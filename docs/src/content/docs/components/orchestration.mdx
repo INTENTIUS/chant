@@ -31,6 +31,8 @@ The same declarations synthesize plain CI YAML through the [GitHub](/chant/lexic
 
 The two compose: interpret mode behind a thin generated CI trigger.
 
+Generate mode has an Op counterpart too, see [Scheduling without Temporal](/chant/guide/ops/#scheduling-without-temporal). A scheduled Op's CI trigger is not limited to cron: `pull_request` and `push` triggers are generic beyond the cron case, for an Op whose natural trigger is a PR or a push to a branch rather than a clock.
+
 See [Execution Backends](/chant/components/backends-reference/) for the backend interface and the general-consumption default profile.
 
 ## Rollback comes free
