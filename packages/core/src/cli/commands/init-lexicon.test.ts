@@ -1,10 +1,11 @@
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
-import { existsSync, readFileSync, mkdirSync, writeFileSync, rmSync, readdirSync, realpathSync } from "fs";
+import { existsSync, readFileSync, mkdirSync, writeFileSync, rmSync, readdirSync, realpathSync, symlinkSync } from "fs";
 import { execFileSync } from "child_process";
 import { join, dirname } from "path";
 import { tmpdir } from "os";
-import { fileURLToPath } from "url";
+import { fileURLToPath, pathToFileURL } from "url";
 import { initLexiconCommand } from "./init-lexicon";
+import { checkLexicon } from "./check-lexicon";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURE_DIR = join(__dirname, "__fixtures__", "init-lexicon-output");
@@ -44,6 +45,8 @@ describe("initLexiconCommand", () => {
       "src/codegen/naming.ts",
       "src/codegen/package.ts",
       "src/codegen/docs.ts",
+      "src/codegen/docs-cli.ts",
+      "src/package-cli.ts",
       "src/spec/fetch.ts",
       "src/spec/parse.ts",
       "src/lint/rules/sample.ts",
@@ -245,6 +248,16 @@ describe("scaffold content validation", () => {
     expect(pkg.scripts.build).toContain("tsconfig.build.json");
   });
 
+  // #2090, the scaffolded package.json failed tier 1 as generated: a bare
+  // string exports["."], a build script that never deletes emitted .js, and
+  // a prepack that never bundled, so dist/manifest.json never existed.
+  test("package.json exports[\".\"].default is ./src/index.ts, build deletes emitted JS, prepack bundles (#2090)", () => {
+    const pkg = JSON.parse(readFileSync(join(targetDir, "package.json"), "utf-8"));
+    expect(pkg.exports["."].default).toBe("./src/index.ts");
+    expect(pkg.scripts.build).toContain("-delete");
+    expect(pkg.scripts.prepack).toContain("bundle");
+  });
+
   test("tsconfig.build.json uses bundler resolution + the development condition (#749)", () => {
     const cfg = JSON.parse(readFileSync(join(targetDir, "tsconfig.build.json"), "utf-8"));
     expect(cfg.compilerOptions.moduleResolution).toBe("bundler");
@@ -305,6 +318,88 @@ describe("scaffold content validation", () => {
   test("generate.ts default pkgDir is also the package root (#1614)", () => {
     const content = readFileSync(join(targetDir, "src/codegen/generate.ts"), "utf-8");
     expect(content).toContain("pkgDir ?? dirname(dirname(dirname(fileURLToPath(import.meta.url))))");
+  });
+});
+
+// #2090, a fresh scaffold used to fail 5 tier-1 checks before the author
+// wrote anything. The docs-cli.ts gap (section 1) and the package.json/bundle
+// gap (section 2) together fixed the packaging-shape check and let
+// `npm run bundle` actually produce dist/manifest.json with a chantVersion.
+describe("a fresh scaffold's tier-1 completeness (#2090)", () => {
+  let root: string;
+  let dir: string;
+
+  beforeEach(async () => {
+    root = join(tmpdir(), `chant-scaffold-tier1-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(root, { recursive: true });
+    // The scaffold's tsconfig.json extends "../../tsconfig.json" (mirroring
+    // lexicons/<name>/tsconfig.json's real "../../tsconfig.json" -> repo
+    // root), so loading it needs a real file two levels up.
+    writeFileSync(join(root, "tsconfig.json"), "{}\n");
+
+    // A self-contained node_modules so the scaffold's own runtime imports of
+    // "@intentius/chant/*" resolve exactly as they would in the real
+    // monorepo, without touching the real repo's node_modules or lexicons/.
+    mkdirSync(join(root, "node_modules/@intentius"), { recursive: true });
+    symlinkSync(
+      join(__dirname, "..", "..", ".."), // commands -> cli -> src -> packages/core
+      join(root, "node_modules/@intentius/chant"),
+      "dir",
+    );
+
+    dir = join(root, "lexicons", "acme");
+    await initLexiconCommand({ name: "acme", path: dir });
+
+    // Bypass the generate() TODO throw. A real spec fetcher/parser is the
+    // author's job, not this test's. writeGeneratedFiles resolves its own
+    // target so a no-op stub is fine.
+    writeFileSync(
+      join(dir, "src/codegen/generate.ts"),
+      [
+        "export async function generate() {",
+        "  return { resources: 0, properties: 0, enums: 0, lexiconJSON: '{}', typesDTS: '', indexTS: '' };",
+        "}",
+        "export function writeGeneratedFiles() {}",
+        "",
+      ].join("\n"),
+    );
+
+    // Run the fixed bundle pipeline for real, proving section 2's package.json
+    // + package-cli.ts changes actually produce dist/manifest.json, not just
+    // that the scripts look right.
+    const packageMod = (await import(pathToFileURL(join(dir, "src/codegen/package.ts")).href)) as {
+      packageLexicon: (opts?: { verbose?: boolean }) => Promise<{ spec: unknown }>;
+    };
+    const { spec } = await packageMod.packageLexicon({ verbose: false });
+
+    const bundleMod = (await import(
+      pathToFileURL(join(root, "node_modules/@intentius/chant/src/codegen/package.ts")).href
+    )) as { writeBundleSpec: (spec: unknown, distDir: string) => void };
+    bundleMod.writeBundleSpec(spec, join(dir, "dist"));
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  test("the fixed bundle pipeline actually produces dist/manifest.json with a chantVersion", () => {
+    expect(existsSync(join(dir, "dist/manifest.json"))).toBe(true);
+    const manifest = JSON.parse(readFileSync(join(dir, "dist/manifest.json"), "utf-8"));
+    expect(typeof manifest.chantVersion).toBe("string");
+    expect(manifest.chantVersion.length).toBeGreaterThan(0);
+  });
+
+  // Only real author work should remain. "Every shipped example builds..."
+  // also fails here, but for a reason outside this issue's scope: the
+  // scaffold's getting-started example has every line commented out (nothing
+  // to build yet), which is true independent of sections 1 and 2 above.
+  test("fails only on real author work, not on anything sections 1-2 fix", async () => {
+    const result = await checkLexicon(dir);
+    const tier1Failures = result.items.filter((i) => i.tier === 1 && !i.pass).map((i) => i.name);
+    expect(tier1Failures).toEqual([
+      "postSynthChecks() returns at least 1 check",
+      "Every shipped example builds and passes its own post-synth checks",
+    ]);
   });
 });
 
