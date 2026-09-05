@@ -150,6 +150,7 @@ export async function packageLexicon(options?: { verbose?: boolean; force?: bool
     buildManifest: (genResult) => ({
       name: "${name}",
       version: "0.0.1",
+      chantVersion: ">=0.1.0",
     }),
     srcDir,
     collectSkills: () => new Map(),
@@ -158,6 +159,14 @@ export async function packageLexicon(options?: { verbose?: boolean; force?: bool
   console.error(\`Packaged \${stats.resources} resources, \${stats.ruleCount} rules\`);
   return { spec, stats };
 }
+`;
+}
+
+export function generateCodegenDocsCliTs(): string {
+  return `#!/usr/bin/env tsx
+import { generateDocs } from "./docs";
+
+await generateDocs({ verbose: true });
 `;
 }
 

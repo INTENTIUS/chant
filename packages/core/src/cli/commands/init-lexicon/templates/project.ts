@@ -10,8 +10,16 @@ export function generatePackageJson(name: string, names: { packageName: string }
     private: true,
     files: ["src/", "dist/"],
     exports: {
-      ".": "./src/index.ts",
-      "./*": "./src/*",
+      ".": {
+        development: "./src/index.ts",
+        types: "./dist/index.d.ts",
+        default: "./src/index.ts",
+      },
+      "./*": {
+        development: "./src/*.ts",
+        types: "./dist/*.d.ts",
+        default: "./src/*.ts",
+      },
       "./manifest": "./dist/manifest.json",
       "./meta": "./dist/meta.json",
       "./types": "./dist/types/index.d.ts",
@@ -20,8 +28,9 @@ export function generatePackageJson(name: string, names: { packageName: string }
       generate: "npx tsx src/codegen/generate-cli.ts",
       validate: "npx tsx src/validate-cli.ts",
       docs: "npx tsx src/codegen/docs-cli.ts",
-      build: "tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json",
-      prepack: "npm run generate && npm run validate && npm run build",
+      build: 'tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json && find dist -type f \\( -name "*.js" -o -name "*.js.map" \\) -delete',
+      prepack: "npm run generate && npm run bundle && npm run validate && npm run build",
+      bundle: "tsx src/package-cli.ts",
     },
     devDependencies: {
       // `*` (not `workspace:*`) so a fresh lexicon `npm install`s under plain npm
@@ -209,5 +218,36 @@ import { validate } from "./validate";
 
 // \`validate\` takes an optional { basePath }; defaults to the lexicon root.
 await validate();
+`;
+}
+
+/**
+ * Thin entry point for `npm run bundle`, called from `prepack`. Writes
+ * `src/generated/` (via the generate pipeline) and `dist/` (via the package
+ * pipeline plus `writeBundleSpec`), so `dist/manifest.json` exists before
+ * `npm run validate` and `npm run build` run.
+ */
+export function generatePackageCliTs(): string {
+  return `#!/usr/bin/env tsx
+import { generate, writeGeneratedFiles } from "./codegen/generate";
+import { packageLexicon } from "./codegen/package";
+import { writeBundleSpec } from "@intentius/chant/codegen/package";
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
+
+const srcDir = dirname(fileURLToPath(import.meta.url));
+
+// 1. Generate src/generated/ files (writeGeneratedFiles resolves its own target)
+const genResult = await generate({ verbose: true });
+writeGeneratedFiles(genResult);
+
+// 2. Run package pipeline and write dist/
+const { spec, stats } = await packageLexicon({ verbose: true });
+
+const distDir = join(dirname(srcDir), "dist");
+writeBundleSpec(spec, distDir);
+
+console.error(\`Packaged \${stats.resources} resources, \${stats.ruleCount} rules, \${stats.skillCount} skills\`);
+console.error(\`dist/ written to \${distDir}\`);
 `;
 }
