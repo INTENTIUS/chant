@@ -15,6 +15,7 @@ export async function packageLexicon(options?: { verbose?: boolean; force?: bool
     buildManifest: (genResult) => ({
       name: "fixture",
       version: "0.0.1",
+      chantVersion: ">=0.1.0",
     }),
     srcDir,
     collectSkills: () => new Map(),

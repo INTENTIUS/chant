@@ -5,6 +5,7 @@ import { formatSuccess, formatError, formatWarning } from "../format";
 
 export interface OnboardOptions {
   name: string;
+  /** Run `chant dev check-lexicon` and print its full output (see `printOnboardResult`). */
   verbose?: boolean;
   /** Monorepo root to patch. Defaults to the root this module lives in. */
   root?: string;
@@ -14,6 +15,7 @@ export interface OnboardResult {
   success: boolean;
   patched: string[];
   skipped: string[];
+  verbose?: boolean;
   error?: string;
 }
 
@@ -332,7 +334,7 @@ export function onboardCommand(options: OnboardOptions): OnboardResult {
     patchDockerfile(join(root, "test/Dockerfile.smoke-npm"), options.name),
   );
 
-  return { success: true, patched, skipped };
+  return { success: true, patched, skipped, verbose: options.verbose };
 }
 
 /**
@@ -365,20 +367,23 @@ export async function printOnboardResult(result: OnboardResult, name: string): P
   console.log(`     (must depend on @intentius/chant-lexicon-${name} for workspace resolution)`);
   console.log(`  2. Add smoke tests to test/integration.sh`);
   console.log(`  3. Run: npm install (to update workspace links)`);
-  console.log(`  4. First npm publish: tag with v<version> and push`);
+  console.log(`  4. First release: just release-lexicon ${name} patch`);
   console.log(`  5. Run: chant dev check-lexicon lexicons/${name} (to see completeness status)`);
   console.log(formatWarning({
     message: "First-time scoped packages may publish as private despite --access public",
   }));
   console.log(`     Check https://www.npmjs.com/org/intentius and toggle visibility if needed`);
 
-  // Run check-lexicon if the lexicon directory exists
-  const lexiconDir = join(findRepoRoot(), "lexicons", name);
-  if (existsSync(lexiconDir)) {
-    console.log("");
-    console.log("Lexicon completeness:");
-    const { checkLexicon, printCheckResult } = await import("./check-lexicon");
-    const checkResult = await checkLexicon(lexiconDir);
-    printCheckResult(checkResult, false);
+  // Under --verbose, run check-lexicon now instead of leaving step 5 to the
+  // author, printing the full tier 1/2/3 detail rather than just the summary above.
+  if (result.verbose) {
+    const lexiconDir = join(findRepoRoot(), "lexicons", name);
+    if (existsSync(lexiconDir)) {
+      console.log("");
+      console.log("Lexicon completeness:");
+      const { checkLexicon, printCheckResult } = await import("./check-lexicon");
+      const checkResult = await checkLexicon(lexiconDir);
+      printCheckResult(checkResult, false);
+    }
   }
 }

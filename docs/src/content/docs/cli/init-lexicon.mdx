@@ -42,7 +42,7 @@ From the provided name, the command derives:
 
 ### Generated files
 
-35 files, as `initLexiconCommand` writes them (`packages/core/src/cli/commands/init-lexicon.ts`). Neither `dist/` nor `src/generated/*` is scaffolded; generation and packaging write those later.
+36 files, as `initLexiconCommand` writes them (`packages/core/src/cli/commands/init-lexicon.ts`). Neither `dist/` nor `src/generated/*` is scaffolded; generation and packaging write those later.
 
 | File | Purpose |
 |------|---------|
@@ -51,6 +51,7 @@ From the provided name, the command derives:
 | `src/serializer.ts` | Stub `Serializer` producing minimal JSON |
 | `src/codegen/generate.ts` | Calls core `generatePipeline` with TODO callbacks |
 | `src/codegen/generate-cli.ts` | tsx entry point for `just generate` |
+| `src/codegen/docs-cli.ts` | tsx entry point for `just docs` |
 | `src/codegen/naming.ts` | `NamingStrategy` with empty data tables |
 | `src/codegen/package.ts` | Calls core `packagePipeline` |
 | `src/codegen/docs.ts` | Calls core `docsPipeline` |
@@ -63,6 +64,7 @@ From the provided name, the command derives:
 | `src/plugin.test.ts`, `src/serializer.test.ts` | The two tests `chant dev check-lexicon` requires by name |
 | `src/validate.ts` | Stub validation checks |
 | `src/validate-cli.ts` | tsx entry point for `just validate` |
+| `src/package-cli.ts` | tsx entry point for `npm run bundle`, chained into `prepack`; writes `src/generated/` and `dist/` |
 | `src/generated/.gitkeep` | Placeholder for the generation output directory |
 | `package.json` | Package config with a `*` dev dependency on `@intentius/chant` |
 | `tsconfig.json`, `tsconfig.build.json` | Extends root TypeScript config; build config with `bundler` resolution |

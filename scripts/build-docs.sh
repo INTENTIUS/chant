@@ -63,9 +63,9 @@ for lex in $(build_order); do
   (
     cd "lexicons/$lex"
     npm run prepack
-    # A hand-written docs site (k3d, k3s) has no generated pages, and so no
-    # codegen entry point — which is why neither could simply be appended to
-    # the old hardcoded list.
+    # Every lexicon ships src/codegen/docs-cli.ts (k3d and k3s gained theirs in
+    # #1815, and the init-lexicon scaffold writes one too), so this guard
+    # always passes now; kept as a defence against a lexicon that skips it.
     if [ -f src/codegen/docs-cli.ts ]; then
       npx tsx src/codegen/docs-cli.ts
     fi

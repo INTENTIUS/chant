@@ -26,7 +26,7 @@ const KUBERAY_CRD_BASE = `https://raw.githubusercontent.com/ray-project/kuberay/
  * Argo CD CRDs — argoproj.io/v1alpha1
  *
  * Produces (the `argoproj.io` group is mapped to the `Argo` namespace —
- * see GROUP_NAMESPACE_OVERRIDES in crd/parser.ts):
+ * see GROUP_NAMESPACE_OVERRIDES in group-namespace.ts):
  *   K8s::Argo::Application     → apiVersion: argoproj.io/v1alpha1, kind: Application
  *   K8s::Argo::ApplicationSet  → apiVersion: argoproj.io/v1alpha1, kind: ApplicationSet
  *   K8s::Argo::AppProject      → apiVersion: argoproj.io/v1alpha1, kind: AppProject
@@ -221,7 +221,7 @@ const PROM_OPERATOR_CRD_BASE = `https://raw.githubusercontent.com/prometheus-ope
  * also carries `ExternalArtifact` and `ArtifactGenerator` (experimental, and a
  * separate `source.extensions.fluxcd.io` group), which are intentionally left
  * out. All groups map to the `Flux` namespace (see GROUP_NAMESPACE_OVERRIDES in
- * crd/parser.ts):
+ * group-namespace.ts):
  *   K8s::Flux::GitRepository / OCIRepository / HelmRepository / HelmChart / Bucket
  *                                          → source.toolkit.fluxcd.io/v1
  *   K8s::Flux::Kustomization               → kustomize.toolkit.fluxcd.io/v1
@@ -259,7 +259,7 @@ const FLUX_OPERATOR_INSTALL = `https://github.com/controlplaneio-fluxcd/flux-ope
  * KubeMicroVM CRDs — lambda.aws.amazon.com/v1alpha1
  *
  * Produces (the group is mapped to the `KubeMicroVM` namespace — see
- * GROUP_NAMESPACE_OVERRIDES in crd/parser.ts):
+ * GROUP_NAMESPACE_OVERRIDES in group-namespace.ts):
  *   K8s::KubeMicroVM::MicroVM            → kind: MicroVM
  *   K8s::KubeMicroVM::MicroVMImage       → kind: MicroVMImage
  *   K8s::KubeMicroVM::MicroVMNetwork     → kind: MicroVMNetwork
@@ -287,7 +287,7 @@ const KUBEMICROVM_VERSION = "1.0.11";
  * k3s estate's GitOps surface is written in.
  *
  * Produces (both groups map to the `K3s` namespace — see
- * GROUP_NAMESPACE_OVERRIDES in crd/parser.ts):
+ * GROUP_NAMESPACE_OVERRIDES in group-namespace.ts):
  *   K8s::K3s::HelmChart        → apiVersion: helm.cattle.io/v1, kind: HelmChart
  *   K8s::K3s::HelmChartConfig  → apiVersion: helm.cattle.io/v1, kind: HelmChartConfig
  *   K8s::K3s::Addon            → apiVersion: k3s.cattle.io/v1,  kind: Addon

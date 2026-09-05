@@ -4,11 +4,11 @@ import { formatSuccess, formatWarning } from "../format";
 
 // Template generators
 import { generatePluginTs, generateIndexTs } from "./init-lexicon/templates/plugin";
-import { generateCodegenGenerateTs, generateCodegenGenerateCliTs, generateCodegenNamingTs, generateCodegenPackageTs, generateCodegenDocsTs } from "./init-lexicon/templates/codegen";
+import { generateCodegenGenerateTs, generateCodegenGenerateCliTs, generateCodegenNamingTs, generateCodegenPackageTs, generateCodegenDocsTs, generateCodegenDocsCliTs } from "./init-lexicon/templates/codegen";
 import { generateSpecFetchTs, generateSpecParseTs } from "./init-lexicon/templates/spec";
 import { generateSampleRuleTs, generateLintRulesIndexTs } from "./init-lexicon/templates/lint";
 import { generateLspCompletionsTs, generateLspHoverTs } from "./init-lexicon/templates/lsp";
-import { generatePackageJson, generateTsConfig, generateTsConfigBuild, generateJustfile, generateGitignore, generateReadme, generateSerializerTs, generateValidateTs, generateValidateCliTs } from "./init-lexicon/templates/project";
+import { generatePackageJson, generateTsConfig, generateTsConfigBuild, generateJustfile, generateGitignore, generateReadme, generateSerializerTs, generateValidateTs, generateValidateCliTs, generatePackageCliTs } from "./init-lexicon/templates/project";
 import { generatePluginTestTs, generateSerializerTestTs, generateCompletionsTestTs, generateHoverTestTs } from "./init-lexicon/templates/tests";
 import { generateDocsPackageJson, generateDocsTsConfig, generateDocsAstroConfig, generateDocsContentConfig, generateDocsIndexMdx, generateDocsGettingStartedMdx } from "./init-lexicon/templates/docs";
 import { generateExamplePackageJson, generateExampleInfraTs } from "./init-lexicon/templates/examples";
@@ -137,6 +137,7 @@ export async function initLexiconCommand(options: InitLexiconOptions): Promise<I
     "src/codegen/naming.ts": generateCodegenNamingTs(),
     "src/codegen/package.ts": generateCodegenPackageTs(name),
     "src/codegen/docs.ts": generateCodegenDocsTs(name),
+    "src/codegen/docs-cli.ts": generateCodegenDocsCliTs(),
     "src/spec/fetch.ts": generateSpecFetchTs(),
     "src/spec/parse.ts": generateSpecParseTs(),
     "src/lint/rules/sample.ts": generateSampleRuleTs(names),
@@ -149,6 +150,7 @@ export async function initLexiconCommand(options: InitLexiconOptions): Promise<I
     "src/serializer.test.ts": generateSerializerTestTs(name, names),
     "src/validate.ts": generateValidateTs(name),
     "src/validate-cli.ts": generateValidateCliTs(),
+    "src/package-cli.ts": generatePackageCliTs(),
     "package.json": generatePackageJson(name, names),
     "tsconfig.json": generateTsConfig(),
     "tsconfig.build.json": generateTsConfigBuild(),
