@@ -12,11 +12,16 @@
  * GitHub Actions' `on.schedule` is workflow-scoped, not job-scoped, so unlike
  * the component generator (one combined pipeline for the whole graph) this
  * emits one workflow file per `ScheduledOpSpec`. Each workflow:
- *  - triggers on `schedule` (the Op's cron) and `workflow_dispatch` (manual
- *    runs stay available for testing/dry-runs);
- *  - declares only the `permissions:` its `findingMode` needs — `report`
- *    stays read-only, `issue`/`pull-request` add the write scope the Op's own
- *    activity uses (`gh issue create` / `gh pr create`, see
+ *  - triggers on its `ScheduledOpSpec`'s trigger (#2084): `cron` (the Op's
+ *    schedule, plus `workflow_dispatch` so manual runs stay available for
+ *    testing/dry-runs), `pull_request` (optionally filtered to `branches`,
+ *    no `workflow_dispatch` — a PR event needs no manual escape hatch), or
+ *    `push` (filtered to `branches`, defaulting to the repository's default
+ *    branch);
+ *  - declares only the `permissions:` its `findingMode` (and, for a
+ *    `pull_request` trigger, whether that mode posts a comment) needs —
+ *    `report` stays read-only, `issue`/`pull-request` add the write scope
+ *    the Op's own activity uses (`gh issue create` / `gh pr create`, see
  *    `@intentius/chant-lexicon-temporal`'s `reconcilePr` activity) — never a
  *    blanket `write-all`;
  *  - runs exactly one invocation, `chant run <name>` by default — never
@@ -26,11 +31,13 @@
  */
 
 import { emitYAML } from "@intentius/chant/yaml";
+import { resolveOpTrigger } from "@intentius/chant/lexicon";
 import type {
   ComponentPipelineOptions as GenerateGithubOpOptions,
   OpFindingMode,
   OpPipelineJob,
   OpPipelineResult as GenerateGithubOpResult,
+  OpTrigger,
   ScheduledOpSpec,
 } from "@intentius/chant/lexicon";
 
@@ -44,7 +51,11 @@ export type { GenerateGithubOpOptions, GenerateGithubOpResult };
  * `./generate-pipeline.ts`'s `GithubPipelineDoc` split.
  */
 export interface GithubOpPipelineDoc {
-  /** The `on:` trigger mapping (`schedule` + `workflow_dispatch`). */
+  /**
+   * The `on:` trigger mapping, per {@link ScheduledOpSpec}'s trigger kind
+   * (#2084): `{ schedule, workflow_dispatch }` for cron, `{ pull_request }`
+   * for `pull_request`, `{ push }` for `push`.
+   */
   on: Record<string, unknown>;
   /** The `env:` mapping, when `options.variables` is set. */
   env?: Record<string, unknown>;
@@ -75,13 +86,40 @@ function toJobName(opName: string): string {
 const DEFAULT_IMAGE = "node:22-slim";
 
 /**
- * Least-privilege `permissions:` for a scheduled Op's finding-mode. `report`
- * needs no write access; `issue` needs only `issues: write`; `pull-request`
- * (and `merge-request`, generated the same way when a GitLab-authored spec is
- * targeted at github) needs `contents: write` to push the reconcile branch
- * plus `pull-requests: write` to open the PR.
+ * Default branch assumed for a `push` trigger with no `branches` override
+ * (#2084). There is no generator constant for a downstream project's actual
+ * default branch — this operates on a `ScheduledOpSpec`, not a git checkout
+ * — so "main" is the documented default; set `trigger.branches` explicitly
+ * for a project whose default branch is something else (e.g. "master").
  */
-function permissionsFor(mode: OpFindingMode): Record<string, "read" | "write"> {
+const DEFAULT_PUSH_BRANCH = "main";
+
+/** This trigger's `on:` mapping (#2084): cron unchanged, `pull_request`/`push` new. */
+function onFor(trigger: OpTrigger): Record<string, unknown> {
+  switch (trigger.kind) {
+    case "cron":
+      return { schedule: [{ cron: trigger.schedule }], workflow_dispatch: {} };
+    case "pull_request":
+      // No `workflow_dispatch`: a PR trigger needs no manual-dispatch escape
+      // hatch (revisit in review if that's wrong).
+      return { pull_request: trigger.branches ? { branches: trigger.branches } : {} };
+    case "push":
+      return { push: { branches: trigger.branches ?? [DEFAULT_PUSH_BRANCH] } };
+  }
+}
+
+/**
+ * Least-privilege `permissions:` for a scheduled Op's finding-mode and
+ * trigger. `report` needs no write access; `issue` needs only `issues:
+ * write`; `pull-request` (and `merge-request`, generated the same way when a
+ * GitLab-authored spec is targeted at github) needs `contents: write` to
+ * push the reconcile branch plus `pull-requests: write` to open the PR. A
+ * `pull_request` trigger reports its finding as a comment on the triggering
+ * PR itself (#2084): any mode but `report` posts something to act on a
+ * finding, so on that trigger every such mode also gets `pull-requests:
+ * write` for the comment, whether or not its own scope already included it.
+ */
+function permissionsForMode(mode: OpFindingMode): Record<string, "read" | "write"> {
   switch (mode) {
     case "issue":
       return { contents: "read", issues: "write" };
@@ -91,6 +129,14 @@ function permissionsFor(mode: OpFindingMode): Record<string, "read" | "write"> {
     case "report":
       return { contents: "read" };
   }
+}
+
+function permissionsFor(mode: OpFindingMode, trigger: OpTrigger): Record<string, "read" | "write"> {
+  const base = permissionsForMode(mode);
+  if (trigger.kind === "pull_request" && mode !== "report") {
+    return { ...base, "pull-requests": "write" };
+  }
+  return base;
 }
 
 /**
@@ -113,8 +159,9 @@ export function buildGithubOpPipelineDocs(
 
   for (const spec of ops) {
     const findingMode = spec.findingMode ?? "report";
+    const trigger = resolveOpTrigger(spec);
     const jobName = toJobName(spec.name);
-    jobs.push({ jobName, op: spec.name, schedule: spec.schedule, findingMode });
+    jobs.push({ jobName, op: spec.name, trigger, findingMode });
 
     const runParts = runCommand.map((part) => part.replace("{name}", spec.name));
 
@@ -129,12 +176,12 @@ export function buildGithubOpPipelineDocs(
     for (const line of extraScript) steps.push({ run: line });
 
     const doc: GithubOpPipelineDoc = {
-      on: { schedule: [{ cron: spec.schedule }], workflow_dispatch: {} },
+      on: onFor(trigger),
       ...(options.variables && Object.keys(options.variables).length > 0 ? { env: options.variables } : {}),
       // One run at a time per Op — a slow audit must not overlap its own next
       // scheduled trigger.
       concurrency: { group: jobName, "cancel-in-progress": false },
-      permissions: permissionsFor(findingMode),
+      permissions: permissionsFor(findingMode, trigger),
       jobsDoc: {
         [jobName]: {
           "runs-on": "ubuntu-latest",

@@ -108,6 +108,84 @@ describe("generateGithubOpPipeline: least-privilege permissions per finding-mode
   });
 });
 
+describe("generateGithubOpPipeline: trigger kinds (#2084)", () => {
+  test("a legacy `{ schedule }` spec with no `trigger` is unchanged", () => {
+    const specs: ScheduledOpSpec[] = [{ name: "actions-audit", schedule: "0 6 * * *", findingMode: "issue" }];
+    const result = generateGithubOpPipeline(specs);
+    const doc = parseFile(result.files[0].yaml);
+
+    expect(doc.on).toEqual({ schedule: [{ cron: "0 6 * * *" }], workflow_dispatch: {} });
+    expect(doc.permissions).toEqual({ contents: "read", issues: "write" });
+    expect(result.jobs[0].trigger).toEqual({ kind: "cron", schedule: "0 6 * * *" });
+  });
+
+  test("pull_request trigger: filters to branches, has no workflow_dispatch", () => {
+    const specs: ScheduledOpSpec[] = [
+      { name: "tf-plan", trigger: { kind: "pull_request", branches: ["main"] } },
+    ];
+    const result = generateGithubOpPipeline(specs);
+    const doc = parseFile(result.files[0].yaml);
+
+    expect(doc.on).toEqual({ pull_request: { branches: ["main"] } });
+    expect(doc.on).not.toHaveProperty("workflow_dispatch");
+    expect(result.jobs[0].trigger).toEqual({ kind: "pull_request", branches: ["main"] });
+  });
+
+  test("pull_request trigger with no branches filter triggers on every PR", () => {
+    const result = generateGithubOpPipeline([{ name: "tf-plan", trigger: { kind: "pull_request" } }]);
+    const doc = parseFile(result.files[0].yaml);
+    expect(doc.on).toEqual({ pull_request: {} });
+  });
+
+  test("pull_request trigger with a comment-posting finding mode gets pull-requests: write", () => {
+    const specs: ScheduledOpSpec[] = [
+      { name: "tf-plan", trigger: { kind: "pull_request" }, findingMode: "issue" },
+    ];
+    const result = generateGithubOpPipeline(specs);
+    const doc = parseFile(result.files[0].yaml);
+    expect(doc.permissions).toEqual({ contents: "read", issues: "write", "pull-requests": "write" });
+  });
+
+  test("pull_request trigger stays read-only when findingMode is report", () => {
+    const result = generateGithubOpPipeline([{ name: "tf-plan", trigger: { kind: "pull_request" } }]);
+    const doc = parseFile(result.files[0].yaml);
+    expect(doc.permissions).toEqual({ contents: "read" });
+  });
+
+  test("push trigger: filters to branches", () => {
+    const specs: ScheduledOpSpec[] = [
+      { name: "tf-apply", trigger: { kind: "push", branches: ["release"] } },
+    ];
+    const result = generateGithubOpPipeline(specs);
+    const doc = parseFile(result.files[0].yaml);
+
+    expect(doc.on).toEqual({ push: { branches: ["release"] } });
+    expect(doc.on).not.toHaveProperty("workflow_dispatch");
+    expect(result.jobs[0].trigger).toEqual({ kind: "push", branches: ["release"] });
+  });
+
+  test("push trigger defaults to the repository default branch (main) when branches is omitted", () => {
+    const result = generateGithubOpPipeline([{ name: "tf-apply", trigger: { kind: "push" } }]);
+    const doc = parseFile(result.files[0].yaml);
+    expect(doc.on).toEqual({ push: { branches: ["main"] } });
+  });
+
+  test("push trigger is read-only by default", () => {
+    const result = generateGithubOpPipeline([{ name: "tf-apply", trigger: { kind: "push" } }]);
+    const doc = parseFile(result.files[0].yaml);
+    expect(doc.permissions).toEqual({ contents: "read" });
+  });
+
+  test("push trigger honors an elevated findingMode, same as cron", () => {
+    const specs: ScheduledOpSpec[] = [
+      { name: "tf-apply", trigger: { kind: "push" }, findingMode: "pull-request" },
+    ];
+    const result = generateGithubOpPipeline(specs);
+    const doc = parseFile(result.files[0].yaml);
+    expect(doc.permissions).toEqual({ contents: "write", "pull-requests": "write" });
+  });
+});
+
 describe("generateGithubOpPipeline: concurrency guards against overlapping runs", () => {
   test("each file's concurrency group is scoped to its own job", () => {
     const result = generateGithubOpPipeline([{ name: "actions-audit", schedule: "0 6 * * *" }]);
