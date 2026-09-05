@@ -28,6 +28,7 @@ What it scans:
 - Azure ARM — `.json` deployment templates (`$schema` with `deploymentTemplate` + `resources`), for a local path — runs the `AZR*` checks (public blob access, missing encryption/TDE, HTTPS-only, TLS 1.2, …)
 - GCP Config Connector — `*.{yml,yaml}` with a `cnrm.cloud.google.com` apiVersion, for a local path — runs the `WGC*` checks (public IAM, open firewalls, public Cloud SQL, missing encryption, Workload Identity, …)
 - Helm charts — any directory with a `Chart.yaml`, for a local path — runs the `WHM*` checks (privileged/root containers, `:latest` images, inline Secrets, chart structure, …). The whole chart is audited as one unit.
+- Terraform root modules, any directory with at least one `.tf` file directly inside it, for a local path. Not recursive: a nested directory with its own `.tf` files (e.g. `modules/foo`) is its own root module and its own audit unit. Install `@intentius/chant-lexicon-terraform` like any other lexicon.
 - fountain manifests — `*.{yml,yaml}` with `apiVersion: fountain.dev/v1` (`fountain apply` files, single or multi-document), for a local path — runs the `FTN*` checks (unrestricted networking, credential-shaped `env_vars`, vault shadowing, unresolvable `${VAR}` references, …). The documents are parsed back into the entity graph, so these are the same rules `chant build` runs — and a fountain document is never misread as a Kubernetes manifest.
 - Secrets & credentials (`SEC*`) — every file above, plus `.env*`, `.pem`, `.key`, `.crt`, `.cer`, `.pfx`, and `.p12` files, are scanned for likely secrets regardless of which lexicons are installed. See [Secrets & credentials detection](#secrets--credentials-detection) below.
 - Wrangler config (`WRG*`) — `wrangler.toml`, Cloudflare Workers' native deploy config. TOML is not a format any lexicon parses, so this is audit-only (#446): no lexicon package to install, no authoring surface — chant never writes Wrangler config, it only reads it for these checks. Runs regardless of which lexicons are installed, the same as `SEC*`. See [Wrangler config detection](#wrangler-config-detection) below.
@@ -261,16 +262,16 @@ This is not a clean result. Detection and checks live in the lexicon packages.
 Files that wanted a lexicon:
   .github/workflows/ci.yml  ->  github
   Dockerfile  ->  docker
-  infra/main.tf  ->  terraform (not audited; see chant carve)
+  infra/main.tf  ->  terraform
   k8s/deploy.yaml  ->  k8s
 
 Run it with the lexicons those files need:
-  npx -p @intentius/chant -p @intentius/chant-lexicon-github -p @intentius/chant-lexicon-docker -p @intentius/chant-lexicon-k8s chant audit .
+  npx -p @intentius/chant -p @intentius/chant-lexicon-github -p @intentius/chant-lexicon-docker -p @intentius/chant-lexicon-terraform -p @intentius/chant-lexicon-k8s chant audit .
 ```
 
 With `--json` the same run emits `"status": "no-lexicons"` plus `unclaimed`, `missingLexicons`, and `install` fields, and no `findings`.
 
-When some lexicons are installed and files on disk look like they belong to one that is not, the report leads with a one-line note naming the skipped files and the `npm i` to fix it, and `--json` carries them in `unclaimed`. Terraform (`*.tf`) is listed the same way so you know the audit never reads HCL; see [the carve-out tutorial](/chant/tutorials/terraform-carve-out/) for that path.
+When some lexicons are installed and files on disk look like they belong to one that is not, the report leads with a one-line note naming the skipped files and the `npm i` to fix it, and `--json` carries them in `unclaimed`. Terraform is listed the same way, `npm i @intentius/chant-lexicon-terraform` included.
 
 If a lexicon package is present for detection but its checks fail to load, the command surfaces that as an error naming the package.
 

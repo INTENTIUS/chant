@@ -83,7 +83,7 @@ best-known readers.
 | `postSynthChecks()` | `PostSynthCheck[]` | Post-build validation checks |
 | `coverageReport()` | `Promise<{ unaccountedKinds?: string[] }>` | Offline kind accounting from committed snapshots. `chant dev check-lexicon` fails when a lexicon that declares it leaves any upstream kind unaccounted (chant #1330) |
 | `auditCatalog()` | `Record<string, RuleMeta>` | Title, tier, fix kind and authority for this lexicon's checks, for `chant audit` — see [Post-Synth Checks](/chant/lexicon-authoring/post-synth-checks/) |
-| `auditEntities(content)` | `Map<string, Declarable>` | Parse standalone manifest content into the entity graph so entity-reading checks fire on `chant audit` (parse-to-graph). Must tolerate malformed input |
+| `auditEntities(content)` | `Map<string, Declarable> \| Promise<Map<string, Declarable>>` | Parse standalone manifest content into the entity graph so entity-reading checks fire on `chant audit` (parse-to-graph). May be async for a lexicon whose parser inherently is (e.g. a wasm-backed HCL parser). Must tolerate malformed input |
 
 **Language surface**
 
