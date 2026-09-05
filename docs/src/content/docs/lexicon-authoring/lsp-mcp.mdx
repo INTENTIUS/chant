@@ -8,10 +8,15 @@ Lexicons can provide editor integration through LSP (Language Server Protocol) a
 
 ## LSP Providers
 
-Core provides `LexiconIndex`, `lexiconCompletions`, and `lexiconHover` — generic implementations that work with any lexicon's registry data:
+Core provides `LexiconIndex`, `lexiconCompletions` and `lexiconHover` in
+`packages/core/src/lsp/lexicon-providers.ts`. They are generic implementations
+that work with any lexicon's registry data:
 
 ```typescript
 import { LexiconIndex, lexiconCompletions, lexiconHover } from "@intentius/chant/lsp/lexicon-providers";
+
+// The generated registry JSON: Record<className, LexiconEntry>.
+import lexiconData from "../generated/lexicon-my-lexicon.json";
 
 const index = new LexiconIndex(lexiconData);
 
@@ -21,6 +26,18 @@ return lexiconCompletions(ctx, index, "My resource");
 // In your hoverProvider():
 return lexiconHover(ctx, index, myCustomHoverFormatter);
 ```
+
+The two context types come from `packages/core/src/lsp/types.ts`:
+
+| Type | Fields |
+|---|---|
+| `CompletionContext` | `uri`, `content`, `position`, `wordAtCursor`, `linePrefix` |
+| `HoverContext` | `uri`, `content`, `position`, `word`, `lineText` |
+
+`lexiconCompletions` reads `linePrefix` and `wordAtCursor` and returns
+`CompletionItem[]`. `lexiconHover` reads `word`, looks it up in the index, and
+returns `HoverInfo | undefined`; its third argument is an optional
+`(className, entry) => HoverInfo | undefined` formatter.
 
 ### Completions
 
@@ -54,37 +71,54 @@ Lexicons can contribute MCP tools and resources for AI agent integration:
 
 ### Tools
 
+`McpToolContribution` and `McpResourceContribution` are defined in
+`packages/core/src/mcp/types.ts`.
+
 ```typescript
-mcpTools() {
+import type { McpToolContribution } from "@intentius/chant/mcp/types";
+
+mcpTools(): McpToolContribution[] {
   return [
     {
       name: "k8s:lookup-resource",
       description: "Look up a resource type definition",
-      inputSchema: { type: "object", properties: { name: { type: "string" } } },
-      handler: async (input) => {
-        // Return resource type info
+      inputSchema: {
+        type: "object" as const,
+        properties: { name: { type: "string" } },
+        required: ["name"],
+      },
+      async handler(params: Record<string, unknown>): Promise<unknown> {
+        return { resourceType: String(params.name) };
       },
     },
   ];
 }
 ```
 
+A tool's `handler` takes `Record<string, unknown>` and returns `Promise<unknown>`.
+
 ### Resources
 
 ```typescript
-mcpResources() {
+import type { McpResourceContribution } from "@intentius/chant/mcp/types";
+
+mcpResources(): McpResourceContribution[] {
   return [
     {
       uri: "catalog",
       name: "K8s Resource Catalog",
       description: "All available Kubernetes resource types",
-      handler: async () => {
-        // Return catalog data
+      mimeType: "application/json",
+      async handler(): Promise<string> {
+        return JSON.stringify([]);
       },
     },
   ];
 }
 ```
+
+A resource's `handler` takes no arguments and must return `Promise<string>`.
+Serialize before returning.
 
 ### Namespacing
 
@@ -93,12 +127,24 @@ Core registers every contribution under the lexicon's own namespace: a tool as
 agent sees and what the docs name, so `k8s:lookup-resource` above registers as
 exactly that, and `catalog` registers as `chant://k8s/catalog`.
 
-Applying the namespace is idempotent (chant #1341): writing the prefix yourself
-is accepted and does not double it, which is what the shared
-`createDiffTool`/`createCatalogResource` helpers rely on. Writing a full
-`chant://…` URI is not — a URI is a path within the namespace, not a
-replacement for it. `chant dev check-lexicon` fails a contribution whose
-registered name is not a single well-formed identifier.
+Applying the namespace is idempotent (chant #1341). `namespacedToolName` and
+`namespacedResourceUri` in `packages/core/src/cli/mcp/server.ts` accept three
+authored forms and normalize them all to one registered name:
+
+| You write | Registers as |
+|---|---|
+| `diff` | `<lexicon>:diff` |
+| `<lexicon>:diff` | `<lexicon>:diff` |
+| `catalog` | `chant://<lexicon>/catalog` |
+| `<lexicon>:resource-catalog` | `chant://<lexicon>/resource-catalog` |
+| `chant://<lexicon>/catalog` | `chant://<lexicon>/catalog` |
+
+That is what lets the shared `createDiffTool` and `createCatalogResource`
+helpers write their own prefix without doubling it. What does not normalize is a
+URI naming a *different* lexicon: `chant://other/x` contributed by `aws`
+registers as the unusable `chant://aws/chant://other/x`. `chant dev
+check-lexicon` fails any contribution whose registered name is not a single
+well-formed identifier, which is exactly that case.
 
 ### Conventional names
 
@@ -107,14 +153,41 @@ Most lexicons contribute a common pair, both from the shared helpers in
 
 | Contribution | What it does | Lexicons |
 |---|---|---|
-| `<lexicon>:diff` | Diff built output against a previous build | 9 |
-| `chant://<lexicon>/resource-catalog` | The lexicon's resource types as JSON | 9 |
+| `<lexicon>:diff` | Diff built output against a previous build | 12 |
+| `chant://<lexicon>/resource-catalog` | The lexicon's resource types as JSON | 12 |
 
-The CI lexicons (github, gitlab, forgejo) additionally share a read-only context
-set — `checks`, `references`, `affected`, `source`, `owns`,
-`workflow`/`pipeline`, `workflow-yaml`/`pipeline-yaml`, and `compare` — each
-answering from a local build without touching a live forge. A new CI lexicon
-should match those names rather than invent its own.
+Both come from `packages/core/src/lexicon-plugin-helpers.ts`, so contributing
+them is two lines:
+
+```typescript
+import { createDiffTool, createCatalogResource } from "@intentius/chant/lexicon-plugin-helpers";
+
+mcpTools() {
+  return [createDiffTool(mySerializer, "Diff built output for My Lexicon", "my-lexicon")];
+},
+
+mcpResources() {
+  return [
+    createCatalogResource(
+      import.meta.url,                 // locates src/generated/
+      "My Lexicon Resource Catalog",
+      "JSON list of all supported resource types",
+      "lexicon-my-lexicon.json",       // the generated registry filename
+      "my-lexicon",
+    ),
+  ];
+},
+```
+
+The same module exports `createSkillsLoader`, which the `skills()` member uses.
+See [Skills](/chant/lexicon-authoring/skills/#registering-skills-in-plugin).
+
+The CI lexicons also ship a read-only context set, each tool answering from a
+local build without touching a live forge. gitlab and forgejo contribute all
+eight (`checks`, `workflow` or `pipeline`, `references`, `affected`,
+`workflow-yaml` or `pipeline-yaml`, `source`, `owns`, `compare`); github
+contributes the first five. A new CI lexicon should match those names rather
+than invent its own. See `lexicons/gitlab/src/mcp/context-tools.ts`.
 
 ## Next Steps
 

@@ -6,7 +6,7 @@ diataxis: explanation
 
 import Diagram from '../../../components/Diagram.astro';
 
-A **lexicon** is a plugin that teaches chant about a specific operational area — types, lint rules, serialization, and build validation. You can create lexicons for any infrastructure platform, internal tool, or custom domain.
+A **lexicon** is a plugin that teaches chant one operational area. It contributes the types for that area, a serializer, and the rules that check the result. You can write one for any infrastructure platform, internal tool, or custom domain.
 
 :::tip[Working with an AI agent? Point it at the onboarding skill.]
 [Lexicon Onboarding Skill](/chant/lexicon-authoring/onboarding-skill/) is a single
@@ -29,7 +29,7 @@ You're in the right place if you want to:
 If you're **using** an existing lexicon (like AWS CloudFormation), see the [User Guide](/chant/guide/writing-resources/) instead.
 
 :::tip[Adding a Kubernetes operator? You don't need a new lexicon.]
-Anything installed as a CustomResourceDefinition — KubeRay, Argo CD, cert-manager, Crossplane — belongs in the **k8s lexicon**, not a lexicon of its own. Add the CRD to the source list, generate typed resources, and author rules against the new kinds. See [Add a Third-Party CRD](/chant/lexicon-authoring/crd-sources/). Build a new lexicon only for a non-Kubernetes spec.
+Anything installed as a CustomResourceDefinition (KubeRay, Argo CD, cert-manager, Crossplane) belongs in the k8s lexicon rather than in a lexicon of its own. Add the CRD to the source list, generate typed resources, and author rules against the new kinds. See [Add a Third-Party CRD](/chant/lexicon-authoring/crd-sources/). Build a new lexicon only for a non-Kubernetes spec.
 :::
 
 ## The LexiconPlugin Interface
@@ -50,27 +50,29 @@ export const myPlugin: LexiconPlugin = {
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `name` | `string` | Human-readable name (e.g. `"aws"`, `"gcp"`) |
+| `name` | `string` | The resolution key. Core imports `@intentius/chant-lexicon-<name>` and users write `lexicons: ["<name>"]` (`packages/core/src/cli/plugins.ts`) |
 | `serializer` | `Serializer` | Serializer for build output |
 
 ### Required lifecycle methods
 
-Every lexicon must implement these 4 methods to support the full generation and distribution workflow:
+Four methods, all four required. `isLexiconPlugin()` in `packages/core/src/lexicon.ts`
+accepts an object only when `name`, `serializer` and these four are present, so a
+plugin missing one is rejected at load rather than at first use.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `generate` | `(options?) => Promise<void>` | Generate lexicon artifacts (types, registry, runtime) from upstream spec |
-| `validate` | `(options?) => Promise<void>` | Validate generated artifacts |
-| `coverage` | `(options?) => Promise<void>` | Analyze spec coverage across resource dimensions |
-| `coverageReport` | `() => Promise<{ unaccountedKinds?: string[] }>` | Offline kind accounting; check-lexicon fails when any kind is unaccounted |
-| `package` | `(options?) => Promise<void>` | Package lexicon into a distributable bundle |
+| `generate` | `(options?: { verbose?: boolean }) => Promise<void>` | Generate lexicon artifacts (types, registry, runtime index) from the upstream spec |
+| `validate` | `(options?: { verbose?: boolean }) => Promise<void>` | Validate generated artifacts |
+| `coverage` | `(options?: { verbose?: boolean; minOverall?: number }) => Promise<void>` | Analyze spec coverage across resource dimensions |
+| `package` | `(options?: { verbose?: boolean; force?: boolean }) => Promise<void>` | Package the lexicon into a distributable bundle |
 
 ### Optional members
 
-Every optional member of `LexiconPlugin`. A test asserts this table lists all of
-them, so a member added to the interface without a row here fails the build
-(chant #1347) — the table had drifted to 16 of ~30, and the entire observation
-family beyond the two best-known readers was missing from it.
+Every optional member of `LexiconPlugin`. `lexicon-doc-coverage.test.ts` parses
+the interface and asserts this table lists all of them, so a member added
+without a row here fails the build (chant #1347). The table had previously
+drifted to 16 of roughly 30, losing the whole observation family beyond the two
+best-known readers.
 
 **Lint and audit**
 
@@ -79,8 +81,9 @@ family beyond the two best-known readers was missing from it.
 | `lintRules()` | `LintRule[]` | Imperative lint rules |
 | `declarativeRules()` | `RuleSpec[]` | Declarative lint rules (compiled via `rule()`). No shipped lexicon uses this — see [Write Lint Rules](/chant/lexicon-authoring/lint-rules/) |
 | `postSynthChecks()` | `PostSynthCheck[]` | Post-build validation checks |
+| `coverageReport()` | `Promise<{ unaccountedKinds?: string[] }>` | Offline kind accounting from committed snapshots. `chant dev check-lexicon` fails when a lexicon that declares it leaves any upstream kind unaccounted (chant #1330) |
 | `auditCatalog()` | `Record<string, RuleMeta>` | Title, tier, fix kind and authority for this lexicon's checks, for `chant audit` — see [Post-Synth Checks](/chant/lexicon-authoring/post-synth-checks/) |
-| `auditEntities()` | `Map<string, Declarable>` | Parse standalone manifest content into the entity graph so entity-reading checks fire on `chant audit` (parse-to-graph). Must tolerate malformed input |
+| `auditEntities(content)` | `Map<string, Declarable>` | Parse standalone manifest content into the entity graph so entity-reading checks fire on `chant audit` (parse-to-graph). Must tolerate malformed input |
 
 **Language surface**
 
@@ -89,14 +92,14 @@ family beyond the two best-known readers was missing from it.
 | `intrinsics()` | `IntrinsicDef[]` | Lexicon-specific intrinsic functions |
 | `pseudoParameters()` | `string[]` | Pseudo-parameter names |
 | `completionProvider()` | `CompletionItem[]` | LSP completions for resource/property names |
-| `hoverProvider()` | `HoverInfo` | LSP hover information for resource types |
+| `hoverProvider()` | `HoverInfo \| undefined` | LSP hover information for resource types |
 | `codeActionProvider()` | `CodeAction[]` | LSP code actions. No shipped lexicon uses this |
 
 **Import and migration**
 
 | Member | Returns | Description |
 |--------|---------|-------------|
-| `detectTemplate()` | `boolean` | Detect if a template belongs to this lexicon |
+| `detectTemplate(data)` | `boolean` | Detect whether a parsed template belongs to this lexicon |
 | `templateParser()` | `TemplateParser` | Parser for importing external templates |
 | `templateGenerator()` | `TypeScriptGenerator` | Generator for converting IR to TypeScript |
 | `agentConfigImporter()` | `AgentConfigImporter` | Re-express local agent configuration (skills, MCP servers, instruction files) discovered by `chant audit --agents` as this lexicon's resources — fountain implements it for `Agent`/`Environment` |
@@ -137,14 +140,14 @@ family beyond the two best-known readers was missing from it.
 | `generateComponentPipeline()` | `ComponentPipelineResult` | Turn the component graph into CI YAML. CI-provider lexicons only (gitlab, github, forgejo) |
 | `generateOpPipeline()` | `OpPipelineResult` | Turn a set of scheduled Ops into cron-triggered CI YAML, one file per Op. CI-provider lexicons only (gitlab, github, forgejo) |
 | `buildRoots()` | `Promise<BuildRootContribution>` | Render config-declared build roots that are not typed chant source into entities, merged into the build before partitioning — k8s implements it for `k8s.kustomize.roots` |
-| `configSchema` | `ZodObject` | The shape of this lexicon's own `chant.config.ts` namespace — see [Owning a config namespace](#owning-a-config-namespace) |
+| `configSchema` | `LexiconConfigSchema` (a `ZodObject`) | The shape of this lexicon's own `chant.config.ts` namespace — see [Owning a config namespace](#owning-a-config-namespace) |
 | `upstreamPin` | `UpstreamPin` | How this lexicon pins its upstream schema and where to look for a newer one, for self-upgrade tooling |
 | `init()` | `void \| Promise<void>` | Called once when the plugin loads. No shipped lexicon uses this |
 
 ## Owning a config namespace
 
-A lexicon may own the top-level `chant.config.ts` key named after it —
-`k8s.profiles`, `temporal.profiles`, `forgejo.runnerLabels`. Declare its shape
+A lexicon may own the top-level `chant.config.ts` key named after it, such as
+`k8s.profiles`, `temporal.profiles` or `forgejo.runnerLabels`. Declare its shape
 and core validates the namespace at load:
 
 ```typescript
@@ -165,9 +168,23 @@ declare module "@intentius/chant/config" {
   }
 }
 
-// plugin.ts
-configSchema: myConfigSchema,
+/** Compile-time proof that the augmentation above reached `ChantConfig`. */
+export type MyConfigNamespace = NonNullable<ChantConfig["mylexicon"]>;
 ```
+
+```typescript
+// src/plugin.ts
+import { myConfigSchema } from "./config";
+
+export const myPlugin: LexiconPlugin = {
+  name: "mylexicon",
+  serializer,
+  configSchema: myConfigSchema,
+  // ...
+};
+```
+
+`lexicons/forgejo/src/config.ts` is the shipped example of exactly this file.
 
 One schema, three consumers: core validates against it, the exported type is
 inferred from it, and that inferred type is what augments `ChantConfig`. The
@@ -176,20 +193,21 @@ of them.
 
 Two things this fixes, both of which had bitten (chant #1344):
 
-- **An unknown key inside a declared namespace is now an error.** The project
-  config schema is `.passthrough()`, so `forgejo: { runnerLabel: … }` — a typo
-  for `runnerLabels` — was accepted and ignored, leaving the dialect on its
+- An unknown key inside a declared namespace is now an error. The project
+  config schema is `.passthrough()`, so `forgejo: { runnerLabel: ... }`, a typo
+  for `runnerLabels`, was accepted and ignored, leaving the dialect on its
   defaults with nothing said.
-- **`satisfies ChantConfig` compiles.** `ChantConfig` is a closed interface, so
+- `satisfies ChantConfig` compiles. `ChantConfig` is a closed interface, so
   a config carrying a lexicon key was `error TS2353` until the lexicon augmented
   it. The augmentation applies only when the config file has the package in its
-  program, which a bare `import "@intentius/chant-lexicon-mylexicon"` guarantees
-  — forgetting it is a compile error rather than silence, which is the safe
-  direction.
+  program, which a bare `import "@intentius/chant-lexicon-mylexicon"`
+  guarantees. Forgetting it is a compile error rather than silence, which is the
+  safe direction.
 
-Use `z.strictObject` for nested objects. Core applies `.strict()` to the top
-level of your namespace itself, but one level is all that reaches — and a typo
-in `profiles.prod.regoin` lives deeper than that.
+Use `z.strictObject` for nested objects. `validateLexiconConfig()`
+(`packages/core/src/lexicon-config.ts`) calls `schema.strict()` on the top level
+of your namespace, and one level is all that reaches, so a typo in
+`profiles.prod.regoin` lives deeper than the strictness core adds for you.
 
 Declaring nothing keeps the old passthrough for your namespace, so this is
 opt-in. `chant dev check-lexicon` warns when a lexicon reads its own namespace
@@ -215,16 +233,24 @@ The **AWS CloudFormation lexicon** (`lexicons/aws/`) is the canonical reference 
 
 ## Authoring Workflow
 
-Building a lexicon follows these steps:
+Each step depends on the one before it. Steps 1 through 3 are the ones nothing
+else can proceed without.
 
-1. **[Scaffold](/chant/lexicon-authoring/scaffold/)** — `chant init lexicon` generates the project structure
-2. **[Implement Generate](/chant/lexicon-authoring/generate/)** — wire up `generatePipeline` with your upstream spec
-3. **[Create a Serializer](/chant/lexicon-authoring/serializer/)** — convert evaluated resources to your target format
-4. **[Write Lint Rules](/chant/lexicon-authoring/lint-rules/)** — imperative, declarative, and post-synth checks
-5. **[LSP & MCP Providers](/chant/lexicon-authoring/lsp-mcp/)** — editor completions, hover, and AI tool support
-6. **[Skills](/chant/lexicon-authoring/skills/)** — AI agent skill files
-7. **[Package & Publish](/chant/lexicon-authoring/package/)** — bundle and publish to npm
-8. **[CI & Distribution](/chant/lexicon-authoring/ci-integration/)** — `chant dev onboard` wires CI, Docker smoke tests, and npm publishing
+| # | Step | What it produces |
+|---|------|------------------|
+| 1 | [Scaffold](/chant/lexicon-authoring/scaffold/) | `chant init lexicon <name>` writes the project, including `src/plugin.ts` and `src/serializer.ts` |
+| 2 | [Implement Generate](/chant/lexicon-authoring/generate/) | `src/spec/fetch.ts`, `src/spec/parse.ts` and `src/codegen/generate.ts`, which fill `src/generated/` |
+| 3 | [Create a Serializer](/chant/lexicon-authoring/serializer/) | `src/serializer.ts`, turning the evaluated entities into your target format |
+| 4 | [Write Lint Rules](/chant/lexicon-authoring/lint-rules/) | `src/lint/rules/`, imperative or declarative |
+| 5 | [Post-Synth Checks](/chant/lexicon-authoring/post-synth-checks/) | `src/lint/post-synth/`, plus the `auditCatalog()` metadata behind `chant audit` |
+| 6 | [Testing](/chant/lexicon-authoring/testing/) | `plugin.test.ts` and `serializer.test.ts`, both required by `chant dev check-lexicon` |
+| 7 | [LSP & MCP Providers](/chant/lexicon-authoring/lsp-mcp/) | `src/lsp/completions.ts` and `src/lsp/hover.ts`, registered on the plugin |
+| 8 | [Skills](/chant/lexicon-authoring/skills/) | `src/skills/`, the AI agent skill files |
+| 9 | [Package & Publish](/chant/lexicon-authoring/package/) | `dist/`, via `packagePipeline` and `writeBundleSpec` |
+| 10 | [CI & Distribution](/chant/lexicon-authoring/ci-integration/) | `chant dev onboard` wires CI, Docker smoke tests, and npm publishing |
+
+Verify the result against the [Completeness Checklist](/chant/lexicon-authoring/completeness-checklist/),
+which is the tier list `chant dev check-lexicon` prints.
 
 ## Example: Minimal Custom Lexicon
 
@@ -232,10 +258,10 @@ Building a lexicon follows these steps:
 import type { LexiconPlugin, Serializer, Declarable } from "@intentius/chant";
 
 const serializer: Serializer = {
-  name: "k8s",
-  rulePrefix: "K8S",
+  name: "acme",
+  rulePrefix: "ACM",
   serialize(entities: Map<string, Declarable>): string {
-    const manifests = [];
+    const manifests: Array<Record<string, unknown>> = [];
     for (const [name, entity] of entities) {
       manifests.push({
         apiVersion: "v1",
@@ -247,8 +273,8 @@ const serializer: Serializer = {
   },
 };
 
-export const k8sPlugin: LexiconPlugin = {
-  name: "k8s",
+export const acmePlugin: LexiconPlugin = {
+  name: "acme",
   serializer,
 
   async generate() {
@@ -273,7 +299,15 @@ export const k8sPlugin: LexiconPlugin = {
 };
 ```
 
-Publish this as `@intentius/chant-lexicon-k8s` (or `@yourorg/lexicon-k8s`) and users can add it to their project.
+Only the four lifecycle methods above are required, so this compiles without
+`coverageReport` and without any observation or LSP member. It reads only
+`entity.entityType`; a serializer that emits authored properties reads
+`entity.props`, which is the subject of [Create a Serializer](/chant/lexicon-authoring/serializer/).
+
+Publish it as `@intentius/chant-lexicon-acme`. The package name is not free
+form: `loadPlugin()` in `packages/core/src/cli/plugins.ts` imports
+`@intentius/chant-lexicon-<name>` for each entry in the project's `lexicons`
+array, so a package published under any other name will not resolve.
 
 ## Background Reading
 

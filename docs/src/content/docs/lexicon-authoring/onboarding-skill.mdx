@@ -31,6 +31,8 @@ is versioned in lockstep with core.
 
 1. **Scaffold**
 
+   Run everything on this page from the repository root.
+
    ```bash
    npx tsx packages/core/src/cli/main.ts init lexicon <name>
    npm install
@@ -46,13 +48,36 @@ is versioned in lockstep with core.
 
 2. **Implement the plugin**
 
-   At minimum a serializer and the generate lifecycle. Depending on the
-   platform you may also want observation, live export, lint rules, and
-   post-synth checks.
+   `chant dev check-lexicon lexicons/<name>` is the contract, and `just check`
+   fails on any tier-1 item. Tier 1 wants all of this, so plan for it rather
+   than discovering it at the gate:
+
+   | Requirement | Where it lives |
+   |---|---|
+   | The package exports a `LexiconPlugin` | `src/index.ts` |
+   | A `Serializer` with `name`, `rulePrefix` and `serialize` | `src/serializer.ts` |
+   | `lintRules()` returns at least one rule | `src/lint/rules/` |
+   | `postSynthChecks()` returns at least one check | `src/lint/post-synth/`, barrel via `npm run generate:barrels` |
+   | Every rule id starts with `rulePrefix` or an `extraRulePrefixes` entry | ibid. |
+   | `completionProvider` and `hoverProvider` registered | `src/lsp/completions.ts`, `src/lsp/hover.ts` |
+   | `docs()` registered | `src/codegen/docs.ts` plus `src/codegen/docs-cli.ts` |
+   | `dist/manifest.json` exists and declares `chantVersion` | produced by `npm run prepack` |
+   | At least one example under `examples/`, and it builds | step 3 |
+   | Registered intrinsics are exported, with correct `isTag` / `foldsAsCall` | `src/index.ts` |
+   | MCP tools and resources under one well-formed namespace | `src/plugin.ts` |
+   | `plugin.test.ts` and `serializer.test.ts` exist | `src/` |
+   | At least one `.mdx` doc page, reachable from the sidebar, with a `diataxis` quadrant | `docs/pages/` |
+
+   Depending on the platform you may also want observation, live export, and an
+   emulator. Tier 2 adds `auditCatalog()` coverage for every post-synth check,
+   three skills, and eight doc pages; it warns rather than failing.
 
    Detail: [Implement Generate](/chant/lexicon-authoring/generate/),
    [Create a Serializer](/chant/lexicon-authoring/serializer/),
-   [Write Lint Rules](/chant/lexicon-authoring/lint-rules/).
+   [Write Lint Rules](/chant/lexicon-authoring/lint-rules/),
+   [Post-Synth Checks](/chant/lexicon-authoring/post-synth-checks/),
+   [LSP & MCP Providers](/chant/lexicon-authoring/lsp-mcp/),
+   [Docs Site Setup](/chant/lexicon-authoring/docs-site/).
 
 3. **Create an example workspace**
 
@@ -71,9 +96,14 @@ is versioned in lockstep with core.
    npm install
    ```
 
-   This patches the root `package.json`, `.github/workflows/chant.yml`,
-   the `publish.yml` test-job prepack line, and both smoke Dockerfiles. It is
-   idempotent.
+   This patches six files: the root `package.json`, the root `tsconfig.json`
+   `paths` map, `.github/workflows/chant.yml`, the `publish.yml` test-job
+   prepack line, and both smoke Dockerfiles. It is idempotent, and it prints a
+   `chant dev check-lexicon` report at the end.
+
+   Ignore one line in that printed report. It says to tag the first publish
+   `v<version>`; that tag matches no workflow trigger. Step 7 has the real
+   commands.
 
    You do **not** add a publish step. `scripts/publish-packages.sh` enumerates
    every non-private workspace package, so a new lexicon is published the
@@ -82,12 +112,21 @@ is versioned in lockstep with core.
 5. **Verify locally**
 
    ```bash
-   npx vitest run lexicons/<name>     # your lexicon
-   just check                          # build, lint, full suite, lexicon contract
+   npx vitest run lexicons/<name>            # your lexicon
+   npm run prepack -w @intentius/chant-lexicon-<name>   # generated artifacts + dist/
+   just check                                # build, lint, full suite, lexicon contract
    ```
 
-   `just check` runs the completeness contract, which gates on the tracked
-   allowlist in `scripts/check-lexicons.ts`. An untracked failure exits 1.
+   `just check` is `build lint test check-lexicons`. The last of those runs
+   `scripts/check-lexicons.ts`. It loops every `lexicons/*` directory and runs
+   the full tier-1 set against each one, then runs that lexicon's own
+   `tsconfig.build.json` build. Its `KNOWN_FAILURES` allowlist is currently
+   empty, so every tier-1 check must pass for every lexicon, including yours. A
+   tsc failure is never allowlistable.
+
+   `just smoke` is separate and local-only. Run it once before the first
+   release, because that is when your `test/integration.sh` section executes for
+   the first time.
 
 6. **Create the npm trusted-publisher record**
 
@@ -114,13 +153,17 @@ is versioned in lockstep with core.
 7. **Release**
 
    ```bash
-   just release patch          # every package, in lockstep
+   just release patch                  # every package, in lockstep
    just release-lexicon <name> patch   # this lexicon only
    ```
 
-   Never hand-roll the tag. The workflow triggers on `chant-v*` and
-   `lexicon-*-v*` only; a bare `v0.34.0` tag matches nothing and the release
-   silently never happens.
+   Never hand-roll the tag. `.github/workflows/publish.yml` triggers on
+   `chant-v*` and `lexicon-*-v*` only; a bare `v0.57.0` tag matches nothing and
+   the release silently never happens.
+
+   Publishing itself is `scripts/publish-packages.sh`, which enumerates every
+   non-private workspace package. No workflow edit is needed for a new
+   lexicon.
 
 8. **Confirm it actually published**
 

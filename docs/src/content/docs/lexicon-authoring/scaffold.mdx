@@ -7,74 +7,120 @@ diataxis: how-to
 The fastest way to start a new lexicon is with `chant init lexicon`:
 
 ```bash
-chant init lexicon k8s
-cd lexicons/k8s
+chant init lexicon acme
+cd lexicons/acme
 npm install
 ```
 
-This scaffolds a complete lexicon project with compilable stubs for every required lifecycle method. Follow the TODO comments in the generated files to wire up your upstream spec.
+The name is the resolution key, so pick the one the published package will carry.
+`chant init lexicon acme` derives `@intentius/chant-lexicon-acme`, the variables
+`acmePlugin` and `acmeSerializer`, and the rule prefix `ACM` (the first three
+alphanumeric characters, upper-cased). The target directory defaults to
+`./lexicons/<name>`; pass a second positional argument to put it elsewhere, and
+`--force` to write into a directory that is not empty. Those are the only two
+arguments the command takes, see the
+[init lexicon CLI reference](/chant/cli/init-lexicon/).
 
-See the [init lexicon CLI reference](/chant/cli/init-lexicon/) for the full list of options and flags.
+The scaffold compiles as generated, and every required lifecycle method is
+present. What it does not do is pass `chant dev check-lexicon`, by design: five
+tier-1 checks fail on a fresh scaffold and each one names work you still owe.
+See [What the scaffold leaves for you](#what-the-scaffold-leaves-for-you).
 
-## Generated File Walkthrough
+## Generated files
 
-The scaffold creates a standard lexicon project layout:
+35 files, listed here as `initLexiconCommand` writes them
+(`packages/core/src/cli/commands/init-lexicon.ts`).
 
-```
-lexicons/k8s/
-├── package.json           npm package config
-├── tsconfig.json          TypeScript config
-├── src/
-│   ├── index.ts           LexiconPlugin export
-│   ├── serializer.ts      Serializer stub
-│   ├── codegen/
-│   │   ├── generate.ts    Generation pipeline stub
-│   │   ├── naming.ts      NamingStrategy config
-│   │   └── package.ts     Packaging pipeline stub
-│   ├── spec/
-│   │   └── fetch.ts       Schema fetching stub
-│   ├── lsp/
-│   │   ├── completions.ts LSP completion provider
-│   │   └── hover.ts       LSP hover provider
-│   └── generated/         (output directory for generatePipeline)
-│       ├── index.ts       Runtime factories (createResource/createProperty)
-│       ├── index.d.ts     TypeScript declarations
-│       └── lexicon.json   Resource registry
-└── dist/                  (output directory for packagePipeline)
-    ├── manifest.json
-    ├── meta.json
-    ├── integrity.json
-    ├── types/index.d.ts
-    ├── rules/
-    └── skills/
-```
+| File | What it is |
+|------|------------|
+| `src/plugin.ts` | The `LexiconPlugin` object. Every required method is wired to a real implementation or a TODO |
+| `src/index.ts` | Re-exports the plugin and the serializer. This is the package entry point |
+| `src/serializer.ts` | `Serializer` stub emitting minimal JSON |
+| `src/codegen/generate.ts` | Calls core's `generatePipeline` with TODO callbacks |
+| `src/codegen/generate-cli.ts` | tsx entry point behind `just generate` |
+| `src/codegen/naming.ts` | `NamingStrategy` config with empty data tables |
+| `src/codegen/package.ts` | Calls core's `packagePipeline` |
+| `src/codegen/docs.ts` | Calls core's `docsPipeline` |
+| `src/spec/fetch.ts` | `fetchWithCache` stub with a TODO URL |
+| `src/spec/parse.ts` | `parseSchema` stub with a `ParseResult` type |
+| `src/lint/rules/sample.ts` | One example `LintRule` using the derived prefix |
+| `src/lint/rules/index.ts` | Rule barrel the plugin's `lintRules()` returns |
+| `src/lsp/completions.ts`, `src/lsp/hover.ts` | LSP providers, registered on the plugin |
+| `src/lsp/completions.test.ts`, `src/lsp/hover.test.ts` | Their tests |
+| `src/plugin.test.ts`, `src/serializer.test.ts` | The two test files `chant dev check-lexicon` requires by name |
+| `src/validate.ts`, `src/validate-cli.ts` | Artifact validation and its tsx entry point |
+| `src/generated/.gitkeep` | Placeholder. `generate` writes the real artifacts here |
+| `package.json`, `tsconfig.json`, `tsconfig.build.json` | Package and compiler config |
+| `justfile` | `generate`, `validate`, `docs`, `docs-build`, `package` recipes |
+| `.gitignore`, `README.md` | Ignores snapshots, dist and cache; README covers getting started |
+| `docs/` | A Starlight site: `astro.config.mjs`, `package.json`, `tsconfig.json`, `src/content.config.ts`, `src/content/docs/index.mdx`, `pages/getting-started.mdx` |
+| `examples/getting-started/` | One example project: `package.json` and `src/infra.ts` |
 
-### Key files
+Neither `dist/` nor `src/generated/*` is scaffolded. `dist/` is written by
+`writeBundleSpec` during packaging, and `src/generated/` by
+`writeGeneratedArtifacts` during generation.
 
-**`src/index.ts`** — The entry point. Exports the `LexiconPlugin` object that wires together all the lifecycle methods:
+## Key files
+
+`src/plugin.ts` holds the plugin object. The scaffold points `generate`,
+`validate`, `package` and `docs` at real modules and leaves `coverage` and
+`postSynthChecks()` as TODOs:
 
 ```typescript
-import type { LexiconPlugin } from "@intentius/chant";
-import { mySerializer } from "./serializer";
+import type { LexiconPlugin } from "@intentius/chant/lexicon";
+import { acmeSerializer } from "./serializer";
+import { rules } from "./lint/rules";
 
-export const myPlugin: LexiconPlugin = {
-  name: "k8s",
-  serializer: mySerializer,
-  async generate(opts) { /* ... */ },
-  async validate(opts) { /* ... */ },
-  async coverage(opts) { /* ... */ },
-  async package(opts) { /* ... */ },
+export const acmePlugin: LexiconPlugin = {
+  name: "acme",
+  serializer: acmeSerializer,
+
+  async generate(options?: { verbose?: boolean }): Promise<void> {
+    const { generate } = await import("./codegen/generate");
+    await generate(options);
+  },
+
+  // validate, coverage, package ...
+
+  lintRules() {
+    return rules;
+  },
 };
 ```
 
-**`src/codegen/generate.ts`** — Where you call core's `generatePipeline` with your provider-specific callbacks. This is where most of the implementation work happens. See [Implement Generate](/chant/lexicon-authoring/generate/).
+`src/index.ts` re-exports `acmePlugin` and `acmeSerializer`. Its last line is a
+commented-out `export * from "./generated/index"`; uncomment it once generation
+has produced that file, or the resource classes are unreachable to users.
 
-**`src/serializer.ts`** — Converts evaluated resources to your target format. See [Create a Serializer](/chant/lexicon-authoring/serializer/).
+`src/codegen/generate.ts` is where core's `generatePipeline` is called with your
+provider-specific callbacks, and where most of the work happens. See
+[Implement Generate](/chant/lexicon-authoring/generate/).
 
-**`src/codegen/package.ts`** — Calls core's `packagePipeline` to produce a distributable bundle. See [Package & Publish](/chant/lexicon-authoring/package/).
+`src/serializer.ts` converts evaluated resources to your target format. See
+[Create a Serializer](/chant/lexicon-authoring/serializer/).
 
-## Next Steps
+`src/codegen/package.ts` calls core's `packagePipeline` to produce a
+distributable bundle. See [Package & Publish](/chant/lexicon-authoring/package/).
 
-With the scaffold in place, your next step is to [implement the generation pipeline](/chant/lexicon-authoring/generate/) — connecting your upstream spec to chant's `generatePipeline`.
+## What the scaffold leaves for you
 
-Once your lexicon is fully built and packaged, run [`chant dev onboard`](/chant/cli/onboard/) to wire it into CI, Docker smoke tests, and the npm publish workflow. See the full [authoring workflow](/chant/lexicon-authoring/overview/#authoring-workflow) for all steps.
+Run `chant dev check-lexicon lexicons/acme` on a fresh scaffold and five tier-1
+checks fail. Each is a real gap rather than a defect in the tool:
+
+| Failing check | What closes it |
+|---|---|
+| `postSynthChecks() returns at least 1 check` | Write checks in `src/lint/post-synth/` and return them. See [Post-Synth Checks](/chant/lexicon-authoring/post-synth-checks/) |
+| `dist/manifest.json exists` | Run the package pipeline. The scaffolded `prepack` runs generate, validate and build, but no bundle step |
+| `dist/manifest.json declares a chantVersion` | Set `chantVersion` in the manifest your `buildManifest` callback returns |
+| `package.json routes exports["."].default at ./src/index.ts and deletes emitted JS in build` | The scaffold writes `"." : "./src/index.ts"` as a bare string. Expand it to a conditions object and append a `find dist -name "*.js" -delete` to the `build` script. Copy `lexicons/k3s/package.json` |
+| `Every shipped example builds and passes its own post-synth checks` | The example imports `@intentius/chant-lexicon-acme`, which resolves only once the package is linked into the workspace |
+
+## Next steps
+
+Implement the generation pipeline next, connecting your upstream spec to
+`generatePipeline`. See [Implement Generate](/chant/lexicon-authoring/generate/).
+
+Once the lexicon is built and packaged, run
+[`chant dev onboard`](/chant/cli/onboard/) to wire it into CI, Docker smoke
+tests, and the npm publish workflow. The full sequence is the
+[authoring workflow](/chant/lexicon-authoring/overview/#authoring-workflow).

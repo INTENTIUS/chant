@@ -6,7 +6,7 @@ diataxis: how-to
 
 Most operators ship their API as Kubernetes CustomResourceDefinitions. Because a CRD carries an `openAPIV3Schema`, the k8s lexicon can generate typed resources from it the same way it generates the built-in Kubernetes types. You do not write a new lexicon for KubeRay, Argo CD, cert-manager, or Crossplane — you add their CRDs to the k8s lexicon and, optionally, author rules against the kinds they introduce.
 
-This is the path KubeRay, Argo CD, Gateway API, the CockroachDB operator, cert-manager, the Prometheus operator, CloudNativePG, Traefik, and Infisical all took. This page documents it.
+Every third-party API in the k8s lexicon arrived this way, from KubeRay and Argo CD to the ACK controllers. Read `CRD_SOURCES` for what is there today. This page documents how to add to it.
 
 :::note[New lexicon vs. third-party CRD]
 Build a [new lexicon](/chant/lexicon-authoring/overview/) when the target is a non-Kubernetes spec (a cloud API, a CI format). Add a CRD here when the target already speaks Kubernetes — anything installed as a CRD belongs in the k8s lexicon, not a lexicon of its own.
@@ -18,13 +18,18 @@ Generation reads its third-party CRDs from one array, `CRD_SOURCES` in `lexicons
 
 ```typescript
 export const CRD_SOURCES: CRDSource[] = [
-  // KubeRay — ray.io/v1
   { type: "url", url: `${KUBERAY_CRD_BASE}/ray.io_rayclusters.yaml` },
   { type: "url", url: `${KUBERAY_CRD_BASE}/ray.io_rayjobs.yaml` },
   { type: "url", url: `${KUBERAY_CRD_BASE}/ray.io_rayservices.yaml` },
-  // ...cert-manager, Argo, Gateway API, Prometheus, Cockroach
+  // ...cert-manager, Argo, Flux, Gateway API, Prometheus, Cockroach, ACK
 ];
 ```
+
+The `CRDSource` type is in `lexicons/k8s/src/crd/types.ts`; `loadCRDs` in
+`lexicons/k8s/src/crd/loader.ts` fetches each one. Each block in
+`crd-sources.ts` is preceded by a doc comment naming the operator, its API
+group, the kinds it produces and the install command for its controller. Follow
+that shape when you add one.
 
 A `CRDSource` is one of four shapes:
 
@@ -35,7 +40,9 @@ A `CRDSource` is one of four shapes:
 | `{ type: "file", path }` | a local path | a CRD vendored into the repo |
 | `{ type: "cluster", context?, namespace? }` | a kubectl context | read CRDs already installed in a cluster |
 
-Pin the operator version in a `const` next to the entry (see the `KUBERAY_VERSION` / `ARGOCD_VERSION` constants at the top of `crd-sources.ts`) so an upgrade is a one-line change and the source URL always resolves to a known revision.
+Every shape also takes an optional `kinds` allowlist, which keeps a multi-document bundle down to the kinds you actually want.
+
+Pin the operator version in a `const` next to the entry (see the `KUBERAY_VERSION` and `ARGOCD_VERSION` constants at the top of `crd-sources.ts`) so an upgrade is a one-line change and the source URL always resolves to a known revision.
 
 ### When the CRDs are only in a chart
 
@@ -85,17 +92,19 @@ Each CRD kind becomes a resource type `K8s::<Namespace>::<Kind>`. The namespace 
 
 An override earns its place for one of two reasons. Either the first segment reads badly on its own — `secrets.infisical.com` would give `K8s::Secrets::InfisicalSecret`, which looks like a core Secret when `K8s::Core::Secret` is right there — or several groups belong together. The last two rows are the second case: a CNPG `Cluster` names a barman-cloud `ObjectStore` in its `plugins[]` block, so splitting them into `Postgresql` and `Barmancloud` would scatter two kinds that are only ever used as a pair. Flux does the same with six groups.
 
-> The mapping lives in `normalizeGroupName` / `GROUP_NAMESPACE_OVERRIDES` in `lexicons/k8s/src/crd/parser.ts`. Add an override there if a group's first segment collides or reads poorly.
+:::note
+The mapping lives in `namespaceSegmentForGroup` and `GROUP_NAMESPACE_OVERRIDES` in `lexicons/k8s/src/group-namespace.ts`, not in `crd/parser.ts`. Add an override there if a group's first segment collides or reads poorly.
+:::
 
-The generator types the writable `spec`. It deliberately drops `apiVersion`, `kind`, and `status` (see `extractProperties` in `crd/parser.ts`) — `status` is runtime state, not authoring input.
+The generator types the writable `spec` and `metadata`. `extractProperties` in `crd/parser.ts` skips `apiVersion` and `kind` (the serializer supplies both) and skips `status`, which `extractStatusType` re-attaches as a read-only `status` attribute instead of an authoring property.
 
 ### Verify
 
 Confirm the kind you added is present and the package still builds:
 
 ```bash
-grep -R "RayCluster" src/generated/index.d.ts        # the type exists
-npm run build -w @intentius/chant-lexicon-k8s          # the lexicon compiles
+grep -R "RayCluster" lexicons/k8s/src/generated/index.d.ts   # the type exists
+npm run build -w @intentius/chant-lexicon-k8s                # the lexicon compiles
 ```
 
 Then import it in a scratch file and check that editor completion resolves the `spec` — that is the fastest confirmation the schema round-tripped.

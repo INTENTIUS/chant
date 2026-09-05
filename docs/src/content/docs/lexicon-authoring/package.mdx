@@ -4,35 +4,87 @@ description: Bundle your lexicon for distribution with packagePipeline
 diataxis: how-to
 ---
 
-The `package` lifecycle method bundles your lexicon's generated artifacts into a distributable format. Core provides `packagePipeline` to orchestrate this.
+The `package` lifecycle method bundles your lexicon's generated artifacts into a distributable format. Core provides `packagePipeline` to assemble the bundle and `writeBundleSpec` to put it on disk.
 
 ## Packaging Pipeline
 
-```typescript
-import { packagePipeline, collectSkills } from "@intentius/chant/codegen/package";
+`packagePipeline` returns a `PackageResult` in memory. It writes nothing.
+`writeBundleSpec(spec, distDir)` is the step that creates `dist/`, and forgetting
+it is why `chant dev check-lexicon` reports `dist/manifest.json exists` as
+failing.
 
-const result = await packagePipeline({
-  generate: (opts) => myGenerate(opts),
-  buildManifest: (genResult) => ({ name: "my-lexicon", version: "1.0.0" }),
-  srcDir: __dirname,
-  collectSkills: () => collectSkills(myPlugin.skills()),
-});
+```typescript
+// src/codegen/package.ts
+import { dirname } from "path";
+import { fileURLToPath } from "url";
+import { packagePipeline, collectSkills } from "@intentius/chant/codegen/package";
+import type { PackageOptions, PackageResult } from "@intentius/chant/codegen/package";
+import { myPlugin } from "../plugin";
+import { generate } from "./generate";
+
+// Lexicon packages are ESM, so `__dirname` does not exist.
+const pkgDir = dirname(dirname(fileURLToPath(import.meta.url)));
+
+export async function packageLexicon(opts: PackageOptions = {}): Promise<PackageResult> {
+  return packagePipeline(
+    {
+      generate: (genOpts) => generate(genOpts),
+      buildManifest: (genResult) => ({
+        name: "my-lexicon",
+        version: "1.0.0",
+        chantVersion: ">=0.1.0",
+      }),
+      srcDir: pkgDir,
+      collectSkills: () => collectSkills(myPlugin.skills?.() ?? []),
+    },
+    opts,
+  );
+}
 ```
 
-> See `lexicons/aws/src/codegen/package.ts` for the AWS packaging pipeline.
+```typescript
+// src/package-cli.ts, run by `npm run bundle`
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
+import { writeBundleSpec } from "@intentius/chant/codegen/package";
+import { packageLexicon } from "./codegen/package";
+
+const pkgDir = dirname(fileURLToPath(import.meta.url));
+const { spec, stats } = await packageLexicon({ verbose: true });
+writeBundleSpec(spec, join(dirname(pkgDir), "dist"));
+console.error(`Packaged ${stats.resources} entities, ${stats.ruleCount} rules`);
+```
+
+> See `lexicons/aws/src/codegen/package.ts` and `lexicons/k3s/src/package-cli.ts`
+> for the shipped pair.
+
+### `PackagePipelineConfig`
+
+| Field | Required | What it does |
+|---|---|---|
+| `generate` | Yes | Runs your generation pipeline and returns the `GenerateResult` |
+| `buildManifest` | Yes | Builds the `LexiconManifest` from that result |
+| `srcDir` | Yes | Package root, scanned for rule files |
+| `collectSkills` | Yes | Returns `Map<filename, content>`. `collectSkills(defs)` maps `SkillDefinition[]` to `<name>.md` |
+| `ruleDirs` | No | Rule directories relative to `srcDir`. Defaults to `["lint/rules", "lint/post-synth"]` |
+| `version` | No | Recorded as `metadata.generatorVersion`. Defaults to `"0.0.0"` |
 
 ## Bundle Layout
 
-The pipeline produces a `dist/` directory:
+`writeBundleSpec` creates the `dist/` directory:
 
 | Artifact | Description |
 |----------|-------------|
 | `manifest.json` | Lexicon metadata (name, version, intrinsics, pseudo-parameters) |
 | `meta.json` | `Record<shortName, LexiconEntry>` resource registry |
-| `integrity.json` | xxhash64 per-artifact hashes + composite hash |
+| `integrity.json` | Per-artifact sha256 hashes plus a composite hash over the sorted `path:hash` pairs |
 | `types/index.d.ts` | TypeScript declarations for all resource and property types |
 | `rules/*.ts` | Lint rule implementations |
 | `skills/*.md` | AI assistant skill definitions |
+| `okf/**` | OKF knowledge bundle derived from the same registry and rules (chant #1060), replaced wholesale on each write |
+
+The integrity record covers `manifest.json`, `meta.json`, `types/index.d.ts`
+and every file under `rules/` and `skills/`. `okf/` is not hashed.
 
 ## `LexiconManifest` Fields
 
@@ -47,21 +99,24 @@ The `buildManifest` callback must return a `LexiconManifest`:
 | `intrinsics` | `IntrinsicDef[]` | No | Intrinsic function definitions |
 | `pseudoParameters` | `Record<string, string>` | No | Pseudo-parameter names and descriptions |
 
+`chantVersion` is optional to the type and required in practice: `chant dev
+check-lexicon` fails tier 1 when the packaged manifest omits it. It is checked
+for presence and shape only, never for compatibility with the running core.
+
 ## Documentation Pipeline
 
 Core provides `docsPipeline` and `writeDocsSite` for generating a standalone Starlight docs site from your lexicon's `dist/` artifacts:
 
 ```typescript
-import { docsPipeline, writeDocsSite } from "@intentius/chant/codegen/docs";
+import { docsPipeline, writeDocsSite, type DocsConfig } from "@intentius/chant/codegen/docs";
 
-const config = {
+const config: DocsConfig = {
   name: "my-lexicon",
   displayName: "My Lexicon",
   description: "Description for page metadata",
   distDir: "./dist",
   outDir: "./docs",
-  serviceFromType: (type) => type.split("::")[1],
-  resourceTypeUrl: (type) => `https://docs.example.com/${type}`,
+  serviceFromType: (type) => type.split("::")[1] ?? "Other",
 };
 
 const result = docsPipeline(config);
@@ -70,15 +125,23 @@ writeDocsSite(config, result);
 
 This creates a self-contained Starlight site with pages for resources, intrinsics, pseudo-parameters, rules, and serialization. Build it with `cd docs && npm install && npm run build`.
 
-Add a `docs()` method to your plugin and a `"docs"` script to your `package.json` so documentation stays in sync with each generation cycle.
+Registering `docs()` on the plugin is a tier-1 requirement, so wire the method
+as well as the `"docs"` script in `package.json`. The full field list for
+`DocsConfig`, including the authored `pagesDir` and the Diátaxis quadrants the
+sidebar is grouped from, is in [Docs Site](/chant/lexicon-authoring/docs-site/).
 
 ## Publishing to npm
 
 Once the bundle is built:
 
-1. Verify the `dist/` directory contains all expected artifacts
-2. Ensure `package.json` has the correct `files` field pointing to `dist/`
-3. Publish with `npm pack` (for testing) or `npm publish`
+1. Run `chant dev check-lexicon <dir>` and confirm tier 1 is clean
+2. Set `files` to `["src/", "dist/"]`. Consumers import TypeScript source through `exports["."].default`, so shipping only `dist/` breaks them
+3. Route `exports["."].default` at `./src/index.ts`, and have the `build` script delete emitted `.js` from `dist/`. Both are tier-1 checks
+4. Chain the bundle step into `prepack`, so `dist/` is rebuilt from the pinned spec at publish time rather than from whatever is on disk
+5. Publish with `npm pack` (for testing) or `npm publish`
+
+`lexicons/k3s/package.json` is the shape to copy, including its
+`"prepack": "npm run generate && npm run bundle && npm run validate && npm run build"`.
 
 Users install your lexicon with:
 

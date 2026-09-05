@@ -178,6 +178,18 @@ After scaffolding with `chant init lexicon`:
 
 ## Reference implementations
 
-- **K8s** — the most mature lexicon: 29 post-synth checks, 9 skills, 30 required names, full docs site
-- **Azure** — comprehensive ARM template lexicon with 20 post-synth checks, 4 skills, and 15 doc pages
-- **AWS** — the broadest surface: 47 post-synth checks, per-rule tests, and the largest composite library. Its `validate.ts` names only 6 required artifacts, so it does not pass the tier-3 required-names check
+Counts below are what `chant dev check-lexicon` reports at chant 0.57.0, and
+they move with every lexicon change, so run the tool rather than trusting the
+table for anything that matters.
+
+| Lexicon | Post-synth checks | Skills | Composites | Doc pages | Tier-3 required names |
+|---|---|---|---|---|---|
+| k8s | 40 | 10 | 50 | 37 | 30, passes |
+| aws | 62 | 3 | 40 | 24 | 6, fails |
+| azure | 24 | 4 | 19 | 25 | 25, fails |
+
+k8s is the most complete of the three and the one to read first. aws has the
+broadest resource surface and the only per-rule test layout. Its `validate.ts`
+names six required artifacts (`lexicons/aws/src/validate.ts`), which is below
+the tier-3 threshold of 30, and azure's 25 is below it too. Both are
+informational failures, not tier-1 ones.

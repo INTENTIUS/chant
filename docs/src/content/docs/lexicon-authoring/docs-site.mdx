@@ -4,69 +4,80 @@ description: Setting up a Starlight documentation site for your lexicon
 diataxis: how-to
 ---
 
-Each lexicon can include a documentation site built with [Astro Starlight](https://starlight.astro.build/). The docs site lives in `lexicons/<name>/docs/`.
+Each lexicon includes a documentation site built with [Astro Starlight](https://starlight.astro.build/), living in `lexicons/<name>/docs/`. All seventeen lexicons have one.
 
-## Quick Setup
+## The pipeline owns the site files
 
-Create the docs directory structure:
+`writeDocsSite` (`packages/core/src/codegen/docs.ts:289`) generates
+`docs/astro.config.mjs`, `docs/package.json`, `docs/tsconfig.json`,
+`docs/src/content.config.ts`, `docs/src/rehype-base-url.mjs`, and every page
+under `docs/src/content/docs/`. Editing any of them by hand loses the edit on the
+next run. The sidebar in particular is built by `buildSidebar`
+(`packages/core/src/codegen/docs-sidebar.ts`) from the pages' `diataxis`
+frontmatter; there is no hand-maintained list.
 
-```bash
-mkdir -p lexicons/my-lexicon/docs/src/content/docs
-```
+What you write is two things: `src/codegen/docs.ts`, which builds a `DocsConfig`
+and calls the pipeline, and your prose under `docs/pages/*.mdx`.
 
-### astro.config.mjs
+## Setup
 
-```javascript
-// @ts-check
-import { defineConfig } from 'astro/config';
-import starlight from '@astrojs/starlight';
+1. Create `src/codegen/docs.ts` with a `generateDocs` function.
+   `lexicons/k3s/src/codegen/docs.ts` is the shortest one in the repo:
 
-export default defineConfig({
-  base: '/chant/lexicons/my-lexicon/',
-  integrations: [
-    starlight({
-      title: 'My Lexicon',
-      sidebar: [
-        { label: '← chant docs', link: '../../' },
-        { label: 'Overview', slug: 'index' },
-        { label: 'Getting Started', slug: 'getting-started' },
-        // ... add more pages
-      ],
-    }),
-  ],
-});
-```
+   ```typescript
+   import { dirname, join } from "path";
+   import { fileURLToPath } from "url";
+   import { docsPipeline, writeDocsSite, type DocsConfig } from "@intentius/chant/codegen/docs";
 
-### package.json
+   const overview = `Prose for the generated index page, as markdown.`;
 
-```json
-{
-  "name": "@intentius/chant-lexicon-my-lexicon-docs",
-  "type": "module",
-  "version": "0.0.1",
-  "private": true,
-  "scripts": {
-    "dev": "astro dev",
-    "build": "astro build",
-    "preview": "astro preview"
-  },
-  "dependencies": {
-    "@astrojs/starlight": "^0.37.6",
-    "astro": "^5.6.1",
-    "sharp": "^0.34.2"
-  }
-}
-```
+   export async function generateDocs(opts?: { verbose?: boolean }): Promise<void> {
+     const pkgDir = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
+     const config: DocsConfig = {
+       name: "my-lexicon",
+       displayName: "My Lexicon",
+       description: "What this lexicon targets",
+       distDir: join(pkgDir, "dist"),
+       outDir: join(pkgDir, "docs"),
+       basePath: process.env.DOCS_BASE_PATH ?? "/chant/lexicons/my-lexicon/",
+       overview,
+     };
+     const result = docsPipeline(config);
+     writeDocsSite(config, result);
+     if (opts?.verbose) console.error(`Generated ${result.pages.size} documentation pages`);
+   }
+   ```
 
-### tsconfig.json
+   The other `DocsConfig` fields are optional: `packageJsonPath`,
+   `outputFormat`, `serviceFromType`, `extraSections`, `suppressPages`,
+   `srcDir`, `examplesDir`, and `pagesDir` (defaults to `<outDir>/pages`). The
+   full type is in `packages/core/src/codegen/docs-types.ts`.
 
-```json
-{
-  "extends": "astro/tsconfigs/strict",
-  "include": [".astro/types.d.ts", "**/*"],
-  "exclude": ["dist"]
-}
-```
+2. Create `src/codegen/docs-cli.ts`, three lines, identical in every lexicon:
+
+   ```typescript
+   #!/usr/bin/env tsx
+   import { generateDocs } from "./docs";
+
+   await generateDocs({ verbose: true });
+   ```
+
+   k3d and k3s shipped for months with a `docs` script pointing at a file
+   neither had, so `npm run docs` failed for both (chant #1815). Create it.
+
+3. Register the `docs()` member in `src/plugin.ts`. `chant dev check-lexicon`
+   fails at tier 1 without it:
+
+   ```typescript
+   async docs(options?: { verbose?: boolean }): Promise<void> {
+     const { generateDocs } = await import("./codegen/docs");
+     await generateDocs(options);
+   },
+   ```
+
+4. Write your prose pages under `docs/pages/`, then run `npm run docs -w
+   @intentius/chant-lexicon-my-lexicon`. The pipeline reads `dist/manifest.json`
+   and `dist/meta.json`, so run `npm run prepack` first on a clean checkout.
 
 ## Where Pages Live
 
@@ -88,6 +99,10 @@ Content goes here. Use {{file:examples/basic/src/main.ts}} to inline a file
 from the directory `examplesDir` points at.
 ```
 
+The quadrant labels the sidebar groups by are fixed: `tutorial` becomes
+"Tutorials", `how-to` becomes "How-to guides", `reference` becomes "Reference",
+`explanation` becomes "Explanation" (`packages/core/src/codegen/docs-pages.ts:35`).
+
 Frontmatter the pipeline reads, on top of Starlight's `title` and `description`:
 
 | Field | Required | Meaning |
@@ -98,9 +113,15 @@ Frontmatter the pipeline reads, on top of Starlight's `title` and `description`:
 | `order` | no | Lower sorts first within its group; pages without it follow, by label |
 | `hidden` | no | `true` keeps the page out of the sidebar |
 
-`chant dev check-lexicon` fails on an authored page with no valid `diataxis`.
+`docsPipeline` throws on an authored page whose frontmatter has no `diataxis`, or
+one whose value is not a quadrant. `chant dev check-lexicon` gates the same
+condition, plus reachability: a page sitting in `docs/src/content/docs/` that no
+sidebar entry names can only be reached by typing its URL, and the pipeline warns
+about each one by name.
 
-## Recommended Pages
+A mature lexicon ships eight or more doc pages, which `chant dev check-lexicon`
+warns about at tier 2. These ten are the set the shipped lexicons converged on,
+all authored, all under `docs/pages/`.
 
 | Page | File | Quadrant |
 |------|------|----------|
@@ -115,46 +136,82 @@ Frontmatter the pipeline reads, on top of Starlight's `title` and `description`:
 | Operational playbook | `operational-playbook.mdx` | how-to |
 | AI Skills | `skills.mdx` | reference |
 
+`extraPages` (prose in `docs.ts` template literals) and `sidebarExtra` (a
+hand-listed content file) were removed in chant #1757. `docs/pages/` is the only
+way to add a prose page. `scripts/extract-lexicon-doc-pages.ts <lexicon>` lifts
+old `extraPages[].content` literals out of a `docs.ts` into `docs/pages/*.mdx` if
+you inherit one that predates the change.
+
+## Pages on the main site
+
+A page about lexicon authoring, the CLI, or a cross-cutting guide belongs on the
+main site (`docs/`), not a lexicon site. That site's sidebar is hand-maintained,
+so getting a page to appear takes two edits:
+
+1. Add the file under `docs/src/content/docs/<section>/<slug>.mdx` with
+   `title`, `description` and `diataxis` in its frontmatter.
+2. Add a `{ label, slug: '<section>/<slug>' }` entry to `docs/astro.config.mjs`,
+   inside the group matching the page's quadrant.
+
+`node scripts/check-docs-diataxis.mjs` enforces both. It fails any page that has
+no quadrant or sits in a sidebar group contradicting it, and any page that
+appears in no group at all. Only `index` and `whats-new` are exempt. The
+`docs-check` workflow runs the script on every push.
+
 ## Building the Docs
 
-```bash
-# Development server
-cd lexicons/my-lexicon/docs
-npm install
-npm run dev
+Regenerate before previewing; the preview server reads what the pipeline wrote.
 
-# Production build
-npm run build
+```bash
+# Regenerate the site from the pipeline (do this after every content change).
+npm run docs -w @intentius/chant-lexicon-my-lexicon
+
+# Then preview it.
+cd lexicons/my-lexicon/docs && npm install && npm run dev
+
+# Or build the whole unified tree and serve it.
+./scripts/build-docs.sh && npx serve .docs-dist
 ```
 
-## Wiring into Package Scripts
+### Wiring into Package Scripts
 
-Add a `docs` script to your lexicon's `package.json`:
+Add a `docs` script to your lexicon's `package.json`, pointing at the
+`docs-cli.ts` from step 2:
 
 ```json
 {
   "scripts": {
-    "docs": "npx tsx src/codegen/docs-cli.ts",
-    "docs:dev": "cd docs && npm run dev",
-    "docs:build": "cd docs && npm run build"
+    "docs": "tsx src/codegen/docs-cli.ts"
   }
 }
 ```
 
 ## Cross-Site Links
 
-The 13 docs sites (main + 12 lexicons) build independently and stitch into a single tree at `.docs-dist/chant/`. Astro's `base: '/chant'` only prefixes its own sidebar/slug entries — root-relative links written in MDX body content don't get prefixed automatically.
+The 18 docs sites (main plus 17 lexicons) build independently and stitch into a single tree at `.docs-dist/chant/`. `scripts/build-docs.sh` derives the lexicon list from the filesystem, so any directory with a `docs/` subdirectory is built. It used to carry one hardcoded block per lexicon. k3d and k3s were simply absent from that list, so both published as 404s and lychee failed every page linking to them (chant #1720). `scripts/build-docs.test.ts` now fails if a lexicon with docs is left out.
 
-A shared `rehype-base-url` plugin (`packages/core/src/codegen/rehype-base-url.mjs`) closes the gap: it walks the HAST tree and prepends the site's `base` to `<a href>` values that start with `/`. The lexicon codegen wires this into every generated `astro.config.mjs`, so new lexicons get it for free.
+The `ORDER` constant in that script is a known-good build order, not decoration: forgejo and gitlab import `lexicons/github/src/generated`, so github must be generated first. A lexicon not named in `ORDER` is appended, which is where a new one lands.
+
+Astro's `base: '/chant'` only prefixes its own sidebar and slug entries. Root-relative links written in MDX body content are not prefixed automatically.
+
+A shared `rehype-base-url` plugin closes the gap. It walks the HAST tree and prepends the site's `base` to `<a href>` values that start with `/`. `writeDocsSite` copies it from `packages/core/src/codegen/rehype-base-url.mjs` to `docs/src/rehype-base-url.mjs` and wires it into the generated `astro.config.mjs` whenever `basePath` is set, so a new lexicon gets it for free. Setting `basePath` is what turns it on.
 
 Two gotchas:
 
-- **Linking across namespaces from a lexicon page.** A lexicon site's base is `/chant/lexicons/<name>`, so `[guide](/guide/composite-resources/)` in `lexicons/aws/...` would get prefixed to `/chant/lexicons/aws/guide/composite-resources/` (wrong). Write the full project path — `/chant/guide/composite-resources/` — and the plugin's idempotency check (`projectBase: '/chant'`) leaves it alone.
-- **Sibling pages in MDX.** `[foo](./foo)` from `aks-composites.mdx` resolves to `aks-composites/foo` (child), not the sibling `foo` page. Use `../foo/` (or the absolute `/chant/...` form).
+- Linking across namespaces from a lexicon page. A lexicon site's base is `/chant/lexicons/<name>`, so `[guide](/guide/composite-resources/)` in `lexicons/aws/...` gets prefixed to `/chant/lexicons/aws/guide/composite-resources/`, which is wrong. Write the full project path, `/chant/guide/composite-resources/`, and the plugin's idempotency check (`projectBase: '/chant'`) leaves it alone.
+- Sibling pages in MDX. `[foo](./foo)` from `aks-composites.mdx` resolves to `aks-composites/foo`, a child, not the sibling `foo` page. Use `../foo/`, or the absolute `/chant/...` form.
 
 `just docs-check-links` runs lychee against the built `.docs-dist/chant/` tree and catches both classes of breakage.
 
 ## Reference
 
-- K8s docs: `lexicons/k8s/docs/` — 11 pages with full sidebar navigation
-- Azure docs: `lexicons/azure/docs/` — 11 pages covering ARM templates
+| Path | What it is |
+|---|---|
+| `packages/core/src/codegen/docs.ts` | `docsPipeline` and `writeDocsSite` |
+| `packages/core/src/codegen/docs-types.ts` | `DocsConfig`, `DocsResult`, `SidebarPage`, `Quadrant` |
+| `packages/core/src/codegen/docs-pages.ts` | authored-page parsing, quadrant labels |
+| `packages/core/src/codegen/docs-sidebar.ts` | sidebar generation |
+| `lexicons/k3s/src/codegen/docs.ts` | the smallest lexicon `docs.ts` |
+| `lexicons/k8s/docs/pages/` | the largest set of authored pages |
+| `scripts/build-docs.sh` | the unified-site build |
+| `scripts/check-docs-diataxis.mjs` | the main site's quadrant and reachability gate |

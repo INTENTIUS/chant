@@ -380,18 +380,7 @@ For the conceptual distinction between resources and artifacts, see [Drift Detec
 
 ### Coverage today
 
-See the [Runtime observation coverage matrix](/chant/lexicons/overview/#runtime-observation-coverage) on the Lexicons overview page for the canonical version with query-mechanism notes. Summary:
-
-| Lexicon | `describeResources()` | `listArtifacts()` |
-|---|---|---|
-| AWS | ✅ |  |
-| Temporal | ✅ |  |
-| K8s | ✅ |  |
-| GCP (via Config Connector) | ✅ |  |
-| Azure | ✅ |  |
-| Helm | | ✅ |
-| Docker | | ✅ |
-| GitHub / GitLab | | N/A — see lexicon READMEs |
+The [Runtime observation coverage matrix](/chant/lexicons/overview/#runtime-observation-coverage) on the Lexicons overview page is the canonical per-lexicon table, with the query mechanism and ownership channel for each. It is the one place a new lexicon adds its row.
 
 Lexicons that implement neither method are warn-skipped — `--live` doesn't fail the whole command for them.
 
@@ -402,10 +391,6 @@ The K8s lexicon reads through a typed API client (chant #1074, [details](/chant/
 The cluster context comes from a `k8s.profiles.<env>.context` binding in `chant.config.ts` (chant #1100) when one is declared — mirroring `temporal.profiles.<env>` — and every request is made against it explicitly. If the kubeconfig's own current-context disagrees with the bound one, `describeResources` refuses with an error naming the environment, the expected context, and the ambient one, instead of silently reading the wrong cluster. An environment with no binding keeps the old behavior — whatever context is ambient — but logs a visible warning that nothing is pinned. See `K8sChantConfig` in the k8s lexicon for the config shape.
 
 On EKS, AKS and GKE, kubeconfig authentication is an exec credential plugin — `aws eks get-token`, `kubelogin`, `gke-gcloud-auth-plugin` — so the client still spawns a process there, once for a token rather than once per read. Those three (plus `kubectl`) are allowed by default and anything else the kubeconfig names is refused unless listed in `k8s.execCredentialPlugins`.
-
-The GCP lexicon still uses the `kubectl` shell-out path against [Config Connector](https://cloud.google.com/config-connector) CRDs, and resolves the same `k8s.profiles.<env>.context` binding the same way — it is fundamentally the same kubectl context, since Config Connector CRDs and a project's K8s entities usually live on the same cluster. The entity type's GVK derivation matches the serializer (`GCP::Storage::Bucket` -> `storagebucket.storage.cnrm.cloud.google.com`), so any of the ~300 chant-supported GCP resources work without per-type configuration. `Ready=True` on the resource's status is mapped to `READY`; otherwise the condition's reason is surfaced.
-
-The Azure lexicon shells out to `az resource show --resource-group <env> --name <name> --resource-type <type> -o json` per declared entity. The `<env>` argument is treated as the Azure resource group name. `properties.provisioningState` becomes the `status`. Top-level resources only — nested ARM types (e.g. `Microsoft.Storage/storageAccounts/blobServices`) are warn-skipped since `az resource show` doesn't accept compound type names directly.
 
 ### Concurrent snapshots
 

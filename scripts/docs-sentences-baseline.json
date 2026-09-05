@@ -151,8 +151,8 @@
   "tricolon/comma-series": 1
  },
  "docs/src/content/docs/cli/lifecycle.mdx": {
-  "formatting/em-dash-density": 96,
-  "claude/colon-reveal": 9,
+  "formatting/em-dash-density": 94,
+  "claude/colon-reveal": 8,
   "discourse/punchy-fragments": 1,
   "anaphora/repeated-opening": 2,
   "tricolon/comma-series": 4,
@@ -684,35 +684,33 @@
   "formatting/bold-first-bullet": 1
  },
  "docs/src/content/docs/lexicon-authoring/applying.mdx": {
-  "formatting/em-dash-density": 10,
+  "formatting/em-dash-density": 9,
   "claude/colon-reveal": 3
  },
  "docs/src/content/docs/lexicon-authoring/ci-integration.mdx": {
-  "formatting/em-dash-density": 11,
+  "formatting/em-dash-density": 9,
   "discourse/punchy-fragments": 1,
   "claude/colon-reveal": 2,
   "tricolon/comma-series": 4
  },
  "docs/src/content/docs/lexicon-authoring/completeness-checklist.mdx": {
-  "formatting/em-dash-density": 16,
+  "formatting/em-dash-density": 13,
   "discourse/punchy-fragments": 1,
   "claude/colon-reveal": 3,
-  "anaphora/repeated-opening": 2,
-  "formatting/bold-first-bullet": 1,
-  "tricolon/comma-series": 1
+  "anaphora/repeated-opening": 2
  },
  "docs/src/content/docs/lexicon-authoring/crd-sources.mdx": {
-  "formatting/em-dash-density": 21,
-  "claude/colon-reveal": 3,
+  "formatting/em-dash-density": 20,
+  "claude/colon-reveal": 2,
   "tricolon/comma-series": 3
  },
  "docs/src/content/docs/lexicon-authoring/docs-site.mdx": {
-  "formatting/em-dash-density": 9,
+  "formatting/em-dash-density": 4,
   "discourse/punchy-fragments": 1,
   "claude/colon-reveal": 2
  },
  "docs/src/content/docs/lexicon-authoring/emulator.mdx": {
-  "formatting/em-dash-density": 7,
+  "formatting/em-dash-density": 4,
   "claude/colon-reveal": 3
  },
  "docs/src/content/docs/lexicon-authoring/generate.mdx": {
@@ -723,34 +721,30 @@
   "tricolon/comma-series": 1
  },
  "docs/src/content/docs/lexicon-authoring/importing.mdx": {
-  "formatting/em-dash-density": 7,
+  "formatting/em-dash-density": 5,
   "claude/colon-reveal": 3,
   "tricolon/comma-series": 1,
   "discourse/punchy-fragments": 1,
-  "anaphora/repeated-opening": 1,
-  "formatting/bold-first-bullet": 1
+  "anaphora/repeated-opening": 1
  },
  "docs/src/content/docs/lexicon-authoring/lint-rules.mdx": {
-  "formatting/em-dash-density": 8,
+  "formatting/em-dash-density": 2,
   "claude/colon-reveal": 2,
-  "dead-metaphor/rare-lemma": 1,
-  "anaphora/repeated-opening": 1,
-  "repetition/near-duplicate": 1,
-  "formatting/bold-first-bullet": 1
+  "anaphora/repeated-opening": 1
  },
  "docs/src/content/docs/lexicon-authoring/live-export.mdx": {
-  "formatting/em-dash-density": 14,
+  "formatting/em-dash-density": 12,
   "claude/colon-reveal": 3
  },
  "docs/src/content/docs/lexicon-authoring/lsp-mcp.mdx": {
-  "formatting/em-dash-density": 6,
+  "formatting/em-dash-density": 2,
   "discourse/punchy-fragments": 1,
   "claude/colon-reveal": 2,
   "anaphora/repeated-opening": 1,
   "repetition/near-duplicate": 1
  },
  "docs/src/content/docs/lexicon-authoring/observation-contract.mdx": {
-  "formatting/em-dash-density": 53,
+  "formatting/em-dash-density": 52,
   "discourse/punchy-fragments": 1,
   "claude/colon-reveal": 4,
   "tricolon/comma-series": 6,
@@ -759,7 +753,7 @@
   "claude/figurative-suffixes": 1
  },
  "docs/src/content/docs/lexicon-authoring/observation.mdx": {
-  "formatting/em-dash-density": 39,
+  "formatting/em-dash-density": 36,
   "claude/sounds-like-claude": 1,
   "claude/colon-reveal": 8,
   "discourse/punchy-fragments": 3,
@@ -774,13 +768,12 @@
   "discourse/punchy-fragments": 1
  },
  "docs/src/content/docs/lexicon-authoring/overview.mdx": {
-  "formatting/em-dash-density": 24,
+  "formatting/em-dash-density": 7,
   "claude/colon-reveal": 3,
   "dead-metaphor/rare-lemma": 1,
   "discourse/punchy-fragments": 1,
   "syntactic/self-posed-question": 2,
-  "tricolon/comma-series": 2,
-  "formatting/bold-first-bullet": 1
+  "tricolon/comma-series": 2
  },
  "docs/src/content/docs/lexicon-authoring/package.mdx": {
   "formatting/em-dash-density": 5,
@@ -789,35 +782,31 @@
   "tricolon/comma-series": 2
  },
  "docs/src/content/docs/lexicon-authoring/post-synth-checks.mdx": {
-  "formatting/em-dash-density": 23,
+  "formatting/em-dash-density": 18,
   "claude/colon-reveal": 5,
-  "dead-metaphor/rare-lemma": 1,
   "tricolon/comma-series": 3
  },
  "docs/src/content/docs/lexicon-authoring/scaffold.mdx": {
-  "formatting/em-dash-density": 7,
+  "formatting/em-dash-density": 2,
   "discourse/punchy-fragments": 1,
   "claude/colon-reveal": 2,
   "anaphora/repeated-opening": 1,
   "tricolon/comma-series": 1
  },
  "docs/src/content/docs/lexicon-authoring/serializer.mdx": {
-  "formatting/em-dash-density": 20,
+  "formatting/em-dash-density": 6,
   "claude/colon-reveal": 2,
   "anaphora/repeated-opening": 2,
-  "formatting/bold-first-bullet": 2,
-  "repetition/near-duplicate": 1,
-  "tricolon/comma-series": 1
- },
- "docs/src/content/docs/lexicon-authoring/skills.mdx": {
-  "formatting/em-dash-density": 11,
-  "discourse/punchy-fragments": 1,
-  "dead-metaphor/rare-lemma": 1,
-  "anaphora/repeated-opening": 1,
+  "tricolon/comma-series": 1,
   "formatting/bold-first-bullet": 1
  },
+ "docs/src/content/docs/lexicon-authoring/skills.mdx": {
+  "formatting/em-dash-density": 5,
+  "discourse/punchy-fragments": 1,
+  "dead-metaphor/rare-lemma": 1
+ },
  "docs/src/content/docs/lexicon-authoring/testing.mdx": {
-  "formatting/em-dash-density": 3,
+  "formatting/em-dash-density": 2,
   "claude/colon-reveal": 2,
   "dead-metaphor/rare-lemma": 1,
   "anaphora/repeated-opening": 1

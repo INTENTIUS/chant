@@ -15,11 +15,26 @@ Two opt-in capabilities let a lexicon participate in the `cloud → code` direct
 ```typescript
 exportResources?(options: {
   environment: string;
+  stack?: string;                // deployed stack to export from (#932)
+  region?: string;               // region that stack is in
   selector?: ResourceSelector;   // { type?, name? }
   owned?: boolean;               // restrict to chant-owned resources
   verbatim?: boolean;            // keep server-defaulted fields
 }): Promise<ExportedTemplate>;
 ```
+
+Every option maps to a flag on [`chant import --from <env>`](/chant/cli/import/):
+
+| Option | Flag | Notes |
+|---|---|---|
+| `environment` | `--from <env>` | The one required argument. |
+| `selector.type` | `--type <ResourceType>` | |
+| `selector.name` | `--name <name>` | |
+| `owned` | `--owned` | |
+| `verbatim` | `--verbatim` | Default strips server-defaulted fields to the declared shape. |
+| `stack` | none | Core supplies it per declared stack when the project configures `stacks`; a single-stack project keeps the convention of the stack named after the environment. |
+
+`-d, --lexicon <name>` restricts the run to one lexicon and never reaches your implementation. `chant import --from` warns before writing that live config may carry secrets, so it is the caller's review step rather than yours.
 
 The result is the existing import IR (`TemplateIR`), branded as `ExportedTemplate`, so it feeds your lexicon's `templateGenerator()` unchanged. The brand keeps a full-fidelity export — which may carry secrets — from flowing into the `lifecycle` code paths, which consume scrubbed metadata through the `ObservationLexicon` view.
 
@@ -31,51 +46,95 @@ Keep the scrubbing boundary single-purpose. `describeResources()` scrubs for dif
 
 Keep all I/O in the activity and the mapping pure, as the shipping lexicons do:
 
-1. Read live objects (`aws cloudformation get-template`, `kubectl get -o json`, …).
-2. **Strip to declared shape** by default — remove server-written fields (`status`, K8s `managedFields`, server metadata, provider bookkeeping annotations). Keep them when `verbatim` is set.
+1. Read live objects (`aws cloudformation get-template`, a typed `LIST`, a REST `GET`).
+2. Strip to the declared shape by default. Remove server-written fields: `status`, K8s `managedFields`, server metadata, provider bookkeeping annotations. Keep them when `verbatim` is set.
 3. Map to `TemplateIR` by reusing your import parser.
-4. Apply the `selector` (and the `owned` filter, below).
+4. Apply the `selector` and the `owned` filter, below.
 
-Reference implementations: `lexicons/aws/src/import/live-export.ts`, `lexicons/azure/src/import/live-export.ts`, `lexicons/k8s/src/import/live-export.ts`, `lexicons/gcp/src/import/live-export.ts`.
+Split the two halves across two files so the mapping tests without a transport. Seven lexicons implement this today:
+
+| Lexicon | I/O entry point (what the plugin calls) | Pure mapping |
+|---|---|---|
+| aws | `lexicons/aws/src/plugin.ts` (inline) | `lexicons/aws/src/import/live-export.ts` |
+| azure | `lexicons/azure/src/export-resources.ts` | `lexicons/azure/src/import/live-export.ts` |
+| cedar | `lexicons/cedar/src/avp/live-export.ts` | same file |
+| fly | `lexicons/fly/src/export-resources.ts` | `lexicons/fly/src/import/live-export.ts` |
+| fountain | `lexicons/fountain/src/export-resources.ts` | same file |
+| gcp | `lexicons/gcp/src/export-resources.ts` | `lexicons/gcp/src/import/live-export.ts` |
+| k8s | `lexicons/k8s/src/export-resources.ts` | `lexicons/k8s/src/import/live-export.ts` |
+
+Wire it from `plugin.ts` behind a dynamic import, the way every one of them does, so `chant build` never loads a live transport.
 
 ## The ownership marker
 
 Ownership is what later lets `delete` be precise without a hosted state file. The marker is stamped at synthesis time into the target's native metadata channel:
 
-| Channel | Targets | Keys |
-|---|---|---|
-| Labels | Kubernetes, GCP | `app.kubernetes.io/managed-by=chant`, `chant.intentius.io/stack`, `chant.intentius.io/env` |
-| Tags | AWS | `chant:managed-by=chant`, `chant:stack`, `chant:env` |
-| Tags | Azure | `chant-managed-by=chant`, `chant-stack`, `chant-env` |
+Each lexicon exports its own `ChannelKeys` (a `managedBy` / `stack` / `env` triple). The label convention is shared as `LABEL_OWNERSHIP_KEYS` in `@intentius/chant/ownership`; tag-key syntax differs per provider, so tag-based lexicons declare their own.
 
-Stamp it from your serializer by reading `context.ownership` and merging into your tag/label channel — reuse the core helper:
+| Constant | Where | `managedBy` key |
+|---|---|---|
+| `LABEL_OWNERSHIP_KEYS` | `@intentius/chant/ownership` (k8s, gcp, helm, k3d, k3s) | `app.kubernetes.io/managed-by` |
+| `AWS_TAG_OWNERSHIP_KEYS` | `lexicons/aws/src/ownership.ts` | `chant:managed-by` |
+| `AZURE_TAG_OWNERSHIP_KEYS` | `lexicons/azure/src/ownership.ts` | `chant-managed-by` |
+| `FLY_METADATA_OWNERSHIP_KEYS` | `lexicons/fly/src/ownership.ts` | `managed-by` |
+| `CPLN_TAG_OWNERSHIP_KEYS` | `lexicons/cpln/src/ownership.ts` | `chant.intentius.io/managed-by` |
+| `RENDER_ENV_OWNERSHIP_KEYS` | `lexicons/render/src/ownership.ts` | `CHANT_MANAGED_BY` |
+| `AVP_OWNERSHIP_KEYS` | `lexicons/cedar/src/avp/ownership.ts` | `chant:managed-by` |
+
+The value of the managed-by key is always `chant` (`OWNERSHIP_MANAGED_BY_VALUE`); the other two carry the stack name and, when the build has one, the environment.
+
+Stamp it from your serializer by reading `context.ownership` and merging into your tag/label channel. The helper takes the keys, not a channel name:
 
 ```typescript
-import { ownershipEntries } from "@intentius/chant/ownership";
+import { ownershipEntries, LABEL_OWNERSHIP_KEYS } from "@intentius/chant/ownership";
 
 serialize(entities, outputs, context) {
-  const ownership = context?.ownership;
-  const labels = ownership ? ownershipEntries("label", ownership) : {};
+  const labels = context?.ownership
+    ? ownershipEntries(LABEL_OWNERSHIP_KEYS, context.ownership)
+    : {};
   // merge `labels` into each resource's metadata.labels (explicit labels win)
 }
 ```
+
+That is `lexicons/k8s/src/serializer.ts`, which seeds its default-label map from the same call.
+
+### Declare the channel on the plugin
+
+Stamping is half of it. Declare which read paths can resolve a verdict from the marker, so a caller knows the answer is available before asking:
+
+```typescript
+// plugin.ts
+ownershipChannel: { keys: LABEL_OWNERSHIP_KEYS, reads: ["describeResources", "observeResourcesDeep", "exportResources"] },
+```
+
+`chant dev check-lexicon` fails a declaration naming a path the plugin does not implement, or whose keys are incomplete, and the observation conformance suite holds a declared path to a real verdict. Omit the field entirely when you have no marker channel anywhere; every verdict must then be `unknown`. See [the observation contract](/chant/lexicon-authoring/observation-contract/#declare-where-you-can-read-the-marker).
 
 ### Querying it for `owned`
 
 Implement the `owned` filter on both `describeResources` and `exportResources` by reading the marker back:
 
 ```typescript
-import { hasOwnershipMarker, classifyOwnership } from "@intentius/chant/ownership";
+import {
+  hasOwnershipMarker,
+  classifyOwnership,
+  readOwnership,
+  LABEL_OWNERSHIP_KEYS,
+} from "@intentius/chant/ownership";
 
 // export: drop objects without the marker
-if (owned && !hasOwnershipMarker(labels, "label")) continue;
+if (owned && !hasOwnershipMarker(labels, LABEL_OWNERSHIP_KEYS)) continue;
 
 // describe: classify so the change set can gate delete
-metadata.ownership = classifyOwnership(labels, "label");
+metadata.ownership = classifyOwnership(labels, LABEL_OWNERSHIP_KEYS);
+
+// teardown: read the stack/env identity back verbatim, never inferred
+metadata.marker = readOwnership(labels, LABEL_OWNERSHIP_KEYS);   // undefined when unmarked
 ```
 
+`classifyOwnership` returns only `owned` or `foreign`, so a path that could not read the channel must stamp `"unknown"` itself rather than calling it. Where tags arrive as a `{Key, Value}` array (CloudFormation's form), `tagArrayToMap(tags)` converts to the map these expect.
+
 <Aside type="note">
-Where a target has **no durable marker channel**, log that ownership is unavailable and degrade to detect-only — never silently return everything. (AWS `describeResources` does this whenever the stack's own tags carry no marker: `describe-stack-resources` returns no per-resource tags, so the stack is the granularity, and an unmarked stack means no filter to apply.)
+Where a target has no durable marker channel on the path being asked, say so and degrade to detect-only rather than silently returning everything. Say it in the envelope's `notes` array, not on stderr: core prints each distinct note once per run, after the answer, so it cannot land ahead of the rows it qualifies. `lexicons/aws/src/plugin.ts` carries the canonical wording, emitted whenever the stack's own tags carry no marker, because `describe-stack-resources` returns no per-resource tags.
 </Aside>
 
 ## See also
@@ -84,3 +143,4 @@ Where a target has **no durable marker channel**, log that ownership is unavaila
 - [Completeness Checklist](/chant/lexicon-authoring/completeness-checklist/) — where these capabilities sit
 - [Live Import](/chant/guide/live-import/) — the user-facing `chant import --from`
 - [Lifecycle Models](/chant/concepts/lifecycle-models/) — why ownership lives on the resource
+- [Observation Contract](/chant/lexicon-authoring/observation-contract/#live-export--exportresources) — `ExportedTemplate`, the brand, and per-lexicon coverage

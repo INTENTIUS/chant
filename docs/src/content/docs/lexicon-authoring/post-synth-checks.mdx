@@ -37,10 +37,15 @@ export const myCheck: PostSynthCheck = {
 
 The `ctx` parameter provides:
 
-- `ctx.outputs` — `Map<string, string | SerializerResult>` of serialized outputs per lexicon
-- `ctx.entities` — `Map<string, Declarable>` of all declared entities
-- `ctx.docs` — `OutputDoc[]`, `ctx.outputs` already parsed — see below
-- `ctx.buildResult` — Full build result including warnings and errors
+| Member | Type | What it holds |
+|---|---|---|
+| `ctx.outputs` | `Map<string, string \| SerializerResult>` | serialized output per lexicon |
+| `ctx.entities` | `Map<string, Declarable>` | every declared entity |
+| `ctx.docs` | `readonly OutputDoc[] \| undefined` | `ctx.outputs` already parsed, lazily and once per run. See below |
+| `ctx.env` | `string \| undefined` | the environment or stack being built, from `--env` or the project's `ownership.env`. Undefined when none is set. Lets an organizational policy branch on environment |
+| `ctx.buildResult` | object | `outputs`, `entities`, `warnings`, `errors`, `sourceFileCount` |
+
+The definitions are in `packages/core/src/lint/post-synth.ts`.
 
 ### `ctx.docs` — the parsed-output view (chant #975)
 
@@ -230,6 +235,12 @@ describe("MYD010: My Check", () => {
 });
 ```
 
+`createPostSynthContext` always sets `entities` to an empty `Map`
+(`packages/test-utils/src/fixtures.ts:95`), so a check that reads `ctx.entities`
+will see nothing and pass vacuously. For those, reach for `makePostSynthCtx` from
+the same package. It takes an entity map as its third argument. Building the
+`PostSynthContext` literal by hand also works.
+
 ## Cross-resource (bundle-join) checks
 
 The examples above judge one resource in isolation. The higher-value checks judge a resource **against the rest of the bundle** — a reference that must resolve, an owner that must exist, a name that must be unique across the output. The shape is always the same: collect every manifest of one kind, then validate each manifest of another kind against that set.
@@ -307,7 +318,17 @@ postSynthChecks() {
 }
 ```
 
-So adding a check is one step: drop the file. Files that export no check (helpers) are skipped, so name shared utilities `*-helpers.ts` and keep them beside the checks. Detection reuses the same `isPostSynthCheck` predicate the runtime uses, so the barrel contains exactly what discovery would.
+So adding a check is two steps: drop the file, then regenerate the barrel.
+
+```bash
+npm run generate:barrels          # scripts/generate-post-synth-barrels.ts, all lexicons
+```
+
+`npm run generate` at the repo root ends with the same step, and each lexicon's
+`prepack` runs its own `generate`. Files that export no check (helpers) are
+skipped, so name shared utilities `*-helpers.ts` and keep them beside the checks.
+Detection reuses the same `isPostSynthCheck` predicate the runtime uses, so the
+barrel contains exactly what discovery would.
 
 > Pre-synth rules (imperative and declarative) are the exception — they are **not** auto-discovered. Import them into the `lintRules()` array in your `plugin.ts`. See [Write Lint Rules](/chant/lexicon-authoring/lint-rules/).
 
@@ -321,13 +342,18 @@ core's small static catalog by `resolveAuditCatalog`:
 
 ```typescript
 // lint/audit-catalog.ts
-import { auditRule, type RuleMeta } from "@intentius/chant/audit/catalog";
+import { auditRule, type Authority, type RuleMeta } from "@intentius/chant/audit/catalog";
+
+const CIS_BENCHMARK: Authority = {
+  name: "CIS Benchmark 2.1.1",
+  url: "https://www.cisecurity.org/benchmark/",
+};
 
 export const myAuditCatalog: Record<string, RuleMeta> = {
   XYZ010: auditRule(
     "XYZ010",
-    "merge-worthy",              // tier: safe to fix in a PR, or report-only
-    "guidance",                  // fixKind: deterministic fix, or needs judgment
+    "merge-worthy",              // tier: "merge-worthy" | "report-only"
+    "guidance",                  // fixKind: "deterministic" | "guidance"
     "Bucket allows public reads",
     "Set `publicAccess: false` on the bucket.",
     { authority: [CIS_BENCHMARK], category: "security" },
@@ -335,8 +361,17 @@ export const myAuditCatalog: Record<string, RuleMeta> = {
 };
 
 // plugin.ts
-auditCatalog: () => myAuditCatalog,
+auditCatalog() {
+  return myAuditCatalog;
+},
 ```
+
+`opts.category` is one of `security`, `correctness`, `best-practice`,
+`efficiency`, and defaults to `best-practice`. Passing any `authority` forces
+`security` regardless of what you pass for `category`
+(`packages/core/src/audit/catalog.ts:362`). Core ships reusable `Authority`
+constants (`K8S_PSS`, `SCORECARD_PINNED`, `GH_SECRETS`, and others) from the same
+module; reach for one before writing your own.
 
 Contributing nothing is not neutral. `resolveAuditCatalog` skips a lexicon that
 omits the method **silently**, so every one of its findings reaches the report
@@ -350,7 +385,9 @@ Two details worth knowing:
 - **`auditRule()` hardcodes `yamlBased: true`.** A check that reads the chant
   model (`ctx.entities`) rather than the emitted output (`ctx.outputs`) cannot
   fire on an audit of standalone YAML, so it must be constructed directly with
-  `yamlBased: false`. fly and temporal do this. The exception: a lexicon that
+  `yamlBased: false`. cpln, fly, k3s, render and temporal do this, each with a
+  small local constructor at the top of its `audit-catalog.ts`. The
+  exception: a lexicon that
   ships `auditEntities` (parse-to-graph) has its classified files parsed back
   into the entity graph during an audit, so its entity-reading checks do fire
   and stay `yamlBased: true` — fountain does this; only its source-level lint
@@ -380,15 +417,38 @@ applyLineage(myAuditCatalog, myAuditLineage);
 ```
 
 `tool` must be a key of `PRIOR_ART` in `packages/core/src/audit/prior-art.ts`.
-That registry names and links each tool once and records its licence, so add a
-new tool there before crediting it. `relation` is `equivalent`, `overlaps` or
-`extends`, defined in the same file. Lineage is credit rather than authority.
-It never changes a rule's tier or category. A rule can have lineage without an
-authority, or the reverse. The credits render on the
+That registry names and links each tool once and records its licence and kind
+(`scanner`, `vendor-validator` or `specification`), so add a new tool there
+before crediting it. `rule` is optional, for a tool with no per-rule ids.
+`relation` is `equivalent`, `overlaps` or `extends`, defined in the same file.
+
+`applyLineage` throws at module load if the lineage names an id the catalog does
+not define, so a renamed rule fails fast instead of silently losing its credit.
+Fourteen lexicons ship an `audit-lineage.ts`;
+`lexicons/k3s/src/lint/audit-lineage.ts` is a short one to copy.
+
+Lineage is credit rather than authority. It never changes a rule's tier or
+category. A rule can have lineage without an authority, or the reverse. The
+credits render on the
 [audit rules reference](/chant/lint-rules/audit-rules/#prior-art) and ride along
-in the JSON and SARIF reports. `scripts/prior-art-sweep.ts` reports when a
-credited tool's index stops listing a cited rule.
+in the JSON and SARIF reports.
+
+```bash
+npm run sweep:prior-art          # scripts/prior-art-sweep.ts, against the committed snapshot
+npm run sweep:prior-art -- --update-snapshot
+```
+
+The sweep fetches each credited tool's published rule index and reports three
+things: ids new upstream since the last snapshot, ids gone upstream, and a
+credit pointing at a rule the index no longer lists. Because it reads the
+network, the sweep runs as a scheduled workflow
+(`.github/workflows/prior-art-sweep.yml`) rather than as a test, and it only
+ever reports. No lineage file is edited for you.
 
 ## Target Count
 
-A mature lexicon should have at least **15 post-synth checks** covering all four categories (security, correctness, best practices, deprecation). The K8s and Azure lexicons each have 20 checks.
+A mature lexicon should have at least 15 post-synth checks covering all four
+categories (security, correctness, best practices, deprecation). The largest
+sets today are aws with 61 and github with 55; k8s ships 40 and azure 24. `chant
+dev check-lexicon` fails at tier 1 if `postSynthChecks()` returns none at all,
+and warns at tier 2 below fifteen.

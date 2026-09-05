@@ -38,13 +38,72 @@ describeResources?(options: {
   buildOutput: string;
   entityNames: string[];
   entities: Map<string, { entityType: string; props: Record<string, unknown> }>;
-  owned?: boolean;
-}): Promise<Record<string, ResourceMetadata> | ObservationResult>;
+  stack?: string;      // deployed stack, for a multi-stack project (`stacks` in ChantConfig)
+  region?: string;     // region that stack is deployed in (#1261)
+  owned?: boolean;     // restrict to resources carrying chant's ownership marker (#119)
+  namespace?: string;  // scope default for an entity that declares none (#1629)
+}): Promise<DescribeResourcesResult>;  // Record<string, ResourceMetadata> | ObservationResult
 ```
+
+Every option after `entities` is optional on both sides. A lexicon whose substrate has no such concept ignores it; core omits it when the project declares none. The full contract with per-field commentary is `packages/core/src/lexicon.ts`.
 
 Return a map keyed by **chant entity name** (the export name on the `*.ts` file), value is the `ResourceMetadata` chant uses to display status and detect drift.
 
 If your implementation has any case where it *can't look* — an unmapped kind, a failed read, missing credentials — return the `ObservationResult` envelope instead and name those entities in `unobserved`. See [the observation tri-state](/chant/lexicon-authoring/observation-contract/#the-observation-tri-state-absent-is-not-the-same-as-unread); it is the difference between `chant lifecycle plan` proposing a `create` and admitting it doesn't know.
+
+### Start from the observer harness
+
+Do not hand-roll the control flow. `observeEntities()` in `@intentius/chant/observation` owns it: bind once, read every declared entity through a bounded concurrency pool, and route each read onto the tri-state. You supply an `ObserverAdapter` with three members.
+
+| Member | Signature | Job |
+|---|---|---|
+| `bind()` | `() => Promise<Client>` | Reach the provider on the applier's transport. `Client` is your own handle. A throw is a whole-lexicon failure. |
+| `classifyBindFailure(err)` | `(err: unknown) => { reason: UnobservedReason; detail?: string } \| "rethrow"` | What a `bind()` throw means. Every declared entity becomes NOT-OBSERVED with that reason, or `"rethrow"` for a refusal core must not swallow. |
+| `read(client, entity)` | `(client, entity: DeclaredEntity) => Promise<EntityObservation>` | One entity. Return `{ present }`, `{ absent: true }`, or `{ unobserved: { reason, detail } }`; every variant may carry `queried`. A throw here is caught and recorded `read-failed` for that entity alone. |
+
+An optional fourth member, `concurrently`, supplies the transport's own pool. Omit it and the harness uses `boundedConcurrently` at `DEFAULT_OBSERVE_CONCURRENCY` (16), so "N entities is not N serial round trips" holds whether or not your transport ships a pool.
+
+```typescript
+import {
+  observeEntities,
+  type DeclaredEntity,
+  type EntityObservation,
+  type ObserverAdapter,
+} from "@intentius/chant/observation";
+
+function adapter(execFn: ExecFn): ObserverAdapter<ClusterEntry[]> {
+  return {
+    async bind() {
+      const { stdout } = await execFn("k3d cluster list -o json");
+      return JSON.parse(stdout || "[]") as ClusterEntry[];
+    },
+    classifyBindFailure(err) {
+      // Binary missing, daemon stopped, unparsable output: all mean "could
+      // not look", never "not there".
+      return { reason: "read-failed", detail: err instanceof Error ? err.message.split("\n")[0] : String(err) };
+    },
+    async read(clusters, entity): Promise<EntityObservation> {
+      if (entity.type !== CLUSTER_TYPE) return { unobserved: { reason: "unsupported-kind", detail: entity.type } };
+      const cluster = clusters.find((c) => c.name === declaredClusterName(entity));
+      if (!cluster) return { absent: true };
+      return { present: { type: CLUSTER_TYPE, physicalId: cluster.name, status: clusterStatus(cluster) } };
+    },
+  };
+}
+
+export async function describeResources(
+  options: { entityNames: string[]; entities: Map<string, { entityType: string; props: Record<string, unknown> }> },
+  execFn: ExecFn = execAsync,
+): Promise<DescribeResourcesResult> {
+  const declared: DeclaredEntity[] = options.entityNames.map((name) => {
+    const entity = options.entities.get(name);
+    return { name, type: entity?.entityType ?? "", props: entity?.props ?? {} };
+  });
+  return observeEntities(declared, adapter(execFn));
+}
+```
+
+That is `lexicons/k3d/src/describe-resources.ts` (chant #1412) with the ownership read elided; `lexicons/k3s/src/describe-resources.ts` (chant #1603) is the same adapter over a kubectl context, and `lexicons/cedar/src/avp/describe-resources.ts`, `lexicons/cpln/src/describe-resources.ts` and `lexicons/fountain/src/describe-resources.ts` use it over REST transports. Taking `execFn` (or the http client) as a defaulted second parameter is what makes the reader testable without mocking a module.
 
 ### Use entity-prop pass-through to find the cloud-side identifier
 
@@ -110,21 +169,21 @@ Cloud Control API, an ARM GET, a direct GCP REST GET, a typed Kubernetes client,
 a Temporal client, the helm CLI delegating to that same k8s client, a fountain
 REST list) against one unchanged interface, with **no per-lexicon branch
 anywhere in `lifecycle/deep-diff.ts` or `deep-observation.ts`**. An eighth is a
-reader and two hooks, not a core change.
+reader and its hooks, not a core change.
 
 `describeResources()` answers whether a declared entity exists and carries a handful of scrubbed outputs. That catches a changed status, a replaced physical id, a changed stack output — and misses the drift people actually chase: a hand-edited security-group rule, an inline policy added in the console, a flipped bucket setting, a controller-mutated CRD field. Reading the full live model is what closes that gap.
 
-Opting in is a reader plus two hooks:
+Opting in is a reader plus its normalization hooks:
 
 ```typescript
 observeResourcesDeep?(options: {
   environment: string; buildOutput: string;
   entityNames: string[];
   entities: Map<string, { entityType: string; props: Record<string, unknown> }>;
-  stack?: string; owned?: boolean;
+  stack?: string; region?: string; owned?: boolean;
 }): Promise<DeepObservationResult>;
 
-deepNormalizationHooks?: DeepNormalizationHooks;   // { prune, orderKey }
+deepNormalizationHooks?: DeepNormalizationHooks;   // { prune, orderKey, unresolved, mask }
 ```
 
 The result is the same tri-state contract, one level down. `deepObservation(resources, unobserved)` builds it; an entity whose *properties* could not be read gets an `unobserved` entry with a total reason, and throwing marks every declared entity `read-failed`. A deep read that fails is never allowed to arrive as a thin-but-clean tree, because a clean tree is a claim that nothing drifted.
@@ -151,6 +210,13 @@ Two things to get right:
 
 - **The hooks are data on the plugin, not steps inside the reader.** Core applies the identical rules to the *declared* property tree, which no reader ever touches. Bury them in the read and the two sides are normalized differently and everything is drift.
 - **`node.counterpart` is a tri-state** — `present` / `absent` / `unknown`. It says whether the same path exists on the other tree. Default subtraction is gated on `absent`, so a property somebody *did* declare is never pruned out from under the diff; `unknown` (a one-sided pass, e.g. a reader normalizing its own output) prunes nothing default-related.
+
+Two further hooks exist for the cases the pass cannot recognize on its own, both optional:
+
+| Hook | Return true when |
+|---|---|
+| `unresolved(node)` | the value cannot be known without deploying and is not a class-instance intrinsic the pass already collapses. An ARM `"[resourceId(...)]"` expression string is the motivating case (chant #1213); left alone it diffs against its evaluated live value forever. |
+| `mask(node)` | the value is secret material whose path is structural rather than name-shaped. A Kubernetes Secret's `data` carries arbitrary key names, so `isSensitiveKey` cannot find it. Masking runs on both trees, so presence and key set still classify while no value reaches a diff row. |
 
 Core owns the rest of the pass and needs no hook for it: canonical key order, hook-driven array order, secret masking by property name, and non-JSON values (an unevaluated `Fn::Sub`) collapsed so an interpolated property never reads as permanent drift.
 
@@ -225,6 +291,7 @@ The contract:
 listArtifacts?(options: {
   environment: string;
   entities: Map<string, { entityType: string; props: Record<string, unknown> }>;
+  stack?: string;   // scope enumeration to one deployed stack, for a multi-stack project
 }): Promise<Record<string, ArtifactMetadata>>;
 ```
 
@@ -288,35 +355,43 @@ Per-tenant warn-soft is the right default: a broken connection on `staging` shou
 
 ## Testing
 
-Both contracts are pure async functions of their options — easy to unit-test by mocking `child_process.exec` or whatever client your lexicon uses.
+Both contracts are pure async functions of their options, so a test needs no cluster and no credentials. Two patterns ship, matched to how the reader reaches its provider.
 
-Pattern from `lexicons/k8s/src/describe-resources.test.ts`:
+**An injected transport.** Take the exec function or http client as a defaulted parameter and hand the test a fake. No module mocking, no `vi.mock` ordering hazard. `lexicons/k3d/src/describe-resources.test.ts`:
 
 ```typescript
-import { describe, test, expect, vi, beforeEach } from "vitest";
+import { describeResources, type ExecFn } from "./describe-resources";
 
-const execMock = vi.fn();
-vi.mock("node:child_process", async () => {
-  const actual = await vi.importActual<typeof import("node:child_process")>("node:child_process");
-  return { ...actual, exec: (cmd, cb) => {
-    Promise.resolve(execMock(cmd)).then(
-      (out) => cb(null, out),
-      (err) => cb(err, { stdout: "", stderr: "" }),
-    );
-  }};
-});
+function fakeExec(handlers: Record<string, string | Error>): ExecFn {
+  return async (command: string) => {
+    for (const [prefix, result] of Object.entries(handlers)) {
+      if (command.startsWith(prefix)) {
+        if (result instanceof Error) throw result;
+        return { stdout: result };
+      }
+    }
+    throw new Error(`unexpected command: ${command}`);
+  };
+}
 
-const { describeResources } = await import("./describe-resources");
+const result = await describeResources(options(), fakeExec({ "k3d cluster list": RUNNING_CLUSTER }));
 ```
 
-Then drive `execMock` per command pattern and assert on the returned `ResourceMetadata` shape.
+**A faked cluster or API.** Where the transport is a typed client rather than a subprocess, drive the real client against a literal config with the wire faked. `lexicons/k8s/src/describe-resources.test.ts` builds one with `fakeCluster()` and `fakeKubeconfig()` from `@intentius/chant-k8s-client/testing`, so no ambient kubeconfig is read and no cluster is contacted.
+
+Either way, assert on the normalized result rather than the raw return: `normalizeObservation(result)` from `@intentius/chant/observation` gives you `resources` and `unobserved` whichever shape the reader chose.
 
 ### Mocking the plugin contract end-to-end
 
-For tests that exercise consumers of the contract (the `lifecycle diff` engine, a custom Op activity), `@intentius/chant-test-utils` ships:
+For tests that exercise consumers of the contract (the `lifecycle diff` engine, a custom Op activity), `@intentius/chant-test-utils` ships a factory plus four static backings:
 
-- **`createMockPlugin({ name, describeResources?, listArtifacts? })`** — minimal plugin satisfying the type
-- **`staticDescribeResources(record)`** / **`staticListArtifacts(record)`** — closure-returning factories for tests that don't care about the query mechanics, just the data flow
+| Helper | What it gives you |
+|---|---|
+| `createMockPlugin(options)` | A minimal plugin satisfying `LexiconPlugin`. `options` accepts `name`, `serializer`, and any of `describeResources`, `listArtifacts`, `observeResourcesDeep`, `observeDependencies`, `teardownOwned`, `executeTeardown`. |
+| `staticDescribeResources(record)` | A `describeResources` returning that bare `name -> ResourceMetadata` map. |
+| `staticObservation(resources, unobserved)` | A `describeResources` returning the versioned envelope, for a test that needs an unobserved row. |
+| `staticDeepObservation(resources, unobserved)` | The same for `observeResourcesDeep`. |
+| `staticListArtifacts(record)` | A `listArtifacts` returning that artifact map. |
 
 ```typescript
 import { createMockPlugin, staticDescribeResources } from "@intentius/chant-test-utils";

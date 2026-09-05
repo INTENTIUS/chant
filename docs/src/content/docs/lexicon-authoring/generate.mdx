@@ -4,7 +4,7 @@ description: Wire up generatePipeline with your upstream spec
 diataxis: how-to
 ---
 
-The `generate` lifecycle method is the heart of a lexicon — it fetches upstream schemas, parses them, and produces TypeScript types, a runtime index, and a registry. Core provides `generatePipeline` to orchestrate this; you supply provider-specific callbacks.
+The `generate` lifecycle method fetches the upstream spec, parses it, and produces TypeScript types, a runtime index, and a registry. Core provides `generatePipeline` to orchestrate this; you supply provider-specific callbacks.
 
 ## Generation Pipeline
 
@@ -20,6 +20,7 @@ const result = await generatePipeline({
   generateRuntimeIndex: (results, naming) => buildRuntimeIndex(results, naming),
   augmentSchemas: async (schemas, opts, log) => { /* patches, overlays */ },
   augmentResults: (results, opts, log) => { /* fallbacks, synthetic resources */ },
+  generateExtraArtifacts: (results, naming) => ({ "extra.json": buildExtra(results) }),
 });
 ```
 
@@ -31,12 +32,13 @@ The pipeline executes these steps in order:
 
 1. **`fetchSchemas(opts)`** -> `Map<typeName, Buffer>` — raw schema files keyed by type name
 2. **`augmentSchemas(schemas, opts, log)`** *(optional)* — patch or overlay schemas before parsing. Skipped when `opts.schemaSource` is provided (e.g. during testing). Returns `{ schemas, extraResults?, warnings? }`
-3. **`parseSchema(typeName, data)`** -> `T | null` — parse each schema buffer. Return `null` to skip a file
+3. **`parseSchema(typeName, data)`** -> `T | T[] | null` — parse each schema buffer. Return `null` to skip a file, or an array when one file yields several results (the k8s OpenAPI spec and the GitLab CI schema both do)
 4. **`augmentResults(results, opts, log)`** *(optional)* — add synthetic resources or fallbacks after parsing. Returns `{ results, warnings? }`
 5. **`createNaming(results)`** -> `NamingStrategy` — build the naming strategy from all parsed results
 6. **`generateRegistry(results, naming)`** -> `string` — JSON content for the lexicon registry
 7. **`generateTypes(results, naming)`** -> `string` — TypeScript declaration content (`.d.ts`)
 8. **`generateRuntimeIndex(results, naming)`** -> `string` — runtime index with factory exports (`index.ts`)
+9. **`generateExtraArtifacts(results, naming)`** *(optional)* -> `Record<filename, string>` — further derived tables from the same pass, returned on `GenerateResult.extraArtifacts` so they cannot skew against the registry and the types
 
 ### `ParsedResult` contract
 
@@ -76,6 +78,9 @@ const config: NamingConfig = {
   serviceAbbreviations: {},
   shortName: (t) => t.split("::").pop()!,
   serviceName: (t) => t.split("::")[1],
+  // Once the lexicon has published a surface, feed it the names it already
+  // shipped so an unrelated upstream change cannot rename them (chant #1459):
+  // reservedNames: reservedNamesFromSnapshot(snapshot),
 };
 
 const naming = new NamingStrategy(inputs, config);
@@ -97,6 +102,30 @@ const schemas = await extractFromZip(zipData, (name) => name.endsWith(".json"));
 > See `lexicons/aws/src/spec/fetch.ts` for the AWS schema fetcher.
 
 Reach for `fetchWithCache` from `src/spec/fetch.ts` and nowhere else. Generation is the one phase allowed to fetch: a serializer, a plugin hook or a lint rule that reached upstream would put a network call on `chant build`, which [Network Egress](/chant/reference/network-egress/) guarantees is offline and a guard test fails on. `fetchWithCache` also caches to disk and falls back to the committed snapshot when the endpoint is unreachable, so generation itself survives a network that is not there.
+
+## When there is no upstream JSON schema
+
+`generatePipeline` only requires `fetchSchemas` to hand back a
+`Map<string, Buffer>`. It never inspects the bytes, so fetching can just as
+well be a local file read or a transform over something that was never a
+schema. Three shipped lexicons take three different routes:
+
+| Lexicon | What its `fetchSchemas` returns | Source |
+|---|---|---|
+| k3s | Five pinned Go source files from `pkg/cli/cmds/`, packed into one JSON envelope keyed `K3s::Config`. k3s publishes no schema; the config keys are the CLI flag names, and the flags are urfave/cli struct literals in that source (chant #1599) | `lexicons/k3s/src/spec/fetch.ts` |
+| k3d | The `v1alpha5/schema.json` from a tagged source tree rather than a moving branch, so the pin is the git tag | `lexicons/k3d/src/spec/fetch.ts` |
+| cedar | A file read with a three-step resolution order: the project's `cedar.schema` config key, then `schema.cedarschema` in the project root, then a real schema bundled in the package. No network at all | `lexicons/cedar/src/spec/fetch.ts` |
+
+Cedar's third step is the one to copy if your spec is local. Without a bundled
+fallback, `generate()` has nothing to read in a fresh clone. Nothing gates it,
+and CI never exercises the pipeline. fountain does the same thing on
+the other axis: it fetches its pinned OpenAPI release and falls back to a
+committed `fountain-openapi.snapshot.json` when the network is absent
+(`lexicons/fountain/src/spec/fetch.ts`).
+
+A hand-authored spec with no upstream at all belongs in `src/spec/`, read by
+`fetchSchemas`. Skip `upstreamPin` in that case. The rest of the pipeline is
+unchanged, and `parseSchema` still owns the shape.
 
 ## Runtime Factories
 
@@ -189,9 +218,9 @@ import { hasIntrinsicInValue, irUsesIntrinsic, collectDependencies } from "@inte
 ```
 
 - **`BaseValueParser`** — abstract base class for parsing template values into IR nodes
-- **`hasIntrinsicInValue(value)`** — check if a raw value contains intrinsic function calls
-- **`irUsesIntrinsic(node, name)`** — check if an IR node uses a specific intrinsic
-- **`collectDependencies(ir)`** — collect all resource dependencies from an IR tree
+- **`hasIntrinsicInValue(value, name)`** — check whether a raw value contains a call to the named intrinsic
+- **`irUsesIntrinsic(ir, name)`** — check whether an IR template uses a specific intrinsic
+- **`collectDependencies(value, isDependency)`** — collect resource dependencies from a value. The predicate is yours: given an object, return its logical id or `null`
 
 ### Intrinsic Interpolation
 
@@ -200,8 +229,12 @@ For lexicons with string interpolation intrinsics (like CloudFormation's `Fn::Su
 ```typescript
 import { buildInterpolatedString, defaultInterpolationSerializer } from "@intentius/chant/intrinsic-interpolation";
 
-const result = buildInterpolatedString(templateString, variables);
+// parts/values come straight from a tagged template literal's arguments.
+const result = buildInterpolatedString(parts, values, defaultInterpolationSerializer);
 ```
+
+`buildInterpolatedString` walks the template parts and the interpolated values
+in lockstep, rendering each value through the serializer you pass.
 
 ## Pinning the upstream schema — `upstreamPin`
 
@@ -233,7 +266,7 @@ upstreamPin: {
 | `upstream.kind` | `releases` for published releases, `tags` for every git tag |
 | `upstream.tagSuffix` | Only consider tags with this suffix — gitlab uses `-ee` |
 
-k8s, gcp, gitlab and docker declare one. `checkPinnedUpgrade`
+k8s, k3s, gcp, gitlab, docker and cedar declare one. `checkPinnedUpgrade`
 (`packages/core/src/codegen/pinned-upgrade.ts`) uses it to report an available
 upgrade, apply it, regenerate, and revert cleanly if the regeneration fails —
 which is the reason `replace` exists rather than the tooling doing a blind

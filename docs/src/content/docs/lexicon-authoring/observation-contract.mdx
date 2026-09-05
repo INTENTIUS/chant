@@ -82,7 +82,7 @@ Rules:
 - **Unobserved entries can carry it inline** via `UnobservedEntity.queried`, so a failed-read row renders without a join.
 - **Omitting it stays valid.** A lexicon with nothing derived about its addresses can skip it entirely.
 
-The harness (`observeEntities`, below) collects it for you: every `EntityObservation` variant — `present`, `absent`, `unobserved` — accepts an optional `queried` string.
+The [observer harness](/chant/lexicon-authoring/observation/#start-from-the-observer-harness) collects it for you: every `EntityObservation` variant (`present`, `absent`, `unobserved`) accepts an optional `queried` string.
 
 Downstream, `chant lifecycle diff --live --json` passes the map through as `resources.queried` per lexicon and joins it onto unobserved rows, so a consumer can render `queried: /apis/apps/v1/namespaces/default/deployments/web → 404` next to a pending verdict — see [`chant lifecycle`](/chant/cli/lifecycle/).
 
@@ -141,9 +141,17 @@ answer, and the suite will hold you to it: every verdict must then be `unknown`.
 |---|---|---|
 | aws | `chant:managed-by` tags | all three (`describeResources` at stack granularity) |
 | azure | `chant-managed-by` tags | `exportResources` |
-| gcp | `app.kubernetes.io/managed-by` labels | all three |
-| k8s | `app.kubernetes.io/managed-by` labels | all three |
+| cedar | `chant:managed-by` AVP tags | `describeResources`, `exportResources` |
+| cpln | `chant.intentius.io/managed-by` tags | `describeResources` |
 | fly | `managed-by` machine metadata | `describeResources` |
+| gcp | `app.kubernetes.io/managed-by` labels | all three |
+| helm | `app.kubernetes.io/managed-by` labels | `describeResources`, `observeResourcesDeep` |
+| k3d | `app.kubernetes.io/managed-by` labels | `describeResources` |
+| k3s | `app.kubernetes.io/managed-by` labels | `describeResources` |
+| k8s | `app.kubernetes.io/managed-by` labels | all three |
+| render | `CHANT_MANAGED_BY` env vars | `describeResources` |
+
+Each lexicon declares its own `ChannelKeys` (`managedBy` / `stack` / `env`); the label convention is shared as `LABEL_OWNERSHIP_KEYS` in `@intentius/chant/ownership`, and each tag-based lexicon keeps its own beside it (`lexicons/aws/src/ownership.ts`, `lexicons/fly/src/ownership.ts`, `lexicons/cedar/src/avp/ownership.ts`).
 
 `chant dev check-lexicon` fails a declaration that names a path the plugin does
 not implement, or whose keys are incomplete.
@@ -153,19 +161,41 @@ not implement, or whose keys are incomplete.
 `describeObservationConformance` in `@intentius/chant-test-utils` is the shared suite every observing lexicon runs. Give it scenarios driven by your own transport mocks; it checks the result shape, reason totality, ownership totality, and — through core's real `buildChangeSet` — that an unreadable entity never classifies as `create`:
 
 ```typescript
+import { describeObservationConformance } from "@intentius/chant-test-utils";
+import { k3dPlugin } from "./plugin";
+
 describeObservationConformance({
-  lexicon: "k8s",
+  lexicon: "k3d",
+  ownershipChannel: k3dPlugin.ownershipChannel,
   scenarios: [
     {
-      name: "a CRD kind with no reader",
-      declared: ["widget", "gone"],
-      expectUnobserved: ["widget"],
-      expectAbsent: ["gone"],
-      run: () => k8sPlugin.describeResources!({ /* ... */ }),
+      name: "running owned cluster",
+      declared: ["probe"],
+      owned: true,
+      expectPresent: ["probe"],
+      run: () => describeResources(options(), fakeExec({ "k3d cluster list": RUNNING_CLUSTER })),
     },
   ],
 });
 ```
+
+That is `lexicons/k3d/src/describe-resources.test.ts` verbatim. Pass `ownershipChannel` whenever your plugin declares one. Without it the suite can only confirm that a verdict, when present, is one of three strings; with it, a lexicon declaring `describeResources` must answer `owned` or `foreign` on an owned read, and a lexicon declaring no channel must answer `unknown`.
+
+The scenario fields are these.
+
+| Field | Meaning |
+|---|---|
+| `name` | Test title. |
+| `declared` | Entity names the lexicon was asked about, the declared axis fed to `buildChangeSet`. |
+| `run` | Invokes your `describeResources` under your own transport fake. Returns a `DescribeResourcesResult`. |
+| `expectPresent` | Names that must land in `resources`. |
+| `expectAbsent` | Names that must be in neither map, and that must classify as `create`. |
+| `expectUnobserved` | Names that must land in `unobserved`, and that must classify as `unobserved` rather than `create`. |
+| `owned` | This scenario ran with `owned: true`, so hold the lexicon to its declared channel. |
+| `expectMarker` | Per entity, the exact `ResourceMetadata.marker` (stack + env) the read must surface. |
+| `expectNoMarker` | Names whose live model carries no marker channel, so the field must stay absent. |
+
+Eleven lexicons run it today (aws, azure, cedar, fly, fountain, gcp, helm, k3d, k3s, k8s, temporal). `lexicons/fly/src/describe-resources.test.ts` and `lexicons/aws/src/lifecycle-integration.test.ts` are the other two worth reading, for a REST transport and for a stack-granularity marker.
 
 ## observeResourcesDeep() — property-level drift
 
@@ -182,8 +212,13 @@ Some deviations are permanent facts of the account — a platform team's mandato
 `describeResources()` answers "what do I manage". Three further readers answer
 questions it structurally cannot, because all of them resolve *outward* from
 what was declared. Each is opt-in and additive: a lexicon implementing none
-behaves exactly as it does today, and aws is currently the only one that
-implements any of them.
+behaves exactly as it does today.
+
+| Reader | Implemented by |
+|---|---|
+| `observeDependencies()` | aws |
+| `observeAmbient()` + `ambientKinds()` | aws, cedar |
+| `describeStackStatus()` | aws, helm, k8s |
 
 ### `observeDependencies()` — what the estate relies on
 
@@ -222,6 +257,19 @@ out. `chant search` uses it to point out that `--ambient` is relevant to the kin
 just queried: an agent asking which security groups are unused otherwise has no
 way to know that some are not in the answer at all.
 
+### `teardownOwned()` — the would-delete set, and its holes
+
+The delete-side reader, and the fourth place `UnobservedReason` appears.
+`chant lifecycle teardown <env>` calls it to plan; it is read-only, and every
+candidate it returns must have been read carrying this project's marker
+identity on this lexicon's channel. A kind the lexicon stamps but cannot read
+back becomes a `TeardownHole` with the same total reason vocabulary, because
+"absent from the plan" reads as "safe" and an unreadable kind is unknown.
+Implemented by aws, fly and k8s; a lexicon without it still takes part, because
+core falls back to `describeResources` filtered on `ResourceMetadata.marker`.
+The execution half is `executeTeardown()`, and the CLI surface for both is
+[`chant lifecycle teardown`](/chant/cli/lifecycle/#lifecycle-teardown-env).
+
 ### `describeStackStatus()` — one deploy unit, by deployed name
 
 `describeResources()` observes a stack's entities keyed by chant entity name and
@@ -244,18 +292,22 @@ different conclusions.
 
 ## Coverage today
 
-| Lexicon | `describeResources()` | `observeResourcesDeep()` | `listArtifacts()` | How it queries |
-|---|---|---|---|---|
-| AWS | ✅ | ✅ |  | CloudFormation `DescribeStackResources` over the applier's read transport; deep read via Cloud Control plus a bulk EC2 describe for security groups |
-| Azure | ✅ | ✅ |  | ARM `GET` per declared entity over the applier's read transport |
-| GCP (Config Connector) | ✅ | ✅ |  | Direct REST `GET` via the applier's per-kind mappers — no Config Connector cluster needed to observe |
-| K8s | ✅ | ✅ |  | Typed API client — concurrent `GET`s, resource resolved through the cluster's own API discovery (chant #1074) |
-| Temporal | ✅ | ✅ |  | Temporal client (`workflowService.listNamespaces`, `operatorService.listSearchAttributes`, `scheduleClient.list`) |
-| Helm |  |  | ✅ | `helm list -A -o json` |
-| Docker |  |  | ✅ | `docker ps`, `docker image ls`, `docker network ls` (NDJSON) |
-| GitHub / GitLab |  |  |  | N/A — git-tracked authoring primitives, see [github](/lexicons/github/) and [gitlab](/lexicons/gitlab/) READMEs |
+The canonical per-lexicon matrix, with the query mechanism and ownership channel
+for each, is [Runtime observation coverage](/chant/lexicons/overview/#runtime-observation-coverage)
+on the Lexicons overview page. One table, maintained in one place, so an
+author adding a reader has one row to update. Today's counts.
 
-For the user-facing version of this matrix and how the diff output is grouped, see [`chant lifecycle`](/chant/cli/lifecycle/#coverage-today).
+| Hook | Lexicons |
+|---|---|
+| `describeResources()` | 13: aws, azure, cedar, cpln, fly, fountain, gcp, helm, k3d, k3s, k8s, render, temporal |
+| `observeResourcesDeep()` | 7: aws, azure, fountain, gcp, helm, k8s, temporal |
+| `listArtifacts()` | 2: docker, helm |
+| `exportResources()` | 7: aws, azure, cedar, fly, fountain, gcp, k8s |
+
+github, gitlab and forgejo implement none by design: workflow definitions are
+git-tracked, so drift is `git diff`. See the [github](/lexicons/github/) and
+[gitlab](/lexicons/gitlab/) READMEs. For how the diff output is grouped, see
+[`chant lifecycle`](/chant/cli/lifecycle/#coverage-today).
 
 ## Live export — `exportResources()`
 
@@ -266,6 +318,8 @@ That is a separate, opt-in capability:
 ```typescript
 exportResources?(options: {
   environment: string;
+  stack?: string;                // deployed stack to export from (#932)
+  region?: string;               // region that stack is in
   selector?: ResourceSelector;   // { type?, name? }
   owned?: boolean;               // restrict to chant-owned resources (live marker)
   verbatim?: boolean;            // keep server-defaulted fields; default strips
@@ -280,13 +334,19 @@ Keep the scrubbing boundary single-purpose. `describeResources()` scrubs for dif
 
 Implementing this is what powers [`chant import --from <env>`](/chant/cli/import/). A full authoring walkthrough — per-provider fidelity, the `--verbatim` switch, and the ownership marker — lands in the live-export authoring guide.
 
-Live-export coverage today:
+Live-export coverage today.
 
-| Lexicon | `exportResources()` | How it reads live config |
+| Lexicon | Entry point | How it reads live config |
 |---|---|---|
-| AWS | ✅ | `aws cloudformation get-template --template-stage Original`, parsed by the CloudFormation import parser |
-| K8s | ✅ | Typed API client `LIST` per kind, stripped of `status`/`managedFields`/server metadata (kept under `--verbatim`), parsed by the K8s import parser |
-| GCP (Config Connector) | ✅ | `kubectl get <*.cnrm.cloud.google.com> -A -o json` (each CC object is its manifest), stripped of `status`/server metadata/`cnrm.cloud.google.com/*` annotations, parsed by the GCP import parser |
+| AWS | `lexicons/aws/src/plugin.ts` | `aws cloudformation get-template --template-stage Original`, mapped by `src/import/live-export.ts` |
+| Azure | `lexicons/azure/src/export-resources.ts` | ARM `GET` over the applier's transport, mapped by `src/import/live-export.ts` |
+| Cedar | `lexicons/cedar/src/avp/live-export.ts` | Amazon Verified Permissions `ListPolicies` plus `GetPolicy` for statements |
+| Fly | `lexicons/fly/src/export-resources.ts` | Machines API (flaps) reads, mapped by `src/import/live-export.ts` |
+| Fountain | `lexicons/fountain/src/export-resources.ts` | REST list per declared kind, stripped to the authored shape in the same file |
+| GCP | `lexicons/gcp/src/export-resources.ts` | Per-kind REST `GET`s, mapped by `src/import/live-export.ts` |
+| K8s | `lexicons/k8s/src/export-resources.ts` | Typed API client `LIST` per kind, stripped of `status`/`managedFields`/server metadata (kept under `--verbatim`), mapped by `src/import/live-export.ts` |
+
+Where a lexicon has both files the split is deliberate: all I/O in the entry point, the cleaning and IR-building pure in `src/import/live-export.ts` so it tests without a transport. cedar and fountain keep both halves in one file.
 
 ## Live graph edges: `referenceCatalog` + `enrichLiveAttrs`
 
@@ -297,7 +357,7 @@ referenceCatalog?: ReferenceCatalog;   // { identities, refs }
 ```
 
 - **`identities`** — which attr paths identify each kind (its id / ARN / name). chant indexes every node by these (and its `physicalId`, and its own id).
-- **`refs`** — per `(kind, attr path)`, that the value there references another resource. Each rule is tagged `reference` (-> a graph edge) or **`containment`** (subnet ∈ VPC -> a boundary box, not a line). `path` supports `a.b` and `arr[].id`.
+- **`refs`** — per `(kind, attr path)`, that the value there references another resource. Each rule is tagged `reference` (a graph edge) or **`containment`** (subnet in VPC, a boundary box rather than a line). `path` supports `a.b` and `arr[].id`; `targetKind` disambiguates identifier collisions. A rule a fold traverses also sets `viaAttr` to the provider's own attribute name (`SubnetId`, `SecurityGroupIds`), because the human-facing `label` is the wrong string to match on, and on a containment rule `viaAttr` additionally makes the relation traversable without drawing the line twice.
 
 ```typescript
 export const myReferenceCatalog: ReferenceCatalog = {
@@ -313,7 +373,12 @@ A reference whose target isn't in the observed set is reported as dangling — n
 Edge reconstruction only works if the observed nodes actually carry those reference attributes. Some observation APIs return thin metadata — AWS `describe-stack-resources`, for instance, gives stack outputs, not per-resource references. When that's the case, implement `enrichLiveAttrs` to source richer attributes for graphing:
 
 ```typescript
-enrichLiveAttrs?(options: { environment: string; owned?: boolean }): Promise<Record<string, Record<string, unknown>>>;
+enrichLiveAttrs?(options: {
+  environment: string;
+  stack?: string;
+  stacks?: Array<string | { name: string; region?: string }>;
+  owned?: boolean;
+}): Promise<Record<string, Record<string, unknown>>>;
 ```
 
 It returns `nodeId → attributes` with cross-resource references resolved to the referenced **node id**, which chant merges into the live nodes before reconstruction. The AWS lexicon sources these from the deployed CloudFormation template (via `exportResources()`), resolving `{Ref}` / `{Fn::GetAtt}` intrinsics — which reference by logical id (= the node id) — to bare strings the resolver matches. See `lexicons/aws/src/reference-catalog.ts` and `live-attrs.ts` for the reference implementation.

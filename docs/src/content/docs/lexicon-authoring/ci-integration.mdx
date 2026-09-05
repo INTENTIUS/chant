@@ -21,14 +21,14 @@ record that nothing here can create for you — hand your agent
 chant dev onboard <name>
 ```
 
-This patches 6 files:
+This patches 6 files (`packages/core/src/cli/commands/onboard.ts:305`):
 
 | File | What it adds |
 |------|-------------|
 | `package.json` (root) | `@intentius/chant-lexicon-<name>: "workspace:*"` dependency |
-| `tsconfig.json` (root) | `paths` mappings for the package and its subpaths. The whole-repo typecheck runs `moduleResolution: node`, which never reads exports maps, so a lexicon without this entry fails the `check` job as soon as an example imports it |
+| `tsconfig.json` (root) | `paths` mappings for the package and its subpaths (chant #1614). The whole-repo typecheck runs `moduleResolution: node`, which never reads exports maps, so a lexicon without this entry fails the `check` job as soon as an example imports it |
 | `.github/workflows/chant.yml` | Prepack lines in check/test jobs + validate step |
-| `.github/workflows/publish.yml` | Prepack line in test job (no publish step needed — `scripts/publish-packages.sh` enumerates the workspace) |
+| `.github/workflows/publish.yml` | Prepack line in test job. No publish step is needed; `scripts/publish-packages.sh` enumerates the workspace |
 | `test/Dockerfile.smoke` | `<name>` in the `for lex in ...` lexicon list of the workspace smoke test |
 | `test/Dockerfile.smoke-npm` | `<name>` in both `for lex in ...` lexicon lists of the npm tarball smoke test |
 
@@ -107,7 +107,7 @@ The command is idempotent. A second run changes nothing and reports each file as
    just smoke
    ```
 
-   The Docker smoke images (`test/Dockerfile.smoke`, `test/Dockerfile.smoke-npm`) and the per-lexicon sections in `test/integration.sh` run **only locally**. No CI job builds them; the `smoke-npm` job in `.github/workflows/chant.yml` is gated `if: false` on purpose, because a Docker build per push is too expensive. A new lexicon's integration section therefore executes for the first time when you run `just smoke` by hand. Do that before the lexicon's first release.
+   The Docker smoke images (`test/Dockerfile.smoke`, `test/Dockerfile.smoke-npm`) and the per-lexicon sections in `test/integration.sh` run only locally. No CI job builds them. The `smoke-npm` job in `.github/workflows/chant.yml` is gated `if: false` on purpose (chant #1687), because a Docker build per push is too expensive. A new lexicon's integration section therefore executes for the first time when you run `just smoke` by hand. Do that before the lexicon's first release.
 
 </Steps>
 
@@ -162,13 +162,19 @@ re-running the workflow a safe way to recover a partial release.
 
 ## Version coupling
 
-`chant init --lexicon <name>` generates a `package.json` with:
+`chant init --lexicon <name>` generates a `package.json` depending on the core
+version it was run from (`packages/core/src/cli/commands/init.ts:101`):
 
 ```json
-"@intentius/chant-lexicon-<name>": "^<core-version>"
+"@intentius/chant": "^0.57.0",
+"@intentius/chant-lexicon-<name>": "^0.57.0"
 ```
 
-With 0.x semver, `^0.0.13` pins to **exactly** `0.0.13` (not `>=0.0.13 <0.1.0`). This means your lexicon version must match the core version at publish time. All packages in the monorepo are versioned together — bump them in lockstep before tagging.
+Under 0.x semver a caret does not float across minors: `^0.57.0` resolves to
+`>=0.57.0 <0.58.0`. A lexicon published at a different minor from core is
+unreachable from a scaffolded project. Every package in the monorepo is versioned
+together, which is what `just release` does; bump them in lockstep before
+tagging.
 
 ## Why the root dependency exists
 
@@ -207,9 +213,15 @@ the emit:
 generateComponentPipeline: (components, options) => generateGitlabPipeline(components, options),
 ```
 
-You receive the components and options (`env`, `runCommand`, `image`,
-`variables`, `beforeScript`), and return the YAML plus the stages and jobs you
-produced, so core can report what it generated without re-parsing it.
+You receive `DriverComponent[]` plus an optional `ComponentPipelineOptions`
+(`env`, `runCommand`, `extraScript`, `beforeScript`, `image`, `variables`) and
+return a `ComponentPipelineResult`. That result carries the YAML alongside the
+wave-ordered `stages`, the `jobs` in emit order, and the `env` you defaulted to,
+so core can report what it generated without re-parsing it. All three types are
+in `packages/core/src/lexicon.ts:441`.
+
+`generateOpPipeline` is the cron-triggered sibling for scheduled Ops (chant
+#927), with the same "CI providers only" rule.
 
 Each job is a **thin trigger**: it runs the component's deploy command. The
 deploy logic stays in the component, not in the generated YAML — the whole point
@@ -225,5 +237,13 @@ member with a hard "this kind of lexicon only" rule.
 chant dev onboard <name>    Patch CI, Dockerfiles, and workflows for a new lexicon
 ```
 
-Flags:
-- `--verbose` — Show detailed output
+The command takes no meaningful flags. `--verbose` parses but changes nothing
+today. After patching, it prints the remaining manual steps and then runs `chant
+dev check-lexicon` against `lexicons/<name>` if that directory exists, so you see
+the completeness report without a second command.
+
+:::caution
+That printed checklist says to tag the first publish `v<version>`, which is
+wrong. `.github/workflows/publish.yml` triggers only on `chant-v*` and
+`lexicon-*-v*`. Use `just release` or `just release-lexicon`.
+:::
