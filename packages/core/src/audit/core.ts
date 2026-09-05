@@ -94,8 +94,10 @@ export type ChecksProvider = (lexicon: AuditLexicon) => Promise<PostSynthCheck[]
  * Parse one classified file's content into the lexicon's entity graph — the
  * parse-to-graph half of the audit (#1567). The returned map is what
  * `ctx.entities` holds during a build, so entity-reading checks run unchanged.
+ * May return a `Promise` for a lexicon whose parser is inherently async (e.g.
+ * terraform's HCL parser); `auditLexicon`'s `entitiesFor` awaits it.
  */
-export type EntitiesParser = (content: string) => Map<string, Declarable>;
+export type EntitiesParser = (content: string) => Map<string, Declarable> | Promise<Map<string, Declarable>>;
 
 /**
  * Resolve the entities parser for a lexicon (its plugin's `auditEntities`,
@@ -203,7 +205,7 @@ export async function auditFiles(
     const checks = await provider(lexicon);
     if (checks.length === 0) continue;
     const parseEntities = await entitiesProvider(lexicon);
-    findings.push(...auditLexicon(lexicon, files, checks, parseEntities));
+    findings.push(...(await auditLexicon(lexicon, files, checks, parseEntities)));
   }
 
   return findings;
@@ -281,20 +283,22 @@ function mergeEntities(maps: Array<Map<string, Declarable>>): Map<string, Declar
  * the entity graph parsed from its files — per file for the per-file pass, all
  * files merged for the all-files pass — so entity-reading checks fire and
  * cross-file facts (an Agent's Environment declared elsewhere, a name declared
- * twice across the apply directory) resolve in the all-files pass.
+ * twice across the apply directory) resolve in the all-files pass. The parser
+ * may be async (a lexicon's own choice, e.g. a wasm-backed HCL parser); this
+ * function awaits each file's entities before either pass runs.
  */
-function auditLexicon(lexicon: AuditLexicon, files: AuditInput[], checks: PostSynthCheck[], parseEntities?: EntitiesParser): AuditFinding[] {
-  const entitiesFor = (file: AuditInput): Map<string, Declarable> => {
+async function auditLexicon(lexicon: AuditLexicon, files: AuditInput[], checks: PostSynthCheck[], parseEntities?: EntitiesParser): Promise<AuditFinding[]> {
+  const entitiesFor = async (file: AuditInput): Promise<Map<string, Declarable>> => {
     if (!parseEntities) return new Map();
     try {
-      return parseEntities(file.content);
+      return await parseEntities(file.content);
     } catch {
       // The audit contract is "runs against any repo" — unparseable content
       // contributes no entities, never a crash.
       return new Map();
     }
   };
-  const perEntities = new Map(files.map((f) => [f.path, entitiesFor(f)]));
+  const perEntities = new Map(await Promise.all(files.map(async (f) => [f.path, await entitiesFor(f)] as const)));
 
   const perFindings: AuditFinding[] = [];
   const perKeys = new Set<string>();

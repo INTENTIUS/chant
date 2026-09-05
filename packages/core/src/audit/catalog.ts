@@ -399,15 +399,18 @@ export async function resolveAuditCatalog(lexicons: string[]): Promise<Record<st
     lexicons.includes("forgejo") && !lexicons.includes("github") ? [...lexicons, "github"] : lexicons;
   if (needed.length === 0) return catalog;
   // Lazy import so importing this module doesn't pull in the plugin/config graph
-  // (matches ./core.ts's `load` — see #408).
-  const { loadPlugins } = await import("../cli/plugins");
-  let plugins: Array<{ auditCatalog?(): Record<string, RuleMeta> }>;
-  try {
-    plugins = await loadPlugins(needed);
-  } catch {
-    return catalog; // a lexicon package isn't installed — fall back to the static core catalog.
-  }
-  for (const plugin of plugins) {
+  // (matches ./core.ts's `load` — see #408). Loaded one at a time (rather than
+  // the bulk `loadPlugins`, which aborts on the first failure) so one
+  // not-yet-installed lexicon (e.g. terraform, #2085) doesn't drop every other
+  // lexicon's contributed catalog back to the static core map.
+  const { loadPlugin } = await import("../cli/plugins");
+  for (const name of needed) {
+    let plugin: { auditCatalog?(): Record<string, RuleMeta> };
+    try {
+      plugin = await loadPlugin(name);
+    } catch {
+      continue; // a lexicon package isn't installed, its catalog just doesn't contribute.
+    }
     const contributed = plugin?.auditCatalog?.();
     if (contributed) Object.assign(catalog, contributed);
   }

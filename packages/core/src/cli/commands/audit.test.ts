@@ -267,12 +267,11 @@ describe("auditCommand", () => {
       expect(result.output).toContain("k8s/deploy.yaml  ->  k8s");
       expect(result.output).toContain("infra/stack.json  ->  aws");
       expect(result.output).toContain("Dockerfile  ->  docker");
-      expect(result.output).toContain("infra/main.tf  ->  terraform (not audited; see chant carve)");
-      // The install line names only the lexicons the files wanted, never terraform.
+      expect(result.output).toContain("infra/main.tf  ->  terraform");
+      // The install line names every lexicon the files wanted, terraform included.
       expect(result.output).toContain(
-        `npx -p @intentius/chant -p @intentius/chant-lexicon-github -p @intentius/chant-lexicon-docker -p @intentius/chant-lexicon-aws -p @intentius/chant-lexicon-k8s chant audit ${MIXED}`,
+        `npx -p @intentius/chant -p @intentius/chant-lexicon-github -p @intentius/chant-lexicon-docker -p @intentius/chant-lexicon-terraform -p @intentius/chant-lexicon-aws -p @intentius/chant-lexicon-k8s chant audit ${MIXED}`,
       );
-      expect(result.output).not.toContain("chant-lexicon-terraform");
     });
 
     test("zero lexicons with --json: status no-lexicons plus the unclaimed list and install line", async () => {
@@ -282,7 +281,7 @@ describe("auditCommand", () => {
       const json = JSON.parse(result.output);
       expect(json.status).toBe("no-lexicons");
       expect(json.findings).toEqual([]);
-      expect(json.missingLexicons).toEqual(["github", "docker", "aws", "k8s"]);
+      expect(json.missingLexicons).toEqual(["github", "docker", "terraform", "aws", "k8s"]);
       expect(json.unclaimed).toContainEqual({ path: "k8s/deploy.yaml", lexicon: "k8s" });
       expect(json.unclaimed).toContainEqual({ path: "infra/main.tf", lexicon: "terraform" });
       expect(json.install).toMatch(/^npx -p @intentius\/chant /);
@@ -307,9 +306,9 @@ describe("auditCommand", () => {
       expect(result.status).toBe("ok");
       expect(result.exitCode).toBe(0);
       expect(result.scanned).toEqual([".github/workflows/ci.yml"]);
-      expect(result.output).toMatch(/^Note: 3 files look like docker\/aws\/k8s but those lexicons are not installed, so they were skipped \(npm i @intentius\/chant-lexicon-docker @intentius\/chant-lexicon-aws @intentius\/chant-lexicon-k8s\)\./);
-      expect(result.output).toContain("1 Terraform file skipped; the audit does not read HCL (see chant carve).");
+      expect(result.output).toMatch(/^Note: 4 files look like docker\/terraform\/aws\/k8s but those lexicons are not installed, so they were skipped \(npm i @intentius\/chant-lexicon-docker @intentius\/chant-lexicon-terraform @intentius\/chant-lexicon-aws @intentius\/chant-lexicon-k8s\)\./);
       expect(result.unclaimed).toContainEqual({ path: "k8s/deploy.yaml", lexicon: "k8s" });
+      expect(result.unclaimed).toContainEqual({ path: "infra/main.tf", lexicon: "terraform" });
     });
 
     test("partial with --json: status ok and the unclaimed files ride along", async () => {
@@ -320,11 +319,14 @@ describe("auditCommand", () => {
       expect(json.unclaimed.map((u: { lexicon: string }) => u.lexicon).sort()).toEqual(["aws", "docker", "k8s", "terraform"]);
     });
 
-    test("all lexicons loaded: no coverage note, no unclaimed (terraform aside)", async () => {
+    test("every installable lexicon loaded: terraform is the only gap, since no @intentius/chant-lexicon-terraform package exists yet (#2085)", async () => {
       const result = await auditCommand({ path: MIXED, plugins: await loadAuditPlugins() });
       expect(result.status).toBe("ok");
       expect(result.unclaimed).toEqual([{ path: "infra/main.tf", lexicon: "terraform" }]);
-      expect(result.output).not.toContain("not installed");
+      // terraform is treated like any other not-yet-installed lexicon now, so it still gets a coverage note.
+      expect(result.output).toContain(
+        "Note: 1 file looks like terraform but that lexicon is not installed, so it was skipped (npm i @intentius/chant-lexicon-terraform).",
+      );
       expect(result.scanned.sort()).toEqual([".github/workflows/ci.yml", "Dockerfile", "infra/stack.json", "k8s/deploy.yaml"]);
     });
 
