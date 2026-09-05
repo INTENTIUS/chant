@@ -1,7 +1,7 @@
 /**
  * Shared helpers for lexicon plugin implementations.
  *
- * Eliminates boilerplate across the 8 lexicon plugins by providing
+ * Eliminates boilerplate across the 15 lexicon plugins that use it by providing
  * factory functions for common plugin methods: skills loading,
  * MCP diff tool, and MCP catalog resource.
  */

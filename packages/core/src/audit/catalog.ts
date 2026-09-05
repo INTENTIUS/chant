@@ -63,7 +63,8 @@ export interface RuleMeta {
   /**
    * False if the check reads the chant model (`ctx.entities`) rather than the
    * emitted YAML (`ctx.outputs`) — such a check won't fire on audited YAML.
-   * All current post-synth checks are output-based, so this is true.
+   * Most post-synth checks are output-based, but cpln, fly, fountain, k3s,
+   * render and temporal all ship model-based checks with this false.
    */
   yamlBased: boolean;
 }
