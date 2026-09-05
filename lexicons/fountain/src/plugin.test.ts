@@ -59,8 +59,9 @@ describe("fountain plugin", () => {
     }
   });
 
-  it("parses standalone manifests into the entity graph via auditEntities (#1567)", () => {
-    const entities = fountainPlugin.auditEntities?.(
+  it("parses standalone manifests into the entity graph via auditEntities (#1567)", async () => {
+    // `await` because the member may return a Promise since #2082; fountain's own parse is sync.
+    const entities = await fountainPlugin.auditEntities?.(
       "apiVersion: fountain.dev/v1\nkind: Environment\nmetadata:\n  name: dev\nspec:\n  networking_type: limited\n",
     );
     expect(entities?.size).toBe(1);
