@@ -208,6 +208,32 @@ describe("auditFiles", () => {
     expect(findings.map((f) => `${f.file}:${f.entity}`).sort()).toEqual(["a.yaml:one", "b.yaml:two"]);
   });
 
+  test("parse-to-graph with an async entities parser: auditFiles awaits it into ctx.entities (#2082)", async () => {
+    const entityCheck: PostSynthCheck = {
+      id: "ENT003",
+      description: "reads ctx.entities, not ctx.outputs",
+      check: (ctx) =>
+        [...ctx.entities.keys()].map((name) => ({ checkId: "ENT003", severity: "warning" as const, message: `saw ${name}`, entity: name })),
+    };
+    const findings = await auditFiles(
+      [
+        { path: "a.tf", content: "one", lexicon: "terraform" },
+        { path: "b.tf", content: "two", lexicon: "terraform" },
+      ],
+      {
+        checksProvider: async () => [entityCheck],
+        // The lexicon's parser is inherently async (a lazy-loaded wasm HCL
+        // parser, per #1567's terraform follow-up). The returned Promise
+        // must be awaited before the check sees ctx.entities.
+        entitiesProvider: async () => async (content) => {
+          await Promise.resolve();
+          return new Map([[content, { entityType: "T::X" } as never]]);
+        },
+      },
+    );
+    expect(findings.map((f) => `${f.file}:${f.entity}`).sort()).toEqual(["a.tf:one", "b.tf:two"]);
+  });
+
   test("parse-to-graph merge: the same entity name in two files keeps both — a duplicate check sees the collision cross-file", async () => {
     const dupCheck: PostSynthCheck = {
       id: "DUP001",

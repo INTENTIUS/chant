@@ -696,9 +696,12 @@ export interface LexiconPlugin {
    * `chant audit` of hand-written manifests — parse-to-graph rather than
    * output-reading rule variants (#1567). Implementations must tolerate
    * arbitrary external content: a malformed document yields no entities, never
-   * a throw. Omit for lexicons whose audit checks read `ctx.outputs`.
+   * a throw. Omit for lexicons whose audit checks read `ctx.outputs`. May
+   * return a `Promise` for a lexicon whose parser is inherently async (e.g.
+   * terraform's HCL parser, a lazy-loaded wasm module). `auditLexicon` awaits
+   * it before reading `ctx.entities`.
    */
-  auditEntities?(content: string): Map<string, Declarable>;
+  auditEntities?(content: string): Map<string, Declarable> | Promise<Map<string, Declarable>>;
 
   /**
    * Machine-readable spec-coverage accounting for `check-lexicon` (#1330).
