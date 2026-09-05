@@ -1,0 +1,10 @@
+{
+  "name": "@intentius/chant-lexicon-terraform-example-getting-started",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@intentius/chant-lexicon-terraform": "workspace:*",
+    "@intentius/chant": "workspace:*"
+  }
+}

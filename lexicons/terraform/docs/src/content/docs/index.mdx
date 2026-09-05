@@ -1,0 +1,14 @@
+---
+title: Overview
+description: Terraform lexicon for chant
+---
+
+The Terraform lexicon reads an estate's existing `.tf` files rather than
+generating types for them. Name your root modules under `terraform.roots` in
+`chant.config.ts` and every HCL block joins the build as an entity, visible to
+the post-synth checks and to `chant audit`, with nothing written back over the
+HCL.
+
+Start with [Getting Started](getting-started/).
+
+Run `just docs` to regenerate this site.

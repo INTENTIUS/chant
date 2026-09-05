@@ -1,0 +1,102 @@
+---
+title: Getting Started
+description: Point chant at an existing Terraform root module
+diataxis: tutorial
+---
+
+Most chant lexicons ask you to declare infrastructure in TypeScript. This one
+starts from the `.tf` files you already have. You name the root modules, chant
+parses them, and the blocks join the build as entities that the post-synth
+checks can read. Nothing is written back over the HCL.
+
+## Install
+
+```bash
+npm install --save-dev @intentius/chant-lexicon-terraform
+```
+
+## Name your roots
+
+Add the `terraform` namespace to `chant.config.ts`. Importing the package is
+what brings the key into `ChantConfig`.
+
+```ts
+import type { ChantConfig } from "@intentius/chant/config";
+import "@intentius/chant-lexicon-terraform";
+
+export default {
+  lexicons: ["terraform"],
+  terraform: {
+    binary: "terraform",
+    roots: {
+      app: { dir: "./terraform" },
+    },
+  },
+} satisfies ChantConfig;
+```
+
+`dir` resolves against the project root, the directory holding
+`chant.config.ts`, because a `.tf` tree usually sits beside the typed source
+rather than inside it. Each root also takes an optional `workspace`, a
+`varFiles` list and a `backendConfig` map.
+
+`binary` is `"terraform"` or `"tofu"`. The two are wire-compatible for
+everything this lexicon does, so the choice is recorded rather than guessed.
+
+## Build
+
+```bash
+chant build
+```
+
+Every block of every configured root becomes one entity, keyed
+`<root>/<address>`:
+
+| HCL | Entity type | Key |
+|---|---|---|
+| `terraform { ... }` | `Terraform::Terraform` | `app/terraform` |
+| `provider "null" {}` | `Terraform::Provider` | `app/provider.null` |
+| `resource "null_resource" "web" {}` | `Terraform::Resource` | `app/null_resource.web` |
+| `data "aws_ami" "base" {}` | `Terraform::Data` | `app/data.aws_ami.base` |
+| `module "cdn" {}` | `Terraform::Module` | `app/module.cdn` |
+| `variable "region" {}` | `Terraform::Variable` | `app/var.region` |
+| `output "url" {}` | `Terraform::Output` | `app/output.url` |
+| `locals { ... }` | `Terraform::Locals` | `app/locals` |
+
+Each entity carries `props.address`, `props.body` (the block, verbatim from the
+parser), `props.file` and `props.root`.
+
+The build emits no Terraform of its own. Your `.tf` files stay the only source
+of truth, and `terraform apply` keeps working exactly as before.
+
+## What the checks tell you
+
+`TF001` fires once per root whose `terraform` block declares neither a
+`backend "<type>"` nor a `cloud {}`. Such a root keeps its state in a local
+`terraform.tfstate`: unshared, unlocked, and holding every resource attribute
+in plaintext. The first apply from a second machine starts from an empty state
+and proposes to create the estate again.
+
+Add a backend to clear it:
+
+```hcl
+terraform {
+  backend "s3" {
+    bucket = "acme-tfstate"
+    key    = "app/terraform.tfstate"
+    region = "us-east-1"
+  }
+}
+```
+
+## Failure modes
+
+A root whose `dir` does not exist, or one holding a `.tf` the parser refuses,
+produces a warning naming the root and contributes no entities. The rest of the
+build carries on, and the other roots are unaffected. Reading someone else's
+estate is the job here, so half of it parsing is more useful than none of it.
+
+## Next
+
+The worked example lives in `examples/getting-started/`: a config, a
+`terraform/` root with a local backend, and the entities it produces.
