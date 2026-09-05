@@ -2,6 +2,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { isLexiconPlugin } from "@intentius/chant/lexicon";
+import { validateLexiconConfig } from "@intentius/chant/lexicon-config";
+import type { ChantConfig } from "@intentius/chant/config";
 import { isDeclarable, isResourceDeclarable, type Declarable } from "@intentius/chant/declarable";
 import { terraformPlugin } from "./plugin";
 import { terraformConfigSchema } from "./config";
@@ -88,6 +90,42 @@ describe("terraform config schema", () => {
 
   it("rejects a binary that is neither terraform nor tofu", () => {
     expect(() => terraformConfigSchema.parse({ binary: "pulumi", roots: {} })).toThrow();
+  });
+});
+
+describe("config load through the plugin's configSchema", () => {
+  /** What `chant build` does with the namespace before anything else runs. */
+  function validate(config: Record<string, unknown>): ReturnType<typeof validateLexiconConfig> {
+    return validateLexiconConfig([terraformPlugin], config as unknown as ChantConfig);
+  }
+
+  it("accepts a well-formed namespace", () => {
+    expect(validate({ terraform: { roots: { app: { dir: "./terraform" } } } })).toEqual([]);
+  });
+
+  // Zod 4 reports an unrecognized key at the path of the object that carries
+  // it, naming the key in the message rather than in the path.
+  it("fails an unknown key under terraform", () => {
+    const problems = validate({ terraform: { roots: {}, workspaces: ["prod"] } });
+    expect(problems).toHaveLength(1);
+    expect(problems[0].path).toBe("terraform");
+    expect(problems[0].lexicon).toBe("terraform");
+    expect(problems[0].message).toContain("workspaces");
+  });
+
+  it("fails an unknown key inside a root", () => {
+    const problems = validate({ terraform: { roots: { app: { dir: ".", varfiles: [] } } } });
+    expect(problems.map((p) => p.path)).toEqual(["terraform.roots.app"]);
+    expect(problems[0].message).toContain("varfiles");
+  });
+
+  it("fails a root with no dir", () => {
+    const problems = validate({ terraform: { roots: { app: {} } } });
+    expect(problems.map((p) => p.path)).toEqual(["terraform.roots.app.dir"]);
+  });
+
+  it("says nothing about a project that declares no terraform namespace", () => {
+    expect(validate({ lexicons: ["terraform"] })).toEqual([]);
   });
 });
 
