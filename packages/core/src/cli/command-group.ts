@@ -57,6 +57,20 @@ export interface CommandGroup {
   description: string;
   /** Verbs in this group. */
   commands: CommandGroupCommand[];
+  /**
+   * The verb to run when the group name is given on its own — `chant acp`
+   * rather than `chant acp serve` (#2125). Named here rather than assumed to
+   * be the first verb, because a group whose bare form should be a usage
+   * error (`chant kube`) must stay one: omitting this field is how a group
+   * says it has no default.
+   *
+   * The token after the group name decides which reading applies, and that
+   * decision belongs to the caller that still holds the raw argv
+   * (`../cli/main.ts`'s `tryPluginCommand`): with a default verb, `chant acp
+   * --durable-requests` has no verb token to consume, so the flag is the
+   * default verb's argument rather than a verb it does not have.
+   */
+  defaultVerb?: string;
 }
 
 /**

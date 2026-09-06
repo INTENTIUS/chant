@@ -804,8 +804,17 @@ async function tryPluginCommand(rawArgv: string[]): Promise<number | undefined> 
   if (!groupName || groupName.startsWith("-")) return undefined;
 
   const plugins = await loadPluginsBestEffort();
-  const rawArgs = rawArgv.slice(2);
-  const result = await dispatchCommandGroup(plugins, groupName, verbName, rawArgs);
+
+  // A group declaring a `defaultVerb` (#2125) answers its bare name, so
+  // `chant acp` and `chant acp --durable-requests` both reach that verb. The
+  // slicing follows: with no verb token consumed, everything after the group
+  // name is the default verb's own argument list.
+  const group = collectCommandGroups(plugins).find((g) => g.name === groupName);
+  const useDefault =
+    group?.defaultVerb !== undefined && (verbName === undefined || verbName.startsWith("-"));
+  const verb = useDefault ? group?.defaultVerb : verbName;
+  const rawArgs = rawArgv.slice(useDefault ? 1 : 2);
+  const result = await dispatchCommandGroup(plugins, groupName, verb, rawArgs);
 
   if (result.kind === "no-group") return undefined;
   if (result.kind === "usage-error") {
@@ -862,7 +871,17 @@ async function loadPluginsOrExit(path: string): Promise<import("../lexicon").Lex
 
 // ── Command registry ──────────────────────────────────────────────
 
-const registry: CommandDef[] = [
+/**
+ * Every command word `chant` answers to, and the handler behind it.
+ *
+ * Exported because a caller other than `main()` now needs to ask "is this a
+ * chant verb, and what runs it?" — the fountain lexicon's ACP server (#2125)
+ * treats a prompt as a chant command line, and the only honest answer to
+ * whether `chant lifecycle diff` is a verb is this list. A hand-kept copy
+ * would be wrong the first time a command is added, and the ACP server would
+ * refuse a verb that works at the terminal.
+ */
+export const commandRegistry: CommandDef[] = [
   // Primary commands
   { name: "build", requiresPlugins: true, handler: runBuild },
   { name: "lint", handler: runLint },
@@ -1037,7 +1056,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const match = resolveCommand(args, registry);
+  const match = resolveCommand(args, commandRegistry);
   if (!match) {
     // chant #1078 — not one of core's own commands; check whether a lexicon
     // mounted a command group under this name before giving up. This is the
