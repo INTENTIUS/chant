@@ -24,6 +24,8 @@ import {
   type FountainSseEvent,
 } from "./runtime";
 import type { FountainHttp } from "./activities/fountain-apply";
+import { Steward, __resetStewardsForTests } from "../composites/steward";
+import { Environment } from "../generated/index";
 
 // ── fixtures ──────────────────────────────────────────────────────────────
 
@@ -297,6 +299,33 @@ describe("start", () => {
   it("refuses a named profile that chant.config.ts does not declare", async () => {
     const runtime = createFountainOpRuntime({ config: CONFIG, profile: "prod", http: fakeHttp({}).http });
     await expect(runtime.start(OP, {})).rejects.toThrow(/no profile "prod" under fountain.profiles/);
+  });
+
+  it("prefers a declared Steward over the profile's team", async () => {
+    __resetStewardsForTests();
+    Steward({
+      name: "declared-steward",
+      environment: new Environment({ name: "toolchain" }),
+      ops: [OP],
+    });
+
+    const { http, calls } = fakeHttp({
+      "GET /api/agents?search=declared-steward": {
+        status: 200,
+        json: { data: [{ id: "agent-7", name: "declared-steward" }] },
+      },
+      "POST /api/team/agent-7/messages": { status: 202, json: { data: { conversation_id: "conv-7" } } },
+    });
+    const { sse } = fakeSse([[sseEvent("1", { stream: "stage", stage: "turn", state: "done" })]]);
+    const runtime = createFountainOpRuntime({
+      config: CONFIG, endpoint: "https://fountain.example.com", token: "t", http, sse, now: fakeClock(),
+    });
+
+    // CONFIG's profile names the team "steward"; the declaration wins.
+    await (await runtime.start(OP, {})).result();
+    expect(calls.some((c) => c.path === "/api/team/agent-7/messages")).toBe(true);
+    expect(calls.some((c) => c.path.includes("search=steward&"))).toBe(false);
+    __resetStewardsForTests();
   });
 
   it("refuses an Op with no steward anywhere, naming all three ways to give it one", async () => {
