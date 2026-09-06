@@ -35,7 +35,7 @@ export const APPLY_OP_KEYS: OptionKey[] = [
   { key: "planFile", detail: "Plan file written by Plan and consumed by Apply. Default: `chant.tfplan`." },
   { key: "gate", detail: '"on-destroy" | "always" | "never" — when to emit the approval gate. Default: "on-destroy".' },
   { key: "signalName", detail: "Gate signal name. Default: `approve-<name>`." },
-  { key: "gateTimeout", detail: "Temporal duration the gate waits before timing out. Default: core's own (48h)." },
+  { key: "gateTimeout", detail: "How long a recorded pending gate stays valid, as a duration string. Default: core's own (48h)." },
   { key: "gateDescription", detail: "Override the gate description shown to the approver." },
   { key: "upgrade", detail: "`-upgrade` on the Init step: re-resolve provider and module versions." },
   { key: "cwd", detail: "Directory each step starts the `chant.config.*` search from." },

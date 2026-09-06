@@ -3,7 +3,7 @@
  * live: `terraform.binary` is `"choudoufu"` and the root's directory declares
  * an estate — a `live { }` block or an `estate.chdf.hcl` sidecar (#2103).
  *
- * Two callers decide something before any Temporal activity ever runs, and
+ * Two callers decide something at build time, before any activity runs, and
  * neither can afford the async work `../op/activities/terraform.ts`'s own
  * `resolveRoot` does (`loadChantConfigUpward`, a full `chant.config.ts`/`.json`
  * walk):
@@ -15,9 +15,9 @@
  *     `terraformApply` call it is statically inspecting is exempt from the
  *     plan-file pairing it otherwise enforces.
  *
- * Both run outside a Temporal worker (a `chant build`/`chant lint` process),
- * so a synchronous read is available, but only the cheap half of it:
- * `findProjectConfig` (`@intentius/chant/project-root`) is a plain, already-
+ * Both run in the build process (`chant build`/`chant lint`) rather than in
+ * an activity at run time, so a synchronous read is available, but only the
+ * cheap half of it: `findProjectConfig` (`@intentius/chant/project-root`) is a plain, already-
  * synchronous upward filesystem walk, but a `chant.config.ts` is project-
  * authored code, and evaluating it synchronously outside chant's own
  * config-sandbox machinery is more than either caller's best-effort question

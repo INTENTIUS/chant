@@ -51,7 +51,7 @@ export const { op } = TerraformApplyOp({
 | `planFile` | `chant.tfplan` | Written by Plan, consumed by Apply — relative to the root dir. |
 | `gate` | `"on-destroy"` | `"on-destroy"` and `"always"` build the identical four-phase shape (`GateStep` carries no condition to branch a plan's destroy count at build time — see below); `"never"` drops the Gate phase entirely. |
 | `signalName` | `approve-<name>` | Gate signal name. |
-| `gateTimeout` | core's own (48h) | Temporal duration the gate waits before timing out. |
+| `gateTimeout` | core's own (48h) | How long a recorded pending gate stays valid, as a duration string. |
 | `gateDescription` | a generated description naming the root and gate mode | Override text shown to the approver. |
 | `upgrade` | `false` | `-upgrade` on the Init step. |
 | `cwd` | the process's cwd | Directory each step starts its `chant.config.*` search from. |
@@ -60,7 +60,7 @@ export const { op } = TerraformApplyOp({
 
 ### The gate
 
-`gate: "never"` is what makes the Op runnable under the local executor (`chant run`) — `packages/core/src/op/local-executor.ts` refuses any Op containing a gate, because a gate is durable-runtime work. Every other mode emits a Gate phase that re-renders the saved plan with a `terraformShow` step first (over the plan file, so it calls no provider) and reports its `destroys` count as a `Destroys` search attribute before waiting. That is deliberate: `GateStep` carries a signal name, a timeout and a description, nothing conditional, so `"on-destroy"` cannot itself decide at build time whether a given run's plan destroys anything. The workable answer is to always emit the gate and tell the approver what is at stake instead of trying to skip it.
+`gate: "never"` drops the Gate phase, so `chant run` walks straight from Plan to Apply. Every other mode emits a Gate phase that re-renders the saved plan with a `terraformShow` step first (over the plan file, so it calls no provider) and reports its `destroys` count as a `Destroys` search attribute. A gate is a fact on the gate ledger: a run that reaches one nobody has approved records that it is waiting, ends with status `gated` and exits 3, `chant approve <op> <gate>` writes the resolution, and the next run reads it and walks through. `"on-destroy"` and `"always"` emitting the identical shape is deliberate: `GateStep` carries a signal name, a timeout and a description, nothing conditional, so `"on-destroy"` cannot itself decide at build time whether a given run's plan destroys anything. The workable answer is to always emit the gate and tell the approver what is at stake instead of trying to skip it.
 
 ### Compensation
 
@@ -168,7 +168,7 @@ export const { op } = TerraformAdoptOp({ name: "estate-adopt", root: "estate" })
 |---|---|---|
 | Check | `choudoufuLiveCheck` | Whether this root can move under markers at all. No cloud calls, so it is the cheapest place to find out that the ledger below would not be authoritative. |
 | Ledger | `choudoufuLivePlan` with `adoptionOnly` | The adoption ledger, which is what the gate approves, plus the machine-readable document the Adopt phase acts on. |
-| Gate | always | Adoption writes tags onto resources this estate does not yet own. There is no `gate: "never"` here, which does mean the Op needs Temporal rather than `chant run`. |
+| Gate | always | Adoption writes tags onto resources this estate does not yet own. There is no `gate: "never"` here, so every run stops at the gate until `chant approve <op> <gate>` records the resolution. |
 | Adopt | `choudoufuAdopt` | The marker writes themselves, and a named refusal for everything it declined. |
 
 | Option | Default | Notes |
@@ -177,7 +177,7 @@ export const { op } = TerraformAdoptOp({ name: "estate-adopt", root: "estate" })
 | `root` | — required | Key into `terraform.roots`. Must be a live root. |
 | `estate` | auto-detected | The estate whose markers to look for; normally the root's own `live` block or sidecar answers this. |
 | `signalName` | `approve-<name>` | Gate signal name. |
-| `gateTimeout` | core's own (48h) | How long the gate waits. |
+| `gateTimeout` | core's own (48h) | How long a recorded pending gate stays valid. |
 | `gateDescription` | a generated description naming the ledger | Override text shown to the approver. |
 | `cwd` | the process's cwd | Directory each step starts its `chant.config.*` search from. |
 | `compensate` | unset | Refused without a command. See below. |

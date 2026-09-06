@@ -27,9 +27,11 @@
  *   - **Gate** always. Adoption writes tags onto resources this estate does
  *     not yet own, which is the moment the estate's boundary moves, and no
  *     reading of that is routine enough to skip. There is no `gate: "never"`
- *     here, unlike `TerraformApplyOp` — which does mean this Op needs Temporal
- *     and cannot run under `chant run` (`packages/core/src/op/local-executor.ts`
- *     refuses any Op containing a gate).
+ *     here, unlike `TerraformApplyOp`, so every run stops at the gate until
+ *     someone has approved it. A gate is a fact on the gate ledger (#2119):
+ *     `chant run` records that the run is waiting, ends with status `gated`
+ *     and exits 3, `chant approve <op> <gate>` writes the resolution, and the
+ *     next run reads it and walks through to the Adopt phase.
  *   - **Adopt** writes the markers. See `choudoufuAdopt`'s own doc for the
  *     mechanism and why it is the tag write rather than choudoufu's `adopt`
  *     policy verb.
@@ -99,7 +101,7 @@ export interface TerraformAdoptOpConfig {
   estate?: string;
   /** Gate signal name. Default: `approve-<name>`, as `TerraformApplyOp` does. */
   signalName?: string;
-  /** Temporal duration the gate waits before timing out. Default: core's own (48h). */
+  /** How long a recorded pending gate stays valid, as a duration string. Default: core's own (48h). */
   gateTimeout?: string;
   /** Override the gate description shown to the approver. */
   gateDescription?: string;

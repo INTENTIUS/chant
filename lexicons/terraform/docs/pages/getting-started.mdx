@@ -107,16 +107,17 @@ import { TerraformApplyOp } from "@intentius/chant-lexicon-terraform";
 export const { op } = TerraformApplyOp({
   name: "app-apply",
   root: "app",
-  gate: "never", // required for the local executor — see below
+  gate: "never", // no approval step, so a run goes straight through — see below
 });
 ```
 
-`gate: "never"` matters here specifically: every other gate mode emits an
-approval-wait phase, which is durable-runtime work the local executor refuses
-to run. With it, `chant run app-apply` executes Init, Plan and Apply against
-your terminal, no Temporal server involved. See [Ops](../ops/) for every
-`TerraformApplyOp` option, the four activities and builders underneath it, and
-the compensation rule for a failed apply.
+`gate: "never"` matters here specifically: every other gate mode emits a Gate
+phase, and a run that reaches a gate nobody has approved records a pending fact
+on the gate ledger, ends with status `gated` and exits 3, so Apply never runs
+until someone records the resolution with `chant approve`. With it, `chant run
+app-apply` executes Init, Plan and Apply straight through in your terminal. See
+[Ops](../ops/) for every `TerraformApplyOp` option, the four activities and
+builders underneath it, and the compensation rule for a failed apply.
 
 ## Next
 

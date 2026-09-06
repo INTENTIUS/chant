@@ -7,18 +7,19 @@
  * `@intentius/chant-lexicon-terraform/op/activity-contracts` for build-time
  * validation. `loadActivityContracts`
  * (`packages/core/src/op/activity-contract-registry.ts`) merges what it finds
- * here into the map temporal's TMP012 and TMP013 validate every `Chant::Op`
- * step against, which is what lets an Op built out of terraform steps be
- * checked at all when the temporal lexicon is in the same build. Before this
- * existed, both examples that carry an Op had to keep it outside `src/` where
- * `chant dev check-lexicon`'s example build could not see it.
+ * here into the map core's own OPS012 and OPS013 validate every `Chant::Op`
+ * step against. Since #2122 moved those checks into core they fire on every
+ * project that declares an Op, so an Op built out of terraform steps is
+ * checked wherever it is built. Before this existed, both examples that carry
+ * an Op had to keep it outside `src/` where `chant dev check-lexicon`'s
+ * example build could not see it.
  *
  * Each contract's `args` schema mirrors the corresponding `*Args` interface in
  * `./activities/terraform.ts`, and each `returns` schema the corresponding
  * `*Result`. Authored with `z.strictObject(...)`, never `z.object(...)`: the
  * default form silently drops an unrecognized key instead of rejecting it, so
  * a misspelled `planfile` would vanish rather than fail the build. The
- * `returns` schemas are the half TMP013 needs — `plan.out.planFile` feeding an
+ * `returns` schemas are the half OPS013 needs — `plan.out.planFile` feeding an
  * Apply step, `plan.out.text` feeding a `reconcilePr` body — so a field a step
  * references has to be spelled here for the reference to validate.
  *
