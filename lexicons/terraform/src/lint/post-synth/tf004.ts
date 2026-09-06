@@ -12,6 +12,10 @@
  * A local (`./`, `../`) or git/hg source is never flagged here: git/hg is
  * TF005's territory, and a local source cannot carry a registry version at
  * all. One diagnostic per module block.
+ *
+ * Scope: root and child modules alike (#2112). The condition is a property
+ * of the block itself, so a descended module's block is read exactly as a
+ * root's is.
  */
 
 import type {

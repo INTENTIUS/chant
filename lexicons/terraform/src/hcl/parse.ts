@@ -46,6 +46,20 @@ export interface TerraformEntity extends Declarable {
     /** Configured root name this block belongs to. */
     readonly root: string;
     /**
+     * The chain of `module.<name>` calls that reached this block, outermost
+     * first (chant #2112). Empty or absent on a block declared in the root
+     * module itself; `["module.cdn"]` on a block of the module `./modules/cdn`
+     * called as `cdn` from the root; `["module.cdn", "module.bucket"]` one
+     * level deeper. The same chain is in the entity key, which is
+     * `<root>/module.cdn/<address>` for the first case, so a reader can tell
+     * root scope from child scope from either.
+     *
+     * The names are the CALL names (`module.<label>`), not the directory the
+     * source points at, matching `terraform show -json`'s `child_modules[]`
+     * addresses, choudoufu's marker grammar, and tflint's `Callers:` chain.
+     */
+    readonly callers?: readonly string[];
+    /**
      * Whether this root is live: `terraform.binary` is `"choudoufu"` and an
      * estate is declared (a `live` block or an `estate.chdf.hcl` sidecar).
      * Set on every entity of the root, not just the `Terraform::Live` one, so
@@ -126,7 +140,7 @@ export function terraformEntity(
   body: BlockBody,
   file: string,
   root: string,
-  extra?: { mode?: TerraformRootMode; estate?: string; workspace?: string; delete?: TerraformDeleteMode },
+  extra?: { mode?: TerraformRootMode; estate?: string; workspace?: string; delete?: TerraformDeleteMode; callers?: readonly string[] },
   source: string = "",
   line?: number,
   suppressions?: readonly SuppressionDirective[],
@@ -147,6 +161,7 @@ export function terraformEntity(
       ...(extra?.estate !== undefined ? { estate: extra.estate } : {}),
       ...(extra?.workspace !== undefined ? { workspace: extra.workspace } : {}),
       ...(extra?.delete !== undefined ? { delete: extra.delete } : {}),
+      ...(extra?.callers !== undefined && extra.callers.length > 0 ? { callers: extra.callers } : {}),
     },
     suppressions,
   };
@@ -254,6 +269,12 @@ export interface TerraformRootModeOptions {
  * "the sidecar is the leading one" (choudoufu refuses the combination
  * outright; this lexicon does not police that here, see TF024/TF025 for
  * what it does police on a live root).
+ *
+ * `callers` is the module-call chain these files were reached through
+ * (chant #2112), empty for a root module. When it is non-empty the keys
+ * become `<root>/module.<name>/<address>` (one segment per caller) and every
+ * entity carries the chain on `props.callers`. `./descend.ts` is what fills
+ * it in; nothing else should pass it.
  */
 export async function blocksToEntities(
   files: readonly TerraformFile[],
@@ -261,9 +282,11 @@ export async function blocksToEntities(
   hcl2json?: Hcl2Json,
   modeOptions?: TerraformRootModeOptions,
   sidecar?: TerraformFile,
+  callers: readonly string[] = [],
 ): Promise<Map<string, Declarable>> {
   const parser = hcl2json ?? (await loadHcl2json());
   const entities = new Map<string, Declarable>();
+  const prefix = callers.length > 0 ? `${root}/${callers.join("/")}` : root;
 
   const add = (entityType: string, address: string, body: unknown, file: TerraformFile, scan: FileScan): void => {
     const { line, suppressions } = directivesFor(scan, address);
@@ -276,13 +299,14 @@ export async function blocksToEntities(
       {
         ...(modeOptions?.workspace !== undefined ? { workspace: modeOptions.workspace } : {}),
         ...(modeOptions?.delete !== undefined ? { delete: modeOptions.delete } : {}),
+        ...(callers.length > 0 ? { callers } : {}),
       },
       file.source,
       line,
       suppressions,
     );
-    let key = `${root}/${address}`;
-    for (let n = 2; entities.has(key); n++) key = `${root}/${address}~${n}`;
+    let key = `${prefix}/${address}`;
+    for (let n = 2; entities.has(key); n++) key = `${prefix}/${address}~${n}`;
     entities.set(key, entity);
   };
 
@@ -381,12 +405,17 @@ export async function parseTerraformRootDir(
   root: string,
   hcl2json?: Hcl2Json,
   modeOptions?: TerraformRootModeOptions,
+  callers: readonly string[] = [],
 ): Promise<Map<string, Declarable>> {
   const files = listTerraformFiles(dir).map((name) => ({
     name,
     source: readFileSync(join(dir, name), "utf-8"),
   }));
-  return blocksToEntities(files, root, hcl2json, modeOptions, readLiveSidecarFile(dir));
+  // A child module gets no sidecar read: `estate.chdf.hcl` declares the
+  // estate a ROOT runs against, and choudoufu reads it from the root's own
+  // directory only. See `./descend.ts`.
+  const sidecar = callers.length === 0 ? readLiveSidecarFile(dir) : undefined;
+  return blocksToEntities(files, root, hcl2json, modeOptions, sidecar, callers);
 }
 
 /**
@@ -405,4 +434,24 @@ export async function parseTerraformRootContent(
   modeOptions?: TerraformRootModeOptions,
 ): Promise<Map<string, Declarable>> {
   return blocksToEntities(splitBundleContent(content), root, hcl2json, modeOptions);
+}
+
+/**
+ * The module scope an entity key names: the part before the address.
+ *
+ * `"app/aws_s3_bucket.assets"` is scope `"app"` (the root module);
+ * `"app/module.cdn/aws_s3_bucket.assets"` is scope `"app/module.cdn"`. Keys
+ * are built here (see {@link blocksToEntities}), so the split lives here too:
+ * the reference index (`./references.ts`) and the module-scoped checks read
+ * scopes through it rather than re-deriving the key shape.
+ */
+export function scopeOfKey(key: string): string {
+  const slash = key.lastIndexOf("/");
+  return slash === -1 ? "" : key.slice(0, slash);
+}
+
+/** The `module.<name>` chain in an entity key, outermost first. Empty for a root-module block. */
+export function callersOfKey(key: string): string[] {
+  const parts = key.split("/");
+  return parts.length <= 2 ? [] : parts.slice(1, -1);
 }

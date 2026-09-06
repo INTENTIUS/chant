@@ -10,6 +10,10 @@
  *
  * A bare `module.x` reference is not reported: a module's outputs are already
  * a curated surface, which is the property this rule is asking for.
+ *
+ * Scope: root and child modules alike (#2112). The condition is a property
+ * of the block itself, so a descended module's block is read exactly as a
+ * root's is.
  */
 
 import type {

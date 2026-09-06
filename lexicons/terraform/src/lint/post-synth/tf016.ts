@@ -20,6 +20,10 @@
  * deprecated interpolation inside an object KEY (`"${var.k}" = "value"`).
  * That is a different line shape and its fix is not a simple unquote, so this
  * rule leaves it alone rather than emit a diff it cannot justify.
+ *
+ * Scope: root and child modules alike (#2112). The condition is a property
+ * of the block itself, so a descended module's block is read exactly as a
+ * root's is.
  */
 
 import type {

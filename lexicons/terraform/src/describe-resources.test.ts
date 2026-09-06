@@ -22,7 +22,9 @@ import type { Declarable } from "@intentius/chant/declarable";
 import {
   describeResources,
   classifyStateOwnership,
+  entityKeyFor,
   indexStateResources,
+  qualifiedAddress,
   TERRAFORM_STATE_OWNERSHIP_KEYS,
   type TerraformReadDeps,
 } from "./describe-resources";
@@ -130,6 +132,30 @@ describe("indexStateResources (#2087)", () => {
   });
 });
 
+describe("child-module addresses and entity keys (#2112)", () => {
+  it("qualifies a child module block's address the way state and the markers write it", () => {
+    expect(qualifiedAddress("null_resource.edge", [])).toBe("null_resource.edge");
+    expect(qualifiedAddress("null_resource.edge", ["module.cdn"])).toBe("module.cdn.null_resource.edge");
+    expect(qualifiedAddress("null_resource.edge", ["module.cdn", "module.bucket"])).toBe(
+      "module.cdn.module.bucket.null_resource.edge",
+    );
+  });
+
+  it("maps a live address back onto the key buildRoots() produced for it", () => {
+    expect(entityKeyFor("app", "null_resource.first")).toBe("app/null_resource.first");
+    expect(entityKeyFor("app", "module.cdn.null_resource.edge")).toBe("app/module.cdn/null_resource.edge");
+    expect(entityKeyFor("app", "module.cdn.module.bucket.aws_s3_bucket.assets")).toBe(
+      "app/module.cdn/module.bucket/aws_s3_bucket.assets",
+    );
+  });
+
+  it("is the inverse of the key the parse builds, for the fixture root", async () => {
+    const entities = await declaredEntities();
+    expect(entities.has("app/module.cdn/null_resource.edge")).toBe(true);
+    expect(entityKeyFor("app", "module.cdn.null_resource.edge")).toBe("app/module.cdn/null_resource.edge");
+  });
+});
+
 describe("classifyStateOwnership (#2087)", () => {
   const index = indexStateResources(STATE);
 
@@ -193,6 +219,18 @@ describe("terraform describeResources (#2087)", () => {
     // Absence is spelled "in neither map", so `queried` is the only place it
     // can say where it looked (#1620).
     expect(queried["app/null_resource.third"]).toContain("null_resource.third");
+  });
+
+  it("maps a descended child module's resource onto its child_modules address (#2112)", async () => {
+    const { resources, queried } = normalizeObservation(await describeResources(await options(), deps()));
+    const child = resources["app/module.cdn/null_resource.edge"];
+    expect(child).toMatchObject({
+      type: "Terraform::Resource",
+      status: "managed",
+      ownership: "owned",
+    });
+    expect(child.attributes).toMatchObject({ address: "module.cdn.null_resource.edge", root: "app" });
+    expect(queried["app/module.cdn/null_resource.edge"]).toContain('address "module.cdn.null_resource.edge"');
   });
 
   it("reports a declared module block as present but unknown, since state has no row for it", async () => {
@@ -296,6 +334,8 @@ describe("terraform describeResources --owned (#2087)", () => {
     expect(resources).not.toHaveProperty("app/module.cdn");
     expect(unobserved["app/module.cdn"].reason).toBe("filtered");
     expect(Object.keys(resources).sort()).toEqual([
+      // The child module's resource is in state and owned too (#2112).
+      "app/module.cdn/null_resource.edge",
       "app/null_resource.first",
       "app/null_resource.second",
     ]);

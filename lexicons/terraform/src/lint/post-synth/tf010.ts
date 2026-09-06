@@ -9,6 +9,10 @@
  *
  * A blank `type` counts as absent, matching KICS, which fails a `type` that
  * trims to empty.
+ *
+ * Scope: root and child modules alike (#2112). The condition is a property
+ * of the block itself, so a descended module's block is read exactly as a
+ * root's is.
  */
 
 import type {

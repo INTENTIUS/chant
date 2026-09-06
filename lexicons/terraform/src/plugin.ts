@@ -5,6 +5,7 @@ import { createSkillsLoader } from "@intentius/chant/lexicon-plugin-helpers";
 import { terraformSerializer } from "./serializer";
 import { rules } from "./lint/rules";
 import { postSynthChecks } from "./lint/post-synth";
+import { withCallersChain } from "./lint/post-synth/scope";
 import { terraformAuditCatalog } from "./lint/audit-catalog";
 import { completions } from "./lsp/completions";
 import { hover } from "./lsp/hover";
@@ -124,15 +125,25 @@ export const terraformPlugin: LexiconPlugin = {
     const namespace = (ctx.config as { terraform?: TerraformConfig }).terraform;
     const roots = namespace?.roots ?? {};
     if (Object.keys(roots).length === 0) return { entities: new Map(), warnings: [] };
-    return renderTerraformRoots({ projectRoot: ctx.projectRoot, roots, binary: namespace?.binary });
+    return renderTerraformRoots({
+      projectRoot: ctx.projectRoot,
+      roots,
+      binary: namespace?.binary,
+      callModuleType: namespace?.callModuleType,
+    });
   },
 
   lintRules() {
     return rules;
   },
 
+  /**
+   * The generated barrel of checks, each wrapped so a finding inside a
+   * descended child module names the call chain that reached it (#2112). See
+   * `./lint/post-synth/scope.ts`.
+   */
   postSynthChecks() {
-    return postSynthChecks;
+    return withCallersChain(postSynthChecks);
   },
 
   auditCatalog() {
@@ -163,6 +174,17 @@ export const terraformPlugin: LexiconPlugin = {
    * the root name to group and de-duplicate diagnostics within one parse, so
    * this is enough for the same graph-reading check that fires on `chant
    * build` to fire here too. Never throws: malformed HCL yields an empty map.
+   *
+   * Module descent (#2112) reaches this path through the same
+   * `blocksToEntities`, but finds nothing to descend into: this hook is
+   * handed one directory's joined text and no directory to read a local
+   * module's files from, and audit discovery has already classified every
+   * nested `.tf` directory as an audit input of its own (`classifyTerraform`,
+   * `packages/core/src/audit/discover.ts`). So a child module IS audited on
+   * this path, as its own root rather than as a child scope, which means the
+   * two rules that ask "is this block inside a child module?" (TF014, TF015)
+   * report on `chant build` and not in `chant audit`, and TF020 answers per
+   * directory either way. The rule pages say so.
    */
   async auditEntities(content: string): Promise<Map<string, Declarable>> {
     try {

@@ -12,6 +12,10 @@
  * `terraform.tf` and `versions.tf`, say). A root with no `terraform` block
  * at all is out of scope, same as TF001 and TF002: the missing block is
  * their finding, not this one's.
+ *
+ * Scope: root modules only (#2112). A child module may legitimately leave
+ * `required_version` to the root that calls it, so a descended module's
+ * `terraform` block is skipped here.
  */
 
 import type {
@@ -20,6 +24,7 @@ import type {
   PostSynthDiagnostic,
 } from "@intentius/chant/lint/post-synth";
 import { isResourceDeclarable } from "@intentius/chant/declarable";
+import { isRootScoped } from "./scope";
 import { TERRAFORM_TYPE, type BlockBody } from "../../hcl/parse";
 
 function hasRequiredVersion(body: BlockBody): boolean {
@@ -37,6 +42,7 @@ export const tf003: PostSynthCheck = {
 
     for (const [key, entity] of ctx.entities) {
       if (entity.entityType !== TERRAFORM_TYPE || !isResourceDeclarable(entity)) continue;
+      if (!isRootScoped(entity)) continue;
       const props = entity.props as { root?: unknown; body?: unknown };
       const root = typeof props.root === "string" ? props.root : "";
       const body = (typeof props.body === "object" && props.body !== null ? props.body : {}) as BlockBody;

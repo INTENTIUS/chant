@@ -13,6 +13,11 @@
  * someone else's estate is the whole job here, and half of it parsing is more
  * useful than none of it, especially when the audit path (#2085) walks
  * repositories it did not write.
+ *
+ * A root's own directory is not the end of the parse: a `module` block with a
+ * local source is followed into its directory and parsed as a child scope of
+ * the root (#2112). `./descend.ts` owns that walk and every refusal in it; the
+ * refusals surface here as this render's warnings.
  */
 
 import { existsSync } from "node:fs";
@@ -21,6 +26,7 @@ import { isResourceDeclarable, type Declarable } from "@intentius/chant/declarab
 import type { Hcl2Json } from "@intentius/chant/terraform/parse";
 import type { TerraformRootConfig } from "../config";
 import { LIVE_TYPE, parseTerraformRootDir } from "./parse";
+import { descendModules, resolveCallModuleType, type CallModuleType } from "./descend";
 
 export interface TerraformRootsResult {
   entities: Map<string, Declarable>;
@@ -37,19 +43,32 @@ export interface RenderTerraformRootsOptions {
    * declares an estate; anything else runs stock (#2103).
    */
   binary?: string;
+  /**
+   * `terraform.callModuleType` (#2112): how far each root's parse follows its
+   * `module` calls. Defaults to `"local"`, so a module sourced from `./` or
+   * `../` is parsed as a child scope of the root that calls it.
+   */
+  callModuleType?: CallModuleType;
   /** Injectable parser (tests); defaults to core's lazy-loaded `@cdktf/hcl2json`. */
   hcl2json?: Hcl2Json;
 }
 
 /**
- * Parse each configured root into entities keyed `<root>/<address>`. Roots are
- * visited in declaration order, and one root's failure never stops the next.
+ * Parse each configured root into entities keyed `<root>/<address>`, plus its
+ * local child modules, keyed `<root>/module.<name>/<address>` (#2112). Roots
+ * are visited in declaration order, and one root's failure never stops the
+ * next.
  */
 export async function renderTerraformRoots(
   opts: RenderTerraformRootsOptions,
 ): Promise<TerraformRootsResult> {
   const entities = new Map<string, Declarable>();
   const warnings: string[] = [];
+
+  // One verdict for the whole render: the mode is a project-level setting, so
+  // a refused `"all"` is said once rather than once per root (#2112).
+  const callModuleType = resolveCallModuleType(opts.callModuleType);
+  if (callModuleType.warning) warnings.push(callModuleType.warning);
 
   for (const [name, root] of Object.entries(opts.roots)) {
     const dir = isAbsolute(root.dir) ? root.dir : resolve(opts.projectRoot, root.dir);
@@ -60,12 +79,23 @@ export async function renderTerraformRoots(
     }
 
     try {
-      const parsed = await parseTerraformRootDir(dir, name, opts.hcl2json, {
-        binary: opts.binary,
-        workspace: root.workspace,
-        delete: root.delete,
-      });
+      const modeOptions = { binary: opts.binary, workspace: root.workspace, delete: root.delete };
+      const parsed = await parseTerraformRootDir(dir, name, opts.hcl2json, modeOptions);
       for (const [key, entity] of parsed) entities.set(key, entity);
+
+      // Local child modules, keyed `<root>/module.<name>/<address>` (#2112).
+      // Their refusals are warnings on the root that called them, since the
+      // call site is where a reader can act on one.
+      const descended = await descendModules(parsed, {
+        dir,
+        root: name,
+        projectRoot: opts.projectRoot,
+        callModuleType: callModuleType.effective,
+        hcl2json: opts.hcl2json,
+        modeOptions,
+      });
+      for (const [key, entity] of descended.entities) entities.set(key, entity);
+      warnings.push(...descended.warnings);
 
       // A `live` block or `estate.chdf.hcl` sidecar only takes effect under
       // choudoufu; under any other binary it parses fine but is inert, which

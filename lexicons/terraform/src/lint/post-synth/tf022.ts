@@ -14,6 +14,10 @@
  * provider API token, a Kubernetes secret's data. The fix is always the same
  * shape, a reference rather than a constant, which is what the message says
  * rather than "remove this".
+ *
+ * Scope: root and child modules alike (#2112). The condition is a property
+ * of the block itself, so a descended module's block is read exactly as a
+ * root's is.
  */
 
 import type {

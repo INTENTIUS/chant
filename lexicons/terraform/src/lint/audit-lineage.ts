@@ -38,7 +38,9 @@
  * `PRIOR_ART`, spelled exactly as below. `checkov` and `kics` were already
  * registered (other lexicons cite them); TF004 and TF005 are the first
  * Terraform rules to. Each later rule issue adds the remaining entries it
- * needs the first time a shipped rule cites them.
+ * needs the first time a shipped rule cites them: #2112 (TF014, TF015, TF020,
+ * TF021) added `gcp-terraform-best-practices`, the last row of the table below
+ * that no shipped rule had cited yet.
  *
  * | Key | Name | URL | Licence | Kind | Note |
  * |---|---|---|---|---|---|
@@ -233,6 +235,42 @@ export const terraformAuditLineage: Record<string, Lineage[]> = {
   TF013: [
     { tool: "tflint-ruleset-redeploy", rule: "terraform_ignore_changes_all", url: `${REDEPLOY_RULES}/terraform_ignore_changes_all.md`, relation: "equivalent" },
   ],
+  TF014: [
+    {
+      tool: "tflint-ruleset-avm",
+      rule: "avm_terraform_provider_block_disallowed",
+      url: "https://github.com/Azure/tflint-ruleset-avm/blob/main/docs/basic/avm_terraform_provider_block_disallowed.md",
+      relation: "equivalent",
+    },
+    {
+      tool: "gcp-terraform-best-practices",
+      rule: "Build reusable modules: modules must not configure providers",
+      url: "https://docs.cloud.google.com/docs/terraform/best-practices/general-style-structure#reusable-modules",
+      relation: "equivalent",
+    },
+    {
+      tool: "aws-terraform-prescriptive-guidance",
+      rule: "Structure: declare provider configurations in the root module",
+      url: "https://docs.aws.amazon.com/prescriptive-guidance/latest/terraform-aws-provider-best-practices/structure.html",
+      relation: "equivalent",
+    },
+  ],
+  // TF015 has no scanner to credit: no ruleset in the survey checks for a
+  // backend or cloud block inside a child module.
+  // tflint-ruleset-terraform's index has nothing about backends at all,
+  // Redeploy's has nothing either, and AVM's module rules stop at the
+  // provider block TF014 credits. What states the rule is Google Cloud's
+  // reusable-modules guide, so that document is the single credit here, and
+  // the page section says plainly that the credit is a document rather than
+  // a tool (#2112).
+  TF015: [
+    {
+      tool: "gcp-terraform-best-practices",
+      rule: "Build reusable modules: state configuration belongs to the root module",
+      url: "https://docs.cloud.google.com/docs/terraform/best-practices/general-style-structure#reusable-modules",
+      relation: "equivalent",
+    },
+  ],
   TF016: [
     // `overlaps`, not `equivalent`: tflint reports the same `x = "${y}"` form
     // and also the object-key case (`"${var.k}" = v`), which this rule leaves
@@ -247,6 +285,43 @@ export const terraformAuditLineage: Record<string, Lineage[]> = {
   ],
   TF019: [
     { tool: "tflint-ruleset-redeploy", rule: "terraform_redundant_default", url: `${REDEPLOY_RULES}/terraform_redundant_default.md`, relation: "equivalent" },
+  ],
+  TF020: [
+    // `overlaps`: tflint evaluates expressions and reports the same four
+    // kinds of declaration; chant's index is a string scan over hcl2json's
+    // preserved expression strings, so it is generous where tflint is exact
+    // (see hcl/references.ts and tf020.ts).
+    {
+      tool: "tflint-ruleset-terraform",
+      rule: "terraform_unused_declarations",
+      url: `${TFLINT_RULES}/terraform_unused_declarations.md`,
+      relation: "overlaps",
+    },
+  ],
+  TF021: [
+    // Redeploy reports every `count` over a collection; TF021 reports only
+    // the ones that build an identity out of `count.index`, which is a
+    // strict subset, hence `overlaps` on both credits rather than
+    // `equivalent`. choudoufu's own rule is the survey's deepest reading of
+    // the identity-bearing question (#2112).
+    {
+      tool: "tflint-ruleset-redeploy",
+      rule: "terraform_prefer_for_each",
+      url: `${REDEPLOY_RULES}/terraform_prefer_for_each.md`,
+      relation: "overlaps",
+    },
+    {
+      tool: "choudoufu",
+      rule: "RuleCountIndex",
+      url: "https://github.com/INTENTIUS/choudoufu/blob/main/internal/live/lint/count_index.go",
+      relation: "overlaps",
+    },
+    {
+      tool: "hashicorp-style-guide",
+      rule: "Resources: use for_each for a dynamic resource count",
+      url: "https://developer.hashicorp.com/terraform/language/style#dynamic-resource-count",
+      relation: "overlaps",
+    },
   ],
   TF022: [
     // tfsec consolidated its three `general/secrets` checks into

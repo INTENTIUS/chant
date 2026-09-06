@@ -7,6 +7,10 @@
  * is stable enough to depend on.
  *
  * Report-only, for the same reason TF011 is.
+ *
+ * Scope: root and child modules alike (#2112). The condition is a property
+ * of the block itself, so a descended module's block is read exactly as a
+ * root's is.
  */
 
 import type {

@@ -2796,6 +2796,26 @@ Replace `ignore_changes = all` with the list of attributes that genuinely change
 |---|---|
 | Prior art | [tflint-ruleset-redeploy `terraform_ignore_changes_all`](https://github.com/RedeployAB/tflint-ruleset-redeploy/blob/main/docs/rules/terraform_ignore_changes_all.md) (equivalent) |
 
+### TF014
+
+**Child module configures a provider block** — merge-worthy · guidance
+
+Move the provider configuration to the root module and pass it into the module with `providers = \{ ... }`, leaving at most an `alias`-only block in the module.
+
+| | |
+|---|---|
+| Prior art | [tflint-ruleset-avm (Azure Verified Modules) `avm_terraform_provider_block_disallowed`](https://github.com/Azure/tflint-ruleset-avm/blob/main/docs/basic/avm_terraform_provider_block_disallowed.md) (equivalent) · [Google Cloud Terraform best-practices series `Build reusable modules: modules must not configure providers`](https://docs.cloud.google.com/docs/terraform/best-practices/general-style-structure#reusable-modules) (equivalent) · [AWS prescriptive guidance for Terraform `Structure: declare provider configurations in the root module`](https://docs.aws.amazon.com/prescriptive-guidance/latest/terraform-aws-provider-best-practices/structure.html) (equivalent) |
+
+### TF015
+
+**Child module declares a backend or cloud block** — merge-worthy · guidance
+
+Delete the `backend`/`cloud` block from the child module. State belongs to the root module that calls it, one state for the whole tree.
+
+| | |
+|---|---|
+| Prior art | [Google Cloud Terraform best-practices series `Build reusable modules: state configuration belongs to the root module`](https://docs.cloud.google.com/docs/terraform/best-practices/general-style-structure#reusable-modules) (equivalent) |
+
 ### TF016
 
 **Attribute value is a quoted interpolation of a single expression** — report-only · deterministic
@@ -2835,6 +2855,26 @@ Deleting the line is the whole fix. `sensitive`, `ephemeral`, `prevent_destroy` 
 | | |
 |---|---|
 | Prior art | [tflint-ruleset-redeploy `terraform_redundant_default`](https://github.com/RedeployAB/tflint-ruleset-redeploy/blob/main/docs/rules/terraform_redundant_default.md) (equivalent) |
+
+### TF020
+
+**Declaration is never referenced in its module scope** — report-only · guidance
+
+Delete the variable, local, data source or aliased provider, or reference it where it was meant to be used.
+
+| | |
+|---|---|
+| Prior art | [tflint-ruleset-terraform `terraform_unused_declarations`](https://github.com/terraform-linters/tflint-ruleset-terraform/blob/main/docs/rules/terraform_unused_declarations.md) (overlaps) |
+
+### TF021
+
+**count builds instance identities from count.index where for_each is safer** — report-only · guidance
+
+Switch to `for_each` over a map or set so each instance is addressed by a stable key, then `terraform state mv` the existing indexed instances onto their new keys.
+
+| | |
+|---|---|
+| Prior art | [tflint-ruleset-redeploy `terraform_prefer_for_each`](https://github.com/RedeployAB/tflint-ruleset-redeploy/blob/main/docs/rules/terraform_prefer_for_each.md) (overlaps) · [choudoufu `RuleCountIndex`](https://github.com/INTENTIUS/choudoufu/blob/main/internal/live/lint/count_index.go) (overlaps) · [HashiCorp Terraform style guide `Resources: use for_each for a dynamic resource count`](https://developer.hashicorp.com/terraform/language/style#dynamic-resource-count) (overlaps) |
 
 ### TF022
 
@@ -3225,30 +3265,31 @@ This is credit rather than authority, and it never changes a rule's tier or cate
 | [gitleaks](https://github.com/gitleaks/gitleaks) | scanner | MIT | 10 |
 | [octoscan](https://github.com/synacktiv/octoscan) | scanner | GPL-3.0 | 10 |
 | [detect-secrets](https://github.com/Yelp/detect-secrets) | scanner | Apache-2.0 | 9 |
+| [tflint-ruleset-terraform](https://github.com/terraform-linters/tflint-ruleset-terraform) | scanner | MPL-2.0 | 9 |
 | [actionlint](https://github.com/rhysd/actionlint) | scanner | MIT | 8 |
-| [tflint-ruleset-terraform](https://github.com/terraform-linters/tflint-ruleset-terraform) | scanner | MPL-2.0 | 8 |
 | [TruffleHog](https://github.com/trufflesecurity/trufflehog) | scanner | AGPL-3.0 | 8 |
 | [gixy-ng (maintained Gixy fork)](https://github.com/dvershinin/gixy) | scanner | MPL-2.0 | 5 |
 | [kubesec](https://kubesec.io/) | scanner | Apache-2.0 | 5 |
+| [tflint-ruleset-redeploy](https://github.com/RedeployAB/tflint-ruleset-redeploy) | scanner | 0BSD | 5 |
 | [Datree](https://hub.datree.io/built-in-rules) | scanner | Apache-2.0 | 4 |
+| [HashiCorp Terraform style guide](https://developer.hashicorp.com/terraform/language/style) | specification | n/a | 4 |
 | [helm lint](https://helm.sh/docs/helm/helm_lint/) | vendor-validator | Apache-2.0 | 4 |
-| [tflint-ruleset-redeploy](https://github.com/RedeployAB/tflint-ruleset-redeploy) | scanner | 0BSD | 4 |
 | [Flux Kustomization API reference](https://fluxcd.io/flux/components/kustomize/kustomizations/) | specification | n/a | 3 |
 | [hadolint](https://github.com/hadolint/hadolint) | scanner | GPL-3.0 | 3 |
-| [HashiCorp Terraform style guide](https://developer.hashicorp.com/terraform/language/style) | specification | n/a | 3 |
 | [HashiCorp reference Sentinel policies](https://github.com/hashicorp/terraform-sentinel-policies) | specification | MPL-2.0 | 3 |
 | [tfsec](https://github.com/aquasecurity/tfsec) | scanner | MIT | 3 |
 | [agent-audit](https://github.com/piiiico/agent-audit) | scanner | MIT | 2 |
 | [ARM Template Toolkit (arm-ttk)](https://github.com/Azure/arm-ttk) | scanner | MIT | 2 |
+| [AWS prescriptive guidance for Terraform](https://docs.aws.amazon.com/prescriptive-guidance/latest/terraform-aws-provider-best-practices/) | specification | n/a | 2 |
 | [Bicep linter](https://learn.microsoft.com/en-us/azure/azure-resource-manager/bicep/linter) | scanner | MIT | 2 |
+| [choudoufu](https://github.com/INTENTIUS/choudoufu) | scanner | MPL-2.0 | 2 |
 | [Dockle](https://github.com/goodwithtech/dockle) | scanner | Apache-2.0 | 2 |
+| [Google Cloud Terraform best-practices series](https://docs.cloud.google.com/docs/terraform/best-practices/general-style-structure) | specification | n/a | 2 |
 | [mcp-audit (APIsec)](https://github.com/apisec-inc/mcp-audit) | scanner | MIT | 2 |
+| [tflint-ruleset-avm (Azure Verified Modules)](https://github.com/Azure/tflint-ruleset-avm) | scanner | MIT | 2 |
 | [Snyk Agent Scan (formerly mcp-scan)](https://github.com/invariantlabs-ai/mcp-scan) | scanner | Apache-2.0 | 1 |
-| [AWS prescriptive guidance for Terraform](https://docs.aws.amazon.com/prescriptive-guidance/latest/terraform-aws-provider-best-practices/) | specification | n/a | 1 |
 | [chart-testing (ct)](https://github.com/helm/chart-testing) | vendor-validator | Apache-2.0 | 1 |
-| [choudoufu](https://github.com/INTENTIUS/choudoufu) | scanner | MPL-2.0 | 1 |
 | [Gixy](https://github.com/yandex/gixy) | scanner | MPL-2.0 | 1 |
 | [Pluto](https://github.com/FairwindsOps/pluto) | scanner | Apache-2.0 | 1 |
 | [Semgrep Registry rules](https://github.com/semgrep/semgrep-rules) | scanner | Semgrep Rules License v1.0 (proprietary, not an SPDX id) | 1 |
-| [tflint-ruleset-avm (Azure Verified Modules)](https://github.com/Azure/tflint-ruleset-avm) | scanner | MIT | 1 |
 

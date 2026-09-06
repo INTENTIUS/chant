@@ -17,6 +17,12 @@ const HASHICORP_STYLE_VARIABLES: Authority = {
   url: "https://developer.hashicorp.com/terraform/language/style#variables",
 };
 
+// The vendor guides behind TF014, TF015 and TF021 are credited as lineage in
+// ./audit-lineage.ts, not as `authority` here. `authority` is reserved for
+// security rules that fail a merge (packages/core/src/audit/catalog.test.ts
+// holds both halves of that invariant), and these three are correctness and
+// best-practice rules (#2112).
+
 export const terraformAuditCatalog: Record<string, RuleMeta> = {
   TF001: {
     id: "TF001",
@@ -183,6 +189,50 @@ export const terraformAuditCatalog: Record<string, RuleMeta> = {
     remediation:
       "Replace `ignore_changes = all` with the list of attributes that genuinely change outside " +
       "Terraform, so every other attribute is still reconciled.",
+    yamlBased: false,
+  },
+  TF014: {
+    id: "TF014",
+    tier: "merge-worthy",
+    fixKind: "guidance",
+    category: "correctness",
+    title: "Child module configures a provider block",
+    remediation:
+      "Move the provider configuration to the root module and pass it into the module with " +
+      "`providers = { ... }`, leaving at most an `alias`-only block in the module.",
+    yamlBased: false,
+  },
+  TF015: {
+    id: "TF015",
+    tier: "merge-worthy",
+    fixKind: "guidance",
+    category: "correctness",
+    title: "Child module declares a backend or cloud block",
+    remediation:
+      "Delete the `backend`/`cloud` block from the child module. State belongs to the root module " +
+      "that calls it, one state for the whole tree.",
+    yamlBased: false,
+  },
+  TF020: {
+    id: "TF020",
+    tier: "report-only",
+    fixKind: "guidance",
+    category: "best-practice",
+    title: "Declaration is never referenced in its module scope",
+    remediation:
+      "Delete the variable, local, data source or aliased provider, or reference it where it was " +
+      "meant to be used.",
+    yamlBased: false,
+  },
+  TF021: {
+    id: "TF021",
+    tier: "report-only",
+    fixKind: "guidance",
+    category: "best-practice",
+    title: "count builds instance identities from count.index where for_each is safer",
+    remediation:
+      "Switch to `for_each` over a map or set so each instance is addressed by a stable key, then " +
+      "`terraform state mv` the existing indexed instances onto their new keys.",
     yamlBased: false,
   },
   TF016: {

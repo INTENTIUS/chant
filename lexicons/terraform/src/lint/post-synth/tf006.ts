@@ -11,6 +11,10 @@
  * Any default counts, not only a secret-shaped one. `default = ""` and
  * `default = null` are the two that look harmless, and both make a required
  * secret optional, which is the other half of the failure.
+ *
+ * Scope: root and child modules alike (#2112). The condition is a property
+ * of the block itself, so a descended module's block is read exactly as a
+ * root's is.
  */
 
 import type {

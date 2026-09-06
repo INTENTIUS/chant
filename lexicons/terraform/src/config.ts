@@ -71,6 +71,15 @@ export const terraformConfigSchema = z.strictObject({
    * binary alone runs the root stock, exactly as `terraform`/`tofu` do.
    */
   binary: z.enum(["terraform", "tofu", "choudoufu"]).optional(),
+  /**
+   * How far a root's parse follows its `module` calls (#2112), spelled the
+   * way tflint spells it. `local` (the default) reads modules sourced from a
+   * relative path, so TF014, TF015 and TF020 see inside them; `none` reads
+   * only each root's own directory; `all` is reserved for fetching registry
+   * and git modules and is refused with a message, since chant fetches
+   * nothing. See `hcl/descend.ts`.
+   */
+  callModuleType: z.enum(["local", "none", "all"]).optional(),
   /** Named root modules. The name is the entity-key prefix, so keep it stable. */
   roots: z.record(z.string(), terraformRootSchema),
 });

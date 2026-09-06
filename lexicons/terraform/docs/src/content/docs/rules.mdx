@@ -6,7 +6,7 @@ description: "Every lint rule and post-synth check provided by the Terraform lex
 {/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-terraform` — DO NOT EDIT.
     Edit lexicons/terraform/src/codegen/docs.ts instead; changes here are overwritten. */}
 
-The Terraform lexicon provides **22** rules: 1 lint rule and 21 post-synth checks.
+The Terraform lexicon provides **26** rules: 1 lint rule and 25 post-synth checks.
 
 ## Lint Rules
 
@@ -33,10 +33,14 @@ Post-synth checks validate the serialized output after the build pipeline comple
 | `TF011` | Variable declares no description |
 | `TF012` | Output declares no description |
 | `TF013` | lifecycle ignore_changes is set to all |
+| `TF014` | Child module configures a provider block |
+| `TF015` | Child module declares a backend or cloud block |
 | `TF016` | Attribute value is a quoted interpolation of a single expression |
 | `TF017` | Module block uses depends_on |
 | `TF018` | Output value is a whole resource or data source |
 | `TF019` | Meta-argument explicitly set to its default of false |
+| `TF020` | Declaration is never referenced in its module scope |
+| `TF021` | count builds instance identities from count.index where for_each is safer |
 | `TF022` | Credential-named resource attribute holds a plaintext literal |
 | `TF024` | Live root declares a backend or cloud block, which choudoufu refuses |
 | `TF025` | Live root references a non-default terraform.workspace, which choudoufu refuses |

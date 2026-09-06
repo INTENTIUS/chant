@@ -12,6 +12,11 @@
  * with no `terraform` block at all is not flagged: it declares no version
  * constraints either, and the missing block is a different finding.
  *
+ * Scope: root modules only (#2112). A child module must NOT declare a
+ * backend, which is the mirror image and TF015's finding, so a descended
+ * module's `terraform` block is skipped here rather than read as if it were
+ * the root's.
+ *
  * Does not fire on a live root (#2103): a `backend` block is exactly what
  * choudoufu refuses there (TF024's territory), and the fallback to local
  * state this check warns about does not apply, since a live root keeps no
@@ -26,6 +31,7 @@ import type {
 import { isResourceDeclarable } from "@intentius/chant/declarable";
 import { TERRAFORM_TYPE, type BlockBody } from "../../hcl/parse";
 import { attr } from "../../hcl/value";
+import { isRootScoped } from "./scope";
 
 /**
  * `backend`/`cloud` are blocks, so hcl2json encodes them as a value under the
@@ -51,7 +57,7 @@ export const tf001: PostSynthCheck = {
 
     for (const [name, entity] of ctx.entities) {
       if (entity.entityType !== TERRAFORM_TYPE) continue;
-      if (!isResourceDeclarable(entity)) continue;
+      if (!isResourceDeclarable(entity) || !isRootScoped(entity)) continue;
       const props = entity.props as { root?: unknown; body?: unknown; mode?: unknown };
       if (props.mode === "live") continue;
       const root = typeof props.root === "string" ? props.root : "";
