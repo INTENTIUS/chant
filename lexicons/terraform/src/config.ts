@@ -26,15 +26,6 @@ import { z } from "zod";
 import type { ChantConfig } from "@intentius/chant/config";
 
 /**
- * One Terraform root module chant reads. `dir` is the only required field:
- * everything else names how the root is invoked rather than what it declares.
- *
- * `strictObject`, not `object`. Core applies `.strict()` to the top level of a
- * declared namespace itself, but nested objects are the lexicon's own to make
- * strict, and a root entry is exactly where a typo (`varfiles`) would
- * otherwise land silently.
- */
-/**
  * chant's cross-lexicon delete-mode vocabulary (`lexicons/k8s/src/op/
  * activities/kubectl.ts`'s `ApplyDeleteMode`, `lexicons/temporal/src/op/
  * activities/apply.ts`'s `DeleteMode`), read here for a live root and mapped
@@ -48,6 +39,15 @@ import type { ChantConfig } from "@intentius/chant/config";
 export const terraformDeleteModeSchema = z.enum(["never", "owned-only", "gated"]);
 export type TerraformDeleteMode = z.infer<typeof terraformDeleteModeSchema>;
 
+/**
+ * One Terraform root module chant reads. `dir` is the only required field:
+ * everything else names how the root is invoked rather than what it declares.
+ *
+ * `strictObject`, not `object`. Core applies `.strict()` to the top level of a
+ * declared namespace itself, but nested objects are the lexicon's own to make
+ * strict, and a root entry is exactly where a typo (`varfiles`) would
+ * otherwise land silently.
+ */
 export const terraformRootSchema = z.strictObject({
   /** Root module directory, relative to the project root (where `chant.config.*` lives). */
   dir: z.string(),
