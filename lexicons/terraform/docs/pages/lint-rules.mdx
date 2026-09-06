@@ -1059,6 +1059,19 @@ reasoning.
 When the referenced identifier cannot be resolved at all in the same file,
 this rule stays silent rather than guess.
 
+**Live roots are checked the same way.** For one release this rule skipped a
+`terraformApply` call over a choudoufu live root, because choudoufu refused
+`-out` and `apply <planfile>` and the activity ran a bare
+`apply -auto-approve` with no plan file to pair. choudoufu v0.13.0 admits
+both under a `live` block ([choudoufu
+#878](https://github.com/INTENTIUS/choudoufu/issues/878)), and there the
+pairing carries more weight than on a stock root: the apply re-plans the live
+system and compares its own fresh plan against the file it was handed,
+refusing with exit status 3 when they differ. A plan file spelled out as a
+literal path is an approval for a run nobody can trace back to a plan step, so
+the exemption is gone with the condition that produced it, and this rule reads
+no project config at all.
+
 ```typescript
 const plan = terraformPlan("app", { id: "plan" });
 const apply = terraformApply("app", { planFile: "/tmp/plan.out" });
