@@ -69,7 +69,7 @@ describe("discoverOps — the scan root is the project, not the checkout (#2058)
 });
 
 /**
- * #2171 — an Op may be exported by name, not only as the file's default.
+ * #2171. An Op may be exported by name, not only as the file's default.
  *
  * Discovery used to read `mod.default` alone, which forced every runnable Op
  * into the one export shape the fold path refuses, so an Op under a project's
@@ -80,7 +80,7 @@ describe("discoverOps — the scan root is the project, not the checkout (#2058)
  * as plain object literals with a `props` field, which is the shape discovery
  * actually validates, so the fixtures stay free of the Op builders.
  */
-describe("discoverOps — an Op may be exported by name (#2171)", () => {
+describe("discoverOps: an Op may be exported by name (#2171)", () => {
   const OP_VALUE = (name: string): string =>
     `{ props: { name: ${JSON.stringify(name)}, overview: "t", phases: [{ name: "Run", steps: [] }] } }`;
 

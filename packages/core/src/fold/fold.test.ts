@@ -560,7 +560,7 @@ describe("fold — registered authoring helpers (#1082)", () => {
 });
 
 /**
- * chant #2171 — the ConvergeOp rule language joins the allowlist.
+ * chant #2171. The ConvergeOp rule language joins the allowlist.
  *
  * A `ConvergeOp`'s `rules` table cannot be written without these, so before
  * this every file declaring a converge rule fell back to run. They fold to the
@@ -568,7 +568,7 @@ describe("fold — registered authoring helpers (#1082)", () => {
  * invoked here, and `../discovery/fold-import.ts` still decides separately
  * whether the name is bound by an import from chant.
  */
-describe("fold — the ConvergeOp rule builders are registered helpers (#2171)", () => {
+describe("fold: the ConvergeOp rule builders are registered helpers (#2171)", () => {
   test("a whole rule folds to nested envelopes, predicate and action included", () => {
     const consts = parseConsts(
       `const x = when(gt("updateCount", 0), report("drift"), { id: "prod-drift", why: "because" });`,

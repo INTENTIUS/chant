@@ -140,7 +140,7 @@ export const FOLDABLE_AUTHORING_HELPERS: readonly FoldableHelperDef[] = [
     module: "lexicon-output.ts",
     note: "Constructs a `LexiconOutput` from a real `AttrRef`/`Intrinsic` and a name. Pure, but identity-sensitive: it reads through the ref's `WeakRef` to its parent entity. Only folds when the ref argument revives to a REAL live reference (see fold-import.ts's `requireLiveRefs`); a symbolic `{ __attrRef }` envelope is rejected, not silently wrapped.",
   },
-  // chant #2171 — the ConvergeOp rule language (`op/converge-rule.ts`). Its own
+  // chant #2171. The ConvergeOp rule language (`op/converge-rule.ts`). Its own
   // module doc is the admission argument: a rule is evaluated per tick against
   // freshly observed data inside an activity, so it must be plain JSON, and
   // every builder below is one statement returning an object literal built from

@@ -71,7 +71,7 @@ describe("the steward template", () => {
   });
 
   /**
-   * chant #2171 — the scaffold folds as it comes out of `chant init`.
+   * chant #2171. The scaffold folds as it comes out of `chant init`.
    *
    * The two `*.op.ts` files used to default-export their Op, which is the one
    * export shape `chant build --fold` refuses, so every scaffolded steward

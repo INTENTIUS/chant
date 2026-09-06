@@ -140,7 +140,7 @@ function opsExportedBy(mod: Record<string, unknown>): Array<{ exportName: string
  * {@link findDiscoveryRoot} (#2058).
  *
  * An Op may be the file's default export or a named one, and a file may hold
- * several — see {@link opsExportedBy} (#2171).
+ * several. See {@link opsExportedBy} (#2171).
  */
 export async function discoverOps(opts?: { cwd?: string }): Promise<OpDiscoveryResult> {
   const errors: string[] = [];
@@ -158,7 +158,7 @@ export async function discoverOps(opts?: { cwd?: string }): Promise<OpDiscoveryR
 
       if (exported.length === 0) {
         errors.push(
-          `${filePath}: exports no Op — expected \`export default Op({...})\` or a named export such as \`export const deploy = Op({...})\``,
+          `${filePath}: exports no Op. Expected \`export default Op({...})\` or a named export such as \`export const deploy = Op({...})\``,
         );
         continue;
       }
