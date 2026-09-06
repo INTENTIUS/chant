@@ -1,7 +1,8 @@
 /**
  * TerraformApplyOp composite tests (#2086) — the phase names, the gate, the
- * plan-to-apply reference, and the compensation refusal. The live-root shape
- * (#2106) is below, in its own describe blocks.
+ * plan-to-apply reference, and the compensation refusal. A live root builds
+ * the same four phases (#2106 follow-up), and what is particular to it is
+ * below, in its own describe block.
  */
 
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
@@ -240,8 +241,8 @@ function project(policy?: string): string {
   return dir;
 }
 
-describe("TerraformApplyOp on a live root (#2106)", () => {
-  test("Init, Plan (choudoufuLivePlan), Gate, Apply — no plan file or -out anywhere", () => {
+describe("TerraformApplyOp on a live root (#2106 follow-up)", () => {
+  test("the same Init, Plan, Gate, Apply as a stock root, with the plan file paired through", () => {
     const dir = project();
     const op = props({ name: "estate-apply", root: "estate", cwd: dir });
     expect(phaseNames(op)).toEqual(["Init", "Plan", "Gate", "Apply"]);
@@ -249,17 +250,26 @@ describe("TerraformApplyOp on a live root (#2106)", () => {
     const activitySteps = op.phases.flatMap((p) => p.steps.filter(isActivity));
     expect(activitySteps.map((s) => s.fn)).toEqual([
       "terraformInit",
-      "choudoufuLivePlan",
-      "choudoufuLivePlan",
+      "terraformPlan",
+      "terraformShow",
       "terraformApply",
     ]);
-    for (const step of activitySteps) {
-      expect(step.args?.planFile).toBeUndefined();
-      expect(JSON.stringify(step.args ?? {})).not.toContain("-out");
-    }
 
+    const plan = op.phases.find((p) => p.name === "Plan")!.steps[0] as ActivityStep;
+    expect(plan.args?.planFile).toBe("chant.tfplan");
+
+    // The Apply step names the Plan step's own output, never a literal path:
+    // on a live root that reference is the approval artifact itself.
     const apply = op.phases.find((p) => p.name === "Apply")!.steps[0] as ActivityStep;
-    expect(apply.args).toEqual({ root: "estate", cwd: dir });
+    expect(isStepOutputRef(apply.args?.planFile)).toBe(true);
+    expect(apply.args?.planFile).toMatchObject({ step: "plan", path: "planFile" });
+  });
+
+  test("no choudoufuLivePlan step anywhere: the watch and adopt Ops still use it, this one does not", () => {
+    const dir = project();
+    const op = props({ name: "estate-apply", root: "estate", cwd: dir });
+    const fns = op.phases.flatMap((p) => p.steps.filter(isActivity)).map((s) => s.fn);
+    expect(fns).not.toContain("choudoufuLivePlan");
   });
 
   test('gate: "never" drops the Gate phase, leaving Init, Plan, Apply', () => {
@@ -269,17 +279,41 @@ describe("TerraformApplyOp on a live root (#2106)", () => {
     expect(op.phases.flatMap((p) => p.steps).some(isGate)).toBe(false);
   });
 
-  test("Plan reports Changed off drift; Gate's own step reports Destroys off destroys", () => {
+  test("Plan reports Changed; the Gate's show step reports Destroys off the saved plan", () => {
     const dir = project();
     const op = props({ name: "estate-apply", root: "estate", cwd: dir });
     const plan = op.phases.find((p) => p.name === "Plan")!.steps[0] as ActivityStep;
-    expect(plan.outcomeAttribute).toEqual({ name: "Changed", from: "drift" });
+    expect(plan.outcomeAttribute).toEqual({ name: "Changed", from: "changed" });
 
     const gateSteps = op.phases.find((p) => p.name === "Gate")!.steps;
-    const freshen = gateSteps[0] as ActivityStep;
-    expect(freshen.fn).toBe("choudoufuLivePlan");
-    expect(freshen.outcomeAttribute).toEqual({ name: "Destroys", from: "destroys" });
+    const show = gateSteps[0] as ActivityStep;
+    expect(show.fn).toBe("terraformShow");
+    expect(show.outcomeAttribute).toEqual({ name: "Destroys", from: "destroys" });
     expect(gateSteps[1].kind).toBe("gate");
+  });
+
+  test("the gate description tells the approver what the exit-3 refusal does", () => {
+    const dir = project();
+    const op = props({ name: "estate-apply", root: "estate", cwd: dir });
+    const gateStep = op.phases.find((p) => p.name === "Gate")!.steps.find(isGate)!;
+    expect(gateStep.description).toContain("live root");
+    expect(gateStep.description).toContain("exit status 3");
+    expect(gateStep.description).toContain("choudoufu #878");
+  });
+
+  test("a stock root's gate description says nothing about a live re-plan", () => {
+    const dir = mkdtempSync(join(tmpdir(), "chant-tf-apply-op-live-"));
+    dirs.push(dir);
+    mkdirSync(join(dir, "root"), { recursive: true });
+    writeFileSync(join(dir, "root", "main.tf"), 'resource "null_resource" "x" {}\n');
+    writeFileSync(
+      join(dir, "chant.config.json"),
+      JSON.stringify({ terraform: { binary: "terraform", roots: { estate: { dir: "./root" } } } }),
+    );
+    const op = props({ name: "estate-apply", root: "estate", cwd: dir });
+    const gateStep = op.phases.find((p) => p.name === "Gate")!.steps.find(isGate)!;
+    expect(gateStep.description).not.toContain("exit status 3");
+    expect(gateStep.description).not.toContain("live root");
   });
 
   test("refuses to build when the root's policy sets undeclared_untagged = \"delete\"", () => {
@@ -294,7 +328,7 @@ describe("TerraformApplyOp on a live root (#2106)", () => {
     expect(() => TerraformApplyOp({ name: "estate-apply", root: "estate", cwd: dir })).not.toThrow();
   });
 
-  test("a choudoufu root with no declared estate stays on the stock shape", () => {
+  test("a choudoufu root with no declared estate builds the same phases and skips the policy read", () => {
     const dir = mkdtempSync(join(tmpdir(), "chant-tf-apply-op-live-"));
     dirs.push(dir);
     mkdirSync(join(dir, "root"), { recursive: true });

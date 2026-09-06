@@ -111,7 +111,7 @@
 import { Op, phase, OpResource, type ActivityStep } from "@intentius/chant/op";
 import { createResource } from "@intentius/chant/runtime";
 import type { Declarable } from "@intentius/chant/declarable";
-import { CHOUDOUFU_PLAN_FILE_REFUSAL, DEFAULT_PLAN_FILE } from "../op/activities/terraform";
+import { CHOUDOUFU_LIVE_PLAN_OUT_REFUSAL, DEFAULT_PLAN_FILE } from "../op/activities/terraform";
 import {
   terraformInit as initStep,
   terraformPlan as planStep,
@@ -211,7 +211,7 @@ export function TerraformWatchOp(config: TerraformWatchOpConfig): TerraformWatch
   if (config.live && config.planFile !== undefined) {
     throw new Error(
       `TerraformWatchOp "${config.name}": planFile is refused on a live root. choudoufu: ` +
-        `"${CHOUDOUFU_PLAN_FILE_REFUSAL}". A live plan writes no saved plan, so there is no file to name; ` +
+        `"${CHOUDOUFU_LIVE_PLAN_OUT_REFUSAL}". A live plan writes no saved plan, so there is no file to name; ` +
         "drop planFile, or drop live if this root runs stock.",
     );
   }

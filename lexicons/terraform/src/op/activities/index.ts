@@ -36,7 +36,6 @@ export {
   terraformPlanCommand,
   terraformApplyCommand,
   terraformShowCommand,
-  choudoufuLiveApplyCommand,
   choudoufuLivePlanCommand,
   choudoufuLiveLsCommand,
   choudoufuLiveCheckCommand,
@@ -51,7 +50,11 @@ export {
   DEFAULT_TERRAFORM_BINARY,
   DEFAULT_LIVE_PLAN_DOCUMENT_FILE,
   MIN_CHOUDOUFU_VERSION,
-  CHOUDOUFU_PLAN_FILE_REFUSAL,
+  classifyApprovalRefusal,
+  CHOUDOUFU_LIVE_PLAN_OUT_REFUSAL,
+  CHOUDOUFU_APPROVAL_EXIT_CODE,
+  CHOUDOUFU_APPROVAL_MISMATCH_REFUSAL,
+  CHOUDOUFU_WRONG_ESTATE_REFUSAL,
 } from "./terraform";
 
 export type {
@@ -67,6 +70,7 @@ export type {
   TerraformInitResult,
   TerraformPlanResult,
   TerraformApplyResult,
+  TerraformApprovalRefusal,
   TerraformShowResult,
   ChoudoufuLivePlanResult,
   ChoudoufuLiveLsResult,

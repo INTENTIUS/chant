@@ -69,12 +69,11 @@ export const terraformPlan = (
 /**
  * `terraform apply <planFile>` in the named root, the fully typed twin of the
  * `terraformApply` activity. `opts` is {@link TerraformApplyArgs} itself,
- * minus the positional `root`. `planFile` is optional here (#2103): required
- * on a stock root (the activity itself refuses a missing one there) and
- * refused on a live root, where an apply always re-plans against the live
- * system and takes no plan file at all, so `opts` is therefore optional too,
- * meaning `terraformApply("estate")` alone is a valid live-root step. Defaults
- * to the `longInfra` profile.
+ * minus the positional `root`. `planFile` is optional in the type and
+ * required in practice, on a live root as much as a stock one: the activity
+ * refuses a missing one, and on a live root the file is the approval artifact
+ * choudoufu v0.13.0 re-plans against and refuses on a mismatch (choudoufu
+ * #878). Defaults to the `longInfra` profile.
  */
 export const terraformApply = (
   root: string,
