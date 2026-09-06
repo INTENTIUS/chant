@@ -169,7 +169,7 @@ describe("TerraformWatchOp on a live root (#2105)", () => {
 
   test("the Op is marked live, and no plan file is named anywhere", () => {
     const op = live();
-    expect(op.searchAttributes).toMatchObject({ TerraformMode: "live" });
+    expect(op.labels).toMatchObject({ TerraformMode: "live" });
     expect(JSON.stringify(op)).not.toContain("chant.tfplan");
   });
 
