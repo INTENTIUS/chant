@@ -1,52 +1,73 @@
 ---
-title: Durable Workflows for Infrastructure (Temporal IaC)
-description: Why infrastructure orchestration wants durable execution — approval gates, compensation, and crash-resume — and how chant uses Temporal for it.
+title: "Ops as teammates"
+description: "What durability an infrastructure op actually needs, where each half of it lives, and why a wait is a fact rather than a held-open process"
 diataxis: explanation
 ---
 
-Synthesis is the easy half. Every IaC toolchain produces an artifact. The hard half is what happens after — the gated, multi-step, cross-system apply, and the rollback when step seven of nine fails. The others weld a fixed lifecycle to their engine and still leave that orchestration to shell scripts, CI YAML, and the operator's memory. chant keeps synthesis pure and holds no opinion of its own, then lets you declare the orchestration as code in `*.op.ts` files that run as inspectable, durable workflows.
+Synthesis is the easy half. Every IaC toolchain produces an artifact. The hard half is what happens after: the gated, multi-step, cross-system apply, and the rollback when step seven of nine fails. The others weld a fixed lifecycle to their engine and still leave that orchestration to shell scripts, CI YAML, and the operator's memory. chant keeps synthesis pure and holds no opinion of its own, then lets you declare the orchestration as code in `*.op.ts` files.
 
-No other IaC toolchain exposes its orchestration as first-class durable execution. This page explains why that matters, and why it stays optional.
+An op is a convergent verb. Running it twice is the same as running it once, because every step re-observes and re-derives what it is about to do. That one property is what decides where an op's durability has to live, and it is why chant does not host a workflow engine.
 
-**Temporal-native when you want durability, zero-dependency when you don't.** The primitives — build, lint, synthesize, plan — need no executor at all. The local executor runs Ops in-process for one-shot `chant run`. Temporal is the upgrade you reach for when an Op needs to outlive a single process.
+## Four things people mean by "durable"
 
-## What durable execution buys an apply
+Ask what an apply needs to survive and four different answers come back. They are not one feature, and they do not live in one place.
 
-A non-trivial apply is a multi-step sequence against systems that fail independently. Three properties separate a durable workflow from a script that happens to call the same APIs.
+The first is the outcome, and it is the op itself. The apply has to reach a declared state and stay there; a convergent verb gets you there by re-running, so a run that dies halfway is answered by running it again rather than by resuming it in place. There is nothing to check-point because there is no mid-sequence position worth remembering. The other three are the subject of this page.
 
-### Approval gates
+### The machine
 
-A destructive change should pause for a human. In a script that means a blocking prompt that dies with the terminal, or an out-of-band ticket the script can't see. A durable workflow waits on a signal — for minutes or for days — without holding a process open. The wait survives a worker restart. The approval is part of the workflow history, not a Slack message someone has to remember.
+Something has to be running when the op runs, with a checkout and the credentials the work needs. A laptop is a fine machine for a change somebody is watching, and a bad one for anything that has to happen while nobody is. `chant run <op> --on fountain` hands the run to a [steward](/chant/lexicons/fountain/steward/), one agent on a persistent sandbox, which is a machine an environment is operated from rather than a machine somebody happens to be sitting at.
 
-### Compensation and rollback
+### The cadence
 
-When step seven of nine fails, the first six steps already happened. A durable workflow models compensation — the saga pattern — so a partial failure unwinds in reverse instead of leaving the system half-applied. The compensation logic is declared alongside the forward step, not bolted on as cleanup nobody tested.
+Some ops run because a clock said so. That is `schedule` on the op, plain data on the declaration:
 
-### Crash-resume without double-acting
+```ts
+export const { op: prodWatch } = WatchOp({
+  name: "prod-watch",
+  env: "prod",
+  schedule: "*/15 * * * *",
+});
+```
 
-A worker that dies mid-apply resumes from the last completed step, not from the top, and without re-running steps that already took effect. Determinism plus event-sourced history is what makes "resume" safe rather than a second chance to double-charge.
+Three readers render that same field. The [github](/chant/lexicons/github/) generator turns it into a workflow `schedule:` trigger. [`chant operator`](/chant/guide/operator/) ticks it from a loop on your own machine. A fountain [`Steward`](/chant/lexicons/fountain/steward/) turns it into a `Schedule` on the teammate. The declaration does not change when you change your mind about which.
 
-## Why this is Temporal, and why it is optional
+## The approval, and why a wait is a fact
 
-These three properties — durable waits, compensation, exactly-once resume — are what Temporal exists to provide. chant does not reimplement them; it compiles your declared Ops into Temporal worker code and lets the platform own durability.
+The fourth is somebody saying yes, and it is the one that used to drag a whole engine in behind it. A workflow engine's gate is a suspended workflow waiting for a signal. That works, and it costs a live workflow plus a worker willing to hold it open for as long as the decision takes.
 
-That is also exactly why it is optional. The primitives that don't need durability don't pay for it:
+chant makes the same gate a pair of records on the gate ledger. A run that reaches an unapproved gate reads the ledger. Finding no resolution newer than the pending fact, it writes that fact if there is not one standing already, and exits 3. Nothing is suspended, so nothing has to survive being suspended.
 
-- `chant build`, `chant lint`, `chant lifecycle plan` are pure and executor-free.
-- One-shot Ops run on the **local executor** in-process — no cluster, no dependency.
-- Only gated or destructive Ops — the ones where a multi-hour approval wait or a crash mid-apply is unacceptable — are Temporal-bound.
+```bash
+chant run prod-apply                                  # exits 3, pending on rollout-gate
+chant approve prod-apply rollout-gate --actor alex    # records the resolution
+chant run prod-apply                                  # reads it, walks through, applies
+```
 
-Lead with the local executor as the on-ramp. Reach for Temporal when the workflow has to survive a crash, hold a long approval, or roll back a partial failure. See [Local vs Temporal](/chant/guide/local-vs-temporal/) for the decision and [Ops](/chant/guide/ops/) for the authoring model.
+Exit 3 is deliberately not 1. A gate is a decision nobody has made yet, so a CI job that reads 3 reports "waiting on approval" instead of paging whoever is on call. Ordering is what makes it safe: a resolution counts only if it is newer than the pending fact it answers, so approving in advance does not clear a gate recorded since.
 
-## Who this is for
+This is why a steward can be one computer rather than one per pending decision. Nothing sits blocked inside a sandbox holding a machine open, which is exactly what a durable wait would have cost.
 
-Two audiences meet here. Teams searching for durable execution for deployments — approval gates and rollback as infrastructure primitives — and finding nothing purpose-built. And existing Temporal users who already trust durable workflows for their application logic and want the same guarantees for the infrastructure underneath it.
+## Two stores, and nothing stored twice
 
-If you are comparing chant against Terraform and bounced on "no state management": durability is a different axis from state. chant has no authoritative state file, and computes a precise change set anyway via [live projection](/chant/concepts/governance/). The durable-workflow layer is what applies that change set safely when you want it to.
+Once an op can run in two places, the question is which of them remembers what. chant answers it with a line rather than a merge.
+
+| Fact | Store | Read it with |
+|---|---|---|
+| A run: its steps, its stdout, when it started and how it ended | the runtime that hosted it — the local ledger record, or fountain's conversation | `chant run status\|log\|list`, with `--on` for a hosted runtime |
+| A gate's resolution, and anything that has to survive across runs | chant's ledger branch in git | `chant approve`, `chant run approve <op> <gate>` |
+| The declared shape of the estate | the repo | `chant build`, `chant lifecycle diff --live` |
+
+A run belongs to the runtime that ran it; a fact about the world belongs to git, where it outlives every runtime that reads it. That split is what lets the same op run locally on Tuesday and on a steward on Wednesday without either of them losing track of an approval the other recorded.
+
+## Where to start
+
+Lead with the local runtime. It needs nothing installed, it runs the whole phase grammar including gates and compensation, and it is the same executor a steward runs inside its sandbox. Move an op to `--on fountain` when it needs a machine that is not yours, a thread somebody else can read, or a cadence that fires while you are asleep. The declaration is the same either way.
 
 ## See also
 
 - [Ops](/chant/guide/ops/) — declaring orchestration in `*.op.ts`
-- [Local vs Temporal](/chant/guide/local-vs-temporal/) — when each executor fits
-- [Temporal Workflow-Driven Deploy](/chant/tutorials/temporal-crdb-deploy/) — a durable infrastructure workflow end to end
+- [Choosing Your Deployment Model](/chant/concepts/deployment-paths/) — whether Ops fit at all
+- [The Steward](/chant/lexicons/fountain/steward/) — the hosted form, declared
+- [`chant operator`](/chant/guide/operator/) — ticking a `ConvergeOp` on git alone
 - [State and Governance](/chant/concepts/governance/) — why no authoritative state file is needed

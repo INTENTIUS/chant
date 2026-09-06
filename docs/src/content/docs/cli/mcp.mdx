@@ -88,52 +88,57 @@ Search available resource types across loaded lexicons.
 
 Returns matching resource type entries sorted by relevance.
 
+Every Op tool takes an optional `runtime`, the same choice [`chant run --on`](/chant/cli/run/#choosing-a-runtime-with---on) makes on the command line. Omitted, it is the built-in local runtime, which executes the Op in this process.
+
 ### `op-list`
 
-List all discovered Ops and their latest Temporal run status.
+List every Op discovered from `*.op.ts` files with the run state the runtime reports.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `profile` | `string` | No | Temporal connection profile (default: `defaultProfile`) |
+| `runtime` | `string` | No | Runtime to address: a lexicon name with an `opRuntime`, or `local` (the default) |
 
 ### `op-run`
 
-Start an Op workflow — spawns a worker and submits the workflow to Temporal.
+Run an Op on a runtime and return its result.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `name` | `string` | Yes | Op name (must match an `*.op.ts` file) |
-| `profile` | `string` | No | Temporal connection profile |
+| `runtime` | `string` | No | Runtime to address: a lexicon name with an `opRuntime`, or `local` (the default) |
 
 ### `op-status`
 
-Show the current state of an Op's latest workflow run.
+Show the state the runtime reports for an Op's latest run.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `name` | `string` | Yes | Op name |
-| `profile` | `string` | No | Temporal connection profile |
+| `runtime` | `string` | No | Runtime to address: a lexicon name with an `opRuntime`, or `local` (the default) |
 
-Returns `{ workflowId, runId, status, startTime, closeTime, taskQueue, activitiesCompleted, activitiesScheduled, progress, gate }`. `progress` is the per-phase `StepRecord[]` array (present when the Op's `*.op.ts` is discoverable; see [Progress and gate state](/chant/guide/ops-reference/#progress-and-gate-state)) — the same shape `--progress-json` streams. `gate` is the pending gate (`{ signalName, description?, since }`) or `null` when none is blocking.
+Returns `{ op, runId, state, startedAt, endedAt, records, gate }`. `records` is the per-phase `StepRecord[]` array (present when the Op's `*.op.ts` is discoverable; see [Progress and gate state](/chant/guide/ops-reference/#progress-and-gate-state)) — the same shape `--progress-json` streams. `gate` is the pending gate (`{ name, since }`), absent when none is standing.
 
-### `op-signal`
+### `op-approve`
 
-Send a named signal to unblock a gate step in a running Op workflow.
+Record a gate's resolution on the gate ledger, then wake the runtime hosting the gated run. This is the rename of `op-signal`, and a different act: a gate is resolved by recording the fact, not by sending a message to a waiting workflow.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `name` | `string` | Yes | Op name |
-| `signal` | `string` | Yes | Signal name (must match the gate's `signalName`) |
-| `profile` | `string` | No | Temporal connection profile |
+| `gate` | `string` | Yes | Gate name (must match the gate's name in the Op) |
+| `approver` | `string` | No | Who approved; defaults to the CI or shell identity |
+| `note` | `string` | No | Free-text context recorded on the resolution |
+| `url` | `string` | No | Absolute http/https URL this resolution happened at |
+| `runtime` | `string` | No | Runtime to address: a lexicon name with an `opRuntime`, or `local` (the default) |
 
 ### `op-report`
 
-Generate a deployment report for an Op without running it.
+Return a markdown report for an Op's latest run.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `name` | `string` | Yes | Op name |
-| `profile` | `string` | No | Temporal connection profile |
+| `runtime` | `string` | No | Runtime to address: a lexicon name with an `opRuntime`, or `local` (the default) |
 
 ### Plugin Tools
 

@@ -1,6 +1,6 @@
 ---
 title: Alert Triage (local)
-description: Run the alert-triage capstone locally — a Temporal-driven incident-triage app with a human-approval gate and an optional agent, on nothing but a Temporal dev server.
+description: Run the alert-triage capstone locally — an incident-triage app whose remediation waits on a person, on nothing but Node and npm.
 diataxis: tutorial
 ---
 
@@ -8,20 +8,18 @@ import { Aside } from '@astrojs/starlight/components';
 
 The [`alert-triage`](https://github.com/INTENTIUS/chant/tree/main/examples/alert-triage)
 example is the capstone (L5) of the [getting-started](https://github.com/INTENTIUS/chant/tree/main/examples/getting-started)
-golden example. It is a Temporal-driven incident-triage app: an alert comes in,
-a phased workflow classifies it, gathers context, proposes a remediation, pauses
-for human approval when the change is risky, applies it (a clearly-stubbed step),
-then notifies. chant synthesizes the
-Kubernetes manifests; the triage workflow itself is hand-written Temporal — the
-["Raw Temporal + chant"](/chant/concepts/deployment-paths/) split.
+golden example. An alert comes in and a phased Op takes it from there. It
+classifies the alert and gathers context, then proposes a remediation and stops
+for a person before applying it (a clearly-stubbed step). chant synthesizes the
+Kubernetes manifests the app runs on, and the triage itself is an ordinary
+`*.op.ts` whose steps shell out to this project's own code.
 
-This tutorial runs the whole thing locally with no cloud and no cluster — just a
-Temporal dev server.
+This tutorial runs the whole thing locally with no cloud, no cluster, and no
+runtime beyond the one built into chant.
 
 ## Prerequisites
 
 - Node.js and `npm`.
-- The [Temporal CLI](https://docs.temporal.io/cli) (`temporal`) for the dev server.
 
 ## Run it
 
@@ -31,24 +29,49 @@ npm install
 npm run dev
 ```
 
-`npm run dev` starts a Temporal dev server, the triage worker, and the webhook
-receiver, then sends one demo alert. Open the Temporal UI at
-**http://localhost:8233** — you'll see an `alertTriage` workflow. The demo alert
-is high-severity, so it's **risky** and pauses at the approval gate.
+`npm run dev` starts the webhook receiver and sends one demo alert, which starts
+`chant run triage`. The run reaches the gate in the Approve phase and stops
+there:
 
-Approve it:
-
-```bash
-temporal workflow signal -n default \
-  --query "WorkflowType='alertTriage'" --name approve-remediation
+```
+Op "triage" is gated on "approve-remediation" after 1.4s
+  Approve the proposed remediation in .chant/triage/current.json
+  approve : chant approve triage approve-remediation
 ```
 
-The workflow completes, and the worker logs the outcome (`… — applied after
-approval`). A low-severity alert skips the gate and applies directly.
+The run exits **3**, not 1. Nothing failed and nothing is being held open. The
+run read the gate ledger, found nothing standing, and stopped after writing the
+pending fact. `app/start-triage.ts` reads exit 3 as "waiting on a human", which is
+what lets the webhook answer `202` with a status instead of a `500`.
+
+## Read the proposal, then clear it
+
+The proposal is on disk between the two runs, so what gets applied is what
+somebody actually read rather than a fresh classification that moved under them:
+
+```bash
+cat .chant/triage/current.json
+chant approve triage approve-remediation --actor you
+chant run triage
+```
+
+`chant approve` writes the resolution to the gate ledger on the
+`chant/lifecycle` branch. The second run reads both facts and walks through the
+gate, applying the remediation and notifying. Ordering is what makes this safe: a
+resolution counts only if it is newer than the pending fact it answers, so last
+week's approval cannot clear this morning's proposal.
+
+Every remediation passes the gate, which is a change from the workflow this
+example replaces. That one paid for its gate with a twelve-hour open wait, so it
+spent that only on remediations the classifier called risky and let the routine
+ones through unattended. Nothing is held open now, and the second run is just
+another run, so there is no cost left to route everything through the gate.
+`risky` still does work: it is what the proposal and the notify line say about
+the change somebody is being asked to clear.
 
 ## Two event sources
 
-Both feed the same triage workflow:
+Both start the same Op:
 
 ```bash
 npm run alert            # external alert via the webhook (POST /alert)
@@ -56,7 +79,7 @@ npm run drift -- --demo  # a drift event (the WatchOp/lifecycle counterpart)
 ```
 
 The webhook is the receiver the `WebApp` manifest deploys. The drift source runs
-`chant lifecycle plan --json` and triages each drifted resource — out-of-band
+`chant lifecycle plan --json` and triages each drifted resource, so out-of-band
 cluster changes go through the same triage as external alerts. `--demo` injects a
 sample drift so you can see the pipeline without making a real change.
 
@@ -65,7 +88,8 @@ sample drift so you can see the pipeline without making a real change.
 `proposeRemediation` is a deterministic stub by default — no key, runs offline.
 Set `ANTHROPIC_API_KEY` (and `npm i @anthropic-ai/sdk`) to have it call Claude;
 override the model with `ANTHROPIC_MODEL` (default `claude-sonnet-4-6`). The first
-run shows chant, not an LLM.
+run shows chant, not an LLM. The agent may only escalate risk, never de-escalate:
+a high or critical alert stays risky even if the model calls it safe.
 
 ## Deploy the manifests
 
@@ -79,7 +103,7 @@ kubectl apply -f k8s.yaml   # e.g. to a local k3d cluster
 
 <Aside type="note">
 The manifests reference placeholder images (`ghcr.io/intentius/alert-*`). Swap in
-your own builds of the worker and webhook to run the app in-cluster; the local
+your own builds of the runner and webhook to run the app in-cluster; the local
 `npm run dev` above runs them from source without images.
 </Aside>
 
@@ -87,12 +111,13 @@ your own builds of the worker and webhook to run the app in-cluster; the local
 
 | Piece | What it is |
 |---|---|
-| `src/` | chant manifests — webhook (`WebApp`) and worker (`WorkerPool`) |
-| `activities/triage.ts` | the triage activities (the agent — stub + Claude opt-in) |
-| `activities/workflow.ts` | the Temporal workflow (classify → context → propose → gate → apply → notify) |
-| `activities/worker.ts` | the worker that registers them |
+| `src/` | chant manifests — webhook (`WebApp`) and runner (`WorkerPool`) |
+| `activities/triage.ts` | the triage steps (the agent — stub + Claude opt-in) |
+| `activities/run-triage.ts` | the CLI the Op shells: `propose` before the gate, `apply` after it |
+| `ops/triage.op.ts` | the Op: Propose → Approve (gate) → Remediate |
 | `app/` | the event sources (webhook, drift) and the demo alert |
 
-A time-skipping test (`activities/workflow.test.ts`) covers the gate behaviour in
-CI. See the [example README](https://github.com/INTENTIUS/chant/tree/main/examples/alert-triage)
-for the full layout.
+Unit tests cover the triage steps and the event mappers (`npm test`). See the
+[example README](https://github.com/INTENTIUS/chant/tree/main/examples/alert-triage)
+for the full layout, and [Gate-as-fact](/chant/guide/operator/#gate-as-fact) for
+what the ledger is doing underneath.

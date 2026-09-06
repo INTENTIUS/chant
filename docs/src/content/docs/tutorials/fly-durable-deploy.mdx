@@ -1,48 +1,45 @@
 ---
-title: Durable Fly Deploy on Temporal
-description: Run a Fly Machines deploy as a durable Temporal workflow — chant generates the worker, auto-starts a local Temporal server, and applies the App + Machine against mudflaps. Kill the worker mid-deploy and it resumes from Temporal's persisted state. Offline, or real Fly by changing two environment variables.
+title: Durable Fly Deploy on a Steward
+description: Run a Fly Machines deploy on a cadence from a fountain steward, offline against mudflaps or against real Fly by changing two environment variables
 diataxis: tutorial
 ---
 
 import { Aside } from '@astrojs/starlight/components';
 
 The [`fly-durable-deploy`](https://github.com/INTENTIUS/chant/tree/main/examples/fly-durable-deploy)
-example runs a Fly Machines deploy as a **durable Temporal workflow**. Where the
-other Fly tutorials run the deploy on chant's local executor, this one runs the
-same kind of Op on Temporal — so if the worker crashes mid-deploy, restarting it
-resumes exactly where it left off, from state Temporal persisted.
+example runs a Fly Machines deploy that keeps running without anybody minding
+it. The op is scheduled on a [fountain steward](/chant/lexicons/fountain/steward/):
+one teammate, one persistent machine, one thread carrying every deploy this app
+has had.
 
 Where [`fly-deploy-rollback`](/chant/tutorials/fly-deploy-rollback/) uses a Sprite
-checkpoint as its recovery boundary, here **Temporal itself is the durability
-layer** — the workflow's progress is the checkpoint.
+checkpoint as its recovery boundary, durability here comes from two properties
+that have nothing to do with a workflow engine.
 
-## How chant runs an Op on Temporal
+**The machine persists.** The steward's sandbox is `sandbox_mode: persistent`,
+so the checkout, the npm cache and the installed chant survive a turn ending. A
+turn is a command on a computer that was already there, not a container booted
+to run one deploy and thrown away.
 
-`chant build` compiles each `*.op.ts` into a Temporal workflow, worker, and
-activities under `dist/ops/<name>/`. `chant run <op> --temporal` then auto-starts
-a local `temporal server start-dev`, spawns the generated worker, submits the
-workflow, and streams progress until it completes:
-
-```
-chant.config.ts ──chant build──▶ dist/ops/fly-durable-deploy/{workflow,worker,activities}.ts
-                                        │
-                 chant run fly-durable-deploy --temporal
-                                        ▼
-   temporal server start-dev  ◀──polls──  worker (flyApply → mudflaps)
-```
+**The op converges.** Build serializes `src/infra.ts` to the flaps plan; Deploy
+applies that plan to the Machines API and waits each machine to `started`.
+Applying it twice reaches the same App and the same Machine. So a turn that dies
+halfway leaves the estate wherever it got to, and the next run walks the same
+steps against that state and finishes. Nothing is resumed, because a convergent
+op has the same shape from every starting point.
 
 ## The op
 
-`ops/fly-durable-deploy.op.ts` is two durable phases:
+`ops/fly-durable-deploy.op.ts` is two phases and a cron:
 
 ```ts
-import { Op, phase, build } from "@intentius/chant-lexicon-temporal";
+import { Op, phase, build } from "@intentius/chant/op";
 import { flyApplyStep } from "@intentius/chant-lexicon-fly";
 
 export default Op({
   name: "fly-durable-deploy",
-  overview: "Durably deploy the Fly App + Machine on Temporal",
-  taskQueue: "fly-durable",
+  overview: "Deploy the Fly App + Machine, convergently, on a cadence",
+  schedule: { cron: "*/30 * * * *" },
   phases: [
     phase("Build", [build(".", { script: "build:fly" })]),
     phase("Deploy", [flyApplyStep("dist/fly.json")]),
@@ -50,32 +47,50 @@ export default Op({
 });
 ```
 
-`Build` serializes `src/infra.ts` (one App + Machine) into the flaps plan;
-`Deploy` applies it straight to the Machines API and waits each machine to
-`started`. The flaps endpoint comes from `FLY_FLAPS_BASE_URL` — local mudflaps
-offline, real Fly when unset.
+`schedule` is data on the Op, not a resource. The flaps endpoint comes from
+`FLY_FLAPS_BASE_URL`, which points at local mudflaps offline and at real Fly when unset.
 
-`chant.config.ts` declares the Temporal profile the generated worker reads:
+## The steward
+
+`ops/fountain.ts` declares the machine that runs it. Four documents come out of
+the composite, plus one `Schedule` because the op carries a cron:
 
 ```ts
-temporal: {
-  profiles: { local: { address: "localhost:7233", namespace: "default", taskQueue: "fly-durable", autoStart: true } },
-  defaultProfile: "local",
-}
+export const { agent, teammate, schedules } = Steward({
+  name: "fly-steward",
+  environment: toolchain,
+  vault: flyCreds,
+  ops: [flyDurableDeploy],
+});
 ```
 
-`autoStart: true` is what lets `chant run --temporal` boot the dev server for you.
+`toolchain` is the `Environment` the sandbox is provisioned from: the estate
+repo mounted at `/workspace/estate`, a setup script that installs chant, and
+`networking_type: "limited"` with an allowlist narrow enough to review
+(`api.machines.dev`, `github.com`, `registry.npmjs.org`). `flyCreds` is the
+`Vault` that holds `FLY_API_TOKEN`, which is set in fountain and never in the
+repo. The `Steward` reads the op's name and its cron off the declaration, so the
+cadence is written once, next to the op it paces.
+
+`chant.config.ts` declares the fountain profile the CLI reads:
+
+```ts
+fountain: {
+  profiles: { demo: { endpoint: "https://fountain.inevitable.fyi", token: { env: "FOUNTAIN_TOKEN" }, team: "fly-steward" } },
+  defaultProfile: "demo",
+}
+```
 
 ## Prerequisites
 
 - Node.js and `npm`.
 - Docker (for the mudflaps emulator).
-- The [`temporal` CLI](https://docs.temporal.io/cli) (`brew install temporal`) —
-  `chant run --temporal` shells `temporal server start-dev`.
+- A fountain instance and a token, for the steward half. The local half needs neither.
 
-## Run it
+## Run it locally
 
-Boot mudflaps, generate the worker, and run the deploy durably:
+The op runs here, in-process, with no fountain at all. Same steps, one
+observation instead of a cadence:
 
 ```bash
 docker run -d --rm -p 4280:4280 --name mudflaps ghcr.io/intentius/mudflaps:0.4.1
@@ -84,62 +99,90 @@ cd examples/fly-durable-deploy
 npm install
 export FLY_FLAPS_BASE_URL=http://localhost:4280
 
-chant build                       # generates dist/ops/fly-durable-deploy/
-chant run fly-durable-deploy --temporal   # auto-starts Temporal, runs the durable deploy
+chant run fly-durable-deploy
 ```
 
 ```
-autoStart: Starting temporal server start-dev...
-Temporal server ready.
-Spawning worker for Op "fly-durable-deploy" (profile: local)...
-Workflow started: chant-op-fly-durable-deploy
-Op "fly-durable-deploy" completed successfully.
+[phase] Build
+  ✓ chantBuild(script=build:fly)   3.1s
+[phase] Deploy
+  ✓ flyApply(plan=dist/fly.json)   6.8s
+Op "fly-durable-deploy" completed in 9.9s
 ```
 
-The App + Machine are now in mudflaps:
+The App and Machine are now in mudflaps:
 
 ```bash
 curl -s http://localhost:4280/v1/apps/fly-durable-demo/machines | jq '.[].state'
 # "started"
 ```
 
-<Aside type="note">
-In a dev checkout, run through the workspace CLI —
-`npx tsx ../../packages/core/src/cli/main.ts run fly-durable-deploy --temporal`.
-</Aside>
-
-## Watch it resume after a crash
-
-The point of running on Temporal is durability. To see it, run the worker in one
-terminal and the workflow-start in another, then kill the worker mid-deploy:
+Now run it a second time.
 
 ```bash
-# terminal 1 — the worker
-npx tsx dist/ops/fly-durable-deploy/worker.ts
-
-# terminal 2 — start the workflow, then Ctrl-C terminal 1 during Deploy
-temporal workflow start --type flyDurableDeployWorkflow --task-queue fly-durable \
-  --workflow-id chant-op-fly-durable-deploy --namespace default
+chant run fly-durable-deploy
 ```
 
-Temporal has persisted the workflow's history. Restart the worker in terminal 1
-and it picks up from the last completed activity — the `Build` result is not
-recomputed, and `Deploy` continues. Nothing is threaded by hand; the workflow
-state is the checkpoint.
+The second run is the point. It reports the same steps and reaches the same App
+and Machine rather than deploying a second one. That is the property the
+schedule leans on, and it is why nothing here has to be resumed.
+
+<Aside type="note">
+In a dev checkout, run through the workspace CLI —
+`npx tsx ../../packages/core/src/cli/main.ts run fly-durable-deploy`.
+</Aside>
+
+## Run it on the steward
+
+```bash
+npm run build:fountain             # dist/fountain.yaml
+export FOUNTAIN_TOKEN=...          # the variable chant.config.ts names
+npm run lint                       # FTN001, FTN010, FTN020..FTN023
+chant run fly-durable-deploy --on fountain
+```
+
+`chant run … --on fountain` posts the command line `chant run fly-durable-deploy`
+to the steward's thread, tails the conversation's event stream, and hands back a
+record in the shape a local run would have written. Open the conversation in
+fountain's UI and every turn is one command somebody could have typed, so
+scrolling the thread is scrolling this app's deploy history.
+
+If the steward is mid-turn the post is refused rather than queued:
+
+```
+fountain runtime: the steward "fly-steward" is running another op
+(https://fountain.inevitable.fyi/conversations/c_01J…). A teammate runs one
+turn at a time; wait for it to finish and run this again.
+```
+
+A teammate runs one turn at a time, which is what keeps two deploys off one
+checkout, and it is also why the schedule is in-thread: a fire that lands
+mid-turn is dropped, and the next one re-applies everything anyway.
+
+Point the sandbox at your own estate with the build parameter:
+
+```bash
+chant build ops --lexicon fountain -o dist/fountain.yaml \
+  --param repoUrl=https://github.com/you/your-estate
+```
 
 ## Run it against real Fly
 
-Drop the emulator override and give it a token — the same op, no code change:
+Drop the emulator override and give it a token. The op does not change:
 
 ```bash
 docker rm -f mudflaps
 unset FLY_FLAPS_BASE_URL       # flyApply falls through to real Fly
 export FLY_API_TOKEN=...
 
-chant run fly-durable-deploy --temporal
+chant run fly-durable-deploy
 ```
 
-Against a real Temporal cluster instead of the local dev server, point the
-`local` profile's `address` at it (and set `autoStart: false`); the generated
-worker connects there, and the search attributes it upserts (`OpName`, `Phase`)
-must be registered on that namespace once.
+On the steward, the token lives in the `Vault` instead, and the op is unchanged.
+
+## Read next
+
+- [The Steward](/chant/lexicons/fountain/steward/) — which fountain noun answers which chant need
+- [Running an Op on fountain](/chant/lexicons/fountain/runtime/) — profiles, `status`, `log`, and the busy case
+- [`fountain-steward`](/chant/tutorials/fountain-steward/) — the fuller worked example: a watch, a converge and a gated apply on one thread
+- [Ops as teammates](/chant/concepts/durable-workflows/) — where each half of an op's durability lives

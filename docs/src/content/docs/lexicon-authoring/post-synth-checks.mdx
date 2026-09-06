@@ -448,7 +448,7 @@ module; reach for one before writing your own.
 
 Contributing nothing is not neutral. `resolveAuditCatalog` skips a lexicon that
 omits the method **silently**, so every one of its findings reaches the report
-with no title, tier, fix kind, or category — which is how fly's and temporal's
+with no title, tier, fix kind, or category — which is how fly's and render's
 six checks surfaced before chant #1346. `chant dev check-lexicon` warns at tier
 2 when a shipped check has no entry, and a repo-level test enumerates every
 lexicon and fails on a gap in either direction.
@@ -458,7 +458,7 @@ Two details worth knowing:
 - **`auditRule()` hardcodes `yamlBased: true`.** A check that reads the chant
   model (`ctx.entities`) rather than the emitted output (`ctx.outputs`) cannot
   fire on an audit of standalone YAML, so it must be constructed directly with
-  `yamlBased: false`. cpln, fly, k3s, render and temporal do this, each with a
+  `yamlBased: false`. cpln, fly, fountain, k3s and render do this, each with a
   small local constructor at the top of its `audit-catalog.ts`. The
   exception: a lexicon that
   ships `auditEntities` (parse-to-graph) has its classified files parsed back

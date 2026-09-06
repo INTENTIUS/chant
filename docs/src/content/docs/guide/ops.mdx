@@ -1,6 +1,6 @@
 ---
 title: Ops
-description: Run named, phased Temporal workflows alongside your chant infrastructure specs
+description: Declare named, phased workflows alongside your chant infrastructure specs, and run them locally or on a steward
 diataxis: how-to
 ---
 
@@ -9,20 +9,23 @@ import Diagram from '../../../components/Diagram.astro';
 
 Deciding whether Ops is the right deployment model for your project? See [Choosing Your Deployment Model](/chant/concepts/deployment-paths/).
 
-**Ops** (chant's named-workflow abstraction, not "operations" in general) are named, phased Temporal workflows defined in `*.op.ts` files. They turn ad-hoc deployment scripts into durable, observable workflows: progress surfaces in the Temporal UI, gate steps can pause for human approval or external events, and `onFailure` phases handle compensation automatically.
+**Ops** (chant's named-workflow abstraction, not "operations" in general) are named, phased workflows defined in `*.op.ts` files. They turn ad-hoc deployment scripts into declared, observable ones: progress renders as the run goes, gate steps stop for a human approval that lives on the gate ledger, and `onFailure` phases handle compensation automatically.
 
 ### When to reach for an Op
 
 - **Long-running deploys** — see current phase without grepping logs.
-- **Gates** — pause for human approval or an external-system event (DNS delegation, change windows).
+- **Gates** — stop for human approval or an external-system event (DNS delegation, change windows).
 - **Automatic rollback** — `onFailure` phases compensate on failure instead of hand-rolled scripts.
 
-`chant run <name>` runs an Op **locally by default** — in-process, with no Temporal server. `chant build` compiles each `*.op.ts` into generated Temporal worker code for when you run with `--temporal`, which spawns the worker and submits the workflow. See [Local vs Temporal](/chant/guide/local-vs-temporal/) for the trade-off.
-
-Temporal-native when you want durability, zero-dependency when you don't: the local executor is the on-ramp, and the synthesis primitives below it need no executor at all. Reach for Temporal when an Op must survive a crash, hold a long approval, or roll back a partial failure.
+`chant run <name>` executes an Op **in this process**, with nothing installed and nothing running. `--on <lexicon>` hands the same Op to a runtime that hosts it instead, and `chant run <op> --on fountain` is the one chant ships: a [steward](/chant/lexicons/fountain/steward/) runs it on a machine of its own and keeps the record on a thread. See [Ops as teammates](/chant/concepts/durable-workflows/) for what each half is for.
 
 <Aside type="note" title="Prerequisites">
-Requires `@intentius/chant-lexicon-temporal` (the package). Local mode needs nothing running. `--temporal` additionally requires a reachable Temporal server (or [Temporal Cloud](https://cloud.temporal.io) — free tier available); see [Worker Profiles](/chant/lexicons/temporal/worker-profiles/) for connection configuration.
+`Op`, `phase` and the base step builders come from `@intentius/chant/op`, which
+ships in `@intentius/chant`. A lexicon that owns a verb ships its own typed
+builder for it (`kubectlApply` and `waitForReady` from
+`@intentius/chant-lexicon-k8s/op/builders`, `flyApplyStep` from the fly lexicon).
+Running on a steward additionally needs `@intentius/chant-lexicon-fountain` and a
+[profile](/chant/lexicons/fountain/profiles/).
 </Aside>
 
 <Diagram name="ops-execution-model" alt="Op execution model: sequential phases, parallel phases, gate steps, and onFailure compensation" caption="Op execution model — phases, gates, and compensation" />
@@ -32,7 +35,8 @@ Requires `@intentius/chant-lexicon-temporal` (the package). Local mode needs not
 Create a `*.op.ts` file anywhere in your project:
 
 ```typescript
-import { Op, phase, kubectlApply, shell } from "@intentius/chant-lexicon-temporal";
+import { Op, phase, shell } from "@intentius/chant/op";
+import { kubectlApply } from "@intentius/chant-lexicon-k8s/op/builders";
 
 export default Op({
   name: "alb-deploy",
@@ -54,7 +58,7 @@ export default Op({
 Before reaching for real infrastructure, verify your toolchain with a shell-only Op. Save as `hello.op.ts` anywhere in your project:
 
 ```typescript
-import { Op, phase, shell } from "@intentius/chant-lexicon-temporal";
+import { Op, phase, shell } from "@intentius/chant/op";
 
 export default Op({
   name: "hello",
@@ -65,20 +69,13 @@ export default Op({
 });
 ```
 
-In one terminal, start a local Temporal dev server:
+Then run it.
 
 ```bash
-temporal server start-dev
-```
-
-In another, build and run:
-
-```bash
-chant build
 chant run hello
 ```
 
-Once this works end-to-end, swap `shell()` for `kubectlApply()`, `helmInstall()`, or any other step builder to start deploying real resources.
+There is no server to start and no worker to build. Once this works end-to-end, swap `shell()` for `kubectlApply()`, `helmInstall()`, or any other step builder to start deploying real resources.
 
 ## Phases and steps
 
@@ -88,38 +85,42 @@ A reconcile activity is also available via `activity("reconcilePr", args)`: give
 
 ## Gate steps
 
-A gate pauses the workflow until a named signal is received. Typical gate scenarios:
+A gate stops the run until someone records a resolution on the gate ledger. Typical gate scenarios:
 
 - Human approval inside a change window
 - Manual QA sign-off before promoting to prod
 - Upstream ticket or external-team handoff
 - External system readiness (DNS delegation, TLS cert issuance, vendor provisioning)
 
-The example below waits for DNS delegation to complete before applying the app layer:
+The example below stops for DNS delegation before applying the app layer:
 
 ```typescript
-import { Op, phase, gate, kubectlApply } from "@intentius/chant-lexicon-temporal";
+import { Op, phase, gate } from "@intentius/chant/op";
+import { kubectlApply } from "@intentius/chant-lexicon-k8s/op/builders";
 
 export default Op({
   name: "dns-delegation",
   overview: "Deploy, then wait for DNS delegation before continuing",
   phases: [
     phase("Deploy", [kubectlApply("dist/infra.yaml")]),
-    phase("Await DNS", [gate("gate-dns-delegation", "72h")]),
+    phase("Await DNS", [gate("gate-dns-delegation", { timeout: "72h" })]),
     phase("Post-delegation", [kubectlApply("dist/k8s.yaml")]),
   ],
 });
 ```
 
-Send the signal when the external action completes:
+The run reaches the gate, records that it is waiting, and exits **3**. Nothing is held open. Record the resolution when the external action completes, then run the Op again:
 
 ```bash
-chant run signal dns-delegation gate-dns-delegation
+chant approve dns-delegation gate-dns-delegation --actor alex
+chant run dns-delegation
 ```
+
+The second run reads the resolution, walks through the gate carrying the approver onto the step record, and finishes. `chant run approve <op> <gate> --on <lexicon>` does the same write and then tells the hosting runtime, so a run parked on a steward's thread picks it up now rather than on its next tick. See [Gate-as-fact](/chant/guide/operator/#gate-as-fact) for the ordering rules.
 
 ## Compensation on failure
 
-`onFailure` phases run in order if the workflow terminates with an unhandled error:
+`onFailure` phases run in order if the run terminates with an unhandled error:
 
 ```typescript
 export default Op({
@@ -134,22 +135,24 @@ export default Op({
 });
 ```
 
+A gate is not a failure, so a run that stops at one runs no `onFailure` phase. Nothing failed, so there is nothing to compensate for.
+
 ## Continuous observation
 
-The `WatchOp` composite pairs an Op with a `TemporalSchedule` so `chant lifecycle snapshot` and `chant lifecycle diff --live` run on a recurring cron — periodic drift detection between change windows, not just at the next deploy.
+The `WatchOp` composite puts a cron on the Op itself, so `chant lifecycle snapshot` and `chant lifecycle diff --live` run on a recurring cadence — periodic drift detection between change windows, not just at the next deploy.
 
-See **[Watching Lifecycle](/chant/guide/watching-lifecycle/)** for the full walk-through: composite shape, generated workflow, Temporal UI filters (`Watch = "true"` / `Drift = "true"`), smoke-testing drift end-to-end, and how to triage each diff category. For the conceptual background on what drift means and why chant snapshots are observational, see [Drift Detection](/chant/concepts/drift-detection/).
+See **[Watching Lifecycle](/chant/guide/watching-lifecycle/)** for the full walk-through: composite shape, the cadence, filtering by `labels` (`Watch = "true"` / `Drift = "true"`), smoke-testing drift end-to-end, and how to triage each diff category. For the conceptual background on what drift means and why chant snapshots are observational, see [Drift Detection](/chant/concepts/drift-detection/).
 
 ## Reconcile (cloud -> code)
 
 The `ReconcileOp` composite takes the next step on the dial: when live drifts from declarations, open a PR that regenerates the affected TypeScript. Phases are **snapshot -> plan -> regenerate -> open PR** — the plan is `chant lifecycle plan`, and the regenerate-and-PR step is the `reconcilePr` activity.
 
 ```typescript
-import { ReconcileOp } from "@intentius/chant-lexicon-temporal";
+import { ReconcileOp } from "@intentius/chant/op";
 
-// Scheduled on Temporal, owned-only. Omit `schedule` for a one-shot
-// `chant run prod-reconcile` on the local executor.
-const { op, schedule } = ReconcileOp({
+// `schedule` lands on the Op as its cadence. Omit it for a one-shot
+// `chant run prod-reconcile`.
+const { op } = ReconcileOp({
   name: "prod-reconcile",
   env: "prod",
   schedule: "0 * * * *",       // hourly
@@ -157,11 +160,10 @@ const { op, schedule } = ReconcileOp({
   onDrift: "pull-request",      // or "issue" | "report"
 });
 
-export default op;        // the Op — discovered by `chant run prod-reconcile`
-export { schedule };      // the TemporalSchedule — deployed by `chant build`
+export default op;        // discovered by `chant run prod-reconcile`
 ```
 
-Run `chant run prod-reconcile` for a one-shot reconcile on the local executor; give it a `schedule` to run continuously on Temporal, where the cron and run history are the value (as with `WatchOp`). The primitives need no executor — only the scheduled, durable form requires Temporal.
+Run `chant run prod-reconcile` for a one-shot reconcile here; give it a `schedule` and hand it to a reader that fires it — the github generator, `chant operator`, or a fountain `Steward` — for the continuous form.
 
 ## Apply (code -> cloud)
 
@@ -169,15 +171,13 @@ The `ApplyOp` composite is the other direction: compute the plan, then apply it.
 
 `target` picks the mechanism, and every one of them is native — no cloud CLI in the path: `kubectl` and `kustomize` are a server-side apply through the k8s lexicon's typed client, `arm` is the azure lexicon's per-resource `azApply`, `cloudformation` is the aws lexicon's `awsApply`, which speaks the CloudFormation API directly, `gcp` is the gcp lexicon's per-resource `gcpApply`, which maps each CNRM kind to its GCP REST API, and `fly` is the fly lexicon's `flyApply`, which speaks the Fly Machines API (flaps) directly. Each is loaded from its lexicon at apply time, so a project using a target lists that lexicon in `chant.config.ts`.
 
-Whatever the target, the apply reports one result shape: the count projection of core's apply contract ([#1446](https://github.com/INTENTIUS/chant/issues/1446)) — `applied`, `pruned`, and `notAttempted` (declared resources no provider call was made for, including kinds an owned-only prune could not consider). A workflow gates on those counts regardless of target; the target-specific detail — the field manager on `kubectl`, the stack status on `cloudformation` — stays on the activity log.
+Whatever the target, the apply reports one result shape: the count projection of core's apply contract ([#1446](https://github.com/INTENTIUS/chant/issues/1446)) — `applied`, `pruned`, and `notAttempted` (declared resources no provider call was made for, including kinds an owned-only prune could not consider). An Op gates on those counts regardless of target; the target-specific detail — the field manager on `kubectl`, the stack status on `cloudformation` — stays on the step record.
 
 chant also ships four **native per-resource appliers** that speak each provider's own API directly, with no CLI in the path and an endpoint override so the same step targets a real account or an emulator: `awsApply`, `azApply` and `gcpApply` (typed step builders, like the ones in [Ops Reference](/chant/guide/ops-reference/#step-builders)), and `flyApply` (an activity the fly lexicon contributes, reached by name). Each of the four is exactly what `ApplyOp` runs for the `cloudformation`, `arm`, `gcp` and `fly` targets ([#1449](https://github.com/INTENTIUS/chant/issues/1449)); the step forms remain for hand-written Ops that need per-step control.
 
 ```typescript
-import { ApplyOp } from "@intentius/chant-lexicon-temporal";
+import { ApplyOp } from "@intentius/chant/op";
 
-// Gated destructive apply on Temporal. Drop `delete`/`gate` for an additive
-// apply that also runs one-shot on the local executor.
 const { op } = ApplyOp({
   name: "prod-apply",
   env: "prod",
@@ -204,47 +204,53 @@ owned by another field manager.
 
 chant never resolves that for you. Set `forceConflicts: true` on the `ApplyOp` to take ownership deliberately — adopting objects a previous `kubectl apply` created is the usual reason. See [the k8s lexicon's API client page](/chant/lexicons/k8s/api-client/) for the full surface.
 
-### Gates and compensation — where Temporal is load-bearing
+### Gates and compensation on a destructive apply
 
-A destructive apply is exactly where durability matters, and where `ApplyOp` leans on Temporal:
+A destructive apply is where the two safety features earn their place:
 
-- **Approval gate** — `delete: "gated"` (or an explicit `gate`) inserts an Approve phase before the apply. On Temporal this is a durable wait-for-signal: it survives a worker crash and can hold for hours or days without keeping a process open. The local executor cannot.
-- **Compensation** — a destructive apply defaults to an `onFailure` Rollback phase (a `compensateApply` activity), so a partial failure unwinds instead of leaving the cloud half-applied. Compensation is total or refused ([#1449](https://github.com/INTENTIUS/chant/issues/1449)): it needs a rollback to run, which is either the target's mapped native one (`cloudformation` rolls back through the aws lexicon's `rollbackStack` — the only mapped rollback today) or an explicit `compensate: { command }` (e.g. `kubectl rollout undo …`). Asking for `compensate: true` on a target with neither fails when the Op is built, not with a warning when the rollback is already needed — and the default only wires the phase where a rollback path exists. Set `compensate: false` to opt out.
-- **Crash-resume + audit** — the workflow resumes from the last completed step with no double-acting, and the workflow history is the audit trail.
+- **Approval gate** — `delete: "gated"` (or an explicit `gate`) inserts an Approve phase before the apply. The run stops there and exits 3 until `chant approve prod-apply approve-apply` records the resolution. Nothing is held open in between, so a decision that takes three days costs nothing while it is being made.
+- **Compensation** — a destructive apply defaults to an `onFailure` Rollback phase (a `compensateApply` activity), so a partial failure unwinds instead of leaving the cloud half-applied. Compensation is total or refused ([#1449](https://github.com/INTENTIUS/chant/issues/1449)): it needs a rollback to run, which is either the target's mapped native one (`cloudformation` rolls back through the aws lexicon's `rollbackStack` — the only mapped rollback today) or an explicit `compensate: { command }` (e.g. `kubectl rollout undo …`). Asking for `compensate: true` on a target with neither fails when the Op is built, not with a warning when the rollback is already needed, and the default only wires the phase where a rollback path exists. Set `compensate: false` to opt out.
+- **Audit** — every run appends one record to the run ledger on the `chant/lifecycle` branch, carrying the run id, the status, the Op's `labels`, and each phase's per-step status. The gate's resolution lands beside it on the same branch.
 
-An ungated, additive apply needs none of this and runs on the local executor. See [Durable Workflows](/chant/concepts/durable-workflows/) for why infra apply wants durable execution — and why it stays optional.
+An ungated, additive apply needs none of this. See [Ops as teammates](/chant/concepts/durable-workflows/) for where each kind of durability an apply needs actually lives.
 
 ## Audit (supply-chain drift)
 
-Some CI/CD security checks can only be answered against a moving external truth: whether a pinned action SHA still corresponds to a real upstream tag, whether a referenced commit still exists, whether a new advisory now covers a dependency already in use, whether an upstream was archived since you pinned it. The reference was correct when authored — the external world moved. That is drift, not a synthesis error, so it cannot live in the pure `chant build`; it belongs in the operational layer, exactly like lifecycle observation. On the dial it sits at **observe**, with a finding-mode as the **reconcile** step.
+Some CI/CD security checks can only be answered against a moving external truth: whether a pinned action SHA still corresponds to a real upstream tag, whether a referenced commit still exists, whether a new advisory now covers a dependency already in use, whether an upstream was archived since you pinned it. The reference was correct when authored, and the external world moved. That is drift, not a synthesis error, so it cannot live in the pure `chant build`; it belongs in the operational layer, exactly like lifecycle observation. On the dial it sits at **observe**, with a finding-mode as the **reconcile** step.
 
 The github and gitlab lexicons each ship an audit Op for this. The deterministic post-synth checks ([GitHub GHA029–058](/chant/lexicons/github/lint-rules/), [GitLab WGL029–048](/chant/lexicons/gitlab/lint-rules/)) own everything answerable from the build; the audit Op owns *only* what needs live resolution.
 
 ```typescript
-import { WorkflowAuditOp } from "@intentius/chant-lexicon-temporal";
+import { WorkflowAuditOp } from "@intentius/chant/op";
 
-// One-shot on the local executor: chant run actions-audit
+// One-shot: chant run actions-audit
 export const { op } = WorkflowAuditOp({ name: "actions-audit" });
 
-// Scheduled daily on Temporal; open a PR that bumps a stale pin
-export const { op: scheduledOp, schedule } = WorkflowAuditOp({
-  name: "actions-audit",
+// Daily, and opening a PR that bumps a stale pin
+export const { op: scheduledOp } = WorkflowAuditOp({
+  name: "actions-audit-daily",
   schedule: "0 6 * * *",
   onFinding: "pull-request",   // "report" (default) | "issue" | "pull-request"
 });
 ```
 
-`PipelineAuditOp` is the GitLab counterpart — it audits `.gitlab-ci.yml` `include:` / `component:` / `image:` references, and its finding-modes are `report | issue | merge-request`. Both run one-shot on the local executor (`chant run <name>`) with no Temporal dependency; only the scheduled, durable form requires Temporal, and `report` mode needs no external services at all. See the [github](/chant/lexicons/github/) and [gitlab](/chant/lexicons/gitlab/) lexicon docs for the per-platform reference lists each audit resolves.
+`PipelineAuditOp` is the GitLab counterpart — it audits `.gitlab-ci.yml` `include:` / `component:` / `image:` references, and its finding-modes are `report | issue | merge-request`. Both run one-shot with `chant run <name>`; `report` mode needs no external services at all. See the [github](/chant/lexicons/github/) and [gitlab](/chant/lexicons/gitlab/) lexicon docs for the per-platform reference lists each audit resolves.
 
-### Scheduling without Temporal
+### Scheduling an Op
 
-`schedule` above produces a `TemporalSchedule`, so it needs a Temporal server. A project that doesn't run one can still put an audit/reconcile Op on a cron via CI itself — the Op counterpart to [generate mode](/chant/components/orchestration/#generate-mode)'s component pipeline. `generateOpsPipeline` (`@intentius/chant/op`) validates that every named Op exists, then delegates to the target lexicon's `generateOpPipeline` (gitlab, github, forgejo), which synthesizes one cron-triggered CI file per Op — `chant run <name>` on the local executor, with only the token/permission scope its finding-mode needs (read-only for `report`; scoped write for `issue`/`pull-request`/`merge-request`).
+`schedule` above is data on the Op: `{ cron, overlap: "skip" }`, and nothing about it names a runtime. Three readers render it.
+
+`generateOpsPipeline` (`@intentius/chant/op`) validates that every named Op exists, then delegates to the target lexicon's `generateOpPipeline` (gitlab, github, forgejo), which synthesizes one cron-triggered CI file per Op — `chant run <name>` in the job, with only the token/permission scope its finding-mode needs (read-only for `report`; scoped write for `issue`/`pull-request`/`merge-request`). This is the Op counterpart to [generate mode](/chant/components/orchestration/#generate-mode)'s component pipeline.
+
+[`chant operator`](/chant/guide/operator/) is the second. A timer and a ref lease around the local executor, ticking every discovered `ConvergeOp` from your own machine or from a CronJob.
+
+A fountain [`Steward`](/chant/lexicons/fountain/steward/) is the third: every op it lists that carries a cadence becomes a `Schedule` on the teammate, in-thread, and a fire that lands while a turn is running is dropped rather than queued.
 
 A `ScheduledOpSpec` isn't limited to cron. Its `trigger` also takes `{ kind: "pull_request", branches? }` and `{ kind: "push", branches? }`, for an Op whose CI trigger is a PR or a push rather than a clock (a Terraform `plan` on `pull_request`, posted as a PR comment, paired with `apply` on `push` to the default branch, is the motivating case). GitHub and Forgejo support all three trigger kinds; GitLab, which has no `pull_request`/`push` event model, throws a clear error if given anything but cron.
 
 ## Replay (policy drift)
 
-`PolicyReplayOp` is the same shape applied to authorization policy. A [dogwood](/chant/lexicons/cedar/) `.dw` policy set carries temporal clauses — `formerly within 1h …` — so what a policy decides depends on a history the build cannot see. Replaying the declared set against a recorded event trace is how that gets checked, and the answer moves as the history does.
+`PolicyReplayOp` is the same shape applied to authorization policy. A [dogwood](/chant/lexicons/cedar/) `.dw` policy set carries time-window clauses — `formerly within 1h …` — so what a policy decides depends on a history the build cannot see. Replaying the declared set against a recorded event trace is how that gets checked, and the answer moves as the history does.
 
 ```typescript
 import { PolicyReplayOp } from "@intentius/chant-lexicon-cedar";
@@ -260,7 +266,7 @@ export const { op } = PolicyReplayOp({
 });
 ```
 
-Phases are **artifacts -> replay -> report**: `chant build` emits the `.dw` bundle, the `dogwoodReplay` activity runs it through upstream's CLI and writes a divergence report, and `dogwoodReplayReport` acts on the finding mode. Unlike the two audit Ops above it ships from the **cedar** lexicon rather than the temporal one, because it hands back an Op and no schedule — pair it with a `TemporalSchedule` yourself for the recurring form. The replay step needs the `dogwood` binary; without one the step fails rather than reporting nothing found.
+Phases are **artifacts -> replay -> report**: `chant build` emits the `.dw` bundle, the `dogwoodReplay` activity runs it through upstream's CLI and writes a divergence report, and `dogwoodReplayReport` acts on the finding mode. It ships from the **cedar** lexicon because the replay step is cedar's; give the Op a `schedule` for the recurring form. The replay step needs the `dogwood` binary; without one the step fails rather than reporting nothing found.
 
 ## Op dependencies
 
@@ -283,28 +289,28 @@ chant graph
 ## Running Ops
 
 ```bash
-# Start an Op (spawns Temporal worker + submits workflow)
+# Run an Op here, in this process
 chant run alb-deploy
 
-# Use a specific connection profile from chant.config.ts
-chant run alb-deploy --profile cloud
+# Run the same Op on a fountain steward
+chant run alb-deploy --on fountain
 
-# List all Ops with latest run status
+# List all Ops with the run state the runtime reports
 chant run list
 
-# Show current workflow state
+# Show the latest run's state
 chant run status alb-deploy
 
-# Unblock a gate step
-chant run signal alb-deploy gate-dns-delegation
+# Record a gate's resolution, then wake the hosting runtime
+chant run approve alb-deploy gate-dns-delegation --approver alex
 
 # Cancel an active run
-chant run cancel alb-deploy --force
+chant run cancel alb-deploy --force --on fountain
 
 # View run history
 chant run log alb-deploy
 ```
 
-See [`chant run`](/chant/cli/run/) for the full CLI reference, and [Worker Profiles](/chant/lexicons/temporal/worker-profiles/) for connection configuration.
+See [`chant run`](/chant/cli/run/) for the full CLI reference, and [Running an Op on fountain](/chant/lexicons/fountain/runtime/) for the hosted path.
 
-See [Ops Reference](/chant/guide/ops-reference/) for step builders, retry profiles, the search-attributes contract, per-target delete-path bounds, and the files `chant build` generates.
+See [Ops Reference](/chant/guide/ops-reference/) for step builders, retry profiles, the labels contract, per-target delete-path bounds, and what `chant build` emits.

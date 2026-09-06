@@ -94,7 +94,7 @@ Two helpers come with it, both from `@intentius/chant`:
 Returning nothing is not the way to say "I applied nothing because I could not". That normalizes to three empty arrays, which reads as an empty plan. Say it with `notAttemptedAll`.
 
 <Aside type="tip" title="Keep your own result too">
-The envelope is an interface, not a replacement. A lexicon's applier knows more than the shared vocabulary can hold. A CNRM `kind` and a per-resource `created`/`updated` flag have no place in it. Keep returning that, and project onto the envelope with a small `toApplyResult` exported beside the applier. `toApplyResult` in `lexicons/gcp/src/op/activities/gcp-apply.ts` is the reference; `lexicons/azure/src/op/activities/az-apply.ts` and `lexicons/fly/src/op/activities/fly-apply.ts` export the same pair. The temporal apply activity looks the projection up by name, so an applier that exports the applier without it is refused rather than silently un-enveloped (`lexicons/temporal/src/op/activities/apply.ts`).
+The envelope is an interface, not a replacement. A lexicon's applier knows more than the shared vocabulary can hold. A CNRM `kind` and a per-resource `created`/`updated` flag have no place in it. Keep returning that, and project onto the envelope with a small `toApplyResult` exported beside the applier. `toApplyResult` in `lexicons/gcp/src/op/activities/gcp-apply.ts` is the reference; `lexicons/azure/src/op/activities/az-apply.ts` and `lexicons/fly/src/op/activities/fly-apply.ts` export the same pair. Core's apply activity looks the projection up by name, so an applier that exports the applier without it is refused rather than silently un-enveloped (`packages/core/src/op/activities/apply.ts`).
 </Aside>
 
 ## Ownership

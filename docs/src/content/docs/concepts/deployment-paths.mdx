@@ -1,6 +1,6 @@
 ---
 title: Choosing Your Deployment Model
-description: Hand off to your own pipeline, Ops, Components, or raw Temporal — pick the right fit for your project
+description: Hand off to your own pipeline, Ops on the local runtime, Components, or Ops on a fountain steward — pick the right fit for your project
 diataxis: explanation
 ---
 
@@ -9,9 +9,9 @@ import Diagram from '../../../components/Diagram.astro';
 
 chant covers the synthesis step — TypeScript in, validated artifacts out — and the lifecycle layers built on top of it: Ops, the lifecycle dial, and the component release model. Knowing which layer fits your situation avoids unnecessary setup.
 
-Use none of the lifecycle layers and chant is a deterministic compiler you hand off from — no executor, no state file, nothing to run. The orchestration layer is Temporal-native when you want durability and zero-dependency when you don't: the local executor runs Ops in-process, and only gated or destructive applies need a Temporal cluster.
+Use none of the lifecycle layers and chant is a deterministic compiler you hand off from, with no runtime, no state file and nothing to run. The orchestration layer starts the same way: `chant run <op>` executes an Op in this process, gates and compensation included. What moves an op off your machine is needing a machine of its own, a record somebody else can read, or a cadence that fires while nobody is watching.
 
-<Diagram name="deployment-paths" alt="Decision tree: existing deploy pipeline -> hand off; need observability, gates, or rollback -> Ops or Raw Temporal" caption="Choosing your deployment model" />
+<Diagram name="deployment-paths" alt="Decision tree: existing deploy pipeline goes to hand-off; needing observability, gates or rollback goes to Ops; needing a machine of its own goes to Ops on a steward" caption="Choosing your deployment model" />
 
 ## Hand Off to an Existing Pipeline
 
@@ -30,13 +30,14 @@ chant build
 kubectl apply -f dist/infra.yaml   # or whatever your tooling does next
 ```
 
-## Ops — Durable Deployment Workflows
+## Ops on the local runtime
 
-Ops are named, phased deployment workflows declared in `*.op.ts` files. `chant build` compiles each Op into a Temporal worker. `chant run <name>` starts the worker and submits the workflow to Temporal.
+Ops are named, phased deployment workflows declared in `*.op.ts` files. `chant run <name>` executes one in this process, rendering each phase and step as it runs, and appends the run's record to the run ledger when it finishes.
 
 ```typescript
 // deploy.op.ts
-import { Op, phase, kubectlApply, shell } from "@intentius/chant-lexicon-temporal";
+import { Op, phase, shell } from "@intentius/chant/op";
+import { kubectlApply } from "@intentius/chant-lexicon-k8s/op/builders";
 
 export default Op({
   name: "api-deploy",
@@ -55,15 +56,15 @@ export default Op({
 chant run api-deploy
 ```
 
-You get: live phase progress in the Temporal UI, automatic retry on activity failure, `onFailure` phases run if the workflow terminates with an error, and gate steps that pause the workflow until a human or external system sends a signal.
+You get live phase progress on your terminal, automatic retry on step failure, `onFailure` phases when the run ends with an error, and gate steps that stop the run pending a resolution on the gate ledger.
 
 **Use this when:**
 - Deployments take more than a few minutes
 - You want to see current phase and history without grepping logs
-- Some steps need to pause for human approval or an external event (DNS delegation, change-window approval)
+- Some steps need to stop for human approval or an external event (DNS delegation, change-window approval)
 - You want automatic rollback on failure without scripting it yourself
 
-**How to get started:** [Quick Start](/chant/getting-started/quick-start/) for synthesis, then the [Ops guide](/chant/guide/ops/) for Op authoring and `chant run`. Requires a Temporal server or [Temporal Cloud](https://cloud.temporal.io) (free tier available).
+**How to get started:** [Quick Start](/chant/getting-started/quick-start/) for synthesis, then the [Ops guide](/chant/guide/ops/) for Op authoring and `chant run`. Nothing to install and nothing to run.
 
 ## Components — Release Model
 
@@ -74,36 +75,39 @@ When you have many releasable units — services, tables, clusters, libraries �
 - You want build-once / publish-by-digest with SBOM, signing, and a verify gate
 - You want rollback via per-capability compensation instead of hand-written scripts
 
-**How to get started:** [Components Overview](/chant/components/overview/), then [Component Contract](/chant/components/component-contract/). Runs on the local executor by default; only gated or crash-resumable components need Temporal. For where this sits against Ops and the lifecycle dial, see [Components](/chant/concepts/components/).
+**How to get started:** [Components Overview](/chant/components/overview/), then [Component Contract](/chant/components/component-contract/). Runs on the local runtime by default, and moves to a hosted one with the same `--on` flag an Op uses. For where this sits against Ops and the lifecycle dial, see [Components](/chant/concepts/components/).
 
-## Raw Temporal + chant
+## Ops on a fountain steward
 
-You write your own Temporal workflow TypeScript — signals, queries, updates, parallel activities — and use chant-synthesized YAML as the input those activities operate on. This is the approach shown in the [Temporal Workflow-Driven Deploy tutorial](/chant/tutorials/temporal-crdb-deploy/).
+The same `*.op.ts` files, hosted. A [`Steward`](/chant/lexicons/fountain/steward/) declares one environment's machine: an agent running `chant acp` on a persistent sandbox, seated on the team as a teammate, with a `Schedule` for every op that carries a cadence.
 
 ```typescript
-// Your own Temporal workflow
-export async function deployWorkflow(params: DeployParams): Promise<void> {
-  await applySharedInfra(params);           // activity calls kubectl apply on chant-built YAML
-  await Promise.all([
-    applyRegionalInfra(params, 'east'),     // parallel activities with heartbeat
-    applyRegionalInfra(params, 'central'),
-    applyRegionalInfra(params, 'west'),
-  ]);
-  setHandler(dnsSignal, () => { dnsReady = true; });
-  await condition(() => dnsReady, '48h');   // gate step — signal or auto-detect
-  // ...
-}
+export const { agent, teammate, schedules } = Steward({
+  name: "prod-steward",
+  environment: toolchain,
+  vault: prodCreds,
+  ops: [prodWatch, prodConverge, prodApply],
+});
 ```
 
-**Use this when:**
-- You're already running Temporal and have existing workers or workflow patterns
-- You need signal/query/update patterns, search attributes, or schedule triggers that Op phases don't expose
-- You want full control over retry policies, heartbeat intervals, and workflow determinism
+```bash
+chant run prod-apply --on fountain
+```
 
-**How to get started:** [Temporal Workflow-Driven Deploy tutorial](/chant/tutorials/temporal-crdb-deploy/).
+The command line `chant run prod-apply` goes onto the steward's thread as a prompt, the CLI tails the conversation's event stream, and the run's record comes back in the shape a local run would have written. The thread is that environment's operational history: each turn is one command somebody could have typed.
+
+**Use this when:**
+- The op has to run when nobody is at a keyboard, on a cadence
+- You want one writer per environment rather than whoever ran it last
+- You want the record of what was done to an environment to outlive the terminal it was done from
+- The op needs credentials that should never reach a laptop
+
+**How to get started:** [The Steward](/chant/lexicons/fountain/steward/), then [Running an Op on fountain](/chant/lexicons/fountain/runtime/) and the [`fountain-steward` example](https://github.com/INTENTIUS/chant/tree/main/examples/fountain-steward).
 
 <Aside type="note">
-Ops and raw Temporal are not mutually exclusive. A project can have `*.op.ts` files for standard deploys **and** a bespoke workflow for a complex one-off operation. Both consume the same chant-built artifacts.
+The local runtime and a steward are not a fork in the road. The same Op runs on
+both, and `--on` is the whole difference at the call site. Start local, and move
+the ops that need a machine.
 </Aside>
 
 ## Decision Table
@@ -112,10 +116,10 @@ Ops and raw Temporal are not mutually exclusive. A project can have `*.op.ts` fi
 |-----------|-------|
 | I have ArgoCD / Terraform / an existing deploy pipeline | Hand off (existing pipeline) |
 | My deployment script is more than 50 lines and fails unpredictably | Ops |
-| I need a human approval gate mid-deploy | Ops |
+| I need a human approval gate mid-deploy | Ops (the gate is a fact either way) |
 | I have many deployable units each dragging its own pipeline | Components |
 | I want build-once, SBOM + signing, and a verify gate before apply | Components |
-| I need parallel regional deploys with independent retry | Ops or raw Temporal |
-| I'm already a Temporal shop with existing workers | Raw Temporal |
-| I need custom Temporal search attributes or schedules | Raw Temporal |
-| I need workflow-level queries during a running deploy | Raw Temporal (or Op + MCP `op-status`) |
+| I need parallel regional deploys with independent retry | Ops |
+| This has to run on a cadence with nobody watching | Ops on a steward |
+| I want one writer per environment, and a thread that says what it did | Ops on a steward |
+| I need to query a running deploy's state | `chant run status`, or the MCP `op-status` tool |

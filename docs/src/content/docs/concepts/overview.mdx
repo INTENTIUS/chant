@@ -30,7 +30,7 @@ A dev environment might only observe; production might apply behind an approval 
 
 ## Durable when you need it
 
-The lifecycle is orchestration, and you declare it as [Ops](/chant/guide/ops/) — named, phased workflows in `*.op.ts` files. An Op runs **locally by default**, in-process, with nothing else installed. When an apply needs to outlive a single process — an approval gate held for days, automatic rollback, crash-resume — the same Op compiles to a [durable Temporal workflow](/chant/concepts/durable-workflows/). Decoupled first, durable when you ask.
+The lifecycle is orchestration, and you declare it as [Ops](/chant/guide/ops/) — named, phased workflows in `*.op.ts` files. An Op runs **locally by default**, in-process, with nothing else installed. When it needs a machine of its own, a standing record, or a cadence nobody has to trigger, the same Op runs on a [fountain steward](/chant/concepts/durable-workflows/) with `chant run <op> --on fountain`. Decoupled first, hosted when you ask.
 
 On top of Ops sits the [component release model](/chant/concepts/components/): declare a releasable unit in `*.component.ts`, and one generated orchestrator builds, publishes, signs, applies, verifies, and rolls it back — no pipeline per unit.
 
@@ -55,5 +55,5 @@ chant hosts no authoritative state file, and the build path itself never touches
 
 - [Philosophy](/chant/concepts/philosophy/) — why the core is a deterministic compiler
 - [Lifecycle Models](/chant/concepts/lifecycle-models/) — the observe -> reconcile -> apply dial, in depth
-- [Choosing Your Deployment Model](/chant/concepts/deployment-paths/) — synthesis hand-off, Ops, Components, or raw Temporal
+- [Choosing Your Deployment Model](/chant/concepts/deployment-paths/) — synthesis hand-off, Ops on the local runtime, Components, or a fountain steward
 - [Getting Started](/chant/getting-started/introduction/) — install and build your first artifact

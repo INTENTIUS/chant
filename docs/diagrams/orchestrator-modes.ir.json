@@ -29,11 +29,11 @@
       }
     },
     {
-      "id": "Temporal",
+      "id": "fountain steward",
       "kind": "",
       "lexicon": "",
       "attrs": {
-        "adds": "gates · durable resume"
+        "adds": "a machine · a cadence"
       }
     },
     {
@@ -69,7 +69,7 @@
     },
     {
       "from": "one orchestrator Op",
-      "to": "Temporal",
+      "to": "fountain steward",
       "kind": "ref",
       "viaAttr": "opt-in",
       "style": "dashed"
@@ -91,7 +91,7 @@
         "chant graph --stacks",
         "one orchestrator Op",
         "local executor",
-        "Temporal"
+        "fountain steward"
       ],
       "generate mode": [
         "github / gitlab / forgejo lexicon",

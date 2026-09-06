@@ -36,7 +36,7 @@ Everything PR-specific reduces to one value: the environment name `pr-<n>`.
 
 ```typescript
 export default {
-  lexicons: ["k8s", "github", "temporal"],
+  lexicons: ["k8s", "github"],
   sourceDir: "src",
   environments: ["local", "pr-*"],
   ownership: { stack: "pr-preview", env: { param: "env" } },
@@ -119,7 +119,7 @@ environment](https://docs.github.com/en/actions/deployment/targeting-different-e
   run: npx chant run preview-apply
 ```
 
-`preview-apply` is an `ApplyOp` on the [local executor](/chant/guide/local-vs-temporal/)
+`preview-apply` is an `ApplyOp` on the [local runtime](/chant/concepts/durable-workflows/)
 — build, live-diff plan, then a Kubernetes server-side apply as field manager
 `chant:pr-preview`, deletes scoped to owned resources only. The op reads the
 same `params.env`, so nothing about it is PR-specific:

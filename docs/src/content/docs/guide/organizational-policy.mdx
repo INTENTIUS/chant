@@ -196,7 +196,8 @@ before applying is gated. To gate an apply *inside* an [Op](/chant/guide/ops/),
 add a **`policyGate()`** step before the apply phase:
 
 ```ts
-import { Op, phase, build, policyGate, kubectlApply } from "@intentius/chant-lexicon-temporal";
+import { Op, phase, build, policyGate } from "@intentius/chant/op";
+import { kubectlApply } from "@intentius/chant-lexicon-k8s/op/builders";
 
 export default Op({
   name: "deploy",
@@ -213,8 +214,8 @@ export default Op({
 `policyGate` builds the project, runs `lint.policies` with the given `env` (or
 `ownership.env`), and **blocks** on any violation — non-retryable and
 single-attempt (a deterministic violation is not worth retrying). It is a plain
-activity, so it gates under both the local executor and Temporal. A clean
-evaluation passes through to the apply.
+activity, so it gates the same wherever the run is hosted. A clean evaluation
+passes through to the apply.
 
 The build behind the gate is assembled from the same resolution `chant build`
 uses, so it is the same project: folded by default, with the project's config

@@ -116,19 +116,22 @@ Every one of these reads the build only — no live instance, no run history, no
 
 ## Ops
 
-Ops are named, phased Temporal workflows defined in `*.op.ts` files. They run durable deployments — phases, gate steps that pause for human signals, compensation on failure — and surface progress in the Temporal UI.
+Ops are named, phased workflows defined in `*.op.ts` files. They run deployments as declared phases, with gate steps that stop for a person and `onFailure` phases that compensate, and each run's steps land on the run ledger as they settle.
 
 ```bash
-# Start an Op workflow
+# Run an Op here, in this process
 chant run alb-deploy
 
-# Send a signal to unblock a gate step
-chant run signal alb-deploy gate-dns-delegation
+# Record a gate's resolution, then wake the hosting runtime
+chant run approve alb-deploy gate-dns-delegation --approver alex
+
+# Or hand the run to a fountain steward
+chant run alb-deploy --on fountain
 ```
 
-The MCP server exposes Op tools (`op-list`, `op-run`, `op-status`, `op-signal`) so agents can start and monitor deployments programmatically.
+The MCP server exposes Op tools (`op-list`, `op-run`, `op-status`, `op-approve`, `op-report`) so agents can start and monitor deployments programmatically. Each takes an optional `runtime`, the same choice `--on` makes on the command line.
 
-See the [Ops guide](/chant/guide/ops/) for details.
+An agent meets a gate the same way a person does. The run exits 3 with the pending fact and the approve line, so an agent can report "waiting on approval" rather than treating it as a failure, and it can neither hurry the decision nor route around it. See the [Ops guide](/chant/guide/ops/) for details, and [chant acp](/chant/lexicons/fountain/acp/) for chant as an agent an editor or sandbox drives directly.
 
 ## When to Use What
 
@@ -136,6 +139,6 @@ See the [Ops guide](/chant/guide/ops/) for details.
 |---------|------|---------|
 | **Skills** | Always-on guidance — installed once, agent reads as needed | Agent checks the AWS skill before deploying a CloudFormation stack |
 | **MCP tools** | Programmatic actions during execution | Agent calls `build` to synthesize templates, `lint` to validate, `op-run` to start a deployment |
-| **Ops** | Durable multi-step workflows with observability and gate steps | Deploying infra + app layers, waiting for DNS delegation, rollback on failure |
+| **Ops** | Multi-step workflows with a record and gate steps | Deploying infra + app layers, stopping for DNS delegation, rollback on failure |
 
-Skills and MCP tools are complementary: skills tell the agent *what to do*, MCP tools let it *do it*. Ops tie both together into repeatable, observable workflows.
+Skills and MCP tools are complementary: skills tell the agent *what to do*, MCP tools let it *do it*. Ops tie both together into repeatable workflows a person can read afterwards.

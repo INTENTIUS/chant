@@ -33,7 +33,7 @@ chant components release prod \
 `--git-sha` defaults to the current `HEAD`, and `--run-id`/`--actor` fall back to common CI environment variables (`GITHUB_RUN_ID`/`CI_PIPELINE_ID`, `GITHUB_ACTOR`/`GITLAB_USER_LOGIN`/`USER`) — but `--actor` has no silent placeholder fallback; an unattributed release record defeats the point of a ledger, so the command fails rather than guess.
 
 <Aside type="tip" title="Populated by construction">
-`chant components release` is the standalone, explicit way to append a record — but `chant run --components <name> --env <env>` (both local and `--temporal`) auto-emits one on every successful deploy that published a digest, so the ledger fills in without a separate step. Opt out with `--no-release-record` or `chant.config.ts`'s `release.autoRecord: false`; see [`chant run`](/chant/cli/run/#auto-recorded-releases). The auto-recorded path is a CLI post-run step in both cases — never inside the Temporal workflow, which must stay deterministic.
+`chant components release` is the standalone, explicit way to append a record — but `chant run --components <name> --env <env>` auto-emits one on every successful deploy that published a digest, so the ledger fills in without a separate step. Opt out with `--no-release-record` or `chant.config.ts`'s `release.autoRecord: false`; see [`chant run`](/chant/cli/run/#auto-recorded-releases). The auto-recorded path runs in the CLI once the deploy settles, outside the composition entirely.
 </Aside>
 
 Helm chart deploys join the same digest-keyed queries. The helm lexicon's [`helmInstall` op activity](/chant/lexicons/helm/best-practices/#deploying-through-an-op) appends a record after each successful `helm upgrade --install`, keyed by an input digest over the chart, its version, the resolved values, and the declared capability profile — so "is the chart in prod the one staging tested" is the same ledger query as for any published image. It is an input-side identity, not a rendered-manifest digest; rendered-output identity is the pinned-render work of epic #1228.
@@ -68,7 +68,7 @@ const entries = await buildLedgerEntries(manifest, orasLookup);
 
 ### Persisting the manifest
 
-A `BuildArchiveManifest` only helps `chant components status` answer "what's built" if something durable outlives the in-process build/run that assembled it. `chant run --components <name> --env <env>` (both local and `--temporal`) persists the run's accumulated manifest — the same document `docker-build`/`generate-sbom`/`extract-config-bom` build up across a component's `Build` phase — to the `chant/lifecycle` orphan branch, alongside the release ledger, keyed by the manifest's own `manifestDigest`:
+A `BuildArchiveManifest` only helps `chant components status` answer "what's built" if something durable outlives the in-process build/run that assembled it. `chant run --components <name> --env <env>` persists the run's accumulated manifest — the same document `docker-build`/`generate-sbom`/`extract-config-bom` build up across a component's `Build` phase — to the `chant/lifecycle` orphan branch, alongside the release ledger, keyed by the manifest's own `manifestDigest`:
 
 ```ts
 import { persistBuildManifest, readBuildManifest, findBuildManifestByArtifactDigest } from "@intentius/chant/lifecycle";
@@ -81,7 +81,7 @@ const behindDeploy = await findBuildManifestByArtifactDigest(digest);  // read b
 Manifests live under a fixed top-level `_builds/` directory on the orphan branch — a peer of the per-env directories the release ledger and snapshots use, never nested inside one. A build archive is promoted by digest across environments rather than owned by a single one, so it doesn't belong under any single `<env>/` path.
 
 <Aside type="tip" title="Populated by construction, same opt-out as the release record">
-Like the release record, manifest persistence is a post-run CLI step — never inside the driver (`../../components/driver.ts` stays capability-agnostic) and never inside the Temporal workflow (which must stay deterministic). It shares the release record's opt-out: `--no-release-record` / `chant.config.ts`'s `release.autoRecord: false` disables both, and a failed or dry-run deploy persists nothing, by construction — the CLI only reaches this step after a run reports success.
+Like the release record, manifest persistence runs in the CLI once the deploy settles. It stays out of the driver, which is capability-agnostic (`../../components/driver.ts`), and out of the composition, which would re-run it on every retry. It shares the release record's opt-out: `--no-release-record` / `chant.config.ts`'s `release.autoRecord: false` disables both, and a failed or dry-run deploy persists nothing, by construction — the CLI only reaches this step after a run reports success.
 </Aside>
 
 `chant components status` resolves `build`/`componentBom` for a recorded digest by calling `findBuildManifestByArtifactDigest` and deriving both from the result via `buildLedgerEntries`/`componentBomSummary` — the same functions covered above, now fed a real manifest instead of one built by hand. A digest with no persisted manifest (it predates this wiring, or was recorded via the standalone `chant components release` command with no corresponding build) simply reports `null` for both fields, exactly as before.

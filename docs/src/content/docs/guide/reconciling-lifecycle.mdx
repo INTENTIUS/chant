@@ -17,21 +17,20 @@ observe  →  reconcile  →  authoritative
 When the live system is ahead of source — someone created or changed a resource by hand — pull reality *back into source* so declarations track it. [`ReconcileOp`](/chant/guide/ops/#reconcile-cloud--code) does this by opening a PR:
 
 ```typescript
-import { ReconcileOp } from "@intentius/chant-lexicon-temporal";
+import { ReconcileOp } from "@intentius/chant/op";
 
-const { op, schedule } = ReconcileOp({
+const { op } = ReconcileOp({
   name: "prod-reconcile",
   env: "prod",
-  schedule: "0 * * * *",      // hourly, on Temporal
+  schedule: "0 * * * *",      // hourly
   scope: { owned: true },     // only chant-owned resources
   onDrift: "pull-request",    // or "issue" | "report"
 });
 
-export default op;        // the Op — discovered by `chant run prod-reconcile`
-export { schedule };      // the TemporalSchedule — deployed by `chant build`
+export default op;        // discovered by `chant run prod-reconcile`
 ```
 
-Phases: **Snapshot -> Plan -> Reconcile**, where the Reconcile phase's `reconcilePr` activity regenerates source ([live import](/chant/guide/live-import/)) and opens the PR in one step. Run `chant run prod-reconcile` for a one-shot reconcile on the local executor; give it a `schedule` to run continuously on Temporal. The PR's diff *is* the regenerated TypeScript, so review is a normal code review.
+Phases: **Snapshot -> Plan -> Reconcile**, where the Reconcile phase's `reconcilePr` activity regenerates source ([live import](/chant/guide/live-import/)) and opens the PR in one step. Run `chant run prod-reconcile` for a one-shot reconcile here. For the continuous form, give it a `schedule` and hand it to whatever fires the cadence: a generated CI workflow, `chant operator`, or a fountain [`Steward`](/chant/lexicons/fountain/steward/). The PR's diff *is* the regenerated TypeScript, so review is a normal code review.
 
 Reconcile never mutates the cloud. It only changes source — the safest reconciliation direction, and a good first step past pure observation.
 
@@ -40,7 +39,7 @@ Reconcile never mutates the cloud. It only changes source — the safest reconci
 When source is the intended truth and the cloud should follow, [`ApplyOp`](/chant/guide/ops/#apply-code--cloud) pushes declared source into the live system — a Kubernetes server-side apply, a CloudFormation `deploy`, or an ARM deployment, selected by `target`:
 
 ```typescript
-import { ApplyOp } from "@intentius/chant-lexicon-temporal";
+import { ApplyOp } from "@intentius/chant/op";
 
 const { op } = ApplyOp({
   name: "prod-apply",
@@ -53,7 +52,7 @@ const { op } = ApplyOp({
 export default op;
 ```
 
-Authority stays with the platform — chant hosts no state file. Deletes ride the target's own delete path and are owned-only on every target: marker-scoped on `kubectl`, tag-scoped on `arm`, and bounded by the stack on `cloudformation`. See [`delete` and what bounds it](/chant/guide/ops-reference/#delete-paths) for the mechanism in each case. A destructive apply gets an approval gate and saga-style rollback; see [Gates and compensation](/chant/guide/ops/#gates-and-compensation--where-temporal-is-load-bearing) for why that half is Temporal-bound.
+Authority stays with the platform — chant hosts no state file. Deletes ride the target's own delete path and are owned-only on every target: marker-scoped on `kubectl`, tag-scoped on `arm`, and bounded by the stack on `cloudformation`. See [`delete` and what bounds it](/chant/guide/ops-reference/#delete-paths) for the mechanism in each case. A destructive apply gets an approval gate and saga-style rollback; see [Gates and compensation on a destructive apply](/chant/guide/ops/#gates-and-compensation-on-a-destructive-apply) for what each buys.
 
 ## See also
 

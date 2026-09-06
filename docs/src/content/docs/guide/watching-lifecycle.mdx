@@ -1,12 +1,12 @@
 ---
 title: Watching Lifecycle
-description: Continuous drift detection by scheduling lifecycle snapshots and live diffs in Temporal
+description: Continuous drift detection by putting a cadence on lifecycle snapshots and live diffs
 diataxis: how-to
 ---
 
 import { Aside } from '@astrojs/starlight/components';
 
-`WatchOp` turns `chant lifecycle snapshot` and `chant lifecycle diff --live` into a recurring Temporal workflow. The result is a deployment dashboard that catches drift between change windows — not just at the next deploy.
+`WatchOp` turns `chant lifecycle snapshot` and `chant lifecycle diff --live` into an Op with a cadence on it. The result is a drift signal that fires between change windows rather than only at the next deploy.
 
 This page is the tutorial home for that pattern. For the underlying CLI commands, see [`chant lifecycle`](/chant/cli/lifecycle/); for the Op execution model, see [Ops](/chant/guide/ops/).
 
@@ -18,74 +18,65 @@ Drift detection in chant is built from three pieces that compose:
 |---|---|---|
 | **Snapshot** | `chant lifecycle snapshot <env>` | Query each lexicon's `describeResources()` / `listArtifacts()`, write the result to the `chant/lifecycle` orphan branch |
 | **Live diff** | `chant lifecycle diff <env> --live` | Query the cloud right now, compare against the current build *and* the last snapshot, group results into seven categories (missing / orphan / disappeared / newly observed / drifted / unchanged / unobserved) |
-| **Watching** | `WatchOp({ env, schedule })` | Run the two commands above on a Temporal cron, surface drift as a per-run search attribute |
+| **Watching** | `WatchOp({ env, schedule })` | Run the two commands above on a cron, and record drift as an outcome on each run |
 
 Snapshots without diffs are forensic record. Diffs without scheduling are ad-hoc. The composite is what makes drift a continuous signal rather than a manual chore.
 
 ## Declaring a WatchOp
 
-Save anywhere in your project as a `*.op.ts` file. The composite returns a chant `Op` and a `TemporalSchedule`; export both so `chant build` discovers them:
+Save anywhere in your project as a `*.op.ts` file. The composite returns `{ op }`, and the cadence rides on the Op itself:
 
 ```typescript
 // prod-watch.op.ts
-import { WatchOp } from "@intentius/chant-lexicon-temporal";
+import { WatchOp } from "@intentius/chant/op";
 
-const { op, schedule } = WatchOp({
+const { op } = WatchOp({
   name: "prod-watch",
   env: "prod",
   schedule: "*/15 * * * *",  // every 15 minutes
 });
 
-export default op;        // the Op — discovered by `chant run prod-watch`
-export { schedule };      // the TemporalSchedule — deployed by `chant build`
+export default op;        // discovered by `chant run prod-watch`
 ```
 
-That's the whole declaration. Run `chant build` and you'll get:
+That's the whole declaration. `chant build` writes `dist/ops/prod-watch/op.json`, the engine-neutral restatement of the two phases, and `schedule` lands on it as `{ cron: "*/15 * * * *", overlap: "skip" }`.
 
-- `dist/ops/prod-watch/{workflow,activities,worker}.ts` — generated worker code with a `Snapshot` phase and a `Diff` phase
-- A `TemporalSchedule` resource named `prod-watch-schedule` in the Temporal serializer output, registered via `tctl schedule create` on the next apply
-
-Submit and start the schedule:
+Run it by hand whenever you want:
 
 ```bash
-chant run prod-watch         # one-shot run, useful for smoke-testing
-# or apply the schedule and let Temporal trigger it on the cron
+chant run prod-watch         # one tick, right now
 ```
 
-### What the generated workflow does
+Three readers turn the cadence into something that fires on its own. The [github](/chant/lexicons/github/) generator (`generateOpsPipeline`) synthesizes a cron-triggered workflow that runs `chant run prod-watch` in CI. [`chant operator`](/chant/guide/operator/) ticks it from a loop on a machine you already have. A fountain [`Steward`](/chant/lexicons/fountain/steward/) that lists the op turns the cron into a `Schedule` on its teammate, in-thread, so a fire that lands mid-turn is dropped rather than opening a second machine beside the first.
 
-The two phases compile down to a workflow that, on each tick:
+### What a tick does
+
+The two phases run in order on each tick:
 
 1. **`Snapshot`** — calls the `lifecycleSnapshot` activity, which shells out to `chant lifecycle snapshot prod`. The result is committed to the `chant/lifecycle` orphan branch. (Concurrent runs are protected by `--force-with-lease` — see [Concurrent snapshots](/chant/cli/lifecycle/#concurrent-snapshots).)
-2. **`Diff`** — calls `lifecycleDiff` with `live: true`. The activity returns `{ output, exitCode, drifted }`. The `drifted` boolean is captured as a workflow search attribute via `outcomeAttribute: { name: "Drift", from: "drifted" }`.
+2. **`Diff`** — calls `lifecycleDiff` with `live: true`. The activity returns `{ output, exitCode, drifted }`. The `drifted` boolean is captured onto the run record via `outcomeAttribute: { name: "Drift", from: "drifted" }`.
 
 Set `live: false` on the composite to use digest-only diff (faster, no cloud queries) for environments without `describeResources()` coverage. With `live: true` (the default) you get external-mutation detection. (See the [Runtime observation coverage matrix](/chant/lexicons/overview/#runtime-observation-coverage) for which lexicons report what.)
 
-`receipts: [myReceipt, ...]` (typed `EffectReceipt` references) adds a read-only `Receipts` phase that reads each effect receipt through the receipt store and reports absent or differing receipts as findings, surfaced as a `StaleReceipts` search attribute — it never runs an effect and never writes a receipt.
+`receipts: [myReceipt, ...]` (typed `EffectReceipt` references) adds a read-only `Receipts` phase that reads each effect receipt through the receipt store and reports absent or differing receipts as findings, recorded as a `StaleReceipts` outcome — it never runs an effect and never writes a receipt.
 
-## The Temporal UI experience
+## Reading the ticks back
 
-Each generated workflow opens with:
+`WatchOp` sets `labels` on the declaration:
 
 ```typescript
-upsertSearchAttributes({
-  OpName: ["prod-watch"],
-  Watch: ["true"],
-  Env: ["prod"],
-});
+labels: { OpName: "prod-watch", Watch: "true", Env: "prod" }
 ```
 
-After the diff phase resolves, an additional `Drift = "true"` or `Drift = "false"` attribute is upserted. So in the Temporal UI you can filter:
+Those labels ride onto every run record the Op writes, and the `Drift` outcome lands beside them once the Diff phase settles. The record goes to `prod/runs__prod-watch.jsonl` on the `chant/lifecycle` branch, because `Env` is `prod`.
 
-| Filter | What it shows |
-|---|---|
-| `Watch = "true"` | Every watch run across every environment |
-| `Watch = "true" AND Env = "prod"` | Just prod's watch runs |
-| `Watch = "true" AND Drift = "true"` | The runs that actually detected drift — the only ones you usually need to look at |
+```bash
+chant run log prod-watch                  # every run, newest first
+chant run status prod-watch               # the latest one
+chant operator log --env prod             # every tick in the environment, one timeline
+```
 
-<Aside type="note" title="Search-attribute registration">
-Custom keys (`Watch`, `Env`, `Drift`, `OpName`) must be registered server-side before the upsert succeeds. Declare them with the [`SearchAttribute`](/chant/lexicons/temporal/) resource so `chant build` emits the registration commands; otherwise the first run will fail with an `UpsertSearchAttribute` error from the workflow worker.
-</Aside>
+Nothing has to be running to read any of that: the ledger is a branch in your own repo. When the op is hosted, its turn is also a message on the steward's thread, so the same tick is legible in fountain's UI as one command somebody could have typed. See [The Steward](/chant/lexicons/fountain/steward/) for which store owns what.
 
 ## Smoke-testing the drift signal
 
@@ -105,7 +96,7 @@ ARTIFACTS ADDED (1)
   helm:demo-drift  chart=nginx  rev=1
 ```
 
-`lifecycleDiff`'s `drifted` flag is true (the `ARTIFACTS ADDED` header matches the drift detector). On the next watch tick the corresponding workflow run will be tagged `Drift = "true"`. Clean up:
+`lifecycleDiff`'s `drifted` flag is true (the `ARTIFACTS ADDED` header matches the drift detector). The next tick's run record carries `Drift = "true"`. Clean up:
 
 ```bash
 helm uninstall demo-drift
@@ -113,9 +104,9 @@ helm uninstall demo-drift
 
 The next tick should show `Drift = "false"` again.
 
-## How drift becomes a search attribute
+## How drift becomes an outcome
 
-`outcomeAttribute` is a generic Op feature, not a `WatchOp`-specific one — see [Outcome-based search attributes](/chant/guide/ops-reference/#outcome-based-search-attributes) for the full contract. The composite wires it like this:
+`outcomeAttribute` is a generic Op feature, not a `WatchOp`-specific one — see [Outcome attributes](/chant/guide/ops-reference/#outcome-attributes) for the full contract. The composite wires it like this:
 
 ```typescript
 phase("Diff", [
@@ -128,12 +119,7 @@ phase("Diff", [
 ]),
 ```
 
-The serializer produces:
-
-```typescript
-const __r0 = await lifecycleDiff({ env: "prod", live: true });
-upsertSearchAttributes({ Drift: [String(__r0?.drifted)] });
-```
+The run reads `drifted` off the activity's return value and folds it into the record's `outcomes` as `Drift`, so `chant run prod-watch --json` prints it and every later reader of the ledger sees the same field.
 
 `from` is a dot-path into the activity's return value. With `lifecycleDiff`'s shape `{ output, exitCode, drifted }`, you could just as easily capture the exit code (`from: "exitCode"`) or the raw output (omit `from` to stringify the whole result). The composite picks `drifted` because it's the field most worth filtering on.
 
@@ -151,7 +137,7 @@ Bias toward less frequent. Each tick re-queries every covered lexicon's API; rat
 
 ## Profile selection
 
-`lifecycleSnapshot` and `lifecycleDiff` are activities — they pick up the same Temporal retry/timeout profiles as any other Op step. Both default to `fastIdempotent` (5 min timeout, 3 retries) which is right for most environments.
+`lifecycleSnapshot` and `lifecycleDiff` are activities — they pick up the same retry/timeout profiles as any other Op step. Both default to `fastIdempotent` (5 min timeout, 3 retries) which is right for most environments.
 
 If your snapshot regularly takes longer than five minutes (large multi-region estates, slow `kubectl` against many resources), declare the activity with `profile: "longInfra"` directly instead of using the composite — `WatchOp` is a thin wrapper, you can always emit the equivalent `Op({ phases: [...] })` by hand.
 
@@ -171,5 +157,5 @@ Drift remediation is intentionally not a chant primitive — what to *do* about 
 
 - [Drift Detection](/chant/concepts/drift-detection/) — the conceptual model behind snapshots and the diff categories
 - [`chant lifecycle`](/chant/cli/lifecycle/) — full reference for snapshot/diff CLI
-- [Ops](/chant/guide/ops/) — Op execution model, search attributes, gates, compensation
+- [Ops](/chant/guide/ops/) — Op execution model, labels, gates, compensation
 - [Choosing Your Deployment Model](/chant/concepts/deployment-paths/) — when to opt into Ops at all

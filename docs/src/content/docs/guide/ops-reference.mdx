@@ -1,12 +1,12 @@
 ---
 title: Ops Reference
-description: Step builders, retry profiles, the search-attributes contract, per-target delete-path bounds, and the files chant build generates for an Op.
+description: Step builders, retry profiles, the labels contract, per-target delete-path bounds, and what chant build emits for an Op.
 diataxis: reference
 ---
 
 import { Aside } from '@astrojs/starlight/components';
 
-Reference for the `*.op.ts` file contract: the built-in step builders and retry profiles, how search attributes are emitted, what bounds an `ApplyOp` delete on each target, and the files `chant build` generates. For how to define, gate, and run an Op, see [Ops](/chant/guide/ops/).
+Reference for the `*.op.ts` file contract: the built-in step builders and retry profiles, what an Op's labels are for, what bounds an `ApplyOp` delete on each target, and what `chant build` emits. For how to define, gate, and run an Op, see [Ops](/chant/guide/ops/).
 
 ## Step builders
 
@@ -27,7 +27,7 @@ Pre-built step builders:
 
 ## Retry profiles
 
-Each step takes an optional `profile` that controls Temporal retry and timeout settings:
+Each step takes an optional `profile` that controls the step's retry and timeout policy. The table is `ACTIVITY_PROFILES` in core, so every runtime reads the same four:
 
 | Profile | Suitable for |
 |---------|-------------|
@@ -55,44 +55,17 @@ export default Op({
 });
 ```
 
-An Op's labels describe the declaration. What a single *run* did (down to each step's status) is a fact about that run and lands on the run ledger instead, at `<env>/runs__<name>.jsonl`. See [`chant run`](/chant/cli/run/).
+An Op's labels describe the declaration. What a single *run* did (down to each step's status) is a fact about that run and lands on the run ledger instead. See [`chant run`](/chant/cli/run/).
 
-### Search attributes in the generated workflow
+### Labels on the record
 
-On the Temporal path, the generated workflow auto-emits `upsertSearchAttributes()` calls so runs are filterable in the Temporal UI without hand-coded boilerplate. Two emission points:
+Every run appends one record to the run ledger on the `chant/lifecycle` branch, at `<env>/runs__<name>.jsonl`, and the Op's labels ride along on it. `<env>` is the Op's own `labels.Env`, or `local` when it declares none. That is what makes a label a filter after the fact: `chant operator log --env staging` and `chant run log <name>` both read the same records back.
 
-1. **Initial call** at workflow start: `OpName` plus every label you declared on the Op
-2. **Per-phase call** at the start of each phase (and each `onFailure` phase): `Phase` set to the current phase name
-
-The generated `workflow.ts` produces:
-
-```typescript
-export async function albDeployWorkflow(): Promise<void> {
-  upsertSearchAttributes({
-    OpName: ["alb-deploy"],
-    Environment: ["staging"],
-    Region: ["us-east-1"],
-  });
-
-  // Phase: Build
-  upsertSearchAttributes({ Phase: ["Build"] });
-  // ...
-
-  // Phase: Deploy
-  upsertSearchAttributes({ Phase: ["Deploy"] });
-  // ...
-}
-```
-
-For an Op with N phases this is **N+1 upsert calls total**. Values are wrapped as single-element arrays for the classic `@temporalio/workflow` API.
-
-> **Registration is separate.** Auto-emit assumes the attributes are already registered server-side. Declare them with the [`SearchAttribute`](/chant/lexicons/temporal/resources/#searchattribute) resource so `chant build` emits the registration commands. See also [`chant lifecycle`](/chant/cli/lifecycle/) for snapshotting registered attributes against a live cluster.
-
-Labels merge over the `OpName` default; if you set `labels: { OpName: "custom" }` the label wins.
+`OpName` is set to the Op's name by default, and a declared label wins over it: set `labels: { OpName: "custom" }` and `custom` is what lands.
 
 ### Outcome attributes
 
-Activity steps support an optional `outcomeAttribute` field that captures the activity's return value. The local executor folds it into the run record's `outcomes`; the generated Temporal workflow additionally upserts it as a search attribute:
+Activity steps support an optional `outcomeAttribute` field that captures the activity's return value onto the run record's `outcomes`:
 
 ```typescript
 phase("Diff", [
@@ -100,28 +73,21 @@ phase("Diff", [
     kind: "activity",
     fn: "lifecycleDiff",
     args: { env: "prod", live: true },
-    // Capture lifecycleDiff's `drifted` field and tag the run Drift=true/false
+    // Capture lifecycleDiff's `drifted` field as Drift=true/false on the record
     outcomeAttribute: { name: "Drift", from: "drifted" },
   },
 ]),
 ```
 
-The serializer turns this into:
-
-```typescript
-const __r0 = await lifecycleDiff({"env":"prod","live":true});
-upsertSearchAttributes({ "Drift": [String(__r0?.drifted)] });
-```
-
-`from` is a dot-path into the return value; when omitted, the whole return value is stringified. Counters are workflow-scoped (`__r0`, `__r1`, ...), and parallel phases destructure `Promise.all` results so each outcome attribute fires after the corresponding activity returns.
+`from` is a dot-path into the return value; when omitted, the whole return value is stringified. `chant run <name> --json` prints the record the run wrote with its outcomes on it, which is the same document `chant operator log` reads back later.
 
 ## Progress and gate state
 
-`chant run status <name>` reports `activitiesCompleted`/`activitiesScheduled` counts, but a picture needs per-phase detail — which step is in which phase, and which gate (if any) is holding the run.
+`chant run status <name>` reports the state the runtime holds for the latest run, and a picture needs per-phase detail: which step is in which phase, and which gate, if any, the run stopped at.
 
 ### `--progress-json`
 
-`chant run <name> --temporal --progress-json` streams one NDJSON `StepRecord` per line to stdout as each declared step settles, matching `chant run <name> --json`'s local-executor shape:
+`chant run <name> --progress-json` streams one NDJSON `StepRecord` per line to stdout as each declared step settles, fed by whatever runtime is hosting the run and matching `chant run <name> --json`'s record shape:
 
 ```typescript
 interface StepRecord {
@@ -133,23 +99,24 @@ interface StepRecord {
 }
 ```
 
-A record is emitted once a step reaches a terminal state — `"ok"` or `"fail"`. `"skipped"` only appears once the workflow itself reaches a terminal status: a declared step that never got scheduled this run (an `onFailure` phase on a run that succeeded, or an `effect()` step's untaken branch) is reported skipped rather than left silently absent. Purely additive: omitting the flag leaves `chant run`'s output and exit code unchanged.
+A record is emitted once a step reaches a terminal state — `"ok"` or `"fail"`. `"skipped"` only appears once the run itself settles: a declared step that never ran this time round (an `onFailure` phase on a run that succeeded, or an `effect()` step's untaken branch) is reported skipped rather than left silently absent. Purely additive: omitting the flag leaves `chant run`'s output and exit code unchanged.
 
 The same reconstruction backs the `op-status` MCP tool's `progress` field and the `chant://ops/<name>/runs/latest` resource, so a point-in-time query and a live stream answer with the same shape.
 
-### Gate state query
+### Gate state
 
-A generated workflow with at least one `gate(...)` step registers a `gateState` query answering which gate, if any, is currently blocking the run:
+A run that stopped at an unapproved gate says so on the record it wrote, and the pending fact itself lives on the gate ledger at `_gates/<op>.jsonl`:
 
 ```typescript
 interface GateState {
-  signalName: string;
+  name: string;
   description?: string;
-  since: string; // ISO timestamp
+  since: string;     // ISO timestamp
+  expiresAt: string; // the gate's `timeout`, 48h by default
 }
 ```
 
-Query it directly through the Temporal SDK (`handle.query("gateState")`, resolving `null` when no gate is pending), or read it off `chant run status <name>`'s `Gate` line and the `op-status` MCP tool's `gate` field, both best-effort — an Op with no gate steps never registers the query, and both report nothing rather than an error.
+Read it off `chant run status <name>`'s `Gate` line, the `op-status` MCP tool's `gate` field, or `chant operator status`'s pending-gates list. An Op with no gate steps reports nothing rather than an error.
 
 ## Delete paths
 
@@ -181,17 +148,22 @@ The `effect(receipt, steps)` builder wraps its steps in read-compare-run-write o
 
 | Config | What it does |
 |--------|-------------|
-| `effects: "gated"` on `ApplyOp` | Insert the durable approval gate before the apply (beside `delete: "gated"`, same signal shape) so the Plan phase's effect-will-fire rows are reviewed before any effect runs |
-| `receipts: [...]` on `WatchOp` | Add a read-only `Receipts` phase reporting absent or differing receipts as findings (`StaleReceipts` search attribute) — nothing runs, nothing is written |
+| `effects: "gated"` on `ApplyOp` | Insert the approval gate before the apply (beside `delete: "gated"`, same gate shape) so the Plan phase's effect-will-fire rows are reviewed before any effect runs |
+| `receipts: [...]` on `WatchOp` | Add a read-only `Receipts` phase reporting absent or differing receipts as findings (a `StaleReceipts` outcome on the run record) — nothing runs, nothing is written |
 
 ## Codegen
 
-`chant build` emits three files per Op under `dist/ops/<name>/`:
+`chant build` writes `dist/ops/<name>/op.json` for every declared Op: a deterministic, engine-neutral restatement of the step graph, produced by core itself rather than by a lexicon serializer.
 
-| File | Purpose |
+| Section | What it holds |
 |------|---------|
-| `workflow.ts` | Temporal workflow function — phases, gates, onFailure |
-| `activities.ts` | Re-exports all pre-built activity implementations |
-| `worker.ts` | Worker bootstrap — reads profile from `chant.config.js` |
+| the step graph | every phase and step as declared, with each step's `profile` and each gate's `timeout` resolved to its effective value |
+| `activityProfiles` | the actual retry and timeout policy behind every profile the Op references, out of `ACTIVITY_PROFILES` |
+| `activityContracts` | args and returns as JSON Schema, for every step whose activity has a registered contract in the registry the build passed |
+| `entities` | the declared entity names a step's contract identifies, so a reader can join a run against the estate |
+
+Nothing has to import chant to read it, which is the point. A dashboard, an agent, or a runtime chant does not ship can answer "what does this Op do" from the file alone. Round-tripping `op.json` back through the IR and re-serializing produces a byte-identical file.
+
+A hosting lexicon may write its own artifacts beside it under the same `dist/ops/<name>/` directory; that location is fixed so the runtime knows where to look.
 
 See [Ops](/chant/guide/ops/) for how to define, gate, and run an Op.

@@ -384,11 +384,11 @@ The [Runtime observation coverage matrix](/chant/lexicons/overview/#runtime-obse
 
 Lexicons that implement neither method are warn-skipped — `--live` doesn't fail the whole command for them.
 
-The Temporal lexicon resolves its connection via the chant config: `lifecycle snapshot <env>` (or `--live` against `<env>`) looks up `temporal.profiles.<env>` in your `chant.config.ts` and falls back to `temporal.defaultProfile`. The same profile model is used by `chant run`. With #39's entity-prop pass-through, namespaces/schedules/search-attributes are mapped back to chant entity names when the declared `props.name` (etc.) match the server-side identifier.
+The fountain lexicon resolves its connection via the chant config: `lifecycle snapshot <env>` (or `--live` against `<env>`) looks up `fountain.profiles.<env>` in your `chant.config.ts` and falls back to `fountain.defaultProfile`. The same profile model is used by `chant run <op> --on fountain`. Every declared fountain resource is mapped back to its chant entity name when the declared `props.name` matches the server-side identifier.
 
 The K8s lexicon reads through a typed API client (chant #1074, [details](/chant/lexicons/k8s/api-client/)) rather than a `kubectl` subprocess. Every generated resource type is addressable — the 165 core kinds plus every bundled CRD — because the entity-type->address table comes out of the same codegen pass as the declarable classes, and is confirmed against the cluster's own API discovery before anything is read. Reads run concurrently, so a hundred declared entities are not a hundred serial round trips, and failures carry the API server's own `code` and `reason` rather than a parsed stderr line.
 
-The cluster context comes from a `k8s.profiles.<env>.context` binding in `chant.config.ts` (chant #1100) when one is declared — mirroring `temporal.profiles.<env>` — and every request is made against it explicitly. If the kubeconfig's own current-context disagrees with the bound one, `describeResources` refuses with an error naming the environment, the expected context, and the ambient one, instead of silently reading the wrong cluster. An environment with no binding keeps the old behavior — whatever context is ambient — but logs a visible warning that nothing is pinned. See `K8sChantConfig` in the k8s lexicon for the config shape.
+The cluster context comes from a `k8s.profiles.<env>.context` binding in `chant.config.ts` (chant #1100) when one is declared — mirroring `fountain.profiles.<env>` — and every request is made against it explicitly. If the kubeconfig's own current-context disagrees with the bound one, `describeResources` refuses with an error naming the environment, the expected context, and the ambient one, instead of silently reading the wrong cluster. An environment with no binding keeps the old behavior — whatever context is ambient — but logs a visible warning that nothing is pinned. See `K8sChantConfig` in the k8s lexicon for the config shape.
 
 On EKS, AKS and GKE, kubeconfig authentication is an exec credential plugin — `aws eks get-token`, `kubelogin`, `gke-gcloud-auth-plugin` — so the client still spawns a process there, once for a token rather than once per read. Those three (plus `kubectl`) are allowed by default and anything else the kubeconfig names is refused unless listed in `k8s.execCredentialPlugins`.
 
@@ -526,10 +526,10 @@ Both halves are exported from `@intentius/chant` for programmatic use (a test-en
 
 #### As an Op step
 
-The same engine runs as a durable step with the `envTeardown` builder — an [Op](/chant/guide/ops/) that tears an environment down on Temporal (or the local executor) instead of from a terminal:
+The same engine runs as a step with the `envTeardown` builder — an [Op](/chant/guide/ops/) that tears an environment down behind a gate instead of from a terminal:
 
 ```typescript
-import { Op, phase, gate, envTeardown } from "@intentius/chant-lexicon-temporal";
+import { Op, phase, gate, envTeardown } from "@intentius/chant/op";
 
 export default Op({
   name: "retire-staging",
@@ -543,7 +543,7 @@ export default Op({
 });
 ```
 
-Steps run in authored order, so a `gate(...)` placed before `envTeardown` holds the deletion until the signal arrives — the durable equivalent of pausing at the plan. The guards are the CLI's guards: an undeclared environment and a missing `ownership.stack` fail the step before any live read, and a production-like name needs `envTeardown("prod", { confirmProd: true })` — the authored counterpart of `--confirm-prod`, since an Op never prompts. The step fails when any candidate is still `failed` after the retry pass, naming the survivors; a fully clean run returns the same per-candidate report the CLI prints. See the [Ops reference](/chant/guide/ops-reference/#step-builders) for the builder row.
+Steps run in authored order, so a `gate(...)` placed before `envTeardown` stops the run until someone records the resolution with `chant approve retire-staging approve-teardown`, and the next run walks through and deletes. The guards are the CLI's guards: an undeclared environment and a missing `ownership.stack` fail the step before any live read, and a production-like name needs `envTeardown("prod", { confirmProd: true })` — the authored counterpart of `--confirm-prod`, since an Op never prompts. The step fails when any candidate is still `failed` after the retry pass, naming the survivors; a fully clean run returns the same per-candidate report the CLI prints. See the [Ops reference](/chant/guide/ops-reference/#step-builders) for the builder row.
 
 ### `lifecycle rollback [env] --to <ref>`
 
@@ -581,6 +581,6 @@ chant lifecycle log dev     # just dev
 
 - [`chant build`](/chant/cli/build/) — build current output for diffing
 - [Configuration](/chant/configuration/config-file/) — declare `environments` in `chant.config.ts`
-- [Watching Lifecycle](/chant/guide/watching-lifecycle/) — wire `lifecycle snapshot` + `lifecycle diff --live` to a `TemporalSchedule` via the `WatchOp` composite
+- [Watching Lifecycle](/chant/guide/watching-lifecycle/) — wire `lifecycle snapshot` + `lifecycle diff --live` to a cadence via the `WatchOp` composite
 - [Implementing Observation](/chant/lexicon-authoring/observation/) — for lexicon authors, how to plug into `--live` via `describeResources()` / `listArtifacts()`
 - [Implementing Observation](/chant/lexicon-authoring/observation/#describeidentity--who-chant-would-act-as) — for lexicon authors, how to answer `whoami` via `describeIdentity()`

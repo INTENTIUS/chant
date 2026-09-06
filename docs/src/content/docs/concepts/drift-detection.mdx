@@ -29,7 +29,7 @@ For the broader trade-off comparison, see [State: authoritative vs. observationa
 
 Drift can mean two structurally different things, and chant tracks them through two different plugin contracts:
 
-**Resources** are 1:1 cloud equivalents of declared chant entities — an AWS CloudFormation resource, a K8s Deployment, an ARM resource group, a Temporal namespace. Each declaration has a name, the cloud version has a name, and they're correlated. Lexicons that fit this model implement `describeResources()` (entity-keyed: "look up the live state of *these* declared things").
+**Resources** are 1:1 cloud equivalents of declared chant entities — an AWS CloudFormation resource, a K8s Deployment, an ARM resource group, a fountain environment. Each declaration has a name, the cloud version has a name, and they're correlated. Lexicons that fit this model implement `describeResources()` (entity-keyed: "look up the live state of *these* declared things").
 
 **Artifacts** are runtime concepts created by tooling outside chant's entity model. A Helm release isn't declared in chant — chant declares Chart.yaml + templates, and `helm install` later creates the release. Same story for Docker containers. Lexicons that fit this model implement `listArtifacts()` (context-keyed: "tell me what artifacts exist *in this environment* right now").
 
@@ -128,7 +128,7 @@ Drift detection is most valuable in environments where the gap between source an
 **It helps when:**
 - **Multiple humans have cluster/cloud access.** Someone scaled an ASG by hand to ride out an incident, didn't get back to update source — drift detection catches the gap on the next snapshot.
 - **Coordination across teams.** Platform team owns the VPC, app teams own services. A platform-side change (subnet CIDR, tag policy) shows up as drift in app-team snapshots before it surfaces as a deploy failure.
-- **Long-running infrastructure between change windows.** Anything declared once and expected to stay put — IAM roles, Cloud DNS zones, KMS keys, Temporal namespaces. The longer the gap between intentional changes, the higher the chance of out-of-band ones.
+- **Long-running infrastructure between change windows.** Anything declared once and expected to stay put — IAM roles, Cloud DNS zones, KMS keys, service accounts. The longer the gap between intentional changes, the higher the chance of out-of-band ones.
 - **Audit and incident timelines.** Snapshots in git give you a forensic record: "the bucket policy was permissive on Tuesday morning, restrictive by Wednesday afternoon." Useful at compliance review time.
 
 **It doesn't help when:**
@@ -153,6 +153,6 @@ Read these trade-offs in context in [How chant compares](/chant/concepts/compari
 ## See also
 
 - [`chant lifecycle`](/chant/cli/lifecycle/) — CLI reference for snapshot, show, diff, log
-- [Watching Lifecycle](/chant/guide/watching-lifecycle/) — turn `lifecycle diff --live` into a recurring Temporal workflow
+- [Watching Lifecycle](/chant/guide/watching-lifecycle/) — turn `lifecycle diff --live` into a scheduled Op
 - [Implementing Observation](/chant/lexicon-authoring/observation/) — for lexicon authors plugging into the pipeline
 - [State: authoritative vs. observational](/chant/concepts/comparison/#state-authoritative-vs-observational) — the cross-tool comparison

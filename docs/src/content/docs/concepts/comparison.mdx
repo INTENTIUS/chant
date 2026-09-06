@@ -22,7 +22,7 @@ Every infrastructure tool sells you a lifecycle. Synthesis, state, apply, drift,
 
 chant sells nothing. Synthesis is pure and the output is native spec — standard CloudFormation, GitLab CI, whatever the lexicon targets. Walk away and there is nothing to unwind. That is the test the claim has to pass, and it is the one most tools fail. You can leave a thing you were never sold.
 
-The lifecycle is still there when you want it. You write your own. Ops are declared as code in `*.op.ts` files and run on a local executor for one-shot work, or on [Temporal](/chant/concepts/durable-workflows/) when an apply needs to outlive a single process — approval gates, rollback, crash-resume. The durable version of what the others sell, for the lifecycle you chose rather than one chosen for you.
+The lifecycle is still there when you want it. You write your own. Ops are declared as code in `*.op.ts` files and run on a local executor for one-shot work, or on a [fountain steward](/chant/concepts/durable-workflows/) when the work needs a machine of its own, a standing record, or a cadence. The hosted version of what the others sell, for the lifecycle you chose rather than one chosen for you.
 
 Decoupled first. Durable when you ask.
 
@@ -32,7 +32,7 @@ A pure synthesis core also owns less *machinery*. Because the build path makes n
 
 A smaller build-time surface is a smaller thing to audit, and a smaller blast radius if something upstream is compromised: fewer packages execute during synthesis, and none of them reach the network or your cloud credentials. This is a property of the architecture, not a security feature — it falls out of synthesis being side-effect-free. The same boundary is described value-by-value in [Where Values Come From](/chant/concepts/where-values-come-from/).
 
-The scope is exact. This is the **build path**. The apply side is whatever lifecycle you brought — the CloudFormation CLI, a CI pipeline, an agent, [Temporal](/chant/concepts/durable-workflows/) — and it carries its own dependencies and its own surface. chant shrinks the build-time surface; it does not remove the apply-time one. Owning less is a build-time property, and only that.
+The scope is exact. This is the **build path**. The apply side is whatever lifecycle you brought — the CloudFormation CLI, a CI pipeline, an agent, [an Op](/chant/concepts/durable-workflows/) — and it carries its own dependencies and its own surface. chant shrinks the build-time surface; it does not remove the apply-time one. Owning less is a build-time property, and only that.
 
 ## Paradigms
 
@@ -150,6 +150,6 @@ chant's design decisions have real consequences:
 
 - **Static evaluation means no runtime lookups at build time.** You can't call an API during synthesis to get a VPC ID or read a secret. Cross-resource references within a project work (via attribute references). For values that need to be resolved at deploy time, lexicons provide intrinsics. For values that need to be resolved before synthesis, agents or scripts can populate source files.
 
-- **Lexicon ecosystem is young, but covering.** Seventeen lexicons ship today (AWS CloudFormation, Azure ARM, GCP Config Connector, Kubernetes, Helm, k3d, k3s, Docker, GitHub Actions, GitLab CI, Forgejo Actions, Temporal, Fly Machines, Fountain, Render, Control Plane, and Cedar — Forgejo is a thin GitHub-Actions dialect). The architecture supports any spec-based operational domain — see [Lexicons](/chant/lexicons/overview/) for the current set and [Lexicon Authoring](/chant/lexicon-authoring/overview/) for adding new ones.
+- **Lexicon ecosystem is young, but covering.** Sixteen lexicons ship today (AWS CloudFormation, Azure ARM, GCP Config Connector, Kubernetes, Helm, k3d, k3s, Docker, GitHub Actions, GitLab CI, Forgejo Actions, Fly Machines, Fountain, Render, Control Plane, and Cedar — Forgejo is a thin GitHub-Actions dialect). The architecture supports any spec-based operational domain — see [Lexicons](/chant/lexicons/overview/) for the current set and [Lexicon Authoring](/chant/lexicon-authoring/overview/) for adding new ones.
 
 - **The static subset of TypeScript is a constraint.** No function calls, no control flow around resources, no dynamic property access. This is deliberate — it's what makes synthesis deterministic — but it means some patterns that work in CDK don't work in chant. See [TypeScript as Data](/chant/concepts/typescript-as-data/) for exactly what's supported.

@@ -151,7 +151,7 @@
   "tricolon/comma-series": 1
  },
  "docs/src/content/docs/cli/lifecycle.mdx": {
-  "formatting/em-dash-density": 94,
+  "formatting/em-dash-density": 93,
   "claude/colon-reveal": 8,
   "discourse/punchy-fragments": 1,
   "anaphora/repeated-opening": 2,
@@ -177,7 +177,7 @@
   "anaphora/repeated-opening": 1
  },
  "docs/src/content/docs/cli/mcp.mdx": {
-  "formatting/em-dash-density": 9,
+  "formatting/em-dash-density": 8,
   "claude/colon-reveal": 3,
   "anaphora/repeated-opening": 1
  },
@@ -190,7 +190,7 @@
   "claude/colon-reveal": 2
  },
  "docs/src/content/docs/cli/operator.mdx": {
-  "formatting/em-dash-density": 11,
+  "formatting/em-dash-density": 9,
   "claude/colon-reveal": 2,
   "repetition/near-duplicate": 1
  },
@@ -201,9 +201,9 @@
   "tricolon/comma-series": 1
  },
  "docs/src/content/docs/cli/run.mdx": {
-  "formatting/em-dash-density": 17,
+  "formatting/em-dash-density": 11,
   "claude/colon-reveal": 3,
-  "tricolon/comma-series": 4,
+  "tricolon/comma-series": 3,
   "anaphora/repeated-opening": 1
  },
  "docs/src/content/docs/cli/scenario.mdx": {
@@ -287,13 +287,13 @@
   "repetition/near-duplicate": 1
  },
  "docs/src/content/docs/components/observability.mdx": {
-  "formatting/em-dash-density": 30,
+  "formatting/em-dash-density": 28,
   "discourse/punchy-fragments": 1,
   "claude/colon-reveal": 2,
   "tricolon/comma-series": 1
  },
  "docs/src/content/docs/components/orchestration.mdx": {
-  "formatting/em-dash-density": 14,
+  "formatting/em-dash-density": 11,
   "discourse/punchy-fragments": 2,
   "claude/colon-reveal": 3,
   "anaphora/repeated-opening": 1,
@@ -301,7 +301,7 @@
   "tricolon/comma-series": 2
  },
  "docs/src/content/docs/components/overview.mdx": {
-  "formatting/em-dash-density": 17,
+  "formatting/em-dash-density": 16,
   "discourse/punchy-fragments": 2,
   "claude/colon-reveal": 5,
   "dead-metaphor/rare-lemma": 1,
@@ -326,7 +326,7 @@
   "tricolon/comma-series": 3
  },
  "docs/src/content/docs/concepts/comparison.mdx": {
-  "formatting/em-dash-density": 60,
+  "formatting/em-dash-density": 59,
   "claude/colon-reveal": 13,
   "tricolon/comma-series": 8,
   "claude-technical-vocabulary": 1,
@@ -344,11 +344,10 @@
   "anaphora/repeated-opening": 1
  },
  "docs/src/content/docs/concepts/deployment-paths.mdx": {
-  "formatting/em-dash-density": 16,
-  "claude/colon-reveal": 6,
-  "tricolon/comma-series": 4,
-  "discourse/punchy-fragments": 1,
-  "repetition/near-duplicate": 1
+  "formatting/em-dash-density": 12,
+  "claude/colon-reveal": 5,
+  "tricolon/comma-series": 3,
+  "discourse/punchy-fragments": 1
  },
  "docs/src/content/docs/concepts/drift-detection.mdx": {
   "formatting/em-dash-density": 36,
@@ -359,7 +358,7 @@
   "anaphora/repeated-opening": 2
  },
  "docs/src/content/docs/concepts/durable-workflows.mdx": {
-  "formatting/em-dash-density": 22,
+  "formatting/em-dash-density": 7,
   "claude/colon-reveal": 2,
   "tricolon/comma-series": 1
  },
@@ -401,7 +400,7 @@
   "claude/figurative-suffixes": 1
  },
  "docs/src/content/docs/concepts/overview.mdx": {
-  "formatting/em-dash-density": 21,
+  "formatting/em-dash-density": 19,
   "claude/colon-reveal": 4,
   "anaphora/repeated-opening": 1,
   "formatting/bold-first-bullet": 1,
@@ -495,7 +494,6 @@
  "docs/src/content/docs/getting-started/introduction.mdx": {
   "formatting/em-dash-density": 20,
   "discourse/punchy-fragments": 1,
-  "dead-metaphor/rare-lemma": 1,
   "formatting/bold-first-bullet": 1,
   "anaphora/repeated-opening": 2,
   "tricolon/comma-series": 3
@@ -515,7 +513,7 @@
   "discourse/punchy-fragments": 1
  },
  "docs/src/content/docs/getting-started/quick-start.mdx": {
-  "formatting/em-dash-density": 17,
+  "formatting/em-dash-density": 16,
   "discourse/punchy-fragments": 4,
   "claude/colon-reveal": 5,
   "anaphora/repeated-opening": 4,
@@ -523,11 +521,11 @@
   "tricolon/comma-series": 4
  },
  "docs/src/content/docs/guide/agent-integration.mdx": {
-  "formatting/em-dash-density": 10,
+  "formatting/em-dash-density": 8,
   "discourse/punchy-fragments": 2,
   "claude/colon-reveal": 3,
   "dead-metaphor/rare-lemma": 1,
-  "tricolon/comma-series": 3
+  "tricolon/comma-series": 2
  },
  "docs/src/content/docs/guide/building.mdx": {
   "formatting/em-dash-density": 2,
@@ -543,7 +541,7 @@
   "formatting/bold-first-bullet": 1
  },
  "docs/src/content/docs/guide/converging-lifecycle.mdx": {
-  "formatting/em-dash-density": 25,
+  "formatting/em-dash-density": 23,
   "claude/colon-reveal": 4,
   "tricolon/density": 1,
   "tricolon/comma-series": 1,
@@ -583,14 +581,6 @@
   "anaphora/repeated-opening": 1,
   "tricolon/comma-series": 1
  },
- "docs/src/content/docs/guide/local-vs-temporal.mdx": {
-  "formatting/em-dash-density": 11,
-  "discourse/punchy-fragments": 1,
-  "claude/colon-reveal": 3,
-  "tricolon/comma-series": 1,
-  "claude/figurative-suffixes": 1,
-  "anaphora/repeated-opening": 1
- },
  "docs/src/content/docs/guide/managing-lexicons.mdx": {
   "formatting/em-dash-density": 3,
   "claude/colon-reveal": 2,
@@ -607,28 +597,25 @@
   "tricolon/comma-series": 1
  },
  "docs/src/content/docs/guide/operator.mdx": {
-  "formatting/em-dash-density": 41,
+  "formatting/em-dash-density": 40,
   "discourse/punchy-fragments": 1,
-  "tricolon/comma-series": 5,
-  "claude/contrast-tail": 4,
+  "claude/contrast-tail": 3,
+  "tricolon/comma-series": 4,
   "formatting/bold-first-bullet": 2,
   "anaphora/repeated-opening": 2
  },
  "docs/src/content/docs/guide/ops-reference.mdx": {
-  "formatting/em-dash-density": 8,
+  "formatting/em-dash-density": 6,
   "discourse/punchy-fragments": 1,
   "claude/colon-reveal": 4,
   "tricolon/comma-series": 3,
   "repetition/near-duplicate": 1
  },
  "docs/src/content/docs/guide/ops.mdx": {
-  "formatting/em-dash-density": 30,
+  "formatting/em-dash-density": 23,
   "discourse/punchy-fragments": 2,
-  "claude/sounds-like-claude": 1,
   "formatting/bold-first-bullet": 2,
-  "tricolon/comma-series": 4,
-  "claude/figurative-suffixes": 1,
-  "repetition/near-duplicate": 1
+  "tricolon/comma-series": 4
  },
  "docs/src/content/docs/guide/organizational-policy.mdx": {
   "formatting/em-dash-density": 21,
@@ -656,8 +643,8 @@
   "repetition/near-duplicate": 1
  },
  "docs/src/content/docs/guide/watching-lifecycle.mdx": {
-  "formatting/em-dash-density": 21,
-  "claude/colon-reveal": 6,
+  "formatting/em-dash-density": 19,
+  "claude/colon-reveal": 5,
   "anaphora/repeated-opening": 2,
   "formatting/bold-first-bullet": 1
  },
@@ -972,7 +959,7 @@
   "formatting/bold-first-bullet": 1
  },
  "docs/src/content/docs/tutorials/alert-triage-local.mdx": {
-  "formatting/em-dash-density": 9,
+  "formatting/em-dash-density": 4,
   "discourse/punchy-fragments": 1,
   "claude/colon-reveal": 4,
   "anaphora/repeated-opening": 1
@@ -984,7 +971,7 @@
   "tricolon/comma-series": 1
  },
  "docs/src/content/docs/tutorials/cockroachdb-multi-region.mdx": {
-  "formatting/em-dash-density": 25,
+  "formatting/em-dash-density": 24,
   "claude/colon-reveal": 2,
   "tricolon/comma-series": 6
  },
@@ -1016,8 +1003,7 @@
   "tricolon/comma-series": 2
  },
  "docs/src/content/docs/tutorials/fly-durable-deploy.mdx": {
-  "formatting/em-dash-density": 10,
-  "claude/colon-reveal": 2,
+  "formatting/em-dash-density": 7,
   "tricolon/comma-series": 1
  },
  "docs/src/content/docs/tutorials/fly-machines-reconcile.mdx": {
@@ -1079,15 +1065,6 @@
   "repetition/near-duplicate": 2,
   "tricolon/comma-series": 1
  },
- "docs/src/content/docs/tutorials/temporal-crdb-deploy.mdx": {
-  "formatting/em-dash-density": 29,
-  "claude/colon-reveal": 4,
-  "tricolon/comma-series": 1,
-  "syntactic/self-posed-question": 2,
-  "anaphora/repeated-opening": 1,
-  "tricolon/density": 1,
-  "formatting/bold-first-bullet": 1
- },
  "docs/src/content/docs/tutorials/terraform-carve-out.mdx": {
   "formatting/em-dash-density": 20,
   "claude/colon-reveal": 4,
@@ -1097,7 +1074,7 @@
   "tricolon/comma-series": 1
  },
  "docs/src/content/docs/whats-new.mdx": {
-  "formatting/em-dash-density": 25,
+  "formatting/em-dash-density": 24,
   "claude/colon-reveal": 2,
   "tricolon/comma-series": 3,
   "claude/figurative-suffixes": 2,
