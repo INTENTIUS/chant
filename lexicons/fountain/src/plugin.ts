@@ -1,4 +1,10 @@
-import type { LexiconPlugin, SkillDefinition, IntrinsicDef } from "@intentius/chant/lexicon";
+import type {
+  LexiconPlugin,
+  SkillDefinition,
+  IntrinsicDef,
+  DisruptionQuery,
+  DisruptionVerdict,
+} from "@intentius/chant/lexicon";
 import type { LintRule } from "@intentius/chant/lint/rule";
 import type { PostSynthCheck } from "@intentius/chant/lint/post-synth";
 import type { CommandGroup } from "@intentius/chant/cli/command-group";
@@ -23,6 +29,7 @@ import { sitesToTemplateIR } from "./import/local-agents";
 import { completions } from "./lsp/completions";
 import { hover } from "./lsp/hover";
 import { fountainDeepNormalizationHooks } from "./deep-observe-hooks";
+import { fountainDisruption } from "./disruption";
 import { fountainConfigSchema } from "./config";
 import { acpCommandGroup } from "./acp";
 import { createFountainOpRuntime } from "./op/runtime";
@@ -200,6 +207,16 @@ export const fountainPlugin: LexiconPlugin = {
   },
 
   deepNormalizationHooks: fountainDeepNormalizationHooks,
+
+  // A table lookup over route semantics, not a live call (#2128). Narrow on
+  // purpose: it answers for the team-side kinds and returns `unknown` for the
+  // rest rather than publishing a claim fountain's spec does not back.
+  classifyDisruption(options: {
+    environment: string;
+    changes: DisruptionQuery[];
+  }): Record<string, DisruptionVerdict> {
+    return fountainDisruption(options);
+  },
 
   referenceCatalog: fountainReferenceCatalog,
 

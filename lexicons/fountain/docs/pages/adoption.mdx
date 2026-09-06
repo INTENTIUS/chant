@@ -4,17 +4,44 @@ description: "Live observation, import, and the graph edge fountain reconstructs
 diataxis: reference
 ---
 
-The lexicon reads live fountain state on three paths.
+The lexicon reads live fountain state on three paths, across all six kinds: environments, vaults and agents from their own collections, teammates from `GET /api/team`, schedules from `GET /api/team/schedules`, webhook endpoints from `GET /api/webhooks`.
 
 ## Drift
 
-`chant lifecycle diff --live` reports each declared entity as observed present, observed absent, or **not observed** with a reason — a read failure is never reported as an absence, which would propose a spurious create. Ownership comes from the `managed-by: chant` marker, so `--owned` filters to what chant declared.
+`chant lifecycle diff --live` reports each declared entity as observed present, observed absent, or **not observed** with a reason — a read failure is never reported as an absence, which would propose a spurious create.
 
-An out-of-band change to a locked environment — a UI edit that adds a secret, opens networking, or drops the marker — is what this catches. Wire it into a scheduled watch and treat a hit as an incident, not housekeeping.
+An out-of-band change to a locked environment — a UI edit that adds a secret, opens networking, or drops the marker — is what this catches. So is a schedule someone paused, a cron edited in the console, and a teammate rebound to another vault. Wire it into a scheduled watch and treat a hit as an incident, not housekeeping.
+
+### What identifies a resource
+
+The read looks a resource up by the same key the serializer writes it under, so a clean apply reads back as unchanged.
+
+| Kind | Key |
+|---|---|
+| Environment, Vault, Agent | the declared `name`, or the export name when there is none |
+| Teammate | the roster name |
+| Schedule | its teammate and its name together — a schedule's name is unique only within one teammate |
+| Webhook | its `url`, which is the only identity a webhook endpoint has |
+
+A declaration that resolves to no identity at all — a schedule whose `teammate` reference names nothing — is reported as a failed read rather than an absence, since nothing was ever asked.
+
+### Who owns what
+
+Ownership comes from the `managed-by: chant` marker in a resource's `metadata`, and only environments, vaults and agents have one. The other three inherit or abstain:
+
+- A **teammate** and its **schedules** inherit the verdict of the agent behind them. chant's marker on the agent covers the teammate that agent is, and every schedule on its thread.
+- A **webhook** carries no metadata upstream, so its verdict is `unknown`. `--owned` withholds it rather than claiming it, and an undeclared webhook is never proposed for deletion.
+
+### What a change costs
+
+`chant lifecycle plan` annotates each pending update with its blast radius. For the team-side kinds the lexicon publishes a verdict; for the rest it says `unknown` rather than guess.
+
+- Editing a schedule's cron, prompt or enabled flag is **in-place**: it rewrites the row the scheduler reads on its next tick and interrupts nothing.
+- Moving a teammate's agent, environment or vault is **replace**. Those are what its persistent sandbox was provisioned from, and fountain retires the machine when one moves — the roster entry survives, the disk does not.
 
 ## Import
 
-`chant import --from` adopts UI-built resources into typed files. Server-written fields are stripped to the authored shape, and an agent's `environment_id` is resolved back to the exported environment's logical name so the generated code carries a reviewable reference.
+`chant import --from` adopts UI-built resources into typed files. Server-written fields are stripped to the authored shape, and every server-resolved id is put back into the vocabulary an author writes: an agent's `environment_id` becomes the environment's name, a teammate's launch bindings become its environment and vault, a schedule's `agent_id` becomes the teammate whose thread it runs on. A schedule's generated name is qualified by its teammate and a webhook's by its url, because neither has a unique name of its own.
 
 Secrets do not round-trip: values are write-only upstream and secret keys are not on the typed request surface, so environments export without them and the caller is warned per environment that carried any. Re-declare them through your secret provider.
 

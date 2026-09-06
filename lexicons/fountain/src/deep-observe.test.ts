@@ -501,3 +501,243 @@ describe("plugin wiring", () => {
     expect(fountainPlugin.deepNormalizationHooks).toBe(fountainDeepNormalizationHooks);
   });
 });
+
+// ── The team-side kinds (#2128) ───────────────────────────────────────────
+//
+// A roster row, a schedule row and a webhook endpoint, as fountain's own JSON
+// views render them. The point of these tests is the translation: the wire
+// carries `agent_id` and a nested conversation, chant declares `teammate`,
+// `environment` and `vault`, and a clean apply has to report nothing.
+
+const TEAMMATE = "Fountain::V1::Teammate";
+const SCHEDULE = "Fountain::V1::Schedule";
+const WEBHOOK = "Fountain::V1::Webhook";
+
+function liveTeammate(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    agent_id: "agent-1",
+    name: "ops-steward",
+    agent: liveAgent(),
+    conversation: { id: "conv-1", environment_id: "env-1", vault_id: "vault-1" },
+    presence: { state: "online", label: "Online" },
+    preview: { kind: "them", text: "converged" },
+    last_turn: null,
+    unread: false,
+    usage_total: { total_tokens: 812 },
+    contact: null,
+    ...overrides,
+  };
+}
+
+function liveSchedule(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: "sched-1",
+    agent_id: "agent-1",
+    name: "nightly-converge",
+    cron: "0 3 * * *",
+    prompt: "chant lifecycle converge",
+    one_off: false,
+    enabled: true,
+    next_run_at: "2026-09-07T03:00:00Z",
+    last_run_at: "2026-09-06T03:00:00Z",
+    last_conversation_id: "conv-7",
+    last_error: null,
+    ...STAMPS,
+    ...overrides,
+  };
+}
+
+function liveWebhook(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: "wh-1",
+    url: "https://ops.example.com/hooks/fountain",
+    description: null,
+    event_types: ["conversation.turn.done"],
+    status: "active",
+    consecutive_failures: 0,
+    disabled_at: null,
+    disabled_reason: null,
+    ...STAMPS,
+    ...overrides,
+  };
+}
+
+/** The steward estate: the three base kinds plus the three team-side ones. */
+function teamEstate(overrides: Record<string, Route> = {}): FountainHttp {
+  return routed({
+    "GET /api/environments": { status: 200, json: { data: [liveEnvironment()] } },
+    "GET /api/vaults": { status: 200, json: { data: [liveVault()] } },
+    "GET /api/agents": { status: 200, json: { data: [liveAgent()] } },
+    "GET /api/team": { status: 200, json: { data: [liveTeammate()] } },
+    "GET /api/team/schedules": { status: 200, json: { data: [liveSchedule()] } },
+    "GET /api/webhooks": { status: 200, json: { data: [liveWebhook()] } },
+    ...overrides,
+  });
+}
+
+function stewardDeclaration(): DeclaredEntities {
+  return declared({
+    opsSteward: {
+      entityType: TEAMMATE,
+      props: {
+        name: "ops-steward",
+        agent: "researcher",
+        environment: "concierge-env",
+        vault: "ops-vault",
+      },
+    },
+    nightly: {
+      entityType: SCHEDULE,
+      props: {
+        name: "nightly-converge",
+        teammate: "ops-steward",
+        cron: "0 3 * * *",
+        prompt: "chant lifecycle converge",
+        enabled: true,
+      },
+    },
+    hook: {
+      entityType: WEBHOOK,
+      props: {
+        url: "https://ops.example.com/hooks/fountain",
+        event_types: ["conversation.turn.done"],
+      },
+    },
+  });
+}
+
+describe("the team-side kinds read back in the declared vocabulary", () => {
+  it("a clean apply of a steward reports nothing", async () => {
+    const { diff } = await drift(stewardDeclaration(), teamEstate());
+
+    expect(diff.drifted).toEqual([]);
+    expect(diff.unobserved).toEqual([]);
+    expect(diff.unchanged.sort()).toEqual(["hook", "nightly", "opsSteward"]);
+  });
+
+  it("the ids the wire carries are translated to the names an author writes", async () => {
+    const { live } = await drift(stewardDeclaration(), teamEstate());
+
+    expect(live.resources.opsSteward.properties).toEqual({
+      name: "ops-steward",
+      agent: "researcher",
+      environment: "concierge-env",
+      vault: "ops-vault",
+    });
+    expect(live.resources.opsSteward.physicalId).toBe("agent-1");
+    expect(live.resources.nightly.properties.teammate).toBe("ops-steward");
+    expect(live.resources.nightly.properties.agent_id).toBeUndefined();
+  });
+
+  it("the scheduler's own run history never reaches a diff", async () => {
+    const { live } = await drift(stewardDeclaration(), teamEstate());
+
+    for (const key of ["next_run_at", "last_run_at", "last_conversation_id", "last_error", "id"]) {
+      expect(Object.keys(live.resources.nightly.properties)).not.toContain(key);
+    }
+  });
+
+  it("a schedule paused in the UI reports enabled: false and nothing else", async () => {
+    const http = teamEstate({
+      "GET /api/team/schedules": { status: 200, json: { data: [liveSchedule({ enabled: false })] } },
+    });
+
+    const { diff } = await drift(stewardDeclaration(), http);
+    const schedule = diff.drifted.find((d) => d.name === "nightly");
+    expect(schedule?.changes).toEqual([
+      expect.objectContaining({ path: "enabled", kind: "changed", declared: true, live: false }),
+    ]);
+    expect(diff.drifted.map((d) => d.name)).toEqual(["nightly"]);
+  });
+
+  it("a cron someone edited in the UI reports as a changed property", async () => {
+    const http = teamEstate({
+      "GET /api/team/schedules": { status: 200, json: { data: [liveSchedule({ cron: "0 5 * * *" })] } },
+    });
+
+    const { diff } = await drift(stewardDeclaration(), http);
+    const schedule = diff.drifted.find((d) => d.name === "nightly");
+    expect(schedule?.changes).toContainEqual(
+      expect.objectContaining({ path: "cron", kind: "changed", declared: "0 3 * * *", live: "0 5 * * *" }),
+    );
+  });
+
+  it("a teammate rebound to another vault reports the vault by name", async () => {
+    const otherVault = liveVault({ id: "vault-2", name: "escalation-vault" });
+    const http = teamEstate({
+      "GET /api/vaults": { status: 200, json: { data: [liveVault(), otherVault] } },
+      "GET /api/team": {
+        status: 200,
+        json: {
+          data: [
+            liveTeammate({ conversation: { id: "conv-1", environment_id: "env-1", vault_id: "vault-2" } }),
+          ],
+        },
+      },
+    });
+
+    const { diff } = await drift(stewardDeclaration(), http);
+    const teammate = diff.drifted.find((d) => d.name === "opsSteward");
+    expect(teammate?.changes).toContainEqual(
+      expect.objectContaining({
+        path: "vault",
+        kind: "changed",
+        declared: "ops-vault",
+        live: "escalation-vault",
+      }),
+    );
+  });
+
+  it("a webhook fountain switched off surfaces its status; a healthy one stays silent", async () => {
+    const clean = await drift(stewardDeclaration(), teamEstate());
+    expect(clean.diff.drifted.find((d) => d.name === "hook")).toBeUndefined();
+
+    const http = teamEstate({
+      "GET /api/webhooks": {
+        status: 200,
+        json: {
+          data: [
+            liveWebhook({
+              status: "disabled",
+              disabled_reason: "too many failures",
+              consecutive_failures: 12,
+            }),
+          ],
+        },
+      },
+    });
+    const { diff } = await drift(stewardDeclaration(), http);
+    const hook = diff.drifted.find((d) => d.name === "hook");
+    // Delivery health is the endpoint's own business; the switch is not.
+    expect(hook?.changes).toEqual([
+      expect.objectContaining({ path: "status", kind: "undeclared", live: "disabled" }),
+    ]);
+  });
+
+  it("a webhook url moved in the UI is a create plus an orphan, not a property change", async () => {
+    const http = teamEstate({
+      "GET /api/webhooks": {
+        status: 200,
+        json: { data: [liveWebhook({ url: "https://elsewhere.example.com/hooks" })] },
+      },
+    });
+
+    // The url IS the identity, so the declared endpoint reads as absent rather
+    // than as a changed field — the thin path reports that, and the deep read
+    // deliberately says nothing rather than doubling the finding.
+    const { live, diff } = await drift(stewardDeclaration(), http);
+    expect(live.resources.hook).toBeUndefined();
+    expect(diff.drifted.find((d) => d.name === "hook")).toBeUndefined();
+  });
+
+  it("a failed roster list marks only the schedules read-failed", async () => {
+    const http = teamEstate({ "GET /api/team": { status: 500 } });
+    const live = normalizeDeepObservation(
+      await observeResourcesDeepFountain(options(stewardDeclaration()), http),
+    );
+
+    expect(live.unobserved.nightly.reason).toBe("read-failed");
+    expect(live.unobserved.opsSteward.reason).toBe("read-failed");
+    expect(live.resources.hook).toBeDefined();
+  });
+});
