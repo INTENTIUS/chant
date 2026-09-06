@@ -140,6 +140,21 @@ export const terraformPlugin: LexiconPlugin = {
   },
 
   /**
+   * `recommended`/`all` (chant #2113), the tflint-ruleset-terraform shape:
+   * `recommended` is every `merge-worthy` TF rule (a correctness/security
+   * finding worth reporting by default), `all` adds the `report-only` ones
+   * (hygiene the family grows into as #2109/#2110/#2112 land). Derived from
+   * `terraformAuditCatalog` rather than a hand-kept id list, so a rule that
+   * lands in a later, parallel issue is picked up automatically the moment
+   * its catalog entry ships, with no second list to fall out of sync.
+   */
+  lintPresets() {
+    const ids = Object.keys(terraformAuditCatalog);
+    const recommended = ids.filter((id) => terraformAuditCatalog[id].tier === "merge-worthy");
+    return { recommended, all: ids };
+  },
+
+  /**
    * Parse-to-graph for `chant audit` (#1567, #2085). `content` is the
    * `# file: <name>`-joined bundle discovery builds for one discovered root
    * module (`classifyTerraform`, `packages/core/src/audit/core.ts`); the root

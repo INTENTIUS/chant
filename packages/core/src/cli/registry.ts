@@ -173,7 +173,7 @@ export interface ParsedArgs {
    * registered in `~/.claude.json`, not just the path argument.
    */
   allProjects?: boolean;
-  /** `chant audit --fail-on merge-worthy|warning|none` */
+  /** `chant audit --fail-on merge-worthy|warning|error|none` */
   failOn?: string;
   /** `chant audit --theme <file>` — JSON theme knobs for the HTML report */
   theme?: string;

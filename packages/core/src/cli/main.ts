@@ -463,7 +463,7 @@ Commands:
                          chant code instead of reading a template file)
   audit [path|url]      Audit a repo's CI YAML for security issues
                         (--format stylish|json|sarif|markdown|html, -o <file>,
-                         --tier merge-worthy|all, --fail-on merge-worthy|warning|none,
+                         --tier merge-worthy|all, --fail-on merge-worthy|warning|error|none,
                          --template <file> / --theme <file> for the html report)
                         --agents audits this machine's agent configuration —
                         instruction files, MCP servers, skills, plugins,

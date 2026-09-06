@@ -728,6 +728,17 @@ export interface LexiconPlugin {
   auditCatalog?(): Record<string, RuleMeta>;
 
   /**
+   * Preset name mapped to the post-synth check ids that preset enables
+   * (chant #2113), e.g. `{ recommended: ["TF001", ...], all: ["TF001", ..., "TF011"] }`.
+   * A project selects one via `lint.presets: { "<this lexicon's name>": "<preset>" }`
+   * (`./lint/config.ts`'s `LintConfig.presets`). `resolvePresetIds` and
+   * `applyConfiguredPreset` (same file) do the filtering. Omit for a lexicon
+   * that ships no presets. Its post-synth findings are unaffected by
+   * `lint.presets`, exactly as before this existed.
+   */
+  lintPresets?(): Record<string, string[]>;
+
+  /**
    * Parse standalone template content (a file audit discovery classified for
    * this lexicon) into the lexicon's entity graph, keyed the way `ctx.entities`
    * is during a build. Lets entity-reading post-synth checks fire on
