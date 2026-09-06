@@ -1,4 +1,5 @@
-import { Op, phase, gcpDelete } from "@intentius/chant-lexicon-temporal";
+import { Op, phase } from "@intentius/chant/op";
+import { gcpDelete } from "@intentius/chant-lexicon-gcp";
 
 /** Tear the estate back down — the inverse of `deploy`. `chant run cc-gcp-destroy`. */
 export default Op({

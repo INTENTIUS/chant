@@ -13,21 +13,23 @@
     "lint": "chant lint src/shared && chant lint src/east && chant lint src/central && chant lint src/west",
     "build:k3d-cluster": "chant build k3d/src --lexicon k3d -o k3d/cluster.yaml",
     "build:k3d": "chant build k3d/src --lexicon k8s -o dist/k3d.yaml",
+    "build:fountain": "chant build ops --lexicon fountain -o dist/fountain.yaml",
     "smoke": "chant run crdb-k3d-smoke",
     "bootstrap": "bash scripts/bootstrap.sh",
     "deploy": "chant run crdb-deploy",
     "teardown": "chant run crdb-teardown",
-    "publish-ui": "chant run crdb-publish-ui --temporal",
+    "publish-ui": "chant run crdb-publish-ui",
     "contexts": "bash scripts/kube-contexts.sh",
-    "diff": "chant lifecycle diff prod --live"
+    "diff": "chant lifecycle diff prod --live",
+    "converge": "chant run crdb-ui-converge"
   },
   "dependencies": {
     "@intentius/chant": "^0.44.13",
+    "@intentius/chant-lexicon-fountain": "^0.44.13",
     "@intentius/chant-lexicon-gcp": "^0.44.13",
-    "@intentius/chant-lexicon-k8s": "^0.44.13",
     "@intentius/chant-lexicon-helm": "^0.44.13",
-    "@intentius/chant-lexicon-temporal": "^0.44.13",
-    "@intentius/chant-lexicon-k3d": "^0.44.13"
+    "@intentius/chant-lexicon-k3d": "^0.44.13",
+    "@intentius/chant-lexicon-k8s": "^0.44.13"
   },
   "devDependencies": {
     "typescript": "^5.9.3"

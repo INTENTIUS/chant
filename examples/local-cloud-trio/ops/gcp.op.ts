@@ -1,4 +1,5 @@
-import { Op, phase, build, gcpApply, flociGcpUp, flociGcpDown, httpCheck } from "@intentius/chant-lexicon-temporal";
+import { Op, phase, build, httpCheck } from "@intentius/chant/op";
+import { flociGcpDown, flociGcpUp, gcpApply } from "@intentius/chant-lexicon-gcp";
 
 /**
  * Deploy the GCS bucket to a local floci-gcp via `gcpApply`. `chant run gcp`.

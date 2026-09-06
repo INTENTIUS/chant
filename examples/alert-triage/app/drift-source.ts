@@ -1,5 +1,5 @@
 // Drift source — event source #2. Runs `chant lifecycle plan --json` and starts
-// a triage workflow for each non-noop change-set entry, so out-of-band cluster
+// a triage run for each non-noop change-set entry, so out-of-band cluster
 // changes go through the same triage as external alerts. The runtime counterpart
 // of a WatchOp (which schedules the same check on a cron).
 //
@@ -14,7 +14,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
-import { startTriage } from "./triage-client.js";
+import { describeStart, startTriage } from "./start-triage.js";
 import { alertFromDrift, type DriftEntry } from "./parse.js";
 
 const execFileAsync = promisify(execFile);
@@ -51,9 +51,11 @@ async function main(): Promise<void> {
     console.log("no drift — nothing to triage");
     return;
   }
+  // One at a time: a triage run is a process, and two of them would race for
+  // the same .chant/triage/ files.
   for (const entry of drifted) {
-    const id = await startTriage(alertFromDrift(entry));
-    console.log(`drift on ${entry.name} → started triage ${id}`);
+    const start = await startTriage(alertFromDrift(entry));
+    console.log(`drift on ${entry.name} → ${describeStart(start)}`);
   }
 }
 

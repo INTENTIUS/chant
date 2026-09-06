@@ -14,11 +14,11 @@ import type { ChantConfig } from "@intentius/chant";
  * kubeconfig floci-az's k3s writes names its context `default`, and
  * `test/azure-cc-e2e.sh` points KUBECONFIG at the extracted file.
  *
- * `temporal` is in the lexicon list so `chant run` loads the azure applier
- * activity alongside the base ones (same wiring as local-cloud-trio).
+ * `azure` is in the lexicon list so `chant run` loads the azure applier
+ * activity; the base activities come from core and need no lexicon at all.
  */
 export default {
-  lexicons: ["azure", "k8s", "temporal"],
+  lexicons: ["azure", "k8s"],
   sourceDir: "src",
   environments: [{ name: "local", endpoint: "http://localhost:4577" }],
   ownership: { stack: "cc-azure-canonical", env: "local" },

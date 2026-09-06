@@ -1,6 +1,6 @@
 // Synthetic alert source — POSTs a demo alert to the webhook if it's reachable,
-// otherwise starts the triage workflow directly. `npm run alert`.
-import { startTriage } from "./triage-client.js";
+// otherwise starts the triage run directly. `npm run alert`.
+import { describeStart, startTriage } from "./start-triage.js";
 import { alertFromWebhook } from "./parse.js";
 
 const demoBody = {
@@ -22,9 +22,9 @@ async function main(): Promise<void> {
     if (!res.ok) throw new Error(`webhook returned ${res.status}`);
     console.log(`sent demo alert to webhook ${webhookUrl}: ${await res.text()}`);
   } catch {
-    // No webhook running — start the workflow directly so the demo still works.
-    const id = await startTriage(alertFromWebhook(demoBody));
-    console.log(`webhook unavailable; started triage workflow directly: ${id}`);
+    // No webhook running — run the triage directly so the demo still works.
+    const start = await startTriage(alertFromWebhook(demoBody));
+    console.log(`webhook unavailable; ran the triage here: ${describeStart(start)}`);
   }
 }
 

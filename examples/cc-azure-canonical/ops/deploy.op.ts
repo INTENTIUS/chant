@@ -1,4 +1,5 @@
-import { Op, phase, azApply } from "@intentius/chant-lexicon-temporal";
+import { Op, phase } from "@intentius/chant/op";
+import { azApply } from "@intentius/chant-lexicon-azure";
 
 /**
  * The azure half's release path: direct per-resource ARM apply (floci-az has

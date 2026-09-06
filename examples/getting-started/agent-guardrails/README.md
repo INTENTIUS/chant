@@ -19,7 +19,7 @@ cp agent-guardrails/skills/drift-check.md     .claude/skills/drift-check/SKILL.m
 
 - `settings.json` — permission tiers. Build, lint, and `lifecycle plan` are
   allowed (pure, no credentials). Drift and reconcile are ask-first. The deploy
-  Ops (`deploy`, `deploy-gated`, `apply`), their approval signal, and
+  Ops (`deploy`, `deploy-gated`, `apply`), `chant approve`, and
   `kubectl apply` / `delete` are denied to the agent. A PostToolUse hook runs
   `chant lint` on every edit.
 - `agent-instructions.md` — standing facts: the loop, the static subset, what not

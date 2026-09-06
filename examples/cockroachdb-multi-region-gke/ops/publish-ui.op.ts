@@ -1,6 +1,6 @@
 /**
- * The half of the deploy that waits on a person.
- * `chant run crdb-publish-ui --temporal`.
+ * The half of the deploy that waits on a person — without waiting.
+ * `chant run crdb-publish-ui`.
  *
  * Each region's UI hangs off a subdomain of your base domain, served by a GCE
  * Ingress with a Google-managed certificate. Google will not issue that
@@ -12,21 +12,22 @@
  * consequence was silent: the deploy "succeeded", the managed certificates sat
  * in PROVISIONING, and the UIs returned 502 until somebody remembered.
  *
- * A gate is what that reminder wanted to be. It holds — durably, for up to
- * three days, surviving a worker restart — and when you send the signal it
- * verifies all three UIs actually answer.
+ * This Op is the other half of that reminder, and it holds nothing open. It
+ * prints the nameservers, waits for the certificates to go Active, and proves
+ * the three UIs answer. Run before delegation it fails on the certificate
+ * wait, which is the honest answer: the names do not resolve yet. Run after,
+ * it succeeds. Nothing is pinned in between.
  *
- *   chant run crdb-publish-ui --temporal
- *   # ... delegate the subdomains at your registrar ...
- *   chant run signal crdb-publish-ui gate-dns-delegation
+ * Which means it does not need anyone to remember either. `crdb-ui-converge`
+ * (./publish-ui-converge.op.ts) observes the estate on a cadence and dispatches
+ * this Op while the UI stack is still short of its declaration, so the first
+ * tick after the NS records propagate is the one that publishes.
  *
- * This Op needs Temporal. A gate anywhere in an Op makes the whole Op refuse
- * to run on the local executor, which is why it is not a phase of
- * `crdb-deploy`: the database does not depend on any of this, and requiring a
- * Temporal server to bring up a cluster would be the tail wagging the dog.
+ *   chant run crdb-publish-ui                 # here, once
+ *   chant run crdb-publish-ui --on fountain   # on the steward's thread
  */
 
-import { Op, phase, gate, shell, httpCheck } from "@intentius/chant-lexicon-temporal";
+import { Op, phase, shell, httpCheck } from "@intentius/chant/op";
 
 const REGIONS = ["east", "central", "west"] as const;
 
@@ -47,7 +48,7 @@ const DOMAIN = process.env.CRDB_DOMAIN ?? PLACEHOLDER_DOMAIN;
 
 export default Op({
   name: "crdb-publish-ui",
-  overview: "Hold for DNS delegation, then verify the three regional UIs answer",
+  overview: "Print the nameservers, wait out certificate issuance, verify the three regional UIs answer",
   depends: ["crdb-deploy"],
   labels: { Estate: "crdb-multi-region" },
 
@@ -67,7 +68,9 @@ export default Op({
       shell('[ -n "${GCP_PROJECT_ID:-}" ] || { echo "GCP_PROJECT_ID is not set"; exit 1; }'),
     ]),
 
-    // The nameservers to copy to your registrar.
+    // The nameservers to copy to your registrar. Printed on every run, so a
+    // dispatched tick leaves them in the thread rather than in somebody's
+    // scrollback from three days ago.
     phase("Nameservers", [
       shell(
         "for z in gke-crdb-east-zone gke-crdb-central-zone gke-crdb-west-zone; do " +
@@ -76,16 +79,8 @@ export default Op({
       ),
     ]),
 
-    phase("Await delegation", [
-      gate("gate-dns-delegation", {
-        timeout: "72h",
-        description:
-          "Delegate east/central/west subdomains at the registrar using the nameservers above, " +
-          "then signal. Google-managed certificates cannot be issued until the names resolve.",
-      }),
-    ]),
-
-    // Certificate issuance is minutes-to-an-hour after delegation propagates.
+    // Certificate issuance is minutes-to-an-hour after delegation propagates,
+    // and never at all before it. This is where an early run stops.
     phase("Certificates", [
       shell(
         REGIONS.map(

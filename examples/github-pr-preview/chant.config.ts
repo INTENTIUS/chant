@@ -22,7 +22,7 @@ import type { ChantConfig } from "@intentius/chant";
  * (k3d locally, a real cluster from CI via a kubeconfig secret).
  */
 export default {
-  lexicons: ["k8s", "github", "temporal"],
+  lexicons: ["k8s", "github"],
   sourceDir: "src",
   environments: ["local", "pr-*"],
   ownership: { stack: "pr-preview", env: { param: "env" } },

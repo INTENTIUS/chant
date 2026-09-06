@@ -14,7 +14,6 @@ import { githubSerializer, githubPlugin } from "@intentius/chant-lexicon-github"
 import { forgejoSerializer, forgejoPlugin } from "@intentius/chant-lexicon-forgejo";
 import { helmSerializer, helmPlugin } from "@intentius/chant-lexicon-helm";
 import { dockerSerializer, dockerPlugin } from "@intentius/chant-lexicon-docker";
-import { temporalSerializer, temporalPlugin } from "@intentius/chant-lexicon-temporal";
 import { flySerializer, flyPlugin } from "@intentius/chant-lexicon-fly";
 import { cplnSerializer, cplnPlugin } from "@intentius/chant-lexicon-cpln";
 
@@ -38,7 +37,6 @@ export const ALL_SERIALIZERS: Serializer[] = [
   forgejoSerializer,
   helmSerializer,
   dockerSerializer,
-  temporalSerializer,
   flySerializer,
   cplnSerializer,
 ];
@@ -59,7 +57,6 @@ export const SERIALIZER_BY_LEXICON: Record<string, Serializer> = {
   forgejo: forgejoSerializer,
   helm: helmSerializer,
   docker: dockerSerializer,
-  temporal: temporalSerializer,
   fly: flySerializer,
   cpln: cplnSerializer,
 };
@@ -81,7 +78,6 @@ export const ALL_INTRINSICS: IntrinsicDef[] = [
   forgejoPlugin,
   helmPlugin,
   dockerPlugin,
-  temporalPlugin,
   flyPlugin,
   cplnPlugin,
 ].flatMap((plugin) => plugin.intrinsics?.() ?? []);
@@ -104,7 +100,6 @@ export const ALL_PLUGINS: LexiconPlugin[] = [
   forgejoPlugin,
   helmPlugin,
   dockerPlugin,
-  temporalPlugin,
   flyPlugin,
   cplnPlugin,
 ];
@@ -120,7 +115,6 @@ export const PLUGIN_BY_LEXICON: Record<string, LexiconPlugin> = {
   forgejo: forgejoPlugin,
   helm: helmPlugin,
   docker: dockerPlugin,
-  temporal: temporalPlugin,
   fly: flyPlugin,
   cpln: cplnPlugin,
 };
@@ -139,7 +133,6 @@ export const INTRINSICS_BY_LEXICON: Record<string, IntrinsicDef[]> = {
   forgejo: forgejoPlugin.intrinsics?.() ?? [],
   helm: helmPlugin.intrinsics?.() ?? [],
   docker: dockerPlugin.intrinsics?.() ?? [],
-  temporal: temporalPlugin.intrinsics?.() ?? [],
   fly: flyPlugin.intrinsics?.() ?? [],
   cpln: cplnPlugin.intrinsics?.() ?? [],
 };

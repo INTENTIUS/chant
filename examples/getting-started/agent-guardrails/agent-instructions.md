@@ -22,7 +22,8 @@ following the tutorial still runs the deploy steps themselves.
 ## What you must not run
 
 - `chant run deploy`, `chant run deploy-gated`, `chant run apply`,
-  `chant run signal …` — deploys and their approval. A human runs these.
+  `chant approve …` — deploys, and the gate resolutions that release them. A
+  human runs these.
 - `kubectl apply` / `kubectl delete` — same reason.
 
 These are denied in `.claude/settings.json`. Do not work around the denial.

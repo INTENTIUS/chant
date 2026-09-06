@@ -1,4 +1,5 @@
-import { Op, phase, build, gcpApply } from "@intentius/chant-lexicon-temporal";
+import { Op, phase, build } from "@intentius/chant/op";
+import { gcpApply } from "@intentius/chant-lexicon-gcp";
 
 /**
  * Deploy the estate to floci-gcp via `gcpApply`. `chant run cc-gcp-deploy`.

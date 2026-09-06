@@ -12,7 +12,7 @@ This is the smallest example of the three-layer split:
 |---|---|---|
 | **Chant** | Authoring typed infra → manifests | `src/app` (the workload), `src/bootstrap` (the Application) |
 | **Argo CD** | Continuously reconciling the manifests | watches `dist/app/` in git, syncs into the cluster |
-| **Temporal** | Procedural steps Argo can't express | *not needed for this example* |
+| **Chant Ops** | Procedural steps Argo can't express | *not needed for this example* |
 
 The key idea: **the k8s lexicon stays runtime-agnostic.** `src/app` is plain
 Chant k8s — it knows nothing about Argo. Argo is **opt-in**, added by one
@@ -129,6 +129,5 @@ and Argo reconciles the diff on its own.
 
 - Scope the Application to a real `AppProject` (`project:` option) for RBAC.
 - Fan out across regional clusters with `ArgoAppSetForRegions`.
-- Gate procedural steps (cert generation, `init` RPCs) on Argo finishing with
-  the temporal lexicon's `waitForArgoSync` activity — see the
-  `temporal-crdb-deploy` example.
+- Gate procedural steps (cert generation, `init` RPCs) on Argo finishing, with
+  an Op step over the k8s lexicon's `waitForArgoSync` activity.

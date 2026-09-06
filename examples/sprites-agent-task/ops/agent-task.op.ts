@@ -1,4 +1,4 @@
-import { Op, phase } from "@intentius/chant-lexicon-temporal";
+import { Op, phase } from "@intentius/chant/op";
 import { spriteCreate, spriteCheckpoint, spriteWriteFile, spriteExec, spriteReadFile, spriteDestroy }
   from "@intentius/chant-lexicon-fly";
 

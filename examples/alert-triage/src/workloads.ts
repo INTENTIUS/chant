@@ -1,7 +1,7 @@
 // The alert-triage app's Kubernetes surface — typed, synthesized to plain YAML.
 //
 // Two workloads: a webhook receiver that accepts incoming alerts over HTTP, and
-// a Temporal worker that runs the triage workflow's activities. Both use
+// a runner pool that executes `chant run triage` for each one. Both use
 // composites for sensible defaults and lint clean. `chant build` still prints a
 // few post-synth hardening advisories (imagePullPolicy, readOnlyRootFilesystem)
 // — those are guidance, not failures; lint is the gate. Hardening against them
@@ -36,10 +36,11 @@ export const webhookService = webhook.service;
 export const webhookIngress = webhook.ingress!;
 export const webhookPdb = webhook.pdb!;
 
-// Temporal worker — Deployment + PDB (no Service). A Temporal worker talks to
-// Temporal, not the K8s API, so `rbacRules: []` suppresses the ServiceAccount /
-// Role / RoleBinding (and the pod's serviceAccountName) WorkerPool would
-// otherwise create — those weren't exported, leaving a dangling SA reference.
+// Triage runner — Deployment + PDB (no Service). A runner shells `chant run`
+// and reads its own working directory, not the K8s API, so `rbacRules: []`
+// suppresses the ServiceAccount / Role / RoleBinding (and the pod's
+// serviceAccountName) WorkerPool would otherwise create — those weren't
+// exported, leaving a dangling SA reference.
 const worker = WorkerPool({
   name: "alert-worker",
   image: workerImage,

@@ -102,8 +102,9 @@ const report: ReportRow[] = [];
  * referenced via `.attr`, now folds instead of failing the whole importing
  * file on the first identifier it doesn't recognize. The 6 entries added
  * here (`alert-triage`, `bedrock-agentcore-agent`, `getting-started`,
- * `temporal-stack`, `lifecycle-reconcile-aws`, `layered-config`) were
- * exactly the corpus entries where cross-file resolution was the ONLY
+ * a since-deleted runtime example, `lifecycle-reconcile-aws`,
+ * `layered-config`) were exactly the corpus entries where cross-file
+ * resolution was the ONLY
  * remaining blocker; most of the run-fallback corpus needs #1044
  * (call-as-a-value) too, or an unrelated shape gap (a resource constructor
  * whose first argument isn't the props object literal, a nested `new` used
@@ -241,7 +242,6 @@ const EXPECTED_FOLD: readonly string[] = [
   "examples/k8s-gke-microservice",
   "examples/local-cloud-trio",
   "examples/local-fly",
-  "examples/temporal-stack",
   "lexicons/aws/examples/fargate-alb",
   "lexicons/aws/examples/lambda-dynamodb",
   "lexicons/aws/examples/lambda-eventbridge",
@@ -318,7 +318,6 @@ const EXPECTED_FOLD: readonly string[] = [
   "lexicons/k8s/examples/org-policy",
   "lexicons/k8s/examples/statefulset",
   "lexicons/k8s/examples/web-platform",
-  "lexicons/temporal/examples/local-dev-server",
 ];
 
 /**

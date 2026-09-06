@@ -9,7 +9,7 @@
 // file; authority stays with the Kubernetes API server.
 //
 //   chant run apply
-import { ApplyOp } from "@intentius/chant-lexicon-temporal";
+import { ApplyOp } from "@intentius/chant/op";
 
 const apply = ApplyOp({
   name: "apply",

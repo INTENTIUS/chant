@@ -17,7 +17,7 @@
       "Bash(chant run deploy:*)",
       "Bash(chant run deploy-gated:*)",
       "Bash(chant run apply:*)",
-      "Bash(chant run signal:*)",
+      "Bash(chant approve:*)",
       "Bash(kubectl apply:*)",
       "Bash(kubectl delete:*)"
     ]

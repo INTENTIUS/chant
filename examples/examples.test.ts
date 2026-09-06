@@ -33,6 +33,7 @@ import flyDurableDeployOp from "./fly-durable-deploy/ops/fly-durable-deploy.op";
 import flyRollbackOp from "./fly-deploy-rollback/ops/fly-deploy.op";
 import flyRollbackGuardedOp from "./fly-deploy-rollback/ops/fly-deploy-guarded.op";
 import deployGatedOp from "./getting-started/deploy-gated.op";
+import triageOp from "./alert-triage/ops/triage.op";
 import localAwsMigrateOp from "./local-op-quickstart/ops/local-aws-migrate.op";
 import { schemaSeeded } from "./local-op-quickstart/ops/receipts";
 import observeOp from "./getting-started/observe.op";
@@ -40,6 +41,7 @@ import reconcileOp from "./getting-started/reconcile.op";
 import applyOp from "./getting-started/apply.op";
 import crdbDeployOp from "./cockroachdb-multi-region-gke/ops/deploy.op";
 import crdbPublishUiOp from "./cockroachdb-multi-region-gke/ops/publish-ui.op";
+import crdbUiConvergeOp from "./cockroachdb-multi-region-gke/ops/publish-ui-converge.op";
 import crdbTeardownOp from "./cockroachdb-multi-region-gke/ops/teardown.op";
 import { resolve } from "path";
 import { readFileSync } from "fs";
@@ -258,9 +260,10 @@ describe("golden example L2 — deploy Op", () => {
   });
 });
 
-// ── Golden teaching example — L3 (gate + Temporal) ───────────────────
-// Gated deploy Op — runs on Temporal (--temporal), not the local executor.
-// Validated by compilation; the gated run is a documented local step.
+// ── Golden teaching example — L3 (the gate) ──────────────────────────
+// Gated deploy Op — a gate is a fact the local executor decides against the
+// ledger (#2119), so this runs where L2 does. Validated by compilation; the
+// two-run gated walkthrough is a documented local step.
 
 describe("golden example L3 — gated deploy Op", () => {
   test("compiles with an approval gate and rollback", () => {
@@ -293,11 +296,10 @@ describe("golden example L4 — lifecycle dial", () => {
 
 // ── Golden teaching example — L5 capstone: alert-triage (#74) ────────
 // This block validates the app's chant-synthesized k8s manifests. The triage
-// workflow itself is raw Temporal (custom agent activities); its workflow,
-// worker, and activities have their own CI coverage under
-// examples/alert-triage/: a time-skipping workflow test (activities/
-// workflow.test.ts — gate behaviour), activity unit tests (activities/
-// triage.test.ts), and the event→Alert mappers (app/parse.test.ts).
+// itself is a chant Op over the app's own steps; those have their own CI
+// coverage under examples/alert-triage/ — step unit tests (activities/
+// triage.test.ts) and the event→Alert mappers (app/parse.test.ts) — and the
+// Op's shape is asserted below.
 
 describeExample(
   "alert-triage",
@@ -326,6 +328,29 @@ describeExample(
     },
   },
 );
+
+describe("alert-triage triage Op (#74)", () => {
+  test("proposes, stops for a person, then remediates", () => {
+    const props = (triageOp as unknown as {
+      props: {
+        name: string;
+        phases: Array<{ name: string; steps: Array<{ kind: string; signalName?: string }> }>;
+      };
+    }).props;
+    expect(props.name).toBe("triage");
+    expect(props.phases.map((p) => p.name)).toEqual(["Propose", "Approve", "Remediate"]);
+
+    // The gate sits between the proposal and the change, which is the
+    // proposed-vs-executed boundary the capstone exists to show: the apply
+    // half cannot be reached without a resolution on the ledger.
+    const gates = props.phases.flatMap((p) => p.steps).filter((s) => s.kind === "gate");
+    expect(gates).toHaveLength(1);
+    expect(gates[0].signalName).toBe("approve-remediation");
+    expect(props.phases.findIndex((p) => p.name === "Approve")).toBeLessThan(
+      props.phases.findIndex((p) => p.name === "Remediate"),
+    );
+  });
+});
 
 // ── Fly deploy — local-fly (#744) ────────────────────────────────────
 // Build-validated in CI (the deploy Op boots mudflaps in Docker, which CI can't
@@ -573,22 +598,30 @@ describe("sprites-build-sandbox Op (#869)", () => {
   });
 });
 
-// ── Durable Fly deploy on Temporal — fly-durable-deploy (#870) ──────────
-// The same App+Machine deploy as local-fly, but run as a durable Temporal Op:
-// Build serializes src/infra.ts, Deploy applies it via flyApply. The live run
-// (chant run fly-durable-deploy --temporal against mudflaps) is in the tutorial;
-// here we compile-validate the two-phase shape and the flyApply activity.
+// ── Scheduled Fly deploy — fly-durable-deploy (#870, #2132) ─────────────
+// The same App+Machine deploy as local-fly, now scheduled on a fountain
+// steward: Build serializes src/infra.ts, Deploy applies it via flyApply, and
+// the Op carries the cron the Steward turns into a Schedule. The live run
+// (against mudflaps, or on a real steward) is in the README; here we
+// compile-validate the two-phase shape, the flyApply activity and the cadence.
 
 describe("fly-durable-deploy Op (#870)", () => {
-  test("composes Build → Deploy with flyApply on its own task queue", () => {
+  test("composes Build → Deploy with flyApply, on a half-hourly cadence", () => {
     const props = (flyDurableDeployOp as unknown as {
-      props: { name: string; phases: Array<{ name: string; steps: Array<{ fn: string }> }> };
+      props: {
+        name: string;
+        schedule?: { cron: string; overlap?: string };
+        phases: Array<{ name: string; steps: Array<{ fn: string }> }>;
+      };
     }).props;
     // Globally-unique Op name (must not collide with fly-deploy-rollback's "fly-deploy").
     expect(props.name).toBe("fly-durable-deploy");
     expect(props.phases.map((p) => p.name)).toEqual(["Build", "Deploy"]);
     expect(props.phases.find((p) => p.name === "Build")!.steps[0].fn).toBe("chantBuild");
     expect(props.phases.find((p) => p.name === "Deploy")!.steps[0].fn).toBe("flyApply");
+    // The cadence rides on the Op, not on a resource (#2120) — the Steward in
+    // ops/fountain.ts reads it off here.
+    expect(props.schedule?.cron).toBe("*/30 * * * *");
   });
 });
 
@@ -1351,12 +1384,12 @@ describe("ray-kuberay-gke example", () => {
   });
 });
 
-// ── CockroachDB multi-region GKE — the three Ops (#1707) ─────────────
-// The Ops replace a 205-line deploy script and a teardown script. None of the
-// three can run in CI — between them they want four GKE clusters, a registrar
-// and a Temporal server — so what is gated here is their shape: the phase
-// order that makes the deploy correct, which phases fan out, and the fact that
-// the one gate lives in the Op that is allowed to have one.
+// ── CockroachDB multi-region GKE — the Ops (#1707, #2132) ────────────
+// The Ops replace a 205-line deploy script and a teardown script. None of them
+// can run in CI — between them they want four GKE clusters and a registrar —
+// so what is gated here is their shape: the phase order that makes the deploy
+// correct, which phases fan out, and the converge rule that replaced the
+// registrar gate.
 
 describe("cockroachdb-multi-region-gke Ops (#1707)", () => {
   type OpProps = {
@@ -1499,20 +1532,43 @@ describe("cockroachdb-multi-region-gke Ops (#1707)", () => {
     expect(guard).toContain("crdb.example.com");
   });
 
-  test("publish-ui: the gate lives here, and only here", () => {
+  test("publish-ui: no gate anywhere — it prints, waits on certs, and verifies", () => {
     const props = propsOf(crdbPublishUiOp);
     expect(props.name).toBe("crdb-publish-ui");
     expect(props.depends).toEqual(["crdb-deploy"]);
     expect(props.phases.map((p) => p.name)).toEqual([
       "Preflight",
       "Nameservers",
-      "Await delegation",
       "Certificates",
       "Verify",
     ]);
-    const gates = props.phases.flatMap((p) => p.steps).filter((s) => s.kind === "gate");
-    expect(gates).toHaveLength(1);
-    expect(gates[0].signalName).toBe("gate-dns-delegation");
+    // The registrar delegation used to be a 72h gate held open here. It is a
+    // converge rule now, so nothing in this Op waits on a person: an early run
+    // fails on the certificate wait, and the first run after delegation lands
+    // succeeds.
+    expect(props.phases.flatMap((p) => p.steps).filter((s) => s.kind === "gate")).toEqual([]);
+  });
+
+  test("ui-converge: an apply-dial rule dispatching publish-ui, with its why", () => {
+    const props = propsOf(crdbUiConvergeOp) as unknown as {
+      name: string;
+      labels?: Record<string, string>;
+      schedule?: { cron: string };
+      phases: Array<{ name: string; steps: Array<{ fn?: string; args?: Record<string, unknown> }> }>;
+    };
+    expect(props.name).toBe("crdb-ui-converge");
+    expect(props.labels?.Dial).toBe("apply");
+    expect(props.schedule?.cron).toBe("*/15 * * * *");
+    const tick = props.phases
+      .flatMap((p) => p.steps)
+      .find((s) => s.fn === "convergeTick")!;
+    const rules = tick.args!.rules as Array<{ id: string; why: string; then: { kind: string; op?: string } }>;
+    expect(rules).toHaveLength(1);
+    expect(rules[0].id).toBe("ui-unpublished");
+    expect(rules[0].then).toMatchObject({ kind: "run", op: "crdb-publish-ui" });
+    // OPS014 refuses a rule with no rationale; this is the assertion that the
+    // one rule here carries one rather than relying on the check to catch it.
+    expect(rules[0].why.length).toBeGreaterThan(40);
   });
 
   test("teardown: unwinds inside out", () => {
@@ -1549,7 +1605,7 @@ describe("cockroachdb-multi-region-gke Ops (#1707)", () => {
     expect(guard).not.toContain("containerclusters.container.cnrm.cloud.google.com >/dev/null || true");
   });
 
-  test("all three carry the estate label (#2118 — an Op declares labels, not a task queue)", () => {
+  test("the three hand-written Ops carry the estate label (#2118 — an Op declares labels, not a task queue)", () => {
     for (const op of [crdbDeployOp, crdbPublishUiOp, crdbTeardownOp]) {
       expect(propsOf(op).labels?.Estate).toBe("crdb-multi-region");
       expect(propsOf(op)).not.toHaveProperty("taskQueue");
@@ -1787,8 +1843,8 @@ describeExample(
 );
 
 // ── Gated migration effect — local-op-quickstart (#1835) ─────────────
-// The live loop (Floci + `--temporal`) is documented in the example README;
-// CI shape-validates the Op and the receipt row it rides on. The SSM
+// The live loop (Floci, and the approve-then-re-run pair) is documented in the
+// example README; CI shape-validates the Op and the receipt row it rides on. The SSM
 // materialization, store, and observation leg have their own coverage under
 // lexicons/aws/src/{effect-receipt-row,receipt-store}.test.ts.
 

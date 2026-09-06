@@ -8,7 +8,6 @@
     "@intentius/chant": "*",
     "@intentius/chant-lexicon-azure": "*",
     "@intentius/chant-lexicon-k8s": "*",
-    "@intentius/chant-lexicon-temporal": "*",
     "typescript": "*"
   },
   "scripts": {

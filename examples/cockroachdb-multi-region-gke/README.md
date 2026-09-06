@@ -15,23 +15,33 @@ npm run teardown   # chant run crdb-teardown
 
 ## What runs the deploy
 
-Four Ops, in `ops/`. Three of them replace a 205-line shell script; the fourth is the local test.
+Five Ops, in `ops/`. Three of them replace a 205-line shell script; the fourth turns the one step nobody can automate into a rule, and the fifth is the local test.
 
-| Op | What it does | Where it runs |
+| Op | What it does | Cadence |
 |---|---|---|
-| `crdb-deploy` | 17 phases: network, three clusters, readiness, certificates, the operator, workloads, the cert sync, discovery, init, topology, backups. Eight phases fan out per region. | local executor — no Temporal server |
-| `crdb-publish-ui` | Holds for DNS delegation at your registrar, then verifies all three UIs answer. | Temporal (`--temporal`) |
-| `crdb-teardown` | Unwinds inside out: workloads, volumes, clusters, network, residue. | local executor |
-| `crdb-k3d-smoke` | The local proof — see [Local verification](#local-verification-no-cloud-account). | local executor |
+| `crdb-deploy` | 17 phases: network, three clusters, readiness, certificates, the operator, workloads, the cert sync, discovery, init, topology, backups. Eight phases fan out per region. | on request |
+| `crdb-publish-ui` | Prints the three zones' nameservers, waits out certificate issuance, verifies all three UIs answer. | on request, and dispatched by the tick below |
+| `crdb-ui-converge` | Observes prod and dispatches `crdb-publish-ui` while the UI stack is short of its declaration. | `*/15 * * * *` |
+| `crdb-teardown` | Unwinds inside out: workloads, volumes, clusters, network, residue. | on request |
+| `crdb-k3d-smoke` | The local proof — see [Local verification](#local-verification-no-cloud-account). | on request |
 
 `chant run crdb-deploy` reports the phase it is in, retries a failed step under a profile chosen for how long that step should take, and on failure runs a Diagnose phase that dumps cluster, pod and CockroachDB state next to the phase that failed.
 
-The gate is in `crdb-publish-ui` rather than in the deploy, deliberately. Delegating three subdomains at a registrar is the one step nobody can automate from inside GCP, and Google will not issue the managed certificates until the names resolve — but the database does not depend on any of it. A gate anywhere in an Op makes the whole Op refuse to run on the local executor, so putting it in the deploy would mean requiring a Temporal server to bring up a database cluster.
+Publishing the UIs is separate from the deploy, deliberately. Delegating three subdomains at a registrar is the one step nobody can automate from inside GCP, and Google will not issue the managed certificates until the names resolve — but the database does not depend on any of it, so the deploy has no business waiting for it.
+
+It used to wait anyway: `crdb-publish-ui` held a 72-hour gate that somebody released with a signal once they had done the work at the registrar. The gate is a converge rule now. `crdb-ui-converge` observes prod every quarter hour, and while the UI ingresses and their certificates are still short of what `src/` declares it dispatches `crdb-publish-ui`. Before delegation that dispatch fails on the certificate wait, cheaply and honestly. The first tick after the NS records propagate is the one that publishes. The delegation is the signal.
 
 ```bash
-chant run crdb-publish-ui --temporal
-# ... create the NS records the Nameservers phase printed ...
-chant run signal crdb-publish-ui gate-dns-delegation
+chant run crdb-publish-ui        # once, by hand: prints the nameservers, then waits
+# ... create the NS records it printed at your registrar ...
+chant run crdb-ui-converge       # or leave the schedule to notice
+```
+
+`ops/fountain.ts` declares the steward those cadences live on — an `Environment`, a `Vault`, an `Agent` speaking ACP over `chant acp`, a `Teammate` seat, and one `Schedule` per Op with a cron. `chant run <op> --on fountain` posts the command line to that thread instead of running it here, so the conversation is the estate's operational history. Every Op above still runs locally with no fountain at all; see [`fountain-steward`](../fountain-steward/) for that shape on its own.
+
+```bash
+npm run build:fountain           # dist/fountain.yaml
+chant run crdb-ui-converge --on fountain
 ```
 
 ## Architecture
@@ -216,10 +226,10 @@ The management cluster is created imperatively by `scripts/bootstrap.sh`, becaus
 Then, when you are ready to expose the UIs:
 
 ```bash
-chant run crdb-publish-ui --temporal
+chant run crdb-publish-ui
 ```
 
-Its first phase prints the nameservers for each regional zone. Create NS records at your registrar:
+Its Nameservers phase prints the nameservers for each regional zone. Create NS records at your registrar:
 
 ```
 east.<your-domain>     →  NS  (the nameservers printed for gke-crdb-east-zone)
@@ -366,9 +376,11 @@ platform/
 └── eso.ts                    → dist/eso.yaml               (44, HelmRender)
 ops/
 ├── deploy.op.ts              # crdb-deploy
-├── publish-ui.op.ts          # crdb-publish-ui  (the gate)
+├── publish-ui.op.ts          # crdb-publish-ui       (nameservers, certs, verify)
+├── publish-ui-converge.op.ts # crdb-ui-converge      (the rule that dispatches it)
 ├── teardown.op.ts            # crdb-teardown
-└── k3d-smoke.op.ts           # crdb-k3d-smoke
+├── k3d-smoke.op.ts           # crdb-k3d-smoke
+└── fountain.ts               # the steward the cadences run on
 k3d/
 ├── src/                      # the smoke cluster + three local regions
 ├── certs.sh                  # shared CA into three namespaces
@@ -445,4 +457,4 @@ npm run deploy
 - **[k8s-eks-microservice](../k8s-eks-microservice/)** — EKS with ALB ingress and IRSA
 - **[k8s-aks-microservice](../k8s-aks-microservice/)** — AKS with AGIC ingress and Workload Identity
 - **[gitlab-cells-single-region-gke](../gitlab-cells-single-region-gke/)** — multi-cell GitLab on GKE with Cloud SQL, Redis and GCS
-- **[temporal-crdb-deploy](../temporal-crdb-deploy/)** — the same estate driven by a hand-written Temporal workflow instead of Ops
+- **[fountain-steward](../fountain-steward/)** — the steward shape on its own: a watch, a converge and a gated apply on one thread

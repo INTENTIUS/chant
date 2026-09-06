@@ -1,4 +1,5 @@
-import { Op, phase, shell, build, gcpApply, gcpDelete } from "@intentius/chant-lexicon-temporal";
+import { Op, phase, shell, build } from "@intentius/chant/op";
+import { gcpApply, gcpDelete } from "@intentius/chant-lexicon-gcp";
 
 /**
  * Boot a local floci-gcp emulator, build a GCS bucket, apply it directly to the

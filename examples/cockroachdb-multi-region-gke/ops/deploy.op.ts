@@ -8,26 +8,18 @@
  * failure runs the Diagnose phase instead of leaving you to guess, and a re-run
  * resumes rather than starting over.
  *
- * Runs on the local executor — no Temporal server needed. There is no gate
- * here on purpose: a gate anywhere in an Op makes the whole Op refuse to run
- * locally, and the one thing that genuinely waits on a human (delegating the
- * DNS subdomains at your registrar) blocks only the public UI, not the
- * database. That lives in `crdb-publish-ui`.
+ * The one thing that genuinely waits on a person — delegating the DNS
+ * subdomains at your registrar — blocks only the public UI, not the database,
+ * so it is not a phase here. `crdb-publish-ui` does that work, and
+ * `crdb-ui-converge` dispatches it on a cadence until it takes.
  *
  * Prerequisite: `npm run bootstrap` once, for the management cluster and
  * Config Connector. Config Connector is what turns dist/*-infra.yaml into real
  * GCP resources, so every infra apply below targets the `mgmt` context.
  */
 
-import {
-  Op,
-  phase,
-  build,
-  kubectlApply,
-  shell,
-  waitForReady,
-  waitForStack,
-} from "@intentius/chant-lexicon-temporal";
+import { Op, phase, build, shell, waitForStack } from "@intentius/chant/op";
+import { kubectlApply, waitForReady } from "@intentius/chant-lexicon-k8s/op/builders";
 
 /** Config Connector runs here; applying an infra manifest anywhere else does nothing. */
 const MGMT = "mgmt";

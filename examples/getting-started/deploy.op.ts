@@ -1,12 +1,12 @@
 // L2 — Ops, on the local executor.
 //
 // The same L1 declarations, now wrapped in an Op: a named, phased workflow.
-// `chant run deploy` runs this in-process with no Temporal server — it builds
-// the manifests, then applies them to your current kube context (point that at a
-// local k3d cluster). Phases run in order, and a failing step retries per its
-// profile. Reach for `--temporal` only when you need gates, schedules, or
-// crash-resume (that is L3).
-import { Op, phase, build, kubectlApply } from "@intentius/chant-lexicon-temporal";
+// `chant run deploy` runs this in-process — it builds the manifests, then
+// applies them to your current kube context (point that at a local k3d
+// cluster). Phases run in order, and a failing step retries per its profile.
+// L3 adds the approval gate; nothing else about the shape changes.
+import { Op, phase, build } from "@intentius/chant/op";
+import { kubectlApply } from "@intentius/chant-lexicon-k8s/op/builders";
 
 export default Op({
   name: "deploy",

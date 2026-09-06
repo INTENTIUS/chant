@@ -1,4 +1,7 @@
 import type { ChantConfig } from "@intentius/chant";
+// Brings the `fountain` key into ChantConfig. Type-only, so nothing about
+// reading this config pulls a lexicon package into the process.
+import type {} from "@intentius/chant-lexicon-fountain";
 
 /**
  * Three values vary per deployment: the GCP project the estate lives in, that
@@ -21,7 +24,7 @@ export default {
   // manifests — registering the plugin would turn its chart-authoring rules on
   // over `src/`, where WHM003 reads a plain container image as an
   // unparameterized chart value.
-  lexicons: ["gcp", "k8s", "temporal", "k3d"],
+  lexicons: ["gcp", "k8s", "k3d", "fountain"],
 
   // Stamped onto every emitted resource as `chant.intentius.io/stack`, next to
   // `app.kubernetes.io/managed-by=chant`. This is what lets a later prune tell
@@ -74,5 +77,28 @@ export default {
       env: "CRDB_DOMAIN",
       description: "Base domain for the UI ingresses — east.<domain>, central.<domain>, west.<domain>",
     },
+    repoUrl: {
+      type: "string",
+      default: "https://github.com/INTENTIUS/chant",
+      env: "CRDB_REPO_URL",
+      description: "The estate repo the steward's sandbox clones (ops/fountain.ts)",
+    },
+  },
+
+  /**
+   * Where `chant run <op> --on fountain` sends a run. The token is always a
+   * variable name — FTN001 refuses a literal in that position, whatever it
+   * looks like. `team` is the fallback for an op the loaded Steward does not
+   * list; ops/fountain.ts lists all four, so it is rarely the path taken.
+   */
+  fountain: {
+    profiles: {
+      prod: {
+        endpoint: "https://fountain.inevitable.fyi",
+        token: { env: "FOUNTAIN_TOKEN" },
+        team: "crdb-steward",
+      },
+    },
+    defaultProfile: "prod",
   },
 } satisfies ChantConfig;

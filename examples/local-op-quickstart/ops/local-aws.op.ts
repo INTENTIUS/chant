@@ -1,4 +1,5 @@
-import { Op, phase, activity, flociUp, build, flociDown } from "@intentius/chant-lexicon-temporal";
+import { Op, phase, activity, build } from "@intentius/chant/op";
+import { flociDown, flociUp } from "@intentius/chant-lexicon-aws";
 
 /**
  * Boot a local Floci AWS emulator, build and deploy a CloudFormation stack to it,
