@@ -819,7 +819,7 @@
   "formatting/bold-first-bullet": 1
  },
  "docs/src/content/docs/lint-rules/audit-rules.mdx": {
-  "formatting/em-dash-density": 369,
+  "formatting/em-dash-density": 370,
   "claude/sounds-like-claude": 1,
   "claude/colon-reveal": 6,
   "tricolon/comma-series": 1,
@@ -827,7 +827,7 @@
   "repetition/near-duplicate": 33,
   "claude/contrast-tail": 3,
   "claude-technical-vocabulary": 1,
-  "anaphora/repeated-opening": 9,
+  "anaphora/repeated-opening": 10,
   "discourse/punchy-fragments": 16,
   "claude/figurative-suffixes": 3
  },

@@ -15,7 +15,7 @@ export interface OptionKey {
 
 /** `TerraformConfig`'s own top-level keys (`terraform: { <here> }`). */
 export const CONFIG_NAMESPACE_KEYS: OptionKey[] = [
-  { key: "binary", detail: '"terraform" | "tofu" — which CLI drives the roots. Default: "terraform".' },
+  { key: "binary", detail: '"terraform" | "tofu" | "choudoufu" — which CLI drives the roots. Default: "terraform".' },
   { key: "roots", detail: "Named root modules. The name is the entity-key prefix." },
 ];
 
@@ -25,6 +25,7 @@ export const ROOT_ENTRY_KEYS: OptionKey[] = [
   { key: "workspace", detail: "Terraform workspace to select for this root. Omitted means `default`." },
   { key: "varFiles", detail: "`-var-file` arguments, in order, relative to `dir`." },
   { key: "backendConfig", detail: "`-backend-config` key/value pairs handed to `init`." },
+  { key: "delete", detail: '"never" | "owned-only" | "gated" — this root\'s delete mode, mapped onto choudoufu\'s policy block on a live root.' },
 ];
 
 /** `TerraformApplyOpConfig`'s keys (`TerraformApplyOp({ <here> })`). */
@@ -71,8 +72,9 @@ export const PLAN_OPTS_KEYS: OptionKey[] = [
 
 /** `terraformApply(root, { <here> })`'s opts — `TerraformApplyArgs` minus `root`, plus step opts. */
 export const APPLY_OPTS_KEYS: OptionKey[] = [
-  { key: "planFile", detail: "The saved plan file to apply, relative to the root directory. Required." },
+  { key: "planFile", detail: "The saved plan file to apply. Required on a stock root; refused on a live root." },
   { key: "cwd", detail: "Directory to start the `chant.config.*` search from." },
+  { key: "approvalArtifact", detail: "Unused. The seam for choudoufu #878's approval artifact, once it ships." },
   ...STEP_OPTS,
 ];
 

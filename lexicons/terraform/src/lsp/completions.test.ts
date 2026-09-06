@@ -103,7 +103,7 @@ describe("LSP completions", () => {
   it("completes root-entry keys inside chant.config.ts's terraform.roots.<name>", () => {
     const content = "export default {\n  terraform: {\n    roots: {\n      app: {\n        ";
     const items = completions(ctx({ content, position: { line: 4, character: 8 } }));
-    expect(items.map((i) => i.label).sort()).toEqual(["backendConfig", "dir", "varFiles", "workspace"]);
+    expect(items.map((i) => i.label).sort()).toEqual(["backendConfig", "delete", "dir", "varFiles", "workspace"]);
   });
 
   it("completes the terraform namespace's own top-level keys", () => {

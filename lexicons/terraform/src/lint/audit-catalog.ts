@@ -4,9 +4,9 @@
  * Every post-synth check needs an entry or it contributes nothing to
  * `chant audit`, silently, and `packages/core/src/audit/catalog.test.ts` fails.
  *
- * TF001, TF024 and TF025 all read the chant model (`ctx.entities`), never
- * emitted output, so `yamlBased` is false for all three. Prior-art lineage
- * lives in ./audit-lineage.ts.
+ * TF001, TF024, TF025 and TF026 all read the chant model (`ctx.entities`),
+ * never emitted output, so `yamlBased` is false for all four. Prior-art
+ * lineage lives in ./audit-lineage.ts.
  */
 import type { Authority, RuleMeta } from "@intentius/chant/audit/catalog";
 import { applyLineage } from "@intentius/chant/audit/catalog";
@@ -49,6 +49,18 @@ export const terraformAuditCatalog: Record<string, RuleMeta> = {
     remediation:
       "Remove `workspace` from the root's terraform.roots config, and remove any `terraform.workspace` " +
       'reference from its HCL; choudoufu refuses any workspace but "default" on a live root.',
+    yamlBased: false,
+  },
+  TF026: {
+    id: "TF026",
+    tier: "merge-worthy",
+    fixKind: "guidance",
+    category: "correctness",
+    title: 'Live root declares delete: "never" but its policy leaves undeclared_tagged at "delete"',
+    remediation:
+      'Add undeclared_tagged = "keep" (or "untag" or "report") to the live root\'s policy block, or ' +
+      'change terraform.roots.<name>.delete to "owned-only" or "gated" if an owned orphan should be ' +
+      "deleted after all.",
     yamlBased: false,
   },
   TF002: {

@@ -23,6 +23,7 @@ import { join } from "node:path";
 import { loadHcl2json, type Hcl2Json } from "@intentius/chant/terraform/parse";
 import { DECLARABLE_MARKER, type Declarable } from "@intentius/chant/declarable";
 import type { SuppressionDirective } from "@intentius/chant/lint/suppressions";
+import type { TerraformDeleteMode } from "../config";
 import { scanSuppressions, directivesFor, type FileScan } from "./suppressions";
 
 /** A parsed HCL block body, as `@cdktf/hcl2json` encodes it. */
@@ -57,6 +58,13 @@ export interface TerraformEntity extends Declarable {
     readonly estate?: string;
     /** `terraform.roots.<name>.workspace`, recorded so TF025 can flag a non-default one on a live root. */
     readonly workspace?: string;
+    /**
+     * `terraform.roots.<name>.delete` (#2106), recorded so TF026 can check a
+     * live root declaring `"never"` against its `policy` block's
+     * `undeclared_tagged` setting. Present regardless of mode, same as
+     * `workspace`; only a live root's TF026 reads it.
+     */
+    readonly delete?: TerraformDeleteMode;
     /**
      * 1-based line the block's header starts on, from a line scan over the
      * raw source (chant #2111): hcl2json exposes no ranges to read this from
@@ -118,7 +126,7 @@ export function terraformEntity(
   body: BlockBody,
   file: string,
   root: string,
-  extra?: { mode?: TerraformRootMode; estate?: string; workspace?: string },
+  extra?: { mode?: TerraformRootMode; estate?: string; workspace?: string; delete?: TerraformDeleteMode },
   source: string = "",
   line?: number,
   suppressions?: readonly SuppressionDirective[],
@@ -138,6 +146,7 @@ export function terraformEntity(
       ...(extra?.mode !== undefined ? { mode: extra.mode } : {}),
       ...(extra?.estate !== undefined ? { estate: extra.estate } : {}),
       ...(extra?.workspace !== undefined ? { workspace: extra.workspace } : {}),
+      ...(extra?.delete !== undefined ? { delete: extra.delete } : {}),
     },
     suppressions,
   };
@@ -224,6 +233,8 @@ export interface TerraformRootModeOptions {
   binary?: string;
   /** `terraform.roots.<name>.workspace`, recorded verbatim regardless of mode. */
   workspace?: string;
+  /** `terraform.roots.<name>.delete`, recorded verbatim regardless of mode (#2106). */
+  delete?: TerraformDeleteMode;
 }
 
 /**
@@ -262,7 +273,10 @@ export async function blocksToEntities(
       (typeof body === "object" && body !== null ? body : {}) as BlockBody,
       file.name,
       root,
-      modeOptions?.workspace !== undefined ? { workspace: modeOptions.workspace } : undefined,
+      {
+        ...(modeOptions?.workspace !== undefined ? { workspace: modeOptions.workspace } : {}),
+        ...(modeOptions?.delete !== undefined ? { delete: modeOptions.delete } : {}),
+      },
       file.source,
       line,
       suppressions,

@@ -69,6 +69,18 @@
  * is refused at the CLI argument-parsing layer there
  * (`internal/command/live_mode.go`), not by a dedicated lint rule under
  * `internal/live/lint`, so there is no `Rule*` constant to point at.
+ *
+ * TF026 (#2106, a live root's `delete: "never"` against its `policy` block's
+ * `undeclared_tagged` verb) has no entry either, the same reason TF001 has
+ * none: choudoufu's own `internal/live/lint` package checks a policy block
+ * for internal validity (`RulePolicyVerb`: an unrecognized or wrong-quadrant
+ * verb; `RulePolicyScope`: `undeclared_untagged = "delete"` with no `scope`
+ * block), never against a `delete: "never" | "owned-only" | "gated"`
+ * classification, because choudoufu has no such classification — that
+ * vocabulary is chant's own, shared across lexicons (`lexicons/k8s/src/op/
+ * activities/kubectl.ts`'s `ApplyDeleteMode`, `lexicons/temporal/src/op/
+ * activities/apply.ts`'s `DeleteMode`), applied here to a tool that does not
+ * itself carry the concept. Ship with no lineage rather than invent a credit.
  */
 import type { Lineage } from "@intentius/chant/audit/catalog";
 
