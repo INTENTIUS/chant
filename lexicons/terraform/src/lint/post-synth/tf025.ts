@@ -19,6 +19,10 @@
  * The first fires once per root (it names a root-level config field, not a
  * particular block); the second fires once per block that contains the
  * reference, since each is its own thing to fix.
+ *
+ * Scope: the config half is root-only, since it reads a root-level config
+ * field; the reference half reads any block of a live root, a descended child
+ * module's included, and names the call chain that reached it (#2112).
  */
 
 import type {
@@ -27,6 +31,7 @@ import type {
   PostSynthDiagnostic,
 } from "@intentius/chant/lint/post-synth";
 import { isResourceDeclarable } from "@intentius/chant/declarable";
+import { isRootScoped } from "./scope";
 
 /** Recursively search a parsed HCL body for a `terraform.workspace` reference, un-evaluated interpolations included. */
 function containsWorkspaceRef(value: unknown): boolean {
@@ -60,6 +65,7 @@ export const tf025: PostSynthCheck = {
         typeof props.workspace === "string" &&
         props.workspace !== "" &&
         props.workspace !== "default" &&
+        isRootScoped(entity) &&
         !flaggedRootWorkspace.has(root)
       ) {
         flaggedRootWorkspace.add(root);

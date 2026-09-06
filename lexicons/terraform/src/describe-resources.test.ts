@@ -195,6 +195,18 @@ describe("terraform describeResources (#2087)", () => {
     expect(queried["app/null_resource.third"]).toContain("null_resource.third");
   });
 
+  it("maps a descended child module's resource onto its child_modules address (#2112)", async () => {
+    const { resources, queried } = normalizeObservation(await describeResources(await options(), deps()));
+    const child = resources["app/module.cdn/null_resource.edge"];
+    expect(child).toMatchObject({
+      type: "Terraform::Resource",
+      status: "managed",
+      ownership: "owned",
+    });
+    expect(child.attributes).toMatchObject({ address: "module.cdn.null_resource.edge", root: "app" });
+    expect(queried["app/module.cdn/null_resource.edge"]).toContain('address "module.cdn.null_resource.edge"');
+  });
+
   it("reports a declared module block as present but unknown, since state has no row for it", async () => {
     const { resources } = normalizeObservation(await describeResources(await options(), deps()));
     expect(resources["app/module.cdn"]).toMatchObject({
@@ -296,6 +308,8 @@ describe("terraform describeResources --owned (#2087)", () => {
     expect(resources).not.toHaveProperty("app/module.cdn");
     expect(unobserved["app/module.cdn"].reason).toBe("filtered");
     expect(Object.keys(resources).sort()).toEqual([
+      // The child module's resource is in state and owned too (#2112).
+      "app/module.cdn/null_resource.edge",
       "app/null_resource.first",
       "app/null_resource.second",
     ]);

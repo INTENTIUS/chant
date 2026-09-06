@@ -148,7 +148,7 @@ import {
   terraformInit,
   terraformShow,
 } from "./op/activities/terraform";
-import { DATA_TYPE, MODULE_TYPE, RESOURCE_TYPE } from "./hcl/parse";
+import { DATA_TYPE, MODULE_TYPE, RESOURCE_TYPE, callersOfKey } from "./hcl/parse";
 
 // The channel keys live in their own module so `plugin.ts` can declare
 // `ownershipChannel` without loading this reader. Re-exported here because
@@ -907,25 +907,48 @@ interface TerraformDeclared extends DeclaredEntity {
 }
 
 /**
- * Split a `<root>/<address>` entity key. Only a fallback: `buildRoots()`
- * records both on `props`, and a duplicated address is keyed `…~2` there, so
- * the props are the reliable source.
+ * Split a `<root>/<address>` entity key, or a descended child module's
+ * `<root>/module.<name>/<address>` (#2112). Only a fallback: `buildRoots()`
+ * records the root, the address and the call chain on `props`, and a
+ * duplicated address is keyed `…~2` there, so the props are the reliable
+ * source.
  */
-function fromEntityName(name: string): { root: string; address: string } {
+function fromEntityName(name: string): { root: string; address: string; callers: string[] } {
   const slash = name.indexOf("/");
-  if (slash === -1) return { root: "", address: name };
-  return { root: name.slice(0, slash), address: name.slice(slash + 1).replace(/~\d+$/, "") };
+  if (slash === -1) return { root: "", address: name, callers: [] };
+  const last = name.lastIndexOf("/");
+  return {
+    root: name.slice(0, slash),
+    address: name.slice(last + 1).replace(/~\d+$/, ""),
+    callers: callersOfKey(name),
+  };
+}
+
+/**
+ * The address the live system knows a block by. For a root-module block that
+ * is the block's own address; for one inside a child module it is what
+ * `terraform show -json` writes in `child_modules[]` and what choudoufu's
+ * markers carry, the call chain and the address joined with dots:
+ * `module.cdn.null_resource.edge` (#2112). The entity KEY keeps its slashes
+ * (`app/module.cdn/null_resource.edge`), so what a build declares and what a
+ * read observes still line up one to one.
+ */
+export function qualifiedAddress(address: string, callers: readonly string[]): string {
+  return callers.length === 0 ? address : `${callers.join(".")}.${address}`;
 }
 
 function declaredOf(name: string, entity: { entityType: string; props: Record<string, unknown> } | undefined): TerraformDeclared {
   const props = entity?.props ?? {};
   const fallback = fromEntityName(name);
+  const callers = Array.isArray(props.callers)
+    ? (props.callers as unknown[]).filter((c): c is string => typeof c === "string")
+    : fallback.callers;
   return {
     name,
     type: entity?.entityType ?? "",
     props,
     root: asString(props.root) ?? fallback.root,
-    address: asString(props.address) ?? fallback.address,
+    address: qualifiedAddress(asString(props.address) ?? fallback.address, callers),
     ...(asString(props.mode) ? { mode: asString(props.mode) } : {}),
   };
 }

@@ -14,6 +14,10 @@
  * Only the name is read. A variable with no default and no value in the
  * repository is still flagged, because the finding is about where the value
  * goes at run time, not about what is committed. That is TF007's question.
+ *
+ * Scope: root and child modules alike (#2112). The condition is a property
+ * of the block itself, so a descended module's block is read exactly as a
+ * root's is.
  */
 
 import type {

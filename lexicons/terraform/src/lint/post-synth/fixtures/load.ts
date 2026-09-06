@@ -24,6 +24,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { PostSynthContext } from "@intentius/chant/lint/post-synth";
 import { blocksToEntities } from "../../../hcl/parse";
+import type { CallModuleType } from "../../../hcl/descend";
+import { renderTerraformRoots } from "../../../hcl/roots";
 
 const FIXTURES_DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -57,6 +59,50 @@ export async function loadFixture(
       warnings: [],
       errors: [],
       sourceFileCount: 1,
+    },
+  };
+}
+
+/**
+ * Parse a whole fixture DIRECTORY, `fixtures/<checkId>/<name>/`, the way
+ * `buildRoots()` parses a configured root: its own `.tf` files, then every
+ * local `module` call followed into its directory (chant #2112). A rule about
+ * child modules (TF014, TF015) or about a whole scope's references (TF020)
+ * cannot be shown a single file and still be tested honestly, so its fixture
+ * is a tree:
+ *
+ * ```
+ * fixtures/TF014/positive/main.tf                     # module "cdn" { source = "./modules/cdn" }
+ * fixtures/TF014/positive/modules/cdn/main.tf         # the provider block the rule reports
+ * ```
+ *
+ * The fixture directory is also the project root for the descent, so a
+ * fixture can exercise the outside-the-project refusal with a `../` source
+ * without reaching into the repository around it. `warnings` from the render
+ * lands on `buildResult.warnings`, where the descent's own refusals are
+ * readable by a test.
+ */
+export async function loadTreeFixture(
+  checkId: string,
+  name: string,
+  root: string = checkId,
+  callModuleType?: CallModuleType,
+): Promise<PostSynthContext> {
+  const dir = join(FIXTURES_DIR, checkId, name);
+  const { entities, warnings } = await renderTerraformRoots({
+    projectRoot: dir,
+    roots: { [root]: { dir } },
+    ...(callModuleType ? { callModuleType } : {}),
+  });
+  return {
+    outputs: new Map(),
+    entities,
+    buildResult: {
+      outputs: new Map(),
+      entities,
+      warnings,
+      errors: [],
+      sourceFileCount: entities.size,
     },
   };
 }

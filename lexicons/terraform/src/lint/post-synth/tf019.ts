@@ -15,6 +15,10 @@
  * Only a literal `false` counts. `prevent_destroy = var.protect` is a real
  * decision expressed as a variable, and hcl2json leaves it a `"${var.protect}"`
  * string rather than a boolean, so it never reaches the comparison.
+ *
+ * Scope: root and child modules alike (#2112). The condition is a property
+ * of the block itself, so a descended module's block is read exactly as a
+ * root's is.
  */
 
 import type {

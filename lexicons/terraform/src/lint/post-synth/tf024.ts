@@ -14,6 +14,9 @@
  * why: the two are mutually exclusive by construction; a root is flagged by
  * at most one of them.
  *
+ * Scope: root modules only (#2112). A child module's backend or cloud block
+ * is TF015's finding, whatever binary the root runs.
+ *
  * One diagnostic per root, fired from the root's `terraform` block.
  */
 
@@ -25,6 +28,7 @@ import type {
 import { isResourceDeclarable } from "@intentius/chant/declarable";
 import { TERRAFORM_TYPE, type BlockBody } from "../../hcl/parse";
 import { hasBlock } from "./tf001";
+import { isRootScoped } from "./scope";
 
 export const tf024: PostSynthCheck = {
   id: "TF024",
@@ -36,7 +40,7 @@ export const tf024: PostSynthCheck = {
 
     for (const [name, entity] of ctx.entities) {
       if (entity.entityType !== TERRAFORM_TYPE) continue;
-      if (!isResourceDeclarable(entity)) continue;
+      if (!isResourceDeclarable(entity) || !isRootScoped(entity)) continue;
       const props = entity.props as { root?: unknown; body?: unknown; mode?: unknown };
       if (props.mode !== "live") continue;
       const root = typeof props.root === "string" ? props.root : "";

@@ -11,6 +11,10 @@
  * merge-worthy rather than hygiene. A list of specific attributes is fine and
  * is not reported: ignoring `tags` an external tool writes is a real need, and
  * naming them is what makes the intent auditable.
+ *
+ * Scope: root and child modules alike (#2112). The condition is a property
+ * of the block itself, so a descended module's block is read exactly as a
+ * root's is.
  */
 
 import type {

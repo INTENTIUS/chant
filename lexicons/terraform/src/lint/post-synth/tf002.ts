@@ -20,6 +20,12 @@
  *
  * A root with no `terraform` block at all is out of scope, same as TF001:
  * the missing block is that rule's finding, not this one's.
+ *
+ * Scope: root modules only (#2112). A child module's own `required_providers`
+ * are the child's business, and its resources are constrained by the root's
+ * block at plan time, so folding a descended module's blocks into this pass
+ * would both credit the root with requirements it never declared and judge it
+ * on providers it never named.
  */
 
 import type {
@@ -28,6 +34,7 @@ import type {
   PostSynthDiagnostic,
 } from "@intentius/chant/lint/post-synth";
 import { isResourceDeclarable } from "@intentius/chant/declarable";
+import { isRootScoped } from "./scope";
 import {
   DATA_TYPE,
   PROVIDER_TYPE,
@@ -49,7 +56,7 @@ function impliedProviders(entities: PostSynthContext["entities"], root: string):
   const fromProviderBlock = new Set<string>();
 
   for (const [key, entity] of entities) {
-    if (!isResourceDeclarable(entity)) continue;
+    if (!isResourceDeclarable(entity) || !isRootScoped(entity)) continue;
     const props = entity.props as { root?: unknown; address?: unknown };
     if (props.root !== root) continue;
     const address = typeof props.address === "string" ? props.address : "";
@@ -109,6 +116,7 @@ export const tf002: PostSynthCheck = {
 
     for (const entity of ctx.entities.values()) {
       if (entity.entityType !== TERRAFORM_TYPE || !isResourceDeclarable(entity)) continue;
+      if (!isRootScoped(entity)) continue;
       const props = entity.props as { root?: unknown; body?: unknown };
       const root = typeof props.root === "string" ? props.root : "";
       roots.add(root);

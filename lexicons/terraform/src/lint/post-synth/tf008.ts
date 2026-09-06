@@ -12,6 +12,10 @@
  * manages, so it is the highest-value one in the root, and it is read from the
  * repository by everyone who can clone it. Providers all accept the same
  * credential through the environment or a shared config file instead.
+ *
+ * Scope: root and child modules alike (#2112). The condition is a property
+ * of the block itself, so a descended module's block is read exactly as a
+ * root's is.
  */
 
 import type {

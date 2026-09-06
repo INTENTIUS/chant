@@ -13,10 +13,14 @@ import { tf010 } from "./tf010";
 import { tf011 } from "./tf011";
 import { tf012 } from "./tf012";
 import { tf013 } from "./tf013";
+import { tf014 } from "./tf014";
+import { tf015 } from "./tf015";
 import { tf016 } from "./tf016";
 import { tf017 } from "./tf017";
 import { tf018 } from "./tf018";
 import { tf019 } from "./tf019";
+import { tf020 } from "./tf020";
+import { tf021 } from "./tf021";
 import { tf022 } from "./tf022";
 import { tf024 } from "./tf024";
 import { tf025 } from "./tf025";
@@ -36,10 +40,14 @@ export const postSynthChecks: PostSynthCheck[] = [
   tf011,
   tf012,
   tf013,
+  tf014,
+  tf015,
   tf016,
   tf017,
   tf018,
   tf019,
+  tf020,
+  tf021,
   tf022,
   tf024,
   tf025,
