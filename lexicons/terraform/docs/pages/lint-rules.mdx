@@ -756,41 +756,6 @@ resource "null_resource" "first" {
 }
 ```
 
-## TF101: terraformApply's planFile must reference a preceding terraformPlan step
-
-A `terraformApply` step's `planFile` is a string or template literal in
-source, or a reference to a step that is not a `terraformPlan` call.
-
-**Why it matters.** The entire point of the plan/apply split is to review
-exactly what will change, then apply exactly that. Spelling the plan path out
-as a literal breaks the link between the two steps: the file applied can be
-stale, hand-edited by something else in the meantime, or simply the wrong
-plan for this root. Carrying the path forward from the producing step
-(`stepOutput(plan, "planFile")` or `plan.out.planFile`) is what keeps apply
-honest about which plan it is running.
-
-**The fix.** Reference the preceding `terraformPlan` step's output instead of
-a literal path: `stepOutput(plan, "planFile")` or `plan.out.planFile`, where
-`plan` is the `const` a `terraformPlan(...)` call was assigned to.
-
-**Prior art.** No tool in the survey covers this. TF101 is a rule about
-chant's own Op-builder DSL, not about a Terraform root. Nothing in the
-survey (linters, scanners, policy engines, or HashiCorp's own Sentinel
-examples) models "does this plan file trace back to a specific preceding
-plan step", because that question does not exist outside chant's own
-authoring surface. See `audit-lineage.ts`'s header comment for the full
-reasoning.
-
-When the referenced identifier cannot be resolved at all in the same file,
-this rule stays silent rather than guess.
-
-```typescript
-const plan = terraformPlan("app", { id: "plan" });
-const apply = terraformApply("app", { planFile: "/tmp/plan.out" });
-```
-
-To write custom rules for your project, see the [lint-rules authoring guide](/chant/lexicon-authoring/lint-rules/).
-
 ## TF026: live root's delete: "never" against its policy block
 
 A live root whose `terraform.roots.<name>.delete` is `"never"`, but whose
@@ -830,6 +795,41 @@ terraform {
 
 resource "null_resource" "first" {}
 ```
+
+## TF101: terraformApply's planFile must reference a preceding terraformPlan step
+
+A `terraformApply` step's `planFile` is a string or template literal in
+source, or a reference to a step that is not a `terraformPlan` call.
+
+**Why it matters.** The entire point of the plan/apply split is to review
+exactly what will change, then apply exactly that. Spelling the plan path out
+as a literal breaks the link between the two steps: the file applied can be
+stale, hand-edited by something else in the meantime, or simply the wrong
+plan for this root. Carrying the path forward from the producing step
+(`stepOutput(plan, "planFile")` or `plan.out.planFile`) is what keeps apply
+honest about which plan it is running.
+
+**The fix.** Reference the preceding `terraformPlan` step's output instead of
+a literal path: `stepOutput(plan, "planFile")` or `plan.out.planFile`, where
+`plan` is the `const` a `terraformPlan(...)` call was assigned to.
+
+**Prior art.** No tool in the survey covers this. TF101 is a rule about
+chant's own Op-builder DSL, not about a Terraform root. Nothing in the
+survey (linters, scanners, policy engines, or HashiCorp's own Sentinel
+examples) models "does this plan file trace back to a specific preceding
+plan step", because that question does not exist outside chant's own
+authoring surface. See `audit-lineage.ts`'s header comment for the full
+reasoning.
+
+When the referenced identifier cannot be resolved at all in the same file,
+this rule stays silent rather than guess.
+
+```typescript
+const plan = terraformPlan("app", { id: "plan" });
+const apply = terraformApply("app", { planFile: "/tmp/plan.out" });
+```
+
+To write custom rules for your project, see the [lint-rules authoring guide](/chant/lexicon-authoring/lint-rules/).
 
 ## Suppressing a finding
 
