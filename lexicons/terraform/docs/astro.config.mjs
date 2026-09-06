@@ -39,6 +39,10 @@ export default defineConfig({
                         {
                               "label": "Serialization",
                               "slug": "serialization"
+                        },
+                        {
+                              "label": "Lint Rules",
+                              "slug": "lint-rules"
                         }
                   ]
             }

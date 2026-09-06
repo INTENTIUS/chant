@@ -9,6 +9,7 @@ import { completions } from "./lsp/completions";
 import { hover } from "./lsp/hover";
 import { terraformConfigSchema, type TerraformConfig } from "./config";
 import { renderTerraformRoots } from "./hcl/roots";
+import { parseTerraformRootContent } from "./hcl/parse";
 
 /**
  * terraform lexicon plugin.
@@ -79,6 +80,24 @@ export const terraformPlugin: LexiconPlugin = {
 
   auditCatalog() {
     return terraformAuditCatalog;
+  },
+
+  /**
+   * Parse-to-graph for `chant audit` (#1567, #2085). `content` is the
+   * `# file: <name>`-joined bundle discovery builds for one discovered root
+   * module (`classifyTerraform`, `packages/core/src/audit/core.ts`); the root
+   * name itself isn't threaded through this hook's single-argument contract,
+   * so a fixed placeholder ("audit-root") stands in for it. TF001 only uses
+   * the root name to group and de-duplicate diagnostics within one parse, so
+   * this is enough for the same graph-reading check that fires on `chant
+   * build` to fire here too. Never throws: malformed HCL yields an empty map.
+   */
+  async auditEntities(content: string): Promise<Map<string, Declarable>> {
+    try {
+      return await parseTerraformRootContent(content, "audit-root");
+    } catch {
+      return new Map();
+    }
   },
 
   skills() {
