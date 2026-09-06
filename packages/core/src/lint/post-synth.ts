@@ -128,6 +128,30 @@ export interface PostSynthDiagnostic {
   entity?: string;
   /** Optional lexicon related to this diagnostic */
   lexicon?: string;
+  /**
+   * Set when the finding is that something does not exist, rather than that
+   * something present is wrong (chant #2113). TF001 (no remote backend) is
+   * the motivating case: there is no resource to set `entity` to, only the
+   * scope that is missing one. Snyk's policy-engine spec names this the
+   * "missing-resource" archetype (a `deny` whose `info` carries a
+   * `resource_type` instead of a `resource`, because there is nothing to
+   * attach to) and is the only tool in chant's TF-family survey with a
+   * first-class shape for it; trivy's own inline-ignore comments admit they
+   * cannot suppress an absence finding for exactly this reason. `kind` names
+   * what is missing (a `backend`/`cloud` block, a required resource type);
+   * `scope` names where it is missing (a root module name, a file). Renders
+   * distinctly in all three reporters (stylish/JSON/SARIF, `../cli/commands/
+   * audit.ts` and `../audit/report-model.ts`) instead of falling back to
+   * `entity`, and gives #2111's HCL suppression a block-anchored key to
+   * suppress an absence finding by (the block that *should* declare `kind`
+   * inside `scope`), independent of whatever `entity` this diagnostic sets.
+   */
+  missing?: {
+    /** What kind of thing is absent (e.g. `"backend"`, `"cloud"`). */
+    kind: string;
+    /** Where it is missing from (e.g. a root module name). */
+    scope: string;
+  };
 }
 
 /**

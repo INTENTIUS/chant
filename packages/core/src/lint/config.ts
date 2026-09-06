@@ -5,6 +5,7 @@ import { evaluateProjectConfigSync } from "../config-sandbox";
 import type { Severity, RuleConfig } from "./rule";
 import type { PostSynthDiagnostic } from "./post-synth";
 import { moduleDir, getRuntime } from "../runtime-adapter";
+import { canonicalRuleId, type RuleMeta } from "../audit/catalog";
 import strictPreset from "./presets/strict.json";
 
 // chant #1117 — the upward config-discovery walk moved to a shared module
@@ -38,6 +39,7 @@ export const LintConfigSchema = z.object({
   })).optional(),
   plugins: z.array(z.string()).optional(),
   policies: z.array(z.string()).optional(),
+  presets: z.record(z.string(), z.string()).optional(),
 });
 
 /**
@@ -166,6 +168,23 @@ export interface LintConfig {
    * phase; same engine.
    */
   policies?: string[];
+  /**
+   * Lexicon name mapped to a preset name (chant #2113), e.g.
+   * `{ terraform: "recommended" }`. A preset is a lexicon's own bundle of
+   * post-synth check ids. tflint ships `recommended` (a subset) and `all`
+   * for its Terraform-language rules the same way, and a lexicon that ships
+   * one exposes it through its plugin's `lintPresets()` (`../lexicon.ts`).
+   * Naming a preset here changes which of that lexicon's post-synth findings
+   * are reported at all, distinct from `rules`, which changes an
+   * already-reported finding's severity. A rule a preset excludes is not
+   * suppressed (it never runs the severity-override gauntlet in the first
+   * place), but an explicit `rules` entry for it always wins and re-enables
+   * it regardless of the active preset, see `resolvePresetIds`/
+   * `applyConfiguredPreset` below. Unset, or naming a preset the lexicon
+   * does not export, falls back to `"recommended"`. A lexicon that ships no
+   * presets at all is unaffected by this field, same as today.
+   */
+  presets?: Record<string, string>;
 }
 
 /**
@@ -226,15 +245,30 @@ export function parseRuleConfig(value: RuleConfig): ParsedRuleConfig {
  * checks have no per-file scope to begin with (see {@link
  * ./post-synth.ts!PostSynthDiagnostic}'s doc for why), so they always pass
  * `config.rules` directly.
+ *
+ * `catalog` (chant #2113) is optional and off by default: pass a resolved
+ * audit catalog to also honor a `rules` key that names one of `id`'s
+ * `RuleMeta.aliases` rather than `id` itself. A project's
+ * `lint.rules: { OLD_ID: "off" }` then keeps suppressing the rule after it
+ * is renamed/renumbered, instead of silently starting to match nothing. Every
+ * existing call site omits `catalog` and is unaffected; a caller that has one
+ * handy (an audit-shaped consumer, not `chant build`'s post-synth loop, which
+ * has no catalog readily resolved at that point) opts in by passing it.
  */
 export function resolveConfiguredSeverity(
   rules: Record<string, RuleConfig> | undefined,
   id: string,
   defaultSeverity: Severity,
+  catalog?: Record<string, RuleMeta>,
 ): ParsedRuleConfig {
   const configValue = rules?.[id];
-  if (configValue === undefined) return { severity: defaultSeverity };
-  return parseRuleConfig(configValue);
+  if (configValue !== undefined) return parseRuleConfig(configValue);
+  if (catalog && rules) {
+    for (const [key, value] of Object.entries(rules)) {
+      if (canonicalRuleId(key, catalog) === id) return parseRuleConfig(value);
+    }
+  }
+  return { severity: defaultSeverity };
 }
 
 /**
@@ -509,16 +543,21 @@ export interface PostSynthSeverityResult {
  * has to carry a `suppressions` field) and runs as its own pass, right after
  * this one, in both `chant build` and `chant audit`. See that module's doc
  * for the full reasoning.
+ *
+ * `catalog` (chant #2113, optional) passes straight through to
+ * `resolveConfiguredSeverity` above for alias resolution; see its doc for
+ * what that buys and why it's opt-in.
  */
 export function applyConfiguredSeverity(
   diagnostics: readonly PostSynthDiagnostic[],
   rules: Record<string, RuleConfig> | undefined,
+  catalog?: Record<string, RuleMeta>,
 ): PostSynthSeverityResult {
   const kept: PostSynthDiagnostic[] = [];
   const suppressed: PostSynthDiagnostic[] = [];
 
   for (const diag of diagnostics) {
-    const resolved = resolveConfiguredSeverity(rules, diag.checkId, diag.severity);
+    const resolved = resolveConfiguredSeverity(rules, diag.checkId, diag.severity, catalog);
     if (resolved.severity === "off") {
       suppressed.push(diag);
       continue;
@@ -526,5 +565,66 @@ export function applyConfiguredSeverity(
     kept.push(resolved.severity === diag.severity ? diag : { ...diag, severity: resolved.severity });
   }
 
+  return { diagnostics: kept, suppressed };
+}
+
+/**
+ * Result of applying a lexicon preset to a set of post-synth diagnostics.
+ * Shaped like {@link PostSynthSeverityResult} so a caller threading both
+ * through (a preset filter, then a severity override) handles them the same
+ * way. See `applyConfiguredPreset` below.
+ */
+export interface PostSynthPresetResult {
+  /** Diagnostics whose check id the active preset enables (or that `rules` explicitly configures, see below). */
+  diagnostics: PostSynthDiagnostic[];
+  /** Diagnostics the active preset excluded, unaltered. Countable rather than silently dropped, mirroring `PostSynthSeverityResult.suppressed`. */
+  suppressed: PostSynthDiagnostic[];
+}
+
+/**
+ * Resolve `lint.presets`' name for one lexicon into the set of check ids that
+ * preset enables (chant #2113). `presets` is what a lexicon plugin's
+ * `lintPresets()` returns (`../lexicon.ts`). A lexicon that ships none
+ * passes `undefined` here, in which case this returns `undefined` and
+ * `applyConfiguredPreset` below becomes a no-op (every rule reports, exactly
+ * today's behavior for a lexicon this feature doesn't touch).
+ *
+ * An unrecognized preset name (a typo, or a name the lexicon doesn't define)
+ * also returns `undefined` rather than an empty set. Falling back to
+ * unfiltered is the safe failure direction; silently reporting nothing would
+ * not be.
+ */
+export function resolvePresetIds(
+  presets: Record<string, string[]> | undefined,
+  presetName: string,
+): Set<string> | undefined {
+  const ids = presets?.[presetName];
+  return ids ? new Set(ids) : undefined;
+}
+
+/**
+ * Filter post-synth diagnostics down to an active preset's ids (chant
+ * #2113). `presetIds` is `resolvePresetIds`'s output. `undefined` disables
+ * filtering entirely (a lexicon with no presets, or an unresolved preset
+ * name), matching tflint's own precedence chain (`--only` / rule config,
+ * then preset, then `disabled_by_default`, `tflint-ruleset-terraform`'s
+ * config docs): an explicit `lint.rules` entry for a check id always keeps
+ * that id's findings, whether or not the active preset includes it, so a
+ * project can opt a single report-only rule back in under `recommended`
+ * without switching its whole lexicon to `all`.
+ */
+export function applyConfiguredPreset(
+  diagnostics: readonly PostSynthDiagnostic[],
+  presetIds: Set<string> | undefined,
+  rules: Record<string, RuleConfig> | undefined,
+): PostSynthPresetResult {
+  if (!presetIds) return { diagnostics: [...diagnostics], suppressed: [] };
+
+  const kept: PostSynthDiagnostic[] = [];
+  const suppressed: PostSynthDiagnostic[] = [];
+  for (const diag of diagnostics) {
+    if (presetIds.has(diag.checkId) || rules?.[diag.checkId] !== undefined) kept.push(diag);
+    else suppressed.push(diag);
+  }
   return { diagnostics: kept, suppressed };
 }

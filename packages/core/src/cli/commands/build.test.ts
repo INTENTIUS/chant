@@ -1315,6 +1315,69 @@ export const x = { [Symbol.for("chant.declarable")]: true, entityType: "X", lexi
       expect(result.warnings.some((w) => w.includes("SUPP003") && w.includes("ignorable: false"))).toBe(true);
     });
   });
+
+  /**
+   * chant #2113: `lint.presets` filters WHICH post-synth check ids are
+   * reported at all, ahead of `lint.rules`' severity overrides (proven
+   * above). A plugin with no `lintPresets()` is unaffected (the common case
+   * today); one that ships presets defaults to `recommended` and is
+   * overridden per-lexicon via `lint.presets: { <name>: "<preset>" }`.
+   */
+  describe("post-synth findings honor lint.presets (chant #2113)", () => {
+    async function writeTrivialEntity(): Promise<void> {
+      await writeFile(
+        join(testDir, "main.ts"),
+        `export const e = { lexicon: "test", entityType: "TestEntity", [Symbol.for("chant.declarable")]: true };\n`,
+      );
+    }
+
+    /** A `LexiconPlugin` whose one post-synth check always fires, with `recommended`/`all` presets. `recommended` excludes the check's own id, `all` includes it. */
+    function fakePresetPlugin(): LexiconPlugin {
+      return {
+        name: "fakepreset",
+        serializer: { name: "fakepreset", rulePrefix: "FP", serialize: () => "{}" },
+        generate: async () => {},
+        validate: async () => {},
+        coverage: async () => {},
+        package: async () => {},
+        postSynthChecks: () => [
+          {
+            id: "FP001",
+            description: "a report-only check, always fires",
+            check: () => [{ checkId: "FP001", severity: "warning" as const, message: "FP001 triggered" }],
+          },
+        ],
+        lintPresets: () => ({ recommended: [], all: ["FP001"] }),
+      };
+    }
+
+    test("with no lint.presets config, the default preset (recommended) excludes the finding", async () => {
+      await writeTrivialEntity();
+      const result = await buildCommand({ path: testDir, format: "json", serializers: [mockSerializer], plugins: [fakePresetPlugin()] });
+      expect(result.warnings.join("\n")).not.toContain("FP001 triggered");
+      expect(result.warnings.some((w) => w.includes("not reported: excluded by the active lint.presets preset"))).toBe(true);
+    });
+
+    test('lint.presets: { fakepreset: "all" } includes the finding', async () => {
+      await writeTrivialEntity();
+      await writeFile(
+        join(testDir, "chant.config.ts"),
+        `export default { lint: { presets: { fakepreset: "all" } } };\n`,
+      );
+      const result = await buildCommand({ path: testDir, format: "json", serializers: [mockSerializer], plugins: [fakePresetPlugin()] });
+      expect(result.warnings.join("\n")).toContain("FP001 triggered");
+    });
+
+    test("an explicit lint.rules entry re-enables the rule even under the excluding (recommended) preset", async () => {
+      await writeTrivialEntity();
+      await writeFile(
+        join(testDir, "chant.config.ts"),
+        `export default { lint: { rules: { "FP001": "warning" } } };\n`,
+      );
+      const result = await buildCommand({ path: testDir, format: "json", serializers: [mockSerializer], plugins: [fakePresetPlugin()] });
+      expect(result.warnings.join("\n")).toContain("FP001 triggered");
+    });
+  });
 });
 
 // ── #284 bug 1: -o extension drives format when --format is absent ────────

@@ -98,6 +98,8 @@ export interface SerializedFinding {
   line?: number;
   /** Redaction-safe fingerprint of a flagged value, when applicable (see `secrets.ts`). */
   fingerprint?: string;
+  /** Set when the finding is an absence rather than a defect — see `PostSynthDiagnostic.missing` (chant #2113). */
+  missing?: { kind: string; scope: string };
   lexicon: string;
   tier: Tier;
   fixKind: FixKind;
@@ -314,6 +316,7 @@ export function buildReportJson(
       entity: f.entity,
       line: f.line,
       fingerprint: f.fingerprint,
+      missing: f.missing,
       lexicon: f.lexicon,
       tier: f.meta.tier,
       fixKind: f.meta.fixKind,

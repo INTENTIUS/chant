@@ -32,6 +32,7 @@ describe("TF001: root module declares no remote backend", () => {
     expect(diags[0].entity).toBe("TF001/terraform");
     expect(diags[0].lexicon).toBe("terraform");
     expect(diags[0].message).toContain("TF001");
+    expect(diags[0].missing).toEqual({ kind: "backend", scope: "TF001" });
   });
 
   test("passes a root with a backend block", async () => {

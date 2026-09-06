@@ -18,9 +18,8 @@ import { runPostSynthChecks, type PostSynthDiagnostic } from "../../lint/post-sy
 import { coreReceiptChecks } from "../../lint/receipt-checks";
 import { coreOutputChecks } from "../../lint/output-checks";
 import { coreKnowledgeChecks } from "../../lint/knowledge-checks";
-import { applyConfiguredSeverity } from "../../lint/config";
+import { applyConfiguredSeverity, applyConfiguredPreset, resolvePresetIds } from "../../lint/config";
 import { applyInlineSuppressions, type SuppressionMetaFinding } from "../../lint/suppressions";
-import type { RuleConfig } from "../../lint/rule";
 import type { Declarable } from "../../declarable";
 import { loadPolicyChecks } from "../../lint/policy";
 import { armSandboxPolicyExecution, runProjectPolicies } from "../../lint/policy-sandbox";
@@ -406,10 +405,29 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
   let suppressedPostSynthCount = 0;
   let inlineSuppressedCount = 0;
   const suppressionMeta: SuppressionMetaFinding[] = [];
+  // A rule a `lint.presets` preset excludes (chant #2113) is a distinct
+  // reason a finding doesn't reach the errors/warnings lists. The preset
+  // decided the rule shouldn't run at all under this project's configured
+  // tier, not that `lint.rules` downgraded it to "off", so it gets its own
+  // counter and its own summary line rather than folding into the one above.
+  let suppressedPresetCount = 0;
 
-  /** Apply both suppression surfaces to one batch, in the order described above. */
-  const resolvePostSynth = (diags: PostSynthDiagnostic[], entities: Map<string, Declarable>): PostSynthDiagnostic[] => {
-    const { diagnostics: afterConfig, suppressed: configSuppressed } = applyConfiguredSeverity(diags, config.lint?.rules);
+  /**
+   * Apply every suppression/filtering surface to one batch, in order:
+   * `lint.presets` (chant #2113, which check ids are enabled at all; a
+   * no-op when `presetIds` is undefined, the case for every call site below
+   * except the per-plugin loop, which is the only one with a lexicon a
+   * preset could apply to), then `lint.rules` severity overrides (chant
+   * #1138), then inline `# chant-ignore` comments (chant #2111).
+   */
+  const resolvePostSynth = (
+    diags: PostSynthDiagnostic[],
+    entities: Map<string, Declarable>,
+    presetIds?: Set<string>,
+  ): PostSynthDiagnostic[] => {
+    const { diagnostics: afterPreset, suppressed: presetSuppressed } = applyConfiguredPreset(diags, presetIds, config.lint?.rules);
+    suppressedPresetCount += presetSuppressed.length;
+    const { diagnostics: afterConfig, suppressed: configSuppressed } = applyConfiguredSeverity(afterPreset, config.lint?.rules);
     suppressedPostSynthCount += configSuppressed.length;
     const { diagnostics: active, suppressed: inlineSuppressed, meta } = applyInlineSuppressions(afterConfig, entities, config.lint?.rules);
     inlineSuppressedCount += inlineSuppressed.length;
@@ -489,7 +507,15 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
 
       const scopedResult = { ...result, outputs: scopedOutputs };
       const postDiags = runPostSynthChecks(checks, scopedResult, env);
-      for (const diag of resolvePostSynth(postDiags, result.entities)) {
+      // `lint.presets` (chant #2113) filters WHICH check ids are reported at
+      // all, before `lint.rules`/inline suppression act on the reported
+      // ones. It's a no-op for a lexicon that ships no `lintPresets()` (the
+      // common case today), since `resolvePresetIds` returns `undefined`
+      // for one. This is the only `resolvePostSynth` call site with a
+      // lexicon a preset could apply to; every other call below passes no
+      // `presetIds` at all.
+      const presetIds = resolvePresetIds(plugin.lintPresets?.(), config.lint?.presets?.[plugin.name] ?? "recommended");
+      for (const diag of resolvePostSynth(postDiags, result.entities, presetIds)) {
         const prefix = diag.entity ? `[${diag.entity}] ` : "";
         const lexiconSuffix = diag.lexicon ? ` (${diag.lexicon})` : "";
         if (diag.severity === "error") {
@@ -539,6 +565,14 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
       warnings.push(
         formatWarning({
           message: `${suppressedPostSynthCount} post-synth finding(s) suppressed via lint.rules (severity "off")`,
+        }),
+      );
+    }
+
+    if (suppressedPresetCount > 0) {
+      warnings.push(
+        formatWarning({
+          message: `${suppressedPresetCount} post-synth finding(s) not reported: excluded by the active lint.presets preset`,
         }),
       );
     }

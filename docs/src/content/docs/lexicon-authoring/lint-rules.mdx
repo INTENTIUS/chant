@@ -99,6 +99,27 @@ repo root, and the committed barrel `src/lint/post-synth/index.ts` picks it up.
 Your plugin's `postSynthChecks()` returns that barrel. See
 [Post-Synth Checks](/chant/lexicon-authoring/post-synth-checks/#wiring-checks-into-plugin).
 
+Four more things a post-synth check or its catalog entry can do (chant
+#2113):
+
+- A diagnostic can report an absence rather than a defect, via the optional
+  `missing: { kind, scope }` field, covered under [PostSynthDiagnostic
+  `missing`](/chant/lexicon-authoring/post-synth-checks/#missing-the-finding-is-an-absence-not-a-defect-chant-2113).
+- A rule's catalog entry can carry `aliases`/`deprecated` so a renamed or
+  retired id keeps resolving, covered under [Aliases and
+  `deprecated`](/chant/lexicon-authoring/post-synth-checks/#aliases-and-deprecated-chant-2113).
+- A check reading a loosely-typed parsed body (HCL or a similar format) can
+  read attributes through a `{kind, value, refs, raw}` value envelope
+  instead of re-deriving "is this a reference" by hand, covered under [the
+  value-envelope
+  section](/chant/lexicon-authoring/post-synth-checks/#a-value-envelope-over-a-loosely-typed-body-chant-2113).
+- A lexicon with enough rules to need a "the good ones" subset exports one
+  via `lintPresets()`, covered under
+  [Presets](/chant/lexicon-authoring/post-synth-checks/#presets-lintpresets-chant-2113)
+  for the lexicon side and [Rule
+  Configuration](/chant/lint-rules/configuration/#selecting-a-lexicon-preset-chant-2113) for
+  how a project selects one.
+
 ## Rule ID Conventions
 
 A rule id is `{PREFIX}{NUMBER}`. The prefix is your serializer's `rulePrefix`

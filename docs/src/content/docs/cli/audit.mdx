@@ -87,7 +87,7 @@ The **expanded** (HTML) report renders the same findings with badges, cards, and
 | `--json` | Shortcut for `--format json` |
 | `-o, --output <file>` | Write the report to a file instead of stdout |
 | `--tier <tier>` | `all` (default) or `merge-worthy` to show only PR-worthy findings |
-| `--fail-on <level>` | Exit non-zero on `merge-worthy`, `warning`, or `none` (default `none`) |
+| `--fail-on <level>` | Exit non-zero on `merge-worthy`, `warning`, `error`, or `none` (default `none`) |
 | `--template <file>` | `html` only: a full HTML template override (see below) |
 | `--theme <file>` | `html` only: a JSON file of theme knobs (`title`, `logo`, `accent`, `footer`) |
 | `--agents` | Audit this machine's **agent configuration** instead of a repository (see below) |
@@ -361,5 +361,13 @@ chant audit . --tier merge-worthy --json --fail-on merge-worthy
 | `none` (default) | never (read-only) |
 | `merge-worthy` | any merge-worthy finding exists |
 | `warning` | any error- or warning-severity finding exists |
+| `error` | any error-severity finding exists (chant #2113) |
+
+`error` is a severity floor, decoupled from `merge-worthy`/`warning`'s tier-
+based checks: it's the value that lets a new rule ship reporting at
+`"warning"` and be promoted to `"error"` later without breaking a pipeline
+pinned to `--fail-on error`. See [Rule
+Configuration](/chant/lint-rules/configuration/#the-chant-audit-failure-severity-floor-chant-2113)
+for the full explanation.
 
 Independent of `--fail-on`, the command exits 2 when no audit lexicon is installed (nothing was inspected, see [Prerequisites](#prerequisites)) and 1 on a hard failure such as an unreachable repo or a missing path.

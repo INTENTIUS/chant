@@ -83,6 +83,8 @@ export interface AuditFinding {
    * itself.
    */
   fingerprint?: string;
+  /** Carried verbatim from the producing `PostSynthDiagnostic.missing` (chant #2113) — see its doc comment. */
+  missing?: { kind: string; scope: string };
 }
 
 /**
@@ -343,7 +345,7 @@ async function auditLexicon(
       metaFindings.push({ checkId: m.checkId, severity: m.severity, message: m.message, file: m.file, lexicon, line: m.line });
     }
     for (const d of diags) {
-      perFindings.push({ checkId: d.checkId, severity: d.severity, message: d.message, file: file.path, lexicon: d.lexicon ?? lexicon, entity: d.entity });
+      perFindings.push({ checkId: d.checkId, severity: d.severity, message: d.message, file: file.path, lexicon: d.lexicon ?? lexicon, entity: d.entity, missing: d.missing });
       perKeys.add(diagKey(d));
     }
   }
@@ -355,7 +357,7 @@ async function auditLexicon(
   const out: AuditFinding[] = perFindings.filter((f) => allKeys.has(diagKey(f)));
   for (const d of allDiags) {
     if (!perKeys.has(diagKey(d))) {
-      out.push({ checkId: d.checkId, severity: d.severity, message: d.message, file: CROSS_FILE, lexicon: d.lexicon ?? lexicon, entity: d.entity });
+      out.push({ checkId: d.checkId, severity: d.severity, message: d.message, file: CROSS_FILE, lexicon: d.lexicon ?? lexicon, entity: d.entity, missing: d.missing });
     }
   }
   return [...out, ...metaFindings];

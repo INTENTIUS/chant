@@ -1,7 +1,7 @@
 import { describe, test, expect } from "vitest";
 import { readdirSync } from "fs";
 import { join } from "path";
-import { PRIOR_ART, RULE_CATALOG, RULE_CATEGORY, auditRule, resolveAuditCatalog } from "./catalog";
+import { PRIOR_ART, RULE_CATALOG, RULE_CATEGORY, auditRule, resolveAuditCatalog, canonicalRuleId } from "./catalog";
 import { loadPlugins } from "../cli/plugins";
 
 /**
@@ -67,6 +67,11 @@ describe("RULE_CATALOG (aggregated: core static + lexicon-contributed, #687)", (
       .filter((id) => !shipped.has(id))
       // Core's own cross-cutting ids are not any one lexicon's to ship.
       .filter((id) => !(id in RULE_CATALOG))
+      // A deprecated rule is deliberately kept in the catalog after its check
+      // stops shipping (chant #2113). That's the whole point of `deprecated`
+      // over deleting the entry, so it's not "stale" the way an orphaned
+      // entry with no explanation is.
+      .filter((id) => !catalog[id]?.deprecated)
       .sort();
     expect(stale).toEqual([]);
   });
@@ -161,6 +166,23 @@ describe("RULE_CATALOG (aggregated: core static + lexicon-contributed, #687)", (
     }
   });
 
+  test("a deprecated id must still resolve (chant #2113): the inverse of the every-check-has-metadata test above", async () => {
+    // A retired check ships no runtime PostSynthCheck any more, so it is
+    // absent from `realCheckIds()`/`shippedRuleIds()` — that's what makes it
+    // "deprecated" rather than merely renamed. The catalog entry, and its
+    // resolution, must survive that removal.
+    const catalog = {
+      ...RULE_CATALOG,
+      ZZZ900: auditRule("ZZZ900", "report-only", "guidance", "Retired check", "No longer applicable.", {
+        category: "best-practice",
+      }),
+    };
+    catalog.ZZZ900.deprecated = "superseded by ZZZ901";
+    expect(catalog.ZZZ900).toBeDefined();
+    expect(catalog.ZZZ900.deprecated).toBe("superseded by ZZZ901");
+    expect(canonicalRuleId("ZZZ900", catalog)).toBe("ZZZ900");
+  });
+
   test("deterministic fixes are limited to the safe mechanical set", async () => {
     const deterministic = Object.values(await aggregate())
       .filter((m) => m.fixKind === "deterministic")
@@ -192,6 +214,29 @@ describe("auditRule (lexicon-facing catalog constructor, #687)", () => {
       "correctness",
     );
     expect(auditRule("X2", "report-only", "guidance", "T", "fix").category).toBe("best-practice");
+  });
+});
+
+describe("canonicalRuleId (chant #2113, alias resolution)", () => {
+  const catalog: Record<string, ReturnType<typeof auditRule>> = {
+    NEW001: { ...auditRule("NEW001", "report-only", "guidance", "T", "r"), aliases: ["OLD001", "LEGACY_OLD"] },
+  };
+
+  test("a canonical id passes through unchanged", () => {
+    expect(canonicalRuleId("NEW001", catalog)).toBe("NEW001");
+  });
+
+  test("an alias resolves to the canonical id", () => {
+    expect(canonicalRuleId("OLD001", catalog)).toBe("NEW001");
+    expect(canonicalRuleId("LEGACY_OLD", catalog)).toBe("NEW001");
+  });
+
+  test("an id that is neither a key nor an alias passes through unchanged", () => {
+    expect(canonicalRuleId("NOBODY_KNOWS_THIS", catalog)).toBe("NOBODY_KNOWS_THIS");
+  });
+
+  test("defaults to the static core RULE_CATALOG when no catalog is given", () => {
+    expect(canonicalRuleId("SEC001")).toBe("SEC001");
   });
 });
 

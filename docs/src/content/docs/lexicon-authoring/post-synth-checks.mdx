@@ -143,8 +143,43 @@ Each diagnostic requires:
   message: "Human-readable message with resource name",
   entity: "resourceName",     // Optional: the resource that triggered it
   lexicon: "my-lexicon",      // Optional: lexicon identifier
+  missing: { kind: "backend", scope: "root-name" }, // Optional, see below
 }
 ```
+
+### `missing`, the finding is an absence, not a defect (chant #2113)
+
+Most checks flag something present and wrong, misconfigured or invalid. Some
+checks flag the opposite. Nothing is there at all. The terraform lexicon's
+TF001 is the example. A root module with no `backend`/`cloud` block has
+nothing to set `entity` to, because the thing that's wrong is that a block
+*doesn't* exist.
+Snyk's policy-engine spec names this the **missing-resource archetype**, a
+policy whose `info` carries a `resource_type` instead of a `resource`,
+"since we don't have one." It's the only tool in a 2026 survey of Terraform
+lint/scan tools with a first-class shape for it. trivy's own inline-ignore
+comments admit they cannot suppress an absence finding, for exactly this
+reason.
+
+```typescript
+{
+  checkId: "TF001",
+  severity: "warning",
+  message: 'Root module "prod" declares no remote backend.',
+  entity: "prod/terraform",     // the terraform block this fired from, by convenience
+  missing: { kind: "backend", scope: "prod" },  // what's missing, and where
+}
+```
+
+Set `missing` alongside `entity`, not instead of it, when a check has some
+convenient anchor to report. TF001's `entity` still names the `terraform`
+block it walked to reach the verdict. That block isn't what's wrong, but
+it's where the check happened to be looking. `kind` names what's absent
+(`"backend"`). `scope` names where it's absent from, typically a root module
+name or a file. Every reporter (stylish, JSON, SARIF) renders `missing`
+distinctly instead of falling back to `entity`. It also gives a
+block-anchored suppression (a separate change) something to key an absence
+finding on.
 
 ## Category Taxonomy
 
@@ -305,6 +340,44 @@ These patterns apply to most IaC formats:
 | Missing TLS/HTTPS | Unencrypted transport |
 | Missing network isolation | No NSG, no network policy, no firewall rules |
 
+## A value envelope over a loosely-typed body (chant #2113)
+
+A check that reads a raw parsed body (hcl2json output, a YAML/JSON document
+via `ctx.docs`) usually needs to know more than "is this key present." Is
+the value a plain literal, or an expression that references something else
+that isn't known statically? Re-deriving that by hand in every check is how
+you end up with a dozen slightly different regexes for "is this a reference."
+
+tflint's OPA ruleset hands a policy `{value, unknown, sensitive, ephemeral,
+range}` per attribute for exactly this reason. One accessor, read uniformly,
+instead of every rule re-deriving it. The terraform lexicon's `attr()`
+(`src/hcl/value.ts`) is chant's version of the same idea, scoped to what a
+static JSON-round-tripped parse (no live evaluation, no position data) can
+actually answer:
+
+```typescript
+import { attr } from "./hcl/value";
+
+const backend = attr(body, "backend");
+// { kind: "literal" | "reference" | "template" | "absent", value?, refs?, raw }
+
+if (backend.kind === "reference") {
+  // backend.refs[0] is the expression inside `${...}`
+}
+```
+
+`kind` is `"absent"` when the key isn't present, `"literal"` for a plain
+value (a nested block hcl2json encodes the same way counts too),
+`"reference"` when the whole value is one `${...}` interpolation, and
+`"template"` when interpolation mixes with literal text. `raw` is always the
+untouched source value. A check that needs something this envelope doesn't
+model can still reach for it directly.
+
+The lesson generalizes past HCL. Any lexicon parsing a format where "is this
+attribute a literal or does it point somewhere else" comes up more than once
+across its checks is a candidate for the same small accessor, instead of
+each check answering that question its own way.
+
 ## Wiring Checks into Plugin
 
 Checks are **discovered by directory**, not registered by hand. Any file in `lint/post-synth/` that exports a `PostSynthCheck` is picked up automatically — the generator scans the directory and emits a committed barrel (`lint/post-synth/index.ts`, marked `DO NOT EDIT`) with explicit static imports, and the plugin's `postSynthChecks()` returns that barrel:
@@ -394,6 +467,68 @@ Two details worth knowing:
   rule (FTN001) is `yamlBased: false`.
 - **Cross-cutting core ids** (`COR*`, `EXT*`) belong to core's static catalog,
   not to any lexicon, and are excluded from both the check and the test.
+
+### Aliases and `deprecated` (chant #2113)
+
+A rule id is public API the day it ships. A project's `lint.rules`, a
+suppression comment, someone's dashboard, all name it. trivy's checks carry
+`id`, `long_id`, `aliases` and a `deprecated: true` field for exactly this
+reason. A rule can be renamed, or retired, without every existing reference
+to its old id going dark. `RuleMeta` carries the same two fields:
+
+```typescript
+export const myAuditCatalog: Record<string, RuleMeta> = {
+  XYZ011: {
+    ...auditRule("XYZ011", "merge-worthy", "guidance", "Bucket allows public reads", "Set `publicAccess: false`."),
+    aliases: ["XYZ010"], // the id this rule used to ship as
+  },
+  XYZ099: {
+    ...auditRule("XYZ099", "report-only", "guidance", "Retired check", "No longer applicable, superseded by XYZ011."),
+    deprecated: "superseded by XYZ011", // or `true`, with no reason string
+  },
+};
+```
+
+`canonicalRuleId(id, catalog)` (`@intentius/chant/audit/catalog`) resolves an
+alias to the id it belongs to. A canonical or unrecognized id passes through
+unchanged. A `lint.rules` entry that names an alias resolves through it too.
+Pass a resolved catalog as `resolveConfiguredSeverity`'s (and
+`applyConfiguredSeverity`'s) optional fourth argument; see
+`packages/core/src/lint/config.ts`. The generated [rules
+reference](/chant/lint-rules/audit-rules/) lists a rule's aliases and greys
+out a deprecated one instead of dropping it from the page. A deprecated id
+stays in the catalog even after its check stops shipping (the catalog drift
+test's "no stale entries" check exempts a `deprecated` entry for this
+reason), so old references keep resolving to an explanation instead of
+silently matching nothing.
+
+### Presets, `lintPresets()` (chant #2113)
+
+A family of more than a handful of rules eventually needs a "the good ones"
+subset distinct from "every rule we ship." tflint-ruleset-terraform ships
+`recommended` (13 of its 20) and `all` for exactly this. A lexicon opts in by
+adding `lintPresets()` to its plugin, returning a preset name mapped to the
+check ids that preset enables:
+
+```typescript
+// plugin.ts
+lintPresets() {
+  return {
+    recommended: Object.keys(myAuditCatalog).filter((id) => myAuditCatalog[id].tier === "merge-worthy"),
+    all: Object.keys(myAuditCatalog),
+  };
+},
+```
+
+Deriving both from the catalog, as above, rather than hand-keeping two id
+lists, means a new rule's preset membership is decided once, where its tier
+already lives. A project picks a preset through the `presets` field under
+`lint` in its config, keyed by lexicon name. The [Rule
+Configuration](/chant/lint-rules/configuration/#selecting-a-lexicon-preset-chant-2113) page
+covers the project-facing side, including the default and the precedence
+against `lint.rules`. A lexicon that omits `lintPresets()` is unaffected.
+Every one of its findings is reported regardless of `lint.presets`, same as
+before this existed.
 
 ### Prior art in `audit-lineage.ts`
 

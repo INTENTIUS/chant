@@ -24,7 +24,7 @@ const CHANT_VERSION: string = (() => {
 
 const AUDIT_FORMATS: AuditFormat[] = ["stylish", "json", "sarif", "markdown", "html"];
 const AUDIT_TIERS: AuditTier[] = ["merge-worthy", "all"];
-const AUDIT_FAIL_ON: AuditFailOn[] = ["merge-worthy", "warning", "none"];
+const AUDIT_FAIL_ON: AuditFailOn[] = ["merge-worthy", "warning", "error", "none"];
 
 /**
  * Parse `--scope system,user,project`. Returns `undefined` (meaning "all") when
