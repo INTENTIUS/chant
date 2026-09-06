@@ -141,14 +141,34 @@ A lexicon that also implements `observeResourcesDeep()` ([coverage](/chant/lexic
 
 ```
 aws (properties)
-1 property drift across 1 resource(s), 2 accepted, 3 unchanged, 1 unobserved
+1 property drift across 1 resource(s), 0 accepted, 3 unchanged, 2 held elsewhere, 1 unobserved
 
 PROPERTY DRIFT (declared vs live; baseline shown where one exists):
   - Assets (AWS::S3::Bucket)
       VersioningConfiguration.Status: Enabled → Suspended
+
+HELD ELSEWHERE (live values on properties chant never declared; not drift):
+  - Assets (AWS::S3::Bucket)
+      Tags[#cost-center].Value: platform [not in this declaration's claimed fields]
 ```
 
 The tree is normalized before it is compared — server-populated fields dropped, tags and policy statements canonicalized, provider defaults subtracted where source is silent, secret-bearing property names masked. A resource whose properties could not be read is listed as unobserved with a reason, exactly like the thin read; it is never reported as clean.
+
+##### Three ways a live value classifies
+
+A declaration's props are a claim: they are exactly the fields chant set. Flattening them gives the **claimed-field set**, in the same path grammar the diff addresses properties by (`spec.replicas`, `Tags[#env].Value`, `ingress[0].fromPort`). Every live value then falls into one of three buckets rather than two:
+
+| Classification | Where it appears | What chant does with it |
+|---|---|---|
+| **declared and equal** | counted in `unchanged` | Nothing. Source and cloud agree. |
+| **declared and different** | `PROPERTY DRIFT` | Drift. The only classification that may become an `update`. |
+| **undeclared** | `HELD ELSEWHERE` | Reported with its live value. Never drift, never counted in the drift total, never proposed for change, and never written by `--update-baseline`. |
+
+Where the substrate records who wrote a field, the held row names them instead: Kubernetes' `metadata.managedFields` gives `spec.replicas: 7 [held by hpa-controller]`, which is the difference between a controller doing its job and somebody running `kubectl edit`. Everywhere else the declaration is the only witness and the row says the path is not in this declaration's claimed fields. `--json` carries both under `heldElsewhere`, with `source` set to `field-manager` or `claimed-fields` so a consumer can tell which answered.
+
+This is what makes an autoscaler quiet without anything being recorded: a field chant never set stops being a finding on the first read it appears in. It also narrows what the accepted baseline is for, since `--update-baseline` now only ever records drift on a path source declares.
+
+A path inside a list is claimed by its exact position or key, so a lexicon that supplies an `orderKey` for a set-like list gets the sharper answer: a tag added in the console is `Tags[#other]`, held elsewhere, while a positional list reports the new element by index instead.
 
 #### `--update-baseline` — accept a deviation
 
@@ -197,6 +217,8 @@ chant lifecycle plan prod --json   # emit the ChangeSet as JSON
 `effect` is the receipt row. An effect receipt is declared, diffed, and observed like any resource, but it is **observe-only to the generic apply path**: the `effect()` step is the sole writer, on success, last. The plan resolves the receipt's expectation (references resolve against observed values at plan time) and compares it to the live value — absent or differing renders `effect will fire: <effect>`, with the reason (`receipt-absent`, `receipt-stale`, or `unresolved-input` when a reference could not resolve — the fire is proposed rather than guessed away). A matching receipt is a clean `noop`; a receipt nobody could read is `unobserved`, loudly. A receipt is never a `create`, never an `update`, and never a prune candidate: a stale receipt after a crash between the effect and its write re-proposes the fire on the next plan, which is the at-least-once guarantee the whole classification exists to preserve.
 
 `create` and `update` are precise from declared-vs-live. `delete` is only ever proposed for an undeclared resource whose **live ownership marker** ([ownership marking](/chant/configuration/config-file/#ownership)) confirms it is chant's; a foreign orphan is `adopt`, and an orphan with no marker data is `adopt`, never `delete`. Pass `--owned` to restrict the query to chant-owned resources.
+
+An `update` is bounded by the **claimed-field set**: a property the declaration never set is somebody else's field, so it is reported as [held elsewhere](#three-ways-a-live-value-classifies) by `diff --live` and never becomes an `update` here. The plan proposes closing the gap on fields chant claims and nothing more, which is why an autoscaler's replica count or a controller's annotation cannot turn into a proposal to overwrite it.
 
 The classification reads ownership from the live marker, **never from the snapshot**, so the snapshot never becomes load-bearing: the delete decision is identical whether or not a snapshot exists. The moment a mutation trusted the snapshot, the snapshot would have become an authoritative state file under a different name — which chant deliberately avoids.
 
