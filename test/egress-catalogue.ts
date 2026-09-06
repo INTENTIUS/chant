@@ -366,6 +366,13 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     why: "`fountainApply` performs the lexicon's resource CRUD.",
   },
   {
+    file: "lexicons/fountain/src/op/runtime.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "the fountain control-plane API, or a declared endpoint",
+    why: "`chant run <op> --on fountain` posts the run to a steward's thread and tails its SSE stream.",
+  },
+  {
     file: "lexicons/render/src/op/activities/render-apply.ts",
     primitives: ["fetch"],
     phase: "apply",

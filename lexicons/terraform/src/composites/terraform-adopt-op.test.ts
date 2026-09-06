@@ -164,4 +164,7 @@ describe("TerraformAdoptOp labels (#2105, #2118)", () => {
     });
   });
 
+  test("no task queue rides on the Op (#2118)", () => {
+    expect(props(base)).not.toHaveProperty("taskQueue");
+  });
 });

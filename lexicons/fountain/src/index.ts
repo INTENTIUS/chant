@@ -27,6 +27,15 @@ export type { FountainApplyArgs, FountainApplySummary, FountainRunArgs, Fountain
 export { fountainConfigSchema, resolveProfile } from "./config";
 export type { FountainConfig, FountainProfile } from "./config";
 
+// The op runtime (#2126) — `chant run <op> --on fountain`, a client over
+// fountain's REST and SSE with no state of its own.
+export {
+  createFountainOpRuntime,
+  defaultFountainSse,
+  DEFAULT_STREAM_IDLE_TIMEOUT_MS,
+} from "./op/runtime";
+export type { FountainOpRuntimeOptions, FountainSse, FountainSseEvent } from "./op/runtime";
+
 // Composites — secure-by-construction bundles.
 export { ConciergeStack } from "./composites/concierge-stack";
 export type { ConciergeStackOpts, ConciergeStackResources } from "./composites/concierge-stack";
