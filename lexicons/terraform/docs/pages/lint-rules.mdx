@@ -1,0 +1,15 @@
+---
+title: Lint Rules
+description: Terraform lexicon lint rules.
+diataxis: reference
+---
+
+The Terraform lexicon ships one source-level lint rule and one post-synth
+check. See [Lint Rules](/chant/lexicons/terraform/rules/) for the generated,
+always-current table.
+
+- `TF101` — a `terraformApply` step's `planFile` must reference the output of
+  a preceding `terraformPlan` step, not a literal path
+- `TF001` — root module declares no remote backend (post-synth)
+
+To write custom rules for your project, see the [lint-rules authoring guide](/chant/lexicon-authoring/lint-rules/).

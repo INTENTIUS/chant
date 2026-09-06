@@ -219,6 +219,23 @@ describe("buildRoots", () => {
   });
 });
 
+describe("auditEntities (#2085, parse-to-graph for chant audit)", () => {
+  it("parses a joined `# file:` bundle into entities", async () => {
+    const hook = terraformPlugin.auditEntities;
+    if (!hook) throw new Error("terraformPlugin.auditEntities is not registered");
+    const content = '# file: main.tf\nresource "null_resource" "root" {}';
+    const entities = await hook(content);
+    expect([...entities.keys()]).toEqual(["audit-root/null_resource.root"]);
+  });
+
+  it("never throws on malformed input; returns an empty map instead", async () => {
+    const hook = terraformPlugin.auditEntities;
+    if (!hook) throw new Error("terraformPlugin.auditEntities is not registered");
+    const entities = await hook("resource null_resource root { this is not valid hcl {{{");
+    expect(entities.size).toBe(0);
+  });
+});
+
 describe("parseTerraformRootContent", () => {
   it("reads the joined `# file:` bundle form chant audit produces", async () => {
     const content = [

@@ -2671,7 +2671,7 @@ Run against Terraform root modules (a directory of `.tf` files) parsed into the 
 
 ### TF001
 
-**Root module declares no remote backend** — report-only · guidance
+**Root module declares no remote backend** — merge-worthy · guidance
 
 Add a `backend "\<type>"` block (s3, gcs, azurerm, http) or a `cloud \{}` block to the root module's terraform block, then `terraform init -migrate-state`.
 

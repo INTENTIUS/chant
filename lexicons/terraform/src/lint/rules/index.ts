@@ -1,7 +1,7 @@
 import type { LintRule } from "@intentius/chant/lint/rule";
-import { sampleRule } from "./sample";
+import { planBeforeApplyRule } from "./plan-before-apply";
 
-export { sampleRule } from "./sample";
+export { planBeforeApplyRule } from "./plan-before-apply";
 
 /** All lint rules provided by this lexicon (imported by plugin.ts's lintRules()). */
-export const rules: LintRule[] = [sampleRule];
+export const rules: LintRule[] = [planBeforeApplyRule];
