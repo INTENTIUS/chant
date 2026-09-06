@@ -72,6 +72,53 @@ jobs:
         run: npm run --prefix lexicons/k8s prepack
 `;
 
+// Mirrors the real chant.yml's check + test jobs: a comment (the cedar note)
+// sitting mid-list splits what would otherwise be one contiguous run of
+// prepack lines into two groups of 2+, so the old grouping wrote the new
+// lexicon's line twice per job (#2098).
+const ciContentWithMidListComment = `name: chant
+on: [push]
+jobs:
+  check:
+    steps:
+      - name: Generate lexicon artifacts
+        run: |
+          npm run --prefix lexicons/aws prepack
+          npm run --prefix lexicons/gitlab prepack
+          # cedar generates from the project's own .cedarschema, falling
+          # back to the schema bundled at src/spec/default-schema.cedarschema
+          # so a clean checkout still produces a surface to gate (#1650).
+          npm run --prefix lexicons/cedar prepack
+          npm run --prefix lexicons/k8s prepack
+      - name: Run tests
+        run: npx vitest run
+
+  test:
+    steps:
+      - name: Generate lexicon artifacts
+        run: |
+          npm run --prefix lexicons/aws prepack
+          npm run --prefix lexicons/gitlab prepack
+          # cedar generates from the project's own .cedarschema, falling
+          # back to the schema bundled at src/spec/default-schema.cedarschema
+          # so a clean checkout still produces a surface to gate (#1650).
+          npm run --prefix lexicons/cedar prepack
+          npm run --prefix lexicons/k8s prepack
+      - name: Run tests
+        run: npx vitest run
+
+  validate:
+    steps:
+      - name: Generate and validate AWS lexicon
+        run: npm run --prefix lexicons/aws prepack
+
+      - name: Generate and validate GitLab lexicon
+        run: npm run --prefix lexicons/gitlab prepack
+
+      - name: Generate and validate K8s lexicon
+        run: npm run --prefix lexicons/k8s prepack
+`;
+
 const publishContent = `name: publish
 on:
   push:
@@ -216,6 +263,34 @@ describe("onboardCommand", () => {
     expect(ci.match(/lexicons\/terraform prepack/g)?.length).toBe(3);
     const docker = readFileSync(join(root, "test/Dockerfile.smoke"), "utf-8");
     expect(docker.match(/terraform/g)?.length).toBe(1);
+  });
+
+  test("a comment mid-list in check/test run blocks does not split the group: one insertion per block (#2098)", () => {
+    writeFileSync(join(root, ".github/workflows/chant.yml"), ciContentWithMidListComment);
+
+    const result = onboardCommand({ name: "terraform", root });
+    expect(result.patched).toContain("chant.yml (prepack + validate)");
+
+    const ci = readFileSync(join(root, ".github/workflows/chant.yml"), "utf-8");
+    // check + test + validate: exactly one new line per job, not two per job
+    // from the comment splitting the run: | block into two groups.
+    expect(ci.match(/lexicons\/terraform prepack/g)?.length).toBe(3);
+
+    const [checkBlock, rest] = ci.split("  test:");
+    const [testBlock, validateBlock] = rest.split("  validate:");
+
+    expect(checkBlock.match(/lexicons\/terraform prepack/g)?.length).toBe(1);
+    expect(testBlock.match(/lexicons\/terraform prepack/g)?.length).toBe(1);
+    expect(validateBlock.match(/lexicons\/terraform prepack/g)?.length).toBe(1);
+
+    // The new line lands after the block's last prepack line (k8s, past the
+    // comment), not right after the comment's first half of the group.
+    expect(checkBlock).toContain(
+      "          npm run --prefix lexicons/k8s prepack\n          npm run --prefix lexicons/terraform prepack\n",
+    );
+    expect(testBlock).toContain(
+      "          npm run --prefix lexicons/k8s prepack\n          npm run --prefix lexicons/terraform prepack\n",
+    );
   });
 });
 

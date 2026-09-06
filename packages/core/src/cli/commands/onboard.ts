@@ -43,6 +43,13 @@ function isPrepackLine(line: string): boolean {
   return PREPACK_LINE.test(line);
 }
 
+/** A YAML comment line, e.g. the cedar note sitting mid-list in chant.yml. */
+const COMMENT_LINE = /^\s*#/;
+
+function isCommentLine(line: string): boolean {
+  return COMMENT_LINE.test(line);
+}
+
 function hasPrepackLine(lines: string[], name: string): boolean {
   return lines.some((l) => isPrepackLine(l) && l.includes(`lexicons/${name} prepack`));
 }
@@ -139,27 +146,46 @@ export function patchRootTsconfigPaths(root: string, name: string): PatchResult 
 
 /**
  * Insert a new prepack line after the last prepack line in each contiguous group
- * of 2+ lines. Single standalone lines (like YAML `run:` values) are ignored.
- * Used for multi-line `run: |` blocks in workflows.
+ * of 2+ prepack lines. Single standalone lines (like YAML `run:` values) are
+ * ignored. Used for multi-line `run: |` blocks in workflows.
+ *
+ * A comment line between two prepack lines (the cedar note in chant.yml's
+ * check and test jobs) does not end the group: it is skipped when scanning,
+ * so the block still gets exactly one insertion, anchored after its last
+ * real prepack line rather than after the comment (#2098).
  */
 function insertPrepackInContiguousGroups(lines: string[], name: string): boolean {
   if (hasPrepackLine(lines, name)) return false;
 
-  // Identify contiguous groups of prepack lines
-  const groups: { start: number; end: number }[] = [];
+  // Identify contiguous groups of prepack lines, treating comment lines
+  // inside a group as pass-through rather than a boundary.
+  const groups: { lastPrepackIdx: number; count: number }[] = [];
   let groupStart = -1;
-  for (let i = 0; i <= lines.length; i++) {
-    const isPrepack = i < lines.length && isPrepackLine(lines[i]);
-    if (isPrepack && groupStart === -1) {
-      groupStart = i;
-    } else if (!isPrepack && groupStart !== -1) {
-      groups.push({ start: groupStart, end: i - 1 });
-      groupStart = -1;
+  let lastPrepackIdx = -1;
+  let count = 0;
+
+  const closeGroup = () => {
+    if (groupStart !== -1) groups.push({ lastPrepackIdx, count });
+    groupStart = -1;
+    count = 0;
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    if (isPrepackLine(lines[i])) {
+      if (groupStart === -1) groupStart = i;
+      lastPrepackIdx = i;
+      count++;
+    } else if (isCommentLine(lines[i])) {
+      // Skip: does not extend a group on its own, and does not close one.
+      continue;
+    } else {
+      closeGroup();
     }
   }
+  closeGroup();
 
-  // Only insert into groups of 2+ lines (multi-line blocks, not standalone steps)
-  const insertAfter = groups.filter((g) => g.end > g.start).map((g) => g.end);
+  // Only insert into groups of 2+ prepack lines (multi-line blocks, not standalone steps)
+  const insertAfter = groups.filter((g) => g.count > 1).map((g) => g.lastPrepackIdx);
 
   if (insertAfter.length === 0) return false;
 
