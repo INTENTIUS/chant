@@ -54,9 +54,13 @@
  * never proposes deleting a resource it does not own, not for a root, and not
  * for an Op it generated.
  *
- * The gate is durable-runtime work, so an Op that emits one needs Temporal;
- * `packages/core/src/op/local-executor.ts` refuses any Op containing a gate.
- * `gate: "never"` is what makes the Op runnable with `chant run` locally.
+ * A gate is a fact on the gate ledger, not a wait (#2119). Reaching one,
+ * `chant run` consults the ledger (`packages/core/src/op/gate.ts`): a
+ * resolution newer than the gate's newest pending fact lets the run walk
+ * through, and anything else records the pending fact and ends the run with
+ * status `gated` and exit 3. `chant approve <op> <gate>` writes the
+ * resolution, and the next run reads it. `gate: "never"` drops the Gate phase
+ * entirely, so a run never stops.
  *
  * @example
  * ```typescript
@@ -85,9 +89,9 @@ import {
  * cannot branch at build time on a count the plan only produces at run time.
  * The workable v1 is that `"on-destroy"` and `"always"` emit the same Gate
  * phase, and the approver is told what is at stake instead: the phase reports
- * the plan's `destroys` count as the `Destroys` search attribute before it
- * waits, and the gate description says so. A gate that skips itself when the
- * plan turns out additive is a new step kind, out of scope here.
+ * the plan's `destroys` count as the `Destroys` search attribute before the
+ * gate is reached, and the gate description says so. A gate that skips itself
+ * when the plan turns out additive is a new step kind, out of scope here.
  */
 export type TerraformGateMode = "on-destroy" | "always" | "never";
 
@@ -106,7 +110,7 @@ export interface TerraformApplyOpConfig {
   gate?: TerraformGateMode;
   /** Gate signal name. Default: `approve-<name>`, as `ApplyOp` does. */
   signalName?: string;
-  /** Temporal duration the gate waits before timing out. Default: core's own (48h). */
+  /** How long a recorded pending gate stays valid, as a duration string. Default: core's own (48h). */
   gateTimeout?: string;
   /** Override the gate description shown to the approver. */
   gateDescription?: string;
@@ -196,7 +200,7 @@ export function TerraformApplyOp(config: TerraformApplyOpConfig): TerraformApply
   phases.push(phase("Plan", [plan]));
 
   if (gateMode !== "never") {
-    // Re-render the saved plan just before the wait, so the approver's
+    // Re-render the saved plan just before the gate, so the approver's
     // `Destroys` attribute comes off the plan that will actually apply.
     // `show` against a plan file calls no provider, on either kind of root.
     const show = showStep(config.root, { ...where, planFile: plan.out.planFile });

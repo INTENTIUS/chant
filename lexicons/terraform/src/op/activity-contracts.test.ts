@@ -44,7 +44,7 @@ describe("terraform activity contracts (#2101)", () => {
     }
   });
 
-  test("every contract declares a return schema — TMP013 needs one to validate a reference", () => {
+  test("every contract declares a return schema — OPS013 needs one to validate a reference", () => {
     for (const name of ACTIVITY_NAMES) {
       expect(CONTRACTS.get(name)?.returns, `${name} declares no return schema`).toBeDefined();
     }

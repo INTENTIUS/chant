@@ -19,9 +19,9 @@
  *
  * The module is dependency-light on purpose: it shells out to the configured
  * binary and reads the `terraform` config namespace, and never touches the
- * lexicon's HCL parse or serializer, so a Temporal worker loads it cheaply.
- * The pure command and environment builders are exported alongside the
- * activities because they are what the tests assert on.
+ * lexicon's HCL parse or serializer, so `loadActivities` imports it cheaply at
+ * run time. The pure command and environment builders are exported alongside
+ * the activities because they are what the tests assert on.
  */
 export {
   terraformInit,

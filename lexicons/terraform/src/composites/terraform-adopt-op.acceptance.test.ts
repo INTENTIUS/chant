@@ -13,11 +13,11 @@
  *
  * The Op's phases are not run through `runOpLocally` here, deliberately.
  * `TerraformAdoptOp` always emits a gate — adoption moves the estate's
- * boundary, and there is no ungated form — and the local executor refuses any
- * Op containing one (`packages/core/src/op/local-executor.ts`). So this drives
- * the two activities the Op's Ledger and Adopt phases are built from, in the
- * same order and with the same hand-off, which is the part a real binary can
- * falsify. `choudoufu.acceptance.test.ts` takes the same approach for the same
+ * boundary, and there is no ungated form — so a local run would stop at the
+ * gate and record a pending fact rather than reach the Adopt phase
+ * (`packages/core/src/op/gate.ts`). So this drives the two activities the Op's
+ * Ledger and Adopt phases are built from, in the same order and with the same
+ * hand-off, which is the part a real binary can falsify. `choudoufu.acceptance.test.ts` takes the same approach for the same
  * reason.
  *
  * ## Why this skips today
