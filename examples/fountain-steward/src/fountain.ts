@@ -18,9 +18,9 @@ import {
   Steward,
   Vault,
 } from "@intentius/chant-lexicon-fountain";
-import prodConverge from "./prod-converge.op";
-import prodWatch from "./prod-watch.op";
-import stewardApply from "./steward-apply.op";
+import { prodConverge } from "./prod-converge.op";
+import { prodWatch } from "./prod-watch.op";
+import { stewardApply } from "./steward-apply.op";
 
 /** The ownership marker. Owned-only reconcile, prune and drift all key on it. */
 export const chantOwned = { "managed-by": "chant" };

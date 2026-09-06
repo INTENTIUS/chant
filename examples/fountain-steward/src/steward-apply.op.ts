@@ -15,7 +15,11 @@
 
 import { Op, activity, gate, phase } from "@intentius/chant/op";
 
-const op = Op({
+// Exported by name, not as the default. `chant run` finds either (#2171), and a
+// named export is the one of the two the fold path can reduce: a file with an
+// `export default` always falls back to running, and so does every file that
+// imports it, which used to cost this example its fold coverage entirely.
+export const stewardApply = Op({
   name: "steward-apply",
   overview: "Apply the fountain manifest for this estate, after a human approves it",
   phases: [
@@ -31,5 +35,3 @@ const op = Op({
     ]),
   ],
 });
-
-export default op;
