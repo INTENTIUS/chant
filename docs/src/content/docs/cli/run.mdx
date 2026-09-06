@@ -36,6 +36,26 @@ chant run status alb-deploy --on fountain
 
 A name that is not a configured lexicon is refused with the list of lexicons that are. A configured lexicon that hosts nothing is refused by name. Core ships only the `local` runtime and never imports a hosting lexicon, so a project gets the hosted path by declaring the lexicon, not by upgrading chant.
 
+### `--on fountain`
+
+The [fountain](/chant/lexicons/fountain/profiles/) lexicon hosts a run on a teammate's thread. `chant run <op> --on fountain` posts the command line `chant run <op>` to the steward as a prompt, tails the conversation's event stream, and exits with the status the run reached. The Op executes in fountain's sandbox, so the run record lands on the ledger from there rather than from this process.
+
+```bash
+chant run alb-deploy --on fountain
+chant run alb-deploy --on fountain --progress-json
+chant run status alb-deploy --on fountain
+chant run log alb-deploy --on fountain --limit 10
+chant run cancel alb-deploy --force --on fountain
+```
+
+The endpoint and the token come from `fountain.profiles` in `chant.config.ts`, and so does the steward: a profile's `team` names the teammate the prompt goes to. Without one, the Op's `labels.Agent` or a `--param agent=<name>` binding opens a fresh conversation on that agent instead. An Op with none of the three is refused with all three named.
+
+A teammate runs one turn at a time. A prompt sent while another op is running comes back as `conversation_busy`, and chant reports it with the conversation's address rather than queueing behind a turn whose length it cannot predict. Wait for the thread to go idle and run the command again.
+
+Tool calls on the stream become phases, so `--progress-json` and the human renderer show the run's shape as it happens. Fountain closes an idle stream connection after 60 seconds, which is not the end of a turn: the reader reconnects with `Last-Event-ID` and the server replays what arrived meanwhile. Only real silence ends the wait, after 30 minutes, and `FOUNTAIN_STREAM_IDLE_TIMEOUT` (in seconds) widens that for a run that thinks for longer.
+
+`chant run approve <op> <gate> --on fountain` writes the resolution to the gate ledger as always, then posts `chant run approve` to the steward so the sandbox re-runs and reads the fact. `--durable-requests` is reserved for answering fountain's own pending request instead; the endpoint it needs has not shipped, and the flag currently refuses by naming the upstream issue rather than reporting a resolution it did not make.
+
 ## Subcommands
 
 ### `run <name>`
@@ -189,6 +209,7 @@ The `--no-release-record` flag always wins over config for that one invocation. 
 | `--params-file <path>` | JSON file of build-time parameter values (`run --components`) |
 | `--sandbox` | Execute project source in one isolated child process. Refuses an Op with a `policyGate` step |
 | `--approver <name>` | Who approved a gated change; recorded on the gate-resolution fact (`run approve`) |
+| `--durable-requests` | Resolve the gate on the hosting runtime's own request path instead of by prompt (`run approve --on <lexicon>`); ignored by a runtime that has no such path |
 | `-v, --verbose` | List every resolved build parameter, and show stack traces on errors |
 
 ## Exit Codes

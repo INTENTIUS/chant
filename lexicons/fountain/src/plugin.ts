@@ -25,6 +25,7 @@ import { hover } from "./lsp/hover";
 import { fountainDeepNormalizationHooks } from "./deep-observe-hooks";
 import { fountainConfigSchema } from "./config";
 import { acpCommandGroup } from "./acp";
+import { createFountainOpRuntime } from "./op/runtime";
 
 /**
  * fountain lexicon plugin.
@@ -35,6 +36,11 @@ export const fountainPlugin: LexiconPlugin = {
   name: "fountain",
   serializer: fountainSerializer,
   configSchema: fountainConfigSchema,
+
+  // `chant run <op> --on fountain` (#2126). Construction is pure — the
+  // endpoint, the token and the steward are resolved on the first call, not
+  // here, so importing the plugin to synthesize a manifest costs nothing.
+  opRuntime: createFountainOpRuntime(),
 
   // ── Required lifecycle methods ────────────────────────────────
 

@@ -90,6 +90,7 @@ const BOOLEAN_FLAGS = new Set([
   "--check-live",
   "--check-snapshot",
   "--fail-on-drift",
+  "--durable-requests",
 ]);
 
 /**
@@ -310,6 +311,12 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.json = true;
     } else if (arg === "--progress-json") {
       result.progressJson = true;
+    } else if (arg === "--durable-requests") {
+      // `chant run approve ... --on <lexicon> --durable-requests` (#2126) —
+      // resolve the gate on the hosting runtime's own request path rather
+      // than by posting a follow-up prompt. Core only carries the flag; the
+      // runtime decides whether it has such a path.
+      result.durableRequests = true;
     } else if (arg === "--update-snapshot") {
       result.updateSnapshot = true;
     } else if (arg === "--update-baseline") {
