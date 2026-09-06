@@ -11,7 +11,6 @@ import { Op, phase, build, kubectlApply } from "@intentius/chant-lexicon-tempora
 export default Op({
   name: "deploy",
   overview: "Build the getting-started manifests and apply them to the current kube context",
-  taskQueue: "getting-started-deploy",
   phases: [
     // Runs `npm run build` in this example dir → writes k8s.yaml. Paths are
     // relative to where `chant run` is invoked (the example dir), hence `.`.

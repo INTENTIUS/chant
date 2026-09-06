@@ -135,8 +135,6 @@ export interface TerraformApplyOpConfig {
    * rollback of your own, or leave it unset.
    */
   compensate?: boolean | { command?: string };
-  /** Override the task queue. Defaults to `name`. */
-  taskQueue?: string;
 }
 
 export interface TerraformApplyOpResources {
@@ -145,7 +143,6 @@ export interface TerraformApplyOpResources {
 }
 
 export function TerraformApplyOp(config: TerraformApplyOpConfig): TerraformApplyOpResources {
-  const taskQueue = config.taskQueue ?? config.name;
   const planFile = config.planFile ?? DEFAULT_PLAN_FILE;
   const gateMode: TerraformGateMode = config.gate ?? "on-destroy";
 
@@ -258,8 +255,7 @@ export function TerraformApplyOp(config: TerraformApplyOpConfig): TerraformApply
   const op = Op({
     name: config.name,
     overview: `Init, plan and apply the "${config.root}" terraform root`,
-    taskQueue,
-    searchAttributes: {
+    labels: {
       Apply: "true",
       TerraformRoot: config.root,
     },

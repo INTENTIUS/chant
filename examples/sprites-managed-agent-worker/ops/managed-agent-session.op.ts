@@ -38,7 +38,6 @@ const SESSION = "agent-session-1";
 export default Op({
   name: "managed-agent-session",
   overview: "Run one Managed Agents session in a per-session Sprite",
-  taskQueue: "sprites",
   phases: [
     phase("Create", [spriteCreate({ name: SESSION, image: "sprites/base:latest" })]),
     phase("Secure", [

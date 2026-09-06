@@ -36,20 +36,15 @@ Each step takes an optional `profile` that controls Temporal retry and timeout s
 | `k8sWait` | Polling until K8s resources are ready |
 | `humanGate` | Steps that may take hours |
 
-## Search attributes
+## Labels
 
-Each generated workflow auto-emits `upsertSearchAttributes()` calls so workflow runs are filterable in the Temporal UI without hand-coded boilerplate. Two emission points:
-
-1. **Initial call** at workflow start: `OpName` plus any `searchAttributes` you declare on the Op
-2. **Per-phase call** at the start of each phase (and each `onFailure` phase): `Phase` set to the current phase name
-
-Declare custom attributes on the Op:
+An Op's `labels` are its discovery keys: free-form `name: value` pairs that say what kind of Op this is and where it belongs. `ConvergeOp` sets `Converge: "true"` alongside an `Env`. `WatchOp` sets `Watch`. `chant operator --env <name>` filters on `labels.Env`, and `chant run list` prints whatever an Op declares.
 
 ```typescript
 export default Op({
   name: "alb-deploy",
   overview: "Deploy ALB stack",
-  searchAttributes: {
+  labels: {
     Environment: "staging",
     Region: "us-east-1",
   },
@@ -59,6 +54,15 @@ export default Op({
   ],
 });
 ```
+
+An Op's labels describe the declaration. What a single *run* did (down to each step's status) is a fact about that run and lands on the run ledger instead, at `<env>/runs__<name>.jsonl`. See [`chant run`](/chant/cli/run/).
+
+### Search attributes in the generated workflow
+
+On the Temporal path, the generated workflow auto-emits `upsertSearchAttributes()` calls so runs are filterable in the Temporal UI without hand-coded boilerplate. Two emission points:
+
+1. **Initial call** at workflow start: `OpName` plus every label you declared on the Op
+2. **Per-phase call** at the start of each phase (and each `onFailure` phase): `Phase` set to the current phase name
 
 The generated `workflow.ts` produces:
 
@@ -84,11 +88,11 @@ For an Op with N phases this is **N+1 upsert calls total**. Values are wrapped a
 
 > **Registration is separate.** Auto-emit assumes the attributes are already registered server-side. Declare them with the [`SearchAttribute`](/chant/lexicons/temporal/resources/#searchattribute) resource so `chant build` emits the registration commands. See also [`chant lifecycle`](/chant/cli/lifecycle/) for snapshotting registered attributes against a live cluster.
 
-User-provided keys merge over the `OpName` default; if you set `searchAttributes: { OpName: "custom" }` the user value wins.
+Labels merge over the `OpName` default; if you set `labels: { OpName: "custom" }` the label wins.
 
-### Outcome-based search attributes
+### Outcome attributes
 
-Activity steps support an optional `outcomeAttribute` field that captures the activity's return value and surfaces it as a workflow search attribute:
+Activity steps support an optional `outcomeAttribute` field that captures the activity's return value. The local executor folds it into the run record's `outcomes`; the generated Temporal workflow additionally upserts it as a search attribute:
 
 ```typescript
 phase("Diff", [

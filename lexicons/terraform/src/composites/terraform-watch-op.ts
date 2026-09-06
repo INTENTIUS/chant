@@ -192,7 +192,7 @@ export interface TerraformWatchOpConfig {
   title?: string;
   /** Branch the pull-request mode opens from. Default: `reconcilePr`'s own. */
   branch?: string;
-  /** Override the task queue. Defaults to `name`. */
+  /** The task queue the generated `TemporalSchedule`'s action targets. Defaults to `name`. */
   taskQueue?: string;
 }
 
@@ -277,8 +277,7 @@ export function TerraformWatchOp(config: TerraformWatchOpConfig): TerraformWatch
     overview: config.live
       ? `Live-plan the "${config.root}" choudoufu estate and report drift, unowned and adoptable resources`
       : `Plan the "${config.root}" terraform root and report drift`,
-    taskQueue,
-    searchAttributes: {
+    labels: {
       Watch: "true",
       TerraformRoot: config.root,
       ...(config.live ? { TerraformMode: "live" } : {}),

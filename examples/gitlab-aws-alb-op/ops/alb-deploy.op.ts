@@ -15,12 +15,11 @@ import { Op, phase, build, kubectlApply, waitForStack, lifecycleSnapshot } from 
 export default Op({
   name: "alb-deploy",
   overview: "Build and deploy the ALB multi-service stack to the target environment",
-  taskQueue: "alb-deploy",
 
   // Auto-injected into workflow.upsertSearchAttributes() at workflow start
   // alongside OpName. Each phase boundary additionally upserts Phase. These
   // attributes must be registered server-side via SearchAttribute resources.
-  searchAttributes: {
+  labels: {
     Environment: "staging",
     Region: "us-east-1",
   },

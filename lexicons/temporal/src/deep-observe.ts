@@ -547,7 +547,7 @@ export async function observeResourcesDeepTemporal(
         continue;
       }
 
-      // Temporal::Server and Temporal::Op are out of this row's scope — the
+      // Temporal::Server and Chant::Op are out of this row's scope — the
       // epic's surface is namespaces, schedules and search attributes.
       unobserved[entityName] = {
         type: entityType,

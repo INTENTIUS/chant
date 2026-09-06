@@ -123,7 +123,7 @@ export interface ConvergeOpConfig {
   schedule?: string;
   /** Run `chant lifecycle diff --live` in the Observe phase (queries live state). @default true */
   live?: boolean;
-  /** Override the task queue. Defaults to `name`. */
+  /** The task queue the generated `TemporalSchedule`'s action targets. Defaults to `name`. */
   taskQueue?: string;
 }
 
@@ -206,8 +206,7 @@ export function ConvergeOp(config: ConvergeOpConfig): ConvergeOpResources {
   const op = Op({
     name: config.name,
     overview: `Converge the ${config.env} environment toward its declaration (dial: ${dial})`,
-    taskQueue,
-    searchAttributes: {
+    labels: {
       Converge: "true",
       Env: config.env,
       Dial: dial,

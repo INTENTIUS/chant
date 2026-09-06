@@ -11,7 +11,6 @@ import { Op, phase, azApply } from "@intentius/chant-lexicon-temporal";
 export default Op({
   name: "cc-azure-deploy",
   overview: "azure CC round-trip: direct ARM apply to floci-az",
-  taskQueue: "cc-azure-canonical",
   phases: [
     phase("Apply", [
       azApply("template.json", {

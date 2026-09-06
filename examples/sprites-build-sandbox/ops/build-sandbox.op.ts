@@ -26,7 +26,6 @@ import {
 export default Op({
   name: "build-sandbox",
   overview: "Warm a toolchain, checkpoint it, build from staged source, collect the artifact, reset",
-  taskQueue: "sprites",
   phases: [
     phase("Create", [spriteCreate({ name: "builder", image: "sprites/base:latest" })]),
     // Warm the toolchain once (install deps, prime caches). Here, a marker file.

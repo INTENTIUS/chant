@@ -112,9 +112,6 @@ export interface PolicyReplayOpConfig {
   /** Op name (kebab-case) — the `chant run <name>` target and the task queue base. */
   name: string;
   overview?: string;
-  /** Defaults to {@link name}. */
-  taskQueue?: string;
-
   /**
    * Directory every relative path below resolves against, and the one the
    * build script runs in. Default `.`.
@@ -231,8 +228,7 @@ export function PolicyReplayOp(config: PolicyReplayOpConfig): PolicyReplayOpReso
       overview:
         config.overview ??
         "Replay the declared dogwood policy set against a recorded event trace and report divergence",
-      taskQueue: config.taskQueue ?? config.name,
-      searchAttributes: {
+      labels: {
         Audit: "true",
         Surface: "cedar-dogwood",
       },

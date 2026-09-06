@@ -155,17 +155,13 @@ describe("TerraformAdoptOp compensation (#2105)", () => {
   });
 });
 
-describe("TerraformAdoptOp search attributes and queue (#2105)", () => {
+describe("TerraformAdoptOp labels (#2105, #2118)", () => {
   test("marks the Op as an adoption on a live root", () => {
-    expect(props(base).searchAttributes).toEqual({
+    expect(props(base).labels).toEqual({
       Adopt: "true",
       TerraformRoot: "estate",
       TerraformMode: "live",
     });
   });
 
-  test("the task queue defaults to the name and can be overridden", () => {
-    expect(props(base).taskQueue).toBe("estate-adopt");
-    expect(props({ ...base, taskQueue: "infra" }).taskQueue).toBe("infra");
-  });
 });

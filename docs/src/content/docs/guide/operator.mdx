@@ -47,7 +47,7 @@ chant approve fountain-apply rollout-gate   # resolve a gate a tick recorded
 
 `chant operator` is a deliberately small daemon: a timer, a lease, and the existing local executor (`runOpLocally`, the same path `chant run <name>` takes) in a loop. Every round:
 
-1. **Discover** every `ConvergeOp` in the project (any Op whose `searchAttributes.Converge === "true"` — what `ConvergeOp(...)` always sets), optionally filtered to `--env`.
+1. **Discover** every `ConvergeOp` in the project (any Op whose `labels.Converge === "true"` — what `ConvergeOp(...)` always sets), optionally filtered to `--env`.
 2. **Acquire or renew the lease** for each one (see below). Lose it — skip and report (`skipped=1(lease-held:<holder>)`), never queue.
 3. **Tick** the ones this process's lease covers, through the same local executor `chant run <name>` uses — so a tick this daemon runs and a tick you run by hand are identical, byte for byte.
 4. **Sleep** `--interval` (default 60s) and repeat, until Ctrl-C.

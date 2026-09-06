@@ -37,9 +37,15 @@ export type { StepRecord, OpRunResult, RunOpOptions } from "./local-executor";
 export { evaluateGate, gitGateLedgerPort, memoryGateLedgerPort, approveCommand } from "./gate";
 export type { GateLedgerPort, GateCheck, GateCheckInput } from "./gate";
 export { createLocalOpRuntime } from "./runtimes/local";
+export { runStateOf } from "./runtime";
 export type {
-  OpRuntimeProvider, OpRunHandle, OpRunRecord, OpRunStartOptions, OpRunState, OpRunStatus,
+  OpRuntimeProvider, OpRunHandle, OpRunStartOptions, OpRunState, OpRunStatus,
+  OpRunRecord, OpRunRecordInput, OpRunPhaseRecord, OpRunStepRecord,
 } from "./runtime";
+export { buildOpIR, serializeOpIR, opConfigFromIR, OP_IR_FORMAT_VERSION } from "./op-ir";
+export type {
+  OpIR, OpIRPhase, OpIRStep, OpIRActivityStep, OpIRGateStep, OpIREffectStep, OpIRActivityContract,
+} from "./op-ir";
 export { renderHuman, renderJson } from "./local-output";
 export {
   activityContract, isActivityContract, collectActivityContracts, validateActivitySteps, KNOWN_ACTIVITY_PROFILES,

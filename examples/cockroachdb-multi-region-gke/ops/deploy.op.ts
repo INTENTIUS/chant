@@ -79,8 +79,7 @@ const REGIONS = ["east", "central", "west"] as const;
 export default Op({
   name: "crdb-deploy",
   overview: "CockroachDB across three GCP regions — VPC, 3 GKE clusters, 9 nodes",
-  taskQueue: "crdb",
-  searchAttributes: { Estate: "crdb-multi-region" },
+  labels: { Estate: "crdb-multi-region" },
 
   phases: [
     // Fail on a missing tool, a missing parameter, or an unbootstrapped

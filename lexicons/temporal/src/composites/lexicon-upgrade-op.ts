@@ -82,7 +82,7 @@ export interface LexiconUpgradeOpConfig {
    * @default "report"
    */
   onFinding?: LexiconUpgradeMode;
-  /** Override the task queue. Defaults to `name`. */
+  /** The task queue the generated `TemporalSchedule`'s action targets. Defaults to `name`. */
   taskQueue?: string;
 }
 
@@ -114,8 +114,7 @@ export function LexiconUpgradeOp(config: LexiconUpgradeOpConfig): LexiconUpgrade
     name,
     overview:
       "Detect a newer upstream spec for the lexicon, regen + validate, and surface the API-surface delta",
-    taskQueue,
-    searchAttributes: {
+    labels: {
       Upgrade: "true",
       Lexicon: config.lexicon,
     },

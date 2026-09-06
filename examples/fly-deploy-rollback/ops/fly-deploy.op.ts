@@ -81,6 +81,5 @@ phases.push(phase("Teardown", teardown));
 export default Op({
   name: "fly-deploy",
   overview: "Deploy a Fly App + Machine, with a Sprite checkpoint as the rollback boundary",
-  taskQueue: "fly-deploy",
   phases,
 });

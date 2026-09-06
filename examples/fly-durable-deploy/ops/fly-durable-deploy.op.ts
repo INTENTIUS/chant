@@ -16,7 +16,6 @@ import { flyApplyStep } from "@intentius/chant-lexicon-fly";
 export default Op({
   name: "fly-durable-deploy",
   overview: "Durably deploy the Fly App + Machine on Temporal",
-  taskQueue: "fly-durable",
   phases: [
     phase("Build", [build(".", { script: "build:fly" })]),
     phase("Deploy", [flyApplyStep("dist/fly.json")]),

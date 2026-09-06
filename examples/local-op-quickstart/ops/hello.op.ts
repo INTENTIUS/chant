@@ -11,7 +11,6 @@ import { Op, phase, shell } from "@intentius/chant-lexicon-temporal";
 export default Op({
   name: "hello",
   overview: "Minimal local Op — no Temporal server required",
-  taskQueue: "hello",
   phases: [
     phase("Greet", [
       shell("echo hello from chant"),

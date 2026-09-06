@@ -54,7 +54,7 @@ export interface WorkflowAuditOpConfig {
    * @default "report"
    */
   onFinding?: WorkflowAuditMode;
-  /** Override the task queue. Defaults to `name`. */
+  /** The task queue the generated `TemporalSchedule`'s action targets. Defaults to `name`. */
   taskQueue?: string;
 }
 
@@ -72,8 +72,7 @@ export function WorkflowAuditOp(config: WorkflowAuditOpConfig): WorkflowAuditOpR
   const op = Op({
     name: config.name,
     overview: "Resolve workflow action references against live upstreams and report supply-chain drift",
-    taskQueue,
-    searchAttributes: {
+    labels: {
       Audit: "true",
       Surface: "github-workflows",
     },

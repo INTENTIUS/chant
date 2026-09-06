@@ -42,12 +42,10 @@ export default Op({
 |---|---|---|
 | `name` | `string` | Kebab-case identifier. Used as workflow name and output directory. |
 | `overview` | `string` | Human-readable description shown in `chant run list`. |
-| `taskQueue` | `string?` | Temporal task queue. Defaults to `name`. |
-| `namespace` | `string?` | Temporal namespace. Defaults to the active profile's namespace. |
 | `phases` | `PhaseDefinition[]` | Ordered execution phases. |
 | `depends` | `string[]?` | Other Op names that must complete before this Op can run. |
 | `onFailure` | `PhaseDefinition[]?` | Compensation phases run on terminal failure. |
-| `searchAttributes` | `Record<string, string>?` | Temporal search attributes to upsert at workflow start. |
+| `labels` | `Record<string, string>?` | Discovery keys. Upserted as search attributes at workflow start on the Temporal path. |
 
 ## Phases and steps
 
@@ -214,12 +212,11 @@ An `OpConfig` is already inert data — no functions, no closures, no runtime re
 
 ```json
 {
-  "formatVersion": "1.0",
+  "formatVersion": "2.0",
   "name": "alb-deploy",
   "overview": "...",
-  "taskQueue": "alb-deploy",
   "depends": [],
-  "searchAttributes": {},
+  "labels": {},
   "phases": [
     {
       "name": "Deploy",

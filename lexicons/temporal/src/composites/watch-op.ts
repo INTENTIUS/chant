@@ -77,8 +77,7 @@ export function WatchOp(config: WatchOpConfig): WatchOpResources {
   const op = Op({
     name: config.name,
     overview: `Periodically snapshot and diff the ${config.env} environment`,
-    taskQueue,
-    searchAttributes: {
+    labels: {
       Watch: "true",
       Env: config.env,
     },

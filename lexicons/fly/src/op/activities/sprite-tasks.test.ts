@@ -98,7 +98,6 @@ describe("Managed Agents session Op (#847)", () => {
     const op: OpConfig = {
       name: "managed-agent-session",
       overview: "one session end-to-end",
-      taskQueue: "sprites",
       phases: [
         phase("Create", [spriteCreate({ name: SESSION })]),
         phase("Secure", [

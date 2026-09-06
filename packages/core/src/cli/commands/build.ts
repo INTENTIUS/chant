@@ -15,6 +15,9 @@ import { resolveCliBuildParams } from "../build-params-cli";
 import type { Serializer, SerializerResult } from "../../serializer";
 import type { LexiconPlugin } from "../../lexicon";
 import { runPostSynthChecks, type PostSynthDiagnostic } from "../../lint/post-synth";
+import { isOpEntity } from "../../op/resource";
+import { serializeOpIR } from "../../op/op-ir";
+import type { OpConfig } from "../../op/types";
 import { coreReceiptChecks } from "../../lint/receipt-checks";
 import { coreOutputChecks } from "../../lint/output-checks";
 import { coreKnowledgeChecks } from "../../lint/knowledge-checks";
@@ -597,9 +600,16 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
   // any output. Almost always indicates broken imports resolving to undefined
   // (e.g. missing root re-exports from a lexicon) or modules that exported no
   // Declarables. Without this guard, chant writes "{}" and exits 0.
+  //
+  // An Op declaration is the honest exception (#2118): it belongs to no
+  // lexicon partition and its build output is the `op.json` written below,
+  // not a resource manifest, so an Ops-only project legitimately produces no
+  // serializer output and must not be reported as a broken import.
+  const declaredOps = [...result.entities.values()].filter(isOpEntity);
   if (
     result.sourceFileCount > 0 &&
     result.outputs.size === 0 &&
+    declaredOps.length === 0 &&
     result.errors.length === 0 &&
     errors.length === 0
   ) {
@@ -746,6 +756,33 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
     }
     if (opsWritten > 0) {
       console.error(formatInfo(`Wrote ${opsWritten} Op worker file(s) under ${join(options.path ?? ".", "dist", "ops")}/`));
+    }
+
+    // `dist/ops/<name>/op.json` — the Op IR (#1289), written here by core
+    // rather than emitted by a lexicon serializer (#2118). An Op declaration
+    // is core's own entity now (`Chant::Op`, lexicon `chant`) and is held out
+    // of `partitionByLexicon` entirely, so this is the one place its build
+    // output is produced: a deterministic, engine-neutral restatement of the
+    // step graph that anything can read without importing chant.
+    let irWritten = 0;
+    for (const entity of declaredOps) {
+      const config = (entity as unknown as { props?: OpConfig }).props;
+      if (!config?.name) continue;
+      try {
+        const targetPath = join(projectDist, "ops", config.name, "op.json");
+        mkdirSync(dirname(targetPath), { recursive: true });
+        writeFileSync(targetPath, serializeOpIR(config));
+        irWritten += 1;
+      } catch (err) {
+        errors.push(
+          formatError({
+            message: `Failed to write op.json for Op "${config.name}": ${err instanceof Error ? err.message : String(err)}`,
+          }),
+        );
+      }
+    }
+    if (irWritten > 0) {
+      console.error(formatInfo(`Wrote ${irWritten} op.json file(s) under ${join(options.path ?? ".", "dist", "ops")}/`));
     }
 
     if (options.output) {

@@ -395,8 +395,8 @@ describe("collectEntities with composites", () => {
 
 describe("collectEntities — default exports (op files)", () => {
   test("two files with `export default` do not collide (keyed per file)", () => {
-    const apply = createMockEntity("Temporal::Op");
-    const reconcile = createMockEntity("Temporal::Op");
+    const apply = createMockEntity("Chant::Op");
+    const reconcile = createMockEntity("Chant::Op");
     const result = collectEntities([
       { file: "ops/apply.op.ts", exports: { default: apply } },
       { file: "ops/reconcile.op.ts", exports: { default: reconcile } },
@@ -409,7 +409,7 @@ describe("collectEntities — default exports (op files)", () => {
   });
 
   test("a single default export is collected (not dropped)", () => {
-    const op = createMockEntity("Temporal::Op");
+    const op = createMockEntity("Chant::Op");
     const result = collectEntities([{ file: "ops/deploy.op.ts", exports: { default: op } }]);
     expect(result.get("deploy")).toBe(op);
   });

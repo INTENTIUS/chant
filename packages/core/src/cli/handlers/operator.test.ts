@@ -14,6 +14,7 @@ const appendGateResolutionMock = vi.fn();
 const appendPendingGateMock = vi.fn();
 const readGateResolutionsMock = vi.fn();
 const readGateLedgerMock = vi.fn();
+const readRunLedgerMock = vi.fn();
 const pushLifecycleMock = vi.fn();
 
 vi.mock("../../op/operator", async () => {
@@ -41,6 +42,10 @@ vi.mock("../../lifecycle/lease", async () => {
 vi.mock("../../lifecycle/converge-ledger", async () => {
   const actual = await vi.importActual<typeof import("../../lifecycle/converge-ledger")>("../../lifecycle/converge-ledger");
   return { ...actual, readConvergeLedger: (...args: unknown[]) => readConvergeLedgerMock(...args) };
+});
+vi.mock("../../lifecycle/run-ledger", async () => {
+  const actual = await vi.importActual<typeof import("../../lifecycle/run-ledger")>("../../lifecycle/run-ledger");
+  return { ...actual, readRunLedger: (...args: unknown[]) => readRunLedgerMock(...args) };
 });
 vi.mock("../../lifecycle/gate-ledger", async () => {
   const actual = await vi.importActual<typeof import("../../lifecycle/gate-ledger")>("../../lifecycle/gate-ledger");
@@ -153,7 +158,7 @@ describe("runOperatorStatus", () => {
 
   test("--json emits one row per discovered ConvergeOp with last tick, lease, and pending gates", async () => {
     discoverConvergeOpsMock.mockResolvedValue({
-      ops: [{ config: { name: "staging-converge", searchAttributes: { Env: "staging" } } }],
+      ops: [{ config: { name: "staging-converge", labels: { Env: "staging" } } }],
       errors: [],
     });
     readConvergeLedgerMock.mockResolvedValue({
@@ -191,7 +196,7 @@ describe("runOperatorStatus", () => {
   // and the only affordance a renderer could offer was a shell command.
   test("a gated outcome's approval url rides onto the pending-gate row", async () => {
     discoverConvergeOpsMock.mockResolvedValue({
-      ops: [{ config: { name: "staging-converge", searchAttributes: { Env: "staging" } } }],
+      ops: [{ config: { name: "staging-converge", labels: { Env: "staging" } } }],
       errors: [],
     });
     readConvergeLedgerMock.mockResolvedValue({
@@ -229,7 +234,7 @@ describe("runOperatorStatus", () => {
 
   test("the human render prints the address under the pending gate", async () => {
     discoverConvergeOpsMock.mockResolvedValue({
-      ops: [{ config: { name: "staging-converge", searchAttributes: { Env: "staging" } } }],
+      ops: [{ config: { name: "staging-converge", labels: { Env: "staging" } } }],
       errors: [],
     });
     readConvergeLedgerMock.mockResolvedValue({
@@ -259,7 +264,7 @@ describe("runOperatorStatus", () => {
 
   test("a gate resolved after the tick that recorded it is no longer pending", async () => {
     discoverConvergeOpsMock.mockResolvedValue({
-      ops: [{ config: { name: "staging-converge", searchAttributes: { Env: "staging" } } }],
+      ops: [{ config: { name: "staging-converge", labels: { Env: "staging" } } }],
       errors: [],
     });
     readConvergeLedgerMock.mockResolvedValue({
@@ -484,10 +489,65 @@ describe("runOperatorLog", () => {
 
   beforeEach(() => {
     discoverConvergeOpsMock.mockResolvedValue({
-      ops: [{ config: { name: "staging-converge", searchAttributes: { Env: "staging" } } }],
+      ops: [{ config: { name: "staging-converge", labels: { Env: "staging" } } }],
       errors: [],
     });
     readGateResolutionsMock.mockResolvedValue({ records: [], malformed: 0 });
+    readRunLedgerMock.mockResolvedValue({ records: [], malformed: 0 });
+  });
+
+  /** One Op-run record (#2118) as `readRunLedger` returns it. */
+  function run(over: Record<string, unknown> = {}) {
+    return {
+      version: 1,
+      id: "99999999-8888-7777-6666-555555555555",
+      op: "staging-converge",
+      env: "staging",
+      started: "2026-01-01T00:29:00.000Z",
+      ended: "2026-01-01T00:30:00.000Z",
+      status: "ok",
+      labels: { Converge: "true", Env: "staging" },
+      outcomes: { Drift: false },
+      phases: [{ name: "Converge", status: "ok", steps: [{ fn: "convergeTick", status: "ok", durationMs: 60_000 }] }],
+      ...over,
+    };
+  }
+
+  test("run records are merged into the timeline, ordered by the instant they ended (#2118)", async () => {
+    readConvergeLedgerMock.mockResolvedValue({
+      records: [
+        tick({ id: "t1", timestamp: "2026-01-01T00:00:00.000Z" }),
+        tick({ id: "t2", timestamp: "2026-01-01T01:00:00.000Z" }),
+      ],
+      malformed: 0,
+    });
+    readRunLedgerMock.mockResolvedValue({ records: [run({ id: "r1" })], malformed: 0 });
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    expect(await runOperatorLog(ctx({ json: true }))).toBe(0);
+
+    const printed = JSON.parse(logSpy.mock.calls[0][0] as string);
+    expect(printed.entries.map((e: { kind: string; record: { id: string } }) => [e.kind, e.record.id])).toEqual([
+      ["tick", "t1"],
+      ["run", "r1"],
+      ["tick", "t2"],
+    ]);
+    expect(readRunLedgerMock).toHaveBeenCalledWith("staging", "staging-converge", expect.anything());
+    logSpy.mockRestore();
+  });
+
+  test("a run renders one line naming its status and captured outcomes", async () => {
+    readConvergeLedgerMock.mockResolvedValue({ records: [], malformed: 0 });
+    readRunLedgerMock.mockResolvedValue({ records: [run({ id: "r1", status: "gated" })], malformed: 0 });
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    expect(await runOperatorLog(ctx({}))).toBe(0);
+
+    const out = logSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(out).toContain("staging-converge@staging");
+    expect(out).toContain("run gated phases=1 steps=1");
+    expect(out).toContain("Drift=false");
+    logSpy.mockRestore();
   });
 
   test("--json emits the whole tick history, not just the newest row", async () => {
@@ -504,7 +564,7 @@ describe("runOperatorLog", () => {
 
     const printed = JSON.parse(logSpy.mock.calls[0][0] as string);
     expect(printed.entries.map((e: { record: { id: string } }) => e.record.id)).toEqual(["t1", "t2", "t3"]);
-    expect(printed.malformed).toEqual({ converge: 0, gates: 0 });
+    expect(printed.malformed).toEqual({ converge: 0, gates: 0, runs: 0 });
     logSpy.mockRestore();
   });
 
@@ -576,8 +636,8 @@ describe("runOperatorLog", () => {
   test("--op restricts to one ConvergeOp", async () => {
     discoverConvergeOpsMock.mockResolvedValue({
       ops: [
-        { config: { name: "staging-converge", searchAttributes: { Env: "staging" } } },
-        { config: { name: "other-converge", searchAttributes: { Env: "staging" } } },
+        { config: { name: "staging-converge", labels: { Env: "staging" } } },
+        { config: { name: "other-converge", labels: { Env: "staging" } } },
       ],
       errors: [],
     });
@@ -595,8 +655,8 @@ describe("runOperatorLog", () => {
   test("two ConvergeOps sharing one environment read that ledger once", async () => {
     discoverConvergeOpsMock.mockResolvedValue({
       ops: [
-        { config: { name: "staging-converge", searchAttributes: { Env: "staging" } } },
-        { config: { name: "other-converge", searchAttributes: { Env: "staging" } } },
+        { config: { name: "staging-converge", labels: { Env: "staging" } } },
+        { config: { name: "other-converge", labels: { Env: "staging" } } },
       ],
       errors: [],
     });

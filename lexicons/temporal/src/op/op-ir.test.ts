@@ -23,8 +23,8 @@ function makeOp(config: OpConfig): [string, Declarable] {
     config.name,
     {
       [DECLARABLE_MARKER]: true,
-      entityType: "Temporal::Op",
-      lexicon: "temporal",
+      entityType: "Chant::Op",
+      lexicon: "chant",
       kind: "resource",
       props: config,
       attributes: {},
@@ -44,7 +44,7 @@ function representativeOp(): OpConfig {
     name: "full-deploy",
     overview: "Deploy with approval, a seeded effect, and rollback on failure",
     depends: [],
-    searchAttributes: { Team: "infra" },
+    labels: { Team: "infra" },
     phases: [
       phase("Build", [shell("npm run build")]),
       phase("Approve", [gate("approve-deploy", { timeout: "24h", description: "Release manager sign-off" })]),
@@ -85,8 +85,7 @@ describe("op.json IR (#1289)", () => {
     const ir = buildOpIR(representativeOp());
 
     expect(ir.name).toBe("full-deploy");
-    expect(ir.taskQueue).toBe("full-deploy"); // resolved default
-    expect(ir.searchAttributes).toEqual({ Team: "infra" });
+    expect(ir.labels).toEqual({ Team: "infra" });
 
     const [build, approve, deploy, seed, verify] = ir.phases;
     expect(build.steps[0]).toMatchObject({ kind: "activity", fn: "shellCmd", profile: "fastIdempotent" });
@@ -129,8 +128,8 @@ describe("op.json IR (#1289)", () => {
 
   it("embeds the resolved retry/timeout policy for every referenced profile", () => {
     const ir = buildOpIR(representativeOp());
-    expect(ir.activityProfiles.fastIdempotent).toMatchObject({ startToCloseTimeout: "5m" });
-    expect(ir.activityProfiles.longInfra).toMatchObject({ startToCloseTimeout: "20m" });
+    expect(ir.activityProfiles.fastIdempotent).toMatchObject({ timeout: "5m" });
+    expect(ir.activityProfiles.longInfra).toMatchObject({ timeout: "20m" });
     // No step used k8sWait/humanGate/argoSync/policyCheck.
     expect(ir.activityProfiles.k8sWait).toBeUndefined();
   });
@@ -253,9 +252,8 @@ describe("op.json IR (#1289)", () => {
       formatVersion: "0.9",
       name: "stale-op",
       overview: "A stale op.json from an older chant version",
-      taskQueue: "stale-op",
       depends: [],
-      searchAttributes: {},
+      labels: {},
       phases: [{ name: "Run", parallel: false, steps: [] }],
       onFailure: [],
       activityProfiles: {},
@@ -263,7 +261,7 @@ describe("op.json IR (#1289)", () => {
     };
 
     expect(() => opConfigFromIR(staleIR)).toThrow(
-      /op\.json IR format mismatch: expected "1\.0", got "0\.9"/,
+      /op\.json IR format mismatch: expected "2\.0", got "0\.9"/,
     );
   });
 

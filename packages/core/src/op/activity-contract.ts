@@ -30,7 +30,7 @@
  * the activities it implements and validates them with its own post-synth
  * check (the same `rulePrefix`-per-lexicon pattern every other check in
  * chant already uses), rather than a shared cross-lexicon registry. A
- * `Temporal::Op` step can call an activity contributed by any lexicon, and
+ * `Chant::Op` step can call an activity contributed by any lexicon, and
  * `PostSynthContext.entities` already carries the whole resolved graph to
  * every lexicon's checks, so no new plumbing is needed for that to work.
  */

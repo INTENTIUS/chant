@@ -1,6 +1,6 @@
 /**
  * Codegen helpers shared between Op codegen (`./op/serializer.ts`,
- * `Temporal::Op` → `dist/ops/<name>/*`) and the durable component codegen
+ * `Chant::Op` → `dist/ops/<name>/*`) and the durable component codegen
  * (`./component-op/serializer.ts`, #589 → `dist/components/<name>/*`).
  *
  * Factored out rather than duplicated so a future change to name-mangling or

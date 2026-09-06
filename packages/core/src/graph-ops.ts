@@ -10,7 +10,7 @@ import { setProvenance } from "./provenance";
  * root beside `sourceDir: "src"`), and `chant op` / `chant graph` find them via
  * {@link discoverOps}, which scans from the git root. Join the two scopes: every
  * Op `discoverOps` finds that discovery did not already load becomes a
- * `Temporal::Op` entity in the map, keyed the way discovery keys a default
+ * `Chant::Op` entity in the map, keyed the way discovery keys a default
  * export (the file's basename sans `.op.ts`), so the IR carries the declared
  * DAG whatever the layout. Ops discovery already loaded (same file) are left
  * alone. Returns the op-discovery errors for the caller to surface.

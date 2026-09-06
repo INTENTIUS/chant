@@ -19,7 +19,6 @@ import { spriteCreate, spriteCheckpoint, spriteWriteFile, spriteExec, spriteRead
 export default Op({
   name: "agent-task",
   overview: "Create a sprite, checkpoint, stage input, run, read output, destroy",
-  taskQueue: "sprites",
   phases: [
     phase("Create", [spriteCreate({ name: "task-1", image: "sprites/base:latest" })]),
     phase("Checkpoint", [spriteCheckpoint({ id: "task-1", comment: "pre-run" })]),

@@ -9,6 +9,7 @@ import { LexiconOutput, isLexiconOutput } from "./lexicon-output";
 import { isSecretDeclaration } from "./secret-provenance";
 import { splitReceiptEntities } from "./effect-receipt";
 import { isScenario } from "./lifecycle/scenario";
+import { isOpEntity } from "./op/resource";
 import { AttrRef } from "./attrref";
 import { isAttrRefLike } from "./utils";
 import { isChildProject, type ChildProjectInstance } from "./child-project";
@@ -308,6 +309,13 @@ export function partitionByLexicon(
     // Plan scenarios (#1292) are serializer-neutral the same way: a checkable
     // expectation the CLI reads off the entity map, never output.
     if (isScenario(entity)) continue;
+    // Op declarations (#2118) too. An Op's build output is its `op.json` IR,
+    // and core writes that itself from the entity map (`./cli/commands/build.ts`)
+    // rather than routing it through a lexicon serializer — the Op model, the
+    // executor and the IR are all core's, and no lexicon renders an Op entity
+    // into its own manifest. Keeping them out of every partition means no
+    // "No serializer found" warning fires for core's own `chant` lexicon.
+    if (isOpEntity(entity)) continue;
     const lexicon = entity.lexicon;
     if (!partitions.has(lexicon)) {
       partitions.set(lexicon, new Map());

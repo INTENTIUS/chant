@@ -1,5 +1,5 @@
 /**
- * Op serializer tests — verifies that Temporal::Op entities generate
+ * Op serializer tests — verifies that Chant::Op entities generate
  * the correct workflow.ts, activities.ts, and worker.ts files.
  */
 
@@ -17,8 +17,8 @@ function makeOp(config: OpConfig): [string, Declarable] {
     config.name,
     {
       [DECLARABLE_MARKER]: true,
-      entityType: "Temporal::Op",
-      lexicon: "temporal",
+      entityType: "Chant::Op",
+      lexicon: "chant",
       kind: "resource",
       props: config,
       attributes: {},
@@ -438,16 +438,10 @@ describe("serializeOps()", () => {
       expect(w).toContain("../../../chant.config.js");
     });
 
-    it("uses op name as default task queue when taskQueue not specified", () => {
+    it("polls a task queue named after the Op (#2118 — an Op declares none)", () => {
       const ops = new Map([makeOp({ name: "alb-deploy", overview: "o", phases: [] })]);
       const w = serializeOps(ops)["ops/alb-deploy/worker.ts"];
       expect(w).toContain("alb-deploy");
-    });
-
-    it("uses custom taskQueue when specified", () => {
-      const ops = new Map([makeOp({ name: "my-op", overview: "o", phases: [], taskQueue: "custom-q" })]);
-      const w = serializeOps(ops)["ops/my-op/worker.ts"];
-      expect(w).toContain("custom-q");
     });
 
     it("points workflowsPath at ./workflow.ts (Temporal's bundler reads it directly under tsx)", () => {
@@ -509,7 +503,7 @@ describe("serializeOps()", () => {
       );
     });
 
-    it("3-phase Op with no searchAttributes emits exactly 4 upsert calls", () => {
+    it("3-phase Op with no labels emits exactly 4 upsert calls", () => {
       const ops = new Map([
         makeOp({
           name: "deploy",
@@ -532,13 +526,13 @@ describe("serializeOps()", () => {
       expect(wf).toContain('upsertSearchAttributes({ Phase: ["verify"] });');
     });
 
-    it("merges user-provided searchAttributes into the initial call (each value as a 1-element array)", () => {
+    it("merges the Op's labels into the initial call (each value as a 1-element array)", () => {
       const ops = new Map([
         makeOp({
           name: "deploy",
           overview: "o",
           phases: [{ name: "Build", steps: [] }],
-          searchAttributes: { Region: "us-east-1", Environment: "prod" },
+          labels: { Region: "us-east-1", Environment: "prod" },
         }),
       ]);
       const wf = serializeOps(ops)["ops/deploy/workflow.ts"];

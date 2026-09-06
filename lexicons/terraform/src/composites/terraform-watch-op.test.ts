@@ -169,7 +169,7 @@ describe("TerraformWatchOp on a live root (#2105)", () => {
 
   test("the Op is marked live, and no plan file is named anywhere", () => {
     const op = live();
-    expect(op.searchAttributes).toMatchObject({ TerraformMode: "live" });
+    expect(op.labels).toMatchObject({ TerraformMode: "live" });
     expect(JSON.stringify(op)).not.toContain("chant.tfplan");
   });
 
@@ -244,17 +244,16 @@ describe("TerraformWatchOp schedule (#2087)", () => {
       spec: { cronExpressions: ["0 6 * * *"] },
       action: { workflowType: "appWatchWorkflow", taskQueue: "app-watch" },
     });
-    expect((op as unknown as { props: OpConfig }).props.taskQueue).toBe("app-watch");
+    expect((op as unknown as { props: OpConfig }).props).not.toHaveProperty("taskQueue");
   });
 
-  test("an explicit taskQueue reaches both the Op and the schedule action", () => {
-    const { op, schedule } = TerraformWatchOp({
+  test("an explicit taskQueue reaches the schedule action", () => {
+    const { schedule } = TerraformWatchOp({
       name: "app-watch",
       root: "app",
       schedule: "0 6 * * *",
       taskQueue: "infra",
     });
-    expect((op as unknown as { props: OpConfig }).props.taskQueue).toBe("infra");
     expect(
       ((schedule as unknown as { props: { action: { taskQueue: string } } }).props.action).taskQueue,
     ).toBe("infra");

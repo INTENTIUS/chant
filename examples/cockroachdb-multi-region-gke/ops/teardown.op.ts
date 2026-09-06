@@ -19,8 +19,7 @@ const REGIONS = ["east", "central", "west"] as const;
 export default Op({
   name: "crdb-teardown",
   overview: "Destroy the CockroachDB estate — workloads, then clusters, then the VPC",
-  taskQueue: "crdb",
-  searchAttributes: { Estate: "crdb-multi-region" },
+  labels: { Estate: "crdb-multi-region" },
 
   phases: [
     // Without the mgmt context every Config Connector delete below is a

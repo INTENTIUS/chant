@@ -13,7 +13,6 @@ import { Op, phase, shell, build, gcpApply, gcpDelete } from "@intentius/chant-l
 export default Op({
   name: "local-gcp",
   overview: "floci-gcp up → build bucket → gcpApply (REST) → verify → down",
-  taskQueue: "local-gcp",
   phases: [
     phase("Emulator", [
       shell("docker run -d --rm --name chant-floci-gcp -p 4588:4588 floci/floci-gcp:latest"),

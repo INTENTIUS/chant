@@ -297,7 +297,7 @@ export const temporalSerializer: Serializer = {
       else if (et === "Temporal::Namespace") namespaces.set(name, entity);
       else if (et === "Temporal::SearchAttribute") searchAttrs.set(name, entity);
       else if (et === "Temporal::Schedule") schedules.set(name, entity);
-      else if (et === "Temporal::Op") ops.set(name, entity);
+      else if (et === "Chant::Op") ops.set(name, entity);
     }
 
     const primary = serializeDockerCompose(servers);

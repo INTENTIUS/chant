@@ -15,7 +15,6 @@ import { Op, phase, build, kubectlApply, gate, shell } from "@intentius/chant-le
 export default Op({
   name: "deploy-gated",
   overview: "Build, pause for human approval, then apply — durable on Temporal",
-  taskQueue: "getting-started-deploy",
   phases: [
     // Paths are relative to the example dir (where `chant run` is invoked).
     phase("Build", [build(".")]),

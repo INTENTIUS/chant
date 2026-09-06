@@ -10,7 +10,6 @@ import { Op, phase, build, awsApply, flociUp, flociDown, httpCheck } from "@inte
 export default Op({
   name: "aws",
   overview: "AWS: S3 bucket → Floci (CloudFormation API), local, no account",
-  taskQueue: "trio-aws",
   phases: [
     phase("Emulator", [flociUp({ dockerSocket: true })]),
     phase("Build", [build(".", { script: "build:aws" })]),

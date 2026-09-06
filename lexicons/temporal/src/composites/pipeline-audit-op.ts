@@ -48,7 +48,7 @@ export interface PipelineAuditOpConfig {
    * @default "report"
    */
   onFinding?: PipelineAuditMode;
-  /** Override the task queue. Defaults to `name`. */
+  /** The task queue the generated `TemporalSchedule`'s action targets. Defaults to `name`. */
   taskQueue?: string;
 }
 
@@ -66,8 +66,7 @@ export function PipelineAuditOp(config: PipelineAuditOpConfig): PipelineAuditOpR
   const op = Op({
     name: config.name,
     overview: "Resolve pipeline include/component/image references against live upstreams and report drift",
-    taskQueue,
-    searchAttributes: {
+    labels: {
       Audit: "true",
       Surface: "gitlab-pipeline",
     },

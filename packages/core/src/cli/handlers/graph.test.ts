@@ -233,14 +233,14 @@ describe("runGraph", () => {
         filePath: file,
       });
 
-      test("an op discoverOps finds at the project root becomes a Temporal::Op node", async () => {
+      test("an op discoverOps finds at the project root becomes a Chant::Op node", async () => {
         lintClean(); discovered();
         discoverOpsMock.mockResolvedValue({ ops: new Map([["deploy", rootOp("/proj/deploy.op.ts")]]), errors: [] });
         const exit = await runGraph({ args: makeArgs({ format: "ir", path: "/proj", detail: 3 }), plugins: [], serializers: [] });
         expect(exit).toBe(0);
         const ir = JSON.parse(stdoutBuf.join("\n"));
         const node = ir.nodes.find((n: { id: string }) => n.id === "deploy");
-        expect(node).toMatchObject({ kind: "Temporal::Op", lexicon: "temporal", sourceLoc: { file: "deploy.op.ts" } });
+        expect(node).toMatchObject({ kind: "Chant::Op", lexicon: "chant", sourceLoc: { file: "deploy.op.ts" } });
         expect(node.attrs.phases[0].name).toBe("Apply");
         expect(node.attrs.depends).toEqual(["infra"]);
       });
@@ -248,7 +248,7 @@ describe("runGraph", () => {
       test("an op discovery already loaded from sourceDir is not added twice", async () => {
         lintClean();
         const entities = sampleEntities();
-        entities.set("deploy", decl({ lexicon: "temporal", entityType: "Temporal::Op", props: { name: "deploy", phases: [] } }));
+        entities.set("deploy", decl({ lexicon: "chant", entityType: "Chant::Op", props: { name: "deploy", phases: [] } }));
         discoverMock.mockResolvedValue({ entities, errors: [], dependencies: new Map(), sourceFiles: ["/proj/src/deploy.op.ts"] });
         discoverOpsMock.mockResolvedValue({ ops: new Map([["deploy", rootOp("/proj/src/deploy.op.ts")]]), errors: [] });
         const exit = await runGraph({ args: makeArgs({ format: "ir", path: "/proj", detail: 3 }), plugins: [], serializers: [] });

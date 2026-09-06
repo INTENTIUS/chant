@@ -17,8 +17,8 @@ describe("Op()", () => {
   it("returns a Declarable with correct lexicon and entityType", () => {
     const op = Op({ name: "my-op", overview: "Test op", phases: [] });
     expect(op[DECLARABLE_MARKER]).toBe(true);
-    expect(op.lexicon).toBe("temporal");
-    expect(op.entityType).toBe("Temporal::Op");
+    expect(op.lexicon).toBe("chant");
+    expect(op.entityType).toBe("Chant::Op");
     expect(op.kind).toBe("resource");
   });
 
@@ -50,10 +50,10 @@ describe("Op()", () => {
     expect(Array.isArray(props.onFailure)).toBe(true);
   });
 
-  it("stores optional taskQueue in props", () => {
-    const op = Op({ name: "op", overview: "o", phases: [], taskQueue: "custom-queue" });
+  it("stores optional labels in props", () => {
+    const op = Op({ name: "op", overview: "o", phases: [], labels: { Converge: "true", Env: "staging" } });
     const props = opProps(op);
-    expect(props.taskQueue).toBe("custom-queue");
+    expect(props.labels).toEqual({ Converge: "true", Env: "staging" });
   });
 });
 

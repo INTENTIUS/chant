@@ -14,7 +14,6 @@ import { Op, phase, activity, flociUp, build, flociDown } from "@intentius/chant
 export default Op({
   name: "local-aws",
   overview: "Floci up → build → cfn deploy → Floci down: a no-account local AWS deploy",
-  taskQueue: "local-aws",
   phases: [
     phase("Emulator", [
       flociUp({ dockerSocket: true }),
