@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { applyResult } from "@intentius/chant/apply";
+import { applyResult } from "../../apply";
 import { defaultOutput, nativeApply, compensateApply, hasNativeRollback } from "./apply";
 import type { K8sApplier, AzureApplier, GcpApplier, FlyApplier, AwsApplier, AwsRollback } from "./apply";
 

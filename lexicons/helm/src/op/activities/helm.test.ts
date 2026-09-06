@@ -46,7 +46,11 @@ const ledger = vi.hoisted(() => ({
   outcome: undefined as unknown,
 }));
 
-vi.mock("node:child_process", async () => {
+// Partial, via `importOriginal`: `@intentius/chant/op` reaches the base
+// activities now (chant #2114), and modules on that path promisify
+// `execFile` at load. A wholesale replacement of node:child_process would
+// make them fail to import rather than fail an assertion.
+vi.mock("node:child_process", async (importOriginal) => {
   const { readFileSync, readdirSync, statSync } = await import("node:fs");
   const { join } = await import("node:path");
   const snapshotDir = (dir: string, rel = ""): Record<string, string> => {
@@ -99,7 +103,7 @@ vi.mock("node:child_process", async () => {
     if (helm.fail) throw new Error("Error: UPGRADE FAILED: context deadline exceeded");
     return { stdout: "Release deployed\n", stderr: "" };
   };
-  return { exec };
+  return { ...(await importOriginal<typeof import("node:child_process")>()), exec };
 });
 
 vi.mock("@intentius/chant/components/auto-release", () => ({

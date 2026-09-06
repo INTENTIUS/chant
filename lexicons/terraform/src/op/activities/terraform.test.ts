@@ -53,7 +53,11 @@ function execError(code: number, stderr: string, stdout = ""): Error & { code: n
   return Object.assign(new Error(`Command failed (exit ${code})`), { code, stdout, stderr });
 }
 
-vi.mock("node:child_process", () => {
+// Partial, via `importOriginal`: `@intentius/chant/op` reaches the base
+// activities now (chant #2114), and modules on that path promisify
+// `execFile` at load. A wholesale replacement of node:child_process would
+// make them fail to import rather than fail an assertion.
+vi.mock("node:child_process", async (importOriginal) => {
   const custom = Symbol.for("nodejs.util.promisify.custom");
   const exec = ((_cmd: string, _opts: unknown, cb?: (...a: unknown[]) => void) => {
     cb?.(new Error("unmocked exec path"));
@@ -78,7 +82,7 @@ vi.mock("node:child_process", () => {
     }
     return { stdout: "", stderr: "" };
   };
-  return { exec };
+  return { ...(await importOriginal<typeof import("node:child_process")>()), exec };
 });
 
 // ── A real project config to resolve roots against ──────────────────────────

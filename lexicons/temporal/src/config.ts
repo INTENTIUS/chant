@@ -35,134 +35,41 @@
  */
 
 /**
- * Activity timeout and retry configuration for infrastructure activity groups.
+ * Activity timeout and retry profiles.
  *
- * Pre-built profiles match the four activity groups typically seen in infra workflows:
- * fast/idempotent operations, long-running infra (GKE, kubectl apply --wait),
- * K8s wait loops, and human-gate activities.
+ * The table itself moved to core as `ACTIVITY_PROFILES` (chant #2114) — a
+ * timeout and a backoff coefficient were never Temporal's. These two names are
+ * kept as aliases so `@intentius/chant-lexicon-temporal/config` (which the
+ * generated workflow imports) and every existing `TEMPORAL_ACTIVITY_PROFILES`
+ * call site resolve unchanged until #2116 deletes this lexicon.
  *
- * @example
- * ```ts
- * import { TEMPORAL_ACTIVITY_PROFILES } from "@intentius/chant-lexicon-temporal";
- * import { proxyActivities } from "@temporalio/workflow";
+ * The table is derived rather than re-exported, because `proxyActivities`
+ * validates the object it is handed: core spells the field `timeout`, Temporal
+ * requires `startToCloseTimeout`. `heartbeatTimeout` is gone on purpose —
+ * `safeHeartbeat` is a no-op now, and an activity declaring a heartbeat timeout
+ * it never meets would be failed by the server for going silent.
  *
- * const { applyInfra } = proxyActivities<typeof infraActivities>(
- *   TEMPORAL_ACTIVITY_PROFILES.longInfra
- * );
- * ```
+ * Sourced from core's profile leaf rather than its `op` barrel: this module is
+ * what the generated workflow imports, and the barrel reaches node:fs/child_process
+ * through the activity registry — which the Temporal workflow sandbox forbids.
  */
 import type { TemporalConfig } from "./config-schema";
+import { ACTIVITY_PROFILES, type ActivityProfile } from "@intentius/chant/op/activity-profiles";
 
 export interface TemporalActivityProfile {
-  /** Maximum time allowed for a single activity execution attempt. */
+  /** Maximum time allowed for a single activity execution attempt. Core's `timeout`. */
   startToCloseTimeout: string;
-  /**
-   * Time after the last heartbeat before Temporal marks the activity as timed out.
-   * Required for activities that call `activity.heartbeat()` to signal liveness.
-   */
-  heartbeatTimeout?: string;
-  /** Retry policy for failed activity attempts. */
-  retry?: {
-    /** Initial wait before the first retry (e.g. "5s"). */
-    initialInterval?: string;
-    /** Multiplier applied to the interval on each retry (e.g. 2). */
-    backoffCoefficient?: number;
-    /** Maximum number of attempts including the first (0 = unlimited). */
-    maximumAttempts?: number;
-    /** Cap on retry intervals (e.g. "5m"). */
-    maximumInterval?: string;
-    /**
-     * Error names (`Error.name`) that fail immediately without retry. Honored
-     * in both modes: the generated worker spreads this profile into
-     * `proxyActivities`, so Temporal's RetryPolicy uses it; the local executor
-     * reads it directly to short-circuit its retry loop.
-     */
-    nonRetryableErrorTypes?: string[];
-  };
+  /** Retry policy for failed activity attempts — passed through unchanged. */
+  retry?: ActivityProfile["retry"];
 }
 
-/**
- * Named activity profiles for common infrastructure workflow patterns.
- *
- * Import and spread into `proxyActivities()` so retry/timeout configuration
- * lives in the lexicon rather than inline in workflow code.
- */
-export const TEMPORAL_ACTIVITY_PROFILES = {
-  /**
-   * Fast, idempotent operations: `chant build`, `kubectl apply` without `--wait`,
-   * fetching nameservers, reading cluster status.
-   */
-  fastIdempotent: {
-    startToCloseTimeout: "5m",
-    retry: { maximumAttempts: 3, initialInterval: "5s", backoffCoefficient: 2 },
-  },
-
-  /**
-   * Long-running infra: GKE cluster creation via Config Connector (~10-20 min),
-   * `kubectl apply --wait` for large resource sets, Helm installs.
-   * Must heartbeat; 60 s silence → Temporal marks the activity dead.
-   */
-  longInfra: {
-    startToCloseTimeout: "20m",
-    heartbeatTimeout: "60s",
-    retry: { maximumAttempts: 3, initialInterval: "30s", backoffCoefficient: 2 },
-  },
-
-  /**
-   * K8s wait loops: polling for StatefulSet rollout, ExternalDNS A-records,
-   * DNS propagation. Medium timeout with heartbeating.
-   */
-  k8sWait: {
-    startToCloseTimeout: "15m",
-    heartbeatTimeout: "60s",
-    // A terminal-state resource (waitForReady's ReadinessFailedError) will never
-    // become ready — fail fast instead of exhausting retries.
-    retry: {
-      maximumAttempts: 3,
-      initialInterval: "10s",
-      backoffCoefficient: 2,
-      nonRetryableErrorTypes: ["ReadinessFailedError"],
-    },
-  },
-
-  /**
-   * Human-gate activities: waiting for an operator action (DNS delegation, approval).
-   * Very long timeout, single attempt — no retry on human-gate timeouts.
-   */
-  humanGate: {
-    startToCloseTimeout: "48h",
-    heartbeatTimeout: "90s",
-    retry: { maximumAttempts: 1 },
-  },
-
-  /**
-   * Argo CD sync waits: poll an Application until `health=Healthy && sync=Synced`
-   * (`waitForArgoSync`). Long timeout for slow first syncs, 60s heartbeat, cheap
-   * idempotent retries — re-polling is free. A terminal-unhealthy Application
-   * fails fast via `ArgoSyncFailedError` (non-retryable).
-   */
-  argoSync: {
-    startToCloseTimeout: "30m",
-    heartbeatTimeout: "60s",
-    retry: {
-      maximumAttempts: 5,
-      initialInterval: "10s",
-      backoffCoefficient: 2,
-      maximumInterval: "1m",
-      nonRetryableErrorTypes: ["ArgoSyncFailedError"],
-    },
-  },
-
-  /**
-   * Organizational policy gate (`policyGate`): build the project and evaluate
-   * `lint.policies`. Deterministic — a violation is the same on every attempt —
-   * so a single attempt, short timeout, no retry. Fails fast in both executors.
-   */
-  policyCheck: {
-    startToCloseTimeout: "5m",
-    retry: { maximumAttempts: 1 },
-  },
-} as const satisfies Record<string, TemporalActivityProfile>;
+export const TEMPORAL_ACTIVITY_PROFILES: Record<keyof typeof ACTIVITY_PROFILES, TemporalActivityProfile> =
+  Object.fromEntries(
+    Object.entries(ACTIVITY_PROFILES).map(([name, profile]) => [
+      name,
+      { startToCloseTimeout: profile.timeout, ...(profile.retry ? { retry: profile.retry } : {}) },
+    ]),
+  ) as Record<keyof typeof ACTIVITY_PROFILES, TemporalActivityProfile>;
 
 export interface TemporalWorkerProfile {
   /** Temporal server gRPC address. e.g. "localhost:7233" or "myns.a2dd6.tmprl.cloud:7233" */

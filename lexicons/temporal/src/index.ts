@@ -30,7 +30,8 @@ export type {
   TemporalScheduleProps,
 } from "./resources";
 
-// Worker profile config shape + activity profiles
+// Worker profile config shape + activity profiles (the profile table itself
+// lives in core now — chant #2114 — and is re-exported under its old name).
 export type { TemporalWorkerProfile, TemporalChantConfig, TemporalActivityProfile } from "./config";
 export { TEMPORAL_ACTIVITY_PROFILES } from "./config";
 
@@ -67,11 +68,11 @@ export type { ConvergeOpConfig, ConvergeOpResources, ConvergeDial } from "./comp
 // `kubectlApply` from `@intentius/chant-lexicon-k8s`).
 //
 // build, shell, waitForStack, lifecycleSnapshot, teardown, envTeardown,
-// httpCheck, policyGate, and guardValidate ARE this lexicon's own activities,
-// so they come from `./op/builders` (fully typed, deriving from each
-// activity's own `*Args` interface) instead — same names, same import path,
-// no call-site change required. See `builders-exports.test.ts` in core for
-// the guard that keeps this split intentional rather than drifting.
+// httpCheck, policyGate and guardValidate used to be typed here, over this
+// lexicon's own activities. chant #2114 moved those activities into core and
+// their typed wrappers with them, so all nine come straight from
+// `@intentius/chant/op` again — one source, same names, same import path.
+// See `builders-exports.test.ts` in core for the guard on that list.
 export {
   Op,
   phase,
@@ -103,9 +104,17 @@ export {
   gcpApply,
   gcpDelete,
   stepOutput,
+  build,
+  shell,
+  waitForStack,
+  lifecycleSnapshot,
+  teardown,
+  envTeardown,
+  httpCheck,
+  policyGate,
+  guardValidate,
 } from "@intentius/chant/op";
 export type {
   OpConfig, PhaseDefinition, StepDefinition, ActivityStep, GateStep, EffectStep,
   StepOutputRef, NamedActivityStep, WithStepRefs,
 } from "@intentius/chant/op";
-export { build, shell, waitForStack, lifecycleSnapshot, teardown, envTeardown, httpCheck, policyGate, guardValidate } from "./op/builders";

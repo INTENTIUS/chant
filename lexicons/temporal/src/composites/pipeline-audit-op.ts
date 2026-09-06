@@ -27,7 +27,7 @@
 
 import { Op, phase, OpResource } from "@intentius/chant/op";
 import { TemporalSchedule } from "../resources";
-import type { PipelineAuditMode } from "../op/activities/pipeline-audit";
+import type { PipelineAuditMode } from "@intentius/chant/op/activities/pipeline-audit";
 
 function kebabToCamel(s: string): string {
   return s.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());

@@ -4,13 +4,13 @@
  * observe (shell to `chant lifecycle plan`/`chant components status`, the
  * same CLI surface `reconcilePr`/`lifecycleDiff` already shell to — see
  * ./reconcile.ts, ./lifecycle.ts) -> classify (the pure rule table
- * evaluator, `@intentius/chant/op`'s `evaluatePredicate`, then this
+ * evaluator, core's `evaluatePredicate`, then this
  * activity's own runtime backstop re-classifying each dispatch target's verb
  * class before it runs — see `verbClassAllowedToDispatch` below) -> dispatch
  * within budget (`chant run <op>`, the existing local runner — a gated
  * dispatched Op ends `gated` with its pending fact on the ledger, exit code 3,
  * which this tick turns into a `"gated"` outcome) -> record (one line to the
- * converge ledger, `@intentius/chant/lifecycle/converge-ledger`).
+ * converge ledger, `../../lifecycle/converge-ledger`).
  *
  * Deliberately monolithic, matching `reconcilePr`'s shape (one activity that
  * derives the change set, regenerates, and opens the PR) rather than
@@ -35,14 +35,13 @@ import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import {
   evaluatePredicate,
-  classifyOpVerbClass,
-  discoverOps,
   type ConvergeRule,
   type RuleAction,
-  type OpVerbClass,
   DEFAULT_FLAP_THRESHOLD,
-} from "@intentius/chant/op";
-import { deriveSymptoms, type ConvergeSymptom } from "@intentius/chant/lifecycle/symptoms";
+} from "../converge-rule";
+import { classifyOpVerbClass, type OpVerbClass } from "../op-verb-class";
+import { discoverOps } from "../discover";
+import { deriveSymptoms, type ConvergeSymptom } from "../../lifecycle/symptoms";
 import {
   appendConvergeRecord,
   readConvergeLedger,
@@ -51,11 +50,11 @@ import {
   sanitizeLedgerText,
   type ConvergeRuleOutcome,
   type ConvergeTickRecord,
-} from "@intentius/chant/lifecycle/converge-ledger";
-import { resolveApprovalUrl } from "@intentius/chant/lifecycle/gate-ledger";
-import { fetchLifecycle, pushLifecycle } from "@intentius/chant/lifecycle/git";
-import type { ChangeSet } from "@intentius/chant/lifecycle/change-set";
-import type { ComponentStatusRow } from "@intentius/chant/lifecycle/status";
+} from "../../lifecycle/converge-ledger";
+import { resolveApprovalUrl } from "../../lifecycle/gate-ledger";
+import { fetchLifecycle, pushLifecycle } from "../../lifecycle/git";
+import type { ChangeSet } from "../../lifecycle/change-set";
+import type { ComponentStatusRow } from "../../lifecycle/status";
 
 const execAsync = promisify(exec);
 

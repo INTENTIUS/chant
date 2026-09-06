@@ -1,52 +1,25 @@
 /**
  * Activity runtime helpers shared by every Op activity implementation, wherever
- * it lives — the base activities in the temporal lexicon and the cloud-specific
- * appliers relocated into the aws/gcp/azure lexicons. Hosting them in core keeps
- * a cloud lexicon from having to depend on the temporal lexicon just to
- * heartbeat or sleep.
+ * it lives — the base activities in `./activities` and the product-specific
+ * appliers in the aws/gcp/azure/k8s/fly lexicons. Hosting them in core keeps a
+ * lexicon from depending on another lexicon just to sleep between polls.
  */
-
-interface ActivityContext {
-  current(): { heartbeat(details?: unknown): void };
-}
-
-// undefined = not yet attempted; null = unavailable; object = resolved Context.
-let cachedContext: ActivityContext | null | undefined;
-let loading: Promise<void> | undefined;
-
-function ensureContext(): void {
-  if (cachedContext !== undefined || loading) return;
-  // Variable specifier so bundlers/tsc do not statically require the optional dep.
-  const spec = "@temporalio/activity";
-  loading = import(spec)
-    .then((mod: unknown) => {
-      cachedContext = (mod as { Context?: ActivityContext }).Context ?? null;
-    })
-    .catch(() => {
-      cachedContext = null;
-    });
-}
 
 /**
- * Emit an activity heartbeat if running under a Temporal worker; otherwise no-op.
+ * No-op.
  *
- * The first call kicks off a one-time lazy load of `@temporalio/activity` and
- * returns immediately; once resolved, subsequent calls heartbeat. Heartbeats
- * are periodic (every ~15s, well inside the 60s heartbeat timeout), so the
- * single missed first tick is harmless. Under chant's local executor (no
- * Temporal SDK present) it no-ops, and the module imports cleanly without the SDK.
+ * @deprecated Heartbeating was a liveness protocol between a Temporal worker
+ * and a Temporal server. chant's ops run in-process on a machine that keeps
+ * state and leaves a record (chant #2114), so nothing is listening for a
+ * heartbeat and nothing acts on a missed one. An activity that wants to report
+ * progress should write a line — the executor streams an activity's output with
+ * the step record it belongs to.
+ *
+ * Kept as a call-compatible no-op so the lexicons that call it keep compiling;
+ * it goes away with the rest of the Temporal surface.
  */
-export function safeHeartbeat(details?: unknown): void {
-  if (cachedContext === undefined) {
-    ensureContext();
-    return;
-  }
-  if (cachedContext === null) return;
-  try {
-    cachedContext.current().heartbeat(details);
-  } catch {
-    // Not inside an activity execution context — nothing to do.
-  }
+export function safeHeartbeat(_details?: unknown): void {
+  // Intentionally empty.
 }
 
 /**

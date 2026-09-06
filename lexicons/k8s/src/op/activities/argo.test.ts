@@ -7,7 +7,7 @@ import {
 } from "./argo";
 // Activity profiles live centrally in the temporal lexicon (loadProfiles reads
 // them there); argoSync marks ArgoSyncFailedError non-retryable for this activity.
-import { TEMPORAL_ACTIVITY_PROFILES } from "@intentius/chant-lexicon-temporal/config";
+import { ACTIVITY_PROFILES } from "@intentius/chant/op/activity-profiles";
 
 /** A fetcher that returns a scripted sequence of statuses, repeating the last. */
 function scriptedFetcher(sequence: ArgoAppStatus[]): ArgoStatusFetcher {
@@ -67,13 +67,12 @@ describe("waitForArgoSync", () => {
 
 describe("argoSync profile", () => {
   test("is exported with a long timeout and 60s heartbeat", () => {
-    const p = TEMPORAL_ACTIVITY_PROFILES.argoSync;
-    expect(p.startToCloseTimeout).toBe("30m");
-    expect(p.heartbeatTimeout).toBe("60s");
+    const p = ACTIVITY_PROFILES.argoSync;
+    expect(p.timeout).toBe("30m");
   });
 
   test("treats ArgoSyncFailedError as non-retryable", () => {
-    expect(TEMPORAL_ACTIVITY_PROFILES.argoSync.retry?.nonRetryableErrorTypes).toContain(
+    expect(ACTIVITY_PROFILES.argoSync.retry?.nonRetryableErrorTypes).toContain(
       "ArgoSyncFailedError",
     );
   });

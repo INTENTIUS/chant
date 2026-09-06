@@ -1,5 +1,5 @@
-import { ApplicationFailure } from "@temporalio/common";
-import { evaluateProjectPolicies } from "@intentius/chant/lint/policy";
+import { nonRetryableFailure } from "../activity-failure";
+import { evaluateProjectPolicies } from "../../lint/policy";
 
 export interface PolicyGateArgs {
   /** Project/source directory to build and evaluate. Default ".". */
@@ -23,7 +23,7 @@ export async function policyGate(args: PolicyGateArgs, _signal?: AbortSignal): P
     const summary = violations
       .map((v) => `[${v.checkId}]${v.entity ? ` ${v.entity}:` : ""} ${v.message}`)
       .join("; ");
-    throw ApplicationFailure.nonRetryable(
+    throw nonRetryableFailure(
       `Organizational policy blocked the apply — ${violations.length} violation(s): ${summary}`,
       "PolicyViolation",
     );

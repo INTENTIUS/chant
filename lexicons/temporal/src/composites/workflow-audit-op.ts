@@ -30,7 +30,7 @@
 
 import { Op, phase, activity, OpResource } from "@intentius/chant/op";
 import { TemporalSchedule } from "../resources";
-import type { WorkflowAuditMode } from "../op/activities/workflow-audit";
+import type { WorkflowAuditMode } from "@intentius/chant/op/activities/workflow-audit";
 
 function kebabToCamel(s: string): string {
   return s.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());

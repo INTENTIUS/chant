@@ -113,8 +113,8 @@ describe("ConvergeOp composite — build-time refusals (#1484)", () => {
 
 describe("ConvergeOp — end-to-end local run (#1484)", () => {
   const PROFILES: Record<string, ActivityProfile> = {
-    fastIdempotent: { startToCloseTimeout: "5m", retry: { maximumAttempts: 1 } },
-    longInfra: { startToCloseTimeout: "20m", retry: { maximumAttempts: 1 } },
+    fastIdempotent: { timeout: "5m", retry: { maximumAttempts: 1 } },
+    longInfra: { timeout: "20m", retry: { maximumAttempts: 1 } },
   };
 
   test("chant run <converge-op>: observes, then ticks, resolving the step-output reference into the tick's args", async () => {

@@ -1,15 +1,11 @@
-import { describe, test, expect, vi, afterEach } from "vitest";
-import { loadActivities, resolveActivity, type ActivityFn } from "./activity-registry";
+import { describe, test, expect } from "vitest";
+import { loadActivities, loadProfiles, resolveActivity, type ActivityFn } from "./activity-registry";
+import { ACTIVITY_PROFILES } from "./activity-profiles";
 
 describe("loadActivities", () => {
-  afterEach(() => {
-    vi.resetModules();
-    vi.doUnmock("@intentius/chant-lexicon-temporal/op/activities");
-  });
-
-  test("loads the lexicon activity library keyed by export name", async () => {
+  test("loads core's own activity library keyed by export name", async () => {
     const activities = await loadActivities();
-    // Real export names from lexicons/temporal/src/op/activities.
+    // Real export names from packages/core/src/op/activities.
     expect(activities.has("shellCmd")).toBe(true);
     expect(activities.has("chantBuild")).toBe(true);
     expect(activities.has("waitForStack")).toBe(true);
@@ -17,15 +13,27 @@ describe("loadActivities", () => {
     expect(typeof activities.get("shellCmd")).toBe("function");
   });
 
-  test("throws a friendly error when the lexicon is not installed", async () => {
-    vi.resetModules();
-    vi.doMock("@intentius/chant-lexicon-temporal/op/activities", () => {
-      throw new Error("Cannot find module");
-    });
-    const { loadActivities: fresh } = await import("./activity-registry");
-    await expect(fresh()).rejects.toThrow(
-      "no activities registered — install `@intentius/chant-lexicon-temporal`",
-    );
+  /**
+   * chant #2114 — the base library used to be `@intentius/chant-lexicon-temporal/
+   * op/activities`, dynamically imported, and `loadActivities` threw "no
+   * activities registered" without it. The activities are core's own now and the
+   * import is static, so an empty lexicon list resolves the whole base surface in
+   * a project that has installed nothing but chant.
+   */
+  test("every base activity resolves with no lexicons configured", async () => {
+    const a = await loadActivities([]);
+    for (const fn of [
+      "shellCmd", "chantBuild", "waitForStack", "lifecycleSnapshot", "lifecycleDiff",
+      "httpCheck", "chantTeardown", "envTeardown", "convergeTick", "reconcilePr",
+      "guardValidate", "policyGate", "workflowSupplyChainAudit", "pipelineSupplyChainAudit",
+      "lexiconUpgrade", "nativeApply",
+    ]) {
+      expect(typeof a.get(fn), `${fn} should resolve from the base library`).toBe("function");
+    }
+  });
+
+  test("loadProfiles returns core's table", async () => {
+    expect(await loadProfiles()).toBe(ACTIVITY_PROFILES);
   });
 });
 
@@ -47,14 +55,15 @@ describe("resolveActivity", () => {
   });
 });
 
-describe("loadActivities — heartbeat-shim safety", () => {
-  test("the activity library loads without @temporalio/activity installed", async () => {
-    // waitForStack (and the relocated kubectlApply/helmInstall/gitlabPipeline)
-    // heartbeat via the lazy shim; if the shim statically required the SDK, this
-    // import would throw (the SDK is not installed in this environment).
+describe("loadActivities — no Temporal SDK on the path", () => {
+  test("the activity library loads with no @temporalio/* package installed", async () => {
+    // The base activities used to reach @temporalio/activity (heartbeats) and
+    // @temporalio/common (ApplicationFailure). Neither is a core dependency, and
+    // this import would throw if one crept back in.
     const activities = await loadActivities();
     expect(activities.has("waitForStack")).toBe(true);
     expect(activities.has("chantBuild")).toBe(true);
+    expect(activities.has("policyGate")).toBe(true);
   });
 });
 
@@ -62,10 +71,10 @@ describe("loadActivities — heartbeat-shim safety", () => {
 // lexicons (#706); the loader pulls them in per the project's configured
 // `lexicons`. Proves the relocation resolves end-to-end.
 describe("loadActivities — multi-lexicon (#706)", () => {
-  test("base (no lexicons): temporal activities present, product activities absent", async () => {
+  test("base (no lexicons): core activities present, product activities absent", async () => {
     const a = await loadActivities();
-    expect(a.has("waitForStack")).toBe(true); // temporal base
-    expect(a.has("shellCmd")).toBe(true); // temporal base
+    expect(a.has("waitForStack")).toBe(true); // core base
+    expect(a.has("shellCmd")).toBe(true); // core base
     expect(a.has("kubectlApply")).toBe(false); // relocated to k8s (#809)
     expect(a.has("k3dUp")).toBe(false); // relocated to k8s (#809), then k3d (#1410)
     expect(a.has("gcpApply")).toBe(false); // relocated to gcp
@@ -117,6 +126,6 @@ describe("loadActivities — multi-lexicon (#706)", () => {
 
   test("unknown lexicon is skipped without throwing", async () => {
     const a = await loadActivities(["definitely-not-a-lexicon"]);
-    expect(a.has("waitForStack")).toBe(true); // temporal base still loads
+    expect(a.has("waitForStack")).toBe(true); // core base still loads
   });
 });

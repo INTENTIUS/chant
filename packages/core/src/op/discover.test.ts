@@ -1,8 +1,12 @@
 import { describe, test, expect, vi, beforeEach } from "vitest";
 import { discoverOps } from "./discover";
 
-// Mock getRuntime to return git root pointing at the repo root
-vi.mock("../runtime-adapter", () => ({
+// Mock getRuntime to return git root pointing at the repo root. Partial, via
+// `importOriginal`: the modules a discovered Op file pulls in reach the rest of
+// this module (`moduleDir`, for the lint presets), and a wholesale replacement
+// would make them fail to load rather than fail an assertion.
+vi.mock("../runtime-adapter", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../runtime-adapter")>()),
   getRuntime: () => ({
     spawn: async (cmd: string[]) => {
       if (cmd[0] === "git" && cmd[1] === "rev-parse") {

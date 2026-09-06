@@ -1,7 +1,7 @@
 import { describe, test, expect } from "vitest";
-import { eq, gt, run, report, when } from "@intentius/chant/op";
-import type { ConvergeSymptom } from "@intentius/chant/lifecycle/symptoms";
-import type { ConvergeTickRecord, ConvergeRuleOutcome } from "@intentius/chant/lifecycle/converge-ledger";
+import { eq, gt, run, report, when } from "../converge-rule";
+import type { ConvergeSymptom } from "../../lifecycle/symptoms";
+import type { ConvergeTickRecord, ConvergeRuleOutcome } from "../../lifecycle/converge-ledger";
 import {
   planConvergeTick,
   verbClassAllowedToDispatch,

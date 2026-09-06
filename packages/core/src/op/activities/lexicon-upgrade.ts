@@ -25,9 +25,9 @@ import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { UpgradeCheckResult, LexiconId } from "@intentius/chant/codegen/pinned-upgrade";
-import type { RollingUpgradeResult, RollingLexicon } from "@intentius/chant/codegen/rolling-upgrade";
-import { bumpForSeverity, bumpPackageJsonVersion } from "@intentius/chant/codegen/version-bump";
+import type { UpgradeCheckResult, LexiconId } from "../../codegen/pinned-upgrade";
+import type { RollingUpgradeResult, RollingLexicon } from "../../codegen/rolling-upgrade";
+import { bumpForSeverity, bumpPackageJsonVersion } from "../../codegen/version-bump";
 
 export { bumpPackageJsonVersion };
 
@@ -342,7 +342,7 @@ let _realApplyBump: ApplyBumpFn | null = null;
 
 async function getRealCheckPinned(): Promise<CheckPinnedFn> {
   if (!_realCheckPinned) {
-    const mod = await import("@intentius/chant/codegen/pinned-upgrade");
+    const mod = await import("../../codegen/pinned-upgrade");
     _realCheckPinned = (opts) => mod.checkPinnedUpgrade(opts);
   }
   return _realCheckPinned;
@@ -350,7 +350,7 @@ async function getRealCheckPinned(): Promise<CheckPinnedFn> {
 
 async function getRealCheckRolling(): Promise<CheckRollingFn> {
   if (!_realCheckRolling) {
-    const mod = await import("@intentius/chant/codegen/rolling-upgrade");
+    const mod = await import("../../codegen/rolling-upgrade");
     _realCheckRolling = (opts) => mod.checkRollingUpgrade(opts);
   }
   return _realCheckRolling;
@@ -358,7 +358,7 @@ async function getRealCheckRolling(): Promise<CheckRollingFn> {
 
 async function getRealApplyBump(): Promise<ApplyBumpFn> {
   if (!_realApplyBump) {
-    const mod = await import("@intentius/chant/codegen/pinned-upgrade");
+    const mod = await import("../../codegen/pinned-upgrade");
     _realApplyBump = (lexicon, lexiconDir, newVersion) =>
       mod.applyPinnedVersionBump(lexicon, lexiconDir, newVersion);
   }
@@ -439,7 +439,7 @@ export async function lexiconUpgrade(args: LexiconUpgradeArgs): Promise<LexiconU
     validationOk = result.validation?.ok ?? true;
     failures = (result.validation?.failures ?? []).map((f) => ({ step: f.step, output: f.output }));
     if (result.validation?.freshSnapshot) {
-      const { serializeSnapshot } = await import("@intentius/chant/codegen/surface-snapshot");
+      const { serializeSnapshot } = await import("../../codegen/surface-snapshot");
       freshSnapshotJson = serializeSnapshot(result.validation.freshSnapshot);
     }
   } else if (isRolling(lexicon)) {
@@ -452,7 +452,7 @@ export async function lexiconUpgrade(args: LexiconUpgradeArgs): Promise<LexiconU
     validationOk = result.validationOk;
     failures = (result.failures ?? []).map((f) => ({ step: f.step, output: f.output }));
     if (result.freshSnapshot) {
-      const { serializeSnapshot } = await import("@intentius/chant/codegen/surface-snapshot");
+      const { serializeSnapshot } = await import("../../codegen/surface-snapshot");
       freshSnapshotJson = serializeSnapshot(result.freshSnapshot);
     }
   } else {
@@ -625,7 +625,7 @@ export async function lexiconUpgrade(args: LexiconUpgradeArgs): Promise<LexiconU
 
     // Write and stage the fresh surface snapshot.
     if (freshSnapshotJson) {
-      const { SNAPSHOT_FILENAME } = await import("@intentius/chant/codegen/lexicon-regen");
+      const { SNAPSHOT_FILENAME } = await import("../../codegen/lexicon-regen");
       const snapshotPath = join(lexiconDir, SNAPSHOT_FILENAME);
       writeFileSync(snapshotPath, freshSnapshotJson, "utf-8");
       await gh(`git add ${shellQuote(snapshotPath)}`).catch(() => {/* best-effort */});

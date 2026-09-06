@@ -36,7 +36,7 @@
  */
 
 import { Op, phase, activity, gate, OpResource } from "@intentius/chant/op";
-import { defaultOutput, hasNativeRollback, type ApplyTarget, type DeleteMode } from "../op/activities/apply";
+import { defaultOutput, hasNativeRollback, type ApplyTarget, type DeleteMode } from "@intentius/chant/op/activities/apply";
 
 export interface ApplyOpConfig {
   /** Op name (kebab-case). */

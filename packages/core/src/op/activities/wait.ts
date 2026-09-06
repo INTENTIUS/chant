@@ -1,6 +1,5 @@
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
-import { safeHeartbeat } from "./heartbeat";
 import { sleep } from "./util";
 
 const execAsync = promisify(exec);
@@ -18,7 +17,12 @@ export interface WaitForStackArgs {
 
 /**
  * Poll until a Kubernetes Deployment or StatefulSet named `name` is fully rolled out.
- * Uses k8sWait profile — 15m timeout, heartbeat every poll.
+ * Uses the `k8sWait` profile — 15m timeout.
+ *
+ * Progress goes to stdout, one line per poll, which is the executor's step-record
+ * channel: the local executor streams an activity's output alongside the step it
+ * belongs to, so a long rollout is visible without a liveness protocol. Nothing
+ * mid-run is durable here by design (chant #2114) — the op re-runs and converges.
  *
  * Deliberately NOT migrated onto the generic `waitForReady` (#957): `kubectl
  * rollout status` encodes rollout-specific semantics — progress-deadline
@@ -36,7 +40,7 @@ export async function waitForStack(args: WaitForStackArgs, signal?: AbortSignal)
   while (true) {
     if (signal?.aborted) throw new Error("waitForStack aborted");
     attempt++;
-    safeHeartbeat({ step: "waitForStack", stack: args.name, attempt });
+    console.log(`[waitForStack] ${args.name}: poll ${attempt}`);
 
     try {
       await execAsync(

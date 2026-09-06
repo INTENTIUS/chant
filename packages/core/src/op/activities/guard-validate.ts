@@ -16,12 +16,12 @@
  * Mirrors `./policy.ts`'s `policyGate`: `report` is the only finding-mode
  * today (the type only admits that one value; `issue`/`pull-request` modes
  * are a follow-up, chant #522), and an error-severity finding throws
- * (`ApplicationFailure.nonRetryable`) so the local executor exits non-zero —
+ * (a non-retryable activity failure) so the local executor exits non-zero —
  * the same gate CI relies on to fail the pipeline — and the same activity
  * blocks a Temporal-orchestrated `ApplyOp` when placed before it.
  */
 import { resolve } from "node:path";
-import { ApplicationFailure } from "@temporalio/common";
+import { nonRetryableFailure } from "../activity-failure";
 
 export interface GuardValidateArgs {
   /**
@@ -194,7 +194,7 @@ export async function guardValidate(args: GuardValidateArgs, _signal?: AbortSign
   const template = args.template ?? resolve(projectPath, "template.json");
   const binary = args.binary ?? "cfn-guard";
 
-  const { getRuntime } = await import("@intentius/chant/runtime-adapter");
+  const { getRuntime } = await import("../../runtime-adapter");
   const rt = getRuntime();
   const result = await rt.spawn([binary, "validate", "-r", args.rules, "-d", template, "--output-format", "json"]);
 
@@ -212,7 +212,7 @@ export async function guardValidate(args: GuardValidateArgs, _signal?: AbortSign
   if (findings.length > 0) {
     console.log(summary);
     const detail = findings.map((f) => `[${f.rule}]${f.entity ? ` ${f.entity}:` : ""} ${f.message}`).join("; ");
-    throw ApplicationFailure.nonRetryable(
+    throw nonRetryableFailure(
       `cfn-guard blocked the build — ${findings.length} violation(s) against ${args.rules}: ${detail}`,
       "GuardViolation",
     );

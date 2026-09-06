@@ -13,8 +13,8 @@ import {
   type CheckRollingFn,
   type BumpPackageVersionFn,
 } from "./lexicon-upgrade";
-import type { UpgradeCheckResult } from "@intentius/chant/codegen/pinned-upgrade";
-import type { RollingUpgradeResult } from "@intentius/chant/codegen/rolling-upgrade";
+import type { UpgradeCheckResult } from "../../codegen/pinned-upgrade";
+import type { RollingUpgradeResult } from "../../codegen/rolling-upgrade";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { writeFileSync, readFileSync } from "node:fs";

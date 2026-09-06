@@ -20,8 +20,8 @@ import { createSpritesFake } from "./sprites-fake";
 // the fake via `SPRITES_BASE_URL`. Fast profiles so retry loops run in ms.
 
 const PROFILES: Record<string, ActivityProfile> = {
-  longInfra: { startToCloseTimeout: "5m", retry: { maximumAttempts: 3, initialInterval: "1ms", backoffCoefficient: 1 } },
-  fastIdempotent: { startToCloseTimeout: "5m", retry: { maximumAttempts: 2, initialInterval: "1ms", backoffCoefficient: 1 } },
+  longInfra: { timeout: "5m", retry: { maximumAttempts: 3, initialInterval: "1ms", backoffCoefficient: 1 } },
+  fastIdempotent: { timeout: "5m", retry: { maximumAttempts: 2, initialInterval: "1ms", backoffCoefficient: 1 } },
 };
 
 let fake: { url: string; close(): Promise<void> };

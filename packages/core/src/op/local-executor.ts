@@ -248,8 +248,8 @@ async function runStep(
   }
 
   const profile = profiles[step.profile ?? DEFAULT_PROFILE] ?? {};
-  const timeoutMs = profile.startToCloseTimeout
-    ? parseDuration(profile.startToCloseTimeout)
+  const timeoutMs = profile.timeout
+    ? parseDuration(profile.timeout)
     : FALLBACK_TIMEOUT_MS;
   const maxAttempts =
     profile.retry?.maximumAttempts && profile.retry.maximumAttempts > 0

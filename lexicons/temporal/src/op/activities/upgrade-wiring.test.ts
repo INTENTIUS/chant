@@ -11,7 +11,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { isRolling, type SupportedLexicon } from "./lexicon-upgrade";
+import { isRolling, type SupportedLexicon } from "@intentius/chant/op/activities/lexicon-upgrade";
 import { IN_SCOPE_LEXICONS } from "../../composites/lexicon-upgrade-op";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..", "..");

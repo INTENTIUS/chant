@@ -2,7 +2,16 @@ import { OpResource } from "./resource";
 import type { OpConfig, PhaseDefinition, StepDefinition, ActivityStep, GateStep, EffectStep } from "./types";
 import { isEffectReceipt, type EffectReceiptDeclaration } from "../effect-receipt";
 import { receiptCheckInput } from "./receipt-store";
-import { makeOutProxy, type StepOutputRef } from "./step-output-ref";
+import { makeOutProxy, type StepOutputRef, type WithStepRefs } from "./step-output-ref";
+import type { ChantBuildArgs } from "./activities/build";
+import type { ShellCmdArgs } from "./activities/shell";
+import type { WaitForStackArgs } from "./activities/wait";
+import type { LifecycleSnapshotArgs } from "./activities/lifecycle";
+import type { ChantTeardownArgs } from "./activities/teardown";
+import type { EnvTeardownArgs } from "./activities/env-teardown";
+import type { HttpCheckArgs } from "./activities/http-check";
+import type { PolicyGateArgs } from "./activities/policy";
+import type { GuardValidateArgs } from "./activities/guard-validate";
 
 /** An `activity()` result — the plain `ActivityStep` shape plus the `.out` reference sugar (#1290). */
 export interface NamedActivityStep extends ActivityStep {
@@ -190,10 +199,25 @@ export function takeProfileAndId(
   return { args, profile, id };
 }
 
-/** Run an npm build script in the given project directory. `opts.script` selects the script (default `build`, e.g. `build:aws`); `opts.env` adds env vars. */
-export const build = (path: string, opts?: Record<string, unknown>): ActivityStep => {
-  const { args, profile } = takeProfile(opts);
-  return activity("chantBuild", { path, ...args }, profile);
+/**
+ * Extra opts every typed base-activity wrapper below accepts alongside its
+ * activity's own fields: the step's `profile` override and its `id` (which
+ * routes to the step, never into args, so `.out` works — chant #1290).
+ */
+type StepOpts = { profile?: ActivityStep["profile"]; id?: string };
+
+/**
+ * Run an npm build script in the given project directory. `opts` is
+ * {@link ChantBuildArgs} itself, minus the positional `path` — `script`
+ * selects the npm script (default `build`, e.g. `build:aws`), `env` adds
+ * env vars.
+ */
+export const build = (
+  path: string,
+  opts?: WithStepRefs<Omit<ChantBuildArgs, "path">> & StepOpts,
+): NamedActivityStep => {
+  const { args, profile, id } = takeProfileAndId(opts as Record<string, unknown> | undefined);
+  return activity("chantBuild", { path, ...args }, { ...(profile ? { profile } : {}), ...(id ? { id } : {}) });
 };
 
 /** Run `kubectl apply -f <manifest>`. Defaults to the `longInfra` profile (override via `opts.profile`). */
@@ -228,10 +252,17 @@ export const helmInstallPinned = (
   return activity("helmInstall", { name, contentDigest, ...args }, profile ?? "longInfra");
 };
 
-/** Poll for stack readiness (kubectl rollout, CloudFormation complete, etc). Defaults to the `k8sWait` profile (override via `opts.profile`). */
-export const waitForStack = (name: string, opts?: Record<string, unknown>): ActivityStep => {
-  const { args, profile } = takeProfile(opts);
-  return activity("waitForStack", { name, ...args }, profile ?? "k8sWait");
+/**
+ * Poll until a Kubernetes Deployment/StatefulSet is fully rolled out. `opts` is
+ * {@link WaitForStackArgs} itself, minus the positional `name`. Defaults to the
+ * `k8sWait` profile (override via `opts.profile`).
+ */
+export const waitForStack = (
+  name: string,
+  opts?: WithStepRefs<Omit<WaitForStackArgs, "name">> & StepOpts,
+): NamedActivityStep => {
+  const { args, profile, id } = takeProfileAndId(opts as Record<string, unknown> | undefined);
+  return activity("waitForStack", { name, ...args }, { profile: profile ?? "k8sWait", ...(id ? { id } : {}) });
 };
 
 /** Poll any operator-backed Kubernetes resource until it reports ready, driven by a data-only readiness spec (CRD-aware; #365). Defaults to the `k8sWait` profile (override via `opts.profile`). */
@@ -246,9 +277,13 @@ export const gitlabPipeline = (name: string, opts?: Record<string, unknown>): Ac
   return activity("gitlabPipeline", { name, ...args }, profile ?? "longInfra");
 };
 
-/** Take a chant lifecycle snapshot for the given environment. */
-export const lifecycleSnapshot = (env: string): ActivityStep =>
-  activity("lifecycleSnapshot", { env });
+/**
+ * Take a chant lifecycle snapshot for the given environment.
+ * {@link LifecycleSnapshotArgs} has only `env`, which is positional here, so
+ * `opts` carries nothing but the step's `id` (for `.out`).
+ */
+export const lifecycleSnapshot = (env: string, opts?: { id?: string }): NamedActivityStep =>
+  activity("lifecycleSnapshot", { env } satisfies LifecycleSnapshotArgs, opts?.id ? { id: opts.id } : undefined);
 
 /**
  * Run an arbitrary shell command. Tag long-running commands with a `profile`
@@ -257,9 +292,11 @@ export const lifecycleSnapshot = (env: string): ActivityStep =>
  */
 export const shell = (
   cmd: string,
-  opts?: { env?: Record<string, string>; profile?: ActivityStep["profile"] },
-): ActivityStep =>
-  activity("shellCmd", { cmd, ...(opts?.env ? { env: opts.env } : {}) }, opts?.profile);
+  opts?: WithStepRefs<Omit<ShellCmdArgs, "cmd">> & StepOpts,
+): NamedActivityStep => {
+  const { args, profile, id } = takeProfileAndId(opts as Record<string, unknown> | undefined);
+  return activity("shellCmd", { cmd, ...args }, { ...(profile ? { profile } : {}), ...(id ? { id } : {}) });
+};
 
 /**
  * Ensure a `generated-once` secret exists in the target store (#1829, epic
@@ -283,9 +320,17 @@ export const ensureSecret = (
   return activity("ensureSecret", { name, keys, ...args }, profile);
 };
 
-/** Run `chant teardown` in the given project directory. Uses `longInfra` profile. */
-export const teardown = (path: string): ActivityStep =>
-  activity("chantTeardown", { path }, "longInfra");
+/**
+ * Run `chant teardown` in the given project directory. Fixed `longInfra`
+ * profile (not overridable). {@link ChantTeardownArgs} has only `path`
+ * (positional), so `opts` is just the step's `id` (for `.out`).
+ */
+export const teardown = (path: string, opts?: { id?: string }): NamedActivityStep =>
+  activity(
+    "chantTeardown",
+    { path } satisfies ChantTeardownArgs,
+    { profile: "longInfra", ...(opts?.id ? { id: opts.id } : {}) },
+  );
 
 /**
  * Tear down one environment's marker-owned resources — the durable form of
@@ -313,9 +358,12 @@ export const teardown = (path: string): ActivityStep =>
  * worker's cwd). Defaults to the `longInfra` profile (override via
  * `opts.profile`).
  */
-export const envTeardown = (env: string, opts?: Record<string, unknown>): ActivityStep => {
-  const { args, profile } = takeProfile(opts);
-  return activity("envTeardown", { env, ...args }, profile ?? "longInfra");
+export const envTeardown = (
+  env: string,
+  opts?: WithStepRefs<Omit<EnvTeardownArgs, "env">> & StepOpts,
+): NamedActivityStep => {
+  const { args, profile, id } = takeProfileAndId(opts as Record<string, unknown> | undefined);
+  return activity("envTeardown", { env, ...args }, { profile: profile ?? "longInfra", ...(id ? { id } : {}) });
 };
 
 /**
@@ -455,9 +503,12 @@ export const flociGcpDown = (opts?: Record<string, unknown>): ActivityStep => {
  * Defaults to the `fastIdempotent` profile. `opts` accepts `method`, `status`
  * (default any 2xx), `contains` (body substring), `retries`, `intervalMs`.
  */
-export const httpCheck = (url: string, opts?: Record<string, unknown>): ActivityStep => {
-  const { args, profile } = takeProfile(opts);
-  return activity("httpCheck", { url, ...args }, profile ?? "fastIdempotent");
+export const httpCheck = (
+  url: string,
+  opts?: WithStepRefs<Omit<HttpCheckArgs, "url">> & StepOpts,
+): NamedActivityStep => {
+  const { args, profile, id } = takeProfileAndId(opts as Record<string, unknown> | undefined);
+  return activity("httpCheck", { url, ...args }, { profile: profile ?? "fastIdempotent", ...(id ? { id } : {}) });
 };
 
 /**
@@ -811,9 +862,28 @@ export const spritesDown = (args: {
  * policy branch on environment. Single-attempt (`policyCheck` profile) — a
  * deterministic violation is not retried.
  */
-export const policyGate = (opts?: { env?: string; path?: string }): ActivityStep =>
-  activity(
+export const policyGate = (opts?: WithStepRefs<PolicyGateArgs> & { id?: string }): NamedActivityStep => {
+  const path = (opts?.path as PolicyGateArgs["path"] | undefined) ?? ".";
+  const env = opts?.env;
+  return activity(
     "policyGate",
-    { path: opts?.path ?? ".", ...(opts?.env ? { env: opts.env } : {}) },
-    "policyCheck",
+    { path, ...(env !== undefined ? { env } : {}) },
+    { profile: "policyCheck", ...(opts?.id ? { id: opts.id } : {}) },
   );
+};
+
+/**
+ * Run an external CloudFormation Guard rules pack against the project's built
+ * CloudFormation template (chant #522). `opts` is {@link GuardValidateArgs}
+ * itself, minus the positional `rules`; `template` defaults (inside the
+ * activity) to `<path>/template.json`. Fixed `policyCheck` profile — same
+ * reasoning as {@link policyGate}: a deterministic policy check is
+ * single-attempt — and not overridable.
+ */
+export const guardValidate = (
+  rules: string,
+  opts?: WithStepRefs<Omit<GuardValidateArgs, "rules">> & { id?: string },
+): NamedActivityStep => {
+  const { id, ...rest } = (opts ?? {}) as Omit<GuardValidateArgs, "rules"> & { id?: string };
+  return activity("guardValidate", { rules, ...rest }, { profile: "policyCheck", ...(id ? { id } : {}) });
+};

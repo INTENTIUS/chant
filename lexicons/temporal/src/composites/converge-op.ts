@@ -8,7 +8,7 @@
  * Phases: `Observe` (snapshot + a quick live diff, exactly `WatchOp`'s own
  * shape, for the `Drift` search attribute and Temporal-UI visibility) ->
  * `Converge` (one `convergeTick` activity call —
- * ../op/activities/converge.ts — that does classify + dispatch + record;
+ * core's op/activities/converge.ts — that does classify + dispatch + record;
  * see that module's doc for why this can't be split into further static
  * phases). `Observe`'s drift signal threads into `Converge`'s args via a
  * step-output reference (#1290), not a search-attribute round-trip.
@@ -87,7 +87,7 @@ function kebabToCamel(s: string): string {
  *   dispatch a mutating op under `reconcile` is refused at build
  *   (`TMP014`), not silently escalated to "run directly" the way `apply`
  *   would. A runtime backstop in `convergeTick`
- *   (`../op/activities/converge.ts`) re-checks the same thing at dispatch
+ *   (`core's op/activities/converge.ts`) re-checks the same thing at dispatch
  *   time, for a rule table that reached the tick without going through that
  *   build.
  * - **`apply` × destructive is refused outright in v1, gate or not.** The
