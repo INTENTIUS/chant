@@ -162,7 +162,7 @@ timeout: props.timeout ?? 30,
 
 ### Registered authoring helpers
 
-A function call is not a value chant can evaluate statically, with one closed exception: chant's own authoring helpers. `phase()`, `gate()`, `activity()`, `stackOutput()` and `output()` are pure functions of their arguments, and they are the API chant documents for writing components and outputs — source using them cannot avoid a call and still use the feature.
+A function call is not a value chant can evaluate statically, with one closed exception: chant's own authoring helpers. `phase()`, `gate()`, `activity()`, `stackOutput()` and `output()` are pure functions of their arguments, and they are the API chant documents for writing components and outputs — source using them cannot avoid a call and still use the feature. The [converge rule](/chant/guide/converging-lifecycle/) builders are registered on the same grounds: `when()`, the comparisons `eq()`, `neq()`, `gt()`, `gte()`, `lt()`, `lte()`, the truthiness tests `truthy()` and `falsy()`, the combinators `allOf()` and `anyOf()`, and the actions `run()` and `report()`. Each returns a plain record built from its arguments, and a `ConvergeOp` rule table cannot be written without them.
 
 ```typescript
 import { phase, stackOutput, type Component } from "@intentius/chant/components";

@@ -66,7 +66,11 @@
  *     `fold()` already rejects a nested `new Type(...)` used as a value for a
  *     real, differential-caught reason (the envelope leaks into
  *     serialization); a factory that returns one is the same hazard wearing a
- *     call.
+ *     call. Still true after #2171, which registered the ConvergeOp RULE
+ *     builders below. Those return plain data that an Op carries; `Op()`
+ *     itself returns the entity, and a top-level `export const x = Op({...})`
+ *     folds through the composite spine in `../discovery/fold-import.ts`
+ *     rather than through this list, which is why it needs no entry here.
  *   - `propagate()`, `withDefaults()`, `resource()`, `mergeDefaults()`
  *     (`../composite.ts`) are composite *definition* helpers, not value-position
  *     helpers. `propagate()` in particular mutates its argument in place, and
@@ -135,6 +139,82 @@ export const FOLDABLE_AUTHORING_HELPERS: readonly FoldableHelperDef[] = [
     name: "output",
     module: "lexicon-output.ts",
     note: "Constructs a `LexiconOutput` from a real `AttrRef`/`Intrinsic` and a name. Pure, but identity-sensitive: it reads through the ref's `WeakRef` to its parent entity. Only folds when the ref argument revives to a REAL live reference (see fold-import.ts's `requireLiveRefs`); a symbolic `{ __attrRef }` envelope is rejected, not silently wrapped.",
+  },
+  // chant #2171 — the ConvergeOp rule language (`op/converge-rule.ts`). Its own
+  // module doc is the admission argument: a rule is evaluated per tick against
+  // freshly observed data inside an activity, so it must be plain JSON, and
+  // every builder below is one statement returning an object literal built from
+  // its arguments. `when()` additionally validates `id`, `why` and
+  // `flapThreshold` and throws on a bad rule, which is the same build-time
+  // refusal the run path performs, at the same point in the build.
+  //
+  // These are authoring surface in the same sense `phase`/`activity` are: a
+  // `ConvergeOp`'s `rules` table cannot be written without them, so before this
+  // every file declaring a converge rule fell back to run whatever else it did.
+  {
+    name: "when",
+    module: "op/converge-rule.ts",
+    note: "Returns a plain `{ id, when, then, why, flapThreshold? }` rule record built from its arguments. Throws at construction on a missing `id`/`why` or a non-positive `flapThreshold`, which is the build-time refusal the run path performs too, so a bad rule fails identically either way.",
+  },
+  {
+    name: "eq",
+    module: "op/converge-rule.ts",
+    note: "Returns a plain `{ kind: 'field-comparison', field, op: 'eq', value }` literal built from its arguments.",
+  },
+  {
+    name: "neq",
+    module: "op/converge-rule.ts",
+    note: "Returns a plain `{ kind: 'field-comparison', field, op: 'neq', value }` literal built from its arguments.",
+  },
+  {
+    name: "gt",
+    module: "op/converge-rule.ts",
+    note: "Returns a plain `{ kind: 'field-comparison', field, op: 'gt', value }` literal built from its arguments.",
+  },
+  {
+    name: "gte",
+    module: "op/converge-rule.ts",
+    note: "Returns a plain `{ kind: 'field-comparison', field, op: 'gte', value }` literal built from its arguments.",
+  },
+  {
+    name: "lt",
+    module: "op/converge-rule.ts",
+    note: "Returns a plain `{ kind: 'field-comparison', field, op: 'lt', value }` literal built from its arguments.",
+  },
+  {
+    name: "lte",
+    module: "op/converge-rule.ts",
+    note: "Returns a plain `{ kind: 'field-comparison', field, op: 'lte', value }` literal built from its arguments.",
+  },
+  {
+    name: "truthy",
+    module: "op/converge-rule.ts",
+    note: "Returns a plain `{ kind: 'field-truthiness', field, op: 'truthy' }` literal built from its argument.",
+  },
+  {
+    name: "falsy",
+    module: "op/converge-rule.ts",
+    note: "Returns a plain `{ kind: 'field-truthiness', field, op: 'falsy' }` literal built from its argument.",
+  },
+  {
+    name: "allOf",
+    module: "op/converge-rule.ts",
+    note: "Returns a plain `{ kind: 'all-of', predicates }` literal over its already-folded predicate arguments.",
+  },
+  {
+    name: "anyOf",
+    module: "op/converge-rule.ts",
+    note: "Returns a plain `{ kind: 'any-of', predicates }` literal over its already-folded predicate arguments.",
+  },
+  {
+    name: "run",
+    module: "op/converge-rule.ts",
+    note: "Returns a plain `{ kind: 'run', op }` action literal. Names an Op for a later tick to dispatch; it runs nothing at fold time, or at any other time.",
+  },
+  {
+    name: "report",
+    module: "op/converge-rule.ts",
+    note: "Returns a plain `{ kind: 'report', reason }` action literal built from its argument.",
   },
 ];
 

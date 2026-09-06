@@ -559,6 +559,62 @@ describe("fold — registered authoring helpers (#1082)", () => {
   });
 });
 
+/**
+ * chant #2171 — the ConvergeOp rule language joins the allowlist.
+ *
+ * A `ConvergeOp`'s `rules` table cannot be written without these, so before
+ * this every file declaring a converge rule fell back to run. They fold to the
+ * same symbolic envelope every other registered helper does; nothing is
+ * invoked here, and `../discovery/fold-import.ts` still decides separately
+ * whether the name is bound by an import from chant.
+ */
+describe("fold — the ConvergeOp rule builders are registered helpers (#2171)", () => {
+  test("a whole rule folds to nested envelopes, predicate and action included", () => {
+    const consts = parseConsts(
+      `const x = when(gt("updateCount", 0), report("drift"), { id: "prod-drift", why: "because" });`,
+    );
+    const expr = consts.get("x");
+    if (!expr) throw new Error("fixture error");
+    expect(fold(expr, consts)).toEqual({
+      __helper: "when",
+      args: [
+        { __helper: "gt", args: ["updateCount", 0] },
+        { __helper: "report", args: ["drift"] },
+        { id: "prod-drift", why: "because" },
+      ],
+    });
+  });
+
+  test("every comparison, truthiness, combinator and action builder is registered", () => {
+    for (const call of [
+      `eq("status", "drifted")`,
+      `neq("status", "ok")`,
+      `gt("updateCount", 0)`,
+      `gte("updateCount", 1)`,
+      `lt("updateCount", 9)`,
+      `lte("updateCount", 9)`,
+      `truthy("drifted")`,
+      `falsy("drifted")`,
+      `allOf(truthy("drifted"))`,
+      `anyOf(falsy("drifted"))`,
+      `run("prod-apply")`,
+      `report("say so")`,
+    ]) {
+      const consts = parseConsts(`const x = ${call};`);
+      const expr = consts.get("x");
+      if (!expr) throw new Error(`fixture error: ${call}`);
+      expect(fold(expr, consts), call).toMatchObject({ __helper: expect.any(String) });
+    }
+  });
+
+  test("a rule builder SHADOWED by a local const is still rejected", () => {
+    const consts = parseConsts(`const gt = (f, v) => ({ f, v }); const x = gt("updateCount", 0);`);
+    const expr = consts.get("x");
+    if (!expr) throw new Error("fixture error");
+    expect(() => fold(expr, consts)).toThrow(FoldError);
+  });
+});
+
 describe("fold — nullish coalescing, ternary, arithmetic", () => {
   test("?? falls through only on null/undefined", () => {
     expect(foldConst(`const x = null ?? "fallback";`, "x")).toBe("fallback");
