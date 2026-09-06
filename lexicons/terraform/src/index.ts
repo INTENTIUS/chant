@@ -37,3 +37,16 @@ export {
 } from "./hcl/parse";
 
 export { renderTerraformRoots, type TerraformRootsResult } from "./hcl/roots";
+
+// Typed Op step builders (#2086). Same names as the activities they wrap, and
+// like k3s's they are opt-in from the lexicon root — the activities themselves
+// are reached by the registry through `./op/activities`, never from here.
+export { terraformInit, terraformPlan, terraformApply, terraformShow } from "./op/builders";
+
+// The Init/Plan/Gate/Apply composite (#2086).
+export { TerraformApplyOp } from "./composites/terraform-apply-op";
+export type {
+  TerraformApplyOpConfig,
+  TerraformApplyOpResources,
+  TerraformGateMode,
+} from "./composites/terraform-apply-op";
