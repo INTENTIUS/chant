@@ -5,7 +5,7 @@ example: `chant run <op> --on fountain` hands a run to a fountain teammate
 instead of executing it here, and that teammate's thread becomes the
 environment's operational history.
 
-Five declarations produce six fountain resources:
+Five declarations produce six fountain documents, across five kinds:
 
 | File | Declares |
 |---|---|
@@ -70,11 +70,18 @@ node -e "import('@intentius/chant-lexicon-fountain').then(m => m.fountainApply({
 `fountainApply` sends `Environment`, `Vault` and `Agent` through fountain's
 bulk `POST /api/apply`, then reconciles `Teammate` and the two `Schedule`s
 through their own routes, matched by name. A second apply of an unchanged
-manifest makes no writes.
+manifest makes no writes for the routed kinds, which compare before they
+write and report `unchanged`. `Environment`, `Vault` and `Agent` come back
+`updated` even when nothing changed: v0.16.0's `ApplyResult.action` is
+`created | updated | error`, so the server has no `unchanged` to answer with.
+chant records one the day fountain sends it.
 
 `runtime: "acp"` with `runtime_command` is
 [fountain#1634](https://github.com/BinaryBourbon/fountain/pull/1634) and is not
-in v0.16.0. An instance without that PR rejects the pair here.
+in v0.16.0. An instance without that PR rejects the `Agent` on both `runtime`
+and `model`: `{"runtime":["is invalid"],"model":["can't be blank"]}`. The
+v0.16.0 runtime enum is `claude | codex | gemini | opencode`, and `model` is
+required there and format-checked, while the steward deliberately emits none.
 
 ## 3. Run an op on the steward
 
@@ -144,9 +151,11 @@ has not shipped.
 ## What CI covers
 
 `examples/examples.test.ts` builds and lints this example on every change and
-asserts the six kinds, the ACP agent fields and both schedule prompts. The
-live half — a real fountain instance, an apply, a turn on a real thread — is
-this README's walkthrough and is not run in CI.
+asserts the six documents — `Environment`, `Vault`, `Agent`, `Teammate` and
+two `Schedule`s, which is five kinds and no `Webhook` — along with the ACP
+agent fields and both schedule prompts. The live half — a real fountain
+instance, an apply, a turn on a real thread — is this README's walkthrough and
+is not run in CI.
 
 ## Further reading
 

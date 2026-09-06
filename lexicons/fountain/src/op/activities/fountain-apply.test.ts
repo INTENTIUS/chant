@@ -6,6 +6,7 @@ import {
   isChantOwned,
   resolveEndpoint,
   resolveConnection,
+  vaultNameRefs,
   type FountainHttp,
 } from "./fountain-apply";
 import { fountainRun } from "./fountain-run";
@@ -17,18 +18,34 @@ interface Call {
   body?: unknown;
 }
 
-/** Scripted fake http: records calls, answers from a route table. */
-function fakeHttp(routes: Record<string, { status: number; json?: unknown }>): {
+interface Reply {
+  status: number;
+  json?: unknown;
+}
+
+/**
+ * Scripted fake http: records calls, answers from a route table.
+ *
+ * A route may hold several replies, which are handed out in order and the
+ * last of them repeats — that is how the two `POST /api/apply` calls of a
+ * vault-scoped agent (#2166) are scripted apart.
+ */
+function fakeHttp(routes: Record<string, Reply | Reply[]>): {
   http: FountainHttp;
   calls: Call[];
 } {
   const calls: Call[] = [];
+  const queues = new Map<string, Reply[]>();
   const http: FountainHttp = async (method, path, body) => {
     calls.push({ method, path, body });
     const key = `${method} ${path}`;
     const hit = routes[key];
     if (!hit) throw new Error(`unrouted: ${key}`);
-    return { status: hit.status, json: hit.json ?? null };
+    if (!Array.isArray(hit)) return { status: hit.status, json: hit.json ?? null };
+    const queue = queues.get(key) ?? [...hit];
+    queues.set(key, queue);
+    const reply = queue.length > 1 ? queue.shift()! : queue[0];
+    return { status: reply.status, json: reply.json ?? null };
   };
   return { http, calls };
 }
@@ -92,6 +109,13 @@ describe("pure helpers", () => {
   it("toApplyPayload passes spec through unchanged when there is no secrets array", () => {
     const spec = { name: "e", networking_type: "limited" };
     expect(toApplyPayload(spec)).toEqual(spec);
+  });
+
+  it("vaultNameRefs picks out the allowed_vault_ids entries that are names (#2166)", () => {
+    const uuid = "0f1e2d3c-4b5a-4968-8776-655443332211";
+    expect(vaultNameRefs({ allowed_vault_ids: ["prod-creds", uuid] })).toEqual(["prod-creds"]);
+    expect(vaultNameRefs({ allowed_vault_ids: [] })).toEqual([]);
+    expect(vaultNameRefs({})).toEqual([]);
   });
 
   it("isChantOwned keys on the metadata marker", () => {
@@ -527,6 +551,147 @@ const LIVE_WEBHOOK = {
   event_types: ["conversation.turn.done"],
   description: null,
 };
+
+// ── allowed_vault_ids (#2166) ─────────────────────────────────────────────
+//
+// The Steward composite scopes its agent to a Vault, and the manifest's
+// reference form is the vault's name. Fountain types that column
+// `{:array, :binary_id}` and passes it straight to the insert, so a name there
+// crashes in Ecto behind a bare 500 that drops the connection. These cover the
+// resolution that keeps the authored shape and sends fountain uuids.
+
+const VAULT_UUID = "0f1e2d3c-4b5a-4968-8776-655443332211";
+
+const STEWARD_WITH_VAULT = `apiVersion: fountain.dev/v1
+kind: Environment
+metadata:
+  name: prod-toolchain
+spec:
+  networking_type: limited
+---
+apiVersion: fountain.dev/v1
+kind: Vault
+metadata:
+  name: prod-creds
+spec:
+  secrets:
+    - key: AWS_ACCESS_KEY_ID
+      value: AKIA
+---
+apiVersion: fountain.dev/v1
+kind: Agent
+metadata:
+  name: prod-steward
+spec:
+  runtime: acp
+  environment: prod-toolchain
+  allowed_vault_ids:
+    - prod-creds
+`;
+
+function applyResults(...results: Array<{ kind: string; name: string }>): Reply {
+  return {
+    status: 200,
+    json: {
+      data: {
+        results: results.map((r) => ({ ...r, action: "created", errors: null, secrets: [] })),
+      },
+    },
+  };
+}
+
+/** Every bulk resource in one call's body, as `Kind/name`. */
+function sentResources(call: Call | undefined): string[] {
+  const body = call?.body as { resources?: Array<{ kind: string; name: string }> } | undefined;
+  return (body?.resources ?? []).map((r) => `${r.kind}/${r.name}`);
+}
+
+describe("fountainApply — allowed_vault_ids (#2166)", () => {
+  it("resolves the vault name to its id, after the call that creates the vault", async () => {
+    const { http, calls } = fakeHttp({
+      "POST /api/apply": [
+        applyResults({ kind: "Environment", name: "prod-toolchain" }, { kind: "Vault", name: "prod-creds" }),
+        applyResults({ kind: "Agent", name: "prod-steward" }),
+      ],
+      "GET /api/vaults": {
+        status: 200,
+        json: { data: [{ id: VAULT_UUID, name: "prod-creds", metadata: { "managed-by": "chant" } }] },
+      },
+    });
+
+    const summary = await fountainApply({ manifestContent: STEWARD_WITH_VAULT }, http);
+
+    // The vault the agent names is created first, then read back for its id.
+    expect(calls.map((c) => `${c.method} ${c.path}`)).toEqual([
+      "POST /api/apply",
+      "GET /api/vaults",
+      "POST /api/apply",
+    ]);
+    expect(sentResources(calls[0])).toEqual(["Environment/prod-toolchain", "Vault/prod-creds"]);
+    expect(sentResources(calls[2])).toEqual(["Agent/prod-steward"]);
+
+    const agent = (calls[2].body as { resources: Array<{ spec: Record<string, unknown> }> }).resources[0];
+    expect(agent.spec.allowed_vault_ids).toEqual([VAULT_UUID]);
+    // The sibling environment reference is still a name — the server resolves it.
+    expect(agent.spec.environment).toBe("prod-toolchain");
+
+    expect(summary.created).toEqual([
+      "Environment/prod-toolchain",
+      "Vault/prod-creds",
+      "Agent/prod-steward",
+    ]);
+  });
+
+  it("fails by name, not in the database layer, when the vault does not exist", async () => {
+    const { http, calls } = fakeHttp({
+      "POST /api/apply": [
+        applyResults({ kind: "Environment", name: "prod-toolchain" }, { kind: "Vault", name: "prod-creds" }),
+        applyResults({ kind: "Agent", name: "prod-steward" }),
+      ],
+      "GET /api/vaults": { status: 200, json: { data: [] } },
+    });
+
+    await expect(fountainApply({ manifestContent: STEWARD_WITH_VAULT }, http)).rejects.toThrow(
+      /Agent\/prod-steward: allowed_vault_ids names the vault "prod-creds"/,
+    );
+    // The agent was never sent, so fountain never saw the name.
+    expect(calls.filter((c) => c.path === "/api/apply")).toHaveLength(1);
+  });
+
+  it("leaves a uuid alone and stays in one call", async () => {
+    const manifest = STEWARD_WITH_VAULT.replace("- prod-creds", `- ${VAULT_UUID}`);
+    const { http, calls } = fakeHttp({
+      "POST /api/apply": applyResults(
+        { kind: "Environment", name: "prod-toolchain" },
+        { kind: "Vault", name: "prod-creds" },
+        { kind: "Agent", name: "prod-steward" },
+      ),
+    });
+
+    await fountainApply({ manifestContent: manifest }, http);
+
+    expect(calls).toHaveLength(1);
+    const agent = (calls[0].body as { resources: Array<{ spec: Record<string, unknown> }> }).resources[2];
+    expect(agent.spec.allowed_vault_ids).toEqual([VAULT_UUID]);
+  });
+
+  it("sends an empty allowlist as it stands — a steward with no vault attaches none", async () => {
+    const manifest = STEWARD_WITH_VAULT.replace("  allowed_vault_ids:\n    - prod-creds\n", "  allowed_vault_ids: []\n");
+    const { http, calls } = fakeHttp({
+      "POST /api/apply": applyResults(
+        { kind: "Environment", name: "prod-toolchain" },
+        { kind: "Vault", name: "prod-creds" },
+        { kind: "Agent", name: "prod-steward" },
+      ),
+    });
+
+    await fountainApply({ manifestContent: manifest }, http);
+
+    expect(calls).toHaveLength(1);
+    const agent = (calls[0].body as { resources: Array<{ spec: Record<string, unknown> }> }).resources[2];
+    expect(agent.spec.allowed_vault_ids).toEqual([]);
+  });
+});
 
 describe("fountainApply — Teammate, Schedule and Webhook", () => {
   it("creates all three on a first apply, after the bulk call", async () => {

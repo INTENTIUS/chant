@@ -328,6 +328,45 @@ describe("start", () => {
     __resetStewardsForTests();
   });
 
+  it("fails the run on fountain's own reason when the conversation dies during provision (#2167)", async () => {
+    const { http, calls } = fakeHttp(
+      stewardRoutes({
+        "POST /api/team/agent-1/messages": { status: 202, json: { data: { conversation_id: "conv-1" } } },
+        "GET /api/conversations/conv-1": {
+          status: 200,
+          json: {
+            data: {
+              id: "conv-1",
+              status: "failed",
+              turn_count: 0,
+              sandbox: { status: "failed" },
+            },
+          },
+        },
+      }),
+    );
+    // The stream opens, carries nothing and closes: no `stage: turn` event is
+    // ever emitted for a conversation that never started a turn.
+    const { sse, opens } = fakeSse([[]]);
+
+    const runtime = createFountainOpRuntime({
+      config: CONFIG,
+      endpoint: "https://fountain.example.com",
+      token: "t",
+      http,
+      sse,
+      // The default 1800s; the run must not wait any part of it.
+      now: () => Date.now(),
+    });
+
+    const status = await (await runtime.start(OP, {})).result();
+
+    expect(status.state).toBe("failed");
+    expect(status.error).toMatch(/fountain ended conversation conv-1 as "failed"/);
+    expect(opens).toHaveLength(1);
+    expect(calls.filter((c) => c.path === "/api/conversations/conv-1")).toHaveLength(1);
+  });
+
   it("refuses an Op with no steward anywhere, naming all three ways to give it one", async () => {
     const bare = { lexicons: ["fountain"] } as ChantConfig;
     const runtime = createFountainOpRuntime({
@@ -409,6 +448,140 @@ describe("tailConversation", () => {
     ).rejects.toThrow(/FOUNTAIN_STREAM_IDLE_TIMEOUT/);
   });
 
+  // ── a conversation fountain has already failed (#2167) ──────────────────
+
+  /** `GET /api/conversations/:id` for a sandbox that never provisioned. */
+  const FAILED_CONVERSATION = {
+    status: 200,
+    json: {
+      data: {
+        id: "conv-1",
+        status: "failed",
+        turn_count: 0,
+        acp: true,
+        sandbox: { status: "failed" },
+        inserted_at: "2026-03-01T10:00:00.000Z",
+        updated_at: "2026-03-01T10:00:01.000Z",
+      },
+    },
+  };
+
+  /** A stream that stays open and says nothing — the live failure's shape. */
+  const silentSse: FountainSse = () => ({
+    [Symbol.asyncIterator]: () => ({ next: () => new Promise<never>(() => {}) }),
+  });
+
+  it("settles on the conversation when the stream is quiet and fountain has failed it", async () => {
+    const { http, calls } = fakeHttp({ "GET /api/conversations/conv-1": FAILED_CONVERSATION });
+
+    const status = await tailConversation({
+      sse: silentSse,
+      conversationId: "conv-1",
+      op: "alb-deploy",
+      startedAt: "2026-03-01T10:00:00.000Z",
+      // Half an hour of patience, which is the default — and irrelevant, because
+      // the conversation is already dead.
+      idleTimeoutMs: 1_800_000,
+      pollIntervalMs: 1,
+      http,
+      now: () => Date.now(),
+    });
+
+    expect(status.state).toBe("failed");
+    expect(status.runId).toBe("conv-1");
+    expect(status.error).toMatch(/"failed"/);
+    expect(status.error).toMatch(/sandbox "failed"/);
+    expect(status.error).toMatch(/before the turn started/);
+    expect(calls).toEqual([{ method: "GET", path: "/api/conversations/conv-1", body: undefined }]);
+  });
+
+  it("polls when the connection ends, and does not reconnect into a dead conversation", async () => {
+    const { sse, opens } = fakeSse([[], [], []]);
+    const { http } = fakeHttp({ "GET /api/conversations/conv-1": FAILED_CONVERSATION });
+
+    const status = await tailConversation({
+      sse,
+      conversationId: "conv-1",
+      op: "alb-deploy",
+      startedAt: "2026-03-01T10:00:00.000Z",
+      idleTimeoutMs: 1_800_000,
+      http,
+      now: () => Date.now(),
+    });
+
+    expect(status.state).toBe("failed");
+    expect(opens).toHaveLength(1);
+  });
+
+  it("reports a terminated conversation as cancelled, not failed", async () => {
+    const { http } = fakeHttp({
+      "GET /api/conversations/conv-1": {
+        status: 200,
+        json: { data: { id: "conv-1", status: "terminated", turn_count: 0 } },
+      },
+    });
+    const { sse } = fakeSse([[]]);
+
+    const status = await tailConversation({
+      sse,
+      conversationId: "conv-1",
+      op: "alb-deploy",
+      startedAt: "2026-03-01T10:00:00.000Z",
+      idleTimeoutMs: 1_800_000,
+      http,
+      now: () => Date.now(),
+    });
+
+    expect(status.state).toBe("cancelled");
+    expect(status.error).toBeUndefined();
+  });
+
+  it("keeps waiting through a poll that finds the conversation alive, and loses no event", async () => {
+    const { http, calls } = fakeHttp({
+      "GET /api/conversations/conv-1": {
+        status: 200,
+        json: { data: { id: "conv-1", status: "running", turn_count: 1 } },
+      },
+    });
+    // The turn thinks for a while, then finishes: several polls, then the event
+    // the polls were waiting through.
+    const sse: FountainSse = () => ({
+      async *[Symbol.asyncIterator]() {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        yield sseEvent("1", { stream: "stdout", blocks: [{ kind: "text", body: JSON.stringify(RECORD) }] });
+        yield sseEvent("2", { stream: "stage", stage: "turn", state: "done" });
+      },
+    });
+
+    const status = await tailConversation({
+      sse,
+      conversationId: "conv-1",
+      op: "alb-deploy",
+      startedAt: "2026-03-01T10:00:00.000Z",
+      idleTimeoutMs: 1_800_000,
+      pollIntervalMs: 1,
+      http,
+      now: () => Date.now(),
+    });
+
+    expect(status.state).toBe("completed");
+    expect(status.runId).toBe("run-7");
+    expect(calls.length).toBeGreaterThan(1);
+  });
+
+  it("still waits out the idle timeout when no REST seam is given", async () => {
+    await expect(
+      tailConversation({
+        sse: silentSse,
+        conversationId: "conv-1",
+        op: "alb-deploy",
+        startedAt: "2026-03-01T10:00:00.000Z",
+        idleTimeoutMs: 5,
+        now: () => Date.now(),
+      }),
+    ).rejects.toThrow(/nothing arrived on conversation conv-1/);
+  });
+
   it("reports a cancelled run when the signal is already aborted", async () => {
     const { sse } = fakeSse([[]]);
     const controller = new AbortController();
@@ -482,6 +655,59 @@ describe("status, log and list read the thread", () => {
     const { runtime } = runtimeFor({
       "GET /api/conversations/conv-1/turns": { status: 200, json: { data: [{ id: "t", prompt: "hi" }] } },
     });
+    expect(await runtime.status("alb-deploy")).toBeUndefined();
+  });
+
+  it("status reports a conversation fountain failed before any turn started (#2167)", async () => {
+    const { http } = fakeHttp({
+      "GET /api/agents?search=steward": { status: 200, json: { data: [{ id: "agent-1", name: "steward" }] } },
+      "GET /api/team/agent-1/conversations": {
+        status: 200,
+        json: {
+          data: [
+            {
+              id: "conv-1",
+              status: "failed",
+              channel_id: "fountain:team",
+              turn_count: 0,
+              sandbox: { status: "failed" },
+              inserted_at: "2026-03-01T10:00:00.000Z",
+              updated_at: "2026-03-01T10:00:01.000Z",
+            },
+          ],
+        },
+      },
+      "GET /api/conversations/conv-1/turns": { status: 200, json: { data: [] } },
+    });
+    const runtime = createFountainOpRuntime({
+      config: CONFIG, endpoint: "https://fountain.example.com", token: "t", http, now: fakeClock(),
+    });
+
+    const status = await runtime.status("alb-deploy");
+    expect(status?.state).toBe("failed");
+    expect(status?.runId).toBe("conv-1");
+    expect(status?.startedAt).toBe("2026-03-01T10:00:00.000Z");
+    expect(status?.endedAt).toBe("2026-03-01T10:00:01.000Z");
+    expect(status?.error).toMatch(/sandbox "failed"/);
+  });
+
+  it("status still says nothing for a failed conversation that ran other turns", async () => {
+    const { http } = fakeHttp({
+      "GET /api/agents?search=steward": { status: 200, json: { data: [{ id: "agent-1", name: "steward" }] } },
+      "GET /api/team/agent-1/conversations": {
+        status: 200,
+        json: { data: [{ id: "conv-1", status: "failed", channel_id: "fountain:team", turn_count: 1 }] },
+      },
+      "GET /api/conversations/conv-1/turns": {
+        status: 200,
+        json: { data: [{ id: "turn-1", prompt: "chant run db-migrate", state: "done" }] },
+      },
+    });
+    const runtime = createFountainOpRuntime({
+      config: CONFIG, endpoint: "https://fountain.example.com", token: "t", http, now: fakeClock(),
+    });
+    // The thread failed, but it ran somebody else's op. Reporting this op as
+    // failed would invent a run it never had.
     expect(await runtime.status("alb-deploy")).toBeUndefined();
   });
 

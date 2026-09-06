@@ -91,20 +91,34 @@ describe("the steward template", () => {
     const result = await build(srcDir, [fountainSerializer], undefined, await declaredBuildOptions(srcDir));
     const manifestContent = result.outputs.get("fountain") as string;
 
-    const calls: Array<{ method: string; path: string }> = [];
-    const routes: Record<string, { status: number; json?: unknown }> = {
-      "POST /api/apply": {
+    const calls: Array<{ method: string; path: string; body?: unknown }> = [];
+    // The steward's Agent scopes itself to the Vault by name, so the bulk call
+    // is two: the vault first, then the agent carrying the id it resolved to
+    // (#2166). Each answers for what it was sent.
+    const applyResults = [
+      {
         status: 200,
         json: {
           data: {
             results: [
               { kind: "Environment", name: "prod-toolchain", action: "created", errors: null, secrets: [] },
               { kind: "Vault", name: "prod-creds", action: "created", errors: null, secrets: [] },
+            ],
+          },
+        },
+      },
+      {
+        status: 200,
+        json: {
+          data: {
+            results: [
               { kind: "Agent", name: "prod-steward", action: "created", errors: null, secrets: [] },
             ],
           },
         },
       },
+    ];
+    const routes: Record<string, { status: number; json?: unknown }> = {
       "GET /api/agents": { status: 200, json: { data: [{ id: "a-1", name: "prod-steward" }] } },
       "GET /api/environments": { status: 200, json: { data: [{ id: "e-1", name: "prod-toolchain" }] } },
       "GET /api/vaults": { status: 200, json: { data: [{ id: "v-1", name: "prod-creds" }] } },
@@ -113,8 +127,13 @@ describe("the steward template", () => {
       "GET /api/team/a-1/schedules": { status: 200, json: { data: [] } },
       "POST /api/team/a-1/schedules": { status: 201, json: { data: { id: "s-1" } } },
     };
-    const http: FountainHttp = async (method, path) => {
-      calls.push({ method, path });
+    const http: FountainHttp = async (method, path, body) => {
+      calls.push({ method, path, body });
+      if (method === "POST" && path === "/api/apply") {
+        const reply = applyResults.shift();
+        if (!reply) throw new Error("unexpected third POST /api/apply");
+        return { status: reply.status, json: reply.json };
+      }
       const hit = routes[`${method} ${path}`];
       if (!hit) throw new Error(`unrouted: ${method} ${path}`);
       return { status: hit.status, json: hit.json ?? null };
@@ -130,9 +149,13 @@ describe("the steward template", () => {
       "Schedule/prod-steward-prod-watch",
       "Schedule/prod-steward-prod-converge",
     ]);
-    // The three bulk kinds go out in one call; the team-side three follow on
-    // their own routes.
-    expect(calls.filter((c) => c.path === "/api/apply")).toHaveLength(1);
+    // The bulk kinds go out first, then the team-side ones on their own routes.
+    const applies = calls.filter((c) => c.path === "/api/apply");
+    expect(applies).toHaveLength(2);
+    // The agent reaches fountain with the vault's id, never its name — a name
+    // in `allowed_vault_ids` is a 500 out of Ecto (#2166).
+    const agent = (applies[1].body as { resources: Array<{ spec: Record<string, unknown> }> }).resources[0];
+    expect(agent.spec.allowed_vault_ids).toEqual(["v-1"]);
     expect(calls.filter((c) => c.method === "POST" && c.path.endsWith("/schedules"))).toHaveLength(2);
   });
 });
