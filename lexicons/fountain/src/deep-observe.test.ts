@@ -720,10 +720,13 @@ describe("the team-side kinds read back in the declared vocabulary", () => {
       },
     });
     const { diff } = await drift(stewardDeclaration(), http);
-    const hook = diff.drifted.find((d) => d.name === "hook");
     // Delivery health is the endpoint's own business; the switch is not.
-    expect(hook?.changes).toEqual([
-      expect.objectContaining({ path: "status", kind: "undeclared", live: "disabled" }),
+    // Source never sets `status`, so fountain holds it (#2160): surfaced with
+    // its live value, and never a change chant proposes to make.
+    expect(diff.drifted.find((d) => d.name === "hook")).toBeUndefined();
+    const hook = diff.heldElsewhere.find((d) => d.name === "hook");
+    expect(hook?.fields).toEqual([
+      expect.objectContaining({ path: "status", live: "disabled", source: "claimed-fields" }),
     ]);
   });
 
