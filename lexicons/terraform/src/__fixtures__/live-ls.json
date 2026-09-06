@@ -1,0 +1,98 @@
+{
+  "estate": "stateless-e2e-block",
+  "consistent": true,
+  "stabilized": true,
+  "attempts": 2,
+  "config_dir": ".",
+  "items": [
+    {
+      "id": "arn:aws:logs:us-east-1:000000000000:log-group:/stateless-e2e-block/app",
+      "type": "aws_cloudwatch_log_group",
+      "address": "aws_cloudwatch_log_group.app",
+      "declared": true,
+      "source": "tagging",
+      "tags": {
+        "tofu-address": "aws_cloudwatch_log_group.app",
+        "tofu-estate": "stateless-e2e-block"
+      }
+    },
+    {
+      "id": "arn:aws:ec2:us-east-1:000000000000:elastic-ip/eipalloc-956f58ee85678c4a2",
+      "type": "aws_eip",
+      "address": "aws_eip.pool[0]",
+      "slot": "0",
+      "declared": true,
+      "source": "tagging",
+      "tags": {
+        "tofu-address": "aws_eip.pool:0",
+        "tofu-estate": "stateless-e2e-block",
+        "tofu-slot": "0"
+      }
+    },
+    {
+      "id": "arn:aws:ec2:us-east-1:000000000000:elastic-ip/eipalloc-eb84912f9550b202b",
+      "type": "aws_eip",
+      "address": "aws_eip.pool[1]",
+      "slot": "1",
+      "declared": true,
+      "source": "tagging",
+      "tags": {
+        "tofu-address": "aws_eip.pool:1",
+        "tofu-estate": "stateless-e2e-block",
+        "tofu-slot": "1"
+      }
+    },
+    {
+      "id": "arn:aws:s3:::tofu-stateless-e2e-block-data",
+      "type": "aws_s3_bucket",
+      "address": "aws_s3_bucket.data",
+      "declared": false,
+      "source": "tagging",
+      "tags": {
+        "tofu-address": "aws_s3_bucket.data",
+        "tofu-estate": "stateless-e2e-block"
+      }
+    },
+    {
+      "id": "arn:aws:ec2:us-east-1:000000000000:security-group/sg-5fbb2850b62304cee",
+      "type": "aws_security_group",
+      "address": "aws_security_group.main",
+      "declared": true,
+      "source": "tagging",
+      "tags": {
+        "tofu-address": "aws_security_group.main",
+        "tofu-estate": "stateless-e2e-block"
+      }
+    },
+    {
+      "id": "arn:aws:ec2:us-east-1:000000000000:subnet/subnet-4d624e84",
+      "type": "aws_subnet",
+      "address": "aws_subnet.app",
+      "declared": true,
+      "source": "tagging",
+      "tags": {
+        "tofu-address": "aws_subnet.app",
+        "tofu-estate": "stateless-e2e-block"
+      }
+    },
+    {
+      "id": "arn:aws:ec2:us-east-1:000000000000:vpc/vpc-c1733cf7",
+      "type": "aws_vpc",
+      "address": "aws_vpc.main",
+      "declared": true,
+      "source": "tagging",
+      "tags": {
+        "tofu-address": "aws_vpc.main",
+        "tofu-estate": "stateless-e2e-block"
+      }
+    }
+  ],
+  "gaps": [
+    {
+      "address": "aws_security_group_rule.https",
+      "type": "aws_security_group_rule",
+      "rung": "declaration-carried",
+      "detail": "aws_security_group_rule has no settable tags argument, so no ownership marker was ever written for it - live/MARKERS.md's tier definitions (#417) name this the declaration-carried tier. Its identity comes entirely from configuration."
+    }
+  ]
+}

@@ -10,7 +10,7 @@ import { completions } from "./lsp/completions";
 import { hover } from "./lsp/hover";
 import { terraformConfigSchema, type TerraformConfig } from "./config";
 import { renderTerraformRoots } from "./hcl/roots";
-import { parseTerraformRootContent } from "./hcl/parse";
+import { parseTerraformRootContent, RESOURCE_TYPE } from "./hcl/parse";
 import { TERRAFORM_STATE_OWNERSHIP_KEYS } from "./state-ownership";
 
 const loadSkills = createSkillsLoader(import.meta.url, [
@@ -70,11 +70,19 @@ export const terraformPlugin: LexiconPlugin = {
   // ── Optional extensions ────────────────────────────────────
 
   /**
-   * Terraform's ownership channel is the state file, not a tag or a label
-   * (#2087). Every address `terraform show -json` returns is `owned`;
-   * everything else is `unknown`. Declaring the channel is what makes that a
-   * claim the conformance suite checks rather than a silent degradation.
-   * See `./describe-resources.ts` and `docs/pages/observation.mdx`.
+   * The ownership channel is per mode, and the channel declared here names
+   * the stock one, because a project's roots are stock unless it opts into
+   * choudoufu.
+   *
+   * On a stock root the channel is the state file, not a tag or a label
+   * (#2087): every address `terraform show -json` returns is `owned` and
+   * everything else is `unknown`. On a live root (#2104) it is choudoufu's
+   * two marker tags, `./live-ownership.ts`'s `TERRAFORM_LIVE_MARKER_KEYS`,
+   * and the verdicts come from `live-plan -json`'s own sections. Both
+   * readings resolve a real verdict on this path, which is what declaring
+   * `describeResources` here claims and what the conformance suite checks,
+   * for both modes. See `./describe-resources.ts` and
+   * `docs/pages/observation.mdx`.
    */
   ownershipChannel: {
     keys: TERRAFORM_STATE_OWNERSHIP_KEYS,
@@ -84,6 +92,26 @@ export const terraformPlugin: LexiconPlugin = {
   async describeResources(options) {
     const { describeResources } = await import("./describe-resources");
     return describeResources(options);
+  },
+
+  /**
+   * The kinds a live root can enumerate beyond its declaration (#1278,
+   * #2104). Empty on a project with no live root, because `live-ls` is the
+   * only estate-wide read this lexicon has and a stock root has none: a state
+   * file knows what it created and nothing else.
+   */
+  ambientKinds() {
+    return [RESOURCE_TYPE];
+  },
+
+  async observeAmbient(options) {
+    const { observeAmbient } = await import("./describe-resources");
+    return observeAmbient(options);
+  },
+
+  async teardownOwned(options) {
+    const { teardownOwned } = await import("./describe-resources");
+    return teardownOwned(options);
   },
 
   /**
