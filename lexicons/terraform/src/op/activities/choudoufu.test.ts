@@ -381,3 +381,19 @@ describe("choudoufuLiveCheck (#2103)", () => {
     expect(result.refused).toBe(false);
   });
 });
+
+describe("liveDocumentFrom (choudoufu #894)", () => {
+  test("skips refresh progress lines that precede the document", async () => {
+    const { liveDocumentFrom } = await import("./terraform");
+    const stdout = 'aws_vpc.main: Refreshing state... [id=vpc-1]\naws_subnet.a: Refreshing state...\n{\n  "bound": []\n}\n';
+    expect(JSON.parse(liveDocumentFrom(stdout))).toEqual({ bound: [] });
+  });
+  test("returns a clean document unchanged", async () => {
+    const { liveDocumentFrom } = await import("./terraform");
+    expect(liveDocumentFrom('{\n  "bound": []\n}\n')).toBe('{\n  "bound": []\n}\n');
+  });
+  test("returns the input unchanged when no line opens a document, so JSON.parse reports the real text", async () => {
+    const { liveDocumentFrom } = await import("./terraform");
+    expect(liveDocumentFrom("Error: boom\n")).toBe("Error: boom\n");
+  });
+});

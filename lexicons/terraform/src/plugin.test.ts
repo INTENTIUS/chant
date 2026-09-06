@@ -58,6 +58,12 @@ describe("terraform plugin", () => {
     expect(terraformPlugin.postSynthChecks?.().length).toBeGreaterThan(0);
   });
 
+  it("registers the estate-wide reads a live root makes possible (#2104)", () => {
+    expect(terraformPlugin.ambientKinds?.()).toEqual(["Terraform::Resource"]);
+    expect(typeof terraformPlugin.observeAmbient).toBe("function");
+    expect(typeof terraformPlugin.teardownOwned).toBe("function");
+  });
+
   it("registers the LSP providers and docs", () => {
     expect(typeof terraformPlugin.completionProvider).toBe("function");
     expect(typeof terraformPlugin.hoverProvider).toBe("function");

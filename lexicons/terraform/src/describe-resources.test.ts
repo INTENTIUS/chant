@@ -50,6 +50,15 @@ async function declaredEntities(): Promise<Map<string, { entityType: string; pro
   return out;
 }
 
+/**
+ * An activity that must never be reached on a stock root. `live-plan` and
+ * `live-ls` are choudoufu's, and this fixture root declares no estate, so a
+ * call to either is the reader picking the wrong adapter.
+ */
+const neverLive = ((args: { root: string }) => {
+  throw new Error(`choudoufu activity called for stock root "${args.root}"`);
+}) as never;
+
 /** Injected activities that answer from the recorded state, with no child process. */
 function deps(overrides?: Partial<TerraformReadDeps>): TerraformReadDeps {
   return {
@@ -63,6 +72,8 @@ function deps(overrides?: Partial<TerraformReadDeps>): TerraformReadDeps {
       changes: 0,
       destroys: 0,
     })) as TerraformReadDeps["show"],
+    livePlan: neverLive,
+    liveLs: neverLive,
     ...overrides,
   };
 }
@@ -257,6 +268,8 @@ describe("terraform describeResources failed reads (#2087)", () => {
         return { dir: ROOT_DIR };
       }) as TerraformReadDeps["init"],
       show: deps().show,
+      livePlan: neverLive,
+      liveLs: neverLive,
     };
     const { resources, unobserved } = normalizeObservation(
       await describeResources(

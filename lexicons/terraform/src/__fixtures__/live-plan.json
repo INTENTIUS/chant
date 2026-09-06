@@ -1,0 +1,285 @@
+{
+  "estate": "stateless-e2e-block",
+  "choudoufu_version": "",
+  "upstream_version": "1.13.0-dev",
+  "bound": [
+    {
+      "addr": "aws_cloudwatch_log_group.app",
+      "type": "aws_cloudwatch_log_group",
+      "identity": "/stateless-e2e-block/app",
+      "identity_values": {
+        "name": "/stateless-e2e-block/app"
+      },
+      "source": "derived"
+    },
+    {
+      "addr": "aws_eip.pool[0]",
+      "type": "aws_eip",
+      "identity": "eipalloc-956f58ee85678c4a2",
+      "source": "marker"
+    },
+    {
+      "addr": "aws_eip.pool[1]",
+      "type": "aws_eip",
+      "identity": "eipalloc-eb84912f9550b202b",
+      "source": "marker"
+    },
+    {
+      "addr": "aws_security_group.main",
+      "type": "aws_security_group",
+      "identity": "sg-5fbb2850b62304cee",
+      "source": "marker"
+    },
+    {
+      "addr": "aws_subnet.app",
+      "type": "aws_subnet",
+      "identity": "subnet-4d624e84",
+      "source": "marker"
+    },
+    {
+      "addr": "aws_vpc.main",
+      "type": "aws_vpc",
+      "identity": "vpc-c1733cf7",
+      "source": "marker"
+    }
+  ],
+  "omissions": [
+    {
+      "addr": "aws_cloudwatch_log_group.adoptable",
+      "reason": "UNOWNED",
+      "detail": "A live aws_cloudwatch_log_group already exists with identity \"/stateless-e2e-block/adoptable\" and carries no tofu-estate marker, so this estate does not own it and the plan proposes creating the resource this configuration declares - which, for a type whose name must be unique, the cloud will refuse while the unowned one holds it. Adopt it by writing tofu-estate=\"stateless-e2e-block\" and tofu-address=\"aws_cloudwatch_log_group.adoptable\" onto it, then re-run; or set policy { declared_untagged = \"adopt\" } in the live block to have this run adopt it for you; or point this resource at a name nobody is using."
+    },
+    {
+      "addr": "aws_cloudwatch_log_group.held_elsewhere",
+      "reason": "UNOWNED",
+      "detail": "A live aws_cloudwatch_log_group already exists with identity \"/stateless-e2e-block/held-elsewhere\" and carries tofu-estate=\"other-estate\", so it belongs to another estate and nothing in this plan reads, changes or destroys it. See live/MARKERS.md, \"Ownership semantics\"."
+    },
+    {
+      "addr": "aws_cloudwatch_log_group.never_applied",
+      "reason": "ABSENT",
+      "detail": "The provider reports no aws_cloudwatch_log_group exists with identity \"/stateless-e2e-block/never-applied\", so this resource has not been created yet. The plan will propose creating it."
+    },
+    {
+      "addr": "aws_security_group_rule.https",
+      "reason": "ABSENT",
+      "detail": "The provider reports no aws_security_group_rule exists with identity \"sg-5fbb2850b62304cee_ingress_tcp_443_443_10.99.0.0/16\", so this resource has not been created yet. The plan will propose creating it."
+    }
+  ],
+  "unowned": [
+    {
+      "addr": "aws_cloudwatch_log_group.adoptable",
+      "type": "aws_cloudwatch_log_group",
+      "identity": "/stateless-e2e-block/adoptable",
+      "adopt_tofu_estate": "stateless-e2e-block",
+      "adopt_tofu_address": "aws_cloudwatch_log_group.adoptable"
+    },
+    {
+      "addr": "aws_cloudwatch_log_group.held_elsewhere",
+      "type": "aws_cloudwatch_log_group",
+      "identity": "/stateless-e2e-block/held-elsewhere",
+      "tofu_estate": "other-estate"
+    }
+  ],
+  "diagnostics": [
+    {
+      "severity": "warning",
+      "summary": "Provider version does not match the admission evidence version",
+      "detail": "This run resolved hashicorp/aws 6.58.0. Live resource markers' admission table - which resource types are accepted, what their import IDs look like, and how their identity is resolved - was verified against hashicorp/aws 6.59.0 (live/survey.json). Import grammar and identity schemas are the parts of that table a provider version change can invalidate: an import ID format or an identity attribute that changed between 6.58.0 and 6.59.0 would misbehave here with no further warning. Taggability judgments are not version-sensitive in the same way and rarely change between provider releases. This is a caution, not a failure: the plan continues."
+    },
+    {
+      "severity": "warning",
+      "summary": "Resource type has no orphan recovery",
+      "detail": "aws_cloudwatch_log_group is admitted by the provider's own identity schema rather than by this fork's admission table, so it plans and applies normally - but the estate-wide sweep draws its type universe from that table and will not list it. Deleting the last aws_cloudwatch_log_group block from this configuration leaves the live resource in the account with no run proposing to remove it, and no warning at that point either. Remove it by hand when you remove the block. See live/LIMITATIONS.md, \"Resource type has no orphan recovery\"."
+    },
+    {
+      "severity": "warning",
+      "summary": "Incomplete sweep for undeclared resources",
+      "detail": "The estate-wide sweep listed a aws_appautoscaling_target that the provider could not fully read (Error Listing Remote Resources: listing Application Auto Scaling Scalable Targets: operation error Application Auto Scaling: DescribeScalableTargets, 1 validation error(s) found.\n- missing required field, DescribeScalableTargetsInput.ServiceNamespace.\n), so its ownership markers cannot be read and it cannot be matched to this estate. This is expected for a resource this estate does not own, such as an AWS-managed default; the sweep continues over the rest of this type's objects and every other type."
+    },
+    {
+      "severity": "warning",
+      "summary": "Incomplete sweep for undeclared resources",
+      "detail": "The estate-wide sweep listed a aws_appflow_flow that the provider could not fully read (Error Listing Remote Resources: listing AppFlow Flow resources: operation error Appflow: ListFlows, https response error StatusCode: 404, RequestID: 3106667e-9751-461c-b81f-ed042144eda3, api error UnknownOperationException: Unknown operation: POST /list-flows), so its ownership markers cannot be read and it cannot be matched to this estate. This is expected for a resource this estate does not own, such as an AWS-managed default; the sweep continues over the rest of this type's objects and every other type."
+    },
+    {
+      "severity": "warning",
+      "summary": "Incomplete sweep for undeclared resources",
+      "detail": "The estate-wide sweep listed a aws_bedrockagentcore_browser_profile that the provider could not fully read (Error Listing Remote Resources: listing Bedrock AgentCore Browser Profiles: operation error Bedrock AgentCore Control: ListBrowserProfiles, https response error StatusCode: 404, RequestID: cfea5f10-3bbf-4011-8946-d1fb97a8a9a3, api error UnknownOperationException: Unknown operation: POST /browser-profiles), so its ownership markers cannot be read and it cannot be matched to this estate. This is expected for a resource this estate does not own, such as an AWS-managed default; the sweep continues over the rest of this type's objects and every other type."
+    },
+    {
+      "severity": "warning",
+      "summary": "Incomplete sweep for undeclared resources",
+      "detail": "The estate-wide sweep listed a aws_bedrockagentcore_evaluator that the provider could not fully read (Error Listing Remote Resources: listing Bedrock AgentCore Evaluators: operation error Bedrock AgentCore Control: ListEvaluators, https response error StatusCode: 404, RequestID: dd8dd4bf-6a92-4477-a7bd-dfe8fbd8b8df, api error UnknownOperationException: Unknown operation: POST /evaluators), so its ownership markers cannot be read and it cannot be matched to this estate. This is expected for a resource this estate does not own, such as an AWS-managed default; the sweep continues over the rest of this type's objects and every other type."
+    },
+    {
+      "severity": "warning",
+      "summary": "Incomplete sweep for undeclared resources",
+      "detail": "The estate-wide sweep listed a aws_bedrockagentcore_harness that the provider could not fully read (Error Listing Remote Resources: listing Bedrock AgentCore Harnesses: operation error Bedrock AgentCore Control: ListHarnesses, https response error StatusCode: 404, RequestID: b1d60f1d-72e1-4faf-8eb6-589dca095f58, api error UnknownOperationException: Unknown operation: GET /harnesses), so its ownership markers cannot be read and it cannot be matched to this estate. This is expected for a resource this estate does not own, such as an AWS-managed default; the sweep continues over the rest of this type's objects and every other type."
+    },
+    {
+      "severity": "warning",
+      "summary": "Incomplete sweep for undeclared resources",
+      "detail": "The estate-wide sweep listed a aws_bedrockagentcore_online_evaluation_config that the provider could not fully read (Error Listing Remote Resources: listing Bedrock AgentCore Online Evaluation Config resources: operation error Bedrock AgentCore Control: ListOnlineEvaluationConfigs, https response error StatusCode: 404, RequestID: c15091aa-6c86-4252-915f-b150ec837003, api error UnknownOperationException: Unknown operation: POST /online-evaluation-configs), so its ownership markers cannot be read and it cannot be matched to this estate. This is expected for a resource this estate does not own, such as an AWS-managed default; the sweep continues over the rest of this type's objects and every other type."
+    },
+    {
+      "severity": "warning",
+      "summary": "Incomplete sweep for undeclared resources",
+      "detail": "The estate-wide sweep listed a aws_bedrockagentcore_policy_engine that the provider could not fully read (Error Listing Remote Resources: listing Bedrock AgentCore Policy Engines: operation error Bedrock AgentCore Control: ListPolicyEngines, https response error StatusCode: 404, RequestID: 13c62cba-5f73-4c52-83d2-5700bdb06361, api error UnknownOperationException: Unknown operation: GET /policy-engines), so its ownership markers cannot be read and it cannot be matched to this estate. This is expected for a resource this estate does not own, such as an AWS-managed default; the sweep continues over the rest of this type's objects and every other type."
+    },
+    {
+      "severity": "warning",
+      "summary": "Incomplete sweep for undeclared resources",
+      "detail": "The estate-wide sweep listed a aws_cleanrooms_collaboration that the provider could not fully read (Error Listing Remote Resources: listing Clean Rooms Collaboration resources: operation error CleanRooms: ListCollaborations, https response error StatusCode: 404, RequestID: 2bcd493d-528d-48f5-9c11-4e0e1130c964, api error UnknownOperationException: Unknown operation: GET /collaborations), so its ownership markers cannot be read and it cannot be matched to this estate. This is expected for a resource this estate does not own, such as an AWS-managed default; the sweep continues over the rest of this type's objects and every other type."
+    },
+    {
+      "severity": "warning",
+      "summary": "Incomplete sweep for undeclared resources",
+      "detail": "The estate-wide sweep listed a aws_cleanrooms_configured_table that the provider could not fully read (Error Listing Remote Resources: listing Clean Rooms Configured Table resources: operation error CleanRooms: ListConfiguredTables, https response error StatusCode: 404, RequestID: 8be20ff4-17a7-4539-ae36-0cd20ecd8732, api error UnknownOperationException: Unknown operation: GET /configuredTables), so its ownership markers cannot be read and it cannot be matched to this estate. This is expected for a resource this estate does not own, such as an AWS-managed default; the sweep continues over the rest of this type's objects and every other type."
+    },
+    {
+      "severity": "warning",
+      "summary": "Incomplete sweep for undeclared resources",
+      "detail": "The estate-wide sweep listed a aws_cleanrooms_membership that the provider could not fully read (Error Listing Remote Resources: listing Clean Rooms Membership resources: operation error CleanRooms: ListMemberships, https response error StatusCode: 404, RequestID: 1a7acf79-c2b7-4194-bf51-481c5714306c, api error UnknownOperationException: Unknown operation: GET /memberships), so its ownership markers cannot be read and it cannot be matched to this estate. This is expected for a resource this estate does not own, such as an AWS-managed default; the sweep continues over the rest of this type's objects and every other type."
+    },
+    {
+      "severity": "warning",
+      "summary": "Incomplete sweep for undeclared resources",
+      "detail": "The estate-wide sweep listed a aws_cloudfront_key_value_store that the provider could not fully read (Error Listing Remote Resources: listing CloudFront Key Value Store resources: operation error CloudFront: ListKeyValueStores, https response error StatusCode: 404, RequestID: , api error UnknownError: UnknownError), so its ownership markers cannot be read and it cannot be matched to this estate. This is expected for a resource this estate does not own, such as an AWS-managed default; the sweep continues over the rest of this type's objects and every other type."
+    },
+    {
+      "severity": "warning",
+      "summary": "Incomplete sweep for undeclared resources",
+      "detail": "The estate-wide sweep listed a aws_cloudwatch_alarm_mute_rule that the provider could not fully read (Error Listing Remote Resources: listing CloudWatch Alarm Mute Rules: operation error CloudWatch: ListAlarmMuteRules, https response error StatusCode: 400, RequestID: 0b189b44-684b-489e-b469-f603146f3666, api error UnsupportedOperation: Operation ListAlarmMuteRules is not supported by CloudWatch JSON.), so its ownership markers cannot be read and it cannot be matched to this estate. This is expected for a resource this estate does not own, such as an AWS-managed default; the sweep continues over the rest of this type's objects and every other type."
+    },
+    {
+      "severity": "warning",
+      "summary": "Incomplete sweep for undeclared resources",
+      "detail": "The estate-wide sweep listed a aws_ec2_network_insights_access_scope that the provider could not fully read (Error Listing Remote Resources: listing EC2 Network Insights Access Scopes: operation error EC2: DescribeNetworkInsightsAccessScopes, https response error StatusCode: 400, RequestID: 94e15dd0-e454-4546-8bb8-9b9f517ff061, api error UnsupportedOperation: Operation DescribeNetworkInsightsAccessScopes is not supported.), so its ownership markers cannot be read and it cannot be matched to this estate. This is expected for a resource this estate does not own, such as an AWS-managed default; the sweep continues over the rest of this type's objects and every other type."
+    },
+    {
+      "severity": "warning",
+      "summary": "Incomplete sweep for undeclared resources",
+      "detail": "The estate-wide sweep listed a aws_ec2_transit_gateway_metering_policy that the provider could not fully read (Error Listing Remote Resources: listing EC2 Transit Gateway Metering Policies: operation error EC2: DescribeTransitGatewayMeteringPolicies, https response error StatusCode: 400, RequestID: a355d836-d169-4f03-97e7-fee2c8571529, api error UnsupportedOperation: Operation DescribeTransitGatewayMeteringPolicies is not supported.), so its ownership markers cannot be read and it cannot be matched to this estate. This is expected for a resource this estate does not own, such as an AWS-managed default; the sweep continues over the rest of this type's objects and every other type."
+    },
+    {
+      "severity": "warning",
+      "summary": "Incomplete sweep for undeclared resources",
+      "detail": "The estate-wide sweep listed a aws_ecs_daemon_task_definition that the provider could not fully read (Error Listing Remote Resources: listing ECS Daemon Task Definitions: operation error ECS: ListDaemonTaskDefinitions, https response error StatusCode: 400, RequestID: a586e7de-99b0-4d5a-ad2c-17bebdb16ab4, api error UnsupportedOperation: Operation ListDaemonTaskDefinitions is not supported.), so its ownership markers cannot be read and it cannot be matched to this estate. This is expected for a resource this estate does not own, such as an AWS-managed default; the sweep continues over the rest of this type's objects and every other type."
+    },
+    {
+      "severity": "warning",
+      "summary": "Incomplete sweep for undeclared resources",
+      "detail": "The estate-wide sweep listed a aws_eks_access_entry that the provider could not fully read (Error Listing Remote Resources: listing EKS Access Entries: operation error EKS: ListAccessEntries, serialization failed: serialization failed: input member clusterName must not be empty), so its ownership markers cannot be read and it cannot be matched to this estate. This is expected for a resource this estate does not own, such as an AWS-managed default; the sweep continues over the rest of this type's objects and every other type."
+    },
+    {
+      "severity": "warning",
+      "summary": "Incomplete sweep for undeclared resources",
+      "detail": "The estate-wide sweep listed a aws_eks_addon that the provider could not fully read (Error Listing Remote Resources: listing EKS Add-Ons: operation error EKS: ListAddons, serialization failed: serialization failed: input member clusterName must not be empty), so its ownership markers cannot be read and it cannot be matched to this estate. This is expected for a resource this estate does not own, such as an AWS-managed default; the sweep continues over the rest of this type's objects and every other type."
+    },
+    {
+      "severity": "warning",
+      "summary": "Incomplete sweep for undeclared resources",
+      "detail": "The estate-wide sweep listed a aws_eks_node_group that the provider could not fully read (Error Listing Remote Resources: listing EKS Node Groups: operation error EKS: ListNodegroups, serialization failed: serialization failed: input member clusterName must not be empty), so its ownership markers cannot be read and it cannot be matched to this estate. This is expected for a resource this estate does not own, such as an AWS-managed default; the sweep continues over the rest of this type's objects and every other type."
+    },
+    {
+      "severity": "warning",
+      "summary": "Incomplete sweep for undeclared resources",
+      "detail": "The estate-wide sweep listed a aws_glue_catalog that the provider could not fully read (Error Listing Remote Resources: listing Glue Catalogs: operation error Glue: GetCatalogs, https response error StatusCode: 400, RequestID: 5f5d7e21-81b7-4e5b-ba9a-68c4f7e8ee3f, api error InvalidAction: Action GetCatalogs is not supported), so its ownership markers cannot be read and it cannot be matched to this estate. This is expected for a resource this estate does not own, such as an AWS-managed default; the sweep continues over the rest of this type's objects and every other type."
+    },
+    {
+      "severity": "warning",
+      "summary": "Incomplete sweep for undeclared resources",
+      "detail": "The estate-wide sweep listed a aws_mailmanager_rule_set that the provider could not fully read (Error Listing Remote Resources: listing SES Mail Manager Rule Set resources: operation error MailManager: ListRuleSets, https response error StatusCode: 404, RequestID: 7d27df75-c06e-45c3-8a94-27f0c99b5f6d, deserialization failed, unexpected smithy-protocol response header '' (HTTP status: 404 Not Found)), so its ownership markers cannot be read and it cannot be matched to this estate. This is expected for a resource this estate does not own, such as an AWS-managed default; the sweep continues over the rest of this type's objects and every other type."
+    },
+    {
+      "severity": "warning",
+      "summary": "Incomplete sweep for undeclared resources",
+      "detail": "The estate-wide sweep listed a aws_mailmanager_traffic_policy that the provider could not fully read (Error Listing Remote Resources: operation error MailManager: ListTrafficPolicies, https response error StatusCode: 404, RequestID: c8f5f01e-e2fb-41d3-8511-662b1bfcb413, deserialization failed, unexpected smithy-protocol response header '' (HTTP status: 404 Not Found)), so its ownership markers cannot be read and it cannot be matched to this estate. This is expected for a resource this estate does not own, such as an AWS-managed default; the sweep continues over the rest of this type's objects and every other type."
+    },
+    {
+      "severity": "warning",
+      "summary": "Incomplete sweep for undeclared resources",
+      "detail": "The estate-wide sweep listed a aws_opensearchserverless_collection that the provider could not fully read (Error Listing Remote Resources: listing OpenSearch Serverless Collections: operation error OpenSearchServerless: ListCollections, https response error StatusCode: 404, RequestID: 830db378-80ce-4278-9268-e03c12d34353, api error UnknownOperationException: Unknown operation: OpenSearchServerless.ListCollections), so its ownership markers cannot be read and it cannot be matched to this estate. This is expected for a resource this estate does not own, such as an AWS-managed default; the sweep continues over the rest of this type's objects and every other type."
+    },
+    {
+      "severity": "warning",
+      "summary": "Incomplete sweep for undeclared resources",
+      "detail": "The estate-wide sweep listed a aws_opensearchserverless_collection_group that the provider could not fully read (Error Listing Remote Resources: listing OpenSearch Serverless Collection Groups: operation error OpenSearchServerless: ListCollectionGroups, https response error StatusCode: 404, RequestID: 09a0eb30-7652-4d4b-aa12-c6babf4754f9, api error UnknownOperationException: Unknown operation: OpenSearchServerless.ListCollectionGroups), so its ownership markers cannot be read and it cannot be matched to this estate. This is expected for a resource this estate does not own, such as an AWS-managed default; the sweep continues over the rest of this type's objects and every other type."
+    },
+    {
+      "severity": "warning",
+      "summary": "Incomplete sweep for undeclared resources",
+      "detail": "The estate-wide sweep listed a aws_osis_pipeline that the provider could not fully read (Error Listing Remote Resources: listing OpenSearch Ingestion Pipeline resources: operation error OSIS: ListPipelines, https response error StatusCode: 404, RequestID: da0b67b6-417b-4df9-a2f5-c2c849dd9604, api error UnknownOperationException: Unknown operation: GET /2022-01-01/osis/listPipelines), so its ownership markers cannot be read and it cannot be matched to this estate. This is expected for a resource this estate does not own, such as an AWS-managed default; the sweep continues over the rest of this type's objects and every other type."
+    },
+    {
+      "severity": "warning",
+      "summary": "Incomplete sweep for undeclared resources",
+      "detail": "The estate-wide sweep listed a aws_pinpointsmsvoicev2_pool that the provider could not fully read (Error Listing Remote Resources: operation error Pinpoint SMS Voice V2: DescribePools, https response error StatusCode: 404, RequestID: 21665f5d-0a75-4515-bb62-5bb03603da15, api error UnknownOperationException: Unknown operation: PinpointSMSVoiceV2.DescribePools), so its ownership markers cannot be read and it cannot be matched to this estate. This is expected for a resource this estate does not own, such as an AWS-managed default; the sweep continues over the rest of this type's objects and every other type."
+    },
+    {
+      "severity": "warning",
+      "summary": "Incomplete sweep for undeclared resources",
+      "detail": "The estate-wide sweep listed a aws_prometheus_anomaly_detector that the provider could not fully read (Error Listing Remote Resources: listing AMP (Managed Prometheus) Anomaly Detector resources: operation error amp: ListAnomalyDetectors, serialization failed: serialization failed: input member workspaceId must not be empty), so its ownership markers cannot be read and it cannot be matched to this estate. This is expected for a resource this estate does not own, such as an AWS-managed default; the sweep continues over the rest of this type's objects and every other type."
+    },
+    {
+      "severity": "warning",
+      "summary": "Incomplete sweep for undeclared resources",
+      "detail": "The estate-wide sweep listed a aws_rekognition_collection that the provider could not fully read (Error Listing Remote Resources: listing Rekognition Collections: operation error Rekognition: ListCollections, https response error StatusCode: 404, RequestID: 559c075d-b91d-4956-b9e2-0d9f01b3239e, api error UnknownOperationException: Unknown operation: RekognitionService.ListCollections), so its ownership markers cannot be read and it cannot be matched to this estate. This is expected for a resource this estate does not own, such as an AWS-managed default; the sweep continues over the rest of this type's objects and every other type."
+    },
+    {
+      "severity": "warning",
+      "summary": "Incomplete sweep for undeclared resources",
+      "detail": "The estate-wide sweep listed a aws_resiliencehubv2_policy that the provider could not fully read (Error Listing Remote Resources: listing Resilience Hub V2 Policies: operation error resiliencehubv2: ListPolicies, https response error StatusCode: 404, RequestID: b2aee268-3876-4163-b1dd-31399bb1da32, api error UnknownOperationException: Unknown operation: GET /v2/list-policies), so its ownership markers cannot be read and it cannot be matched to this estate. This is expected for a resource this estate does not own, such as an AWS-managed default; the sweep continues over the rest of this type's objects and every other type."
+    },
+    {
+      "severity": "warning",
+      "summary": "Incomplete sweep for undeclared resources",
+      "detail": "The estate-wide sweep listed a aws_route53_resolver_rule that the provider could not fully read (Error Listing Remote Resources: listing Route53 Resolver Rules: operation error Route53Resolver: ListResolverRules, https response error StatusCode: 404, RequestID: fc867ad8-77d3-4084-8cf7-36abe714f121, api error UnknownOperationException: Unknown operation: Route53Resolver.ListResolverRules), so its ownership markers cannot be read and it cannot be matched to this estate. This is expected for a resource this estate does not own, such as an AWS-managed default; the sweep continues over the rest of this type's objects and every other type."
+    },
+    {
+      "severity": "warning",
+      "summary": "Incomplete sweep for undeclared resources",
+      "detail": "The estate-wide sweep listed a aws_s3_directory_bucket that the provider could not fully read (Error Listing Remote Resources: listing S3 Directory Bucket resources: operation error S3: ListDirectoryBuckets, get identity: bucket name is missing), so its ownership markers cannot be read and it cannot be matched to this estate. This is expected for a resource this estate does not own, such as an AWS-managed default; the sweep continues over the rest of this type's objects and every other type."
+    },
+    {
+      "severity": "warning",
+      "summary": "Incomplete sweep for undeclared resources",
+      "detail": "The estate-wide sweep listed a aws_s3files_access_point that the provider could not fully read (Error Listing Remote Resources: operation error S3Files: ListAccessPoints, 1 validation error(s) found.\n- missing required field, ListAccessPointsInput.FileSystemId.\n), so its ownership markers cannot be read and it cannot be matched to this estate. This is expected for a resource this estate does not own, such as an AWS-managed default; the sweep continues over the rest of this type's objects and every other type."
+    },
+    {
+      "severity": "warning",
+      "summary": "Incomplete sweep for undeclared resources",
+      "detail": "The estate-wide sweep listed a aws_s3files_file_system that the provider could not fully read (Error Listing Remote Resources: operation error S3Files: ListFileSystems, https response error StatusCode: 404, RequestID: c6761512-a695-4051-b61f-5786821d6041, api error UnknownOperationException: Unknown operation: GET /file-systems), so its ownership markers cannot be read and it cannot be matched to this estate. This is expected for a resource this estate does not own, such as an AWS-managed default; the sweep continues over the rest of this type's objects and every other type."
+    },
+    {
+      "severity": "warning",
+      "summary": "Incomplete sweep for undeclared resources",
+      "detail": "The estate-wide sweep listed a aws_sagemaker_hub_content_reference that the provider could not fully read (Error Listing Remote Resources: listing SageMaker Hub Content Reference resources: operation error SageMaker: ListHubs, https response error StatusCode: 400, RequestID: 2a883b3d-177a-4dcc-85e3-9f114f730510, api error UnknownOperationException: Operation ListHubs is not supported by floci), so its ownership markers cannot be read and it cannot be matched to this estate. This is expected for a resource this estate does not own, such as an AWS-managed default; the sweep continues over the rest of this type's objects and every other type."
+    },
+    {
+      "severity": "warning",
+      "summary": "Incomplete sweep for undeclared resources",
+      "detail": "The estate-wide sweep listed a aws_securityhub_automation_rule_v2 that the provider could not fully read (Error Listing Remote Resources: listing Security Hub V2 Automation Rules: operation error SecurityHub: ListAutomationRulesV2, https response error StatusCode: 404, RequestID: 568ce3df-35ff-4d65-bc8b-1708eaa17fc9, api error UnknownOperationException: Unknown operation: GET /automationrulesv2/list), so its ownership markers cannot be read and it cannot be matched to this estate. This is expected for a resource this estate does not own, such as an AWS-managed default; the sweep continues over the rest of this type's objects and every other type."
+    },
+    {
+      "severity": "warning",
+      "summary": "Incomplete sweep for undeclared resources",
+      "detail": "The estate-wide sweep listed a aws_securityhub_connector_v2 that the provider could not fully read (Error Listing Remote Resources: listing Security Hub V2 Connectors: operation error SecurityHub: ListConnectorsV2, https response error StatusCode: 404, RequestID: a975e3a9-1cbd-4729-9de7-22cce42a6bde, api error UnknownOperationException: Unknown operation: GET /connectorsv2), so its ownership markers cannot be read and it cannot be matched to this estate. This is expected for a resource this estate does not own, such as an AWS-managed default; the sweep continues over the rest of this type's objects and every other type."
+    },
+    {
+      "severity": "warning",
+      "summary": "Incomplete sweep for undeclared resources",
+      "detail": "The estate-wide sweep listed a aws_workspaces_pool that the provider could not fully read (Error Listing Remote Resources: listing WorkSpaces Pools: operation error WorkSpaces: DescribeWorkspacesPools, https response error StatusCode: 404, RequestID: 296ecdfc-186f-437b-a9cc-e9775b298f7f, api error UnknownOperationException: Unknown operation: WorkspacesService.DescribeWorkspacesPools), so its ownership markers cannot be read and it cannot be matched to this estate. This is expected for a resource this estate does not own, such as an AWS-managed default; the sweep continues over the rest of this type's objects and every other type."
+    },
+    {
+      "severity": "warning",
+      "summary": "Live resource outside this estate",
+      "detail": "A live aws_cloudwatch_log_group already exists with identity \"/stateless-e2e-block/adoptable\" and carries no tofu-estate marker, so this estate does not own it and the plan proposes creating the resource this configuration declares - which, for a type whose name must be unique, the cloud will refuse while the unowned one holds it. Adopt it by writing tofu-estate=\"stateless-e2e-block\" and tofu-address=\"aws_cloudwatch_log_group.adoptable\" onto it, then re-run; or set policy { declared_untagged = \"adopt\" } in the live block to have this run adopt it for you; or point this resource at a name nobody is using."
+    },
+    {
+      "severity": "warning",
+      "summary": "Live resource outside this estate",
+      "detail": "A live aws_cloudwatch_log_group already exists with identity \"/stateless-e2e-block/held-elsewhere\" and carries tofu-estate=\"other-estate\", so it belongs to another estate and nothing in this plan reads, changes or destroys it. See live/MARKERS.md, \"Ownership semantics\"."
+    }
+  ]
+}
