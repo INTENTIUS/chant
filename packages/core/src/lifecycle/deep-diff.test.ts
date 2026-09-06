@@ -1,7 +1,11 @@
 import { describe, test, expect } from "vitest";
-import { countHeldFields, countPropertyDrift, diffDeep, type DeclaredDeepEntity } from "./deep-diff";
+import { countHeld, countHeldFields, countPropertyDrift, diffDeep, suspiciousHeld, type DeclaredDeepEntity } from "./deep-diff";
 import { UNRESOLVED, type NormalizedDeepObservation } from "../deep-observation";
+import { HELD_ELSEWHERE_TAG } from "../held-elsewhere";
 import type { BaselineLexicon } from "./observation-baseline";
+
+/** A declared property's normalized held-elsewhere form, as `deep-observation.ts` produces it (#2162). Tests build this directly, same as they build every other already-normalized declared value in this file. */
+const held = (by: string, reason: string) => ({ heldElsewhere: HELD_ELSEWHERE_TAG, by, reason });
 
 const live = (
   resources: Record<string, { type: string; properties: Record<string, unknown>; fieldOwners?: Record<string, string> }>,
@@ -381,6 +385,72 @@ describe("diffDeep - the claimed-field set (#2160)", () => {
     // The claim covers the path, so the disagreement is real drift.
     const result = diffDeep({
       declared,
+// #2162 — a `heldElsewhere()` marker is never drift: a difference on it is
+// reported as held, with its holder and reason, and never as `changed`,
+// `undeclared`, or `absent`. The honest example from the issue: an HPA owns
+// a Deployment's `spec.replicas` after the first apply.
+describe("diffDeep — heldElsewhere() (#2162)", () => {
+  test("a live value on a held path is reported as held, not drift", () => {
+    const result = diffDeep({
+      declared: {
+        web: {
+          type: "K8s::Apps::Deployment",
+          properties: { spec: { replicas: held("hpa", "the autoscaler owns replicas after the first apply") } },
+        },
+      },
+      live: live({ web: { type: "K8s::Apps::Deployment", properties: { spec: { replicas: 5 } } } }),
+    });
+    expect(result.drifted).toEqual([]);
+    expect(countPropertyDrift(result)).toBe(0);
+    expect(result.held).toEqual([
+      {
+        name: "web",
+        type: "K8s::Apps::Deployment",
+        held: [
+          {
+            path: "spec.replicas",
+            by: "hpa",
+            reason: "the autoscaler owns replicas after the first apply",
+            live: 5,
+            suspicious: false,
+          },
+        ],
+      },
+    ]);
+    expect(countHeld(result)).toBe(1);
+    // Metadata otherwise matched, so it is unchanged too — held is a
+    // separate axis, not a substitute for the drift/unchanged split.
+    expect(result.unchanged).toEqual(["web"]);
+  });
+
+  test("no live value at all on a held path is suspicious — the claimed hand-over never showed up", () => {
+    const result = diffDeep({
+      declared: {
+        web: {
+          type: "K8s::Apps::Deployment",
+          properties: { spec: { replicas: held("hpa", "x") } },
+        },
+      },
+      live: live({ web: { type: "K8s::Apps::Deployment", properties: {} } }),
+    });
+    expect(result.drifted).toEqual([]);
+    expect(result.held[0].held[0]).toEqual({
+      path: "spec.replicas",
+      by: "hpa",
+      reason: "x",
+      suspicious: true,
+    });
+    expect(result.held[0].held[0]).not.toHaveProperty("live");
+    expect(suspiciousHeld(result)).toEqual([
+      { name: "web", type: "K8s::Apps::Deployment", path: "spec.replicas", by: "hpa", reason: "x", suspicious: true },
+    ]);
+  });
+
+  test("carries the field manager that owns the path live, where the substrate records one (#1189)", () => {
+    const result = diffDeep({
+      declared: {
+        web: { type: "K8s::Apps::Deployment", properties: { spec: { replicas: held("hpa", "x") } } },
+      },
       live: live({
         web: {
           type: "K8s::Apps::Deployment",
@@ -417,5 +487,38 @@ describe("diffDeep - the claimed-field set (#2160)", () => {
     });
     expect(result.drifted).toEqual([]);
     expect(result.heldElsewhere).toEqual([]);
+    expect(result.held[0].held[0]).toMatchObject({ owner: "hpa-controller" });
+  });
+
+  test("a held property never counts toward property drift, even alongside a genuine drift on another path", () => {
+    const result = diffDeep({
+      declared: {
+        web: {
+          type: "K8s::Apps::Deployment",
+          properties: { spec: { replicas: held("hpa", "x"), image: "app:1" } },
+        },
+      },
+      live: live({
+        web: { type: "K8s::Apps::Deployment", properties: { spec: { replicas: 7, image: "app:2" } } },
+      }),
+    });
+    expect(result.drifted).toEqual([
+      { name: "web", type: "K8s::Apps::Deployment", changes: [{ path: "spec.image", kind: "changed", declared: "app:1", live: "app:2" }] },
+    ]);
+    expect(countPropertyDrift(result)).toBe(1);
+    expect(countHeld(result)).toBe(1);
+    // A held+drifted entity is not unchanged — the same rule as accepted.
+    expect(result.unchanged).toEqual([]);
+  });
+
+  test("suspiciousHeld() reports nothing when the held property never differs from having no baseline to check", () => {
+    // A held property whose live value showed up is not suspicious, whatever
+    // that value is — chant has no seed to compare it against, so presence
+    // alone is the only evidence it can read in one observation.
+    const result = diffDeep({
+      declared: { web: { type: "T", properties: { A: held("controller", "x") } } },
+      live: live({ web: { type: "T", properties: { A: "anything" } } }),
+    });
+    expect(suspiciousHeld(result)).toEqual([]);
   });
 });

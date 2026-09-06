@@ -12,6 +12,7 @@ import {
   normalizeDeepProperties,
   type DeepNormalizationHooks,
 } from "./deep-observation";
+import { HELD_ELSEWHERE_TAG, heldElsewhere, isNormalizedHeldElsewhere } from "./held-elsewhere";
 
 describe("the deep observation envelope", () => {
   test("is discriminated by its version literal", () => {
@@ -316,6 +317,80 @@ describe("deepValueEqual", () => {
     expect(deepValueEqual({ a: [1, 2] }, { a: [2, 1] })).toBe(false);
     expect(deepValueEqual(null, undefined)).toBe(false);
     expect(deepValueEqual(1, 1)).toBe(true);
+  });
+});
+
+// #2162 — a `heldElsewhere()` marker is declared on purpose, not authored
+// data to walk into and not an unresolved intrinsic. It must survive
+// normalization as one recognizable leaf, all the way through
+// `flattenDeepProperties` and `deepPathSet`, or `deep-diff.ts` has nothing
+// to key its held classification on.
+describe("normalizeDeepProperties — heldElsewhere() markers (#2162)", () => {
+  test("normalizes to a JSON-safe tagged leaf rather than being walked as a two-key object", () => {
+    const out = normalizeDeepProperties(
+      { replicas: heldElsewhere<number>({ by: "hpa", reason: "the autoscaler owns replicas after the first apply" }) },
+      { entityType: "Deployment", side: "declared" },
+    );
+    expect(out).toEqual({
+      replicas: { heldElsewhere: HELD_ELSEWHERE_TAG, by: "hpa", reason: "the autoscaler owns replicas after the first apply" },
+    });
+    expect(isNormalizedHeldElsewhere(out.replicas)).toBe(true);
+  });
+
+  test("is not masked, unresolved, or subjected to a lexicon's own hooks", () => {
+    const out = normalizeDeepProperties(
+      { password: heldElsewhere<string>({ by: "operator", reason: "rotated out of band" }) },
+      {
+        entityType: "T",
+        side: "declared",
+        // Scoped to the one path under test — a hook that fires on every
+        // node (including the root) would mask/unresolve the whole tree,
+        // which is a hazard of the hook, not something this test is after.
+        hooks: { unresolved: (n) => n.path === "password", mask: (n) => n.path === "password" },
+      },
+    );
+    // If either hook had run ahead of the held check, this would be
+    // UNRESOLVED or MASKED instead — the key name looks secret-bearing
+    // (`isSensitiveKey`) and both hooks say yes too, and the held check
+    // still has to win.
+    expect(isNormalizedHeldElsewhere(out.password)).toBe(true);
+  });
+
+  test("nested inside a property-kind declarable, still normalizes to the tagged leaf", () => {
+    const propertyDeclarable = (entityType: string, props: Record<string, unknown>) => ({
+      entityType,
+      kind: "property",
+      props,
+    });
+    const out = normalizeDeepProperties(
+      {
+        Behavior: propertyDeclarable("HorizontalPodAutoscaler.Behavior", {
+          scaleUp: heldElsewhere<Record<string, unknown>>({ by: "hpa", reason: "the controller tunes its own policy" }),
+        }),
+      },
+      { entityType: "HorizontalPodAutoscaler", side: "declared" },
+    );
+    expect(isNormalizedHeldElsewhere((out.Behavior as Record<string, unknown>).scaleUp)).toBe(true);
+  });
+});
+
+describe("flattenDeepProperties — heldElsewhere() markers (#2162)", () => {
+  test("addresses the marker as one leaf path, not two", () => {
+    const normalized = normalizeDeepProperties(
+      { replicas: heldElsewhere<number>({ by: "hpa", reason: "x" }) },
+      { entityType: "Deployment", side: "declared" },
+    );
+    const flat = flattenDeepProperties(normalized);
+    expect([...flat.keys()]).toEqual(["replicas"]);
+    expect(isNormalizedHeldElsewhere(flat.get("replicas"))).toBe(true);
+  });
+});
+
+describe("deepPathSet — heldElsewhere() markers (#2162)", () => {
+  test("records the held property's own path, not synthetic sub-paths into by/reason", () => {
+    const marker = heldElsewhere<number>({ by: "hpa", reason: "x" });
+    const set = deepPathSet({ replicas: marker });
+    expect([...set].sort()).toEqual(["replicas"]);
   });
 });
 

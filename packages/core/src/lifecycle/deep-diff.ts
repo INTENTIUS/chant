@@ -41,6 +41,7 @@ import {
   type NormalizedDeepObservation,
 } from "../deep-observation";
 import { claimedFieldsFromPaths, heldBy, isClaimed, type FieldClaimSource } from "../claimed-fields";
+import { isNormalizedHeldElsewhere } from "../held-elsewhere";
 import { originOfPath, type PathOrigin } from "../provenance";
 import type { UnobservedResource } from "./live-diff";
 import { acceptedDeviation, type BaselineLexicon } from "./observation-baseline";
@@ -150,6 +151,36 @@ export interface DeepEntityHeldFields {
   name: string;
   type: string;
   fields: HeldField[];
+ * One property declared `heldElsewhere()` (#2162) — a fact about who owns the
+ * field at runtime, reported beside drift rather than folded into it. Never a
+ * {@link PropertyDrift}: a held property is never `changed`, `undeclared`, or
+ * `absent`, and is never proposed for update.
+ */
+export interface PropertyHeld {
+  /** Path within the normalized property tree, same addressing as {@link PropertyDrift.path}. */
+  path: string;
+  /** Who holds it — the marker's `by`. */
+  by: string;
+  /** Why chant does not reconcile it — the marker's `reason`. */
+  reason: string;
+  /** The live value, when the deep read found one at this path. */
+  live?: unknown;
+  /**
+   * True when this path carried no live value at all — the deep read found
+   * nothing here, not even a provider default. A declared hand-over with no
+   * evidence anything was ever written is itself worth a look: either the
+   * holder never ran, or this is not the field it actually writes.
+   */
+  suspicious: boolean;
+  /** The field manager that owns this path live, where the substrate records one (#1189). See {@link PropertyDrift.owner}. */
+  owner?: string;
+}
+
+/** Held properties (#2162) for one declared entity. */
+export interface DeepEntityHeld {
+  name: string;
+  type: string;
+  held: PropertyHeld[];
 }
 
 export interface DeepDiffResult {
@@ -171,6 +202,13 @@ export interface DeepDiffResult {
    * has it.
    */
   heldElsewhere: DeepEntityHeldFields[];
+   * Properties declared `heldElsewhere()` (#2162) — reported here instead of
+   * in `drifted`/`accepted`, whatever the live value is. Not a suppression:
+   * every held property is listed, with its holder and reason, so a reader of
+   * the plan sees which fields are not being managed and by whom. Sorted by
+   * name.
+   */
+  held: DeepEntityHeld[];
   /** Entities whose property trees matched. Sorted. */
   unchanged: string[];
   /** Declared entities whose *properties* could not be read (#1089). Sorted. */
@@ -215,6 +253,7 @@ export function diffDeep(input: DiffDeepInput): DeepDiffResult {
   const drifted: DeepEntityDrift[] = [];
   const accepted: DeepEntityDrift[] = [];
   const heldElsewhere: DeepEntityHeldFields[] = [];
+  const held: DeepEntityHeld[] = [];
   const unchanged: string[] = [];
   const unobserved: UnobservedResource[] = [];
   const undeclaredEntities: string[] = [];
@@ -268,13 +307,36 @@ export function diffDeep(input: DiffDeepInput): DeepDiffResult {
     const paths = [...new Set([...declaredFlat.keys(), ...liveFlat.keys()])].sort();
     const reported: PropertyDrift[] = [];
     const suppressed: PropertyDrift[] = [];
-    const held: HeldField[] = [];
+    const heldFields: HeldField[] = [];
+    const heldHere: PropertyHeld[] = [];
 
     for (const path of paths) {
       const hasDeclared = isClaimed(claimed, path);
       const hasLive = liveFlat.has(path);
       const declaredValue = declaredFlat.get(path);
       const liveValue = liveFlat.get(path);
+
+      // A `heldElsewhere()` marker (#2162): never drift, whatever the live
+      // value is (or isn't) — reported in its own section instead, with its
+      // holder and reason, and never proposed for update. Checked ahead of
+      // the UNRESOLVED/equality shortcuts below: a held path is not "no
+      // source-side value" (UNRESOLVED) and its declared side will never
+      // structurally equal a live value, so without this check every held
+      // property would fall through and report as ordinary `changed` drift.
+      if (hasDeclared && isNormalizedHeldElsewhere(declaredValue)) {
+        heldHere.push({
+          path,
+          by: declaredValue.by,
+          reason: declaredValue.reason,
+          ...(hasLive ? { live: liveValue } : {}),
+          // No live value at all is the one thing chant can check in a
+          // single observation: a claimed hand-over that produced no
+          // evidence — not even a provider default — is worth a look.
+          suspicious: !hasLive,
+          ...(hasLive && liveEntity.fieldOwners?.[path] ? { owner: liveEntity.fieldOwners[path] } : {}),
+        });
+        continue;
+      }
 
       // An unevaluated intrinsic has no source-side value to compare against.
       if (hasDeclared && declaredValue === UNRESOLVED) continue;
@@ -288,7 +350,7 @@ export function diffDeep(input: DiffDeepInput): DeepDiffResult {
       // substrate records one, is the whole answer an operator wants.
       if (!hasDeclared) {
         const { holder, source } = heldBy(liveEntity.fieldOwners, path);
-        held.push({
+        heldFields.push({
           path,
           live: liveValue,
           ...(holder ? { heldBy: holder } : {}),
@@ -327,18 +389,20 @@ export function diffDeep(input: DiffDeepInput): DeepDiffResult {
     }
 
     if (suppressed.length > 0) accepted.push({ name, type, changes: suppressed });
-    if (held.length > 0) heldElsewhere.push({ name, type, fields: held });
+    if (heldFields.length > 0) heldElsewhere.push({ name, type, fields: heldFields });
     if (reported.length > 0) drifted.push({ name, type, changes: reported });
     // Held fields do not disqualify an entity from `unchanged`: every property
     // chant declared matches, and the epic's whole point is that a controller's
     // field stops being a finding chant restates on every tick.
     else if (suppressed.length === 0) unchanged.push(name);
+    if (heldHere.length > 0) held.push({ name, type, held: heldHere });
   }
 
   return {
     drifted: drifted.sort((a, b) => a.name.localeCompare(b.name)),
     accepted: accepted.sort((a, b) => a.name.localeCompare(b.name)),
     heldElsewhere: heldElsewhere.sort((a, b) => a.name.localeCompare(b.name)),
+    held: held.sort((a, b) => a.name.localeCompare(b.name)),
     unchanged: unchanged.sort(),
     unobserved: unobserved.sort((a, b) => a.name.localeCompare(b.name)),
     undeclaredEntities: undeclaredEntities.sort(),
@@ -353,4 +417,29 @@ export function countPropertyDrift(result: DeepDiffResult): number {
 /** Total live values held by someone other than chant, across every entity (#2160). Never added to the drift count. */
 export function countHeldFields(result: DeepDiffResult): number {
   return result.heldElsewhere.reduce((n, e) => n + e.fields.length, 0);
+/** Total held properties (#2162) across every entity. */
+export function countHeld(result: DeepDiffResult): number {
+  return result.held.reduce((n, e) => n + e.held.length, 0);
+}
+
+/** One held property flagged suspicious (#2162), with its entity attached. */
+export interface SuspiciousHeld extends PropertyHeld {
+  name: string;
+  type: string;
+}
+
+/**
+ * Every held property whose declaration looks like a hand-over that never
+ * happened — no live value ever showed up for it. Worth a look: either the
+ * named holder never ran, or this is not the field it actually writes.
+ * Sorted by entity name, then path.
+ */
+export function suspiciousHeld(result: DeepDiffResult): SuspiciousHeld[] {
+  const out: SuspiciousHeld[] = [];
+  for (const entity of result.held) {
+    for (const h of entity.held) {
+      if (h.suspicious) out.push({ name: entity.name, type: entity.type, ...h });
+    }
+  }
+  return out.sort((a, b) => a.name.localeCompare(b.name) || a.path.localeCompare(b.path));
 }

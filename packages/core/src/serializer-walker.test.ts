@@ -4,6 +4,7 @@ import { DECLARABLE_MARKER, type Declarable } from "./declarable";
 import { INTRINSIC_MARKER } from "./intrinsic";
 import { AttrRef } from "./attrref";
 import { createResource } from "./runtime";
+import { heldElsewhere } from "./held-elsewhere";
 
 function makeDeclarable(type: string, kind: "resource" | "property" = "resource", props?: Record<string, unknown>): Declarable & { props?: Record<string, unknown> } {
   const d: Declarable & { props?: Record<string, unknown> } = {
@@ -143,5 +144,46 @@ describe("walkValue", () => {
         items: [{ __getAtt: ["MyRole", "arn"] }, "static"],
       },
     });
+  });
+});
+
+// #2162 — a `heldElsewhere()` marker is never written to the applied
+// payload: the field is omitted entirely so the provider defaults it once at
+// creation and the named holder owns it from there. Every apply this
+// synthesizes omits it, not only the first — re-asserting even the field's
+// own value on a later apply would fight whatever the holder wrote in
+// between.
+describe("walkValue — heldElsewhere() markers (#2162)", () => {
+  test("a top-level held value walks to undefined", () => {
+    const names = new Map<Declarable, string>();
+    const marker = heldElsewhere<number>({ by: "hpa", reason: "x" });
+    expect(walkValue(marker, names, mockVisitor)).toBeUndefined();
+  });
+
+  test("an object key holding a marker is omitted entirely, not set to undefined", () => {
+    const names = new Map<Declarable, string>();
+    const value = {
+      replicas: heldElsewhere<number>({ by: "hpa", reason: "the autoscaler owns replicas after the first apply" }),
+      image: "app:1",
+    };
+    const result = walkValue(value, names, mockVisitor);
+    expect(result).toEqual({ image: "app:1" });
+    expect(Object.keys(result as object)).not.toContain("replicas");
+  });
+
+  test("a held element inside an array is dropped, not left as a hole", () => {
+    const names = new Map<Declarable, string>();
+    const value = { tolerations: ["a", heldElsewhere<string>({ by: "controller", reason: "x" }), "b"] };
+    expect(walkValue(value, names, mockVisitor)).toEqual({ tolerations: ["a", "b"] });
+  });
+
+  test("nested inside a property-kind declarable's own props, still omitted", () => {
+    const names = new Map<Declarable, string>();
+    const scaleTarget = makeDeclarable("K8s::Autoscaling::HorizontalPodAutoscaler.Behavior", "property", {
+      scaleUp: heldElsewhere<Record<string, unknown>>({ by: "hpa", reason: "the controller tunes its own policy" }),
+      stabilizationWindowSeconds: 60,
+    });
+    const result = walkValue(scaleTarget, names, mockVisitor);
+    expect(result).toEqual({ stabilizationWindowSeconds: 60 });
   });
 });
