@@ -84,6 +84,34 @@ describe("op.json IR", () => {
     expect(ir.labels).toEqual({});
   });
 
+  it("carries the Op's own cadence, and omits the key when it declares none (#2120)", () => {
+    const scheduled = buildOpIR({
+      name: "nightly",
+      overview: "o",
+      phases: [],
+      schedule: { cron: "0 3 * * *", overlap: "skip" },
+    });
+    expect(scheduled.schedule).toEqual({ cron: "0 3 * * *", overlap: "skip" });
+    expect(serializeOpIR({ name: "nightly", overview: "o", phases: [], schedule: { cron: "0 3 * * *" } }))
+      .toContain('"cron": "0 3 * * *"');
+
+    expect(buildOpIR({ name: "bare", overview: "o", phases: [] })).not.toHaveProperty("schedule");
+  });
+
+  it("round-trips a scheduled Op byte-identically (#2120)", () => {
+    const original: OpConfig = {
+      name: "nightly",
+      overview: "o",
+      phases: [phase("Only", [shell("echo hi")])],
+      schedule: { cron: "0 3 * * *", overlap: "skip" },
+    };
+    const text = serializeOpIR(original);
+    const reconstructed = opConfigFromIR(JSON.parse(text) as OpIR);
+
+    expect(reconstructed.schedule).toEqual({ cron: "0 3 * * *", overlap: "skip" });
+    expect(serializeOpIR(reconstructed)).toBe(text);
+  });
+
   it("two serializations of the same config are byte-identical (determinism)", () => {
     const config = representativeOp();
     expect(serializeOpIR(config)).toBe(serializeOpIR(config));

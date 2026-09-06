@@ -75,6 +75,25 @@ function writeFixtureConvergeOp(dir: string, opName: string, env: string): void 
   );
 }
 
+/** The same fixture with a cadence of its own (#2120) — what `ConvergeOp({ schedule })` produces. */
+function writeFixtureScheduledConvergeOp(dir: string, opName: string, env: string, cron: string): void {
+  const opsDir = join(dir, "ops");
+  mkdirSync(opsDir, { recursive: true });
+  writeFileSync(
+    join(opsDir, `${opName}.op.ts`),
+    `export default {
+  props: {
+    name: ${JSON.stringify(opName)},
+    overview: "fixture scheduled converge op",
+    phases: [{ name: "Converge", steps: [{ kind: "activity", fn: "fakeTick", args: {} }] }],
+    labels: { Converge: "true", Env: ${JSON.stringify(env)}, Dial: "observe" },
+    schedule: { cron: ${JSON.stringify(cron)}, overlap: "skip" },
+  },
+};
+`,
+  );
+}
+
 function writeFixtureNonConvergeOp(dir: string, opName: string): void {
   const opsDir = join(dir, "ops");
   mkdirSync(opsDir, { recursive: true });
@@ -391,6 +410,77 @@ describe("runOperatorForever — interval/timer behavior", () => {
   });
 });
 
+describe("runOperatorRound — an Op's own schedule is its tick cadence (#2120)", () => {
+  /** 2026-09-06T13:30 local — a minute `*​/10 * * * *` fires on. */
+  const firing = () => new Date(2026, 8, 6, 13, 30, 0, 0);
+  /** …and 13:33, which it does not. */
+  const quiet = () => new Date(2026, 8, 6, 13, 33, 0, 0);
+
+  test("a round on a firing minute ticks the op", async () => {
+    await withTestDir(async (dir) => {
+      await initRepo(dir);
+      writeFixtureScheduledConvergeOp(dir, "staging-converge", "staging", "*/10 * * * *");
+      const activities = fakeTickActivities(dir, "staging", "staging-converge");
+
+      const events = await runOperatorRound({ cwd: dir, holder: "op-a", activities, profiles: PROFILES, now: firing });
+      expect(events).toEqual([
+        { kind: "ticked", op: "staging-converge", env: "staging", result: expect.objectContaining({ status: "ok" }) },
+      ]);
+    });
+  });
+
+  test("a round off the cron skips without touching the lease, and writes no ledger record", async () => {
+    await withTestDir(async (dir) => {
+      await initRepo(dir);
+      writeFixtureScheduledConvergeOp(dir, "staging-converge", "staging", "*/10 * * * *");
+      const activities = fakeTickActivities(dir, "staging", "staging-converge");
+
+      const events = await runOperatorRound({ cwd: dir, holder: "op-a", activities, profiles: PROFILES, now: quiet });
+      expect(events).toEqual([
+        { kind: "skipped-not-due", op: "staging-converge", env: "staging", cron: "*/10 * * * *" },
+      ]);
+
+      const { records } = await readConvergeLedger("staging", { cwd: dir });
+      expect(records).toHaveLength(0);
+      expect((await readLease("staging-converge", { cwd: dir })).record).toBeUndefined();
+    });
+  });
+
+  test("a late round still owes the tick: a firing minute passed since this op was last considered", async () => {
+    await withTestDir(async (dir) => {
+      await initRepo(dir);
+      writeFixtureScheduledConvergeOp(dir, "staging-converge", "staging", "*/10 * * * *");
+      const activities = fakeTickActivities(dir, "staging", "staging-converge");
+      const scheduleState = new Map<string, Date>();
+
+      // 13:33 — first sight, not a firing minute: recorded, not ticked.
+      const first = await runOperatorRound({ cwd: dir, holder: "op-a", activities, profiles: PROFILES, now: quiet, scheduleState });
+      expect(first[0].kind).toBe("skipped-not-due");
+
+      // 13:42 — 13:40 fired while nobody was looking, so this round ticks.
+      const late = () => new Date(2026, 8, 6, 13, 42, 0, 0);
+      const second = await runOperatorRound({ cwd: dir, holder: "op-a", activities, profiles: PROFILES, now: late, scheduleState });
+      expect(second[0].kind).toBe("ticked");
+
+      // 13:43 — nothing has fired since 13:42.
+      const after = () => new Date(2026, 8, 6, 13, 43, 0, 0);
+      const third = await runOperatorRound({ cwd: dir, holder: "op-a", activities, profiles: PROFILES, now: after, scheduleState });
+      expect(third[0].kind).toBe("skipped-not-due");
+    });
+  });
+
+  test("an op with no cadence of its own still ticks every round — `--interval` is the fallback", async () => {
+    await withTestDir(async (dir) => {
+      await initRepo(dir);
+      writeFixtureConvergeOp(dir, "staging-converge", "staging");
+      const activities = fakeTickActivities(dir, "staging", "staging-converge");
+
+      const events = await runOperatorRound({ cwd: dir, holder: "op-a", activities, profiles: PROFILES, now: quiet });
+      expect(events[0].kind).toBe("ticked");
+    });
+  });
+});
+
 describe("formatRoundLine", () => {
   test("renders each event kind as one line", () => {
     expect(formatRoundLine({
@@ -419,5 +509,7 @@ describe("formatRoundLine", () => {
       .toContain("fenced=1");
     expect(formatRoundLine({ kind: "lease-error", op: "x", env: "staging", error: "stale lock at .../x.lock" }))
       .toContain("stale lock at .../x.lock");
+    expect(formatRoundLine({ kind: "skipped-not-due", op: "x", env: "staging", cron: "*/10 * * * *" }))
+      .toContain("not-due:*/10 * * * *");
   });
 });

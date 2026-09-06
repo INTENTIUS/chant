@@ -9,15 +9,9 @@
  */
 
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
-
-/** Very permissive cron field pattern — catches obvious syntax errors. */
-const CRON_FIELD = /^[0-9*,/\-?LW#]+$/;
-
-function isValidCronExpression(expr: string): boolean {
-  const fields = expr.trim().split(/\s+/);
-  if (fields.length < 5 || fields.length > 6) return false;
-  return fields.every((f) => CRON_FIELD.test(f));
-}
+// The parser moved to core with `OpConfig.schedule` (#2120), which validates
+// the same way at `Op()` construction. One implementation, one wording.
+import { isValidCronExpression, cronSyntaxMessage } from "@intentius/chant/op";
 
 export const tmp010: PostSynthCheck = {
   id: "TMP010",
@@ -50,7 +44,7 @@ export const tmp010: PostSynthCheck = {
               diagnostics.push({
                 checkId: "TMP010",
                 severity: "warning",
-                message: `${filename}: cron expression "${expr}" does not look like valid 5- or 6-field cron syntax`,
+                message: `${filename}: ${cronSyntaxMessage(expr)}`,
                 lexicon: "temporal",
               });
             }

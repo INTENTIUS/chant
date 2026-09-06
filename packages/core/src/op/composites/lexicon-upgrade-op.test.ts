@@ -2,10 +2,10 @@ import { describe, test, expect } from "vitest";
 import { LexiconUpgradeOp, IN_SCOPE_LEXICONS } from "./lexicon-upgrade-op";
 
 describe("LexiconUpgradeOp composite (#527)", () => {
-  test("one-shot form: op only, no schedule", () => {
-    const { op, schedule } = LexiconUpgradeOp({ lexicon: "aws" });
+  test("one-shot form: op only, no cadence", () => {
+    const { op } = LexiconUpgradeOp({ lexicon: "aws" });
     expect(op).toBeDefined();
-    expect(schedule).toBeUndefined();
+    expect((op as unknown as { props: { schedule?: unknown } }).props.schedule).toBeUndefined();
   });
 
   test("default name is <lexicon>-upgrade", () => {
@@ -31,18 +31,15 @@ describe("LexiconUpgradeOp composite (#527)", () => {
     expect(phases[0].steps[0].args.mode).toBe("report");
   });
 
-  test("scheduled form: op + weekly TemporalSchedule", () => {
-    const { op, schedule } = LexiconUpgradeOp({
+  test("scheduled form: the weekly cron rides on the op (#2120)", () => {
+    const { op } = LexiconUpgradeOp({
       lexicon: "k8s",
       schedule: "0 6 * * 1",
       onFinding: "pull-request",
     });
-    expect(op).toBeDefined();
-    expect(schedule).toBeDefined();
-    const props = (schedule as unknown as { props: Record<string, unknown> }).props;
-    expect(props.scheduleId).toBe("k8s-upgrade-schedule");
-    expect((props.spec as { cronExpressions: string[] }).cronExpressions).toEqual(["0 6 * * 1"]);
-    expect((props.action as { workflowType: string }).workflowType).toBe("k8sUpgradeWorkflow");
+    const config = (op as unknown as { props: Record<string, unknown> }).props;
+    expect(config.name).toBe("k8s-upgrade");
+    expect(config.schedule).toEqual({ cron: "0 6 * * 1", overlap: "skip" });
   });
 
   test("surfaces HasUpgrade as an outcome search attribute", () => {

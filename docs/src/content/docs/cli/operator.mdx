@@ -44,9 +44,10 @@ Each round prints one line per discovered `ConvergeOp`:
 ```
 operator: staging-converge@staging ticked=1 ok=true
 operator: prod-converge@prod skipped=1(lease-held:mac.local:4821:9f2c1a3b)
+operator: nightly-converge@prod skipped=1(not-due:0 3 * * *)
 ```
 
-A `ConvergeOp`'s own `schedule` (its Temporal cron field) is unrelated to `--interval` — it drives the durable `TemporalSchedule` resource `chant build` generates, not anything the operator reads back at discovery time. `--interval` is the operator daemon's own, separate cadence.
+A `ConvergeOp` that declares its own `schedule` cron is ticked on that cron rather than on every round: the daemon still wakes on `--interval`, but an op whose cron has not fired since the operator last looked at it is skipped as `not-due`. `--interval` is the fallback for an op with no cron of its own, and the resolution at which any cron can be honoured — a round that runs every five minutes cannot see a per-minute cron.
 
 ### `operator status`
 
