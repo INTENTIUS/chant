@@ -1,6 +1,6 @@
 ---
 title: "chant operator"
-description: Run scheduled ConvergeOp ticks locally, durably, with no Temporal
+description: Run scheduled ConvergeOp ticks locally and durably on git alone
 diataxis: reference
 ---
 
@@ -15,7 +15,7 @@ chant approve <op> <gate> [flags]
 
 ## Description
 
-`chant operator` runs scheduled ticks for every discovered [`ConvergeOp`](/chant/guide/converging-lifecycle/) locally — no Temporal server, no new state store. Coordination is a git-ref lease; tick state is a ledger fact on the `chant/lifecycle` orphan branch. See the [Operator guide](/chant/guide/operator/) for the full design (pipeline vs converge ops, the lease, crash recovery, gate-as-fact).
+`chant operator` runs scheduled ticks for every discovered [`ConvergeOp`](/chant/guide/converging-lifecycle/) locally, with no new service and no new state store. Coordination is a git-ref lease; tick state is a ledger fact on the `chant/lifecycle` orphan branch. See the [Operator guide](/chant/guide/operator/) for the full design (pipeline vs converge ops, the lease, crash recovery, gate-as-fact).
 
 `chant approve` is the sibling command that records a gate's out-of-band resolution — the durable counterpart to a tick's `gated` outcome.
 
@@ -100,7 +100,7 @@ chant approve fountain-apply rollout-gate --note "paged on-call first; see the i
 | `--url <url>` | the surrounding CI job's PR/MR, when there is one | The address this resolution happened at, typically the PR or MR that carried the change. Recorded typed on the resolution fact so a reader is not sniffing free text for a link. Must be an absolute http or https URL |
 | `--note <text>` | — | Free-text context recorded alongside the resolution. The link belongs in `--url`; this is for everything else |
 
-Recording a resolution does **not** retroactively unblock the gated op's own local dispatch — the local executor still refuses any Op containing a gate, unconditionally. Re-run it with `--temporal`, or let the merged PR the note points at carry the change itself.
+Recording a resolution does not resume a run that already stopped. Nothing is parked waiting for it. The run read the ledger, found nothing standing, and exited 3 after writing the pending fact. Run the Op again and it reads the resolution you just wrote and walks through the gate, or let the merged PR the note points at carry the change itself.
 
 ## See also
 

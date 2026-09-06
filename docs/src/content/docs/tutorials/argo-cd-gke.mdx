@@ -6,7 +6,7 @@ diataxis: tutorial
 
 import { Aside } from '@astrojs/starlight/components';
 
-The smallest example of the **three-layer split**: Chant authors typed manifests, Argo CD reconciles them, and Temporal (not needed here) orchestrates anything procedural. A single GKE cluster runs Argo CD, and one Chant-authored workload is deployed through a `K8s::Argo::Application` declared in TypeScript with [`ArgoAppFor`](/chant/lexicons/k8s/argo-composites/).
+The smallest example of the **three-layer split**: Chant authors typed manifests, Argo CD reconciles them, and an Op on a steward (not needed here) drives anything procedural. A single GKE cluster runs Argo CD, and one Chant-authored workload is deployed through a `K8s::Argo::Application` declared in TypeScript with [`ArgoAppFor`](/chant/lexicons/k8s/argo-composites/).
 
 This mirrors the [`argo-cd-gke` example](https://github.com/INTENTIUS/chant/tree/main/examples/argo-cd-gke).
 
@@ -134,5 +134,5 @@ The `web` Deployment and Service exist in the `demo` namespace — created by Ar
 
 - Scope the Application to a real `AppProject` for RBAC ([ARGO002](/chant/lexicons/k8s/lint-rules/)).
 - Fan out across regional clusters with [`ArgoAppSetForRegions`](/chant/lexicons/k8s/argo-composites/).
-- Gate procedural steps on Argo finishing with the temporal lexicon's `waitForArgoSync` activity — see the [CockroachDB multi-region tutorial](/chant/tutorials/temporal-crdb-deploy/), which uses Argo for the apply layer and Temporal for the procedural one.
+- Gate procedural steps on Argo finishing with the k8s lexicon's `waitForArgoSync` activity — see the [CockroachDB multi-region tutorial](/chant/tutorials/cockroachdb-multi-region/), which uses Argo for the apply layer and a steward for the procedural one.
 - Running Flux instead of Argo? The same split, on a self-hosted estate: [Flux CD Self-Hosted](/chant/tutorials/flux-apps/).

@@ -9,7 +9,7 @@ import Diagram from '../../../components/Diagram.astro';
 
 The orchestrator runs a set of [components](/chant/components/component-contract/) in dependency order, dispatching each step to its [capability](/chant/components/capabilities/). It contains no per-component code. There are two modes, and both make pipeline count independent of component count.
 
-<Diagram name="orchestrator-modes" alt="Two modes side by side: interpret mode runs one Op over the component graph on the local executor or Temporal; generate mode synthesizes plain CI YAML from the same declarations." caption="Interpret mode runs the declarations directly; generate mode synthesizes CI YAML from them. Same contract underneath." />
+<Diagram name="orchestrator-modes" alt="Two modes side by side: interpret mode runs one Op over the component graph on the local executor or a fountain steward; generate mode synthesizes plain CI YAML from the same declarations." caption="Interpret mode runs the declarations directly; generate mode synthesizes CI YAML from them. Same contract underneath." />
 
 ## Interpret mode
 
@@ -17,12 +17,12 @@ chant generates one orchestrator Op that reads the declarations, orders them wit
 
 The orchestrator is an [Op](/chant/guide/ops/), so it runs **local by default** on the in-process executor. Phase sequencing, retries, activity profiles, and `onFailure` saga rollback all work locally with nothing installed.
 
-<Aside type="note" title="Temporal is optional">
-Temporal is required only for components whose composition includes a **gate** (a durable human-approval wait) or that need **durable crash-resume**. Schedules do **not** require it — a schedule externalizes to any native scheduler (CI `schedule:`, K8s CronJob, EventBridge). Graduation is per-component via one flag — `chant run --components <name> --temporal` compiles the component's composition to a Temporal workflow/worker (phases -> workflow, capability steps -> activities, `gate` -> durable wait-for-signal, `onFailure`/rollback -> saga compensation, mirroring `Chant::Op` codegen) and runs it durably; the component definition does not change. See [`chant run`](/chant/cli/run/) and [Local vs Temporal](/chant/guide/local-vs-temporal/).
+<Aside type="note" title="A hosted runtime is optional">
+A `gate` in a composition needs no hosted runtime. The run reads the gate ledger, walks through on a resolution someone already recorded, or writes the pending fact and exits 3 — nothing is parked, so nothing has to survive being parked. Schedules do not need one either. A schedule rides on the Op's own `schedule` field, or externalizes to whatever native scheduler the platform already runs. What a hosted runtime buys is a machine of its own and a standing record of what ran there, and `chant run --on <lexicon>` is how a component asks for one; the component definition does not change. See [`chant run`](/chant/cli/run/) and [Ops as teammates](/chant/concepts/durable-workflows/).
 </Aside>
 
-<Aside type="note" title="Release recording stays outside the workflow">
-On a successful deploy, `chant run --components` auto-emits a [release-ledger](/chant/components/observability/) record — always as a CLI post-run step, on both the local executor and `--temporal`, never inside the generated workflow itself. The workflow returns its final phase outputs so the CLI can read the published digest once the run reports `COMPLETED`; a ledger write is a non-deterministic side effect (git, network, wall-clock time) that has no business running as workflow code.
+<Aside type="note" title="Release recording stays outside the composition">
+On a successful deploy, `chant run --components` auto-emits a [release-ledger](/chant/components/observability/) record, always as a CLI post-run step and never as a step of the composition itself. The run returns its final phase outputs so the CLI can read the published digest once the run reports success; a ledger write is a side effect on git and the network, and a composition that carried it would be re-running it on every retry.
 </Aside>
 
 ## Generate mode
@@ -31,7 +31,7 @@ The same declarations synthesize plain CI YAML through the [GitHub](/chant/lexic
 
 The two compose: interpret mode behind a thin generated CI trigger.
 
-Generate mode has an Op counterpart too, see [Scheduling without Temporal](/chant/guide/ops/#scheduling-without-temporal). A scheduled Op's CI trigger is not limited to cron: `pull_request` and `push` triggers are generic beyond the cron case, for an Op whose natural trigger is a PR or a push to a branch rather than a clock.
+Generate mode has an Op counterpart too, see [Scheduling an Op](/chant/guide/ops/#scheduling-an-op). A scheduled Op's CI trigger is not limited to cron: `pull_request` and `push` triggers are generic beyond the cron case, for an Op whose natural trigger is a PR or a push to a branch rather than a clock.
 
 See [Execution Backends](/chant/components/backends-reference/) for the backend interface and the general-consumption default profile.
 
@@ -40,16 +40,16 @@ See [Execution Backends](/chant/components/backends-reference/) for the backend 
 Because each capability declares its own compensation, the orchestrator gets saga rollback without a hand-written rollback pipeline: on failure it unwinds executed steps in reverse and calls each `rollback`. Native rollbacks are reused where the platform provides them — `cfn-deploy` triggers CloudFormation's own `rollback-stack`, `code-deploy` triggers CodeDeploy's own automatic rollback to the last known-good revision. Where a capability has no native rollback (`ecs-update-service`, `lambda-deploy`), it declares a best-effort compensation instead (re-apply the prior state); where a component needs a truer restore than that best-effort re-apply gives, it supplies its own component-level `rollback` phase (the ALB/ECS pilot does this with `rollback-previous`). Non-auto, non-compensable cases opt out with a stated reason (`noRollback: "<reason>"` on the step) rather than failing silently — the [COMP003 lint rule](/chant/lint-rules/composition/) requires the reason at author time, and the driver reports the same fact at run time: a step whose capability has no rollback gets its own `rollback-opted-out` record in the run result, carrying that reason, rather than being passed over without a trace.
 
 <Aside type="caution" title="The unwind itself is not durable">
-The saga mechanism — reverse-order unwind, calling each executed step's `rollback` — is capability-agnostic and runs identically on the local executor and on Temporal. What differs is what survives a crash *during* that unwind. On the local executor, rollback state lives only in the driver's in-memory call stack: if the process dies mid-unwind, nothing resumes it, and whichever steps had not yet been rolled back stay in whatever partial state they were left in — the same boundary that already applies to forward `onFailure` compensation on a plain Op (see [Local vs Temporal](/chant/guide/local-vs-temporal/)). On Temporal, the unwind is itself a sequence of durable activities, so a crash resumes from the last completed rollback step rather than restarting or abandoning it. This is why a component with a real availability requirement around its own rollback (not just its forward deploy) is a candidate for `--temporal`, independent of whether it also needs a gate.
+The saga mechanism — reverse-order unwind, calling each executed step's `rollback` — is capability-agnostic and runs the same wherever the run is hosted. What it does not do is survive a crash *during* the unwind. Rollback state lives in the driver's in-memory call stack: if the process dies mid-unwind, nothing resumes it, and whichever steps had not yet been rolled back stay in whatever partial state they were left in. The same boundary already applies to forward `onFailure` compensation on a plain Op. Running on a [fountain steward](/chant/concepts/durable-workflows/) does not change that; what it changes is that the machine is not your laptop and the thread records how far the unwind got, so the next run starts from something you can read rather than something you have to reconstruct. A capability whose rollback cannot be re-run safely is the real problem, and the apply contract is what fixes it.
 </Aside>
 
 ## What chant adds over hand-driving it
 
-- **Semantic lint on the composition.** Publishes-but-never-applies, an `imageRef` to a phase that does not exist, a mutating capability with no rollback and no opt-out, a gate in a local-executor component, a capability named after a component. These are the long-term entropy guards a plain JSON contract cannot enforce — see the [Composition lint rules](/chant/lint-rules/composition/) (COMP001–COMP007).
+- **Semantic lint on the composition.** Publishes-but-never-applies, an `imageRef` to a phase that does not exist, a mutating capability with no rollback and no opt-out, an unacknowledged gate, a capability named after a component. These are the long-term entropy guards a plain JSON contract cannot enforce — see the [Composition lint rules](/chant/lint-rules/composition/) (COMP001–COMP007).
 - **The graph and the generated driver.** `chant graph` / `describe` over components; `chant build` emits the durable orchestrator.
 
 ## Read next
 
 - [Execution Backends](/chant/components/backends-reference/) — the backend interface and the general-consumption default profile.
 - [Cloud-Agnostic Boundary](/chant/components/cloud-boundary/) — what ports across clouds and what does not.
-- [Local vs Temporal](/chant/guide/local-vs-temporal/) — the executor trade-off in depth.
+- [Ops as teammates](/chant/concepts/durable-workflows/) — the runtime trade-off in depth.

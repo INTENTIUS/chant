@@ -195,7 +195,7 @@ The scenario fields are these.
 | `expectMarker` | Per entity, the exact `ResourceMetadata.marker` (stack + env) the read must surface. |
 | `expectNoMarker` | Names whose live model carries no marker channel, so the field must stay absent. |
 
-Eleven lexicons run it today (aws, azure, cedar, fly, fountain, gcp, helm, k3d, k3s, k8s, temporal). `lexicons/fly/src/describe-resources.test.ts` and `lexicons/aws/src/lifecycle-integration.test.ts` are the other two worth reading, for a REST transport and for a stack-granularity marker.
+Ten lexicons run it today (aws, azure, cedar, fly, fountain, gcp, helm, k3d, k3s, k8s). `lexicons/fly/src/describe-resources.test.ts` and `lexicons/aws/src/lifecycle-integration.test.ts` are the other two worth reading, for a REST transport and for a stack-granularity marker.
 
 ## observeResourcesDeep() — property-level drift
 
@@ -299,8 +299,8 @@ author adding a reader has one row to update. Today's counts.
 
 | Hook | Lexicons |
 |---|---|
-| `describeResources()` | 13: aws, azure, cedar, cpln, fly, fountain, gcp, helm, k3d, k3s, k8s, render, temporal |
-| `observeResourcesDeep()` | 7: aws, azure, fountain, gcp, helm, k8s, temporal |
+| `describeResources()` | 12: aws, azure, cedar, cpln, fly, fountain, gcp, helm, k3d, k3s, k8s, render |
+| `observeResourcesDeep()` | 6: aws, azure, fountain, gcp, helm, k8s |
 | `listArtifacts()` | 2: docker, helm |
 | `exportResources()` | 7: aws, azure, cedar, fly, fountain, gcp, k8s |
 

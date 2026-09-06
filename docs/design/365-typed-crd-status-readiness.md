@@ -4,7 +4,7 @@ Research spike deliverable. No code ships from this doc; it answers the issue's 
 
 Investigated in a fresh clone at commit HEAD of `main`. Note two stale references in the issue body, corrected here:
 
-- The bespoke waits are no longer in `lexicons/temporal/…`. Post-#809 they live in the k8s lexicon: `lexicons/k8s/src/op/activities/argo.ts` (`waitForArgoSync`) and `lexicons/temporal/src/op/activities/wait.ts` (`waitForStack`, still temporal-side, workload-only).
+- The bespoke waits are no longer where the issue body puts them. Post-#809 `waitForArgoSync` lives in the k8s lexicon at `lexicons/k8s/src/op/activities/argo.ts`, and `waitForStack` (workload-only) is a base activity in core at `packages/core/src/op/activities/wait.ts`.
 - `waitForArgoSync` already returns typed status (`ArgoAppStatus`) and is dependency-light by design — a constraint that shapes the whole solution (see §4).
 
 ## Summary of conclusions
@@ -87,7 +87,7 @@ readiness: {
 
 ## 4. Architecture — a generic activity, not generated activities
 
-The decisive constraint is in `argo.ts`: the wait activity is "intentionally dependency-light … must not import the lexicon's generated Argo CRD types … its signature is primitives-only so a Temporal worker can load it without pulling in the declarable surface."
+The decisive constraint is in `argo.ts`: the wait activity is "intentionally dependency-light … must not import the lexicon's generated Argo CRD types … its signature is primitives-only so any runtime can load it without pulling in the declarable surface."
 
 So the solution is **not** "generate a `waitForKeycloak` TS activity that imports the `Keycloak` class." It is:
 
@@ -126,5 +126,5 @@ Dependencies: 2 depends on 1 (needs the status types to validate specs against);
 - `lexicons/k8s/src/spec/parse.ts`, `lexicons/k8s/src/codegen/generate.ts` — read-only nested attribute rendering (§1)
 - `lexicons/k8s/src/op/activities/` — generic `waitForReady`, alongside `argo.ts` (§4)
 - `lexicons/k8s/src/describe-resources.ts` — the untyped status reader to generalize (§4)
-- `lexicons/temporal/src/config.ts` — reuse `k8sWait`, no change (§4)
-- `lexicons/temporal/src/op/activities/wait.ts` — `waitForStack` workload wait, generalized by §4
+- `packages/core/src/op/activity-profiles.ts` — reuse `k8sWait`, no change (§4)
+- `packages/core/src/op/activities/wait.ts` — `waitForStack` workload wait, generalized by §4

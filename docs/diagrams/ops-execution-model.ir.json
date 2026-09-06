@@ -6,7 +6,7 @@
       "lexicon": "",
       "attrs": {
         "_status": "good",
-        "does": "spawn worker · submit workflow"
+        "does": "execute in-process, or --on"
       }
     },
     {
@@ -24,7 +24,7 @@
       "lexicon": "",
       "attrs": {
         "flag": "parallel: true",
-        "how": "Temporal schedules concurrently"
+        "how": "the executor runs them at once"
       }
     },
     {
@@ -33,7 +33,7 @@
       "lexicon": "",
       "attrs": {
         "_status": "accent",
-        "does": "pause · await signal",
+        "does": "read the gate ledger",
         "or": "timeout expires"
       }
     },
@@ -89,7 +89,7 @@
       "from": "Gate step",
       "to": "Remaining phases…",
       "kind": "ref",
-      "viaAttr": "signal received"
+      "viaAttr": "gate resolved"
     },
     {
       "from": "Remaining phases…",

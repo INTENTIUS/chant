@@ -1,6 +1,6 @@
 ---
 title: "CockroachDB Multi-Region on GKE"
-description: "One CockroachDB cluster across three GCP regions — nine nodes, three composites, four Ops — with a local k3d smoke test that needs no cloud account."
+description: "One CockroachDB cluster across three GCP regions — nine nodes, three composites, five Ops — with a local k3d smoke test that needs no cloud account."
 diataxis: tutorial
 ---
 
@@ -28,7 +28,7 @@ One TypeScript project, eight output files, nine CockroachDB nodes across three 
 
 - Why `advertiseHostDomain` exists — a cluster-local FQDN does not resolve from another cluster, and nodes that advertise one come up healthy, never find each other, and sit there
 - How three composites collapse a 3-region estate to two files per region
-- How a 13-step deploy script becomes phases, and where a gate belongs (and where it does not)
+- How a 13-step deploy script becomes phases, and how the one wait nobody can automate became a converge rule
 - Why the operator you install with Helm belongs in the build output, pinned
 - How to prove a multi-region database forms, on a laptop, with no cloud account
 
@@ -180,11 +180,11 @@ phase("Clusters ready", [
 
 The readiness phase is the clearest trade. The script waited on `kubectl wait --for=condition=Ready containercluster/...` and then polled `gcloud container node-pools describe` sixty times in a bash loop. Both are Config Connector resources, so [`waitForReady`](/chant/guide/ops-reference/#step-builders) reads their own Ready condition — and fails fast on a terminal one instead of polling out the timeout.
 
-### Where the gate goes
+### Where the wait goes
 
 Between two steps the old script printed a DNS-delegation reminder in an ASCII box and carried straight on. Delegating three subdomains at a registrar is the one action nobody can automate from inside GCP, and Google will not issue the managed certificates until the names resolve — so the deploy "succeeded" while three certificates sat in PROVISIONING and the UIs served 502 until somebody remembered.
 
-That is a gate. It is *not* in the deploy Op:
+Publishing the UIs is therefore its own Op, and the database does not wait on any of it:
 
 ```typescript
 // ops/publish-ui.op.ts
@@ -192,20 +192,46 @@ export default Op({
   name: "crdb-publish-ui",
   depends: ["crdb-deploy"],
   phases: [
-    phase("Nameservers",      [shell("gcloud dns managed-zones describe ...")]),
-    phase("Await delegation", [gate("gate-dns-delegation", { timeout: "72h", description: "..." })]),
-    phase("Certificates",     [shell("kubectl wait managedcertificate/... --timeout=45m")]),
-    phase("Verify",           REGIONS.map((r) => httpCheck(`https://${r}.${DOMAIN}/health`)), { parallel: true }),
+    phase("Nameservers",  [shell("gcloud dns managed-zones describe ...")]),
+    phase("Certificates", [shell("kubectl wait managedcertificate/... --timeout=45m")]),
+    phase("Verify",       REGIONS.map((r) => httpCheck(`https://${r}.${DOMAIN}/health`)), { parallel: true }),
   ],
 });
 ```
 
-A gate anywhere in an Op makes the whole Op refuse to run on the local executor — gates need a durable runtime. The database does not depend on delegation at all, so folding this into the deploy would mean requiring a Temporal server to bring up a database cluster. Split, `crdb-deploy` runs locally with no server and `crdb-publish-ui --temporal` holds for up to three days, surviving a worker restart.
+That Op held a 72-hour gate once, released by somebody who had to remember to send a signal after they had already done the work at the registrar. It holds nothing now. Run before delegation it fails on the certificate wait, which is the honest answer: the names do not resolve yet. Run after, it succeeds.
+
+Which means nobody has to remember. `ops/publish-ui-converge.op.ts` is a `ConvergeOp` that observes prod every quarter hour and dispatches `crdb-publish-ui` while the UI stack is short of what `src/` declares:
+
+```typescript
+export const { op } = ConvergeOp({
+  name: "crdb-ui-converge",
+  env: "prod",
+  dial: "apply",
+  schedule: "*/15 * * * *",
+  budget: 1,
+  rules: [
+    when(gt("updateCount", 0), run("crdb-publish-ui"), {
+      id: "ui-unpublished",
+      why: "The UI ingresses and their certificates are declared but not yet live …",
+    }),
+  ],
+});
+```
+
+The first tick after the NS records propagate is the one that publishes. The delegation is the signal.
 
 ```bash
-chant run crdb-deploy                                    # local executor
-chant run crdb-publish-ui --temporal                     # holds
-chant run signal crdb-publish-ui gate-dns-delegation     # when the NS records are live
+chant run crdb-deploy            # the database, which waits on nothing
+chant run crdb-publish-ui        # once, by hand: prints the nameservers you delegate
+chant run crdb-ui-converge       # one tick, or leave the cadence to notice
+```
+
+`ops/fountain.ts` declares the steward those cadences live on. Out of it come an `Environment` and a `Vault`, an `Agent` speaking ACP over `chant acp` with a `Teammate` seat, and one `Schedule` per Op that carries a cron. `chant run <op> --on fountain` posts the command line to that thread instead of running it here, so the conversation is the estate's operational history. Every Op above still runs locally with no fountain at all.
+
+```bash
+npm run build:fountain           # dist/fountain.yaml
+chant run crdb-ui-converge --on fountain
 ```
 
 ### The operator belongs in the build output
@@ -285,4 +311,4 @@ The [example README](https://github.com/intentius/chant/tree/main/examples/cockr
 - [Ops](/chant/guide/ops/) — phases, gates, profiles, and compensation
 - [Build-Time Parameters](/chant/concepts/build-time-parameters/) — declaring what varies per deployment
 - [Multi-Stack Projects](/chant/guide/multi-stack/) — splitting one project across stacks
-- [temporal-crdb-deploy](/chant/tutorials/temporal-crdb-deploy/) — the same estate driven by a hand-written Temporal workflow
+- [The Steward](/chant/lexicons/fountain/steward/) — the machine the cadences above run from, declared

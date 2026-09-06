@@ -45,7 +45,7 @@ chant computes the change set; it does not execute it. Two read-only commands si
 - [`chant lifecycle diff`](/chant/cli/lifecycle/) — the three-way comparison. The default mode builds and compares declarations against the last snapshot, offline; `--live` queries the cloud and compares the live result against both the snapshot and the current build.
 - [`chant lifecycle plan`](/chant/cli/lifecycle/) — promotes the live diff to a typed create/update/delete change set you can act on.
 
-Both stop at producing the artifact. What to do about it is the orchestration's decision, whether that is a CI job, an agent, a human, or a [scheduled Temporal workflow](/chant/guide/watching-lifecycle/). A team comfortable with the observational model wires the plan to automation. A team that wants a strict gate wires the same artifact into its own approval flow. chant does not force either, because it does not own the apply.
+Both stop at producing the artifact. What to do about it is the orchestration's decision, whether that is a CI job, an agent, a human, or a [scheduled WatchOp](/chant/guide/watching-lifecycle/). A team comfortable with the observational model wires the plan to automation. A team that wants a strict gate wires the same artifact into its own approval flow. chant does not force either, because it does not own the apply.
 
 ## Blast radius at scale
 

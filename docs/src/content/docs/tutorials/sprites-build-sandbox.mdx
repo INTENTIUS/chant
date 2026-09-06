@@ -38,7 +38,7 @@ lives in chant's Op/activity layer — no `build` phase, no serialized plan.
 `ops/build-sandbox.op.ts` is a pure activity sequence:
 
 ```ts
-import { Op, phase } from "@intentius/chant-lexicon-temporal";
+import { Op, phase } from "@intentius/chant/op";
 import { spriteCreate, spriteExec, spriteCheckpoint, spriteWriteFile, spriteReadFile, spriteRestore, spriteDestroy }
   from "@intentius/chant-lexicon-fly";
 

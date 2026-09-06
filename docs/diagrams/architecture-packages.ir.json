@@ -19,6 +19,6 @@
   ],
   "groups": {"byStack": {
     "@intentius/chant": ["Build pipeline", "Lint engine", "Codegen infra"],
-    "Lexicon Plugin  (aws · k8s · temporal · …)": ["Serializer", "Lint rules + post-synth checks", "LSP · MCP · Skills"]
+    "Lexicon Plugin  (aws · k8s · fountain · …)": ["Serializer", "Lint rules + post-synth checks", "LSP · MCP · Skills"]
   }}
 }

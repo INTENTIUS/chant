@@ -82,11 +82,11 @@ Resources synthesize to artifacts. **Ops** *execute* — phased, with retries an
 
 ```typescript
 // hello.op.ts
-import { Op, phase, shell } from "@intentius/chant-lexicon-temporal";
+import { Op, phase, shell } from "@intentius/chant/op";
 
 export default Op({
   name: "hello",
-  overview: "Minimal local Op — no Temporal server required",
+  overview: "Minimal Op — nothing to install, nothing to run",
   taskQueue: "hello",
   phases: [
     phase("Greet", [
@@ -106,7 +106,7 @@ chant run hello
 Op "hello" completed in 0.1s
 ```
 
-No Temporal **server** required — chant runs Ops locally by default. (The Op imports from `@intentius/chant-lexicon-temporal`, so install that package — but nothing has to be running.) For durable resume, gates, and schedules, configure a Temporal profile and pass `--temporal`. See [Local vs Temporal](/chant/guide/local-vs-temporal/).
+Nothing had to be installed and nothing had to be running: `Op`, `phase` and `shell` come from `@intentius/chant/op`, and `chant run` executes the phases in this process. A gate in the Op works here too — the run reads the gate ledger and either walks through or records that it is waiting. When an Op needs a machine of its own, a standing record, or a cadence nobody triggers, `chant run <op> --on fountain` hands the same declaration to a steward. See [Ops as teammates](/chant/concepts/durable-workflows/).
 
 ## Step 6: See drift, decide what to do
 

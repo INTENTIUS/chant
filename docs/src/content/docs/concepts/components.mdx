@@ -39,14 +39,14 @@ A [Composite](/chant/guide/composite-resources/) such as `LambdaNode` or `Cockro
 
 ## Components and Ops
 
-A Component's `deploy` uses the same phase grammar as an Op — phases, `parallel`, `gate`, `onFailure`. That is not a coincidence. `chant build` generates **one** orchestrator Op that reads every component and drives each composition. The orchestrator is an Op, so a component runs on the local executor by default and reaches for Temporal only when a step needs a durable gate or crash-resume ([Orchestration](/chant/components/orchestration/)).
+A Component's `deploy` uses the same phase grammar as an Op — phases, `parallel`, `gate`, `onFailure`. That is not a coincidence. `chant build` generates **one** orchestrator Op that reads every component and drives each composition. The orchestrator is an Op, so a component runs on the local executor by default and moves to a hosted runtime only when it needs a machine of its own ([Orchestration](/chant/components/orchestration/)).
 
 So the layering is: a Component is authored declaratively, and it compiles down to an Op. You reach for a hand-written Op when a single deploy needs bespoke workflow logic. You reach for a Component when you have many releasable units and want one orchestrator to run all of them without a pipeline each. A project can hold both — `*.op.ts` files and `*.component.ts` files — and they consume the same chant-built artifacts.
 
 <Aside type="caution" title="Two `phase()` and two `chant run`, on purpose">
 Ops and Components each expose a function named `phase()` and each launch through `chant run`, but they are different surfaces:
 
-- An **Op** imports its step builders (`kubectlApply`, `shell`, …) from `@intentius/chant-lexicon-temporal`; you launch it with `chant run <name>`.
+- An **Op** imports `Op`, `phase` and the base step builders from `@intentius/chant/op`, and a lexicon's typed builders (`kubectlApply`, `waitForReady`) from that lexicon; you launch it with `chant run <name>`.
 - A **Component** imports its step builders (`publishImage`, `cfnDeploy`, …) from `@intentius/chant/components` — or writes the equivalent `{ kind: "publish-image", … }` literals; you launch it with `chant run --components <name>`.
 
 The tell is the import path and the `--components` flag, not the syntax — both surfaces compose `phase()`.
@@ -81,4 +81,4 @@ chant run --components search-service --env staging
 - [Component Contract](/chant/components/component-contract/) — the shape and the portable JSON projection
 - [Supply-Chain Attestations](/chant/components/supply-chain/) — SBOM, provenance, and signing on a component's artifact
 - [Ops](/chant/guide/ops/) — the workflow layer a component compiles down to
-- [Choosing Your Deployment Model](/chant/concepts/deployment-paths/) — synthesis-only, Ops, Components, or raw Temporal
+- [Choosing Your Deployment Model](/chant/concepts/deployment-paths/) — synthesis-only, Ops on the local runtime, Components, or a fountain steward

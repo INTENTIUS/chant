@@ -12,7 +12,7 @@ A **component** is a releasable unit — a service, a table, a cluster, a librar
 This is the layer above [synthesis](/chant/concepts/philosophy/). `chant build` turns typed intent into spec-native artifacts. Components turn those artifacts into a release: build once, publish at deploy time, apply, verify, roll back.
 
 <Aside type="note" title="Where this sits">
-Synthesis (`chant build`) produces artifacts and stops. [Ops](/chant/guide/ops/) run phased, durable workflows. Components are the release model on top: each declares a composition of capabilities, and the orchestrator is a generated Op. Temporal stays optional — the local executor is the default.
+Synthesis (`chant build`) produces artifacts and stops. [Ops](/chant/guide/ops/) run phased workflows. Components are the release model on top: each declares a composition of capabilities, and the orchestrator is a generated Op. A hosted runtime stays optional; the local executor is the default.
 </Aside>
 
 ## The problem: pipeline sprawl
@@ -58,7 +58,7 @@ Sprawl is that bounded set re-expressed as bespoke pipeline code once per compon
 		Agnostic in structure and orchestration, spec-true in the leaves. The per-cloud seam is the [lexicon boundary](/chant/components/cloud-boundary/). One driver, one lint, real per-cloud deploys.
 	</Card>
 	<Card title="Zero exotic dependencies" icon="document">
-		The default runs on plain CI plus the local executor plus native scheduling. Temporal and Dagster are opt-in backends, not baseline. See [Orchestration](/chant/components/orchestration/).
+		The default runs on plain CI plus the local executor plus native scheduling. A fountain steward and Dagster are opt-in backends, not baseline. See [Orchestration](/chant/components/orchestration/).
 	</Card>
 </CardGrid>
 

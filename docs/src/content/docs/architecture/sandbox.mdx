@@ -90,7 +90,7 @@ One residual remains, pre-existing and not closed by this flag:
 
 ## What a sandboxed config may contain
 
-Only JSON crosses a process boundary, so under `--sandbox` a `chant.config.ts` must evaluate to data. Every field `ChantConfig` declares already is: string arrays (`lexicons`, `capabilities`, `environments`), strings, nested plain objects of strings and booleans (`ownership`, `build`, `release`, `sbom`, `signing`, `vulnPolicy`), arrays of plain objects (`stacks`), records of plain objects (`buildParams`). `lint.plugins` and `lint.policies` are file *paths* — chant loads those modules itself; they are not functions embedded in the config. Lexicon extensions ride on the schema's `passthrough` (the temporal lexicon's `temporal:` block), and those are data too.
+Only JSON crosses a process boundary, so under `--sandbox` a `chant.config.ts` must evaluate to data. Every field `ChantConfig` declares already is: string arrays (`lexicons`, `capabilities`, `environments`), strings, nested plain objects of strings and booleans (`ownership`, `build`, `release`, `sbom`, `signing`, `vulnPolicy`), arrays of plain objects (`stacks`), records of plain objects (`buildParams`). `lint.plugins` and `lint.policies` are file *paths* — chant loads those modules itself; they are not functions embedded in the config. Lexicon extensions ride on the schema's `passthrough` (the fountain lexicon's `fountain:` block), and those are data too.
 
 A value that would not survive the round trip is **named and refused**, never dropped:
 

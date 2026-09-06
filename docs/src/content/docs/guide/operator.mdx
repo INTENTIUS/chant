@@ -1,12 +1,12 @@
 ---
 title: Operator
-description: "chant operator: native durable ticks for ConvergeOp, with no Temporal — a timer, a git-ref lease, and the local executor in a loop"
+description: "chant operator: native durable ticks for ConvergeOp — a timer, a git-ref lease, and the local executor in a loop"
 diataxis: how-to
 ---
 
 import { Aside } from '@astrojs/starlight/components';
 
-[`ConvergeOp`](/chant/guide/converging-lifecycle/) needs a controller, not a workflow engine: a converge tick re-observes and re-derives everything every time, so durability, crash recovery, and a normal tick are the same act. `chant operator` runs those ticks — scheduled, durable, gated — using only primitives chant already owns: git as memory, `chant lifecycle plan --live` as the clock, and `git update-ref` as the lock. No Temporal, no new service, no new state store.
+[`ConvergeOp`](/chant/guide/converging-lifecycle/) needs a controller, not a workflow engine: a converge tick re-observes and re-derives everything every time, so durability, crash recovery, and a normal tick are the same act. `chant operator` runs those ticks — scheduled, durable, gated — using only primitives chant already owns: git as memory, `chant lifecycle plan --live` as the clock, and `git update-ref` as the lock. No new service, no new state store.
 
 ## Pipeline ops vs converge ops
 
@@ -14,24 +14,23 @@ Two kinds of Op need two different runtimes, and the difference is what durabili
 
 | | Pipeline Op | `ConvergeOp` |
 |---|---|---|
-| Shape | A fixed sequence of steps that must resume exactly where it stopped | A loop that observes, classifies, and dispatches — fresh, every tick |
-| What a crash loses | Mid-sequence progress — which step it was on, what it already did | Nothing — the next tick re-observes and re-derives everything |
-| What "durable" means | Suspend-and-resume: pick up the exact activity that was in flight | Re-tick: run the whole loop again: cheap because ticks are idempotent |
-| Waiting (a schedule, a gate) | A blocked activity that must be woken up | A symptom the next tick reads fresh, or a fact the tick records and moves past |
-| Runtime | Temporal (`--temporal`) | `chant operator`, no Temporal needed |
+| Shape | A fixed sequence of steps, run start to finish | A loop that observes, classifies, and dispatches — fresh, every tick |
+| What a crash loses | Whatever the run had not finished when it died | Nothing — the next tick re-observes and re-derives everything |
+| What "durable" means | Run it again, on a machine that is still there | Re-tick: run the whole loop again, cheap because ticks are idempotent |
+| Waiting (a schedule, a gate) | A fact the run records and exits on | A symptom the next tick reads fresh, or a fact the tick records and moves past |
+| Runtime | `chant run <op>`, here or `--on` a steward | `chant operator`, or the same steward |
 
-The Temporal dependency is essential for the first kind and incidental for the second. A pipeline Op's steps are non-idempotent by construction — that's why they need exactly-once resume semantics, a durable event history, and a worker that can pick up a suspended workflow. A `ConvergeOp` tick has no mid-sequence progress worth checkpointing: it is level-triggered in the Kubernetes-controller sense, comparing the live level of the world against the declared level, recomputed from scratch every time. Re-running one beats resuming one.
+Both are convergent verbs; what differs is who decides when they run. A pipeline Op runs because somebody or something asked for it, so what it needs from a runtime is a machine that is still standing when the ask arrives. A `ConvergeOp` runs because the world might have moved, so what it needs is a cadence and a lease. It is level-triggered in the Kubernetes-controller sense, comparing the live level of the world against the declared level, recomputed from scratch every time. Re-running one beats resuming one, which is why nothing here resumes anything.
 
-This is the same dial [Local vs Temporal](/chant/guide/local-vs-temporal/) draws for ordinary Ops, sharpened for the converge case: a pipeline Op still graduates to `--temporal` the day it needs to survive a crash mid-sequence. A `ConvergeOp` never needs to, because there is no mid-sequence to survive — `chant operator` is what runs its schedule instead.
+`chant operator` is the smallest thing that supplies the cadence and the lease: your own machine, or a CronJob, ticking on git alone. A [fountain steward](/chant/lexicons/fountain/steward/) is the same cadence hosted, with the environment's thread as the record. See [Ops as teammates](/chant/concepts/durable-workflows/) for how the pieces divide up.
 
-<Aside type="tip" title="Still reach for Temporal when...">
-Long multi-step pipelines with exactly-once step semantics, worker fan-out
-across task queues, and durable sleeps *inside* a step remain Temporal's job.
+<Aside type="tip" title="When a step genuinely cannot be re-run">
 Compensation and mid-sequence resumption are workarounds for non-idempotent
-steps — the apply contract's whole point (tri-state envelope, owned-only
-prune, re-apply converges) is that chant verbs should already be convergent,
-so if a step genuinely can't be re-run safely, that's usually a sign it
-belongs in a pipeline Op on Temporal, not a converge rule's `run()` target.
+steps. The apply contract's whole point (tri-state envelope, owned-only prune,
+re-apply converges) is that chant verbs should already be convergent, so a step
+that cannot be re-run safely is usually a step in the wrong place — a pipeline
+Op somebody invokes deliberately, rather than a converge rule's `run()` target
+that a tick may fire at any time.
 </Aside>
 
 ## Running it
@@ -78,7 +77,7 @@ All operator state — ticks, gates, leases — lives on git. `rm -rf` of any lo
 
 ## Gate-as-fact
 
-A gate suspends a Temporal workflow until signaled. There is nothing to suspend on a runtime that does not wait, so chant makes a gate a **fact** instead: reaching one, a run reads the gate ledger, and either walks through on a resolution someone has already written or records that it is waiting and stops.
+A gate is a **fact**, not a wait. Nothing is suspended and nothing is holding a machine open for a decision: reaching a gate, a run reads the gate ledger, and either walks through on a resolution someone has already written or records that it is waiting and stops.
 
 Run a gated Op directly and you see both halves:
 
@@ -144,9 +143,10 @@ A resolution is a durable, queryable fact rather than an authorization check.
 Anyone who can run `chant approve` locally can write one, the same trust
 boundary a local `git commit` already has, and [issue #1485](https://github.com/INTENTIUS/chant/issues/1485)
 scopes signed resolutions out on purpose. Re-running is also what clears a
-gate; nothing resumes a run in place. On the Temporal path a gate is still a
-durable wait for a signal, which is a different mechanism with the same
-meaning.
+gate; nothing resumes a run in place. That holds on a hosted runtime too — a
+steward's turn ends at the gate rather than sitting on the thread waiting, and
+`chant run approve <op> <gate> --on fountain` posts the re-run once the
+resolution is written.
 </Aside>
 
 ## `chant operator status`
@@ -194,11 +194,11 @@ This exists so a reader never has to reach past the CLI. `git show chant/lifecyc
 
 ## Local-only durability
 
-`chant operator`'s daemon lives entirely on your machine and your project's git remote — there is no server component, no new database, and OperatorStack (the in-cluster estate runtime, tracked separately) is deliberately out of scope here. If your project has no configured remote, say so loudly to yourself: the lease and the ledger are then local-only, and a second machine running `chant operator` against the "same" environment has no way to see the first one's lease at all.
+`chant operator`'s daemon lives entirely on your machine and your project's git remote — there is no server component and no new database. Hosting the same cadence on a machine that is not yours is what a [fountain steward](/chant/lexicons/fountain/steward/) is for, and OperatorStack (the in-cluster estate runtime, tracked separately) is deliberately out of scope here. If your project has no configured remote, say so loudly to yourself: the lease and the ledger are then local-only, and a second machine running `chant operator` against the "same" environment has no way to see the first one's lease at all.
 
 ## See also
 
 - [Converging Lifecycle](/chant/guide/converging-lifecycle/) — defining a `ConvergeOp`'s rule table
-- [Local vs Temporal](/chant/guide/local-vs-temporal/) — the general dial this page sharpens for the converge case
+- [Ops as teammates](/chant/concepts/durable-workflows/) — the general shape this page sharpens for the converge case
 - [`chant operator` CLI reference](/chant/cli/operator/) — flags and subcommands
 - [Reconciling Lifecycle](/chant/guide/reconciling-lifecycle/) — the PR-as-gate pattern `chant approve` mirrors

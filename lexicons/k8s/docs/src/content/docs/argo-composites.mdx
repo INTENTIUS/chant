@@ -26,7 +26,7 @@ Chant authors typed infra into manifests. From there, who applies them?
 | **Temporal** | Procedural steps with ordering, signals, human gates, one-shot RPCs | the step is a *procedure*, not a state — DNS delegation, cert generation, `db init` |
 | **CI** | One-shot, fire-and-forget apply | a simple pipeline with no reconciliation or long-running orchestration need |
 
-Rule of thumb: **if it's declarative and converges, let Argo reconcile it; if it's a procedure with ordering or gates, orchestrate it in Temporal.** Prefer Argo CD over Argo *Workflows* — the procedural layer stays Temporal. See the [temporal-crdb-deploy tutorial](/chant/tutorials/temporal-crdb-deploy/) for a deployment that uses both.
+Rule of thumb: **if it's declarative and converges, let Argo reconcile it; if it's a procedure with ordering or gates, run it as a chant Op.** Prefer Argo CD over Argo *Workflows* — the procedural layer stays an Op. See the [CockroachDB multi-region tutorial](/chant/tutorials/cockroachdb-multi-region/) for a deployment that uses both.
 
 ## The CRDs
 
@@ -110,4 +110,4 @@ The k8s lexicon ships five Argo-specific checks (see [Lint Rules](../lint-rules/
 - [argo-cd-gke tutorial](/chant/tutorials/argo-cd-gke/) — a minimal single-cluster on-ramp.
 - [Flux Composites](../flux-composites/) — the Flux counterpart: `FluxGitSource` + `FluxAppFor`, the FLUX00x rules, and the `flux-reconcile` deploy step.
 - The `chant-k8s-argo` [skill](../skills/) — agent guidance for these patterns.
-- [temporal-crdb-deploy tutorial](/chant/tutorials/temporal-crdb-deploy/) — Argo + Temporal together.
+- [CockroachDB multi-region tutorial](/chant/tutorials/cockroachdb-multi-region/) — Argo and a chant Op together.

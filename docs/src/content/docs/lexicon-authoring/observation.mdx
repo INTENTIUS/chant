@@ -19,7 +19,7 @@ Pick based on the relationship between your lexicon's chant entities and the run
 
 | Your lexicon describes... | The runtime world is... | Use |
 |---|---|---|
-| 1:1 cloud resources (CFN resources, K8s objects, ARM resources, Temporal namespaces) | Created and updated *by chant build + apply* | `describeResources()` |
+| 1:1 cloud resources (CFN resources, K8s objects, ARM resources, fountain environments) | Created and updated *by chant build + apply* | `describeResources()` |
 | Authoring primitives (Helm charts, Compose files, CI workflow definitions) | Created by *external tooling* outside chant's entity model (`helm install`, `docker run`) | `listArtifacts()` |
 | Both | A mix of declared resources and runtime artifacts | Implement both — `lifecycle diff` shows them in separate sections |
 | Neither (definitions-only, like git-tracked workflow YAML) | Everything is git-tracked already; drift is `git diff` | Implement neither; document the rationale in your lexicon README (see `lexicons/github/README.md`) |
@@ -107,7 +107,7 @@ That is `lexicons/k3d/src/describe-resources.ts` (chant #1412) with the ownershi
 
 ### Use entity-prop pass-through to find the cloud-side identifier
 
-`entities.get(entityName).props` is the literal props the user passed to the entity constructor. K8s reads `props.metadata.name` and `props.metadata.namespace`; Temporal reads `props.name` for namespaces and `props.scheduleId` for schedules; AWS uses the chant entity name directly because CloudFormation logical IDs and chant export names are 1:1.
+`entities.get(entityName).props` is the literal props the user passed to the entity constructor. K8s reads `props.metadata.name` and `props.metadata.namespace`; fountain reads `props.name` for every resource kind; AWS uses the chant entity name directly because CloudFormation logical IDs and chant export names are 1:1.
 
 The K8s pattern:
 
@@ -161,15 +161,15 @@ The status string is opaque to chant's diff logic (any change is "drift"), so yo
 
 Reference implementation: `lexicons/aws/src/deep-observe.ts`.
 
-**Seven lexicons implement this seam** — aws, azure, gcp, k8s, temporal, helm
-and fountain — each shipping a `src/deep-observe.ts` plus
+**Six lexicons implement this seam** — aws, azure, gcp, k8s, helm and
+fountain — each shipping a `src/deep-observe.ts` plus
 `deepNormalizationHooks`, both wired through its `plugin.ts`. That is the seam's
-conformance evidence: seven readers over seven very different transports (the
+conformance evidence: six readers over six very different transports (the
 Cloud Control API, an ARM GET, a direct GCP REST GET, a typed Kubernetes client,
-a Temporal client, the helm CLI delegating to that same k8s client, a fountain
-REST list) against one unchanged interface, with **no per-lexicon branch
-anywhere in `lifecycle/deep-diff.ts` or `deep-observation.ts`**. An eighth is a
-reader and its hooks, not a core change.
+the helm CLI delegating to that same k8s client, a fountain REST list) against
+one unchanged interface, with **no per-lexicon branch anywhere in
+`lifecycle/deep-diff.ts` or `deep-observation.ts`**. A seventh is a reader and
+its hooks, not a core change.
 
 `describeResources()` answers whether a declared entity exists and carries a handful of scrubbed outputs. That catches a changed status, a replaced physical id, a changed stack output — and misses the drift people actually chase: a hand-edited security-group rule, an inline policy added in the console, a flipped bucket setting, a controller-mutated CRD field. Reading the full live model is what closes that gap.
 

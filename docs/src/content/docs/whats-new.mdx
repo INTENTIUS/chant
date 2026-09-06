@@ -7,6 +7,18 @@ A hand-curated rollup of capabilities shipped recently. If you learned chant bef
 
 For the day-to-day reference docs see [Lifecycle Models](/chant/concepts/lifecycle-models/), [`chant lifecycle`](/chant/cli/lifecycle/), [Live Import](/chant/guide/live-import/), [Reconciling Lifecycle](/chant/guide/reconciling-lifecycle/), [Drift Detection](/chant/concepts/drift-detection/), and [Implementing Observation](/chant/lexicon-authoring/observation/).
 
+## Ops run on the local runtime and on a fountain steward
+
+Temporal is gone. An Op no longer compiles to workflow code for an engine you have to run: `chant run <op>` executes the phases in this process, and `chant run <op> --on fountain` hands the same declaration to a [steward](/chant/lexicons/fountain/steward/), one teammate on a persistent sandbox whose thread becomes that environment's operational history. The `temporal` lexicon, the `--temporal` flag and the generated worker are all removed.
+
+What used to need a workflow engine now lives in three places nothing has to host. A gate is a **fact** on the gate ledger: a run that reaches an unapproved one records that it is waiting and exits **3**, `chant approve <op> <gate>` writes the resolution, and the next run reads both and walks through. Nothing is suspended, so nothing has to survive being suspended. A cadence is `schedule` on the Op itself, plain data that the github generator, [`chant operator`](/chant/guide/operator/) and a fountain `Steward` each render their own way. And a machine is a steward, declared alongside the ops it runs. See [Ops as teammates](/chant/concepts/durable-workflows/) for where each half belongs, and [Choosing Your Deployment Model](/chant/concepts/deployment-paths/) for which to reach for.
+
+| # | Capability |
+|---|---|
+| [#2114](https://github.com/INTENTIUS/chant/issues/2114) | The runtime seam — `chant run --on <lexicon>`, gate-as-fact with exit 3 and `chant approve`, the base activities and `ACTIVITY_PROFILES` in core, `labels` and the run ledger, `op.schedule` and the Op composites, and the OPS lint rules |
+| [#2115](https://github.com/INTENTIUS/chant/issues/2115) | The fountain lexicon as the hosted runtime — `Teammate` / `Schedule` / `Webhook`, `fountain.profiles`, `chant acp`, the `opRuntime` provider, observation, and the `Steward` composite |
+| [#2116](https://github.com/INTENTIUS/chant/issues/2116) | Temporal removed — the lexicon, every reference in core, the examples, the docs, the CI, and the published package deprecated in favour of `@intentius/chant-lexicon-fountain` |
+
 ## Exploitability-aware vulnerability gating
 
 `vuln-gate` can now gate on whether a CVE is actually being exploited, not just how bad it would be: **KEV** catalog membership (CISA's list of vulnerabilities exploited in the wild) and the **EPSS** score (likelihood of exploitation in the next 30 days). Four new `vulnPolicy` fields — `failOnKev`, `failEpssAtOrAbove`, `warnEpssAtOrAbove`, `exploitabilityFixableOnly` — work project-wide from `chant.config.ts` or per-step. All default to off, so upgrading blocks nothing new; the one change every gate sees is that `VulnGateFailedError` now names the rule that fired per finding (`in CISA KEV since 2024-03-11, known ransomware use` instead of a bare CVE list). VEX suppression still outranks everything, KEV included. grype reports the data; trivy (v0.73) reports none of it, in which case the gate behaves exactly as before. See [Exploitability gating](/chant/components/attestation-reference/#exploitability-gating-kev-and-epss).
@@ -20,7 +32,7 @@ For the day-to-day reference docs see [Lifecycle Models](/chant/concepts/lifecyc
 
 ## A Kubernetes runtime surface
 
-The k8s lexicon had chant's strongest authoring surface and its weakest runtime one: `describeResources()` shelled `kubectl get` once per declared entity, serially, through a hardcoded twenty-entry map that warn-skipped every CRD. `lifecycle diff --live`, `lifecycle plan` and behold's overlay all inherited that cap. It now reads through a typed API client in its own package — coverage from the same codegen pass that emits the declarable classes (180-odd types, CRDs included) confirmed against the cluster's own API discovery, concurrent reads, and failures carrying the API server's `code` and `reason` instead of a parsed stderr line. A Temporal worker running `kubectlApply` or `waitForReady` no longer needs a `kubectl` binary.
+The k8s lexicon had chant's strongest authoring surface and its weakest runtime one: `describeResources()` shelled `kubectl get` once per declared entity, serially, through a hardcoded twenty-entry map that warn-skipped every CRD. `lifecycle diff --live`, `lifecycle plan` and behold's overlay all inherited that cap. It now reads through a typed API client in its own package — coverage from the same codegen pass that emits the declarable classes (180-odd types, CRDs included) confirmed against the cluster's own API discovery, concurrent reads, and failures carrying the API server's `code` and `reason` instead of a parsed stderr line. A run that calls `kubectlApply` or `waitForReady` no longer needs a `kubectl` binary.
 
 Writes went the same way. Every Kubernetes apply — including `ApplyOp({ target: "kubectl" })`, which used to shell `kubectl apply -f` — is now a **server-side apply** as the field manager `chant:<stack>`, so the API server records per field which of your tools wrote it. When another manager already owns a field the apply would set, chant names the owner and the contested paths and stops; it never forces a conflict on your behalf. See [The Kubernetes API client](/chant/lexicons/k8s/api-client/).
 
@@ -59,7 +71,7 @@ An earlier thread. The [components](/chant/components/overview/) release model �
 | [#629](https://github.com/INTENTIUS/chant/issues/629), [#632](https://github.com/INTENTIUS/chant/pull/632) | Wire `chant.config.ts` `sbom`/`signing`/`vulnPolicy` into `run --components` |
 | [#630](https://github.com/INTENTIUS/chant/issues/630), [#633](https://github.com/INTENTIUS/chant/pull/633) | Runnable [`examples/supply-chain`](https://github.com/INTENTIUS/chant/tree/main/examples/supply-chain) + hermetic SBOM default |
 | [#634](https://github.com/INTENTIUS/chant/issues/634), [#635](https://github.com/INTENTIUS/chant/pull/635) | Default `vuln-gate`/`scan-vulnerabilities` to a real auto-detecting scanner (grype → trivy) |
-| [#637](https://github.com/INTENTIUS/chant/issues/637), [#638](https://github.com/INTENTIUS/chant/pull/638) | Apply `chant.config` defaults on the Temporal codegen path |
+| [#637](https://github.com/INTENTIUS/chant/issues/637), [#638](https://github.com/INTENTIUS/chant/pull/638) | Apply `chant.config` defaults on the Op codegen path |
 
 ## Pipeline context for agents
 
@@ -93,14 +105,14 @@ A workflow/pipeline security pass across the github and gitlab lexicons, split a
 |---|---|
 | [#296](https://github.com/INTENTIUS/chant/issues/296) | Epic: GitHub workflow security audit — [GHA029–058](/chant/lexicons/github/lint-rules/) post-synth checks generalize SHA-pinning to every `uses:`/`image:`, flag over-broad token scopes, taint untrusted input into `run:`, contain secrets, reject unsound/obfuscated expressions, and enforce artifact/cache hygiene |
 | [#305](https://github.com/INTENTIUS/chant/issues/305) | Epic: GitLab pipeline security audit — [WGL029–048](/chant/lexicons/gitlab/lint-rules/), the same problems on GitLab primitives (includes/components, `CI_JOB_TOKEN`/`id_tokens`, masked/protected variables, `rules:`) |
-| [#292](https://github.com/INTENTIUS/chant/issues/292), [#303](https://github.com/INTENTIUS/chant/issues/303) | [`WorkflowAuditOp` / `PipelineAuditOp`](/chant/guide/ops/#audit-supply-chain-drift) — the live, always-fresh half: resolve pinned refs against moving upstreams (stale SHAs, impostor refs, advisories, archived projects), one-shot on the local executor or scheduled on Temporal, reporting via `report` / `issue` / `pull-request` (or `merge-request`) |
+| [#292](https://github.com/INTENTIUS/chant/issues/292), [#303](https://github.com/INTENTIUS/chant/issues/303) | [`WorkflowAuditOp` / `PipelineAuditOp`](/chant/guide/ops/#audit-supply-chain-drift) — the live, always-fresh half: resolve pinned refs against moving upstreams (stale SHAs, impostor refs, advisories, archived projects), one-shot on the local runtime or on the Op's own cadence, reporting via `report` / `issue` / `pull-request` (or `merge-request`) |
 | [#294](https://github.com/INTENTIUS/chant/issues/294) | [`Dependabot`](/chant/lexicons/github/composites/#dependabot) composite + resource — models `.github/dependabot.yml` so it's emitted and lintable, with safe defaults (cooldown window, external code execution denied); checks GHA057/058 |
 | [#306](https://github.com/INTENTIUS/chant/issues/306) | [Security-aware migration](/chant/lexicons/gitlab/migration/#security-posture) — a security-fate classification (Translated / Approximated / NeedsReview / Lost) on the migration provenance model, new `MIG-*` security rules, and a `--validate` security backend that runs the GitLab checks against migrated output |
 | [#293](https://github.com/INTENTIUS/chant/issues/293) | Fixed a duplicate lint ID — the post-synth "missing job-level permissions" check moved to `GHA013`, freeing `GHA020` for the secret-detection rule |
 
 ## Live import & the lifecycle dial
 
-The follow-on to the observation thread: chant turned its single observational drift workflow into a full family — **observe -> reconcile -> authoritative**, chosen per environment. It gained *live import* (regenerate TypeScript from running cloud/cluster state) and *projection + cloud-side ownership* (a precise create/update/delete change set computed against live), **without** hosting an authoritative state file. The snapshot is never load-bearing — the projection reads ownership from the live resource only. Primitives need no executor; only gated/destructive Ops require Temporal.
+The follow-on to the observation thread: chant turned its single observational drift workflow into a full family — **observe -> reconcile -> authoritative**, chosen per environment. It gained *live import* (regenerate TypeScript from running cloud/cluster state) and *projection + cloud-side ownership* (a precise create/update/delete change set computed against live), **without** hosting an authoritative state file. The snapshot is never load-bearing — the projection reads ownership from the live resource only. The primitives need no runtime at all, and an Op only asks for a machine of its own when it has to run where nobody is watching.
 
 | # | Capability |
 |---|---|
@@ -113,9 +125,9 @@ The follow-on to the observation thread: chant turned its single observational d
 | [#120](https://github.com/INTENTIUS/chant/issues/120) | `owned` filter on describe/export — query the marker live; marker present + undeclared → delete candidate, absent → `foreign` (adopt only); degrades to detect-only where no marker channel exists |
 | [#121](https://github.com/INTENTIUS/chant/issues/121) | Ownership-gated delete in the change set — `delete` only for owned orphans, read from the live marker, never from the snapshot |
 | [#122](https://github.com/INTENTIUS/chant/issues/122) | `reconcilePr` Op activity — regenerate drifted/orphaned entities and open a reviewable PR (modes: pull-request / issue / report); never commits to the main branch |
-| [#123](https://github.com/INTENTIUS/chant/issues/123) | [`ReconcileOp`](/chant/guide/reconciling-lifecycle/) composite — the `cloud → code` workflow (snapshot → plan → reconcile); one-shot on the local executor, continuous on a Temporal cron |
+| [#123](https://github.com/INTENTIUS/chant/issues/123) | [`ReconcileOp`](/chant/guide/reconciling-lifecycle/) composite — the `cloud → code` workflow (snapshot → plan → reconcile); one-shot on the local runtime, continuous on the Op's own cadence |
 | [#124](https://github.com/INTENTIUS/chant/issues/124) | [`ApplyOp`](/chant/guide/reconciling-lifecycle/) composite — the `code → cloud` workflow via native apply (Kubernetes server-side apply / CloudFormation deploy / per-resource ARM PUT); deletes ride the target's own delete path and are owned-only on all three ([what bounds each one](/chant/guide/ops-reference/#delete-paths)) |
-| [#125](https://github.com/INTENTIUS/chant/issues/125) | Approval gates + compensation for destructive apply — durable wait-for-signal, saga-style `onFailure` rollback, crash-resume; where Temporal is load-bearing |
+| [#125](https://github.com/INTENTIUS/chant/issues/125) | Approval gates + compensation for destructive apply — an approval recorded before the delete, and saga-style `onFailure` rollback |
 | [#126](https://github.com/INTENTIUS/chant/issues/126)–[#131](https://github.com/INTENTIUS/chant/issues/131) | Docs: new [Lifecycle Models](/chant/concepts/lifecycle-models/) (three-axis model + dial) and [Durable Workflows](/chant/concepts/durable-workflows/) concept pages; [Live Import](/chant/guide/live-import/) and [Reconciling Lifecycle](/chant/guide/reconciling-lifecycle/) guides; [Implementing Live Export](/chant/lexicon-authoring/live-export/) authoring guide; governance/comparison revised to retire the "no plan" concession; cross-page tone audit |
 
 ## Observation & drift detection
@@ -125,15 +137,14 @@ The biggest single thread. `chant lifecycle diff` went from a digest-vs-digest f
 | # | Capability |
 |---|---|
 | [#26](https://github.com/INTENTIUS/chant/issues/26) | `chant lifecycle diff <env> --live` — three-way diff (declared / observed-now / observed-then), six resource categories (missing / orphan / disappeared / newly observed / drifted / unchanged) with attribute-level deltas |
-| [#27](https://github.com/INTENTIUS/chant/issues/27) | Temporal lexicon `describeResources()` — namespaces, search attributes, schedules |
 | [#39](https://github.com/INTENTIUS/chant/issues/39) | `describeResources()` contract gains entity-prop pass-through — lexicons now receive declared props (e.g. K8s `metadata.name`/`namespace`) and can map cloud-side identifiers back to chant entity names |
-| [#42](https://github.com/INTENTIUS/chant/issues/42) | Five `describeResources()` implementations — AWS, Azure, GCP (Config Connector), Kubernetes, Temporal |
+| [#42](https://github.com/INTENTIUS/chant/issues/42) | Four `describeResources()` implementations — AWS, Azure, GCP (Config Connector), Kubernetes |
 | [#51](https://github.com/INTENTIUS/chant/issues/51) | `listArtifacts()` plugin contract — context-keyed observation for lexicons whose chant entities describe authoring primitives rather than 1:1 cloud resources |
 | [#52](https://github.com/INTENTIUS/chant/issues/52) | Helm `listArtifacts()` — Helm releases via `helm list -A -o json` |
 | [#53](https://github.com/INTENTIUS/chant/issues/53) | Docker `listArtifacts()` — containers / images / networks via three independent NDJSON queries |
 | [#56](https://github.com/INTENTIUS/chant/issues/56) | GitHub / GitLab — runtime observation documented as N/A; both describe git-tracked authoring primitives where drift is `git diff` |
 | [#30](https://github.com/INTENTIUS/chant/issues/30) | `chant/lifecycle` orphan branch concurrency — pushes use `--force-with-lease`; concurrent snapshots fail fast instead of silently overwriting |
-| [#31](https://github.com/INTENTIUS/chant/issues/31) | `WatchOp` composite — periodic lifecycle observation by pairing an `Op` (Snapshot + Diff phases) with a `TemporalSchedule` |
+| [#31](https://github.com/INTENTIUS/chant/issues/31) | `WatchOp` composite — periodic lifecycle observation from an `Op` (Snapshot + Diff phases) carrying a cron |
 
 ## Op runtime
 
@@ -141,12 +152,10 @@ The Op composite gained two ergonomic upgrades that were previously hand-coded b
 
 | # | Capability |
 |---|---|
-| [#28](https://github.com/INTENTIUS/chant/issues/28) | Op codegen auto-emits `upsertSearchAttributes()` — `OpName` at workflow start, `Phase` at each phase boundary, plus any user-declared `searchAttributes`. No more hand-rolled boilerplate; `chant run list` and Temporal UI filters work out of the box |
-| [#41](https://github.com/INTENTIUS/chant/issues/41) | `outcomeAttribute` on activity steps — capture an activity's return value (e.g. `lifecycleDiff`'s `drifted` boolean) as a workflow search attribute. Used by `WatchOp` to surface `Drift = "true"`/`"false"` per run |
+| [#28](https://github.com/INTENTIUS/chant/issues/28) | An Op's `labels` are emitted for it — `OpName` by default, plus whatever the Op declares. No more hand-rolled boilerplate; `chant run list` and `chant operator log --env` filter on them out of the box |
+| [#41](https://github.com/INTENTIUS/chant/issues/41) | `outcomeAttribute` on activity steps — capture an activity's return value (e.g. `lifecycleDiff`'s `drifted` boolean) onto the run record. Used by `WatchOp` to surface `Drift = "true"`/`"false"` per run |
 | [#29](https://github.com/INTENTIUS/chant/issues/29), [#40](https://github.com/INTENTIUS/chant/issues/40) | Test coverage for `cli/handlers/lifecycle.ts` (then `state.ts`), `run.ts`, `graph.ts`, and `runOp` — refactor surface is now safe |
-| [#161](https://github.com/INTENTIUS/chant/issues/161) | Temporal runtime harness — runs the serializer's *actual* generated workflow under a time-skipping `TestWorkflowEnvironment`: phase ordering, gate waits for the approval signal (not the timeout), `onFailure` compensation in reverse, and `ApplyOp`'s gated destructive apply ([#125](https://github.com/INTENTIUS/chant/issues/125)) |
 | [#162](https://github.com/INTENTIUS/chant/issues/162) | Compile-smoke for generated Op output — type-checks the emitted `workflow.ts`/`worker.ts`/`activities.ts` against the live activity signatures, so an activity-signature change that the serializer doesn't track fails at compile time instead of drifting silently |
-| [#173](https://github.com/INTENTIUS/chant/issues/173) | Generated workflows are workflow-sandbox-safe — activity profiles import from the import-free `config` leaf instead of the package root, so the Temporal worker's bundler no longer drags `node:fs`/`node:path` into the deterministic workflow VM (the generated workflow now bundles and runs). Surfaced by the [#161](https://github.com/INTENTIUS/chant/issues/161) harness |
 
 ## Cross-lexicon migration
 
@@ -194,9 +203,8 @@ After all the runtime work shipped, the docs site got a sweep to surface it:
 These shipped before the observation thread but underpin everything above. Listed for completeness:
 
 - [#5](https://github.com/INTENTIUS/chant/issues/5) Node.js migration + dev toolchain cleanup
-- [#6](https://github.com/INTENTIUS/chant/issues/6) Temporal lexicon — `TemporalNamespace`, `TemporalSchedule`, `SearchAttribute`, plus the lint rules and composites
 - [#7](https://github.com/INTENTIUS/chant/issues/7) Op composite + build pipeline integration
 - [#8](https://github.com/INTENTIUS/chant/issues/8) `chant run` CLI
 - [#9](https://github.com/INTENTIUS/chant/issues/9) MCP tools for Op
 - [#10](https://github.com/INTENTIUS/chant/issues/10) Migrate spells to Ops
-- [#11](https://github.com/INTENTIUS/chant/issues/11) Op replaces spells with Temporal-backed deployment workflows
+- [#11](https://github.com/INTENTIUS/chant/issues/11) Op replaces spells with declared, phased deployment workflows
