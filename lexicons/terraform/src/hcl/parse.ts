@@ -22,6 +22,8 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadHcl2json, type Hcl2Json } from "@intentius/chant/terraform/parse";
 import { DECLARABLE_MARKER, type Declarable } from "@intentius/chant/declarable";
+import type { SuppressionDirective } from "@intentius/chant/lint/suppressions";
+import { scanSuppressions, directivesFor, type FileScan } from "./suppressions";
 
 /** A parsed HCL block body, as `@cdktf/hcl2json` encodes it. */
 export type BlockBody = Record<string, unknown>;
@@ -55,7 +57,24 @@ export interface TerraformEntity extends Declarable {
     readonly estate?: string;
     /** `terraform.roots.<name>.workspace`, recorded so TF025 can flag a non-default one on a live root. */
     readonly workspace?: string;
+    /**
+     * 1-based line the block's header starts on, from a line scan over the
+     * raw source (chant #2111): hcl2json exposes no ranges to read this from
+     * instead (see `../hcl/suppressions.ts`). Undefined when the scan's block
+     * regex didn't recognize the header (unusual formatting); a suppression
+     * comment simply can't anchor to that block then.
+     */
+    readonly line?: number;
   };
+  /**
+   * `# chant-ignore`/`chant-ignore-file`/`chant-ignore-block` directives that
+   * apply to this entity (chant #2111): the ones anchored to its own block,
+   * plus any file-level one. Read generically by
+   * `@intentius/chant/lint/suppressions`'s `entitySuppressions()`; see that
+   * module's doc comment for why this is a plain duck-typed field rather than
+   * a `PostSynthContext` addition.
+   */
+  readonly suppressions?: readonly SuppressionDirective[];
 }
 
 /** `entityType` per block kind. */
@@ -88,6 +107,8 @@ export function terraformEntity(
   file: string,
   root: string,
   extra?: { mode?: TerraformRootMode; estate?: string; workspace?: string },
+  line?: number,
+  suppressions?: readonly SuppressionDirective[],
 ): TerraformEntity {
   return {
     [DECLARABLE_MARKER]: true,
@@ -99,10 +120,12 @@ export function terraformEntity(
       body,
       file,
       root,
+      line,
       ...(extra?.mode !== undefined ? { mode: extra.mode } : {}),
       ...(extra?.estate !== undefined ? { estate: extra.estate } : {}),
       ...(extra?.workspace !== undefined ? { workspace: extra.workspace } : {}),
     },
+    suppressions,
   };
 }
 
@@ -217,7 +240,8 @@ export async function blocksToEntities(
   const parser = hcl2json ?? (await loadHcl2json());
   const entities = new Map<string, Declarable>();
 
-  const add = (entityType: string, address: string, body: unknown, file: string): void => {
+  const add = (entityType: string, address: string, body: unknown, file: string, scan: FileScan): void => {
+    const { line, suppressions } = directivesFor(scan, address);
     const entity = terraformEntity(
       entityType,
       address,
@@ -225,6 +249,8 @@ export async function blocksToEntities(
       file,
       root,
       modeOptions?.workspace !== undefined ? { workspace: modeOptions.workspace } : undefined,
+      line,
+      suppressions,
     );
     let key = `${root}/${address}`;
     for (let n = 2; entities.has(key); n++) key = `${root}/${address}~${n}`;
@@ -237,8 +263,9 @@ export async function blocksToEntities(
     section: string,
     entityType: string,
     file: string,
+    scan: FileScan,
   ): void => {
-    for (const body of asArray(tree[section])) add(entityType, section, body, file);
+    for (const body of asArray(tree[section])) add(entityType, section, body, file, scan);
   };
 
   /** `provider`, `module`, `variable`, `output`: one label, so `Record<name, body[]>`. */
@@ -248,9 +275,10 @@ export async function blocksToEntities(
     entityType: string,
     address: (name: string) => string,
     file: string,
+    scan: FileScan,
   ): void => {
     for (const [name, bodies] of Object.entries(asRecord(tree[section]))) {
-      for (const body of asArray(bodies)) add(entityType, address(name), body, file);
+      for (const body of asArray(bodies)) add(entityType, address(name), body, file, scan);
     }
   };
 
@@ -261,30 +289,32 @@ export async function blocksToEntities(
     entityType: string,
     address: (type: string, name: string) => string,
     file: string,
+    scan: FileScan,
   ): void => {
     for (const [type, named] of Object.entries(asRecord(tree[section]))) {
       for (const [name, bodies] of Object.entries(asRecord(named))) {
-        for (const body of asArray(bodies)) add(entityType, address(type, name), body, file);
+        for (const body of asArray(bodies)) add(entityType, address(type, name), body, file, scan);
       }
     }
   };
 
   for (const file of files) {
     const tree = (await parser.parse(file.name, file.source)) as Record<string, unknown>;
-    unlabelled(tree, "terraform", TERRAFORM_TYPE, file.name);
-    for (const liveBody of liveBlocksIn(tree)) add(LIVE_TYPE, "live", liveBody, file.name);
-    unlabelled(tree, "locals", LOCALS_TYPE, file.name);
-    oneLabel(tree, "provider", PROVIDER_TYPE, (n) => `provider.${n}`, file.name);
-    oneLabel(tree, "module", MODULE_TYPE, (n) => `module.${n}`, file.name);
-    oneLabel(tree, "variable", VARIABLE_TYPE, (n) => `var.${n}`, file.name);
-    oneLabel(tree, "output", OUTPUT_TYPE, (n) => `output.${n}`, file.name);
-    twoLabels(tree, "resource", RESOURCE_TYPE, (t, n) => `${t}.${n}`, file.name);
-    twoLabels(tree, "data", DATA_TYPE, (t, n) => `data.${t}.${n}`, file.name);
+    const scan = scanSuppressions(file.name, file.source);
+    unlabelled(tree, "terraform", TERRAFORM_TYPE, file.name, scan);
+    for (const liveBody of liveBlocksIn(tree)) add(LIVE_TYPE, "live", liveBody, file.name, scan);
+    unlabelled(tree, "locals", LOCALS_TYPE, file.name, scan);
+    oneLabel(tree, "provider", PROVIDER_TYPE, (n) => `provider.${n}`, file.name, scan);
+    oneLabel(tree, "module", MODULE_TYPE, (n) => `module.${n}`, file.name, scan);
+    oneLabel(tree, "variable", VARIABLE_TYPE, (n) => `var.${n}`, file.name, scan);
+    oneLabel(tree, "output", OUTPUT_TYPE, (n) => `output.${n}`, file.name, scan);
+    twoLabels(tree, "resource", RESOURCE_TYPE, (t, n) => `${t}.${n}`, file.name, scan);
+    twoLabels(tree, "data", DATA_TYPE, (t, n) => `data.${t}.${n}`, file.name, scan);
   }
 
   if (sidecar) {
     const tree = (await parser.parse(sidecar.name, sidecar.source)) as Record<string, unknown>;
-    if (typeof tree["estate"] === "string") add(LIVE_TYPE, "live", tree, sidecar.name);
+    if (typeof tree["estate"] === "string") add(LIVE_TYPE, "live", tree, sidecar.name, scanSuppressions(sidecar.name, sidecar.source));
   }
 
   // Which of the (at most two) Live entities names the estate, preferring the
