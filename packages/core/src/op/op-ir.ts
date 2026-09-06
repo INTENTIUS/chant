@@ -50,9 +50,8 @@
  * Resolving defaults loses nothing: parsing `op.json` back into an
  * `OpConfig`-shaped object (`opConfigFromIR`) and re-serializing it produces
  * a byte-identical `op.json`, and a lexicon serializer fed the reconstruction
- * emits byte-identical code (verified by round-trip tests here and in
- * `lexicons/temporal/src/op/op-ir.test.ts`) — the issue's own verification
- * criterion.
+ * emits byte-identical code (verified by the round-trip tests here) — the
+ * issue's own verification criterion.
  *
  * ## Step-output references (chant #1290, #1288 Stage 2 follow-up)
  *

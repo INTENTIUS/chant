@@ -8,8 +8,8 @@
  * `LexiconPlugin.symptoms?()` interface in v1 — everything here is a pure
  * projection of structures chant already computes (`ChangeSet`,
  * `ComponentStatusRow[]`). No I/O in this module; a caller (the `convergeTick`
- * activity, lexicons/temporal/src/op/activities/converge.ts) gathers those
- * inputs and hands them here.
+ * activity, ../op/activities/converge.ts) gathers those inputs and hands them
+ * here.
  *
  * One record per tick, not per component: the issue's own rule sketch reads
  * `s.status`/`s.backupVerifiedAge` as a single symptom `s` a rule closes

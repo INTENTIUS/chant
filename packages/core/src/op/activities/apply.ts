@@ -245,7 +245,7 @@ async function loadK8sApplier(): Promise<K8sApplier> {
     throw new Error(
       `apply target "kubectl" needs @intentius/chant-lexicon-k8s, which could not be loaded ` +
         `(${err instanceof Error ? err.message : String(err)}). Kubernetes applies moved out of the ` +
-        `Temporal lexicon in chant #1075; install the k8s lexicon and list it in chant.config.ts.`,
+        `op lexicon in chant #1075; install the k8s lexicon and list it in chant.config.ts.`,
     );
   }
   if (typeof mod.applyManifest !== "function") {

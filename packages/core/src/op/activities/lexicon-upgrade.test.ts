@@ -300,8 +300,8 @@ describe("lexiconUpgrade breakage handling", () => {
 // ── out-of-scope rejection ────────────────────────────────────────────
 
 describe("out-of-scope lexicons", () => {
-  test("helm/temporal/forgejo throw", async () => {
-    for (const l of ["helm", "temporal", "forgejo"]) {
+  test("helm/forgejo throw", async () => {
+    for (const l of ["helm", "forgejo"]) {
       await expect(
         lexiconUpgrade({ lexicon: l as never, mode: "report" }),
       ).rejects.toThrow(/not supported/);

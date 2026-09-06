@@ -13,7 +13,7 @@
  *
  * It is dependency-free and primitives-only: it reads the emitted workflow YAML
  * (passed as a string) and resolves references through an injectable
- * `ActionRefResolver`, so Temporal/`chant run` can schedule it and tests can run
+ * `ActionRefResolver`, so `chant run` can schedule it and tests can run
  * it against recorded responses with no live network.
  */
 

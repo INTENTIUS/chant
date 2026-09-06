@@ -71,7 +71,6 @@ const BOOLEAN_FLAGS = new Set([
   "--down",
   "--include-dependents",
   "--local",
-  "--temporal",
   "--json",
   "--progress-json",
   "--update-snapshot",
@@ -96,6 +95,27 @@ const BOOLEAN_FLAGS = new Set([
 /**
  * Parse command line arguments
  */
+/**
+ * `--temporal` picked the Temporal runtime, which #2116 deleted. It is caught
+ * ahead of {@link parseArgs} — which no longer knows the flag at all — for one
+ * minor version, so an invocation that still carries it is told where the
+ * runtime went instead of getting "Unknown flag: --temporal" and a pointer at
+ * `--help`. Delete this, its test and the constants below once that version
+ * has shipped.
+ */
+export const REMOVED_TEMPORAL_FLAG = "--temporal was removed in #2116; use --on fountain";
+
+/**
+ * Not 1: a removed flag means the command never started, so a CI job that
+ * retries a failed run has nothing to retry here.
+ */
+export const REMOVED_FLAG_EXIT_CODE = 2;
+
+/** Matches the bare flag and the joined `--temporal=…` form `splitJoinedFlags` would otherwise split. */
+export function usesRemovedTemporalFlag(argv: string[]): boolean {
+  return argv.some((arg) => arg === "--temporal" || arg.startsWith("--temporal="));
+}
+
 export function parseArgs(args: string[]): ParsedArgs {
   // Local mutable copy — chant #1127's joined-`--flag=value` splitting below
   // rewrites the array in place (one token becomes two), so this must not
@@ -117,12 +137,10 @@ export function parseArgs(args: string[]): ParsedArgs {
     watch: false,
     verbose: false,
     help: false,
-    profile: undefined,
     param: undefined,
     paramsFile: undefined,
     report: undefined,
     local: undefined,
-    temporal: undefined,
     json: undefined,
     live: false,
     migrateFrom: undefined,
@@ -174,8 +192,6 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.watch = true;
     } else if (arg === "--verbose" || arg === "-v") {
       result.verbose = true;
-    } else if (arg === "--profile" || arg === "-p") {
-      result.profile = args[++i];
     } else if (arg === "--report") {
       // --report alone is the boolean (used by `run`); --report <path> is
       // the migrate-command file path. Look ahead for a non-flag.
@@ -305,8 +321,6 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.includeDependents = true;
     } else if (arg === "--local") {
       result.local = true;
-    } else if (arg === "--temporal") {
-      result.temporal = true;
     } else if (arg === "--json") {
       result.json = true;
     } else if (arg === "--progress-json") {
@@ -519,17 +533,12 @@ Commands:
                                           applied) and path. Read-only.
 
 Ops:
-  run <name>            Start an Op workflow (spawns worker + submits to Temporal)
-  run list              List all Ops with current run status
-                        --components: list discovered Components instead (--temporal
-                        also annotates each with its latest run status; #599)
-  run status <name>     Show current workflow run state
-                        --components: show a Component's durable run state instead (#599)
+  run <name>            Run an Op on the resolved runtime (--on; local by default)
+  run list              List all Ops with the runtime's state for each
+  run status <name>     Show the runtime's state for one Op's latest run
   run approve <op> <gate>  Record a gate's resolution and wake the runtime
-  run cancel <name>     Cancel the active workflow run (requires --force)
-                        --components: cancel a Component's workflow instead (#589)
+  run cancel <name>     Cancel the active run (requires --force)
   run log <name>        Show run history for an Op
-                        --components: show a Component's run history instead (#599)
   run --components <name|all>  Run discovered Component(s) through the interpret
                         driver on the local executor (--env <env>; #585).
                         On success, auto-emits a release-ledger record per
@@ -541,7 +550,7 @@ Ops:
                         progress instead of tailing raw logs (additive; run
                         semantics/exit code unchanged)
   operator               Run scheduled ticks for discovered ConvergeOps
-                        locally, no Temporal (#1485): acquire/renew a per-op
+                        locally (#1485): acquire/renew a per-op
                         lease (git ref CAS), tick on --interval, record every
                         result as a ledger fact. --env <env> scopes to one
                         environment; --interval <dur> (default 60s) and
@@ -680,12 +689,9 @@ Options:
   --on <lexicon>        Which runtime hosts the run: a configured lexicon with
                         an opRuntime, or the built-in local runtime when
                         omitted (every run subcommand; #2121)
-  -p, --profile <name>  Temporal worker profile to use (run command)
   --local               Run an Op with the local in-process executor (default)
-  --temporal            Run an Op via a Temporal cluster (schedules, durable resume, a gate as a wait)
   --json                Emit the structured run result as JSON (run command)
-  --report              Print deployment report instead of running (run command)
-                        OR with a path arg: SARIF report destination (migrate)
+  --report              With a path arg: SARIF report destination (migrate)
                         OR '--report gitlab-mr': emit the GitLab MR plan-widget
                         JSON (lifecycle plan)
                         OR '--report markdown': emit a reviewer-facing markdown
@@ -993,6 +999,12 @@ export const commandRegistry: CommandDef[] = [
  */
 async function main(): Promise<void> {
   const rawArgv = process.argv.slice(2);
+
+  if (usesRemovedTemporalFlag(rawArgv)) {
+    console.error(formatError({ message: REMOVED_TEMPORAL_FLAG }));
+    await flushAndExit(REMOVED_FLAG_EXIT_CODE);
+    return;
+  }
 
   let args: ParsedArgs;
   try {

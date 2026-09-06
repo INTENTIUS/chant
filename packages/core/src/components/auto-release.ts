@@ -4,23 +4,18 @@
  * release ledger (../lifecycle/release-ledger.ts) was only populated by the
  * standalone `chant components release <env>` command — a deploy that never
  * called it left the ledger silently empty. This module makes recording
- * happen *by construction*: the CLI post-run step for both the local
- * executor (`runOpComponents`) and the durable Temporal path
- * (`runComponentTemporal`) calls `maybeRecordAutoRelease` after the run
- * reports success.
+ * happen *by construction*: the CLI's post-run step (`runOpComponents`)
+ * calls `maybeRecordAutoRelease` after the run reports success.
  *
  * Deliberately CLI-side, not driver-side or workflow-side:
  *  - `../components/driver.ts` stays capability-agnostic — it already
  *    resists per-component/per-capability branching, and "write to git"
  *    is exactly the kind of side effect that doesn't belong in a step
  *    dispatcher tests exercise against a bare `CapabilityRegistry`.
- *  - The Temporal workflow (lexicons/temporal/src/component-op/) must stay
- *    deterministic and replay-safe. A ledger write is a non-idempotent git
- *    push with real-world side effects (network, `Date.now()`, file writes
- *    outside workflow state) — precisely what Temporal workflow code must
- *    never do directly. It happens in the CLI, after `handle.describe()`
- *    reports a terminal COMPLETED status, the same place `runOpTemporal`
- *    already writes its deployment report post-run.
+ *  - A ledger write is a non-idempotent git push with real-world side
+ *    effects (network, `Date.now()`, file writes) — the kind of thing a
+ *    replay-safe hosted runtime must not do inline either. It happens in the
+ *    CLI, once the run has reported a terminal outcome.
  *
  * Reuses ../lifecycle/release-ledger.ts's `appendReleaseRecord` verbatim —
  * this module only decides *whether* to call it and *what digest* to record,
@@ -72,27 +67,6 @@ export function extractRunDigest(records: DriverStepRecord[]): string | undefine
   return found;
 }
 
-/**
- * Same digest extraction as `extractRunDigest`, but over a component
- * Temporal workflow's returned `phaseOutputs` (`{ [phase]: output }`) instead
- * of a `DriverStepRecord[]` — the shape `handle.result()` resolves to for a
- * COMPLETED component workflow (see lexicons/temporal/src/component-op/
- * serializer.ts's generated `return { phaseOutputs, componentOutputs }`).
- * Used by the `--temporal` CLI path, which never sees individual step
- * records (those exist only inside the workflow/activities).
- */
-export function extractRunDigestFromPhaseOutputs(
-  phaseOutputs: Record<string, Record<string, unknown>> | undefined,
-): string | undefined {
-  let found: string | undefined;
-  for (const output of Object.values(phaseOutputs ?? {})) {
-    if (isPromotedArtifact(output) && typeof output.digest === "string") {
-      found = output.digest;
-    }
-  }
-  return found;
-}
-
 /** Explicit reasons `maybeRecordAutoRelease` declined to write a record — never a thrown error, since "nothing to record" (or "opted out") is an expected, common outcome. */
 export type AutoReleaseSkipReason =
   | "opted-out"
@@ -105,19 +79,19 @@ export type AutoReleaseResult =
   | { recorded: false; reason: AutoReleaseSkipReason; detail?: string }
   | { recorded: false; reason: "error"; error: string };
 
-/** Input describing one component's completed run, common to both the local-executor and Temporal-durable CLI paths. */
+/** Input describing one component's completed run. */
 export interface AutoReleaseRunInfo {
   component: string;
   env: string;
-  /** Whether the run reported overall success — `DriverRunResult.ok` (local) or a terminal `COMPLETED` Temporal status. A caller must not call this for a non-terminal/in-progress run. */
+  /** Whether the run reported overall success (`DriverRunResult.ok`). A caller must not call this for a non-terminal/in-progress run. */
   success: boolean;
   /** The component's step records (local executor), used to locate the published digest via `extractRunDigest`. Mutually exclusive with `digest` — pass whichever the caller already has. */
   records?: DriverStepRecord[];
-  /** A digest already resolved by the caller (e.g. the `--temporal` path, via `extractRunDigestFromPhaseOutputs` over the workflow's `handle.result()`). Takes precedence over `records` when both are given. */
+  /** A digest the caller already resolved by its own means. Takes precedence over `records` when both are given. */
   digest?: string;
-  /** Orchestrator run identifier — a Temporal `runId`, or a locally generated id for the local executor (mirrors `runComponentsReleaseRecord`'s `--run-id` default). */
+  /** Orchestrator run identifier — a hosting runtime's own run id, or a locally generated one (mirrors `runComponentsReleaseRecord`'s `--run-id` default). */
   runId: string;
-  /** The id space `runId` lives in (#2045) — `{ forge: "op" }` for a Temporal run, `{ forge: "local" }` for a local-executor mint. Recorded verbatim as the release record's `runOrigin`. */
+  /** The id space `runId` lives in (#2045) — `{ forge: "op" }` for a hosted run, `{ forge: "local" }` for a local-executor mint. Recorded verbatim as the release record's `runOrigin`. */
   runOrigin?: RunOrigin;
   /** The bypassed capability-profile divergences, when the caller deliberately overrode a deploy-time profile assertion (chant #1244) — recorded verbatim as the release record's `profileOverride`. */
   profileOverride?: string;
@@ -142,11 +116,11 @@ function resolveActor(override?: string): string | undefined {
 }
 
 /**
- * After a successful `chant run --components <name> --env <env>` (local or
- * `--temporal`), append exactly one immutable release record to the ledger
- * and push it — or explain, without throwing, why it didn't. Never called
- * for a failed run (`run.success` must be true before the caller invokes
- * this at all; see `runOpComponents`/`runComponentTemporal`) — a failed
+ * After a successful `chant run --components <name> --env <env>`, append
+ * exactly one immutable release record to the ledger and push it — or
+ * explain, without throwing, why it didn't. Never called for a failed run
+ * (`run.success` must be true before the caller invokes this at all; see
+ * `runOpComponents`) — a failed
  * deploy writes nothing, by construction, since this function is simply
  * never reached on that path.
  *

@@ -6,7 +6,7 @@
  * Op itself (#2120).
  *
  * Phases: `Observe` (snapshot + a quick live diff, exactly `WatchOp`'s own
- * shape, for the `Drift` search attribute and Temporal-UI visibility) ->
+ * shape, for the `Drift` outcome and per-phase visibility) ->
  * `Converge` (one `convergeTick` activity call —
  * ../activities/converge.ts — that does classify + dispatch + record;
  * see that module's doc for why this can't be split into further static
@@ -87,15 +87,12 @@ import { CONVERGE_SYMPTOM_FIELDS } from "../../lifecycle/symptoms";
  *   build.
  * - **`apply` × destructive is refused outright in v1, gate or not.** The
  *   issue's table says "always gated", but the dispatch executor can't
- *   honor a gate: `dispatchOp` always shells `chant run <op>` without
- *   `--temporal`, and the local executor's pre-flight rejects any gated op
- *   before running a single step (`LocalGateUnsupportedError`) — so
+ *   honor a gate: `dispatchOp` shells `chant run <op>`, and a gated run ends
+ *   pending approval (#2119) rather than continuing — so
  *   "destructive + apply + gated" reads as a path to dispatch but was a
- *   dead cell: it could never actually succeed. `TMP014` now refuses the
- *   rule instead of shipping a path guaranteed to fail every time it's
- *   exercised. Durable gated dispatch (e.g. a `--temporal` pass-through when
- *   the parent workflow itself runs under Temporal) is #1485's design to
- *   own.
+ *   dead cell: it could never actually succeed. `OPS014` refuses the rule
+ *   instead of shipping a path guaranteed to fail every time it's exercised.
+ *   Gated dispatch that waits for the approval is #1485's design to own.
  */
 export type ConvergeDial = "observe" | "reconcile" | "apply";
 
@@ -138,8 +135,8 @@ export function ConvergeOp(config: ConvergeOpConfig): ConvergeOpResources {
   // unknown op referenced by `run()`, a mutating/destructive dispatch target
   // whose own verb class the dial disallows) can't be checked here — a
   // sibling `*.op.ts` file's Op may not exist yet at the moment this factory
-  // runs — and are instead TMP014's job
-  // (lexicons/temporal/src/lint/post-synth/tmp014-converge-rule-refusals.ts), which runs after
+  // runs — and are instead OPS014's job
+  // (../../lint/rules/op/ops014-converge-rule-refusals.ts), which runs after
   // the whole project is resolved.
 
   if (config.rules.length === 0) {

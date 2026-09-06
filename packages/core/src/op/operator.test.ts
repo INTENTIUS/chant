@@ -52,7 +52,7 @@ async function initRepo(dir: string): Promise<void> {
  * Write a minimal fixture ConvergeOp — the same `{ props: OpConfig }` shape
  * `discoverOps` reads from a real `*.op.ts` file's default export
  * (`../op/discover.ts`), hand-built here rather than going through the real
- * `ConvergeOp()` composite (lexicons/temporal) so this suite tests the
+ * `ConvergeOp()` composite so this suite tests the
  * operator's own discovery/lease/tick-loop logic without depending on that
  * lexicon at all. One "Converge" phase calling a single fake activity —
  * `runOpLocally` doesn't care what the phases are named or how many there

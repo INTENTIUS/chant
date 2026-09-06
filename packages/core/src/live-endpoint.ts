@@ -42,7 +42,7 @@ import { emulatorsOf, endpointEnvVars, type EmulatorDeclaration } from "./op/emu
  * The ambient endpoint vars a lexicon honors, from its emulator capability.
  *
  * A lexicon with no emulator contributes nothing, which is the same answer the
- * hand-maintained map gave for k8s, gcp and temporal — they resolve their live
+ * hand-maintained map gave for k8s and gcp — they resolve their live
  * target from `chant.config` itself, so there is nothing to inject.
  */
 export function endpointEnvVarsFor(lexicon: EndpointLexicon): string[] {

@@ -8,7 +8,7 @@ import { loadPlugins } from "../cli/plugins";
  * Every lexicon in the repo, enumerated rather than listed (#1346).
  *
  * This was nine hardcoded names. It missed fountain, which contributes a
- * catalog, and could not notice fly and temporal, which did not — so their six
+ * catalog, and could not notice fly, which did not — so their six
  * post-synth checks reached `chant audit` with no title, tier, fix kind, or
  * category, and the guard meant to catch exactly that was blind to them. A
  * thirteenth lexicon would have been invisible to it on arrival.

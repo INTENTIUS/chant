@@ -67,15 +67,15 @@ describe("validateLexiconConfig (#1344)", () => {
   });
 
   test("validates each declaring lexicon independently", () => {
-    const temporal = {
-      name: "temporal",
+    const k8s = {
+      name: "k8s",
       configSchema: z.strictObject({ defaultProfile: z.string().optional() }),
     };
     const problems = validateLexiconConfig(
-      [forgejo, temporal],
-      cfg({ forgejo: { actionsRoot: "https://x" }, temporal: { defaultProfil: "local" } }),
+      [forgejo, k8s],
+      cfg({ forgejo: { actionsRoot: "https://x" }, k8s: { defaultProfil: "local" } }),
     );
-    expect(problems.map((p) => p.lexicon)).toEqual(["temporal"]);
+    expect(problems.map((p) => p.lexicon)).toEqual(["k8s"]);
   });
 
   test("no config at all is not a problem", () => {

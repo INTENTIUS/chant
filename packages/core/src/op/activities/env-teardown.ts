@@ -21,7 +21,7 @@
  *
  * All three refusals throw before any live read, so a refused teardown
  * touches nothing at all. They are configuration errors, not transient ones —
- * a Temporal retry cannot make `prod` stop looking like production.
+ * no retry can make `prod` stop looking like production.
  *
  * Distinct from {@link chantTeardown} (`npm run teardown`), which runs
  * whatever script a project wired under that name. This activity is

@@ -8,15 +8,15 @@
 /**
  * No-op.
  *
- * @deprecated Heartbeating was a liveness protocol between a Temporal worker
- * and a Temporal server. chant's ops run in-process on a machine that keeps
+ * @deprecated Heartbeating was a liveness protocol between a worker and the
+ * server that scheduled it. chant's ops run in-process on a machine that keeps
  * state and leaves a record (chant #2114), so nothing is listening for a
  * heartbeat and nothing acts on a missed one. An activity that wants to report
  * progress should write a line — the executor streams an activity's output with
  * the step record it belongs to.
  *
  * Kept as a call-compatible no-op so the lexicons that call it keep compiling;
- * it goes away with the rest of the Temporal surface.
+ * it goes away once none of them do.
  */
 export function safeHeartbeat(_details?: unknown): void {
   // Intentionally empty.

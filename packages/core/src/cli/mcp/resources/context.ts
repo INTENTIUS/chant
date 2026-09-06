@@ -49,9 +49,9 @@ chant import template.json    # Convert external template
 chant import template.json -o ./src/  # Custom output dir
 \`\`\`
 
-## Ops (Temporal Workflows)
+## Ops
 
-Ops are durable workflow definitions backed by Temporal. Each \`*.op.ts\` file declares an Op with named phases and activity steps.
+An Op is a convergent verb. Each \`*.op.ts\` file declares one with named phases and activity steps; \`--on <lexicon>\` picks the runtime that hosts the run, and the built-in local runtime runs it in-process otherwise.
 
 ### Op MCP Tools
 

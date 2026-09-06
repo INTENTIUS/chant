@@ -39,8 +39,8 @@
  *
  * The one way to get there is `ChantConfigSchema`'s `.passthrough()`, which
  * accepts unknown extra keys of any type (that is how a lexicon extends the
- * config — `temporal:` in the temporal lexicon's `TemporalChantConfig`, itself
- * pure data). A project that parks a function under such a key gets a clear
+ * config — a lexicon's own namespace key, itself pure data). A project that
+ * parks a function under such a key gets a clear
  * error naming it, rather than a config that silently lost it.
  *
  * ## The one accepted lossy case: `undefined` object properties

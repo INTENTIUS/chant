@@ -485,7 +485,7 @@ describe("runComponentDeploy — output wiring", () => {
 
 describe("collectComponentOutputs / accumulateComponentOutputs — the shared accumulator (#700)", () => {
   // Exported so the durable path's `accumulateComponentOutputs` activity
-  // (lexicons/temporal/src/component-op/activities.ts) captures outputs via
+  // (a hosting runtime's own step executor) captures outputs via
   // the same function `runComponentDeploy` does — the accumulation twin of
   // the already-shared `resolveStepInput`.
   const phaseOutputs = {
@@ -516,7 +516,7 @@ describe("collectComponentOutputs / accumulateComponentOutputs — the shared ac
       publish: { uri: "repo@sha256:abc", digest: "sha256:abc" },
     });
     expect(out.other).toEqual({ x: 1 });
-    // Plain data throughout — survives the Temporal activity JSON boundary unchanged.
+    // Plain data throughout — survives an out-of-process JSON boundary unchanged.
     expect(JSON.parse(JSON.stringify(out))).toEqual(out);
   });
 

@@ -2,7 +2,7 @@
 import type { Component } from "../../../../../../components/component";
 import { gate, phase } from "../../../../../../components/component";
 
-/** COMP004 pass case: a genuine gate, opted out via a file-level disable directive with a documented reason — the intended path for a component that graduates to the Temporal backend. */
+/** COMP004 pass case: a genuine gate, opted out via a file-level disable directive with a documented reason — the intended path for a component whose rollout genuinely waits on a person. */
 export const neo4jCluster: Component = {
   name: "neo4j-cluster",
   archetype: "infra",

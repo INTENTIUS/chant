@@ -3,7 +3,7 @@
  *
  * The lexicon-flavoured half of the original suite (workflow.ts byte-identity,
  * this-lexicon contract coverage) stays in
- * `lexicons/temporal/src/op/op-ir.test.ts`, which now drives the same code
+ * a hosting lexicon's own op-ir suite, which now drives the same code
  * through the shim. What is here is what the IR itself promises: the `2.0`
  * shape, determinism, the injected registries, and the round trip.
  */

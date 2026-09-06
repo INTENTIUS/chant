@@ -10,7 +10,7 @@ import type { ComponentCheck } from "../../component-checks";
 import { comp001PublishesNeverAppliesRule } from "./comp001-publishes-never-applies";
 import { comp002DanglingWiringRefRule } from "./comp002-dangling-wiring-ref";
 import { comp003MutatingNoRollbackRule } from "./comp003-mutating-no-rollback";
-import { comp004GateNeedsTemporalRule } from "./comp004-gate-needs-temporal";
+import { comp004GateNeedsDurableRuntimeRule } from "./comp004-gate-needs-durable-runtime";
 import { comp005CapabilityKindIsNounRule } from "./comp005-capability-kind-is-noun";
 import { comp006ShellNeedsReasonRule } from "./comp006-shell-needs-reason";
 import { comp007CompositionSprawlRule } from "./comp007-composition-sprawl";
@@ -18,7 +18,7 @@ import { comp007CompositionSprawlRule } from "./comp007-composition-sprawl";
 export { comp001PublishesNeverAppliesRule } from "./comp001-publishes-never-applies";
 export { comp002DanglingWiringRefRule } from "./comp002-dangling-wiring-ref";
 export { comp003MutatingNoRollbackRule } from "./comp003-mutating-no-rollback";
-export { comp004GateNeedsTemporalRule } from "./comp004-gate-needs-temporal";
+export { comp004GateNeedsDurableRuntimeRule } from "./comp004-gate-needs-durable-runtime";
 export { comp005CapabilityKindIsNounRule } from "./comp005-capability-kind-is-noun";
 export { comp006ShellNeedsReasonRule } from "./comp006-shell-needs-reason";
 export { comp007CompositionSprawlRule } from "./comp007-composition-sprawl";
@@ -29,7 +29,7 @@ export function loadComponentChecks(): ComponentCheck[] {
     comp001PublishesNeverAppliesRule,
     comp002DanglingWiringRefRule,
     comp003MutatingNoRollbackRule,
-    comp004GateNeedsTemporalRule,
+    comp004GateNeedsDurableRuntimeRule,
     comp005CapabilityKindIsNounRule,
     comp006ShellNeedsReasonRule,
     comp007CompositionSprawlRule,

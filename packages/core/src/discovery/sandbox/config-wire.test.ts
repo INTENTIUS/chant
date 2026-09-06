@@ -20,9 +20,9 @@ describe("scanConfigWireSafety", () => {
         buildParams: { tier: { type: "string", default: "light", enum: ["light", "prod"] } },
         lint: { rules: { COR001: "error", COR002: ["warning", { max: 3 }] }, policies: ["policies/org.ts"] },
         vulnPolicy: { failSeverity: "critical", license: { allow: ["MIT"], deny: [] } },
-        // A lexicon's passthrough extension (the temporal lexicon's shape) —
+        // A lexicon's passthrough extension —
         // still pure data.
-        temporal: { profiles: { local: { address: "localhost:7233", tls: false } }, defaultProfile: "local" },
+        k8s: { profiles: { local: { context: "kind-chant", namespace: "default" } }, defaultProfile: "local" },
       }),
     ).toEqual([]);
   });

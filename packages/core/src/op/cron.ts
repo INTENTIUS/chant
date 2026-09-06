@@ -3,13 +3,12 @@
  * and minute-granularity matching for `chant operator`'s per-op cadence.
  *
  * `OpConfig.schedule.cron` is runtime-neutral data: the github lexicon turns
- * it into `on.schedule`, a Temporal project pairs it with a `TemporalSchedule`
- * by hand, `chant operator` reads it as that Op's tick cadence, and the local
- * one-shot executor ignores it entirely. Nothing here talks to a scheduler.
+ * it into `on.schedule`, a hosting lexicon hands it to its own scheduler,
+ * `chant operator` reads it as that Op's tick cadence, and the local one-shot
+ * executor ignores it entirely. Nothing here talks to a scheduler.
  *
- * The validator is the one TMP010 already used against generated
- * `TemporalSchedule` files (`lexicons/temporal/src/lint/post-synth/tmp010-cron-syntax.ts`,
- * which now imports it from here rather than keeping its own copy):
+ * The validator a lexicon's own post-synth cron check imports rather than
+ * keeping its own copy:
  * deliberately permissive, a pre-submission guard rather than a full parser,
  * since the final word belongs to whichever scheduler runs the cron.
  *

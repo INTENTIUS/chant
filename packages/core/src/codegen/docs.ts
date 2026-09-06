@@ -325,7 +325,7 @@ export function writeDocsSite(config: DocsConfig, result: DocsResult): void {
   // Starlight does not auto-discover pages, so a page absent from the sidebar
   // is reachable only by typing its URL. The pipeline deliberately preserves
   // hand-written pages it did not emit (above), which makes it easy to add one
-  // and never wire it up — azure, temporal, helm and github each accumulated
+  // and never wire it up — azure, helm and github each accumulated
   // several that way (#1312). Report them; `chant dev check-lexicon` gates on
   // the same condition.
   const unreachable = unreachablePages(contentDir, sidebar);

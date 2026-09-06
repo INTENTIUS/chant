@@ -4,10 +4,10 @@
  * Some activities fail deterministically: an organizational policy violation
  * (`policyGate`) or a cfn-guard finding (`guardValidate`) reads the same on the
  * second attempt as on the first, so a retry only delays the report. Those
- * activities used to raise Temporal's `ApplicationFailure.nonRetryable`, which
- * put `@temporalio/common` on the import path of every base activity. Core owns
- * the base activities now (chant #2114), and core has no Temporal dependency —
- * this is the same signal in a plain `Error`.
+ * activities used to raise an orchestrator SDK's non-retryable failure type,
+ * which put that SDK on the import path of every base activity. Core owns the
+ * base activities now (chant #2114), and depends on no runtime SDK — this is
+ * the same signal in a plain `Error`.
  *
  * `name` is the failure type, not the class name, so the local executor's
  * `retry.nonRetryableErrorTypes` (which matches on `Error.name`) can name it in
@@ -28,7 +28,7 @@ export class NonRetryableActivityError extends Error {
   }
 }
 
-/** Build a {@link NonRetryableActivityError} — the `ApplicationFailure.nonRetryable` shape without Temporal. */
+/** Build a {@link NonRetryableActivityError} — a non-retryable failure with no SDK behind it. */
 export function nonRetryableFailure(message: string, type: string): NonRetryableActivityError {
   return new NonRetryableActivityError(message, type);
 }

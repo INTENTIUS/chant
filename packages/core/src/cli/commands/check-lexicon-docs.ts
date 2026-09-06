@@ -4,7 +4,7 @@
  * The contract used to check documentation by counting files — "at least 1
  * .mdx page" at tier 1, "at least 8" at tier 2 — and never opened one. That
  * counts a page nothing links to exactly the same as a page a reader can
- * actually find, so azure, temporal, helm and github each accumulated
+ * actually find, so azure, helm and github each accumulated
  * hand-added pages that appear in no sidebar and are reachable only by typing
  * their URL. Azure's getting-started, resource reference and composites pages
  * were all invisible while its ≥8-page check passed comfortably — the count

@@ -98,8 +98,8 @@ export interface ReleaseRecord {
   /**
    * Who approved the change at its durable approval gate (#1035). Populated for
    * a gated change — the same identity the approver supplied when they cleared
-   * the Temporal gate (`chant run signal ... --approver`, carried in the gate
-   * signal payload and thus the workflow history). Optional and omitted for an
+   * the gate (`chant approve <op> <gate> --approver`, recorded on the gate
+   * resolution fact). Optional and omitted for an
    * ungated change (nothing to approve), so `actor` alone answers "who made
    * it" while `approver` answers "who approved it" only where a gate exists.
    * Distinct from `actor`: the approver is deliberately a different person than

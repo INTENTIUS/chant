@@ -16,9 +16,9 @@
  * Mirrors `./policy.ts`'s `policyGate`: `report` is the only finding-mode
  * today (the type only admits that one value; `issue`/`pull-request` modes
  * are a follow-up, chant #522), and an error-severity finding throws
- * (a non-retryable activity failure) so the local executor exits non-zero —
- * the same gate CI relies on to fail the pipeline — and the same activity
- * blocks a Temporal-orchestrated `ApplyOp` when placed before it.
+ * (a non-retryable activity failure) so the run exits non-zero — the same gate
+ * CI relies on to fail the pipeline — and the same activity blocks an `ApplyOp`
+ * when placed before it.
  */
 import { resolve } from "node:path";
 import { nonRetryableFailure } from "../activity-failure";
@@ -179,7 +179,7 @@ function renderSummary(findings: GuardFinding[], template: string, rules: string
  * (`chant run`) exits non-zero and CI fails the pipeline — the same shape
  * `policyGate` uses to block an apply. A clean run passes through.
  *
- * Runs in both executors — it is a plain activity, not a Temporal gate.
+ * A plain activity on every runtime, not a `gate` step.
  */
 export async function guardValidate(args: GuardValidateArgs, _signal?: AbortSignal): Promise<GuardValidateResult> {
   const mode = args.onFinding ?? "report";

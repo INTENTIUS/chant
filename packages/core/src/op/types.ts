@@ -1,8 +1,8 @@
 /**
- * Op type definitions — the data model for a named, phased Temporal workflow.
+ * Op type definitions — the data model for a named, phased Op.
  *
- * These types are intentionally free of Temporal SDK imports so they can live
- * in core without pulling in @temporalio/* as a dependency.
+ * These types are intentionally free of any runtime SDK's imports, so they can
+ * live in core without core depending on a runtime.
  */
 
 import type { EffectReceiptRef } from "./receipt-store";
@@ -36,8 +36,8 @@ export interface OpConfig {
    * The cadence this Op runs on, when it has one (#2120). Runtime-neutral
    * data, not a scheduler: the github/gitlab/forgejo lexicons render it as a
    * CI cron ({@link ScheduledOpSpec}), `chant operator` reads it as this Op's
-   * tick cadence, a Temporal project pairs it with a `TemporalSchedule` of its
-   * own, and the local one-shot executor ignores it.
+   * tick cadence, a hosting lexicon hands it to its own scheduler, and the
+   * local one-shot executor ignores it.
    */
   schedule?: OpSchedule;
 }
@@ -59,7 +59,7 @@ export interface OpSchedule {
 }
 
 export interface PhaseDefinition {
-  /** Display name shown in progress output and Temporal UI. */
+  /** Display name shown in progress output. */
   name: string;
   /** Ordered steps within the phase. */
   steps: StepDefinition[];
@@ -101,10 +101,10 @@ export interface ActivityStep {
    * Surface this activity's return value as a named run outcome.
    *
    * The local executor captures it into the step's record and folds it into
-   * the run ledger's `outcomes` (`../lifecycle/run-ledger.ts`); the Temporal
-   * serializer additionally upserts it as a workflow search attribute. Useful
-   * for reading back a run by outcome (e.g. `Drift: "true"/"false"` from a
-   * lifecycleDiff activity).
+   * the run ledger's `outcomes` (`../lifecycle/run-ledger.ts`); a hosting
+   * lexicon's serializer may additionally publish it to whatever index that
+   * runtime queries by. Useful for reading back a run by outcome (e.g. `Drift:
+   * "true"/"false"` from a lifecycleDiff activity).
    *
    * An array publishes several attributes off the same result in one upsert
    * (#2105): one activity can answer more than one question about a run, and
@@ -120,9 +120,9 @@ export interface ActivityStep {
   outcomeAttribute?: OutcomeAttribute | OutcomeAttribute[];
 }
 
-/** One workflow search attribute published off a step's return value. */
+/** One named run outcome published off a step's return value. */
 export interface OutcomeAttribute {
-  /** Search attribute name, as registered on the Temporal namespace. */
+  /** The outcome's name, as it appears in the run ledger's `outcomes`. */
   name: string;
   /** Dot-path into the activity's return value; the whole value when omitted. */
   from?: string;
@@ -171,9 +171,9 @@ export interface EffectStep {
 
 export interface GateStep {
   kind: "gate";
-  /** Signal name. The generated workflow waits for this signal before continuing. */
+  /** The gate's name — what `chant approve <op> <gate>` resolves. */
   signalName: string;
-  /** Temporal duration string. Default: "48h". */
+  /** How long a recorded pending gate stays valid, as a duration string. Default: "48h". */
   timeout?: string;
   /** Human-readable description of the action required to unblock this gate. */
   description?: string;

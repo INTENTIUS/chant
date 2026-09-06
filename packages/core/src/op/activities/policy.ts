@@ -11,11 +11,11 @@ export interface PolicyGateArgs {
 /**
  * Gate an apply on organizational policy: build the project, run its
  * `lint.policies` over the resolved resources, and **block** on any violation.
- * Place it as a step before the apply phase — a violation fails the workflow
+ * Place it as a step before the apply phase — a violation fails the run
  * (non-retryable; the `policyCheck` profile is single-attempt) so nothing is
  * applied. A clean evaluation passes through.
  *
- * Runs in both executors — it is a plain activity, not a Temporal gate.
+ * A plain activity on every runtime, not a `gate` step.
  */
 export async function policyGate(args: PolicyGateArgs, _signal?: AbortSignal): Promise<void> {
   const { violations, suppressed, env } = await evaluateProjectPolicies({ path: args.path ?? ".", env: args.env });

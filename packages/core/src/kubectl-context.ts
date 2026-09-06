@@ -3,7 +3,7 @@
  *
  * Every cloud lexicon binds an environment to a scope: AWS resolves `<env>`
  * to a CloudFormation stack, Azure treats `<env>` as the resource group,
- * Temporal looks up `temporal.profiles.<env>` in `chant.config.ts`. K8s (and
+ * Fly resolves it to an app. K8s (and
  * GCP-via-Config-Connector, which observes through the same kubectl path)
  * bound nothing — `describeResources` shelled out to `kubectl get` with no
  * `--context`, so it read whatever cluster `kubectl config current-context`
@@ -111,8 +111,8 @@ export interface ResolveClusterTargetOptions {
  * Resolve the kubectl context an environment should be observed/applied
  * against, reading `k8s.profiles.<environment>.context` from `chant.config.ts`
  * (the `config` passed in is the passthrough `ChantConfig`, cast loosely since
- * the `k8s` key isn't declared on the core schema — same pattern as
- * `temporal.profiles`).
+ * the `k8s` key isn't declared on the core schema — the same pattern every
+ * lexicon namespace follows).
  *
  * - No binding declared: returns `{ source: "ambient" }` — unchanged
  *   behavior — but logs a visible warning identifying the caller and

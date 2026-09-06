@@ -1,9 +1,8 @@
 /**
  * OPS012: activity step args/outcomeAttribute must match the activity's
- * declared contract (chant #1288 Stage 1; moved from the temporal lexicon's
+ * declared contract (chant #1288 Stage 1; moved from a hosting lexicon's own
  * TMP012 to core in #2122, epic #2114 sub-issue 6, so it fires on every
- * project that declares an Op, not only one with the temporal lexicon
- * configured).
+ * project that declares an Op, not only one with that lexicon configured).
  *
  * Validates every Op entity's steps against core's own base-activity
  * contracts (`../../../op/activities/activity-contracts.ts`, #2117), using

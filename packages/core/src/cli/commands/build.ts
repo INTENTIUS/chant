@@ -493,8 +493,8 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
   }
 
   // Core-owned post-synth checks over the Op model (#2122, epic #2114
-  // sub-issue 6) — OPS012/OPS013/OPS014, ported from the temporal lexicon's
-  // TMP012/TMP013/TMP014. An Op is recognized by entity type
+  // sub-issue 6) — OPS012/OPS013/OPS014, ported from a hosting lexicon's
+  // own TMP012/TMP013/TMP014. An Op is recognized by entity type
   // (`OpResource`), not by which lexicon declared it, so this runs over the
   // FULL build result regardless of which plugins loaded — same as the
   // receipt/output/knowledge checks above.
@@ -753,11 +753,11 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
     }
 
     // Op worker artifacts (`ops/<name>/{workflow,worker,activities}.ts`) always
-    // go to `<project>/dist/ops/` — the fixed location `chant run <op> --temporal`
-    // reads (`join(projectPath, "dist", "ops", ...)`) — independent of `--output`,
-    // which routes the primary resource manifest. Without this, a bare `chant build`
-    // only printed them to stderr and `--output foo.yaml` scattered them next to
-    // `foo.yaml`, so the durable-run worker was never where `run --temporal` looks.
+    // go to `<project>/dist/ops/` — the fixed location a hosting lexicon's
+    // worker is read from — independent of `--output`, which routes the primary
+    // resource manifest. Without this, a bare `chant build` only printed them to
+    // stderr and `--output foo.yaml` scattered them next to `foo.yaml`, so the
+    // worker was never where its runtime looks.
     const projectDist = resolve(options.path ?? ".", "dist");
     let opsWritten = 0;
     for (const [filename, entry] of [...additionalFiles]) {

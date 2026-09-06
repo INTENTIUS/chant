@@ -1,7 +1,5 @@
-import { resolve, join, dirname } from "node:path";
-import { existsSync, writeFileSync, mkdirSync, readFileSync } from "node:fs";
-import { createConnection } from "node:net";
-import { spawn as spawnChild, type ChildProcess } from "node:child_process";
+import { resolve, dirname } from "node:path";
+import { writeFileSync, mkdirSync, readFileSync } from "node:fs";
 import { loadChantConfig, resolveAutoReleaseDisabled, type ChantConfig } from "../../config";
 import { discoverOps } from "../../op/discover";
 import type { OpConfig } from "../../op/types";
@@ -16,27 +14,11 @@ import { recordGateApproval } from "./operator";
 import { formatError, formatWarning, formatSuccess, formatBold, formatInfo } from "../format";
 import { resolveCliBuildParams, parseParamFlags } from "../build-params-cli";
 import type { CommandContext } from "../registry";
-import {
-  loadTemporalClient,
-  connectionOptions,
-  resolveWorkflowId,
-  resolveProfile,
-  fetchNormalizedHistory,
-  type WorkflowHandleRaw,
-  type WorkflowExecutionDescription,
-  type WorkflowHistoryRaw,
-} from "./run-client";
-import { generateReport, writeReport } from "./run-report";
-import { extractIndexedStepRecords, stepRecordEmitter, countActivities, queryGateState } from "./op-progress";
-import { runComponents, resolveComponentTargets, findComponentGate, listComponents } from "../../components/cli-support";
 import { renderDriverHuman, renderDriverJson } from "../../components/driver-output";
 import { ndjsonProgressSink } from "../../components/run-progress";
-import { loadComponentTemporalCodegen } from "../../components/temporal-codegen-loader";
-import { applyConfigDefaults } from "../../components/config-defaults";
-import { maybeRecordAutoRelease, extractRunDigestFromPhaseOutputs } from "../../components/auto-release";
-import { maybePersistBuildManifest, extractRunManifestFromPhaseOutputs } from "../../components/manifest-persistence";
+import { maybeRecordAutoRelease } from "../../components/auto-release";
+import { maybePersistBuildManifest } from "../../components/manifest-persistence";
 import type { DriverComponentResult } from "../../components/driver";
-import type { BuildParamProvenance } from "../../provenance";
 
 /**
  * The exit code a run that stopped at an unapproved gate uses (#2119).
@@ -46,62 +28,21 @@ import type { BuildParamProvenance } from "../../provenance";
  */
 export const GATED_EXIT_CODE = 3;
 
-function kebabToCamel(s: string): string {
-  return s.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
-}
-
-function workflowFnName(opName: string): string {
-  return kebabToCamel(opName) + "Workflow";
-}
-
 /**
- * Guard for Temporal-only commands (run list/status/log/signal/cancel, --report).
- * These query durable run state that only exists under Temporal. Returns true
- * when `--temporal` was passed; otherwise prints an actionable message and the
- * caller should return non-zero.
+ * `run list/status/log/cancel --components` reported a component's *durable*
+ * run state — a run that outlives the CLI process and can be queried, signalled
+ * or cancelled afterwards (#589). #2116 removed the runtime that provided it.
+ * The local driver runs a component to completion inside this process, so there
+ * is no separate run left to ask about once the command returns.
+ *
+ * Returns 1; the caller returns it straight back.
  */
-function requireTemporalMode(ctx: CommandContext, what: string): boolean {
-  if (ctx.args.temporal) return true;
+function refuseDurableComponentSubcommand(what: string, hint: string): number {
   console.error(formatError({
-    message: `\`${what}\` is not available in local mode`,
-    hint: "pass --temporal or configure a profile",
+    message: `\`${what}\` read a component's durable run state, which #2116 removed`,
+    hint,
   }));
-  return false;
-}
-
-export async function makeTemporalClient(profileName: string | undefined, projectPath: string) {
-  const { config } = await loadChantConfig(projectPath);
-  const profile = resolveProfile(config as Record<string, unknown>, profileName);
-  const { Connection, Client } = await loadTemporalClient();
-  const connection = await Connection.connect(connectionOptions(profile));
-  const client = new Client({ connection, namespace: profile.namespace });
-  return { client, profile, config };
-}
-
-/**
- * Register the Keyword search attributes the generated workflow upserts
- * (`OpName`, `Phase`, plus any op-declared) on the namespace, so the first
- * workflow task does not fail with `BadSearchAttributes`. Registered one at a
- * time so an already-present attribute (`ALREADY_EXISTS`) does not block the
- * rest. Only used for the autoStart dev server — a real server (autoStart=false)
- * is expected to have these pre-registered (it may reject registration).
- */
-async function ensureSearchAttributes(client: unknown, namespace: string, names: string[]): Promise<void> {
-  const operatorService = (
-    client as { connection?: { operatorService?: { addSearchAttributes?: (r: unknown) => Promise<unknown> } } }
-  ).connection?.operatorService;
-  if (!operatorService?.addSearchAttributes) return;
-  const KEYWORD = 2; // Temporal IndexedValueType KEYWORD
-  for (const name of names) {
-    try {
-      await operatorService.addSearchAttributes({ namespace, searchAttributes: { [name]: KEYWORD } });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (!/already|exists/i.test(msg)) {
-        console.error(formatWarning({ message: `Could not register search attribute "${name}": ${msg}` }));
-      }
-    }
-  }
+  return 1;
 }
 
 // ── The runtime seam (#2121) ────────────────────────────────────────────────
@@ -192,73 +133,8 @@ function renderRuntimeStatus(label: string, name: string, runtime: string, statu
 // ── chant run list ──────────────────────────────────���─────────────────────────
 
 export async function runOpList(ctx: CommandContext): Promise<number> {
-  if (ctx.args.components) return runComponentsList(ctx);
-  if (!ctx.args.temporal) return runOpListOnRuntime(ctx);
-
-  if (!requireTemporalMode(ctx, "chant run list")) return 1;
-  const { ops, errors } = await discoverOps();
-
-  for (const err of errors) {
-    console.error(formatError({ message: err }));
-  }
-
-  if (ops.size === 0) {
-    console.error(formatWarning({ message: "No Op definitions found (*.op.ts)" }));
-    return 0;
-  }
-
-  console.log(
-    "NAME".padEnd(22) +
-    "PHASES".padEnd(8) +
-    "LABELS".padEnd(28) +
-    "DEPENDS".padEnd(20) +
-    "OVERVIEW",
-  );
-
-  let runStatus: Map<string, string> | undefined;
-  try {
-    const projectPath = resolve(".");
-    const { config } = await loadChantConfig(projectPath);
-    const profile = resolveProfile(config as Record<string, unknown>, ctx.args.profile);
-    const { Connection, Client } = await loadTemporalClient();
-    const connection = await Connection.connect(connectionOptions(profile));
-    const client = new Client({ connection, namespace: profile.namespace });
-    runStatus = new Map();
-    for (const [name] of ops) {
-      try {
-        const desc = await client.workflow.getHandle(resolveWorkflowId(name)).describe();
-        runStatus.set(name, desc.status.name);
-      } catch {
-        runStatus.set(name, "—");
-      }
-    }
-  } catch {
-    // Temporal not available — degrade gracefully
-  }
-
-  for (const [name, { config }] of ops) {
-    const phases = String(config.phases.length);
-    // The Op's discovery keys (#2118) — what `discoverConvergeOps` filters on
-    // and the only free-form metadata an Op declaration still carries.
-    const labelPairs = Object.entries(config.labels ?? {}).map(([k, v]) => `${k}=${v}`).join(",");
-    const labels = labelPairs.length > 26 ? labelPairs.slice(0, 25) + "…" : labelPairs || "—";
-    const deps = config.depends?.join(",") ?? "—";
-    const overview = config.overview.length > 36
-      ? config.overview.slice(0, 33) + "..."
-      : config.overview;
-    const status = runStatus?.get(name);
-    const statusStr = status ? ` [${status}]` : "";
-
-    console.log(
-      (name + statusStr).padEnd(22) +
-      phases.padEnd(8) +
-      labels.padEnd(28) +
-      deps.padEnd(20) +
-      overview,
-    );
-  }
-
-  return 0;
+  if (ctx.args.components) return runComponentsList();
+  return runOpListOnRuntime(ctx);
 }
 
 /**
@@ -267,8 +143,7 @@ export async function runOpList(ctx: CommandContext): Promise<number> {
  * answers for all of them in one call (`list`), so a hosted runtime can do it
  * in one round trip instead of N.
  *
- * An Op the runtime has no run for prints with no state annotation, the same
- * way the Temporal path prints one it cannot describe.
+ * An Op the runtime has no run for prints with no state annotation.
  */
 async function runOpListOnRuntime(ctx: CommandContext): Promise<number> {
   const runtime = await resolveOpRuntime(ctx);
@@ -317,83 +192,16 @@ async function runOpListOnRuntime(ctx: CommandContext): Promise<number> {
 }
 
 /**
- * `chant run list --components` (#599) — the component counterpart of
- * `runOpList` above, mirrored shape-for-shape: discover, print a header,
- * best-effort annotate with Temporal run status, print one row per entry.
- * Kept behind the same `requireTemporalMode` gate as the Op path — the whole
- * point of this subcommand is the run-status annotation, and components have
- * no local notion of a "run" to list either (mirrors the "Temporal-only
- * subcommand guards" test coverage for the Op list/status/log/signal/cancel
- * set).
- *
- * Discovery + column shape reuses `listComponents` (../../components/cli-
- * support.ts), the same helper `chant list --components` already uses, so
- * archetype inference/field projection isn't duplicated here — this function
- * only adds the Temporal status column. Status lookups use
- * `componentWorkflowId`, the id space `runOpSignal`/`runOpCancel` established
- * for components (#589) — kept distinct from `resolveWorkflowId`'s Op id
- * space so an Op and a component can share a name.
+ * `chant run list --components` (#599) listed discovered components annotated
+ * with each one's durable run status. Discovery alone is what `chant list
+ * --components` already prints, so with the status column gone (#2116) this
+ * subcommand has nothing of its own left to say.
  */
-async function runComponentsList(ctx: CommandContext): Promise<number> {
-  if (!requireTemporalMode(ctx, "chant run list --components")) return 1;
-
-  const projectPath = resolve(".");
-  const result = await listComponents(projectPath, ctx.args.sandbox);
-
-  if (!result.success) {
-    for (const err of result.errors) console.error(formatError({ message: err }));
-    return 1;
-  }
-
-  if (result.components.length === 0) {
-    console.error(formatWarning({ message: "No component definitions found (*.component.ts)" }));
-    return 0;
-  }
-
-  console.log(
-    "NAME".padEnd(22) +
-    "ARCHETYPE".padEnd(18) +
-    "PHASES".padEnd(8) +
-    "DEPENDS".padEnd(20) +
-    "FILE",
-  );
-
-  let runStatus: Map<string, string> | undefined;
-  try {
-    const { config } = await loadChantConfig(projectPath);
-    const profile = resolveProfile(config as Record<string, unknown>, ctx.args.profile);
-    const { Connection, Client } = await loadTemporalClient();
-    const connection = await Connection.connect(connectionOptions(profile));
-    const client = new Client({ connection, namespace: profile.namespace });
-    runStatus = new Map();
-    for (const { name } of result.components) {
-      try {
-        const desc = await client.workflow.getHandle(componentWorkflowId(name)).describe();
-        runStatus.set(name, desc.status.name);
-      } catch {
-        runStatus.set(name, "—");
-      }
-    }
-  } catch {
-    // Temporal not available — degrade gracefully
-  }
-
-  for (const c of result.components) {
-    const phases = String(c.phases.length);
-    const deps = c.dependsOn.join(",") || "—";
-    const status = runStatus?.get(c.name);
-    const statusStr = status ? ` [${status}]` : "";
-
-    console.log(
-      (c.name + statusStr).padEnd(22) +
-      c.archetype.padEnd(18) +
-      phases.padEnd(8) +
-      deps.padEnd(20) +
-      c.filePath,
-    );
-  }
-
-  return 0;
+function runComponentsList(): Promise<number> {
+  return Promise.resolve(refuseDurableComponentSubcommand(
+    "chant run list --components",
+    "Run `chant list --components` to see discovered components.",
+  ));
 }
 
 // ── chant run status <name> ───────────────────────────────────────────────────
@@ -407,45 +215,12 @@ export async function runOpStatus(ctx: CommandContext): Promise<number> {
   }
 
   if (ctx.args.components) {
-    if (!requireTemporalMode(ctx, "chant run status --components")) return 1;
-    return runComponentStatus(ctx, name);
+    return refuseDurableComponentSubcommand(
+      "chant run status --components",
+      "Run `chant components status` for a component's release and build state.",
+    );
   }
-  if (!ctx.args.temporal) return runOpStatusOnRuntime(ctx, name);
-
-  const projectPath = resolve(".");
-  let client, desc: WorkflowExecutionDescription, history: WorkflowHistoryRaw, handle: WorkflowHandleRaw;
-  try {
-    ({ client } = await makeTemporalClient(ctx.args.profile, projectPath));
-    handle = client.workflow.getHandle(resolveWorkflowId(name));
-    desc = await handle.describe();
-    history = await fetchNormalizedHistory(handle);
-  } catch (err) {
-    console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
-    return 1;
-  }
-
-  console.log(formatBold(`Op: ${name}`));
-  console.log(`  Workflow ID : ${desc.workflowId}`);
-  console.log(`  Run ID      : ${desc.runId}`);
-  console.log(`  Status      : ${desc.status.name}`);
-  console.log(`  Task Queue  : ${desc.taskQueue}`);
-  console.log(`  Started     : ${desc.startTime.toISOString()}`);
-  if (desc.closeTime) console.log(`  Closed      : ${desc.closeTime.toISOString()}`);
-
-  const { completed, scheduled } = countActivities(history);
-  if (scheduled > 0) {
-    console.log(`  Activities  : ${completed}/${scheduled} completed`);
-  }
-
-  // Queryable gate state (#1676) — undefined means the query itself failed
-  // (an ungated Op never registers a "gateState" handler), so print nothing;
-  // null means the query answered "no gate pending" — also nothing to print.
-  const gate = await queryGateState(handle);
-  if (gate) {
-    console.log(`  Gate        : ${gate.signalName}${gate.description ? ` — ${gate.description}` : ""} (waiting since ${gate.since})`);
-  }
-
-  return 0;
+  return runOpStatusOnRuntime(ctx, name);
 }
 
 /**
@@ -474,42 +249,6 @@ async function runOpStatusOnRuntime(ctx: CommandContext, name: string): Promise<
   return 0;
 }
 
-/**
- * `chant run status <name> --components` (#599) — the component counterpart
- * of `runOpStatus` above. Identical describe+history rendering; the only
- * difference is the workflow id (`componentWorkflowId`, not
- * `resolveWorkflowId`) and the "Component:" label, mirroring how
- * `runOpSignal`/`runOpCancel` already distinguish the two id spaces (#589).
- */
-async function runComponentStatus(ctx: CommandContext, name: string): Promise<number> {
-  const projectPath = resolve(".");
-  let client, desc: WorkflowExecutionDescription, history: WorkflowHistoryRaw;
-  try {
-    ({ client } = await makeTemporalClient(ctx.args.profile, projectPath));
-    const handle = client.workflow.getHandle(componentWorkflowId(name));
-    desc = await handle.describe();
-    history = await fetchNormalizedHistory(handle);
-  } catch (err) {
-    console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
-    return 1;
-  }
-
-  console.log(formatBold(`Component: ${name}`));
-  console.log(`  Workflow ID : ${desc.workflowId}`);
-  console.log(`  Run ID      : ${desc.runId}`);
-  console.log(`  Status      : ${desc.status.name}`);
-  console.log(`  Task Queue  : ${desc.taskQueue}`);
-  console.log(`  Started     : ${desc.startTime.toISOString()}`);
-  if (desc.closeTime) console.log(`  Closed      : ${desc.closeTime.toISOString()}`);
-
-  const { completed, scheduled } = countActivities(history);
-  if (scheduled > 0) {
-    console.log(`  Activities  : ${completed}/${scheduled} completed`);
-  }
-
-  return 0;
-}
-
 // ── chant run log <name> ──────────────────────────────────────────────────────
 
 export async function runOpLog(ctx: CommandContext): Promise<number> {
@@ -521,45 +260,12 @@ export async function runOpLog(ctx: CommandContext): Promise<number> {
   }
 
   if (ctx.args.components) {
-    if (!requireTemporalMode(ctx, "chant run log --components")) return 1;
-    return runComponentLog(ctx, name);
+    return refuseDurableComponentSubcommand(
+      "chant run log --components",
+      "Run `chant components status` for a component's recorded releases.",
+    );
   }
-  if (!ctx.args.temporal) return runOpLogOnRuntime(ctx, name);
-
-  const projectPath = resolve(".");
-  let client;
-  try {
-    ({ client } = await makeTemporalClient(ctx.args.profile, projectPath));
-  } catch (err) {
-    console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
-    return 1;
-  }
-
-  console.log(
-    "RUN-ID".padEnd(36) +
-    "STATUS".padEnd(16) +
-    "STARTED".padEnd(26) +
-    "CLOSED",
-  );
-
-  try {
-    const fnName = workflowFnName(name);
-    for await (const run of client.workflow.list({ query: `WorkflowType = "${fnName}"` })) {
-      const start = run.startTime.toISOString().slice(0, 19).replace("T", " ");
-      const close = run.closeTime ? run.closeTime.toISOString().slice(0, 19).replace("T", " ") : "—";
-      console.log(
-        run.runId.padEnd(36) +
-        run.status.name.padEnd(16) +
-        start.padEnd(26) +
-        close,
-      );
-    }
-  } catch (err) {
-    console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
-    return 1;
-  }
-
-  return 0;
+  return runOpLogOnRuntime(ctx, name);
 }
 
 /**
@@ -601,62 +307,7 @@ async function runOpLogOnRuntime(ctx: CommandContext, name: string): Promise<num
   return 0;
 }
 
-/**
- * `chant run log <name> --components` (#599) — the component counterpart of
- * `runOpLog` above. Same table shape; the `WorkflowType` query needs the
- * component's generated workflow function name rather than
- * `workflowFnName`'s Op convention, so this loads the Temporal component
- * codegen module (`../../components/temporal-codegen-loader.ts`, the same
- * loader `runComponentTemporal` already uses) purely for its
- * `componentWorkflowFnName` helper — no compilation happens here, `log` only
- * reads past run history.
- */
-async function runComponentLog(ctx: CommandContext, name: string): Promise<number> {
-  const projectPath = resolve(".");
-  let client;
-  try {
-    ({ client } = await makeTemporalClient(ctx.args.profile, projectPath));
-  } catch (err) {
-    console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
-    return 1;
-  }
-
-  let fnName: string;
-  try {
-    const codegen = await loadComponentTemporalCodegen();
-    fnName = codegen.componentWorkflowFnName(name);
-  } catch (err) {
-    console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
-    return 1;
-  }
-
-  console.log(
-    "RUN-ID".padEnd(36) +
-    "STATUS".padEnd(16) +
-    "STARTED".padEnd(26) +
-    "CLOSED",
-  );
-
-  try {
-    for await (const run of client.workflow.list({ query: `WorkflowType = "${fnName}"` })) {
-      const start = run.startTime.toISOString().slice(0, 19).replace("T", " ");
-      const close = run.closeTime ? run.closeTime.toISOString().slice(0, 19).replace("T", " ") : "—";
-      console.log(
-        run.runId.padEnd(36) +
-        run.status.name.padEnd(16) +
-        start.padEnd(26) +
-        close,
-      );
-    }
-  } catch (err) {
-    console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
-    return 1;
-  }
-
-  return 0;
-}
-
-// ── chant run signal <name> <signal> ─────────────────────────────────────────
+// ── chant run approve <op> <gate> ────────────────────────────────────────────
 
 /**
  * `chant run approve <op> <gate> [--approver] [--url] [--note]` (#2121) — the
@@ -715,13 +366,8 @@ export async function runOpApprove(ctx: CommandContext): Promise<number> {
  * `chant run signal` was renamed `chant run approve` (#2121). Registered so
  * the old spelling says where the verb went instead of being read as an Op
  * named "signal".
- *
- * `--temporal` still reaches the old signal sender: a component's durable
- * gate on that path is cleared by an actual workflow signal, and #2116 removes
- * the path and this branch together.
  */
 export function runOpSignalRenamed(ctx: CommandContext): Promise<number> {
-  if (ctx.args.temporal) return runOpSignal(ctx);
   const opName = ctx.args.extraPositional ?? "<op>";
   const gate = ctx.args.extraPositional2 ?? "<gate>";
   console.error(formatError({
@@ -731,54 +377,9 @@ export function runOpSignalRenamed(ctx: CommandContext): Promise<number> {
   return Promise.resolve(1);
 }
 
-/**
- * `chant run signal <name> <signal> [--components]` — sends a signal to a
- * running Op workflow by default, or a component workflow when `--components`
- * is passed (#589): the durable path's gate is otherwise unclearable from the
- * CLI. Resolves the workflow id via `componentWorkflowId` (`chant-component-
- * <name>`) instead of `resolveWorkflowId` (`chant-op-<name>`) in that case —
- * the two id spaces are kept distinct so an Op and a component can share a
- * name without colliding.
- */
-export async function runOpSignal(ctx: CommandContext): Promise<number> {
-  if (!requireTemporalMode(ctx, "chant run signal")) return 1;
-  const name = ctx.args.extraPositional;
-  const signalName = ctx.args.extraPositional2;
-
-  if (!name || !signalName) {
-    console.error(formatError({ message: "Usage: chant run signal <name> <signal-name>" }));
-    return 1;
-  }
-
-  const projectPath = resolve(".");
-  const workflowId = ctx.args.components ? componentWorkflowId(name) : resolveWorkflowId(name);
-  // Approver identity for an approval gate (#1035): supplied via --approver, or
-  // resolved from the CI/user environment the same way `chant components
-  // release` resolves --actor. Rides the gate signal payload so Temporal
-  // persists "who approved" in the workflow history. Optional — a signal that
-  // is not an approval gate (or an approver who declines to identify) sends no
-  // payload and the gate still clears.
-  const approver = ctx.args.approver ?? process.env.GITHUB_ACTOR ?? process.env.GITLAB_USER_LOGIN ?? process.env.USER;
-  let handle: WorkflowHandleRaw;
-  try {
-    const { client } = await makeTemporalClient(ctx.args.profile, projectPath);
-    handle = client.workflow.getHandle(workflowId);
-    await handle.signal(signalName, ...(approver ? [{ approver }] : []));
-  } catch (err) {
-    console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
-    return 1;
-  }
-
-  console.error(formatSuccess(
-    `Signal "${signalName}" sent to ${ctx.args.components ? "component" : "Op"} "${name}"` +
-      (approver ? ` (approver: ${approver})` : ""),
-  ));
-  return 0;
-}
-
 // ── chant run cancel <name> ───────────────────────────────────────────────────
 
-/** `chant run cancel <name> [--components]` — cancels an Op workflow by default, or a component workflow when `--components` is passed (#589), mirroring `runOpSignal`'s id resolution. */
+/** `chant run cancel <name>` — asks the resolved runtime (#2121) to stop the Op's active run. */
 export async function runOpCancel(ctx: CommandContext): Promise<number> {
   const name = ctx.args.extraPositional;
   if (!name) {
@@ -788,29 +389,20 @@ export async function runOpCancel(ctx: CommandContext): Promise<number> {
 
   if (!ctx.args.force) {
     console.error(formatWarning({
-      message: `Cancelling "${name}" will stop the active workflow run`,
+      message: `Cancelling "${name}" will stop the active run`,
       hint: "Use --force to confirm cancellation",
     }));
     return 1;
   }
 
-  if (!ctx.args.components && !ctx.args.temporal) return runOpCancelOnRuntime(ctx, name);
-  if (!requireTemporalMode(ctx, "chant run cancel --components")) return 1;
-
-  const projectPath = resolve(".");
-  const workflowId = ctx.args.components ? componentWorkflowId(name) : resolveWorkflowId(name);
-  let handle: WorkflowHandleRaw;
-  try {
-    const { client } = await makeTemporalClient(ctx.args.profile, projectPath);
-    handle = client.workflow.getHandle(workflowId);
-    await handle.cancel();
-  } catch (err) {
-    console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
-    return 1;
+  if (ctx.args.components) {
+    return refuseDurableComponentSubcommand(
+      "chant run cancel --components",
+      "A component run lives and dies with the `chant run --components` process — interrupt that instead.",
+    );
   }
 
-  console.error(formatSuccess(`Cancellation requested for ${ctx.args.components ? "component" : "Op"} "${name}"`));
-  return 0;
+  return runOpCancelOnRuntime(ctx, name);
 }
 
 /**
@@ -836,43 +428,13 @@ async function runOpCancelOnRuntime(ctx: CommandContext, name: string): Promise<
 
 // ── chant run <name> — main command ───────────────────────────────────────────
 
-const TERMINAL_STATUSES = new Set(["COMPLETED", "FAILED", "CANCELLED", "TERMINATED", "TIMED_OUT"]);
-const POLL_INTERVAL_MS = 3000;
-
-async function waitForTemporalServer(address: string, maxWaitMs = 30_000): Promise<void> {
-  const [host, portStr] = address.split(":");
-  const port = parseInt(portStr ?? "7233", 10);
-  const deadline = Date.now() + maxWaitMs;
-  while (Date.now() < deadline) {
-    try {
-      await new Promise<void>((res, rej) => {
-        const socket = createConnection({ host, port }, () => { socket.destroy(); res(); });
-        socket.on("error", rej);
-        socket.setTimeout(1000, () => { socket.destroy(); rej(new Error("timeout")); });
-      });
-      return;
-    } catch {
-      await new Promise((r) => setTimeout(r, 1000));
-    }
-  }
-  throw new Error(`Temporal server at ${address} did not become ready within ${maxWaitMs / 1000}s`);
-}
-
-function renderProgress(opName: string, history: WorkflowHistoryRaw): void {
-  const { completed, scheduled } = countActivities(history);
-  process.stderr.write(
-    `\r${formatInfo(`[${opName}]`)} ${completed}/${scheduled} activities completed`,
-  );
-}
-
 /**
  * `chant run <name>` dispatcher.
  *
- * Local mode is the default — it runs the Op in-process with no Temporal
- * server — a `gate` there is decided against the gate ledger and ends the run
- * pending approval (#2119), exit code 3. `--temporal` opts into a cluster,
- * where a gate is instead a durable wait for a signal.
- * `--report` reads a past durable run and is therefore Temporal-only.
+ * Every run goes through the runtime resolved by `--on` (#2121); without it,
+ * core's built-in local provider runs the Op in this process, where a `gate`
+ * is decided against the gate ledger and ends the run pending approval
+ * (#2119), exit code 3.
  *
  * `chant run --components <name|all>` (#585) is a separate target: discovered
  * `Component` declarations dispatched through the interpret driver
@@ -881,22 +443,19 @@ function renderProgress(opName: string, history: WorkflowHistoryRaw): void {
  * runComponentGraph(ctx)` branch (../handlers/graph.ts).
  *
  * chant #1116 — `--report` with `--components` is checked and hard-errored
- * before that dispatch. There is no preview/dry-run mode for the component
- * driver: unlike the Op path (where `--report` reads a past Temporal run),
- * `runOpComponents` has never read `ctx.args.report` at all, so the flag was
- * silently ignored and the command fell through to a real dispatch — observed
- * live reaching an actual cloud shell-out. Erroring here is the safe minimum
- * called out on the issue; a real preview is future work.
+ * before that dispatch, and #2116 retired `--report` on the Op path too: it
+ * rendered a past durable run's workflow history, which no runtime keeps any
+ * more. Both refuse rather than falling through to a real dispatch — the
+ * component case was observed live reaching an actual cloud shell-out.
  */
 /**
  * Pre-flight for `chant run <op> --sandbox` on an Op containing a `policyGate`
  * step (chant #2003). `--sandbox` is a global flag, and `../main.ts` arms the
  * process-wide policy latch off it for every command — so the gate's
  * `loadPolicyChecks` refuses mid-run with a message addressed to a chant
- * maintainer ("This is a chant bug"), or, under `--temporal`, as a
- * non-retryable activity failure inside the workflow. Neither is an answer a
- * user can act on. Refuse here instead, before anything runs, naming the
- * combination and what to do about it.
+ * maintainer ("This is a chant bug"), which is not an answer a user can act
+ * on. Refuse here instead, before anything runs, naming the combination and
+ * what to do about it.
  *
  * Keyed on the flag rather than on whether the project declares
  * `lint.policies`: the flag is what arms the latch, and a gate that builds the
@@ -923,20 +482,14 @@ export async function runOp(ctx: CommandContext): Promise<number> {
     return 1;
   }
   if (ctx.args.components) return runOpComponents(ctx);
-  if (ctx.args.local && ctx.args.temporal) {
+  if (ctx.args.report) {
     console.error(formatError({
-      message: "--local and --temporal are mutually exclusive",
-      hint: "omit both for local mode (the default), or pass exactly one",
+      message: "`chant run --report` rendered a past durable run, which #2116 removed",
+      hint: "Run `chant run log <op>` for the runtime's own run history.",
     }));
     return 1;
   }
-  if (ctx.args.report) {
-    if (!requireTemporalMode(ctx, "chant run --report")) return 1;
-    return runOpTemporal(ctx);
-  }
-  // `--temporal` is the pre-seam path, kept working (and untouched) until
-  // #2116 deletes it wholesale. Everything else goes through the runtime.
-  return ctx.args.temporal ? runOpTemporal(ctx) : runOpOnRuntime(ctx);
+  return runOpOnRuntime(ctx);
 }
 
 // ── Auto-release recording post-run (#597) ──────────────────────────────────
@@ -1017,28 +570,18 @@ async function recordAutoReleasesForRun(
 // ── chant run --components <name|all> ────────────────────────────────────────
 
 /**
- * `chant run --components <name|all> [--env <env>] [--temporal]` (#585, and
- * #589 for `--temporal`) — the interpret driver's CLI entrypoint. `args.path`
- * is the component name (or `all`), matching `chant run <name>`'s Op-dispatch
- * convention exactly (`args.path` is the Op name there too) rather than a
- * project directory — components are always discovered from the current
- * working directory, the same way Op discovery (`discoverOps()`) never takes
- * a project-path argument either.
+ * `chant run --components <name|all> [--env <env>]` (#585) — the interpret
+ * driver's CLI entrypoint, and since #2116 the only component run path there
+ * is. `args.path` is the component name (or `all`), matching `chant run
+ * <name>`'s Op-dispatch convention exactly (`args.path` is the Op name there
+ * too) rather than a project directory — components are always discovered from
+ * the current working directory, the same way Op discovery (`discoverOps()`)
+ * never takes a project-path argument either.
  *
- * Local mode (the default) resolves the selector through `runComponents`
- * (`../../components/cli-support.ts`) and runs it on the local in-process
- * executor; a `gate` is decided against the gate ledger when the driver
- * reaches it (#2119), and one nobody has approved ends the run with exit code
- * 3 and the `chant approve` line, exactly as `chant run <op>` does.
- *
- * `--temporal` (#589) takes the durable path instead: compiles the named
- * component's composition to a Temporal workflow/worker (mirroring
- * `Chant::Op` codegen — see `runComponentTemporal` below), and gates are
- * now ACCEPTED — a gate is durable wait-for-signal there, not a local
- * in-process block. Scoped to a single named component (`all --temporal` is
- * out of scope for #589: coordinating N durable workflows' cross-component
- * `dependsOn` durably is a follow-up, not part of "compile a component's
- * `deploy` composition into a durable orchestrator").
+ * The selector resolves through the runtime's `runComponents` and runs on the
+ * local in-process driver; a `gate` is decided against the gate ledger when
+ * the driver reaches it (#2119), and one nobody has approved ends the run with
+ * exit code 3 and the `chant approve` line, exactly as `chant run <op>` does.
  *
  * On a successful run, auto-emits one release-ledger record per component
  * that published a digest (#597, `recordAutoReleasesForRun` above) — a
@@ -1051,8 +594,8 @@ async function recordAutoReleasesForRun(
  * chant #1108 — resolves this invocation's declared build-time parameters
  * (`chant.config.ts`'s `buildParams`, against `--param`/`--params-file`/a
  * declared `env` mapping) the exact same way `chant build` does
- * (`resolveCliBuildParams`, shared with `buildCommand`), BEFORE either the
- * local or `--temporal` path discovers/imports any `*.component.ts` file.
+ * (`resolveCliBuildParams`, shared with `buildCommand`), BEFORE anything
+ * discovers/imports a `*.component.ts` file.
  * Before this, `params.*` (`@intentius/chant/params`) was always `{}` under
  * this command, no matter what a component's `chant.config.ts` declared or a
  * CI job's environment supplied — see chant #1108. `chant.config.ts` is
@@ -1081,8 +624,6 @@ export async function runOpComponents(ctx: CommandContext): Promise<number> {
     for (const message of paramsResolution.errors) console.error(message);
     return 1;
   }
-
-  if (ctx.args.temporal) return runComponentTemporal(ctx, selector, config, paramsResolution.provenance);
 
   const runtime = await resolveOpRuntime(ctx);
   if (!runtime) return 1;
@@ -1160,244 +701,6 @@ export async function runOpComponents(ctx: CommandContext): Promise<number> {
   }
 
   return result.success ? 0 : 1;
-}
-
-// ── chant run --components <name> --temporal (#589) ─────────────────────────
-
-function componentWorkflowId(componentName: string): string {
-  return `chant-component-${componentName}`;
-}
-
-/**
- * `chant run --components <name> --temporal` (#589, epic #551 §5/§8) — the
- * durable counterpart to `runOpComponents`'s local path. Mirrors
- * `runOpTemporal`'s shape exactly (build+spawn worker, submit workflow, poll,
- * report) but "build" here means compiling the component's composition
- * on-the-fly via `loadComponentTemporalCodegen` (the Temporal lexicon's
- * `serializeComponent`, mirroring `serializeOps`) rather than reading a
- * pre-existing `dist/ops/<name>/worker.ts` — components have no separate
- * `chant build` step that already produced generated files the way Ops do, so
- * this generates `dist/components/<name>/{workflow,worker,activities}.ts`
- * itself before spawning.
- *
- * Unlike the local executor, a `gate` anywhere in the component's
- * composition is fully supported: the generated workflow durably waits for
- * the signal (see `serializeComponent`'s codegen), survivable across a worker
- * crash and clearable via `chant run signal <name> <signal> --components
- * --temporal` (`runOpSignal` above, extended for components alongside this
- * issue).
- *
- * `config`/`buildParams` are resolved once by the caller (`runOpComponents`,
- * chant #1108) BEFORE this function runs, so `resolveComponentTargets`
- * below — which discovers/imports the target `*.component.ts` file — sees
- * `params.*` (`@intentius/chant/params`) already populated, the same
- * guarantee the local executor path gets.
- */
-async function runComponentTemporal(
-  ctx: CommandContext,
-  selector: string,
-  config: ChantConfig,
-  buildParams: BuildParamProvenance[],
-): Promise<number> {
-  if (selector === "all") {
-    console.error(formatError({
-      message: "`chant run --components all --temporal` is not supported",
-      hint: "Pass a single component name — durable execution is compiled and run per component (see epic #551 #589).",
-    }));
-    return 1;
-  }
-
-  const projectPath = resolve(".");
-  const resolved = await resolveComponentTargets(projectPath, selector, ctx.args.sandbox, buildParams);
-  if (!resolved.success || resolved.targets.length === 0) {
-    console.error(formatError({ message: resolved.error ?? `Component "${selector}" not found` }));
-    return 1;
-  }
-  const component = resolved.targets[0];
-
-  // Config + profile (mirrors runOpTemporal). `config` was already loaded by
-  // the caller to resolve build-time parameters (chant #1108); reused here
-  // rather than loading chant.config.ts a second time.
-  const chantConfig = config;
-  let profile;
-  try {
-    profile = resolveProfile(chantConfig as Record<string, unknown>, ctx.args.profile);
-  } catch (err) {
-    console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
-    return 1;
-  }
-
-  // Compile the component to workflow/worker/activities under dist/components/<name>/.
-  let codegen;
-  try {
-    codegen = await loadComponentTemporalCodegen();
-  } catch (err) {
-    console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
-    return 1;
-  }
-
-  // (#629) Fill `chant.config.ts`'s `sbom`/`signing`/`vulnPolicy` defaults into
-  // every recognized step BEFORE codegen — same pass the interpret/local path
-  // runs in `runComponents` (../../components/cli-support.ts). The Temporal path
-  // *inlines* the resolved composition into the generated workflow/activities,
-  // so if we serialized the raw component the durable path would silently drop
-  // project-level supply-chain defaults the local path honors. (The GitLab
-  // generate path needs no equivalent: it emits thin `chant run --components`
-  // trigger jobs, so defaults are applied at run time inside the triggered job.)
-  const resolvedComponent = applyConfigDefaults(component, chantConfig);
-  const files = codegen.serializeComponent(resolvedComponent, { env: ctx.args.env });
-  for (const [relPath, content] of Object.entries(files)) {
-    const outPath = join(projectPath, "dist", relPath);
-    mkdirSync(dirname(outPath), { recursive: true });
-    writeFileSync(outPath, content);
-  }
-
-  const workerPath = join(projectPath, "dist", "components", component.name, "worker.ts");
-
-  // autoStart: spin up temporal server if needed (mirrors runOpTemporal).
-  if (profile.autoStart) {
-    console.error(formatInfo("autoStart: checking Temporal server..."));
-    try {
-      await waitForTemporalServer(profile.address, 2000);
-      console.error(formatInfo("Temporal server already running."));
-    } catch {
-      console.error(formatInfo("Starting temporal server start-dev..."));
-      spawnChild("temporal", ["server", "start-dev"], {
-        cwd: projectPath,
-        stdio: "ignore",
-        detached: true,
-      }).unref();
-      await waitForTemporalServer(profile.address, 30_000);
-      console.error(formatSuccess("Temporal server ready."));
-    }
-  }
-
-  let client;
-  try {
-    ({ client } = await makeTemporalClient(ctx.args.profile, projectPath));
-  } catch (err) {
-    console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
-    return 1;
-  }
-
-  // Register the search attributes the generated component workflow upserts
-  // (ComponentName/Phase) on the autoStart dev server (mirrors runOpTemporal).
-  if (profile.autoStart) {
-    await ensureSearchAttributes(client, profile.namespace, ["ComponentName", "Phase"]);
-  }
-
-  const profileName = ctx.args.profile ??
-    (((chantConfig as Record<string, unknown>).temporal as Record<string, unknown> | undefined)?.defaultProfile as string | undefined) ??
-    "local";
-
-  console.error(formatInfo(`Spawning worker for component "${component.name}" (profile: ${profileName})...`));
-  const workerProcess: ChildProcess = spawnChild("npx", ["tsx", workerPath], {
-    cwd: projectPath,
-    env: { ...process.env, TEMPORAL_PROFILE: profileName },
-    stdio: ["ignore", "ignore", "inherit"],
-  });
-
-  const workflowId = componentWorkflowId(component.name);
-  const fnName = codegen.componentWorkflowFnName(component.name);
-  const taskQueue = profile.taskQueue ?? component.name;
-
-  let handle: WorkflowHandleRaw;
-  try {
-    handle = await client.workflow.start(fnName, {
-      taskQueue,
-      workflowId,
-      workflowIdConflictPolicy: "FAIL",
-    });
-    console.error(formatSuccess(`Workflow started: ${workflowId}`));
-  } catch (err) {
-    console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
-    try { workerProcess.kill(); } catch { /* ignore */ }
-    return 1;
-  }
-
-  const gate = findComponentGate(component);
-  if (gate) {
-    console.error(formatInfo(
-      `Component has a gate ("${gate.signalName}") — unblock it with: chant run signal ${component.name} ${gate.signalName} --components --temporal`,
-    ));
-  }
-
-  let finalDesc: WorkflowExecutionDescription | undefined;
-
-  try {
-    while (true) {
-      await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
-      const desc = await handle.describe();
-      const history = await fetchNormalizedHistory(handle);
-      renderProgress(component.name, history);
-      if (TERMINAL_STATUSES.has(desc.status.name)) {
-        process.stderr.write("\n");
-        finalDesc = desc;
-        break;
-      }
-    }
-  } catch (err) {
-    process.stderr.write("\n");
-    console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
-    return 1;
-  } finally {
-    try { workerProcess.kill(); } catch { /* ignore */ }
-  }
-
-  if (!finalDesc) return 1;
-
-  const status = finalDesc.status.name;
-  console.error(status === "COMPLETED"
-    ? formatSuccess(`Component "${component.name}" completed successfully.`)
-    : formatError({ message: `Component "${component.name}" ended with status: ${status}` }),
-  );
-
-  if (status === "COMPLETED") {
-    // (#597) Auto-emit a release record post-run — never inside the generated
-    // workflow (determinism). The workflow returns its final phaseOutputs
-    // (see serializeComponent's codegen) precisely so this read is possible;
-    // handle.result() on an already-COMPLETED workflow is a plain historical
-    // read, not a new activity/side effect.
-    let digest: string | undefined;
-    let manifest: ReturnType<typeof extractRunManifestFromPhaseOutputs>;
-    try {
-      const workflowResult = await handle.result() as { phaseOutputs?: Record<string, Record<string, unknown>> } | undefined;
-      digest = extractRunDigestFromPhaseOutputs(workflowResult?.phaseOutputs);
-      manifest = extractRunManifestFromPhaseOutputs(workflowResult?.phaseOutputs);
-    } catch {
-      digest = undefined;
-      manifest = undefined;
-    }
-
-    const { config } = await loadChantConfig(projectPath).catch(() => ({ config: {} }));
-    const disabled = resolveAutoReleaseDisabled(config, ctx.args.noReleaseRecord);
-    const env = ctx.args.env ?? "local";
-    const outcome = await maybeRecordAutoRelease(
-      // A Temporal workflow run id lives in the orchestrator's id space (#2045).
-      { component: component.name, env, success: true, digest, runId: finalDesc.runId, runOrigin: { forge: "op" } },
-      { disabled },
-    );
-    if (!outcome.recorded && outcome.reason === "error") {
-      console.error(formatWarning({ message: `release record for "${component.name}"@${env} was not recorded: ${outcome.error}` }));
-    } else if (outcome.recorded) {
-      console.error(formatInfo(
-        `Recorded release: ${formatBold(component.name)}@${env} -> ${outcome.record.digest} (commit ${outcome.commit.slice(0, 7)})`,
-      ));
-    }
-
-    // (#609) Persist the run's build manifest post-run, same opt-out flag as
-    // the release record above — see ../../components/manifest-persistence.ts.
-    const manifestOutcome = await maybePersistBuildManifest({ success: true, manifest }, { disabled });
-    if (!manifestOutcome.persisted && manifestOutcome.reason === "error") {
-      console.error(formatWarning({ message: `build manifest for "${component.name}"@${env} was not persisted: ${manifestOutcome.error}` }));
-    } else if (manifestOutcome.persisted) {
-      console.error(formatInfo(
-        `Persisted build manifest: ${formatBold(component.name)} -> ${manifestOutcome.manifestDigest} (commit ${manifestOutcome.commit.slice(0, 7)})`,
-      ));
-    }
-  }
-
-  return status === "COMPLETED" ? 0 : 1;
 }
 
 /**
@@ -1495,207 +798,6 @@ export async function runOpOnRuntime(ctx: CommandContext): Promise<number> {
   } finally {
     process.removeListener("SIGINT", onSigint);
   }
-}
-
-async function runOpTemporal(ctx: CommandContext): Promise<number> {
-  const opName = ctx.args.path;
-
-  if (!opName || opName === ".") {
-    console.error(formatError({
-      message: "Op name is required: chant run <name>",
-      hint: "Run `chant run list` to see available Ops",
-    }));
-    return 1;
-  }
-
-  // Discover Ops
-  const { ops, errors } = await discoverOps();
-  for (const err of errors) console.error(formatWarning({ message: err }));
-
-  const discovered = ops.get(opName);
-  if (!discovered) {
-    const names = [...ops.keys()];
-    console.error(formatError({
-      message: `Op "${opName}" not found`,
-      hint: names.length > 0
-        ? `Available: ${names.join(", ")}`
-        : "No *.op.ts files found — create one or run `chant run list`",
-    }));
-    return 1;
-  }
-
-  const { config } = discovered;
-
-  // Pre-flight: --sandbox cannot cover a policyGate step (#2003). Refused here
-  // too, so the durable path fails as a CLI error rather than as a
-  // non-retryable activity failure buried in workflow history.
-  if (refusesPolicyGateUnderSandbox(ctx, config, opName)) return 1;
-
-  const projectPath = resolve(".");
-
-  // Load config + profile
-  const { config: chantConfig } = await loadChantConfig(projectPath);
-  let profile;
-  try {
-    profile = resolveProfile(chantConfig as Record<string, unknown>, ctx.args.profile);
-  } catch (err) {
-    console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
-    return 1;
-  }
-
-  // Handle --report flag: just print the last run report
-  if (ctx.args.report) {
-    let client, desc: WorkflowExecutionDescription, history: WorkflowHistoryRaw;
-    try {
-      ({ client } = await makeTemporalClient(ctx.args.profile, projectPath));
-      const handle = client.workflow.getHandle(resolveWorkflowId(opName));
-      desc = await handle.describe();
-      history = await fetchNormalizedHistory(handle);
-    } catch (err) {
-      console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
-      return 1;
-    }
-    const md = generateReport(opName, config, desc, history);
-    process.stdout.write(md);
-    return 0;
-  }
-
-  // Check built worker exists
-  const workerPath = join(projectPath, "dist", "ops", opName, "worker.ts");
-  if (!existsSync(workerPath)) {
-    console.error(formatError({
-      message: `dist/ops/${opName}/worker.ts not found`,
-      hint: "Run `chant build` first to generate the worker",
-    }));
-    return 1;
-  }
-
-  // autoStart: spin up temporal server if needed
-  if (profile.autoStart) {
-    console.error(formatInfo("autoStart: checking Temporal server..."));
-    try {
-      await waitForTemporalServer(profile.address, 2000);
-      console.error(formatInfo("Temporal server already running."));
-    } catch {
-      console.error(formatInfo("Starting temporal server start-dev..."));
-      spawnChild("temporal", ["server", "start-dev"], {
-        cwd: projectPath,
-        stdio: "ignore",
-        detached: true,
-      }).unref();
-      await waitForTemporalServer(profile.address, 30_000);
-      console.error(formatSuccess("Temporal server ready."));
-    }
-  }
-
-  // Load Temporal client
-  let client;
-  try {
-    ({ client } = await makeTemporalClient(ctx.args.profile, projectPath));
-  } catch (err) {
-    console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
-    return 1;
-  }
-
-  // On the autoStart dev server, register the search attributes the generated
-  // workflow upserts (OpName/Phase + any op-declared) so the first workflow task
-  // does not fail with BadSearchAttributes.
-  if (profile.autoStart) {
-    await ensureSearchAttributes(client, profile.namespace, [
-      "OpName",
-      "Phase",
-      ...Object.keys(config.labels ?? {}),
-    ]);
-  }
-
-  // Spawn worker process
-  const profileName = ctx.args.profile ??
-    (((chantConfig as Record<string, unknown>).temporal as Record<string, unknown> | undefined)?.defaultProfile as string | undefined) ??
-    "local";
-
-  console.error(formatInfo(`Spawning worker for Op "${opName}" (profile: ${profileName})...`));
-  const workerProcess: ChildProcess = spawnChild("npx", ["tsx", workerPath], {
-    cwd: projectPath,
-    env: { ...process.env, TEMPORAL_PROFILE: profileName },
-    stdio: ["ignore", "ignore", "inherit"],
-  });
-
-  // Submit workflow
-  const workflowId = resolveWorkflowId(opName);
-  const fnName = workflowFnName(opName);
-  const taskQueue = profile.taskQueue ?? opName;
-
-  let handle: WorkflowHandleRaw;
-  try {
-    handle = await client.workflow.start(fnName, {
-      taskQueue,
-      workflowId,
-      workflowIdConflictPolicy: "FAIL",
-    });
-    console.error(formatSuccess(`Workflow started: ${workflowId}`));
-  } catch (err) {
-    console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
-    return 1;
-  }
-
-  // Poll for progress until terminal state.
-  //
-  // `--progress-json` (chant #1676): stream one NDJSON StepRecord per line to
-  // stdout as each declared step settles — the durable-path counterpart to
-  // `chant run <name> --json`'s local-executor record shape (op-progress.ts).
-  // Purely additive: when the flag is absent `emitNewRecords` stays undefined
-  // and every call site is a no-op, so poll-loop behavior is unchanged.
-  //
-  // Dedup is by declared-step identity, not by an emitted count (chant #2032):
-  // the terminal `final: true` pass *inserts* a `"skipped"` record at each
-  // never-reached step's declared position, so the list is not append-only and
-  // a count watermark shifts off the end of it.
-  const emitProgress = ctx.args.progressJson ? ndjsonProgressSink<StepRecord>() : undefined;
-  const emitNewRecords = emitProgress ? stepRecordEmitter(emitProgress) : undefined;
-
-  let finalDesc: WorkflowExecutionDescription | undefined;
-  let finalHistory: WorkflowHistoryRaw | undefined;
-
-  try {
-    while (true) {
-      await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
-      const desc = await handle.describe();
-      const history = await fetchNormalizedHistory(handle);
-
-      renderProgress(opName, history);
-      emitNewRecords?.(extractIndexedStepRecords(config, history));
-
-      if (TERMINAL_STATUSES.has(desc.status.name)) {
-        process.stderr.write("\n");
-        emitNewRecords?.(extractIndexedStepRecords(config, history, { final: true }));
-        finalDesc = desc;
-        finalHistory = history;
-        break;
-      }
-    }
-  } catch (err) {
-    process.stderr.write("\n");
-    console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
-    return 1;
-  } finally {
-    // Kill worker process (best-effort)
-    try { workerProcess.kill(); } catch { /* ignore */ }
-  }
-
-  if (!finalDesc || !finalHistory) return 1;
-
-  const status = finalDesc.status.name;
-  console.error(status === "COMPLETED"
-    ? formatSuccess(`Op "${opName}" completed successfully.`)
-    : formatError({ message: `Op "${opName}" ended with status: ${status}` }),
-  );
-
-  // Write deployment report
-  const md = generateReport(opName, config, finalDesc, finalHistory);
-  const reportPath = writeReport(opName, md);
-  console.error(formatInfo(`Report written to ${reportPath}`));
-
-  return status === "COMPLETED" ? 0 : 1;
 }
 
 // ── fallback ────────────────────────────────────────────────────────────────���─

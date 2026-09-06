@@ -1,8 +1,8 @@
 /**
- * OPS014: converge-rule-refusals (#1484). Moved from the temporal lexicon's
+ * OPS014: converge-rule-refusals (#1484). Moved from a hosting lexicon's own
  * TMP014 to core in #2122 (epic #2114 sub-issue 6), so it fires on every
- * project that declares a `ConvergeOp`-shaped Op, not only one with the
- * temporal lexicon configured.
+ * project that declares a `ConvergeOp`-shaped Op, not only one with that
+ * lexicon configured.
  *
  * Cross-Op build-time refusals for a `ConvergeOp`'s rule table — the checks
  * `../../../op/composites/converge-op.ts`'s factory can't make on its own,

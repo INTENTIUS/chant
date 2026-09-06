@@ -13,10 +13,9 @@
  * doc: a manifest write is a git commit + push, a non-idempotent side effect
  * with real-world I/O — exactly what `driver.ts` resists taking on (it is
  * exercised in tests against a bare `CapabilityRegistry` with no lifecycle
- * dependency at all) and what Temporal workflow code must never do directly
- * (replay-safety). The CLI calls this after `runComponents`/`handle.result()`
- * reports success, the same place `maybeRecordAutoRelease` is already
- * called from (../cli/handlers/run.ts).
+ * dependency at all). The CLI calls this after `runComponents` reports
+ * success, the same place `maybeRecordAutoRelease` is already called from
+ * (../cli/handlers/run.ts).
  *
  * **Extraction is duck-typed, not capability-specific.** `docker-build`,
  * `generate-sbom`, `extract-config-bom`, and `addArchiveTemplate` (the
@@ -68,25 +67,6 @@ export function extractRunManifest(records: DriverStepRecord[]): BuildArchiveMan
   return found;
 }
 
-/**
- * Same manifest extraction as `extractRunManifest`, but over a component
- * Temporal workflow's returned `phaseOutputs` (`{ [phase]: output }`) —
- * mirroring ./auto-release.ts's `extractRunDigestFromPhaseOutputs`, the
- * `--temporal` CLI path's counterpart, since that path never sees individual
- * step records either.
- */
-export function extractRunManifestFromPhaseOutputs(
-  phaseOutputs: Record<string, Record<string, unknown>> | undefined,
-): BuildArchiveManifest | undefined {
-  let found: BuildArchiveManifest | undefined;
-  for (const output of Object.values(phaseOutputs ?? {})) {
-    if (isManifestShaped(output)) {
-      found = output.manifest;
-    }
-  }
-  return found;
-}
-
 /** Explicit reasons `maybePersistBuildManifest` declined to write — never a thrown error, mirroring ./auto-release.ts's `AutoReleaseSkipReason`. */
 export type ManifestPersistSkipReason = "opted-out" | "run-not-successful" | "no-manifest";
 
@@ -101,7 +81,7 @@ export interface ManifestPersistRunInfo {
   success: boolean;
   /** The component's step records (local executor), used to locate the accumulated manifest via `extractRunManifest`. Mutually exclusive with `manifest`. */
   records?: DriverStepRecord[];
-  /** A manifest already resolved by the caller (e.g. a future durable/Temporal path that has its own phaseOutputs-shaped extraction). Takes precedence over `records` when both are given. */
+  /** A manifest the caller already resolved by its own means. Takes precedence over `records` when both are given. */
   manifest?: BuildArchiveManifest;
 }
 

@@ -16,12 +16,11 @@
  * derives the change set, regenerates, and opens the PR) rather than
  * `ApplyOp`'s Build/Plan/Approve/Apply phase split — a converge tick's
  * "classify against a rule table, then dispatch" step can't be decomposed
- * into separate static Temporal steps, because *which* rules fire is a
- * runtime fact discovered only once live symptoms are read, and Temporal
- * workflow structure has to be fully static at build time. Splitting
- * `Observe` into its own phase (the composite still does, for the `Drift`
- * search attribute and Temporal-UI visibility WatchOp/ApplyOp/ReconcileOp
- * all get) and threading its result into this activity's `args` via a
+ * into separate declared steps, because *which* rules fire is a runtime fact
+ * discovered only once live symptoms are read, while an Op's phase structure
+ * is fully static at build time. Splitting `Observe` into its own phase (the
+ * composite still does, for the per-phase visibility WatchOp/ApplyOp/
+ * ReconcileOp all get) and threading its result into this activity's `args` via a
  * step-output reference (#1290) rather than a search-attribute round-trip is
  * the seam this module *does* use the new dataflow for.
  *

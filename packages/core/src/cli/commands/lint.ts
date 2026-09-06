@@ -424,7 +424,7 @@ async function runComponentCheckDiagnostics(
 
 /**
  * Run the OPS* Op-model post-synth checks (#2122, epic #2114 sub-issue 6 —
- * OPS012/OPS013/OPS014, ported from the temporal lexicon's
+ * OPS012/OPS013/OPS014, ported from a hosting lexicon's own
  * TMP012/TMP013/TMP014) over every `*.op.ts` file under the lint target and
  * merge them into the same diagnostics/suppressed lists `chant lint` already
  * reports through, the same treatment {@link runComponentCheckDiagnostics}

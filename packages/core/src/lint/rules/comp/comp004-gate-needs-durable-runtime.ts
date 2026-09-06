@@ -1,21 +1,21 @@
 /**
- * COMP004: gate-needs-temporal (the id is renamed in #2116; the behaviour
- * changed in #2119)
+ * COMP004: gate-needs-durable-runtime (the file is renamed in #2116; the
+ * behaviour changed in #2119)
  *
  * Flags a `gate` step anywhere in a component's composition — the point where
- * a run stops and waits for a person. Since #2119 that is no longer a refusal
- * on the local executor: the driver decides the gate against the gate ledger
- * (`../../../op/gate.ts`), and one nobody has approved ends the run pending
- * `chant approve <component> <gate>`, to be re-decided next run.
+ * a run stops and waits for a person. Since #2119 that is not a refusal: the
+ * driver decides the gate against the gate ledger (`../../../op/gate.ts`), and
+ * one nobody has approved ends the run pending `chant approve <component>
+ * <gate>`, to be re-decided next run.
  *
  * The rule survives the change because what it flags survives it. The
- * component contract has no per-component backend/executor field (the backend
- * is chosen per *run*, per epic #551 §8 — intentionally not part of the
- * declaration), so lint cannot tell from the declaration alone that a `gate`
- * is deliberate; every one is a standing "this component stops for a human"
- * fact worth surfacing, not a mistake to silently allow. Acknowledge it
- * explicitly with a **file-level**
- * disable directive once the durable backend is genuinely intended (see
+ * component contract has no per-component runtime field (the runtime is chosen
+ * per *run*, via `chant run --on`, intentionally not part of the declaration),
+ * so lint cannot tell from the declaration alone that a `gate` is deliberate;
+ * every one is a standing "this component stops for a human" fact worth
+ * surfacing, not a mistake to silently allow. Acknowledge it explicitly with a
+ * **file-level**
+ * disable directive once the human wait is genuinely intended (see
  * lint-rules/disable-directives.mdx) — a COMP* diagnostic carries no real
  * line/column (it is reported for the whole component; see
  * ../../component-checks.ts), so only the file-level `chant-disable` form is
@@ -36,7 +36,7 @@
 import type { ComponentCheck, ComponentCheckContext, ComponentCheckDiagnostic } from "../../component-checks";
 import { walkComponent } from "./support";
 
-export const comp004GateNeedsTemporalRule: ComponentCheck = {
+export const comp004GateNeedsDurableRuntimeRule: ComponentCheck = {
   id: "COMP004",
   severity: "error",
   category: "correctness",

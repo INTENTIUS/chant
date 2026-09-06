@@ -76,7 +76,7 @@ const GATED: OpRunResult = withRecord({
 });
 
 describe("renderHuman — gated (#2119)", () => {
-  test("names the gate, the approve line and the expiry, and never mentions --temporal", () => {
+  test("names the gate, the approve line and the expiry, and points at no other runtime", () => {
     const lines: string[] = [];
     renderHuman(GATED, (l) => lines.push(l));
     const out = lines.join("\n");
@@ -85,7 +85,7 @@ describe("renderHuman — gated (#2119)", () => {
     expect(out).toContain("chant approve prod-apply rollout-gate");
     expect(out).toContain("https://github.com/org/repo/pull/7");
     expect(out).toContain("expires : 2026-09-07T12:00:00.000Z");
-    expect(out).not.toContain("--temporal");
+    expect(out).not.toContain("--on");
   });
 
   test("shows the approver on a gate that passed", () => {

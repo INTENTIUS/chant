@@ -61,7 +61,7 @@ describe("Real pilots lint clean under COMP* (#562 acceptance criteria)", () => 
     // a defect. A real project would
     // acknowledge it with `// chant-disable-next-line COMP004 -- <reason>`
     // once authored as an actual `*.component.ts` file (see
-    // ../../lint/rules/comp/comp004-gate-needs-temporal.ts and the
+    // ../../lint/rules/comp/comp004-gate-needs-durable-runtime.ts and the
     // comp004/pass fixture demonstrating that opt-out end to end).
     const ctx = contextFor([neo4jCluster]);
     const diagnostics = runAll(ctx);

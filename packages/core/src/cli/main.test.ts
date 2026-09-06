@@ -1,6 +1,6 @@
 import { describe, test, expect } from "vitest";
 import { EventEmitter } from "node:events";
-import { parseArgs, waitForStreamDrain } from "./main";
+import { parseArgs, waitForStreamDrain, usesRemovedTemporalFlag, REMOVED_TEMPORAL_FLAG, REMOVED_FLAG_EXIT_CODE } from "./main";
 import { resolveCommand, type CommandDef, type ParsedArgs } from "./registry";
 
 describe("parseArgs", () => {
@@ -578,19 +578,21 @@ describe("resolveCommand", () => {
   });
 });
 
+describe("--temporal, removed in #2116", () => {
+  test("the flag is caught before parseArgs, with the line that says where the runtime went", () => {
+    expect(usesRemovedTemporalFlag(["run", "alb-deploy", "--temporal"])).toBe(true);
+    expect(usesRemovedTemporalFlag(["run", "alb-deploy", "--temporal=true"])).toBe(true);
+    expect(REMOVED_TEMPORAL_FLAG).toBe("--temporal was removed in #2116; use --on fountain");
+    expect(REMOVED_FLAG_EXIT_CODE).toBe(2);
+  });
+
+  test("an invocation without it is untouched, and the parser has forgotten the flag", () => {
+    expect(usesRemovedTemporalFlag(["run", "alb-deploy", "--on", "fountain"])).toBe(false);
+    expect(() => parseArgs(["run", "alb-deploy", "--temporal"])).toThrow(/Unknown flag/);
+  });
+});
+
 describe("parseArgs — run flags", () => {
-  test("parses --profile flag", () => {
-    const result = parseArgs(["run", "alb-deploy", "--profile", "local"]);
-    expect(result.command).toBe("run");
-    expect(result.path).toBe("alb-deploy");
-    expect(result.profile).toBe("local");
-  });
-
-  test("parses -p shorthand for --profile", () => {
-    const result = parseArgs(["run", "alb-deploy", "-p", "cloud"]);
-    expect(result.profile).toBe("cloud");
-  });
-
   test("parses --report flag", () => {
     const result = parseArgs(["run", "alb-deploy", "--report"]);
     expect(result.command).toBe("run");
@@ -601,11 +603,6 @@ describe("parseArgs — run flags", () => {
   test("report is undefined when not provided", () => {
     const result = parseArgs(["run", "alb-deploy"]);
     expect(result.report).toBe(undefined);
-  });
-
-  test("profile is undefined when not provided", () => {
-    const result = parseArgs(["run", "alb-deploy"]);
-    expect(result.profile).toBe(undefined);
   });
 
   test("run signal parses op name and signal into positionals", () => {

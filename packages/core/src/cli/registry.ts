@@ -18,12 +18,9 @@ export interface ParsedArgs {
   watch: boolean;
   verbose: boolean;
   help: boolean;
-  profile?: string;
   report?: boolean;
   /** `chant run` — force the local in-process executor (the default). */
   local?: boolean;
-  /** `chant run` — run via a Temporal cluster instead of the local executor. */
-  temporal?: boolean;
   /**
    * `chant run <op> --on <lexicon>` (#2121) — which runtime hosts the run.
    * The named lexicon's `opRuntime` (`../lexicon.ts`) takes it; omitted, core's
@@ -40,10 +37,9 @@ export interface ParsedArgs {
    * per line to stdout while the run executes, so a consumer can render live
    * wave/component/phase/step progress instead of tailing raw logs.
    *
-   * `chant run <name> --temporal --progress-json` (chant #1676) — the same
-   * flag on an Op's durable path streams one NDJSON `StepRecord`
-   * (../../op/local-executor.ts, reconstructed from workflow history by
-   * ../handlers/op-progress.ts) per settled step instead.
+   * `chant run <name> --progress-json` streams one NDJSON `StepRecord`
+   * (../../op/local-executor.ts) per settled step instead, fed by whatever
+   * the resolved runtime reports through its `progress` hook (#2121).
    *
    * Both are purely additive: run semantics, ordering, and exit code are
    * unchanged; omitted (undefined, not false) when the flag isn't passed.

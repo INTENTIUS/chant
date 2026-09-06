@@ -1,5 +1,5 @@
 /**
- * OPS012 tests — ported from the temporal lexicon's TMP012
+ * OPS012 tests — ported from a hosting lexicon's own TMP012
  * (chant #1288 Stage 1, moved to core by #2122).
  */
 
@@ -84,14 +84,14 @@ describe("OPS012: activity-contract", () => {
 
   test("ignores non-Op entities", () => {
     const ctx = makeCtxFromEntities(new Map([
-      ["ns", makeEntity("Temporal::Namespace", { name: "default", retention: "30d" })],
+      ["bucket", makeEntity("AWS::S3::Bucket", { name: "default" })],
     ]));
     expect(ops012.check(ctx)).toHaveLength(0);
   });
 
   test("ignores an entity whose entityType isn't Chant::Op", () => {
     const ctx = makeCtxFromEntities(new Map([
-      ["op", opEntity("deploy", [{ kind: "activity", fn: "lifecycleDiff", args: { environment: "prod" } }], "Temporal::Op")],
+      ["op", opEntity("deploy", [{ kind: "activity", fn: "lifecycleDiff", args: { environment: "prod" } }], "Legacy::Op")],
     ]));
     expect(ops012.check(ctx)).toHaveLength(0);
   });

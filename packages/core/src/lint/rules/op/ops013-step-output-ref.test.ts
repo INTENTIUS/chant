@@ -1,5 +1,5 @@
 /**
- * OPS013 tests — ported from the temporal lexicon's TMP013
+ * OPS013 tests — ported from a hosting lexicon's own TMP013
  * (chant #1290, moved to core by #2122).
  */
 
@@ -116,7 +116,7 @@ describe("OPS013: step-output-ref", () => {
 
   test("ignores non-Op entities", () => {
     const ctx = makeCtxFromEntities(new Map([
-      ["ns", makeEntity("Temporal::Namespace", { name: "default", retention: "30d" })],
+      ["bucket", makeEntity("AWS::S3::Bucket", { name: "default" })],
     ]));
     expect(ops013.check(ctx)).toHaveLength(0);
   });
@@ -125,7 +125,7 @@ describe("OPS013: step-output-ref", () => {
     const ctx = makeCtxFromEntities(new Map([
       ["op", opEntity("reconcile", [
         { kind: "activity", fn: "httpCheck", args: { url: "http://x", contains: stepOutput("nope", "x") } },
-      ], "Temporal::Op")],
+      ], "Legacy::Op")],
     ]));
     expect(ops013.check(ctx)).toHaveLength(0);
   });

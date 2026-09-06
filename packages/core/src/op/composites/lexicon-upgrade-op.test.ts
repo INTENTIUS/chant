@@ -49,20 +49,19 @@ describe("LexiconUpgradeOp composite (#527)", () => {
     expect(phases[0].steps[0].outcomeAttribute).toEqual({ name: "HasUpgrade", from: "hasUpgrade" });
   });
 
-  test("in-scope set is exactly the 9 lexicons (helm/temporal/forgejo excluded)", () => {
+  test("in-scope set is exactly the 9 lexicons (helm/forgejo excluded)", () => {
     // cedar joined with #1650: it pins `CEDAR_WASM_VERSION`, a dependency
     // rather than a downloaded spec, but the pinned-constant machinery the Op
-    // drives is identical. helm/temporal/forgejo still have no upstream at all.
+    // drives is identical. helm/forgejo still have no upstream at all.
     expect([...IN_SCOPE_LEXICONS].sort()).toEqual(
       ["aws", "azure", "cedar", "docker", "fly", "gcp", "github", "gitlab", "k8s"].sort(),
     );
     expect(IN_SCOPE_LEXICONS).not.toContain("helm");
-    expect(IN_SCOPE_LEXICONS).not.toContain("temporal");
     expect(IN_SCOPE_LEXICONS).not.toContain("forgejo");
   });
 
   test("rejects out-of-scope lexicons at construction", () => {
-    for (const l of ["helm", "temporal", "forgejo"]) {
+    for (const l of ["helm", "forgejo"]) {
       expect(() => LexiconUpgradeOp({ lexicon: l as never })).toThrow(/not in scope/);
     }
   });

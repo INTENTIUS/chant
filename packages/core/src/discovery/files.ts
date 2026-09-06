@@ -3,10 +3,10 @@ import { existsSync } from "node:fs";
 import { join, relative } from "node:path";
 
 /**
- * Marker chant writes at the top of files it generates (worker/workflow/activities
- * bootstrap for Temporal Ops, etc.). Discovery must not treat these as authored
- * infra source: they hold no Declarables, they self-execute on import (the worker
- * bootstrap calls `run()`), and they use runtime patterns the authored-source lint
+ * Marker chant writes at the top of files it generates (a hosting lexicon's
+ * worker/bootstrap output, and the like). Discovery must not treat these as
+ * authored infra source: they hold no Declarables, they self-execute on import,
+ * and they use runtime patterns the authored-source lint
  * rules forbid (dynamic `process.env[...]` access, spreads). Skipping them keeps
  * `chant lint`/`build` from importing or linting the tool's own output.
  */

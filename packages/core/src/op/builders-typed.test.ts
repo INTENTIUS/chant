@@ -1,6 +1,6 @@
 /**
  * The typed step-builder wrappers over core's own base activities (chant #1288
- * Stage 2, moved here from the temporal lexicon by #2114). `opts` in each is
+ * Stage 2, moved here from a hosting lexicon by #2114). `opts` in each is
  * the activity's own `*Args` interface (`./activities/*.ts`) via `Omit`/
  * `WithStepRefs`, never a hand-restated mirror, so a signature change in the
  * activity is a compile error at the builder rather than a silently-dropped arg.

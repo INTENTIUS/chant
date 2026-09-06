@@ -1,5 +1,5 @@
 /**
- * OPS014 tests — ported from the temporal lexicon's TMP014
+ * OPS014 tests — ported from a hosting lexicon's own TMP014
  * (#1484, moved to core by #2122).
  */
 
@@ -248,7 +248,7 @@ describe("OPS014: converge-rule-refusals", () => {
 
   test("ignores non-Op entities", () => {
     const ctx = makeCtxFromEntities(new Map([
-      ["ns", makeEntity("Temporal::Namespace", { name: "default", retention: "30d" })],
+      ["bucket", makeEntity("AWS::S3::Bucket", { name: "default" })],
     ]));
     expect(ops014.check(ctx)).toHaveLength(0);
   });
@@ -256,7 +256,7 @@ describe("OPS014: converge-rule-refusals", () => {
   test("ignores an entity whose entityType isn't Chant::Op", () => {
     const rule = when<ConvergeSymptom>(eq("status", "drifted"), run("does-not-exist"), { id: "drift-apply", why: "Re-apply on drift." });
     const ctx = makeCtxFromEntities(new Map([
-      ["converge", convergeOpEntity("converge", [rule], { dial: "apply", entityType: "Temporal::Op" })],
+      ["converge", convergeOpEntity("converge", [rule], { dial: "apply", entityType: "Legacy::Op" })],
     ]));
     expect(ops014.check(ctx)).toHaveLength(0);
   });

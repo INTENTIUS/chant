@@ -951,9 +951,9 @@ export const x = { [Symbol.for("chant.declarable")]: true, entityType: "X", lexi
   });
 
   test("op worker files go to <project>/dist/ops even with no --output (#878)", async () => {
-    // The generated Op worker must land where `chant run <op> --temporal` reads it
+    // The generated Op worker must land where its hosting runtime reads it
     // (`<project>/dist/ops/<name>/worker.ts`) even when the build has no --output
-    // (a Temporal Op project often has no primary resource manifest to route).
+    // (an Op-only project often has no primary resource manifest to route).
     const opSerializer: Serializer = {
       name: "multi",
       rulePrefix: "MULTI",

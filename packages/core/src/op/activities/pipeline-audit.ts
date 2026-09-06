@@ -11,7 +11,7 @@
  *
  * Dependency-free and primitives-only: it reads the emitted `.gitlab-ci.yml`
  * (passed as a string) and resolves references through an injectable
- * `GitlabRefResolver`, so Temporal/`chant run` can schedule it and tests can run
+ * `GitlabRefResolver`, so `chant run` can schedule it and tests can run
  * it against recorded responses with no live network.
  */
 

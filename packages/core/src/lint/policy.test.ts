@@ -1,6 +1,6 @@
 /**
  * chant #1138 — `evaluateProjectPolicies` (the `policyGate` Op step's entry
- * point, ../../lexicons/temporal/src/op/activities/policy.ts) applies
+ * point, ./op/activities/policy.ts) applies
  * `lint.rules` severity overrides to policy diagnostics the same way `chant
  * build` does (`../cli/commands/build.ts`), so a check `lint.rules` turns
  * "off" no longer gates an apply either — before this fix, only `chant
