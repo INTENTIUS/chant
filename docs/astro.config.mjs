@@ -312,6 +312,7 @@ export default defineConfig({
 								{ label: 'Docker', link: '/lexicons/docker/' },
 								{ label: 'Render', link: '/lexicons/render/' },
 								{ label: 'Temporal', link: '/lexicons/temporal/' },
+								{ label: 'Terraform', link: '/lexicons/terraform/' },
 							],
 						},
 						{

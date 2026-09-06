@@ -62,6 +62,14 @@ describe("terraform plugin", () => {
     expect(typeof terraformPlugin.hoverProvider).toBe("function");
     expect(typeof terraformPlugin.docs).toBe("function");
   });
+
+  it("loads the chant-terraform skill with real content", () => {
+    const skills = terraformPlugin.skills?.() ?? [];
+    expect(skills).toHaveLength(1);
+    expect(skills[0].name).toBe("chant-terraform");
+    expect(skills[0].content.length).toBeGreaterThan(0);
+    expect(skills[0].content).toContain("TerraformApplyOp");
+  });
 });
 
 describe("terraform config schema", () => {

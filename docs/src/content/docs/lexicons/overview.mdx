@@ -27,6 +27,7 @@ A **lexicon** is a collection of types and semantic lint rules for an operationa
 | Cedar | `@intentius/chant-lexicon-cedar` | Policy and Schema, plus entity and action types generated from your schema | [Reference](/chant/lexicons/cedar/) — emits `.cedar` and Cedar JSON; observes and imports against Amazon Verified Permissions |
 | k3d | `@intentius/chant-lexicon-k3d` | 1 resource (Cluster) + config property types, pinned to k3d v5.9.0 | [Reference](/chant/lexicons/k3d/) — emits the `k3d.io/v1alpha5` config `k3d cluster create --config` consumes; `k3dUp`/`k3dDown` Op activities |
 | k3s | `@intentius/chant-lexicon-k3s` | 3 resources (Server, Agent, Registries) | [Reference](/chant/lexicons/k3s/) — emits `config.yaml` and `registries.yaml` for `/etc/rancher/k3s/`; `k3sInstall`/`k3sUninstall` Op activities |
+| Terraform | `@intentius/chant-lexicon-terraform` | one entity per HCL block, no generated resource surface | [Reference](/chant/lexicons/terraform/) — reads an existing root module's `.tf` files as-is; `terraformInit`/`terraformPlan`/`terraformApply`/`terraformShow` Op activities and the `TerraformApplyOp` composite |
 
 ## Runtime observation coverage
 

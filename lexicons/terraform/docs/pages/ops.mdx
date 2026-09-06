@@ -1,0 +1,82 @@
+---
+title: Ops
+description: The init/plan/apply/show activities, the typed builders, and TerraformApplyOp.
+diataxis: how-to
+---
+
+Four activities ship with the lexicon, resolvable by name via `loadActivities(["terraform"])`, plus one composite Op that phases them into a gated apply.
+
+## The activities
+
+Every call resolves the named root out of `terraform.roots` (walking up from `cwd` to the nearest `chant.config.*`, the same way `chant build` does), sets `TF_IN_AUTOMATION=1`, and passes `-input=false` everywhere the CLI accepts it — a missing variable fails the step instead of blocking on a prompt nobody answers.
+
+| Activity | Runs | Notes |
+|---|---|---|
+| `terraformInit` | `terraform init` | `-backend-config` flags come from the root's `backendConfig`. `upgrade` adds `-upgrade`; `reconfigure` adds `-reconfigure`. |
+| `terraformPlan` | `terraform plan -detailed-exitcode -out=<planFile>` | Exit 0 means no changes, exit 2 means changes — both are success, everything else throws with the CLI's own stderr attached. Returns the plan's add/change/destroy counts and both a `-json` and a `-no-color` render, so a gate or a report downstream never re-plans. |
+| `terraformApply` | `terraform apply <planFile>` | A saved plan only — there is no bare-apply mode. A missing `planFile` is refused before the CLI ever runs, naming the Plan step's own output as the fix. |
+| `terraformShow` | `terraform show` | Over a saved plan (`planFile` given) or over current state (omitted). `terraform show` takes no `-input` flag, so this one carries `TF_IN_AUTOMATION` alone. |
+
+## The builders
+
+`terraformInit`, `terraformPlan`, `terraformApply`, `terraformShow` also exist as typed step-builder wrappers (`import { terraformPlan } from "@intentius/chant-lexicon-terraform"`), the fully-typed twins of the activities above: `opts` *is* the activity's own args interface, minus the positional `root`, so a field rename there is a compile error at the call site rather than a silent drop. `root` is positional because naming the root is the one thing a terraform step cannot be authored without.
+
+```typescript
+import { terraformInit, terraformPlan, terraformApply, phase } from "@intentius/chant-lexicon-terraform";
+
+const plan = terraformPlan("app", { id: "plan" }); // an id is what makes `.out` legal
+```
+
+Give a Plan step an `id` when a later step applies its plan: `plan.out.planFile` builds a reference to that step's own saved output, instead of a literal path a rename could silently orphan. That reference is exactly what TF101 enforces — see [Lint Rules](../lint-rules/).
+
+Default profiles: `terraformInit`/`terraformPlan`/`terraformApply` run on `longInfra` (they call providers or download them); `terraformShow` runs on `fastIdempotent` (it reads an artifact and calls no provider).
+
+## TerraformApplyOp
+
+The composite that phases the four activities into Init, Plan, an optional approval Gate, then Apply:
+
+```typescript
+import { TerraformApplyOp } from "@intentius/chant-lexicon-terraform";
+
+export const { op } = TerraformApplyOp({
+  name: "app-apply",
+  root: "app",
+});
+```
+
+| Option | Default | Notes |
+|---|---|---|
+| `name` | — required | Op name (kebab-case). Also the default task queue and gate signal suffix. |
+| `root` | — required | Key into `terraform.roots`. |
+| `planFile` | `chant.tfplan` | Written by Plan, consumed by Apply — relative to the root dir. |
+| `gate` | `"on-destroy"` | `"on-destroy"` and `"always"` build the identical four-phase shape (`GateStep` carries no condition to branch a plan's destroy count at build time — see below); `"never"` drops the Gate phase entirely. |
+| `signalName` | `approve-<name>` | Gate signal name. |
+| `gateTimeout` | core's own (48h) | Temporal duration the gate waits before timing out. |
+| `gateDescription` | a generated description naming the root and gate mode | Override text shown to the approver. |
+| `upgrade` | `false` | `-upgrade` on the Init step. |
+| `cwd` | the process's cwd | Directory each step starts its `chant.config.*` search from. |
+| `compensate` | unset | Saga-style rollback on a failed apply — see below. |
+| `taskQueue` | `name` | Override the task queue. |
+
+### The gate
+
+`gate: "never"` is what makes the Op runnable under the local executor (`chant run`) — `packages/core/src/op/local-executor.ts` refuses any Op containing a gate, because a gate is durable-runtime work. Every other mode emits a Gate phase that re-renders the saved plan with a `terraformShow` step first (over the plan file, so it calls no provider) and reports its `destroys` count as a `Destroys` search attribute before waiting. That is deliberate: `GateStep` carries a signal name, a timeout and a description, nothing conditional, so `"on-destroy"` cannot itself decide at build time whether a given run's plan destroys anything. The workable answer is to always emit the gate and tell the approver what is at stake instead of trying to skip it.
+
+### Compensation
+
+Terraform has no automatic rollback — undoing a partial apply means planning and applying the inverse, a decision about the estate rather than something chant can synthesize. So `compensate: true` with no `command` throws at build time, naming the Op, rather than surfacing as a runtime failure once an apply has already half-run:
+
+```typescript
+export const { op } = TerraformApplyOp({
+  name: "app-apply-gated",
+  root: "app",
+  gate: "always",
+  compensate: { command: "terraform destroy -auto-approve" },
+});
+```
+
+`examples/apply-gated/` is the worked version of this shape.
+
+## TerraformWatchOp
+
+A second composite, `TerraformWatchOp`, polls a root's state on a schedule rather than driving an apply. See the lexicon's "Live Observation" doc page for how a scheduled watch reads a Terraform root's state file as its ownership answer.
