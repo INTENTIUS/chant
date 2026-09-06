@@ -8,6 +8,10 @@ import { vaultShadowingCheck } from "./ftn014-vault-shadowing";
 import { mcpSecretEnvSubstitutionCheck } from "./ftn015-mcp-secret-env-substitution";
 import { runtimeModelValidCheck } from "./ftn016-runtime-model-valid";
 import { uniqueResourceNamesCheck } from "./ftn017-unique-resource-names";
+import { scheduleCronSyntaxCheck } from "./ftn020-schedule-cron-syntax";
+import { typedReferencesResolveCheck } from "./ftn021-typed-references-resolve";
+import { webhookUrlPublicHttpsCheck } from "./ftn022-webhook-url-public-https";
+import { acpRuntimeCommandCheck } from "./ftn023-acp-runtime-command";
 
 export const postSynthChecks: PostSynthCheck[] = [
   networkingExplicitCheck,
@@ -18,4 +22,8 @@ export const postSynthChecks: PostSynthCheck[] = [
   mcpSecretEnvSubstitutionCheck,
   runtimeModelValidCheck,
   uniqueResourceNamesCheck,
+  scheduleCronSyntaxCheck,
+  typedReferencesResolveCheck,
+  webhookUrlPublicHttpsCheck,
+  acpRuntimeCommandCheck,
 ];

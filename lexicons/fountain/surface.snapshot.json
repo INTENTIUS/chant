@@ -1,11 +1,12 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-07-30T05:02:31.958Z",
+  "generatedAt": "2026-09-06T14:56:24.144Z",
   "entries": {
     "Agent": {
       "kind": "resource",
       "resourceType": "Fountain::V1::Agent",
       "props": [
+        "allowed_environment_ids:false",
         "allowed_vault_ids:false",
         "description:false",
         "environment_id:false",
@@ -13,7 +14,11 @@
         "metadata:false",
         "model:true",
         "name:true",
+        "permission_policy:false",
         "runtime:true",
+        "runtime_command:false",
+        "sandbox_mode:false",
+        "sandbox_provider:false",
         "skills:false",
         "system:false"
       ]
@@ -36,6 +41,28 @@
       "kind": "property",
       "resourceType": "Fountain::V1::Repository"
     },
+    "Schedule": {
+      "kind": "resource",
+      "resourceType": "Fountain::V1::Schedule",
+      "props": [
+        "cron:true",
+        "enabled:false",
+        "name:false",
+        "one_off:false",
+        "prompt:true",
+        "teammate:true"
+      ]
+    },
+    "Teammate": {
+      "kind": "resource",
+      "resourceType": "Fountain::V1::Teammate",
+      "props": [
+        "agent:true",
+        "environment:false",
+        "name:false",
+        "vault:false"
+      ]
+    },
     "Vault": {
       "kind": "resource",
       "resourceType": "Fountain::V1::Vault",
@@ -43,6 +70,15 @@
         "description:false",
         "metadata:false",
         "name:true"
+      ]
+    },
+    "Webhook": {
+      "kind": "resource",
+      "resourceType": "Fountain::V1::Webhook",
+      "props": [
+        "description:false",
+        "event_types:false",
+        "url:true"
       ]
     }
   }

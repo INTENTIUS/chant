@@ -20,7 +20,7 @@ import { fountainAuditLineage } from "./audit-lineage";
 import { applyLineage } from "@intentius/chant/audit/catalog";
 
 const FOUNTAIN_PRIMITIVES: Authority = {
-  name: "fountain — Environment, Vault, and Agent primitives",
+  name: "fountain — Environment, Vault, Agent, Teammate, Schedule and Webhook primitives",
   url: "https://github.com/BinaryBourbon/fountain/blob/main/docs/primitives.md",
 };
 
@@ -115,6 +115,36 @@ export const fountainAuditCatalog: Record<string, RuleMeta> = {
     "correctness",
     "Two declarations of one kind resolve to the same fountain name",
     "fountain reconciles by name — rename one, or the second silently overwrites the first.",
+  ),
+  FTN020: rule(
+    "FTN020",
+    "merge-worthy",
+    "correctness",
+    "Schedule cron is not five-field UTC cron syntax",
+    "Fix the expression. fountain stores an unparseable cron and then never fires it.",
+  ),
+  FTN021: rule(
+    "FTN021",
+    "merge-worthy",
+    "correctness",
+    "A typed reference names something the build does not declare",
+    "Declare the Agent or Teammate being referenced, or fix the name. Auditing standalone YAML, " +
+      "check the reference is not simply in another file, since the audit reads one file at a time.",
+  ),
+  FTN022: rule(
+    "FTN022",
+    "merge-worthy",
+    "security",
+    "Webhook url is http, or targets a loopback or private address",
+    "Deliver over https to a public host; a private target makes the delivery worker an SSRF probe.",
+    [OWASP_LLM_INJECTION],
+  ),
+  FTN023: rule(
+    "FTN023",
+    "merge-worthy",
+    "correctness",
+    'Agent runtime "acp" is missing runtime_command, or another runtime carries one',
+    "Pair the acp runtime with the command it speaks the protocol over, and drop the field elsewhere.",
   ),
 };
 

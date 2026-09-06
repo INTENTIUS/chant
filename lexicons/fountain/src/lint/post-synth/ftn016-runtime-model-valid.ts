@@ -7,9 +7,15 @@ import { propsOf } from "../../entity-props";
  * The generated types make these compile-time checks for typed authoring;
  * this backstops untyped construction (imported templates, hand-built
  * plans) so a typo fails the build instead of a 422 at apply.
+ *
+ * `acp` is the exception on both counts. It is a chant extension pending
+ * BinaryBourbon/fountain#1634, and it names a process rather than a hosted
+ * model: the model is whatever the command on the other end of the protocol
+ * decides to use, so a `model` on an acp agent is a value nothing reads. The
+ * command itself is FTN023's business.
  */
 
-const RUNTIMES = new Set(["claude", "codex", "gemini", "opencode"]);
+const RUNTIMES = new Set(["claude", "codex", "gemini", "opencode", "acp"]);
 const MODEL_RE = /^[a-z0-9_-]+\/[a-z0-9._-]+$/;
 
 export const runtimeModelValidCheck: PostSynthCheck = {
@@ -34,6 +40,21 @@ export const runtimeModelValidCheck: PostSynthCheck = {
           lexicon: "fountain",
         });
       }
+      if (agent.runtime === "acp") {
+        if (agent.model !== undefined) {
+          diagnostics.push({
+            checkId: "FTN016",
+            severity: "error",
+            message:
+              `Agent "${name}" has runtime "acp" and a model — an acp agent's model is ` +
+              `the command's own choice, so nothing reads this one`,
+            entity: name,
+            lexicon: "fountain",
+          });
+        }
+        continue;
+      }
+
       if (typeof agent.model === "string" && !MODEL_RE.test(agent.model)) {
         diagnostics.push({
           checkId: "FTN016",

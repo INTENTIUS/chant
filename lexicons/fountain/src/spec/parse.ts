@@ -1,15 +1,28 @@
 /**
  * Fountain OpenAPI parser.
  *
- * Fountain's spec (OpenApiSpex, served at /api/openapi.json) is
- * request/response DTOs, so we generate a curated set of resources — the
- * three kinds `fountain apply` reconciles: Environment, Vault, Agent.
- * Each pairs a request schema (writable authoring surface) with a response
- * schema (read-only attributes). Object schemas reachable from the request
- * schemas (e.g. Repository) are emitted as standalone property-type classes.
+ * Fountain's spec (OpenApiSpex, published as a release asset) is
+ * request/response DTOs, so we generate a curated set of resources — the six
+ * declarable kinds. Environment, Vault and Agent are what `fountain apply`
+ * reconciles; Teammate, Schedule and Webhook belong to the team, schedule and
+ * webhook routes. Each pairs a request schema (writable authoring surface)
+ * with a response schema (read-only attributes). Object schemas reachable from
+ * the request schemas (e.g. Repository) are emitted as standalone
+ * property-type classes.
  *
  * Conversations are deliberately not a resource: they are runs with a
  * status lifecycle, modeled as ops, not declarables.
+ *
+ * Two things the curated manifest adds on top of the raw schemas:
+ *
+ *   - Typed references. A request schema carries `agent_id`; a chant author
+ *     writes `agent: someAgent`. The `refs` entries rename an id field, or
+ *     add one that reaches the API only as a path parameter (a schedule's
+ *     teammate), into a by-name reference the serializer resolves and FTN021
+ *     proves resolvable — the same shape an Agent's `environment` has.
+ *   - Extensions. A prop chant accepts ahead of upstream, declared here so the
+ *     generated type documents it instead of leaving authors to smuggle it
+ *     through `metadata`. Today that is the ACP runtime.
  */
 
 import {
@@ -68,19 +81,147 @@ interface OpenAPISpec {
 /** The single service segment for all fountain type names (apiVersion fountain.dev/v1). */
 const SERVICE = "V1";
 
+/** A by-name reference to another declared fountain resource. */
+interface RefSpec {
+  /** The prop authors write. */
+  prop: string;
+  /**
+   * The request-schema id field it replaces. Absent when the id reaches the
+   * API as a path parameter and so never appears in a request body.
+   */
+  from?: string;
+  /** The kind it points at, as a chant type name. */
+  target: string;
+  required: boolean;
+  description: string;
+}
+
+/** A prop chant accepts that the pinned spec does not describe yet. */
+interface ExtensionSpec {
+  name: string;
+  tsType: string;
+  required: boolean;
+  description: string;
+}
+
 interface ResourceSpec {
   typeName: string;
   request: string;
   response: string;
+  refs?: RefSpec[];
+  /** Extra accepted values, per enum-valued request property. */
+  enumExtensions?: Record<string, string[]>;
+  extensions?: ExtensionSpec[];
 }
+
+/**
+ * The ACP runtime (BinaryBourbon/fountain#1634).
+ *
+ * `runtime: "acp"` and `runtime_command` are not in the pinned spec; the
+ * upstream PR that adds them is open. chant models them anyway, because
+ * `chant acp` is what a steward's agent runs, and an author who cannot name
+ * the runtime has nowhere to put it but `metadata`. An instance without #1634
+ * rejects them at apply — a 422 with an obvious cause, which is better than a
+ * generated type that cannot express the deployment this lexicon is for.
+ */
+const ACP_NOTE =
+  "chant extension, pending BinaryBourbon/fountain#1634 — an instance without that PR rejects it at apply.";
+
+const REF_TARGET = {
+  agent: `Fountain::${SERVICE}::Agent`,
+  environment: `Fountain::${SERVICE}::Environment`,
+  vault: `Fountain::${SERVICE}::Vault`,
+  teammate: `Fountain::${SERVICE}::Teammate`,
+};
 
 const RESOURCES: ResourceSpec[] = [
   { typeName: `Fountain::${SERVICE}::Environment`, request: "EnvironmentRequest", response: "Environment" },
   { typeName: `Fountain::${SERVICE}::Vault`, request: "VaultRequest", response: "Vault" },
-  { typeName: `Fountain::${SERVICE}::Agent`, request: "AgentRequest", response: "Agent" },
+  {
+    typeName: `Fountain::${SERVICE}::Agent`,
+    request: "AgentRequest",
+    response: "Agent",
+    enumExtensions: { runtime: ["acp"] },
+    extensions: [
+      {
+        name: "runtime_command",
+        tsType: "string",
+        required: false,
+        description: `The command line an "acp" agent speaks the Agent Client Protocol over, e.g. "chant acp". ${ACP_NOTE}`,
+      },
+    ],
+  },
+  {
+    typeName: `Fountain::${SERVICE}::Teammate`,
+    request: "TeamAddRequest",
+    response: "Teammate",
+    refs: [
+      {
+        prop: "agent",
+        from: "agent_id",
+        target: REF_TARGET.agent,
+        required: true,
+        description: "The agent this teammate is, by name. A dangling reference is FTN021, not a 404 at apply.",
+      },
+      {
+        prop: "environment",
+        from: "environment_id",
+        target: REF_TARGET.environment,
+        required: false,
+        description:
+          "Provision the teammate's computer from this environment instead of the agent's own. Must satisfy the agent's allowed_environment_ids.",
+      },
+      {
+        prop: "vault",
+        from: "vault_id",
+        target: REF_TARGET.vault,
+        required: false,
+        description: "Layer this vault's secrets on top. Must satisfy allowed_vault_ids.",
+      },
+    ],
+  },
+  {
+    typeName: `Fountain::${SERVICE}::Schedule`,
+    request: "TeamScheduleCreateRequest",
+    response: "TeamSchedule",
+    refs: [
+      {
+        prop: "teammate",
+        target: REF_TARGET.teammate,
+        required: true,
+        description:
+          "The teammate whose thread this prompt goes to. The route carries it as a path parameter " +
+          "(POST /api/team/{agent_id}/schedules), so it is a chant-level reference rather than a body field.",
+      },
+    ],
+  },
+  { typeName: `Fountain::${SERVICE}::Webhook`, request: "WebhookEndpointCreateRequest", response: "WebhookEndpoint" },
 ];
 
+/**
+ * The request schemas the curated manifest models, by schema name.
+ *
+ * Coverage reads this rather than guessing `${kind}Request`: a Teammate is
+ * created by `TeamAddRequest` and a Schedule by `TeamScheduleCreateRequest`.
+ */
+export const MODELED_REQUEST_SCHEMAS: string[] = RESOURCES.map((r) => r.request);
+
 const REF_PREFIX = "#/components/schemas/";
+
+/**
+ * A reference prop accepts the referenced declaration or the name of one, so
+ * an author can point at something chant declares elsewhere in the build or at
+ * something that already exists on the instance.
+ */
+function refProperty(ref: RefSpec): ParsedProperty {
+  return {
+    name: ref.prop,
+    tsType: `${fountainShortName(ref.target)} | string`,
+    required: ref.required,
+    description: ref.description,
+    constraints: {},
+  };
+}
 
 // ── Parser ─────────────────────────────────────────────────────────
 
@@ -103,21 +244,57 @@ export function parseFountainOpenAPI(data: string | Buffer): FountainParseResult
     const reqProps = req?.properties ?? {};
     const requiredSet = new Set(req?.required ?? []);
 
+    const refs = rspec.refs ?? [];
+    const refByIdField = new Map(refs.filter((r) => r.from).map((r) => [r.from!, r]));
+
     const properties: ParsedProperty[] = [];
     for (const [name, prop] of Object.entries(reqProps)) {
+      const ref = refByIdField.get(name);
+      if (ref) {
+        properties.push(refProperty(ref));
+        continue;
+      }
+      const extraEnum = rspec.enumExtensions?.[name];
+      const constraints = coreExtractConstraints(prop as JsonSchemaProperty);
+      let tsType = resolve(prop);
+      if (extraEnum && extraEnum.length > 0) {
+        const values = [...(prop.enum ?? []), ...extraEnum];
+        constraints.enum = values;
+        tsType = [...values].sort().map((v) => JSON.stringify(v)).join(" | ");
+      }
       properties.push({
         name,
-        tsType: resolve(prop),
+        tsType,
         required: requiredSet.has(name),
         description: prop.description,
-        constraints: coreExtractConstraints(prop as JsonSchemaProperty),
+        constraints,
       });
     }
 
-    // Attributes = response props not present in the request schema.
+    // References whose id is a path parameter have no request-body field to
+    // rename, so they are appended rather than substituted.
+    for (const ref of refs) {
+      if (!ref.from) properties.push(refProperty(ref));
+    }
+
+    for (const ext of rspec.extensions ?? []) {
+      properties.push({
+        name: ext.name,
+        tsType: ext.tsType,
+        required: ext.required,
+        description: ext.description,
+        constraints: {},
+      });
+    }
+
+    // Attributes = response props not authored on the request side. Both the
+    // id field a ref replaced (`agent_id`) and the ref that replaced it
+    // (`agent`) count as authored, so a Teammate's `agent` is a constructor
+    // prop and not also a readonly attribute shadowing it.
+    const authored = new Set([...Object.keys(reqProps), ...properties.map((p) => p.name)]);
     const attributes: Array<{ name: string; tsType: string }> = [];
     for (const [name, prop] of Object.entries(res?.properties ?? {})) {
-      if (name in reqProps) continue;
+      if (authored.has(name)) continue;
       attributes.push({ name, tsType: resolve(prop) });
     }
 

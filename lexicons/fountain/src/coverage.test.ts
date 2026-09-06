@@ -23,7 +23,14 @@ describe("fountain coverage", () => {
     const report = computeFountainCoverage(spec, surface);
 
     expect(report.overallPct).toBe(100);
-    expect(report.modeledKinds.sort()).toEqual(["Agent", "Environment", "Vault"]);
+    expect(report.modeledKinds.sort()).toEqual([
+      "Agent",
+      "Environment",
+      "Schedule",
+      "Teammate",
+      "Vault",
+      "Webhook",
+    ]);
     for (const kind of report.kinds) {
       expect(kind.missing).toEqual([]);
       expect(kind.stale).toEqual([]);

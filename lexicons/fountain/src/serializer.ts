@@ -42,6 +42,23 @@ function kindOf(entityType: string): string {
   return parts[parts.length - 1];
 }
 
+/**
+ * Documents come out in dependency order, not declaration order.
+ *
+ * A Teammate names an Agent, a Schedule names a Teammate, and the three of
+ * them can only be applied after the Environment and Vault they layer on.
+ * Sorting here rather than trusting the author's export order means the
+ * manifest reads the way it applies, and `fountain apply -f` on the ejected
+ * file behaves the same as `fountainApply` does. Kinds are stable-sorted, so
+ * two Environments keep the order they were declared in.
+ */
+const KIND_ORDER = ["Environment", "Vault", "Agent", "Teammate", "Schedule", "Webhook"];
+
+function kindRank(entityType: string): number {
+  const i = KIND_ORDER.indexOf(kindOf(entityType));
+  return i === -1 ? KIND_ORDER.length : i;
+}
+
 export const fountainSerializer: Serializer = {
   name: "fountain",
   rulePrefix: "FTN",
@@ -74,8 +91,10 @@ export const fountainSerializer: Serializer = {
       },
     };
 
+    const ordered = [...entities].sort((a, b) => kindRank(a[1].entityType) - kindRank(b[1].entityType));
+
     const docs: string[] = [];
-    for (const [name, entity] of entities) {
+    for (const [name, entity] of ordered) {
       // `name` lives in `metadata` only. fountain's manifest format carries
       // the upsert key there and nowhere else; a second copy under `spec`
       // is at best redundant and at worst a conflicting value (#1606).

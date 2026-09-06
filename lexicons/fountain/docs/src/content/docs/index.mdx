@@ -6,9 +6,9 @@ description: "Fountain workload primitives (Environment, Vault, Agent) as typed 
 {/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-fountain` — DO NOT EDIT.
     Edit lexicons/fountain/src/codegen/docs.ts instead; changes here are overwritten. */}
 
-The **fountain** lexicon declares [fountain](https://github.com/BinaryBourbon/fountain)'s workload layer as typed chant resources. fountain runs coding agents in sandboxed VMs; its three declarable kinds are `Environment` (sandbox baseline), `Vault` (env-var overrides), and `Agent` (a runnable agent config).
+The **fountain** lexicon declares [fountain](https://github.com/BinaryBourbon/fountain)'s workload layer as typed chant resources. fountain runs coding agents in sandboxed VMs. Six kinds are declarable: `Environment` (sandbox baseline), `Vault` (env-var overrides) and `Agent` (a runnable agent config) are what `fountain apply` reconciles; `Teammate` (an agent seated on the team, with a thread of its own), `Schedule` (a cron prompt into that thread) and `Webhook` (where the estate's events leave it) belong to the team, schedule and webhook routes.
 
-Types are generated from fountain's served OpenAPI spec, so they track the real API.
+Types are generated from a pinned fountain release's OpenAPI spec, so they track the real API.
 
 Install it with:
 
@@ -19,7 +19,7 @@ npm install --save-dev @intentius/chant-lexicon-fountain
 ## Quick Start
 
 ```typescript
-import { Environment, Agent } from "@intentius/chant-lexicon-fountain";
+import { Environment, Agent, Teammate, Schedule } from "@intentius/chant-lexicon-fountain";
 
 export const env = new Environment({
   name: "team-env",
@@ -33,6 +33,15 @@ export const helper = new Agent({
   model: "anthropic/claude-sonnet-4-6",
   runtime: "claude",
   environment: env,                              // typed ref — dangling name = build error
+});
+
+export const helperSeat = new Teammate({ name: "helper", agent: helper });
+
+export const nightly = new Schedule({
+  name: "nightly-converge",
+  teammate: helperSeat,
+  cron: "0 3 * * *",                             // five fields, UTC (FTN020)
+  prompt: "chant run converge",
 });
 ```
 
@@ -51,15 +60,15 @@ export const helper = new Agent({
 
 | Metric | Count |
 |--------|-------|
-| Resources | 3 |
+| Resources | 6 |
 | Property types | 1 |
 | Services | 1 |
 | Intrinsic functions | 0 |
 | Pseudo-parameters | 0 |
-| Lint rules | 9 |
+| Lint rules | 13 |
 
 **Lexicon version:** 0.57.0  
 **Namespace:** `Fountain`
 
-- [All Rules](./rules) — 9 rules
+- [All Rules](./rules) — 13 rules
 - [Serialization](./serialization) — output format details

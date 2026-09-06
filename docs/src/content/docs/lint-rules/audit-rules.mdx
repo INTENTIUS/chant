@@ -2608,7 +2608,7 @@ Set networking_type — an open sandbox by silence is not a reviewed decision.
 
 | | |
 |---|---|
-| Authority | [fountain — Environment, Vault, and Agent primitives](https://github.com/BinaryBourbon/fountain/blob/main/docs/primitives.md) |
+| Authority | [fountain — Environment, Vault, Agent, Teammate, Schedule and Webhook primitives](https://github.com/BinaryBourbon/fountain/blob/main/docs/primitives.md) |
 
 ### FTN011
 
@@ -2618,7 +2618,7 @@ Prefer limited with an allowed_hosts allowlist; an empty list denies all egress.
 
 | | |
 |---|---|
-| Authority | [fountain — Environment, Vault, and Agent primitives](https://github.com/BinaryBourbon/fountain/blob/main/docs/primitives.md) |
+| Authority | [fountain — Environment, Vault, Agent, Teammate, Schedule and Webhook primitives](https://github.com/BinaryBourbon/fountain/blob/main/docs/primitives.md) |
 
 ### FTN012
 
@@ -2664,6 +2664,34 @@ Use a known runtime and a canonical provider/model_id.
 **Two declarations of one kind resolve to the same fountain name** — merge-worthy · guidance
 
 fountain reconciles by name — rename one, or the second silently overwrites the first.
+
+### FTN020
+
+**Schedule cron is not five-field UTC cron syntax** — merge-worthy · guidance
+
+Fix the expression. fountain stores an unparseable cron and then never fires it.
+
+### FTN021
+
+**A typed reference names something the build does not declare** — merge-worthy · guidance
+
+Declare the Agent or Teammate being referenced, or fix the name. Auditing standalone YAML, check the reference is not simply in another file, since the audit reads one file at a time.
+
+### FTN022
+
+**Webhook url is http, or targets a loopback or private address** — merge-worthy · guidance
+
+Deliver over https to a public host; a private target makes the delivery worker an SSRF probe.
+
+| | |
+|---|---|
+| Authority | [OWASP Top 10 for LLM Applications — LLM01: Prompt Injection](https://owasp.org/www-project-top-10-for-large-language-model-applications/) |
+
+### FTN023
+
+**Agent runtime "acp" is missing runtime_command, or another runtime carries one** — merge-worthy · guidance
+
+Pair the acp runtime with the command it speaks the protocol over, and drop the field elsewhere.
 
 ## Terraform (TF)
 
