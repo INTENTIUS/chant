@@ -36,6 +36,7 @@
  */
 
 import { z } from "zod";
+import { outcomeAttributesOf } from "./types";
 import type { OpConfig, PhaseDefinition, ActivityStep, StepDefinition } from "./types";
 
 /** Every literal value {@link ActivityStep.profile} may hold. Kept in sync with `types.ts`'s `ActivityStep["profile"]`. */
@@ -277,13 +278,15 @@ export function validateActivitySteps(
         }
       }
 
-      if (step.outcomeAttribute?.from && contract.returns && !pathExistsInSchema(contract.returns, step.outcomeAttribute.from)) {
-        issues.push({
-          opName: config.name,
-          phase: phase.name,
-          fn: step.fn,
-          message: `outcomeAttribute.from "${step.outcomeAttribute.from}" does not exist on "${step.fn}"'s declared return type`,
-        });
+      for (const attr of outcomeAttributesOf(step)) {
+        if (attr.from && contract.returns && !pathExistsInSchema(contract.returns, attr.from)) {
+          issues.push({
+            opName: config.name,
+            phase: phase.name,
+            fn: step.fn,
+            message: `outcomeAttribute.from "${attr.from}" does not exist on "${step.fn}"'s declared return type`,
+          });
+        }
       }
     }
   }

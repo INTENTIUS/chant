@@ -643,6 +643,39 @@ describe("serializeOps()", () => {
       expect(wf).toContain('upsertSearchAttributes({ "Ok": [String(__r0?.result?.healthy)] });');
     });
 
+    it("an array of attributes lands in one upsert, all keys off the same result (#2105)", () => {
+      const ops = new Map([
+        makeOp({
+          name: "watch",
+          overview: "watch",
+          phases: [
+            {
+              name: "Plan",
+              steps: [
+                {
+                  kind: "activity",
+                  fn: "choudoufuLivePlan",
+                  outcomeAttribute: [
+                    { name: "Drift", from: "drift" },
+                    { name: "Unowned", from: "unowned" },
+                    { name: "Adoptable", from: "adoptable" },
+                  ],
+                },
+              ],
+            },
+          ],
+        }),
+      ]);
+      const wf = serializeOps(ops)["ops/watch/workflow.ts"];
+      expect(wf).toContain(
+        'upsertSearchAttributes({ "Drift": [String(__r0?.drift)], "Unowned": [String(__r0?.unowned)], ' +
+          '"Adoptable": [String(__r0?.adoptable)] });',
+      );
+      // One call, not one per attribute: the three describe a single activity
+      // result and land together.
+      expect(wf.split("upsertSearchAttributes(").length - 1).toBe(3); // OpName, Phase, the outcome upsert
+    });
+
     it("counter is workflow-scoped: multiple outcome attrs use __r0, __r1, ...", () => {
       const ops = new Map([
         makeOp({

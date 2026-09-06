@@ -83,6 +83,7 @@ import type {
   EffectStep,
   EffectReceiptRef,
   ActivityContract,
+  OutcomeAttribute,
 } from "@intentius/chant/op";
 import { collectActivityContracts } from "@intentius/chant/op";
 import { TEMPORAL_ACTIVITY_PROFILES, type TemporalActivityProfile } from "../config";
@@ -113,7 +114,8 @@ export interface OpIRActivityStep {
    * in this step (a step-output ref resolves at run time, not here).
    */
   entities?: string[];
-  outcomeAttribute?: { name: string; from?: string };
+  /** One search attribute, or several published off the same result (#2105). */
+  outcomeAttribute?: OutcomeAttribute | OutcomeAttribute[];
 }
 
 export interface OpIRGateStep {

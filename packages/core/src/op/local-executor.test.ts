@@ -207,6 +207,35 @@ describe("runOpLocally — outcomeAttribute", () => {
     });
     const result = await runOpLocally(config, new Map([["lifecycleDiff", diff]]), PROFILES);
     expect(result.records[0].outcome).toEqual({ name: "Drift", value: false });
+    expect(result.records[0].outcomes).toEqual([{ name: "Drift", value: false }]);
+  });
+
+  test("an array captures every attribute off one result, and `outcome` stays the first (#2105)", async () => {
+    const livePlan: ActivityFn = async () => ({ drift: true, unowned: 3, adoptable: 2 });
+    const config = op({
+      phases: [{ name: "Plan", steps: [
+        { kind: "activity", fn: "choudoufuLivePlan", outcomeAttribute: [
+          { name: "Drift", from: "drift" },
+          { name: "Unowned", from: "unowned" },
+          { name: "Adoptable", from: "adoptable" },
+        ] },
+      ] }],
+    });
+    const result = await runOpLocally(config, new Map([["choudoufuLivePlan", livePlan]]), PROFILES);
+    expect(result.records[0].outcomes).toEqual([
+      { name: "Drift", value: true },
+      { name: "Unowned", value: 3 },
+      { name: "Adoptable", value: 2 },
+    ]);
+    expect(result.records[0].outcome).toEqual({ name: "Drift", value: true });
+  });
+
+  test("a step with no attribute leaves both fields absent", async () => {
+    const noop: ActivityFn = async () => ({ ok: true });
+    const config = op({ phases: [{ name: "Plan", steps: [{ kind: "activity", fn: "noop" }] }] });
+    const result = await runOpLocally(config, new Map([["noop", noop]]), PROFILES);
+    expect(result.records[0].outcome).toBeUndefined();
+    expect(result.records[0].outcomes).toBeUndefined();
   });
 });
 
