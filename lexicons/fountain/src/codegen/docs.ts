@@ -13,9 +13,9 @@ import { docsPipeline, writeDocsSite, type DocsConfig } from "@intentius/chant/c
 
 const pkgDir = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 
-const overview = `The **fountain** lexicon declares [fountain](https://github.com/BinaryBourbon/fountain)'s workload layer as typed chant resources. fountain runs coding agents in sandboxed VMs; its three declarable kinds are \`Environment\` (sandbox baseline), \`Vault\` (env-var overrides), and \`Agent\` (a runnable agent config).
+const overview = `The **fountain** lexicon declares [fountain](https://github.com/BinaryBourbon/fountain)'s workload layer as typed chant resources. fountain runs coding agents in sandboxed VMs. Six kinds are declarable: \`Environment\` (sandbox baseline), \`Vault\` (env-var overrides) and \`Agent\` (a runnable agent config) are what \`fountain apply\` reconciles; \`Teammate\` (an agent seated on the team, with a thread of its own), \`Schedule\` (a cron prompt into that thread) and \`Webhook\` (where the estate's events leave it) belong to the team, schedule and webhook routes.
 
-Types are generated from fountain's served OpenAPI spec, so they track the real API.
+Types are generated from a pinned fountain release's OpenAPI spec, so they track the real API.
 
 Install it with:
 
@@ -26,7 +26,7 @@ npm install --save-dev @intentius/chant-lexicon-fountain
 ## Quick Start
 
 \`\`\`typescript
-import { Environment, Agent } from "@intentius/chant-lexicon-fountain";
+import { Environment, Agent, Teammate, Schedule } from "@intentius/chant-lexicon-fountain";
 
 export const env = new Environment({
   name: "team-env",
@@ -40,6 +40,15 @@ export const helper = new Agent({
   model: "anthropic/claude-sonnet-4-6",
   runtime: "claude",
   environment: env,                              // typed ref — dangling name = build error
+});
+
+export const helperSeat = new Teammate({ name: "helper", agent: helper });
+
+export const nightly = new Schedule({
+  name: "nightly-converge",
+  teammate: helperSeat,
+  cron: "0 3 * * *",                             // five fields, UTC (FTN020)
+  prompt: "chant run converge",
 });
 \`\`\`
 
@@ -72,13 +81,17 @@ spec:
       - github.com
 \`\`\`
 
+Documents come out in dependency order — Environment, Vault, Agent, Teammate, Schedule, Webhook — whatever order the file declared them in, so the manifest reads the way it applies. Within one kind, declaration order is kept.
+
 \`metadata.name\` is the resource's declared \`name\`, not the name of the variable you exported it as. fountain reconciles by that name, so renaming the variable does not orphan the resource. An entity declared without a \`name\` falls back to the export name. The name appears only in \`metadata\`; it is not repeated under \`spec\`, so the apply request carries one name per resource.
 
 The output is ejectable — \`fountain apply -f\` accepts it verbatim, so adopting chant here does not trap the manifests behind chant.
 
 ## Applying the manifest
 
-\`fountainApply\` parses this same YAML and sends it to fountain's bulk \`POST /api/apply\` endpoint in one request — the server reconciles by name, Environment → Vault → Agent, and resolves an agent's \`environment\` reference itself, against the manifest or the tenant's existing environments. See the Ops page for the activity's own behavior (prune, secrets, failure reporting).
+\`fountainApply\` parses this same YAML and sends it to fountain's bulk \`POST /api/apply\` endpoint in one request — the server reconciles by name, Environment then Vault then Agent, and resolves an agent's \`environment\` reference itself, against the manifest or the tenant's existing environments. See the Ops page for the activity's own behavior (prune, secrets, failure reporting).
+
+Bulk apply accepts those three kinds only. A \`Teammate\`, \`Schedule\` or \`Webhook\` document is emitted and is valid, and \`fountainApply\` does not send it yet: applying the three through their own routes waits on chant #2127, and on BinaryBourbon/fountain#1636 for a bulk call that covers them.
 
 ## Ownership
 

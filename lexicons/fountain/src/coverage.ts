@@ -2,8 +2,8 @@
  * Coverage analysis for the fountain lexicon.
  *
  * The shared `computeCoverage` measures CloudFormation-shaped dimensions
- * (lifecycle flags, return attributes, extension constraints) that a
- * three-kind OpenAPI lexicon has no analog for — it would report 0% on
+ * (lifecycle flags, return attributes, extension constraints) that an
+ * OpenAPI lexicon has no analog for — it would report 0% on
  * everything and mean nothing. What fountain actually needs to know is
  * whether its generated surface still matches upstream, measured against the
  * pinned spec release (see spec/fetch.ts):
@@ -20,17 +20,68 @@ import { readFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { fetchSchemas } from "./spec/fetch";
-import { parseFountainOpenAPI, fountainShortName } from "./spec/parse";
+import { parseFountainOpenAPI, fountainShortName, MODELED_REQUEST_SCHEMAS } from "./spec/parse";
 
-/** Request schemas with no typed resource, and why. */
+/**
+ * Request schemas with no typed resource, and why.
+ *
+ * Every `*Request` schema in the pinned spec is either modeled or listed here.
+ * v0.16.0 describes the whole product, not just the workload layer, so most of
+ * this list is one restatement of the same three reasons: it is a session and
+ * not a thing, it is an account operation and not estate, or it is write-only
+ * and so could never be diffed.
+ */
 export const EXCLUDED_KINDS: Record<string, string> = {
+  // Runs, turns, and the envelope around them.
   ConversationCreateRequest: "conversations are runs, not declarables — started by the fountainRun op",
   PromptRequest: "turn-level input inside a conversation run",
-  SecretRequest: "secrets are a write-only sub-resource — upserted by fountainApply",
-  VaultSecretRequest: "secrets are a write-only sub-resource — upserted by fountainApply",
+  PermissionAnswerRequest: "a human's answer to one tool card mid-run — an event on a conversation, not estate",
+  TeamMessageRequest: "one turn addressed to a teammate — the run, not the seat",
+  ChatCompletionRequest: "the OpenAI-compatible inference shim; a request to a model, unrelated to estate",
   ApplyRequest:
     "the envelope fountainApply builds around a manifest, not a thing anyone declares — " +
     "its contents are the Environment/Vault/Agent resources, which are modeled",
+
+  // Write-only values: created once, never readable, so never diffable.
+  SecretRequest: "secrets are a write-only sub-resource — upserted by fountainApply",
+  VaultSecretRequest: "secrets are a write-only sub-resource — upserted by fountainApply",
+  ApiKeyRequest:
+    "an API key's value is returned once and never again — declaring one means recreating it on " +
+    "every apply, or reporting it permanently unobservable. Same reason as SecretRequest",
+  InferenceCredentialRequest: "a provider key, write-only for the same reason as ApiKeyRequest",
+  SecretBindingRequest: "binds a stored secret to a host for the egress broker; the value behind it is write-only",
+
+  // Partial updates of a modeled kind — chant declares the whole thing.
+  TeamRenameRequest: "a partial update of a modeled Teammate — chant declares the full shape and applies it",
+  TeamScheduleUpdateRequest: "a partial update of a modeled Schedule",
+  WebhookEndpointUpdateRequest: "a partial update of a modeled Webhook",
+  TeamContactRequest: "sets a teammate's email and phone (flag team_comms) — a per-seat contact detail, not estate",
+  AvatarRequest: "sets an agent's avatar image; presentation, not configuration",
+  AvatarGenerateRequest: "asks fountain to draw an avatar — a one-shot action with no resource behind it",
+
+  // The account, its people, and its money.
+  RegisterRequest: "account signup",
+  AuthTokenRequest: "mints a session token; the credential chant reads from FOUNTAIN_TOKEN",
+  TokenRequest: "mints a session token; the credential chant reads from FOUNTAIN_TOKEN",
+  OAuthTokenRequest: "an OAuth token exchange",
+  DeviceTokenRequest: "the device-code half of an interactive login",
+  EmailRequest: "sends a verification or reset mail",
+  EmailChangeRequest: "changes the account email",
+  PasswordChangeRequest: "changes the account password",
+  PasswordResetRequest: "completes a password reset",
+  AccountDeleteRequest: "deletes the account — the opposite of estate",
+  CreditsCheckoutRequest: "starts a Stripe checkout for credits",
+  SupportReportCreateRequest: "files a support report",
+  ConnectionProviderRequest: "registers an OAuth app for third-party connections; the connections themselves are per-user grants",
+  BuzzProvisionRequest: "provisions a Buzz identity for an agent — a separate product surface",
+  BuzzAccessUpdateRequest: "changes who may use a Buzz identity",
+
+  // Instance administration. An operator's console, not a tenant's estate.
+  AdminCompRequest: "instance administration — comps a user's balance",
+  AdminCreditsRequest: "instance administration — grants credits",
+  AdminRoleRequest: "instance administration — changes a user's role",
+  AdminSandboxLimitRequest: "instance administration — sets a user's sandbox ceiling",
+  AdminSuspendRequest: "instance administration — suspends a user",
 };
 
 /**
@@ -49,15 +100,10 @@ export const EXCLUDED_KINDS: Record<string, string> = {
  * decision on record rather than something nobody noticed.
  */
 export const UNSPECIFIED_ENDPOINTS: Record<string, string> = {
-  "/api-keys": [
-    "not modeled, and not modelable as a declarable: an API key's value is",
-    "returned once at creation and never readable again. A declared ApiKey could",
-    "be created but never diffed or reconciled — chant would report it",
-    "permanently unobservable, or recreate it on every apply and hand back a new",
-    "secret each time. Same write-only property that excludes SecretRequest.",
-    "If minting a key from chant is wanted, the honest shape is an op alongside",
-    "fountainRun: hand it to the caller once, never claim it as estate.",
-  ].join(" "),
+  // v0.16.0 annotates the api-keys controller, so `/api/auth/api-keys` and its
+  // `ApiKeyRequest` are now visible to the spec-driven accounting above. The
+  // entry that used to sit here moved to EXCLUDED_KINDS, which is what this
+  // list's own comment said should happen: shrink rather than shadow.
 };
 
 export interface KindCoverage {
@@ -129,7 +175,10 @@ export function computeFountainCoverage(
       components?: { schemas?: Record<string, unknown> };
     }).components?.schemas ?? {},
   );
-  const modeledRequests = new Set(modeledKinds.map((k) => `${k}Request`));
+  // The request schema per modeled kind comes from the curated manifest, not
+  // from `${kind}Request`: a Teammate is created by TeamAddRequest and a
+  // Schedule by TeamScheduleCreateRequest.
+  const modeledRequests = new Set(MODELED_REQUEST_SCHEMAS);
   const unaccountedKinds = schemas.filter(
     (name) =>
       name.endsWith("Request") && !modeledRequests.has(name) && !(name in EXCLUDED_KINDS),

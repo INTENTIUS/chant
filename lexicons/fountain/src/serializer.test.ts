@@ -1,10 +1,33 @@
 import { describe, expect, it } from "vitest";
+import { parseYAML } from "@intentius/chant/yaml";
 import { fountainSerializer } from "./serializer";
 import { parseManifest } from "./op/activities/fountain-apply";
 import type { Declarable } from "@intentius/chant";
 
 function entity(entityType: string, props: Record<string, unknown>): Declarable {
   return { entityType, lexicon: "fountain", ...props } as unknown as Declarable;
+}
+
+/**
+ * Every document in the emitted stream.
+ *
+ * `parseManifest` is the apply path's reader and keeps only the three kinds
+ * `POST /api/apply` accepts, so it cannot see a Teammate, Schedule or Webhook
+ * (that is #2127's work). Tests about what the serializer emits read the
+ * documents directly.
+ */
+function documents(out: string): Array<{ kind: string; name: string; spec: Record<string, unknown> }> {
+  return out
+    .split(/^---\s*$/m)
+    .filter((d) => d.trim())
+    .map((docText) => {
+      const doc = parseYAML(docText) as {
+        kind?: string;
+        metadata?: { name?: string };
+        spec?: Record<string, unknown>;
+      };
+      return { kind: doc.kind ?? "", name: doc.metadata?.name ?? "", spec: doc.spec ?? {} };
+    });
 }
 
 describe("fountain serializer", () => {
@@ -163,6 +186,90 @@ describe("fountain serializer", () => {
       { source: "anthropics/skills", name: "frontend-design" },
     ]);
     expect(resources[1].spec.metadata).toEqual({ "managed-by": "chant" });
+  });
+
+  it("emits all six kinds in dependency order, whatever order they were declared in", () => {
+    const env = entity("Fountain::V1::Environment", { name: "steward-env" });
+    const vault = entity("Fountain::V1::Vault", { name: "steward-creds" });
+    const agent = entity("Fountain::V1::Agent", {
+      name: "steward",
+      runtime: "acp",
+      runtime_command: "chant acp",
+      environment: env,
+    });
+    const teammate = entity("Fountain::V1::Teammate", { name: "steward-seat", agent });
+    const schedule = entity("Fountain::V1::Schedule", {
+      name: "nightly-converge",
+      teammate,
+      cron: "0 3 * * *",
+      prompt: "chant run converge",
+    });
+    const webhook = entity("Fountain::V1::Webhook", {
+      name: "turn-done",
+      url: "https://example.com/hooks/fountain",
+      event_types: ["conversation.turn.done"],
+    });
+
+    // Declared back to front — the serializer, not the author, fixes the order.
+    const out = fountainSerializer.serialize(
+      new Map([
+        ["webhook", webhook],
+        ["schedule", schedule],
+        ["teammate", teammate],
+        ["agent", agent],
+        ["vault", vault],
+        ["env", env],
+      ]),
+    ) as string;
+
+    expect(documents(out).map((d) => d.kind)).toEqual([
+      "Environment",
+      "Vault",
+      "Agent",
+      "Teammate",
+      "Schedule",
+      "Webhook",
+    ]);
+  });
+
+  it("resolves the new kinds' references to the referenced entity's name", () => {
+    const agent = entity("Fountain::V1::Agent", { name: "steward", runtime: "acp", runtime_command: "chant acp" });
+    const teammate = entity("Fountain::V1::Teammate", { name: "steward-seat", agent });
+    const schedule = entity("Fountain::V1::Schedule", {
+      name: "nightly",
+      teammate,
+      cron: "0 3 * * *",
+      prompt: "chant run converge",
+    });
+
+    const out = fountainSerializer.serialize(
+      new Map([
+        ["stewardAgent", agent],
+        ["stewardSeat", teammate],
+        ["nightly", schedule],
+      ]),
+    ) as string;
+
+    const [runnable, seat, cadence] = documents(out);
+    expect(seat.spec.agent).toBe("steward");
+    expect(cadence.spec.teammate).toBe("steward-seat");
+    // The ACP extension survives the round trip — an instance with
+    // BinaryBourbon/fountain#1634 gets both halves or neither.
+    expect(runnable.spec.runtime_command).toBe("chant acp");
+  });
+
+  it("keeps declaration order within one kind", () => {
+    const a = entity("Fountain::V1::Vault", { name: "b-vault" });
+    const b = entity("Fountain::V1::Vault", { name: "a-vault" });
+
+    const out = fountainSerializer.serialize(
+      new Map([
+        ["first", a],
+        ["second", b],
+      ]),
+    ) as string;
+
+    expect(parseManifest(out).map((r) => r.name)).toEqual(["b-vault", "a-vault"]);
   });
 
   it("does not use YAML aliases or tags for substitution references", () => {

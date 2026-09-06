@@ -1,16 +1,6 @@
-import { createRequire } from "module";
 import type { HoverContext, HoverInfo } from "@intentius/chant/lsp/types";
-import { LexiconIndex, lexiconHover, type LexiconEntry } from "@intentius/chant/lsp/lexicon-providers";
-const require = createRequire(import.meta.url);
-
-let cachedIndex: LexiconIndex | null = null;
-
-function getIndex(): LexiconIndex {
-  if (cachedIndex) return cachedIndex;
-  const data = require("../generated/lexicon-fountain.json") as Record<string, LexiconEntry>;
-  cachedIndex = new LexiconIndex(data);
-  return cachedIndex;
-}
+import { lexiconHover, type LexiconEntry } from "@intentius/chant/lsp/lexicon-providers";
+import { fountainLexiconIndex } from "./lexicon-index";
 
 /**
  * Per-kind notes. The security-relevant semantics (deny-all networking,
@@ -29,7 +19,25 @@ const KIND_NOTES: Record<string, string> = {
   Agent:
     "A runnable agent config bound to one Environment. `allowed_vault_ids`: " +
     "`null` allows any tenant vault, `[]` forbids all, a list is an allowlist — " +
-    "set `[]` when the reviewed environment must not be overridable at spawn.",
+    "set `[]` when the reviewed environment must not be overridable at spawn.\n\n" +
+    "`runtime: \"acp\"` with `runtime_command` is a chant extension pending " +
+    "BinaryBourbon/fountain#1634; FTN023 keeps the pair together and FTN016 " +
+    "rejects a model on it.",
+  Teammate:
+    "An Agent seated on the team, with a thread of its own. `agent` is a typed " +
+    "reference; `environment` and `vault` override the agent's own for this " +
+    "seat and must satisfy its allowlists. FTN021 rejects a dangling reference " +
+    "at build rather than at apply.",
+  Schedule:
+    "A cron prompt sent to a Teammate. `cron` is five fields in UTC (FTN020). " +
+    "`one_off: false` sends into the teammate's own thread — a busy teammate " +
+    "means the run is skipped, not queued; `one_off: true` opens a fresh " +
+    "conversation each fire.",
+  Webhook:
+    "A URL fountain POSTs lifecycle events to. FTN022 requires https and " +
+    "refuses loopback, link-local and RFC1918 targets — fountain refuses them " +
+    "again at request time. The signing secret is returned once at create and " +
+    "is never readable, so it is not part of the declared shape.",
 };
 
 /** Enum-valued props are worth spelling out inline — they are the typo surface. */
@@ -66,5 +74,5 @@ function fountainHover(className: string, entry: LexiconEntry): HoverInfo | unde
 
 /** Provide LSP hover information for fountain resources. */
 export function hover(ctx: HoverContext): HoverInfo | undefined {
-  return lexiconHover(ctx, getIndex(), fountainHover);
+  return lexiconHover(ctx, fountainLexiconIndex(), fountainHover);
 }

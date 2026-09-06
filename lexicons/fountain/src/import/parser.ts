@@ -20,6 +20,9 @@ const KIND_TO_TYPE: Record<string, string> = {
   Environment: "Fountain::V1::Environment",
   Vault: "Fountain::V1::Vault",
   Agent: "Fountain::V1::Agent",
+  Teammate: "Fountain::V1::Teammate",
+  Schedule: "Fountain::V1::Schedule",
+  Webhook: "Fountain::V1::Webhook",
 };
 
 function isRecord(v: unknown): v is Record<string, unknown> {

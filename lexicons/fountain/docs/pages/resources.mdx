@@ -1,14 +1,14 @@
 ---
 title: "Resources"
-description: "The three fountain workload kinds the lexicon declares."
+description: "The six fountain workload kinds the lexicon declares."
 diataxis: reference
 ---
 
-The lexicon types the three kinds `fountain apply` reconciles — the workload
-layer of [fountain](https://github.com/BinaryBourbon/fountain). Types are
-generated from fountain's served OpenAPI spec, so they track the real API.
-Conversations are deliberately **not** a resource: they are runs with a
-status lifecycle, modeled as ops.
+The lexicon types six kinds. Environment, Vault and Agent are what `fountain
+apply` reconciles; Teammate, Schedule and Webhook are the team, schedule and
+webhook routes. Types are generated from a pinned fountain release's OpenAPI
+spec, so they track the real API. Conversations are deliberately **not** a
+resource: they are runs with a status lifecycle, modeled as ops.
 
 ## Environment
 
@@ -32,12 +32,47 @@ allowlist.
 A named, re-runnable agent configuration: model, runtime, skills (inline
 SKILL.md or GitHub-sourced with a `ref` pin), MCP servers, and an optional
 `environment` reference — typed, so a dangling reference is a build error,
-not a 422 at apply time.
+not a 422 at apply time. `sandbox_mode` picks between a sandbox per
+conversation and one persistent computer per agent identity.
+
+### The ACP runtime
+
+`runtime: "acp"` and `runtime_command` are chant extensions. Upstream does not
+have them yet: the PR that adds them is
+[BinaryBourbon/fountain#1634](https://github.com/BinaryBourbon/fountain/pull/1634),
+and until it lands an instance rejects the pair at apply. They are on the
+generated `Agent` type anyway, for the same reason `metadata` is — an author
+needs somewhere honest to put them, and `metadata` is not it. FTN023 keeps the
+two together, and FTN016 rejects a `model` on an acp agent, because the model
+is whatever the command on the other end of the protocol chooses.
+
+## Teammate
+
+An Agent seated on the team, with a conversation of its own that becomes that
+seat's operational history. `agent` is a typed reference; `environment` and
+`vault` override the agent's own for this seat, and must satisfy its
+`allowed_environment_ids` and `allowed_vault_ids`. FTN021 rejects a dangling
+reference at build rather than partway through an apply.
+
+## Schedule
+
+A cron prompt sent to a Teammate. `cron` is five fields in UTC, and FTN020
+rejects an expression fountain would store and then never fire. `one_off:
+false` sends the prompt into the teammate's own thread, where a busy teammate
+means the run is skipped rather than queued; `one_off: true` opens a fresh
+conversation on each fire.
+
+## Webhook
+
+A URL fountain POSTs lifecycle events to. FTN022 requires https and refuses
+loopback, link-local and RFC1918 targets, which fountain refuses again at
+request time. The signing secret is returned once at create and is never
+readable afterwards, so it is not part of the declared shape.
 
 ## Example
 
 ```ts
-import { Environment, Agent } from "@intentius/chant-lexicon-fountain";
+import { Environment, Agent, Teammate, Schedule, Webhook } from "@intentius/chant-lexicon-fountain";
 
 export const conciergeEnv = new Environment({
   name: "concierge-env",
@@ -52,5 +87,22 @@ export const researcher = new Agent({
   runtime: "claude",
   environment: conciergeEnv,
   skills: [{ source: "vercel-labs/agent-skills", ref: "main" }],
+});
+
+export const researcherSeat = new Teammate({
+  name: "researcher",
+  agent: researcher,
+});
+
+export const nightlySweep = new Schedule({
+  name: "nightly-sweep",
+  teammate: researcherSeat,
+  cron: "0 3 * * *",
+  prompt: "chant run sweep",
+});
+
+export const turnEvents = new Webhook({
+  url: "https://example.com/hooks/fountain",
+  event_types: ["conversation.turn.done", "conversation.turn.failed"],
 });
 ```

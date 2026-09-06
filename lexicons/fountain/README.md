@@ -5,15 +5,17 @@ fountain lexicon plugin for [chant](https://github.com/intentius/chant).
 [fountain](https://github.com/BinaryBourbon/fountain) runs coding agents in
 sandboxed VMs. This lexicon declares its workload layer as typed chant
 resources: `Environment` (sandbox baseline), `Vault` (env-var overrides),
-`Agent` (a runnable agent config). Conversations are runs, not resources —
-start them with the `fountainRun` op.
+`Agent` (a runnable agent config), `Teammate` (an agent seated on the team,
+with a thread of its own), `Schedule` (a cron prompt into that thread), and
+`Webhook` (where the estate's events leave it). Conversations are runs, not
+resources — start them with the `fountainRun` op.
 
 `chant build` serializes to fountain's own manifest YAML (`fountain apply -f`
 accepts it verbatim) — the same YAML `fountainApply` sends to fountain's bulk
 `POST /api/apply` endpoint in one request.
 
 ```ts
-import { Environment, Agent } from "@intentius/chant-lexicon-fountain";
+import { Environment, Agent, Teammate, Schedule } from "@intentius/chant-lexicon-fountain";
 
 export const env = new Environment({
   name: "team-env",
@@ -28,7 +30,21 @@ export const helper = new Agent({
   runtime: "claude",
   environment: env,                              // typed ref — dangling name = build error
 });
+
+export const helperSeat = new Teammate({ name: "helper", agent: helper });
+
+export const nightly = new Schedule({
+  name: "nightly-converge",
+  teammate: helperSeat,
+  cron: "0 3 * * *",                             // five fields, UTC (FTN020)
+  prompt: "chant run converge",
+});
 ```
+
+`runtime: "acp"` and `runtime_command` are on the generated `Agent` type as
+chant extensions. Upstream does not have them until
+[BinaryBourbon/fountain#1634](https://github.com/BinaryBourbon/fountain/pull/1634)
+lands, and an instance without that PR rejects the pair at apply.
 
 For agents handling anything sensitive, `ConciergeStack` bundles the
 locked-down defaults (deny-all egress, no vault overrides, ownership marker
@@ -61,7 +77,7 @@ left unmodeled.
 - `src/plugin.ts` — LexiconPlugin with all lifecycle methods
 - `src/serializer.ts` — manifest YAML output
 - `src/codegen/`, `src/spec/` — generation pipeline and spec fetch/parse
-- `src/lint/rules/`, `src/lint/post-synth/` — FTN001 (AST) and FTN010–017
+- `src/lint/rules/`, `src/lint/post-synth/` — FTN001 (AST) and FTN010 to FTN023
 - `src/op/activities/` — `fountainApply` (reconciler) and `fountainRun`
 - `src/composites/` — `ConciergeStack`
 - `src/skills/` — agent skills for authoring, secrets, and locked sandboxes

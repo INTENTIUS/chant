@@ -24,13 +24,17 @@ spec:
       - github.com
 ```
 
+Documents come out in dependency order — Environment, Vault, Agent, Teammate, Schedule, Webhook — whatever order the file declared them in, so the manifest reads the way it applies. Within one kind, declaration order is kept.
+
 `metadata.name` is the resource's declared `name`, not the name of the variable you exported it as. fountain reconciles by that name, so renaming the variable does not orphan the resource. An entity declared without a `name` falls back to the export name. The name appears only in `metadata`; it is not repeated under `spec`, so the apply request carries one name per resource.
 
 The output is ejectable — `fountain apply -f` accepts it verbatim, so adopting chant here does not trap the manifests behind chant.
 
 ## Applying the manifest
 
-`fountainApply` parses this same YAML and sends it to fountain's bulk `POST /api/apply` endpoint in one request — the server reconciles by name, Environment → Vault → Agent, and resolves an agent's `environment` reference itself, against the manifest or the tenant's existing environments. See the Ops page for the activity's own behavior (prune, secrets, failure reporting).
+`fountainApply` parses this same YAML and sends it to fountain's bulk `POST /api/apply` endpoint in one request — the server reconciles by name, Environment then Vault then Agent, and resolves an agent's `environment` reference itself, against the manifest or the tenant's existing environments. See the Ops page for the activity's own behavior (prune, secrets, failure reporting).
+
+Bulk apply accepts those three kinds only. A `Teammate`, `Schedule` or `Webhook` document is emitted and is valid, and `fountainApply` does not send it yet: applying the three through their own routes waits on chant #2127, and on BinaryBourbon/fountain#1636 for a bulk call that covers them.
 
 ## Ownership
 

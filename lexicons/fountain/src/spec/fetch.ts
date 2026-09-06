@@ -28,11 +28,13 @@ import { fetchWithCache } from "@intentius/chant/codegen/fetch";
 /**
  * The pinned upstream spec.
  *
- * v0.3.0 is the first release to carry the `openapi.json` asset. Bumping this
- * changes the generated surface, so it belongs in its own commit with the
- * regenerated snapshot beside it.
+ * v0.3.0 was the first release to carry the `openapi.json` asset. v0.16.0 is
+ * the first that describes team, schedules, webhooks, sandboxes and the event
+ * stream, which is what the Teammate, Schedule and Webhook kinds are generated
+ * from. Bumping this changes the generated surface, so it belongs in its own
+ * commit with the regenerated snapshot beside it.
  */
-export const FOUNTAIN_SPEC_VERSION = "v0.3.0";
+export const FOUNTAIN_SPEC_VERSION = "v0.16.0";
 
 const SCHEMA_URL = `https://github.com/BinaryBourbon/fountain/releases/download/${FOUNTAIN_SPEC_VERSION}/openapi.json`;
 

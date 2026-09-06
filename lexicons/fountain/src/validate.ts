@@ -18,7 +18,15 @@ export type { ValidateCheck, ValidateResult } from "@intentius/chant/codegen/val
  * kind. Repository is included: it is the one property type reachable
  * from the request schemas, and its absence means ref-following broke.
  */
-const REQUIRED_NAMES: string[] = ["Environment", "Vault", "Agent", "Repository"];
+const REQUIRED_NAMES: string[] = [
+  "Environment",
+  "Vault",
+  "Agent",
+  "Teammate",
+  "Schedule",
+  "Webhook",
+  "Repository",
+];
 
 /**
  * Validate the generated lexicon-fountain artifacts.

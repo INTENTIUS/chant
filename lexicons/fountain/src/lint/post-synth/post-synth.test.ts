@@ -9,6 +9,10 @@ import { vaultShadowingCheck } from "./ftn014-vault-shadowing";
 import { mcpSecretEnvSubstitutionCheck } from "./ftn015-mcp-secret-env-substitution";
 import { runtimeModelValidCheck } from "./ftn016-runtime-model-valid";
 import { uniqueResourceNamesCheck } from "./ftn017-unique-resource-names";
+import { scheduleCronSyntaxCheck } from "./ftn020-schedule-cron-syntax";
+import { typedReferencesResolveCheck } from "./ftn021-typed-references-resolve";
+import { webhookUrlPublicHttpsCheck } from "./ftn022-webhook-url-public-https";
+import { acpRuntimeCommandCheck } from "./ftn023-acp-runtime-command";
 
 function ctx(entities: Record<string, Record<string, unknown>>): PostSynthContext {
   const map = new Map<string, Declarable>();
@@ -21,6 +25,9 @@ function ctx(entities: Record<string, Record<string, unknown>>): PostSynthContex
 const ENV = "Fountain::V1::Environment";
 const VAULT = "Fountain::V1::Vault";
 const AGENT = "Fountain::V1::Agent";
+const TEAMMATE = "Fountain::V1::Teammate";
+const SCHEDULE = "Fountain::V1::Schedule";
+const WEBHOOK = "Fountain::V1::Webhook";
 
 describe("FTN011 no-unrestricted-networking", () => {
   it("warns on unrestricted, silent on limited", () => {
@@ -108,6 +115,21 @@ describe("FTN016 runtime-model-valid", () => {
     );
     expect(diags).toHaveLength(0);
   });
+
+  it("accepts the acp runtime with no model", () => {
+    const diags = runtimeModelValidCheck.check(
+      ctx({ a: { entityType: AGENT, runtime: "acp", runtime_command: "chant acp" } }),
+    );
+    expect(diags).toHaveLength(0);
+  });
+
+  it("errors when an acp agent carries a model", () => {
+    const diags = runtimeModelValidCheck.check(
+      ctx({ a: { entityType: AGENT, runtime: "acp", model: "anthropic/claude-sonnet-4-6" } }),
+    );
+    expect(diags).toHaveLength(1);
+    expect(diags[0].message).toContain("acp");
+  });
 });
 
 describe("FTN017 unique-resource-names", () => {
@@ -129,5 +151,127 @@ describe("FTN017 unique-resource-names", () => {
       }),
     );
     expect(diags).toHaveLength(0);
+  });
+});
+
+describe("FTN020 schedule-cron-syntax", () => {
+  it("errors on an expression fountain would store and never fire", () => {
+    const diags = scheduleCronSyntaxCheck.check(
+      ctx({ s: { entityType: SCHEDULE, name: "nightly", cron: "every night" } }),
+    );
+    expect(diags).toHaveLength(1);
+    expect(diags[0].message).toContain("every night");
+  });
+
+  it("errors on too few fields", () => {
+    expect(scheduleCronSyntaxCheck.check(ctx({ s: { entityType: SCHEDULE, cron: "0 3 * *" } }))).toHaveLength(1);
+  });
+
+  it("accepts five fields, six fields, and the documented nicknames", () => {
+    for (const cron of ["0 3 * * *", "0 9 * * 1-5", "*/30 0 3 * * *", "@daily"]) {
+      expect(scheduleCronSyntaxCheck.check(ctx({ s: { entityType: SCHEDULE, cron } })), cron).toHaveLength(0);
+    }
+  });
+
+  it("rejects @reboot, which fountain documents as unsupported", () => {
+    expect(scheduleCronSyntaxCheck.check(ctx({ s: { entityType: SCHEDULE, cron: "@reboot" } }))).toHaveLength(1);
+  });
+});
+
+describe("FTN021 typed-references-resolve", () => {
+  it("errors when a Teammate names an agent the build does not declare", () => {
+    const diags = typedReferencesResolveCheck.check(
+      ctx({
+        a: { entityType: AGENT, name: "steward" },
+        t: { entityType: TEAMMATE, name: "seat", agent: "stewrad" },
+      }),
+    );
+    expect(diags).toHaveLength(1);
+    expect(diags[0].message).toContain("stewrad");
+  });
+
+  it("errors when a Schedule names a teammate the build does not declare", () => {
+    const diags = typedReferencesResolveCheck.check(
+      ctx({ s: { entityType: SCHEDULE, name: "nightly", teammate: "nobody" } }),
+    );
+    expect(diags).toHaveLength(1);
+  });
+
+  it("resolves against the declared name and the export name alike", () => {
+    const byDeclaredName = typedReferencesResolveCheck.check(
+      ctx({
+        stewardAgent: { entityType: AGENT, name: "steward" },
+        t: { entityType: TEAMMATE, agent: "steward" },
+      }),
+    );
+    const byExportName = typedReferencesResolveCheck.check(
+      ctx({
+        stewardAgent: { entityType: AGENT, name: "steward" },
+        t: { entityType: TEAMMATE, agent: "stewardAgent" },
+      }),
+    );
+    expect(byDeclaredName).toHaveLength(0);
+    expect(byExportName).toHaveLength(0);
+  });
+
+  it("is silent on the typed form, where the declaration is the reference", () => {
+    const agent = { entityType: AGENT, name: "steward" };
+    const diags = typedReferencesResolveCheck.check(ctx({ a: agent, t: { entityType: TEAMMATE, agent } }));
+    expect(diags).toHaveLength(0);
+  });
+});
+
+describe("FTN022 webhook-url-public-https", () => {
+  it("errors on http", () => {
+    const diags = webhookUrlPublicHttpsCheck.check(
+      ctx({ w: { entityType: WEBHOOK, name: "hook", url: "http://example.com/hooks" } }),
+    );
+    expect(diags).toHaveLength(1);
+    expect(diags[0].message).toContain("not https");
+  });
+
+  it("errors on loopback, RFC1918, and the cloud metadata address", () => {
+    for (const url of [
+      "https://localhost/hooks",
+      "https://127.0.0.1/hooks",
+      "https://10.0.3.7/hooks",
+      "https://192.168.1.9/hooks",
+      "https://172.20.0.4/hooks",
+      "https://169.254.169.254/latest/meta-data/",
+    ]) {
+      const diags = webhookUrlPublicHttpsCheck.check(ctx({ w: { entityType: WEBHOOK, name: "hook", url } }));
+      expect(diags.length, url).toBeGreaterThan(0);
+    }
+  });
+
+  it("is silent on an https public endpoint", () => {
+    const diags = webhookUrlPublicHttpsCheck.check(
+      ctx({ w: { entityType: WEBHOOK, name: "hook", url: "https://example.com/hooks/fountain" } }),
+    );
+    expect(diags).toHaveLength(0);
+  });
+});
+
+describe("FTN023 acp-runtime-command", () => {
+  it("errors on an acp agent with no runtime_command", () => {
+    const diags = acpRuntimeCommandCheck.check(ctx({ a: { entityType: AGENT, name: "s", runtime: "acp" } }));
+    expect(diags).toHaveLength(1);
+    expect(diags[0].message).toContain("runtime_command");
+  });
+
+  it("errors on a runtime_command anywhere else", () => {
+    const diags = acpRuntimeCommandCheck.check(
+      ctx({ a: { entityType: AGENT, name: "s", runtime: "claude", runtime_command: "chant acp" } }),
+    );
+    expect(diags).toHaveLength(1);
+  });
+
+  it("is silent on the pair, and on a plain claude agent", () => {
+    expect(
+      acpRuntimeCommandCheck.check(ctx({ a: { entityType: AGENT, runtime: "acp", runtime_command: "chant acp" } })),
+    ).toHaveLength(0);
+    expect(
+      acpRuntimeCommandCheck.check(ctx({ a: { entityType: AGENT, runtime: "claude", model: "anthropic/x" } })),
+    ).toHaveLength(0);
   });
 });

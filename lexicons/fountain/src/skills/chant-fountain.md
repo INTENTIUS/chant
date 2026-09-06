@@ -8,9 +8,9 @@ user-invocable: true
 
 ## What this lexicon covers
 
-[fountain](https://github.com/BinaryBourbon/fountain) runs coding agents in sandboxed VMs. Its workload layer is three kinds — `Environment` (sandbox baseline), `Vault` (env-var overrides), `Agent` (a runnable agent config) — and this lexicon declares them as typed chant resources. Conversations are runs, not resources: start them with the `fountainRun` op, never declare them.
+[fountain](https://github.com/BinaryBourbon/fountain) runs coding agents in sandboxed VMs. Six kinds are declarable, and this lexicon types all of them. `Environment` (sandbox baseline), `Vault` (env-var overrides) and `Agent` (a runnable agent config) are the workload layer; `Teammate` (an agent seated on the team, with a thread of its own), `Schedule` (a cron prompt into that thread) and `Webhook` (where the estate's events leave it) are the team, schedule and webhook routes. Conversations are runs, not resources: start them with the `fountainRun` op, never declare them.
 
-The source of truth is the TypeScript in `src/`. `chant build` serializes it to fountain's own manifest YAML (ejectable — `fountain apply -f` accepts it verbatim). `fountainApply` sends that same YAML to fountain's bulk `POST /api/apply` endpoint in one request: create-if-new, update-by-name, opt-in owned-only prune keyed on the `managed-by: chant` metadata marker.
+The source of truth is the TypeScript in `src/`. `chant build` serializes it to fountain's own manifest YAML (ejectable — `fountain apply -f` accepts it verbatim). `fountainApply` sends that same YAML to fountain's bulk `POST /api/apply` endpoint in one request: create-if-new, update-by-name, opt-in owned-only prune keyed on the `managed-by: chant` metadata marker. Bulk apply covers Environment, Vault and Agent only — a Teammate, Schedule or Webhook document is emitted and valid, and applying it through its own route waits on chant #2127.
 
 ## Authoring
 

@@ -29,12 +29,19 @@ describe("fountain plugin", () => {
       kind: string;
     }>;
     const resourceKinds = catalog.filter((e) => e.kind === "resource").map((e) => e.className);
-    expect(resourceKinds.sort()).toEqual(["Agent", "Environment", "Vault"]);
+    expect(resourceKinds.sort()).toEqual([
+      "Agent",
+      "Environment",
+      "Schedule",
+      "Teammate",
+      "Vault",
+      "Webhook",
+    ]);
   });
 
   it("exposes every post-synth check and lint rule", () => {
     expect(fountainPlugin.lintRules?.()).toHaveLength(1);
-    expect(fountainPlugin.postSynthChecks?.()).toHaveLength(8);
+    expect(fountainPlugin.postSynthChecks?.()).toHaveLength(12);
   });
 
   it("carries audit metadata for every rule it ships", () => {

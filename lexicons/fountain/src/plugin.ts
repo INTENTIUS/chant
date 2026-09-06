@@ -137,7 +137,7 @@ export const fountainPlugin: LexiconPlugin = {
       createCatalogResource(
         import.meta.url,
         "Fountain Resource Types",
-        "The three fountain workload kinds declarable from chant: Environment, Vault, Agent (conversations are runs, started by the fountainRun op)",
+        "The six fountain kinds declarable from chant: Environment, Vault, Agent, Teammate, Schedule, Webhook (conversations are runs, started by the fountainRun op)",
         "lexicon-fountain.json",
         "fountain",
       ),

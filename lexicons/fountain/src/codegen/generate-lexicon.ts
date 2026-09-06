@@ -14,6 +14,17 @@ export interface FountainLexiconEntry {
   kind: "resource" | "property";
   lexicon: "fountain";
   /**
+   * Every authored prop name, sorted.
+   *
+   * `propertyConstraints` is the only prop list core's `LexiconIndex` reads,
+   * and it carries a prop only when upstream constrained it — so a `Schedule`
+   * would complete `prompt` and `name` but not `cron`, and a `Webhook` not
+   * `url`. The two props most worth completing are exactly the ones the spec
+   * documents with an example rather than a pattern. This field is the full
+   * list; `src/lsp/lexicon-index.ts` merges it in.
+   */
+  props?: string[];
+  /**
    * Per-property constraints. Named to match core's `LexiconEntry`
    * contract (and the aws/azure peers) — core reserves bare `constraints`
    * for the extension-constraint array, and the LSP providers read
@@ -42,6 +53,8 @@ export function generateLexiconJSON(results: FountainParseResult[], naming: Nami
         kind: r?.isProperty ? "property" : "resource",
         lexicon: "fountain",
       };
+      const propNames = (r?.resource.properties ?? []).map((p) => p.name).sort();
+      if (propNames.length > 0) entry.props = propNames;
       if (propConstraints && Object.keys(propConstraints).length > 0) {
         entry.propertyConstraints = propConstraints;
       }

@@ -36,7 +36,18 @@ describe("LSP hover", () => {
     const info = hover(ctx("Agent"));
 
     expect(info?.contents).toContain("allowed_vault_ids");
-    expect(info?.contents).toContain("`runtime`: `claude` | `codex` | `gemini` | `opencode`");
+    expect(info?.contents).toContain("`runtime`: `claude` | `codex` | `gemini` | `opencode` | `acp`");
+  });
+
+  it("documents the kinds added in v0.16.0", () => {
+    expect(hover(ctx("Teammate"))?.contents).toContain("Fountain::V1::Teammate");
+    expect(hover(ctx("Teammate"))?.contents).toContain("typed reference");
+    expect(hover(ctx("Schedule"))?.contents).toContain("five fields in UTC");
+    expect(hover(ctx("Webhook"))?.contents).toContain("RFC1918");
+  });
+
+  it("says the acp runtime is a chant extension pending upstream", () => {
+    expect(hover(ctx("Agent"))?.contents).toContain("BinaryBourbon/fountain#1634");
   });
 
   it("marks property types as non-declarable", () => {

@@ -17,6 +17,9 @@ const flyNamingConfig: NamingConfig = {
     "Fountain::V1::Environment": "Environment",
     "Fountain::V1::Agent": "Agent",
     "Fountain::V1::Vault": "Vault",
+    "Fountain::V1::Teammate": "Teammate",
+    "Fountain::V1::Schedule": "Schedule",
+    "Fountain::V1::Webhook": "Webhook",
   },
 
   priorityAliases: {},
