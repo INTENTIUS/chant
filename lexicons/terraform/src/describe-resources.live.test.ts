@@ -102,6 +102,10 @@ function deps(overrides?: Partial<TerraformReadDeps>): TerraformReadDeps {
       adoptions: [],
       contested: [],
       ambiguous: 0,
+      // Plan change counts (#2106), likewise unread here.
+      adds: 0,
+      changes: 0,
+      destroys: 0,
       dir: ROOT_DIR,
       documentPath: "chant.live-plan.json",
       estate: ESTATE,
