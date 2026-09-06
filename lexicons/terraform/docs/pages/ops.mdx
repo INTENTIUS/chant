@@ -4,7 +4,7 @@ description: The init/plan/apply/show activities, the typed builders, and Terraf
 diataxis: how-to
 ---
 
-Four activities ship with the lexicon, resolvable by name via `loadActivities(["terraform"])`, plus one composite Op that phases them into a gated apply.
+Seven activities ship with the lexicon, resolvable by name via `loadActivities(["terraform"])`, plus one composite Op that phases four of them into a gated apply.
 
 ## The activities
 
@@ -14,7 +14,7 @@ Every call resolves the named root out of `terraform.roots` (walking up from `cw
 |---|---|---|
 | `terraformInit` | `terraform init` | `-backend-config` flags come from the root's `backendConfig`. `upgrade` adds `-upgrade`; `reconfigure` adds `-reconfigure`. |
 | `terraformPlan` | `terraform plan -detailed-exitcode -out=<planFile>` | Exit 0 means no changes, exit 2 means changes — both are success, everything else throws with the CLI's own stderr attached. Returns the plan's add/change/destroy counts and both a `-json` and a `-no-color` render, so a gate or a report downstream never re-plans. |
-| `terraformApply` | `terraform apply <planFile>` | A saved plan only — there is no bare-apply mode. A missing `planFile` is refused before the CLI ever runs, naming the Plan step's own output as the fix. |
+| `terraformApply` | `terraform apply <planFile>` | A saved plan only on a stock root, since there is no bare-apply mode there, and a missing `planFile` is refused before the CLI ever runs, naming the Plan step's own output as the fix. On a live root (see "choudoufu" below) it is the opposite: a `planFile` is refused, and it runs `apply -auto-approve` with none. |
 | `terraformShow` | `terraform show` | Over a saved plan (`planFile` given) or over current state (omitted). `terraform show` takes no `-input` flag, so this one carries `TF_IN_AUTOMATION` alone. |
 
 ## The builders
@@ -76,6 +76,41 @@ export const { op } = TerraformApplyOp({
 ```
 
 `examples/apply-gated/` is the worked version of this shape.
+
+## choudoufu
+
+`terraform.binary` also accepts `"choudoufu"`, an [OpenTofu fork](https://github.com/INTENTIUS/choudoufu) that carries ownership as two AWS tags on the resource itself rather than in a state file. A root only runs live under choudoufu when it also declares an estate, either form:
+
+```hcl
+# in-block, inside the root's terraform block
+terraform {
+  live {
+    estate = "prod-networking"
+  }
+}
+```
+
+```hcl
+# estate.chdf.hcl, a sidecar beside the root's .tf files, the leading form,
+# since it keeps every .tf file free of syntax stock tooling does not know
+estate = "prod-networking"
+```
+
+Declaring `binary: "choudoufu"` with no estate anywhere runs the root stock, exactly as `"terraform"`/`"tofu"` do; declaring an estate under any other binary parses fine but is inert, and `chant dev check-lexicon`/`buildRoots()` warns about it.
+
+Three more activities exist for a live root, alongside the four above:
+
+| Activity | Runs | Notes |
+|---|---|---|
+| `choudoufuLivePlan` | `live-plan -detailed-exitcode -json -estate=<estate>`, plus a second `live-plan` without `-json` | Exit 0 means no drift, exit 2 means drift, and both are success. Returns GitHub issue #788's JSON document captured whole (`.out.documentPath` names where it was written, under the root dir), the human-readable plan, and `drift`/`unowned`/`adoptable` counts projected from the document. `estate` is auto-detected from the root's own `live` block or sidecar when omitted. |
+| `choudoufuLiveLs` | `live-ls -estate=<estate> -json [-consistent]` | Lists every resource the account holds under the estate, straight off the Resource Groups Tagging API. No configuration, state or record store is read. |
+| `choudoufuLiveCheck` | `live-check -json` | Whether the root can move under live resource markers, and what stops it if not. Makes no cloud calls and needs no estate at all; `refused: true` on a non-zero exit carries the answer back rather than throwing. |
+
+`terraformInit` is reused as-is on a live root. `terraformApply` takes no plan file there and runs `apply -auto-approve`, which re-plans against the live system at apply time; passing `planFile` on a live root is refused, quoting choudoufu's own reason. Every choudoufu invocation still gets `TF_IN_AUTOMATION=1`. `choudoufu version` is checked once per activity-module load and refuses a binary older than v0.12.0 (needed for `live-plan -json`, `live-ls` and `live-check -json`).
+
+`choudoufuLivePlan`, `choudoufuLiveLs` and `choudoufuLiveCheck` exist as typed step builders too, the same shape as the four above (`root` positional, `opts` the activity's own args minus `root`). `choudoufuLivePlan`/`choudoufuLiveLs` default to the `longInfra`/`fastIdempotent` profiles respectively the same way `terraformPlan`/`terraformShow` do; `choudoufuLiveCheck` defaults to `fastIdempotent`, no cloud calls, no state.
+
+TF001 (no remote backend) does not fire on a live root, since a `backend` block is exactly what choudoufu refuses there. TF024 and TF025 are the live-root equivalents; see [Lint Rules](../lint-rules/).
 
 ## TerraformWatchOp
 

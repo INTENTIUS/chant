@@ -123,3 +123,77 @@ const apply = terraformApply("app", { planFile: "/tmp/plan.out" });
 ```
 
 To write custom rules for your project, see the [lint-rules authoring guide](/chant/lexicon-authoring/lint-rules/).
+
+## TF024: live root declares a backend or cloud block
+
+A root that is live (`terraform.binary: "choudoufu"` plus a declared estate, as a
+`live` block or an `estate.chdf.hcl` sidecar) whose `terraform` block also carries
+a `backend "<type>"` or `cloud {}` block.
+
+**Why it matters.** Under live markers there is no state to store: prior state is a
+projection of the `tofu-estate` and `tofu-address` tags, rebuilt from the live
+system every run. choudoufu refuses the combination at `init`, before any command
+runs ("Both a backend and a live configuration are present"), so the root never
+plans. TF001 is the same block read the other way round and does not fire on a
+live root.
+
+**The fix.** Remove the `backend` or `cloud` block from a live root. If the root is
+meant to stay on stock state, drop the estate declaration instead and switch
+`terraform.binary` back to `terraform` or `tofu`.
+
+**Prior art.** choudoufu `RuleStateBackend`
+([`internal/live/lint`](https://github.com/INTENTIUS/choudoufu/tree/main/internal/live/lint)),
+equivalent: the identical condition, checked the same way at `init`.
+
+```hcl
+terraform {
+  required_version = ">= 1.5.0"
+
+  live {
+    estate = "fixture-estate"
+  }
+
+  backend "s3" {
+    bucket = "tfstate"
+    key    = "fixture/terraform.tfstate"
+  }
+}
+
+resource "null_resource" "first" {}
+```
+
+## TF025: live root references a non-default workspace
+
+A live root whose configuration references `terraform.workspace`, or whose
+`terraform.roots.<name>.workspace` names anything but `default`.
+
+**Why it matters.** choudoufu refuses every workspace but `default`, along with
+`workspace new` and `workspace select`: a workspace is a second state file, and a
+live root has none. A `terraform.workspace` reference in a live root can only ever
+read `default`, which is a sign the configuration was written for a stock
+multi-workspace layout and has not been adapted.
+
+**The fix.** Replace the `terraform.workspace` reference with a variable or the
+estate name, and drop the `workspace` setting from the root's entry in
+`terraform.roots`. Separate environments become separate estates.
+
+**Prior art.** No tool in the survey covers this. choudoufu refuses the workspace
+at its CLI argument layer (`internal/command/live_mode.go`) rather than through a
+lint rule, so there is no rule constant to cite; see `audit-lineage.ts` for the
+note.
+
+```hcl
+terraform {
+  required_version = ">= 1.5.0"
+
+  live {
+    estate = "fixture-estate"
+  }
+}
+
+resource "null_resource" "first" {
+  triggers = {
+    workspace = "${terraform.workspace}"
+  }
+}
+```

@@ -7,7 +7,15 @@
 
 import { describe, test, expect } from "vitest";
 import { isStepOutputRef, type StepOutputRef } from "@intentius/chant/op";
-import { terraformInit, terraformPlan, terraformApply, terraformShow } from "./builders";
+import {
+  terraformInit,
+  terraformPlan,
+  terraformApply,
+  terraformShow,
+  choudoufuLivePlan,
+  choudoufuLiveLs,
+  choudoufuLiveCheck,
+} from "./builders";
 
 describe("terraform typed step builders (#2086)", () => {
   test("terraformInit: root is positional, longInfra by default", () => {
@@ -73,18 +81,65 @@ describe("terraform typed step builders (#2086)", () => {
   test(".out throws when the producing step has no id", () => {
     expect(() => terraformPlan("app").out.planFile).toThrow(/has no id/);
   });
+
+  test("terraformApply: no opts at all is valid (#2103, a live root's bare apply)", () => {
+    expect(terraformApply("estate")).toMatchObject({
+      fn: "terraformApply",
+      args: { root: "estate" },
+      profile: "longInfra",
+    });
+    expect(terraformApply("estate").args?.planFile).toBeUndefined();
+  });
+});
+
+describe("choudoufu typed step builders (#2103)", () => {
+  test("choudoufuLivePlan: root is positional, longInfra by default, estate is optional", () => {
+    expect(choudoufuLivePlan("estate")).toMatchObject({
+      kind: "activity",
+      fn: "choudoufuLivePlan",
+      args: { root: "estate" },
+      profile: "longInfra",
+    });
+    expect(choudoufuLivePlan("estate", { estate: "prod-networking" })).toMatchObject({
+      args: { root: "estate", estate: "prod-networking" },
+    });
+  });
+
+  test("choudoufuLivePlan: .out refs for drift, unowned, adoptable and documentPath", () => {
+    const plan = choudoufuLivePlan("estate", { id: "live-plan" });
+    expect(isStepOutputRef(plan.out.drift as StepOutputRef)).toBe(true);
+    expect((plan.out.unowned as StepOutputRef).path).toBe("unowned");
+    expect((plan.out.adoptable as StepOutputRef).path).toBe("adoptable");
+    expect((plan.out.documentPath as StepOutputRef).path).toBe("documentPath");
+  });
+
+  test("choudoufuLiveLs: fastIdempotent by default", () => {
+    expect(choudoufuLiveLs("estate", { consistent: true })).toMatchObject({
+      fn: "choudoufuLiveLs",
+      args: { root: "estate", consistent: true },
+      profile: "fastIdempotent",
+    });
+  });
+
+  test("choudoufuLiveCheck: fastIdempotent by default, no opts needed at all", () => {
+    expect(choudoufuLiveCheck("estate")).toMatchObject({
+      kind: "activity",
+      fn: "choudoufuLiveCheck",
+      args: { root: "estate" },
+      profile: "fastIdempotent",
+    });
+  });
 });
 
 // ── Compile-time-only: authoring-time type errors (never executed) ──────────
 function _typeChecksOnly(): void {
-  // @ts-expect-error — planFile is required on an apply: this activity has no
-  // bare-apply mode, so omitting it is a compile error, not a runtime one.
-  terraformApply("app");
-
   // @ts-expect-error — "planfile" (wrong case) is not a key of TerraformApplyArgs.
   terraformApply("app", { planfile: "chant.tfplan" });
 
   // @ts-expect-error — `root` is positional; it is not a member of opts.
   terraformInit("app", { root: "other" });
+
+  // @ts-expect-error: "estatee" (typo) is not a key of ChoudoufuLivePlanArgs.
+  choudoufuLivePlan("estate", { estatee: "prod" });
 }
 void _typeChecksOnly;

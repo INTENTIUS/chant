@@ -6,7 +6,7 @@ description: "Every lint rule and post-synth check provided by the Terraform lex
 {/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-terraform` — DO NOT EDIT.
     Edit lexicons/terraform/src/codegen/docs.ts instead; changes here are overwritten. */}
 
-The Terraform lexicon provides **2** rules: 1 lint rule and 1 post-synth check.
+The Terraform lexicon provides **4** rules: 1 lint rule and 3 post-synth checks.
 
 ## Lint Rules
 
@@ -21,3 +21,5 @@ Post-synth checks validate the serialized output after the build pipeline comple
 | ID | Description |
 |----|-------------|
 | `TF001` | Root module declares no remote backend |
+| `TF024` | Live root declares a backend or cloud block, which choudoufu refuses |
+| `TF025` | Live root references a non-default terraform.workspace, which choudoufu refuses |

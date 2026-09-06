@@ -99,6 +99,7 @@ export const PRIOR_ART = {
   "gixy": { name: "Gixy", url: "https://github.com/yandex/gixy", license: "MPL-2.0", kind: "scanner" },
   "kube-bench": { name: "kube-bench", url: "https://github.com/aquasecurity/kube-bench", license: "Apache-2.0", kind: "scanner" },
   "pluto": { name: "Pluto", url: "https://github.com/FairwindsOps/pluto", license: "Apache-2.0", kind: "scanner" },
+  "choudoufu": { name: "choudoufu", url: "https://github.com/INTENTIUS/choudoufu", license: "MPL-2.0", kind: "scanner" },
 } as const satisfies Record<string, PriorArtEntry>;
 
 export type PriorArtTool = keyof typeof PRIOR_ART;

@@ -17,10 +17,10 @@
 
 import { existsSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
-import type { Declarable } from "@intentius/chant/declarable";
+import { isResourceDeclarable, type Declarable } from "@intentius/chant/declarable";
 import type { Hcl2Json } from "@intentius/chant/terraform/parse";
 import type { TerraformRootConfig } from "../config";
-import { parseTerraformRootDir } from "./parse";
+import { LIVE_TYPE, parseTerraformRootDir } from "./parse";
 
 export interface TerraformRootsResult {
   entities: Map<string, Declarable>;
@@ -32,6 +32,11 @@ export interface RenderTerraformRootsOptions {
   projectRoot: string;
   /** `terraform.roots`: name to root-module config. */
   roots: Readonly<Record<string, TerraformRootConfig>>;
+  /**
+   * `terraform.binary`. A root is live only when this is `"choudoufu"` and it
+   * declares an estate; anything else runs stock (#2103).
+   */
+  binary?: string;
   /** Injectable parser (tests); defaults to core's lazy-loaded `@cdktf/hcl2json`. */
   hcl2json?: Hcl2Json;
 }
@@ -55,8 +60,26 @@ export async function renderTerraformRoots(
     }
 
     try {
-      const parsed = await parseTerraformRootDir(dir, name, opts.hcl2json);
+      const parsed = await parseTerraformRootDir(dir, name, opts.hcl2json, {
+        binary: opts.binary,
+        workspace: root.workspace,
+      });
       for (const [key, entity] of parsed) entities.set(key, entity);
+
+      // A `live` block or `estate.chdf.hcl` sidecar only takes effect under
+      // choudoufu; under any other binary it parses fine but is inert, which
+      // is worth a warning rather than silence (#2103).
+      for (const entity of parsed.values()) {
+        if (entity.entityType !== LIVE_TYPE || !isResourceDeclarable(entity)) continue;
+        if ((entity.props as { mode?: string }).mode === "state") {
+          warnings.push(
+            `terraform.roots.${name}: declares a live estate (a \`live\` block or ${JSON.stringify(
+              "estate.chdf.hcl",
+            )} sidecar), but terraform.binary is ${JSON.stringify(opts.binary ?? "terraform")}, not "choudoufu", so the live declaration is inert.`,
+          );
+        }
+        break;
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       warnings.push(`terraform.roots.${name}: could not parse ${dir}, ${message}`);

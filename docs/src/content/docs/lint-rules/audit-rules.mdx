@@ -2675,6 +2675,22 @@ Run against Terraform root modules (a directory of `.tf` files) parsed into the 
 
 Add a `backend "\<type>"` block (s3, gcs, azurerm, http) or a `cloud \{}` block to the root module's terraform block, then `terraform init -migrate-state`.
 
+### TF024
+
+**Live root declares a backend or cloud block, which choudoufu refuses** — merge-worthy · guidance
+
+Remove the `backend`/`cloud` block from the live root's terraform block; a live root's prior state is a projection rebuilt from the live system every run, so there is no state to store.
+
+| | |
+|---|---|
+| Prior art | [choudoufu `RuleStateBackend`](https://github.com/INTENTIUS/choudoufu/blob/main/internal/live/lint/issue.go) (equivalent) |
+
+### TF025
+
+**Live root references a non-default terraform.workspace, which choudoufu refuses** — merge-worthy · guidance
+
+Remove `workspace` from the root's terraform.roots config, and remove any `terraform.workspace` reference from its HCL; choudoufu refuses any workspace but "default" on a live root.
+
 ## Secrets & credentials (SEC)
 
 Lexicon-independent — scans the raw text of every scanned file for likely credentials, regardless of which audit lexicons are installed. Matched values are always redacted; see [suppressing false positives](/chant/cli/audit/#suppressing-a-secrets-finding).
@@ -3036,6 +3052,7 @@ This is credit rather than authority, and it never changes a rule's tier or cate
 | [mcp-audit (APIsec)](https://github.com/apisec-inc/mcp-audit) | scanner | MIT | 2 |
 | [Snyk Agent Scan (formerly mcp-scan)](https://github.com/invariantlabs-ai/mcp-scan) | scanner | Apache-2.0 | 1 |
 | [chart-testing (ct)](https://github.com/helm/chart-testing) | vendor-validator | Apache-2.0 | 1 |
+| [choudoufu](https://github.com/INTENTIUS/choudoufu) | scanner | MPL-2.0 | 1 |
 | [Gixy](https://github.com/yandex/gixy) | scanner | MPL-2.0 | 1 |
 | [Pluto](https://github.com/FairwindsOps/pluto) | scanner | Apache-2.0 | 1 |
 

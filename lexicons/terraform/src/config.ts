@@ -47,10 +47,14 @@ export const terraformRootSchema = z.strictObject({
 
 export const terraformConfigSchema = z.strictObject({
   /**
-   * Which CLI drives the roots. The two are wire-compatible for everything
-   * this lexicon does, so the choice is recorded rather than inferred.
+   * Which CLI drives the roots. `terraform` and `tofu` are wire-compatible
+   * for everything this lexicon does, so the choice is recorded rather than
+   * inferred. `choudoufu` (#2103) is an OpenTofu fork: a root running it also
+   * needs a declared estate (a `live` block or an `estate.chdf.hcl` sidecar,
+   * seen by the shared HCL parse) before it counts as live. Declaring the
+   * binary alone runs the root stock, exactly as `terraform`/`tofu` do.
    */
-  binary: z.enum(["terraform", "tofu"]).optional(),
+  binary: z.enum(["terraform", "tofu", "choudoufu"]).optional(),
   /** Named root modules. The name is the entity-key prefix, so keep it stable. */
   roots: z.record(z.string(), terraformRootSchema),
 });
