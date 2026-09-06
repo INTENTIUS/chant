@@ -1219,6 +1219,102 @@ export const x = { [Symbol.for("chant.declarable")]: true, entityType: "X", lexi
       30_000,
     );
   });
+
+  describe("post-synth findings honor inline chant-ignore comments (chant #2111)", () => {
+    /**
+     * A discovered entity carrying a `suppressions` directive by hand, the
+     * generic, duck-typed field `applyInlineSuppressions` reads (see
+     * `../../lint/suppressions.ts`'s module doc). The terraform lexicon
+     * populates this from real `# chant-ignore*` HCL comments
+     * (`lexicons/terraform/src/hcl/suppressions.ts`); this test proves the
+     * core wiring, that `chant build` applies it to ANY lexicon's entities,
+     * without needing a real HCL parse.
+     */
+    async function writeSuppressibleEntity(ids: string): Promise<void> {
+      await writeFile(
+        join(testDir, "main.ts"),
+        `export const e = {\n` +
+          `  lexicon: "test",\n` +
+          `  entityType: "TestEntity",\n` +
+          `  [Symbol.for("chant.declarable")]: true,\n` +
+          `  suppressions: [{ form: "chant-ignore", ids: new Set(${JSON.stringify(ids.split(","))}), file: "main.ts", line: 1, key: "main.ts:1:chant-ignore" }],\n` +
+          `};\n`,
+      );
+    }
+
+    /** Same shape as `fakePostSynthPlugin` above, except its check attaches `entity` to whatever entity the build discovered, so a suppression directive on that entity has something to match against. */
+    function fakeEntitySuppressionPlugin(checkId: string, severity: "error" | "warning" | "info"): LexiconPlugin {
+      return {
+        name: "fake",
+        serializer: { name: "fake", rulePrefix: "FAKE", serialize: () => "{}" },
+        generate: async () => {},
+        validate: async () => {},
+        coverage: async () => {},
+        package: async () => {},
+        postSynthChecks: () => [
+          {
+            id: checkId,
+            description: "test check",
+            check: (ctx) => {
+              const [key] = [...ctx.entities.keys()];
+              return key ? [{ checkId, severity, message: `${checkId} triggered`, entity: key }] : [];
+            },
+          },
+        ],
+      };
+    }
+
+    test("an inline chant-ignore naming the finding's checkId suppresses it and reports a suppressed count", async () => {
+      await writeSuppressibleEntity("FAKE005");
+      await writeFile(join(testDir, "chant.config.ts"), `export default {};\n`);
+
+      const result = await buildCommand({
+        path: testDir,
+        format: "json",
+        serializers: [mockSerializer],
+        plugins: [fakeEntitySuppressionPlugin("FAKE005", "error")],
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.errors).toEqual([]);
+      expect(result.warnings.some((w) => w.includes("1 post-synth finding(s) suppressed via inline chant-ignore comments"))).toBe(true);
+    });
+
+    test("an inline chant-ignore naming a different id has no effect", async () => {
+      await writeSuppressibleEntity("FAKE006");
+      await writeFile(join(testDir, "chant.config.ts"), `export default {};\n`);
+
+      const result = await buildCommand({
+        path: testDir,
+        format: "json",
+        serializers: [mockSerializer],
+        plugins: [fakeEntitySuppressionPlugin("FAKE007", "error")],
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.errors.some((e) => e.includes("FAKE007 triggered"))).toBe(true);
+      expect(result.warnings.some((w) => w.includes("suppressed"))).toBe(false);
+    });
+
+    test("ignorable: false in lint.rules denies the ignore and reports the attempt, keeping the finding active", async () => {
+      await writeSuppressibleEntity("FAKE008");
+      await writeFile(
+        join(testDir, "chant.config.ts"),
+        `export default { lint: { rules: { "FAKE008": ["error", { ignorable: false }] } } };\n`,
+      );
+
+      const result = await buildCommand({
+        path: testDir,
+        format: "json",
+        serializers: [mockSerializer],
+        plugins: [fakeEntitySuppressionPlugin("FAKE008", "error")],
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.errors.some((e) => e.includes("FAKE008 triggered"))).toBe(true);
+      expect(result.warnings.some((w) => w.includes("SUPP003") && w.includes("ignorable: false"))).toBe(true);
+    });
+  });
 });
 
 // ── #284 bug 1: -o extension drives format when --format is absent ────────

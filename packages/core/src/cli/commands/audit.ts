@@ -7,7 +7,7 @@
 
 import { existsSync, readFileSync, statSync, writeFileSync } from "fs";
 import { join } from "path";
-import { auditFiles, type AuditInput, type AuditFinding, type ChecksProvider } from "../../audit/core";
+import { auditFiles, type AuditInput, type AuditFinding, type ChecksProvider, type SuppressionStats } from "../../audit/core";
 import { AUDIT_LEXICONS, classifyFiles, collectCandidates, loadAuditPlugins, unclaimedFiles, type DetectPlugin, type RepoFile, type UnclaimedFile } from "../../audit/discover";
 import { RULE_CATALOG, resolveAuditCatalog, type RuleMeta } from "../../audit/catalog";
 import { scanForSecrets, parseSecretsConfig, type SecretsScanOptions } from "../../audit/secrets";
@@ -79,6 +79,12 @@ export interface AuditCommandResult {
   unclaimed?: UnclaimedFile[];
   /** Where `output` belongs; diagnostics go to stderr, reports to stdout (default). */
   stream?: "stdout" | "stderr";
+  /**
+   * Findings an inline `# chant-ignore*` comment suppressed (chant #2111),
+   * counted, never dropped silently, mirroring `chant build`'s equivalent
+   * summary line.
+   */
+  suppressedCount?: number;
 }
 
 /** Exit code when the audit had no lexicons to look with. Distinct from 1 (findings / failure). */
@@ -410,9 +416,13 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
   }
 
   let findings: AuditFinding[] = [];
+  // chant #2111: mutated in place by `auditFiles` so its inline (`# chant-
+  // ignore*`) suppressed count reaches the summary without changing
+  // `auditFiles`'s `AuditFinding[]` return type; see `SuppressionStats`'s doc.
+  const suppressionStats: SuppressionStats = { count: 0 };
   if (inputs.length > 0) {
     try {
-      findings = await auditFiles(inputs, { checksProvider: options.checksProvider });
+      findings = await auditFiles(inputs, { checksProvider: options.checksProvider, suppressionStats });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return { success: false, output: "", findings: [], scanned, exitCode: 1, error: msg };
@@ -429,6 +439,11 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
   if (tier === "merge-worthy") findings = findings.filter((f) => isMergeWorthy(f, catalog));
   const notes = coverageNotes(inputs);
   if (missingLexiconNote) notes.push(missingLexiconNote);
+  if (suppressionStats.count > 0) {
+    notes.push(
+      `${suppressionStats.count} finding${suppressionStats.count === 1 ? "" : "s"} suppressed via inline chant-ignore comments.`,
+    );
+  }
 
   // Diff-bearing renderers (markdown, html) need action SHAs / image digests
   // resolved up front (sync maps so rendering stays synchronous).
@@ -496,10 +511,10 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
     } catch (err) {
       return { success: false, output, findings, scanned, exitCode: 1, error: `Failed to write ${options.output}: ${err instanceof Error ? err.message : String(err)}` };
     }
-    return { success: true, status: "ok", output, findings, scanned, unclaimed, exitCode, wroteTo: options.output };
+    return { success: true, status: "ok", output, findings, scanned, unclaimed, exitCode, wroteTo: options.output, suppressedCount: suppressionStats.count };
   }
 
-  return { success: true, status: "ok", output, findings, scanned, unclaimed, exitCode };
+  return { success: true, status: "ok", output, findings, scanned, unclaimed, exitCode, suppressedCount: suppressionStats.count };
 }
 
 /** Print an audit result to stdout. */

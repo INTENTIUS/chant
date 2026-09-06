@@ -500,6 +500,15 @@ export interface PostSynthSeverityResult {
  * remove. Config severity (`"off"`) is the one suppression surface this can
  * offer uniformly; a check that wants a per-instance escape hatch can read
  * `ctx.env`/its own options to decide not to emit a diagnostic at all.
+ *
+ * chant #2111 adds a second, narrower surface next to this one:
+ * `./suppressions.ts`'s `applyInlineSuppressions` matches `diag.entity`
+ * against `ctx.entities` (a source-level map key every `PostSynthContext`
+ * carries) instead of a name in the synthesized output, so it sidesteps the
+ * exact mismatch this comment describes. It is opt-in per lexicon (an entity
+ * has to carry a `suppressions` field) and runs as its own pass, right after
+ * this one, in both `chant build` and `chant audit`. See that module's doc
+ * for the full reasoning.
  */
 export function applyConfiguredSeverity(
   diagnostics: readonly PostSynthDiagnostic[],
