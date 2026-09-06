@@ -1,6 +1,6 @@
 ---
 title: "Composites"
-description: "ConciergeStack — a locked-down Environment and Agent pair."
+description: "ConciergeStack, a locked-down Environment and Agent pair, and Steward, an environment's one writer."
 diataxis: reference
 ---
 
@@ -31,3 +31,45 @@ export const { environment, agent } = ConciergeStack({
 Every default is the closed one, so loosening any of it is a visible, reviewable act: pass an allowlist, pass vault ids, or drop to the raw classes.
 
 Give such a sandbox **no cloud credentials of any kind** — anything readable inside it is exfiltratable by prompt injection. Services the agent needs live outside the sandbox behind their own auth; the sandbox gets at most a conversation-scoped token.
+
+## Steward
+
+An environment's one writer: an Agent that speaks the Agent Client Protocol over `chant acp` on a persistent sandbox, bound to the team as a Teammate so it has a standing conversation, with a Schedule per scheduled op and an optional Webhook.
+
+```typescript
+import { Steward } from "@intentius/chant-lexicon-fountain";
+import { watch, converge, apply } from "../ops";
+
+export const { agent, teammate, schedules, webhook } = Steward({
+  name: "prod-steward",
+  environment: toolchain,   // repo, chant and kubectl in setup_script
+  vault: prodCreds,         // omit under the egress broker
+  ops: [watch.op, converge.op, apply.op],
+  webhook: {
+    url: "https://hooks.example.com/chant",
+    event_types: ["conversation.turn.done", "conversation.turn.failed"],
+  },
+});
+```
+
+The teammate's thread is that environment's operational history. Each turn is one chant command line, so scrolling the thread is scrolling what was done to the environment.
+
+| Default | Effect |
+|---|---|
+| `runtime: acp` with `runtime_command: "chant acp"` | the agent launches chant's own ACP server, so a prompt is a chant command line |
+| `sandbox_mode: persistent` | one computer per steward — the checkout and tool cache survive a turn ending |
+| `permission_policy: { default: "auto_allow" }` | nobody is at the keyboard to answer a permission card; chant's gates are where a human belongs |
+| no `model` | an acp agent's model is whatever the command it launches decides to use |
+| no skills | a steward's competence is chant's op definitions |
+| `allowed_vault_ids` scoped to the given vault, `[]` with none | no conversation may attach a vault the steward was not given |
+| `managed-by: chant` on the Agent | owned-only reconcile, prune, and drift filtering see it |
+
+An op that carries a `schedule` (`WatchOp`, `ConvergeOp`, `ApplyOp` and `ReconcileOp` all set one from their `schedule:` field) gets a Schedule whose `cron` is the op's and whose `prompt` is `chant run <op>` — the exact line `chant acp` parses. It is `one_off: false`, so the prompt goes into the teammate's own thread and a fire while a run is in flight is dropped rather than opening a second computer beside the first. An op with no cadence gets no Schedule, but is still listed on the steward, which is how `chant run <op> --on fountain` knows the thread its run belongs on.
+
+Three things are refused at construction rather than at apply:
+
+- Two stewards on the same environment and vault. That is two writers on one machine, which is the exact thing a single thread exists to prevent — fountain would accept both and their turns would interleave on the same checkout.
+- An op whose `schedule.overlap` is anything but `skip`. A fountain schedule that fires while the teammate is busy is dropped with `teammate was busy`, so any other policy would be a promise the server does not keep.
+- A webhook url FTN022 would reject: plaintext http, or a loopback, link-local or RFC1918 target. Refusing here rather than at synth keeps the author from reading a lint error about a resource they never typed.
+
+`chant build` emits all four to the manifest in dependency order — Environment, Vault, Agent, Teammate, Schedule, Webhook — and `fountainApply` reconciles them. The first three go through fountain's bulk `POST /api/apply`; the other three, which bulk apply does not carry yet ([fountain#1636](https://github.com/BinaryBourbon/fountain/issues/1636)), go through their own routes afterwards, matched by name and by url, so a second apply of an unchanged manifest makes no writes at all.

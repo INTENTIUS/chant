@@ -23,14 +23,16 @@
  *
  * ## Finding the steward
  *
- * A declared `Steward` composite is #2127 and does not exist yet. Until it
- * does, the steward is resolved in this order:
+ * The steward is resolved in this order:
  *
- * 1. the profile's `team` (#2124) — a teammate name. The post goes to
+ * 1. a declared `Steward` (#2127) that lists this Op. The composite registers
+ *    the mapping when the project's declarations load, so this answers
+ *    whenever the run and the declaration share a process.
+ * 2. the profile's `team` (#2124) — a teammate name. The post goes to
  *    `POST /api/team/:agent_id/messages`, which serialises against the turn in
  *    flight. That refusal is fountain's single-writer rule, and it is the
  *    reason a steward thread is the right place for an op to run.
- * 2. `--param agent=<name>`, then the Op's `labels.Agent`. Either opens a
+ * 3. `--param agent=<name>`, then the Op's `labels.Agent`. Either opens a
  *    fresh conversation with `POST /api/conversations` instead.
  *
  * A `400 conversation_busy` is reported with the conversation's address and
@@ -59,6 +61,10 @@ import {
   type FountainHttp,
 } from "./activities/fountain-apply";
 import { resolveAgentId } from "./activities/fountain-run";
+import { stewardForOp } from "../composites/steward";
+import { runPrompt } from "./run-prompt";
+
+export { runPrompt };
 
 // ── The SSE seam ──────────────────────────────────────────────────────────
 
@@ -237,11 +243,6 @@ export const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 1_800_000;
 const MAX_RECONNECTS = 1000;
 
 // ── Pure helpers ──────────────────────────────────────────────────────────
-
-/** The prompt one run of `op` is posted as, and the string a turn is matched by. */
-export function runPrompt(op: string): string {
-  return `chant run ${op}`;
-}
 
 /** Does this turn's prompt name `op`? The prompt is `chant run <op>`, exactly. */
 export function turnRunsOp(turn: Turn, op: string): boolean {
@@ -463,7 +464,7 @@ interface Steward {
   /** True when the post goes to the team thread — fountain's single-writer path. */
   team: boolean;
   /** Which declaration named it, for an error that can be acted on. */
-  via: "profile-team" | "param-agent" | "label-agent";
+  via: "steward" | "profile-team" | "param-agent" | "label-agent";
 }
 
 /**
@@ -548,9 +549,17 @@ export function createFountainOpRuntime(opts: FountainOpRuntimeOptions = {}): Op
   };
 
   const resolveSteward = async (op: OpConfig | undefined, params?: Record<string, unknown>): Promise<Steward> => {
-    // #2127 will put a declared `Steward` above this: an Op named in its `ops`
-    // goes to that teammate's thread whatever the profile says. Until that
-    // composite exists there is nothing to look it up in.
+    // A declared `Steward` (#2127) wins: an Op listed in its `ops` goes to
+    // that teammate's thread whatever the profile says, because the steward is
+    // the declaration that put the Op on that machine in the first place. The
+    // registry it fills is only populated when the project's declarations have
+    // been loaded into this process — `chant build` and anything that imports
+    // the declaration file — so the profile below stays the answer for a bare
+    // `chant run <op> --on fountain` in a project that keeps its Ops and its
+    // steward in separate modules.
+    const declared = op ? stewardForOp(op.name) : undefined;
+    if (declared) return { agent: declared, team: true, via: "steward" };
+
     const { profile } = await connect();
     if (profile?.team) return { agent: profile.team, team: true, via: "profile-team" };
 

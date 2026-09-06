@@ -369,7 +369,13 @@ spec:
     const { http, calls } = fakeHttp({});
     const summary = await fountainApply({ manifestContent: "" }, http);
     expect(calls).toHaveLength(0);
-    expect(summary).toEqual({ created: [], updated: [], pruned: [], secretsUpserted: 0 });
+    expect(summary).toEqual({
+      created: [],
+      updated: [],
+      unchanged: [],
+      pruned: [],
+      secretsUpserted: 0,
+    });
   });
 
   it("prunes only chant-owned resources, in reverse kind order", async () => {
@@ -390,6 +396,7 @@ spec:
       },
       "DELETE /api/agents/a-1": { status: 204 },
       "DELETE /api/environments/e-1": { status: 204 },
+      "GET /api/team": { status: 200, json: { data: [] } },
     });
 
     const summary = await fountainApply({ manifestContent: "", prune: true }, http);
@@ -416,11 +423,320 @@ spec: {}
       },
       "GET /api/vaults": { status: 200, json: { data: [] } },
       "GET /api/agents": { status: 200, json: { data: [] } },
+      "GET /api/team": { status: 200, json: { data: [] } },
     });
 
     const summary = await fountainApply({ manifestContent: manifest, prune: true }, http);
     expect(calls.some((c) => c.method === "DELETE")).toBe(false);
     expect(summary.pruned).toEqual([]);
+  });
+});
+
+// ── The three v0.16.0 kinds, reconciled through their own routes ──────────
+
+const STEWARD_MANIFEST = `apiVersion: fountain.dev/v1
+kind: Agent
+metadata:
+  name: prod-steward
+spec:
+  runtime: acp
+  runtime_command: chant acp
+  environment: toolchain
+---
+apiVersion: fountain.dev/v1
+kind: Teammate
+metadata:
+  name: prod-steward
+spec:
+  agent: prod-steward
+  environment: toolchain
+  vault: prod-creds
+---
+apiVersion: fountain.dev/v1
+kind: Schedule
+metadata:
+  name: prod-steward-prod-watch
+spec:
+  teammate: prod-steward
+  cron: "*/10 * * * *"
+  prompt: chant run prod-watch
+  one_off: false
+  enabled: true
+---
+apiVersion: fountain.dev/v1
+kind: Webhook
+metadata:
+  name: prodHook
+spec:
+  url: https://hooks.example.com/chant
+  event_types:
+    - conversation.turn.done
+`;
+
+/** The bulk call, answering "created" for whatever the manifest sent it. */
+function bulkCreated(): { status: number; json: unknown } {
+  return {
+    status: 200,
+    json: {
+      data: {
+        results: [{ kind: "Agent", name: "prod-steward", action: "created", errors: null, secrets: [] }],
+      },
+    },
+  };
+}
+
+const LIVE_AGENTS = {
+  status: 200,
+  json: { data: [{ id: "a-1", name: "prod-steward", metadata: { "managed-by": "chant" } }] },
+};
+const LIVE_ENVIRONMENTS = {
+  status: 200,
+  json: { data: [{ id: "e-1", name: "toolchain", metadata: { "managed-by": "chant" } }] },
+};
+const LIVE_VAULTS = {
+  status: 200,
+  json: { data: [{ id: "v-1", name: "prod-creds", metadata: { "managed-by": "chant" } }] },
+};
+
+/** The roster once the steward is on the team. */
+const ON_TEAM = {
+  status: 200,
+  json: {
+    data: [
+      {
+        agent_id: "a-1",
+        name: "prod-steward",
+        agent: { id: "a-1", name: "prod-steward", metadata: { "managed-by": "chant" } },
+      },
+    ],
+  },
+};
+
+const LIVE_SCHEDULE = {
+  id: "s-1",
+  name: "prod-steward-prod-watch",
+  cron: "*/10 * * * *",
+  prompt: "chant run prod-watch",
+  one_off: false,
+  enabled: true,
+};
+
+const LIVE_WEBHOOK = {
+  id: "w-1",
+  url: "https://hooks.example.com/chant",
+  event_types: ["conversation.turn.done"],
+  description: null,
+};
+
+describe("fountainApply — Teammate, Schedule and Webhook", () => {
+  it("creates all three on a first apply, after the bulk call", async () => {
+    const { http, calls } = fakeHttp({
+      "POST /api/apply": bulkCreated(),
+      "GET /api/agents": LIVE_AGENTS,
+      "GET /api/environments": LIVE_ENVIRONMENTS,
+      "GET /api/vaults": LIVE_VAULTS,
+      "GET /api/team": { status: 200, json: { data: [] } },
+      "POST /api/team": { status: 201, json: { data: { agent_id: "a-1" } } },
+      "GET /api/team/a-1/schedules": { status: 200, json: { data: [] } },
+      "POST /api/team/a-1/schedules": { status: 201, json: { data: { id: "s-1" } } },
+      "GET /api/webhooks": { status: 200, json: { data: [] } },
+      "POST /api/webhooks": { status: 201, json: { data: { id: "w-1" } } },
+    });
+
+    const summary = await fountainApply({ manifestContent: STEWARD_MANIFEST }, http);
+
+    expect(summary.created).toEqual([
+      "Agent/prod-steward",
+      "Teammate/prod-steward",
+      "Schedule/prod-steward-prod-watch",
+      "Webhook/prodHook",
+    ]);
+    expect(summary.unchanged).toEqual([]);
+
+    // The bulk call carries only the kinds `/api/apply` knows.
+    const bulk = calls.find((c) => c.path === "/api/apply")!;
+    expect((bulk.body as { resources: Array<{ kind: string }> }).resources.map((r) => r.kind)).toEqual([
+      "Agent",
+    ]);
+
+    // Name references became the ids the routes take.
+    const addTeammate = calls.find((c) => c.method === "POST" && c.path === "/api/team")!;
+    expect(addTeammate.body).toEqual({
+      agent_id: "a-1",
+      name: "prod-steward",
+      environment_id: "e-1",
+      vault_id: "v-1",
+    });
+
+    const addSchedule = calls.find((c) => c.path === "/api/team/a-1/schedules" && c.method === "POST")!;
+    expect(addSchedule.body).toEqual({
+      name: "prod-steward-prod-watch",
+      cron: "*/10 * * * *",
+      prompt: "chant run prod-watch",
+      one_off: false,
+      enabled: true,
+    });
+  });
+
+  it("reports unchanged and writes nothing on a second apply", async () => {
+    const { http, calls } = fakeHttp({
+      "POST /api/apply": {
+        status: 200,
+        json: {
+          data: {
+            results: [
+              { kind: "Agent", name: "prod-steward", action: "unchanged", errors: null, secrets: [] },
+            ],
+          },
+        },
+      },
+      "GET /api/agents": LIVE_AGENTS,
+      "GET /api/team": ON_TEAM,
+      "GET /api/team/a-1/schedules": { status: 200, json: { data: [LIVE_SCHEDULE] } },
+      "GET /api/webhooks": { status: 200, json: { data: [LIVE_WEBHOOK] } },
+    });
+
+    const summary = await fountainApply({ manifestContent: STEWARD_MANIFEST }, http);
+
+    expect(summary.unchanged).toEqual([
+      "Agent/prod-steward",
+      "Teammate/prod-steward",
+      "Schedule/prod-steward-prod-watch",
+      "Webhook/prodHook",
+    ]);
+    expect(summary.created).toEqual([]);
+    expect(summary.updated).toEqual([]);
+    expect(calls.filter((c) => c.method === "PATCH" || c.method === "DELETE")).toEqual([]);
+  });
+
+  it("PATCHes a schedule whose cron drifted, and nothing else", async () => {
+    const { http, calls } = fakeHttp({
+      "POST /api/apply": {
+        status: 200,
+        json: {
+          data: {
+            results: [
+              { kind: "Agent", name: "prod-steward", action: "unchanged", errors: null, secrets: [] },
+            ],
+          },
+        },
+      },
+      "GET /api/agents": LIVE_AGENTS,
+      "GET /api/team": ON_TEAM,
+      "GET /api/team/a-1/schedules": {
+        status: 200,
+        json: { data: [{ ...LIVE_SCHEDULE, cron: "0 3 * * *" }] },
+      },
+      "PATCH /api/team/a-1/schedules/s-1": { status: 200, json: { data: LIVE_SCHEDULE } },
+      "GET /api/webhooks": { status: 200, json: { data: [LIVE_WEBHOOK] } },
+    });
+
+    const summary = await fountainApply({ manifestContent: STEWARD_MANIFEST }, http);
+
+    expect(summary.updated).toEqual(["Schedule/prod-steward-prod-watch"]);
+    const patches = calls.filter((c) => c.method === "PATCH");
+    expect(patches).toHaveLength(1);
+    expect((patches[0].body as { cron: string }).cron).toBe("*/10 * * * *");
+  });
+
+  it("PATCHes a webhook whose event types drifted", async () => {
+    const { http } = fakeHttp({
+      "POST /api/apply": {
+        status: 200,
+        json: {
+          data: {
+            results: [
+              { kind: "Agent", name: "prod-steward", action: "unchanged", errors: null, secrets: [] },
+            ],
+          },
+        },
+      },
+      "GET /api/agents": LIVE_AGENTS,
+      "GET /api/team": ON_TEAM,
+      "GET /api/team/a-1/schedules": { status: 200, json: { data: [LIVE_SCHEDULE] } },
+      "GET /api/webhooks": {
+        status: 200,
+        json: { data: [{ ...LIVE_WEBHOOK, event_types: ["conversation.turn.failed"] }] },
+      },
+      "PATCH /api/webhooks/w-1": { status: 200, json: { data: LIVE_WEBHOOK } },
+    });
+
+    const summary = await fountainApply({ manifestContent: STEWARD_MANIFEST }, http);
+    expect(summary.updated).toEqual(["Webhook/prodHook"]);
+  });
+
+  it("renames a teammate whose display name drifted", async () => {
+    const { http, calls } = fakeHttp({
+      "POST /api/apply": {
+        status: 200,
+        json: {
+          data: {
+            results: [
+              { kind: "Agent", name: "prod-steward", action: "unchanged", errors: null, secrets: [] },
+            ],
+          },
+        },
+      },
+      "GET /api/agents": LIVE_AGENTS,
+      "GET /api/team": {
+        status: 200,
+        json: {
+          data: [
+            {
+              agent_id: "a-1",
+              name: "renamed-in-the-ui",
+              agent: { id: "a-1", name: "prod-steward", metadata: { "managed-by": "chant" } },
+            },
+          ],
+        },
+      },
+      "PATCH /api/team/a-1": { status: 200, json: { data: {} } },
+      "GET /api/team/a-1/schedules": { status: 200, json: { data: [LIVE_SCHEDULE] } },
+      "GET /api/webhooks": { status: 200, json: { data: [LIVE_WEBHOOK] } },
+    });
+
+    const summary = await fountainApply({ manifestContent: STEWARD_MANIFEST }, http);
+    expect(summary.updated).toEqual(["Teammate/prod-steward"]);
+    expect(calls.find((c) => c.path === "/api/team/a-1")!.body).toEqual({ name: "prod-steward" });
+  });
+
+  it("prunes an unlisted schedule and teammate, and only the chant-owned ones", async () => {
+    const { http, calls } = fakeHttp({
+      "GET /api/team": {
+        status: 200,
+        json: {
+          data: [
+            {
+              agent_id: "a-1",
+              name: "retired-steward",
+              agent: { id: "a-1", name: "retired-steward", metadata: { "managed-by": "chant" } },
+            },
+            {
+              agent_id: "a-9",
+              name: "a-person",
+              agent: { id: "a-9", name: "a-person", metadata: {} },
+            },
+          ],
+        },
+      },
+      "GET /api/team/a-1/schedules": {
+        status: 200,
+        json: { data: [{ ...LIVE_SCHEDULE, name: "retired-nightly" }] },
+      },
+      "DELETE /api/team/a-1/schedules/s-1": { status: 204 },
+      "DELETE /api/team/a-1": { status: 204 },
+      "GET /api/environments": { status: 200, json: { data: [] } },
+      "GET /api/vaults": { status: 200, json: { data: [] } },
+      "GET /api/agents": { status: 200, json: { data: [] } },
+    });
+
+    const summary = await fountainApply({ manifestContent: "", prune: true }, http);
+
+    expect(summary.pruned).toEqual(["Schedule/retired-nightly", "Teammate/retired-steward"]);
+    expect(calls.filter((c) => c.method === "DELETE").map((c) => c.path)).toEqual([
+      "/api/team/a-1/schedules/s-1",
+      "/api/team/a-1",
+    ]);
   });
 });
 
