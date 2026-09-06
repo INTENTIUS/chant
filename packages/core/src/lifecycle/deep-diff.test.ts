@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { countPropertyDrift, diffDeep, type DeclaredDeepEntity } from "./deep-diff";
+import { countHeldFields, countPropertyDrift, diffDeep, type DeclaredDeepEntity } from "./deep-diff";
 import { UNRESOLVED, type NormalizedDeepObservation } from "../deep-observation";
 import type { BaselineLexicon } from "./observation-baseline";
 
@@ -33,14 +33,25 @@ describe("diffDeep", () => {
     expect(countPropertyDrift(result)).toBe(1);
   });
 
-  test("a property only the cloud has is undeclared drift", () => {
+  test("a property only the cloud has is held elsewhere, not drift", () => {
     const result = diffDeep({
       declared: { b: { type: "T", properties: {} } },
       live: live({ b: { type: "T", properties: { LoggingConfiguration: { TargetBucket: "logs" } } } }),
     });
-    expect(result.drifted[0].changes).toEqual([
-      { path: "LoggingConfiguration.TargetBucket", kind: "undeclared", live: "logs" },
+    expect(result.drifted).toEqual([]);
+    expect(countPropertyDrift(result)).toBe(0);
+    expect(result.heldElsewhere).toEqual([
+      {
+        name: "b",
+        type: "T",
+        fields: [
+          { path: "LoggingConfiguration.TargetBucket", live: "logs", source: "claimed-fields" },
+        ],
+      },
     ]);
+    // Every property chant declared matches, so the entity is clean: a field
+    // somebody else set must not keep an entity reported forever.
+    expect(result.unchanged).toEqual(["b"]);
   });
 
   test("a declared property the cloud does not carry is absent", () => {
@@ -107,17 +118,22 @@ describe("diffDeep with an accepted baseline", () => {
       accepted: [{ path: "Tags[0].Value", value: "platform", note: "set by the platform team" }],
     },
   };
+  // A path source DOES declare — since #2160 the baseline only ever has drift
+  // to suppress, because a path source never declared is held elsewhere and was
+  // never reported in the first place.
+  const declared = { b: { type: "AWS::S3::Bucket", properties: { Tags: [{ Value: "ours" }] } } };
 
   test("an accepted deviation is not drift", () => {
     const result = diffDeep({
-      declared: { b: { type: "AWS::S3::Bucket", properties: {} } },
+      declared,
       live: live({ b: { type: "AWS::S3::Bucket", properties: { Tags: [{ Value: "platform" }] } } }),
       baseline,
     });
     expect(result.drifted).toEqual([]);
     expect(result.accepted[0].changes[0]).toEqual({
       path: "Tags[0].Value",
-      kind: "undeclared",
+      kind: "changed",
+      declared: "ours",
       live: "platform",
       baseline: "platform",
     });
@@ -125,13 +141,14 @@ describe("diffDeep with an accepted baseline", () => {
 
   test("a value that moved away from the accepted one is drift again, and shows all three axes", () => {
     const result = diffDeep({
-      declared: { b: { type: "AWS::S3::Bucket", properties: {} } },
+      declared,
       live: live({ b: { type: "AWS::S3::Bucket", properties: { Tags: [{ Value: "someone-else" }] } } }),
       baseline,
     });
     expect(result.drifted[0].changes[0]).toEqual({
       path: "Tags[0].Value",
-      kind: "undeclared",
+      kind: "changed",
+      declared: "ours",
       live: "someone-else",
       baseline: "platform",
     });
@@ -139,7 +156,7 @@ describe("diffDeep with an accepted baseline", () => {
 
   test("an entity with only accepted deviations is not counted as unchanged", () => {
     const result = diffDeep({
-      declared: { b: { type: "AWS::S3::Bucket", properties: {} } },
+      declared,
       live: live({ b: { type: "AWS::S3::Bucket", properties: { Tags: [{ Value: "platform" }] } } }),
       baseline,
     });
@@ -148,11 +165,29 @@ describe("diffDeep with an accepted baseline", () => {
 
   test("the baseline never suppresses a different path", () => {
     const result = diffDeep({
-      declared: { b: { type: "AWS::S3::Bucket", properties: {} } },
+      declared: { b: { type: "AWS::S3::Bucket", properties: { Tags: [{ Value: "ours" }], Extra: 0 } } },
       live: live({ b: { type: "AWS::S3::Bucket", properties: { Tags: [{ Value: "platform" }], Extra: 1 } } }),
       baseline,
     });
     expect(result.drifted[0].changes.map((c) => c.path)).toEqual(["Extra"]);
+  });
+
+  test("a held field carries its accepted value but never needed one", () => {
+    // A baseline recorded before #2160 still names undeclared paths. The value
+    // rides along for continuity; the field is quiet either way.
+    const result = diffDeep({
+      declared: { b: { type: "AWS::S3::Bucket", properties: {} } },
+      live: live({ b: { type: "AWS::S3::Bucket", properties: { Tags: [{ Value: "platform" }] } } }),
+      baseline,
+    });
+    expect(result.drifted).toEqual([]);
+    expect(result.accepted).toEqual([]);
+    expect(result.heldElsewhere[0].fields[0]).toEqual({
+      path: "Tags[0].Value",
+      live: "platform",
+      source: "claimed-fields",
+      baseline: "platform",
+    });
   });
 });
 
@@ -252,7 +287,7 @@ describe("diffDeep — declared-side origin (#1443)", () => {
     expect(change.origin).toEqual({ kind: "composite", composite: "WebService", instance: "web" });
   });
 
-  test("is absent on an undeclared path — nothing in source produced it", () => {
+  test("an undeclared path gets no origin because it is not a drift row at all", () => {
     const result = diffDeep({
       declared,
       live: live({
@@ -265,9 +300,9 @@ describe("diffDeep — declared-side origin (#1443)", () => {
         },
       }),
     });
-    const change = result.drifted[0].changes.find((c) => c.path === "status.observed")!;
-    expect(change.kind).toBe("undeclared");
-    expect(change).not.toHaveProperty("origin");
+    expect(result.drifted).toEqual([]);
+    const held = result.heldElsewhere[0].fields.find((f) => f.path === "status.observed")!;
+    expect(held).toEqual({ path: "status.observed", live: 1, source: "claimed-fields" });
   });
 
   test("is absent when the build recorded no path origins", () => {
@@ -278,5 +313,109 @@ describe("diffDeep — declared-side origin (#1443)", () => {
       live: live({ web: { type: "K8s::Apps::Deployment", properties: { spec: { replicas: 5 } } } }),
     });
     expect(result.drifted[0].changes[0]).not.toHaveProperty("origin");
+  });
+});
+
+
+// #2160 - the claimed-field set. A live value on a property this declaration
+// never set belongs to whoever wrote it, and chant reports it as theirs rather
+// than proposing to change it.
+describe("diffDeep - the claimed-field set (#2160)", () => {
+  const declared: Record<string, DeclaredDeepEntity> = {
+    web: { type: "K8s::Apps::Deployment", properties: { spec: { replicas: 2 } } },
+  };
+
+  test("a declared path that differs is still drift, unchanged", () => {
+    const result = diffDeep({
+      declared,
+      live: live({ web: { type: "K8s::Apps::Deployment", properties: { spec: { replicas: 5 } } } }),
+    });
+    expect(result.drifted[0].changes).toEqual([
+      { path: "spec.replicas", kind: "changed", declared: 2, live: 5 },
+    ]);
+    expect(result.heldElsewhere).toEqual([]);
+  });
+
+  test("a declared path that matches is neither drift nor held", () => {
+    const result = diffDeep({
+      declared,
+      live: live({ web: { type: "K8s::Apps::Deployment", properties: { spec: { replicas: 2 } } } }),
+    });
+    expect(result.unchanged).toEqual(["web"]);
+    expect(result.heldElsewhere).toEqual([]);
+  });
+
+  test("the claim answers where the substrate records no manager", () => {
+    const result = diffDeep({
+      declared,
+      live: live({
+        web: {
+          type: "K8s::Apps::Deployment",
+          properties: { spec: { replicas: 2 }, metadata: { labels: { team: "platform" } } },
+        },
+      }),
+    });
+    expect(result.heldElsewhere[0].fields).toEqual([
+      { path: "metadata.labels.team", live: "platform", source: "claimed-fields" },
+    ]);
+  });
+
+  test("the manager wins over the claim where the substrate names one", () => {
+    const result = diffDeep({
+      declared,
+      live: live({
+        web: {
+          type: "K8s::Apps::Deployment",
+          properties: { spec: { replicas: 2 }, metadata: { labels: { team: "platform" } } },
+          fieldOwners: { "metadata.labels.team": "kubectl-edit" },
+        },
+      }),
+    });
+    expect(result.heldElsewhere[0].fields).toEqual([
+      { path: "metadata.labels.team", live: "platform", heldBy: "kubectl-edit", source: "field-manager" },
+    ]);
+  });
+
+  test("a field manager on a DECLARED path still reports drift and names the manager", () => {
+    // The contested case: chant's source asks for 2, an autoscaler holds 5.
+    // The claim covers the path, so the disagreement is real drift.
+    const result = diffDeep({
+      declared,
+      live: live({
+        web: {
+          type: "K8s::Apps::Deployment",
+          properties: { spec: { replicas: 5 } },
+          fieldOwners: { "spec.replicas": "hpa-controller" },
+        },
+      }),
+    });
+    expect(result.heldElsewhere).toEqual([]);
+    expect(result.drifted[0].changes[0]).toMatchObject({ kind: "changed", owner: "hpa-controller" });
+  });
+
+  test("held fields are never counted as drift", () => {
+    const result = diffDeep({
+      declared,
+      live: live({
+        web: {
+          type: "K8s::Apps::Deployment",
+          properties: { spec: { replicas: 5 }, status: { readyReplicas: 5, observedGeneration: 3 } },
+        },
+      }),
+    });
+    expect(countPropertyDrift(result)).toBe(1);
+    expect(countHeldFields(result)).toBe(2);
+  });
+
+  test("an unevaluated intrinsic is claimed, so its live value is not held elsewhere", () => {
+    // chant DID set the field; it just cannot know what the reference resolves
+    // to. Treating it as unclaimed would report an interpolated property as
+    // somebody else's on every read.
+    const result = diffDeep({
+      declared: { b: { type: "T", properties: { BucketName: UNRESOLVED } } },
+      live: live({ b: { type: "T", properties: { BucketName: "prod-data" } } }),
+    });
+    expect(result.drifted).toEqual([]);
+    expect(result.heldElsewhere).toEqual([]);
   });
 });

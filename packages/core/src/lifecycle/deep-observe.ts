@@ -26,6 +26,7 @@ import {
   type DeepResourceObservation,
   type NormalizedDeepObservation,
 } from "../deep-observation";
+import { claimedFieldPaths, claimedFieldsOfTree } from "../claimed-fields";
 import { unobservedAll, type UnobservedEntity } from "../observation";
 import type { PathOrigin } from "../provenance";
 import { diffDeep, type DeclaredDeepEntity, type DeepDiffResult } from "./deep-diff";
@@ -140,14 +141,15 @@ export function diffDeepObservation(
     const declaredPaths = deepPathSet(declaredRaw);
     const livePaths = deepPathSet(liveRaw);
 
+    const declaredProperties = normalizeDeepProperties(declaredRaw, {
+      entityType: entity.entityType,
+      side: "declared",
+      hooks,
+      counterpartPaths: livePaths,
+    });
     declared[name] = {
       type: entity.entityType,
-      properties: normalizeDeepProperties(declaredRaw, {
-        entityType: entity.entityType,
-        side: "declared",
-        hooks,
-        counterpartPaths: livePaths,
-      }),
+      properties: declaredProperties,
       ...(entity.pathOrigins ? { pathOrigins: entity.pathOrigins } : {}),
     };
     if (liveEntity) {
@@ -158,6 +160,14 @@ export function diffDeepObservation(
         // up by the flattened path, so a keyed list element (`[#name]`) has
         // no owner today — its raw index path is what the reader recorded.
         ...(liveEntity.fieldOwners ? { fieldOwners: liveEntity.fieldOwners } : {}),
+        // The claimed-field set (#2160), computed from the declaration and
+        // carried on the observation so a consumer holding only this envelope
+        // can classify a live value three ways rather than two. Same normalized
+        // tree and same hooks `diffDeep` flattens, so the two never disagree
+        // about a path.
+        claimedFields: claimedFieldPaths(
+          claimedFieldsOfTree(declaredProperties, { entityType: entity.entityType, ...(hooks ? { hooks } : {}) }),
+        ),
         properties: normalizeDeepProperties(liveRaw, {
           entityType: liveEntity.type || entity.entityType,
           side: "live",

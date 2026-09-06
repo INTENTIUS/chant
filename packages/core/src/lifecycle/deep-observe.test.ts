@@ -156,10 +156,12 @@ describe("deepDiffForLexicon", () => {
       observeResourcesDeep: async () =>
         deepObservation({ a: { type: "T", properties: { Extra: "accepted-value" } } }),
     });
+    // A path source declares: since #2160 the baseline only ever suppresses
+    // drift, and a path nobody declared never reaches it (it is held elsewhere).
     const opts = {
       environment: "prod",
       buildOutput: "",
-      entities: entities({ a: { entityType: "T", props: {} } }),
+      entities: entities({ a: { entityType: "T", props: { Extra: "ours" } } }),
     };
     const withoutBaseline = await deepDiffForLexicon(plugin, opts);
     expect(withoutBaseline.drifted[0].changes[0].path).toBe("Extra");
