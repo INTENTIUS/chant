@@ -38,6 +38,7 @@
     "**/node_modules/**",
     "**/dist/**",
     "**/docs/**",
-    "packages/core/src/cli/commands/__fixtures__/**"
+    "packages/core/src/cli/commands/__fixtures__/**",
+    "lexicons/terraform/src/lint/rules/fixtures/**/*-op.ts"
   ]
 }

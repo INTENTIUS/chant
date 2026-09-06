@@ -19,7 +19,8 @@
     "**/*.test.ts",
     "node_modules",
     "dist",
-    "docs"
+    "docs",
+    "src/lint/rules/fixtures/**/*-op.ts"
   ],
   "tsc-alias": {
     "resolveFullPaths": true

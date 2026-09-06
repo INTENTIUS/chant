@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import * as ts from "typescript";
 import type { LintContext } from "@intentius/chant/lint/rule";
 import { planBeforeApplyRule } from "./plan-before-apply";
+import { loadRuleFixture } from "./fixtures/load";
 
 function createContext(code: string, fileName = "infra.op.ts"): LintContext {
   const sourceFile = ts.createSourceFile(fileName, code, ts.ScriptTarget.Latest, true);
@@ -10,16 +11,16 @@ function createContext(code: string, fileName = "infra.op.ts"): LintContext {
 
 describe("TF101: plan-before-apply", () => {
   test("flags a literal plan path", () => {
-    const diags = planBeforeApplyRule.check(
-      createContext(`
-        const plan = terraformPlan({ root: "app" });
-        const apply = terraformApply({ planFile: "/tmp/plan.out" });
-      `),
-    );
+    const diags = planBeforeApplyRule.check(loadRuleFixture("TF101", "positive"));
     expect(diags).toHaveLength(1);
     expect(diags[0].ruleId).toBe("TF101");
     expect(diags[0].severity).toBe("error");
     expect(diags[0].message).toContain("literal path");
+  });
+
+  test("passes a step-output reference to the preceding plan (fixtures/TF101/negative.op.ts)", () => {
+    const diags = planBeforeApplyRule.check(loadRuleFixture("TF101", "negative"));
+    expect(diags).toHaveLength(0);
   });
 
   test("flags a template literal plan path", () => {

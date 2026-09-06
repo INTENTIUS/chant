@@ -159,6 +159,7 @@
     "node_modules",
     "**/dist/**",
     "**/docs/**",
-    "**/*.test.ts"
+    "**/*.test.ts",
+    "lexicons/terraform/src/lint/rules/fixtures/**/*-op.ts"
   ]
 }
