@@ -51,6 +51,39 @@ For sharing default *property values* across resources of the same type, see [Pr
 
 Some lexicons also support **child projects** — subdirectories that build to separate output files. The parent references a child project via a lexicon-specific function (e.g. AWS `nestedStack()`), and cross-stack values are explicitly exported with `stackOutput()`. See [Multi-Stack Projects](/chant/guide/multi-stack/) for an overview.
 
+## What a Composite Records About Its Fields
+
+A composite is the one thing chant emits that is not one to one with its source. Two typed arguments become five resources, so a drift report comparing live properties against declared ones sees flat resources and no longer sees the factory that produced them.
+
+The build records the missing half. For every property an expansion emits, `chant build` stores where the value came from, beside the build output and never inside it, so the record cannot reach the document an applier writes. There are four answers:
+
+- a parameter of the factory, with the parameter path that flowed into the field
+- a literal the factory fixes, which no argument at the call site can move
+- a field the author declared directly, outside any expansion
+- unknown, when the build expanded a call without interpreting its factory
+
+`chant lifecycle diff` reads the record on the return leg. A drifted field that traces to a parameter is reported as a one line change to that parameter, naming the file, the call and the parameter path, leaving the source structure intact. A drifted field the factory fixes is refused by name instead. Closing it would mean flattening the abstraction away, and the two honest options are to parameterize the field or to stop using the abstraction at that call site. Both are choices for a person to make.
+
+### Hardcoding a Field Gives Up Its Provenance
+
+Whatever a factory writes as a literal becomes a field the return leg can only refuse:
+
+```typescript
+export const WebService = Composite<WebServiceProps>((props) => {
+  const deployment = new Deployment({
+    replicas: 3,                 // fixed: the return leg will refuse to change it
+    image: props.image,          // parameterized: a drift here proposes `image`
+  });
+  return { deployment };
+}, "WebService");
+```
+
+That is a fair trade for a value that genuinely should not vary per caller, such as an API version or a label chant itself owns. It is a poor one for a value an operator might need to change under pressure, because the only ways to move it are to edit the factory for every caller or to abandon it for one of them. Prefer a parameter with a default when a caller might ever need the field to differ.
+
+Two other shapes lose provenance the same way. A field wired to a sibling member inside the factory reads as fixed. `role: role.arn` is the usual case, and no argument at the call site moves it, so proposing a parameter change would be wrong.
+
+A factory outside the interpretable subset gives up provenance for every field it emits, not only the hardcoded ones. `chant build --fold` interprets a body instead of calling it only while that body stays inside the evaluated subset, so a factory with an `if` or an array transform is invoked and the build records `unknown` for its properties. Unknown is a legal answer, and the return leg handles it by falling back to editing the declared value and saying that is what it did. It is still less than the factory could have given.
+
 ## Kubernetes Composites
 
 The Kubernetes lexicon ships 27 production-ready composites across four categories. Here's a quick overview:

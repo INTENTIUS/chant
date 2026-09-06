@@ -31,6 +31,13 @@ import type { PathOrigin } from "../provenance";
  * consts without scope tracking. That reports a parameter the field could
  * plausibly be governed by rather than one it definitely is, which is the
  * failure the "could affect" reading is written to absorb.
+ *
+ * {@link collectCompositeOrigins} (chant #2161) is the same walk pointed at a
+ * different parameter object: a composite factory's own props, inside a body
+ * the fold interprets. It shares the path grammar, the const-following and the
+ * under-reporting posture, and adds the one answer a build parameter has no use
+ * for — a path that reads no parameter at all, which for a composite means the
+ * field is fixed.
  */
 
 /** The property name a member declares, when it is a literal one. */
@@ -162,6 +169,192 @@ export function collectParamDependencies(
         continue;
       }
       record(path, member.initializer);
+    }
+  };
+
+  walk(props, "");
+  return out;
+}
+
+/**
+ * The factory-parameter names in scope inside one composite body (chant #2161).
+ *
+ * A `Composite()` factory takes at most one argument, so a parameter path is a
+ * path INTO that argument: `props.scaling.max` is the parameter path
+ * `scaling.max`. Two binding forms reach the same place — `(props) => …` binds
+ * the whole object under one name, `({ name, port }) => …` binds leaves — so
+ * the scope carries both.
+ */
+export interface CompositeParamScope {
+  /** Local names bound to the whole props object (`(props) => …`). */
+  whole: ReadonlySet<string>;
+  /** Local name → the parameter path it was destructured from (`({ name }) => …`). */
+  destructured: ReadonlyMap<string, string>;
+}
+
+/** The parameter path `node` addresses, or `undefined` when it is not rooted at one. */
+function parameterPathOf(node: ts.Expression, scope: CompositeParamScope): string | undefined {
+  const segments: string[] = [];
+  let current: ts.Expression = node;
+  for (;;) {
+    if (ts.isPropertyAccessExpression(current)) {
+      segments.unshift(current.name.text);
+      current = current.expression;
+      continue;
+    }
+    if (ts.isElementAccessExpression(current) && ts.isStringLiteralLike(current.argumentExpression)) {
+      segments.unshift(current.argumentExpression.text);
+      current = current.expression;
+      continue;
+    }
+    break;
+  }
+  if (!ts.isIdentifier(current)) return undefined;
+  if (scope.whole.has(current.text)) {
+    // A bare `props` addresses no single parameter — the same call the
+    // build-param collector makes about a bare `params`.
+    return segments.length === 0 ? undefined : segments.join(".");
+  }
+  const base = scope.destructured.get(current.text);
+  if (base === undefined) return undefined;
+  return segments.length === 0 ? base : `${base}.${segments.join(".")}`;
+}
+
+/**
+ * True for a `const` bound to a sibling ENTITY rather than to a value: a
+ * `new Type(...)`, or a call (a nested composite, a helper).
+ *
+ * Following one would answer the wrong question. `const bucket = new Bucket({
+ * BucketName: props.name })` and then `Description: bucket.Arn` reads a
+ * reference to a sibling the composite wired up, not the value of `name`.
+ * Chasing it would report `Description` as governed by `name`, and the return
+ * leg would propose editing `name` to fix a field that is a cross-reference. A
+ * field wired inside the composite is one the composite fixes, and the refusal
+ * is the right answer.
+ */
+function isEntityBinding(initializer: ts.Expression): boolean {
+  const expr = unwrap(initializer);
+  return ts.isNewExpression(expr) || ts.isCallExpression(expr);
+}
+
+/**
+ * Every factory parameter path `expr` reads, following `consts` so a value
+ * hoisted into a body-local `const` is still attributed.
+ */
+function readCompositeParameters(
+  expr: ts.Expression,
+  consts: ReadonlyMap<string, ts.Expression>,
+  scope: CompositeParamScope,
+  out: Set<string>,
+): void {
+  const followed = new Set<string>();
+
+  const visit = (node: ts.Node): void => {
+    if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
+      const path = parameterPathOf(node as ts.Expression, scope);
+      if (path !== undefined) {
+        out.add(path);
+        return;
+      }
+      visit(node.expression);
+      if (ts.isElementAccessExpression(node)) visit(node.argumentExpression);
+      return;
+    }
+
+    if (ts.isIdentifier(node)) {
+      const path = parameterPathOf(node, scope);
+      if (path !== undefined) {
+        out.add(path);
+        return;
+      }
+      if (scope.whole.has(node.text)) return;
+      const initializer = consts.get(node.text);
+      if (initializer && !followed.has(node.text) && !isEntityBinding(initializer)) {
+        followed.add(node.text);
+        visit(initializer);
+      }
+      return;
+    }
+
+    // A property KEY is not a reference — see `readParams` for the same guard.
+    if (ts.isPropertyAssignment(node)) {
+      visit(node.initializer);
+      return;
+    }
+
+    ts.forEachChild(node, visit);
+  };
+
+  visit(expr);
+}
+
+/**
+ * Path → composite origin for one `new Type({...})` inside an interpreted
+ * composite factory body (chant #2161).
+ *
+ * Same walk, same path grammar and the same under-reporting posture as
+ * {@link collectParamDependencies}, with one added answer: a path whose
+ * expression reads NO parameter is recorded as `composite-literal` rather than
+ * left silent, because "the composite fixes this" is a finding in its own
+ * right — it is what the reconcile refuses on.
+ *
+ * A spread is the one place nothing is recorded when no parameter is found.
+ * Which keys it contributes is not knowable here, so `composite-parameter` at
+ * the containing object is a safe over-approximation of "a parameter governs
+ * something under here", while `composite-literal` would be a claim that every
+ * key it brings is fixed. That claim is left unmade, and those paths come back
+ * `unknown` from ../fold-provenance.ts instead.
+ */
+export function collectCompositeOrigins(
+  props: ts.ObjectLiteralExpression,
+  consts: ReadonlyMap<string, ts.Expression>,
+  scope: CompositeParamScope,
+  composite: string,
+): Record<string, PathOrigin> {
+  const out: Record<string, PathOrigin> = {};
+
+  const parametersOf = (expr: ts.Expression): string[] => {
+    const found = new Set<string>();
+    readCompositeParameters(expr, consts, scope, found);
+    return [...found].sort();
+  };
+
+  const record = (path: string, expr: ts.Expression, spread: boolean): void => {
+    const parameters = parametersOf(expr);
+    if (parameters.length > 0) {
+      const existing = out[path];
+      const merged =
+        existing && existing.kind === "composite-parameter"
+          ? [...new Set([...existing.parameters, ...parameters])].sort()
+          : parameters;
+      out[path] = { kind: "composite-parameter", composite, parameters: merged };
+      return;
+    }
+    if (spread) return;
+    out[path] ??= { kind: "composite-literal", composite };
+  };
+
+  const walk = (object: ts.ObjectLiteralExpression, prefix: string): void => {
+    for (const member of object.properties) {
+      if (ts.isSpreadAssignment(member)) {
+        record(prefix, member.expression, true);
+        continue;
+      }
+      if (ts.isShorthandPropertyAssignment(member)) {
+        const key = member.name.text;
+        record(prefix ? `${prefix}.${key}` : key, member.name, false);
+        continue;
+      }
+      if (!ts.isPropertyAssignment(member)) continue;
+      const key = literalName(member.name);
+      if (key === undefined) continue;
+      const path = prefix ? `${prefix}.${key}` : key;
+      const initializer = unwrap(member.initializer);
+      if (ts.isObjectLiteralExpression(initializer)) {
+        walk(initializer, path);
+        continue;
+      }
+      record(path, member.initializer, false);
     }
   };
 

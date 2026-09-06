@@ -1,7 +1,7 @@
 import * as ts from "typescript";
 import { describe, expect, test } from "vitest";
 import { collectConsts } from "../fold/fold";
-import { collectParamDependencies } from "./param-deps";
+import { collectCompositeOrigins, collectParamDependencies } from "./param-deps";
 import type { PathOrigin } from "../provenance";
 
 /**
@@ -114,5 +114,116 @@ describe("collectParamDependencies", () => {
   test("a computed key is skipped rather than guessed at", () => {
     const source = `export const x = new Thing({ [params.key]: 1, name: params.name });`;
     expect(depsOf(source)).toEqual({ name: param("name") });
+  });
+});
+
+/**
+ * chant #2161 — the same walk over a composite factory's own parameter.
+ *
+ * The fixture shape is a factory body: the file is `const f = (<param>) => {
+ * <consts> return new Thing({...}); }`, so the body consts are in scope exactly
+ * as {@link import("./fold-import").interpretCompositeFactory} arranges them.
+ */
+function compositeOriginsOf(
+  body: string,
+  scope: { whole?: string[]; destructured?: Record<string, string> } = { whole: ["props"] },
+): Record<string, PathOrigin> {
+  const source = `const f = (p) => { ${body} };`;
+  const file = ts.createSourceFile("factory.ts", source, ts.ScriptTarget.Latest, true);
+
+  const consts = new Map<string, ts.Expression>();
+  let props: ts.ObjectLiteralExpression | undefined;
+  const visit = (node: ts.Node): void => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+      consts.set(node.name.text, node.initializer);
+    }
+    if (ts.isNewExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "Thing") {
+      for (const argument of node.arguments ?? []) {
+        if (ts.isObjectLiteralExpression(argument)) props ??= argument;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  if (!props) throw new Error("fixture has no `new Thing({...})`");
+
+  return collectCompositeOrigins(
+    props,
+    consts,
+    {
+      whole: new Set(scope.whole ?? []),
+      destructured: new Map(Object.entries(scope.destructured ?? {})),
+    },
+    "WebService",
+  );
+}
+
+const fromParam = (...names: string[]): PathOrigin => ({
+  kind: "composite-parameter",
+  composite: "WebService",
+  parameters: names,
+});
+const fixed: PathOrigin = { kind: "composite-literal", composite: "WebService" };
+
+describe("collectCompositeOrigins", () => {
+  test("a parameter read and a fixed literal are both recorded, at their own paths", () => {
+    expect(compositeOriginsOf(`return new Thing({ name: props.name, tier: "prod" });`)).toEqual({
+      name: fromParam("name"),
+      tier: fixed,
+    });
+  });
+
+  test("a nested parameter path keeps its dots", () => {
+    expect(compositeOriginsOf(`return new Thing({ path: props.iam.path });`)).toEqual({
+      path: fromParam("iam.path"),
+    });
+  });
+
+  test("a destructured parameter is the path it was destructured from", () => {
+    expect(
+      compositeOriginsOf(`return new Thing({ name: name, max: scaling.max });`, {
+        destructured: { name: "name", scaling: "scaling" },
+      }),
+    ).toEqual({ name: fromParam("name"), max: fromParam("scaling.max") });
+  });
+
+  test("a value hoisted into a body const is still attributed", () => {
+    expect(
+      compositeOriginsOf("const roleName = `role-for-${props.name}`; return new Thing({ roleName });"),
+    ).toEqual({ roleName: fromParam("name") });
+  });
+
+  test("a const bound to a sibling resource is NOT followed, so the field reads as fixed", () => {
+    expect(
+      compositeOriginsOf(`const b = new Bucket({ BucketName: props.name }); return new Thing({ ref: b.Arn });`),
+    ).toEqual({ ref: fixed });
+  });
+
+  test("an object literal is descended into; an array is attributed whole", () => {
+    expect(
+      compositeOriginsOf(`return new Thing({ v: { Status: "Enabled" }, Tags: [{ Key: "t", Value: props.tier }] });`),
+    ).toEqual({ "v.Status": fixed, Tags: fromParam("tier") });
+  });
+
+  test("a bare props reference names no single parameter", () => {
+    expect(compositeOriginsOf(`return new Thing({ all: props });`)).toEqual({ all: fixed });
+  });
+
+  test("a spread records a parameter it finds and claims nothing when it finds none", () => {
+    expect(compositeOriginsOf(`return new Thing({ ...props.extra, name: "n" });`)).toEqual({
+      "": fromParam("extra"),
+      name: fixed,
+    });
+    expect(compositeOriginsOf(`return new Thing({ ...defaults, name: "n" });`)).toEqual({ name: fixed });
+  });
+
+  test("a factory with no parameters at all fixes everything", () => {
+    expect(compositeOriginsOf(`return new Thing({ name: "n" });`, {})).toEqual({ name: fixed });
+  });
+
+  test("a computed key is skipped rather than guessed at", () => {
+    expect(compositeOriginsOf(`return new Thing({ [props.key]: 1, name: props.name });`)).toEqual({
+      name: fromParam("name"),
+    });
   });
 });

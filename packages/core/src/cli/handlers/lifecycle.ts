@@ -5,7 +5,8 @@ import { takeSnapshot } from "../../lifecycle/snapshot";
 import { readSnapshot, readSnapshotAt, readEnvironmentSnapshots, listSnapshots, fetchLifecycle, pushLifecycle, snapshotStorageKey, StaleLifecycleBranchError } from "../../lifecycle/git";
 import { deepDiffForLexicon, type DeclaredEntities } from "../../lifecycle/deep-observe";
 import { countHeldFields, countPropertyDrift, countHeld, suspiciousHeld, type DeepDiffResult, type DeepEntityHeld } from "../../lifecycle/deep-diff";
-import { describePathOrigin, getPathProvenance } from "../../provenance";
+import { describePathOrigin, getPathProvenance, getProvenance, type EntityProvenance } from "../../provenance";
+import { resolveDeepDrift, resolveDriftedField, type FieldReconcile } from "../../fold-provenance";
 import {
   acceptDeviations,
   baselineForLexicon,
@@ -697,6 +698,13 @@ interface LiveDiffOutcome {
       unobserved?: Record<string, UnobservedEntity>;
       /** Property-level drift (#1014), present only for lexicons with a deep reader. */
       deep?: DeepDiffResult;
+      /**
+       * chant #2161 — one verdict per drifted field: what the fold provenance
+       * says produced it, and what the return leg may therefore propose. A
+       * sibling of `deep` rather than a field inside it, because `deep` is the
+       * comparison and this is what may be done about it.
+       */
+      reconcile?: FieldReconcile[];
       artifacts?: LiveArtifactDiffResult;
       /** What `listArtifacts` actually saw, keyed like `artifacts`' entries
        * (behold#146). The diff alone is snapshot-relative key lists — on a
@@ -882,8 +890,17 @@ async function runLifecycleDiffLive(args: LiveDiffArgs): Promise<LiveDiffOutcome
         // otherwise one unreadable entity is counted twice.
         totalUnobserved += deep.unobserved.filter((u) => !observed.unobserved[u.name]).length;
         if (args.updateBaseline) toAccept[lexiconName] = deviationsToAccept(deep);
-        if (args.json) (byLexicon[lexiconName] ??= {}).deep = deep;
-        else renderDeepDiff(lexiconName, deep);
+        // chant #2161 — the return leg, classified by fold provenance. Read off
+        // the build's own entities, which is where the record lives.
+        const provenanceOf = (name: string): EntityProvenance | undefined => {
+          const entity = args.buildResult.entities.get(name);
+          return entity ? getProvenance(entity) : undefined;
+        };
+        if (args.json) {
+          const entry = (byLexicon[lexiconName] ??= {});
+          entry.deep = deep;
+          entry.reconcile = resolveDeepDrift(deep.drifted, provenanceOf);
+        } else renderDeepDiff(lexiconName, deep, provenanceOf);
         // Printed on stderr regardless of `--json` (#2162), same reason the
         // unobserved/disruption notices are: a shape with no column for
         // "suspicious" must not read as clean.
@@ -947,7 +964,11 @@ function deviationsToAccept(deep: DeepDiffResult): DeviationToAccept[] {
 }
 
 /** Property-level drift report (#1014). Silent when a lexicon's deep read found nothing to say. */
-function renderDeepDiff(lexiconName: string, deep: DeepDiffResult): void {
+function renderDeepDiff(
+  lexiconName: string,
+  deep: DeepDiffResult,
+  provenanceOf: (entity: string) => EntityProvenance | undefined = () => undefined,
+): void {
   const drift = countPropertyDrift(deep);
   const heldElsewhereCount = countHeldFields(deep);
   const heldCount = countHeld(deep);
@@ -981,6 +1002,7 @@ function renderDeepDiff(lexiconName: string, deep: DeepDiffResult): void {
     console.log(formatBold("\nPROPERTY DRIFT (declared vs live; baseline shown where one exists):"));
     for (const entity of deep.drifted) {
       console.log(`  - ${entity.name} (${entity.type})`);
+      const provenance = provenanceOf(entity.name);
       for (const change of entity.changes) {
         const declared = "declared" in change ? formatValue(change.declared) : "<undeclared>";
         const live = "live" in change ? formatValue(change.live) : "<absent>";
@@ -989,6 +1011,21 @@ function renderDeepDiff(lexiconName: string, deep: DeepDiffResult): void {
         const from = change.origin ? ` [from: ${describePathOrigin(change.origin)}]` : "";
         const owner = change.owner ? ` [owner: ${change.owner}]` : "";
         console.log(`      ${change.path}: ${declared} → ${live}${baseline}${from}${owner}`);
+        // chant #2161 — what may be done about it, when the origin says
+        // something today's behaviour would get wrong. A field the author
+        // declared directly is left unremarked: editing it IS today's
+        // behaviour, and saying so on every row would bury the two that matter.
+        const { resolution } = resolveDriftedField({
+          entity: entity.name,
+          path: change.path,
+          ...("declared" in change ? { declared: change.declared } : {}),
+          ...("live" in change ? { live: change.live } : {}),
+          ...(change.origin ? { origin: change.origin } : {}),
+          ...(provenance ? { provenance } : {}),
+        });
+        if (resolution.kind !== "edit-declaration") {
+          console.log(`        ${resolution.description}`);
+        }
       }
     }
   }

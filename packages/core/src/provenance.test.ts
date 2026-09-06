@@ -155,6 +155,12 @@ describe("describePathOrigin", () => {
       "composite WebService (web)",
     );
     expect(describePathOrigin({ kind: "build-param", params: ["region", "tier"] })).toBe("param region, tier");
+    expect(
+      describePathOrigin({ kind: "composite-parameter", composite: "WebService", parameters: ["name", "tier"] }),
+    ).toBe("composite WebService parameter name, tier");
+    expect(describePathOrigin({ kind: "composite-literal", composite: "WebService" })).toBe(
+      "composite WebService literal",
+    );
   });
 });
 
