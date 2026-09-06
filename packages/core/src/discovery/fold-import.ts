@@ -2177,17 +2177,6 @@ function isLiteralPropertyNameNode(node: ts.PropertyName): boolean {
 }
 
 /**
- * Interpret an admissible factory's body against `args`, and assemble the
- * result through chant's own {@link Composite}.
- *
- * Returns `undefined` — a DECLINE, not a failure — when anything in the body
- * fails to resolve (an identifier the defining module's imports don't reach, a
- * constructor `--sandbox` refuses, a nested call that isn't a composite). The
- * caller then invokes for real, landing exactly where it landed before #1023.
- * That asymmetry is deliberate: interpretation may only ever REMOVE an
- * execution, never introduce a fold failure that wasn't there.
- */
-/**
  * chant #2161 — how one admissible factory's parameter is bound in its body,
  * plus the consts an attribution walk has to follow.
  *
@@ -2258,6 +2247,17 @@ function stampCompositeOrigins(entity: unknown, node: ts.NewExpression, ctx: Res
   for (const [path, origin] of Object.entries(origins)) setPathProvenance(entity, path, origin);
 }
 
+/**
+ * Interpret an admissible factory's body against `args`, and assemble the
+ * result through chant's own {@link Composite}.
+ *
+ * Returns `undefined` — a DECLINE, not a failure — when anything in the body
+ * fails to resolve (an identifier the defining module's imports don't reach, a
+ * constructor `--sandbox` refuses, a nested call that isn't a composite). The
+ * caller then invokes for real, landing exactly where it landed before #1023.
+ * That asymmetry is deliberate: interpretation may only ever REMOVE an
+ * execution, never introduce a fold failure that wasn't there.
+ */
 async function interpretCompositeFactory(
   factory: InterpretableFactory,
   args: readonly unknown[],
