@@ -13,14 +13,14 @@ import { stepOutput } from "./step-output-ref";
 // Fast profiles so retry/timeout tests run in milliseconds.
 const PROFILES: Record<string, ActivityProfile> = {
   fastIdempotent: {
-    startToCloseTimeout: "5m",
+    timeout: "5m",
     retry: { maximumAttempts: 3, initialInterval: "5ms", backoffCoefficient: 2 },
   },
   quickTimeout: {
-    startToCloseTimeout: "50ms",
+    timeout: "50ms",
     retry: { maximumAttempts: 2, initialInterval: "1ms", backoffCoefficient: 1 },
   },
-  single: { startToCloseTimeout: "5m", retry: { maximumAttempts: 1 } },
+  single: { timeout: "5m", retry: { maximumAttempts: 1 } },
 };
 
 function op(partial: Partial<OpConfig>): OpConfig {
@@ -118,8 +118,8 @@ describe("runOpLocally — retry + timeout", () => {
     // default cap (local vs --temporal disagreement).
     const slow: ActivityFn = async () => { await new Promise((r) => setTimeout(r, 150)); return "done"; };
     const profiles = {
-      fastIdempotent: { startToCloseTimeout: "50ms", retry: { maximumAttempts: 1 } },
-      longInfra: { startToCloseTimeout: "5m", retry: { maximumAttempts: 1 } },
+      fastIdempotent: { timeout: "50ms", retry: { maximumAttempts: 1 } },
+      longInfra: { timeout: "5m", retry: { maximumAttempts: 1 } },
     };
     const config = op({
       phases: [{ name: "P", steps: [{ kind: "activity", fn: "slow", profile: "longInfra" }] }],
@@ -140,7 +140,7 @@ describe("runOpLocally — cancellation", () => {
       throw new Error("abandoned");
     };
     const config = op({ phases: [{ name: "P", steps: [{ kind: "activity", fn: "hang" }] }] });
-    const profiles = { ...PROFILES, fastIdempotent: { startToCloseTimeout: "30ms", retry: { maximumAttempts: 1 } } };
+    const profiles = { ...PROFILES, fastIdempotent: { timeout: "30ms", retry: { maximumAttempts: 1 } } };
     await expect(runOpLocally(config, new Map([["hang", hang]]), profiles)).rejects.toBeInstanceOf(OpRunFailure);
     expect(abortedSeen).toBe(true);
   });
@@ -187,7 +187,7 @@ describe("runOpLocally — non-retryable errors", () => {
     const profiles = {
       ...PROFILES,
       fastIdempotent: {
-        startToCloseTimeout: "5m",
+        timeout: "5m",
         retry: { maximumAttempts: 3, initialInterval: "1ms", nonRetryableErrorTypes: ["ValidationError"] },
       },
     };

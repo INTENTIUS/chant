@@ -40,7 +40,7 @@
 
 import { Op, phase, OpResource } from "@intentius/chant/op";
 import { TemporalSchedule } from "../resources";
-import type { LexiconUpgradeMode, SupportedLexicon } from "../op/activities/lexicon-upgrade";
+import type { LexiconUpgradeMode, SupportedLexicon } from "@intentius/chant/op/activities/lexicon-upgrade";
 
 function kebabToCamel(s: string): string {
   return s.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());

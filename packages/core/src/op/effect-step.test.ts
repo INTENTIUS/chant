@@ -188,7 +188,7 @@ describe("receiptActivities (the injectable store seam)", () => {
 // ── Local executor: read-compare-run-write ────────────────────────────────────
 
 const PROFILES: Record<string, ActivityProfile> = {
-  fastIdempotent: { startToCloseTimeout: "5m", retry: { maximumAttempts: 1 } },
+  fastIdempotent: { timeout: "5m", retry: { maximumAttempts: 1 } },
 };
 
 function activityMap(

@@ -18,7 +18,11 @@ const execCalls: Array<{ cmd: string; opts: unknown }> = [];
 let versionReply: { stdout: string; stderr: string } | Error = new Error("k3s: command not found");
 let uninstallReply: { stdout: string; stderr: string } = { stdout: "", stderr: "" };
 
-vi.mock("node:child_process", () => {
+// Partial, via `importOriginal`: `@intentius/chant/op` reaches the base
+// activities now (chant #2114), and modules on that path promisify
+// `execFile` at load. A wholesale replacement of node:child_process would
+// make them fail to import rather than fail an assertion.
+vi.mock("node:child_process", async (importOriginal) => {
   const custom = Symbol.for("nodejs.util.promisify.custom");
   const exec = ((_cmd: string, _opts: unknown, cb?: (...a: unknown[]) => void) => {
     cb?.(new Error("unmocked exec path"));
@@ -32,7 +36,7 @@ vi.mock("node:child_process", () => {
     if (cmd.startsWith("test -x")) return uninstallReply;
     return { stdout: "", stderr: "" };
   };
-  return { exec };
+  return { ...(await importOriginal<typeof import("node:child_process")>()), exec };
 });
 
 describe("k3sInstallCommand (#1601)", () => {

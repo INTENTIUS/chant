@@ -26,8 +26,8 @@ import {
 // stage → process → collect proves they resolve by name and compose.
 
 const PROFILES: Record<string, ActivityProfile> = {
-  longInfra: { startToCloseTimeout: "5m", retry: { maximumAttempts: 3, initialInterval: "1ms", backoffCoefficient: 1 } },
-  fastIdempotent: { startToCloseTimeout: "5m", retry: { maximumAttempts: 2, initialInterval: "1ms", backoffCoefficient: 1 } },
+  longInfra: { timeout: "5m", retry: { maximumAttempts: 3, initialInterval: "1ms", backoffCoefficient: 1 } },
+  fastIdempotent: { timeout: "5m", retry: { maximumAttempts: 2, initialInterval: "1ms", backoffCoefficient: 1 } },
 };
 
 let fake: { url: string; close(): Promise<void> };

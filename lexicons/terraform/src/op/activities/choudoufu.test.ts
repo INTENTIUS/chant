@@ -49,7 +49,10 @@ function commandsRun(): string[] {
   return execCalls.filter((c) => c.cmd !== "choudoufu version").map((c) => c.cmd);
 }
 
-vi.mock("node:child_process", () => {
+// Partial mock: `@intentius/chant/op` reaches core's base activities
+// statically now (#2117), and they need the real `execFile`/`spawn` to load.
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
   const custom = Symbol.for("nodejs.util.promisify.custom");
   const exec = ((_cmd: string, _opts: unknown, cb?: (...a: unknown[]) => void) => {
     cb?.(new Error("unmocked exec path"));
@@ -64,7 +67,7 @@ vi.mock("node:child_process", () => {
     }
     return { stdout: "", stderr: "" };
   };
-  return { exec };
+  return { ...actual, exec };
 });
 
 // ── A real project config to resolve roots against ──────────────────────────

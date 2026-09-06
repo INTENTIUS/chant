@@ -6,6 +6,7 @@
  */
 
 import type { EffectReceiptRef } from "./receipt-store";
+import type { ActivityProfileName } from "./activity-profiles";
 
 export interface OpConfig {
   /** Kebab-case identifier. Used as the workflow function name (camelCase) and output directory name. */
@@ -61,10 +62,10 @@ export interface ActivityStep {
    */
   args?: Record<string, unknown>;
   /**
-   * Key from TEMPORAL_ACTIVITY_PROFILES controlling timeout + retry.
+   * Key from {@link ACTIVITY_PROFILES} controlling timeout + retry.
    * Default: "fastIdempotent"
    */
-  profile?: "fastIdempotent" | "longInfra" | "k8sWait" | "humanGate" | "argoSync" | "policyCheck";
+  profile?: ActivityProfileName;
   /**
    * Surface this activity's return value as one or more workflow search
    * attributes.

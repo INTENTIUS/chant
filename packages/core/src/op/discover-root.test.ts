@@ -16,7 +16,8 @@ import { discoverOps } from "./discover";
  * symlink and the walk compares resolved paths).
  */
 let fakeGitRoot = "";
-vi.mock("../runtime-adapter", () => ({
+vi.mock("../runtime-adapter", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../runtime-adapter")>()),
   getRuntime: () => ({
     spawn: async (cmd: string[]) =>
       cmd[0] === "git" && cmd[1] === "rev-parse"

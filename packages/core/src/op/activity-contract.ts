@@ -38,16 +38,14 @@
 import { z } from "zod";
 import { outcomeAttributesOf } from "./types";
 import type { OpConfig, PhaseDefinition, ActivityStep, StepDefinition } from "./types";
+import { ACTIVITY_PROFILE_NAMES } from "./activity-profiles";
 
-/** Every literal value {@link ActivityStep.profile} may hold. Kept in sync with `types.ts`'s `ActivityStep["profile"]`. */
-export const KNOWN_ACTIVITY_PROFILES = [
-  "fastIdempotent",
-  "longInfra",
-  "k8sWait",
-  "humanGate",
-  "argoSync",
-  "policyCheck",
-] as const;
+/**
+ * Every literal value {@link ActivityStep.profile} may hold, read off
+ * {@link ACTIVITY_PROFILES} itself so the runtime list cannot drift from the
+ * table the type is derived from.
+ */
+export const KNOWN_ACTIVITY_PROFILES = ACTIVITY_PROFILE_NAMES;
 
 const CONTRACT_BRAND = Symbol.for("chant.op.activityContract");
 

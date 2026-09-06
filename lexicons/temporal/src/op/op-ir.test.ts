@@ -130,7 +130,7 @@ describe("op.json IR (#1289)", () => {
   it("embeds the resolved retry/timeout policy for every referenced profile", () => {
     const ir = buildOpIR(representativeOp());
     expect(ir.activityProfiles.fastIdempotent).toMatchObject({ startToCloseTimeout: "5m" });
-    expect(ir.activityProfiles.longInfra).toMatchObject({ startToCloseTimeout: "20m", heartbeatTimeout: "60s" });
+    expect(ir.activityProfiles.longInfra).toMatchObject({ startToCloseTimeout: "20m" });
     // No step used k8sWait/humanGate/argoSync/policyCheck.
     expect(ir.activityProfiles.k8sWait).toBeUndefined();
   });

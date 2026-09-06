@@ -30,7 +30,7 @@
 
 import { Op, phase, activity, OpResource } from "@intentius/chant/op";
 import { TemporalSchedule } from "../resources";
-import type { ReconcileMode } from "../op/activities/reconcile";
+import type { ReconcileMode } from "@intentius/chant/op/activities/reconcile";
 
 function kebabToCamel(s: string): string {
   return s.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());

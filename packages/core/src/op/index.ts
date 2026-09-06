@@ -3,6 +3,7 @@ export { Op, phase, activity, gate, effect, build, kubectlApply, helmInstall, he
          k3sInstall, k3sUninstall, flociUp, flociDown,
          flociAzUp, flociAzDown, flociGcpUp, flociGcpDown, httpCheck,
          azGroupEnsure, azGroupDelete, azApply, azDelete, awsApply, awsDelete, gcpApply, gcpDelete, policyGate,
+         guardValidate,
          spriteCreate, spriteExec, spriteCheckpoint, spriteRestore, listCheckpoints, spriteDestroy,
          spriteWriteFile, spriteReadFile, spriteListDir, spriteRemove,
          spriteApplyNetworkPolicy, spriteApplyServices,
@@ -27,7 +28,10 @@ export type { DiscoveredOp, OpDiscoveryResult } from "./discover";
 export { generateOpsPipeline } from "./generate-pipeline";
 export type { GenerateOpsPipelineResult } from "./generate-pipeline";
 export { loadActivities, loadProfiles, resolveActivity } from "./activity-registry";
-export type { ActivityFn, ActivityProfile } from "./activity-registry";
+export type { ActivityFn } from "./activity-registry";
+export { ACTIVITY_PROFILES, ACTIVITY_PROFILE_NAMES } from "./activity-profiles";
+export type { ActivityProfile, ActivityProfileName } from "./activity-profiles";
+export { NonRetryableActivityError, nonRetryableFailure } from "./activity-failure";
 export { runOpLocally, parseDuration, OpRunFailure } from "./local-executor";
 export type { StepRecord, OpRunResult, RunOpOptions } from "./local-executor";
 export { evaluateGate, gitGateLedgerPort, memoryGateLedgerPort, approveCommand } from "./gate";

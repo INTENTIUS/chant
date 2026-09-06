@@ -11,7 +11,7 @@ import {
   type ReadinessSpec,
 } from "./wait-for-ready";
 // The k8sWait profile marks ReadinessFailedError non-retryable for this activity.
-import { TEMPORAL_ACTIVITY_PROFILES } from "@intentius/chant-lexicon-temporal/config";
+import { ACTIVITY_PROFILES } from "@intentius/chant/op/activity-profiles";
 import { fakeCluster, objectKey } from "../../api/fake-cluster";
 
 /** A fetcher returning a scripted sequence of objects, repeating the last. */
@@ -156,7 +156,7 @@ describe("waitForReady", () => {
   });
 
   test("k8sWait marks ReadinessFailedError non-retryable", () => {
-    expect(TEMPORAL_ACTIVITY_PROFILES.k8sWait.retry?.nonRetryableErrorTypes).toContain("ReadinessFailedError");
+    expect(ACTIVITY_PROFILES.k8sWait.retry?.nonRetryableErrorTypes).toContain("ReadinessFailedError");
   });
 
   test("explicit spec wins over the registry", async () => {

@@ -1,4 +1,4 @@
-import { sleep } from "@intentius/chant/op";
+import { sleep } from "../activity-runtime";
 
 export interface HttpCheckArgs {
   /** URL to GET (or `method`). */

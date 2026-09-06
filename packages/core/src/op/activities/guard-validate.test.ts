@@ -1,6 +1,6 @@
 import { describe, test, expect, vi, beforeEach } from "vitest";
 import { resolve } from "node:path";
-import type { ApplicationFailure } from "@temporalio/common";
+import type { NonRetryableActivityError } from "../activity-failure";
 
 // guardValidate reaches cfn-guard through the runtime adapter's spawn (not
 // node:child_process), so the I/O seam is the runtime-adapter module — same
@@ -10,8 +10,8 @@ import type { ApplicationFailure } from "@temporalio/common";
 // reachable from other real exports this file's own imports touch
 // transitively, so replacing it wholesale would break more than `spawn`.
 const spawnMock = vi.fn();
-vi.mock("@intentius/chant/runtime-adapter", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@intentius/chant/runtime-adapter")>();
+vi.mock("../../runtime-adapter", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../runtime-adapter")>();
   return { ...actual, getRuntime: () => ({ ...actual.getRuntime(), spawn: spawnMock }) };
 });
 
@@ -73,14 +73,14 @@ describe("guardValidate activity (#522)", () => {
     );
   });
 
-  test("the thrown failure is a non-retryable ApplicationFailure typed GuardViolation — same shape policyGate uses for PolicyViolation", async () => {
+  test("the thrown failure is a non-retryable activity failure typed GuardViolation — same shape policyGate uses for PolicyViolation", async () => {
     spawnMock.mockResolvedValue({ stdout: ONE_VIOLATION, stderr: "", exitCode: 5 });
     try {
       await guardValidate({ rules: "rules.guard" });
       expect.unreachable("guardValidate should have thrown");
     } catch (err) {
-      expect((err as ApplicationFailure).type).toBe("GuardViolation");
-      expect((err as ApplicationFailure).nonRetryable).toBe(true);
+      expect((err as NonRetryableActivityError).type).toBe("GuardViolation");
+      expect((err as NonRetryableActivityError).nonRetryable).toBe(true);
     }
   });
 

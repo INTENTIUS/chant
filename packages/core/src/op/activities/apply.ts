@@ -34,7 +34,7 @@
 
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
-import { normalizeApply, type ApplyResult } from "@intentius/chant/apply";
+import { normalizeApply, type ApplyResult } from "../../apply";
 
 const execAsync = promisify(exec);
 

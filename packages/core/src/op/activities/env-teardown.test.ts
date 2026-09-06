@@ -1,7 +1,7 @@
 import { describe, test, expect, vi } from "vitest";
 import { envTeardown } from "./env-teardown";
-import type { ObservationLexicon, TeardownEnumeration, TeardownExecution } from "@intentius/chant/lexicon";
-import type { ChantConfig } from "@intentius/chant/config";
+import type { ObservationLexicon, TeardownEnumeration, TeardownExecution } from "../../lexicon";
+import type { ChantConfig } from "../../config";
 
 /**
  * The activity is exercised through the REAL core engine

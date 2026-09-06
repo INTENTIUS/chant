@@ -30,11 +30,11 @@
  */
 
 import { resolve } from "node:path";
-import { loadChantConfig, resolveOwnershipStack, type ChantConfig } from "@intentius/chant/config";
-import { unknownEnvError, isProdLikeEnvironment } from "@intentius/chant/env";
-import { applyLiveEndpoint } from "@intentius/chant/live-endpoint";
-import { executeTeardown, type TeardownReport } from "@intentius/chant/lifecycle/teardown";
-import type { ObservationLexicon } from "@intentius/chant/lexicon";
+import { loadChantConfig, resolveOwnershipStack, type ChantConfig } from "../../config";
+import { unknownEnvError, isProdLikeEnvironment } from "../../env";
+import { applyLiveEndpoint } from "../../live-endpoint";
+import { executeTeardown, type TeardownReport } from "../../lifecycle/teardown";
+import type { ObservationLexicon } from "../../lexicon";
 
 export interface EnvTeardownArgs {
   /** The environment to tear down — the marker env core selects on. */
@@ -81,7 +81,7 @@ export interface EnvTeardownDeps {
  * load time — the registry imports every activity module eagerly.
  */
 async function loadProjectPlugins(projectPath: string): Promise<ObservationLexicon[]> {
-  const { loadPlugins, resolveProjectLexicons } = await import("@intentius/chant/cli/plugins");
+  const { loadPlugins, resolveProjectLexicons } = await import("../../cli/plugins");
   return loadPlugins(await resolveProjectLexicons(projectPath));
 }
 
