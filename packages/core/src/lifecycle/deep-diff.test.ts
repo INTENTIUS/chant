@@ -385,6 +385,45 @@ describe("diffDeep - the claimed-field set (#2160)", () => {
     // The claim covers the path, so the disagreement is real drift.
     const result = diffDeep({
       declared,
+      live: live({
+        web: {
+          type: "K8s::Apps::Deployment",
+          properties: { spec: { replicas: 5 } },
+          fieldOwners: { "spec.replicas": "hpa-controller" },
+        },
+      }),
+    });
+    expect(result.heldElsewhere).toEqual([]);
+    expect(result.drifted[0].changes[0]).toMatchObject({ kind: "changed", owner: "hpa-controller" });
+  });
+
+  test("held fields are never counted as drift", () => {
+    const result = diffDeep({
+      declared,
+      live: live({
+        web: {
+          type: "K8s::Apps::Deployment",
+          properties: { spec: { replicas: 5 }, status: { readyReplicas: 5, observedGeneration: 3 } },
+        },
+      }),
+    });
+    expect(countPropertyDrift(result)).toBe(1);
+    expect(countHeldFields(result)).toBe(2);
+  });
+
+  test("an unevaluated intrinsic is claimed, so its live value is not held elsewhere", () => {
+    // chant DID set the field; it just cannot know what the reference resolves
+    // to. Treating it as unclaimed would report an interpolated property as
+    // somebody else's on every read.
+    const result = diffDeep({
+      declared: { b: { type: "T", properties: { BucketName: UNRESOLVED } } },
+      live: live({ b: { type: "T", properties: { BucketName: "prod-data" } } }),
+    });
+    expect(result.drifted).toEqual([]);
+    expect(result.heldElsewhere).toEqual([]);
+  });
+});
+
 // #2162 — a `heldElsewhere()` marker is never drift: a difference on it is
 // reported as held, with its holder and reason, and never as `changed`,
 // `undeclared`, or `absent`. The honest example from the issue: an HPA owns
@@ -459,34 +498,6 @@ describe("diffDeep — heldElsewhere() (#2162)", () => {
         },
       }),
     });
-    expect(result.heldElsewhere).toEqual([]);
-    expect(result.drifted[0].changes[0]).toMatchObject({ kind: "changed", owner: "hpa-controller" });
-  });
-
-  test("held fields are never counted as drift", () => {
-    const result = diffDeep({
-      declared,
-      live: live({
-        web: {
-          type: "K8s::Apps::Deployment",
-          properties: { spec: { replicas: 5 }, status: { readyReplicas: 5, observedGeneration: 3 } },
-        },
-      }),
-    });
-    expect(countPropertyDrift(result)).toBe(1);
-    expect(countHeldFields(result)).toBe(2);
-  });
-
-  test("an unevaluated intrinsic is claimed, so its live value is not held elsewhere", () => {
-    // chant DID set the field; it just cannot know what the reference resolves
-    // to. Treating it as unclaimed would report an interpolated property as
-    // somebody else's on every read.
-    const result = diffDeep({
-      declared: { b: { type: "T", properties: { BucketName: UNRESOLVED } } },
-      live: live({ b: { type: "T", properties: { BucketName: "prod-data" } } }),
-    });
-    expect(result.drifted).toEqual([]);
-    expect(result.heldElsewhere).toEqual([]);
     expect(result.held[0].held[0]).toMatchObject({ owner: "hpa-controller" });
   });
 

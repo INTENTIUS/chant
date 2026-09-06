@@ -151,6 +151,9 @@ export interface DeepEntityHeldFields {
   name: string;
   type: string;
   fields: HeldField[];
+}
+
+/**
  * One property declared `heldElsewhere()` (#2162) — a fact about who owns the
  * field at runtime, reported beside drift rather than folded into it. Never a
  * {@link PropertyDrift}: a held property is never `changed`, `undeclared`, or
@@ -202,6 +205,7 @@ export interface DeepDiffResult {
    * has it.
    */
   heldElsewhere: DeepEntityHeldFields[];
+  /**
    * Properties declared `heldElsewhere()` (#2162) — reported here instead of
    * in `drifted`/`accepted`, whatever the live value is. Not a suppression:
    * every held property is listed, with its holder and reason, so a reader of
@@ -417,6 +421,8 @@ export function countPropertyDrift(result: DeepDiffResult): number {
 /** Total live values held by someone other than chant, across every entity (#2160). Never added to the drift count. */
 export function countHeldFields(result: DeepDiffResult): number {
   return result.heldElsewhere.reduce((n, e) => n + e.fields.length, 0);
+}
+
 /** Total held properties (#2162) across every entity. */
 export function countHeld(result: DeepDiffResult): number {
   return result.held.reduce((n, e) => n + e.held.length, 0);
