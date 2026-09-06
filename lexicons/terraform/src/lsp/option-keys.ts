@@ -72,9 +72,13 @@ export const PLAN_OPTS_KEYS: OptionKey[] = [
 
 /** `terraformApply(root, { <here> })`'s opts — `TerraformApplyArgs` minus `root`, plus step opts. */
 export const APPLY_OPTS_KEYS: OptionKey[] = [
-  { key: "planFile", detail: "The saved plan file to apply. Required on a stock root; refused on a live root." },
+  {
+    key: "planFile",
+    detail:
+      "The saved plan file to apply. Required on either kind of root; on a live root it is the approval " +
+      "artifact the apply re-plans against and refuses on a mismatch (choudoufu #878).",
+  },
   { key: "cwd", detail: "Directory to start the `chant.config.*` search from." },
-  { key: "approvalArtifact", detail: "Unused. The seam for choudoufu #878's approval artifact, once it ships." },
   ...STEP_OPTS,
 ];
 

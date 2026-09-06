@@ -1,45 +1,43 @@
 /**
- * TerraformApplyOp composite (#2086) — init, plan, approve, apply for one root
+ * TerraformApplyOp composite (#2086), init, plan, approve, apply for one root
  * module named in `terraform.roots`.
  *
  * Authority stays with terraform: chant runs the binary, reads its plan, and
- * hands the same saved plan to apply. The Apply step never re-plans, because
- * it takes the Plan step's own `planFile` as a `StepOutputRef` — whatever was
- * approved is what runs.
+ * hands the same saved plan to apply. The Apply step never applies something
+ * no gate saw, because it takes the Plan step's own `planFile` as a
+ * `StepOutputRef`.
  *
- * Phases: Init, Plan, Gate, Apply. That is the stock shape. A live root
- * (#2103, `terraform.binary: "choudoufu"` plus a declared estate) builds a
- * different one, because choudoufu refuses `-out` and `apply <planfile>` by
- * design: prior state is a projection rebuilt from the live system every run,
- * so an apply always plans against the live system at the moment it runs.
- * `TerraformApplyOp` reads the named root's mode at build time
- * ({@link resolveRootModeSync}, a best-effort, synchronous read of
- * `chant.config.json`) and builds accordingly:
+ * Phases: Init, Plan, Gate, Apply. One shape, both kinds of root. A live root
+ * (#2103, `terraform.binary: "choudoufu"` plus a declared estate) ran a
+ * different shape for one release, because choudoufu refused `-out` and
+ * `apply <planfile>`; choudoufu v0.13.0 admits both under a `live` block
+ * ([choudoufu #878](https://github.com/INTENTIUS/choudoufu/issues/878),
+ * PR 889), so the plan-file discipline is back and the two shapes are one
+ * again.
  *
- *   - Init: unchanged.
- *   - Plan: `choudoufuLivePlan` (`-detailed-exitcode -json`) in place of
- *     `terraformPlan`, reporting `Changed` off its `drift` field.
- *   - Gate (unless `gate: "never"`): a second `choudoufuLivePlan` call
- *     reporting `Destroys` off its `destroys` field, then the same `gate()`
- *     step as the stock shape. Stock's own Gate step re-renders the saved
- *     plan with `terraformShow`, which calls no provider; a live root has no
- *     saved plan to re-render this way, so this is a second live read
- *     instead — the same real cost `terraformApply` itself pays a moment
- *     later, re-planning live at apply time regardless.
- *   - Apply: `terraformApply` with no `planFile` at all — choudoufu refuses
- *     one, quoting its own reason (`CHOUDOUFU_PLAN_FILE_REFUSAL`).
+ * **What the approval covers on a live root.** `plan -out=<planFile>` writes
+ * stock's own plan file, and that file is what the approver reads and what
+ * the Apply step names. `apply <planFile>` does not replay it: prior state on
+ * a live root is a projection rebuilt from the live system every run, so the
+ * apply re-plans against the live system the way every live-markers run does,
+ * then compares its fresh plan with the file's. Same addresses, same actions,
+ * same live objects, and the same planned values, or it refuses before
+ * anything changes:
  *
- * **The caveat.** The approval a live root's Gate records covers only the
- * plan its approver read. The Apply phase that follows re-plans live and
- * applies whatever that fresh plan says; nothing here refuses when the two
- * differ. [choudoufu #878](https://github.com/INTENTIUS/choudoufu/issues/878)
- * asks for an approval artifact — a change-set digest apply refuses to run
- * against on a mismatch, or a stock-form plan file admitted with a live
- * re-check — that would close this gap. `terraformApply`'s own
- * `approvalArtifact?: StepOutputRef` argument (`../op/activities/
- * terraform.ts`) is the named, unused seam for it: when #878 ships, the Plan
- * step captures the artifact and the Apply step below passes it through, one
- * activity change, no reshape of this composite.
+ *   - `The approved plan no longer matches the live system`, and
+ *   - `The approved plan belongs to a different estate`,
+ *
+ * both with exit status **3**, which is neither 1 (any ordinary failure) nor
+ * `-detailed-exitcode`'s 2. `terraformApply` maps that status to a named
+ * result rather than a thrown error (`refused: "approval-mismatch" |
+ * "wrong-estate"`, with choudoufu's message in `refusal`), so a workflow
+ * reading the Apply step's output can route the run back to review instead of
+ * treating it as a broken step. The seam #2106 left named and unused on the
+ * apply args is now the plan file itself.
+ *
+ * TF101 therefore fires on a live root's `terraformApply` call again: there
+ * is a plan file to pair once more, and pairing it is what the refusal above
+ * has to compare against.
  *
  * **Delete modes.** chant's `delete: "never" | "owned-only" | "gated"`
  * (`terraform.roots.<name>.delete`, `../config.ts`) maps onto choudoufu's
@@ -47,14 +45,14 @@
  * `undeclared_tagged` quadrant (an orphaned marked resource) and needs
  * nothing; `"gated"` needs nothing beyond this composite's own approval gate;
  * `"never"` requires the root's `policy` block to set `undeclared_tagged` to
- * `"keep"`, `"untag"` or `"report"` — TF026 (`../lint/post-synth/tf026.ts`)
+ * `"keep"`, `"untag"` or `"report"`, and TF026 (`../lint/post-synth/tf026.ts`)
  * enforces that at build time, naming the setting to add. Separately, and
  * regardless of `delete`, this composite refuses outright to build against a
  * root whose `policy` sets `undeclared_untagged = "delete"` (account-scoped
  * reconciliation, which needs a `scope` block): that quadrant deletes
  * resources the estate never claimed, anywhere the scope reaches, and chant
- * never proposes deleting a resource it does not own — not for a root, and
- * not for an Op it generated.
+ * never proposes deleting a resource it does not own, not for a root, and not
+ * for an Op it generated.
  *
  * The gate is durable-runtime work, so an Op that emits one needs Temporal;
  * `packages/core/src/op/local-executor.ts` refuses any Op containing a gate.
@@ -77,7 +75,6 @@ import {
   terraformPlan as planStep,
   terraformApply as applyStep,
   terraformShow as showStep,
-  choudoufuLivePlan as livePlanStep,
 } from "../op/builders";
 
 /**
@@ -168,7 +165,8 @@ export function TerraformApplyOp(config: TerraformApplyOpConfig): TerraformApply
 
   // Best-effort, synchronous (chant.config.json only — see
   // resolveRootModeSync's own doc comment): "unknown" reads as stock, the
-  // conservative direction, same as TF101's own posture.
+  // conservative direction. The mode no longer changes which steps are
+  // emitted; it decides the policy refusal below and the wording of the gate.
   const resolved = resolveRootModeSync(config.root, config.cwd);
   const live = resolved?.mode === "live";
 
@@ -192,68 +190,40 @@ export function TerraformApplyOp(config: TerraformApplyOpConfig): TerraformApply
     phase("Init", [initStep(config.root, { ...where, ...(config.upgrade ? { upgrade: true } : {}) })]),
   ];
 
-  if (live) {
-    // No plan file to pair here, and no `id` needed either: nothing
-    // downstream references this step's output by StepOutputRef, only its
-    // own outcomeAttribute.
-    const livePlan = livePlanStep(config.root, { ...where });
-    livePlan.outcomeAttribute = { name: "Changed", from: "drift" };
-    phases.push(phase("Plan", [livePlan]));
+  // `id` is what makes `plan.out` legal, and `plan.out.planFile` is how the
+  // Apply step below names this step's saved plan. On a live root that file
+  // is also the approval artifact the apply re-plans against, so the same
+  // reference carries the approval as well as the path.
+  const plan = planStep(config.root, { planFile, ...where, id: "plan" });
+  plan.outcomeAttribute = { name: "Changed", from: "changed" };
+  phases.push(phase("Plan", [plan]));
 
-    if (gateMode !== "never") {
-      // choudoufu has no equivalent of stock's `terraformShow`: there is no
-      // saved plan to re-render without calling a provider, since a live
-      // root's prior state is a projection rebuilt from the live system
-      // every run. This re-reads the live system a second time instead —
-      // the same real cost `terraformApply` itself pays again at apply time.
-      const freshen = livePlanStep(config.root, { ...where });
-      freshen.outcomeAttribute = { name: "Destroys", from: "destroys" };
-      phases.push(
-        phase("Gate", [
-          freshen,
-          gate(config.signalName ?? `approve-${config.name}`, {
-            ...(config.gateTimeout ? { timeout: config.gateTimeout } : {}),
-            description:
-              config.gateDescription ??
-              `Approve terraform apply of live root "${config.root}" (gate: ${gateMode}). ` +
-                `The Destroys search attribute on this phase is this fresh read's destroy count. ` +
-                "The apply that follows re-plans against the live system and applies whatever that " +
-                "plan says; nothing refuses if it differs from what was just approved (choudoufu #878).",
-          }),
-        ]),
-      );
-    }
-
-    phases.push(phase("Apply", [applyStep(config.root, { ...where })]));
-  } else {
-    // `id` is what makes `plan.out` legal, and `plan.out.planFile` is how the
-    // Apply step below names this step's saved plan.
-    const plan = planStep(config.root, { planFile, ...where, id: "plan" });
-    plan.outcomeAttribute = { name: "Changed", from: "changed" };
-    phases.push(phase("Plan", [plan]));
-
-    if (gateMode !== "never") {
-      // Re-render the saved plan just before the wait, so the approver's
-      // `Destroys` attribute comes off the plan that will actually apply.
-      // `show` against a plan file calls no provider.
-      const show = showStep(config.root, { ...where, planFile: plan.out.planFile });
-      show.outcomeAttribute = { name: "Destroys", from: "destroys" };
-      phases.push(
-        phase("Gate", [
-          show,
-          gate(config.signalName ?? `approve-${config.name}`, {
-            ...(config.gateTimeout ? { timeout: config.gateTimeout } : {}),
-            description:
-              config.gateDescription ??
-              `Approve terraform apply of root "${config.root}" (gate: ${gateMode}). ` +
-                `The Destroys search attribute on this phase is the plan's destroy count.`,
-          }),
-        ]),
-      );
-    }
-
-    phases.push(phase("Apply", [applyStep(config.root, { ...where, planFile: plan.out.planFile })]));
+  if (gateMode !== "never") {
+    // Re-render the saved plan just before the wait, so the approver's
+    // `Destroys` attribute comes off the plan that will actually apply.
+    // `show` against a plan file calls no provider, on either kind of root.
+    const show = showStep(config.root, { ...where, planFile: plan.out.planFile });
+    show.outcomeAttribute = { name: "Destroys", from: "destroys" };
+    phases.push(
+      phase("Gate", [
+        show,
+        gate(config.signalName ?? `approve-${config.name}`, {
+          ...(config.gateTimeout ? { timeout: config.gateTimeout } : {}),
+          description:
+            config.gateDescription ??
+            `Approve terraform apply of ${live ? "live " : ""}root "${config.root}" (gate: ${gateMode}). ` +
+              `The Destroys search attribute on this phase is the plan's destroy count.` +
+              (live
+                ? " The apply that follows re-plans against the live system and applies this plan file only" +
+                  " if its own fresh plan agrees; otherwise it refuses with exit status 3 and the Apply" +
+                  " step reports a named refusal for review (choudoufu #878)."
+                : ""),
+        }),
+      ]),
+    );
   }
+
+  phases.push(phase("Apply", [applyStep(config.root, { ...where, planFile: plan.out.planFile })]));
 
   const op = Op({
     name: config.name,

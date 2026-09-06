@@ -15,7 +15,8 @@ import {
   choudoufuLiveLs,
   choudoufuLiveCheck,
   choudoufuAdopt,
-  choudoufuLiveApplyCommand,
+  terraformApplyCommand,
+  classifyApprovalRefusal,
   choudoufuLivePlanCommand,
   choudoufuLiveLsCommand,
   choudoufuLiveCheckCommand,
@@ -26,6 +27,8 @@ import {
   __resetChoudoufuVersionCheckForTests,
   DEFAULT_LIVE_PLAN_DOCUMENT_FILE,
   MIN_CHOUDOUFU_VERSION,
+  CHOUDOUFU_APPROVAL_MISMATCH_REFUSAL,
+  CHOUDOUFU_WRONG_ESTATE_REFUSAL,
 } from "./terraform";
 
 // ── The child-process stub (mirrors terraform.test.ts) ──────────────────────
@@ -115,9 +118,27 @@ afterEach(() => {
 
 // ── Pure command builders ────────────────────────────────────────────────────
 
-describe("choudoufuLiveApplyCommand (#2103)", () => {
-  test("apply -auto-approve, no plan file", () => {
-    expect(choudoufuLiveApplyCommand({ binary: "choudoufu" })).toBe("choudoufu apply -input=false -auto-approve");
+describe("apply on a live root is the stock command (#2106 follow-up)", () => {
+  test("no -auto-approve: a matched plan file applies without re-prompting, as stock's own apply does", () => {
+    expect(terraformApplyCommand({ binary: "choudoufu", planFile: "chant.tfplan" })).toBe(
+      "choudoufu apply -input=false chant.tfplan",
+    );
+  });
+});
+
+describe("classifyApprovalRefusal (#2106 follow-up)", () => {
+  test("names the change-set refusal", () => {
+    expect(classifyApprovalRefusal(`\nError: ${CHOUDOUFU_APPROVAL_MISMATCH_REFUSAL}\n\nrows...`)).toBe(
+      "approval-mismatch",
+    );
+  });
+
+  test("names the estate refusal", () => {
+    expect(classifyApprovalRefusal(`\nError: ${CHOUDOUFU_WRONG_ESTATE_REFUSAL}\n`)).toBe("wrong-estate");
+  });
+
+  test("undefined for output carrying neither summary line", () => {
+    expect(classifyApprovalRefusal("Error: something else entirely")).toBeUndefined();
   });
 });
 
@@ -223,14 +244,14 @@ describe("parseChoudoufuPlanSummary (#2106)", () => {
 
 describe("isOlderVersion / parseChoudoufuVersion (#2103)", () => {
   test("compares major.minor.patch numerically", () => {
-    expect(isOlderVersion("0.11.9", "0.12.0")).toBe(true);
-    expect(isOlderVersion("0.12.0", "0.12.0")).toBe(false);
-    expect(isOlderVersion("0.12.1", "0.12.0")).toBe(false);
-    expect(isOlderVersion("1.0.0", "0.12.0")).toBe(false);
+    expect(isOlderVersion("0.12.9", "0.13.0")).toBe(true);
+    expect(isOlderVersion("0.13.0", "0.13.0")).toBe(false);
+    expect(isOlderVersion("0.13.1", "0.13.0")).toBe(false);
+    expect(isOlderVersion("1.0.0", "0.13.0")).toBe(false);
   });
 
   test("parses the release version out of the human `version` output", () => {
-    expect(parseChoudoufuVersion("choudoufu v0.12.0 (based on OpenTofu v1.13.0)\non darwin_arm64")).toBe("0.12.0");
+    expect(parseChoudoufuVersion("choudoufu v0.13.0 (based on OpenTofu v1.13.0)\non darwin_arm64")).toBe("0.13.0");
   });
 
   test("undefined for a dev build with no release tag baked in", () => {
@@ -241,10 +262,10 @@ describe("isOlderVersion / parseChoudoufuVersion (#2103)", () => {
 // ── The version check, wired into every activity via resolveRoot ───────────
 
 describe("choudoufu version check (#2103)", () => {
-  test("refuses a binary older than v0.12.0", async () => {
+  test("refuses a binary older than the floor, which the approval artifact moved to v0.13.0", async () => {
     const dir = liveProject();
-    replies.push({ match: "version", reply: { stdout: "choudoufu v0.11.0 (based on OpenTofu v1.12.0)\n", stderr: "" } });
-    await expect(choudoufuLiveCheck({ root: "estate", cwd: dir })).rejects.toThrow(/older than.*v0\.12\.0/);
+    replies.push({ match: "version", reply: { stdout: "choudoufu v0.12.0 (based on OpenTofu v1.13.0)\n", stderr: "" } });
+    await expect(choudoufuLiveCheck({ root: "estate", cwd: dir })).rejects.toThrow(/older than.*v0\.13\.0/);
   });
 
   test("passes at exactly the minimum version", async () => {
@@ -280,33 +301,84 @@ describe("choudoufu version check (#2103)", () => {
 
 // ── terraformApply on a live root ───────────────────────────────────────────
 
-describe("terraformApply on a live root (#2103)", () => {
-  test("runs apply -auto-approve with no plan file", async () => {
+describe("terraformApply on a live root (#2106 follow-up)", () => {
+  /** The version reply every activity call needs before it reaches the apply. */
+  function atMinimumVersion(): void {
+    replies.push({
+      match: "version",
+      reply: { stdout: `choudoufu v${MIN_CHOUDOUFU_VERSION} (based on OpenTofu v1.13.0)\n`, stderr: "" },
+    });
+  }
+
+  test("applies the plan file, the same command a stock root runs", async () => {
     const dir = liveProject();
-    const result = await terraformApply({ root: "estate", cwd: dir });
-    const applyCalls = execCalls.filter((c) => c.cmd.includes("apply"));
-    expect(applyCalls).toHaveLength(1);
-    expect(applyCalls[0].cmd).toBe("choudoufu apply -input=false -auto-approve");
-    expect(result).toEqual({ dir: resolve(dir, "estate"), applied: true });
+    atMinimumVersion();
+    const result = await terraformApply({ root: "estate", cwd: dir, planFile: "chant.tfplan" });
+    expect(commandsRun()).toEqual(["choudoufu apply -input=false chant.tfplan"]);
+    expect(result).toEqual({ planFile: "chant.tfplan", dir: resolve(dir, "estate"), applied: true });
   });
 
-  test("refuses a plan file, quoting choudoufu's own reason", async () => {
+  test("exit 3 with the change-set refusal comes back as a named result, not a throw", async () => {
     const dir = liveProject();
+    atMinimumVersion();
+    replies.push({
+      match: "apply",
+      reply: execError(3, `\nError: ${CHOUDOUFU_APPROVAL_MISMATCH_REFUSAL}\n\n  null_resource.second  Create  -\n`),
+    });
+    const result = await terraformApply({ root: "estate", cwd: dir, planFile: "chant.tfplan" });
+    expect(result.applied).toBe(false);
+    expect(result.refused).toBe("approval-mismatch");
+    expect(result.refusal).toContain(CHOUDOUFU_APPROVAL_MISMATCH_REFUSAL);
+    expect(result.planFile).toBe("chant.tfplan");
+  });
+
+  test("exit 3 with the estate refusal is the sibling named result", async () => {
+    const dir = liveProject();
+    atMinimumVersion();
+    replies.push({ match: "apply", reply: execError(3, `\nError: ${CHOUDOUFU_WRONG_ESTATE_REFUSAL}\n`) });
+    const result = await terraformApply({ root: "estate", cwd: dir, planFile: "chant.tfplan" });
+    expect(result.refused).toBe("wrong-estate");
+  });
+
+  test("exit 1 stays a failure, so an ordinary breakage is never routed to a reviewer", async () => {
+    const dir = liveProject();
+    atMinimumVersion();
+    replies.push({ match: "apply", reply: execError(1, "Error: no valid credential sources found") });
     await expect(terraformApply({ root: "estate", cwd: dir, planFile: "chant.tfplan" })).rejects.toThrow(
-      /Applying a saved plan file is not available under live resource markers/,
+      /Command failed \(exit 1\)/,
     );
-    expect(execCalls.filter((c) => c.cmd.includes("apply"))).toHaveLength(0);
+  });
+
+  test("exit 3 carrying neither refusal line stays a failure", async () => {
+    const dir = liveProject();
+    atMinimumVersion();
+    replies.push({ match: "apply", reply: execError(3, "Error: something nobody has named yet") });
+    await expect(terraformApply({ root: "estate", cwd: dir, planFile: "chant.tfplan" })).rejects.toThrow(
+      /Command failed \(exit 3\)/,
+    );
   });
 
   test("reads the estate from the sidecar just as well", async () => {
     const dir = liveProject({ withSidecar: true });
-    await terraformApply({ root: "estate", cwd: dir });
-    expect(execCalls.some((c) => c.cmd === "choudoufu apply -input=false -auto-approve")).toBe(true);
+    atMinimumVersion();
+    await terraformApply({ root: "estate", cwd: dir, planFile: "chant.tfplan" });
+    expect(commandsRun()).toEqual(["choudoufu apply -input=false chant.tfplan"]);
   });
 
-  test("a choudoufu root with no live declaration runs the ordinary stock branch", async () => {
-    const dir = liveProject({ withLiveBlock: false });
+  test("a missing plan file is refused on a live root too", async () => {
+    const dir = liveProject();
+    atMinimumVersion();
     await expect(terraformApply({ root: "estate", cwd: dir })).rejects.toThrow(/planFile is required/);
+    expect(commandsRun()).toEqual([]);
+  });
+
+  test("a choudoufu root with no live declaration reads exit 3 as an ordinary failure", async () => {
+    const dir = liveProject({ withLiveBlock: false });
+    atMinimumVersion();
+    replies.push({ match: "apply", reply: execError(3, `\nError: ${CHOUDOUFU_APPROVAL_MISMATCH_REFUSAL}\n`) });
+    await expect(terraformApply({ root: "estate", cwd: dir, planFile: "chant.tfplan" })).rejects.toThrow(
+      /Command failed \(exit 3\)/,
+    );
   });
 });
 

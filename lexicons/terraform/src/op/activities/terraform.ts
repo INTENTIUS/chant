@@ -31,7 +31,8 @@
  * the four above do: pure command builders, the `promisify(exec)` shape, and
  * no dependency on the lexicon's HCL parse. `./live-detect.ts` is a
  * deliberately separate, cheap regex-based read of "does this root declare a
- * live estate," used only to decide `terraformApply`'s branch and to
+ * live estate," used only to decide how `terraformApply` reads a non-zero
+ * exit and to
  * auto-detect `-estate` for the two live-only reads that need it; the
  * accurate, AST-based version lives in `../../hcl/parse.ts` and stays out of
  * this module's dependency graph. `choudoufu version` is checked once per
@@ -43,7 +44,7 @@ import { exec } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { promisify } from "node:util";
 import { resolve, dirname, join } from "node:path";
-import { safeHeartbeat, type StepOutputRef } from "@intentius/chant/op";
+import { safeHeartbeat } from "@intentius/chant/op";
 import { loadChantConfigUpward } from "@intentius/chant/config";
 import type { TerraformConfig, TerraformRootConfig } from "../../config";
 import { detectLiveEstate } from "./live-detect";
@@ -75,12 +76,37 @@ export const DEFAULT_TERRAFORM_BINARY = "terraform";
 /** Where {@link choudoufuLivePlan} writes GitHub issue #788's JSON document, relative to the root directory. */
 export const DEFAULT_LIVE_PLAN_DOCUMENT_FILE = "chant.live-plan.json";
 
-/** choudoufu below this refuses (#2103): `live-plan -json`, `live-ls` and `live-check -json` all need v0.12.0. */
-export const MIN_CHOUDOUFU_VERSION = "0.12.0";
+/**
+ * choudoufu below this refuses. v0.12.0 brought `live-plan -json`, `live-ls`
+ * and `live-check -json` (#2103); v0.13.0 brought the approval artifact
+ * ([choudoufu #878](https://github.com/INTENTIUS/choudoufu/issues/878), PR
+ * 889): under a live block `plan -out=FILE` is accepted and `apply FILE`
+ * re-plans the live system and refuses on a mismatch with exit status 3.
+ * {@link terraformApply} depends on that refusal existing, so the floor is
+ * the release that shipped it rather than the one before.
+ */
+export const MIN_CHOUDOUFU_VERSION = "0.13.0";
 
-/** choudoufu's own refusal text for applying a saved plan file on a live root (`internal/command/live_mode.go`). */
-export const CHOUDOUFU_PLAN_FILE_REFUSAL =
-  "Applying a saved plan file is not available under live resource markers";
+/**
+ * choudoufu's own refusal summary for `-out` on the `live-plan -estate`
+ * surface (`internal/command/live_mode.go`). That is the one surface where a
+ * saved plan file is still refused: a directory reached through `-estate` has
+ * no `live` block, so plain `plan` and `apply` there are ordinary state-backed
+ * commands and a file written from this form would be applied by something
+ * that never heard of the estate. Under a `live` block `plan -out` is
+ * accepted (choudoufu #878).
+ */
+export const CHOUDOUFU_LIVE_PLAN_OUT_REFUSAL =
+  "Saved plan files are not available under live resource markers";
+
+/** Exit status choudoufu's approval refusals carry: not 1 (any ordinary failure), not 2 (`-detailed-exitcode`). */
+export const CHOUDOUFU_APPROVAL_EXIT_CODE = 3;
+
+/** Summary line of choudoufu's refusal when the fresh live plan differs from the approved plan file. */
+export const CHOUDOUFU_APPROVAL_MISMATCH_REFUSAL = "The approved plan no longer matches the live system";
+
+/** Summary line of choudoufu's sibling refusal when the plan file was produced against another estate. */
+export const CHOUDOUFU_WRONG_ESTATE_REFUSAL = "The approved plan belongs to a different estate";
 
 // ── Args and results ────────────────────────────────────────────────────────
 
@@ -116,31 +142,21 @@ export interface TerraformPlanArgs extends TerraformRootArgs {
 export interface TerraformApplyArgs extends TerraformRootArgs {
   /**
    * The saved plan file to apply, relative to the root directory, normally
-   * `plan.out.planFile`, the Plan step's own output.
+   * `plan.out.planFile`, the Plan step's own output. Required: this activity
+   * applies a saved plan and has no bare-apply mode, on either kind of root.
    *
-   * Required on a stock root: this activity has no bare-apply mode there.
-   * Optional, and refused if given, on a live root (#2103): choudoufu
-   * refuses both `-out` and `apply <planfile>` by design (apply always
-   * re-plans live), so a live apply runs `apply -auto-approve` with no plan
-   * file at all.
+   * On a live root this file is the approval artifact
+   * [choudoufu #878](https://github.com/INTENTIUS/choudoufu/issues/878) asked
+   * for, in the stock form choudoufu v0.13.0 shipped (PR 889). `plan -out`
+   * writes stock's own plan file; `apply <planfile>` never replays it, and
+   * never reads it as prior state or as an ownership answer. It re-plans
+   * against the live system the way every live-markers run does, then
+   * compares its fresh plan with the file's, down to the planned values, and
+   * refuses with exit status 3 when they differ. So the seam #2106 left named
+   * and unused on these args is now this field itself, and there is nothing
+   * separate to pass.
    */
   planFile?: string;
-  /**
-   * Unused (#2106). The seam for the approval artifact
-   * [choudoufu #878](https://github.com/INTENTIUS/choudoufu/issues/878) asks
-   * for: a change-set digest apply would refuse to run against on a
-   * mismatch, or a stock-form plan file admitted with a live re-check. Today,
-   * the approval a `TerraformApplyOp` gate records covers only the plan its
-   * approver read; the apply that follows re-plans live and applies whatever
-   * that fresh plan says, and nothing refuses when the two differ (the
-   * composite's own doc comment states this caveat in full). When #878 ships,
-   * the Plan step captures the artifact `choudoufuLivePlan` would then
-   * return, the Apply step below passes it here, and this activity checks it
-   * before applying — one activity change, no composite reshape. Typed as a
-   * bare {@link StepOutputRef} rather than a resolved value's type, since
-   * there is no resolved shape to speak of until #878 lands.
-   */
-  approvalArtifact?: StepOutputRef;
 }
 
 export interface TerraformShowArgs extends TerraformRootArgs {
@@ -230,14 +246,34 @@ export interface TerraformPlanResult extends PlanChangeCounts {
   text: string;
 }
 
+/**
+ * Why a live apply refused the approval artifact it was handed. Both are
+ * choudoufu's exit status 3, which is neither 1 (any ordinary failure, which
+ * a pipeline must not route back to a reviewer) nor `-detailed-exitcode`'s 2.
+ *
+ *   - `"approval-mismatch"`: the fresh live plan's change set or planned
+ *     values differ from the approved file's.
+ *   - `"wrong-estate"`: the file was produced from a configuration naming
+ *     another estate.
+ */
+export type TerraformApprovalRefusal = "approval-mismatch" | "wrong-estate";
+
 /** What {@link terraformApply} resolved. */
 export interface TerraformApplyResult {
-  /** The plan file that was applied. Absent on a live root: a live apply runs with no plan file. */
+  /** The plan file that was applied, or that was refused. */
   planFile?: string;
   /** Absolute path of the root module directory. */
   dir: string;
-  /** Always `true` on success; the activity throws otherwise. */
+  /** `true` when the plan was applied. `false` exactly when {@link refused} is set. */
   applied: boolean;
+  /**
+   * Set when a live apply refused the approval artifact (choudoufu exit 3).
+   * This is a result, not a thrown error, so a workflow can route the run
+   * back to review instead of treating it as a broken step.
+   */
+  refused?: TerraformApprovalRefusal;
+  /** choudoufu's own refusal text, verbatim, when {@link refused} is set. */
+  refusal?: string;
 }
 
 /** Counts projected out of `live-plan -json`'s `unowned` section. */
@@ -438,19 +474,14 @@ export function terraformPlanCommand(opts: {
   return parts.join(" ");
 }
 
-/** `terraform apply <planFile>` — a saved plan, never a bare apply. */
+/**
+ * `terraform apply <planFile>` — a saved plan, never a bare apply. The same
+ * command on a live root: choudoufu v0.13.0 admits a plan file under a `live`
+ * block, and a matched one applies without re-prompting, exactly as stock's
+ * own `apply <planfile>` does, so no `-auto-approve` is needed or passed.
+ */
 export function terraformApplyCommand(opts: { binary: string; planFile: string }): string {
   return `${opts.binary} apply -input=false ${quoteArg(opts.planFile)}`;
-}
-
-/**
- * `choudoufu apply -auto-approve` on a live root: no plan file, since
- * choudoufu refuses `-out` and `apply <planfile>` by design (apply always
- * re-plans live). `-auto-approve` is what lets an automated run skip the
- * confirmation prompt an interactive `apply` would otherwise print.
- */
-export function choudoufuLiveApplyCommand(opts: { binary: string }): string {
-  return `${opts.binary} apply -input=false -auto-approve`;
 }
 
 /**
@@ -626,7 +657,8 @@ async function ensureChoudoufuVersion(binary: string, signal?: AbortSignal): Pro
     if (isOlderVersion(version, MIN_CHOUDOUFU_VERSION)) {
       throw new Error(
         `choudoufu ${version} is older than the minimum supported version v${MIN_CHOUDOUFU_VERSION} ` +
-          "(needed for live-plan -json, live-ls and live-check -json). Upgrade choudoufu.",
+          "(needed for live-plan -json, live-ls, live-check -json, and the approval artifact `plan -out` / " +
+          "`apply <planfile>` pair). Upgrade choudoufu.",
       );
     }
   })();
@@ -799,15 +831,35 @@ export async function terraformPlan(
 }
 
 /**
- * `terraform apply <planFile>` in the named root, or, on a live root,
- * `apply -auto-approve` with no plan file at all.
+ * Which of choudoufu's two approval refusals an exit-3 apply printed, or
+ * `undefined` when the output carries neither summary line. Reads both the
+ * stderr the diagnostic is written to and the stdout the fresh plan is
+ * rendered on, since the two travel separately.
+ */
+export function classifyApprovalRefusal(output: string): TerraformApprovalRefusal | undefined {
+  if (output.includes(CHOUDOUFU_WRONG_ESTATE_REFUSAL)) return "wrong-estate";
+  if (output.includes(CHOUDOUFU_APPROVAL_MISMATCH_REFUSAL)) return "approval-mismatch";
+  return undefined;
+}
+
+/**
+ * `terraform apply <planFile>` in the named root, on a stock root and on a
+ * live one alike.
  *
- * A stock root has no bare-apply mode: without a saved `planFile`, apply
- * re-plans at apply time and acts on something no gate ever saw, so a
- * missing one is refused. A live root is the opposite: choudoufu refuses
- * `-out` and `apply <planfile>` by design (apply always re-plans against the
- * live system), so a `planFile` there is refused instead, quoting
- * choudoufu's own reason.
+ * Neither kind has a bare-apply mode here: without a saved `planFile`, apply
+ * re-plans at apply time and acts on something no gate ever saw, so a missing
+ * one is refused before the CLI runs. choudoufu v0.13.0 is what makes the
+ * live half of that true (choudoufu #878, PR 889): `plan -out` is accepted
+ * under a `live` block, and `apply <planfile>` re-plans against the live
+ * system, compares its fresh plan with the file's down to the planned values,
+ * and applies only when they agree.
+ *
+ * When they do not, choudoufu exits **3**, neither 1 (any ordinary failure)
+ * nor `-detailed-exitcode`'s 2, with one of two named refusals. That is an
+ * answer rather than a breakage, so it comes back as a result (`refused`,
+ * `refusal`) instead of a thrown error, and a workflow can route the run back
+ * to review. Exit 3 is read this way only on a live root; on a stock root
+ * nothing produces it and every non-zero exit stays a failure.
  *
  * Uses the longInfra profile.
  */
@@ -818,21 +870,6 @@ export async function terraformApply(
   const { binary, root, dir, live } = await resolveRoot(args, signal);
   const hasPlanFile = typeof args.planFile === "string" && args.planFile.trim() !== "";
 
-  if (live) {
-    if (hasPlanFile) {
-      throw new Error(
-        `terraformApply: a plan file is refused on a live root. choudoufu: "${CHOUDOUFU_PLAN_FILE_REFUSAL}". ` +
-          "Call terraformApply with no planFile; a live apply always re-plans against the live system.",
-      );
-    }
-    const cmd = choudoufuLiveApplyCommand({ binary });
-    const { stdout, stderr } = await withHeartbeat({ step: "choudoufu apply", root: args.root, dir }, () =>
-      run(cmd, dir, terraformEnvironment(root), signal),
-    );
-    report(stdout, stderr);
-    return { dir, applied: true };
-  }
-
   if (!hasPlanFile) {
     throw new Error(
       "terraformApply: planFile is required — this activity applies a saved plan and has no bare-apply mode. " +
@@ -840,14 +877,34 @@ export async function terraformApply(
     );
   }
 
-  const cmd = terraformApplyCommand({ binary, planFile: args.planFile! });
-  const { stdout, stderr } = await withHeartbeat(
-    { step: "terraform apply", root: args.root, dir, planFile: args.planFile },
-    () => run(cmd, dir, terraformEnvironment(root), signal),
-  );
-  report(stdout, stderr);
+  const planFile = args.planFile!;
+  const cmd = terraformApplyCommand({ binary, planFile });
 
-  return { planFile: args.planFile, dir, applied: true };
+  try {
+    const { stdout, stderr } = await withHeartbeat(
+      { step: "terraform apply", root: args.root, dir, planFile },
+      () => run(cmd, dir, terraformEnvironment(root), signal),
+    );
+    report(stdout, stderr);
+    return { planFile, dir, applied: true };
+  } catch (err) {
+    // An abort or a spawn failure carries no numeric exit code. That is not
+    // the CLI answering, so it propagates untouched, same as terraformPlan.
+    const failure = err as ExecFailure;
+    const refused =
+      live && failure.code === CHOUDOUFU_APPROVAL_EXIT_CODE
+        ? classifyApprovalRefusal(`${failure.stderr ?? ""}\n${failure.stdout ?? ""}`)
+        : undefined;
+    if (refused === undefined) throw err;
+    report(failure.stdout ?? "", failure.stderr ?? "");
+    return {
+      planFile,
+      dir,
+      applied: false,
+      refused,
+      refusal: (failure.stderr ?? "").trim() || (failure.stdout ?? "").trim(),
+    };
+  }
 }
 
 /**

@@ -114,7 +114,7 @@ describe("TF101: plan-before-apply", () => {
   });
 });
 
-describe("TF101: mode awareness against chant.config.json (#2106)", () => {
+describe("TF101: a live root is checked like any other (#2106 follow-up)", () => {
   const dirs: string[] = [];
 
   afterEach(() => {
@@ -139,28 +139,15 @@ describe("TF101: mode awareness against chant.config.json (#2106)", () => {
     return dir;
   }
 
-  /** A `LintContext` whose file lives inside `project`, so the rule's upward walk finds its `chant.config.json`. */
+  /** A `LintContext` whose file lives inside `project`, so a config walk would find it if the rule did one. */
   function contextIn(project: string, code: string): LintContext {
     const filePath = join(project, "ops", "app.op.ts");
     const sourceFile = ts.createSourceFile(filePath, code, ts.ScriptTarget.Latest, true);
     return { sourceFile, entities: [], filePath };
   }
 
-  test("does not fire on a terraformApply call over a live root, even with a literal planFile", () => {
+  test("fires on a terraformApply call over a live root, where #2106 exempted it", () => {
     const dir = project({ binary: "choudoufu", live: true });
-    const diags = planBeforeApplyRule.check(
-      contextIn(
-        dir,
-        `
-          const apply = terraformApply("app", { planFile: "/tmp/plan.out" });
-        `,
-      ),
-    );
-    expect(diags).toHaveLength(0);
-  });
-
-  test("still fires on a terraformApply call over a stock root in the same shape", () => {
-    const dir = project({ binary: "terraform", live: false });
     const diags = planBeforeApplyRule.check(
       contextIn(
         dir,
@@ -173,8 +160,8 @@ describe("TF101: mode awareness against chant.config.json (#2106)", () => {
     expect(diags[0].message).toContain("literal path");
   });
 
-  test("still fires when the root is choudoufu but declares no estate (stock branch)", () => {
-    const dir = project({ binary: "choudoufu", live: false });
+  test("fires on a stock root in the same shape", () => {
+    const dir = project({ binary: "terraform", live: false });
     const diags = planBeforeApplyRule.check(
       contextIn(
         dir,
@@ -186,7 +173,21 @@ describe("TF101: mode awareness against chant.config.json (#2106)", () => {
     expect(diags).toHaveLength(1);
   });
 
-  test("root name via a root: property (object-literal-only call form) resolves the same way", () => {
+  test("a live root's paired call still passes", () => {
+    const dir = project({ binary: "choudoufu", live: true });
+    const diags = planBeforeApplyRule.check(
+      contextIn(
+        dir,
+        `
+          const plan = terraformPlan("app", { id: "plan" });
+          const apply = terraformApply("app", { planFile: plan.out.planFile });
+        `,
+      ),
+    );
+    expect(diags).toHaveLength(0);
+  });
+
+  test("the object-literal-only call form is checked the same way", () => {
     const dir = project({ binary: "choudoufu", live: true });
     const diags = planBeforeApplyRule.check(
       contextIn(
@@ -196,6 +197,20 @@ describe("TF101: mode awareness against chant.config.json (#2106)", () => {
         `,
       ),
     );
-    expect(diags).toHaveLength(0);
+    expect(diags).toHaveLength(1);
+  });
+
+  test("no project config at all changes nothing: the rule reads none", () => {
+    const dir = mkdtempSync(join(tmpdir(), "chant-tf101-mode-"));
+    dirs.push(dir);
+    const diags = planBeforeApplyRule.check(
+      contextIn(
+        dir,
+        `
+          const apply = terraformApply("app", { planFile: "/tmp/plan.out" });
+        `,
+      ),
+    );
+    expect(diags).toHaveLength(1);
   });
 });

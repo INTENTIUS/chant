@@ -1,7 +1,5 @@
 import * as ts from "typescript";
 import type { LintRule, LintDiagnostic, LintContext } from "@intentius/chant/lint/rule";
-import { dirname } from "node:path";
-import { resolveRootModeSync } from "../../op/resolve-root-mode";
 
 /**
  * TF101: terraformApply's planFile must reference a preceding terraformPlan step.
@@ -30,16 +28,16 @@ import { resolveRootModeSync } from "../../op/resolve-root-mode";
  * `validateStepOutputRefs` takes, since the runtime brand on a real
  * `StepOutputRef` is invisible to a source-level AST match.
  *
- * Does not fire on a `terraformApply` call over a live root (#2103, #2106):
- * there is no plan file to pair there — choudoufu refuses one, and the
- * activity runs a bare `apply -auto-approve` instead. This rule resolves the
- * call's root name against `chant.config.json`
- * ({@link resolveRootModeSync}, walking up from the linted file's own
- * directory) when it can; when it cannot — a `chant.config.ts`, no config
- * discoverable at all, an unrecognized root name, or a root argument that
- * isn't a string literal — it stays silent about the mode question and
- * checks the call exactly as it always has, the same conservative direction
- * the resolver itself takes.
+ * Fires on every `terraformApply` call, live root or stock. #2106 exempted
+ * live roots for one release, because choudoufu refused `-out` and
+ * `apply <planfile>` and the activity ran a bare `apply -auto-approve` with no
+ * plan file to pair. choudoufu v0.13.0 admits both under a `live` block
+ * ([choudoufu #878](https://github.com/INTENTIUS/choudoufu/issues/878)), and
+ * there the pairing matters more than on a stock root, not less: the apply
+ * re-plans the live system and compares its fresh plan against the file it was
+ * handed, so a plan file spelled out as a literal is an approval for a run
+ * nobody can trace back to a plan step. The exemption is gone with the
+ * condition that produced it, and this rule reads no project config at all.
  */
 export const planBeforeApplyRule: LintRule = {
   id: "TF101",
@@ -138,43 +136,13 @@ export const planBeforeApplyRule: LintRule = {
       }
     };
 
-    /**
-     * The root name a `terraformApply(...)` call names, when it is a plain
-     * string literal: the positional first argument (the k3s-shaped builder
-     * signature), or a `root: "..."` property in an object-literal argument.
-     * `undefined` for anything else (an identifier, a template literal) —
-     * this rule does not evaluate expressions, only match literal shapes.
-     */
-    const rootNameOf = (node: ts.CallExpression): string | undefined => {
-      const [first] = node.arguments;
-      if (first && ts.isStringLiteral(first)) return first.text;
-      for (const arg of node.arguments) {
-        if (!ts.isObjectLiteralExpression(arg)) continue;
-        for (const prop of arg.properties) {
-          if (
-            ts.isPropertyAssignment(prop) &&
-            ts.isIdentifier(prop.name) &&
-            prop.name.text === "root" &&
-            ts.isStringLiteral(prop.initializer)
-          ) {
-            return prop.initializer.text;
-          }
-        }
-      }
-      return undefined;
-    };
-
     const visit = (node: ts.Node) => {
       if (ts.isCallExpression(node) && calleeName(node.expression) === "terraformApply") {
-        const rootName = rootNameOf(node);
-        const resolved = rootName !== undefined ? resolveRootModeSync(rootName, dirname(context.filePath)) : undefined;
-        if (resolved?.mode !== "live") {
-          // The options object may be the first argument (`terraformApply({ planFile })`)
-          // or follow a positional one (`terraformApply("app", { planFile })`, the
-          // k3s-shaped builder signature); inspect every object-literal argument.
-          for (const arg of node.arguments) {
-            if (ts.isObjectLiteralExpression(arg)) checkPlanFile(arg);
-          }
+        // The options object may be the first argument (`terraformApply({ planFile })`)
+        // or follow a positional one (`terraformApply("app", { planFile })`, the
+        // k3s-shaped builder signature); inspect every object-literal argument.
+        for (const arg of node.arguments) {
+          if (ts.isObjectLiteralExpression(arg)) checkPlanFile(arg);
         }
       }
       ts.forEachChild(node, visit);
