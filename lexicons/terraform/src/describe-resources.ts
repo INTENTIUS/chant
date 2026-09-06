@@ -705,9 +705,26 @@ function gapReason(): UnobservedReason {
   return "unsupported-kind";
 }
 
-/** The entity key `buildRoots()` would have produced for a live resource's address. */
-function entityKeyFor(root: string, address: string): string {
-  return `${root}/${address}`;
+/**
+ * The entity key `buildRoots()` would have produced for a live resource's
+ * address.
+ *
+ * A live address is fully qualified with dots, `module.cdn.null_resource.edge`;
+ * the build keys a descended child module's block with a slash per call,
+ * `app/module.cdn/null_resource.edge` (#2112). Splitting the `module.<name>.`
+ * prefixes back out is what keeps a live row and the block that declared it
+ * on the same key.
+ */
+export function entityKeyFor(root: string, address: string): string {
+  const parts = address.split(".");
+  const segments: string[] = [];
+  let i = 0;
+  while (i + 1 < parts.length && parts[i] === "module") {
+    segments.push(`module.${parts[i + 1]}`);
+    i += 2;
+  }
+  segments.push(parts.slice(i).join("."));
+  return [root, ...segments].join("/");
 }
 
 /**

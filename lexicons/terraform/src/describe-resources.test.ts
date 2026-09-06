@@ -22,7 +22,9 @@ import type { Declarable } from "@intentius/chant/declarable";
 import {
   describeResources,
   classifyStateOwnership,
+  entityKeyFor,
   indexStateResources,
+  qualifiedAddress,
   TERRAFORM_STATE_OWNERSHIP_KEYS,
   type TerraformReadDeps,
 } from "./describe-resources";
@@ -127,6 +129,30 @@ describe("indexStateResources (#2087)", () => {
   it("reads nothing from a document with no values at all", () => {
     expect(indexStateResources({}).rows.size).toBe(0);
     expect(indexStateResources(null).rows.size).toBe(0);
+  });
+});
+
+describe("child-module addresses and entity keys (#2112)", () => {
+  it("qualifies a child module block's address the way state and the markers write it", () => {
+    expect(qualifiedAddress("null_resource.edge", [])).toBe("null_resource.edge");
+    expect(qualifiedAddress("null_resource.edge", ["module.cdn"])).toBe("module.cdn.null_resource.edge");
+    expect(qualifiedAddress("null_resource.edge", ["module.cdn", "module.bucket"])).toBe(
+      "module.cdn.module.bucket.null_resource.edge",
+    );
+  });
+
+  it("maps a live address back onto the key buildRoots() produced for it", () => {
+    expect(entityKeyFor("app", "null_resource.first")).toBe("app/null_resource.first");
+    expect(entityKeyFor("app", "module.cdn.null_resource.edge")).toBe("app/module.cdn/null_resource.edge");
+    expect(entityKeyFor("app", "module.cdn.module.bucket.aws_s3_bucket.assets")).toBe(
+      "app/module.cdn/module.bucket/aws_s3_bucket.assets",
+    );
+  });
+
+  it("is the inverse of the key the parse builds, for the fixture root", async () => {
+    const entities = await declaredEntities();
+    expect(entities.has("app/module.cdn/null_resource.edge")).toBe(true);
+    expect(entityKeyFor("app", "module.cdn.null_resource.edge")).toBe("app/module.cdn/null_resource.edge");
   });
 });
 
