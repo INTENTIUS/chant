@@ -1,4 +1,5 @@
 import type { Declarable } from "../declarable";
+import type { ActivityContract } from "../op/activity-contract";
 import type { SerializerResult } from "../serializer";
 import type { Severity } from "./rule";
 import { parseOutputDocs, type OutputDoc } from "./output-docs";
@@ -38,6 +39,22 @@ export interface PostSynthContext {
    * with `ctx.docs ?? []` only when a context's provenance is unknown.
    */
   readonly docs?: OutputDoc[];
+  /**
+   * Activity contracts resolved across every lexicon this build configured
+   * (chant #2101), keyed by activity name — core's own plus whatever each
+   * lexicon contributes at `@intentius/chant-lexicon-<name>/op/activity-contracts`
+   * or through its plugin. Filled in by `chant build`, `chant lint` and
+   * `check-lexicon`'s example harness via `loadActivityContracts`.
+   *
+   * The checks that validate Op steps against contracts (OPS012 and OPS013,
+   * `./rules/op/`) merge this over their own statically imported table with
+   * `mergeActivityContracts`, so an Op calling `terraformPlan` or
+   * `k3sInstall` validates against the contract the owning lexicon declared
+   * instead of failing for the absence of one. Optional, and absent from a
+   * hand-built context: a check must behave as it did before this existed
+   * when it is `undefined`.
+   */
+  readonly activityContracts?: ReadonlyMap<string, ActivityContract>;
   /** Raw build result object */
   buildResult: {
     outputs: Map<string, string | SerializerResult>;
@@ -181,12 +198,15 @@ export function isPostSynthCheck(value: unknown): value is PostSynthCheck {
 
 /**
  * Run a set of post-synthesis checks against a build result. `env` is threaded
- * into the context so a check can branch on the current environment/stack.
+ * into the context so a check can branch on the current environment/stack, and
+ * `opts.activityContracts` (chant #2101) carries the build's cross-lexicon
+ * activity-contract map to the checks that validate Op steps against it.
  */
 export function runPostSynthChecks(
   checks: PostSynthCheck[],
   buildResult: PostSynthContext["buildResult"],
   env?: string,
+  opts?: { activityContracts?: ReadonlyMap<string, ActivityContract> },
 ): PostSynthDiagnostic[] {
   const getDocs = createDocsAccessor(buildResult.outputs);
   const ctx: PostSynthContext = {
@@ -194,6 +214,7 @@ export function runPostSynthChecks(
     entities: buildResult.entities,
     env,
     buildResult,
+    ...(opts?.activityContracts ? { activityContracts: opts.activityContracts } : {}),
     get docs(): OutputDoc[] {
       return getDocs();
     },

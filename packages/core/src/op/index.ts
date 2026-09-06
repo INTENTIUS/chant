@@ -43,6 +43,8 @@ export { generateOpsPipeline, withOpSchedules } from "./generate-pipeline";
 export type { GenerateOpsPipelineResult } from "./generate-pipeline";
 export { loadActivities, loadProfiles, resolveActivity } from "./activity-registry";
 export type { ActivityFn } from "./activity-registry";
+export { loadActivityContracts, mergeActivityContracts } from "./activity-contract-registry";
+export type { LexiconActivityContractContributor } from "./activity-contract-registry";
 export { ACTIVITY_PROFILES, ACTIVITY_PROFILE_NAMES } from "./activity-profiles";
 export type { ActivityProfile, ActivityProfileName } from "./activity-profiles";
 export { NonRetryableActivityError, nonRetryableFailure } from "./activity-failure";

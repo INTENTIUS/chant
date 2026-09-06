@@ -15,6 +15,7 @@ import { resolveCliBuildParams } from "../build-params-cli";
 import type { Serializer, SerializerResult } from "../../serializer";
 import type { LexiconPlugin } from "../../lexicon";
 import { runPostSynthChecks, type PostSynthDiagnostic } from "../../lint/post-synth";
+import { loadActivityContracts } from "../../op/activity-contract-registry";
 import { isOpEntity } from "../../op/resource";
 import { serializeOpIR } from "../../op/op-ir";
 import type { OpConfig } from "../../op/types";
@@ -492,6 +493,16 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
     }
   }
 
+  // Activity contracts across every loaded lexicon (chant #2101): core's own
+  // plus each lexicon's, by the same `@intentius/chant-lexicon-<name>/op/...`
+  // convention `loadActivities` resolves implementations with. OPS012/OPS013
+  // and a plugin's own checks merge this over their own tables, so a step
+  // calling a lexicon's activity is validated against that lexicon's contract
+  // instead of failing for the absence of one. Resolved once, for both check
+  // passes below.
+  const activityContracts =
+    result.errors.length === 0 ? await loadActivityContracts(options.plugins ?? []) : undefined;
+
   // Core-owned post-synth checks over the Op model (#2122, epic #2114
   // sub-issue 6) — OPS012/OPS013/OPS014, ported from a hosting lexicon's
   // own TMP012/TMP013/TMP014. An Op is recognized by entity type
@@ -499,7 +510,7 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
   // FULL build result regardless of which plugins loaded — same as the
   // receipt/output/knowledge checks above.
   if (result.errors.length === 0) {
-    const opDiags = runPostSynthChecks(coreOpChecks(), result, env);
+    const opDiags = runPostSynthChecks(coreOpChecks(), result, env, { activityContracts });
     const { diagnostics: activeDiags, suppressed } = applyConfiguredSeverity(opDiags, config.lint?.rules);
     suppressedPostSynthCount += suppressed.length;
     for (const diag of activeDiags) {
@@ -531,7 +542,7 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
       }
 
       const scopedResult = { ...result, outputs: scopedOutputs };
-      const postDiags = runPostSynthChecks(checks, scopedResult, env);
+      const postDiags = runPostSynthChecks(checks, scopedResult, env, { activityContracts });
       // `lint.presets` (chant #2113) filters WHICH check ids are reported at
       // all, before `lint.rules`/inline suppression act on the reported
       // ones. It's a no-op for a lexicon that ships no `lintPresets()` (the

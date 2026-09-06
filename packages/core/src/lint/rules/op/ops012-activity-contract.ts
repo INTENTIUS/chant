@@ -10,10 +10,21 @@
  * whose `fn` has no registered contract here is skipped — most activities
  * don't have one yet; see that module's doc for why that's the intended,
  * non-breaking default.
+ *
+ * Cross-lexicon (chant #2101): an Op step may call an activity any
+ * configured lexicon contributes (`terraformPlan`, `k3sInstall`,
+ * `flyApply`), and since this check became core-owned it fires on every
+ * project that declares an Op. `ctx.activityContracts` carries the contracts
+ * every configured lexicon declared, resolved by `loadActivityContracts`
+ * (`../../../op/activity-contract-registry.ts`) the same way
+ * `loadActivities` resolves the implementations, and is merged over the
+ * static table below. A context that carries none — a hand-built one in a
+ * test, a caller that has not loaded any — falls back to that table alone,
+ * exactly as before.
  */
 
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "../../post-synth";
-import { validateActivitySteps, type ActivityContract } from "../../../op";
+import { validateActivitySteps, mergeActivityContracts, type ActivityContract } from "../../../op";
 import type { OpConfig } from "../../../op";
 import * as contracts from "../../../op/activities/activity-contracts";
 import { isOpEntity } from "./support";
@@ -28,6 +39,7 @@ export const ops012: PostSynthCheck = {
 
   check(ctx: PostSynthContext): PostSynthDiagnostic[] {
     const diagnostics: PostSynthDiagnostic[] = [];
+    const activeContracts = mergeActivityContracts(CONTRACTS, ctx.activityContracts);
 
     for (const [entityKey, entity] of ctx.entities) {
       if (!isOpEntity(entity)) continue;
@@ -36,7 +48,7 @@ export const ops012: PostSynthCheck = {
       const props = ((entity as { props?: Record<string, unknown> }).props ?? {}) as unknown as OpConfig;
       if (typeof props.name !== "string" || !Array.isArray(props.phases)) continue;
 
-      for (const issue of validateActivitySteps(props, CONTRACTS)) {
+      for (const issue of validateActivitySteps(props, activeContracts)) {
         diagnostics.push({
           checkId: "OPS012",
           severity: "error",

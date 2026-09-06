@@ -60,6 +60,7 @@ function onPath(cmd: string): boolean {
 /**
  * https://github.com/INTENTIUS/choudoufu/issues/894. Flip to `false` when the
  * `-json` document becomes reachable on a root that declares its own estate.
+ * chant #2168 tracks this and the other four reversals that unblock together.
  */
 const CHOUDOUFU_894_OPEN = true;
 

@@ -119,7 +119,7 @@ export const plainBucket = new Bucket({
     const results = await checkExamplesBuild(dir);
     const insecure = results.find((r) => r.example === "insecure");
     expect(insecure?.ok).toBe(false);
-    expect(insecure?.detail).toMatch(/post-synth error\(s\) from the lexicon's own checks/);
+    expect(insecure?.detail).toMatch(/post-synth error\(s\)/);
     expect(insecure?.detail).toMatch(/WAW042: \[plainBucket\]/);
   });
 
@@ -139,6 +139,34 @@ export const plainBucket = new Bucket({
 
     const results = await checkExamplesBuild(dir);
     expect(results.find((r) => r.example === "suppressed")).toMatchObject({ ok: true });
+  });
+
+  // #2101 — the third axis: core's own Op-model checks run over the example's
+  // result too, so an example carrying an Op has it validated here rather
+  // than only when a user builds the example themselves. The Op below
+  // references a step whose activity has no registered contract anywhere,
+  // which is exactly what OPS013 exists to refuse.
+  test("an example whose Op fails core's own OPS checks fails (#2101)", async () => {
+    writeLexiconDirWithExample(dir, "bad-op", {
+      "bucket.ts": cleanBucketSource,
+      "broken.op.ts": `import { Op, phase, activity, stepOutput } from "@intentius/chant/op";
+
+export const brokenOp = Op({
+  name: "broken",
+  overview: "references a step nothing declares",
+  phases: [
+    phase("Run", [
+      activity("shellCmd", { cmd: stepOutput("nope", "value") }),
+    ]),
+  ],
+});
+`,
+    });
+
+    const results = await checkExamplesBuild(dir);
+    const badOp = results.find((r) => r.example === "bad-op");
+    expect(badOp?.ok).toBe(false);
+    expect(badOp?.detail).toMatch(/OPS013/);
   });
 
   test("an empty src/ directory is skipped, not reported as a failure", async () => {

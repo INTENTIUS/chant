@@ -1,6 +1,6 @@
 # scheduled-watch
 
-A terraform root watched on a cron. `ops/watch.op.ts` builds a
+A terraform root watched on a cron. `src/watch.op.ts` builds a
 `TerraformWatchOp` over the `app` root declared in `chant.config.ts`: init,
 plan with `-detailed-exitcode`, and, when the plan is not empty, a GitHub
 issue whose body is the `terraform plan -no-color` render.

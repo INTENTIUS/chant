@@ -20,6 +20,23 @@
  * be configured, and no activity needs a registered contract at all, for it
  * to fire.
  *
+ * Cross-lexicon (chant #2101): an Op step may call an activity any
+ * configured lexicon contributes (`terraformPlan`, `k3sInstall`,
+ * `flyApply`), and since this check became core-owned it fires on every
+ * project that declares an Op. `ctx.activityContracts` carries the contracts
+ * every configured lexicon declared, resolved by `loadActivityContracts`
+ * (`../../../op/activity-contract-registry.ts`) the same way
+ * `loadActivities` resolves the implementations, and is merged over the
+ * static table below. A context that carries none — a hand-built one in a
+ * test, a caller that has not loaded any — falls back to that table alone,
+ * exactly as before.
+ *
+ * That merge is what makes this rule usable at all on an Op whose steps are
+ * a lexicon's: before it, `terraformPlan` feeding `terraformApply` failed
+ * `chant build` for the absence of a contract the terraform lexicon does in
+ * fact declare, which is why both terraform examples carrying an Op kept it
+ * outside `src/` where the example-build harness could not see it.
+ *
  * This check is what makes it safe for a lexicon's own serializer to compile
  * every reference it finds unconditionally: `chant build` blocks file output
  * while an error-severity post-synth finding stands, so generated code
@@ -41,7 +58,7 @@
  */
 
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "../../post-synth";
-import { validateStepOutputRefs, type ActivityContract } from "../../../op";
+import { validateStepOutputRefs, mergeActivityContracts, type ActivityContract } from "../../../op";
 import type { OpConfig } from "../../../op";
 import * as contracts from "../../../op/activities/activity-contracts";
 import { isOpEntity } from "./support";
@@ -56,6 +73,7 @@ export const ops013: PostSynthCheck = {
 
   check(ctx: PostSynthContext): PostSynthDiagnostic[] {
     const diagnostics: PostSynthDiagnostic[] = [];
+    const activeContracts = mergeActivityContracts(CONTRACTS, ctx.activityContracts);
 
     for (const [entityKey, entity] of ctx.entities) {
       if (!isOpEntity(entity)) continue;
@@ -64,7 +82,7 @@ export const ops013: PostSynthCheck = {
       const props = ((entity as { props?: Record<string, unknown> }).props ?? {}) as unknown as OpConfig;
       if (typeof props.name !== "string" || !Array.isArray(props.phases)) continue;
 
-      for (const issue of validateStepOutputRefs(props, CONTRACTS)) {
+      for (const issue of validateStepOutputRefs(props, activeContracts)) {
         diagnostics.push({
           checkId: "OPS013",
           severity: "error",

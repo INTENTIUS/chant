@@ -23,6 +23,14 @@
  * diagnostic left at `error` severity fails the example. Warnings do not.
  * An example is what a user copies wholesale; it must not teach a pattern
  * the lexicon it demonstrates flags as an error.
+ *
+ * #2101 added the third axis: core's own Op-model checks (OPS012/OPS013/
+ * OPS014, `../../lint/rules/op/`) run over the same result, as `chant build`
+ * runs them, so an example carrying an Op has that Op validated here rather
+ * than only when a user builds the example themselves. They are given the
+ * activity contracts every loaded lexicon declares, resolved the same way
+ * `chant build` resolves them, so a step calling that lexicon's own activity
+ * validates against its own schemas.
  */
 
 import { existsSync, readdirSync } from "fs";
@@ -33,6 +41,9 @@ import { detectLexicons } from "../../detectLexicon";
 import { loadChantConfig } from "../../config";
 import { loadPlugins, collectBuildRootContributors } from "../plugins";
 import { runPostSynthChecks, type PostSynthDiagnostic } from "../../lint/post-synth";
+import { coreOpChecks } from "../../lint/rules/op";
+import { loadActivityContracts } from "../../op/activity-contract-registry";
+import type { ActivityContract } from "../../op/activity-contract";
 import { applyConfiguredSeverity } from "../../lint/config";
 import type { LexiconPlugin } from "../../lexicon";
 import type { SerializerResult } from "../../serializer";
@@ -44,18 +55,31 @@ export interface ExampleBuildResult {
 }
 
 /**
- * Run each plugin's own post-synth checks against that plugin's output —
- * the same per-plugin scoping and `lint.rules` severity resolution
- * `cli/commands/build.ts` applies — and return what is left at `error`
- * severity. Project `lint.policies` are not run here: those are the
- * example author's organizational policy, not the lexicon's contract.
+ * Run core's Op-model checks over the whole result, then each plugin's own
+ * post-synth checks against that plugin's output — the same scoping and
+ * `lint.rules` severity resolution `cli/commands/build.ts` applies — and
+ * return what is left at `error` severity. Project `lint.policies` are not
+ * run here: those are the example author's organizational policy, not the
+ * lexicon's contract.
  */
 export function postSynthErrors(
   plugins: LexiconPlugin[],
   result: BuildResult,
   lintRules: Parameters<typeof applyConfiguredSeverity>[1],
+  activityContracts?: ReadonlyMap<string, ActivityContract>,
 ): PostSynthDiagnostic[] {
   const errors: PostSynthDiagnostic[] = [];
+
+  // Core's Op-model checks first (#2101). An Op is recognized by entity type,
+  // not by which lexicon declared it, so these run over the FULL result the
+  // way `chant build` runs them — unscoped, and regardless of which plugins
+  // loaded. Without this an example's Op reached output unvalidated, which is
+  // why the terraform, aws and render examples kept their Ops outside `src/`.
+  const opDiags = runPostSynthChecks(coreOpChecks(), result, undefined, { activityContracts });
+  for (const diag of applyConfiguredSeverity(opDiags, lintRules).diagnostics) {
+    if (diag.severity === "error") errors.push(diag);
+  }
+
   for (const plugin of plugins) {
     if (!plugin.postSynthChecks) continue;
     const checks = plugin.postSynthChecks();
@@ -66,7 +90,7 @@ export function postSynthErrors(
     const pluginOutput = result.outputs.get(outputKey);
     if (pluginOutput !== undefined) scopedOutputs.set(outputKey, pluginOutput);
 
-    const diags = runPostSynthChecks(checks, { ...result, outputs: scopedOutputs });
+    const diags = runPostSynthChecks(checks, { ...result, outputs: scopedOutputs }, undefined, { activityContracts });
     const { diagnostics } = applyConfiguredSeverity(diags, lintRules);
     for (const diag of diagnostics) {
       if (diag.severity === "error") errors.push(diag);
@@ -147,7 +171,7 @@ export async function checkExamplesBuild(lexiconDir: string): Promise<ExampleBui
       // already explains the failure, and partial output is not the output
       // the checks are meant to see.
       const postSynth = structurallyOk
-        ? postSynthErrors(plugins, result, exampleConfig.lint?.rules)
+        ? postSynthErrors(plugins, result, exampleConfig.lint?.rules, await loadActivityContracts(plugins))
         : [];
       const ok = structurallyOk && postSynth.length === 0;
 
@@ -160,7 +184,7 @@ export async function checkExamplesBuild(lexiconDir: string): Promise<ExampleBui
             ? structuralErrors.join("; ")
             : !producedOutput
               ? "discovered source but produced no output"
-              : `post-synth error(s) from the lexicon's own checks: ${postSynth.map(formatPostSynthError).join("; ")}`,
+              : `post-synth error(s): ${postSynth.map(formatPostSynthError).join("; ")}`,
       });
     } catch (err) {
       results.push({

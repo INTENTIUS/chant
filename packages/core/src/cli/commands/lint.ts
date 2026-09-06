@@ -14,6 +14,7 @@ import { runComponentChecks, type ComponentCheckDiagnostic } from "../../lint/co
 import { buildCapabilityRegistry } from "../../components/capability-plugin-loader";
 import type { RollbackPolicy } from "../../components/capability";
 import { coreOpChecks } from "../../lint/rules/op";
+import { loadActivityContracts } from "../../op/activity-contract-registry";
 import { runPostSynthChecks } from "../../lint/post-synth";
 import { rule } from "../../lint/declarative";
 import { watchDirectory, formatTimestamp, formatChangedFiles } from "../watch";
@@ -446,9 +447,16 @@ async function runComponentCheckDiagnostics(
  *
  * Each `*.op.ts` file's default export is imported directly and used as-is
  * (it is already the `Declarable` `OpResource` instance `Op()` built) — no
- * serializer and no lexicon needed, since OPS012/OPS013/OPS014 only ever
- * read `ctx.entities`, never `ctx.outputs`. That's what lets this fire even
- * on a project with no lexicons configured at all.
+ * serializer and no lexicon plugin needed, since OPS012/OPS013/OPS014 only
+ * ever read `ctx.entities`, never `ctx.outputs`. That's what lets this fire
+ * even on a project with no lexicons configured at all.
+ *
+ * The project's configured lexicon NAMES are read, though (chant #2101), to
+ * resolve the activity contracts each one declares at
+ * `@intentius/chant-lexicon-<name>/op/activity-contracts` — one dynamic
+ * import per lexicon, no plugin load. Without them a step calling a
+ * lexicon's activity is flagged for the absence of a contract that lexicon
+ * does declare, which is the whole point of OPS013 firing outside a build.
  *
  * Reported at `1:1` in the file the Op was declared in, the same whole-file
  * convention COMP* diagnostics use — a post-synth finding carries no real
@@ -486,13 +494,21 @@ async function runOpCheckDiagnostics(
 
   if (entities.size === 0) return { diagnostics: [], suppressed: [] };
 
-  const raw = runPostSynthChecks(coreOpChecks(), {
-    outputs: new Map(),
-    entities: entities as Map<string, never>,
-    warnings: [],
-    errors: [],
-    sourceFileCount: opFiles.length,
-  });
+  const lexiconNames = await resolveProjectLexicons(infraPath).catch(() => [] as string[]);
+  const activityContracts = await loadActivityContracts(lexiconNames);
+
+  const raw = runPostSynthChecks(
+    coreOpChecks(),
+    {
+      outputs: new Map(),
+      entities: entities as Map<string, never>,
+      warnings: [],
+      errors: [],
+      sourceFileCount: opFiles.length,
+    },
+    undefined,
+    { activityContracts },
+  );
 
   const diagnostics: LintDiagnostic[] = [];
   const suppressed: Array<LintDiagnostic & { reason?: string }> = [];
