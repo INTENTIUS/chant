@@ -1,0 +1,1 @@
+{"ended":"2026-09-06T17:43:19.869Z","env":"local","id":"local-1788716599861","labels":{},"op":"hello","outcomes":{},"phases":[{"name":"Greet","status":"ok","steps":[{"durationMs":8,"fn":"shellCmd","status":"ok"}]}],"started":"2026-09-06T17:43:19.861Z","status":"ok","version":1}
