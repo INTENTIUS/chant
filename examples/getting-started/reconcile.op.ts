@@ -6,7 +6,7 @@
 // chant-owned resources. One-shot on the local executor (no schedule here).
 //
 //   chant run reconcile
-import { ReconcileOp } from "@intentius/chant-lexicon-temporal";
+import { ReconcileOp } from "@intentius/chant/op";
 
 const reconcile = ReconcileOp({
   name: "reconcile",

@@ -5,13 +5,17 @@
   "type": "module",
   "scripts": {
     "build:fly": "chant build src --lexicon fly -o dist/fly.json",
-    "build": "chant build",
-    "lint": "chant lint src"
+    "build:fountain": "chant build ops --lexicon fountain -o dist/fountain.yaml",
+    "build": "npm run build:fly && npm run build:fountain",
+    "lint": "chant lint src && chant lint ops",
+    "deploy": "chant run fly-durable-deploy --on fountain"
   },
   "dependencies": {
     "@intentius/chant": "*",
     "@intentius/chant-lexicon-fly": "*",
-    "@intentius/chant-lexicon-temporal": "*"
+    "@intentius/chant-lexicon-fountain": "*"
   },
-  "devDependencies": { "typescript": "*" }
+  "devDependencies": {
+    "typescript": "*"
+  }
 }

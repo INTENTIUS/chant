@@ -1,4 +1,4 @@
-import { Op, phase, build, httpCheck } from "@intentius/chant-lexicon-temporal";
+import { Op, phase, build, httpCheck } from "@intentius/chant/op";
 import {
   spriteCreate,
   spriteExec,

@@ -1,7 +1,7 @@
-// Webhook receiver — event source #1. POST /alert starts a triage workflow.
+// Webhook receiver — event source #1. POST /alert starts a triage run.
 // This is what the WebApp manifest deploys; run it locally with `npm run webhook`.
 import { createServer } from "node:http";
-import { startTriage } from "./triage-client.js";
+import { describeStart, startTriage } from "./start-triage.js";
 import { alertFromWebhook } from "./parse.js";
 
 const port = Number(process.env.PORT ?? 8080);
@@ -19,9 +19,9 @@ const server = createServer((req, res) => {
       void (async () => {
         try {
           const alert = alertFromWebhook(data ? JSON.parse(data) : {});
-          const id = await startTriage(alert);
+          const start = await startTriage(alert);
           res.writeHead(202, { "content-type": "application/json" });
-          res.end(JSON.stringify({ started: id }));
+          res.end(JSON.stringify({ id: start.alert.id, gated: start.gated, status: describeStart(start) }));
         } catch (err) {
           res.writeHead(500, { "content-type": "application/json" });
           res.end(JSON.stringify({ error: String(err) }));

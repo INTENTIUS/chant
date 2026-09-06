@@ -168,7 +168,7 @@ Patterns to add next:
 
 ## Op
 
-This example has a corresponding Op for Temporal-backed deployment:
+This example has a corresponding Op for the deployment:
 
 ```bash
 chant run gke-bootstrap

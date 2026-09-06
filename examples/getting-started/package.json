@@ -13,7 +13,6 @@
   },
   "dependencies": {
     "@intentius/chant-lexicon-k8s": "*",
-    "@intentius/chant-lexicon-temporal": "*",
     "@intentius/chant": "*"
   },
   "devDependencies": {

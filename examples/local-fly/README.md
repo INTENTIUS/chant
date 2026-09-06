@@ -17,8 +17,8 @@ the applier is exercised against a real flaps-shaped control plane offline.
 
 ## Run it
 
-Requires only Docker. `chant run fly` runs the Op in-process (no Temporal
-server) through five modeled phases:
+Requires only Docker. `chant run fly` runs the Op in-process through five
+modeled phases:
 
 ```bash
 npm install

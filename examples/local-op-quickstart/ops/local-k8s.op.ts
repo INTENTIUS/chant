@@ -1,4 +1,6 @@
-import { Op, phase, k3dUp, kubectlApply, waitForStack, k3dDown } from "@intentius/chant-lexicon-temporal";
+import { Op, phase, waitForStack } from "@intentius/chant/op";
+import { kubectlApply } from "@intentius/chant-lexicon-k8s/op/builders";
+import { k3dDown, k3dUp } from "@intentius/chant-lexicon-k3d";
 
 /**
  * Stand up a local vanilla-Kubernetes target with k3d, apply a stack to it, wait

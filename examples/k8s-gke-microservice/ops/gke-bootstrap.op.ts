@@ -1,4 +1,4 @@
-import { Op, phase, shell } from "@intentius/chant-lexicon-temporal";
+import { Op, phase, shell } from "@intentius/chant/op";
 
 export default Op({
   name: "gke-bootstrap",

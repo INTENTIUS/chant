@@ -1,19 +1,27 @@
-import { Op, phase, shell } from "@intentius/chant-lexicon-temporal";
+import { ACTIVITY_PROFILES, Op, phase, shell } from "@intentius/chant/op";
 
 /**
- * Minimal Op that runs locally with no Temporal server.
+ * The smallest Op there is.
  *
- * `chant run hello` executes this in-process — phased, with retries — using the
- * local executor (the default). No Temporal worker, server, or cloud required.
- * For durable resume, gates, and schedules, configure a Temporal profile and
- * pass `--temporal`.
+ * `chant run hello` executes this in-process — phased, with per-step retries
+ * and `onFailure` compensation. Nothing else is running: no server, no worker,
+ * no cloud.
+ *
+ * A step's `profile` names a timeout-and-retry shape from `ACTIVITY_PROFILES`
+ * in `@intentius/chant/op`. Six names cover what infra steps actually do —
+ * fast idempotent work, long infra, a K8s wait loop, a human gate, an Argo
+ * sync, a deterministic policy check — so the tuning lives in one table
+ * instead of inline at every call site, and the overview below reads the
+ * timeout back off it rather than restating a number that could drift.
  */
+const profile = "fastIdempotent";
+
 export default Op({
   name: "hello",
-  overview: "Minimal local Op — no Temporal server required",
+  overview: `Minimal local Op — one shell step, ${ACTIVITY_PROFILES[profile].timeout} timeout`,
   phases: [
     phase("Greet", [
-      shell("echo hello from chant"),
+      shell("echo hello from chant", { profile }),
     ]),
   ],
 });

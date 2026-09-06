@@ -13,6 +13,9 @@
   "dependencies": {
     "@intentius/chant": "*",
     "@intentius/chant-lexicon-aws": "*",
-    "@intentius/chant-lexicon-temporal": "*"
+    "@intentius/chant-lexicon-azure": "*",
+    "@intentius/chant-lexicon-gcp": "*",
+    "@intentius/chant-lexicon-k3d": "*",
+    "@intentius/chant-lexicon-k8s": "*"
   }
 }

@@ -7,7 +7,6 @@
   "devDependencies": {
     "@intentius/chant": "*",
     "@intentius/chant-lexicon-gcp": "*",
-    "@intentius/chant-lexicon-temporal": "*",
     "typescript": "*"
   },
   "scripts": {

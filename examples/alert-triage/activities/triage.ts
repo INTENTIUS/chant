@@ -1,12 +1,12 @@
-// Triage activities — plain async functions the Temporal worker registers.
+// The triage steps — plain async functions, no framework underneath.
 //
-// These are raw Temporal activities (not chant Op steps): the triage workflow is
-// custom app logic, so it's hand-written Temporal with chant synthesizing the
-// manifests around it. See chant's "Raw Temporal + chant" deployment path.
+// `run-triage.ts` sequences them and `ops/triage.op.ts` is the Op that runs
+// that CLI; nothing here knows about either. They are unit-tested directly
+// (./triage.test.ts) for the same reason.
 //
 // The agent is stubbed by default — deterministic, no key, runs in CI and
 // offline. When ANTHROPIC_API_KEY is set, `proposeRemediation` calls Claude.
-import { ApplicationFailure } from "@temporalio/common";
+import { nonRetryableFailure } from "@intentius/chant/op";
 
 export interface Alert {
   id: string;
@@ -91,10 +91,9 @@ export async function proposeRemediation(input: {
 
 /**
  * Apply the remediation. Clearly stubbed — a real build would run the change
- * (kubectl, a runbook, an API call). The workflow calls this only once the
- * remediation is cleared (safe directly, risky after approval), so a held
- * remediation is never applied. This is the proposed-vs-executed boundary the
- * capstone is built to show.
+ * (kubectl, a runbook, an API call). The Op reaches this only after the
+ * approval gate resolves, so a held remediation is never applied. This is the
+ * proposed-vs-executed boundary the capstone is built to show.
  */
 export async function applyRemediation(input: {
   alert: Alert;
@@ -189,11 +188,11 @@ async function proposeWithClaude(input: {
     });
   } catch (err) {
     // 4xx (bad key, bad model, malformed request) will never succeed on retry —
-    // fail the activity non-retryably so Temporal stops instead of masking the
-    // cause as doomed retries. 5xx / network errors fall through to normal retry.
+    // fail non-retryably so the run stops instead of masking the cause as
+    // doomed retries. 5xx / network errors fall through to normal retry.
     const status = (err as { status?: number }).status;
     if (typeof status === "number" && status >= 400 && status < 500) {
-      throw ApplicationFailure.nonRetryable(
+      throw nonRetryableFailure(
         `Anthropic API rejected the request (${status}): ${(err as Error).message}`,
         "AnthropicClientError",
       );

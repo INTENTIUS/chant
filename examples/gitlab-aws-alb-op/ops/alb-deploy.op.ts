@@ -1,16 +1,16 @@
 /**
  * ALB multi-service deploy Op.
  *
- * Demonstrates the Op pattern: a named, phased Temporal workflow declared
- * as infrastructure code. Run `chant build ops/ -o dist/` to generate
- * dist/ops/alb-deploy/workflow.ts, worker.ts, and activities.ts.
+ * Demonstrates the Op pattern: a named, phased workflow declared as
+ * infrastructure code. `chant run alb-deploy` executes it in-process.
  *
  * Phases:
  *   1. Build (parallel) — build all three services concurrently
  *   2. Deploy           — apply manifests sequentially (ordered by dependency)
  *   3. Verify           — wait for rollout, then snapshot state
  */
-import { Op, phase, build, kubectlApply, waitForStack, lifecycleSnapshot } from "@intentius/chant-lexicon-temporal";
+import { Op, phase, build, waitForStack, lifecycleSnapshot } from "@intentius/chant/op";
+import { kubectlApply } from "@intentius/chant-lexicon-k8s/op/builders";
 
 export default Op({
   name: "alb-deploy",

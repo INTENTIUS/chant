@@ -11,7 +11,7 @@
  * against a partial teardown — which, after a failed deploy, is the usual case.
  */
 
-import { Op, phase, shell } from "@intentius/chant-lexicon-temporal";
+import { Op, phase, shell } from "@intentius/chant/op";
 
 const MGMT = "mgmt";
 const REGIONS = ["east", "central", "west"] as const;

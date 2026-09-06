@@ -26,17 +26,9 @@
  * leaves a cluster behind gets run once and then avoided.
  */
 
-import {
-  Op,
-  phase,
-  build,
-  k3dUp,
-  k3dDown,
-  kubectlApply,
-  shell,
-  waitForReady,
-  waitForStack,
-} from "@intentius/chant-lexicon-temporal";
+import { Op, phase, build, shell, waitForStack } from "@intentius/chant/op";
+import { kubectlApply, waitForReady } from "@intentius/chant-lexicon-k8s/op/builders";
+import { k3dDown, k3dUp } from "@intentius/chant-lexicon-k3d";
 
 /** Matches metadata.name in k3d/src/k3d-cluster.ts and CLUSTER in k3d/src/config.ts. */
 const CLUSTER = "crdb-smoke";

@@ -1,4 +1,5 @@
-import { Op, phase, build, azApply, flociAzUp, flociAzDown, httpCheck } from "@intentius/chant-lexicon-temporal";
+import { Op, phase, build, httpCheck } from "@intentius/chant/op";
+import { azApply, flociAzDown, flociAzUp } from "@intentius/chant-lexicon-azure";
 
 /**
  * Deploy the storage account to a local floci-az via `azApply`. `chant run azure`.

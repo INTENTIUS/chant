@@ -5,12 +5,12 @@
 // drift. It changes nothing — this is the read-only end of the dial.
 //
 // Who honours the cron is the runtime's business: `chant operator` ticks this Op
-// on it, a CI generator renders it as a workflow schedule, and a project running
-// Temporal pairs the Op with a `TemporalSchedule` of its own. A bare
+// on it, a CI generator renders it as a pipeline schedule, and a fountain
+// steward turns it into a Schedule on the teammate's thread. A bare
 // `chant run observe` is still one observation, now.
 //
 //   chant build && chant run observe
-import { WatchOp } from "@intentius/chant-lexicon-temporal";
+import { WatchOp } from "@intentius/chant/op";
 
 export const { op } = WatchOp({
   name: "observe",

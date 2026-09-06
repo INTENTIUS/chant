@@ -1,4 +1,5 @@
-import { Op, phase, activity, azGroupEnsure, build, azGroupDelete } from "@intentius/chant-lexicon-temporal";
+import { Op, phase, activity, build } from "@intentius/chant/op";
+import { azGroupDelete, azGroupEnsure } from "@intentius/chant-lexicon-azure";
 
 /**
  * Deploy an ARM template to Azure: ensure the resource group, build the template,

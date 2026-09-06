@@ -1,4 +1,5 @@
-import { Op, phase, activity, effect, gate, shell, flociUp, build } from "@intentius/chant-lexicon-temporal";
+import { Op, phase, activity, effect, gate, shell, build } from "@intentius/chant/op";
+import { flociUp } from "@intentius/chant-lexicon-aws";
 import { schemaSeeded } from "./receipts";
 
 /**
@@ -11,15 +12,18 @@ import { schemaSeeded } from "./receipts";
  *
  *   - receipt matches → the migration (and its gate) is skipped: "effect
  *     already applied". Re-runs are safe by construction.
- *   - receipt absent or stale → the gate pauses for approval, the migration
- *     runs, and only on success is the receipt written — last, once. A failed
- *     run leaves the receipt untouched, so the next run re-proposes it.
+ *   - receipt absent or stale → the run reaches the gate, records it pending
+ *     and ends `gated` (exit 3). Once somebody records the resolution, the
+ *     next run walks through, the migration runs, and only on success is the
+ *     receipt written — last, once. A failed run leaves the receipt untouched,
+ *     so the next run re-proposes it.
  *
- * The gate makes this Op need `--temporal` (the local executor refuses gates
- * by design — see local-aws.op.ts for the ungated local loop):
+ * The gate is a fact on the ledger, not a wait, so the whole loop is local
+ * (see local-aws.op.ts for the ungated version):
  *
- *   chant run local-aws-migrate --temporal --env local
- *   chant run signal local-aws-migrate approve-migration
+ *   chant run local-aws-migrate --env local
+ *   chant approve local-aws-migrate approve-migration --approver you
+ *   chant run local-aws-migrate --env local
  *
  * Floci serves as the local AWS: `flociUp` exports `AWS_ENDPOINT_URL`, which
  * the receipt store honors like every other read path (#1694), so the receipt

@@ -1,8 +1,6 @@
 {
-  "note": "Files that fail tsconfig.typecheck.json today (#1388). Only ever remove lines from this list — scripts/typecheck.ts fails on a file that is not here, and on a file here that now passes.",
+  "note": "Files that fail tsconfig.typecheck.json today (#1388). Only ever remove lines from this list \u2014 scripts/typecheck.ts fails on a file that is not here, and on a file here that now passes.",
   "files": [
-    "examples/alert-triage/activities/worker.ts",
-    "examples/alert-triage/app/triage-client.ts",
     "examples/fargate-lucene-efs/docker/e2e.test.ts",
     "examples/fargate-lucene-efs/docker/relay-dynamo.ts",
     "examples/fargate-lucene-efs/docker/relay-minio.ts",
@@ -13,8 +11,6 @@
     "examples/k8s-eks-microservice/src/k8s/app.ts",
     "examples/k8s-eks-microservice/src/k8s/storage.ts",
     "examples/k8s-gke-microservice/src/k8s/app.ts",
-    "examples/local-op-quickstart/ops/hello/worker.ts",
-    "examples/temporal-crdb-deploy/temporal/worker.ts",
     "lexicons/aws/scripts/roundtrip-helper.ts",
     "lexicons/aws/src/components/config-bom.test.ts",
     "lexicons/aws/src/integration.test.ts",

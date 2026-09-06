@@ -1,4 +1,5 @@
-import { Op, phase, build, awsApply, flociUp, flociDown, httpCheck } from "@intentius/chant-lexicon-temporal";
+import { Op, phase, build, httpCheck } from "@intentius/chant/op";
+import { awsApply, flociDown, flociUp } from "@intentius/chant-lexicon-aws";
 
 /**
  * Deploy the S3 bucket to a local Floci (emulated AWS) via CloudFormation.

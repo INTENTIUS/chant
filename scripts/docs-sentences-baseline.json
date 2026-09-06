@@ -479,8 +479,7 @@
   "claude/colon-reveal": 2,
   "anaphora/repeated-opening": 2,
   "claude/figurative-suffixes": 1,
-  "tricolon/density": 1,
-  "tricolon/comma-series": 1
+  "tricolon/density": 1
  },
  "docs/src/content/docs/contributing/lifecycles.mdx": {
   "formatting/em-dash-density": 27,
@@ -841,7 +840,7 @@
   "claude/colon-reveal": 2
  },
  "docs/src/content/docs/lint-rules/composition.mdx": {
-  "formatting/em-dash-density": 31,
+  "formatting/em-dash-density": 30,
   "discourse/punchy-fragments": 1,
   "claude/colon-reveal": 9,
   "dead-metaphor/rare-lemma": 1,

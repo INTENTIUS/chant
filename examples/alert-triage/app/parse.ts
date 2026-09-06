@@ -1,5 +1,5 @@
 // Pure mappers from each event source into the triage `Alert` shape.
-// Kept separate (and free of Temporal/IO) so they're unit-tested in CI.
+// Kept separate (and free of IO) so they're unit-tested in CI.
 import type { Alert } from "../activities/triage";
 
 function str(v: unknown): string | undefined {
