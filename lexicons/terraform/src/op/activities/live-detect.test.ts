@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
-import { detectLiveEstate } from "./live-detect";
+import { detectLiveEstate, detectLivePolicyVerbs } from "./live-detect";
 
 const dirs: string[] = [];
 
@@ -84,5 +84,60 @@ describe("detectLiveEstate (#2103)", () => {
       ["terraform {", "  live {", '    estate = "from-block"', "  }", "}", ""].join("\n"),
     );
     expect(detectLiveEstate(dir)).toBe("from-sidecar");
+  });
+});
+
+describe("detectLivePolicyVerbs (#2106)", () => {
+  test("reads undeclared_tagged and undeclared_untagged out of a nested policy block", () => {
+    const dir = tempDir();
+    writeFileSync(
+      join(dir, "main.tf"),
+      [
+        "terraform {",
+        "  live {",
+        '    estate = "fixture-estate"',
+        "    policy {",
+        '      undeclared_tagged   = "keep"',
+        '      undeclared_untagged = "delete"',
+        "      scope {",
+        '        services = ["ec2"]',
+        "      }",
+        "    }",
+        "  }",
+        "}",
+        "",
+      ].join("\n"),
+    );
+    expect(detectLivePolicyVerbs(dir)).toEqual({ undeclaredTagged: "keep", undeclaredUntagged: "delete" });
+  });
+
+  test("undefined fields when the policy block sets only one of the two", () => {
+    const dir = tempDir();
+    writeFileSync(
+      join(dir, "main.tf"),
+      ["terraform {", "  live {", '    estate = "fixture-estate"', "    policy {", '      undeclared_tagged = "untag"', "    }", "  }", "}", ""].join(
+        "\n",
+      ),
+    );
+    expect(detectLivePolicyVerbs(dir)).toEqual({ undeclaredTagged: "untag", undeclaredUntagged: undefined });
+  });
+
+  test("undefined when the live block declares no policy block", () => {
+    const dir = tempDir();
+    writeFileSync(
+      join(dir, "main.tf"),
+      ["terraform {", "  live {", '    estate = "fixture-estate"', "  }", "}", ""].join("\n"),
+    );
+    expect(detectLivePolicyVerbs(dir)).toBeUndefined();
+  });
+
+  test("undefined when the directory declares no live block at all", () => {
+    const dir = tempDir();
+    writeFileSync(join(dir, "main.tf"), 'resource "null_resource" "x" {}\n');
+    expect(detectLivePolicyVerbs(dir)).toBeUndefined();
+  });
+
+  test("undefined for a directory that does not exist", () => {
+    expect(detectLivePolicyVerbs(join(tmpdir(), "chant-tf-live-detect-does-not-exist"))).toBeUndefined();
   });
 });
