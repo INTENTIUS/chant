@@ -555,6 +555,82 @@ describe("secrets detection (#443)", () => {
   });
 });
 
+describe("Terraform HCL suppression (chant #2111)", () => {
+  function tmpRepo(): string {
+    const dir = join(tmpdir(), `chant-audit-tf-suppress-${process.pid}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(dir, { recursive: true });
+    mkdirSync(join(dir, "infra"), { recursive: true });
+    return dir;
+  }
+
+  const BACKENDLESS = 'terraform {\n  required_version = ">= 1.5.0"\n}\n';
+
+  async function auditTerraform(dir: string): Promise<Awaited<ReturnType<typeof auditCommand>>> {
+    const all = await loadAuditPlugins();
+    return auditCommand({ path: dir, plugins: all.filter((p) => p.name === "terraform"), format: "json" });
+  }
+
+  test("chant-ignore-block suppresses TF001 through chant audit", async () => {
+    const dir = tmpRepo();
+    writeFileSync(join(dir, "infra", "main.tf"), `# chant-ignore-block: TF001\n${BACKENDLESS}`);
+    const result = await auditTerraform(dir);
+    expect(result.findings.map((f) => f.checkId)).not.toContain("TF001");
+    expect(result.suppressedCount).toBe(1);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("a plain chant-ignore on the same block also suppresses TF001 through chant audit", async () => {
+    const dir = tmpRepo();
+    writeFileSync(join(dir, "infra", "main.tf"), `# chant-ignore: TF001\n${BACKENDLESS}`);
+    const result = await auditTerraform(dir);
+    expect(result.findings.map((f) => f.checkId)).not.toContain("TF001");
+    expect(result.suppressedCount).toBe(1);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('"all" suppresses TF001 through chant audit', async () => {
+    const dir = tmpRepo();
+    writeFileSync(join(dir, "infra", "main.tf"), `# chant-ignore-block: all\n${BACKENDLESS}`);
+    const result = await auditTerraform(dir);
+    expect(result.findings.map((f) => f.checkId)).not.toContain("TF001");
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("chant-ignore-file at the top of the file suppresses TF001 through chant audit", async () => {
+    const dir = tmpRepo();
+    writeFileSync(join(dir, "infra", "main.tf"), `# chant-ignore-file: TF001\n${BACKENDLESS}`);
+    const result = await auditTerraform(dir);
+    expect(result.findings.map((f) => f.checkId)).not.toContain("TF001");
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("a chant-ignore-file NOT at the top has no effect and is reported through chant audit", async () => {
+    const dir = tmpRepo();
+    writeFileSync(join(dir, "infra", "main.tf"), `# a header\n# chant-ignore-file: TF001\n${BACKENDLESS}`);
+    const result = await auditTerraform(dir);
+    expect(result.findings.map((f) => f.checkId)).toContain("TF001"); // still fires
+    expect(result.findings.map((f) => f.checkId)).toContain("SUPP002");
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("a directive naming a different rule id does not suppress TF001 through chant audit", async () => {
+    const dir = tmpRepo();
+    writeFileSync(join(dir, "infra", "main.tf"), `# chant-ignore-block: TF010\n${BACKENDLESS}`);
+    const result = await auditTerraform(dir);
+    expect(result.findings.map((f) => f.checkId)).toContain("TF001");
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("an already-expired suppression no longer suppresses TF001 and is reported through chant audit", async () => {
+    const dir = tmpRepo();
+    writeFileSync(join(dir, "infra", "main.tf"), `# chant-ignore-block: TF001 exp:2020-01-01\n${BACKENDLESS}`);
+    const result = await auditTerraform(dir);
+    expect(result.findings.map((f) => f.checkId)).toContain("TF001"); // still fires: expired
+    expect(result.findings.map((f) => f.checkId)).toContain("SUPP001");
+    rmSync(dir, { recursive: true, force: true });
+  });
+});
+
 describe("Wrangler config audit (#446)", () => {
   function tmpRepo(): string {
     const dir = join(tmpdir(), `chant-audit-wrangler-${process.pid}-${Math.random().toString(36).slice(2)}`);

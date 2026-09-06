@@ -22,7 +22,8 @@
 
 import { basename } from "path";
 import type { Severity } from "../lint/rule";
-import type { PostSynthCheck, PostSynthContext } from "../lint/post-synth";
+import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "../lint/post-synth";
+import { applyInlineSuppressions, type SuppressionMetaFinding } from "../lint/suppressions";
 import type { SerializerResult } from "../serializer";
 import type { LexiconPlugin } from "../lexicon";
 import type { Declarable } from "../declarable";
@@ -182,12 +183,24 @@ async function defaultEntitiesProvider(lexicon: AuditLexicon): Promise<EntitiesP
 }
 
 /**
+ * Mutable out-param for the inline (`# chant-ignore*`) suppression count
+ * (chant #2111): `auditFiles`'s return type stays `AuditFinding[]` for every
+ * existing caller, so a caller that wants the count (`chant audit`'s CLI, for
+ * its summary line) passes this in and reads `.count` back afterward, rather
+ * than `auditFiles` growing a `{findings, suppressedCount}` shape that would
+ * touch every existing call site.
+ */
+export interface SuppressionStats {
+  count: number;
+}
+
+/**
  * Audit a set of CI files and return all findings. Pure with respect to the
  * filesystem and network — callers supply file contents.
  */
 export async function auditFiles(
   inputs: AuditInput[],
-  opts: { checksProvider?: ChecksProvider; entitiesProvider?: EntitiesProvider } = {},
+  opts: { checksProvider?: ChecksProvider; entitiesProvider?: EntitiesProvider; suppressionStats?: SuppressionStats } = {},
 ): Promise<AuditFinding[]> {
   const provider = opts.checksProvider ?? defaultChecksProvider;
   const entitiesProvider = opts.entitiesProvider ?? defaultEntitiesProvider;
@@ -205,7 +218,7 @@ export async function auditFiles(
     const checks = await provider(lexicon);
     if (checks.length === 0) continue;
     const parseEntities = await entitiesProvider(lexicon);
-    findings.push(...(await auditLexicon(lexicon, files, checks, parseEntities)));
+    findings.push(...(await auditLexicon(lexicon, files, checks, parseEntities, opts.suppressionStats)));
   }
 
   return findings;
@@ -226,14 +239,20 @@ function toOutput(file: AuditInput): string | SerializerResult {
   return { primary: file.content, files: { [basename(file.path)]: file.content } };
 }
 
+interface CheckRunResult {
+  diagnostics: PostSynthDiagnostic[];
+  suppressed: PostSynthDiagnostic[];
+  meta: SuppressionMetaFinding[];
+}
+
 function runChecks(
   checks: PostSynthCheck[],
   outputs: Map<string, string | SerializerResult>,
   entities: Map<string, Declarable> = new Map(),
-): ReturnType<PostSynthCheck["check"]> {
+): CheckRunResult {
   const buildResult: PostSynthContext["buildResult"] = { outputs, entities, warnings: [], errors: [], sourceFileCount: outputs.size };
   const ctx: PostSynthContext = { outputs, entities: buildResult.entities, buildResult };
-  const diags = [];
+  const diags: PostSynthDiagnostic[] = [];
   for (const check of checks) {
     try {
       diags.push(...check.check(ctx));
@@ -241,7 +260,11 @@ function runChecks(
       // A check that throws on unusual external YAML must not abort the audit.
     }
   }
-  return diags;
+  // chant #2111: `rules` (for `ignorable: false`) is omitted, since `chant audit`
+  // has no project `lint.rules` to read here (see `applyInlineSuppressions`'s
+  // doc comment for why that's a deliberate scope line, not an oversight), so
+  // every rule id reads as ignorable, same as an unconfigured one everywhere.
+  return applyInlineSuppressions(diags, entities);
 }
 
 function diagKey(d: { checkId: string; entity?: string; message: string }): string {
@@ -287,7 +310,13 @@ function mergeEntities(maps: Array<Map<string, Declarable>>): Map<string, Declar
  * may be async (a lexicon's own choice, e.g. a wasm-backed HCL parser); this
  * function awaits each file's entities before either pass runs.
  */
-async function auditLexicon(lexicon: AuditLexicon, files: AuditInput[], checks: PostSynthCheck[], parseEntities?: EntitiesParser): Promise<AuditFinding[]> {
+async function auditLexicon(
+  lexicon: AuditLexicon,
+  files: AuditInput[],
+  checks: PostSynthCheck[],
+  parseEntities?: EntitiesParser,
+  suppressionStats?: SuppressionStats,
+): Promise<AuditFinding[]> {
   const entitiesFor = async (file: AuditInput): Promise<Map<string, Declarable>> => {
     if (!parseEntities) return new Map();
     try {
@@ -302,8 +331,17 @@ async function auditLexicon(lexicon: AuditLexicon, files: AuditInput[], checks: 
 
   const perFindings: AuditFinding[] = [];
   const perKeys = new Set<string>();
+  // chant #2111: meta findings (an expired/misplaced/denied suppression
+  // directive) are collected from the per-file pass only: the all-files pass
+  // below sees the same entities merged, so it would report the identical
+  // directive again. Counted the same way, once, here too.
+  const metaFindings: AuditFinding[] = [];
   for (const file of files) {
-    const diags = runChecks(checks, new Map([[file.path, toOutput(file)]]), perEntities.get(file.path));
+    const { diagnostics: diags, suppressed, meta } = runChecks(checks, new Map([[file.path, toOutput(file)]]), perEntities.get(file.path));
+    if (suppressionStats) suppressionStats.count += suppressed.length;
+    for (const m of meta) {
+      metaFindings.push({ checkId: m.checkId, severity: m.severity, message: m.message, file: m.file, lexicon, line: m.line });
+    }
     for (const d of diags) {
       perFindings.push({ checkId: d.checkId, severity: d.severity, message: d.message, file: file.path, lexicon: d.lexicon ?? lexicon, entity: d.entity });
       perKeys.add(diagKey(d));
@@ -311,7 +349,7 @@ async function auditLexicon(lexicon: AuditLexicon, files: AuditInput[], checks: 
   }
 
   const allOutputs = new Map<string, string | SerializerResult>(files.map((f) => [f.path, toOutput(f)]));
-  const allDiags = runChecks(checks, allOutputs, mergeEntities([...perEntities.values()]));
+  const { diagnostics: allDiags } = runChecks(checks, allOutputs, mergeEntities([...perEntities.values()]));
   const allKeys = new Set(allDiags.map(diagKey));
 
   const out: AuditFinding[] = perFindings.filter((f) => allKeys.has(diagKey(f)));
@@ -320,5 +358,5 @@ async function auditLexicon(lexicon: AuditLexicon, files: AuditInput[], checks: 
       out.push({ checkId: d.checkId, severity: d.severity, message: d.message, file: CROSS_FILE, lexicon: d.lexicon ?? lexicon, entity: d.entity });
     }
   }
-  return out;
+  return [...out, ...metaFindings];
 }
