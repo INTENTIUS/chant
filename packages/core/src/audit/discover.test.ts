@@ -93,8 +93,8 @@ describe("discoverByDetection (unified, detectTemplate-driven)", () => {
     expect(plugins.map((p) => p.name)).toEqual(["github"]);
   });
 
-  test("loadAuditPlugins skips terraform quietly (package not installed yet, #2085)", async () => {
-    const plugins = await loadAuditPlugins(["github", "terraform"]);
+  test("loadAuditPlugins skips a lexicon whose package is not installed, quietly", async () => {
+    const plugins = await loadAuditPlugins(["github", "not-a-lexicon"]);
     expect(plugins.map((p) => p.name)).toEqual(["github"]);
   });
 

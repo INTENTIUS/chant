@@ -2665,6 +2665,16 @@ Use a known runtime and a canonical provider/model_id.
 
 fountain reconciles by name — rename one, or the second silently overwrites the first.
 
+## Terraform (TF)
+
+Run against Terraform root modules (a directory of `.tf` files) parsed into the entity graph, so the same rules fire on `chant build` over `terraform.roots` and on `chant audit` (#2083).
+
+### TF001
+
+**Root module declares no remote backend** — report-only · guidance
+
+Add a `backend "\<type>"` block (s3, gcs, azurerm, http) or a `cloud \{}` block to the root module's terraform block, then `terraform init -migrate-state`.
+
 ## Secrets & credentials (SEC)
 
 Lexicon-independent — scans the raw text of every scanned file for likely credentials, regardless of which audit lexicons are installed. Matched values are always redacted; see [suppressing false positives](/chant/cli/audit/#suppressing-a-secrets-finding).
