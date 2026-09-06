@@ -759,6 +759,20 @@ function resolveEstate(args: { estate?: string }, resolved: ResolvedRoot, activi
  * Uses the longInfra profile: like `terraformPlan`, this reads the live
  * system in full (the estate-wide sweep).
  */
+/**
+ * The JSON document within a `live-plan -json` stdout: everything from the
+ * first line that is a bare `{` to the end. Stock keeps stdout to the
+ * document; choudoufu's `-estate` path precedes it with refresh progress
+ * lines (choudoufu #894). Returns the input unchanged when no such line
+ * exists, so a clean stdout parses as before and a broken one fails in
+ * `JSON.parse` with the real text in the error.
+ */
+export function liveDocumentFrom(stdout: string): string {
+  const lines = stdout.split("\n");
+  const start = lines.findIndex((line) => line.trim() === "{");
+  return start === -1 ? stdout : lines.slice(start).join("\n");
+}
+
 export async function choudoufuLivePlan(
   args: ChoudoufuLivePlanArgs & { documentPath?: string },
   signal?: AbortSignal,
@@ -792,13 +806,16 @@ export async function choudoufuLivePlan(
     },
   );
 
-  const json: unknown = JSON.parse(jsonStdout);
+  // On the `-estate` path choudoufu prints refresh progress to stdout ahead of
+  // the document (choudoufu #894), so parse from the first line that opens it.
+  const document = liveDocumentFrom(jsonStdout);
+  const json: unknown = JSON.parse(document);
   // #788's document carries no render of the human plan itself
   // (`views.LivePlanDocument` has no such field), so the human text needs a
   // second live read rather than a field on the same response.
   const textRun = await run(choudoufuLivePlanCommand({ binary, estate, json: false }), dir, env, signal);
 
-  writeFileSync(join(dir, documentPath), jsonStdout);
+  writeFileSync(join(dir, documentPath), document);
 
   return {
     drift,
