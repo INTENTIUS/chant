@@ -141,7 +141,7 @@ A lexicon that also implements `observeResourcesDeep()` ([coverage](/chant/lexic
 
 ```
 aws (properties)
-1 property drift across 1 resource(s), 0 accepted, 3 unchanged, 2 held elsewhere, 1 unobserved
+1 property drift across 1 resource(s), 0 accepted, 3 unchanged, 1 held elsewhere, 1 unobserved
 
 PROPERTY DRIFT (declared vs live; baseline shown where one exists):
   - Assets (AWS::S3::Bucket)
@@ -169,6 +169,18 @@ Where the substrate records who wrote a field, the held row names them instead: 
 This is what makes an autoscaler quiet without anything being recorded: a field chant never set stops being a finding on the first read it appears in. It also narrows what the accepted baseline is for, since `--update-baseline` now only ever records drift on a path source declares.
 
 A path inside a list is claimed by its exact position or key, so a lexicon that supplies an `orderKey` for a set-like list gets the sharper answer: a tag added in the console is `Tags[#other]`, held elsewhere, while a positional list reports the new element by index instead.
+
+#### `heldElsewhere()`, a field declared, then handed over
+
+A property declared [`heldElsewhere()`](/chant/concepts/drift-detection/#heldelsewhere-a-field-declared-once-then-handed-over) never reports as drift, whatever the live value is, and gets its own section instead, naming who holds it and why:
+
+```
+HELD (declared heldElsewhere(); not drift, never proposed for update):
+  - web (K8s::Apps::Deployment)
+      spec.replicas: held by hpa — 5 (the autoscaler owns replicas after the first apply)
+```
+
+No live value at all, not even a provider default, gets marked `[SUSPICIOUS: ...]`: the declared hand-over has no evidence it ever happened. In `--json`, the held set rides under the lexicon's `deep.held` key, the same as `drifted`/`accepted`/`unchanged`. `chant lifecycle plan` carries the same set under the change set's top-level `held` key, described [below](#lifecycle-plan-env). Held properties are never actions, so they never appear inside `entries`.
 
 #### `--update-baseline` — accept a deviation
 
@@ -223,6 +235,8 @@ An `update` is bounded by the **claimed-field set**: a property the declaration 
 The classification reads ownership from the live marker, **never from the snapshot**, so the snapshot never becomes load-bearing: the delete decision is identical whether or not a snapshot exists. The moment a mutation trusted the snapshot, the snapshot would have become an authoritative state file under a different name — which chant deliberately avoids.
 
 `lifecycle plan` is strictly read-only: it builds, queries, and classifies. It never mutates the cloud and never deploys — `chant build` stays pure.
+
+For every lexicon that implements `observeResourcesDeep()`, the plan also carries a `held` array, one entry per entity with at least one property declared [`heldElsewhere()`](/chant/concepts/drift-detection/#heldelsewhere-a-field-declared-once-then-handed-over). A held property is not an action, never appearing inside `entries` and never the reason an entity classifies as `update`. The human render prints its own HELD section, `--json` carries the array as `held` beside `entries`, and `--report markdown` folds it into the same section shown for `lifecycle diff --live`.
 
 #### Crosswalk: observation categories -> plan actions
 
