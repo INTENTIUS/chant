@@ -127,8 +127,12 @@ export const planBeforeApplyRule: LintRule = {
 
     const visit = (node: ts.Node) => {
       if (ts.isCallExpression(node) && calleeName(node.expression) === "terraformApply") {
-        const arg = node.arguments[0];
-        if (arg && ts.isObjectLiteralExpression(arg)) checkPlanFile(arg);
+        // The options object may be the first argument (`terraformApply({ planFile })`)
+        // or follow a positional one (`terraformApply("app", { planFile })`, the
+        // k3s-shaped builder signature); inspect every object-literal argument.
+        for (const arg of node.arguments) {
+          if (ts.isObjectLiteralExpression(arg)) checkPlanFile(arg);
+        }
       }
       ts.forEachChild(node, visit);
     };

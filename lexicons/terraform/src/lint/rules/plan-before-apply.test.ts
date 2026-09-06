@@ -74,6 +74,23 @@ describe("TF101: plan-before-apply", () => {
     expect(diags).toHaveLength(0);
   });
 
+  test("checks the options object when it follows a positional root argument (k3s-shaped builder)", () => {
+    const flagged = planBeforeApplyRule.check(
+      createContext(`
+        const plan = terraformPlan("app", { planFile: "plan.out" });
+        const apply = terraformApply("app", { planFile: "/tmp/plan.out" });
+      `),
+    );
+    expect(flagged).toHaveLength(1);
+    const passing = planBeforeApplyRule.check(
+      createContext(`
+        const plan = terraformPlan("app", { id: "plan" });
+        const apply = terraformApply("app", { planFile: plan.out.planFile });
+      `),
+    );
+    expect(passing).toHaveLength(0);
+  });
+
   test("does not flag terraformApply calls with no planFile property", () => {
     const diags = planBeforeApplyRule.check(
       createContext(`
