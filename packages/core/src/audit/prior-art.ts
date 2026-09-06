@@ -107,6 +107,18 @@ export const PRIOR_ART = {
   "terraform-sentinel-policies": { name: "HashiCorp reference Sentinel policies", url: "https://github.com/hashicorp/terraform-sentinel-policies", license: "MPL-2.0", kind: "specification" },
   "hashicorp-style-guide": { name: "HashiCorp Terraform style guide", url: "https://developer.hashicorp.com/terraform/language/style", license: "n/a", kind: "specification" },
   "aws-terraform-prescriptive-guidance": { name: "AWS prescriptive guidance for Terraform", url: "https://docs.aws.amazon.com/prescriptive-guidance/latest/terraform-aws-provider-best-practices/", license: "n/a", kind: "specification" },
+  "tflint-ruleset-redeploy": { name: "tflint-ruleset-redeploy", url: "https://github.com/RedeployAB/tflint-ruleset-redeploy", license: "0BSD", kind: "scanner" },
+  "tflint-ruleset-avm": { name: "tflint-ruleset-avm (Azure Verified Modules)", url: "https://github.com/Azure/tflint-ruleset-avm", license: "MIT", kind: "scanner" },
+  // tfsec is frozen rather than archived, and its docs site 404s above v0.61.x,
+  // so its credits cite pinned repository paths (a tag or `master`), never the
+  // docs site. The three `general/secrets` checks chant credits live only here:
+  // trivy dropped them when it absorbed tfsec.
+  "tfsec": { name: "tfsec", url: "https://github.com/aquasecurity/tfsec", license: "MIT", kind: "scanner" },
+  // Semgrep's engine is LGPL-2.1 but its rules are not: they ship under the
+  // proprietary Semgrep Rules License v1.0, which forbids redistribution. So
+  // this entry carries no SPDX id, and no semgrep rule text is ever copied into
+  // this repository — a credit by name and link is the whole of it (#2107).
+  "semgrep": { name: "Semgrep Registry rules", url: "https://github.com/semgrep/semgrep-rules", license: "Semgrep Rules License v1.0 (proprietary, not an SPDX id)", kind: "scanner" },
 } as const satisfies Record<string, PriorArtEntry>;
 
 export type PriorArtTool = keyof typeof PRIOR_ART;

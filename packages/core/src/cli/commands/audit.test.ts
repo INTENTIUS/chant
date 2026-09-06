@@ -725,3 +725,31 @@ describe("nginx config audit (#1979)", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 });
+
+describe("committed Terraform state (TF023, #2110)", () => {
+  function tmpRepo(): string {
+    const dir = join(tmpdir(), `chant-audit-tfstate-${process.pid}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(dir, { recursive: true });
+    return dir;
+  }
+
+  test("fires end to end on a directory with a tracked state file, with no lexicon installed", async () => {
+    const dir = tmpRepo();
+    writeFileSync(join(dir, "main.tf"), 'resource "null_resource" "a" {}\n');
+    writeFileSync(join(dir, "terraform.tfstate"), JSON.stringify({ version: 4, resources: [] }));
+    const result = await auditCommand({ path: dir, plugins: [] });
+    expect(result.findings.map((f) => f.checkId)).toContain("TF023");
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("says nothing when the state is ignored rather than committed", async () => {
+    const dir = tmpRepo();
+    writeFileSync(join(dir, ".gitignore"), "*.tfstate\n.terraform/\n");
+    writeFileSync(join(dir, "main.tf"), 'resource "null_resource" "a" {}\n');
+    writeFileSync(join(dir, "terraform.tfstate"), JSON.stringify({ version: 4, resources: [] }));
+    mkdirSync(join(dir, ".terraform"), { recursive: true });
+    const result = await auditCommand({ path: dir, plugins: [] });
+    expect(result.findings.map((f) => f.checkId)).not.toContain("TF023");
+    rmSync(dir, { recursive: true, force: true });
+  });
+});

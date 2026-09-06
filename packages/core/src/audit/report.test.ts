@@ -149,6 +149,39 @@ describe("efficiency dimension (#444)", () => {
   });
 });
 
+describe("a report-only rule with a deterministic fix (#2110)", () => {
+  const TF_ROOT = `variable "log_level" {
+  type      = string
+  sensitive = false
+}
+`;
+  const findings: AuditFinding[] = [
+    {
+      checkId: "TF019",
+      severity: "info",
+      message: "sensitive = false is already the default.",
+      file: "infra/prod",
+      lexicon: "terraform",
+      entity: "infra/prod/var.log_level.sensitive",
+    },
+  ];
+
+  test("renders in quick wins with its diff, not in the hygiene table", async () => {
+    const catalog = await resolveAuditCatalog(["terraform"]);
+    const out = renderMarkdown(findings, { catalog, files: [{ path: "infra/prod", content: TF_ROOT }] });
+    expect(out).toContain("## Quick wins (deterministic)");
+    expect(out).toContain("-  sensitive = false");
+    expect(out).toContain("1 finding — 1 quick-win, 0 needs-review, 0 report-only");
+    expect(out).not.toContain("Report-only (hygiene)");
+  });
+
+  test("the credit rides beside the fix", async () => {
+    const catalog = await resolveAuditCatalog(["terraform"]);
+    const out = renderMarkdown(findings, { catalog, files: [{ path: "infra/prod", content: TF_ROOT }] });
+    expect(out).toContain("prior art: [tflint-ruleset-redeploy terraform_redundant_default]");
+  });
+});
+
 describe("catalog threading (#687)", () => {
   test("buildReportModel uses a passed-in catalog over core's static one", async () => {
     const { buildReportModel } = await import("./report-model");

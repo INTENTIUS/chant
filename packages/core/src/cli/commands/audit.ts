@@ -13,6 +13,7 @@ import { RULE_CATALOG, resolveAuditCatalog, type RuleMeta } from "../../audit/ca
 import { scanForSecrets, parseSecretsConfig, type SecretsScanOptions } from "../../audit/secrets";
 import { auditWranglerConfigs } from "../../audit/wrangler";
 import { auditNginxConfigs } from "../../audit/nginx";
+import { auditTerraformState } from "../../audit/terraform-state";
 import { renderMarkdown } from "../../audit/report";
 import { renderHtml, type ReportTheme } from "../../audit/report-html";
 import { buildReportJson, REPORT_SCHEMA_VERSION, type AuditSnapshot } from "../../audit/report-model";
@@ -402,15 +403,19 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
   // its own path detector plus a parsed-content marker check (a `.conf` in a
   // shared directory name like conf.d/ only counts once it parses as nginx).
   const nginxFindings = auditNginxConfigs(candidates);
+  // TF023 (#2110) — committed Terraform state. Lexicon-independent for the
+  // same reason the three above are: it reads the discovered paths, not a
+  // parsed root module, so it fires with or without the terraform lexicon.
+  const terraformStateFindings = auditTerraformState(candidates);
 
   if (plugins.length === 0) {
     const output = format === "json" ? renderNoLexiconsJson(options.path, unclaimed) : renderNoLexicons(options.path, unclaimed);
-    return { success: true, status: "no-lexicons", output, findings: [...secretsFindings, ...wranglerFindings, ...nginxFindings], scanned: [], unclaimed, exitCode: NO_LEXICONS_EXIT_CODE, stream: format === "json" ? "stdout" : "stderr" };
+    return { success: true, status: "no-lexicons", output, findings: [...secretsFindings, ...wranglerFindings, ...nginxFindings, ...terraformStateFindings], scanned: [], unclaimed, exitCode: NO_LEXICONS_EXIT_CODE, stream: format === "json" ? "stdout" : "stderr" };
   }
 
   const missingLexiconNote = missingLexiconHint(unclaimed);
 
-  if (inputs.length === 0 && secretsFindings.length === 0 && wranglerFindings.length === 0 && nginxFindings.length === 0) {
+  if (inputs.length === 0 && secretsFindings.length === 0 && wranglerFindings.length === 0 && nginxFindings.length === 0 && terraformStateFindings.length === 0) {
     const output = `No auditable files found under ${options.path}.${missingLexiconNote ? ` ${missingLexiconNote}` : ""}`;
     return { success: true, status: "ok", output, findings: [], scanned: [], unclaimed, exitCode: 0 };
   }
@@ -428,7 +433,7 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
       return { success: false, output: "", findings: [], scanned, exitCode: 1, error: msg };
     }
   }
-  findings = [...findings, ...secretsFindings, ...wranglerFindings, ...nginxFindings];
+  findings = [...findings, ...secretsFindings, ...wranglerFindings, ...nginxFindings, ...terraformStateFindings];
   // Resolve the audit catalog once, aggregating the audited lexicons' own
   // metadata over core's static catalog (#687). The lexicons are already loaded
   // by `auditFiles` above, so this is cheap. Core's static catalog (always

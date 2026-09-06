@@ -148,6 +148,70 @@ function narrowWriteAll(content: string): { patched: string; changed: boolean } 
 }
 
 /**
+ * TF019 — drop a meta-argument explicitly set to its own default `false`
+ * (`sensitive`, `ephemeral`, `prevent_destroy`, `create_before_destroy`). The
+ * fix is the deletion of the whole line, which is what tflint-ruleset-redeploy's
+ * own autofix for `terraform_redundant_default` does. Only a literal `false` is
+ * touched: `prevent_destroy = var.protect` is left alone, and so is a line with
+ * a trailing comment, where deleting the line would delete prose too.
+ */
+const REDUNDANT_DEFAULT_RE = /^[ \t]*(?:sensitive|ephemeral|prevent_destroy|create_before_destroy)[ \t]*=[ \t]*false[ \t]*$/;
+
+function dropRedundantDefaults(content: string): { patched: string; changed: boolean } {
+  const kept = content.split("\n").filter((line) => !REDUNDANT_DEFAULT_RE.test(line));
+  const patched = kept.join("\n");
+  return { patched, changed: patched !== content };
+}
+
+/**
+ * TF016 — unwrap an attribute whose whole value is one interpolation
+ * (`x = "${var.y}"` becomes `x = var.y`), the deprecated pre-0.12 style
+ * tflint's `terraform_deprecated_interpolation` reports. Anchored on the
+ * source text rather than the parsed body for the reason TF016's own module
+ * gives: `@cdktf/hcl2json` renders a bare reference and a quoted interpolation
+ * identically, so the quotes only exist here.
+ */
+const INTERPOLATION_ONLY_RE = /^([ \t]*)([A-Za-z_][A-Za-z0-9_-]*)([ \t]*=[ \t]*)"\$\{([^"]+)\}"([ \t]*(?:#.*)?)$/;
+
+/** One `name = "${expr}"` line, split into the parts the fix reassembles. */
+export interface InterpolationOnlyLine {
+  /** The attribute's name. */
+  name: string;
+  /** The expression inside the interpolation, without the `${` and `}`. */
+  expr: string;
+  /** The same line with the quotes and the `${}` taken off. */
+  unwrapped: string;
+}
+
+/**
+ * Parse a line whose whole value is one interpolation. Exported because a rule
+ * and its fix have to agree on what counts: the terraform lexicon's TF016
+ * check calls this over a block's source text, and `unwrapInterpolations`
+ * below rewrites exactly the lines it accepts.
+ */
+export function interpolationOnlyLine(line: string): InterpolationOnlyLine | undefined {
+  const m = INTERPOLATION_ONLY_RE.exec(line);
+  if (!m) return undefined;
+  const expr = m[4];
+  // A nested `${` means the template is not one interpolation (it embeds
+  // another), and a `}` before the end means the interpolation closed early,
+  // so the quotes are carrying literal text as well.
+  if (expr.includes("${") || expr.includes("}")) return undefined;
+  return { name: m[2], expr, unwrapped: `${m[1]}${m[2]}${m[3]}${expr}${m[5]}` };
+}
+
+function unwrapInterpolations(content: string): { patched: string; changed: boolean } {
+  let changed = false;
+  const lines = content.split("\n").map((line) => {
+    const parsed = interpolationOnlyLine(line);
+    if (!parsed) return line;
+    changed = true;
+    return parsed.unwrapped;
+  });
+  return { patched: lines.join("\n"), changed };
+}
+
+/**
  * Produce a deterministic fix + diff for a finding, if one is mechanical.
  * Returns `applied: false` with guidance for non-deterministic findings.
  */
@@ -180,6 +244,12 @@ export function proveFix(checkId: string, content: string, opts: ProveOptions = 
       break;
     case "GHA033":
       result = narrowWriteAll(content);
+      break;
+    case "TF016":
+      result = unwrapInterpolations(content);
+      break;
+    case "TF019":
+      result = dropRedundantDefaults(content);
       break;
     default:
       return notApplied(checkId, "needs-input", cat?.remediation || "No deterministic fix implemented for this rule yet.");

@@ -84,4 +84,17 @@ export const coreAuditLineage: Record<string, Lineage[]> = {
     { tool: "detect-secrets", rule: "HexHighEntropyString", url: "https://github.com/Yelp/detect-secrets/blob/master/detect_secrets/plugins/high_entropy_strings.py", relation: "overlaps" },
     { tool: "gitleaks", rule: "generic-api-key", url: "https://github.com/gitleaks/gitleaks/blob/master/config/gitleaks.toml", relation: "overlaps" },
   ],
+  // TF023 is the one TF id core owns (./terraform-state.ts); the rest of the
+  // family credits its prior art from lexicons/terraform/src/lint/audit-lineage.ts.
+  // No linter or scanner in #2107's survey checks for committed state, but the
+  // style guide's .gitignore section names the exact files, so the document is
+  // both the authority and the first written statement of the rule.
+  TF023: [
+    {
+      tool: "hashicorp-style-guide",
+      rule: ".gitignore: do not commit terraform.tfstate, terraform.tfstate.* backups, or the .terraform directory",
+      url: "https://developer.hashicorp.com/terraform/language/style#gitignore",
+      relation: "equivalent",
+    },
+  ],
 };

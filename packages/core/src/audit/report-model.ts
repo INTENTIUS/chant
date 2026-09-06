@@ -248,7 +248,13 @@ export function buildReportModel(findings: AuditFinding[], opts: BuildModelOptio
   const contents = new Map((opts.files ?? []).map((f) => [f.path, f.content]));
 
   const mergeWorthy = enriched.filter((f) => f.meta.tier === "merge-worthy");
-  const quickWinFindings = mergeWorthy.filter((f) => f.meta.fixKind === "deterministic");
+  // A deterministic fix is a quick win whatever the finding's tier. Every
+  // deterministic rule was merge-worthy until terraform's TF016 and TF019
+  // (#2110): both are hygiene, and both delete or unquote exactly the flagged
+  // line, which is the same safe mechanical patch a merge-worthy quick win
+  // offers. Filing them under "needs a judgement call" or in the hygiene table
+  // would hide a ready-to-apply diff.
+  const quickWinFindings = enriched.filter((f) => f.meta.fixKind === "deterministic");
   const needsReviewFindings = mergeWorthy.filter((f) => f.meta.fixKind === "guidance");
 
   // De-noise: drop a report-only finding only when a specific merge-worthy
@@ -256,6 +262,8 @@ export function buildReportModel(findings: AuditFinding[], opts: BuildModelOptio
   const mwOnEntity = new Set(mergeWorthy.filter((f) => f.entity).map((f) => `${f.file}:${f.entity}:${f.checkId}`));
   const reportOnly = enriched.filter((f) => {
     if (f.meta.tier !== "report-only") return false;
+    // Counted and rendered as a quick win instead, so the three buckets stay disjoint.
+    if (f.meta.fixKind === "deterministic") return false;
     const supers = SUPERSEDED_BY[f.checkId];
     if (supers && f.entity && supers.some((id) => mwOnEntity.has(`${f.file}:${f.entity}:${id}`))) return false;
     return true;

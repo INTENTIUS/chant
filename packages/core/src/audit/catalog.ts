@@ -158,6 +158,10 @@ export const CWE_HARDCODED_CREDS: Authority = {
   name: "CWE-798 — Use of Hard-coded Credentials",
   url: "https://cwe.mitre.org/data/definitions/798.html",
 };
+export const HASHICORP_STYLE_GITIGNORE: Authority = {
+  name: "HashiCorp Terraform style guide — .gitignore",
+  url: "https://developer.hashicorp.com/terraform/language/style#gitignore",
+};
 export const CWE_CLEARTEXT: Authority = {
   name: "CWE-319 — Cleartext Transmission of Sensitive Information",
   url: "https://cwe.mitre.org/data/definitions/319.html",
@@ -233,6 +237,10 @@ export const RULE_CATEGORY: Record<string, Category> = {
   NGX005: "security",
   NGX006: "best-practice",
   NGX007: "best-practice",
+  // TF023 — Terraform state committed to the repository. Core-owned for the
+  // same reason SEC/WRG/NGX are: it reads the discovered file list, not a
+  // parsed root module. See ./terraform-state.ts.
+  TF023: "security",
   // AGT — agent configuration (`chant audit --agents`). Core-owned like COR/EXT:
   // these run against the machine's own agent config, not against any one
   // lexicon's emitted output, so no lexicon ships them.
@@ -293,6 +301,21 @@ export const RULE_CATALOG: Record<string, RuleMeta> = {
   NGX005: meta("NGX005", M, G, "Status endpoint with no access restriction", "Restrict the stub_status location with allow/deny (or auth_basic/auth_request) so connection metrics aren't public reconnaissance.", [NGINX_STUB_STATUS]),
   NGX006: meta("NGX006", R, G, "Server version disclosure", "Add `server_tokens off;` in the http block so nginx stops advertising its exact version in the Server header and error pages."),
   NGX007: meta("NGX007", R, G, "Access logging disabled at server scope", "Re-enable access_log at http/server scope (silencing a single noisy location is fine) so requests are recorded for incident investigation."),
+
+  // TF023 (#2110) — Terraform state, or the `.terraform/` working directory,
+  // committed to the repository. The one TF rule core owns: every other TF id
+  // is a post-synth check over a parsed root module (the terraform lexicon's
+  // `auditCatalog()`), while this one reads the discovered file list and never
+  // runs during `chant build`. Same shape as SEC/WRG/NGX above, and the same
+  // reason it lives here: `terraform-state.ts` needs no lexicon installed.
+  TF023: meta(
+    "TF023",
+    M,
+    G,
+    "Terraform state committed to the repository",
+    "Delete the state file (or `.terraform/`) from version control, add it to .gitignore, move the state to a remote backend, and rotate every credential the file held.",
+    [HASHICORP_STYLE_GITIGNORE],
+  ),
 
   // ── Agent configuration (`chant audit --agents`) ──────────────────
   AGT001: agentMeta(
