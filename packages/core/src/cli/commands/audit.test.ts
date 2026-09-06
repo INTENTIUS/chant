@@ -319,15 +319,13 @@ describe("auditCommand", () => {
       expect(json.unclaimed.map((u: { lexicon: string }) => u.lexicon).sort()).toEqual(["aws", "docker", "k8s", "terraform"]);
     });
 
-    test("every installable lexicon loaded: terraform is the only gap, since no @intentius/chant-lexicon-terraform package exists yet (#2085)", async () => {
+    test("every installable lexicon loaded: nothing is unclaimed, and the terraform root is scanned as one bundle (#2083)", async () => {
       const result = await auditCommand({ path: MIXED, plugins: await loadAuditPlugins() });
       expect(result.status).toBe("ok");
-      expect(result.unclaimed).toEqual([{ path: "infra/main.tf", lexicon: "terraform" }]);
-      // terraform is treated like any other not-yet-installed lexicon now, so it still gets a coverage note.
-      expect(result.output).toContain(
-        "Note: 1 file looks like terraform but that lexicon is not installed, so it was skipped (npm i @intentius/chant-lexicon-terraform).",
-      );
-      expect(result.scanned.sort()).toEqual([".github/workflows/ci.yml", "Dockerfile", "infra/stack.json", "k8s/deploy.yaml"]);
+      expect(result.unclaimed).toEqual([]);
+      expect(result.output).not.toContain("looks like terraform");
+      // `infra` is the terraform root-module bundle (one input per directory of `.tf` files).
+      expect(result.scanned.sort()).toEqual([".github/workflows/ci.yml", "Dockerfile", "infra", "infra/stack.json", "k8s/deploy.yaml"]);
     });
 
     test("installLine puts every lexicon on the same npx -p path", () => {

@@ -31,7 +31,7 @@ import { build, type BuildResult } from "../../build";
 import { findInfraFiles } from "../../discovery/files";
 import { detectLexicons } from "../../detectLexicon";
 import { loadChantConfig } from "../../config";
-import { loadPlugins } from "../plugins";
+import { loadPlugins, collectBuildRootContributors } from "../plugins";
 import { runPostSynthChecks, type PostSynthDiagnostic } from "../../lint/post-synth";
 import { applyConfiguredSeverity } from "../../lint/config";
 import type { LexiconPlugin } from "../../lexicon";
@@ -129,7 +129,15 @@ export async function checkExamplesBuild(lexiconDir: string): Promise<ExampleBui
       }
 
       const plugins = await loadPlugins(lexiconNames);
-      const result = await build(srcDir, plugins.map((p) => p.serializer));
+      // Bind each plugin's `buildRoots()` hook exactly as `chant build` does
+      // (#2083): a lexicon whose entities come from config-declared roots
+      // rather than typed source (k8s kustomize roots, terraform roots) has
+      // nothing to serialize otherwise, and its example would read as
+      // "produced no output" for a reason that is this harness's, not the
+      // example's.
+      const exampleDir = join(examplesDir, entry.name);
+      const buildRoots = collectBuildRootContributors(plugins, exampleConfig as Record<string, unknown>, exampleDir);
+      const result = await build(srcDir, plugins.map((p) => p.serializer), undefined, { buildRoots });
 
       const structuralErrors = result.errors.map((e) => e.message);
       const producedOutput = result.outputs.size > 0;
