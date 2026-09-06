@@ -1,0 +1,68 @@
+{
+  "format_version": "1.0",
+  "terraform_version": "1.15.8",
+  "values": {
+    "root_module": {
+      "resources": [
+        {
+          "address": "null_resource.first",
+          "mode": "managed",
+          "type": "null_resource",
+          "name": "first",
+          "provider_name": "registry.terraform.io/hashicorp/null",
+          "schema_version": 0,
+          "values": {
+            "id": "1710777879587847269",
+            "triggers": {
+              "name": "first"
+            }
+          },
+          "sensitive_values": {
+            "triggers": {}
+          }
+        },
+        {
+          "address": "null_resource.second",
+          "mode": "managed",
+          "type": "null_resource",
+          "name": "second",
+          "provider_name": "registry.terraform.io/hashicorp/null",
+          "schema_version": 0,
+          "values": {
+            "id": "8141892773761384170",
+            "triggers": {
+              "name": "second"
+            }
+          },
+          "sensitive_values": {
+            "triggers": {}
+          }
+        }
+      ],
+      "child_modules": [
+        {
+          "resources": [
+            {
+              "address": "module.cdn.null_resource.edge",
+              "mode": "managed",
+              "type": "null_resource",
+              "name": "edge",
+              "provider_name": "registry.terraform.io/hashicorp/null",
+              "schema_version": 0,
+              "values": {
+                "id": "3525037590895298281",
+                "triggers": {
+                  "name": "edge"
+                }
+              },
+              "sensitive_values": {
+                "triggers": {}
+              }
+            }
+          ],
+          "address": "module.cdn"
+        }
+      ]
+    }
+  }
+}

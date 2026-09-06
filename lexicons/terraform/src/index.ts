@@ -50,3 +50,16 @@ export type {
   TerraformApplyOpResources,
   TerraformGateMode,
 } from "./composites/terraform-apply-op";
+
+// The Init/Plan/[Report] drift composite (#2087).
+export { TerraformWatchOp } from "./composites/terraform-watch-op";
+export type {
+  TerraformWatchOpConfig,
+  TerraformWatchOpResources,
+  TerraformFindingMode,
+} from "./composites/terraform-watch-op";
+
+// Live observation over `terraform show -json` (#2087). The plugin reaches
+// `describeResources` through a dynamic import; the ownership keys are here
+// because `ownershipChannel` declares them eagerly.
+export { TERRAFORM_STATE_OWNERSHIP_KEYS } from "./state-ownership";
