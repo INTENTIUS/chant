@@ -475,7 +475,7 @@ describe("the agent's vault allowlist (#2176)", () => {
 
     expect(live.resources.researcher.properties.allowed_vault_ids).toEqual(["ops-vault"]);
     expect(diff.drifted).toEqual([]);
-    expect(diff.heldElsewhere).toEqual([]);
+    expect(diff.unclaimed).toEqual([]);
     expect(diff.unchanged).toContain("researcher");
   });
 
@@ -488,7 +488,7 @@ describe("the agent's vault allowlist (#2176)", () => {
     const { diff } = await drift(scopedDeclaration(opsVaultDeclaration), scopedEstate());
 
     expect(diff.drifted).toEqual([]);
-    expect(diff.heldElsewhere).toEqual([]);
+    expect(diff.unclaimed).toEqual([]);
     expect(diff.unchanged).toContain("researcher");
   });
 
@@ -505,7 +505,7 @@ describe("the agent's vault allowlist (#2176)", () => {
       expect.objectContaining({ path: "allowed_vault_ids[#ops-vault]", kind: "absent", declared: "ops-vault" }),
     );
     // The vault somebody else put on the list is reported by name, not by uuid.
-    expect(diff.heldElsewhere[0]?.fields).toContainEqual(
+    expect(diff.unclaimed[0]?.fields).toContainEqual(
       expect.objectContaining({ path: "allowed_vault_ids[#finance-vault]", live: "finance-vault" }),
     );
   });
@@ -524,7 +524,7 @@ describe("the agent's vault allowlist (#2176)", () => {
     );
     const { diff } = await drift(scopedDeclaration(opsVaultDeclaration), http);
 
-    expect(diff.heldElsewhere[0]?.fields).toContainEqual(
+    expect(diff.unclaimed[0]?.fields).toContainEqual(
       expect.objectContaining({ path: "allowed_vault_ids[#finance-vault]", live: "finance-vault" }),
     );
   });
@@ -537,7 +537,7 @@ describe("the agent's vault allowlist (#2176)", () => {
     const { diff } = await drift(scopedDeclaration("ops-vault"), http);
 
     expect(diff.drifted).toEqual([]);
-    expect(diff.heldElsewhere[0]?.fields).toEqual([
+    expect(diff.unclaimed[0]?.fields).toEqual([
       expect.objectContaining({ path: "allowed_vault_ids[#finance-vault]", live: "finance-vault" }),
     ]);
   });
@@ -547,7 +547,7 @@ describe("the agent's vault allowlist (#2176)", () => {
 
     expect(live.resources.researcher.properties.allowed_vault_ids).toEqual([VAULT_ID]);
     expect(diff.drifted).toEqual([]);
-    expect(diff.heldElsewhere).toEqual([]);
+    expect(diff.unclaimed).toEqual([]);
   });
 
   it("an id no vault answers to survives as itself and reports as drift", async () => {
@@ -560,7 +560,7 @@ describe("the agent's vault allowlist (#2176)", () => {
     expect(agent?.changes).toContainEqual(
       expect.objectContaining({ path: "allowed_vault_ids[#ops-vault]", kind: "absent" }),
     );
-    expect(diff.heldElsewhere[0]?.fields).toContainEqual(
+    expect(diff.unclaimed[0]?.fields).toContainEqual(
       expect.objectContaining({ path: `allowed_vault_ids[#${OTHER_ID}]`, live: OTHER_ID }),
     );
   });
@@ -606,7 +606,7 @@ describe("the agent's vault allowlist (#2176)", () => {
 
     expect(live.resources.researcher.properties.allowed_environment_ids).toEqual(["concierge-env"]);
     expect(diff.drifted).toEqual([]);
-    expect(diff.heldElsewhere).toEqual([]);
+    expect(diff.unclaimed).toEqual([]);
   });
 });
 
