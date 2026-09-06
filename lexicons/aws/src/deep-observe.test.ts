@@ -954,8 +954,8 @@ describe("end to end: declared + mutated live + baseline (#1015)", () => {
     // elsewhere, at its live value, and it is not drift. AWS records no field
     // manager, so the claimed-field set is the only source that can answer.
     expect(result.accepted).toEqual([]);
-    expect(result.heldElsewhere.map((e) => e.name)).toEqual(["Assets"]);
-    expect(result.heldElsewhere[0].fields).toEqual([
+    expect(result.unclaimed.map((e) => e.name)).toEqual(["Assets"]);
+    expect(result.unclaimed[0].fields).toEqual([
       { path: "Tags[#cost-center].Key", live: "cost-center", source: "claimed-fields", baseline: "cost-center" },
       { path: "Tags[#cost-center].Value", live: "platform", source: "claimed-fields", baseline: "platform" },
     ]);
@@ -991,7 +991,7 @@ describe("end to end: declared + mutated live + baseline (#1015)", () => {
     });
     const assets = result.drifted.find((d) => d.name === "Assets");
     expect(assets?.changes.map((c) => c.path)).toEqual(["VersioningConfiguration.Status"]);
-    expect(result.heldElsewhere[0].fields.map((f) => f.path)).toEqual([
+    expect(result.unclaimed[0].fields.map((f) => f.path)).toEqual([
       "Tags[#cost-center].Key",
       "Tags[#cost-center].Value",
     ]);

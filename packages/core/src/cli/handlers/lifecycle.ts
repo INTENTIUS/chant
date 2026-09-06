@@ -4,7 +4,7 @@ import { build } from "../../build";
 import { takeSnapshot } from "../../lifecycle/snapshot";
 import { readSnapshot, readSnapshotAt, readEnvironmentSnapshots, listSnapshots, fetchLifecycle, pushLifecycle, snapshotStorageKey, StaleLifecycleBranchError } from "../../lifecycle/git";
 import { deepDiffForLexicon, type DeclaredEntities } from "../../lifecycle/deep-observe";
-import { countHeldFields, countPropertyDrift, countHeld, suspiciousHeld, type DeepDiffResult, type DeepEntityHeld } from "../../lifecycle/deep-diff";
+import { countUnclaimed, countPropertyDrift, countHeld, suspiciousHeld, type DeepDiffResult, type DeepEntityHeld } from "../../lifecycle/deep-diff";
 import { describePathOrigin, getPathProvenance, getProvenance, type EntityProvenance } from "../../provenance";
 import { resolveDeepDrift, resolveDriftedField, type FieldReconcile } from "../../fold-provenance";
 import {
@@ -970,13 +970,13 @@ function renderDeepDiff(
   provenanceOf: (entity: string) => EntityProvenance | undefined = () => undefined,
 ): void {
   const drift = countPropertyDrift(deep);
-  const heldElsewhereCount = countHeldFields(deep);
+  const unclaimedCount = countUnclaimed(deep);
   const heldCount = countHeld(deep);
   if (
     drift === 0 &&
     heldCount === 0 &&
+    unclaimedCount === 0 &&
     deep.accepted.length === 0 &&
-    heldCount === 0 &&
     deep.unobserved.length === 0 &&
     deep.undeclaredEntities.length === 0
   ) {
@@ -989,7 +989,7 @@ function renderDeepDiff(
     `${drift} property drift across ${deep.drifted.length} resource(s), ` +
       `${acceptedCount} accepted, ${deep.unchanged.length} unchanged` +
       (heldCount > 0 ? `, ${heldCount} held` : "") +
-      (heldElsewhereCount > 0 ? `, ${heldElsewhereCount} held elsewhere` : "") +
+      (unclaimedCount > 0 ? `, ${unclaimedCount} unclaimed` : "") +
       (deep.unobserved.length > 0 ? `, ${deep.unobserved.length} unobserved` : ""),
   );
   console.log("-".repeat(80));
@@ -1029,11 +1029,11 @@ function renderDeepDiff(
       }
     }
   }
-  if (deep.heldElsewhere.length > 0) {
+  if (deep.unclaimed.length > 0) {
     // Not drift, and printed after it for that reason (#2160): chant never set
     // these fields, so nothing here is a change chant proposes to make.
-    console.log(formatBold("\nHELD ELSEWHERE (live values on properties chant never declared; not drift):"));
-    for (const entity of deep.heldElsewhere) {
+    console.log(formatBold("\nUNCLAIMED (live values on properties chant never declared; not drift):"));
+    for (const entity of deep.unclaimed) {
       console.log(`  - ${entity.name} (${entity.type})`);
       for (const field of entity.fields) {
         const holder = field.heldBy

@@ -38,7 +38,7 @@
  *
  * Since #2160 part of that table has a substrate-independent answer behind it:
  * core derives a claimed-field set from the declaration's own props, and a
- * live value on a path outside it is reported as held elsewhere rather than as
+ * live value on a path outside it is reported as unclaimed rather than as
  * drift. The table is not obsolete — `prune` is still the right tool for a
  * field GCP populates on every object of a kind, and for putting the two trees
  * in the same vocabulary — but the entries that exist only to say "nobody

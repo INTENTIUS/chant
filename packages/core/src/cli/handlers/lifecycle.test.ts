@@ -566,17 +566,49 @@ describe("runLifecycleDiff --live", () => {
       } as never);
     };
 
-    test("reports the changed property as drift and the undeclared one as held elsewhere", async () => {
+    test("reports the changed property as drift and the undeclared one as unclaimed", async () => {
       await runDiff([withDeep()]);
       const output = stdoutBuf.join("\n");
       expect(output).toContain("aws (properties)");
       expect(output).toContain("Versioning: Enabled → Suspended");
       // #2160: source never set Logging.Target, so it is somebody else's field.
       // Still reported, no longer a difference chant proposes to close.
-      expect(output).toContain("HELD ELSEWHERE");
+      expect(output).toContain("UNCLAIMED");
       expect(output).toContain("Logging.Target: audit [not in this declaration's claimed fields]");
       expect(output).toContain("1 property drift across 1 resource(s)");
-      expect(output).toContain("1 held elsewhere");
+      expect(output).toContain("1 unclaimed");
+    });
+
+    // #2181 - the early-return guard tested the held count twice and never the
+    // unclaimed count, so a report whose only finding was a live value
+    // nobody declared printed nothing at all: no summary line, no section. That
+    // is the case #2160 was opened to surface.
+    test("a report whose only finding is a live value nobody declared still renders", async () => {
+      const plugins = [withDeep()];
+      const build = makeBuildResult({ aws: ["bucket"] });
+      // Declared exactly what is live, so there is no drift left to carry the
+      // section into the output.
+      build.entities.set("bucket", {
+        lexicon: "aws",
+        entityType: "AWS::S3::Bucket",
+        props: { Versioning: "Suspended" },
+      } as never);
+      buildMock.mockResolvedValue(build);
+      fetchLifecycleMock.mockResolvedValue(undefined);
+      readSnapshotMock.mockResolvedValue(null);
+
+      await runLifecycleDiff({
+        args: makeArgs({ command: "state", path: "diff", extraPositional: "prod", live: true }),
+        plugins,
+        serializers: plugins.map((p) => p.serializer),
+      } as never);
+
+      const output = stdoutBuf.join("\n");
+      expect(output).toContain("aws (properties)");
+      expect(output).toContain("0 property drift across 0 resource(s)");
+      expect(output).toContain("1 unclaimed");
+      expect(output).toContain("UNCLAIMED");
+      expect(output).toContain("Logging.Target: audit");
     });
 
     test("a lexicon with no deep reader prints nothing extra", async () => {
@@ -586,7 +618,7 @@ describe("runLifecycleDiff --live", () => {
 
     test("an accepted deviation in the baseline stops re-alerting", async () => {
       // A path source declares: since #2160 the baseline only ever has drift to
-      // suppress, because an undeclared path is held elsewhere and never alerted.
+      // suppress, because an undeclared path is unclaimed and never alerted.
       readBlobFromPathMock.mockResolvedValue(
         JSON.stringify({
           baseline: "v1",
@@ -600,20 +632,20 @@ describe("runLifecycleDiff --live", () => {
       expect(output).toContain("ACCEPTED (in the baseline; not drift)");
     });
 
-    test("--json carries the property drift and the held fields under the lexicon's `deep` key", async () => {
+    test("--json carries the property drift and the unclaimed fields under the lexicon's `deep` key", async () => {
       await runDiff([withDeep()], { json: true });
       const payload = JSON.parse(stdoutBuf.join("\n")) as {
         lexicons: {
           aws: {
             deep: {
               drifted: Array<{ changes: Array<{ path: string }> }>;
-              heldElsewhere: Array<{ fields: Array<{ path: string; live: unknown; source: string }> }>;
+              unclaimed: Array<{ fields: Array<{ path: string; live: unknown; source: string }> }>;
             };
           };
         };
       };
       expect(payload.lexicons.aws.deep.drifted[0].changes.map((c) => c.path)).toEqual(["Versioning"]);
-      expect(payload.lexicons.aws.deep.heldElsewhere[0].fields).toEqual([
+      expect(payload.lexicons.aws.deep.unclaimed[0].fields).toEqual([
         { path: "Logging.Target", live: "audit", source: "claimed-fields" },
       ]);
     });
@@ -660,7 +692,7 @@ describe("runLifecycleDiff --live", () => {
 
   // #2162 — a `heldElsewhere()` marker reports as held, not drift, and a
   // held property nothing ever writes is flagged suspicious on stderr.
-  describe("held elsewhere (#2162)", () => {
+  describe("heldElsewhere() markers (#2162)", () => {
     const runHeldDiff = async (
       liveProperties: Record<string, unknown>,
       args: Partial<ParsedArgs> = {},

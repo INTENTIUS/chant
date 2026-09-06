@@ -42,7 +42,7 @@
  *    value chant's manifest asks for is the thing `lifecycle diff --live`
  *    exists to surface. It reports as `changed`.
  * 3. **Undeclared** — a path outside the declaration's claimed-field set
- *    (`@intentius/chant/claimed-fields`) — is reported as held elsewhere and
+ *    (`@intentius/chant/claimed-fields`) — is reported as unclaimed and
  *    is not drift at all. Before #2160 it was `undeclared` drift that the
  *    accepted baseline had to absorb one path at a time; the declaration
  *    answers on the first read instead, so an HPA that owns `spec.replicas`

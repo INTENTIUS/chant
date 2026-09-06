@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { countHeld, countHeldFields, countPropertyDrift, diffDeep, suspiciousHeld, type DeclaredDeepEntity } from "./deep-diff";
+import { countHeld, countUnclaimed, countPropertyDrift, diffDeep, suspiciousHeld, type DeclaredDeepEntity } from "./deep-diff";
 import { UNRESOLVED, type NormalizedDeepObservation } from "../deep-observation";
 import { HELD_ELSEWHERE_TAG } from "../held-elsewhere";
 import type { BaselineLexicon } from "./observation-baseline";
@@ -37,14 +37,14 @@ describe("diffDeep", () => {
     expect(countPropertyDrift(result)).toBe(1);
   });
 
-  test("a property only the cloud has is held elsewhere, not drift", () => {
+  test("a property only the cloud has is unclaimed, not drift", () => {
     const result = diffDeep({
       declared: { b: { type: "T", properties: {} } },
       live: live({ b: { type: "T", properties: { LoggingConfiguration: { TargetBucket: "logs" } } } }),
     });
     expect(result.drifted).toEqual([]);
     expect(countPropertyDrift(result)).toBe(0);
-    expect(result.heldElsewhere).toEqual([
+    expect(result.unclaimed).toEqual([
       {
         name: "b",
         type: "T",
@@ -123,7 +123,7 @@ describe("diffDeep with an accepted baseline", () => {
     },
   };
   // A path source DOES declare — since #2160 the baseline only ever has drift
-  // to suppress, because a path source never declared is held elsewhere and was
+  // to suppress, because a path source never declared is unclaimed and was
   // never reported in the first place.
   const declared = { b: { type: "AWS::S3::Bucket", properties: { Tags: [{ Value: "ours" }] } } };
 
@@ -186,7 +186,7 @@ describe("diffDeep with an accepted baseline", () => {
     });
     expect(result.drifted).toEqual([]);
     expect(result.accepted).toEqual([]);
-    expect(result.heldElsewhere[0].fields[0]).toEqual({
+    expect(result.unclaimed[0].fields[0]).toEqual({
       path: "Tags[0].Value",
       live: "platform",
       source: "claimed-fields",
@@ -305,7 +305,7 @@ describe("diffDeep — declared-side origin (#1443)", () => {
       }),
     });
     expect(result.drifted).toEqual([]);
-    const held = result.heldElsewhere[0].fields.find((f) => f.path === "status.observed")!;
+    const held = result.unclaimed[0].fields.find((f) => f.path === "status.observed")!;
     expect(held).toEqual({ path: "status.observed", live: 1, source: "claimed-fields" });
   });
 
@@ -337,7 +337,7 @@ describe("diffDeep - the claimed-field set (#2160)", () => {
     expect(result.drifted[0].changes).toEqual([
       { path: "spec.replicas", kind: "changed", declared: 2, live: 5 },
     ]);
-    expect(result.heldElsewhere).toEqual([]);
+    expect(result.unclaimed).toEqual([]);
   });
 
   test("a declared path that matches is neither drift nor held", () => {
@@ -346,7 +346,7 @@ describe("diffDeep - the claimed-field set (#2160)", () => {
       live: live({ web: { type: "K8s::Apps::Deployment", properties: { spec: { replicas: 2 } } } }),
     });
     expect(result.unchanged).toEqual(["web"]);
-    expect(result.heldElsewhere).toEqual([]);
+    expect(result.unclaimed).toEqual([]);
   });
 
   test("the claim answers where the substrate records no manager", () => {
@@ -359,7 +359,7 @@ describe("diffDeep - the claimed-field set (#2160)", () => {
         },
       }),
     });
-    expect(result.heldElsewhere[0].fields).toEqual([
+    expect(result.unclaimed[0].fields).toEqual([
       { path: "metadata.labels.team", live: "platform", source: "claimed-fields" },
     ]);
   });
@@ -375,7 +375,7 @@ describe("diffDeep - the claimed-field set (#2160)", () => {
         },
       }),
     });
-    expect(result.heldElsewhere[0].fields).toEqual([
+    expect(result.unclaimed[0].fields).toEqual([
       { path: "metadata.labels.team", live: "platform", heldBy: "kubectl-edit", source: "field-manager" },
     ]);
   });
@@ -393,7 +393,7 @@ describe("diffDeep - the claimed-field set (#2160)", () => {
         },
       }),
     });
-    expect(result.heldElsewhere).toEqual([]);
+    expect(result.unclaimed).toEqual([]);
     expect(result.drifted[0].changes[0]).toMatchObject({ kind: "changed", owner: "hpa-controller" });
   });
 
@@ -408,10 +408,10 @@ describe("diffDeep - the claimed-field set (#2160)", () => {
       }),
     });
     expect(countPropertyDrift(result)).toBe(1);
-    expect(countHeldFields(result)).toBe(2);
+    expect(countUnclaimed(result)).toBe(2);
   });
 
-  test("an unevaluated intrinsic is claimed, so its live value is not held elsewhere", () => {
+  test("an unevaluated intrinsic is claimed, so its live value is not unclaimed", () => {
     // chant DID set the field; it just cannot know what the reference resolves
     // to. Treating it as unclaimed would report an interpolated property as
     // somebody else's on every read.
@@ -420,7 +420,7 @@ describe("diffDeep - the claimed-field set (#2160)", () => {
       live: live({ b: { type: "T", properties: { BucketName: "prod-data" } } }),
     });
     expect(result.drifted).toEqual([]);
-    expect(result.heldElsewhere).toEqual([]);
+    expect(result.unclaimed).toEqual([]);
   });
 });
 

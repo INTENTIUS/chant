@@ -240,7 +240,7 @@ describe("the drift the design was written for", () => {
     );
   });
 
-  it("an egress allowlist widened in the UI reports the added host as held elsewhere", async () => {
+  it("an egress allowlist widened in the UI reports the added host as unclaimed", async () => {
     // fountain is the reference substrate for #2160: a REST payload carries no
     // field ownership, so the declaration is the only witness to who set what.
     // The added host sits at a path this declaration never claimed, so it is
@@ -255,7 +255,7 @@ describe("the drift the design was written for", () => {
     });
 
     const { diff } = await drift(conciergeDeclaration(), http);
-    const env = diff.heldElsewhere.find((d) => d.name === "conciergeEnv");
+    const env = diff.unclaimed.find((d) => d.name === "conciergeEnv");
     expect(env?.fields).toContainEqual(
       expect.objectContaining({ live: "evil.example.com", source: "claimed-fields" }),
     );
@@ -296,7 +296,7 @@ describe("the drift the design was written for", () => {
 });
 
 describe("secrets: presence classifies, values and keys never leave fountain", () => {
-  it("a secret added to an environment that declares none reports as held elsewhere", async () => {
+  it("a secret added to an environment that declares none reports as unclaimed", async () => {
     const http = estate({
       "GET /api/environments/env-1/secrets": {
         status: 200,
@@ -305,7 +305,7 @@ describe("secrets: presence classifies, values and keys never leave fountain", (
     });
 
     const { live, diff } = await drift(conciergeDeclaration(), http);
-    const env = diff.heldElsewhere.find((d) => d.name === "conciergeEnv");
+    const env = diff.unclaimed.find((d) => d.name === "conciergeEnv");
     expect(env?.fields).toContainEqual(
       expect.objectContaining({ path: "secrets", live: MASKED, source: "claimed-fields" }),
     );
@@ -314,7 +314,7 @@ describe("secrets: presence classifies, values and keys never leave fountain", (
     // core's key-name mask collapses the whole node on both trees.
     expect(JSON.stringify(live.resources.conciergeEnv.properties)).not.toContain("STRIPE_KEY");
     expect(JSON.stringify(diff.drifted)).not.toContain("STRIPE_KEY");
-    expect(JSON.stringify(diff.heldElsewhere)).not.toContain("STRIPE_KEY");
+    expect(JSON.stringify(diff.unclaimed)).not.toContain("STRIPE_KEY");
   });
 
   it("declared secrets against live secrets is unchanged, and no value is compared", async () => {
@@ -436,7 +436,7 @@ describe("the agent's environment reference", () => {
     });
 
     const { diff } = await drift(entities, estate());
-    expect(diff.heldElsewhere[0]?.fields).toContainEqual(
+    expect(diff.unclaimed[0]?.fields).toContainEqual(
       expect.objectContaining({ path: "environment", live: "concierge-env", source: "claimed-fields" }),
     );
   });
@@ -724,7 +724,7 @@ describe("the team-side kinds read back in the declared vocabulary", () => {
     // Source never sets `status`, so fountain holds it (#2160): surfaced with
     // its live value, and never a change chant proposes to make.
     expect(diff.drifted.find((d) => d.name === "hook")).toBeUndefined();
-    const hook = diff.heldElsewhere.find((d) => d.name === "hook");
+    const hook = diff.unclaimed.find((d) => d.name === "hook");
     expect(hook?.fields).toEqual([
       expect.objectContaining({ path: "status", live: "disabled", source: "claimed-fields" }),
     ]);

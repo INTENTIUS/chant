@@ -409,7 +409,7 @@ export function resolveDriftedField(input: {
 /**
  * Every drifted field in a deep diff, classified.
  *
- * Reads `drifted` only. `heldElsewhere` is somebody else's field and
+ * Reads `drifted` only. `unclaimed` is somebody else's field and
  * `accepted` is a difference the baseline holds back, and neither may become an
  * update, so neither is offered a resolution.
  *
