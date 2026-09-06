@@ -1,6 +1,7 @@
 import type { LexiconPlugin } from "@intentius/chant/lexicon";
 import type { CompletionContext, HoverContext } from "@intentius/chant/lsp/types";
 import type { Declarable } from "@intentius/chant/declarable";
+import { createSkillsLoader } from "@intentius/chant/lexicon-plugin-helpers";
 import { terraformSerializer } from "./serializer";
 import { rules } from "./lint/rules";
 import { postSynthChecks } from "./lint/post-synth";
@@ -11,6 +12,15 @@ import { terraformConfigSchema, type TerraformConfig } from "./config";
 import { renderTerraformRoots } from "./hcl/roots";
 import { parseTerraformRootContent } from "./hcl/parse";
 import { TERRAFORM_STATE_OWNERSHIP_KEYS } from "./state-ownership";
+
+const loadSkills = createSkillsLoader(import.meta.url, [
+  {
+    file: "chant-terraform.md",
+    name: "chant-terraform",
+    description:
+      "Read an existing Terraform root module into chant's build and audit, and drive it with the init/plan/apply Ops",
+  },
+]);
 
 /**
  * terraform lexicon plugin.
@@ -118,9 +128,7 @@ export const terraformPlugin: LexiconPlugin = {
     }
   },
 
-  skills() {
-    return []; // TODO: Add skills
-  },
+  skills: loadSkills,
 
   mcpTools() {
     return []; // TODO: Implement MCP tools
