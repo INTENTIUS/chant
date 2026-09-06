@@ -120,8 +120,6 @@ export interface TerraformAdoptOpConfig {
    * rather than warning at the moment a rollback is already wanted.
    */
   compensate?: boolean | { command?: string };
-  /** Override the task queue. Defaults to `name`. */
-  taskQueue?: string;
 }
 
 export interface TerraformAdoptOpResources {
@@ -130,8 +128,6 @@ export interface TerraformAdoptOpResources {
 }
 
 export function TerraformAdoptOp(config: TerraformAdoptOpConfig): TerraformAdoptOpResources {
-  const taskQueue = config.taskQueue ?? config.name;
-
   const compensateCommand = typeof config.compensate === "object" ? config.compensate.command : undefined;
   if (config.compensate !== undefined && config.compensate !== false && compensateCommand === undefined) {
     throw new Error(
@@ -169,8 +165,7 @@ export function TerraformAdoptOp(config: TerraformAdoptOpConfig): TerraformAdopt
   const op = Op({
     name: config.name,
     overview: `Adopt the live resources the "${config.root}" choudoufu estate already declares`,
-    taskQueue,
-    searchAttributes: {
+    labels: {
       Adopt: "true",
       TerraformRoot: config.root,
       TerraformMode: "live",
