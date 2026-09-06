@@ -100,6 +100,13 @@ export const PRIOR_ART = {
   "kube-bench": { name: "kube-bench", url: "https://github.com/aquasecurity/kube-bench", license: "Apache-2.0", kind: "scanner" },
   "pluto": { name: "Pluto", url: "https://github.com/FairwindsOps/pluto", license: "Apache-2.0", kind: "scanner" },
   "choudoufu": { name: "choudoufu", url: "https://github.com/INTENTIUS/choudoufu", license: "MPL-2.0", kind: "scanner" },
+  // Terraform lint family (#2107). Registry entries recorded in
+  // lexicons/terraform/src/lint/audit-lineage.ts's header comment; added here
+  // the first time a shipped rule cites them (#2109).
+  "tflint-ruleset-terraform": { name: "tflint-ruleset-terraform", url: "https://github.com/terraform-linters/tflint-ruleset-terraform", license: "MPL-2.0", kind: "scanner" },
+  "terraform-sentinel-policies": { name: "HashiCorp reference Sentinel policies", url: "https://github.com/hashicorp/terraform-sentinel-policies", license: "MPL-2.0", kind: "specification" },
+  "hashicorp-style-guide": { name: "HashiCorp Terraform style guide", url: "https://developer.hashicorp.com/terraform/language/style", license: "n/a", kind: "specification" },
+  "aws-terraform-prescriptive-guidance": { name: "AWS prescriptive guidance for Terraform", url: "https://docs.aws.amazon.com/prescriptive-guidance/latest/terraform-aws-provider-best-practices/", license: "n/a", kind: "specification" },
 } as const satisfies Record<string, PriorArtEntry>;
 
 export type PriorArtTool = keyof typeof PRIOR_ART;

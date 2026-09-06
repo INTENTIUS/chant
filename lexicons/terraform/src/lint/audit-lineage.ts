@@ -29,12 +29,16 @@
  * #2107 ran three research passes over every serious Terraform lint, scan and
  * policy tool (1,888 lines, 222 cited URLs, attached to that issue as
  * comments). The tools and documents below are what the survey found worth
- * crediting from across that research. This issue (#2108) adds none of them to
- * `PRIOR_ART`. `packages/core/src/audit/catalog.test.ts`'s "every registered
+ * crediting from across that research. #2108 added none of them to
+ * `PRIOR_ART`: `packages/core/src/audit/catalog.test.ts`'s "every registered
  * tool is credited" test fails on an entry no shipped rule cites yet, and
- * neither TF001 nor TF101 cites anything. Each later rule issue (#2109, #2110,
- * ...) adds the entries it needs from this list, spelled exactly as below, the
- * first time a shipped rule cites them.
+ * neither TF001 nor TF101 cites anything. #2109 (TF002-TF005) is the first to
+ * draw from this list: `tflint-ruleset-terraform`, `terraform-sentinel-policies`,
+ * `hashicorp-style-guide` and `aws-terraform-prescriptive-guidance` are now in
+ * `PRIOR_ART`, spelled exactly as below. `checkov` and `kics` were already
+ * registered (other lexicons cite them); TF004 and TF005 are the first
+ * Terraform rules to. Each later rule issue adds the remaining entries it
+ * needs the first time a shipped rule cites them.
  *
  * | Key | Name | URL | Licence | Kind | Note |
  * |---|---|---|---|---|---|
@@ -75,6 +79,89 @@ export const terraformAuditLineage: Record<string, Lineage[]> = {
       rule: "RuleStateBackend",
       url: "https://github.com/INTENTIUS/choudoufu/blob/main/internal/live/lint/issue.go",
       relation: "equivalent",
+    },
+  ],
+  TF002: [
+    {
+      tool: "tflint-ruleset-terraform",
+      rule: "terraform_required_providers",
+      url: "https://github.com/terraform-linters/tflint-ruleset-terraform/blob/main/docs/rules/terraform_required_providers.md",
+      relation: "equivalent",
+    },
+    {
+      tool: "terraform-sentinel-policies",
+      rule: "require-all-providers-have-version-constraint",
+      url: "https://github.com/hashicorp/terraform-sentinel-policies/tree/main/cloud-agnostic",
+      relation: "equivalent",
+    },
+    {
+      tool: "aws-terraform-prescriptive-guidance",
+      rule: "Add automated version checks",
+      url: "https://docs.aws.amazon.com/prescriptive-guidance/latest/terraform-aws-provider-best-practices/version.html#add-automated-version-checks",
+      relation: "equivalent",
+    },
+  ],
+  // Sentinel's restrict-terraform-versions checks that required_version is
+  // within an allowed range, not that it is present at all: a narrower
+  // question than TF003's, so "overlaps" rather than "equivalent" (#2109).
+  TF003: [
+    {
+      tool: "tflint-ruleset-terraform",
+      rule: "terraform_required_version",
+      url: "https://github.com/terraform-linters/tflint-ruleset-terraform/blob/main/docs/rules/terraform_required_version.md",
+      relation: "equivalent",
+    },
+    {
+      tool: "terraform-sentinel-policies",
+      rule: "restrict-terraform-versions",
+      url: "https://github.com/hashicorp/terraform-sentinel-policies/tree/main/cloud-agnostic",
+      relation: "overlaps",
+    },
+    {
+      tool: "hashicorp-style-guide",
+      rule: "Version pinning",
+      url: "https://developer.hashicorp.com/terraform/language/style#version-pinning",
+      relation: "overlaps",
+    },
+  ],
+  TF004: [
+    {
+      tool: "tflint-ruleset-terraform",
+      rule: "terraform_module_version",
+      url: "https://github.com/terraform-linters/tflint-ruleset-terraform/blob/main/docs/rules/terraform_module_version.md",
+      relation: "equivalent",
+    },
+    {
+      tool: "checkov",
+      rule: "CKV_TF_2",
+      url: "https://github.com/bridgecrewio/checkov/blob/main/checkov/terraform/checks/module/generic/RevisionVersionTag.py",
+      relation: "equivalent",
+    },
+  ],
+  // checkov's CKV_TF_1 accepts any `?ref=`/`&ref=` matching `[?&](ref=).*(\d\.\d).*`,
+  // which a branch literally named `v1.2-dev` passes; TF005 requires a full
+  // semver tag or a 40-hex SHA, so "extends" (a strict superset), not
+  // "equivalent". KICS's query only matches the `git::` prefix, not the
+  // github.com/bitbucket.org shorthands or scp-style sources TF005 also
+  // covers, so "overlaps" (#2109).
+  TF005: [
+    {
+      tool: "tflint-ruleset-terraform",
+      rule: "terraform_module_pinned_source",
+      url: "https://github.com/terraform-linters/tflint-ruleset-terraform/blob/main/docs/rules/terraform_module_pinned_source.md",
+      relation: "equivalent",
+    },
+    {
+      tool: "checkov",
+      rule: "CKV_TF_1",
+      url: "https://github.com/bridgecrewio/checkov/blob/main/checkov/terraform/checks/module/generic/RevisionHash.py",
+      relation: "extends",
+    },
+    {
+      tool: "kics",
+      rule: "3a81fc06-566f-492a-91dd-7448e409e2cd",
+      url: "https://docs.kics.io/latest/queries/terraform-queries/3a81fc06-566f-492a-91dd-7448e409e2cd/",
+      relation: "overlaps",
     },
   ],
 };

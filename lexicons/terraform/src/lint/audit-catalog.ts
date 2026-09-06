@@ -46,6 +46,44 @@ export const terraformAuditCatalog: Record<string, RuleMeta> = {
       'reference from its HCL; choudoufu refuses any workspace but "default" on a live root.',
     yamlBased: false,
   },
+  TF002: {
+    id: "TF002",
+    tier: "merge-worthy",
+    fixKind: "guidance",
+    category: "correctness",
+    title: "Provider implied by the root has no required_providers entry",
+    remediation:
+      "Add the provider to the terraform block's `required_providers`, with both `source` and " +
+      "`version` set, so a future provider release can't silently change behavior.",
+    yamlBased: false,
+  },
+  TF003: {
+    id: "TF003",
+    tier: "merge-worthy",
+    fixKind: "guidance",
+    category: "correctness",
+    title: "Root module's terraform block has no required_version",
+    remediation: 'Set `required_version = ">= <lowest supported version>"` in the terraform block.',
+    yamlBased: false,
+  },
+  TF004: {
+    id: "TF004",
+    tier: "merge-worthy",
+    fixKind: "guidance",
+    category: "correctness",
+    title: "Registry-sourced module block has no version",
+    remediation: "Add a `version` constraint to the module block (e.g. `~> 5.0`).",
+    yamlBased: false,
+  },
+  TF005: {
+    id: "TF005",
+    tier: "merge-worthy",
+    fixKind: "guidance",
+    category: "correctness",
+    title: "Git/hg module source is unpinned, or pinned to a mutable ref",
+    remediation: "Pin the module's `?ref=` to a tag or a full commit SHA.",
+    yamlBased: false,
+  },
 };
 
 // Prior art credits, if any, live beside the rules in ./audit-lineage.ts (see
