@@ -33,7 +33,7 @@ is named `-op.ts` rather than `.op.ts` on disk) so the page cannot drift from
 what the tests actually run.
 */}
 
-The Terraform lexicon ships one source-level lint rule and five post-synth
+The Terraform lexicon ships one source-level lint rule and eight post-synth
 checks. See [Lint Rules](/chant/lexicons/terraform/rules/) for the generated,
 always-current table; this page is the reasoning, the fix and the credit
 behind each entry.
@@ -794,6 +794,46 @@ const apply = terraformApply("app", { planFile: "/tmp/plan.out" });
 ```
 
 To write custom rules for your project, see the [lint-rules authoring guide](/chant/lexicon-authoring/lint-rules/).
+
+## TF026: live root's delete: "never" against its policy block
+
+A live root whose `terraform.roots.<name>.delete` is `"never"`, but whose
+`policy` block leaves `undeclared_tagged` at its default (`"delete"`) or sets
+it to anything but `"keep"`, `"untag"` or `"report"`.
+
+**Why it matters.** chant's `delete: "never" | "owned-only" | "gated"` maps
+onto choudoufu's `policy` block: `undeclared_tagged` governs what happens to
+a resource this estate marked that the configuration no longer declares, and
+defaults to `"delete"` when the `policy` block omits it, or the root
+declares no `policy` block at all. `delete: "never"` promises that
+`TerraformApplyOp` never proposes deleting a resource it owns; a root making
+that promise without actually turning the quadrant's default off is a
+promise the configuration cannot keep.
+
+**The fix.** Add a `policy` block (nested in the root's `live` block) setting
+`undeclared_tagged` to `"keep"`, `"untag"` or `"report"`, or change the
+root's `delete` to `"owned-only"` or `"gated"` if an owned orphan really
+should be deleted.
+
+**Prior art.** No tool in the survey covers this. choudoufu's own
+`internal/live/lint` package checks a `policy` block for internal validity
+(an unrecognized or wrong-quadrant verb, an unscoped
+`undeclared_untagged = "delete"`), never against a
+`delete: "never" | "owned-only" | "gated"` classification — that vocabulary
+is chant's own, applied here to a tool that does not itself carry the
+concept. See `audit-lineage.ts` for the full reasoning.
+
+```hcl
+terraform {
+  required_version = ">= 1.5.0"
+
+  live {
+    estate = "fixture-estate"
+  }
+}
+
+resource "null_resource" "first" {}
+```
 
 ## Suppressing a finding
 

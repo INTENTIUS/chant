@@ -111,7 +111,24 @@ Four more activities exist for a live root, alongside the four above:
 
 `choudoufuLivePlan`, `choudoufuLiveLs`, `choudoufuLiveCheck` and `choudoufuAdopt` exist as typed step builders too, the same shape as the four above (`root` positional, `opts` the activity's own args minus `root`). `choudoufuLivePlan`/`choudoufuLiveLs` default to the `longInfra`/`fastIdempotent` profiles respectively the same way `terraformPlan`/`terraformShow` do; `choudoufuLiveCheck` defaults to `fastIdempotent`, no cloud calls, no state; `choudoufuAdopt` defaults to `longInfra`, one tagging round trip per resource.
 
-TF001 (no remote backend) does not fire on a live root, since a `backend` block is exactly what choudoufu refuses there. TF024 and TF025 are the live-root equivalents; see [Lint Rules](../lint-rules/).
+TF001 (no remote backend) does not fire on a live root, since a `backend` block is exactly what choudoufu refuses there. TF024, TF025 and TF026 are the live-root equivalents; see [Lint Rules](../lint-rules/).
+
+### TerraformApplyOp on a live root
+
+`TerraformApplyOp` reads the named root's mode at build time (a best-effort, synchronous read of `chant.config.json`) and builds a different shape there, since choudoufu refuses `-out` and `apply <planfile>` by design — an apply always plans against the live system at the moment it runs:
+
+- Init: unchanged.
+- Plan: `choudoufuLivePlan` in place of `terraformPlan`, reporting `Changed` off its `drift` field.
+- Gate (unless `gate: "never"`): a second `choudoufuLivePlan` call reporting `Destroys` off its `destroys` field (parsed from the human-readable render's own "Plan: N to add, N to change, N to destroy." line — GitHub issue #788's JSON document carries no resource-change diff of its own), then the same `gate()` step as the stock shape.
+- Apply: `terraformApply` with no `planFile` at all.
+
+TF101 (plan-before-apply) does not fire on a `terraformApply` call over a live root, for the same reason: there is no plan file to pair.
+
+**The caveat.** The approval a live root's Gate records covers only the plan its approver read. The Apply phase that follows re-plans live and applies whatever that fresh plan says; nothing refuses when the two differ. [choudoufu #878](https://github.com/INTENTIUS/choudoufu/issues/878) asks for an approval artifact — a change-set digest apply refuses to run against on a mismatch, or a stock-form plan file admitted with a live re-check — that would close this gap. `terraformApply`'s own `approvalArtifact?: StepOutputRef` argument is the named, unused seam for it: when #878 ships, the Plan step captures the artifact and the Apply step passes it through, one activity change, no reshape of this composite.
+
+**Known upstream gap.** choudoufu's `live-plan -json` refuses to run on a configuration that declares its own estate ([choudoufu #894](https://github.com/INTENTIUS/choudoufu/issues/894)), which every chant live root does by construction. So the Plan phase above throws today on a real live root; the composite is built and unit-tested against the activity's own contract, and the acceptance suite skips with this reason rather than failing, until #894 ships.
+
+**Delete modes.** chant's `delete: "never" | "owned-only" | "gated"` (`terraform.roots.<name>.delete`) maps onto choudoufu's `policy` block: `"owned-only"` is choudoufu's own default verb for the `undeclared_tagged` quadrant (an orphaned marked resource) and needs nothing; `"gated"` needs nothing beyond the approval gate above; `"never"` requires the root's `policy` block to set `undeclared_tagged` to `"keep"`, `"untag"` or `"report"` — TF026 enforces that at build time, naming the setting to add. Separately, and regardless of `delete`, `TerraformApplyOp` refuses outright to build against a root whose `policy` sets `undeclared_untagged = "delete"` (account-scoped reconciliation, which needs a `scope` block): chant never proposes deleting a resource it does not own, and neither does an Op it generates.
 
 ## TerraformWatchOp
 

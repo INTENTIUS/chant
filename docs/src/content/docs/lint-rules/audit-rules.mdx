@@ -2873,6 +2873,12 @@ Remove the `backend`/`cloud` block from the live root's terraform block; a live 
 
 Remove `workspace` from the root's terraform.roots config, and remove any `terraform.workspace` reference from its HCL; choudoufu refuses any workspace but "default" on a live root.
 
+### TF026
+
+**Live root declares delete: "never" but its policy leaves undeclared_tagged at "delete"** — merge-worthy · guidance
+
+Add undeclared_tagged = "keep" (or "untag" or "report") to the live root's policy block, or change terraform.roots.\<name>.delete to "owned-only" or "gated" if an owned orphan should be deleted after all.
+
 ## Secrets & credentials (SEC)
 
 Lexicon-independent — scans the raw text of every scanned file for likely credentials, regardless of which audit lexicons are installed. Matched values are always redacted; see [suppressing false positives](/chant/cli/audit/#suppressing-a-secrets-finding).
