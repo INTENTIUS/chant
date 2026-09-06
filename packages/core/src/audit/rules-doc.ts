@@ -60,9 +60,35 @@ function backingTable(m: RuleMeta): string {
   return rows.length ? `\n\n| | |\n|---|---|\n${rows.join("\n")}` : "";
 }
 
-function ruleBlock(m: RuleMeta): string {
-  const tags = `${m.tier} · ${m.fixKind}`;
-  return `### ${m.id}\n\n**${mdxEscape(m.title)}** — ${tags}\n\n${mdxEscape(m.remediation)}${backingTable(m)}`;
+/**
+ * A rule kept the day it retires (chant #2113) rather than dropped: still
+ * gets a heading (so old links and `lint.rules`/suppression entries that
+ * name it still land somewhere), but greyed via a `:::note` aside instead of
+ * reading like a live rule, and with the `deprecated` string, when one was
+ * given, saying what replaced it.
+ */
+function deprecatedNote(deprecated: boolean | string): string {
+  const reason = typeof deprecated === "string" ? mdxEscape(deprecated) : "This rule no longer runs.";
+  return `\n\n:::note[Deprecated]\n${reason} The id is kept so a reference to it still resolves.\n:::`;
+}
+
+function aliasesLine(aliases: string[]): string {
+  return `\n\nAlso known as: ${aliases.map((a) => `\`${mdxEscape(a)}\``).join(", ")}.`;
+}
+
+/** Exported for `rules-doc.test.ts` to exercise the alias/deprecated rendering directly against a synthetic `RuleMeta`, without needing a real catalog entry to carry either (chant #2113). */
+export function ruleBlock(m: RuleMeta): string {
+  // The heading text is what Starlight slugifies into `#<id>`, the anchor
+  // `ruleDocUrl()` links to (`./catalog.ts`), so it stays exactly `### <ID>`
+  // even for a deprecated rule. The "greyed out" treatment goes below the
+  // heading instead, so an old link/alias reference still lands on the id.
+  const tags = m.deprecated ? `${m.tier} · ${m.fixKind} · ~~deprecated~~` : `${m.tier} · ${m.fixKind}`;
+  return (
+    `### ${m.id}\n\n**${mdxEscape(m.title)}** — ${tags}\n\n${mdxEscape(m.remediation)}` +
+    `${backingTable(m)}` +
+    `${m.aliases?.length ? aliasesLine(m.aliases) : ""}` +
+    `${m.deprecated ? deprecatedNote(m.deprecated) : ""}`
+  );
 }
 
 /**

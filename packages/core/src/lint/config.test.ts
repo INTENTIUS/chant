@@ -1,6 +1,7 @@
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
-import { loadConfig, DEFAULT_CONFIG, findProjectRoot, resolveConfiguredSeverity, applyConfiguredSeverity } from "./config";
+import { loadConfig, DEFAULT_CONFIG, findProjectRoot, resolveConfiguredSeverity, applyConfiguredSeverity, resolvePresetIds, applyConfiguredPreset } from "./config";
 import type { PostSynthDiagnostic } from "./post-synth";
+import { auditRule, type RuleMeta } from "../audit/catalog";
 import { writeFileSync, mkdirSync, rmSync } from "fs";
 import { join, resolve } from "path";
 
@@ -755,6 +756,26 @@ describe("resolveConfiguredSeverity", () => {
       resolveConfiguredSeverity({ COR009: ["fatal" as never, { max: 12 }] }, "COR009", "error"),
     ).toThrow(/severity "fatal"/);
   });
+
+  describe("alias resolution (chant #2113, opt-in via `catalog`)", () => {
+    const catalog: Record<string, RuleMeta> = {
+      NEW001: { ...auditRule("NEW001", "report-only", "guidance", "T", "r"), aliases: ["OLD001"] },
+    };
+
+    test("with no catalog, a `rules` key naming an alias does not match, today's behavior, unchanged", () => {
+      expect(resolveConfiguredSeverity({ OLD001: "off" }, "NEW001", "error")).toEqual({ severity: "error" });
+    });
+
+    test("with a catalog, a `rules` key naming an alias resolves to the canonical id", () => {
+      expect(resolveConfiguredSeverity({ OLD001: "off" }, "NEW001", "error", catalog)).toEqual({ severity: "off" });
+    });
+
+    test("a `rules` key already at the canonical id still wins over an alias entry", () => {
+      expect(
+        resolveConfiguredSeverity({ OLD001: "off", NEW001: "warning" }, "NEW001", "error", catalog),
+      ).toEqual({ severity: "warning" });
+    });
+  });
 });
 
 /**
@@ -807,5 +828,65 @@ describe("applyConfiguredSeverity", () => {
 
   test("an empty diagnostics list is a no-op", () => {
     expect(applyConfiguredSeverity([], { WAW019: "off" })).toEqual({ diagnostics: [], suppressed: [] });
+  });
+
+  test("a `rules` key naming a retired rule's alias suppresses the renamed rule's finding, given a catalog (#2113)", () => {
+    const catalog: Record<string, RuleMeta> = {
+      WAW019: { ...auditRule("WAW019", "merge-worthy", "guidance", "T", "r"), aliases: ["WAW019-OLD"] },
+    };
+    const result = applyConfiguredSeverity([diag()], { "WAW019-OLD": "off" }, catalog);
+    expect(result.diagnostics).toEqual([]);
+    expect(result.suppressed).toEqual([diag()]);
+  });
+});
+
+describe("resolvePresetIds (chant #2113)", () => {
+  const presets = { recommended: ["A001", "A002"], all: ["A001", "A002", "A003"] };
+
+  test("a lexicon with no presets at all returns undefined (no filtering)", () => {
+    expect(resolvePresetIds(undefined, "recommended")).toBeUndefined();
+  });
+
+  test("a known preset name resolves to its id set", () => {
+    expect(resolvePresetIds(presets, "recommended")).toEqual(new Set(["A001", "A002"]));
+    expect(resolvePresetIds(presets, "all")).toEqual(new Set(["A001", "A002", "A003"]));
+  });
+
+  test("an unrecognized preset name falls back to unfiltered (undefined), not an empty set", () => {
+    expect(resolvePresetIds(presets, "typo-of-recommended")).toBeUndefined();
+  });
+});
+
+describe("applyConfiguredPreset (chant #2113)", () => {
+  function diag(checkId: string, overrides: Partial<PostSynthDiagnostic> = {}): PostSynthDiagnostic {
+    return { checkId, severity: "warning", message: `finding for ${checkId}`, ...overrides };
+  }
+
+  test("no presetIds (undefined) is a no-op: every diagnostic passes through", () => {
+    const diags = [diag("A001"), diag("Z999")];
+    const result = applyConfiguredPreset(diags, undefined, undefined);
+    expect(result.diagnostics).toEqual(diags);
+    expect(result.suppressed).toEqual([]);
+  });
+
+  test("a report-only rule outside the active preset is not reported, moved to suppressed, not dropped", () => {
+    const recommended = new Set(["A001"]);
+    const result = applyConfiguredPreset([diag("A001"), diag("Z999")], recommended, undefined);
+    expect(result.diagnostics.map((d) => d.checkId)).toEqual(["A001"]);
+    expect(result.suppressed.map((d) => d.checkId)).toEqual(["Z999"]);
+  });
+
+  test("the same rule under a wider preset (e.g. `all`) IS reported", () => {
+    const all = new Set(["A001", "Z999"]);
+    const result = applyConfiguredPreset([diag("A001"), diag("Z999")], all, undefined);
+    expect(result.diagnostics.map((d) => d.checkId).sort()).toEqual(["A001", "Z999"]);
+    expect(result.suppressed).toEqual([]);
+  });
+
+  test("an explicit `lint.rules` entry re-enables a rule the active preset excludes", () => {
+    const recommended = new Set(["A001"]);
+    const result = applyConfiguredPreset([diag("Z999")], recommended, { Z999: "warning" });
+    expect(result.diagnostics.map((d) => d.checkId)).toEqual(["Z999"]);
+    expect(result.suppressed).toEqual([]);
   });
 });

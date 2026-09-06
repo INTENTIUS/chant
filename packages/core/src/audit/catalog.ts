@@ -67,6 +67,28 @@ export interface RuleMeta {
    * render and temporal all ship model-based checks with this false.
    */
   yamlBased: boolean;
+  /**
+   * Retired ids this rule used to ship under (chant #2113). A rule id is
+   * public the day it ships. trivy's checks carry `id`, `long_id` and
+   * `aliases` for exactly this reason, so a rename or a scheme migration
+   * doesn't strand every existing reference to the old id. An alias resolves
+   * to this entry wherever a rule id is looked up by a human or a config.
+   * `canonicalRuleId()` (below) is the shared resolver; a `lint.rules` key
+   * and #2111's HCL suppression both go through it (or will, since #2111
+   * lands separately and is not touched by this change).
+   */
+  aliases?: string[];
+  /**
+   * Set when this rule is retired: `true`, or a string explaining what
+   * replaced it / why it no longer fires. A deprecated rule stays in the
+   * catalog rather than being deleted. trivy's `deprecated: true` field lets
+   * a ruleset retire a check without breaking every existing suppression or
+   * dashboard that still names it, so its id keeps resolving (via `aliases`
+   * on whichever rule superseded it, when there is one) and the rules page
+   * still lists it, greyed out, instead of the id going dark with no
+   * explanation.
+   */
+  deprecated?: boolean | string;
 }
 
 // ── Authority references ─────────────────────────────────────────────
@@ -443,6 +465,31 @@ export async function resolveAuditCatalog(lexicons: string[]): Promise<Record<st
 /** Look up catalog metadata for a check id, if known. */
 export function ruleMeta(id: string): RuleMeta | undefined {
   return RULE_CATALOG[id];
+}
+
+/**
+ * Resolve a rule id to its canonical form against `catalog` (chant #2113). An
+ * id that is itself a key of `catalog` passes through unchanged (this covers
+ * the common case without scanning every entry's `aliases`); otherwise every
+ * entry's `aliases` is searched for a match, and the id it belongs to is
+ * returned. An id neither a key nor anyone's alias passes through unchanged
+ * too, since this is a best-effort resolver, not a validator, so an unknown
+ * id is a caller's problem, not this function's.
+ *
+ * Exported so a `lint.rules`/preset key that names an alias resolves to the
+ * rule that actually runs (see `resolveConfiguredSeverity`,
+ * `../lint/config.ts`), and so #2111's HCL suppression code can key an
+ * inline `# chant-ignore <id>` off the same resolution once it lands — that
+ * suppression mechanism does not exist yet in this worktree (#2111 is a
+ * separate, parallel issue), so this function is exported now for it to call
+ * later rather than being wired into it here.
+ */
+export function canonicalRuleId(id: string, catalog: Record<string, RuleMeta> = RULE_CATALOG): string {
+  if (id in catalog) return id;
+  for (const [canonicalId, meta] of Object.entries(catalog)) {
+    if (meta.aliases?.includes(id)) return canonicalId;
+  }
+  return id;
 }
 
 /** Docs path for the audit rules reference (one anchor per rule id). */
