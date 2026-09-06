@@ -38,7 +38,11 @@ import {
   SUPPORTED_UNARY_OPERATORS,
 } from "../fold/subset";
 import { importModule } from "./import";
-import { collectParamDependencies } from "./param-deps";
+import {
+  collectCompositeOrigins,
+  collectParamDependencies,
+  type CompositeParamScope,
+} from "./param-deps";
 import { setPathProvenance } from "../provenance";
 import { intrinsicCallFoldsEagerly, type IntrinsicDef } from "../lexicon";
 import type { BuildParamValue } from "../build-params";
@@ -1273,6 +1277,29 @@ interface ResolveCtx {
    * terminates it — see {@link MAX_INTERPRETATION_DEPTH}.
    */
   interpretDepth: number;
+  /**
+   * chant #2161 — the composite whose factory body this context is evaluating,
+   * and how its props are bound there. Present ONLY inside
+   * {@link interpretCompositeFactory}'s body context, so a `new Type(...)` at a
+   * file's own top level records nothing and a nested composite records its own
+   * innermost factory rather than the enclosing one.
+   */
+  compositeParams?: CompositeParamRecorder;
+}
+
+/** chant #2161 — what {@link stampCompositeOrigins} needs at one `new Type(...)` inside a factory body. */
+interface CompositeParamRecorder {
+  /** The composite's declared name, as `Composite(fn, "<name>")` gave it. */
+  composite: string;
+  /** How the factory's single parameter is bound in this body. */
+  scope: CompositeParamScope;
+  /**
+   * The body's own `const` initializers, so a value hoisted out of a member's
+   * props (`const roleName = \`${props.name}-role\``) is still attributed. The
+   * defining module's top-level consts are layered underneath, exactly as
+   * `fold()` sees them.
+   */
+  consts: Map<string, ts.Expression>;
 }
 
 /** `{ value }` when `node`'s shape was recognized and resolved (value may itself be `undefined`/`null` — e.g. an optional composite member that wasn't created); `undefined` when the shape isn't one the live resolver understands (a plain literal, etc.) — callers fall back to the original, unchanged handling for that shape. */
@@ -2150,6 +2177,77 @@ function isLiteralPropertyNameNode(node: ts.PropertyName): boolean {
 }
 
 /**
+ * chant #2161 — how one admissible factory's parameter is bound in its body,
+ * plus the consts an attribution walk has to follow.
+ *
+ * Built from the SOURCE, not from the argument value: the question is which
+ * expression a member's property was written as, not what it evaluated to. A
+ * factory with no parameter at all still gets a recorder, so every path in its
+ * members records as a literal the composite fixes, which is exactly what a
+ * parameterless composite does.
+ */
+function compositeParamRecorder(
+  factory: InterpretableFactory,
+  moduleConsts: ReadonlyMap<string, ts.Expression>,
+): CompositeParamRecorder {
+  const whole = new Set<string>();
+  const destructured = new Map<string, string>();
+  const param = factory.fn.parameters[0];
+  if (param) {
+    if (ts.isIdentifier(param.name)) {
+      whole.add(param.name.text);
+    } else if (ts.isObjectBindingPattern(param.name)) {
+      for (const el of param.name.elements) {
+        const key = bindingElementPropKey(el);
+        if (key !== undefined && ts.isIdentifier(el.name)) destructured.set(el.name.text, key);
+      }
+    }
+  }
+
+  // Body `const`s layered over the defining module's, so a hoisted value is
+  // followed. `interpretCompositeFactory` deletes shadowed names from the
+  // context's own const map as it binds values; this map is separate precisely
+  // so the INITIALIZER stays available to the attribution walk.
+  const consts = new Map(moduleConsts);
+  const body = factory.fn.body;
+  if (ts.isBlock(body)) {
+    for (const statement of body.statements) {
+      if (!ts.isVariableStatement(statement)) continue;
+      for (const decl of statement.declarationList.declarations) {
+        if (ts.isIdentifier(decl.name) && decl.initializer) consts.set(decl.name.text, decl.initializer);
+      }
+    }
+  }
+
+  return { composite: factory.compositeName, scope: { whole, destructured }, consts };
+}
+
+/**
+ * chant #2161 — record, for one `new Type({...})` written inside an interpreted
+ * factory body, which factory parameter produced each of its property paths and
+ * which paths the composite fixes.
+ *
+ * Best-effort and additive, exactly like {@link stampParamDependencies}: a
+ * constructor called with no object literal records nothing, and
+ * `setPathProvenance` keeps the first (innermost) writer.
+ */
+function stampCompositeOrigins(entity: unknown, node: ts.NewExpression, ctx: ResolveCtx): void {
+  const recorder = ctx.compositeParams;
+  if (!recorder) return;
+  if (typeof entity !== "object" || entity === null) return;
+  let propsArg: ts.ObjectLiteralExpression | undefined;
+  for (const argument of node.arguments ?? []) {
+    if (ts.isObjectLiteralExpression(argument)) {
+      propsArg = argument;
+      break;
+    }
+  }
+  if (!propsArg) return;
+  const origins = collectCompositeOrigins(propsArg, recorder.consts, recorder.scope, recorder.composite);
+  for (const [path, origin] of Object.entries(origins)) setPathProvenance(entity, path, origin);
+}
+
+/**
  * Interpret an admissible factory's body against `args`, and assemble the
  * result through chant's own {@link Composite}.
  *
@@ -2196,6 +2294,9 @@ async function interpretCompositeFactory(
     sandbox: ctx.sandbox,
     session: ctx.session,
     interpretDepth: ctx.interpretDepth + 1,
+    // chant #2161 — set unconditionally, and NOT inherited from `ctx`: a nested
+    // composite records its own parameters, never the enclosing one's.
+    compositeParams: compositeParamRecorder(factory, scope.consts),
   };
 
   const bind = (name: string, value: unknown): void => {
@@ -2392,7 +2493,9 @@ async function interpretNewExpression(node: ts.NewExpression, ctx: ResolveCtx): 
 
   const ctorArgs: unknown[] = [];
   for (const arg of node.arguments ?? []) ctorArgs.push(await interpretExpression(arg, ctx));
-  return new (Ctor as new (...ctorArguments: unknown[]) => unknown)(...ctorArgs);
+  const instance = new (Ctor as new (...ctorArguments: unknown[]) => unknown)(...ctorArgs);
+  stampCompositeOrigins(instance, node, ctx);
+  return instance;
 }
 
 /**

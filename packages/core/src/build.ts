@@ -3,7 +3,8 @@ import type { Serializer, SerializerResult } from "./serializer";
 import type { OwnershipMarker } from "./ownership";
 import type { BuildError, DiscoveryErrorType } from "./errors";
 import type { IntrinsicDef, BuildRootContribution, BuildRootContributor } from "./lexicon";
-import type { BuildParamProvenance } from "./provenance";
+import { getProvenance, type BuildParamProvenance } from "./provenance";
+import { foldProvenanceOfEntities, type FoldProvenance } from "./fold-provenance";
 import { DiscoveryError, BuildError as BuildErrorClass } from "./errors";
 import { LexiconOutput, isLexiconOutput } from "./lexicon-output";
 import { isSecretDeclaration } from "./secret-provenance";
@@ -283,6 +284,22 @@ export interface BuildResult {
    * supplies none.
    */
   buildParams: BuildParamProvenance[];
+
+  /**
+   * chant #2161 — emitted property path to origin, per entity: which composite
+   * parameter produced the field, which literal the composite fixes, which the
+   * author declared directly, and which this build could not attribute.
+   *
+   * Beside the output on purpose, and never inside it. Nothing here is passed
+   * to a serializer, so it cannot reach the document an applier writes; see
+   * ./fold-provenance.ts's module doc and `fold-provenance-exclusion.test.ts`.
+   *
+   * Every entity with properties appears. The origins are as fine as the build
+   * managed: a run build, or a fold build over a factory outside the
+   * interpretable subset, records `unknown` for a composite's fields rather
+   * than guessing.
+   */
+  foldProvenance: FoldProvenance;
 }
 
 /**
@@ -860,6 +877,11 @@ async function buildFromDiscoveryResult(
     foldDecisions: discoveryResult.foldDecisions,
     lexiconVersions: { ...(options?.lexiconVersions ?? {}) },
     buildParams: options?.buildParams ?? [],
+    // chant #2161 — read off the entities AFTER every step that can change
+    // them (the shared-props merge in `expandComposite`, the build-root merge
+    // above), and deliberately after Step 7, so nothing about computing it can
+    // reach a serializer.
+    foldProvenance: foldProvenanceOfEntities(discoveryResult.entities, getProvenance),
   };
 }
 

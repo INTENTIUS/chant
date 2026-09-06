@@ -71,11 +71,27 @@ export interface EntityProvenance {
  *   is governed by `tier`, which is what an editor needs to know. Under-reports
  *   (a shape the collector does not follow drops a dependency) and never
  *   over-reports a parameter the expression does not mention.
+ * - `composite-parameter` — the fold interpreted the composite's factory body,
+ *   and the expression for this path reads the named factory parameter paths
+ *   (chant #2161). Same syntactic-dependency discipline as `build-param`, and
+ *   for the same reason: a shape the collector does not follow drops a
+ *   parameter, it never invents one.
+ * - `composite-literal` — the fold interpreted the factory body and the
+ *   expression for this path reads no parameter at all. The composite fixes
+ *   this field, and no argument at the call site moves it.
+ *
+ * The coarse `composite` and the two fine kinds are not alternatives. A build
+ * records `composite` when it expanded a composite without interpreting its
+ * body (the run path, an inadmissible factory), and that is why
+ * ./fold-provenance.ts answers `unknown` there rather than falling through to a
+ * direct declaration.
  */
 export type PathOrigin =
   | { kind: "authored" }
   | { kind: "composite"; composite: string; instance: string }
-  | { kind: "build-param"; params: string[] };
+  | { kind: "build-param"; params: string[] }
+  | { kind: "composite-parameter"; composite: string; parameters: string[] }
+  | { kind: "composite-literal"; composite: string };
 
 /** True when `prefix` addresses `path` or an ancestor of it, on a segment boundary. */
 function isPathPrefix(prefix: string, path: string): boolean {
@@ -170,6 +186,10 @@ export function describePathOrigin(origin: PathOrigin): string {
       return `composite ${origin.composite} (${origin.instance})`;
     case "build-param":
       return `param ${origin.params.join(", ")}`;
+    case "composite-parameter":
+      return `composite ${origin.composite} parameter ${origin.parameters.join(", ")}`;
+    case "composite-literal":
+      return `composite ${origin.composite} literal`;
   }
 }
 
