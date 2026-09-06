@@ -56,7 +56,25 @@
  * proprietary Semgrep Rules License v1.0, which forbids redistribution; cite
  * it by name in prose if a rule's idea comes from it, never register it in
  * `PRIOR_ART` with an SPDX licence).
+ *
+ * TF024 (#2103, live root declares a backend/cloud block) credits choudoufu's
+ * own `RuleStateBackend`, `internal/live/lint/issue.go` of
+ * github.com/INTENTIUS/choudoufu: the identical condition, checked the same
+ * way this fork checks it at `init` before any command runs. TF025 (a live
+ * root's non-default `terraform.workspace`) has no entry: its workspace half
+ * is refused at the CLI argument-parsing layer there
+ * (`internal/command/live_mode.go`), not by a dedicated lint rule under
+ * `internal/live/lint`, so there is no `Rule*` constant to point at.
  */
 import type { Lineage } from "@intentius/chant/audit/catalog";
 
-export const terraformAuditLineage: Record<string, Lineage[]> = {};
+export const terraformAuditLineage: Record<string, Lineage[]> = {
+  TF024: [
+    {
+      tool: "choudoufu",
+      rule: "RuleStateBackend",
+      url: "https://github.com/INTENTIUS/choudoufu/blob/main/internal/live/lint/issue.go",
+      relation: "equivalent",
+    },
+  ],
+};
