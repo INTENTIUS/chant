@@ -9,7 +9,7 @@
  *
  * Detection reuses the runtime's own `isPostSynthCheck`, so the barrel contains
  * exactly the checks discovery would — including files whose export name differs
- * from the filename (docker/helm/temporal) and excluding helper modules
+ * from the filename (docker/helm) and excluding helper modules
  * (cf-refs, arm-refs, …) that export no check.
  */
 

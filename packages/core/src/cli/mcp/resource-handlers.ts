@@ -4,9 +4,7 @@ import type { ResourceDefinition } from "./types";
 import { getContext } from "./resources/context";
 import { readSnapshot, readEnvironmentSnapshots } from "../../lifecycle/git";
 import { discoverOps } from "../../op/discover";
-import { makeTemporalClient } from "../handlers/run";
-import { resolveWorkflowId, fetchNormalizedHistory } from "../handlers/run-client";
-import { extractStepRecords, countActivities, queryGateState } from "../handlers/op-progress";
+import { createLocalOpRuntime } from "../../op/runtimes/local";
 import { loadOkfBundle } from "../../okf-read";
 import { loadChantConfigUpward, resolveKnowledgeDir } from "../../config";
 
@@ -37,7 +35,7 @@ export const coreResourceDefinitions: ResourceDefinition[] = [
   {
     uri: "chant://ops/{name}/runs",
     name: "Op run history",
-    description: "Workflow run history for a named Op",
+    description: "Run history for a named Op, newest first",
     mimeType: "application/json",
   },
   {
@@ -93,10 +91,6 @@ export function collectExamples(
     }
   }
   return examples;
-}
-
-function opWorkflowFnName(opName: string): string {
-  return opName.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase()) + "Workflow";
 }
 
 /**
@@ -175,33 +169,16 @@ export async function handleResourcesRead(
     };
   }
 
+  // Both run resources read the built-in local runtime (#2121, #2116) — the
+  // one an MCP client can address without naming a lexicon. `status` and `log`
+  // answer from the run ledger (#2118), so a run that ended in an earlier
+  // process still reads back here.
   if (uri.startsWith("chant://ops/") && uri.endsWith("/runs/latest")) {
     const name = uri.replace("chant://ops/", "").replace("/runs/latest", "");
     try {
-      const { ops } = await discoverOps();
-      const config = ops.get(name)?.config;
-
-      const { client } = await makeTemporalClient(undefined, resolve("."));
-      const handle = client.workflow.getHandle(resolveWorkflowId(name));
-      const desc = await handle.describe();
-      const history = await fetchNormalizedHistory(handle);
-      const { completed: activitiesCompleted, scheduled: activitiesScheduled } = countActivities(history);
-      const progress = config ? extractStepRecords(config, history, { final: Boolean(desc.closeTime) }) : undefined;
-      const gate = await queryGateState(handle);
-      const result = {
-        workflowId: desc.workflowId,
-        runId: desc.runId,
-        status: desc.status.name,
-        startTime: desc.startTime,
-        closeTime: desc.closeTime ?? null,
-        taskQueue: desc.taskQueue,
-        activitiesCompleted,
-        activitiesScheduled,
-        ...(progress ? { progress } : {}),
-        gate: gate ?? null,
-      };
+      const status = await createLocalOpRuntime({ projectPath: resolve(".") }).status(name);
       return {
-        contents: [{ uri, mimeType: "application/json", text: JSON.stringify(result, null, 2) }],
+        contents: [{ uri, mimeType: "application/json", text: JSON.stringify(status ?? null, null, 2) }],
       };
     } catch (err) {
       return {
@@ -213,11 +190,7 @@ export async function handleResourcesRead(
   if (uri.startsWith("chant://ops/") && uri.endsWith("/runs")) {
     const name = uri.replace("chant://ops/", "").replace("/runs", "");
     try {
-      const { client } = await makeTemporalClient(undefined, resolve("."));
-      const runs: unknown[] = [];
-      for await (const run of client.workflow.list({ query: `WorkflowType = "${opWorkflowFnName(name)}"` })) {
-        runs.push({ runId: run.runId, status: run.status.name, startTime: run.startTime, closeTime: run.closeTime ?? null });
-      }
+      const runs = await createLocalOpRuntime({ projectPath: resolve(".") }).log(name);
       return {
         contents: [{ uri, mimeType: "application/json", text: JSON.stringify(runs, null, 2) }],
       };

@@ -247,7 +247,7 @@ describe("COMP003: mutating-no-rollback", () => {
   });
 });
 
-describe("COMP004: gate-needs-temporal", () => {
+describe("COMP004: gate-needs-durable-runtime", () => {
   it("flags a gate step with no disable directive", async () => {
     const diagnostics = await lintFixture("comp004", "fail");
     const hits = diagnostics.filter((d) => d.checkId === "COMP004");

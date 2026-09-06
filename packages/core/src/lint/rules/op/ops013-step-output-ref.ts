@@ -3,7 +3,7 @@
  * #1290) must name a step that precedes it, in scope (main `phases`, not
  * `onFailure` or nested inside an `EffectStep`), with a registered
  * `ActivityContract` whose `returns` schema the referenced path resolves
- * against. Moved from the temporal lexicon's TMP013 to core in #2122 (epic
+ * against. Moved from a hosting lexicon's own TMP013 to core in #2122 (epic
  * #2114 sub-issue 6), so it fires on every project that declares an Op — a
  * project on the local runtime with no lexicons configured included.
  *
@@ -22,11 +22,11 @@
  *
  * This check is what makes it safe for a lexicon's own serializer to compile
  * every reference it finds unconditionally: `chant build` blocks file output
- * while an error-severity post-synth finding stands, so a workflow.ts
- * referencing an unresolved step never reaches disk (see the temporal
- * lexicon's `op/serializer.ts`, which also runs its own scope-only subset of
- * this same check directly — `validateStepOutputRefScope` — as
- * defense-in-depth, chant #1950 pre-merge review finding 2).
+ * while an error-severity post-synth finding stands, so generated code
+ * referencing an unresolved step never reaches disk (a lexicon's own Op
+ * serializer also runs the scope-only subset of this check directly —
+ * `validateStepOutputRefScope` — as defense-in-depth, chant #1950 pre-merge
+ * review finding 2).
  *
  * Cross-contract type compatibility (chant #1950 pre-merge review, finding
  * 3): this rule also compares a producer's declared return type at `path`

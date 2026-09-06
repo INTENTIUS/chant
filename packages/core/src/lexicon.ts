@@ -485,9 +485,9 @@ export interface ComponentPipelineResult {
 }
 
 /**
- * Finding-mode a scheduled Op surfaces on drift — the vocabulary the
- * temporal-lexicon composites (`WorkflowAuditOp`/`PipelineAuditOp`/
- * `ReconcileOp`) already declare on the Op itself (#927). The mode is baked
+ * Finding-mode a scheduled Op surfaces on drift — the vocabulary the core
+ * composites (`WorkflowAuditOp`/`PipelineAuditOp`/`ReconcileOp`) already
+ * declare on the Op itself (#927). The mode is baked
  * into the Op's own activity args at build time and is never re-passed on the
  * generated CI invocation; here it decides only what token/permission wiring
  * the generated job needs to act on a finding — elevated write access for
@@ -497,8 +497,8 @@ export type OpFindingMode = "report" | "issue" | "pull-request" | "merge-request
 
 /**
  * The CI-native trigger driving a scheduled Op's generated workflow. `cron`
- * is the historical shape — the CI-only alternative to a Temporal
- * `TemporalSchedule`. `pull_request` and `push` are generic beyond cron: a
+ * is the historical shape — the CI-only way to give an Op a cadence.
+ * `pull_request` and `push` are generic beyond cron: a
  * Terraform CI shape needs `plan` on `pull_request` (posted as a PR comment)
  * and `apply` on `push` to the default branch, each its own Op with its own
  * trigger (#2081, #2084).
@@ -513,8 +513,7 @@ export interface ScheduledOpSpec {
   /** Op name (`*.op.ts`'s `Op({ name })`) — what `chant run <name>` targets. */
   name: string;
   /**
-   * Cron expression driving the CI-native trigger — the CI-only alternative
-   * to a Temporal `TemporalSchedule`. Superseded by `trigger`; kept for
+   * Cron expression driving the CI-native trigger. Superseded by `trigger`; kept for
    * backward compatibility, so an omitted `trigger` with `schedule` present
    * still means `{ kind: "cron", schedule }` (see {@link resolveOpTrigger}).
    */
@@ -687,8 +686,8 @@ export interface LexiconPlugin {
    * The shape of this lexicon's own `chant.config.ts` namespace — the top-level
    * key named after the lexicon (#1344).
    *
-   * k8s reads `k8s.profiles.<env>.context`, temporal `temporal.profiles`,
-   * forgejo `forgejo.runnerLabels` and `forgejo.actionsRoot`. All were
+   * k8s reads `k8s.profiles.<env>.context`, forgejo `forgejo.runnerLabels`
+   * and `forgejo.actionsRoot`. All were
    * documented for users and declared nowhere: the config schema is
    * `.passthrough()`, so a typo was accepted and silently ignored, and the
    * `ChantConfig` interface is closed, so the documented examples did not
@@ -932,7 +931,7 @@ export interface LexiconPlugin {
    * Query deployed resources and return API metadata. Opt-in.
    *
    * Use this when each chant entity has a 1:1 cloud equivalent — e.g. an
-   * AWS CFN resource, a K8s object, an ARM resource, a Temporal namespace.
+   * AWS CFN resource, a K8s object, an ARM resource, a Fly app.
    *
    * **The observation contract (#1089).** Returning nothing for a declared
    * entity is a claim, and there are two different claims to make. Either the
@@ -965,8 +964,8 @@ export interface LexiconPlugin {
    * `entities` carries the chant-side entity declarations for this lexicon,
    * keyed by chant entity name (e.g. the export name from a `*.ts` file).
    * Implementations that need to map cloud-side names back to chant entity
-   * names (e.g. Temporal — server-side namespace `prod` ↔ chant entity `ns`
-   * declared with `name: "prod"`) read this; implementations that already
+   * names (server-side name `prod` ↔ chant entity `ns` declared with
+   * `name: "prod"`) read this; implementations that already
    * have name parity (e.g. AWS CloudFormation logical IDs == chant entity
    * names) can ignore it.
    *

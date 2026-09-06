@@ -1,8 +1,8 @@
 /**
- * Local Op executor — runs an Op's phases in-process with no Temporal worker.
+ * Local Op executor — runs an Op's phases in this process.
  *
- * A first-class peer to Temporal mode for dev loops, CI, and drift/observation
- * Ops. Provides phase sequencing, parallel phases, per-step retry + timeout via
+ * The default runtime (#2121), and the one dev loops, CI, and drift/observation
+ * Ops use. Provides phase sequencing, parallel phases, per-step retry + timeout via
  * activity profiles, `outcomeAttribute` capture, and `onFailure` compensation.
  *
  * A gate is a fact, not a wait (#2119). Reaching one, the executor consults the
@@ -14,9 +14,9 @@
  * ledger, so `chant approve <op> <gate>` followed by `chant run <op>` is the
  * whole loop.
  *
- * The executor is deliberately decoupled from the Temporal lexicon: activity
+ * The executor is deliberately decoupled from any lexicon: activity
  * implementations and profiles are passed in (loaded dynamically by the CLI),
- * so core never statically depends on `@intentius/chant-lexicon-temporal`.
+ * so core never statically depends on one.
  */
 
 import { outcomeAttributesOf } from "./types";
@@ -39,10 +39,9 @@ export interface StepRecord {
   phase: string;
   fn: string;
   /**
-   * Present for a local-executor record. Absent for one reconstructed from
-   * Temporal workflow history (op-progress.ts) — an activity's scheduled
-   * input isn't decoded there, so the field is simply omitted rather than
-   * populated with a guess.
+   * Present for a local-executor record. A runtime that reconstructs records
+   * from its own run history may not have an activity's scheduled input to
+   * hand, and omits the field rather than guessing at it.
    */
   args?: Record<string, unknown>;
   status: "ok" | "fail" | "skipped";
@@ -234,9 +233,9 @@ interface RanStep {
 /**
  * Run one activity step with retry + timeout. Never throws — returns a
  * record. Any {@link StepOutputRef} in `step.args` is resolved against
- * `resultsById` before the activity is called (#1290) — the local executor
- * is a first-class peer of the Temporal path, so an unresolved placeholder
- * must never reach an activity function; see `resolveStepOutputRefs`.
+ * `resultsById` before the activity is called (#1290) — an unresolved
+ * placeholder must never reach an activity function, on this runtime or any
+ * other; see `resolveStepOutputRefs`.
  */
 async function runStep(
   step: ActivityStep,

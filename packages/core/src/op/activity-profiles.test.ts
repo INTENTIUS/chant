@@ -4,10 +4,10 @@ import { KNOWN_ACTIVITY_PROFILES } from "./activity-contract";
 import { activity } from "./builders";
 
 /**
- * chant #2114 — the profile table moved out of the temporal lexicon into core
- * and lost its prefix. What a profile carries is a timeout and a retry policy;
- * `heartbeatTimeout` configured a Temporal worker's liveness protocol and has
- * no subject in an in-process step, so it did not come along.
+ * chant #2114 — the profile table moved out of a hosting lexicon into core and
+ * lost its prefix. What a profile carries is a timeout and a retry policy;
+ * `heartbeatTimeout` configured a worker's liveness protocol and has no subject
+ * in an in-process step, so it did not come along.
  */
 describe("ACTIVITY_PROFILES", () => {
   test("carries the six named profiles", () => {
@@ -16,7 +16,7 @@ describe("ACTIVITY_PROFILES", () => {
     );
   });
 
-  test("every profile has a timeout, and none has a Temporal-era field", () => {
+  test("every profile has a timeout, and none has a worker-era field", () => {
     for (const [name, profile] of Object.entries(ACTIVITY_PROFILES)) {
       expect(typeof profile.timeout, `${name}.timeout`).toBe("string");
       expect(profile, `${name} should have no heartbeatTimeout`).not.toHaveProperty("heartbeatTimeout");

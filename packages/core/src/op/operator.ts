@@ -1,6 +1,6 @@
 /**
- * `chant operator` (#1485, epic #1487) — native durable ticks without
- * Temporal. A deliberately small daemon: a timer, a lease
+ * `chant operator` (#1485, epic #1487) — durable ticks with no service behind
+ * them. A deliberately small daemon: a timer, a lease
  * (../lifecycle/lease.ts), and the existing local executor
  * (./local-executor.ts) in a loop. No new service, no new state store — the
  * lease lives on a git ref, tick state lives on the `chant/lifecycle`

@@ -86,9 +86,8 @@
  *    `run(ctx, input)` was called with, plus (since #1944) the exact `output`
  *    `run()` returned — `../capability.ts`'s `Capability.rollback` grew an
  *    optional third parameter for precisely this, and ../driver.ts's saga
- *    unwind (both the local in-process path and, via
- *    `lexicons/temporal/src/component-op/{activities,serializer}.ts`, the
- *    durable Temporal path) always threads it through. `run()` records the
+ *    unwind (and any hosting runtime that splits `run`/`rollback` across
+ *    process boundaries) always threads it through. `run()` records the
  *    sprite id and exact pre-run checkpoint id two ways: in a private
  *    `WeakMap` keyed by the exact `input` object (works only when `rollback`
  *    is called with that same object — true in-process, e.g. this module's
@@ -115,18 +114,13 @@
  *    commented no-op return — the same pattern
  *    `../../lexicons/aws/src/components/host-delivery.ts`'s `code-deploy`
  *    rollback uses (`if (!deploymentId) return;`) — rather than throwing.
- *    **Before #1944**, the Temporal durable path (`run` and `rollback`
- *    executing as separate Activities, each rebuilding `input` fresh via
- *    `resolveStepInput`) never gave the `WeakMap` a hit, so a fresh sprite's
- *    rollback there silently degraded to that no-op; passing `output` through
- *    (this revision) closes that gap directly, without redesigning the
- *    component-op wire format — see #1944's PR description for why this was
- *    chosen over the "make the degrade loud" alternative. The generated
- *    workflow's saga-unwind loop (`lexicons/temporal/src/component-op/
- *    serializer.ts`) also no longer swallows a rollback failure silently
- *    (any capability's, not just this one) — it now logs it and surfaces it
- *    via a `RollbackFailed` search attribute, defense in depth for a rollback
- *    failure unrelated to identity (e.g. the sprite backend itself erroring).
+ *    **Before #1944**, a hosted path running `run` and `rollback` as separate
+ *    units of work — each rebuilding `input` fresh via `resolveStepInput` —
+ *    never gave the `WeakMap` a hit, so a fresh sprite's rollback there
+ *    silently degraded to that no-op; passing `output` through (this revision)
+ *    closes that gap directly, without redesigning the component-op wire
+ *    format — see #1944's PR description for why this was chosen over the
+ *    "make the degrade loud" alternative.
  *  - **Destroy vs. leave-alive.** `run()` destroys a freshly created (not
  *    `workspace.spriteName`-reused) sprite only when `turn.status ===
  *    "completed"`. An ordinary failed turn leaves the sprite alive — it
@@ -526,8 +520,8 @@ export function createRunAgentCapability(
     async rollback(_ctx, input, output): Promise<void> {
       // The durable-safe channel first (#1944): `output` is the exact value
       // this step's own `run()` returned, threaded through by every current
-      // caller (../driver.ts locally, lexicons/temporal/src/component-op/
-      // {activities,serializer}.ts across the Activity boundary) — it
+      // caller (../driver.ts locally, and a hosting runtime across whatever
+      // process boundary it puts between the two) — it
       // survives even when `rollback()` is called with a freshly-rebuilt
       // `input` object the in-process WeakMap below has never seen. Falls
       // back to the WeakMap for a caller that predates/never threads

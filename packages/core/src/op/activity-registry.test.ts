@@ -14,9 +14,9 @@ describe("loadActivities", () => {
   });
 
   /**
-   * chant #2114 — the base library used to be `@intentius/chant-lexicon-temporal/
-   * op/activities`, dynamically imported, and `loadActivities` threw "no
-   * activities registered" without it. The activities are core's own now and the
+   * chant #2114 — the base library used to live in a hosting lexicon,
+   * dynamically imported, and `loadActivities` threw "no activities
+   * registered" without it. The activities are core's own now and the
    * import is static, so an empty lexicon list resolves the whole base surface in
    * a project that has installed nothing but chant.
    */
@@ -55,11 +55,11 @@ describe("resolveActivity", () => {
   });
 });
 
-describe("loadActivities — no Temporal SDK on the path", () => {
-  test("the activity library loads with no @temporalio/* package installed", async () => {
-    // The base activities used to reach @temporalio/activity (heartbeats) and
-    // @temporalio/common (ApplicationFailure). Neither is a core dependency, and
-    // this import would throw if one crept back in.
+describe("loadActivities — no runtime SDK on the path", () => {
+  test("the activity library loads with no orchestrator SDK installed", async () => {
+    // The base activities used to reach an orchestrator SDK for heartbeats and
+    // its non-retryable failure type. Neither is a core dependency, and this
+    // import would throw if one crept back in.
     const activities = await loadActivities();
     expect(activities.has("waitForStack")).toBe(true);
     expect(activities.has("chantBuild")).toBe(true);
@@ -67,7 +67,7 @@ describe("loadActivities — no Temporal SDK on the path", () => {
   });
 });
 
-// Cloud appliers were relocated out of the temporal lexicon into their own
+// Cloud appliers were relocated out of a single lexicon into their own
 // lexicons (#706); the loader pulls them in per the project's configured
 // `lexicons`. Proves the relocation resolves end-to-end.
 describe("loadActivities — multi-lexicon (#706)", () => {

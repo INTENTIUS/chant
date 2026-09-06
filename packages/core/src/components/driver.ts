@@ -32,15 +32,13 @@
  * already requires at author time — the driver reports the same fact the
  * lint rule already made a component author state.
  *
- * This unwind runs entirely in-process: if the process crashes mid-rollback
- * on the local executor, nothing resumes it — there is no persisted run state
- * to resume from. That is the documented Temporal boundary (see
- * docs/components/orchestration.mdx#rollback-comes-free and
- * docs/guide/local-vs-temporal.mdx): the *mechanism* (reverse-order unwind
- * calling each capability's `rollback`) is capability-agnostic and works
- * identically on both executors, but *durable resume of a rollback already in
- * progress* is Temporal-only, the same boundary that already applies to
- * forward `onFailure` compensation on an Op.
+ * This unwind runs entirely in-process: if the process crashes mid-rollback,
+ * nothing resumes it — there is no persisted run state to resume from (see
+ * docs/components/orchestration.mdx#rollback-comes-free). The *mechanism*
+ * (reverse-order unwind calling each capability's `rollback`) is
+ * capability-agnostic; *durable resume of a rollback already in progress*
+ * would be a hosting runtime's to offer, the same boundary that already
+ * applies to forward `onFailure` compensation on an Op.
  *
  * Contains zero per-component logic: nothing in this module branches on a
  * component or capability `kind`/name. All behavior is either generic
@@ -292,12 +290,11 @@ export function resolveWiring(
  * Deep-walk an object, resolving every string/stackOutput wiring value found.
  * Arrays and nested objects are walked too.
  *
- * Exported (not just used internally) so the durable Temporal path
- * (`@intentius/chant-lexicon-temporal`'s component workflow codegen, see
- * epic #551 #589) can resolve a step's wiring the same way inside a Temporal
- * *activity* — the workflow itself only accumulates `phaseOutputs`/
- * `componentOutputs` and passes them through; resolution logic stays in one
- * place so local and durable execution can never silently diverge.
+ * Exported (not just used internally) so a hosting runtime that runs steps
+ * out of process can resolve a step's wiring the same way — the orchestrator
+ * only accumulates `phaseOutputs`/`componentOutputs` and passes them through;
+ * resolution logic stays in one place so local and hosted execution can never
+ * silently diverge.
  */
 export function resolveStepInput(
   input: Record<string, unknown>,
@@ -703,9 +700,9 @@ export async function runComponentDeploy(
   }
 
   // Publish-family and stack outputs become this component's entry in
-  // `componentOutputs` — through the same exported accumulator the durable
-  // path's `accumulateComponentOutputs` activity calls (#700), so local and
-  // Temporal runs can never diverge on what downstream references see.
+  // `componentOutputs` — through the same exported accumulator a hosted
+  // runtime calls (#700), so local and hosted runs can never diverge on what
+  // downstream references see.
   accumulateComponentOutputs(componentOutputs, component.name, phaseOutputs);
 
   return { component: component.name, ok: true, status: "ok", records };
@@ -732,9 +729,8 @@ export async function runComponentDeploy(
  * the driver free of per-capability branching. Returns `undefined` when the
  * component exposed nothing.
  *
- * Exported, like `resolveStepInput`, so the durable Temporal path
- * (lexicons/temporal/src/component-op/activities.ts) accumulates outputs via
- * this exact function rather than re-deriving it (#700). The resolver and the
+ * Exported, like `resolveStepInput`, so a hosting runtime accumulates outputs
+ * via this exact function rather than re-deriving it (#700). The resolver and the
  * accumulator are the two halves of one contract; sharing only the resolver
  * is how the cross-stack gap #699 closed locally could reopen durably.
  */
@@ -750,11 +746,11 @@ export function collectComponentOutputs(
 /**
  * Record a finished component's outputs (`collectComponentOutputs`) into the
  * shared `componentOutputs` map under the component's own name, merging over
- * any seeded entry (`--seed-outputs`, or a durable parent workflow's
- * thread-through). Mutates and returns `componentOutputs`, so a Temporal
- * activity can hand the updated map back to its workflow over the JSON
- * boundary — every value in it is plain activity-result data, so the map is
- * serializable by construction. A no-op when the component exposed nothing.
+ * any seeded entry (`--seed-outputs`, or a parent orchestrator's
+ * thread-through). Mutates and returns `componentOutputs`, so an out-of-process
+ * step can hand the updated map back over a JSON boundary — every value in it
+ * is plain result data, so the map is serializable by construction. A no-op
+ * when the component exposed nothing.
  */
 export function accumulateComponentOutputs(
   componentOutputs: Record<string, Record<string, unknown>>,

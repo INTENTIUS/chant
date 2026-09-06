@@ -22,8 +22,8 @@
  * (`../lint/rules/op/ops012-activity-contract.ts`, chant #2122) does this
  * for every declared Op regardless of which lexicons are configured; a
  * lexicon's own post-synth check can additionally validate against its own
- * roster the same way (the temporal lexicon's TMP012 did this before #2122
- * moved the op-model checks to core). A step whose `fn` has no registered
+ * roster the same way (a lexicon-owned check did this before #2122 moved the
+ * op-model checks to core). A step whose `fn` has no registered
  * contract is skipped (not an error): this is deliberately incremental — a
  * contract map opts an activity in by declaring one for it, and the
  * k8s/aws/azure/gcp/fly activity sets are expected to pick this up one at a

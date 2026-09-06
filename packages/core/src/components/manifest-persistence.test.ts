@@ -16,7 +16,6 @@ vi.mock("../lifecycle/git", () => ({
 const {
   maybePersistBuildManifest,
   extractRunManifest,
-  extractRunManifestFromPhaseOutputs,
 } = await import("./manifest-persistence");
 
 function makeManifest(component: string, digest: string): BuildArchiveManifest {
@@ -67,23 +66,6 @@ describe("extractRunManifest", () => {
   });
 });
 
-describe("extractRunManifestFromPhaseOutputs", () => {
-  test("finds the manifest across phase outputs (Temporal workflow result shape)", () => {
-    const manifest = makeManifest("svc", "sha256:abc");
-    expect(
-      extractRunManifestFromPhaseOutputs({
-        Build: { archivePath: "image.tar", digest: "sha256:abc", manifest },
-        Apply: { ok: true },
-      }),
-    ).toEqual(manifest);
-  });
-
-  test("returns undefined for undefined/empty phaseOutputs", () => {
-    expect(extractRunManifestFromPhaseOutputs(undefined)).toBeUndefined();
-    expect(extractRunManifestFromPhaseOutputs({})).toBeUndefined();
-  });
-});
-
 describe("maybePersistBuildManifest", () => {
   beforeEach(() => {
     persistBuildManifestMock.mockReset();
@@ -102,8 +84,8 @@ describe("maybePersistBuildManifest", () => {
     expect(pushLifecycleMock).toHaveBeenCalledTimes(1);
   });
 
-  test("a pre-resolved manifest (Temporal path) takes precedence over records", async () => {
-    const preResolved = makeManifest("svc", "sha256:temporal");
+  test("a pre-resolved manifest takes precedence over records", async () => {
+    const preResolved = makeManifest("svc", "sha256:preresolved");
     persistBuildManifestMock.mockResolvedValue({ commit: "b".repeat(40) });
 
     const outcome = await maybePersistBuildManifest({

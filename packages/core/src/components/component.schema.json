@@ -162,7 +162,7 @@
 
     "Gate": {
       "type": "object",
-      "description": "Pauses the composition for an external signal (typically human approval) before continuing. A gate in a component's composition requires the durable (Temporal) execution backend; it cannot run on the local in-process executor.",
+      "description": "Ends the run pending human approval. The driver decides a gate against the gate ledger when it reaches one; a gate nobody has approved stops the run there, and `chant approve <component> <gate>` records the resolution the next run reads.",
       "required": ["kind", "signalName"],
       "additionalProperties": false,
       "properties": {

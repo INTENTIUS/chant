@@ -9,8 +9,8 @@ import { formatError, formatInfo } from "./format";
  * out (chant #1108) so every command that discovers project source before
  * running it resolves `chant.config.ts`'s declared `buildParams` the exact
  * same way: `chant build` (`../commands/build.ts`'s `buildCommand`), the
- * component deploy driver (`./handlers/run.ts`'s `chant run --components`
- * local + `--temporal` paths), and generate mode (`./handlers/build.ts`'s
+ * component deploy driver (`./handlers/run.ts`'s `chant run --components`),
+ * and generate mode (`./handlers/build.ts`'s
  * `chant build --components --generate <lexicon>`).
  *
  * Before #1108, only `buildCommand` ran this sequence — `chant run

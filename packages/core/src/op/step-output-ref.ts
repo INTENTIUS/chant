@@ -5,8 +5,8 @@
  * An Op's steps run in a fixed sequence chant already knows: phases in
  * order, and (within a non-parallel phase) steps in order. Today the only
  * way a value escapes a step is `outcomeAttribute`, which stringifies it
- * into a Temporal search attribute — a UI filter, not something a later
- * step can consume. `StepOutputRef` is the mechanism that lets a later
+ * into a named run outcome — something to read a run back by, not something a
+ * later step can consume. `StepOutputRef` is the mechanism that lets a later
  * step's `args` hold a *reference* to an earlier step's declared return
  * value instead.
  *
@@ -93,8 +93,8 @@ const STEP_OUTPUT_REF_BRAND = Symbol.for("chant.op.stepOutputRef");
  * A typed reference to a prior step's declared return value. Inert by
  * construction — it carries a producer step id and an optional dot-path
  * into that producer's return schema, resolved by `chant build`
- * (`validateStepOutputRefs`) and compiled by the temporal serializer into a
- * local variable holding the awaited activity result.
+ * (`validateStepOutputRefs`) and compiled by a hosting lexicon's serializer
+ * into a local variable holding the awaited activity result.
  */
 export interface StepOutputRef {
   readonly [STEP_OUTPUT_REF_BRAND]: true;
@@ -268,11 +268,11 @@ function indexById(locations: StepLocation[]): { byId: Map<string, StepLocation>
  * validateStepOutputRefs}'s checks that don't depend on a contract map, kept
  * as its own export so a caller with no contracts on hand (or that wants to
  * defend against exactly this class of bug regardless of what contracts are
- * registered) can still refuse a scope-invalid reference. The temporal
- * lexicon's serializer (`serializeOps`) is exactly this caller: OPS013 (which
- * calls the fuller {@link validateStepOutputRefs}) protects `chant build`,
- * but `serializeOps` is a public export a caller can invoke directly,
- * bypassing that lint pass — this is its own defense-in-depth.
+ * registered) can still refuse a scope-invalid reference. A hosting lexicon's
+ * own Op serializer is exactly this caller: OPS013 (which calls the fuller
+ * {@link validateStepOutputRefs}) protects `chant build`, but a serializer is
+ * a public export a caller can invoke directly, bypassing that lint pass —
+ * this is its own defense-in-depth.
  *
  * Flags:
  *  - a reference authored inside `onFailure`, or inside an `EffectStep`'s

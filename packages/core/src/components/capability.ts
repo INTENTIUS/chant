@@ -50,10 +50,10 @@ export interface Capability<In = unknown, Out = unknown> {
    * returned (#1944, epic #1564 phase 4) — a serializable identity channel a
    * capability can use to recover state `rollback` needs when it cannot rely
    * on in-process object identity between its `run`/`rollback` calls. The
-   * local interpret driver (../driver.ts) always threads it through; the
-   * durable Temporal path (lexicons/temporal/src/component-op/*.ts) threads
-   * it across the Activity boundary as plain JSON, which is exactly the case
-   * this exists for — see ./verbs/run-agent.ts's "Rollback identity" doc
+   * local interpret driver (../driver.ts) always threads it through; a
+   * hosting runtime that splits a run across process boundaries threads it
+   * across as plain JSON, which is exactly the case this exists for — see
+   * ./verbs/run-agent.ts's "Rollback identity" doc
    * comment for the motivating gap (a fresh sprite's checkpoint id, recorded
    * only in an in-process `WeakMap` keyed by `run()`'s `input` object, never
    * survives to a `rollback()` call that runs as a separate Activity with its

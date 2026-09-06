@@ -63,8 +63,8 @@ export function renderHuman(result: OpRunResult, write: Writer = stderr): void {
   }
 
   // Gated (#2119): a standing fact and the one command that clears it. No
-  // `--temporal` hint — there is no other backend to escalate to; the run
-  // ended here on purpose and the next one re-reads the ledger.
+  // hint at another runtime — the run ended here on purpose, and the next one
+  // re-reads the ledger.
   const { gate } = result;
   write(`Op "${result.op}" is gated on "${gate.gate}" after ${total}`);
   if (gate.description) write(`  ${gate.description}`);

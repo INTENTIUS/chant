@@ -1,6 +1,6 @@
 /**
  * OPS* Op-model post-synth checks (#2122, epic #2114 sub-issue 6) — ported
- * from the temporal lexicon's TMP012/TMP013/TMP014. Registered as core-owned
+ * from a hosting lexicon's own TMP012/TMP013/TMP014. Registered as core-owned
  * post-synth checks (`coreOpChecks`, mirroring `../../receipt-checks.ts`'s
  * `coreReceiptChecks`) so they run over the FULL build result regardless of
  * which lexicons are configured — an Op is recognized by entity type

@@ -663,7 +663,7 @@ describe("McpServer", () => {
         });
         expect(response.error).toBeUndefined();
         const result = response.result as { content: Array<{ text: string }>; isError?: boolean };
-        // Either "not found" or Temporal error — either way should not be a protocol error
+        // Either "not found" or a runtime error — either way, not a protocol error
         expect(result.content[0].text.length).toBeGreaterThan(0);
       });
 
@@ -702,7 +702,7 @@ describe("McpServer", () => {
         });
         expect(response.error).toBeUndefined();
         const result = response.result as { content: Array<{ text: string }>; isError?: boolean };
-        // Op not found → returns a "not found" message or Temporal error, not a protocol error
+        // Op not found → returns a "not found" message or a runtime error, not a protocol error
         expect(result.content[0].text.length).toBeGreaterThan(0);
       });
     });
@@ -973,7 +973,7 @@ describe("McpServer", () => {
         expect(Array.isArray(ops)).toBe(true);
       });
 
-      test("chant://ops/{name}/runs degrades gracefully when Temporal unavailable", async () => {
+      test("chant://ops/{name}/runs is an empty list for an Op with no recorded run", async () => {
         const response = await server.handleRequest({
           jsonrpc: "2.0",
           id: 1,
@@ -982,11 +982,10 @@ describe("McpServer", () => {
         });
         expect(response.error).toBeUndefined();
         const result = response.result as { contents: Array<{ text: string }> };
-        const data = JSON.parse(result.contents[0].text);
-        expect(data.error).toBeDefined();
+        expect(JSON.parse(result.contents[0].text)).toEqual([]);
       });
 
-      test("chant://ops/{name}/runs/latest degrades gracefully when Temporal unavailable", async () => {
+      test("chant://ops/{name}/runs/latest is null for an Op with no recorded run", async () => {
         const response = await server.handleRequest({
           jsonrpc: "2.0",
           id: 1,
@@ -995,8 +994,7 @@ describe("McpServer", () => {
         });
         expect(response.error).toBeUndefined();
         const result = response.result as { contents: Array<{ text: string }> };
-        const data = JSON.parse(result.contents[0].text);
-        expect(data.error).toBeDefined();
+        expect(JSON.parse(result.contents[0].text)).toBeNull();
       });
     });
 

@@ -28,7 +28,7 @@ const FILENAME = "converge.jsonl";
  * record. A record here is one line of JSON, so a multi-line or unbounded
  * string folded into any field would break the line the ledger is built out
  * of. Every free-text field a tick writes goes through this: a dispatch
- * failure's `stderr` (lexicons/temporal's `sanitizeOneLine`, which delegates
+ * failure's `stderr` (a hosting lexicon's own one-line sanitizer delegates
  * here) and a component verdict's lexicon-authored `detail`.
  */
 const MAX_LEDGER_TEXT_LEN = 300;

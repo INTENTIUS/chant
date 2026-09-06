@@ -28,7 +28,7 @@ export interface NamedActivityStep extends ActivityStep {
 // ── Core builders ─────────────────────────────────────────────────────────────
 
 /**
- * Declare a named, phased Temporal workflow.
+ * Declare a named, phased Op.
  *
  * @example
  * ```ts
@@ -296,7 +296,7 @@ export const lifecycleSnapshot = (env: string, opts?: { id?: string }): NamedAct
 /**
  * Run an arbitrary shell command. Tag long-running commands with a `profile`
  * (e.g. `longInfra` for a multi-GB image push) so they get the right
- * start-to-close timeout under both the local executor and Temporal.
+ * start-to-close timeout on whichever runtime hosts the run.
  */
 export const shell = (
   cmd: string,
@@ -605,7 +605,7 @@ export const gcpDelete = (manifestPath: string, opts?: Record<string, unknown>):
 // The builder and the executor-side activity function share a name (e.g.
 // `spriteCreate`), and that is intentional: the builder here returns an
 // `activity("spriteCreate", ...)` step; `loadActivities` loads the function of
-// the same name from the temporal lexicon to run the HTTP. They live in
+// the same name from the fly lexicon to run the HTTP. They live in
 // different modules and are both exported — exactly how `flapsUp`/`flapsDown`
 // already work. Op files import these builders; the executor resolves the
 // function by name. Endpoint override + bearer are read by the activity from

@@ -8,8 +8,8 @@
  *   - `schedule` puts the cadence on the Op itself (#2120)
  *
  * The cron is Op data, not a resource: `chant operator` ticks on it, the
- * github/gitlab/forgejo generators render it as a CI cron, and a project that
- * runs Temporal pairs the Op with a `TemporalSchedule` of its own.
+ * github/gitlab/forgejo generators render it as a CI cron, and a hosting
+ * lexicon hands it to its own scheduler.
  *
  * @example
  * ```typescript

@@ -5,11 +5,11 @@
  *
  * ## Why an Op run leaves a record at all
  *
- * `OpConfig` used to carry `searchAttributes`, and the generated Temporal
- * workflow upserted `Phase`, `Drift`, `Approver` and `RollbackFailed` into
- * them as it ran. Those are not properties of the declaration — they are
- * facts about one run, and they only existed while a Temporal cluster held
- * the workflow's history. Ops now run on whatever runtime `chant run --on`
+ * `OpConfig` used to carry `searchAttributes`, and the generated orchestrator
+ * code upserted `Phase`, `Drift`, `Approver` and `RollbackFailed` into them as
+ * it ran. Those are not properties of the declaration — they are facts about
+ * one run, and they only existed while a cluster held the run's history. Ops
+ * now run on whatever runtime `chant run --on`
  * selects (#2121), including the plain in-process one, so the outcome has to
  * be durable somewhere chant owns. Here. What stayed on the declaration is
  * `OpConfig.labels`, the discovery half of the same field, and it is copied

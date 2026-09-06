@@ -5,10 +5,10 @@
  * The issue's illustrative sketch writes a rule's condition as a JS arrow
  * function (`s => s.status === "drifted"`). That reads well but can't
  * actually ship: a rule is evaluated per-tick against live, freshly-observed
- * data inside a Temporal activity, and an activity's arguments — including
- * whatever a `ConvergeOp` composite bakes into its generated workflow — must
- * be plain JSON (see `step-output-ref.ts`'s module doc on why a value
- * crossing the workflow/activity boundary can't carry a closure). A rule
+ * data inside an activity, and an activity's arguments — including whatever a
+ * `ConvergeOp` composite bakes into the Op it builds — must be plain JSON (see
+ * `step-output-ref.ts`'s module doc on why a value crossing an activity
+ * boundary can't carry a closure). A rule
  * "outside the evaluable subset" is one of the build-time refusals #1484
  * names explicitly, which only makes sense if there IS an evaluable subset
  * to be outside of — so rules here are data: a small comparison language

@@ -2,7 +2,7 @@
  * The config namespace a lexicon owns (#1344).
  *
  * Three lexicons read a top-level `chant.config.ts` key named after themselves —
- * `k8s.profiles.<env>.context`, `temporal.profiles`, `forgejo.runnerLabels` and
+ * `k8s.profiles.<env>.context`, `forgejo.runnerLabels` and
  * `forgejo.actionsRoot` — all documented for users, none declared anywhere.
  * `ChantConfigSchema` is `.passthrough()`, so at runtime any key is accepted and
  * a typo is silently ignored: write `runnerLabel` and the Forgejo dialect just
@@ -12,9 +12,9 @@
  *     error TS2353: Object literal may only specify known properties,
  *     and 'forgejo' does not exist in type 'ChantConfig'.
  *
- * Three lexicons had arrived at three different workarounds: temporal exported
- * its own widened `TemporalChantConfig`, k8s's docs dropped `satisfies`, and
- * forgejo's kept it and were wrong.
+ * The lexicons had arrived at different workarounds: one exported its own
+ * widened config type, k8s's docs dropped `satisfies`, and forgejo's kept it
+ * and were wrong.
  *
  * A lexicon now declares the shape of its namespace. The declaration is both
  * halves of the fix at once: core validates against it at load, and the lexicon

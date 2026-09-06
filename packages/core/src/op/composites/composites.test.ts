@@ -2,8 +2,8 @@
  * Composite unit tests (#2120) — WatchOp, ReconcileOp, ApplyOp and the
  * receipt-staleness watch, moved here with the composites themselves. The
  * serialization half of this suite stays in
- * `lexicons/temporal/src/composites/composites.test.ts`: it asserts on the
- * temporal serializer's own output, which is the lexicon's business.
+ * a hosting lexicon's own composites suite: that one asserts on its
+ * serializer's output, which is the lexicon's business.
  */
 
 import { describe, test, expect } from "vitest";

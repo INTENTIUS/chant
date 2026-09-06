@@ -1,5 +1,6 @@
 /**
- * MCP tools over Ops (#2121: on the runtime seam, not on a Temporal client).
+ * MCP tools over Ops — on the runtime seam (#2121), not on any one runtime's
+ * own client.
  *
  * Every tool here goes through an {@link OpRuntimeProvider} — the built-in
  * `local` one by default, or the `runtime` argument's lexicon `opRuntime` when

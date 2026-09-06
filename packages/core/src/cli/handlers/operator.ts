@@ -32,7 +32,7 @@ import { pushLifecycle } from "../../lifecycle/git";
 import { formatError, formatWarning, formatSuccess, formatBold, formatInfo } from "../format";
 import type { CommandContext } from "../registry";
 
-/** Load the activities a local tick needs, the same way `runOpLocal` does: base temporal activities plus whatever the project's configured lexicons contribute. Best-effort on the lexicon list — an unreadable `chant.config.ts` falls back to base activities only. */
+/** Load the activities a local tick needs, the same way a local run does: core's base activities plus whatever the project's configured lexicons contribute. Best-effort on the lexicon list — an unreadable `chant.config.ts` falls back to base activities only. */
 async function loadOperatorActivities() {
   let lexicons: string[] = [];
   try {
@@ -48,7 +48,7 @@ async function loadOperatorActivities() {
 /**
  * `chant operator [--env <env>] [--interval <duration>] [--lease-ttl
  * <duration>] [--once]` — run scheduled ticks for this project's discovered
- * ConvergeOps, locally, with no Temporal installed (issue's own worked
+ * ConvergeOps, locally, with no service to install (issue's own worked
  * example). `--once` runs a single round and exits (also the offline test
  * story, and what a cron/systemd-timer/k8s-CronJob invoker uses instead of
  * leaving the daemon running); omitted, the daemon loops until Ctrl-C.

@@ -316,11 +316,9 @@ function toDriverComponent(component: { name: string; dependsOn: string[]; deplo
  * Find the first `gate` step anywhere in a component's `deploy`/`rollback`
  * composition (including nested fan-out phases).
  *
- * A declaration-time question, not a pre-flight refusal: since #2119 the local
+ * A declaration-time question, not a pre-flight refusal: since #2119 the
  * driver decides a gate against the ledger when it reaches one, so nothing
- * needs to know up front that a component has one. What still does is the
- * `--temporal` path (`../cli/handlers/run.ts`), which prints the signal command
- * that unblocks the durable workflow it just started.
+ * needs to know up front that a component has one.
  */
 export function findComponentGate(component: DriverComponent): { signalName: string } | undefined {
   const search = (phases: DriverPhase[] | undefined): { signalName: string } | undefined => {
@@ -451,7 +449,7 @@ export interface RunComponentsResult {
  * stops the run there with `gated` set, which the CLI turns into exit code 3
  * and the `chant approve` line.
  */
-/** Result of resolving a `<name|all>` selector against discovered components — shared by the local (`runComponents`) and durable (Temporal codegen, #589) entrypoints. */
+/** Result of resolving a `<name|all>` selector against discovered components. */
 export interface ResolvedComponentTargets {
   success: boolean;
   targets: DriverComponent[];
@@ -462,10 +460,8 @@ export interface ResolvedComponentTargets {
  * Discover every component under `path` and resolve `selector` (`"all"` or a
  * single component name) to the `DriverComponent`(s) to run, with no gate
  * check and no dispatch — just discovery + selection, factored out of
- * `runComponents` so the durable Temporal entrypoint (`chant run --components
- * <name> --temporal`, #589) can reuse the exact same selection semantics
- * without also inheriting the local executor's pre-flight gate rejection
- * (gates are exactly what the durable path exists to support).
+ * `runComponents` so another entrypoint can reuse the exact same selection
+ * semantics without inheriting the run itself.
  */
 export async function resolveComponentTargets(
   path: string,

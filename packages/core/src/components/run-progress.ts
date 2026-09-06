@@ -10,9 +10,9 @@
  * single-component path, ./cli-support.ts's `runComponents`), that never
  * changes run ordering, gating, `onFailure`, rollback, or exit codes — it
  * only reports what already happened, as it happens. See ./driver.ts's
- * module doc for what actually executes; streaming progress on the *durable*
- * (Temporal) path is a separate, later concern (Temporal already exposes
- * durable run state via `chant run status`/`log`).
+ * module doc for what actually executes; streaming progress from a hosted
+ * runtime is a separate, later concern (`chant run status`/`log` already ask
+ * one for the run state it keeps).
  *
  * `RunProgressEvent` is a discriminated union on `type`, one JSON object per
  * NDJSON line (see `ndjsonProgressSink` below and
@@ -108,7 +108,7 @@ export type RunProgressSink = (event: RunProgressEvent) => void;
  * Build a sink that writes `JSON.stringify(event) + "\n"` to `write` (default:
  * `process.stdout.write`), one line per event, as they happen — the
  * `--progress-json` CLI wiring's sink (../cli/handlers/run.ts, for both the
- * `--components` driver's `RunProgressEvent`s and the Temporal Op path's
+ * `--components` driver's `RunProgressEvent`s and the Op path's
  * `StepRecord`s, chant #1676). Kept separate from `driver-output.ts`'s
  * end-of-run renderers: this emits *during* the run, one line at a time;
  * `renderDriverJson`/`renderDriverHuman` render the completed

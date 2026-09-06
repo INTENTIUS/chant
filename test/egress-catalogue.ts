@@ -254,13 +254,6 @@ export interface EgressSite {
 export const EGRESS_CATALOGUE: readonly EgressSite[] = [
   // ── apply ──────────────────────────────────────────────────────────────────
   {
-    file: "packages/core/src/cli/handlers/run.ts",
-    primitives: ["node:net"],
-    phase: "apply",
-    destination: "the configured Temporal server's gRPC address",
-    why: "`chant run --temporal` opens a TCP probe against the server address and retries until it answers, so a not-yet-ready cluster reports as a wait rather than as a client error.",
-  },
-  {
     file: "packages/core/src/components/verbs/cloud-executor.ts",
     primitives: ["node:net"],
     phase: "apply",

@@ -6,7 +6,7 @@
  * `buildParams`, so a `*.component.ts` file reading `params.<name>` always
  * saw `{}` under `chant build --components --generate`, exactly like `chant
  * run --components` (see ../handlers/run.test.ts's "build-time parameters"
- * describe block for the equivalent local/`--temporal` coverage).
+ * describe block for the equivalent local-run coverage).
  *
  * Mocks `generateComponentsPipeline` and `loadChantConfigUpward` (chant
  * #1117 — `runGenerateComponents` walks up to the project root now, same as

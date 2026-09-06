@@ -7,11 +7,11 @@
  * steps actually take: fast idempotent work, long infra, K8s wait loops, a
  * human gate, an Argo sync wait, and a deterministic policy check.
  *
- * These lived in the temporal lexicon as `TEMPORAL_ACTIVITY_PROFILES` until
- * chant #2114 moved the base activities into core. Nothing about a timeout or a
- * backoff coefficient is Temporal's, so the table came with them and lost the
- * prefix. `heartbeatTimeout` did not come along: it configured a liveness
- * protocol between a worker and a Temporal server, and no in-process step
+ * These lived in a hosting lexicon, under its own prefixed name, until chant
+ * #2114 moved the base activities into core. Nothing about a timeout or a
+ * backoff coefficient belonged to that runtime, so the table came with them and
+ * lost the prefix. `heartbeatTimeout` did not come along: it configured a
+ * liveness protocol between a worker and a server, and no in-process step
  * heartbeats to anything.
  */
 

@@ -5,7 +5,7 @@ import { createResource } from "../runtime";
  * entityType: "Chant::Op", lexicon: "chant"
  * Discovered automatically alongside infra files — no pipeline changes needed.
  *
- * An Op is chant's own verb, not Temporal's (#2118, epic #2114): the model,
+ * An Op is chant's own verb, not a runtime's (#2118, epic #2114): the model,
  * the executor and the ledger all live in core, and a lexicon that hosts runs
  * is one runtime among several. The entity type says so.
  */

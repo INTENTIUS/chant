@@ -15,7 +15,7 @@
  * Lexicon classification (which check the activity dispatches to):
  *   PINNED  {k8s, gcp, docker, gitlab} → checkPinnedUpgrade
  *   ROLLING {aws, azure, github}       → checkRollingUpgrade
- * helm / temporal / forgejo are excluded — no upstream spec.
+ * helm / forgejo are excluded — no upstream spec.
  *
  * Finding-modes mirror ReconcileOp: `report` (default, no external services)
  * | `issue` | `pull-request`. For the epic goal, `pull-request` opens/updates a
@@ -43,7 +43,7 @@ import { Op, phase } from "../builders";
 import type { OpResource } from "../resource";
 import type { LexiconUpgradeMode, SupportedLexicon } from "../activities/lexicon-upgrade";
 
-/** The in-scope lexicons. helm / temporal / forgejo are excluded (no upstream spec). */
+/** The in-scope lexicons. helm / forgejo are excluded (no upstream spec). */
 export const IN_SCOPE_LEXICONS: readonly SupportedLexicon[] = [
   "k8s",
   "gcp",
@@ -95,7 +95,7 @@ export function LexiconUpgradeOp(config: LexiconUpgradeOpConfig): LexiconUpgrade
     throw new Error(
       `LexiconUpgradeOp: "${config.lexicon}" is not in scope. ` +
         `In-scope lexicons: ${IN_SCOPE_LEXICONS.join(", ")} ` +
-        `(helm, temporal, forgejo have no upstream spec).`,
+        `(helm, forgejo have no upstream spec).`,
     );
   }
 

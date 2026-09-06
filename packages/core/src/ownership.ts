@@ -44,7 +44,7 @@ export interface ChannelKeys {
 /**
  * The label-based ownership convention (`app.kubernetes.io/managed-by` +
  * `chant.intentius.io/{stack,env}`) — the default, shared by every label-based
- * lexicon (k8s, gcp, helm, and the Temporal apply activity's `kubectl --prune`
+ * lexicon (k8s, gcp, helm, and the `k8sApply` activity's `kubectl --prune`
  * selector). AWS and Azure tag keys are defined in their own lexicons.
  */
 export const LABEL_OWNERSHIP_KEYS: ChannelKeys = {

@@ -108,8 +108,3 @@ export {
   SingleHostComposeComponent,
   type SingleHostComposeComponentConfig,
 } from "./presets/index";
-export {
-  type ComponentTemporalCodegen,
-  type ComponentTemporalCodegenOptions,
-  loadComponentTemporalCodegen,
-} from "./temporal-codegen-loader";

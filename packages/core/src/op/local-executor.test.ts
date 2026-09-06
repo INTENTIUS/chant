@@ -115,7 +115,7 @@ describe("runOpLocally — retry + timeout", () => {
   test("honors a step's non-default profile timeout (not the default)", async () => {
     // The default profile would time out at 50ms; the step is tagged longInfra,
     // which gives it room. Guards the bug where a profiled step silently got the
-    // default cap (local vs --temporal disagreement).
+    // default cap (a per-runtime disagreement).
     const slow: ActivityFn = async () => { await new Promise((r) => setTimeout(r, 150)); return "done"; };
     const profiles = {
       fastIdempotent: { timeout: "50ms", retry: { maximumAttempts: 1 } },
@@ -465,7 +465,7 @@ describe("runOpLocally — step-output references (#1290)", () => {
     expect(received).toEqual([{ v: undefined }]);
   });
 
-  test("e2e: chant run (non-temporal) end to end — producer object flows to consumer", async () => {
+  test("e2e: chant run on the local runtime, end to end — producer object flows to consumer", async () => {
     const activities = new Map<string, ActivityFn>([
       ["lifecycleDiff", async () => ({ driftedStacks: ["stack-a"], drifted: true })],
       ["applyStacks", async (args) => ({ applied: args.stacks })],

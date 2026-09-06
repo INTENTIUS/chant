@@ -849,7 +849,7 @@ describe("resolveComponentTargets — buildParams (chant #1108)", () => {
     await rm(testDir, { recursive: true, force: true });
   });
 
-  test("forwards buildParams into discovery — the durable (--temporal) path's entrypoint", async () => {
+  test("forwards buildParams into discovery — the selector-resolution entrypoint", async () => {
     await writeFile(
       join(testDir, "svc.component.ts"),
       `

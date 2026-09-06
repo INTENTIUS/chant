@@ -22,7 +22,6 @@ vi.mock("../lifecycle/release-ledger", async () => {
 const {
   maybeRecordAutoRelease,
   extractRunDigest,
-  extractRunDigestFromPhaseOutputs,
 } = await import("./auto-release");
 
 function publishRecord(digest: string): DriverStepRecord {
@@ -64,21 +63,6 @@ describe("extractRunDigest", () => {
   });
 });
 
-describe("extractRunDigestFromPhaseOutputs", () => {
-  test("finds the digest across phase outputs (Temporal workflow result shape)", () => {
-    expect(extractRunDigestFromPhaseOutputs({ Publish: { digest: "sha256:abc", uri: "repo@sha256:abc" }, Apply: { ok: true } })).toBe("sha256:abc");
-  });
-
-  test("returns undefined for undefined/empty phaseOutputs", () => {
-    expect(extractRunDigestFromPhaseOutputs(undefined)).toBeUndefined();
-    expect(extractRunDigestFromPhaseOutputs({})).toBeUndefined();
-  });
-
-  test("ignores a phase output carrying only a content digest (SBOM, #665)", () => {
-    expect(extractRunDigestFromPhaseOutputs({ Sbom: { digest: "sha256:sbombytes" } })).toBeUndefined();
-  });
-});
-
 describe("maybeRecordAutoRelease", () => {
   beforeEach(() => {
     getHeadCommitMock.mockReset().mockResolvedValue("abc123headsha");
@@ -111,19 +95,19 @@ describe("maybeRecordAutoRelease", () => {
     expect(pushLifecycleMock).toHaveBeenCalledTimes(1);
   });
 
-  test("a pre-resolved digest (Temporal path) takes precedence and is used directly", async () => {
+  test("a pre-resolved digest takes precedence and is used directly", async () => {
     appendReleaseRecordMock.mockResolvedValue({
       commit: "b".repeat(40),
-      record: { version: 1, component: "svc", env: "prod", digest: "sha256:temporal", gitSha: "x", runId: "r", timestamp: "t", actor: "a" },
+      record: { version: 1, component: "svc", env: "prod", digest: "sha256:preresolved", gitSha: "x", runId: "r", timestamp: "t", actor: "a" },
     });
 
     await maybeRecordAutoRelease(
-      { component: "svc", env: "prod", success: true, digest: "sha256:temporal", records: [publishRecord("sha256:ignored")], runId: "run-1" },
+      { component: "svc", env: "prod", success: true, digest: "sha256:preresolved", records: [publishRecord("sha256:ignored")], runId: "run-1" },
       { actor: "alice" },
     );
 
     const [input] = appendReleaseRecordMock.mock.calls[0];
-    expect(input.digest).toBe("sha256:temporal");
+    expect(input.digest).toBe("sha256:preresolved");
   });
 
   test("failure (run.success = false) -> writes nothing", async () => {

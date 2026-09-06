@@ -1,6 +1,4 @@
 import { describe, test, expect } from "vitest";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import * as opIndex from "./index";
 import * as builders from "./builders";
 
@@ -24,52 +22,6 @@ describe("op builders are all reachable (#1715)", () => {
       missing,
       `builders.ts exports these, and op/index.ts does not re-export them — add them to the ` +
         `export list at the top of op/index.ts, or a project cannot use them:\n  ${missing.join("\n  ")}`,
-    ).toEqual([]);
-  });
-
-  test("the temporal lexicon re-exports the same set", () => {
-    // The lexicon is what a project actually imports from
-    // (`@intentius/chant-lexicon-temporal`), and it re-states the list a third
-    // time rather than re-exporting wholesale — so it can drift independently.
-    //
-    // chant #2114 — `build`, `shell`, `waitForStack`, `lifecycleSnapshot`,
-    // `teardown`, `envTeardown`, `httpCheck`, `policyGate` and `guardValidate`
-    // used to be excluded here: the lexicon owned the activities behind them
-    // and typed its own wrappers in `./op/builders`. Core owns the activities
-    // and the wrappers now, so there is one source and no exclusion — the
-    // lexicon re-exports all nine from `@intentius/chant/op` like everything
-    // else in the list.
-    const src = readFileSync(
-      join(import.meta.dirname, "../../../../lexicons/temporal/src/index.ts"),
-      "utf-8",
-    );
-    const block = src.match(/export \{([^}]*)\} from "@intentius\/chant\/op";/)?.[1] ?? "";
-    const reExported = new Set(
-      block.split(",").map((s) => s.trim()).filter(Boolean),
-    );
-    // The sprites family reaches projects through the fly lexicon, not this
-    // one. Named rather than prefix-matched, because `listCheckpoints` is one
-    // of them and does not look like one — which this test caught on its
-    // first run.
-    const FLY_SURFACE = new Set([
-      "spriteCreate", "spriteExec", "spriteCheckpoint", "spriteRestore",
-      "listCheckpoints", "spriteDestroy", "spriteWriteFile", "spriteReadFile",
-      "spriteListDir", "spriteRemove", "spriteApplyNetworkPolicy",
-      "spriteApplyServices", "spriteTaskCreate", "spriteTaskRefresh",
-      "spriteTaskRelease", "spritesUp", "spritesDown",
-    ]);
-    // chant #1288 Stage 2 — an internal helper (`takeProfile`'s sibling) for
-    // the typed step-builder wrappers to reuse, not an Op-authoring primitive
-    // itself; nothing authors an Op with it directly, so it has no place in
-    // the Op-authoring barrel.
-    const INTERNAL_HELPERS = new Set(["takeProfileAndId"]);
-    const expected = Object.keys(builders).filter(
-      (n) => !FLY_SURFACE.has(n) && !INTERNAL_HELPERS.has(n),
-    );
-    const missing = expected.filter((name) => !reExported.has(name));
-    expect(
-      missing,
-      `lexicons/temporal/src/index.ts does not re-export these builders:\n  ${missing.join("\n  ")}`,
     ).toEqual([]);
   });
 });

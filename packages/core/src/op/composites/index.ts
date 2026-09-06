@@ -3,12 +3,10 @@
  * hand-writing phases: watch, reconcile, apply, converge, and the three audit
  * runners.
  *
- * They lived in the temporal lexicon while a cadence meant a
- * `TemporalSchedule` resource; now that the cadence is `OpConfig.schedule`
- * they are runtime-neutral, each returns `{ op }`, and nothing here imports a
- * hosting lexicon. `lexicons/temporal/src/composites/*.ts` re-export these
- * until #2116 deletes the shims; a Temporal project that wants a real
- * `TemporalSchedule` pairs one with the Op by hand (the pattern
+ * They lived in a hosting lexicon while a cadence meant a scheduler resource;
+ * now that the cadence is `OpConfig.schedule` they are runtime-neutral, each
+ * returns `{ op }`, and nothing here imports a hosting lexicon. A project that
+ * wants a real scheduler resource pairs one with the Op by hand (the pattern
  * `lexicons/cedar/src/dogwood/replay-op.ts` documents).
  */
 

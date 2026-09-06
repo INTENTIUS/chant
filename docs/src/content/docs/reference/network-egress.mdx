@@ -63,7 +63,6 @@ An in-process guard says nothing about a child process, so the offline phases' s
 
 | Module | Primitive | Destination | Why |
 |---|---|---|---|
-| `packages/core/src/cli/handlers/run.ts` | `node:net` | the configured Temporal server's gRPC address | `chant run --temporal` opens a TCP probe against the server address and retries until it answers, so a not-yet-ready cluster reports as a wait rather than as a client error. |
 | `packages/core/src/components/verbs/cloud-executor.ts` | `node:net` | a declared cluster member's bolt port | The agnostic `wait-cluster-healthy` verb probes each member's port to decide quorum; injectable, so a test never opens a socket. |
 | `packages/core/src/components/verbs/wait-verify.ts` | `fetch` | the endpoint a component declares | `wait-endpoint` and `health-gate` poll the deployed thing they were pointed at; the fetcher is injectable for the same reason. |
 | `lexicons/aws/src/api/read-client.ts` | `fetch` | AWS Cloud Control and CloudFormation, or `AWS_ENDPOINT_URL` | The aws lexicon's read transport, signed with SigV4 and retargetable at a local emulator; there is no AWS SDK in the tree. |
@@ -79,7 +78,6 @@ An in-process guard says nothing about a child process, so the offline phases' s
 | `lexicons/fly/src/op/activities/sprites.ts` | `fetch` | the Sprites API, or `SPRITES_BASE_URL` | Sprite lifecycle activities — create, exec, destroy — for the Sprites Ops. |
 | `lexicons/fly/src/op/activities/sprite-fs.ts` | `fetch` | the Sprites filesystem API, or `SPRITES_BASE_URL` | Stages an input file into a sprite and reads a result out, without shelling it through `spriteExec`. |
 | `lexicons/fountain/src/op/activities/fountain-apply.ts` | `fetch` | the fountain control-plane API, or a declared endpoint | `fountainApply` performs the lexicon's resource CRUD. |
-| `lexicons/fountain/src/op/runtime.ts` | `fetch` | the fountain control-plane API, or a declared endpoint | `chant run <op> --on fountain` posts the run to a steward's thread and tails its SSE stream. |
 | `lexicons/render/src/op/activities/render-apply.ts` | `fetch` | the Render API | `renderApply` performs the lexicon's resource CRUD. |
 | `lexicons/k8s/src/op/activities/argo.ts` | `fetch` | an Argo CD server's API | The Argo sync/wait activities drive an installed Argo CD rather than reimplementing it. |
 | `lexicons/cedar/src/avp/client.ts` | `fetch` | Amazon Verified Permissions | The AVP read transport, hand-rolled over the AWS JSON protocol for the same reason the aws lexicon is: no AWS SDK in a vendor-neutral lexicon's dependency tree. |
@@ -124,7 +122,7 @@ Freshness checks that run in this repository's own CI, against `api.github.com`.
 | `scripts/dogwood-freshness.ts` | `fetch` | `api.github.com` commit and tree metadata | Compares the committed dogwood pin against upstream for `scripts/check-dogwood-freshness.ts`. The transport is injectable, which is why the comparison half is unit-tested without a network. |
 | `scripts/prior-art-sweep.ts` | `fetch` | the rule indexes of the tools the audit rules credit: `raw.githubusercontent.com`, `api.github.com` directory listings, and a few tools' own docs sites (checkov.io, PSRule for Azure, the Bicep linter page) | Diffs each credited tool's published rule list against `scripts/prior-art/snapshot.json` so a rule that appears or disappears upstream, or a credit whose upstream id no longer resolves, is reported. Run by the monthly `prior-art-sweep` workflow and by hand; never by a CLI command or a test. |
 
-**32 modules** across `packages/`, `lexicons/`, `scripts/`, `ops/` call a network primitive directly. Every other module that reaches the network does so through one of them.
+**30 modules** across `packages/`, `lexicons/`, `scripts/`, `ops/` call a network primitive directly. Every other module that reaches the network does so through one of them.
 
 {/* GENERATED:egress-catalogue:end */}
 
