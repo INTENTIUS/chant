@@ -170,6 +170,21 @@ This is what makes an autoscaler quiet without anything being recorded: a field 
 
 A path inside a list is claimed by its exact position or key, so a lexicon that supplies an `orderKey` for a set-like list gets the sharper answer: a tag added in the console is `Tags[#other]`, held elsewhere, while a positional list reports the new element by index instead.
 
+##### What a drifted field proposes
+
+Drift on a declared path is the only thing that may become a change, and how it becomes one depends on where the field came from. `chant build` records that per emitted property (see [Composite Resources](/chant/guide/composite-resources/#what-a-composite-records-about-its-fields)), and the report prints a verdict under any row where editing the declared value in place would be the wrong move:
+
+```
+PROPERTY DRIFT (declared vs live; baseline shown where one exists):
+  - webBucket (AWS::S3::Bucket)
+      BucketName: data → data-renamed [from: composite WebService parameter name]
+        change parameter `name` of the `web` call of composite WebService in src/main.ts so `BucketName` moves from "data" to "data-renamed". The composite stays.
+      VersioningConfiguration.Status: Enabled → Suspended [from: composite WebService literal]
+        refused: `VersioningConfiguration.Status` is fixed by the `web` call of composite WebService in src/main.ts, so no argument at the call site moves it. Parameterize the field, or stop using the composite here.
+```
+
+A field the author declared directly gets no extra line, since editing it in place is already what happens. A field whose origin the build could not determine says so and falls back to the same behaviour. Every verdict is a description and nothing here edits a source file. `--json` carries them all under `reconcile`, a sibling of `deep`.
+
 #### `heldElsewhere()`, a field declared, then handed over
 
 A property declared [`heldElsewhere()`](/chant/concepts/drift-detection/#heldelsewhere-a-field-declared-once-then-handed-over) never reports as drift, whatever the live value is, and gets its own section instead, naming who holds it and why:
