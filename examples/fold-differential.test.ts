@@ -225,6 +225,21 @@ const report: ReportRow[] = [];
  * `secret-access` example stays out because it reads the secret's value from
  * `process.env` at build time, which is the pattern that lexicon's own docs
  * recommend and which the folder refuses on purpose.
+ *
+ * chant #2171 adds one, `examples/fountain-steward`, which had never folded
+ * since it joined the corpus at #2129. Its three `*.op.ts` files
+ * default-exported their Op because Op discovery read `mod.default` and
+ * nothing else, and `export default` is the one export shape the fold path
+ * refuses, so all four files fell back, `fountain.ts` included since it
+ * imports all three. Two changes, both in this PR: `discoverOps` accepts a
+ * named export (the default export still works, so no other `*.op.ts` file in
+ * the repo moved), and the ConvergeOp rule builders `when`/`gt`/`report` and
+ * their siblings joined `FOLDABLE_AUTHORING_HELPERS`, without which
+ * `prod-converge.op.ts` still fell back on `when(...)` once the default export
+ * was gone. Nothing else in the corpus is affected: `export default` was the
+ * sole fallback reason for exactly these four files, and the only other files
+ * it disqualifies corpus-wide are three `chant.config.ts` fixtures whose
+ * entries fall back for unrelated reasons anyway.
  */
 const EXPECTED_FOLD: readonly string[] = [
   "examples/adopt-alb-services",
@@ -234,6 +249,7 @@ const EXPECTED_FOLD: readonly string[] = [
   "examples/fly-deploy-rollback",
   "examples/fly-durable-deploy",
   "examples/fly-reconcile",
+  "examples/fountain-steward",
   "examples/getting-started",
   "examples/gitlab-aws-alb-api",
   "examples/gitlab-aws-alb-infra",
