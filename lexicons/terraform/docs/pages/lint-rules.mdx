@@ -29,8 +29,8 @@ is named `-op.ts` rather than `.op.ts` on disk) so the page cannot drift from
 what the tests actually run.
 */}
 
-The Terraform lexicon ships one source-level lint rule and one post-synth
-check. See [Lint Rules](/chant/lexicons/terraform/rules/) for the generated,
+The Terraform lexicon ships one source-level lint rule and five post-synth
+checks. See [Lint Rules](/chant/lexicons/terraform/rules/) for the generated,
 always-current table; this page is the reasoning, the fix and the credit
 behind each entry.
 
@@ -82,6 +82,136 @@ resource "null_resource" "second" {
   triggers = {
     name = "second"
   }
+}
+```
+
+## TF002: provider implied by the root has no required_providers entry
+
+A `provider "<name>" {}` block, or a resource/data type prefix
+(`aws_instance` implies `aws`), with no matching entry in the `terraform`
+block's `required_providers`, or an entry that is missing `source` or
+`version`.
+
+**Why it matters.** With no version constraint, `terraform init` installs
+whatever release of the provider is current the day someone first runs it,
+and every teammate and CI runner after that installs whatever is current the
+day *they* first run it. A provider release that changes a resource's
+defaults or removes an attribute becomes a plan diff nobody asked for,
+instead of a version-check failure caught before it can run.
+
+**The fix.** Add the provider to `required_providers`, with both `source`
+(`"hashicorp/aws"`) and `version` (`"~> 5.0"`) set.
+
+**Prior art.** tflint's `terraform_required_providers` checks the identical
+condition (equivalent): every implied provider needs a `required_providers`
+entry with `source` and `version`. HashiCorp's own reference Sentinel policy
+`require-all-providers-have-version-constraint` ships the same check
+(equivalent). AWS's prescriptive guidance for Terraform names it directly:
+"CI must fail builds when a provider version constraint is undefined"
+(equivalent).
+
+```hcl
+terraform {
+  required_version = ">= 1.5.0"
+}
+
+resource "google_compute_instance" "vm" {
+  name = "vm"
+}
+```
+
+## TF003: root module's terraform block has no required_version
+
+A `terraform` block with no `required_version` attribute.
+
+**Why it matters.** Sits beside TF002 on the same block: without
+`required_version`, a root can be applied by whatever Terraform binary
+happens to be on the runner's `PATH`. A binary upgrade that changes behavior
+surfaces as a surprise plan diff instead of a version-check failure before
+anything runs.
+
+**The fix.** Add `required_version = ">= <lowest supported version>"` to the
+`terraform` block.
+
+**Prior art.** tflint's `terraform_required_version` checks the identical
+condition (equivalent). HashiCorp's style guide names version pinning
+directly, including `required_version` for the binary (overlaps: the guide's
+advice covers provider and module pinning in the same breath, not just this
+one attribute). HashiCorp's reference Sentinel policy
+`restrict-terraform-versions` checks an allowed *range* once
+`required_version` is set, a narrower question than presence (overlaps).
+
+```hcl
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+}
+```
+
+## TF004: registry-sourced module block has no version
+
+A `module` block whose `source` parses as a Terraform registry address
+(`namespace/name/target-system`, optionally hostname-prefixed) with no
+`version`.
+
+**Why it matters.** With no `version` constraint, `terraform init` resolves
+to the newest release of the module every time it runs. A registry module
+that changes what it provisions between releases becomes an unreviewed
+change the next time anyone runs `init`, not a diff caught by a pinned
+version bump.
+
+**The fix.** Add a `version` constraint to the module block (e.g. `~> 5.0`).
+
+**Prior art.** tflint's `terraform_module_version` checks the identical
+condition (equivalent). checkov's `CKV_TF_2` checks the same thing for a
+registry source (equivalent).
+
+```hcl
+module "vpc" {
+  source = "terraform-aws-modules/vpc/aws"
+}
+```
+
+## TF005: git/hg module source is unpinned, or pinned to a mutable ref
+
+A `module` block whose `source` is a git or hg source (an explicit
+`git::`/`hg::` prefix, the `github.com`/`bitbucket.org` shorthands, an
+scp-style address, or anything ending in `.git`) with no `?ref=`, or a
+`?ref=` that is neither a semver-shaped tag nor a full 40-hex commit SHA.
+
+**Why it matters.** An unpinned git source resolves to whatever the branch's
+tip happens to be the moment `terraform init` runs, which can differ between
+two runs an hour apart. A `?ref=` pinned to a branch name (`main`, `master`,
+`develop`, `trunk`, or any other moving target) has exactly the same
+problem, just with an extra step: it looks pinned until the branch moves
+again.
+
+**The fix.** Pin `?ref=` to a tag (`v1.2.0`) or a full 40-character commit
+SHA, never a branch name.
+
+**Prior art.** tflint's `terraform_module_pinned_source` checks the
+identical condition in its default `flexible` style, rejecting the same four
+branch names (equivalent); its `semver` style additionally requires the ref
+to parse as a semantic version, which this rule's own default already does
+unconditionally, since chant has no per-project rule configuration yet.
+checkov's `CKV_TF_1` also requires a git module source to carry a `?ref=`,
+but its lenient fallback (`CKV_TF_2`) accepts any ref matching `\d\.\d`, so
+`v1.2-dev` passes checkov and fails here (extends: a strict superset of
+checkov's check). KICS's `3a81fc06-566f-492a-91dd-7448e409e2cd` checks only
+the `git::` prefix, missing the `github.com`/`bitbucket.org` shorthands and
+scp-style sources this rule also covers (overlaps).
+
+A local (`./`, `../`) source is never flagged: it can't be pinned to a ref
+at all, the same reasoning checkov's own module-pinning checks use when they
+report `UNKNOWN` rather than a failure for one.
+
+```hcl
+module "vpc" {
+  source = "git::https://example.com/vpc.git"
 }
 ```
 

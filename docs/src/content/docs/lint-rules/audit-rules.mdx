@@ -2675,6 +2675,46 @@ Run against Terraform root modules (a directory of `.tf` files) parsed into the 
 
 Add a `backend "\<type>"` block (s3, gcs, azurerm, http) or a `cloud \{}` block to the root module's terraform block, then `terraform init -migrate-state`.
 
+### TF002
+
+**Provider implied by the root has no required_providers entry** — merge-worthy · guidance
+
+Add the provider to the terraform block's `required_providers`, with both `source` and `version` set, so a future provider release can't silently change behavior.
+
+| | |
+|---|---|
+| Prior art | [tflint-ruleset-terraform `terraform_required_providers`](https://github.com/terraform-linters/tflint-ruleset-terraform/blob/main/docs/rules/terraform_required_providers.md) (equivalent) · [HashiCorp reference Sentinel policies `require-all-providers-have-version-constraint`](https://github.com/hashicorp/terraform-sentinel-policies/tree/main/cloud-agnostic) (equivalent) · [AWS prescriptive guidance for Terraform `Add automated version checks`](https://docs.aws.amazon.com/prescriptive-guidance/latest/terraform-aws-provider-best-practices/version.html#add-automated-version-checks) (equivalent) |
+
+### TF003
+
+**Root module's terraform block has no required_version** — merge-worthy · guidance
+
+Set `required_version = ">= \<lowest supported version>"` in the terraform block.
+
+| | |
+|---|---|
+| Prior art | [tflint-ruleset-terraform `terraform_required_version`](https://github.com/terraform-linters/tflint-ruleset-terraform/blob/main/docs/rules/terraform_required_version.md) (equivalent) · [HashiCorp reference Sentinel policies `restrict-terraform-versions`](https://github.com/hashicorp/terraform-sentinel-policies/tree/main/cloud-agnostic) (overlaps) · [HashiCorp Terraform style guide `Version pinning`](https://developer.hashicorp.com/terraform/language/style#version-pinning) (overlaps) |
+
+### TF004
+
+**Registry-sourced module block has no version** — merge-worthy · guidance
+
+Add a `version` constraint to the module block (e.g. `~> 5.0`).
+
+| | |
+|---|---|
+| Prior art | [tflint-ruleset-terraform `terraform_module_version`](https://github.com/terraform-linters/tflint-ruleset-terraform/blob/main/docs/rules/terraform_module_version.md) (equivalent) · [Checkov `CKV_TF_2`](https://github.com/bridgecrewio/checkov/blob/main/checkov/terraform/checks/module/generic/RevisionVersionTag.py) (equivalent) |
+
+### TF005
+
+**Git/hg module source is unpinned, or pinned to a mutable ref** — merge-worthy · guidance
+
+Pin the module's `?ref=` to a tag or a full commit SHA.
+
+| | |
+|---|---|
+| Prior art | [tflint-ruleset-terraform `terraform_module_pinned_source`](https://github.com/terraform-linters/tflint-ruleset-terraform/blob/main/docs/rules/terraform_module_pinned_source.md) (equivalent) · [Checkov `CKV_TF_1`](https://github.com/bridgecrewio/checkov/blob/main/checkov/terraform/checks/module/generic/RevisionHash.py) (extends) · [KICS `3a81fc06-566f-492a-91dd-7448e409e2cd`](https://docs.kics.io/latest/queries/terraform-queries/3a81fc06-566f-492a-91dd-7448e409e2cd/) (overlaps) |
+
 ### TF024
 
 **Live root declares a backend or cloud block, which choudoufu refuses** — merge-worthy · guidance
@@ -3020,8 +3060,8 @@ This is credit rather than authority, and it never changes a rule's tier or cate
 
 | Tool | Kind | Licence | Credits |
 |---|---|---|---|
-| [Checkov](https://www.checkov.io/) | scanner | Apache-2.0 | 63 |
-| [KICS](https://docs.kics.io/) | scanner | Apache-2.0 | 44 |
+| [Checkov](https://www.checkov.io/) | scanner | Apache-2.0 | 65 |
+| [KICS](https://docs.kics.io/) | scanner | Apache-2.0 | 45 |
 | [zizmor](https://docs.zizmor.sh/) | scanner | MIT | 38 |
 | [cfn_nag](https://github.com/stelligent/cfn_nag) | scanner | MIT | 20 |
 | [GitLab CI/CD YAML reference](https://docs.gitlab.com/ci/yaml/) | specification | CC-BY-SA-4.0 | 20 |
@@ -3043,6 +3083,7 @@ This is credit rather than authority, and it never changes a rule's tier or cate
 | [kubesec](https://kubesec.io/) | scanner | Apache-2.0 | 5 |
 | [Datree](https://hub.datree.io/built-in-rules) | scanner | Apache-2.0 | 4 |
 | [helm lint](https://helm.sh/docs/helm/helm_lint/) | vendor-validator | Apache-2.0 | 4 |
+| [tflint-ruleset-terraform](https://github.com/terraform-linters/tflint-ruleset-terraform) | scanner | MPL-2.0 | 4 |
 | [Flux Kustomization API reference](https://fluxcd.io/flux/components/kustomize/kustomizations/) | specification | n/a | 3 |
 | [hadolint](https://github.com/hadolint/hadolint) | scanner | GPL-3.0 | 3 |
 | [agent-audit](https://github.com/piiiico/agent-audit) | scanner | MIT | 2 |
@@ -3050,9 +3091,12 @@ This is credit rather than authority, and it never changes a rule's tier or cate
 | [Bicep linter](https://learn.microsoft.com/en-us/azure/azure-resource-manager/bicep/linter) | scanner | MIT | 2 |
 | [Dockle](https://github.com/goodwithtech/dockle) | scanner | Apache-2.0 | 2 |
 | [mcp-audit (APIsec)](https://github.com/apisec-inc/mcp-audit) | scanner | MIT | 2 |
+| [HashiCorp reference Sentinel policies](https://github.com/hashicorp/terraform-sentinel-policies) | specification | MPL-2.0 | 2 |
 | [Snyk Agent Scan (formerly mcp-scan)](https://github.com/invariantlabs-ai/mcp-scan) | scanner | Apache-2.0 | 1 |
+| [AWS prescriptive guidance for Terraform](https://docs.aws.amazon.com/prescriptive-guidance/latest/terraform-aws-provider-best-practices/) | specification | n/a | 1 |
 | [chart-testing (ct)](https://github.com/helm/chart-testing) | vendor-validator | Apache-2.0 | 1 |
 | [choudoufu](https://github.com/INTENTIUS/choudoufu) | scanner | MPL-2.0 | 1 |
 | [Gixy](https://github.com/yandex/gixy) | scanner | MPL-2.0 | 1 |
+| [HashiCorp Terraform style guide](https://developer.hashicorp.com/terraform/language/style) | specification | n/a | 1 |
 | [Pluto](https://github.com/FairwindsOps/pluto) | scanner | Apache-2.0 | 1 |
 
