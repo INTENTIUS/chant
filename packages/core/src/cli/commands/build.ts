@@ -14,11 +14,14 @@ import type { OwnershipMarker } from "../../ownership";
 import { resolveCliBuildParams } from "../build-params-cli";
 import type { Serializer, SerializerResult } from "../../serializer";
 import type { LexiconPlugin } from "../../lexicon";
-import { runPostSynthChecks } from "../../lint/post-synth";
+import { runPostSynthChecks, type PostSynthDiagnostic } from "../../lint/post-synth";
 import { coreReceiptChecks } from "../../lint/receipt-checks";
 import { coreOutputChecks } from "../../lint/output-checks";
 import { coreKnowledgeChecks } from "../../lint/knowledge-checks";
 import { applyConfiguredSeverity } from "../../lint/config";
+import { applyInlineSuppressions, type SuppressionMetaFinding } from "../../lint/suppressions";
+import type { RuleConfig } from "../../lint/rule";
+import type { Declarable } from "../../declarable";
 import { loadPolicyChecks } from "../../lint/policy";
 import { armSandboxPolicyExecution, runProjectPolicies } from "../../lint/policy-sandbox";
 import { sortedJsonReplacer } from "../../utils";
@@ -392,7 +395,27 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
   // rule id — so `lint.rules: { WAW019: "off" }` suppresses a post-synth
   // finding just as it suppresses a pre-synth one. A finding it suppresses is
   // counted, not dropped silently — see `suppressedPostSynthCount` below.
+  //
+  // chant #2111: every batch also goes through `applyInlineSuppressions`
+  // right after, so a `# chant-ignore` comment on an entity (terraform's HCL
+  // blocks today; any lexicon that attaches `suppressions` to its own
+  // entities tomorrow) suppresses identically regardless of which phase
+  // produced the diagnostic. Same counted-not-dropped contract, in its own
+  // `inlineSuppressedCount`, plus `suppressionMeta` for directives that are
+  // themselves worth a finding (expired, misplaced, denied by `ignorable: false`).
   let suppressedPostSynthCount = 0;
+  let inlineSuppressedCount = 0;
+  const suppressionMeta: SuppressionMetaFinding[] = [];
+
+  /** Apply both suppression surfaces to one batch, in the order described above. */
+  const resolvePostSynth = (diags: PostSynthDiagnostic[], entities: Map<string, Declarable>): PostSynthDiagnostic[] => {
+    const { diagnostics: afterConfig, suppressed: configSuppressed } = applyConfiguredSeverity(diags, config.lint?.rules);
+    suppressedPostSynthCount += configSuppressed.length;
+    const { diagnostics: active, suppressed: inlineSuppressed, meta } = applyInlineSuppressions(afterConfig, entities, config.lint?.rules);
+    inlineSuppressedCount += inlineSuppressed.length;
+    suppressionMeta.push(...meta);
+    return active;
+  };
 
   // Core-owned post-synth checks over effect receipts (#1833). Receipts are
   // recognized by marker, lexicon-independently, so this set runs over the
@@ -400,9 +423,7 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
   // Same severity-resolution funnel as every other post-synth finding.
   if (result.errors.length === 0) {
     const receiptDiags = runPostSynthChecks(coreReceiptChecks(), result, env);
-    const { diagnostics: activeDiags, suppressed } = applyConfiguredSeverity(receiptDiags, config.lint?.rules);
-    suppressedPostSynthCount += suppressed.length;
-    for (const diag of activeDiags) {
+    for (const diag of resolvePostSynth(receiptDiags, result.entities)) {
       const prefix = diag.entity ? `[${diag.entity}] ` : "";
       const lexiconSuffix = diag.lexicon ? ` (${diag.lexicon})` : "";
       if (diag.severity === "error") {
@@ -419,9 +440,7 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
   // the FULL build result the same way the receipt checks above do.
   if (result.errors.length === 0) {
     const outputDiags = runPostSynthChecks(coreOutputChecks(), result, env);
-    const { diagnostics: activeDiags, suppressed } = applyConfiguredSeverity(outputDiags, config.lint?.rules);
-    suppressedPostSynthCount += suppressed.length;
-    for (const diag of activeDiags) {
+    for (const diag of resolvePostSynth(outputDiags, result.entities)) {
       const prefix = diag.entity ? `[${diag.entity}] ` : "";
       const lexiconSuffix = diag.lexicon ? ` (${diag.lexicon})` : "";
       if (diag.severity === "error") {
@@ -440,9 +459,7 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
   if (result.errors.length === 0) {
     const bundle = await loadOkfBundle(resolveKnowledgeDir(config, configDir));
     const knowledgeDiags = runPostSynthChecks(coreKnowledgeChecks(bundle), result, env);
-    const { diagnostics: activeDiags, suppressed } = applyConfiguredSeverity(knowledgeDiags, config.lint?.rules);
-    suppressedPostSynthCount += suppressed.length;
-    for (const diag of activeDiags) {
+    for (const diag of resolvePostSynth(knowledgeDiags, result.entities)) {
       const prefix = diag.entity ? `[${diag.entity}] ` : "";
       const lexiconSuffix = diag.lexicon ? ` (${diag.lexicon})` : "";
       if (diag.severity === "error") {
@@ -472,9 +489,7 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
 
       const scopedResult = { ...result, outputs: scopedOutputs };
       const postDiags = runPostSynthChecks(checks, scopedResult, env);
-      const { diagnostics: activeDiags, suppressed } = applyConfiguredSeverity(postDiags, config.lint?.rules);
-      suppressedPostSynthCount += suppressed.length;
-      for (const diag of activeDiags) {
+      for (const diag of resolvePostSynth(postDiags, result.entities)) {
         const prefix = diag.entity ? `[${diag.entity}] ` : "";
         const lexiconSuffix = diag.lexicon ? ` (${diag.lexicon})` : "";
         if (diag.severity === "error") {
@@ -511,9 +526,7 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
         env,
         preloaded: preloadedPolicyChecks,
       });
-      const { diagnostics: activePolicyDiags, suppressed } = applyConfiguredSeverity(policyDiags, config.lint?.rules);
-      suppressedPostSynthCount += suppressed.length;
-      for (const diag of activePolicyDiags) {
+      for (const diag of resolvePostSynth(policyDiags, result.entities)) {
         const prefix = diag.entity ? `[${diag.entity}] ` : "";
         const where = diag.lexicon ? ` (${diag.lexicon})` : "";
         const msg = `[policy:${diag.checkId}] ${prefix}${diag.message}${where}`;
@@ -528,6 +541,21 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
           message: `${suppressedPostSynthCount} post-synth finding(s) suppressed via lint.rules (severity "off")`,
         }),
       );
+    }
+
+    if (inlineSuppressedCount > 0) {
+      warnings.push(
+        formatWarning({
+          message: `${inlineSuppressedCount} post-synth finding(s) suppressed via inline chant-ignore comments`,
+        }),
+      );
+    }
+
+    // Directives that are themselves worth a finding (expired, misplaced, or
+    // naming a rule id configured `ignorable: false`) are reported once
+    // each, never silently (chant #2111).
+    for (const m of suppressionMeta) {
+      warnings.push(formatWarning({ message: `[${m.checkId}] ${m.file}:${m.line} ${m.message}` }));
     }
   }
 
