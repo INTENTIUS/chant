@@ -579,6 +579,38 @@ describe("runLifecycleDiff --live", () => {
       expect(output).toContain("1 held elsewhere");
     });
 
+    // #2181 - the early-return guard tested the held count twice and never the
+    // held-elsewhere count, so a report whose only finding was a live value
+    // nobody declared printed nothing at all: no summary line, no section. That
+    // is the case #2160 was opened to surface.
+    test("a report whose only finding is a live value nobody declared still renders", async () => {
+      const plugins = [withDeep()];
+      const build = makeBuildResult({ aws: ["bucket"] });
+      // Declared exactly what is live, so there is no drift left to carry the
+      // section into the output.
+      build.entities.set("bucket", {
+        lexicon: "aws",
+        entityType: "AWS::S3::Bucket",
+        props: { Versioning: "Suspended" },
+      } as never);
+      buildMock.mockResolvedValue(build);
+      fetchLifecycleMock.mockResolvedValue(undefined);
+      readSnapshotMock.mockResolvedValue(null);
+
+      await runLifecycleDiff({
+        args: makeArgs({ command: "state", path: "diff", extraPositional: "prod", live: true }),
+        plugins,
+        serializers: plugins.map((p) => p.serializer),
+      } as never);
+
+      const output = stdoutBuf.join("\n");
+      expect(output).toContain("aws (properties)");
+      expect(output).toContain("0 property drift across 0 resource(s)");
+      expect(output).toContain("1 held elsewhere");
+      expect(output).toContain("HELD ELSEWHERE");
+      expect(output).toContain("Logging.Target: audit");
+    });
+
     test("a lexicon with no deep reader prints nothing extra", async () => {
       await runDiff([createMockPlugin({ name: "aws", describeResources: staticObservation({ bucket: meta() }) })]);
       expect(stdoutBuf.join("\n")).not.toContain("(properties)");

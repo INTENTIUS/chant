@@ -975,8 +975,8 @@ function renderDeepDiff(
   if (
     drift === 0 &&
     heldCount === 0 &&
+    heldElsewhereCount === 0 &&
     deep.accepted.length === 0 &&
-    heldCount === 0 &&
     deep.unobserved.length === 0 &&
     deep.undeclaredEntities.length === 0
   ) {
