@@ -376,7 +376,7 @@ describe("terraformApply — saved plans only (#2086)", () => {
     expect(result).toMatchObject({ planFile: "chant.tfplan", applied: true });
   });
 
-  test("no planFile: refused before the config is even read, with no bare apply run", async () => {
+  test("no planFile on a stock root: refused, with no bare apply run", async () => {
     const dir = project({ roots: { app: { dir: "./infra" } } });
     await expect(
       terraformApply({ root: "app", cwd: dir } as unknown as { root: string; cwd: string; planFile: string }),

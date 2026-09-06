@@ -14,10 +14,18 @@
 import { describe, test, expect } from "vitest";
 import { loadActivities, resolveActivity } from "@intentius/chant/op";
 
-describe("loadActivities([\"terraform\"]) (#2086)", () => {
-  test("resolves all four activity names", async () => {
+describe("loadActivities([\"terraform\"]) (#2086, #2103)", () => {
+  test("resolves all seven activity names", async () => {
     const activities = await loadActivities(["terraform"]);
-    for (const name of ["terraformInit", "terraformPlan", "terraformApply", "terraformShow"]) {
+    for (const name of [
+      "terraformInit",
+      "terraformPlan",
+      "terraformApply",
+      "terraformShow",
+      "choudoufuLivePlan",
+      "choudoufuLiveLs",
+      "choudoufuLiveCheck",
+    ]) {
       expect(typeof resolveActivity(activities, name)).toBe("function");
     }
   });

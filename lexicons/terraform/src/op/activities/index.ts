@@ -8,8 +8,13 @@
  *   - terraformInit — `init` with the root's `backendConfig`.
  *   - terraformPlan — `plan -detailed-exitcode -out=<planFile>`, plus both
  *     `show` renders of the written plan.
- *   - terraformApply — `apply <planFile>`, a saved plan only.
+ *   - terraformApply: `apply <planFile>` on a stock root, a saved plan only;
+ *     `apply -auto-approve` with no plan file on a live root (#2103).
  *   - terraformShow — state, or a saved plan, as JSON and as text.
+ *   - choudoufuLivePlan: `live-plan -detailed-exitcode -json -estate=<estate>`,
+ *     plus a second `live-plan` for the human render (#2103).
+ *   - choudoufuLiveLs: `live-ls -estate=<estate> -json [-consistent]` (#2103).
+ *   - choudoufuLiveCheck: `live-check -json`, no cloud calls (#2103).
  *
  * The module is dependency-light on purpose: it shells out to the configured
  * binary and reads the `terraform` config namespace, and never touches the
@@ -22,16 +27,29 @@ export {
   terraformPlan,
   terraformApply,
   terraformShow,
+  choudoufuLivePlan,
+  choudoufuLiveLs,
+  choudoufuLiveCheck,
   terraformInitCommand,
   terraformPlanCommand,
   terraformApplyCommand,
   terraformShowCommand,
+  choudoufuLiveApplyCommand,
+  choudoufuLivePlanCommand,
+  choudoufuLiveLsCommand,
+  choudoufuLiveCheckCommand,
   terraformEnvironment,
   terraformBinary,
   countPlanChanges,
+  countLivePlanUnowned,
+  isOlderVersion,
+  parseChoudoufuVersion,
   quoteArg,
   DEFAULT_PLAN_FILE,
   DEFAULT_TERRAFORM_BINARY,
+  DEFAULT_LIVE_PLAN_DOCUMENT_FILE,
+  MIN_CHOUDOUFU_VERSION,
+  CHOUDOUFU_PLAN_FILE_REFUSAL,
 } from "./terraform";
 
 export type {
@@ -40,9 +58,18 @@ export type {
   TerraformPlanArgs,
   TerraformApplyArgs,
   TerraformShowArgs,
+  ChoudoufuLivePlanArgs,
+  ChoudoufuLiveLsArgs,
+  ChoudoufuLiveCheckArgs,
   TerraformInitResult,
   TerraformPlanResult,
   TerraformApplyResult,
   TerraformShowResult,
+  ChoudoufuLivePlanResult,
+  ChoudoufuLiveLsResult,
+  ChoudoufuLiveCheckResult,
   PlanChangeCounts,
+  LivePlanUnownedCounts,
 } from "./terraform";
+
+export { detectLiveEstate } from "./live-detect";

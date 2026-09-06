@@ -27,6 +27,9 @@ import type {
   TerraformPlanArgs,
   TerraformApplyArgs,
   TerraformShowArgs,
+  ChoudoufuLivePlanArgs,
+  ChoudoufuLiveLsArgs,
+  ChoudoufuLiveCheckArgs,
 } from "./activities/terraform";
 
 /** Extra opts every wrapper below accepts alongside its activity's own fields. */
@@ -63,18 +66,82 @@ export const terraformPlan = (
 };
 
 /**
- * `terraform apply <planFile>` in the named root — the fully typed twin of the
+ * `terraform apply <planFile>` in the named root, the fully typed twin of the
  * `terraformApply` activity. `opts` is {@link TerraformApplyArgs} itself,
- * minus the positional `root`, so `planFile` stays required at the call site
- * and the activity's bare-apply refusal is a compile error rather than a
- * runtime one. Defaults to the `longInfra` profile.
+ * minus the positional `root`. `planFile` is optional here (#2103): required
+ * on a stock root (the activity itself refuses a missing one there) and
+ * refused on a live root, where an apply always re-plans against the live
+ * system and takes no plan file at all, so `opts` is therefore optional too,
+ * meaning `terraformApply("estate")` alone is a valid live-root step. Defaults
+ * to the `longInfra` profile.
  */
 export const terraformApply = (
   root: string,
-  opts: WithStepRefs<Omit<TerraformApplyArgs, "root">> & StepOpts,
+  opts?: WithStepRefs<Omit<TerraformApplyArgs, "root">> & StepOpts,
 ): NamedActivityStep => {
   const { args, profile, id } = takeProfileAndId(opts as Record<string, unknown> | undefined);
   return activity("terraformApply", { root, ...args }, { profile: profile ?? "longInfra", ...(id ? { id } : {}) });
+};
+
+/**
+ * `choudoufu live-plan -detailed-exitcode -json -estate=<estate>` in the
+ * named root, plus the human render. The fully typed twin of the
+ * `choudoufuLivePlan` activity (#2103). `opts` is {@link ChoudoufuLivePlanArgs}
+ * itself, minus the positional `root`; `estate` is optional, auto-detected
+ * from the root's `live` block or `estate.chdf.hcl` sidecar when omitted.
+ * Defaults to the `longInfra` profile: like `terraformPlan`, this reads the
+ * live system in full (the estate-wide sweep).
+ *
+ * Give this step an `id` to read `.out.drift`, `.out.unowned`,
+ * `.out.adoptable` or `.out.documentPath` from a later step.
+ */
+export const choudoufuLivePlan = (
+  root: string,
+  opts?: WithStepRefs<Omit<ChoudoufuLivePlanArgs, "root">> & StepOpts,
+): NamedActivityStep => {
+  const { args, profile, id } = takeProfileAndId(opts as Record<string, unknown> | undefined);
+  return activity(
+    "choudoufuLivePlan",
+    { root, ...args },
+    { profile: profile ?? "longInfra", ...(id ? { id } : {}) },
+  );
+};
+
+/**
+ * `choudoufu live-ls -estate=<estate> -json [-consistent]` in the named root,
+ * the fully typed twin of the `choudoufuLiveLs` activity (#2103). `opts` is
+ * {@link ChoudoufuLiveLsArgs} itself, minus the positional `root`. Defaults to
+ * the `fastIdempotent` profile: `live-ls` reads a tagging-API listing and
+ * calls no other provider.
+ */
+export const choudoufuLiveLs = (
+  root: string,
+  opts?: WithStepRefs<Omit<ChoudoufuLiveLsArgs, "root">> & StepOpts,
+): NamedActivityStep => {
+  const { args, profile, id } = takeProfileAndId(opts as Record<string, unknown> | undefined);
+  return activity(
+    "choudoufuLiveLs",
+    { root, ...args },
+    { profile: profile ?? "fastIdempotent", ...(id ? { id } : {}) },
+  );
+};
+
+/**
+ * `choudoufu live-check -json` in the named root, the fully typed twin of the
+ * `choudoufuLiveCheck` activity (#2103). `opts` is {@link ChoudoufuLiveCheckArgs}
+ * itself, minus the positional `root`. Defaults to the `fastIdempotent`
+ * profile: no cloud calls, no state.
+ */
+export const choudoufuLiveCheck = (
+  root: string,
+  opts?: WithStepRefs<Omit<ChoudoufuLiveCheckArgs, "root">> & StepOpts,
+): NamedActivityStep => {
+  const { args, profile, id } = takeProfileAndId(opts as Record<string, unknown> | undefined);
+  return activity(
+    "choudoufuLiveCheck",
+    { root, ...args },
+    { profile: profile ?? "fastIdempotent", ...(id ? { id } : {}) },
+  );
 };
 
 /**
