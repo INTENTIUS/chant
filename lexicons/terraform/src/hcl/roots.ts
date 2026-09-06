@@ -63,6 +63,7 @@ export async function renderTerraformRoots(
       const parsed = await parseTerraformRootDir(dir, name, opts.hcl2json, {
         binary: opts.binary,
         workspace: root.workspace,
+        delete: root.delete,
       });
       for (const [key, entity] of parsed) entities.set(key, entity);
 

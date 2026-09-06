@@ -34,6 +34,20 @@ import type { ChantConfig } from "@intentius/chant/config";
  * strict, and a root entry is exactly where a typo (`varfiles`) would
  * otherwise land silently.
  */
+/**
+ * chant's cross-lexicon delete-mode vocabulary (`lexicons/k8s/src/op/
+ * activities/kubectl.ts`'s `ApplyDeleteMode`, `lexicons/temporal/src/op/
+ * activities/apply.ts`'s `DeleteMode`), read here for a live root and mapped
+ * onto choudoufu's `policy` block (#2106): `"never"` requires the root's
+ * `policy` to set `undeclared_tagged` to `"keep"`, `"untag"` or `"report"`
+ * (TF026 enforces this at build time); `"owned-only"` is choudoufu's own
+ * default verb for that quadrant (`delete`) and needs nothing; `"gated"`
+ * needs nothing beyond `TerraformApplyOp`'s own approval gate. Inert on a
+ * stock root: choudoufu's `policy` block does not exist there.
+ */
+export const terraformDeleteModeSchema = z.enum(["never", "owned-only", "gated"]);
+export type TerraformDeleteMode = z.infer<typeof terraformDeleteModeSchema>;
+
 export const terraformRootSchema = z.strictObject({
   /** Root module directory, relative to the project root (where `chant.config.*` lives). */
   dir: z.string(),
@@ -43,6 +57,8 @@ export const terraformRootSchema = z.strictObject({
   varFiles: z.array(z.string()).optional(),
   /** `-backend-config` key/value pairs handed to `init`. */
   backendConfig: z.record(z.string(), z.string()).optional(),
+  /** This root's declared delete mode. See {@link terraformDeleteModeSchema}. */
+  delete: terraformDeleteModeSchema.optional(),
 });
 
 export const terraformConfigSchema = z.strictObject({
