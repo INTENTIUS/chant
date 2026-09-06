@@ -8,12 +8,118 @@ diataxis: reference
     Edit lexicons/terraform/docs/pages/lint-rules.mdx instead; changes here are overwritten. */}
 
 
+{/*
+Template for a rule section, copied by every TF-family issue that ships a
+new rule (#2108). One `##` heading per rule, in this order:
+
+## TFxxx: a one-line condition
+
+**Why it matters.** Two or three sentences on the failure mode this catches,
+not a restatement of the condition.
+
+**The fix.** What to write instead, concretely.
+
+**Prior art.** Rendered from the rule's lineage entry (`audit-lineage.ts` for
+a post-synth check; the rule's own file comment for a lint rule, which
+carries no `RuleMeta`/`Lineage` entry at all): tool, upstream rule id, a
+link, and the relation (`equivalent`, `overlaps`, `extends`). A rule with no
+credit says so plainly: "No tool in the survey covers this; see the
+lineage file for where it looked." Never invent a near-miss credit.
+
+Then the positive fixture, the file that triggers the rule, as a fenced code
+block, read straight from `fixtures/<id>/positive.tf` (or `positive-op.ts`
+for a source-level rule; see that fixture's own loader for why an Op fixture
+is named `-op.ts` rather than `.op.ts` on disk) so the page cannot drift from
+what the tests actually run.
+*/}
+
 The Terraform lexicon ships one source-level lint rule and one post-synth
 check. See [Lint Rules](/chant/lexicons/terraform/rules/) for the generated,
-always-current table.
+always-current table; this page is the reasoning, the fix and the credit
+behind each entry.
 
-- `TF101` — a `terraformApply` step's `planFile` must reference the output of
-  a preceding `terraformPlan` step, not a literal path
-- `TF001` — root module declares no remote backend (post-synth)
+## TF001: root module declares no remote backend
+
+A `terraform` block with no `backend "<type>"` and no `cloud {}`.
+
+**Why it matters.** No backend falls back to the local one, which puts
+`terraform.tfstate` in the working directory. That file holds every attribute
+of every managed resource, secrets included, and it is unshared, unlocked and
+unversioned. The first apply from a second machine or a CI runner starts from
+an empty state and proposes to create the whole estate again.
+
+**The fix.** Add a `backend "<type>"` block (`s3`, `gcs`, `azurerm`, `http`) or
+a `cloud {}` block to the root module's `terraform` block, then run
+`terraform init -migrate-state`.
+
+**Prior art.** No tool in the survey covers this; see `audit-lineage.ts`'s
+header comment for where it looked. Checkov's `CKV_TF_*` family has no rule
+for a missing backend block, and tflint-ruleset-terraform's own index has
+none either. Its closest neighbors check something else entirely
+(unconstrained provider versions, a `terraform.workspace` compatibility
+concern), not the absence of a backend.
+
+A root with no `terraform` block at all is not flagged: it declares no
+version constraints either, and that is a different finding.
+
+```hcl
+terraform {
+  required_version = ">= 1.5.0"
+
+  required_providers {
+    null = {
+      source  = "hashicorp/null"
+      version = "~> 3.2"
+    }
+  }
+}
+
+provider "null" {}
+
+resource "null_resource" "first" {
+  triggers = {
+    name = "first"
+  }
+}
+
+resource "null_resource" "second" {
+  triggers = {
+    name = "second"
+  }
+}
+```
+
+## TF101: terraformApply's planFile must reference a preceding terraformPlan step
+
+A `terraformApply` step's `planFile` is a string or template literal in
+source, or a reference to a step that is not a `terraformPlan` call.
+
+**Why it matters.** The entire point of the plan/apply split is to review
+exactly what will change, then apply exactly that. Spelling the plan path out
+as a literal breaks the link between the two steps: the file applied can be
+stale, hand-edited by something else in the meantime, or simply the wrong
+plan for this root. Carrying the path forward from the producing step
+(`stepOutput(plan, "planFile")` or `plan.out.planFile`) is what keeps apply
+honest about which plan it is running.
+
+**The fix.** Reference the preceding `terraformPlan` step's output instead of
+a literal path: `stepOutput(plan, "planFile")` or `plan.out.planFile`, where
+`plan` is the `const` a `terraformPlan(...)` call was assigned to.
+
+**Prior art.** No tool in the survey covers this. TF101 is a rule about
+chant's own Op-builder DSL, not about a Terraform root. Nothing in the
+survey (linters, scanners, policy engines, or HashiCorp's own Sentinel
+examples) models "does this plan file trace back to a specific preceding
+plan step", because that question does not exist outside chant's own
+authoring surface. See `audit-lineage.ts`'s header comment for the full
+reasoning.
+
+When the referenced identifier cannot be resolved at all in the same file,
+this rule stays silent rather than guess.
+
+```typescript
+const plan = terraformPlan("app", { id: "plan" });
+const apply = terraformApply("app", { planFile: "/tmp/plan.out" });
+```
 
 To write custom rules for your project, see the [lint-rules authoring guide](/chant/lexicon-authoring/lint-rules/).
