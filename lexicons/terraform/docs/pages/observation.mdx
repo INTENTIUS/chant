@@ -1,6 +1,6 @@
 ---
 title: Observation
-description: What chant can honestly say about a terraform root, and why the state file answers "is this mine?"
+description: What chant can honestly say about a terraform root, and what answers "is this mine?" in each of its two modes
 diataxis: explanation
 ---
 
@@ -12,13 +12,17 @@ gives: exit 0 is a plan with nothing in it, exit 2 is drift. That boolean
 leaves the Op as the `Drift` search attribute, and on a finding mode of
 `issue` or `pull-request` the plan is opened as one.
 
-`describeResources()` asks **does this declared block exist?** It runs
-`terraform show -json` over the root's current state and matches
+`describeResources()` asks **does this declared block exist?** On a stock root
+it runs `terraform show -json` over the root's current state and matches
 `values.root_module.resources[]`, `child_modules[]` included, against the
 `<root>/<address>` keys `buildRoots()` produced at build time. That is what
 `chant lifecycle diff <env> --live` and `chant lifecycle plan` read.
 
-## The state file is the ownership answer
+On a [live root](/chant/lexicons/terraform/ops/) it runs
+`choudoufu live-plan -json` instead and matches that document's sections, for
+the reason the next two sections give: a live root has no state file to show.
+
+## The state file is the ownership answer, on a stock root
 
 [Lifecycle models](/chant/concepts/lifecycle-models/) draws three axes, and
 the third one is "who answers *is this mine?*". It has three rows: a trusted
@@ -51,12 +55,73 @@ see the block is live without the state ever saying that block is managed. It
 comes back present with `ownership: "unknown"`, and an `unknown` never becomes
 a delete.
 
+## The marker is the ownership answer, on a choudoufu root
+
+Set `terraform.binary` to `"choudoufu"` and declare an estate, and the root
+moves to the other row. [choudoufu](https://github.com/INTENTIUS/choudoufu)
+writes two ordinary AWS tags in the create call, `tofu-estate` and
+`tofu-address`, rebuilds prior state from the live system on every run, and
+keeps the state file, where it keeps one at all, as a disposable cache. It is
+never consulted for ownership, live wins on any disagreement, and losing it
+costs one slower run.
+
+So on a live root the marker is the ownership answer, and terraform sits in
+the same row as every other chant lexicon: a fact recorded on the resource,
+read back on every observation, with no file to host or lock. The spec for
+those tags is `live/MARKERS.md` in choudoufu's own repository, and it is the
+one surface that project asks external tools to rely on.
+
+chant does not re-derive the verdict from the tags. `live-plan -json` has
+already split every declared instance four ways, and the mapping is one table:
+
+| `live-plan -json` | chant |
+| --- | --- |
+| a bound instance | present, `owned`; the estate is surfaced as the resource's marker when the bind came from the marker sweep |
+| a bound instance whose identity came from the configuration | present, `owned` by derivation, and said so in `boundBy` |
+| an unowned resource at a declared identity | present, `foreign`; something is in the way and the plan will not touch it |
+| an adoptable match | present, `unknown`, carrying the exact `tofu-estate` and `tofu-address` values one tag write would claim it with |
+| an omission | not-observed with the reason mapped, `ABSENT` excepted |
+
+`ABSENT` is the one omission that is not a claim of ignorance. It means the
+provider was asked and reported that no such object exists, which is chant's
+OBSERVED-ABSENT and the only shape that may become a `create`. Every other
+omission reason is a reason chant could not look, and those are not-observed.
+
+Because a chant entity is the HCL block and the document's rows are instances,
+a block with `count` or `for_each` takes the aggregate of its instances, and
+the least certain instance wins: one not-observed instance makes the block
+not-observed. Partial knowledge is not knowledge.
+
+## What the estate holds that nothing declares
+
+`choudoufu live-ls -estate -json` lists the whole estate off the Resource
+Groups Tagging API, reading no configuration, no state and no record store.
+That answers a question a state file cannot: which resources does this estate
+own that the configuration has stopped declaring?
+
+Those owned orphans are what `observeAmbient()` reports and what
+`teardownOwned()` names, and they are the same set choudoufu's own default
+policy verb (`undeclared_tagged = "delete"`) would remove on the next apply.
+The read always passes `-consistent`, because that tag index lags a write by
+about a minute and a listing taken straight after an apply would otherwise
+show a resource under both its old estate and its new one, or under neither.
+
+A declared instance the listing cannot reach comes back in its own `gaps`
+section, on the `record` or `declaration-carried` rung, and chant reports it
+as a teardown hole rather than leaving it out. A resource type with no `tags`
+argument never carried a marker, so its absence from a tag listing says
+nothing about whether it is there.
+
 ## What has no answer at all
 
 Only `resource` and `data` blocks have rows in state. A `terraform`,
 `provider`, `variable`, `output` or `locals` block is reported as not-observed
 with reason `unsupported-kind`. That is honest rather than a gap: those blocks
 have no live counterpart to look for.
+
+A live root reads one block narrower still. `live-plan`'s document is prior
+state for managed resources, so a `data` block has no row in it either and is
+reported `unsupported-kind` there, where a stock root can answer for it.
 
 ## A failed read is never a list of creates
 
@@ -65,7 +130,10 @@ a declared entity comes back in one of three states, and "absent" is only one
 of them. If a root's `init` or `show` fails, for a held state lock, an
 unreachable backend or missing credentials, every entity declared in that root
 is reported not-observed with reason `read-failed` and the root named in the
-detail. None of them is reported absent, because absent plus declared
+detail. A live root whose `live-plan` fails is the same, with the same
+mapping: `no-credentials` where the failure names credentials, `read-failed`
+for a refused configuration or any other error.
+None of them is reported absent, because absent plus declared
 classifies as `create`, and a broken read must not propose recreating an
 estate that is sitting there working.
 
