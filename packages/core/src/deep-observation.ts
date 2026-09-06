@@ -67,6 +67,23 @@ export interface DeepResourceObservation {
    * very different answers to an operator.
    */
   fieldOwners?: Record<string, string>;
+  /**
+   * The paths this entity's declaration claims (#2160) — every property chant
+   * set, flattened into the diff's own grammar and sorted. Built by core in
+   * `lifecycle/deep-observe.ts` from the declaration's `props`, never by a
+   * reader: a lexicon has no more to say about it than the props it was handed.
+   *
+   * It rides here, on the live row, because this is the envelope a consumer
+   * holds. With it, a live value classifies three ways instead of two — chant
+   * set this and it matches, chant set this and it moved, chant never set it —
+   * and only the middle one is drift. Absent for a live entity nobody declared,
+   * which has no claim to carry.
+   *
+   * Complementary to {@link fieldOwners} rather than a replacement: the manager
+   * name says *who* holds a field, which is strictly more than "not chant". See
+   * `../claimed-fields.ts`.
+   */
+  claimedFields?: readonly string[];
 }
 
 /**

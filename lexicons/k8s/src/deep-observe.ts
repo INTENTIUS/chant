@@ -31,7 +31,7 @@
  * was controller noise. It silenced exactly the case the deep read exists
  * for — `kubectl label deploy web team=platform` is foreign-owned
  * (`kubectl-edit`) and undeclared, and never appeared in fieldDrift. The
- * policy now (recorded on #1202) is:
+ * policy now (recorded on #1202, refined by #2160) is:
  *
  * 1. **Chant-owned** (`chant`, `chant:<stack>` — chant #1075, matched on the
  *    family so a stack rename does not stop recognizing its own history) is
@@ -41,18 +41,25 @@
  *    write currently holds the field, and a foreign write that overrides a
  *    value chant's manifest asks for is the thing `lifecycle diff --live`
  *    exists to surface. It reports as `changed`.
- * 3. **Foreign-owned and undeclared** is reported as `undeclared` drift,
- *    unless the accepted baseline already carries it at that value. The
- *    baseline (`--update-baseline`) is the noise valve: an HPA that owns
- *    `spec.replicas` on a Deployment whose source is silent about replicas
- *    reports once, gets accepted, and stays quiet until the value moves.
+ * 3. **Undeclared** — a path outside the declaration's claimed-field set
+ *    (`@intentius/chant/claimed-fields`) — is reported as held elsewhere and
+ *    is not drift at all. Before #2160 it was `undeclared` drift that the
+ *    accepted baseline had to absorb one path at a time; the declaration
+ *    answers on the first read instead, so an HPA that owns `spec.replicas`
+ *    on a Deployment whose source is silent about replicas is quiet with
+ *    nothing recorded anywhere.
  *
- * So ownership decides nothing about *whether* a path is compared. What it
- * contributes is `fieldOwners` (#1189): every reported drift names the
- * manager that holds the field live, which is how an operator tells
- * `hpa-controller` doing its job from somebody running `kubectl edit`. The
- * only fields subtracted because a foreign manager wrote them are the
- * well-known system ones on the static allowlist.
+ * So ownership decides nothing about *whether* a path is compared, and since
+ * #2160 it no longer decides the verdict either — the declaration does. What
+ * it contributes is `fieldOwners` (#1189), and that is worth more here than
+ * anywhere else: on every other substrate a held field can only be reported
+ * as "not chant's", while here it is reported as `hpa-controller`'s or
+ * `kubectl-edit`'s by name, which is the difference between a controller
+ * doing its job and somebody bypassing the pipeline. Core takes the manager
+ * where this reader supplies one and falls back to the claim where it does
+ * not (a path inside a key-addressed list, which no `fieldsV1` entry names in
+ * that form). The only fields subtracted because a foreign manager wrote them
+ * are the well-known system ones on the static allowlist.
  *
  * ## Resolving a managedFields entry against a live array
  *
@@ -244,10 +251,10 @@ export async function observeResourcesDeepK8s(
           hooks: k8sDeepNormalizationHooks,
         }),
         // Who owns each path (#1189). Nothing is pruned by ownership any more
-        // (#1191), so a foreign-owned undeclared field reaches the diff as
-        // `undeclared` — and naming the manager is the whole question there:
-        // an operator needs to tell `hpa-controller` doing its job from
-        // somebody running `kubectl edit`.
+        // (#1191), so a foreign-owned undeclared field still reaches the diff
+        // — as a held field since #2160 — and naming the manager is the whole
+        // question there: an operator needs to tell `hpa-controller` doing its
+        // job from somebody running `kubectl edit`.
         ...(sets.owners.size > 0 ? { fieldOwners: Object.fromEntries(sets.owners) } : {}),
       };
     } catch (err) {

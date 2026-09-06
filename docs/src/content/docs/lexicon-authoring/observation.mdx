@@ -220,6 +220,34 @@ Two further hooks exist for the cases the pass cannot recognize on its own, both
 
 Core owns the rest of the pass and needs no hook for it: canonical key order, hook-driven array order, secret masking by property name, and non-JSON values (an unevaluated `Fn::Sub`) collapsed so an interpolated property never reads as permanent drift.
 
+### The claimed-field set: half of that noise has a general answer
+
+Three of the four hooks exist because the live tree carries fields the declaration never mentions, and every lexicon has been answering that with knowledge it wrote down by hand. There is a source of that knowledge nobody had to write: the declaration itself. A `ResourceDeclarable`'s props are exactly the fields chant set, they exist on every substrate, and they come from the same build that produced the entity.
+
+Core derives them per entity, normalized with your hooks and flattened into the diff's own path grammar, and classifies each live value three ways instead of two:
+
+| Classification | Result | Consequence |
+|---|---|---|
+| declared and equal | `unchanged` | Nothing to report. |
+| declared and different | `drifted` | Drift, and the only case that may become an `update`. |
+| undeclared | `heldElsewhere` | Reported with its live value, never drift, never proposed for change. |
+
+Nothing in a lexicon implements this, the same way nothing implements the accepted baseline: it is applied by core, above your reader. What it changes for you is what the `prune` hook is *for*. Pruning is still right for a field the platform populates on every object of a kind (`status`, an ARN, a generation counter) and for putting two vocabularies in the same shape. It is no longer the only way to keep a foreign controller's field out of a drift report, so a table entry that exists only to say "nobody declared this" now has a general mechanism underneath it and can go when you trust the classification. Do not remove one blind: verify against a real estate first, because a prune entry and a held field are reported differently. Pruned means the field is not in the tree at all; held means it is reported with its value.
+
+Two things worth designing for:
+
+- **`orderKey` sharpens the claim.** A path inside a list is claimed at its exact position or key, so a set-like list your hook can key (`Tags[#env].Value`) keeps a property's identity still while the set moves around it, and a console-added tag classifies as its own path. A positional list claims `Tags[0]` and reports a new element by index.
+- **Where the substrate names the writer, keep supplying it.** `DeepResourceObservation.fieldOwners` still wins over the claim for a held field: "held by `hpa-controller`" is strictly more than "chant did not set it", and core falls back to the claim only where your reader has no manager for the path. That is Kubernetes today, via `metadata.managedFields`, and it is what the two mechanisms composing looks like.
+
+The claim is also available directly, for a consumer that has a declaration and no diff:
+
+```typescript
+import { claimedFieldsOfProps, isClaimed } from "@intentius/chant/claimed-fields";
+
+const claimed = claimedFieldsOfProps(entity.props, { entityType: entity.entityType, hooks: myHooks });
+isClaimed(claimed, "spec.replicas");   // did this declaration ever set it
+```
+
 ## classifyDisruption() — what applying an update costs
 
 Reference implementation: `lexicons/aws/src/disruption.ts`. `lexicons/fountain/src/disruption.ts` is the same hook where no registry schema exists to read: the table is written from the provider's routes, naming which fields a PATCH accepts and which ones are the resource's identity, and it covers three of the six kinds and says `unknown` for the rest.

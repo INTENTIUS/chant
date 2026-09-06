@@ -565,12 +565,17 @@ describe("runLifecycleDiff --live", () => {
       } as never);
     };
 
-    test("reports the changed property and the undeclared one", async () => {
+    test("reports the changed property as drift and the undeclared one as held elsewhere", async () => {
       await runDiff([withDeep()]);
       const output = stdoutBuf.join("\n");
       expect(output).toContain("aws (properties)");
       expect(output).toContain("Versioning: Enabled → Suspended");
-      expect(output).toContain("Logging.Target: <undeclared> → audit");
+      // #2160: source never set Logging.Target, so it is somebody else's field.
+      // Still reported, no longer a difference chant proposes to close.
+      expect(output).toContain("HELD ELSEWHERE");
+      expect(output).toContain("Logging.Target: audit [not in this declaration's claimed fields]");
+      expect(output).toContain("1 property drift across 1 resource(s)");
+      expect(output).toContain("1 held elsewhere");
     });
 
     test("a lexicon with no deep reader prints nothing extra", async () => {
@@ -579,28 +584,36 @@ describe("runLifecycleDiff --live", () => {
     });
 
     test("an accepted deviation in the baseline stops re-alerting", async () => {
+      // A path source declares: since #2160 the baseline only ever has drift to
+      // suppress, because an undeclared path is held elsewhere and never alerted.
       readBlobFromPathMock.mockResolvedValue(
         JSON.stringify({
           baseline: "v1",
           environment: "prod",
-          lexicons: { aws: { bucket: { accepted: [{ path: "Logging.Target", value: "audit" }] } } },
+          lexicons: { aws: { bucket: { accepted: [{ path: "Versioning", value: "Suspended" }] } } },
         }),
       );
       await runDiff([withDeep()]);
       const output = stdoutBuf.join("\n");
-      expect(output).toContain("Versioning: Enabled → Suspended");
-      expect(output).not.toContain("Logging.Target: <undeclared>");
+      expect(output).not.toContain("PROPERTY DRIFT");
       expect(output).toContain("ACCEPTED (in the baseline; not drift)");
     });
 
-    test("--json carries the property drift under the lexicon's `deep` key", async () => {
+    test("--json carries the property drift and the held fields under the lexicon's `deep` key", async () => {
       await runDiff([withDeep()], { json: true });
       const payload = JSON.parse(stdoutBuf.join("\n")) as {
-        lexicons: { aws: { deep: { drifted: Array<{ changes: Array<{ path: string }> }> } } };
+        lexicons: {
+          aws: {
+            deep: {
+              drifted: Array<{ changes: Array<{ path: string }> }>;
+              heldElsewhere: Array<{ fields: Array<{ path: string; live: unknown; source: string }> }>;
+            };
+          };
+        };
       };
-      expect(payload.lexicons.aws.deep.drifted[0].changes.map((c) => c.path).sort()).toEqual([
-        "Logging.Target",
-        "Versioning",
+      expect(payload.lexicons.aws.deep.drifted[0].changes.map((c) => c.path)).toEqual(["Versioning"]);
+      expect(payload.lexicons.aws.deep.heldElsewhere[0].fields).toEqual([
+        { path: "Logging.Target", live: "audit", source: "claimed-fields" },
       ]);
     });
 
@@ -628,9 +641,11 @@ describe("runLifecycleDiff --live", () => {
       const written = JSON.parse(content) as {
         lexicons: { aws: { bucket: { accepted: Array<{ path: string; value: unknown }> } } };
       };
-      expect(written.lexicons.aws.bucket.accepted.map((a) => a.path)).toEqual(["Logging.Target", "Versioning"]);
+      // Only drift is accepted. A held field needs no acceptance: it was never
+      // reported as a deviation to begin with (#2160).
+      expect(written.lexicons.aws.bucket.accepted.map((a) => a.path)).toEqual(["Versioning"]);
       expect(pushLifecycleMock).toHaveBeenCalled();
-      expect(stderrBuf.join("\n")).toContain("accepted 2 deviation(s)");
+      expect(stderrBuf.join("\n")).toContain("accepted 1 deviation(s)");
     });
 
     test("--update-baseline with nothing reported writes nothing", async () => {

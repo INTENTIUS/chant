@@ -4,7 +4,7 @@ import { build } from "../../build";
 import { takeSnapshot } from "../../lifecycle/snapshot";
 import { readSnapshot, readSnapshotAt, readEnvironmentSnapshots, listSnapshots, fetchLifecycle, pushLifecycle, snapshotStorageKey, StaleLifecycleBranchError } from "../../lifecycle/git";
 import { deepDiffForLexicon, type DeclaredEntities } from "../../lifecycle/deep-observe";
-import { countPropertyDrift, type DeepDiffResult } from "../../lifecycle/deep-diff";
+import { countHeldFields, countPropertyDrift, type DeepDiffResult } from "../../lifecycle/deep-diff";
 import { describePathOrigin, getPathProvenance } from "../../provenance";
 import {
   acceptDeviations,
@@ -941,8 +941,10 @@ function deviationsToAccept(deep: DeepDiffResult): DeviationToAccept[] {
 /** Property-level drift report (#1014). Silent when a lexicon's deep read found nothing to say. */
 function renderDeepDiff(lexiconName: string, deep: DeepDiffResult): void {
   const drift = countPropertyDrift(deep);
+  const heldCount = countHeldFields(deep);
   if (
     drift === 0 &&
+    heldCount === 0 &&
     deep.accepted.length === 0 &&
     deep.unobserved.length === 0 &&
     deep.undeclaredEntities.length === 0
@@ -955,6 +957,7 @@ function renderDeepDiff(lexiconName: string, deep: DeepDiffResult): void {
   console.log(
     `${drift} property drift across ${deep.drifted.length} resource(s), ` +
       `${acceptedCount} accepted, ${deep.unchanged.length} unchanged` +
+      (heldCount > 0 ? `, ${heldCount} held elsewhere` : "") +
       (deep.unobserved.length > 0 ? `, ${deep.unobserved.length} unobserved` : ""),
   );
   console.log("-".repeat(80));
@@ -975,6 +978,20 @@ function renderDeepDiff(lexiconName: string, deep: DeepDiffResult): void {
         const from = change.origin ? ` [from: ${describePathOrigin(change.origin)}]` : "";
         const owner = change.owner ? ` [owner: ${change.owner}]` : "";
         console.log(`      ${change.path}: ${declared} → ${live}${baseline}${from}${owner}`);
+      }
+    }
+  }
+  if (deep.heldElsewhere.length > 0) {
+    // Not drift, and printed after it for that reason (#2160): chant never set
+    // these fields, so nothing here is a change chant proposes to make.
+    console.log(formatBold("\nHELD ELSEWHERE (live values on properties chant never declared; not drift):"));
+    for (const entity of deep.heldElsewhere) {
+      console.log(`  - ${entity.name} (${entity.type})`);
+      for (const field of entity.fields) {
+        const holder = field.heldBy
+          ? `held by ${field.heldBy}`
+          : "not in this declaration's claimed fields";
+        console.log(`      ${field.path}: ${formatValue(field.live)} [${holder}]`);
       }
     }
   }

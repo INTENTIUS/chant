@@ -36,6 +36,14 @@
  * labels, CNRM-only declared fields, and per-kind provider defaults gated on
  * "source never declared it". Core applies the same hooks to both trees.
  *
+ * Since #2160 part of that table has a substrate-independent answer behind it:
+ * core derives a claimed-field set from the declaration's own props, and a
+ * live value on a path outside it is reported as held elsewhere rather than as
+ * drift. The table is not obsolete — `prune` is still the right tool for a
+ * field GCP populates on every object of a kind, and for putting the two trees
+ * in the same vocabulary — but the entries that exist only to say "nobody
+ * declared this" now have a general mechanism underneath them.
+ *
  * ## The build-path boundary
  *
  * `gcpPlugin.ts` reaches this file only via `await import("./deep-observe")`
@@ -272,9 +280,11 @@ export async function observeResourcesDeepGcp(options: GcpDeepObserveOptions): P
         properties: normalizeDeepProperties(toCnrmTree(gvk.kind, obj, { project: client.project }), {
           entityType,
           side: "live",
-          // The static table is the whole prune now — there is no per-resource
+          // The static table is the whole prune here — there is no per-resource
           // ownership pass, because a REST payload carries no field ownership
-          // to drive one (see ./deep-observe-hooks.ts).
+          // to drive one (see ./deep-observe-hooks.ts). What the payload cannot
+          // say, the declaration does: core classifies against the claimed-field
+          // set above this reader (#2160).
           hooks: gcpDeepNormalizationHooks,
         }),
       };

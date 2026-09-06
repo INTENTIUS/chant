@@ -529,10 +529,15 @@ describe("end to end: declared + mutated live + baseline (#1086)", () => {
     // The vnet is clean: reordering and server-populated fields subtract.
     expect(result.unchanged).toEqual(["vnet"]);
 
-    // The platform team's tag is accepted, so it is reported as suppressed
-    // rather than as drift.
-    expect(result.accepted.map((e) => e.name)).toEqual(["dataAccount"]);
-    expect(result.accepted[0].changes.map((c) => c.path)).toEqual(["tags.cost-center"]);
+    // The platform team's tag is on a path source never declared, so since
+    // #2160 the claim answers before the baseline does: held elsewhere, at its
+    // live value, and not drift. ARM records no field manager, so the
+    // claimed-field set is the only source that can answer.
+    expect(result.accepted).toEqual([]);
+    expect(result.heldElsewhere.map((e) => e.name)).toEqual(["dataAccount"]);
+    expect(result.heldElsewhere[0].fields).toEqual([
+      { path: "tags.cost-center", live: "platform", source: "claimed-fields", baseline: "platform" },
+    ]);
 
     // An unreadable deep read is a hole with a reason — never silence, never
     // noise, and never a create.
@@ -547,24 +552,34 @@ describe("end to end: declared + mutated live + baseline (#1086)", () => {
     ]);
   });
 
-  test("without the baseline the platform tag is drift, and accepting it is what silences it", async () => {
+  test("the claim silences the platform tag with no baseline at all (#2160)", async () => {
     wireMocks();
     const result = await deepDiffForLexicon(azurePlugin, { environment: "prod", buildOutput: "", entities: declared });
     const dataAccount = result.drifted.find((d) => d.name === "dataAccount");
-    expect(dataAccount?.changes.map((c) => c.path).sort()).toEqual(["allowBlobPublicAccess", "tags.cost-center"]);
+    expect(dataAccount?.changes.map((c) => c.path)).toEqual(["allowBlobPublicAccess"]);
+    expect(result.heldElsewhere[0].fields.map((f) => f.path)).toEqual(["tags.cost-center"]);
     expect(result.accepted).toEqual([]);
   });
 
   test("an accepted value that later changes is drift again, with all three axes", async () => {
+    // The baseline's value-bound rule, on the path that is actually declared.
     wireMocks();
     const result = await deepDiffForLexicon(azurePlugin, {
       environment: "prod",
       buildOutput: "",
       entities: declared,
-      baseline: { dataAccount: { accepted: [{ path: "tags.cost-center", value: "someone-elses-team" }] } },
+      baseline: { dataAccount: { accepted: [{ path: "allowBlobPublicAccess", value: false }] } },
     });
-    const change = result.drifted.find((d) => d.name === "dataAccount")?.changes.find((c) => c.path === "tags.cost-center");
-    expect(change).toEqual({ path: "tags.cost-center", kind: "undeclared", live: "platform", baseline: "someone-elses-team" });
+    const change = result.drifted
+      .find((d) => d.name === "dataAccount")
+      ?.changes.find((c) => c.path === "allowBlobPublicAccess");
+    expect(change).toEqual({
+      path: "allowBlobPublicAccess",
+      kind: "changed",
+      declared: false,
+      live: true,
+      baseline: false,
+    });
   });
 
   test("a whole-lexicon failure is a hole for every declared entity, not a clean report", async () => {

@@ -56,6 +56,7 @@ export * from "./observation";
 export * from "./identity";
 export * from "./apply";
 export * from "./deep-observation";
+export * from "./claimed-fields";
 export * from "./owner-chain";
 export * from "./lexicon-integrity";
 export * from "./lexicon-manifest";

@@ -20,6 +20,17 @@
  * {@link UNRESOLVED} — an unevaluated intrinsic (`Fn::Sub`, `Ref`) has no
  * source-side value to compare, and reporting one as drift would light up every
  * interpolated property forever.
+ *
+ * ## The claim decides what counts as drift (#2160)
+ *
+ * The declared tree is not only one side of a comparison, it is a statement of
+ * which fields chant ever set — the claimed-field set (../claimed-fields.ts).
+ * A live value on a path outside it is somebody else's field: an autoscaler's
+ * replica count, a controller's annotation, a value a person typed into a
+ * console. It is reported in {@link DeepDiffResult.heldElsewhere}, with the
+ * manager's name where the substrate records one, and it is not drift. Only a
+ * claimed path that moved is, and drift is the only thing that may become an
+ * update.
  */
 
 import {
@@ -29,6 +40,7 @@ import {
   type DeepNormalizationHooks,
   type NormalizedDeepObservation,
 } from "../deep-observation";
+import { claimedFieldsFromPaths, heldBy, isClaimed, type FieldClaimSource } from "../claimed-fields";
 import { originOfPath, type PathOrigin } from "../provenance";
 import type { UnobservedResource } from "./live-diff";
 import { acceptedDeviation, type BaselineLexicon } from "./observation-baseline";
@@ -37,20 +49,30 @@ import { acceptedDeviation, type BaselineLexicon } from "./observation-baseline"
  * How a property differs.
  *
  * - `changed` — declared and live both have the path, with different values.
- * - `undeclared` — live has it, source never did. cdk-real-drift's whole reason
- *   to exist: the console-added property CloudFormation itself will not report.
+ *   The only kind that may become an update.
  * - `absent` — source declares it and the live tree does not carry it. Weaker
- *   than the other two: a provider that omits a property it considers unset is
+ *   than `changed`: a provider that omits a property it considers unset is
  *   common, which is what the lexicon's pruning hook is for.
+ *
+ * A live value on a path source never declared used to be a third kind,
+ * `undeclared`. It is no longer drift at all (#2160): chant never set that
+ * field, so somebody else holds it, and it is reported in
+ * {@link DeepDiffResult.heldElsewhere} instead. It is still reported — pruning
+ * what chant cannot attribute is how #1191 lost a console-added label — it just
+ * stopped being a difference chant proposes to close.
  */
-export type PropertyDriftKind = "changed" | "undeclared" | "absent";
+export type PropertyDriftKind = "changed" | "absent";
 
 /** One property-level difference. */
 export interface PropertyDrift {
   /** Path within the normalized property tree (`Tags[0].Value`). */
   path: string;
   kind: PropertyDriftKind;
-  /** Value in source. Absent for `undeclared`. */
+  /**
+   * Value in source. Always present since #2160 — a drift row is only ever
+   * raised for a path the declaration claims — and kept optional for the wire
+   * shape consumers already branch on.
+   */
   declared?: unknown;
   /** Value in the cloud. Absent for `absent`. */
   live?: unknown;
@@ -64,7 +86,8 @@ export interface PropertyDrift {
    * The field manager that owns this path live, where the substrate records one
    * (#1189) — Kubernetes' `managedFields`, and nowhere else today.
    *
-   * `kind` says a path is `undeclared` or `changed`; this says who did it.
+   * `kind` says whether a claimed path changed or went missing; this says who
+   * holds it live.
    * "Owned by `kubectl-client-side-apply`" and "owned by `hpa-controller`" are
    * the same `kind` and mean opposite things: one is somebody bypassing the
    * pipeline, the other is a controller doing its job. Absent on a substrate
@@ -92,6 +115,43 @@ export interface DeepEntityDrift {
   changes: PropertyDrift[];
 }
 
+/**
+ * One live property value on a path this declaration never claimed (#2160) —
+ * a field that exists and that chant did not set.
+ *
+ * Reported, never proposed. The interesting column is {@link source}: on
+ * Kubernetes the API server names the manager and this row says
+ * `hpa-controller`; everywhere else the declaration is the only witness and the
+ * row says "not mine" without saying whose.
+ */
+export interface HeldField {
+  /** Path within the normalized property tree (`spec.replicas`). */
+  path: string;
+  /** The value the cloud is carrying. */
+  live: unknown;
+  /**
+   * The field manager holding it, where the substrate records one. Absent on
+   * every substrate but Kubernetes, and absent on Kubernetes for a path no
+   * `managedFields` entry covers.
+   */
+  heldBy?: string;
+  /** Which source answered: the substrate's manager, or the claimed-field set. */
+  source: FieldClaimSource;
+  /**
+   * The accepted value from the baseline, when this path has one. A held field
+   * needs no acceptance to stay quiet, so this is carried for continuity with
+   * baselines recorded before #2160 rather than because it changes anything.
+   */
+  baseline?: unknown;
+}
+
+/** Live property values one declared entity is not claiming. */
+export interface DeepEntityHeldFields {
+  name: string;
+  type: string;
+  fields: HeldField[];
+}
+
 export interface DeepDiffResult {
   /** Entities with at least one reportable property difference. Sorted by name. */
   drifted: DeepEntityDrift[];
@@ -101,6 +161,16 @@ export interface DeepDiffResult {
    * being held back and the count never silently changes meaning.
    */
   accepted: DeepEntityDrift[];
+  /**
+   * Live values on paths nobody declared (#2160), per entity. Sorted by name.
+   *
+   * Not drift, and deliberately a sibling of `drifted` rather than a kind
+   * inside it: `countPropertyDrift` does not see this list, `--update-baseline`
+   * does not record it, and nothing downstream may turn one of these into an
+   * update. It exists so the report can still say the field is there and who
+   * has it.
+   */
+  heldElsewhere: DeepEntityHeldFields[];
   /** Entities whose property trees matched. Sorted. */
   unchanged: string[];
   /** Declared entities whose *properties* could not be read (#1089). Sorted. */
@@ -144,6 +214,7 @@ export function diffDeep(input: DiffDeepInput): DeepDiffResult {
   const baseline = input.baseline ?? {};
   const drifted: DeepEntityDrift[] = [];
   const accepted: DeepEntityDrift[] = [];
+  const heldElsewhere: DeepEntityHeldFields[] = [];
   const unchanged: string[] = [];
   const unobserved: UnobservedResource[] = [];
   const undeclaredEntities: string[] = [];
@@ -187,12 +258,20 @@ export function diffDeep(input: DiffDeepInput): DeepDiffResult {
       hooks: input.hooks,
     });
 
+    // The claim (#2160): every path this declaration's props flatten to, in the
+    // grammar this loop addresses paths by. Derived here rather than read off
+    // `liveEntity.claimedFields` so `diffDeep` stays a pure function of its two
+    // trees; `lifecycle/deep-observe.ts` computes the identical set from the
+    // identical normalized tree and carries it on the observation for consumers.
+    const claimed = claimedFieldsFromPaths(declaredFlat.keys());
+
     const paths = [...new Set([...declaredFlat.keys(), ...liveFlat.keys()])].sort();
     const reported: PropertyDrift[] = [];
     const suppressed: PropertyDrift[] = [];
+    const held: HeldField[] = [];
 
     for (const path of paths) {
-      const hasDeclared = declaredFlat.has(path);
+      const hasDeclared = isClaimed(claimed, path);
       const hasLive = liveFlat.has(path);
       const declaredValue = declaredFlat.get(path);
       const liveValue = liveFlat.get(path);
@@ -201,25 +280,40 @@ export function diffDeep(input: DiffDeepInput): DeepDiffResult {
       if (hasDeclared && declaredValue === UNRESOLVED) continue;
       if (hasDeclared && hasLive && deepValueEqual(declaredValue, liveValue)) continue;
 
-      const kind: PropertyDriftKind = !hasDeclared ? "undeclared" : !hasLive ? "absent" : "changed";
+      const acceptedEntry = acceptedDeviation(baseline, name, path);
+
+      // A live value on a path nobody claimed is somebody else's field, not a
+      // difference chant proposes to close (#2160). Reported, never drift,
+      // never a candidate for an update — and the manager name, where the
+      // substrate records one, is the whole answer an operator wants.
+      if (!hasDeclared) {
+        const { holder, source } = heldBy(liveEntity.fieldOwners, path);
+        held.push({
+          path,
+          live: liveValue,
+          ...(holder ? { heldBy: holder } : {}),
+          source,
+          ...(acceptedEntry ? { baseline: acceptedEntry.value } : {}),
+        });
+        continue;
+      }
+
+      const kind: PropertyDriftKind = !hasLive ? "absent" : "changed";
       // Who owns the path live, where the substrate records it (#1189). Only
       // meaningful for a path that exists live — an `absent` drift has no live
       // field for anyone to own.
       const owner = hasLive ? liveEntity.fieldOwners?.[path] : undefined;
-      // The declared-side counterpart (#1443). Only meaningful for a path
-      // source actually declares — an `undeclared` drift has no authored
-      // expression for anything to have produced.
-      const origin = hasDeclared ? originOfPath(declaredEntity.pathOrigins, path) : undefined;
+      // The declared-side counterpart (#1443).
+      const origin = originOfPath(declaredEntity.pathOrigins, path);
       const drift: PropertyDrift = {
         path,
         kind,
-        ...(hasDeclared ? { declared: declaredValue } : {}),
+        declared: declaredValue,
         ...(hasLive ? { live: liveValue } : {}),
         ...(owner ? { owner } : {}),
         ...(origin ? { origin } : {}),
       };
 
-      const acceptedEntry = acceptedDeviation(baseline, name, path);
       if (acceptedEntry) {
         drift.baseline = acceptedEntry.value;
         // Value-bound acceptance: the accepted value is not drift, a different
@@ -233,13 +327,18 @@ export function diffDeep(input: DiffDeepInput): DeepDiffResult {
     }
 
     if (suppressed.length > 0) accepted.push({ name, type, changes: suppressed });
+    if (held.length > 0) heldElsewhere.push({ name, type, fields: held });
     if (reported.length > 0) drifted.push({ name, type, changes: reported });
+    // Held fields do not disqualify an entity from `unchanged`: every property
+    // chant declared matches, and the epic's whole point is that a controller's
+    // field stops being a finding chant restates on every tick.
     else if (suppressed.length === 0) unchanged.push(name);
   }
 
   return {
     drifted: drifted.sort((a, b) => a.name.localeCompare(b.name)),
     accepted: accepted.sort((a, b) => a.name.localeCompare(b.name)),
+    heldElsewhere: heldElsewhere.sort((a, b) => a.name.localeCompare(b.name)),
     unchanged: unchanged.sort(),
     unobserved: unobserved.sort((a, b) => a.name.localeCompare(b.name)),
     undeclaredEntities: undeclaredEntities.sort(),
@@ -249,4 +348,9 @@ export function diffDeep(input: DiffDeepInput): DeepDiffResult {
 /** Total reported property differences across every entity. */
 export function countPropertyDrift(result: DeepDiffResult): number {
   return result.drifted.reduce((n, e) => n + e.changes.length, 0);
+}
+
+/** Total live values held by someone other than chant, across every entity (#2160). Never added to the drift count. */
+export function countHeldFields(result: DeepDiffResult): number {
+  return result.heldElsewhere.reduce((n, e) => n + e.fields.length, 0);
 }

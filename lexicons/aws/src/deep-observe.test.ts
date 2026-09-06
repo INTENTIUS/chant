@@ -949,12 +949,15 @@ describe("end to end: declared + mutated live + baseline (#1015)", () => {
     // all subtracted.
     expect(result.unchanged).toEqual(["AppRole"]);
 
-    // The platform team's tag is accepted, so it is reported as suppressed
-    // rather than as drift.
-    expect(result.accepted.map((e) => e.name)).toEqual(["Assets"]);
-    expect(result.accepted[0].changes.map((c) => c.path)).toEqual([
-      "Tags[#cost-center].Key",
-      "Tags[#cost-center].Value",
+    // The platform team's tag is on a path source never declared, so since
+    // #2160 the claim answers before the baseline gets a chance to: it is held
+    // elsewhere, at its live value, and it is not drift. AWS records no field
+    // manager, so the claimed-field set is the only source that can answer.
+    expect(result.accepted).toEqual([]);
+    expect(result.heldElsewhere.map((e) => e.name)).toEqual(["Assets"]);
+    expect(result.heldElsewhere[0].fields).toEqual([
+      { path: "Tags[#cost-center].Key", live: "cost-center", source: "claimed-fields", baseline: "cost-center" },
+      { path: "Tags[#cost-center].Value", live: "platform", source: "claimed-fields", baseline: "platform" },
     ]);
 
     // An unreadable deep read is a hole with a reason — never silence, never
@@ -976,7 +979,10 @@ describe("end to end: declared + mutated live + baseline (#1015)", () => {
     ]);
   });
 
-  test("without the baseline the platform tag is drift, and accepting it is what silences it", async () => {
+  test("the claim silences the platform tag with no baseline at all (#2160)", async () => {
+    // Before #2160 this tag was drift until somebody accepted it. The
+    // declaration is the table AWS cannot provide, and it answers on the first
+    // read, with nothing recorded anywhere.
     wireMocks();
     const result = await deepDiffForLexicon(awsPlugin, {
       environment: "prod",
@@ -984,15 +990,16 @@ describe("end to end: declared + mutated live + baseline (#1015)", () => {
       entities: declared,
     });
     const assets = result.drifted.find((d) => d.name === "Assets");
-    expect(assets?.changes.map((c) => c.path).sort()).toEqual([
+    expect(assets?.changes.map((c) => c.path)).toEqual(["VersioningConfiguration.Status"]);
+    expect(result.heldElsewhere[0].fields.map((f) => f.path)).toEqual([
       "Tags[#cost-center].Key",
       "Tags[#cost-center].Value",
-      "VersioningConfiguration.Status",
     ]);
     expect(result.accepted).toEqual([]);
   });
 
   test("an accepted value that later changes is drift again, with all three axes", async () => {
+    // The baseline's value-bound rule, on the path that is actually declared.
     wireMocks();
     const result = await deepDiffForLexicon(awsPlugin, {
       environment: "prod",
@@ -1000,18 +1007,19 @@ describe("end to end: declared + mutated live + baseline (#1015)", () => {
       entities: declared,
       baseline: {
         Assets: {
-          accepted: [{ path: "Tags[#cost-center].Value", value: "someone-elses-team" }],
+          accepted: [{ path: "VersioningConfiguration.Status", value: "Enabled" }],
         },
       },
     });
     const change = result.drifted
       .find((d) => d.name === "Assets")
-      ?.changes.find((c) => c.path === "Tags[#cost-center].Value");
+      ?.changes.find((c) => c.path === "VersioningConfiguration.Status");
     expect(change).toEqual({
-      path: "Tags[#cost-center].Value",
-      kind: "undeclared",
-      live: "platform",
-      baseline: "someone-elses-team",
+      path: "VersioningConfiguration.Status",
+      kind: "changed",
+      declared: "Enabled",
+      live: "Suspended",
+      baseline: "Enabled",
     });
   });
 

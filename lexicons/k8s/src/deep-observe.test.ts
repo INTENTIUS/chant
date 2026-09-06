@@ -687,19 +687,20 @@ describe("end to end: managed-fields-derived drift (#1076)", () => {
     },
   };
 
-  test("genuine, undeclared and contested drift surface; accepted deviations and controller-stamped metadata do not", async () => {
+  test("contested drift surfaces; fields nobody declared are held elsewhere and accepted deviations are held back", async () => {
     const live = normalizeDeepObservation(
       await observeResourcesDeepK8s({ environment: "prod", entityNames: [...declared.keys()], entities: declared }, cluster().connector),
     );
     const result = diffDeepObservation(declared, live, k8sDeepNormalizationHooks, baseline);
 
+    // Only a path chant's source declares can be drift (#2160). `tier` is
+    // declared and holds a different value live, which is the whole point of
+    // the contested case: a foreign write over a field chant asks for.
     expect(result.drifted).toEqual([
       {
         name: "web",
         type: "K8s::Apps::Deployment",
         changes: [
-          // The #1191 case: foreign-owned, undeclared, not accepted — and the owner says who.
-          { path: "metadata.labels.team", kind: "undeclared", live: "platform", owner: "kubectl-edit" },
           { path: "metadata.labels.tier", kind: "changed", declared: "backend", live: "frontend", owner: "chant:web" },
         ],
       },
@@ -710,16 +711,39 @@ describe("end to end: managed-fields-derived drift (#1076)", () => {
       },
     ]);
 
-    // The accepted HPA replicas and sidecar are held back, not hidden.
+    // Everything source never set, with the manager where managedFields has one
+    // and the claim where it does not. The `team` label needs no baseline entry
+    // to stay quiet now, and `kubectl-edit` still says who put it there.
+    expect(result.heldElsewhere).toEqual([
+      {
+        name: "web",
+        type: "K8s::Apps::Deployment",
+        fields: [
+          { path: "metadata.labels.team", live: "platform", heldBy: "kubectl-edit", source: "field-manager" },
+          { path: "spec.replicas", live: 7, heldBy: "kube-controller-manager", source: "field-manager", baseline: 7 },
+          {
+            path: "spec.template.spec.containers[#istio-proxy].image",
+            live: "istio/proxyv2:1.20",
+            source: "claimed-fields",
+            baseline: "istio/proxyv2:1.20",
+          },
+          {
+            path: "spec.template.spec.containers[#istio-proxy].name",
+            live: "istio-proxy",
+            source: "claimed-fields",
+            baseline: "istio-proxy",
+          },
+        ],
+      },
+    ]);
+
+    // The accepted build-id is held back, not hidden.
     expect(result.accepted).toEqual([
       {
         name: "web",
         type: "K8s::Apps::Deployment",
         changes: [
           { path: "metadata.annotations.build-id", kind: "changed", declared: "42", live: "43", baseline: "43", owner: "chant:web" },
-          { path: "spec.replicas", kind: "undeclared", live: 7, baseline: 7, owner: "kube-controller-manager" },
-          { path: "spec.template.spec.containers[#istio-proxy].image", kind: "undeclared", live: "istio/proxyv2:1.20", baseline: "istio/proxyv2:1.20" },
-          { path: "spec.template.spec.containers[#istio-proxy].name", kind: "undeclared", live: "istio-proxy", baseline: "istio-proxy" },
         ],
       },
     ]);
@@ -739,7 +763,10 @@ describe("end to end: managed-fields-derived drift (#1076)", () => {
     ]);
   });
 
-  test("without the baseline every foreign-owned undeclared field is drift too; accepting is what silences it", async () => {
+  test("without the baseline only the declared paths are drift; the rest are still held elsewhere", async () => {
+    // The baseline was the noise valve before #2160. It is no longer load
+    // bearing for a field nobody declared: the claim answers first, so an HPA's
+    // replica count and an injected sidecar are quiet with no baseline at all.
     const live = normalizeDeepObservation(
       await observeResourcesDeepK8s({ environment: "prod", entityNames: [...declared.keys()], entities: declared }, cluster().connector),
     );
@@ -747,8 +774,10 @@ describe("end to end: managed-fields-derived drift (#1076)", () => {
     const web = result.drifted.find((d) => d.name === "web");
     expect(web?.changes.map((c) => c.path).sort()).toEqual([
       "metadata.annotations.build-id",
-      "metadata.labels.team",
       "metadata.labels.tier",
+    ]);
+    expect(result.heldElsewhere.find((d) => d.name === "web")?.fields.map((f) => f.path)).toEqual([
+      "metadata.labels.team",
       "spec.replicas",
       "spec.template.spec.containers[#istio-proxy].image",
       "spec.template.spec.containers[#istio-proxy].name",
@@ -756,38 +785,40 @@ describe("end to end: managed-fields-derived drift (#1076)", () => {
     expect(result.accepted).toEqual([]);
   });
 
-  test("the same out-of-band label in the accepted baseline is not drift, at that value (#1191)", async () => {
+  test("managedFields names the manager where it has one, and the claim answers where it does not (#2160)", async () => {
+    // The k8s row is the only substrate where both sources are available, so
+    // it is the one place the fallback can be tested against real data. The
+    // `team` label has a managedFields entry addressed by a plain path, so the
+    // API server answers. The injected sidecar's fields are inside a list the
+    // diff addresses by key (`[#istio-proxy]`), which no managedFields entry
+    // names in that form, so the claimed-field set answers instead.
     const live = normalizeDeepObservation(
       await observeResourcesDeepK8s({ environment: "prod", entityNames: [...declared.keys()], entities: declared }, cluster().connector),
     );
-    const withTeam = {
-      web: { ...baseline.web, accepted: [...baseline.web.accepted, { path: "metadata.labels.team", value: "platform" }] },
-    };
-    const result = diffDeepObservation(declared, live, k8sDeepNormalizationHooks, withTeam);
-    const web = result.drifted.find((d) => d.name === "web");
-    expect(web?.changes).toEqual([
-      { path: "metadata.labels.tier", kind: "changed", declared: "backend", live: "frontend", owner: "chant:web" },
-    ]);
-    expect(result.accepted.find((d) => d.name === "web")?.changes).toContainEqual({
+    const result = diffDeepObservation(declared, live, k8sDeepNormalizationHooks);
+    const web = result.heldElsewhere.find((d) => d.name === "web");
+
+    const byManager = web?.fields.find((f) => f.path === "metadata.labels.team");
+    expect(byManager).toEqual({
       path: "metadata.labels.team",
-      kind: "undeclared",
       live: "platform",
-      baseline: "platform",
-      owner: "kubectl-edit",
+      heldBy: "kubectl-edit",
+      source: "field-manager",
     });
 
-    // Value-bound: accepting `team=platform` does not bless `team=security`.
-    const moved = {
-      web: { ...baseline.web, accepted: [...baseline.web.accepted, { path: "metadata.labels.team", value: "security" }] },
-    };
-    const movedResult = diffDeepObservation(declared, live, k8sDeepNormalizationHooks, moved);
-    expect(movedResult.drifted.find((d) => d.name === "web")?.changes).toContainEqual({
-      path: "metadata.labels.team",
-      kind: "undeclared",
-      live: "platform",
-      baseline: "security",
-      owner: "kubectl-edit",
+    const byClaim = web?.fields.find((f) => f.path === "spec.template.spec.containers[#istio-proxy].image");
+    expect(byClaim).toEqual({
+      path: "spec.template.spec.containers[#istio-proxy].image",
+      live: "istio/proxyv2:1.20",
+      source: "claimed-fields",
     });
+    expect(byClaim).not.toHaveProperty("heldBy");
+
+    // Both sources agree on the verdict; they differ only in how much they can
+    // say about it. Neither is drift, and neither is proposed for update.
+    expect(result.drifted.find((d) => d.name === "web")?.changes.map((c) => c.path)).not.toContain(
+      "metadata.labels.team",
+    );
   });
 
   test("a whole-lexicon failure (no client) is a hole for every declared entity, never a clean report", async () => {
@@ -873,27 +904,29 @@ describe("the managed-fields twist: ownership names the writer, the declared tre
     ]);
   });
 
-  test("a controller owns the field and source is silent: the same mutated value is undeclared drift until accepted (#1191)", async () => {
+  test("a controller owns the field and source is silent: the same mutated value is held elsewhere, never drift (#2160)", async () => {
+    // The mirror of the test above, and the whole claim in one pair: the same
+    // live value, the same manager, and the declaration is what decides
+    // whether it is chant's problem.
     const cluster = fakeCluster({ objects: { [objectKey("apps/v1", "Deployment", "app", "prod")]: liveWith("controller") } });
     const entities = declaredWith(false);
     const live = normalizeDeepObservation(
       await observeResourcesDeepK8s({ environment: "prod", entityNames: ["app"], entities }, cluster.connector),
     );
     const result = diffDeepObservation(entities, live, k8sDeepNormalizationHooks);
-    expect(result.drifted).toEqual([
+    expect(result.drifted).toEqual([]);
+    expect(result.heldElsewhere).toEqual([
       {
         name: "app",
         type: "K8s::Apps::Deployment",
-        changes: [{ path: "spec.template.spec.containers[#app].image", kind: "undeclared", live: "app:2.0" }],
+        fields: [
+          { path: "spec.template.spec.containers[#app].image", live: "app:2.0", source: "claimed-fields" },
+        ],
       },
     ]);
-
-    const accepted = {
-      app: { accepted: [{ path: "spec.template.spec.containers[#app].image", value: "app:2.0" }] },
-    };
-    const quiet = diffDeepObservation(entities, live, k8sDeepNormalizationHooks, accepted);
-    expect(quiet.drifted).toEqual([]);
-    expect(quiet.accepted.map((d) => d.name)).toEqual(["app"]);
+    // No baseline entry needed to silence it, which is what #1191's valve was
+    // being used for.
+    expect(result.unchanged).toEqual(["app"]);
   });
 });
 
@@ -954,9 +987,12 @@ describe("secret masking — diff --live never holds a Secret data value (#1830,
     // MASTER_KEY is present on both sides: both values collapse to the mask,
     // so a value-only difference is NOT drift — that is the contract, chant
     // cannot know and must not learn whether the bytes moved.
-    expect(changes.map((c) => `${c.path}:${c.kind}`).sort()).toEqual([
-      "data.INJECTED_KEY:undeclared",
-      "data.PENDING_KEY:absent",
+    expect(changes.map((c) => `${c.path}:${c.kind}`).sort()).toEqual(["data.PENDING_KEY:absent"]);
+
+    // The injected key is a key source never declared, so it is held elsewhere
+    // (#2160). Presence still classifies; the value is still the mask.
+    expect(result.heldElsewhere.find((d) => d.name === "master-key")?.fields).toEqual([
+      { path: "data.INJECTED_KEY", live: "[REDACTED]", source: "claimed-fields" },
     ]);
 
     // The hard line, asserted over the whole serialized result: no data
