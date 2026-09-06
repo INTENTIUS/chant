@@ -8,6 +8,7 @@ export {
   fountainApply,
   resolveEndpoint,
   resolveToken,
+  resolveConnection,
   parseManifest,
   toApplyPayload,
   isChantOwned,
@@ -21,6 +22,7 @@ export type {
   FountainApplySummary,
   ManifestResource,
   FountainHttp,
+  FountainConnectionDeps,
 } from "./fountain-apply";
 
 export { fountainRun, resolveAgentId, TERMINAL_STATUSES } from "./fountain-run";

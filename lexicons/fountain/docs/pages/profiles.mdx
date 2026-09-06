@@ -1,0 +1,89 @@
+---
+title: "Profiles"
+description: "fountain.profiles in chant.config.ts — named endpoints and tokens for fountainApply, fountainRun, and chant run --on fountain."
+diataxis: reference
+---
+
+`fountainApply` and `fountainRun` need an endpoint and a token. Pre-#2124 that meant `FOUNTAIN_ENDPOINT` / `FOUNTAIN_TOKEN` in the shell — fine for one instance and one account, wrong for a project that targets a self-hosted instance for staging and the hosted one for prod. The `fountain.profiles` namespace in `chant.config.ts` names one or more endpoint/token pairs so a project can switch between them with `--profile`, the same way `temporal.profiles` names Temporal connections.
+
+## Profile shape
+
+```ts
+import type { ChantConfig } from "@intentius/chant/config";
+// Brings the `fountain` key into ChantConfig.
+import "@intentius/chant-lexicon-fountain";
+
+export default {
+  lexicons: ["fountain"],
+  fountain: {
+    profiles: {
+      staging: {
+        endpoint: "https://fountain-staging.example.com",
+        token: { env: "FOUNTAIN_STAGING_TOKEN" },
+        team: "staging-steward",
+      },
+      prod: {
+        endpoint: "https://fountain.inevitable.fyi",
+        token: { env: "FOUNTAIN_PROD_TOKEN" },
+      },
+    },
+    defaultProfile: "staging",
+  },
+} satisfies ChantConfig;
+```
+
+## Profile fields
+
+| Field | Type | Description |
+|---|---|---|
+| `endpoint` | `string` | Base URL of the fountain instance this profile targets. |
+| `token` | `{ env: string }` | The name of the environment variable that holds the bearer token — never a literal value. FTN001 refuses a literal string here. |
+| `team` | `string` (optional) | The default steward — a `Teammate` name — that `chant run --on fountain` posts to when the op declares no steward of its own. |
+
+An unknown key anywhere in `fountain` — a namespace-level typo, or one inside a profile — fails config load naming the key, the same way `forgejo` and `temporal` do (chant #1344).
+
+## Precedence
+
+`resolveProfile(config, name?)` returns:
+
+1. The profile named by `name`, if one exists.
+2. Otherwise, the profile named by `defaultProfile`, if one exists.
+3. Otherwise, `undefined`.
+
+`fountainApply` and `fountainRun` resolve endpoint and token field by field: an explicit `endpoint` or `token` argument always wins over the profile. For whichever field an explicit argument doesn't cover, they call `resolveProfile` and, if it returns a profile, read that field from it. Once a profile resolves, it is authoritative — an unset token env var is an actionable error naming the variable, not a silent fall-through to `FOUNTAIN_TOKEN`. Only when `resolveProfile` returns `undefined` (no `fountain.profiles` declared, or neither the named nor the default profile exists) do the activities fall back to the pre-#2124 behavior: `FOUNTAIN_ENDPOINT` / `FOUNTAIN_TOKEN`, then the hosted default endpoint.
+
+```typescript
+// Explicit args always win, per field.
+await fountainApply({ manifestPath: "build/fountain.yaml", endpoint: "http://localhost:4000" });
+
+// Resolves through fountain.profiles.staging (or defaultProfile, if "staging" doesn't exist).
+await fountainApply({ manifestPath: "build/fountain.yaml", profile: "staging" });
+
+// No profile configured at all: falls back to FOUNTAIN_ENDPOINT / FOUNTAIN_TOKEN.
+await fountainApply({ manifestPath: "build/fountain.yaml" });
+```
+
+## Selecting a profile from the CLI
+
+```bash
+# Uses defaultProfile
+chant run steward-converge --on fountain
+
+# Overrides it
+chant run steward-converge --on fountain --profile prod
+```
+
+`--profile` is the same flag `chant run` already exposes for `temporal.profiles`; fountain reads it identically.
+
+## Never a literal token
+
+A profile's `token` is always `{ env: "VAR_NAME" }` — an environment variable name, never a secret value. FTN001 refuses a literal string in that position under `fountain.profiles`, regardless of whether it happens to match a known credential shape:
+
+```ts
+fountain: {
+  profiles: {
+    // FTN001: literal token under fountain.profiles
+    staging: { endpoint: "https://x", token: "sk-abc123" },
+  },
+},
+```

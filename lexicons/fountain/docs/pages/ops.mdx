@@ -22,7 +22,7 @@ The native applier: compiles the serializer's manifest YAML into fountain's bulk
 await fountainApply({ manifestPath: "build/fountain.yaml", prune: true });
 ```
 
-Endpoint and token resolution: explicit args win, then `FOUNTAIN_ENDPOINT` / `FOUNTAIN_TOKEN`, then the hosted default.
+Endpoint and token resolution: explicit args win, then the named `fountain.profiles` entry (`profile` arg, falling back to `defaultProfile`), then `FOUNTAIN_ENDPOINT` / `FOUNTAIN_TOKEN`, then the hosted default. See [Profiles](/chant/lexicons/fountain/profiles/).
 
 ## fountainRun
 

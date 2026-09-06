@@ -22,12 +22,19 @@
  * lists each kind's live state and deletes what's absent from the
  * manifest, same as before.
  *
- * Endpoint/token resolution: explicit args win, then FOUNTAIN_ENDPOINT /
- * FOUNTAIN_TOKEN, then the hosted default endpoint.
+ * Endpoint/token resolution (#2124): explicit args win; then the
+ * `fountain.profiles` entry named by `args.profile` (falling back to
+ * `defaultProfile`) read from the project's `chant.config.ts`; then
+ * FOUNTAIN_ENDPOINT / FOUNTAIN_TOKEN; then the hosted default endpoint. Once
+ * a profile resolves, its own token env var is authoritative — a profile
+ * with an unset env var is an actionable error, not a silent fall-through to
+ * FOUNTAIN_TOKEN.
  */
 
 import { readFileSync } from "node:fs";
 import { parseYAML } from "@intentius/chant/yaml";
+import { loadChantConfig, type ChantConfig } from "@intentius/chant/config";
+import { resolveProfile } from "../../config";
 
 export const DEFAULT_FOUNTAIN_BASE_URL = "https://fountain.inevitable.fyi";
 
@@ -63,8 +70,22 @@ export interface FountainApplyArgs {
   manifestContent?: string;
   endpoint?: string;
   token?: string;
+  /**
+   * Named `fountain.profiles` entry to resolve endpoint/token from (#2124).
+   * Falls back to `defaultProfile` when omitted; ignored for any field an
+   * explicit `endpoint`/`token` arg already supplies.
+   */
+  profile?: string;
+  /** Project root `chant.config.ts` is read from. Default: process.cwd(). */
+  cwd?: string;
   /** Delete chant-owned resources absent from the manifest. Off by default. */
   prune?: boolean;
+}
+
+/** Injectable seam for testing — production loads the config from disk. */
+export interface FountainConnectionDeps {
+  /** Pre-loaded project config (skips reading chant.config.ts). */
+  config?: ChantConfig;
 }
 
 export interface FountainApplySummary {
@@ -91,6 +112,44 @@ export function resolveToken(
   const token = args.token || env.FOUNTAIN_TOKEN;
   if (!token) throw new Error("fountainApply: no token — set FOUNTAIN_TOKEN or pass token");
   return token;
+}
+
+/**
+ * Resolve the endpoint and token to talk to fountain with (#2124).
+ *
+ * Explicit `args.endpoint` / `args.token` always win, field by field. For
+ * whichever field is missing, this reads the project's `chant.config.ts` and
+ * resolves `args.profile` (falling back to `defaultProfile`) through
+ * {@link resolveProfile}. When a profile resolves, it is authoritative for
+ * the field it covers — a profile whose token env var isn't set throws
+ * naming that variable, rather than silently falling through to
+ * `FOUNTAIN_TOKEN`. Only when no profile resolves at all does this fall back
+ * to the pre-#2124 behavior: `FOUNTAIN_ENDPOINT` / `FOUNTAIN_TOKEN` /
+ * `DEFAULT_FOUNTAIN_BASE_URL`.
+ */
+export async function resolveConnection(
+  args: { endpoint?: string; token?: string; profile?: string; cwd?: string },
+  deps?: FountainConnectionDeps,
+): Promise<{ endpoint: string; token: string }> {
+  if (args.endpoint !== undefined && args.token !== undefined) {
+    return { endpoint: resolveEndpoint(args), token: args.token };
+  }
+
+  const config = deps?.config ?? (await loadChantConfig(args.cwd ?? process.cwd())).config;
+  const profile = resolveProfile(config, args.profile);
+
+  if (!profile) {
+    return { endpoint: resolveEndpoint(args), token: resolveToken(args) };
+  }
+
+  const endpoint = resolveEndpoint({ endpoint: args.endpoint ?? profile.endpoint });
+  const token = args.token ?? process.env[profile.token.env];
+  if (!token) {
+    throw new Error(
+      `fountainApply: profile's token environment variable "${profile.token.env}" is not set`,
+    );
+  }
+  return { endpoint, token };
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -191,12 +250,16 @@ async function listByName(http: FountainHttp, kind: string): Promise<Map<string,
 export async function fountainApply(
   args: FountainApplyArgs,
   http?: FountainHttp,
+  deps?: FountainConnectionDeps,
 ): Promise<FountainApplySummary> {
   const content = args.manifestContent ?? readFileSync(args.manifestPath!, "utf-8");
   const resources = parseManifest(content);
 
-  const endpoint = resolveEndpoint(args);
-  const client = http ?? defaultFountainHttp(endpoint, resolveToken(args));
+  let client = http;
+  if (!client) {
+    const { endpoint, token } = await resolveConnection(args, deps);
+    client = defaultFountainHttp(endpoint, token);
+  }
 
   const summary: FountainApplySummary = { created: [], updated: [], pruned: [], secretsUpserted: 0 };
 

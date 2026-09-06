@@ -22,6 +22,11 @@ export * from "./generated/index";
 export { fountainApply, fountainRun, DEFAULT_FOUNTAIN_BASE_URL } from "./op/activities";
 export type { FountainApplyArgs, FountainApplySummary, FountainRunArgs, FountainRunResult } from "./op/activities";
 
+// Config namespace (#2124) — `fountain.profiles` in chant.config.ts, and the
+// resolver both activities and the opRuntime provider (#2126) call.
+export { fountainConfigSchema, resolveProfile } from "./config";
+export type { FountainConfig, FountainProfile } from "./config";
+
 // Composites — secure-by-construction bundles.
 export { ConciergeStack } from "./composites/concierge-stack";
 export type { ConciergeStackOpts, ConciergeStackResources } from "./composites/concierge-stack";
