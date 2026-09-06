@@ -1435,8 +1435,8 @@ describe("buildCommand — OPS014 (op-model post-synth checks, #2122)", () => {
       `
 export const pruneStaging = {
   [Symbol.for("chant.declarable")]: true,
-  entityType: "Temporal::Op",
-  lexicon: "temporal",
+  entityType: "Chant::Op",
+  lexicon: "chant",
   kind: "resource",
   props: {
     name: "prune-staging",
@@ -1459,13 +1459,13 @@ export const pruneStaging = {
       `
 export const converge = {
   [Symbol.for("chant.declarable")]: true,
-  entityType: "Temporal::Op",
-  lexicon: "temporal",
+  entityType: "Chant::Op",
+  lexicon: "chant",
   kind: "resource",
   props: {
     name: "converge",
     overview: "test",
-    searchAttributes: { Converge: "true", Env: "staging", Dial: "apply" },
+    labels: { Converge: "true", Env: "staging", Dial: "apply" },
     phases: [
       { name: "Observe", steps: [{ kind: "activity", fn: "lifecycleDiff", args: { env: "staging" }, id: "diff" }] },
       { name: "Converge", steps: [{ kind: "activity", fn: "convergeTick", args: { rules: [

@@ -34,12 +34,12 @@ function makeCtxFromEntities(entities: Map<string, unknown>): PostSynthContext {
   };
 }
 
-function opEntity(name: string, steps: unknown[], entityType = "Temporal::Op") {
+function opEntity(name: string, steps: unknown[], entityType = "Chant::Op") {
   return makeEntity(entityType, { name, overview: "test", phases: [{ name: "Phase", steps }] });
 }
 
 function opEntityPhases(name: string, phases: Array<{ name: string; steps: unknown[]; parallel?: boolean }>) {
-  return makeEntity("Temporal::Op", { name, overview: "test", phases });
+  return makeEntity("Chant::Op", { name, overview: "test", phases });
 }
 
 describe("OPS013: step-output-ref", () => {
@@ -121,16 +121,13 @@ describe("OPS013: step-output-ref", () => {
     expect(ops013.check(ctx)).toHaveLength(0);
   });
 
-  // #2118 — the Op model's entity type is renaming from "Temporal::Op" to
-  // "Chant::Op"; this check matches both until that migration lands.
-  test("also matches the future \"Chant::Op\" entity type (#2118)", () => {
+  test("ignores an entity whose entityType isn't Chant::Op", () => {
     const ctx = makeCtxFromEntities(new Map([
       ["op", opEntity("reconcile", [
         { kind: "activity", fn: "httpCheck", args: { url: "http://x", contains: stepOutput("nope", "x") } },
-      ], "Chant::Op")],
+      ], "Temporal::Op")],
     ]));
-    const diags = ops013.check(ctx);
-    expect(diags.some((d) => d.checkId === "OPS013")).toBe(true);
+    expect(ops013.check(ctx)).toHaveLength(0);
   });
 
   // ── cross-contract type compatibility (#1950-3) ──────────────────────────

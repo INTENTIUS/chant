@@ -81,8 +81,8 @@ export const b = new Bucket({ encryption: { algo: "AES256" } });
       `
 export default {
   [Symbol.for("chant.declarable")]: true,
-  entityType: "Temporal::Op",
-  lexicon: "temporal",
+  entityType: "Chant::Op",
+  lexicon: "chant",
   kind: "resource",
   props: {
     name: "reconcile",

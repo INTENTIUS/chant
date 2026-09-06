@@ -36,7 +36,7 @@ function makeCtxFromEntities(entities: Map<string, unknown>): PostSynthContext {
   };
 }
 
-function opEntity(name: string, steps: unknown[], entityType = "Temporal::Op") {
+function opEntity(name: string, steps: unknown[], entityType = "Chant::Op") {
   return makeEntity(entityType, { name, overview: "test", phases: [{ name: "Phase", steps }] });
 }
 
@@ -45,10 +45,10 @@ function convergeOpEntity(
   rules: ConvergeRule<ConvergeSymptom>[],
   opts?: { dial?: "observe" | "reconcile" | "apply"; entityType?: string },
 ) {
-  return makeEntity(opts?.entityType ?? "Temporal::Op", {
+  return makeEntity(opts?.entityType ?? "Chant::Op", {
     name,
     overview: "test",
-    searchAttributes: { Converge: "true", Env: "staging", Dial: opts?.dial ?? "observe" },
+    labels: { Converge: "true", Env: "staging", Dial: opts?.dial ?? "observe" },
     phases: [
       { name: "Observe", steps: [{ kind: "activity", fn: "lifecycleDiff", args: { env: "staging" }, id: "diff" }] },
       { name: "Converge", steps: [{ kind: "activity", fn: "convergeTick", args: { rules } }] },
@@ -76,7 +76,7 @@ function destructiveOpEntity(name: string, opts?: { gated?: boolean }) {
         { name: "Apply", steps },
       ]
     : [{ name: "Apply", steps }];
-  return makeEntity("Temporal::Op", { name, overview: "test", phases });
+  return makeEntity("Chant::Op", { name, overview: "test", phases });
 }
 
 describe("OPS014: converge-rule-refusals", () => {
@@ -253,14 +253,11 @@ describe("OPS014: converge-rule-refusals", () => {
     expect(ops014.check(ctx)).toHaveLength(0);
   });
 
-  // #2118 — the Op model's entity type is renaming from "Temporal::Op" to
-  // "Chant::Op"; this check matches both until that migration lands.
-  test("also matches the future \"Chant::Op\" entity type (#2118)", () => {
+  test("ignores an entity whose entityType isn't Chant::Op", () => {
     const rule = when<ConvergeSymptom>(eq("status", "drifted"), run("does-not-exist"), { id: "drift-apply", why: "Re-apply on drift." });
     const ctx = makeCtxFromEntities(new Map([
-      ["converge", convergeOpEntity("converge", [rule], { dial: "apply", entityType: "Chant::Op" })],
+      ["converge", convergeOpEntity("converge", [rule], { dial: "apply", entityType: "Temporal::Op" })],
     ]));
-    const diags = ops014.check(ctx);
-    expect(diags.some((d) => d.checkId === "OPS014" && d.message.includes('unknown op "does-not-exist"'))).toBe(true);
+    expect(ops014.check(ctx)).toHaveLength(0);
   });
 });

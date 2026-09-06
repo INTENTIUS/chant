@@ -33,7 +33,7 @@ function makeCtxFromEntities(entities: Map<string, unknown>): PostSynthContext {
   };
 }
 
-function opEntity(name: string, steps: unknown[], entityType = "Temporal::Op") {
+function opEntity(name: string, steps: unknown[], entityType = "Chant::Op") {
   return makeEntity(entityType, { name, overview: "test", phases: [{ name: "Phase", steps }] });
 }
 
@@ -89,13 +89,10 @@ describe("OPS012: activity-contract", () => {
     expect(ops012.check(ctx)).toHaveLength(0);
   });
 
-  // #2118 — the Op model's entity type is renaming from "Temporal::Op" to
-  // "Chant::Op"; this check matches both until that migration lands.
-  test("also matches the future \"Chant::Op\" entity type (#2118)", () => {
+  test("ignores an entity whose entityType isn't Chant::Op", () => {
     const ctx = makeCtxFromEntities(new Map([
-      ["op", opEntity("deploy", [{ kind: "activity", fn: "lifecycleDiff", args: { environment: "prod" } }], "Chant::Op")],
+      ["op", opEntity("deploy", [{ kind: "activity", fn: "lifecycleDiff", args: { environment: "prod" } }], "Temporal::Op")],
     ]));
-    const diags = ops012.check(ctx);
-    expect(diags.some((d) => d.checkId === "OPS012")).toBe(true);
+    expect(ops012.check(ctx)).toHaveLength(0);
   });
 });

@@ -9,14 +9,16 @@
  *
  * Same shape as OPS012 (`./ops012-activity-contract.ts`): the generic walk
  * lives in `@intentius/chant/op`'s `validateStepOutputRefs`, over the same
- * contract map this file builds from `./activity-contracts.ts`. A producer
+ * contract map this file builds from core's own base-activity contracts
+ * (`../../../op/activities/activity-contracts.ts`, #2117). A producer
  * step whose `fn` has no registered contract is flagged (unlike OPS012's
  * args/outcomeAttribute checks, which skip an unregistered `fn` — a
  * reference has nothing to validate against without one, so it can't be
- * silently allowed the way an unchecked arg can). This also means a
- * reference to an unknown/later producer step is caught with an EMPTY
- * contract map — no lexicon needs to be configured for the purely structural
- * half of this check (unknown step id, later phase) to fire.
+ * silently allowed the way an unchecked arg can). The purely structural half
+ * of this check (an unknown step id, or a reference into a later phase) is
+ * independent of the contract map's contents entirely — no lexicon needs to
+ * be configured, and no activity needs a registered contract at all, for it
+ * to fire.
  *
  * This check is what makes it safe for a lexicon's own serializer to compile
  * every reference it finds unconditionally: `chant build` blocks file output
@@ -41,8 +43,8 @@
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "../../post-synth";
 import { validateStepOutputRefs, type ActivityContract } from "../../../op";
 import type { OpConfig } from "../../../op";
-import * as contracts from "./activity-contracts";
-import { isOpEntityType } from "./support";
+import * as contracts from "../../../op/activities/activity-contracts";
+import { isOpEntity } from "./support";
 
 const CONTRACTS: Map<string, ActivityContract> = new Map(
   Object.values(contracts).map((c) => [c.name, c]),
@@ -56,8 +58,8 @@ export const ops013: PostSynthCheck = {
     const diagnostics: PostSynthDiagnostic[] = [];
 
     for (const [entityKey, entity] of ctx.entities) {
+      if (!isOpEntity(entity)) continue;
       const rec = entity as unknown as Record<string, unknown>;
-      if (!isOpEntityType(rec.entityType)) continue;
 
       const props = ((entity as { props?: Record<string, unknown> }).props ?? {}) as unknown as OpConfig;
       if (typeof props.name !== "string" || !Array.isArray(props.phases)) continue;
