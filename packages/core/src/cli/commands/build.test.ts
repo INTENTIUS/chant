@@ -1402,6 +1402,105 @@ export const x = { [Symbol.for("chant.declarable")]: true, entityType: "X", lexi
   });
 });
 
+// #2122 (epic #2114 sub-issue 6) — OPS012/OPS013/OPS014 are core-owned
+// post-synth checks over the Op model, run unscoped by `coreOpChecks()`
+// regardless of which plugins/lexicons are configured. This is the
+// end-to-end path acceptance criterion 3 needs: `chant build` over a real
+// ConvergeOp-shaped fixture with a destructive gated dispatch rule fails
+// with the OPS014 refusal, with zero plugins/lexicons loaded.
+describe("buildCommand — OPS014 (op-model post-synth checks, #2122)", () => {
+  let testDir: string;
+
+  const mockSerializer: Serializer = {
+    name: "test",
+    rulePrefix: "TEST",
+    serialize: (entities) => JSON.stringify({ resources: [...entities.keys()] }, null, 2),
+  };
+
+  beforeEach(async () => {
+    testDir = join(tmpdir(), `chant-ops014-test-${Date.now()}-${Math.random()}`);
+    await mkdir(testDir, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await rm(testDir, { recursive: true, force: true });
+  });
+
+  test("fails build with the OPS014 refusal on a ConvergeOp dispatching a destructive, gated op", async () => {
+    // The destructive dispatch target: a gated `nativeApply` with
+    // `deleteMode: "gated"` — classified destructive by
+    // `../../op/op-verb-class.ts`, gate or not.
+    await writeFile(
+      join(testDir, "prune-staging.op.ts"),
+      `
+export const pruneStaging = {
+  [Symbol.for("chant.declarable")]: true,
+  entityType: "Temporal::Op",
+  lexicon: "temporal",
+  kind: "resource",
+  props: {
+    name: "prune-staging",
+    overview: "test",
+    phases: [
+      { name: "Approve", steps: [{ kind: "gate", signalName: "approve-x" }] },
+      { name: "Apply", steps: [
+        { kind: "activity", fn: "nativeApply", args: { target: "kubectl", env: "staging", output: "dist", deleteMode: "gated" } },
+      ] },
+    ],
+  },
+};
+      `,
+    );
+
+    // The ConvergeOp-shaped Op: dial "apply", one rule dispatching the
+    // destructive target above.
+    await writeFile(
+      join(testDir, "converge.op.ts"),
+      `
+export const converge = {
+  [Symbol.for("chant.declarable")]: true,
+  entityType: "Temporal::Op",
+  lexicon: "temporal",
+  kind: "resource",
+  props: {
+    name: "converge",
+    overview: "test",
+    searchAttributes: { Converge: "true", Env: "staging", Dial: "apply" },
+    phases: [
+      { name: "Observe", steps: [{ kind: "activity", fn: "lifecycleDiff", args: { env: "staging" }, id: "diff" }] },
+      { name: "Converge", steps: [{ kind: "activity", fn: "convergeTick", args: { rules: [
+        {
+          id: "drift-prune",
+          when: { kind: "field-comparison", field: "status", op: "eq", value: "drifted" },
+          then: { kind: "run", op: "prune-staging" },
+          why: "Prune drifted resources.",
+        },
+      ] } }] },
+    ],
+  },
+};
+      `,
+    );
+
+    const result = await buildCommand({
+      path: testDir,
+      format: "json",
+      serializers: [mockSerializer],
+      plugins: [],
+    });
+
+    expect(result.success).toBe(false);
+    // build.ts's plain error strings carry the diagnostic's message text, not
+    // its checkId — OPS014's own message names what it refused and why (see
+    // ../../lint/rules/op/ops014-converge-rule-refusals.ts).
+    expect(
+      result.errors.some(
+        (e) => e.includes("destructive") && e.includes("prune-staging") && e.includes("refused in v1"),
+      ),
+    ).toBe(true);
+  });
+});
+
 // ── #284 bug 1: -o extension drives format when --format is absent ────────
 describe("resolveBuildFormat", () => {
   test("infers yaml from .yaml / .yml extension", () => {

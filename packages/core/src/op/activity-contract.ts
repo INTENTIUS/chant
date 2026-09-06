@@ -16,23 +16,26 @@
  * An activity declares a contract alongside its implementation — the same
  * "registration surface" the issue asked for (`activity-registry.ts`'s
  * `collectActivities` already does this for implementations; this is the
- * schema-shaped sibling). `chant build` — via a lexicon's own post-synth
- * check, e.g. the temporal lexicon's TMP012 — resolves each step's `fn`
- * against a contract map built the same way and validates `args` and
- * `outcomeAttribute.from`. A step whose `fn` has no registered contract is
- * skipped (not an error): this is deliberately incremental — a lexicon opts
- * an activity in by declaring a contract for it, and the k8s/aws/azure/gcp/
- * fly activity sets are expected to pick this up lexicon by lexicon rather
- * than all at once (see the issue's "worth checking this lands cleanly"
- * note).
+ * schema-shaped sibling). `chant build` resolves each step's `fn` against a
+ * contract map built from `Object.values()` of an activity-contracts module
+ * and validates `args` and `outcomeAttribute.from` — core's own OPS012
+ * (`../lint/rules/op/ops012-activity-contract.ts`, chant #2122) does this
+ * for every declared Op regardless of which lexicons are configured; a
+ * lexicon's own post-synth check can additionally validate against its own
+ * roster the same way (the temporal lexicon's TMP012 did this before #2122
+ * moved the op-model checks to core). A step whose `fn` has no registered
+ * contract is skipped (not an error): this is deliberately incremental — a
+ * contract map opts an activity in by declaring one for it, and the
+ * k8s/aws/azure/gcp/fly activity sets are expected to pick this up one at a
+ * time rather than all at once (see the issue's "worth checking this lands
+ * cleanly" note).
  *
- * Ownership is decentralized on purpose: each lexicon declares contracts for
- * the activities it implements and validates them with its own post-synth
- * check (the same `rulePrefix`-per-lexicon pattern every other check in
- * chant already uses), rather than a shared cross-lexicon registry. A
- * `Chant::Op` step can call an activity contributed by any lexicon, and
- * `PostSynthContext.entities` already carries the whole resolved graph to
- * every lexicon's checks, so no new plumbing is needed for that to work.
+ * Ownership of a contract map is per-caller, not a shared cross-lexicon
+ * registry: whoever builds the map (core's OPS012/OPS013, or a lexicon's own
+ * check) decides which activities it covers. A `Chant::Op` step can call an
+ * activity contributed by any lexicon, and `PostSynthContext.entities`
+ * already carries the whole resolved graph to every check, so no new
+ * plumbing is needed for that to work.
  */
 
 import { z } from "zod";
@@ -265,7 +268,7 @@ export function validateActivitySteps(
           // A step-output reference (#1290) sitting at this path is a
           // placeholder object at build time, not the value it will
           // resolve to — so an args-schema type mismatch here is a false
-          // positive; TMP013 (`validateStepOutputRefs`) is what validates
+          // positive; OPS013 (`validateStepOutputRefs`) is what validates
           // a reference, against the *producer's* declared return schema.
           // An unrecognized-key issue's path is the parent object (`[]`
           // for a top-level extra key), which is never itself a reference,

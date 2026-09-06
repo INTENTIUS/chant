@@ -13,6 +13,8 @@ import { loadComponentChecks } from "../../lint/rules/comp/index";
 import { runComponentChecks, type ComponentCheckDiagnostic } from "../../lint/component-checks";
 import { buildCapabilityRegistry } from "../../components/capability-plugin-loader";
 import type { RollbackPolicy } from "../../components/capability";
+import { coreOpChecks } from "../../lint/rules/op";
+import { runPostSynthChecks } from "../../lint/post-synth";
 import { rule } from "../../lint/declarative";
 import { watchDirectory, formatTimestamp, formatChangedFiles } from "../watch";
 import { formatError, formatInfo } from "../format";
@@ -421,6 +423,98 @@ async function runComponentCheckDiagnostics(
 }
 
 /**
+ * Run the OPS* Op-model post-synth checks (#2122, epic #2114 sub-issue 6 —
+ * OPS012/OPS013/OPS014, ported from the temporal lexicon's
+ * TMP012/TMP013/TMP014) over every `*.op.ts` file under the lint target and
+ * merge them into the same diagnostics/suppressed lists `chant lint` already
+ * reports through, the same treatment {@link runComponentCheckDiagnostics}
+ * above gives COMP*.
+ *
+ * Deliberately scoped DOWNWARD from `infraPath` — the same scan
+ * `getTypeScriptFiles` already ran to build `files` — rather than
+ * `../../op/discover.ts`'s `discoverOps`, which walks UP to the nearest
+ * project root (or the git root, absent a config file) precisely because a
+ * real project's `ops/` convention sits outside `sourceDir`. That upward
+ * walk is right for `chant run`/`chant build`, which always operate on one
+ * whole project; it is wrong here, because `chant lint <path>` (and every
+ * fixture-scoped test that calls this file's `lintCommand`) may point at a
+ * directory with no `chant.config.*` above it short of this repo's own git
+ * root — which would make this check import every `*.op.ts` file in the
+ * entire monorepo on every such call. Scanning only under `infraPath`, like
+ * every other check in this function, keeps this check's cost proportional
+ * to the target the caller actually asked to lint.
+ *
+ * Each `*.op.ts` file's default export is imported directly and used as-is
+ * (it is already the `Declarable` `OpResource` instance `Op()` built) — no
+ * serializer and no lexicon needed, since OPS012/OPS013/OPS014 only ever
+ * read `ctx.entities`, never `ctx.outputs`. That's what lets this fire even
+ * on a project with no lexicons configured at all.
+ *
+ * Reported at `1:1` in the file the Op was declared in, the same whole-file
+ * convention COMP* diagnostics use — a post-synth finding carries no real
+ * line/column (../../lint/post-synth.ts's `PostSynthDiagnostic` doc) and
+ * there's no per-file disable-directive suppression for the same reason
+ * (that doc again), so this reads only `lint.rules` severity overrides, not
+ * `chant-disable` comments.
+ */
+async function runOpCheckDiagnostics(
+  infraPath: string,
+  files: string[],
+): Promise<{ diagnostics: LintDiagnostic[]; suppressed: Array<LintDiagnostic & { reason?: string }> }> {
+  const config = loadConfig(findProjectRoot(infraPath));
+  const opFiles = files.filter((f) => f.endsWith(".op.ts"));
+  if (opFiles.length === 0) return { diagnostics: [], suppressed: [] };
+
+  const entities = new Map<string, unknown>();
+  const fileByOpName = new Map<string, string>();
+  for (const filePath of opFiles) {
+    try {
+      const mod: unknown = await import(filePath);
+      const entity = (mod as { default?: unknown }).default;
+      if (!entity || typeof entity !== "object") continue;
+      const opConfig = (entity as { props?: unknown }).props as { name?: unknown; phases?: unknown } | undefined;
+      if (!opConfig || typeof opConfig.name !== "string" || !Array.isArray(opConfig.phases)) continue;
+      entities.set(opConfig.name, entity);
+      fileByOpName.set(opConfig.name, filePath);
+    } catch {
+      // A file that fails to import is somebody else's problem — a syntax
+      // error surfaces through the AST rule pass over the same file instead
+      // of crashing this one.
+      continue;
+    }
+  }
+
+  if (entities.size === 0) return { diagnostics: [], suppressed: [] };
+
+  const raw = runPostSynthChecks(coreOpChecks(), {
+    outputs: new Map(),
+    entities: entities as Map<string, never>,
+    warnings: [],
+    errors: [],
+    sourceFileCount: opFiles.length,
+  });
+
+  const diagnostics: LintDiagnostic[] = [];
+  const suppressed: Array<LintDiagnostic & { reason?: string }> = [];
+
+  for (const d of raw) {
+    const resolved = resolveConfiguredSeverity(config.rules, d.checkId, d.severity);
+    if (resolved.severity === "off") continue;
+
+    diagnostics.push({
+      file: (d.entity && fileByOpName.get(d.entity)) ?? infraPath,
+      line: 1,
+      column: 1,
+      ruleId: d.checkId,
+      severity: resolved.severity,
+      message: d.message,
+    });
+  }
+
+  return { diagnostics, suppressed };
+}
+
+/**
  * Apply fixes to a file
  */
 function applyFixes(filePath: string, fixes: LintFix[]): void {
@@ -523,6 +617,13 @@ export async function lintCommand(options: LintOptions): Promise<LintResult> {
   diagnostics.push(...componentResult.diagnostics);
   suppressed.push(...componentResult.suppressed);
 
+  // Run the OPS* Op-model post-synth checks (#2122) over every `*.op.ts`
+  // file under the lint target — see runOpCheckDiagnostics's doc for why
+  // this needs no lexicon or build to fire.
+  const opResult = await runOpCheckDiagnostics(infraPath, files);
+  diagnostics.push(...opResult.diagnostics);
+  suppressed.push(...opResult.suppressed);
+
   // Apply fixes if requested
   if (options.fix) {
     // Group fixes by file
@@ -570,6 +671,12 @@ export async function lintCommand(options: LintOptions): Promise<LintResult> {
     const postComponentResult = await runComponentCheckDiagnostics(infraPath, options.sandbox, options.buildParams);
     diagnostics.push(...postComponentResult.diagnostics);
     suppressed.push(...postComponentResult.suppressed);
+
+    // OPS* checks have no `.fix` either; re-run for the same consistency
+    // reason as the COMP* re-run just above.
+    const postOpResult = await runOpCheckDiagnostics(infraPath, files);
+    diagnostics.push(...postOpResult.diagnostics);
+    suppressed.push(...postOpResult.suppressed);
   }
 
   // Count errors and warnings

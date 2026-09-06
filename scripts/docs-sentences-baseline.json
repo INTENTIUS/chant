@@ -544,7 +544,7 @@
   "formatting/bold-first-bullet": 1
  },
  "docs/src/content/docs/guide/converging-lifecycle.mdx": {
-  "formatting/em-dash-density": 26,
+  "formatting/em-dash-density": 25,
   "claude/colon-reveal": 4,
   "tricolon/density": 1,
   "tricolon/comma-series": 1,
@@ -854,10 +854,10 @@
   "claude/colon-reveal": 2
  },
  "docs/src/content/docs/lint-rules/correctness.mdx": {
-  "formatting/em-dash-density": 23,
-  "discourse/punchy-fragments": 5,
+  "formatting/em-dash-density": 24,
+  "discourse/punchy-fragments": 7,
   "claude/colon-reveal": 5,
-  "repetition/near-duplicate": 2,
+  "repetition/near-duplicate": 3,
   "tricolon/comma-series": 2
  },
  "docs/src/content/docs/lint-rules/cross-file.mdx": {

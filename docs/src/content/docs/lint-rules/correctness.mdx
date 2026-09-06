@@ -263,3 +263,78 @@ binds: jobQueue
 ```
 
 ---
+
+## OPS012: Activity Step Args Don't Match the Activity's Contract
+
+An activity step's `args` and `outcomeAttribute.from` must match the activity's registered `ActivityContract`: its name and arg schema, plus its return schema when one is declared. A step whose `fn` has no registered contract is skipped, not flagged, since contract coverage is opt-in per activity.
+
+This runs over every declared Op regardless of which lexicons are configured; an Op is recognized by its entity type, not by which lexicon declared it. An untyped `args: Record<string, unknown>` otherwise lets four failure classes through, and this check catches all of them:
+
+- an unrecognized profile
+- an args key the schema doesn't recognize
+- an args value of the wrong type
+- an `outcomeAttribute.from` path missing from the declared return type
+
+**Severity:** error
+
+```typescript
+// ❌ Triggers OPS012: "env" typo'd as "environment"
+activity("lifecycleDiff", { environment: "prod" });
+```
+
+```typescript
+// ✅ Fixed: matches lifecycleDiff's registered contract
+activity("lifecycleDiff", { env: "prod" });
+```
+
+## OPS013: Dangling Step-Output Reference
+
+A step-output reference (`stepOutput()` / `step.out.field`) must name a step that precedes it, in scope. "In scope" means the same main `phases`; not `onFailure`, and not nested inside an `effect` step. The named step also needs a registered contract with a `returns` schema the referenced path resolves against. This check additionally compares the producer's declared return type at that path against the consumer's declared arg type at the same position, and flags a mismatch such as a boolean-returning path feeding a string-typed arg.
+
+This is what lets a lexicon's serializer compile every reference it finds unconditionally: `chant build` blocks output while an error-severity finding stands, so a workflow referencing an unresolved step never reaches disk. The purely structural half of this check (an unknown step id, or a reference into a later phase) fires with no activity contracts registered at all, so it still catches a dangling reference on a project with no lexicons configured.
+
+**Severity:** error
+
+```typescript
+// ❌ Triggers OPS013: "diff" is never a step id in this Op
+activity("httpCheck", { url, contains: stepOutput("diff", "output") });
+```
+
+```typescript
+// ✅ Fixed: "diff" names a preceding step in the same phases
+const diff = activity("lifecycleDiff", { env: "prod" }, "diff");
+activity("httpCheck", { url, contains: diff.out.output });
+```
+
+## OPS014: ConvergeOp Rule Table Refusal
+
+`chant build` refuses a `ConvergeOp` rule table that isn't honest about what it will do. Each of these fails the build:
+
+- a rule with no (or blank) `why`
+- a predicate outside the evaluable subset (`eq`/`neq`/`gt`/`gte`/`lt`/`lte`/`truthy`/`falsy`/`allOf`/`anyOf` over a known symptom field, nothing else)
+- a `run()` action naming an Op that no declared Op has as its `name`
+- a `run()` dispatching a `mutating` Op under any dial but `apply` (the table's answer for `reconcile` is "open PR," which v1 doesn't implement)
+- a `run()` dispatching a `destructive` Op under any dial, unconditionally
+- a rule whose predicate reads `adoptCount` while dispatching a `mutating` Op (an unowned resource is reported, never auto-claimed)
+
+The destructive refusal holds no matter whether the target carries a gate. A converge tick runs unattended on a schedule, with no one watching it fire. A destructive dispatch needs a human's approval before it is attempted, not a gate the tick consults only after already committing to run the op, and `run()` has no way to ask first. See the [Converging Lifecycle](/chant/guide/converging-lifecycle/) guide's "Build-time refusals" section for the full dial × verb-class matrix.
+
+**Severity:** error
+
+```typescript
+// ❌ Triggers OPS014: "prune-staging" is destructive; refused under every dial
+when(eq("status", "drifted"), run("prune-staging"), {
+  id: "drift-prune",
+  why: "Prune drifted resources.",
+});
+```
+
+```typescript
+// ✅ Fixed: report instead, and remediate the destructive op manually
+when(eq("status", "drifted"), report("staging has drifted resources to prune"), {
+  id: "drift-prune",
+  why: "Destructive remediation stays a manual, gated ApplyOp/ReconcileOp run.",
+});
+```
+
+---
