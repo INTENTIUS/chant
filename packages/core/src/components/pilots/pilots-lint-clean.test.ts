@@ -52,13 +52,13 @@ describe("Real pilots lint clean under COMP* (#562 acceptance criteria)", () => 
     expect(runAll(ctx)).toEqual([]);
   });
 
-  it("the Neo4j fan-out pilot produces zero COMP* diagnostics other than the expected COMP004 (gate requires Temporal)", () => {
+  it("the Neo4j fan-out pilot produces zero COMP* diagnostics other than the expected COMP004 (a gate ends the run pending approval)", () => {
     // The Neo4j pilot's Node-1 approval gate is a deliberate design choice
-    // (see neo4j-fanout.pilot.ts's own docstring and
-    // ../driver.ts's DriverGateUnsupportedError / docs/components/
-    // orchestration.mdx's "Temporal is optional" aside) — it is the one real
-    // pilot that genuinely needs the durable backend, so COMP004 firing here
-    // is the *correct*, expected signal, not a defect. A real project would
+    // (see neo4j-fanout.pilot.ts's own docstring, and ../driver.ts on
+    // gate-as-fact, #2119) — a run reaching it stops there pending `chant
+    // approve`, which is exactly the standing human wait COMP004 exists to
+    // surface, so COMP004 firing here is the *correct*, expected signal, not
+    // a defect. A real project would
     // acknowledge it with `// chant-disable-next-line COMP004 -- <reason>`
     // once authored as an actual `*.component.ts` file (see
     // ../../lint/rules/comp/comp004-gate-needs-temporal.ts and the

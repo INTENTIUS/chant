@@ -113,7 +113,7 @@ describe.skipIf(skipReason !== "")(
           await loadProfiles(),
         );
 
-        expect(result.ok).toBe(true);
+        expect(result.status).toBe("ok");
         expect(result.records.map((r) => `${r.phase}:${r.status}`)).toEqual([
           "Init:ok",
           "Plan:ok",

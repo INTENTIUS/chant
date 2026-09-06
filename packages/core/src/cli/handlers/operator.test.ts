@@ -11,7 +11,9 @@ const loadChantConfigMock = vi.fn();
 const readLeaseMock = vi.fn();
 const readConvergeLedgerMock = vi.fn();
 const appendGateResolutionMock = vi.fn();
+const appendPendingGateMock = vi.fn();
 const readGateResolutionsMock = vi.fn();
+const readGateLedgerMock = vi.fn();
 const pushLifecycleMock = vi.fn();
 
 vi.mock("../../op/operator", async () => {
@@ -45,7 +47,9 @@ vi.mock("../../lifecycle/gate-ledger", async () => {
   return {
     ...actual,
     appendGateResolution: (...args: unknown[]) => appendGateResolutionMock(...args),
+    appendPendingGate: (...args: unknown[]) => appendPendingGateMock(...args),
     readGateResolutions: (...args: unknown[]) => readGateResolutionsMock(...args),
+    readGateLedger: (...args: unknown[]) => readGateLedgerMock(...args),
   };
 });
 vi.mock("../../lifecycle/git", async () => {
@@ -71,6 +75,8 @@ beforeEach(() => {
   loadProfilesMock.mockResolvedValue({});
   discoverOpsMock.mockResolvedValue({ ops: new Map([["fountain-apply", {}]]), errors: [] });
   pushLifecycleMock.mockResolvedValue(true);
+  readGateResolutionsMock.mockResolvedValue({ records: [], malformed: 0 });
+  readGateLedgerMock.mockResolvedValue({ resolutions: [], pending: [], malformed: 0 });
 });
 
 describe("runOperator", () => {
@@ -84,7 +90,7 @@ describe("runOperator", () => {
 
   test("--once runs exactly one round and exits 0 when nothing failed", async () => {
     discoverConvergeOpsMock.mockResolvedValue({ ops: [{ config: { name: "staging-converge" } }], errors: [] });
-    runOperatorRoundMock.mockResolvedValue([{ kind: "ticked", op: "staging-converge", env: "staging", result: { op: "staging-converge", records: [], totalMs: 1, ok: true } }]);
+    runOperatorRoundMock.mockResolvedValue([{ kind: "ticked", op: "staging-converge", env: "staging", result: { op: "staging-converge", records: [], totalMs: 1, status: "ok", startedAt: "2026-01-01T00:00:00.000Z" } }]);
 
     const code = await runOperator(ctx({ once: true }));
     expect(code).toBe(0);
@@ -283,6 +289,51 @@ describe("runOperatorStatus", () => {
     expect(printed[0].pendingGates).toEqual([]);
     logSpy.mockRestore();
   });
+  // #2119 — a gate a plain `chant run <op>` stopped at is a pending fact on
+  // that op's own ledger, with no converge tick anywhere behind it.
+  test("lists a pending fact for a non-converge op", async () => {
+    discoverConvergeOpsMock.mockResolvedValue({ ops: [], errors: [] });
+    discoverOpsMock.mockResolvedValue({ ops: new Map([["prod-apply", {}]]), errors: [] });
+    readGateLedgerMock.mockResolvedValue({
+      resolutions: [],
+      pending: [{
+        version: 1, kind: "pending", op: "prod-apply", gate: "rollout-gate",
+        description: "release manager signs off",
+        timestamp: "2026-01-01T00:00:00.000Z", expiresAt: "2099-01-01T00:00:00.000Z",
+        url: "https://pr.example/9",
+      }],
+      malformed: 0,
+    });
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    expect(await runOperatorStatus(ctx({}))).toBe(0);
+    const out = logSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(out).toContain("pending gates (no converge tick)");
+    expect(out).toContain("chant approve prod-apply rollout-gate");
+    expect(out).toContain("expires: 2099-01-01T00:00:00.000Z");
+    expect(out).toContain("approve at: https://pr.example/9");
+    logSpy.mockRestore();
+  });
+
+  test("an expired pending fact is not listed", async () => {
+    discoverConvergeOpsMock.mockResolvedValue({ ops: [], errors: [] });
+    discoverOpsMock.mockResolvedValue({ ops: new Map([["prod-apply", {}]]), errors: [] });
+    readGateLedgerMock.mockResolvedValue({
+      resolutions: [],
+      pending: [{
+        version: 1, kind: "pending", op: "prod-apply", gate: "rollout-gate",
+        timestamp: "2026-01-01T00:00:00.000Z", expiresAt: "2026-01-03T00:00:00.000Z",
+      }],
+      malformed: 0,
+    });
+
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    expect(await runOperatorStatus(ctx({}))).toBe(0);
+    expect(logSpy.mock.calls.map((c) => String(c[0])).join("\n")).not.toContain("pending gates");
+    logSpy.mockRestore();
+    errSpy.mockRestore();
+  });
 });
 
 describe("runApprove", () => {
@@ -357,6 +408,43 @@ describe("runApprove", () => {
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const code = await runApprove(ctx({ path: "fountain-apply", extraPositional: "g", url: "org/repo/pull/1" }));
     expect(code).toBe(1);
+    expect(appendGateResolutionMock).not.toHaveBeenCalled();
+    errSpy.mockRestore();
+  });
+
+  // #2119 — `--expire` clears a standing pending fact without approving it.
+  test("--expire supersedes the standing pending fact and writes no resolution", async () => {
+    readGateLedgerMock.mockResolvedValue({
+      resolutions: [],
+      pending: [{
+        version: 1, kind: "pending", op: "fountain-apply", gate: "rollout-gate",
+        description: "release manager signs off",
+        timestamp: "2026-01-01T00:00:00.000Z", expiresAt: "2099-01-01T00:00:00.000Z",
+      }],
+      malformed: 0,
+    });
+    appendPendingGateMock.mockResolvedValue({ commit: "sha", record: {} });
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const code = await runApprove(ctx({ path: "fountain-apply", extraPositional: "rollout-gate", expire: true }));
+
+    expect(code).toBe(0);
+    expect(appendGateResolutionMock).not.toHaveBeenCalled();
+    const written = appendPendingGateMock.mock.calls[0][0];
+    expect(written.op).toBe("fountain-apply");
+    expect(written.gate).toBe("rollout-gate");
+    expect(written.description).toBe("release manager signs off");
+    // Already expired the moment it is written: the next run re-decides.
+    expect(written.expiresAt).toBe(written.timestamp);
+    expect(pushLifecycleMock).toHaveBeenCalled();
+    errSpy.mockRestore();
+  });
+
+  test("--expire with nothing standing writes nothing and still exits 0", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const code = await runApprove(ctx({ path: "fountain-apply", extraPositional: "rollout-gate", expire: true }));
+    expect(code).toBe(0);
+    expect(appendPendingGateMock).not.toHaveBeenCalled();
     expect(appendGateResolutionMock).not.toHaveBeenCalled();
     errSpy.mockRestore();
   });

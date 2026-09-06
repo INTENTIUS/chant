@@ -19,8 +19,8 @@
  * ../cli/handlers/run.ts's `--progress-json` wiring).
  */
 
-/** Terminal status for a wave/component/phase/run — mirrors DriverStepRecord's ok/fail split, collapsed to the two outcomes a consumer renders progress against. */
-export type RunProgressStatus = "ok" | "failed";
+/** Terminal status for a wave/component/phase/run — mirrors `DriverRunResult.status`'s three outcomes (#2119): `gated` is neither, and reporting it as `failed` would have a progress consumer page someone for a decision nobody has made yet. */
+export type RunProgressStatus = "ok" | "failed" | "gated";
 
 /** The run is about to start. `waves` are the parallel-safe waves the run will attempt, in order (see resolveComponentGraph) — 1-based wave numbers in every other event index into this array. */
 export interface RunStartEvent {

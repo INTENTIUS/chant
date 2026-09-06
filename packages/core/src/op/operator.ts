@@ -37,7 +37,7 @@
  */
 import type { ActivityFn, ActivityProfile } from "./activity-registry";
 import { discoverOps, type DiscoveredOp } from "./discover";
-import { runOpLocally, OpRunFailure, LocalGateUnsupportedError, type OpRunResult } from "./local-executor";
+import { runOpLocally, OpRunFailure, type OpRunResult } from "./local-executor";
 import { acquireLease, stillHoldsLease, currentHolderId, DEFAULT_LEASE_TTL_MS, type LeaseRecord, type AcquireLeaseResult } from "../lifecycle/lease";
 import { StaleLockError } from "../lifecycle/git";
 
@@ -144,11 +144,9 @@ export async function runOperatorRound(opts: OperatorRoundOptions): Promise<Oper
       const message =
         err instanceof OpRunFailure
           ? `Op "${config.name}" failed — see its ledger record for step-level detail`
-          : err instanceof LocalGateUnsupportedError
+          : err instanceof Error
             ? err.message
-            : err instanceof Error
-              ? err.message
-              : String(err);
+            : String(err);
       events.push({ kind: "tick-failed", op: config.name, env, error: message });
     }
   }
@@ -200,7 +198,8 @@ export async function runOperatorForever(opts: OperatorLoopOptions): Promise<voi
 export function formatRoundLine(event: OperatorTickEvent): string {
   switch (event.kind) {
     case "ticked":
-      return `operator: ${event.op}@${event.env} ticked=1 ok=${event.result.ok}`;
+      return `operator: ${event.op}@${event.env} ticked=1 status=${event.result.status}` +
+        (event.result.gate ? ` gate="${event.result.gate.gate}"` : "");
     case "skipped-lease-held":
       return `operator: ${event.op}@${event.env} skipped=1(lease-held${event.heldBy ? `:${event.heldBy}` : ""})`;
     case "tick-failed":

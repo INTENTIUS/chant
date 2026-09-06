@@ -8,11 +8,9 @@
  * activity's own runtime backstop re-classifying each dispatch target's verb
  * class before it runs — see `verbClassAllowedToDispatch` below) -> dispatch
  * within budget (`chant run <op>`, the existing local runner — a gated
- * dispatched Op fails loudly with `LocalGateUnsupportedError`, which is why
- * `TMP014` refuses a destructive dispatch target outright in v1 rather than
- * shipping a "gated destructive dispatch" path that can never actually
- * complete) -> record (one line to the converge ledger,
- * `@intentius/chant/lifecycle/converge-ledger`).
+ * dispatched Op ends `gated` with its pending fact on the ledger, exit code 3,
+ * which this tick turns into a `"gated"` outcome) -> record (one line to the
+ * converge ledger, `@intentius/chant/lifecycle/converge-ledger`).
  *
  * Deliberately monolithic, matching `reconcilePr`'s shape (one activity that
  * derives the change set, regenerates, and opens the PR) rather than
@@ -143,47 +141,62 @@ async function observeStatusRows(env: string, signal?: AbortSignal): Promise<Com
 }
 
 /**
- * The local executor's own gate-rejection message (`../../../../../packages/
- * core/src/op/local-executor.ts`'s `LocalGateUnsupportedError`), stable and
- * well-known — `dispatchOp` matches it below to tell "hit a gate" apart from
- * every other dispatch failure, the same way `ensureSearchAttributes`
- * elsewhere in this codebase matches a known error string rather than
- * threading a typed error code through a subprocess boundary. `chant run`
- * itself never gains a distinct JSON field or exit code for this in v1 —
- * the message is the one contract, and it's the same message a human sees
- * running the dispatch by hand.
+ * `chant run <op>`'s exit code for a run that stopped at an unapproved gate
+ * (#2119 — `../../../../../packages/core/src/cli/handlers/run.ts`'s
+ * `GATED_EXIT_CODE`). The typed signal that replaced the old string match
+ * against `LocalGateUnsupportedError`'s message: since #2119 the executor
+ * records the pending fact itself and ends with `status: "gated"`, so a tick
+ * no longer has to reconstruct a gate from an error string, and no longer
+ * writes the pending fact on the executor's behalf.
  */
-const GATE_UNSUPPORTED_PATTERN = /gate "([^"]+)" is not supported in local mode/;
+const GATED_EXIT_CODE = 3;
 
-/** Gate-as-fact detection for a dispatch's raw failure output (#1485) — pure, unit-tested directly rather than only through `dispatchOp`'s subprocess plumbing. `undefined` when the failure wasn't a gate rejection. */
+/**
+ * The gate a gated `chant run` stopped at, read off its JSON result (#2119) —
+ * pure, unit-tested directly rather than only through `dispatchOp`'s
+ * subprocess plumbing. `undefined` when the output says nothing about a gate.
+ */
 export function classifyDispatchFailure(raw: string): { gateName: string } | undefined {
-  const match = raw.match(GATE_UNSUPPORTED_PATTERN);
+  for (const line of raw.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("{")) continue;
+    try {
+      const parsed = JSON.parse(trimmed) as { status?: string; gate?: { gate?: string } };
+      if (parsed.status === "gated" && typeof parsed.gate?.gate === "string") {
+        return { gateName: parsed.gate.gate };
+      }
+    } catch {
+      // Not this line's JSON — keep looking.
+    }
+  }
+  const match = /is gated on "([^"]+)"/.exec(raw);
   return match ? { gateName: match[1] } : undefined;
 }
 
 /**
- * Dispatch one matched `run` action via the existing local runner (`chant
- * run <op>`). A gated target Op is gate-as-fact (#1485): its own local
- * executor still refuses to run it (`LocalGateUnsupportedError`, unchanged —
- * see `../../../../../packages/core/src/lifecycle/gate-ledger.ts`'s doc on
- * why that's still true in v1), but this tick no longer treats that refusal
- * as an ordinary dispatch failure. `gateName` set on the return value is
- * what `convergeTick` below turns into a `"gated"` outcome instead of a
- * `"reported"` one — a terminal, durable, non-blocking fact rather than an
- * error the operator retries every tick until a human notices the log.
+ * Dispatch one matched `run` action via the existing local runner (`chant run
+ * <op> --json`). A gated target Op is gate-as-fact (#1485, closed by #2119):
+ * the target's own executor reads the gate ledger, records the pending fact,
+ * and exits {@link GATED_EXIT_CODE} — so this tick reads the gate off that
+ * result rather than parsing a refusal message, and records the `"gated"`
+ * outcome that names it. The pending fact itself is the executor's to write;
+ * duplicating it here is what "call the same executor code" rules out.
  */
 async function dispatchOp(
   opName: string,
   signal?: AbortSignal,
 ): Promise<{ ok: true } | { ok: false; error: string; gateName?: string }> {
   try {
-    await execAsync(`chant run ${shellQuote(opName)}`, { signal });
+    await execAsync(`chant run ${shellQuote(opName)} --json`, { signal });
     return { ok: true };
   } catch (err) {
-    const e = err as { stderr?: string; message?: string };
+    const e = err as { code?: number; stdout?: string; stderr?: string; message?: string };
     const raw = e.stderr ?? e.message ?? String(err);
-    const gate = classifyDispatchFailure(raw);
-    return { ok: false, error: sanitizeOneLine(raw), gateName: gate?.gateName };
+    if (e.code === GATED_EXIT_CODE) {
+      const gate = classifyDispatchFailure(`${e.stdout ?? ""}\n${raw}`);
+      if (gate) return { ok: false, error: sanitizeOneLine(raw), gateName: gate.gateName };
+    }
+    return { ok: false, error: sanitizeOneLine(raw) };
   }
 }
 
@@ -375,10 +388,12 @@ export async function convergeTick(args: ConvergeTickArgs, signal?: AbortSignal)
 
     const result = await dispatchOp(outcome.op, signal);
     if (!result.ok && result.gateName) {
-      // Gate-as-fact (#1485): a terminal, durable, non-blocking fact — not
-      // an ordinary dispatch failure the operator keeps retrying. See
-      // ../../../../../packages/core/src/lifecycle/gate-ledger.ts's doc for
-      // how this resolves (`chant approve`, or a merged PR).
+      // Gate-as-fact (#1485, closed by #2119): a terminal, durable,
+      // non-blocking fact — not an ordinary dispatch failure the operator
+      // keeps retrying. The target's own executor already wrote the pending
+      // record to `_gates/<op>.jsonl`; this outcome is the tick's account of
+      // the same event. See ../../../../../packages/core/src/lifecycle/
+      // gate-ledger.ts for how it resolves (`chant approve`, or a merged PR).
       outcome.action = "gated";
       outcome.gateName = result.gateName;
       // #2028: the pending fact carries its address when this tick is running

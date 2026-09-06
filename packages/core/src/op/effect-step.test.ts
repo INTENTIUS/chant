@@ -11,7 +11,7 @@
  * - `receiptStaleness` (WatchOp's phase) is read-only: it reports absent and
  *   differing receipts as findings and never writes.
  */
-import { describe, test, expect } from "vitest";
+import { describe, test, expect, vi } from "vitest";
 import { EffectReceipt, receiptExpectation, EXISTENCE_EXPECTATION } from "../effect-receipt";
 import { INTRINSIC_MARKER, type Intrinsic } from "../intrinsic";
 import { effect, phase } from "./builders";
@@ -23,7 +23,8 @@ import {
 } from "./receipt-store";
 import type { ActivityFn, ActivityProfile } from "./activity-registry";
 import type { OpConfig, ActivityStep } from "./types";
-import { runOpLocally, findGate, LocalGateUnsupportedError, OpRunFailure } from "./local-executor";
+import { runOpLocally, OpRunFailure } from "./local-executor";
+import { memoryGateLedgerPort } from "./gate";
 
 function fakeIntrinsic(json: unknown): Intrinsic {
   return {
@@ -216,7 +217,7 @@ describe("runOpLocally — effect steps", () => {
     const ran: string[] = [];
     const activities = activityMap(store, { runSeed: async () => void ran.push("runSeed") });
     const result = await runOpLocally(seedOp(), activities, PROFILES);
-    expect(result.ok).toBe(true);
+    expect(result.status).toBe("ok");
     expect(ran).toEqual([]);
     expect(writes).toEqual([]);
     // The read records the effect as already applied; the nested step is skipped.
@@ -235,7 +236,7 @@ describe("runOpLocally — effect steps", () => {
       { runSeed: async () => void order.push("runSeed") },
     );
     const result = await runOpLocally(seedOp(), activities, PROFILES);
-    expect(result.ok).toBe(true);
+    expect(result.status).toBe("ok");
     expect(order).toEqual(["runSeed", "write"]);
     expect(writes).toEqual([{ name: "seeded", expectation: receiptExpectation(seeded) }]);
     expect(result.records.map((r) => [r.fn, r.status])).toEqual([
@@ -262,7 +263,7 @@ describe("runOpLocally — effect steps", () => {
     // then writes.
     healthy = true;
     const rerun = await runOpLocally(seedOp(), activities, PROFILES);
-    expect(rerun.ok).toBe(true);
+    expect(rerun.status).toBe("ok");
     expect(writes).toEqual([{ name: "seeded", expectation: receiptExpectation(seeded) }]);
   });
 
@@ -282,7 +283,7 @@ describe("runOpLocally — effect steps", () => {
     ]);
   });
 
-  test("a gate nested in an effect step is rejected up front, like any other gate", () => {
+  test("a gate nested in an effect step stops before the receipt is written (#2119)", async () => {
     const config: OpConfig = {
       name: "gated",
       overview: "",
@@ -290,11 +291,25 @@ describe("runOpLocally — effect steps", () => {
         phase("Seed", [effect(seeded, [{ kind: "gate", signalName: "approve-seed" }, step("runSeed")])]),
       ],
     };
-    expect(findGate(config)?.signalName).toBe("approve-seed");
     const { store } = memStore();
-    return expect(
-      runOpLocally(config, activityMap(store, { runSeed: async () => {} }), PROFILES),
-    ).rejects.toThrow(LocalGateUnsupportedError);
+    const ran = vi.fn();
+    const result = await runOpLocally(
+      config,
+      activityMap(store, { runSeed: async () => { ran(); } }),
+      PROFILES,
+      undefined,
+      { gates: memoryGateLedgerPort(), now: "2026-09-05T12:00:00.000Z" },
+    );
+    expect(result.status).toBe("gated");
+    expect(result.gate?.gate).toBe("approve-seed");
+    expect(ran).not.toHaveBeenCalled();
+    // The receipt is untouched, so the next run re-proposes the effect.
+    expect(result.records.map((r) => [r.fn, r.status])).toEqual([
+      ["receiptRead", "ok"],
+      ["gate:approve-seed", "skipped"],
+      ["runSeed", "skipped"],
+      ["receiptWrite", "skipped"],
+    ]);
   });
 
   test("an effect step in a parallel phase is refused — read-compare-run-write is ordered", async () => {

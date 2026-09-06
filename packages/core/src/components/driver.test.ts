@@ -5,17 +5,17 @@
  * implementations are a separate later issue (#557). These tests exercise the
  * driver's generic behavior only: dependency ordering + parallel-safe waves,
  * sequential vs parallel step execution, `onFailure`/saga rollback in reverse
- * order, output wiring (`@Phase.field` and `@<component>.publish.*`), and that
- * a `gate` errors on the local executor. Several cases replay the real pilot
+ * order, output wiring (`@Phase.field` and `@<component>.publish.*`), and
+ * gate-as-fact on the local executor (#2119). Several cases replay the real pilot
  * declarations (../pilots/*.pilot.ts) as realistic inputs.
  */
 
 import { describe, expect, it } from "vitest";
 import { CapabilityRegistry, type DeployContext } from "./capability";
 import { stubCapability } from "./verbs/stub";
+import { memoryGateLedgerPort } from "../op/gate";
 import {
   DependencyCycleError,
-  DriverGateUnsupportedError,
   DriverRunFailure,
   UnknownDependencyError,
   accumulateComponentOutputs,
@@ -210,32 +210,102 @@ describe("runComponentDeploy — sequential vs parallel", () => {
   });
 });
 
-describe("runComponentDeploy — gate on the local executor", () => {
-  it("throws DriverGateUnsupportedError when a phase contains a gate", async () => {
-    const registry = new CapabilityRegistry();
-    const component: DriverComponent = {
-      name: "neo4j-cluster",
-      deploy: [
-        {
-          phase: "Node 1",
-          steps: [{ kind: "gate", signalName: "approve-node-1" }, { kind: "cfn-deploy" }],
-        },
-      ],
-    };
-    await expect(
-      runComponentDeploy(component, { env: "dev", component: "neo4j-cluster" }, registry, {}),
-    ).rejects.toThrow(DriverGateUnsupportedError);
+describe("runComponentDeploy — gate as fact (#2119)", () => {
+  const NOW = "2026-09-05T12:00:00.000Z";
+
+  const gatedComponent = (): DriverComponent => ({
+    name: "neo4j-cluster",
+    deploy: [
+      { phase: "Prepare", steps: [{ kind: "cfn-deploy" }] },
+      { phase: "Node 1", steps: [{ kind: "gate", signalName: "approve-node-1" }, { kind: "code-deploy" }] },
+    ],
+    rollback: [{ phase: "Undo", steps: [{ kind: "cfn-deploy" }] }],
   });
 
-  it("the neo4j pilot's gated Node 1 phase errors locally (matches chant's local-executor behavior)", async () => {
+  function registryWithCalls() {
+    const registry = new CapabilityRegistry();
+    const calls: string[] = [];
+    const rolledBack: string[] = [];
+    for (const kind of ["cfn-deploy", "code-deploy"]) {
+      registry.register(
+        fakeCapability(kind, {
+          run: () => { calls.push(kind); return { ok: true }; },
+          rollback: () => { rolledBack.push(kind); },
+        }).capability,
+      );
+    }
+    return { registry, calls, rolledBack };
+  }
+
+  it("ends gated, records the pending fact, and runs nothing after the gate", async () => {
+    const { registry, calls, rolledBack } = registryWithCalls();
+    const port = memoryGateLedgerPort();
+    const result = await runComponentDeploy(
+      gatedComponent(), { env: "dev", component: "neo4j-cluster" }, registry, {}, undefined,
+      { port, now: NOW },
+    );
+
+    expect(result.status).toBe("gated");
+    expect(result.ok).toBe(false);
+    expect(result.gate).toMatchObject({ op: "neo4j-cluster", gate: "approve-node-1" });
+    expect(port.appended).toHaveLength(1);
+    expect(calls).toEqual(["cfn-deploy"]);
+    // A gate is not a failure: nothing unwinds and no `rollback` phase runs.
+    expect(rolledBack).toEqual([]);
+    expect(result.records.map((r) => [r.kind, r.status])).toEqual([
+      ["cfn-deploy", "ok"],
+      ["gate:approve-node-1", "skipped"],
+      ["code-deploy", "skipped"],
+    ]);
+  });
+
+  it("a resolution newer than the pending fact passes the gate and carries the approver", async () => {
+    const { registry, calls } = registryWithCalls();
+    const port = memoryGateLedgerPort({
+      pending: [{
+        version: 1, kind: "pending", op: "neo4j-cluster", gate: "approve-node-1",
+        timestamp: "2026-09-05T10:00:00.000Z", expiresAt: "2026-09-07T10:00:00.000Z",
+      }],
+      resolutions: [{
+        version: 1, op: "neo4j-cluster", gate: "approve-node-1",
+        resolvedBy: "alex", timestamp: "2026-09-05T11:00:00.000Z",
+      }],
+    });
+    const result = await runComponentDeploy(
+      gatedComponent(), { env: "dev", component: "neo4j-cluster" }, registry, {}, undefined,
+      { port, now: NOW },
+    );
+
+    expect(result.status).toBe("ok");
+    expect(calls).toEqual(["cfn-deploy", "code-deploy"]);
+    expect(result.records.find((r) => r.kind === "gate:approve-node-1")?.approval)
+      .toEqual({ gate: "approve-node-1", resolvedBy: "alex", timestamp: "2026-09-05T11:00:00.000Z" });
+  });
+
+  it("the neo4j pilot's gated Node 1 phase ends the run pending approval", async () => {
     const registry = new CapabilityRegistry();
     for (const kind of ["cfn-deploy", "code-deploy", "wait-cluster-healthy"]) {
       registry.register(fakeCapability(kind, { run: () => ({ ok: true }) }).capability);
     }
     const json = projectToJson(neo4jCluster) as unknown as DriverComponent;
-    await expect(runComponentDeploy(json, { env: "dev", component: "neo4j-cluster" }, registry, {})).rejects.toThrow(
-      /gate "approve-neo4j-node-1" is not supported/,
+    const result = await runComponentDeploy(
+      json, { env: "dev", component: "neo4j-cluster" }, registry, {}, undefined,
+      { port: memoryGateLedgerPort(), now: NOW },
     );
+    expect(result.status).toBe("gated");
+    expect(result.gate?.gate).toBe("approve-neo4j-node-1");
+  });
+
+  it("a gated component stops the whole interpret run without throwing", async () => {
+    const { registry } = registryWithCalls();
+    const run = await runInterpretDriver([gatedComponent()], registry, {
+      env: "dev",
+      gates: memoryGateLedgerPort(),
+      now: NOW,
+    });
+    expect(run.status).toBe("gated");
+    expect(run.gatedComponent).toBe("neo4j-cluster");
+    expect(run.gate?.gate).toBe("approve-node-1");
   });
 });
 

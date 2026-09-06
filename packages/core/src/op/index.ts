@@ -28,8 +28,10 @@ export { generateOpsPipeline } from "./generate-pipeline";
 export type { GenerateOpsPipelineResult } from "./generate-pipeline";
 export { loadActivities, loadProfiles, resolveActivity } from "./activity-registry";
 export type { ActivityFn, ActivityProfile } from "./activity-registry";
-export { runOpLocally, parseDuration, findGate, LocalGateUnsupportedError, OpRunFailure } from "./local-executor";
-export type { StepRecord, OpRunResult } from "./local-executor";
+export { runOpLocally, parseDuration, OpRunFailure } from "./local-executor";
+export type { StepRecord, OpRunResult, RunOpOptions } from "./local-executor";
+export { evaluateGate, gitGateLedgerPort, memoryGateLedgerPort, approveCommand } from "./gate";
+export type { GateLedgerPort, GateCheck, GateCheckInput } from "./gate";
 export { createLocalOpRuntime } from "./runtimes/local";
 export type {
   OpRuntimeProvider, OpRunHandle, OpRunRecord, OpRunStartOptions, OpRunState, OpRunStatus,

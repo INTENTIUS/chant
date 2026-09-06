@@ -78,23 +78,45 @@ All operator state — ticks, gates, leases — lives on git. `rm -rf` of any lo
 
 ## Gate-as-fact
 
-A gate suspends a Temporal workflow until signaled — there's nothing to suspend in a converge tick with no durable runtime underneath it. When a tick's `run()` dispatch hits a target Op that declares a gate, the local executor still refuses to run it (the same `LocalGateUnsupportedError` any gated Op hits locally), but the tick no longer treats that as an ordinary dispatch failure. It records a **terminal, durable fact** instead:
+A gate suspends a Temporal workflow until signaled. There is nothing to suspend on a runtime that does not wait, so chant makes a gate a **fact** instead: reaching one, a run reads the gate ledger, and either walks through on a resolution someone has already written or records that it is waiting and stops.
+
+Run a gated Op directly and you see both halves:
+
+```bash
+chant run prod-apply
+```
+
+```
+[phase] Plan
+  ✓ terraformPlan(root=app)   2.1s
+  • gate:rollout-gate   0ms
+  • terraformApply(root=app)   skipped
+Op "prod-apply" is gated on "rollout-gate" after 2.1s
+  release manager signs off
+  approve : chant approve prod-apply rollout-gate
+  expires : 2026-09-07T12:00:00.000Z
+```
+
+The run exits **3** — not 1. A gate is a decision nobody has made yet, not a broken Op, and a CI job that reads 3 can report "waiting on approval" instead of paging whoever is on call. No phase after the gate runs, and no `onFailure` phase runs either: nothing failed, so there is nothing to compensate for. The pending fact lands on `_gates/<op>.jsonl` beside the resolutions, with the gate's `timeout` as its expiry (48h by default). Running again before it expires re-reads the same fact rather than writing another one, so an operator ticking every minute against an unapproved gate does not grow the ledger by a line a minute.
+
+A converge tick reports the same event in its own vocabulary. Its `run()` dispatch of a gated Op sees exit 3 and records one `ConvergeRuleOutcome` with `action: "gated"` and the gate's name, on the same ledger record every other tick outcome lands on (`<env>/converge.jsonl`):
 
 ```
 converge(staging): drifted=1 remediated=0 reported=0 skipped-budget=0 skipped-flap=0 gated=1 unobserved=0 adopted=0
 ```
 
-— one `ConvergeRuleOutcome` with `action: "gated"` and the gate's name, on the same ledger record every other tick outcome lands on (`<env>/converge.jsonl`). The tick ends there for that rule; it does not block, retry, or queue. The next tick re-observes independently and may fire the same rule again, recording another `gated` fact — visible in `chant operator status`'s pending-gates list either way.
+The tick ends there for that rule; it does not block, retry, or queue. The next tick re-observes independently and may fire the same rule again — visible in `chant operator status`'s pending-gates list either way.
 
-The pending fact carries an address when the tick has one. A tick running inside the PR (or MR) job that carries the change knows where approval happens, so it records that link on the outcome's `url`, and `chant operator status` prints it under the pending gate:
+The pending fact carries an address when the run has one. A run inside the PR (or MR) job that carries the change knows where approval happens, so it records that link, and `chant operator status` prints it under the pending gate:
 
 ```
   pending gates:
     - fountain-apply gate "rollout-gate" (rule drift-apply) — resolve: chant approve fountain-apply rollout-gate
+      expires: 2026-09-07T12:00:00.000Z
       approve at: https://github.com/org/repo/pull/123
 ```
 
-A tick with no PR behind it records no `url` at all — the field is absent, never a synthesized link.
+A run with no PR behind it records no `url` at all — the field is absent, never a synthesized link. A gate an ordinary `chant run <op>` stopped at appears under a `pending gates (no converge tick)` heading, since no rule dispatched it.
 
 Resolution is out-of-band, the same two paths [Reconciling Lifecycle](/chant/guide/reconciling-lifecycle/) already uses for a human gate:
 
@@ -104,16 +126,27 @@ chant approve fountain-apply rollout-gate --actor alex --url "https://github.com
 
 writes the counterpart fact — a `GateResolutionRecord` at `_gates/<op>.jsonl` — or a merged PR resolves it just as validly. `--url` is the typed link, so a reader gets "resolved by this PR" without sniffing free text; omit it inside a PR/MR CI job and that job's own PR is used. `--note` stays for prose.
 
-<Aside type="caution" title="What chant approve does not (yet) do">
-Recording a resolution is a durable, queryable fact — it does not retroactively
-make the gated Op's local dispatch succeed. The local executor still refuses
-any Op containing a gate, unconditionally, resolution or not: re-run it with
-`--temporal`, or let the merged PR itself carry the change. Wiring an approved
-gate back into local dispatch is a semantic change to `GateStep` handling in
-both executors (local and the generated Temporal workflow) — [issue #1485](https://github.com/INTENTIUS/chant/issues/1485)
-scopes that out on purpose, the same way it scopes `chant approve` in v1 to
-local trust (anyone who can run it locally can write a resolution) rather than
-a signed record.
+Then run the Op again. It reads the resolution, walks through the gate carrying the approver onto the step record, and finishes:
+
+```
+  ✓ gate:rollout-gate   0ms
+    [approved] alex at 2026-09-05T13:04:00.000Z (https://github.com/org/repo/pull/123)
+  ✓ terraformApply(root=app)   41.2s
+Op "prod-apply" completed in 43.4s
+```
+
+Ordering is what makes this safe. A resolution counts only if it is newer than the gate's newest pending fact, so approving in advance does not clear a gate recorded since, and last month's approval does not answer the fact this morning's run wrote. To take back a gate nobody intends to finish, `chant approve <op> <gate> --expire` clears the standing pending fact without approving anything — the next run decides the gate from scratch.
+
+`chant run --components <name>` behaves identically. A `gate` in a component's composition stops that component pending `chant approve <component> <gate>`, exit 3, with no saga unwind and no `rollback` phase. The steps that ran before the gate are the steps the author meant to run before the approval.
+
+<Aside type="note" title="The limits of chant approve">
+A resolution is a durable, queryable fact rather than an authorization check.
+Anyone who can run `chant approve` locally can write one, the same trust
+boundary a local `git commit` already has, and [issue #1485](https://github.com/INTENTIUS/chant/issues/1485)
+scopes signed resolutions out on purpose. Re-running is also what clears a
+gate; nothing resumes a run in place. On the Temporal path a gate is still a
+durable wait for a signal, which is a different mechanism with the same
+meaning.
 </Aside>
 
 ## `chant operator status`

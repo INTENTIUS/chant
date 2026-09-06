@@ -142,7 +142,7 @@ describe("runOperatorRound — lease + tick execution over a fixture ConvergeOp 
       const activities = fakeTickActivities(dir, "staging", "staging-converge");
 
       const events = await runOperatorRound({ cwd: dir, holder: "op-a", activities, profiles: PROFILES });
-      expect(events).toEqual([{ kind: "ticked", op: "staging-converge", env: "staging", result: expect.objectContaining({ ok: true }) }]);
+      expect(events).toEqual([{ kind: "ticked", op: "staging-converge", env: "staging", result: expect.objectContaining({ status: "ok" }) }]);
 
       const { records } = await readConvergeLedger("staging", { cwd: dir });
       expect(records).toHaveLength(1);
@@ -332,8 +332,20 @@ describe("runOperatorForever — interval/timer behavior", () => {
 
 describe("formatRoundLine", () => {
   test("renders each event kind as one line", () => {
-    expect(formatRoundLine({ kind: "ticked", op: "x", env: "staging", result: { op: "x", records: [], totalMs: 1, ok: true } }))
-      .toContain("ticked=1 ok=true");
+    expect(formatRoundLine({
+      kind: "ticked", op: "x", env: "staging",
+      result: { op: "x", records: [], totalMs: 1, status: "ok", startedAt: "2026-09-05T12:00:00.000Z" },
+    })).toContain("ticked=1 status=ok");
+    expect(formatRoundLine({
+      kind: "ticked", op: "x", env: "staging",
+      result: {
+        op: "x", records: [], totalMs: 1, status: "gated", startedAt: "2026-09-05T12:00:00.000Z",
+        gate: {
+          version: 1, kind: "pending", op: "x", gate: "rollout-gate",
+          timestamp: "2026-09-05T12:00:00.000Z", expiresAt: "2026-09-07T12:00:00.000Z",
+        },
+      },
+    })).toContain('status=gated gate="rollout-gate"');
     expect(formatRoundLine({ kind: "skipped-lease-held", op: "x", env: "staging", heldBy: "holder-a" }))
       .toContain("lease-held:holder-a");
     expect(formatRoundLine({ kind: "tick-failed", op: "x", env: "staging", error: "boom" }))
