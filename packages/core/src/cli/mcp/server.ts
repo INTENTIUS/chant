@@ -9,7 +9,7 @@ import { searchTool, createSearchHandler } from "./tools/search";
 import type { LexiconPlugin } from "../../lexicon";
 import type { McpRequest, McpResponse, McpRequestMeta, ToolDefinition, ToolHandler, ResourceDefinition } from "./types";
 import { createSnapshotTool, createDiffTool } from "./lifecycle-tools";
-import { createOpListTool, createOpRunTool, createOpStatusTool, createOpSignalTool, createOpReportTool } from "./op-tools";
+import { createOpListTool, createOpRunTool, createOpStatusTool, createOpApproveTool, createOpReportTool } from "./op-tools";
 import { buildResourcesList, handleResourcesRead } from "./resource-handlers";
 
 /**
@@ -103,7 +103,7 @@ export class McpServer {
     this.registerTool(diff.definition, diff.handler);
 
     // Register Op tools
-    for (const factory of [createOpListTool, createOpRunTool, createOpStatusTool, createOpSignalTool, createOpReportTool]) {
+    for (const factory of [createOpListTool, createOpRunTool, createOpStatusTool, createOpApproveTool, createOpReportTool]) {
       const t = factory();
       this.registerTool(t.definition, t.handler);
     }

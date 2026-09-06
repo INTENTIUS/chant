@@ -24,6 +24,14 @@ export interface ParsedArgs {
   local?: boolean;
   /** `chant run` — run via a Temporal cluster instead of the local executor. */
   temporal?: boolean;
+  /**
+   * `chant run <op> --on <lexicon>` (#2121) — which runtime hosts the run.
+   * The named lexicon's `opRuntime` (`../lexicon.ts`) takes it; omitted, core's
+   * built-in `local` provider does. Applies to every `run` subcommand, so
+   * `run status`/`log`/`list`/`cancel`/`approve` all address the same runtime
+   * the run started on.
+   */
+  on?: string;
   /** `chant run` — emit the structured OpRunResult as JSON on stdout. */
   json?: boolean;
   /**

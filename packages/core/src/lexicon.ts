@@ -12,6 +12,7 @@ import type { CompletionContext, CompletionItem, HoverContext, HoverInfo, CodeAc
 import type { McpToolContribution, McpResourceContribution } from "./mcp/types";
 import type { DriverComponent } from "./components/driver";
 import type { EmulatorDeclaration } from "./op/emulator-lifecycle";
+import type { OpRuntimeProvider } from "./op/runtime";
 import type { OwnershipChannel, OwnershipMarker } from "./ownership";
 import type { LexiconConfigSchema } from "./lexicon-config";
 import type { RuleMeta } from "./audit/catalog";
@@ -23,6 +24,17 @@ import type { DeepNormalizationHooks, DeepObservationResult } from "./deep-obser
 import type { DisruptionQuery, DisruptionVerdict } from "./lifecycle/disruption";
 import type { OwnerChainVerdict } from "./owner-chain";
 import type { CommandGroup } from "./cli/command-group";
+
+// Re-exported so a lexicon that hosts Op runs (#2121) can type its
+// `opRuntime` from the same entry it imports the plugin contract from.
+export type {
+  OpRuntimeProvider,
+  OpRunHandle,
+  OpRunRecord,
+  OpRunStartOptions,
+  OpRunState,
+  OpRunStatus,
+} from "./op/runtime";
 
 // Re-exported so a lexicon can author its command group (#1078) from the
 // same `@intentius/chant/lexicon` entry it imports the plugin contract from.
@@ -836,6 +848,18 @@ export interface LexiconPlugin {
     ops: ScheduledOpSpec[],
     options?: ComponentPipelineOptions,
   ): OpPipelineResult;
+
+  /**
+   * Host Op runs — the seam `chant run <op> --on <this lexicon>` dispatches to
+   * (#2121, epic #2114). Core ships one provider of its own, `local`, and
+   * selects it when no `--on` is passed; a lexicon that can start, watch,
+   * cancel and wake runs somewhere else implements the same contract and
+   * every `chant run` subcommand goes through it unchanged.
+   *
+   * Core never imports a hosting lexicon, so this is the only direction the
+   * dependency runs. Omit for lexicons that host nothing.
+   */
+  readonly opRuntime?: OpRuntimeProvider;
 
   /**
    * Render this lexicon's config-declared build roots into entities (#1548

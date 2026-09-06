@@ -10,7 +10,7 @@ diataxis: reference
 chant run <name> [flags]
 chant run list [flags]
 chant run status <name> [flags]
-chant run signal <name> <signal> [flags]
+chant run approve <op> <gate> [flags]
 chant run cancel <name> [flags]
 chant run log <name> [flags]
 chant run --components <name|all> [flags]
@@ -22,7 +22,19 @@ chant run --components <name|all> [flags]
 
 `chant run <name>` runs **local by default**: the Op executes in-process with no Temporal server, worker, or built `worker.ts`. Pass `--temporal` to run against a Temporal cluster instead (worker spawn + workflow submission). One flag selects the runtime — no config is inspected. See [Local vs Temporal](/chant/guide/local-vs-temporal/) for the trade-off.
 
-Local mode covers phase sequencing, retries, activity profiles, and `onFailure` compensation. Gates, schedules, durable resume, and the run-management subcommands (`list` / `status` / `log` / `signal` / `cancel`) require `--temporal` and a reachable Temporal server. Connection settings come from `chant.config.ts` under `temporal.profiles`; see [Worker Profiles](/chant/lexicons/temporal/worker-profiles/).
+Local mode covers phase sequencing, retries, activity profiles, and `onFailure` compensation. Gates, schedules and durable resume still require `--temporal` and a reachable Temporal server. Connection settings come from `chant.config.ts` under `temporal.profiles`; see [Worker Profiles](/chant/lexicons/temporal/worker-profiles/).
+
+## Choosing a runtime with `--on`
+
+Every `run` subcommand addresses one **runtime**, the thing that actually hosts the run. Without a flag that is the built-in `local` runtime, which executes the Op in the chant process. `--on <lexicon>` hands the run to a configured lexicon that implements the `opRuntime` hook instead, and the subcommands follow it there: `run status`, `run log`, `run list`, `run cancel` and `run approve` all query the runtime named by the same flag.
+
+```bash
+chant run alb-deploy                  # the built-in local runtime
+chant run alb-deploy --on fountain    # a lexicon that hosts runs
+chant run status alb-deploy --on fountain
+```
+
+A name that is not a configured lexicon is refused with the list of lexicons that are. A configured lexicon that hosts nothing is refused by name. Core ships only the `local` runtime and never imports a hosting lexicon, so a project gets the hosted path by declaring the lexicon, not by upgrading chant.
 
 ## Subcommands
 
@@ -42,56 +54,54 @@ A gate or schedule in the Op fails fast in local mode with an actionable message
 
 ### `run list`
 
-List all discovered Ops (`*.op.ts` files) with their current Temporal run status. Requires `--temporal`. With `--components`, list discovered components and their component workflows instead.
+List all discovered Ops (`*.op.ts` files) with the run state the selected runtime reports for each. With `--components`, list discovered components and their component workflows instead, which still requires `--temporal`.
 
 ```bash
-chant run list --temporal
+chant run list
+chant run list --on fountain
 chant run list --components --temporal
 ```
 
-Output columns: `NAME`, `PHASES`, `TASK-QUEUE`, `DEPENDS`, `OVERVIEW`, `STATUS`.
+Output columns: `NAME`, `PHASES`, `DEPENDS`, `OVERVIEW`. The name carries the run state when the runtime reports one.
 
 ### `run status <name>`
 
-Show the current state of an Op's latest workflow run.
+Show the state the selected runtime reports for an Op's latest run. A runtime with no record of the Op says so and exits 0.
 
 ```bash
-chant run status alb-deploy --temporal
+chant run status alb-deploy
+chant run status alb-deploy --on fountain
 chant run status search-service --components --temporal
 ```
 
-### `run signal <name> <signal>`
+### `run approve <op> <gate>`
 
-Send a named signal to unblock a gate step in a running workflow.
-
-```bash
-chant run signal alb-deploy gate-dns-delegation
-```
-
-The signal name must match the `signalName` passed to the `gate()` builder in the Op definition. Pass `--components` to signal a component's durable gate instead (see `run --components` below).
-
-For an approval gate, `--approver <name>` records who approved. It rides the signal payload into workflow history, and defaults to `GITHUB_ACTOR`, `GITLAB_USER_LOGIN`, or `USER` when omitted.
+Record a gate's resolution, then wake the runtime hosting the gated run. This is the rename of `run signal`, and a different act: a resolution is a fact on the gate ledger, not a message to a waiting workflow. The ledger write is the same one [`chant approve`](/chant/cli/operator/) performs, so a resolution recorded either way reads back identically; the runtime is told afterwards only so a parked run wakes now rather than on its next tick. A runtime that has no wake hook is not an error, since the next run reads the fact.
 
 ```bash
-chant run signal alb-deploy release-approval --temporal --approver alex
+chant run approve alb-deploy release-approval --approver alex
+chant run approve alb-deploy release-approval --on fountain --url https://github.com/acme/infra/pull/42
 ```
+
+`--approver <name>` records who approved, defaulting to `GITHUB_ACTOR`, `GITLAB_USER_LOGIN`, or `USER`. The address the approval happened at goes in `--url`, which must be an absolute `http`/`https` URL. Free-text context goes in `--note`.
 
 ### `run cancel <name>`
 
-Cancel the active workflow run. Requires `--force`.
+Cancel the active run on the selected runtime. Requires `--force`. The local runtime runs an Op in the foreground and so has nothing to cancel; Ctrl-C is the answer there, and the command says so.
 
 ```bash
-chant run cancel alb-deploy --force
+chant run cancel alb-deploy --force --on fountain
 ```
 
 Pass `--components` to cancel a component's durable workflow instead.
 
 ### `run log <name>`
 
-Show run history for an Op.
+Show the run history the selected runtime holds for an Op, newest first.
 
 ```bash
-chant run log alb-deploy --temporal
+chant run log alb-deploy
+chant run log alb-deploy --on fountain --limit 10
 chant run log search-service --components --temporal
 ```
 
@@ -119,7 +129,7 @@ chant run --components search-service --env staging --seed-outputs out/shared-al
 
 #### Streaming progress: `--progress-json`
 
-`--progress-json` streams one NDJSON record per line to stdout while the run executes, so a consumer can render live progress instead of tailing logs. On the local component path each line is a `RunProgressEvent` (wave, component, phase, step). On `chant run <name> --temporal` each line is a `StepRecord` for a settled step, keyed by declared-step identity. Run semantics, ordering and exit code are unchanged.
+`--progress-json` streams one NDJSON record per line to stdout while the run executes, so a consumer can render live progress instead of tailing logs. On the component path each line is a `RunProgressEvent` (wave, component, phase, step). On `chant run <name>` each line is a `StepRecord` for a settled step, fed by whatever runtime is hosting the run. Run semantics, ordering and exit code are unchanged.
 
 On a successful run, `chant run --components` auto-emits one immutable release record per component that published a digest-bearing artifact — `(component, env, digest, gitSha, runId, timestamp, actor)`, appended to the same [release ledger](/chant/components/observability/) the standalone [`chant components release`](/chant/cli/components/) command writes to. This is a post-run CLI step: it never runs inside the Temporal workflow (determinism), and it never runs at all when the deploy fails. See [Auto-recorded releases](#auto-recorded-releases) below.
 
@@ -162,7 +172,8 @@ The `--no-release-record` flag always wins over config for that one invocation. 
 |------|-------------|
 | `--local` | Run with the local in-process executor — the default (`run <name>`, `run --components`) |
 | `--temporal` | Run via a Temporal cluster: gates, schedules, durable resume (`run <name>`, `run --components <name>`) |
-| `--components` | Target a component instead of an Op (`run --components`, and `run signal` / `run cancel` against a component's workflow) |
+| `--on <lexicon>` | Which runtime hosts the run: a configured lexicon with an `opRuntime`, or the built-in local runtime when omitted (every `run` subcommand) |
+| `--components` | Target a component instead of an Op (`run --components`, and `run cancel` against a component's workflow) |
 | `--no-release-record` | Skip auto-emitting a release-ledger record after a successful `run --components` deploy — default is ON (`run --components`) |
 | `--env <name>` | Target [environment](/chant/configuration/config-file/#environments), threaded into every capability's context (`run --components`); defaults to `local` |
 | `--json` | Emit the structured run result as JSON on stdout (`run <name>`, `run --components`) |
@@ -175,7 +186,7 @@ The `--no-release-record` flag always wins over config for that one invocation. 
 | `--param <name=value>` | Bind a declared build-time parameter for the component build; repeatable (`run --components`) |
 | `--params-file <path>` | JSON file of build-time parameter values (`run --components`) |
 | `--sandbox` | Execute project source in one isolated child process. Refuses an Op with a `policyGate` step |
-| `--approver <name>` | Who approved a gated change; rides the gate signal into workflow history (`run signal`) |
+| `--approver <name>` | Who approved a gated change; recorded on the gate-resolution fact (`run approve`) |
 | `-v, --verbose` | List every resolved build parameter, and show stack traces on errors |
 
 ## Exit Codes

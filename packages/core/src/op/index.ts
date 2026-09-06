@@ -30,6 +30,10 @@ export { loadActivities, loadProfiles, resolveActivity } from "./activity-regist
 export type { ActivityFn, ActivityProfile } from "./activity-registry";
 export { runOpLocally, parseDuration, findGate, LocalGateUnsupportedError, OpRunFailure } from "./local-executor";
 export type { StepRecord, OpRunResult } from "./local-executor";
+export { createLocalOpRuntime } from "./runtimes/local";
+export type {
+  OpRuntimeProvider, OpRunHandle, OpRunRecord, OpRunStartOptions, OpRunState, OpRunStatus,
+} from "./runtime";
 export { renderHuman, renderJson } from "./local-output";
 export {
   activityContract, isActivityContract, collectActivityContracts, validateActivitySteps, KNOWN_ACTIVITY_PROFILES,

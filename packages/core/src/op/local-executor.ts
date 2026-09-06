@@ -329,16 +329,19 @@ async function runEffectStep(
   profiles: Record<string, ActivityProfile>,
   resultsById: Map<string, unknown>,
   signal?: AbortSignal,
+  onRecord?: (record: StepRecord) => void,
 ): Promise<{ records: StepRecord[]; failed: boolean }> {
   const records: StepRecord[] = [];
+  /** Collect a record and hand it to the caller's progress sink in one move. */
+  const push = (record: StepRecord): void => { records.push(record); onRecord?.(record); };
 
   const read = await runStep(receiptReadStep(step), phaseName, activities, profiles, resultsById, signal);
-  records.push(read.record);
+  push(read.record);
   if (read.record.status === "fail") return { records, failed: true };
 
   const result = read.result as Partial<ReceiptReadResult> | undefined;
   if (typeof result?.expectation !== "string") {
-    records.push({
+    push({
       phase: phaseName,
       fn: `effect:${step.receipt.name}`,
       args: {},
@@ -353,7 +356,7 @@ async function runEffectStep(
   if (result.current === expectation) {
     // Effect already applied — skip the nested steps, write nothing.
     for (const nested of step.steps) {
-      if (nested.kind === "activity") records.push(skippedRecord(phaseName, nested.fn, nested.args));
+      if (nested.kind === "activity") push(skippedRecord(phaseName, nested.fn, nested.args));
     }
     return { records, failed: false };
   }
@@ -362,13 +365,13 @@ async function runEffectStep(
   const nestedActivities = step.steps.filter(isActivity);
   for (let i = 0; i < nestedActivities.length; i++) {
     const ran = await runStep(nestedActivities[i], phaseName, activities, profiles, resultsById, signal);
-    records.push(ran.record);
+    push(ran.record);
     if (ran.record.status === "fail") {
       // Receipt left untouched (stale) — the next run re-proposes the effect.
       for (const skipped of nestedActivities.slice(i + 1)) {
-        records.push(skippedRecord(phaseName, skipped.fn, skipped.args));
+        push(skippedRecord(phaseName, skipped.fn, skipped.args));
       }
-      records.push(skippedRecord(phaseName, "receiptWrite"));
+      push(skippedRecord(phaseName, "receiptWrite"));
       return { records, failed: true };
     }
   }
@@ -387,7 +390,7 @@ async function runEffectStep(
     resultsById,
     signal,
   );
-  records.push(wrote.record);
+  push(wrote.record);
   return { records, failed: wrote.record.status === "fail" };
 }
 
@@ -398,6 +401,7 @@ async function runPhase(
   profiles: Record<string, ActivityProfile>,
   resultsById: Map<string, unknown>,
   signal?: AbortSignal,
+  onRecord?: (record: StepRecord) => void,
 ): Promise<StepRecord[]> {
   // Defensive: gates are pre-flighted, but never execute one if it slips
   // through — including a gate nested inside an effect step.
@@ -417,19 +421,22 @@ async function runPhase(
     const records = (
       await Promise.all(steps.map((s) => runStep(s, phase.name, activities, profiles, resultsById, signal)))
     ).map((r) => r.record);
+    for (const record of records) onRecord?.(record);
     if (records.some((r) => r.status === "fail")) throw new PhaseFailure(records);
     return records;
   }
 
   const steps = phase.steps.filter((s): s is ActivityStep | EffectStep => !isGate(s));
   const records: StepRecord[] = [];
+  /** Collect a record and hand it to the caller's progress sink in one move. */
+  const push = (record: StepRecord): void => { records.push(record); onRecord?.(record); };
 
   const skipRemaining = (from: number) => {
     for (const skipped of steps.slice(from)) {
       if (isEffect(skipped)) {
-        records.push(skippedRecord(phase.name, `effect:${skipped.receipt.name}`));
+        push(skippedRecord(phase.name, `effect:${skipped.receipt.name}`));
       } else {
-        records.push(skippedRecord(phase.name, skipped.fn, skipped.args));
+        push(skippedRecord(phase.name, skipped.fn, skipped.args));
       }
     }
   };
@@ -437,7 +444,8 @@ async function runPhase(
   for (let i = 0; i < steps.length; i++) {
     const step = steps[i];
     if (isEffect(step)) {
-      const { records: effRecords, failed } = await runEffectStep(step, phase.name, activities, profiles, resultsById, signal);
+      // The nested run already fed `onRecord`; only collect here.
+      const { records: effRecords, failed } = await runEffectStep(step, phase.name, activities, profiles, resultsById, signal, onRecord);
       records.push(...effRecords);
       if (failed) {
         skipRemaining(i + 1);
@@ -446,7 +454,7 @@ async function runPhase(
       continue;
     }
     const { record } = await runStep(step, phase.name, activities, profiles, resultsById, signal);
-    records.push(record);
+    push(record);
     if (record.status === "fail") {
       // Mark the remaining steps in this phase as skipped, then abort.
       skipRemaining(i + 1);
@@ -463,12 +471,18 @@ async function runPhase(
  * `OpRunFailure` (carrying the partial result) on terminal failure, after
  * running any `onFailure` phases in reverse order. Throws
  * `LocalGateUnsupportedError` up front if the Op contains a gate.
+ *
+ * `onRecord` (#2121) is called once per settled step, in the order the records
+ * are produced — what the local op runtime (./runtimes/local.ts) feeds
+ * `--progress-json` from. Optional and side-effect free when omitted: the
+ * returned result is byte-for-byte what it was before the parameter existed.
  */
 export async function runOpLocally(
   config: OpConfig,
   activities: Map<string, ActivityFn>,
   profiles: Record<string, ActivityProfile>,
   signal?: AbortSignal,
+  onRecord?: (record: StepRecord) => void,
 ): Promise<OpRunResult> {
   const gate = findGate(config);
   if (gate) throw new LocalGateUnsupportedError(gate.signalName);
@@ -496,7 +510,7 @@ export async function runOpLocally(
   try {
     for (const phase of config.phases) {
       if (signal?.aborted) throw new PhaseFailure([]);
-      records.push(...(await runPhase(phase, activities, profiles, resultsById, signal)));
+      records.push(...(await runPhase(phase, activities, profiles, resultsById, signal, onRecord)));
     }
   } catch (err) {
     if (err instanceof PhaseFailure) records.push(...err.records);
@@ -506,7 +520,7 @@ export async function runOpLocally(
     if (!signal?.aborted) {
       for (const phase of [...(config.onFailure ?? [])].reverse()) {
         try {
-          records.push(...(await runPhase(phase, activities, profiles, resultsById, signal)));
+          records.push(...(await runPhase(phase, activities, profiles, resultsById, signal, onRecord)));
         } catch (compErr) {
           if (compErr instanceof PhaseFailure) records.push(...compErr.records);
         }

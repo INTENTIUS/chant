@@ -467,50 +467,50 @@ describe("McpServer", () => {
         return tool.inputSchema.properties as Record<string, unknown>;
       }
 
-      test("op-list has profile property", async () => {
+      test("op-list has a runtime property", async () => {
         const props = await getToolProps("op-list");
-        expect(props.profile).toBeDefined();
+        expect(props.runtime).toBeDefined();
       });
 
-      test("op-run has name (required) and profile", async () => {
+      test("op-run has name (required) and runtime", async () => {
         const response = await server.handleRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" });
         const result = response.result as { tools: Array<{ name: string; inputSchema: Record<string, unknown> }> };
         const tool = result.tools.find((t) => t.name === "op-run")!;
         const props = tool.inputSchema.properties as Record<string, unknown>;
         expect(props.name).toBeDefined();
-        expect(props.profile).toBeDefined();
+        expect(props.runtime).toBeDefined();
         expect(tool.inputSchema.required).toContain("name");
       });
 
-      test("op-status has name (required) and profile", async () => {
+      test("op-status has name (required) and runtime", async () => {
         const response = await server.handleRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" });
         const result = response.result as { tools: Array<{ name: string; inputSchema: Record<string, unknown> }> };
         const tool = result.tools.find((t) => t.name === "op-status")!;
         const props = tool.inputSchema.properties as Record<string, unknown>;
         expect(props.name).toBeDefined();
-        expect(props.profile).toBeDefined();
+        expect(props.runtime).toBeDefined();
         expect(tool.inputSchema.required).toContain("name");
       });
 
-      test("op-signal has name and signal (both required) and profile", async () => {
+      test("op-approve has name and gate (both required), plus runtime (#2121)", async () => {
         const response = await server.handleRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" });
         const result = response.result as { tools: Array<{ name: string; inputSchema: Record<string, unknown> }> };
-        const tool = result.tools.find((t) => t.name === "op-signal")!;
+        const tool = result.tools.find((t) => t.name === "op-approve")!;
         const props = tool.inputSchema.properties as Record<string, unknown>;
         expect(props.name).toBeDefined();
-        expect(props.signal).toBeDefined();
-        expect(props.profile).toBeDefined();
+        expect(props.gate).toBeDefined();
+        expect(props.runtime).toBeDefined();
         expect(tool.inputSchema.required).toContain("name");
-        expect(tool.inputSchema.required).toContain("signal");
+        expect(tool.inputSchema.required).toContain("gate");
       });
 
-      test("op-report has name (required) and profile", async () => {
+      test("op-report has name (required) and runtime", async () => {
         const response = await server.handleRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" });
         const result = response.result as { tools: Array<{ name: string; inputSchema: Record<string, unknown> }> };
         const tool = result.tools.find((t) => t.name === "op-report")!;
         const props = tool.inputSchema.properties as Record<string, unknown>;
         expect(props.name).toBeDefined();
-        expect(props.profile).toBeDefined();
+        expect(props.runtime).toBeDefined();
         expect(tool.inputSchema.required).toContain("name");
       });
     });
@@ -640,7 +640,7 @@ describe("McpServer", () => {
     });
 
     describe("Op tool handlers", () => {
-      test("op-list returns list without throwing when Temporal unavailable", async () => {
+      test("op-list returns list without throwing when no runtime has a record", async () => {
         const response = await server.handleRequest({
           jsonrpc: "2.0",
           id: 1,
@@ -654,7 +654,7 @@ describe("McpServer", () => {
         expect(result.isError).toBeUndefined();
       });
 
-      test("op-run returns isError when Temporal unavailable", async () => {
+      test("op-run answers for an Op that does not exist", async () => {
         const response = await server.handleRequest({
           jsonrpc: "2.0",
           id: 1,
@@ -667,7 +667,7 @@ describe("McpServer", () => {
         expect(result.content[0].text.length).toBeGreaterThan(0);
       });
 
-      test("op-status returns isError when Temporal unavailable", async () => {
+      test("op-status returns isError for an Op that does not exist", async () => {
         const response = await server.handleRequest({
           jsonrpc: "2.0",
           id: 1,
@@ -680,12 +680,12 @@ describe("McpServer", () => {
         expect(result.content[0].text).toContain("Error:");
       });
 
-      test("op-signal returns isError when Temporal unavailable", async () => {
+      test("op-approve returns isError without a gate name (#2121)", async () => {
         const response = await server.handleRequest({
           jsonrpc: "2.0",
           id: 1,
           method: "tools/call",
-          params: { name: "op-signal", arguments: { name: "nonexistent-op", signal: "gate" } },
+          params: { name: "op-approve", arguments: { name: "nonexistent-op" } },
         });
         expect(response.error).toBeUndefined();
         const result = response.result as { content: Array<{ text: string }>; isError: boolean };
@@ -1471,7 +1471,7 @@ describe("McpServer", () => {
       expect(tools).toHaveLength(13);
       expect(tools.map((t) => t.name).sort()).toEqual([
         "build", "explain", "import", "lifecycle-diff", "lifecycle-snapshot", "lint",
-        "op-list", "op-report", "op-run", "op-signal", "op-status",
+        "op-approve", "op-list", "op-report", "op-run", "op-status",
         "scaffold", "search",
       ]);
 
