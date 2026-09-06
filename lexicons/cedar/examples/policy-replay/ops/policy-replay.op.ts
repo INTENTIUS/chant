@@ -6,24 +6,23 @@
  * npx chant run policy-replay
  * ```
  *
- * `PolicyReplayOp` ships from the cedar lexicon rather than from the temporal
- * one, because it hands back an Op and nothing else — see
- * `src/dogwood/replay-op.ts` for the packaging decision. That is why this file
- * imports one package and the Op runs on the local executor with no Temporal
- * server in the picture.
+ * `PolicyReplayOp` ships from the cedar lexicon because it hands back an Op
+ * and nothing else — see `src/dogwood/replay-op.ts` for the packaging
+ * decision. That is why this file imports one package and the Op runs on the
+ * local executor.
  *
- * The scheduled form, for a project that already installs the temporal
- * lexicon, is the same factory plus a schedule of its own:
+ * The scheduled form is the same factory with a cadence on the Op:
  *
  * ```ts
- * import { TemporalSchedule } from "@intentius/chant-lexicon-temporal";
- *
- * export const schedule = new TemporalSchedule({
- *   scheduleId: "policy-replay-schedule",
- *   spec: { cronExpressions: ["0 6 * * *"] },
- *   action: { workflowType: "policyReplayWorkflow", taskQueue: "policy-replay" },
+ * export const { op } = PolicyReplayOp({
+ *   name: "policy-replay",
+ *   schedule: "0 6 * * *",
+ *   …
  * });
  * ```
+ *
+ * `chant operator` ticks that locally; a CI or hosting lexicon reads the same
+ * field and renders its own cron.
  *
  * The Replay phase needs a `dogwood` binary — upstream ships only a Rust CLI,
  * with no npm package and no wasm build. Build one from

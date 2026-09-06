@@ -1,4 +1,4 @@
-import { LexiconUpgradeOp } from "@intentius/chant-lexicon-temporal";
+import { LexiconUpgradeOp } from "@intentius/chant/op";
 
 /**
  * cedar lexicon upgrade Op (epic #523 / #527, wired by #1650).

@@ -36,9 +36,6 @@
     "lexicons/k8s/src/kube/project.test.ts",
     "lexicons/k8s/src/lifecycle-integration.test.ts",
     "lexicons/k8s/src/lsp/hover.test.ts",
-    "lexicons/temporal/src/composites/composites.test.ts",
-    "lexicons/temporal/src/op/runtime.test.ts",
-    "lexicons/temporal/src/validate.test.ts",
     "packages/test-utils/src/mock-plugin.test.ts",
     "packages/test-utils/src/post-synth-harness.test.ts"
   ]

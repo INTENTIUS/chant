@@ -58,7 +58,6 @@ jobs:
           npm run --prefix lexicons/gcp prepack
           npm run --prefix lexicons/helm prepack
           npm run --prefix lexicons/docker prepack
-          npm run --prefix lexicons/temporal prepack
           npm run --prefix lexicons/fly prepack
           npm run --prefix lexicons/fountain prepack
           npm run --prefix lexicons/k3d prepack
@@ -169,7 +168,6 @@ jobs:
           npm run --prefix lexicons/gcp prepack
           npm run --prefix lexicons/helm prepack
           npm run --prefix lexicons/docker prepack
-          npm run --prefix lexicons/temporal prepack
           npm run --prefix lexicons/fly prepack
           npm run --prefix lexicons/fountain prepack
           npm run --prefix lexicons/k3d prepack
@@ -263,9 +261,6 @@ jobs:
 
       - name: Generate and validate Docker lexicon
         run: npm run --prefix lexicons/docker prepack
-
-      - name: Generate and validate Temporal lexicon
-        run: npm run --prefix lexicons/temporal prepack
 
       - name: Generate and validate Fly lexicon
         run: npm run --prefix lexicons/fly prepack

@@ -7,9 +7,8 @@ export { gitlabPlugin } from "./plugin";
 // Typed Op step-builder wrapper (chant #1288 Stage 2) — gitlabPipeline with
 // authoring-time types derived from this lexicon's own GitlabPipelineArgs
 // (see lexicons/k8s/src/op/builders.ts's module doc for why this lives here
-// rather than in core or the temporal barrel). Opt-in:
-// `@intentius/chant-lexicon-temporal`'s same-named export is core's original
-// untyped builder, unchanged, for cloud-agnostic authoring.
+// rather than in core). Opt-in: `@intentius/chant/op`'s same-named export is
+// core's original untyped builder, unchanged, for cloud-agnostic authoring.
 export { gitlabPipeline } from "./op/builders";
 
 // Intrinsics

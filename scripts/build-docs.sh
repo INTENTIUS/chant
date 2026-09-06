@@ -32,10 +32,10 @@ cp -r docs/dist/* "$SITE/"
 # `prepack` can import another's generated surface — forgejo and gitlab are
 # github dialects and both import `lexicons/github/src/generated` — so github
 # has to be generated first or their prepack dies with ERR_MODULE_NOT_FOUND.
-# The dependency graph has cycles (aws <-> k8s, k8s <-> temporal), so this is a
-# known-good order rather than a topological sort. Anything with docs and no
-# entry here is appended, which is the case a new lexicon lands in.
-ORDER="aws gitlab k8s azure gcp fly fountain helm github docker forgejo cedar temporal"
+# The dependency graph has cycles (aws <-> k8s), so this is a known-good order
+# rather than a topological sort. Anything with docs and no entry here is
+# appended, which is the case a new lexicon lands in.
+ORDER="aws gitlab k8s azure gcp fly fountain helm github docker forgejo cedar"
 
 lexicons_with_docs() {
   for d in lexicons/*/; do

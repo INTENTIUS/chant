@@ -126,7 +126,6 @@ for what each scenario field means.
 | `expectToThrow` | Typed error assertion |
 | `createMockPlugin` | A minimal `LexiconPlugin`, with optional describe/observe/emulator members |
 | `staticDescribeResources` / `staticObservation` / `staticDeepObservation` / `staticListArtifacts` | Canned observation results for a mock plugin |
-| `createMockTemporalClient` | Stands in for a Temporal connection |
 | `FIXTURE` | Shared fixture constants |
 
 ### Adding a new example

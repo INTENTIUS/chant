@@ -7,12 +7,11 @@
  * `./activities/gitlab.ts`. `opts`'s type below IS `GitlabPipelineArgs`
  * itself (via `Omit`/`WithStepRefs`) — never a hand-restated mirror.
  *
- * `core`'s own `gitlabPipeline` (in `@intentius/chant/op`, re-exported from
- * `@intentius/chant-lexicon-temporal`) is UNCHANGED and produces a
- * byte-identical `ActivityStep` for the same inputs — purely additive, and
- * deliberately not swapped into the temporal barrel (see
+ * `core`'s own `gitlabPipeline` (in `@intentius/chant/op`) is UNCHANGED and
+ * produces a byte-identical `ActivityStep` for the same inputs — purely
+ * additive, and deliberately not swapped into core's barrel (see
  * `lexicons/k8s/src/op/builders.ts`'s module doc for why: that would make
- * temporal depend on this package at runtime). An author who wants the typed
+ * core depend on this package at runtime). An author who wants the typed
  * surface imports it from here — `@intentius/chant-lexicon-gitlab`.
  */
 

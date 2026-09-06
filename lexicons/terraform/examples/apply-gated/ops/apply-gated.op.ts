@@ -15,9 +15,11 @@
  * `examples/getting-started` reads it (TF001 passes here for the same
  * reason: the root declares a `backend "local"`).
  *
- * Gated applies need the Temporal executor (the local executor refuses any
- * Op containing a gate): `chant run app-apply-gated --temporal`, then signal
- * `approve-app-apply-gated`.
+ * A gate is a fact, not a wait. `chant run app-apply-gated` reads the gate
+ * ledger, finds no resolution, records the gate as pending and ends with exit
+ * 3 — nothing is held open. Record the answer with `chant approve
+ * app-apply-gated approve-app-apply-gated --approver you`, then run it again:
+ * the second run walks through the gate carrying the approver and applies.
  */
 
 import { TerraformApplyOp } from "@intentius/chant-lexicon-terraform";

@@ -35,6 +35,6 @@ Only the human plan is ever posted. `terraform show -json` over a plan file
 carries resource attribute values, provider secrets among them, so the Op
 references the `-no-color` render and there is no option to post the other.
 
-The `schedule` export is a `Temporal::Schedule` for a project that runs
-Temporal. A project that does not can ignore it: the CI cron above is the
-same trigger by another route.
+The cron lives on the Op as `schedule`, runtime-neutral data rather than a
+scheduler. The CI workflow above is one reader of it; `chant operator` is
+another, ticking the same Op locally on the same cadence.

@@ -5,7 +5,6 @@
   "type": "module",
   "dependencies": {
     "@intentius/chant-lexicon-terraform": "workspace:*",
-    "@intentius/chant-lexicon-temporal": "workspace:*",
     "@intentius/chant": "workspace:*"
   }
 }

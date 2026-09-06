@@ -73,7 +73,6 @@ PROJECT="$WORK/project"
 mkdir -p "$PROJECT/node_modules/@intentius"
 ln -sfn "$ROOT/packages/core" "$PROJECT/node_modules/@intentius/chant"
 ln -sfn "$ROOT/lexicons/gcp" "$PROJECT/node_modules/@intentius/chant-lexicon-gcp"
-ln -sfn "$ROOT/lexicons/temporal" "$PROJECT/node_modules/@intentius/chant-lexicon-temporal"
 cd "$PROJECT"
 # `chant run` refuses to work outside a git repository.
 git init -q

@@ -51,9 +51,9 @@
  *
  * ## Findings reuse `reconcilePr`
  *
- * `issue` and `pull-request` call the temporal lexicon's `reconcilePr`
- * activity, the one place in chant that shells to `gh issue create` /
- * `gh pr create`, rather than growing a second copy of those calls here.
+ * `issue` and `pull-request` call core's `reconcilePr` activity, the one place
+ * in chant that shells to `gh issue create` / `gh pr create`, rather than
+ * growing a second copy of those calls here.
  * That activity built its own change-set summary and had no way to be handed
  * one, so #2087 added a single field to it (`ReconcilePrArgs.body`), which is
  * what carries the `-no-color` plan through. Note that the pull-request mode
@@ -66,22 +66,12 @@
  *
  * ## The schedule
  *
- * A cron makes this a `{ op, schedule }` pair, the shape
- * `lexicons/temporal/src/composites/workflow-audit-op.ts` and
- * `reconcile-op.ts` return. The schedule resource is `Temporal::Schedule`,
- * built here through core's own `createResource` rather than imported from
- * `@intentius/chant-lexicon-temporal`: no lexicon in this repo imports
- * another lexicon's package at runtime, and a static import would mean a
- * project that installs terraform and runs `chant run` on the local executor
- * could not load `@intentius/chant-lexicon-terraform` at all without also
- * installing temporal. The declarable is the same one temporal's
- * `TemporalSchedule` produces (`createResource("Temporal::Schedule",
- * "temporal", {})`, `lexicons/temporal/src/resources.ts`), so temporal's
- * serializer renders it unchanged when a project has both.
- *
- * A project with no Temporal at all runs the same Op on a CI cron instead:
- * `generateOpsPipeline` against the github lexicon turns the Op plus its cron
- * into a workflow. `examples/scheduled-watch/` is that recipe.
+ * A cron lands on the Op itself as `schedule` (#2120), the same field
+ * `WatchOp` and `ConvergeOp` set. It is runtime-neutral data: `chant
+ * operator` reads it as this Op's tick cadence, `generateOpsPipeline` against
+ * the github lexicon renders it as a CI cron, and a hosting lexicon hands it
+ * to its own scheduler. The one-shot `chant run app-watch` path ignores it.
+ * `examples/scheduled-watch/` is the CI recipe.
  *
  * @example
  * ```typescript
@@ -91,7 +81,7 @@
  * export const { op } = TerraformWatchOp({ name: "app-watch", root: "app" });
  *
  * // nightly, opening an issue when the plan is non-empty
- * export const { op, schedule } = TerraformWatchOp({
+ * export const { op } = TerraformWatchOp({
  *   name: "app-watch",
  *   root: "app",
  *   schedule: "0 6 * * *",
@@ -109,8 +99,6 @@
  */
 
 import { Op, phase, OpResource, type ActivityStep } from "@intentius/chant/op";
-import { createResource } from "@intentius/chant/runtime";
-import type { Declarable } from "@intentius/chant/declarable";
 import { CHOUDOUFU_LIVE_PLAN_OUT_REFUSAL, DEFAULT_PLAN_FILE } from "../op/activities/terraform";
 import {
   terraformInit as initStep,
@@ -125,27 +113,15 @@ import {
  */
 export type TerraformFindingMode = "report" | "issue" | "pull-request";
 
-/**
- * `Temporal::Schedule`, built without importing the temporal lexicon. See the
- * module doc for why. Identical to `TemporalSchedule` in
- * `lexicons/temporal/src/resources.ts`.
- */
-const ScheduleResource = createResource("Temporal::Schedule", "temporal", {});
-
-/** `app-watch` becomes `appWatchWorkflow`, matching the temporal serializer's naming. */
-function kebabToCamel(s: string): string {
-  return s.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
-}
-
 export interface TerraformWatchOpConfig {
-  /** Op name (kebab-case). Also the default task queue and schedule id base. */
+  /** Op name (kebab-case). */
   name: string;
   /** Key into the project's `terraform.roots`. The root carries dir, workspace, var files and backend config. */
   root: string;
   /**
-   * Cron expression. When set, a `Temporal::Schedule` is returned alongside
-   * the Op; omit for one-shot `chant run` on the local executor, or for a CI
-   * cron built by `generateOpsPipeline`.
+   * Cron expression. When set, it lands on the Op as `schedule` — the cadence
+   * `chant operator` ticks on and `generateOpsPipeline` renders as a CI cron.
+   * Omit for one-shot `chant run` on the local executor.
    */
   schedule?: string;
   /**
@@ -192,19 +168,14 @@ export interface TerraformWatchOpConfig {
   title?: string;
   /** Branch the pull-request mode opens from. Default: `reconcilePr`'s own. */
   branch?: string;
-  /** The task queue the generated `TemporalSchedule`'s action targets. Defaults to `name`. */
-  taskQueue?: string;
 }
 
 export interface TerraformWatchOpResources {
-  /** Op resource. Generates the Init/Plan/[Report] workflow. */
+  /** Op resource. Generates the Init/Plan/[Report] phases. */
   op: InstanceType<typeof OpResource>;
-  /** `Temporal::Schedule`, present only when `schedule` was given. */
-  schedule?: Declarable;
 }
 
 export function TerraformWatchOp(config: TerraformWatchOpConfig): TerraformWatchOpResources {
-  const taskQueue = config.taskQueue ?? config.name;
   const findingMode: TerraformFindingMode = config.findingMode ?? "report";
   const where = config.cwd ? { cwd: config.cwd } : {};
 
@@ -282,19 +253,9 @@ export function TerraformWatchOp(config: TerraformWatchOpConfig): TerraformWatch
       TerraformRoot: config.root,
       ...(config.live ? { TerraformMode: "live" } : {}),
     },
+    ...(config.schedule ? { schedule: { cron: config.schedule, overlap: "skip" as const } } : {}),
     phases,
   });
 
-  if (!config.schedule) return { op };
-
-  const schedule = new ScheduleResource({
-    scheduleId: `${config.name}-schedule`,
-    spec: { cronExpressions: [config.schedule] },
-    action: {
-      workflowType: kebabToCamel(config.name) + "Workflow",
-      taskQueue,
-    },
-  });
-
-  return { op, schedule };
+  return { op };
 }

@@ -78,7 +78,8 @@ host the Op runs on or can reach directly — the same boundary `k3dUp`/
 Requires `"k3s"` in the project's `chant.config.ts` `lexicons`.
 
 ```typescript
-import { Op, phase, k3sInstall, k3sUninstall } from "@intentius/chant-lexicon-temporal";
+import { Op, phase } from "@intentius/chant/op";
+import { k3sInstall, k3sUninstall } from "@intentius/chant-lexicon-k3s";
 
 export default Op({
   name: "k3s-controlplane",

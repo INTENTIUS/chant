@@ -320,7 +320,6 @@ export default defineConfig({
 								{ label: 'Forgejo Actions', link: '/lexicons/forgejo/' },
 								{ label: 'Docker', link: '/lexicons/docker/' },
 								{ label: 'Render', link: '/lexicons/render/' },
-								{ label: 'Temporal', link: '/lexicons/temporal/' },
 								{ label: 'Terraform', link: '/lexicons/terraform/' },
 							],
 						},

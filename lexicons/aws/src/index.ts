@@ -28,9 +28,9 @@ export type { AwsReceiptStoreOptions, ReceiptRowObservation } from "./receipt-st
 // Typed Op step-builder wrappers (chant #1288 Stage 2) — awsApply/awsDelete/
 // flociUp/flociDown with authoring-time types derived from this lexicon's
 // own *Args interfaces (see ./op/builders.ts's module doc for why these live
-// here rather than in core or the temporal barrel). Opt-in:
-// `@intentius/chant-lexicon-temporal`'s same-named exports are core's
-// original untyped builders, unchanged, for cloud-agnostic authoring.
+// here rather than in core). Opt-in: `@intentius/chant/op`'s same-named
+// exports are core's original untyped builders, unchanged, for
+// cloud-agnostic authoring.
 export { awsApply, awsDelete, flociUp, flociDown } from "./op/builders";
 
 // Serializer

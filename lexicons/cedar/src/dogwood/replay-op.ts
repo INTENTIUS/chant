@@ -8,32 +8,28 @@
  * against last week's traffic can decide differently against this week's, and
  * the deterministic build cannot see that.
  *
- * ## Packaging: the composite ships from cedar, not from temporal
+ * ## Packaging: the composite ships from cedar
  *
- * `WorkflowAuditOp` and `PipelineAuditOp` live in the temporal lexicon because
- * they hand back a `TemporalSchedule` alongside the Op, and that resource is
- * temporal's. This composite hands back an Op and nothing else, so it has no
- * reason to reach across — it imports `@intentius/chant/op` only, exactly as
- * the fly lexicon's `flyDeploy` composite does. cedar therefore keeps zero
- * runtime dependency on `@intentius/chant-lexicon-temporal`.
+ * It hands back an Op and nothing else, so it imports `@intentius/chant/op`
+ * only, exactly as the fly lexicon's `flyDeploy` composite does. cedar keeps
+ * zero runtime dependency on any hosting lexicon.
  *
- * The scheduled form is a two-line project-side pairing rather than a config
- * flag, and that is the deliberate cost of the decision:
+ * The cadence is a `schedule` on the Op itself (#2120) — runtime-neutral data
+ * the reader decides what to do with, the same field `WatchOp` and
+ * `ConvergeOp` set:
  *
  * ```ts
- * import { TemporalSchedule } from "@intentius/chant-lexicon-temporal";
- *
- * export const { op } = PolicyReplayOp({ name: "policy-replay", … });
- * export const schedule = new TemporalSchedule({
- *   scheduleId: "policy-replay-schedule",
- *   spec: { cronExpressions: ["0 6 * * *"] },
- *   action: { workflowType: "policyReplayWorkflow", taskQueue: "policy-replay" },
+ * export const { op } = PolicyReplayOp({
+ *   name: "policy-replay",
+ *   schedule: "0 6 * * *",
+ *   …
  * });
  * ```
  *
- * A project that wants that already installs the temporal lexicon; a project
- * that only wants `chant run policy-replay` on the local executor should not
- * have to. `examples/policy-replay` is the worked recipe for both.
+ * `chant operator` ticks it locally, the github/gitlab/forgejo lexicons render
+ * it as a CI cron, a hosting lexicon hands it to its own scheduler, and the
+ * one-shot executor behind `chant run policy-replay` ignores it.
+ * `examples/policy-replay` is the worked recipe.
  *
  * ## Phases
  *
@@ -155,6 +151,13 @@ export interface PolicyReplayOpConfig {
   reportPath?: string;
   /** Explicit `dogwood` binary path, for a runner that knows where it built one. */
   binary?: string;
+
+  /**
+   * Cron expression. When set, it lands on the Op as `schedule` — the cadence
+   * a reader picks up (`chant operator`'s tick, a CI cron, a hosting lexicon's
+   * own scheduler). The one-shot `chant run` path ignores it.
+   */
+  schedule?: string;
 }
 
 /** What {@link PolicyReplayOp} hands back. */
@@ -232,6 +235,7 @@ export function PolicyReplayOp(config: PolicyReplayOpConfig): PolicyReplayOpReso
         Audit: "true",
         Surface: "cedar-dogwood",
       },
+      ...(config.schedule ? { schedule: { cron: config.schedule, overlap: "skip" as const } } : {}),
       phases,
     }),
   };

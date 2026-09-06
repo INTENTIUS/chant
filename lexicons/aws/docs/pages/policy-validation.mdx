@@ -40,10 +40,11 @@ cfn-lint t.json
 
 ## Running it as a chant Op step
 
-The recipes above run standalone in any CI job. To make the check a first-class step in a chant [Op](/chant/guide/ops/) — gate-able the same way [`policyGate`](/chant/guide/organizational-policy/#gating-an-apply) gates an apply — use `guardValidate` from the temporal lexicon:
+The recipes above run standalone in any CI job. To make the check a first-class step in a chant [Op](/chant/guide/ops/) — gate-able the same way [`policyGate`](/chant/guide/organizational-policy/#gating-an-apply) gates an apply — use `guardValidate`:
 
 ```ts
-import { Op, phase, build, guardValidate, awsApply } from "@intentius/chant-lexicon-temporal";
+import { Op, phase, build, guardValidate } from "@intentius/chant/op";
+import { awsApply } from "@intentius/chant-lexicon-aws";
 
 export default Op({
   name: "deploy",
@@ -61,8 +62,8 @@ export default Op({
 
 `guardValidate(rules, opts?)` shells `cfn-guard` through the same runtime-adapter `spawn` seam every other Op activity uses — never inside `chant build` itself, which stays dependency-free and offline. `template` defaults to `<path>/template.json`, the convention `chant build -o template.json` writes to; pass an explicit `template` if your project writes elsewhere. A non-compliant rule throws (non-retryable), so:
 
-- `chant run deploy` (the local executor, no Temporal) exits non-zero and fails the CI job.
-- Placed before an apply phase in a Temporal-orchestrated Op, the same violation blocks the apply.
+- `chant run deploy` on the local executor exits non-zero and fails the CI job.
+- Placed before an apply phase, the same violation blocks the apply.
 
 Only `report` mode ships today — it prints a summary of every violation and fails the run. `issue`/`pull-request` finding-modes (opening a tracking issue or PR comment instead of just failing) are a follow-up.
 

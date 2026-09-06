@@ -67,12 +67,6 @@
       "@intentius/chant-lexicon-fountain/*": [
         "lexicons/fountain/src/*"
       ],
-      "@intentius/chant-lexicon-temporal": [
-        "lexicons/temporal/src/index.ts"
-      ],
-      "@intentius/chant-lexicon-temporal/*": [
-        "lexicons/temporal/src/*"
-      ],
       "@intentius/chant-lexicon-gitlab/*": [
         "lexicons/gitlab/src/*"
       ],

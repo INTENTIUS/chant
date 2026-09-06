@@ -125,7 +125,7 @@ export interface TerraformApplyOpConfig {
    * Terraform has no automatic rollback: a half-applied plan is undone by
    * planning and applying the inverse, which is a decision about the estate
    * rather than something chant can synthesize. So compensation here is
-   * total or refused, the same stance `ApplyOp` takes (`lexicons/temporal/src/
+   * total or refused, the same stance `ApplyOp` takes (`packages/core/src/op/
    * composites/apply-op.ts`) — `true`, or an object with no `command`, throws
    * when the Op is built, naming the Op, rather than warning at the moment a
    * rollback is already needed. Supply `compensate: { command: "..." }` with a

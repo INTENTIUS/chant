@@ -97,8 +97,7 @@ cp -R "$FIXTURE/project/." "$WORK/"
 mkdir -p "$WORK/packs"
 ( cd "$ROOT" && npm pack --silent --pack-destination "$WORK/packs" \
     -w @intentius/chant \
-    -w @intentius/chant-lexicon-fly \
-    -w @intentius/chant-lexicon-temporal )
+    -w @intentius/chant-lexicon-fly )
 ls -la "$WORK/packs"
 
 # A runner expects a git repo at the root.
