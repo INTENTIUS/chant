@@ -336,12 +336,12 @@ export function formatRenderLiveDiff(contentDigest: string, environment: string,
   const driftCount = diff.drifted.reduce((n, e) => n + e.changes.length, 0);
   // Fields the render never sets (#2160). Live has them and this chart did not
   // ask for them, so they are somebody else's, not a difference to reconcile.
-  const heldCount = diff.heldElsewhere.reduce((n, e) => n + e.fields.length, 0);
+  const unclaimedCount = diff.unclaimed.reduce((n, e) => n + e.fields.length, 0);
   const lines: string[] = [
     `render ${contentDigest} vs live (${environment})`,
     `${driftCount} property drift across ${diff.drifted.length} document(s), ` +
       `${diff.accepted.length} accepted, ${diff.unchanged.length} unchanged` +
-      (heldCount > 0 ? `, ${heldCount} held elsewhere` : "") +
+      (unclaimedCount > 0 ? `, ${unclaimedCount} unclaimed` : "") +
       (diff.unobserved.length > 0 ? `, ${diff.unobserved.length} unobserved` : "") +
       (diff.undeclaredEntities.length > 0 ? `, ${diff.undeclaredEntities.length} undeclared` : ""),
   ];
@@ -360,9 +360,9 @@ export function formatRenderLiveDiff(contentDigest: string, environment: string,
       }
     }
   }
-  if (diff.heldElsewhere.length > 0) {
-    lines.push("", "HELD ELSEWHERE (live values this render never sets; not drift):");
-    for (const entity of diff.heldElsewhere) {
+  if (diff.unclaimed.length > 0) {
+    lines.push("", "UNCLAIMED (live values this render never sets; not drift):");
+    for (const entity of diff.unclaimed) {
       lines.push(`  - ${entity.name} (${entity.type})`);
       for (const field of entity.fields) {
         const holder = field.heldBy ? ` [held by ${field.heldBy}]` : "";

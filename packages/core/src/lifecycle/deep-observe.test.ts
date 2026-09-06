@@ -157,7 +157,7 @@ describe("deepDiffForLexicon", () => {
         deepObservation({ a: { type: "T", properties: { Extra: "accepted-value" } } }),
     });
     // A path source declares: since #2160 the baseline only ever suppresses
-    // drift, and a path nobody declared never reaches it (it is held elsewhere).
+    // drift, and a path nobody declared never reaches it (it is unclaimed).
     const opts = {
       environment: "prod",
       buildOutput: "",

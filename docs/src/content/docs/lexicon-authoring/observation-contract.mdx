@@ -201,7 +201,7 @@ Ten lexicons run it today (aws, azure, cedar, fly, fountain, gcp, helm, k3d, k3s
 
 ### Ownership is a label on drift, not a filter
 
-A substrate that records who wrote each field (Kubernetes' `metadata.managedFields`, read by the k8s row) may return `fieldOwners` — a map from path to manager name — alongside each resource's normalized tree. Core attaches it to every reported drift as `owner`, and to every held field as `heldBy`. It must not be used to drop fields before the diff. A field a foreign manager owns and source never declared is what the held-elsewhere report exists to show, and pruning it at read time is how chant #1191 lost a console-added label. Subtract only what the platform writes on every object of a kind (`status`, server-minted metadata, controller-stamped annotations and labels — `K8S_SYSTEM_METADATA_PRUNE_PATTERNS` in `@intentius/chant/managed-fields` for Kubernetes-shaped objects).
+A substrate that records who wrote each field (Kubernetes' `metadata.managedFields`, read by the k8s row) may return `fieldOwners` — a map from path to manager name — alongside each resource's normalized tree. Core attaches it to every reported drift as `owner`, and to every unclaimed field as `heldBy`. It must not be used to drop fields before the diff. A field a foreign manager owns and source never declared is what the unclaimed report exists to show, and pruning it at read time is how chant #1191 lost a console-added label. Subtract only what the platform writes on every object of a kind (`status`, server-minted metadata, controller-stamped annotations and labels — `K8S_SYSTEM_METADATA_PRUNE_PATTERNS` in `@intentius/chant/managed-fields` for Kubernetes-shaped objects).
 
 ### The claimed-field set is the substrate-independent half
 
@@ -211,9 +211,9 @@ Core flattens each declaration's props into the same path grammar the diff uses,
 |---|---|
 | declared and equal | Nothing to report. |
 | declared and different | Drift. The only case that may become an update. |
-| undeclared | Reported under `heldElsewhere`. Never drift. |
+| undeclared | Reported under `unclaimed`. Never drift. |
 
-No lexicon implements it. Where you return `fieldOwners` the held row names the manager and says `source: "field-manager"`. Where you do not (or for a path your ownership metadata does not cover) the claim answers instead, and the row says `source: "claimed-fields"`. See [the authoring guide](/chant/lexicon-authoring/observation/#the-claimed-field-set-half-of-that-noise-has-a-general-answer).
+No lexicon implements it. Where you return `fieldOwners` the unclaimed row names the manager and says `source: "field-manager"`. Where you do not (or for a path your ownership metadata does not cover) the claim answers instead, and the row says `source: "claimed-fields"`. See [the authoring guide](/chant/lexicon-authoring/observation/#the-claimed-field-set-half-of-that-noise-has-a-general-answer).
 
 ### The accepted baseline
 

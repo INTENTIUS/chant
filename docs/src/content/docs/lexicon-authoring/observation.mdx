@@ -230,9 +230,9 @@ Core derives them per entity, normalized with your hooks and flattened into the 
 |---|---|---|
 | declared and equal | `unchanged` | Nothing to report. |
 | declared and different | `drifted` | Drift, and the only case that may become an `update`. |
-| undeclared | `heldElsewhere` | Reported with its live value, never drift, never proposed for change. |
+| undeclared | `unclaimed` | Reported with its live value, never drift, never proposed for change. |
 
-Nothing in a lexicon implements this, the same way nothing implements the accepted baseline: it is applied by core, above your reader. What it changes for you is what the `prune` hook is *for*. Pruning is still right for a field the platform populates on every object of a kind (`status`, an ARN, a generation counter) and for putting two vocabularies in the same shape. It is no longer the only way to keep a foreign controller's field out of a drift report, so a table entry that exists only to say "nobody declared this" now has a general mechanism underneath it and can go when you trust the classification. Do not remove one blind: verify against a real estate first, because a prune entry and a held field are reported differently. Pruned means the field is not in the tree at all; held means it is reported with its value.
+Nothing in a lexicon implements this, the same way nothing implements the accepted baseline: it is applied by core, above your reader. What it changes for you is what the `prune` hook is *for*. Pruning is still right for a field the platform populates on every object of a kind (`status`, an ARN, a generation counter) and for putting two vocabularies in the same shape. It is no longer the only way to keep a foreign controller's field out of a drift report, so a table entry that exists only to say "nobody declared this" now has a general mechanism underneath it and can go when you trust the classification. Do not remove one blind: verify against a real estate first, because a prune entry and an unclaimed field are reported differently. Pruned means the field is not in the tree at all; unclaimed means it is reported with its value.
 
 Two things worth designing for:
 

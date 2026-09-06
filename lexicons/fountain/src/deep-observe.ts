@@ -29,7 +29,7 @@
  * tree already speak one vocabulary — the AWS situation, not temporal's. The
  * payload is therefore forwarded as-is and the noise rules
  * (./deep-observe-hooks.ts) do the rest. A field fountain adds in a later
- * release surfaces as held elsewhere until the table names it (#2160: source
+ * release surfaces as unclaimed until the table names it (#2160: source
  * never set it, so it is not drift and is never proposed for update), which is
  * the deliberate trade: visible and fixable beats silently dropped.
  *

@@ -27,7 +27,7 @@
  * which fields chant ever set — the claimed-field set (../claimed-fields.ts).
  * A live value on a path outside it is somebody else's field: an autoscaler's
  * replica count, a controller's annotation, a value a person typed into a
- * console. It is reported in {@link DeepDiffResult.heldElsewhere}, with the
+ * console. It is reported in {@link DeepDiffResult.unclaimed}, with the
  * manager's name where the substrate records one, and it is not drift. Only a
  * claimed path that moved is, and drift is the only thing that may become an
  * update.
@@ -58,7 +58,7 @@ import { acceptedDeviation, type BaselineLexicon } from "./observation-baseline"
  * A live value on a path source never declared used to be a third kind,
  * `undeclared`. It is no longer drift at all (#2160): chant never set that
  * field, so somebody else holds it, and it is reported in
- * {@link DeepDiffResult.heldElsewhere} instead. It is still reported — pruning
+ * {@link DeepDiffResult.unclaimed} instead. It is still reported — pruning
  * what chant cannot attribute is how #1191 lost a console-added label — it just
  * stopped being a difference chant proposes to close.
  */
@@ -125,7 +125,7 @@ export interface DeepEntityDrift {
  * `hpa-controller`; everywhere else the declaration is the only witness and the
  * row says "not mine" without saying whose.
  */
-export interface HeldField {
+export interface PropertyUnclaimed {
   /** Path within the normalized property tree (`spec.replicas`). */
   path: string;
   /** The value the cloud is carrying. */
@@ -139,18 +139,18 @@ export interface HeldField {
   /** Which source answered: the substrate's manager, or the claimed-field set. */
   source: FieldClaimSource;
   /**
-   * The accepted value from the baseline, when this path has one. A held field
-   * needs no acceptance to stay quiet, so this is carried for continuity with
+   * The accepted value from the baseline, when this path has one. An unclaimed
+   * field needs no acceptance to stay quiet, so this is carried for continuity with
    * baselines recorded before #2160 rather than because it changes anything.
    */
   baseline?: unknown;
 }
 
 /** Live property values one declared entity is not claiming. */
-export interface DeepEntityHeldFields {
+export interface DeepEntityUnclaimed {
   name: string;
   type: string;
-  fields: HeldField[];
+  fields: PropertyUnclaimed[];
 }
 
 /**
@@ -203,8 +203,12 @@ export interface DeepDiffResult {
    * does not record it, and nothing downstream may turn one of these into an
    * update. It exists so the report can still say the field is there and who
    * has it.
+   *
+   * Not `held`, which is the opposite fact: `held` is a field source declared
+   * and then handed over with `heldElsewhere()`, and this is a field source
+   * never declared at all.
    */
-  heldElsewhere: DeepEntityHeldFields[];
+  unclaimed: DeepEntityUnclaimed[];
   /**
    * Properties declared `heldElsewhere()` (#2162) — reported here instead of
    * in `drifted`/`accepted`, whatever the live value is. Not a suppression:
@@ -256,7 +260,7 @@ export function diffDeep(input: DiffDeepInput): DeepDiffResult {
   const baseline = input.baseline ?? {};
   const drifted: DeepEntityDrift[] = [];
   const accepted: DeepEntityDrift[] = [];
-  const heldElsewhere: DeepEntityHeldFields[] = [];
+  const unclaimed: DeepEntityUnclaimed[] = [];
   const held: DeepEntityHeld[] = [];
   const unchanged: string[] = [];
   const unobserved: UnobservedResource[] = [];
@@ -311,7 +315,7 @@ export function diffDeep(input: DiffDeepInput): DeepDiffResult {
     const paths = [...new Set([...declaredFlat.keys(), ...liveFlat.keys()])].sort();
     const reported: PropertyDrift[] = [];
     const suppressed: PropertyDrift[] = [];
-    const heldFields: HeldField[] = [];
+    const unclaimedFields: PropertyUnclaimed[] = [];
     const heldHere: PropertyHeld[] = [];
 
     for (const path of paths) {
@@ -354,7 +358,7 @@ export function diffDeep(input: DiffDeepInput): DeepDiffResult {
       // substrate records one, is the whole answer an operator wants.
       if (!hasDeclared) {
         const { holder, source } = heldBy(liveEntity.fieldOwners, path);
-        heldFields.push({
+        unclaimedFields.push({
           path,
           live: liveValue,
           ...(holder ? { heldBy: holder } : {}),
@@ -393,7 +397,7 @@ export function diffDeep(input: DiffDeepInput): DeepDiffResult {
     }
 
     if (suppressed.length > 0) accepted.push({ name, type, changes: suppressed });
-    if (heldFields.length > 0) heldElsewhere.push({ name, type, fields: heldFields });
+    if (unclaimedFields.length > 0) unclaimed.push({ name, type, fields: unclaimedFields });
     if (reported.length > 0) drifted.push({ name, type, changes: reported });
     // Held fields do not disqualify an entity from `unchanged`: every property
     // chant declared matches, and the epic's whole point is that a controller's
@@ -405,7 +409,7 @@ export function diffDeep(input: DiffDeepInput): DeepDiffResult {
   return {
     drifted: drifted.sort((a, b) => a.name.localeCompare(b.name)),
     accepted: accepted.sort((a, b) => a.name.localeCompare(b.name)),
-    heldElsewhere: heldElsewhere.sort((a, b) => a.name.localeCompare(b.name)),
+    unclaimed: unclaimed.sort((a, b) => a.name.localeCompare(b.name)),
     held: held.sort((a, b) => a.name.localeCompare(b.name)),
     unchanged: unchanged.sort(),
     unobserved: unobserved.sort((a, b) => a.name.localeCompare(b.name)),
@@ -418,9 +422,9 @@ export function countPropertyDrift(result: DeepDiffResult): number {
   return result.drifted.reduce((n, e) => n + e.changes.length, 0);
 }
 
-/** Total live values held by someone other than chant, across every entity (#2160). Never added to the drift count. */
-export function countHeldFields(result: DeepDiffResult): number {
-  return result.heldElsewhere.reduce((n, e) => n + e.fields.length, 0);
+/** Total live values on paths no declaration claimed, across every entity (#2160). Never added to the drift count. */
+export function countUnclaimed(result: DeepDiffResult): number {
+  return result.unclaimed.reduce((n, e) => n + e.fields.length, 0);
 }
 
 /** Total held properties (#2162) across every entity. */

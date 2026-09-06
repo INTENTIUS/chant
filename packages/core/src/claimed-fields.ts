@@ -49,10 +49,10 @@
  *
  * It does not prune. A field chant never declared still reaches the diff, still
  * appears in the report, and still carries its live value — it is reported as
- * held elsewhere rather than dropped, because chant #1191 already lost a
+ * unclaimed rather than dropped, because chant #1191 already lost a
  * console-added label by pruning what it could not attribute. What the claim
- * changes is the verdict: held is not drift, and drift is the only thing that
- * may become an update.
+ * changes is the verdict: unclaimed is not drift, and drift is the only thing
+ * that may become an update.
  */
 
 import {

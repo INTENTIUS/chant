@@ -688,7 +688,7 @@ describe("end to end: managed-fields-derived drift (#1076)", () => {
     },
   };
 
-  test("contested drift surfaces; fields nobody declared are held elsewhere and accepted deviations are held back", async () => {
+  test("contested drift surfaces; fields nobody declared are unclaimed and accepted deviations are held back", async () => {
     const live = normalizeDeepObservation(
       await observeResourcesDeepK8s({ environment: "prod", entityNames: [...declared.keys()], entities: declared }, cluster().connector),
     );
@@ -715,7 +715,7 @@ describe("end to end: managed-fields-derived drift (#1076)", () => {
     // Everything source never set, with the manager where managedFields has one
     // and the claim where it does not. The `team` label needs no baseline entry
     // to stay quiet now, and `kubectl-edit` still says who put it there.
-    expect(result.heldElsewhere).toEqual([
+    expect(result.unclaimed).toEqual([
       {
         name: "web",
         type: "K8s::Apps::Deployment",
@@ -764,7 +764,7 @@ describe("end to end: managed-fields-derived drift (#1076)", () => {
     ]);
   });
 
-  test("without the baseline only the declared paths are drift; the rest are still held elsewhere", async () => {
+  test("without the baseline only the declared paths are drift; the rest are still unclaimed", async () => {
     // The baseline was the noise valve before #2160. It is no longer load
     // bearing for a field nobody declared: the claim answers first, so an HPA's
     // replica count and an injected sidecar are quiet with no baseline at all.
@@ -777,7 +777,7 @@ describe("end to end: managed-fields-derived drift (#1076)", () => {
       "metadata.annotations.build-id",
       "metadata.labels.tier",
     ]);
-    expect(result.heldElsewhere.find((d) => d.name === "web")?.fields.map((f) => f.path)).toEqual([
+    expect(result.unclaimed.find((d) => d.name === "web")?.fields.map((f) => f.path)).toEqual([
       "metadata.labels.team",
       "spec.replicas",
       "spec.template.spec.containers[#istio-proxy].image",
@@ -797,7 +797,7 @@ describe("end to end: managed-fields-derived drift (#1076)", () => {
       await observeResourcesDeepK8s({ environment: "prod", entityNames: [...declared.keys()], entities: declared }, cluster().connector),
     );
     const result = diffDeepObservation(declared, live, k8sDeepNormalizationHooks);
-    const web = result.heldElsewhere.find((d) => d.name === "web");
+    const web = result.unclaimed.find((d) => d.name === "web");
 
     const byManager = web?.fields.find((f) => f.path === "metadata.labels.team");
     expect(byManager).toEqual({
@@ -1041,7 +1041,7 @@ describe("the managed-fields twist: ownership names the writer, the declared tre
     ]);
   });
 
-  test("a controller owns the field and source is silent: the same mutated value is held elsewhere, never drift (#2160)", async () => {
+  test("a controller owns the field and source is silent: the same mutated value is unclaimed, never drift (#2160)", async () => {
     // The mirror of the test above, and the whole claim in one pair: the same
     // live value, the same manager, and the declaration is what decides
     // whether it is chant's problem.
@@ -1052,7 +1052,7 @@ describe("the managed-fields twist: ownership names the writer, the declared tre
     );
     const result = diffDeepObservation(entities, live, k8sDeepNormalizationHooks);
     expect(result.drifted).toEqual([]);
-    expect(result.heldElsewhere).toEqual([
+    expect(result.unclaimed).toEqual([
       {
         name: "app",
         type: "K8s::Apps::Deployment",
@@ -1126,9 +1126,9 @@ describe("secret masking — diff --live never holds a Secret data value (#1830,
     // cannot know and must not learn whether the bytes moved.
     expect(changes.map((c) => `${c.path}:${c.kind}`).sort()).toEqual(["data.PENDING_KEY:absent"]);
 
-    // The injected key is a key source never declared, so it is held elsewhere
+    // The injected key is a key source never declared, so it is unclaimed
     // (#2160). Presence still classifies; the value is still the mask.
-    expect(result.heldElsewhere.find((d) => d.name === "master-key")?.fields).toEqual([
+    expect(result.unclaimed.find((d) => d.name === "master-key")?.fields).toEqual([
       { path: "data.INJECTED_KEY", live: "[REDACTED]", source: "claimed-fields" },
     ]);
 

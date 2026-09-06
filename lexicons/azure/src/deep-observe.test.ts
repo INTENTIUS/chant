@@ -530,12 +530,12 @@ describe("end to end: declared + mutated live + baseline (#1086)", () => {
     expect(result.unchanged).toEqual(["vnet"]);
 
     // The platform team's tag is on a path source never declared, so since
-    // #2160 the claim answers before the baseline does: held elsewhere, at its
+    // #2160 the claim answers before the baseline does: unclaimed, at its
     // live value, and not drift. ARM records no field manager, so the
     // claimed-field set is the only source that can answer.
     expect(result.accepted).toEqual([]);
-    expect(result.heldElsewhere.map((e) => e.name)).toEqual(["dataAccount"]);
-    expect(result.heldElsewhere[0].fields).toEqual([
+    expect(result.unclaimed.map((e) => e.name)).toEqual(["dataAccount"]);
+    expect(result.unclaimed[0].fields).toEqual([
       { path: "tags.cost-center", live: "platform", source: "claimed-fields", baseline: "platform" },
     ]);
 
@@ -557,7 +557,7 @@ describe("end to end: declared + mutated live + baseline (#1086)", () => {
     const result = await deepDiffForLexicon(azurePlugin, { environment: "prod", buildOutput: "", entities: declared });
     const dataAccount = result.drifted.find((d) => d.name === "dataAccount");
     expect(dataAccount?.changes.map((c) => c.path)).toEqual(["allowBlobPublicAccess"]);
-    expect(result.heldElsewhere[0].fields.map((f) => f.path)).toEqual(["tags.cost-center"]);
+    expect(result.unclaimed[0].fields.map((f) => f.path)).toEqual(["tags.cost-center"]);
     expect(result.accepted).toEqual([]);
   });
 
