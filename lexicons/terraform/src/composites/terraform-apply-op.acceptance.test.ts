@@ -195,7 +195,7 @@ describe("TerraformApplyOp applies a live root against choudoufu's emulator (#21
         await loadProfiles(),
       );
 
-      expect(result.ok).toBe(true);
+      expect(result.status).toBe("ok");
       expect(result.records.map((r) => `${r.phase}:${r.status}`)).toEqual(["Init:ok", "Plan:ok", "Apply:ok"]);
     },
   );
