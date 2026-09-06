@@ -40,11 +40,29 @@
  * handing the author a lint error about a resource they never typed.
  */
 
-import type { OpConfig } from "@intentius/chant/op";
+import type { OpConfig, OpResource } from "@intentius/chant/op";
 import { Agent, Environment, Schedule, Teammate, Vault, Webhook } from "../generated/index";
 import { isPrivateHost } from "../lint/post-synth/ftn022-webhook-url-public-https";
 import { runPrompt } from "../op/run-prompt";
 import { propsOf } from "../entity-props";
+
+/**
+ * An op a steward runs, however the project happens to hold it.
+ *
+ * `WatchOp`, `ConvergeOp`, `ApplyOp` and `ReconcileOp` all hand back an `Op`
+ * declaration rather than the config they were given, and that declaration
+ * keeps its config behind `props` — so `ops: [watch.op]`, which is what an
+ * author has in hand, is the common case and not the exception. A bare
+ * `OpConfig` object is accepted too, because an Op assembled by hand never
+ * becomes a declaration until `Op()` is called on it.
+ */
+export type StewardOp = OpConfig | InstanceType<typeof OpResource>;
+
+/** The config inside an op, whether it arrived as a declaration or as itself. */
+function configOf(op: StewardOp): OpConfig {
+  const declared = (op as { props?: unknown }).props;
+  return (declared && typeof declared === "object" ? declared : op) as OpConfig;
+}
 
 /** The webhook a steward declares, if any. Shape of fountain's create request. */
 export interface StewardWebhookOpts {
@@ -67,7 +85,7 @@ export interface StewardOpts {
    * without is still listed, so `chant run <op> --on fountain` knows which
    * thread the run belongs on.
    */
-  ops: OpConfig[];
+  ops: StewardOp[];
   webhook?: StewardWebhookOpts;
   /** Extra metadata merged over the `managed-by` marker on the Agent. */
   metadata?: Record<string, unknown>;
@@ -140,6 +158,7 @@ function checkWebhookUrl(steward: string, url: string): void {
 
 export function Steward(opts: StewardOpts): StewardResources {
   const metadata = { "managed-by": "chant", ...(opts.metadata ?? {}) };
+  const ops = opts.ops.map(configOf);
 
   // One writer per environment. The binding is the pair the sandbox identity
   // is keyed on upstream (agent, environment, vault), minus the agent — two
@@ -157,7 +176,7 @@ export function Steward(opts: StewardOpts): StewardResources {
     );
   }
 
-  for (const op of opts.ops) {
+  for (const op of ops) {
     const overlap = op.schedule?.overlap;
     if (overlap !== undefined && overlap !== "skip") {
       throw new Error(
@@ -195,7 +214,7 @@ export function Steward(opts: StewardOpts): StewardResources {
   });
 
   const schedules: InstanceType<typeof Schedule>[] = [];
-  for (const op of opts.ops) {
+  for (const op of ops) {
     if (!op.schedule) continue;
     schedules.push(
       new Schedule({
@@ -220,7 +239,7 @@ export function Steward(opts: StewardOpts): StewardResources {
     : undefined;
 
   bindings.set(binding, opts.name);
-  for (const op of opts.ops) opStewards.set(op.name, opts.name);
+  for (const op of ops) opStewards.set(op.name, opts.name);
 
   return { agent, teammate, schedules, ...(webhook ? { webhook } : {}) };
 }

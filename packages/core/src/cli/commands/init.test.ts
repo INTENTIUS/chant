@@ -348,5 +348,39 @@ describe("initCommand", () => {
       expect(pipeline).toContain("NodePipeline");
     });
   });
-});
 
+  // chant #2129 — core writes `chant.config.ts` before a plugin's root files
+  // and `writeIfNotExists` keeps the first one, so a template that ships its
+  // own config used to be discarded in silence. The template's wins now: it
+  // is the only one that knows the config namespace the scaffold needs.
+  test("a template's own chant.config.ts wins over the generic one", async () => {
+    await withTestDir(async (testDir) => {
+      const result = await initCommand({
+        path: testDir,
+        lexicon: "fountain",
+        template: "steward",
+        skipMcp: true,
+        skipInstall: true,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.createdFiles).toContain("chant.config.ts");
+      // Written once, so no "already exists, skipping" warning about it.
+      expect(result.warnings.filter((w) => w.includes("chant.config.ts"))).toEqual([]);
+
+      const config = readFileSync(join(testDir, "chant.config.ts"), "utf-8");
+      expect(config).toContain("fountain:");
+      expect(config).toContain('token: { env: "FOUNTAIN_TOKEN" }');
+      expect(result.createdFiles).toContain("src/prod-watch.op.ts");
+    });
+  });
+
+  test("a template without a config still gets the generic one", async () => {
+    await withTestDir(async (testDir) => {
+      await initCommand({ path: testDir, lexicon: "fountain", skipMcp: true, skipInstall: true });
+      const config = readFileSync(join(testDir, "chant.config.ts"), "utf-8");
+      expect(config).toContain('lexicons: ["fountain"]');
+      expect(config).not.toContain("profiles");
+    });
+  });
+});

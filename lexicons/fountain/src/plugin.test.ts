@@ -84,10 +84,11 @@ describe("fountain plugin", () => {
     expect(open).not.toContain("ConciergeStack");
   });
 
-  it("loads all three skills", () => {
+  it("loads all four skills", () => {
     expect(fountainPlugin.skills?.().map((s) => s.name).sort()).toEqual([
       "chant-fountain",
       "chant-fountain-locked-sandboxes",
+      "chant-fountain-ops",
       "chant-fountain-secrets",
     ]);
   });

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import type { OpConfig } from "@intentius/chant/op";
+import { WatchOp, type OpConfig } from "@intentius/chant/op";
 import { ConciergeStack } from "./concierge-stack";
 import { Steward, stewardForOp, __resetStewardsForTests } from "./steward";
 import { Environment, Vault } from "../generated/index";
@@ -124,6 +124,24 @@ describe("Steward", () => {
     expect(stewardForOp("prod-watch")).toBe("prod-steward");
     expect(stewardForOp("prod-apply")).toBe("prod-steward");
     expect(stewardForOp("unrelated")).toBeUndefined();
+  });
+
+  // `WatchOp`/`ConvergeOp`/`ApplyOp` return an Op *declaration*, which keeps
+  // its config behind `props`. That is what an author has in hand, so reading
+  // through it is the composite's job rather than the caller's — before this,
+  // `ops: [watch.op]` type-checked nowhere and silently produced no schedules.
+  it("takes the Op declarations the composites return, not just bare configs", () => {
+    const { op: watch } = WatchOp({ name: "prod-watch", env: "prod", schedule: "*/10 * * * *" });
+    const { schedules } = Steward({
+      name: "prod-steward",
+      environment: toolchain(),
+      ops: [watch],
+    });
+    expect(schedules).toHaveLength(1);
+    expect(props(schedules[0]).name).toBe("prod-steward-prod-watch");
+    expect(props(schedules[0]).cron).toBe("*/10 * * * *");
+    expect(props(schedules[0]).prompt).toBe("chant run prod-watch");
+    expect(stewardForOp("prod-watch")).toBe("prod-steward");
   });
 
   it("refuses a second steward on the same environment and vault", () => {

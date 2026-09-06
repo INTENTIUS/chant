@@ -1,0 +1,105 @@
+---
+title: "Running an Op on fountain"
+description: "chant run --on fountain: profiles, the steward lookup, status, log, list, cancel, approve, and what to do when the steward is busy."
+diataxis: how-to
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-fountain` — DO NOT EDIT.
+    Edit lexicons/fountain/docs/pages/runtime.mdx instead; changes here are overwritten. */}
+
+
+`chant run <op> --on fountain` hands a run to a fountain teammate instead of executing it here. The command line goes onto the steward's thread as a prompt, the CLI tails the conversation's event stream, and the run's record comes back in the same shape a local run would have written.
+
+Nothing is stored on the client. `status`, `log` and `list` read fountain's turns; a gate's resolution is read from chant's own ledger.
+
+## Before the first run
+
+Declare an endpoint and a token. A profile in `chant.config.ts` is the version-controlled way:
+
+```ts
+import type { ChantConfig } from "@intentius/chant/config";
+import "@intentius/chant-lexicon-fountain";
+
+export default {
+  lexicons: ["fountain"],
+  fountain: {
+    profiles: {
+      prod: {
+        endpoint: "https://fountain.inevitable.fyi",
+        token: { env: "FOUNTAIN_TOKEN" },
+        team: "prod-steward",
+      },
+    },
+    defaultProfile: "prod",
+  },
+} satisfies ChantConfig;
+```
+
+`FOUNTAIN_ENDPOINT` and `FOUNTAIN_TOKEN` in the shell still work when no profile is declared. Once a profile resolves it is authoritative: an unset token variable is an error naming the variable, not a silent fall-through. See [Profiles](/chant/lexicons/fountain/profiles/) for the full precedence.
+
+## Starting a run
+
+```bash
+chant run prod-watch --on fountain
+chant run prod-apply --on fountain --profile staging
+```
+
+The prompt posted is exactly `chant run <op>`, which is what makes the thread readable and what `status` matches turns on later.
+
+### Which thread it lands on
+
+Resolved in this order, first hit wins:
+
+1. A declared [`Steward`](/chant/lexicons/fountain/steward/) that lists this Op. The composite registers the mapping when the project's declarations load, so this answers whenever the run and the declaration share a process.
+2. The profile's `team`, a teammate name. The post goes to `POST /api/team/:agent_id/messages`, the single-writer path.
+3. `--param agent=<name>`, then the Op's `labels.Agent`. Either opens a fresh conversation on that agent rather than joining a thread.
+
+With none of the four, the run refuses and names all three ways to fix it. Prefer the first: the steward is the declaration that put the Op on that machine in the first place, and it needs no second copy of the name in config.
+
+## Reading a run back
+
+```bash
+chant run status prod-watch --on fountain   # the latest turn's state and step records
+chant run log prod-watch --on fountain      # every turn that ran this op, newest first
+chant run list --on fountain                # one row per declared Op
+chant run cancel prod-watch --on fountain --force
+```
+
+`list` groups by steward before it reads anything, so twenty ops behind one teammate cost one round trip rather than twenty.
+
+`cancel` without `--force` interrupts the turn and leaves the machine standing. Core's `chant run cancel` requires `--force`, which terminates the conversation and takes its sandbox with it. On a persistent steward that is the more expensive of the two: the checkout and tool cache go with it.
+
+## Approving a gate
+
+A run that reaches an unapproved gate ends its turn with the pending fact and the approve line. The gate is a fact on chant's ledger, so it is resolved the ordinary way:
+
+```bash
+chant approve prod-apply deploy-window --approver alice
+chant run approve prod-apply deploy-window --on fountain
+```
+
+The first records the resolution. The second posts `chant run approve <op> <gate>` back onto the steward's thread so the sandbox reads it and the op re-runs, carrying `--approver` and `--url` along so the hosted re-run records the same address a local one would have.
+
+`--durable-requests` would instead answer fountain's own pending permission card. It is refused today by name: the request-answer path it needs is [fountain#1635](https://github.com/BinaryBourbon/fountain/issues/1635), which has not shipped. Drop the flag and use the two commands above.
+
+## When the steward is busy
+
+A teammate runs one turn at a time. Posting to a busy one comes back `400 conversation_busy`, and this runtime reports it with the conversation's address and does not retry:
+
+```
+fountain runtime: the steward "prod-steward" is running another op
+(https://fountain.inevitable.fyi/conversations/c_01J…). A teammate runs one
+turn at a time; wait for it to finish and run this again.
+```
+
+Queueing behind it from a CLI that may be interrupted a second later would be a promise this client cannot keep. Open the conversation, see what is running, and run the command again when it settles. A `Schedule` that fires against a busy steward is dropped the same way, which is why the composite refuses any `schedule.overlap` other than `skip`.
+
+## Patience and reconnects
+
+fountain closes an idle event-stream connection after 60 seconds. A turn that thinks for a while and prints nothing therefore loses its connection, and that is not the end of the turn: the reader reconnects with `Last-Event-ID` and replays what arrived while it had none.
+
+Only genuine silence ends the wait, after `FOUNTAIN_STREAM_IDLE_TIMEOUT` seconds (default 1800), and it ends it with an error naming the conversation rather than reporting a success nobody observed.
+
+## What the sandbox is running
+
+The steward's agent is `runtime: "acp"` with `runtime_command: "chant acp"`, so the prompt this runtime posts is parsed and executed by chant itself inside the sandbox. See [ACP](/chant/lexicons/fountain/acp/).

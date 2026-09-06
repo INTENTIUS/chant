@@ -60,6 +60,7 @@ export default defineConfig({
 						{ label: 'Quick Start', slug: 'getting-started/quick-start' },
 						{ label: 'Alert Triage (local)', slug: 'tutorials/alert-triage-local' },
 						{ label: 'Carve out of Terraform', slug: 'tutorials/terraform-carve-out' },
+						{ label: 'Run Ops on a Fountain Steward', slug: 'tutorials/fountain-steward' },
 						{
 							label: 'Fly',
 							items: [
@@ -290,7 +291,15 @@ export default defineConfig({
 								{ label: 'Azure ARM', link: '/lexicons/azure/' },
 								{ label: 'GCP Config Connector', link: '/lexicons/gcp/' },
 								{ label: 'Fly Machines', link: '/lexicons/fly/' },
-								{ label: 'Fountain', link: '/lexicons/fountain/' },
+								{
+									label: 'Fountain',
+									items: [
+										{ label: 'Overview', link: '/lexicons/fountain/' },
+										{ label: 'The Steward', link: '/lexicons/fountain/steward/' },
+										{ label: 'Running an Op on fountain', link: '/lexicons/fountain/runtime/' },
+										{ label: 'chant acp', link: '/lexicons/fountain/acp/' },
+									],
+								},
 								{ label: 'Control Plane', link: '/lexicons/cpln/' },
 								{ label: 'Cedar', link: '/lexicons/cedar/' },
 								{

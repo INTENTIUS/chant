@@ -21,6 +21,15 @@ export default defineConfig({
                   "slug": "index"
             },
             {
+                  "label": "How-to guides",
+                  "items": [
+                        {
+                              "label": "Running an Op on fountain",
+                              "slug": "runtime"
+                        }
+                  ]
+            },
+            {
                   "label": "Reference",
                   "items": [
                         {
@@ -30,6 +39,10 @@ export default defineConfig({
                         {
                               "label": "Serialization",
                               "slug": "serialization"
+                        },
+                        {
+                              "label": "chant acp",
+                              "slug": "acp"
                         },
                         {
                               "label": "Composites",
@@ -54,6 +67,15 @@ export default defineConfig({
                         {
                               "label": "Skills",
                               "slug": "skills"
+                        }
+                  ]
+            },
+            {
+                  "label": "Explanation",
+                  "items": [
+                        {
+                              "label": "The Steward",
+                              "slug": "steward"
                         }
                   ]
             }

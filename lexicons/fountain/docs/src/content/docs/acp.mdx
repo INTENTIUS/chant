@@ -1,0 +1,81 @@
+---
+title: "chant acp"
+description: "chant as an Agent Client Protocol agent: a prompt is a chant command line, steps arrive as tool calls, and a gate ends the turn."
+diataxis: reference
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-fountain` — DO NOT EDIT.
+    Edit lexicons/fountain/docs/pages/acp.mdx instead; changes here are overwritten. */}
+
+
+`chant acp` speaks the [Agent Client Protocol](https://agentclientprotocol.com) over stdio. An editor or a fountain sandbox spawns the process, sends JSON-RPC 2.0 on stdin, and gets `session/update` notifications back.
+
+It is fountain-agnostic by construction. Nothing in it imports a fountain type, a fountain route, or a fountain URL; it ships in this lexicon because a fountain `Agent` with `runtime: "acp"` and `runtime_command: "chant acp"` is its first host, and any ACP client drives it unchanged.
+
+```bash
+chant acp                 # the bare form a client spawns
+chant acp serve           # the same thing, spelled out
+chant acp --durable-requests
+```
+
+## A prompt is a chant command line
+
+Every `session/prompt` is one chant command line:
+
+```
+chant run prod-apply --env prod
+chant lifecycle diff --live
+chant build
+```
+
+That is the whole convention, and it is what makes a steward's thread readable: each turn is a command someone could have typed, so scrolling the thread is scrolling the environment's shell history.
+
+It is a command *line*, not a shell line. The text is split with quote awareness and nothing else. No `$VAR`, no `&&`, no pipes, no globbing, no redirection. The verb is then resolved against chant's own command registry, so the set of things this accepts is exactly the set `chant --help` prints, and a prompt that does not parse to a chant verb is refused before anything runs. `rm -rf /` never reaches a shell, because there is no shell.
+
+Nothing here shells out at all: a parsed command is dispatched in this process, against the checkout the session's `cwd` points at.
+
+## What a client sees
+
+| Prompt | Updates |
+|---|---|
+| `chant run <op>` | one `tool_call` per declared step, `pending`, emitted before the run starts, then a `tool_call_update` as each step settles. Stdout and stderr stream as `agent_message_chunk`s, and the run's ledger record is the final chunk. |
+| any other verb | runs with `--json`; output streams as `agent_message_chunk`s the same way. |
+
+An Op's declaration is the plan, so the whole plan arrives up front and fills in. A client renders the shape of the run immediately instead of watching calls appear one at a time with no idea how many are coming. Tool calls carry `kind: "execute"`, the title `<phase> / <fn>`, and the step's args as `rawInput`.
+
+A record that matches no declared step, which is what an `onFailure` phase produces, opens its own tool call and closes it in the same breath. Failure phases are not part of the plan because they only run when the plan fails.
+
+## Protocol surface
+
+| Method | Behavior |
+|---|---|
+| `initialize` | negotiates down to the highest version both ends speak. Reports `loadSession: false`, text-only prompt capabilities, and no auth methods: the agent runs as whoever spawned it. |
+| `session/new` | a session is a working directory and nothing else. `mcpServers` is ignored, because chant's tools are its own verbs. |
+| `session/prompt` | one command line, one turn. Turns are serialized: a turn borrows the process writers to stream output and changes into the session's `cwd`, both process-wide, so one connection runs one command at a time. |
+| `session/cancel` | a notification. It aborts the in-flight step through the executor's signal, which then runs the Op's `onFailure` phases before the run settles. The pending `session/prompt` answers with `stopReason: "cancelled"`. |
+
+`session/load` is not implemented. There is no transcript to replay that the run ledger does not already hold.
+
+Stop reasons are `end_turn`, `cancelled`, `refusal` (the command line did not parse to a chant verb) and `waiting` (a gate, under `--durable-requests`).
+
+## Gates
+
+By default a run that reaches an unapproved gate ends its turn. The reply carries the pending fact and the line that resolves it:
+
+```
+chant approve prod-apply deploy-window --approver <you>
+```
+
+The gate is a fact on chant's ledger, not a wait held open inside the sandbox. Nothing blocks, no machine is pinned by a decision nobody has made yet, and the next run re-evaluates the fact.
+
+### `--durable-requests`
+
+With the flag, the same gate becomes a `session/request_permission` carrying `allow_once` and `reject_once`, and the turn ends `waiting`. The client answers on a later prompt whose `_meta.chant.permission` names the request id and the option chosen; allowing records the gate resolution the way `chant approve` does and re-runs the command line, which now walks through the gate.
+
+It is off by default because a request that outlives a turn needs [fountain#1635](https://github.com/BinaryBourbon/fountain/issues/1635). That has not shipped in any fountain release, including the v0.16.0 the lexicon's types are generated from, so on fountain today the flag has no client that can answer it. It is useful now against an editor or any other ACP client that can hold a request across turns.
+
+The `runtime: "acp"` and `runtime_command` pair the steward sets is itself [fountain#1634](https://github.com/BinaryBourbon/fountain/pull/1634), which is also not in v0.16.0: an instance rejects the pair at apply until it lands. See the Agent section of [Resources](/chant/lexicons/fountain/resources/).
+
+## Redaction
+
+The server does not redact. A step's output reaches the thread verbatim and fountain redacts secrets on the way in. chant never reads or prints the environment it was spawned with, so nothing is added to what the command itself chose to say.

@@ -618,7 +618,7 @@
  "docs/src/content/docs/guide/ops-reference.mdx": {
   "formatting/em-dash-density": 8,
   "discourse/punchy-fragments": 1,
-  "claude/colon-reveal": 5,
+  "claude/colon-reveal": 4,
   "tricolon/comma-series": 3,
   "repetition/near-duplicate": 1
  },
@@ -1026,6 +1026,9 @@
   "claude/colon-reveal": 4,
   "tricolon/comma-series": 1,
   "anaphora/repeated-opening": 2
+ },
+ "docs/src/content/docs/tutorials/fountain-steward.mdx": {
+  "claude/colon-reveal": 2
  },
  "docs/src/content/docs/tutorials/github-pr-preview.mdx": {
   "formatting/em-dash-density": 20,
