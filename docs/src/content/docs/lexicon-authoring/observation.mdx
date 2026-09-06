@@ -222,7 +222,7 @@ Core owns the rest of the pass and needs no hook for it: canonical key order, ho
 
 ## classifyDisruption() — what applying an update costs
 
-Reference implementation: `lexicons/aws/src/disruption.ts`.
+Reference implementation: `lexicons/aws/src/disruption.ts`. `lexicons/fountain/src/disruption.ts` is the same hook where no registry schema exists to read: the table is written from the provider's routes, naming which fields a PATCH accepts and which ones are the resource's identity, and it covers three of the six kinds and says `unknown` for the rest.
 
 `lifecycle plan` reports what changes. What it costs to apply is a separate question, and only the lexicon can answer it: replacement semantics live in the spec you already compile (CloudFormation's `createOnlyProperties`, Kubernetes' SSA schema), and the attribute paths on a change-set entry are paths into *your* observation shape, which core cannot map back onto property names.
 

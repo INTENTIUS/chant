@@ -203,3 +203,183 @@ describeObservationConformance({
     },
   ],
 });
+
+// ── The team-side kinds (#2128) ───────────────────────────────────────────
+//
+// A teammate keys on its roster name, a schedule on its teammate AND its name,
+// a webhook on its url. None of the three carries chant's `managed-by` marker,
+// so the first two inherit ownership from the agent behind them and the third
+// has no verdict to give.
+
+const OWNED_AGENT = { id: "agent-1", name: "steward", metadata: { "managed-by": "chant" } };
+const FOREIGN_AGENT = { id: "agent-9", name: "someone-else", metadata: {} };
+
+const TEAM = routedHttp({
+  "GET /api/team": {
+    status: 200,
+    json: {
+      data: [
+        {
+          agent_id: "agent-1",
+          name: "ops-steward",
+          agent: OWNED_AGENT,
+          conversation: { id: "conv-1", environment_id: "env-1", vault_id: "vault-1" },
+          presence: { state: "online", label: "Online" },
+          unread: false,
+        },
+        {
+          agent_id: "agent-9",
+          name: "hand-built",
+          agent: FOREIGN_AGENT,
+          conversation: { id: "conv-9" },
+          presence: { state: "asleep", label: "Asleep" },
+          unread: false,
+        },
+      ],
+    },
+  },
+  "GET /api/team/schedules": {
+    status: 200,
+    json: {
+      data: [
+        {
+          id: "sched-1",
+          agent_id: "agent-1",
+          name: "nightly-converge",
+          cron: "0 3 * * *",
+          prompt: "chant lifecycle converge",
+          one_off: false,
+          enabled: true,
+          next_run_at: "2026-09-07T03:00:00Z",
+          updated_at: "2026-09-06T00:00:00Z",
+        },
+        {
+          id: "sched-9",
+          agent_id: "agent-9",
+          name: "nightly-converge",
+          cron: "0 4 * * *",
+          prompt: "someone else's",
+          one_off: false,
+          enabled: true,
+        },
+      ],
+    },
+  },
+  "GET /api/webhooks": {
+    status: 200,
+    json: {
+      data: [
+        {
+          id: "wh-1",
+          url: "https://ops.example.com/hooks/fountain",
+          event_types: ["conversation.turn.done"],
+          status: "active",
+          consecutive_failures: 0,
+          updated_at: "2026-09-06T00:00:00Z",
+        },
+      ],
+    },
+  },
+});
+
+describe("teammates, schedules and webhooks", () => {
+  it("keys a teammate by its roster name and inherits the agent's ownership", async () => {
+    const ents = entities({
+      opsSteward: { entityType: "Fountain::V1::Teammate", props: { name: "ops-steward", agent: "steward" } },
+      handBuilt: { entityType: "Fountain::V1::Teammate", props: { name: "hand-built", agent: "someone-else" } },
+    });
+    const { resources } = normalizeObservation(await describeResources(opts(ents), TEAM));
+
+    expect(resources.opsSteward.ownership).toBe("owned");
+    // A teammate has no id column — it IS an agent on the team channel.
+    expect(resources.opsSteward.physicalId).toBe("agent-1");
+    // The launch bindings live on the team conversation, and they are what
+    // makes a rebound teammate classifiable as `replace`.
+    expect(resources.opsSteward.attributes?.environment_id).toBe("env-1");
+    expect(resources.opsSteward.attributes?.vault_id).toBe("vault-1");
+    expect(resources.handBuilt.ownership).toBe("foreign");
+  });
+
+  it("keys a schedule by its teammate AND its name, so the same name under another teammate is absent", async () => {
+    const ents = entities({
+      nightly: {
+        entityType: "Fountain::V1::Schedule",
+        props: {
+          name: "nightly-converge",
+          teammate: "ops-steward",
+          cron: "0 3 * * *",
+          prompt: "chant lifecycle converge",
+        },
+      },
+      elsewhere: {
+        entityType: "Fountain::V1::Schedule",
+        props: { name: "nightly-converge", teammate: "not-on-the-roster", cron: "0 3 * * *", prompt: "x" },
+      },
+    });
+    const { resources, unobserved } = normalizeObservation(await describeResources(opts(ents), TEAM));
+
+    expect(resources.nightly.physicalId).toBe("sched-1");
+    expect(resources.nightly.attributes?.cron).toBe("0 3 * * *");
+    // Inherited from agent-1, which carries the marker.
+    expect(resources.nightly.ownership).toBe("owned");
+    // Asked and answered no: the pair does not exist, even though a schedule of
+    // that name does. Absent, not unobserved — it stays eligible for `create`.
+    expect(resources.elsewhere).toBeUndefined();
+    expect(unobserved.elsewhere).toBeUndefined();
+  });
+
+  it("reports a webhook unknown, because fountain stores no marker on one", async () => {
+    const ents = entities({
+      hook: { entityType: "Fountain::V1::Webhook", props: { url: "https://ops.example.com/hooks/fountain" } },
+    });
+    const { resources } = normalizeObservation(await describeResources(opts(ents), TEAM));
+
+    expect(resources.hook.physicalId).toBe("wh-1");
+    expect(resources.hook.attributes?.status).toBe("active");
+    expect(resources.hook.ownership).toBe("unknown");
+  });
+
+  it("withholds a foreign webhook under --owned, naming the missing channel", async () => {
+    const ents = entities({
+      hook: { entityType: "Fountain::V1::Webhook", props: { url: "https://ops.example.com/hooks/fountain" } },
+    });
+    const { resources, unobserved } = normalizeObservation(
+      await describeResources(opts(ents, { owned: true }), TEAM),
+    );
+
+    expect(resources.hook).toBeUndefined();
+    expect(unobserved.hook.reason).toBe("filtered");
+    expect(unobserved.hook.detail).toContain("no metadata on a webhook endpoint");
+  });
+
+  it("a declaration that resolves to no identity is read-failed, never absent", async () => {
+    const ents = entities({
+      orphan: { entityType: "Fountain::V1::Schedule", props: { name: "nightly", cron: "0 3 * * *", prompt: "x" } },
+    });
+    const { resources, unobserved } = normalizeObservation(await describeResources(opts(ents), TEAM));
+
+    expect(resources.orphan).toBeUndefined();
+    expect(unobserved.orphan.reason).toBe("read-failed");
+  });
+
+  it("lists the roster once even when teammates and schedules are both declared", async () => {
+    const calls: string[] = [];
+    const counting: FountainHttp = async (method, path) => {
+      calls.push(`${method} ${path}`);
+      return TEAM(method, path);
+    };
+    await describeResources(
+      opts(
+        entities({
+          opsSteward: { entityType: "Fountain::V1::Teammate", props: { name: "ops-steward", agent: "steward" } },
+          nightly: {
+            entityType: "Fountain::V1::Schedule",
+            props: { name: "nightly-converge", teammate: "ops-steward", cron: "0 3 * * *", prompt: "x" },
+          },
+        }),
+      ),
+      counting,
+    );
+    expect(calls.filter((c) => c === "GET /api/team")).toHaveLength(1);
+  });
+});

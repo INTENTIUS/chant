@@ -3,11 +3,11 @@
  * contract (#1014).
  *
  * `describeResources()` (./describe-resources.ts) answers whether a declared
- * Environment/Vault/Agent exists and hands back its id and timestamps. That
- * misses the drift the design was written for: an environment hand-edited in
- * the fountain UI from `networking_type: limited` to `unrestricted`, an
- * `allowed_vault_ids` allowlist widened, a skill repointed at an unpinned
- * branch, a secret added to a reviewed sandbox. All of it lives one level
+ * resource exists and hands back its id and timestamps. That misses the drift
+ * the design was written for: an environment hand-edited in the fountain UI
+ * from `networking_type: limited` to `unrestricted`, an `allowed_vault_ids`
+ * allowlist widened, a skill repointed at an unpinned branch, a secret added to
+ * a reviewed sandbox, a schedule someone paused. All of it lives one level
  * down, in properties nobody was reading.
  *
  * ## The read is the thin path's read
@@ -19,7 +19,8 @@
  * field the request schema accepts, not a summary — so there is no per-resource
  * follow-up GET the way the AWS row needs Cloud Control on top of
  * `describe-stack-resources`. One list per declared kind, cached, exactly as
- * the thin path does it.
+ * the thin path does it, through the same `FountainLists` (./live-identity.ts)
+ * so the two readers index a live record under the same key.
  *
  * ## The payload passes through
  *
@@ -31,13 +32,24 @@
  * release surfaces as `undeclared` until the table names it, which is the
  * deliberate trade: visible and fixable beats silently dropped.
  *
- * One exception, and it is the reference edge. chant declares an agent's
- * environment as a typed reference (`environment`), fountain stores the id it
- * resolved to (`environment_id`). Passing the id through would report
- * `<undeclared> -> <uuid>` on every clean read, so where source did not author
- * `environment_id` itself the id is resolved back to the environment's name and
- * emitted as `environment` — the same translation `exportResources()` does for
- * the import path.
+ * The exceptions are the reference edges, and there is one per kind that has
+ * one. chant declares an agent's environment as a typed reference
+ * (`environment`), fountain stores the id it resolved to (`environment_id`).
+ * Passing the id through would report `<undeclared> -> <uuid>` on every clean
+ * read, so where source did not author the id field itself the id is resolved
+ * back to the target's name and emitted under the prop an author writes — the
+ * same translation `exportResources()` does for the import path. A schedule's
+ * `agent_id` becomes `teammate`; a teammate's environment and vault ids become
+ * `environment` and `vault`.
+ *
+ * A teammate is the one kind whose live payload is not its record. `GET
+ * /api/team` renders a roster row: the agent embedded whole, the current
+ * conversation, presence, unread state, the last turn, usage. Almost none of
+ * that is authored, and the three fields that are — the agent, and the
+ * environment and vault the team conversation was launched with — are nested
+ * rather than top-level. So a teammate is projected onto its four declarable
+ * props instead of passed through, and ./deep-observe-hooks.ts prunes the
+ * render fields on both sides in case a future payload carries them flat.
  *
  * ## Secrets: presence, never keys, never values
  *
@@ -65,16 +77,26 @@ import { unobservedAll } from "@intentius/chant/observation";
 import {
   resolveEndpoint,
   defaultFountainHttp,
-  isChantOwned,
   OWNERSHIP_KEY,
   OWNERSHIP_VALUE,
   type FountainHttp,
 } from "./op/activities/fountain-apply";
 import {
+  FountainLists,
+  KIND_PATHS,
+  declaredKey,
+  nameIndex,
+  ownershipGap,
+  ownershipOf,
+  type LiveRecord,
+} from "./live-identity";
+import {
   fountainDeepNormalizationHooks,
   ENVIRONMENT_TYPE,
   VAULT_TYPE,
   AGENT_TYPE,
+  TEAMMATE_TYPE,
+  SCHEDULE_TYPE,
 } from "./deep-observe-hooks";
 
 // Re-exported so a dynamic importer of this module gets the reader and its
@@ -82,12 +104,6 @@ import {
 // statically, because core normalizes the declared tree with them whether or
 // not a live read ever happens.
 export { fountainDeepNormalizationHooks };
-
-const KIND_PATHS: Record<string, string> = {
-  [ENVIRONMENT_TYPE]: "environments",
-  [VAULT_TYPE]: "vaults",
-  [AGENT_TYPE]: "agents",
-};
 
 /** Kinds whose secrets live in a sub-resource rather than the record itself. */
 const SECRET_BEARING: ReadonlySet<string> = new Set([ENVIRONMENT_TYPE, VAULT_TYPE]);
@@ -104,35 +120,12 @@ export interface FountainDeepObserveOptions {
   endpoint?: string;
 }
 
-/** The fields this reader reads by name off a live record. Everything else passes through. */
-interface LiveRecord extends Record<string, unknown> {
-  id: string;
-  name: string;
-  metadata?: Record<string, unknown>;
-  environment_id?: string | null;
-}
-
-/** One list per kind, shared by every entity of that kind — including a failure. */
-class KindLists {
-  private readonly lists = new Map<string, Promise<Map<string, LiveRecord>>>();
-
-  constructor(private readonly http: FountainHttp) {}
-
-  byName(entityType: string): Promise<Map<string, LiveRecord>> {
-    const cached = this.lists.get(entityType);
-    if (cached) return cached;
-
-    const path = KIND_PATHS[entityType];
-    const pending = (async () => {
-      const { status, json } = await this.http("GET", `/api/${path}`);
-      if (status !== 200) throw new Error(`list ${path} returned ${status}`);
-      const data = (json as { data?: LiveRecord[] })?.data ?? [];
-      return new Map(data.map((r) => [r.name, r]));
-    })();
-
-    this.lists.set(entityType, pending);
-    return pending;
-  }
+/** The id→name lookups a reference translation needs, resolved on first use. */
+interface NameLookups {
+  environment(): Promise<Map<string, string>>;
+  vault(): Promise<Map<string, string>>;
+  agent(): Promise<Map<string, string>>;
+  teammate(): Promise<ReadonlyMap<string, LiveRecord>>;
 }
 
 /**
@@ -158,27 +151,113 @@ async function secretKeys(
 }
 
 /**
+ * Replace a server-resolved id with the name an author writes, unless source
+ * authored the id field itself — in which case the id IS the declared
+ * vocabulary and translating it would manufacture drift.
+ */
+function translateRef(
+  tree: Record<string, unknown>,
+  declared: Record<string, unknown>,
+  idField: string,
+  prop: string,
+  names: Map<string, string>,
+): void {
+  if (declared[idField] !== undefined) return;
+  const id = tree[idField];
+  if (typeof id !== "string") return;
+  const name = names.get(id);
+  // An id with nothing behind it should not exist (the column carries a foreign
+  // key), but if it does, the raw id is the honest thing to report.
+  if (!name) return;
+  delete tree[idField];
+  tree[prop] = name;
+}
+
+/**
  * The live property tree for an agent, with the reference edge put back into
  * the vocabulary source writes it in (see the module doc).
  */
-function agentProperties(
+async function agentProperties(
   record: LiveRecord,
   declared: Record<string, unknown>,
-  environmentNameById: Map<string, string>,
-): Record<string, unknown> {
+  names: NameLookups,
+): Promise<Record<string, unknown>> {
   const tree: Record<string, unknown> = { ...record };
-  if (declared.environment_id !== undefined) return tree;
-
-  const id = record.environment_id;
-  if (typeof id !== "string") return tree;
-  const name = environmentNameById.get(id);
-  // An id with no environment behind it should not exist (the column carries a
-  // foreign key), but if it does, the raw id is the honest thing to report.
-  if (!name) return tree;
-
-  delete tree.environment_id;
-  tree.environment = name;
+  if (declared.environment_id === undefined && typeof record.environment_id === "string") {
+    translateRef(tree, declared, "environment_id", "environment", await names.environment());
+  }
   return tree;
+}
+
+/**
+ * The four authored props of a teammate, read off a roster row: its name, the
+ * agent it is, and the environment and vault its team conversation was
+ * launched with. Everything else on the row is a render (see the module doc).
+ */
+async function teammateProperties(
+  record: LiveRecord,
+  declared: Record<string, unknown>,
+  names: NameLookups,
+): Promise<Record<string, unknown>> {
+  const conversation =
+    record.conversation && typeof record.conversation === "object"
+      ? (record.conversation as Record<string, unknown>)
+      : {};
+  const tree: Record<string, unknown> = {};
+  if (typeof record.name === "string") tree.name = record.name;
+
+  const agentId = typeof record.agent_id === "string" ? record.agent_id : undefined;
+  const embedded =
+    record.agent && typeof record.agent === "object"
+      ? (record.agent as Record<string, unknown>)
+      : undefined;
+  if (typeof embedded?.name === "string") tree.agent = embedded.name;
+  else if (agentId) {
+    tree.agent_id = agentId;
+    translateRef(tree, declared, "agent_id", "agent", await names.agent());
+  }
+
+  for (const [idField, prop, lookup] of [
+    ["environment_id", "environment", names.environment],
+    ["vault_id", "vault", names.vault],
+  ] as const) {
+    const id = record[idField] ?? conversation[idField];
+    if (typeof id !== "string") continue;
+    tree[idField] = id;
+    translateRef(tree, declared, idField, prop, await lookup());
+  }
+
+  return tree;
+}
+
+/**
+ * A schedule's payload is its record, so it passes through — with `agent_id`
+ * resolved back to the `teammate` reference chant declares it as.
+ */
+async function scheduleProperties(
+  record: LiveRecord,
+  declared: Record<string, unknown>,
+  names: NameLookups,
+): Promise<Record<string, unknown>> {
+  const tree: Record<string, unknown> = { ...record };
+  if (declared.agent_id !== undefined || typeof record.agent_id !== "string") return tree;
+  const teammate = (await names.teammate()).get(record.agent_id)?.name;
+  if (typeof teammate !== "string") return tree;
+  delete tree.agent_id;
+  tree.teammate = teammate;
+  return tree;
+}
+
+async function liveProperties(
+  entityType: string,
+  record: LiveRecord,
+  declared: Record<string, unknown>,
+  names: NameLookups,
+): Promise<Record<string, unknown>> {
+  if (entityType === AGENT_TYPE) return agentProperties(record, declared, names);
+  if (entityType === TEAMMATE_TYPE) return teammateProperties(record, declared, names);
+  if (entityType === SCHEDULE_TYPE) return scheduleProperties(record, declared, names);
+  return { ...record };
 }
 
 /**
@@ -212,19 +291,19 @@ export async function observeResourcesDeepFountain(
     http = defaultFountainHttp(resolveEndpoint({ endpoint: options.endpoint }), token);
   }
 
-  const lists = new KindLists(http);
+  const lists = new FountainLists(http);
+  const index = nameIndex(options.entities);
   const resources: Record<string, DeepResourceObservation> = {};
   const unobserved: Record<string, UnobservedEntity> = {};
 
-  // Built lazily and only for agents, so a project that declares no agent never
-  // pays for the environments list it would not otherwise read.
-  let environmentNameById: Map<string, string> | undefined;
-  const environmentNames = async (): Promise<Map<string, string>> => {
-    if (!environmentNameById) {
-      const byName = await lists.byName(ENVIRONMENT_TYPE);
-      environmentNameById = new Map([...byName.values()].map((r) => [r.id, r.name]));
-    }
-    return environmentNameById;
+  // Lazy, and each underlying list is fetched at most once by `FountainLists`,
+  // so a project that declares no agent never pays for the environments list it
+  // would not otherwise read.
+  const lookups: NameLookups = {
+    environment: () => lists.nameById(ENVIRONMENT_TYPE),
+    vault: () => lists.nameById(VAULT_TYPE),
+    agent: () => lists.nameById(AGENT_TYPE),
+    teammate: () => lists.roster(),
   };
 
   for (const [entityName, { entityType, props }] of options.entities) {
@@ -237,40 +316,54 @@ export async function observeResourcesDeepFountain(
       continue;
     }
 
-    const resourceName = typeof props.name === "string" ? props.name : entityName;
+    const key = declaredKey(entityType, entityName, props, index);
+    if (key === undefined) {
+      unobserved[entityName] = {
+        type: entityType,
+        reason: "read-failed",
+        detail: `"${entityName}" does not resolve to a fountain identity — a schedule needs a teammate reference, a webhook a url`,
+      };
+      continue;
+    }
 
     try {
-      const byName = await lists.byName(entityType);
-      const record = byName.get(resourceName);
+      const byKey = await lists.byKey(entityType);
+      const record = byKey.get(key);
 
       // Not deployed. The thin read already reports the absence (#1089);
       // restating it here as a property hole would turn one finding into two.
       if (!record) continue;
 
-      if (options.owned && !isChantOwned(record)) {
-        unobserved[entityName] = {
-          type: entityType,
-          reason: "filtered",
-          detail: `"${resourceName}" exists but does not carry the ${OWNERSHIP_KEY}: ${OWNERSHIP_VALUE} marker`,
-        };
-        continue;
+      if (options.owned) {
+        const ownership = ownershipOf(entityType, record, await lists.rosterFor(entityType));
+        if (ownership !== "owned") {
+          unobserved[entityName] = {
+            type: entityType,
+            reason: "filtered",
+            detail:
+              ownership === "unknown"
+                ? `"${key}" exists but its ownership cannot be established — ${ownershipGap(entityType)}`
+                : `"${key}" exists but does not carry the ${OWNERSHIP_KEY}: ${OWNERSHIP_VALUE} marker`,
+          };
+          continue;
+        }
       }
 
-      let tree: Record<string, unknown>;
-      if (entityType === AGENT_TYPE) {
-        tree = agentProperties(record, props, await environmentNames());
-      } else {
-        tree = { ...record };
-      }
+      const tree = await liveProperties(entityType, record, props, lookups);
 
       if (SECRET_BEARING.has(entityType)) {
-        const secrets = await secretKeys(http, KIND_PATHS[entityType], record.id);
+        const secrets = await secretKeys(http, KIND_PATHS[entityType], String(record.id));
         if (secrets) tree.secrets = secrets;
       }
 
+      // A teammate has no id of its own — it IS an agent on the reserved team
+      // channel — so the agent's id is its physical identity, same as the thin
+      // read reports.
+      const physicalId = entityType === TEAMMATE_TYPE ? record.agent_id : record.id;
+
       resources[entityName] = {
         type: entityType,
-        physicalId: record.id,
+        ...(typeof physicalId === "string" ? { physicalId } : {}),
         properties: normalizeDeepProperties(tree, {
           entityType,
           side: "live",

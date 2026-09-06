@@ -342,7 +342,7 @@ Live-export coverage today.
 | Azure | `lexicons/azure/src/export-resources.ts` | ARM `GET` over the applier's transport, mapped by `src/import/live-export.ts` |
 | Cedar | `lexicons/cedar/src/avp/live-export.ts` | Amazon Verified Permissions `ListPolicies` plus `GetPolicy` for statements |
 | Fly | `lexicons/fly/src/export-resources.ts` | Machines API (flaps) reads, mapped by `src/import/live-export.ts` |
-| Fountain | `lexicons/fountain/src/export-resources.ts` | REST list per declared kind, stripped to the authored shape in the same file |
+| Fountain | `lexicons/fountain/src/export-resources.ts` | REST list per kind, stripped to the authored shape in the same file; a kind a selector excludes is still listed when a selected kind resolves a reference through it |
 | GCP | `lexicons/gcp/src/export-resources.ts` | Per-kind REST `GET`s, mapped by `src/import/live-export.ts` |
 | K8s | `lexicons/k8s/src/export-resources.ts` | Typed API client `LIST` per kind, stripped of `status`/`managedFields`/server metadata (kept under `--verbatim`), mapped by `src/import/live-export.ts` |
 

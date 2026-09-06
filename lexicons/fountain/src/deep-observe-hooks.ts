@@ -17,8 +17,8 @@
  * drift, which is the worse of the two failures.
  *
  * Every value below is read off fountain's own Ecto schemas (`Environment`,
- * `Vault`, `Agent`) and the JSON views that render them, not guessed from a
- * sample payload.
+ * `Vault`, `Agent`, `Teammate`, `TeamSchedule`, `WebhookEndpoint`) and the JSON
+ * views that render them, not guessed from a sample payload.
  *
  * ## Secrets
  *
@@ -48,6 +48,9 @@ import { SERVER_FIELDS } from "./import/parser";
 export const ENVIRONMENT_TYPE = "Fountain::V1::Environment";
 export const VAULT_TYPE = "Fountain::V1::Vault";
 export const AGENT_TYPE = "Fountain::V1::Agent";
+export const TEAMMATE_TYPE = "Fountain::V1::Teammate";
+export const SCHEDULE_TYPE = "Fountain::V1::Schedule";
+export const WEBHOOK_TYPE = "Fountain::V1::Webhook";
 
 /**
  * Top-level payload fields fountain writes and a caller cannot: the primary
@@ -104,6 +107,46 @@ export const FOUNTAIN_DEFAULTS: Readonly<Record<string, Readonly<Record<string, 
     // predates it simply never emits the field.
     sandbox_mode: "ephemeral",
   },
+  [TEAMMATE_TYPE]: {},
+  [SCHEDULE_TYPE]: {
+    enabled: true,
+    one_off: false,
+  },
+  [WEBHOOK_TYPE]: {
+    description: "",
+    // `status` is read-only upstream — an author cannot declare it — so it is
+    // here rather than in the server-field table on purpose: `active`
+    // subtracts and `disabled` survives as `undeclared`, which is exactly the
+    // finding this row exists for. A webhook fountain switched off after
+    // enough failed deliveries is drift; a healthy one is silent.
+    status: "active",
+    // What a create with no `event_types` is given.
+    event_types: [
+      "conversation.turn.done",
+      "conversation.turn.failed",
+      "conversation.provision.failed",
+    ],
+  },
+};
+
+/**
+ * Server-written fields of ONE kind, pruned on both sides the way
+ * {@link FOUNTAIN_SERVER_FIELDS} is, but scoped because the names are not
+ * globally safe: `agent_id` is a server-resolved reference on a schedule and a
+ * teammate, where chant writes `teammate` and `agent` instead, but it is
+ * authored configuration nowhere else.
+ *
+ * The schedule entries are the scheduler's own run history — it rewrites them
+ * on every fire, so a working schedule would otherwise report drift on every
+ * read. The webhook entries are delivery health, which moves on its own and is
+ * already summarised by `status`. The teammate entries are the roster render:
+ * `GET /api/team` returns presence, unread state and the last turn alongside
+ * the binding, none of it configuration.
+ */
+export const FOUNTAIN_KIND_SERVER_FIELDS: Readonly<Record<string, ReadonlySet<string>>> = {
+  [TEAMMATE_TYPE]: new Set(["agent_id", "contact", "conversation", "last_turn", "presence", "preview", "unread", "usage_total"]),
+  [SCHEDULE_TYPE]: new Set(["agent_id", "last_conversation_id", "last_error", "last_run_at", "next_run_at"]),
+  [WEBHOOK_TYPE]: new Set(["consecutive_failures", "disabled_at", "disabled_reason"]),
 };
 
 /**
@@ -171,6 +214,7 @@ export const fountainDeepNormalizationHooks: DeepNormalizationHooks = {
   prune(node: DeepNode): boolean {
     // Server-written, on either side, declared or not.
     if (FOUNTAIN_SERVER_FIELDS.has(node.pattern)) return true;
+    if (FOUNTAIN_KIND_SERVER_FIELDS[node.entityType]?.has(node.pattern)) return true;
 
     // An authored-but-empty `secrets` list is not a fountain state: there is no
     // sub-resource to read back for it, so leaving it on the declared side
