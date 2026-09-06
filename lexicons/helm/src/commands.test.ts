@@ -19,7 +19,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { RESERVED_COMMAND_NAMES } from "@intentius/chant/cli/command-group";
-import { formatRenderDiff, formatRenderRecords, helmCommandGroup } from "./commands";
+import { formatRenderDiff, formatRenderLiveDiff, formatRenderRecords, helmCommandGroup } from "./commands";
 import { helmPlugin } from "./plugin";
 import { renderStability } from "./render-digest";
 import { persistHelmRender } from "./render-store";
@@ -414,6 +414,31 @@ describe("formatRenderDiff", () => {
       unindexed: { from: 0, to: 0 },
     });
     expect(out).toContain("no differences — identical documents on both sides");
+  });
+});
+
+describe("formatRenderLiveDiff", () => {
+  // #2181 - the bucket for a live value this render never set is `unclaimed`,
+  // which is a different fact from a property declared `heldElsewhere()`.
+  it("prints the unclaimed section for a live value the render never set", () => {
+    const out = formatRenderLiveDiff(`sha256:${"a".repeat(64)}`, "prod", {
+      drifted: [],
+      accepted: [],
+      unclaimed: [
+        {
+          name: "Deployment web/app",
+          type: "apps/v1 Deployment",
+          fields: [{ path: "spec.replicas", live: 7, heldBy: "hpa-controller", source: "field-manager" }],
+        },
+      ],
+      held: [],
+      unchanged: [],
+      unobserved: [],
+      undeclaredEntities: [],
+    });
+    expect(out).toContain("1 unclaimed");
+    expect(out).toContain("UNCLAIMED (live values this render never sets; not drift):");
+    expect(out).toContain("spec.replicas: 7 [held by hpa-controller]");
   });
 });
 
