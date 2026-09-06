@@ -67,3 +67,106 @@ describe("discoverOps — the scan root is the project, not the checkout (#2058)
     expect([...ops.keys()].sort()).toEqual(["mine", "root", "theirs"]);
   });
 });
+
+/**
+ * #2171 — an Op may be exported by name, not only as the file's default.
+ *
+ * Discovery used to read `mod.default` alone, which forced every runnable Op
+ * into the one export shape the fold path refuses, so an Op under a project's
+ * `sourceDir` cost that project its fold coverage. The default export is still
+ * accepted, unchanged; these cases are the widening around it.
+ *
+ * Same fake-git-root harness as the suite above: the Op files here are written
+ * as plain object literals with a `props` field, which is the shape discovery
+ * actually validates, so the fixtures stay free of the Op builders.
+ */
+describe("discoverOps — an Op may be exported by name (#2171)", () => {
+  const OP_VALUE = (name: string): string =>
+    `{ props: { name: ${JSON.stringify(name)}, overview: "t", phases: [{ name: "Run", steps: [] }] } }`;
+
+  let checkout: string;
+  const write = (file: string, body: string): void => {
+    writeFileSync(join(checkout, "ops", file), body);
+  };
+
+  beforeEach(() => {
+    checkout = realpathSync(mkdtempSync(join(tmpdir(), "chant-op-named-")));
+    fakeGitRoot = checkout;
+    mkdirSync(join(checkout, "ops"), { recursive: true });
+    writeFileSync(join(checkout, "chant.config.json"), JSON.stringify({ lexicons: ["aws"] }));
+  });
+  afterEach(() => rmSync(checkout, { recursive: true, force: true }));
+
+  test("a named export is discovered", async () => {
+    write("named.op.ts", `export const deploy = ${OP_VALUE("deploy")};\n`);
+    const { ops, errors } = await discoverOps({ cwd: checkout });
+    expect(errors).toEqual([]);
+    expect([...ops.keys()]).toEqual(["deploy"]);
+    expect(ops.get("deploy")!.exportName).toBe("deploy");
+  });
+
+  test("the default export still works, and reports itself as the default", async () => {
+    write("legacy.op.ts", `export default ${OP_VALUE("legacy")};\n`);
+    const { ops, errors } = await discoverOps({ cwd: checkout });
+    expect(errors).toEqual([]);
+    expect([...ops.keys()]).toEqual(["legacy"]);
+    expect(ops.get("legacy")!.exportName).toBe("default");
+  });
+
+  test("one file may declare several Ops, and each is registered on its own", async () => {
+    write("many.op.ts", `export const a = ${OP_VALUE("alpha")};\nexport const b = ${OP_VALUE("beta")};\n`);
+    const { ops, errors } = await discoverOps({ cwd: checkout });
+    expect(errors).toEqual([]);
+    expect([...ops.keys()].sort()).toEqual(["alpha", "beta"]);
+    expect(ops.get("alpha")!.filePath).toBe(ops.get("beta")!.filePath);
+  });
+
+  test("a default and a named Op in one file are both registered", async () => {
+    write("both.op.ts", `export default ${OP_VALUE("first")};\nexport const other = ${OP_VALUE("second")};\n`);
+    const { ops, errors } = await discoverOps({ cwd: checkout });
+    expect(errors).toEqual([]);
+    expect([...ops.keys()].sort()).toEqual(["first", "second"]);
+  });
+
+  test("the same Op exported twice is one Op, not a self-collision", async () => {
+    write("aliased.op.ts", `const op = ${OP_VALUE("aliased")};\nexport default op;\nexport { op };\n`);
+    const { ops, errors } = await discoverOps({ cwd: checkout });
+    expect(errors).toEqual([]);
+    expect([...ops.keys()]).toEqual(["aliased"]);
+    expect(ops.get("aliased")!.exportName).toBe("default");
+  });
+
+  test("exports that are not Ops are skipped in silence", async () => {
+    write("mixed.op.ts", `export const meta = { team: "infra" };\nexport const notQuite = { props: { name: "x" } };\nexport const real = ${OP_VALUE("real")};\n`);
+    const { ops, errors } = await discoverOps({ cwd: checkout });
+    expect(errors).toEqual([]);
+    expect([...ops.keys()]).toEqual(["real"]);
+  });
+
+  test("a file exporting no Op at all is the error, and names both accepted shapes", async () => {
+    write("empty.op.ts", `export const meta = { team: "infra" };\n`);
+    const { ops, errors } = await discoverOps({ cwd: checkout });
+    expect(ops.size).toBe(0);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain("exports no Op");
+    expect(errors[0]).toContain("export default Op({...})");
+    expect(errors[0]).toContain("export const deploy = Op({...})");
+  });
+
+  test("two files declaring the same Op name still collide", async () => {
+    write("one.op.ts", `export const a = ${OP_VALUE("same")};\n`);
+    write("two.op.ts", `export const b = ${OP_VALUE("same")};\n`);
+    const { ops, errors } = await discoverOps({ cwd: checkout });
+    expect(ops.size).toBe(1);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatch(/^Duplicate Op name "same" in .+ and .+$/);
+  });
+
+  test("two Ops sharing a name inside one file collide, and the message says so", async () => {
+    write("clash.op.ts", `export const a = ${OP_VALUE("twice")};\nexport const b = ${OP_VALUE("twice")};\n`);
+    const { ops, errors } = await discoverOps({ cwd: checkout });
+    expect(ops.size).toBe(1);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain(`Duplicate Op name "twice" declared twice in`);
+  });
+});

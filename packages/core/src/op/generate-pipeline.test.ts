@@ -77,7 +77,7 @@ describe("generateOpsPipeline", () => {
 
 describe("withOpSchedules — the Op's own cadence reaches the CI generator (#2120)", () => {
   function discovered(entries: Array<[string, OpConfig]>): Map<string, DiscoveredOp> {
-    return new Map(entries.map(([name, config]) => [name, { config, filePath: `${name}.op.ts` }]));
+    return new Map(entries.map(([name, config]) => [name, { config, filePath: `${name}.op.ts`, exportName: "default" }]));
   }
 
   const scheduled: OpConfig = {
