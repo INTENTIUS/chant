@@ -608,7 +608,7 @@
   "tricolon/comma-series": 1
  },
  "docs/src/content/docs/guide/operator.mdx": {
-  "formatting/em-dash-density": 43,
+  "formatting/em-dash-density": 41,
   "discourse/punchy-fragments": 1,
   "tricolon/comma-series": 5,
   "claude/contrast-tail": 4,
