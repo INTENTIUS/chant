@@ -45,6 +45,15 @@ export default defineConfig({
                               "slug": "lint-rules"
                         }
                   ]
+            },
+            {
+                  "label": "Explanation",
+                  "items": [
+                        {
+                              "label": "Observation",
+                              "slug": "observation"
+                        }
+                  ]
             }
       ],
     }),

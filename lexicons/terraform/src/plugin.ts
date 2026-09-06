@@ -10,6 +10,7 @@ import { hover } from "./lsp/hover";
 import { terraformConfigSchema, type TerraformConfig } from "./config";
 import { renderTerraformRoots } from "./hcl/roots";
 import { parseTerraformRootContent } from "./hcl/parse";
+import { TERRAFORM_STATE_OWNERSHIP_KEYS } from "./state-ownership";
 
 /**
  * terraform lexicon plugin.
@@ -57,6 +58,23 @@ export const terraformPlugin: LexiconPlugin = {
   },
 
   // ── Optional extensions ────────────────────────────────────
+
+  /**
+   * Terraform's ownership channel is the state file, not a tag or a label
+   * (#2087). Every address `terraform show -json` returns is `owned`;
+   * everything else is `unknown`. Declaring the channel is what makes that a
+   * claim the conformance suite checks rather than a silent degradation.
+   * See `./describe-resources.ts` and `docs/pages/observation.mdx`.
+   */
+  ownershipChannel: {
+    keys: TERRAFORM_STATE_OWNERSHIP_KEYS,
+    reads: ["describeResources"],
+  },
+
+  async describeResources(options) {
+    const { describeResources } = await import("./describe-resources");
+    return describeResources(options);
+  },
 
   /**
    * Each entry in `terraform.roots` is a root module directory that parses at

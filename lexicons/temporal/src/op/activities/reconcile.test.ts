@@ -57,3 +57,25 @@ describe("reconcilePr report mode (#122)", () => {
     expect(result.entries).toEqual(entries);
   });
 });
+
+describe("reconcilePr pre-built body (#2087)", () => {
+  test("a caller-supplied body is used verbatim, in place of the change-set table", async () => {
+    const plan = "Terraform will perform the following actions:\n\n  # null_resource.first will be created";
+    const result = await reconcilePr({ env: "app", mode: "report", body: plan });
+    expect(result.summary).toBe(plan);
+    expect(result.summary).not.toContain("| Entry | Action | Type |");
+  });
+
+  test("supplying a body derives no plan, so nothing shells to `chant lifecycle plan`", async () => {
+    // No `entries`, no mock, no network: if the derivation still ran this
+    // would spawn `chant lifecycle plan --json` and reject.
+    const result = await reconcilePr({ env: "app", mode: "report", body: "drift" });
+    expect(result.entries).toEqual([]);
+  });
+
+  test("explicit entries still ride alongside a supplied body", async () => {
+    const result = await reconcilePr({ env: "prod", mode: "report", entries, body: "drift" });
+    expect(result.summary).toBe("drift");
+    expect(result.entries).toEqual(entries);
+  });
+});

@@ -35,6 +35,22 @@ export interface ReconcilePrArgs {
   owned?: boolean;
   /** PR / issue title. Default derived from env. */
   title?: string;
+  /**
+   * A finding body built by the caller, used verbatim as the issue/PR body in
+   * place of {@link reconcileSummary} (chant #2087).
+   *
+   * The summary this activity writes itself is a change-set table, which is
+   * the right artifact when the finding IS a change set. Some observe-dial
+   * Ops already hold a better one: `TerraformWatchOp` carries the
+   * `terraform plan -no-color` render its own Plan step produced, and
+   * re-deriving that from `chant lifecycle plan` here would both lose the
+   * plan and run a second, differently-timed read.
+   *
+   * Supplying it also suppresses the `chant lifecycle plan --json` derivation
+   * that fills `entries`: a caller that already knows what it wants to say
+   * is not asking this activity to go and find out.
+   */
+  body?: string;
 }
 
 export interface ReconcileResult {
@@ -121,13 +137,19 @@ async function derivePlanEntries(
  *   `chant import --from <env>`, commit, push, and open a PR whose diff is the
  *   regenerated TypeScript. Never commits to the main branch.
  *
+ * The body is {@link reconcileSummary}'s change-set table unless `args.body`
+ * supplies one, in which case that text is used verbatim and no plan is
+ * derived (chant #2087).
+ *
  * Requires `chant` and (for non-report modes) `gh`/`git` in the environment.
  */
 export async function reconcilePr(args: ReconcilePrArgs, signal?: AbortSignal): Promise<ReconcileResult> {
   const mode = args.mode ?? "pull-request";
   const owned = args.owned ?? false;
-  const entries = args.entries ?? (await derivePlanEntries(args.env, owned, signal));
-  const summary = reconcileSummary(args.env, entries);
+  // A caller-supplied body means the finding is already written, so there is
+  // nothing for `chant lifecycle plan` to tell us (#2087).
+  const entries = args.entries ?? (args.body !== undefined ? [] : await derivePlanEntries(args.env, owned, signal));
+  const summary = args.body ?? reconcileSummary(args.env, entries);
   const title = args.title ?? `Reconcile ${args.env}: ${entries.length} change(s) from live`;
 
   if (mode === "report") {
