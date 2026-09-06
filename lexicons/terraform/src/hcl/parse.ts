@@ -18,13 +18,16 @@
  * changed in `packages/core/package.json` for this.
  */
 
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadHcl2json, type Hcl2Json } from "@intentius/chant/terraform/parse";
 import { DECLARABLE_MARKER, type Declarable } from "@intentius/chant/declarable";
 
 /** A parsed HCL block body, as `@cdktf/hcl2json` encodes it. */
 export type BlockBody = Record<string, unknown>;
+
+/** Whether a root runs under choudoufu with a declared estate (#2103). */
+export type TerraformRootMode = "live" | "state";
 
 /** The entity every block becomes. `props` is what post-synth checks read. */
 export interface TerraformEntity extends Declarable {
@@ -39,6 +42,19 @@ export interface TerraformEntity extends Declarable {
     readonly file: string;
     /** Configured root name this block belongs to. */
     readonly root: string;
+    /**
+     * Whether this root is live: `terraform.binary` is `"choudoufu"` and an
+     * estate is declared (a `live` block or an `estate.chdf.hcl` sidecar).
+     * Set on every entity of the root, not just the `Terraform::Live` one, so
+     * a post-synth check or `describeResources()` reads it without
+     * re-parsing (#2103). Absent when the caller supplied no `binary` (the
+     * `chant audit` content path, which has no project config to read).
+     */
+    readonly mode?: TerraformRootMode;
+    /** The declared estate name. Present only when `mode` is `"live"`. */
+    readonly estate?: string;
+    /** `terraform.roots.<name>.workspace`, recorded so TF025 can flag a non-default one on a live root. */
+    readonly workspace?: string;
   };
 }
 
@@ -51,6 +67,11 @@ export const MODULE_TYPE = "Terraform::Module";
 export const VARIABLE_TYPE = "Terraform::Variable";
 export const OUTPUT_TYPE = "Terraform::Output";
 export const LOCALS_TYPE = "Terraform::Locals";
+/** A `live { estate = "..." }` block, or an `estate.chdf.hcl` sidecar's content (#2103). */
+export const LIVE_TYPE = "Terraform::Live";
+
+/** The sidecar filename choudoufu reads an estate declaration from when no in-block `live { }` is used. */
+export const LIVE_SIDECAR_FILENAME = "estate.chdf.hcl";
 
 /**
  * Build one entity. Written out rather than run through `createResource`
@@ -66,13 +87,22 @@ export function terraformEntity(
   body: BlockBody,
   file: string,
   root: string,
+  extra?: { mode?: TerraformRootMode; estate?: string; workspace?: string },
 ): TerraformEntity {
   return {
     [DECLARABLE_MARKER]: true,
     lexicon: "terraform",
     entityType,
     kind: "resource",
-    props: { address, body, file, root },
+    props: {
+      address,
+      body,
+      file,
+      root,
+      ...(extra?.mode !== undefined ? { mode: extra.mode } : {}),
+      ...(extra?.estate !== undefined ? { estate: extra.estate } : {}),
+      ...(extra?.workspace !== undefined ? { workspace: extra.workspace } : {}),
+    },
   };
 }
 
@@ -115,6 +145,18 @@ export function listTerraformFiles(dir: string): string[] {
     .sort();
 }
 
+/**
+ * Read the `estate.chdf.hcl` sidecar beside `dir`'s `.tf` files, if present.
+ * Sibling to {@link listTerraformFiles}: the sidecar is plain HCL (a bare
+ * `estate = "..."` attribute, no wrapper block) and is never a `.tf` file, so
+ * it falls outside that glob and needs its own read.
+ */
+export function readLiveSidecarFile(dir: string): TerraformFile | undefined {
+  const path = join(dir, LIVE_SIDECAR_FILENAME);
+  if (!existsSync(path)) return undefined;
+  return { name: LIVE_SIDECAR_FILENAME, source: readFileSync(path, "utf-8") };
+}
+
 function asArray(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
 }
@@ -125,15 +167,52 @@ function asRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
+/** Every `live { ... }` block nested inside every `terraform { ... }` block of `tree`. */
+function liveBlocksIn(tree: Record<string, unknown>): BlockBody[] {
+  const out: BlockBody[] = [];
+  for (const tfBody of asArray(tree["terraform"])) {
+    const body = asRecord(tfBody);
+    for (const liveBody of asArray(body["live"])) out.push(asRecord(liveBody));
+  }
+  return out;
+}
+
+/**
+ * Options threading the config-level facts a root's mode depends on into the
+ * parse, so `blocksToEntities` can stamp `mode`/`estate`/`workspace` onto
+ * every entity without a second pass over the project config (#2103).
+ */
+export interface TerraformRootModeOptions {
+  /** `terraform.binary`. A root is live only when this is `"choudoufu"` and an estate is declared. */
+  binary?: string;
+  /** `terraform.roots.<name>.workspace`, recorded verbatim regardless of mode. */
+  workspace?: string;
+}
+
 /**
  * Parse a set of files into entities keyed `<root>/<address>`. Two blocks that
  * genuinely share an address (two `locals` blocks, or the same address in two
  * files of one root) are numbered `~2`, `~3` rather than overwriting.
+ *
+ * Recognises both ways an estate is declared: a `live { }` block nested in a
+ * `terraform { }` block of any file here, and, when `sidecar` is given, the
+ * `estate.chdf.hcl` sidecar's bare `estate = "..."` attribute. Either becomes
+ * a {@link LIVE_TYPE} entity, and the root is live (`mode: "live"`) exactly
+ * when `modeOptions.binary` is `"choudoufu"` and one of the two named an
+ * estate; that verdict, and the estate name when live, is then stamped onto
+ * every entity this call returns, sidecar and in-block declaration alike so
+ * a post-synth check or `describeResources()` reads it without re-parsing.
+ * When both forms are present the sidecar wins, matching choudoufu's own
+ * "the sidecar is the leading one" (choudoufu refuses the combination
+ * outright; this lexicon does not police that here, see TF024/TF025 for
+ * what it does police on a live root).
  */
 export async function blocksToEntities(
   files: readonly TerraformFile[],
   root: string,
   hcl2json?: Hcl2Json,
+  modeOptions?: TerraformRootModeOptions,
+  sidecar?: TerraformFile,
 ): Promise<Map<string, Declarable>> {
   const parser = hcl2json ?? (await loadHcl2json());
   const entities = new Map<string, Declarable>();
@@ -145,6 +224,7 @@ export async function blocksToEntities(
       (typeof body === "object" && body !== null ? body : {}) as BlockBody,
       file,
       root,
+      modeOptions?.workspace !== undefined ? { workspace: modeOptions.workspace } : undefined,
     );
     let key = `${root}/${address}`;
     for (let n = 2; entities.has(key); n++) key = `${root}/${address}~${n}`;
@@ -192,6 +272,7 @@ export async function blocksToEntities(
   for (const file of files) {
     const tree = (await parser.parse(file.name, file.source)) as Record<string, unknown>;
     unlabelled(tree, "terraform", TERRAFORM_TYPE, file.name);
+    for (const liveBody of liveBlocksIn(tree)) add(LIVE_TYPE, "live", liveBody, file.name);
     unlabelled(tree, "locals", LOCALS_TYPE, file.name);
     oneLabel(tree, "provider", PROVIDER_TYPE, (n) => `provider.${n}`, file.name);
     oneLabel(tree, "module", MODULE_TYPE, (n) => `module.${n}`, file.name);
@@ -201,35 +282,68 @@ export async function blocksToEntities(
     twoLabels(tree, "data", DATA_TYPE, (t, n) => `data.${t}.${n}`, file.name);
   }
 
+  if (sidecar) {
+    const tree = (await parser.parse(sidecar.name, sidecar.source)) as Record<string, unknown>;
+    if (typeof tree["estate"] === "string") add(LIVE_TYPE, "live", tree, sidecar.name);
+  }
+
+  // Which of the (at most two) Live entities names the estate, preferring the
+  // sidecar over an in-block declaration when both are present.
+  let estate: string | undefined;
+  for (const entity of entities.values()) {
+    if (entity.entityType !== LIVE_TYPE) continue;
+    const props = (entity as TerraformEntity).props;
+    const name = typeof props.body["estate"] === "string" ? (props.body["estate"] as string) : undefined;
+    if (name === undefined) continue;
+    if (estate === undefined || props.file === LIVE_SIDECAR_FILENAME) estate = name;
+  }
+
+  const mode: TerraformRootMode = modeOptions?.binary === "choudoufu" && estate !== undefined ? "live" : "state";
+  for (const [key, entity] of entities) {
+    const te = entity as TerraformEntity;
+    const stamped: TerraformEntity = {
+      ...te,
+      props: { ...te.props, mode, ...(mode === "live" ? { estate } : {}) },
+    };
+    entities.set(key, stamped);
+  }
+
   return entities;
 }
 
 /**
- * Parse a root module directory. Reads every `.tf` directly under `dir`.
- * Throws whatever the parser throws for malformed HCL; `buildRoots()` is where
- * that becomes a warning.
+ * Parse a root module directory. Reads every `.tf` directly under `dir`, plus
+ * the `estate.chdf.hcl` sidecar beside them when present. Throws whatever the
+ * parser throws for malformed HCL; `buildRoots()` is where that becomes a
+ * warning.
  */
 export async function parseTerraformRootDir(
   dir: string,
   root: string,
   hcl2json?: Hcl2Json,
+  modeOptions?: TerraformRootModeOptions,
 ): Promise<Map<string, Declarable>> {
   const files = listTerraformFiles(dir).map((name) => ({
     name,
     source: readFileSync(join(dir, name), "utf-8"),
   }));
-  return blocksToEntities(files, root, hcl2json);
+  return blocksToEntities(files, root, hcl2json, modeOptions, readLiveSidecarFile(dir));
 }
 
 /**
  * Parse the joined-file string form `chant audit` produces for a discovered
- * root module (`AuditInput.content`). Unwired for now: #2085's
- * `auditEntities()` is what calls it.
+ * root module (`AuditInput.content`). `auditEntities()` is what calls it; that
+ * hook's single-argument contract carries no project config, so `modeOptions`
+ * is left undefined there and every entity gets `mode: "state"`; the audit
+ * path does not detect live mode (#2103). `modeOptions` exists here mainly for
+ * tests exercising the mode-stamping behaviour directly against inline HCL,
+ * the same way `parseTerraformRootDir`'s callers exercise it against files.
  */
 export async function parseTerraformRootContent(
   content: string,
   root: string,
   hcl2json?: Hcl2Json,
+  modeOptions?: TerraformRootModeOptions,
 ): Promise<Map<string, Declarable>> {
-  return blocksToEntities(splitBundleContent(content), root, hcl2json);
+  return blocksToEntities(splitBundleContent(content), root, hcl2json, modeOptions);
 }

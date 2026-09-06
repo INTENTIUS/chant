@@ -93,9 +93,10 @@ export const terraformPlugin: LexiconPlugin = {
    * project root, which is what relative `dir` paths resolve against.
    */
   async buildRoots(ctx): Promise<{ entities: Map<string, Declarable>; warnings: string[] }> {
-    const roots = (ctx.config as { terraform?: TerraformConfig }).terraform?.roots ?? {};
+    const namespace = (ctx.config as { terraform?: TerraformConfig }).terraform;
+    const roots = namespace?.roots ?? {};
     if (Object.keys(roots).length === 0) return { entities: new Map(), warnings: [] };
-    return renderTerraformRoots({ projectRoot: ctx.projectRoot, roots });
+    return renderTerraformRoots({ projectRoot: ctx.projectRoot, roots, binary: namespace?.binary });
   },
 
   lintRules() {

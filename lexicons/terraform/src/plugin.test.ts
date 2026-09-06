@@ -9,6 +9,7 @@ import { terraformPlugin } from "./plugin";
 import { terraformConfigSchema } from "./config";
 import {
   DATA_TYPE,
+  LIVE_TYPE,
   PROVIDER_TYPE,
   RESOURCE_TYPE,
   TERRAFORM_TYPE,
@@ -224,6 +225,67 @@ describe("buildRoots", () => {
     const { entities, warnings } = await buildRoots(fixtures, {});
     expect(entities.size).toBe(0);
     expect(warnings ?? []).toEqual([]);
+  });
+});
+
+describe("buildRoots: choudoufu live mode (#2103)", () => {
+  it("marks every entity live and carries the estate, under binary: choudoufu", async () => {
+    const { entities, warnings } = await buildRoots(fixtures, {
+      terraform: { binary: "choudoufu", roots: { estate: { dir: "./live" } } },
+    });
+
+    expect(warnings ?? []).toEqual([]);
+    expect([...entities.keys()].sort()).toEqual([
+      "estate/live",
+      "estate/null_resource.first",
+      "estate/null_resource.second",
+      "estate/provider.null",
+      "estate/terraform",
+    ]);
+
+    const live = entities.get("estate/live")!;
+    expect(live.entityType).toBe(LIVE_TYPE);
+    for (const key of entities.keys()) {
+      const props = propsOf(entities.get(key));
+      expect(props.mode).toBe("live");
+      expect(props.estate).toBe("fixture-estate");
+    }
+  });
+
+  it("reads the estate from the estate.chdf.hcl sidecar the same way", async () => {
+    const { entities, warnings } = await buildRoots(fixtures, {
+      terraform: { binary: "choudoufu", roots: { estate: { dir: "./live-sidecar" } } },
+    });
+
+    expect(warnings ?? []).toEqual([]);
+    const live = entities.get("estate/live")!;
+    expect(live.entityType).toBe(LIVE_TYPE);
+    expect(propsOf(live).file).toBe("estate.chdf.hcl");
+    expect(propsOf(entities.get("estate/terraform")).estate).toBe("fixture-estate");
+  });
+
+  it("stays state mode and warns when the estate is declared but the binary is not choudoufu", async () => {
+    const { entities, warnings } = await buildRoots(fixtures, {
+      terraform: { roots: { estate: { dir: "./live" } } },
+    });
+
+    for (const key of entities.keys()) {
+      const props = propsOf(entities.get(key));
+      expect(props.mode).toBe("state");
+      expect(props.estate).toBeUndefined();
+    }
+    expect(warnings).toHaveLength(1);
+    expect(warnings![0]).toContain("terraform.roots.estate");
+    expect(warnings![0]).toContain("inert");
+  });
+
+  it("stays state mode with no live declaration at all, regardless of binary", async () => {
+    const { entities, warnings } = await buildRoots(fixtures, {
+      terraform: { binary: "choudoufu", roots: { app: { dir: "./with-backend" } } },
+    });
+
+    expect(warnings ?? []).toEqual([]);
+    expect(propsOf(entities.get("app/terraform")).mode).toBe("state");
   });
 });
 
