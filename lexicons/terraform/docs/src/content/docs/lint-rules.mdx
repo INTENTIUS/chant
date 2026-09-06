@@ -42,6 +42,12 @@ checks, plus TF023, which runs only in `chant audit` and is documented here
 beside the rest of the family. See [Lint Rules](/chant/lexicons/terraform/rules/)
 for the generated, always-current table of the checks that run in a build; this
 page is the reasoning, the fix and the credit behind each entry.
+The Terraform lexicon ships one source-level lint rule and twenty-four
+post-synth checks, plus TF023, which runs only in `chant audit` and is
+documented here beside the rest of the family. See [Lint
+Rules](/chant/lexicons/terraform/rules/) for the generated, always-current
+table of the checks that run in a build; this page is the reasoning, the fix
+and the credit behind each entry.
 
 ## TF001: root module declares no remote backend
 
@@ -474,6 +480,117 @@ resource "aws_instance" "web" {
 }
 ```
 
+## TF014: a child module configures a provider block
+
+A `provider` block inside a module the root calls, setting anything other than
+`alias`. A provider block in the root module is where providers belong, and its
+contents are TF008's business, not this rule's.
+
+**Why it matters.** A module that configures its own provider takes the choice
+away from whoever calls it. The caller cannot point it at another region or
+account, and two calls of the same module in one root cannot differ, which is
+the whole reason to have a module. The worse half is removal: Terraform needs a
+provider configuration to destroy the resources a module created, and deleting
+the module call deletes the configuration the destroy needs, so the root is
+left unable to plan until the module is temporarily put back.
+
+**The fix.** Configure the provider in the root module and pass it in:
+
+```hcl
+module "cdn" {
+  source = "./modules/cdn"
+
+  providers = {
+    aws         = aws
+    aws.replica = aws.replica
+  }
+}
+```
+
+A block that declares nothing but `alias` is a slot for the caller to fill, not
+a configuration, so it is never reported.
+
+**Prior art.** Azure Verified Modules'
+[`avm_terraform_provider_block_disallowed`](https://github.com/Azure/tflint-ruleset-avm/blob/main/docs/basic/avm_terraform_provider_block_disallowed.md)
+checks the same condition (equivalent). Google Cloud's
+[reusable-modules guidance](https://docs.cloud.google.com/docs/terraform/best-practices/general-style-structure#reusable-modules)
+and AWS's
+[prescriptive guidance on structure](https://docs.aws.amazon.com/prescriptive-guidance/latest/terraform-aws-provider-best-practices/structure.html)
+both state the rule directly (equivalent), which is why both are credited
+beside the ruleset that automates it.
+
+This rule needs the module descent to see anything at all, so it fires on
+`chant build`, where a root's local modules are parsed as child scopes. In
+`chant audit` a nested directory is discovered as a root module of its own, so
+there is no caller to make it a child, and the rule stays quiet. See [Module
+descent and scope](#module-descent-and-scope).
+
+```hcl
+# The provider block TF014 reports: this module configures its own region, so
+# its caller cannot point it anywhere else, and Terraform cannot remove the
+# module without deleting the provider its own destroy needs.
+provider "aws" {
+  region  = "us-east-1"
+  profile = "cdn"
+}
+
+variable "bucket" {
+  type = string
+}
+
+resource "aws_s3_bucket" "assets" {
+  bucket = var.bucket
+}
+```
+
+## TF015: a child module declares a backend or cloud block
+
+A `terraform` block inside a called module carrying a `backend "<type>"` or a
+`cloud {}` block. This is TF001's mirror image: TF001 wants a root to declare
+one, and this rule wants a child module to declare neither.
+
+**Why it matters.** State belongs to the root module, one state for the whole
+tree however many modules it calls, and Terraform says so: a backend block may
+appear only in a root module. Depending on the version the block is ignored
+with a warning or the root refuses to initialize, and either way the module is
+making a claim about where state lives that it does not get to make. The usual
+cause is a directory that used to be a root and kept its `terraform` block when
+someone factored it out into a module.
+
+**The fix.** Delete the `backend`/`cloud` block from the module. The rest of
+its `terraform` block is welcome to stay: `required_version` and
+`required_providers` are meaningful in a child module and are not reported
+here.
+
+**Prior art.** No tool in the survey checks this. tflint's official ruleset has
+nothing about backends at all, Redeploy's community ruleset has nothing either,
+and the Azure Verified Modules rules stop at the provider block TF014 credits.
+The one source that states the rule is a document rather than a linter, Google
+Cloud's
+[reusable-modules guidance](https://docs.cloud.google.com/docs/terraform/best-practices/general-style-structure#reusable-modules),
+and it is credited as such (equivalent). See `audit-lineage.ts` for where the
+survey looked.
+
+Like TF014, this rule reads a child scope and so fires on `chant build`. See
+[Module descent and scope](#module-descent-and-scope).
+
+```hcl
+# This directory used to be a root module and kept its backend when it became
+# a child. State belongs to the root that calls it, so the block below is the
+# TF015 finding. `required_version` beside it is fine and is not reported.
+terraform {
+  required_version = ">= 1.5.0"
+
+  backend "local" {
+    path = "cdn.tfstate"
+  }
+}
+
+resource "aws_s3_bucket" "assets" {
+  bucket = "assets"
+}
+```
+
 ## TF016: an attribute value is a quoted interpolation of a single expression
 
 An attribute written `x = "${var.y}"`, the pre-0.12 style Terraform deprecated
@@ -605,6 +722,124 @@ resource "aws_instance" "web" {
   lifecycle {
     prevent_destroy       = false
     create_before_destroy = false
+  }
+}
+```
+
+## TF020: a declaration nothing in its module references
+
+A `variable`, an entry in a `locals` block, a `data` source, or an aliased
+`provider` that no other block in the same module scope refers to. Report-only.
+
+**Why it matters.** An unused declaration is not a defect, which is why this
+never fails a build. It is still worth a finding: a variable nobody reads is
+usually the leftover of a refactor, and the next person to touch the file has
+to prove that before deleting it. An unused data source costs more than
+attention, since it is read from the provider's API on every plan, with the
+permission that read requires, for a value nothing consumes.
+
+**The fix.** Delete it, or reference it where it was meant to be used.
+
+Scope is per module, the way Terraform's own namespaces are: a `var.region`
+declared inside `module.cdn` is the child module's variable, and a reference to
+`var.region` in the root says nothing about it. The index behind this rule is
+keyed the same way.
+
+**Prior art.** tflint's
+[`terraform_unused_declarations`](https://github.com/terraform-linters/tflint-ruleset-terraform/blob/main/docs/rules/terraform_unused_declarations.md),
+credited as an overlap rather than an equivalent because of how the two find
+their references. tflint evaluates expressions; chant scans strings. `hcl2json`
+hands back an expression as a string with its `${...}` wrapper intact, so
+chant's index is a set of regexes over those strings, which makes it generous
+in one direction (a name inside a prose `description` reads as a reference, so
+the declaration is not reported) and blind in another (a variable supplied only
+through `TF_VAR_` is not a reference at all, and a root's variables often are
+exactly that). Both errors are why the rule is report-only. See
+`hcl/references.ts` for the scan and what it collects.
+
+A `provider` block with no `alias` is never reported: it is the default
+configuration for its type and every resource of that type uses it without
+naming it. Only an aliased provider has to be asked for by name.
+
+```hcl
+variable "region" {
+  type    = string
+  default = "us-east-1"
+}
+
+variable "retention_days" {
+  type = number
+
+  validation {
+    condition     = var.retention_days > 0
+    error_message = "retention_days must be positive."
+  }
+}
+
+locals {
+  common_tags = { Team = "platform" }
+  bucket_name = "assets"
+}
+
+data "aws_ami" "ubuntu" {
+  most_recent = true
+}
+
+provider "aws" {
+  alias  = "replica"
+  region = "eu-west-1"
+}
+
+resource "aws_s3_bucket" "assets" {
+  bucket = local.bucket_name
+  region = var.region
+}
+```
+
+Four findings there: `var.retention_days` (read only by its own `validation`
+block, which does not count as a use), `local.common_tags`,
+`data.aws_ami.ubuntu` and the `aws.replica` provider. `var.region` and
+`local.bucket_name` are read by the bucket and are not reported.
+
+## TF021: a count builds instance identities out of count.index
+
+A `resource` whose `count` is a numeric literal of two or more, or
+`length(var.x)` / `length(local.x)`, and whose body uses `count.index` to build
+an identity-bearing attribute: a `name`, a `bucket`, a `key`, a `tags.Name`.
+Report-only.
+
+**Why it matters.** `count` addresses instances by position:
+`aws_instance.web[0]`, `[1]`, `[2]`. Remove the middle element of the list the
+count came from and every later instance shifts down one index, so Terraform
+plans to destroy and recreate all of them to move each identity onto the next
+position. With `for_each` the instances are addressed by key, and removing one
+element removes exactly one instance.
+
+**The fix.** Use `for_each` over a map or a set, then `terraform state mv` the
+existing indexed instances onto their new keys so the switch itself does not
+recreate anything.
+
+**Prior art.** The community Redeploy ruleset's
+[`terraform_prefer_for_each`](https://github.com/RedeployAB/tflint-ruleset-redeploy/blob/main/docs/rules/terraform_prefer_for_each.md)
+(overlaps) reports every `count` over a collection. This rule is deliberately
+narrower: both conditions have to hold, plural count and an identity built from
+`count.index`, so a `count.index` that only picks a subnet out of a list is not
+reported and neither is the `count = var.enabled ? 1 : 0` switch, which
+`for_each` does not replace. choudoufu's `RuleCountIndex`
+([`internal/live/lint/count_index.go`](https://github.com/INTENTIUS/choudoufu/blob/main/internal/live/lint/count_index.go))
+is the survey's deepest treatment of which attributes carry an instance's
+identity, and is credited the same way (overlaps). HashiCorp's style guide
+states the preference itself in its
+[dynamic resource count](https://developer.hashicorp.com/terraform/language/style#dynamic-resource-count)
+section (overlaps).
+
+```hcl
+resource "aws_instance" "web" {
+  count         = 3
+  instance_type = "t3.micro"
+
+  tags = {
+    Name = "web-${count.index}"
   }
 }
 ```
@@ -834,6 +1069,68 @@ const apply = terraformApply("app", { planFile: "/tmp/plan.out" });
 ```
 
 To write custom rules for your project, see the [lint-rules authoring guide](/chant/lexicon-authoring/lint-rules/).
+
+## Module descent and scope
+
+A root module's parse does not stop at its own directory. A `module` block
+whose `source` is a local path (`./modules/cdn`, `../shared`) names a directory
+on disk, and that directory is parsed as a child scope of the root that calls
+it. Its blocks are keyed `<root>/module.<name>/<address>`, one key segment per
+call, which is the address `terraform show -json` writes in `child_modules[]`
+and the one choudoufu's marker tags carry.
+
+This is what lets TF014 and TF015 exist at all, and what makes TF020 answer per
+module rather than per repository. Every other rule reads a child module's
+blocks exactly as it reads a root's, with two groups of exceptions: TF001,
+TF002, TF003, TF024 and TF025 are about how a ROOT is assembled and skip a
+child's blocks (a module beneath a root with a perfectly good backend must not
+make TF001 fire), and TF014 and TF015 are the mirror, reading only child
+modules. Each rule's own file says which it is.
+
+A finding inside a child module names the call that reached it:
+
+```
+TF014: Child module block "provider.aws" configures a provider (profile, region). ...
+       Callers: app -> module.cdn (main.tf:13).
+```
+
+The chain is tflint's idea, printed there as a `Callers:` block under the
+diagnostic. A chant post-synth finding carries no source ranges of its own, so
+the chain goes in the message, where every output format shows it.
+
+**What is followed.** `terraform.callModuleType` in `chant.config.*` spells the
+policy, with tflint's three values and its default:
+
+```typescript
+export default {
+  lexicons: ["terraform"],
+  terraform: {
+    callModuleType: "local", // the default
+    roots: { app: { dir: "./terraform/app" } },
+  },
+};
+```
+
+- `local` reads modules sourced from a relative path. A registry or git source
+  is not fetched, so its contents are never linted and every finding about it
+  is reported against the `module` block at the call site, which is where TF004
+  and TF005 report already. The skipped calls are named in a build warning
+  rather than passed over in silence.
+- `none` reads each root's own directory and nothing else.
+- `all` is tflint's "fetch registry and git modules too", which needs a
+  `terraform init` first so the modules are on disk. chant fetches nothing, so
+  this is refused with a message rather than quietly behaving like `local`.
+
+Two refusals keep the walk inside the repository it was pointed at. A source
+that resolves outside the project root is not read, and a source already on the
+current call chain is a cycle and stops there. Both are build warnings naming
+the call site.
+
+`chant audit` sees the same rules but not the same scopes: audit discovery
+already treats every directory of `.tf` files as a root module of its own, and
+the audit hook is handed one directory's text with no filesystem beneath it. So
+a child module is audited, as a root rather than as a child, and the two rules
+that ask "is this inside a called module?" report on `chant build` only.
 
 ## Suppressing a finding
 
