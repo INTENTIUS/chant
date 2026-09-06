@@ -72,6 +72,12 @@
  */
 import type { Lineage } from "@intentius/chant/audit/catalog";
 
+const TFSEC_V061 = "https://github.com/aquasecurity/tfsec/blob/v0.61.3/docs/checks/general/secrets";
+/** tflint's official language ruleset. */
+const TFLINT_RULES = "https://github.com/terraform-linters/tflint-ruleset-terraform/blob/main/docs/rules";
+/** The community ruleset with the richest set of language rules outside the official one. */
+const REDEPLOY_RULES = "https://github.com/RedeployAB/tflint-ruleset-redeploy/blob/main/docs/rules";
+
 export const terraformAuditLineage: Record<string, Lineage[]> = {
   TF024: [
     {
@@ -163,5 +169,84 @@ export const terraformAuditLineage: Record<string, Lineage[]> = {
       url: "https://docs.kics.io/latest/queries/terraform-queries/3a81fc06-566f-492a-91dd-7448e409e2cd/",
       relation: "overlaps",
     },
+  ],
+  TF006: [
+    {
+      tool: "tflint-ruleset-avm",
+      rule: "avm_terraform_sensitive_variable_default_disallowed",
+      url: "https://github.com/Azure/tflint-ruleset-avm/blob/main/docs/basic/avm_terraform_sensitive_variable_default_disallowed.md",
+      relation: "equivalent",
+    },
+  ],
+  TF007: [
+    { tool: "tfsec", rule: "general-secrets-sensitive-in-variable", url: `${TFSEC_V061}/sensitive-in-variable.md`, relation: "equivalent" },
+    { tool: "tfsec", rule: "general-secrets-sensitive-in-local", url: `${TFSEC_V061}/sensitive-in-local.md`, relation: "equivalent" },
+  ],
+  TF008: [
+    { tool: "checkov", rule: "CKV_AWS_41", url: "https://www.checkov.io/5.Policy%20Index/terraform.html", relation: "overlaps" },
+    { tool: "kics", rule: "d7b9d850-3e06-4a75-852f-c46c2e92240b", url: "https://docs.kics.io/latest/queries/terraform-queries/aws/d7b9d850-3e06-4a75-852f-c46c2e92240b/", relation: "overlaps" },
+    {
+      tool: "semgrep",
+      rule: "terraform.aws.security.aws-provider-static-credentials",
+      url: "https://github.com/semgrep/semgrep-rules/blob/develop/terraform/aws/security/aws-provider-static-credentials.yaml",
+      relation: "overlaps",
+    },
+  ],
+  TF009: [
+    {
+      tool: "hashicorp-style-guide",
+      rule: "Variables: for sensitive variables, such as passwords and private keys, set the sensitive parameter to true",
+      url: "https://developer.hashicorp.com/terraform/language/style#variables",
+      relation: "equivalent",
+    },
+  ],
+  TF010: [
+    { tool: "tflint-ruleset-terraform", rule: "terraform_typed_variables", url: `${TFLINT_RULES}/terraform_typed_variables.md`, relation: "equivalent" },
+    { tool: "kics", rule: "fc5109bf-01fd-49fb-8bde-4492b543c34a", url: "https://docs.kics.io/latest/queries/terraform-queries/fc5109bf-01fd-49fb-8bde-4492b543c34a/", relation: "equivalent" },
+  ],
+  TF011: [
+    { tool: "tflint-ruleset-terraform", rule: "terraform_documented_variables", url: `${TFLINT_RULES}/terraform_documented_variables.md`, relation: "equivalent" },
+    { tool: "kics", rule: "2a153952-2544-4687-bcc9-cc8fea814a9b", url: "https://docs.kics.io/latest/queries/terraform-queries/2a153952-2544-4687-bcc9-cc8fea814a9b/", relation: "equivalent" },
+    {
+      tool: "terraform-sentinel-policies",
+      rule: "validate-variables-have-descriptions",
+      url: "https://github.com/hashicorp/terraform-sentinel-policies/blob/main/cloud-agnostic/validate-variables-have-descriptions.sentinel",
+      relation: "equivalent",
+    },
+  ],
+  TF012: [
+    { tool: "tflint-ruleset-terraform", rule: "terraform_documented_outputs", url: `${TFLINT_RULES}/terraform_documented_outputs.md`, relation: "equivalent" },
+    { tool: "kics", rule: "59312e8a-a64e-41e7-a252-618533dd1ea8", url: "https://docs.kics.io/latest/queries/terraform-queries/59312e8a-a64e-41e7-a252-618533dd1ea8/", relation: "equivalent" },
+  ],
+  TF013: [
+    { tool: "tflint-ruleset-redeploy", rule: "terraform_ignore_changes_all", url: `${REDEPLOY_RULES}/terraform_ignore_changes_all.md`, relation: "equivalent" },
+  ],
+  TF016: [
+    // `overlaps`, not `equivalent`: tflint reports the same `x = "${y}"` form
+    // and also the object-key case (`"${var.k}" = v`), which this rule leaves
+    // alone. See tf016.ts.
+    { tool: "tflint-ruleset-terraform", rule: "terraform_deprecated_interpolation", url: `${TFLINT_RULES}/terraform_deprecated_interpolation.md`, relation: "overlaps" },
+  ],
+  TF017: [
+    { tool: "tflint-ruleset-redeploy", rule: "terraform_module_depends_on", url: `${REDEPLOY_RULES}/terraform_module_depends_on.md`, relation: "equivalent" },
+  ],
+  TF018: [
+    { tool: "tflint-ruleset-redeploy", rule: "terraform_output_resource", url: `${REDEPLOY_RULES}/terraform_output_resource.md`, relation: "equivalent" },
+  ],
+  TF019: [
+    { tool: "tflint-ruleset-redeploy", rule: "terraform_redundant_default", url: `${REDEPLOY_RULES}/terraform_redundant_default.md`, relation: "equivalent" },
+  ],
+  TF022: [
+    // tfsec consolidated its three `general/secrets` checks into
+    // `no-plaintext-exposure` in v1, which is the one still in the repository's
+    // `master` docs; `overlaps` because that consolidation also covers the
+    // variable and locals cases TF007 reports separately.
+    {
+      tool: "tfsec",
+      rule: "general-secrets-no-plaintext-exposure",
+      url: "https://github.com/aquasecurity/tfsec/blob/master/docs/checks/general/secrets/no-plaintext-exposure/index.md",
+      relation: "overlaps",
+    },
+    { tool: "kics", rule: "a88baa34-e2ad-44ea-ad6f-8cac87bc7c71", url: "https://docs.kics.io/latest/secrets/", relation: "overlaps" },
   ],
 };

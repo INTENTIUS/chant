@@ -173,7 +173,13 @@ export function parseSecretsConfig(content: string): SecretsScanOptions {
 
 // ── Shannon entropy ─────────────────────────────────────────────────────
 
-function shannonEntropy(s: string): number {
+/**
+ * Shannon entropy in bits per character. Exported so a lexicon's own
+ * secret-shape heuristic can score a candidate on the same scale this
+ * module's SEC010 catch-all uses (the terraform lexicon's
+ * `lint/secret-shape.ts`, #2110) instead of inventing a second one.
+ */
+export function shannonEntropy(s: string): number {
   const freq = new Map<string, number>();
   for (const ch of s) freq.set(ch, (freq.get(ch) ?? 0) + 1);
   let entropy = 0;
@@ -188,8 +194,14 @@ function shannonEntropy(s: string): number {
 
 const PLACEHOLDER_RE = /example|placeholder|dummy|changeme|change-me|redacted|sample|fixme|todo|xxxxxxxx|your[-_]?(api[-_]?)?(key|token|secret)|fake[-_]?(key|token|secret)|test[-_]?(key|token|secret)/i;
 
-/** Cheap, format-agnostic "this doesn't look like a real secret" filter. */
-function looksLikePlaceholder(value: string): boolean {
+/**
+ * Cheap, format-agnostic "this doesn't look like a real secret" filter.
+ * Exported for the same reason {@link shannonEntropy} is: the placeholder
+ * vocabulary a scanner has to ignore (`changeme`, `example`, `your-api-key`,
+ * a run of one repeated character) is the same wherever the candidate came
+ * from, and a second copy of this list would drift from this one.
+ */
+export function looksLikePlaceholder(value: string): boolean {
   if (PLACEHOLDER_RE.test(value)) return true;
   const uniq = new Set(value.toLowerCase()).size;
   if (value.length > 8 && uniq <= 2) return true; // e.g. "0000000000000000"

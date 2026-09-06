@@ -37,6 +37,11 @@ The Terraform lexicon ships one source-level lint rule and five post-synth
 checks. See [Lint Rules](/chant/lexicons/terraform/rules/) for the generated,
 always-current table; this page is the reasoning, the fix and the credit
 behind each entry.
+The Terraform lexicon ships one source-level lint rule and fourteen post-synth
+checks, plus TF023, which runs only in `chant audit` and is documented here
+beside the rest of the family. See [Lint Rules](/chant/lexicons/terraform/rules/)
+for the generated, always-current table of the checks that run in a build; this
+page is the reasoning, the fix and the credit behind each entry.
 
 ## TF001: root module declares no remote backend
 
@@ -152,9 +157,6 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
-  }
-}
-```
 
 ## TF004: registry-sourced module block has no version
 
@@ -219,40 +221,470 @@ module "vpc" {
 }
 ```
 
-## TF101: terraformApply's planFile must reference a preceding terraformPlan step
+## TF006: a sensitive variable declares a default
 
-A `terraformApply` step's `planFile` is a string or template literal in
-source, or a reference to a step that is not a `terraformPlan` call.
+A `variable` marked `sensitive = true` that also has a `default`, whatever the
+default's value is.
 
-**Why it matters.** The entire point of the plan/apply split is to review
-exactly what will change, then apply exactly that. Spelling the plan path out
-as a literal breaks the link between the two steps: the file applied can be
-stale, hand-edited by something else in the meantime, or simply the wrong
-plan for this root. Carrying the path forward from the producing step
-(`stepOutput(plan, "planFile")` or `plan.out.planFile`) is what keeps apply
-honest about which plan it is running.
+**Why it matters.** `sensitive = true` says the value must not be seen, and a
+default is a value committed to the repository, so the two together contradict
+each other: the secret is already in git, and the flag only hides it from plan
+output, which was never where the exposure was. An empty or `null` default is
+the same finding for a second reason, because it turns a required secret into
+an optional one and every environment that forgets to pass the variable
+silently gets the committed value.
 
-**The fix.** Reference the preceding `terraformPlan` step's output instead of
-a literal path: `stepOutput(plan, "planFile")` or `plan.out.planFile`, where
-`plan` is the `const` a `terraformPlan(...)` call was assigned to.
+**The fix.** Delete the `default`. Pass the value in at apply time, from a
+tfvars file kept out of git, a `TF_VAR_` environment variable, or a workspace
+variable.
 
-**Prior art.** No tool in the survey covers this. TF101 is a rule about
-chant's own Op-builder DSL, not about a Terraform root. Nothing in the
-survey (linters, scanners, policy engines, or HashiCorp's own Sentinel
-examples) models "does this plan file trace back to a specific preceding
-plan step", because that question does not exist outside chant's own
-authoring surface. See `audit-lineage.ts`'s header comment for the full
-reasoning.
+**Prior art.** Azure's AVM ruleset ships
+[`avm_terraform_sensitive_variable_default_disallowed`](https://github.com/Azure/tflint-ruleset-avm/blob/main/docs/basic/avm_terraform_sensitive_variable_default_disallowed.md)
+(equivalent). The official tflint ruleset has no equivalent, which is part of
+why it is worth shipping.
 
-When the referenced identifier cannot be resolved at all in the same file,
-this rule stays silent rather than guess.
-
-```typescript
-const plan = terraformPlan("app", { id: "plan" });
-const apply = terraformApply("app", { planFile: "/tmp/plan.out" });
+```hcl
+variable "deploy_token" {
+  type        = string
+  description = "Token the deploy job authenticates with"
+  sensitive   = true
+  default     = "carried-over-from-the-old-staging-account"
+}
 ```
 
-To write custom rules for your project, see the [lint-rules authoring guide](/chant/lexicon-authoring/lint-rules/).
+## TF007: a secret-shaped literal in a variable default or a locals value
+
+A `variable` default or a `locals` value that is a committed literal and looks
+like a credential, by either heuristic in `src/lint/secret-shape.ts`: the name
+reads like a credential (`password`, `passwd`, `secret`, `token`, `api_key`,
+`private_key`, `access_key`, case-insensitive and word-bounded, with the
+`_file`, `_path`, `_arn`, `_id` and `_name` locator suffixes excluded), or the
+value matches a credential shape (an AWS key id, a JWT, a PEM header, a
+high-entropy token). Placeholders such as `changeme` and `CHANGE_ME` are
+excluded, and so is anything that is a reference rather than a constant.
+
+**Why it matters.** A committed credential is in git history, which no later
+edit removes, and Terraform copies it into state and into plan output on every
+run. This is the check with the largest gap behind it in the survey: tfsec
+shipped it, trivy dropped it when it absorbed tfsec, and no maintained tool
+covers it today.
+
+**The fix.** Remove the literal, mark the variable `sensitive = true`, and read
+the value from a secret manager data source or an input at apply time. Then
+rotate the credential, because it is already public to everyone who can clone
+the repository.
+
+**Prior art.** tfsec's
+[`general-secrets-sensitive-in-variable`](https://github.com/aquasecurity/tfsec/blob/v0.61.3/docs/checks/general/secrets/sensitive-in-variable.md)
+and
+[`general-secrets-sensitive-in-local`](https://github.com/aquasecurity/tfsec/blob/v0.61.3/docs/checks/general/secrets/sensitive-in-local.md),
+both equivalent. Both are cited at the v0.61.3 tag: tfsec's docs site 404s
+above that version, and the checks did not survive the move into trivy, so the
+pinned repository path is the only stable citation. Neither trivy-checks nor
+KICS, checkov, tflint or any of its rulesets has a replacement.
+
+```hcl
+variable "db_password" {
+  type        = string
+  description = "Password for the application database user"
+  default     = "hunter2-prod-db"
+}
+
+locals {
+  ci_token = "ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8"
+}
+```
+
+## TF008: a provider block configures a credential inline
+
+A `provider` block whose body sets a credential attribute to a literal:
+`credentials`, `client_certificate`, `client_key`, `shared_credentials_file`,
+or any attribute whose name matches the credential-name heuristic
+(`access_key`, `secret_key`, `token`, `password`, `client_secret`, and the
+rest). A value that is a reference, a placeholder, or a path to a key file is
+not a finding.
+
+**Why it matters.** A provider's credential is used by every resource that
+provider manages, so it is the highest-value secret in the root, and it is
+readable by everyone who can clone the repository. Every provider already
+accepts the same credential from the environment, a shared config file, or a
+role assumption.
+
+**The fix.** Delete the credential from the provider block and let the provider
+find it the way it is designed to. Then rotate it.
+
+**Prior art.** The most corroborated rule in the survey, and the only
+Terraform-language-shaped check some of these tools ship at all. Checkov's
+[`CKV_AWS_41`](https://www.checkov.io/5.Policy%20Index/terraform.html) and its
+six `credentials.py` siblings, KICS's
+[`d7b9d850-3e06-4a75-852f-c46c2e92240b`](https://docs.kics.io/latest/queries/terraform-queries/aws/d7b9d850-3e06-4a75-852f-c46c2e92240b/),
+and semgrep's
+[`aws-provider-static-credentials`](https://github.com/semgrep/semgrep-rules/blob/develop/terraform/aws/security/aws-provider-static-credentials.yaml)
+are all credited as overlaps: each is written per provider, while this rule is
+written against attribute names and so covers every provider. Snyk ships the
+same idea as `SNYK-CC-TF-74`, cited here by name only: Snyk IaC is a product
+rather than an open rule source, so it is not in chant's prior-art registry.
+Semgrep is registered without an SPDX id, because its rules ship under the
+proprietary Semgrep Rules License v1.0 even though its engine is LGPL-2.1.
+
+```hcl
+provider "aws" {
+  region     = "eu-west-1"
+  access_key = "AKIA2E0XYZ4PQRSTUVWX"
+  secret_key = "8Jd0hVn2XqB7sLtR4mYcE1zPgWfKa5UiQ3oNrTbA"
+}
+```
+
+## TF009: a credential-named variable is not marked sensitive
+
+A `variable` whose name matches the credential-name heuristic and that does not
+set `sensitive = true`. Only the name is read: a variable with no default is
+still reported, because the finding is about where the value goes at run time.
+
+**Why it matters.** Without the flag Terraform echoes the value in `plan` and
+`apply` output, which puts it in CI logs, in the comment a plan bot posts on a
+pull request, and in every terminal scrollback. The flag does not keep the
+value out of state, where it is stored in plaintext regardless, which is why
+the remediation says both things.
+
+**The fix.** Add `sensitive = true`, and keep the state remote and encrypted.
+
+**Prior art.** No tool in the survey checks this. The authority is HashiCorp's
+own [style guide](https://developer.hashicorp.com/terraform/language/style#variables),
+whose variables section says: "For sensitive variables, such as passwords and
+private keys, set the sensitive parameter to true." That section is credited
+as lineage as well as authority, the way the other specification entries in
+the registry are: it is where the rule was written down first.
+
+```hcl
+variable "db_password" {
+  type        = string
+  description = "Password for the application database user"
+}
+```
+
+## TF010: a variable declares no type
+
+A `variable` block with no `type`, or with a `type` that trims to empty.
+
+**Why it matters.** Without a type constraint Terraform accepts whatever it is
+given and infers the type from the value, so a variable meant to hold a list
+arrives as a string from a `TF_VAR_` environment variable, or a number arrives
+as `"3"` from a tfvars file. The failure then surfaces deep inside a resource
+argument rather than at the module boundary where the wrong value came in.
+
+**The fix.** Declare the constraint: `string`, `number`, `bool`,
+`list(string)`, an `object({...})`.
+
+**Prior art.** tflint's
+[`terraform_typed_variables`](https://github.com/terraform-linters/tflint-ruleset-terraform/blob/main/docs/rules/terraform_typed_variables.md),
+a member of its `recommended` preset, and KICS's
+[`fc5109bf-01fd-49fb-8bde-4492b543c34a`](https://docs.kics.io/latest/queries/terraform-queries/fc5109bf-01fd-49fb-8bde-4492b543c34a/),
+both equivalent. KICS also fails a `type` that trims to empty, which is why
+this rule treats a blank one as absent.
+
+```hcl
+variable "instance_count" {
+  description = "How many web instances to run"
+  default     = 3
+}
+```
+
+## TF011: a variable declares no description
+
+A `variable` block with no `description`, or a blank one. Report-only.
+
+**Why it matters.** A module's variables are its API. The description is what
+`terraform-docs` renders into the README, what the HCP Terraform variable UI
+shows next to the input box, and what a caller reads before deciding what to
+pass. Without it the only documentation is the variable's name.
+
+**The fix.** Add a `description` saying what the value is for and what a valid
+one looks like.
+
+**Prior art.** Three, all equivalent: tflint's
+[`terraform_documented_variables`](https://github.com/terraform-linters/tflint-ruleset-terraform/blob/main/docs/rules/terraform_documented_variables.md),
+KICS's
+[`2a153952-2544-4687-bcc9-cc8fea814a9b`](https://docs.kics.io/latest/queries/terraform-queries/2a153952-2544-4687-bcc9-cc8fea814a9b/),
+and HashiCorp's reference Sentinel policy
+[`validate-variables-have-descriptions`](https://github.com/hashicorp/terraform-sentinel-policies/blob/main/cloud-agnostic/validate-variables-have-descriptions.sentinel).
+KICS files it as INFO and tflint keeps it out of `recommended`, so chant tiers
+it report-only for the same reason.
+
+```hcl
+variable "region" {
+  type    = string
+  default = "eu-west-1"
+}
+```
+
+## TF012: an output declares no description
+
+An `output` block with no `description`, or a blank one. Report-only.
+
+**Why it matters.** The other half of a module's API. An output is what a
+caller wires into the next module, and the description is the only place to say
+what the value actually is, an id or an ARN, a full URL or a bare hostname, and
+whether it is stable enough to depend on.
+
+**The fix.** Add a `description` saying what the value is and what a caller can
+rely on it for.
+
+**Prior art.** tflint's
+[`terraform_documented_outputs`](https://github.com/terraform-linters/tflint-ruleset-terraform/blob/main/docs/rules/terraform_documented_outputs.md)
+and KICS's
+[`59312e8a-a64e-41e7-a252-618533dd1ea8`](https://docs.kics.io/latest/queries/terraform-queries/59312e8a-a64e-41e7-a252-618533dd1ea8/),
+both equivalent.
+
+```hcl
+output "bucket_name" {
+  value = aws_s3_bucket.assets.bucket
+}
+```
+
+## TF013: lifecycle ignore_changes is set to all
+
+A `resource` or `data` block whose `lifecycle` block sets `ignore_changes` to
+the bare keyword `all`. A list of named attributes is not reported.
+
+**Why it matters.** `all` tells Terraform to stop reconciling every attribute
+of the resource after it is created. A manual console edit, a deleted security
+group rule, a downgraded instance class: none of it appears in a plan again.
+The masking is silent, because a plan that finds nothing looks exactly like a
+plan that was told to look at nothing, and it switches off the observe half of
+the lifecycle chant exists to run.
+
+**The fix.** Replace `all` with the specific attributes that genuinely change
+outside Terraform, so everything else is still reconciled. Naming them is what
+makes the intent auditable later.
+
+**Prior art.** The community Redeploy ruleset's
+[`terraform_ignore_changes_all`](https://github.com/RedeployAB/tflint-ruleset-redeploy/blob/main/docs/rules/terraform_ignore_changes_all.md)
+(equivalent). Nothing in the official tflint ruleset, KICS, checkov or trivy
+covers it.
+
+```hcl
+resource "aws_instance" "web" {
+  ami           = "ami-0c55b159cbfafe1f0"
+  instance_type = "t3.micro"
+
+  lifecycle {
+    ignore_changes = all
+  }
+}
+```
+
+## TF016: an attribute value is a quoted interpolation of a single expression
+
+An attribute written `x = "${var.y}"`, the pre-0.12 style Terraform deprecated
+in 2019. Report-only, with a deterministic fix.
+
+**Why it matters.** The quotes buy nothing and cost readability. The expression
+is already an expression, and wrapping it in a template makes every value in
+the file look like a string whether it is one or not, which hides the real type
+of an argument that takes a list or a bool.
+
+**The fix.** Drop the quotes and the `${}`. `chant audit` renders the patch in
+its quick-wins section, because the edit is mechanical and touches only the
+flagged line.
+
+**Prior art.** tflint's
+[`terraform_deprecated_interpolation`](https://github.com/terraform-linters/tflint-ruleset-terraform/blob/main/docs/rules/terraform_deprecated_interpolation.md),
+credited as an overlap rather than an equivalent for two reasons. tflint also
+reports the deprecated interpolation in an object KEY (`"${var.k}" = value`);
+that is a different line shape whose fix is not a simple unquote, so this rule
+leaves it alone rather than emit a diff it cannot justify. And chant's version
+reads the block's source text rather than its parsed body, which is the one
+rule in the family that has to: `@cdktf/hcl2json` renders `x = var.y` and
+`x = "${var.y}"` as the same string, so a check over the parse alone would
+report every reference in the root. The quotes only survive in the text.
+
+```hcl
+variable "assets_bucket" {
+  type        = string
+  description = "Name of the bucket the site is served from"
+}
+
+resource "aws_s3_bucket" "assets" {
+  bucket = "${var.assets_bucket}"
+}
+
+output "assets_bucket_arn" {
+  description = "ARN of the assets bucket"
+  value       = "${aws_s3_bucket.assets.arn}"
+}
+```
+
+## TF017: a module block uses depends_on
+
+A `module` call that carries the `depends_on` meta-argument. Report-only.
+
+**Why it matters.** `depends_on` on a module applies to every resource inside
+it, including the ones that had no reason to wait, so the whole module
+serializes behind the named dependency and a plan that could have run in
+parallel does not. The ordering is also invisible from inside the module, where
+the resource that actually needed it lives.
+
+**The fix.** Remove `depends_on` and pass an attribute of the dependency into a
+module input. Terraform derives the same edge from the reference, only narrower
+and self-documenting.
+
+**Prior art.** Redeploy's
+[`terraform_module_depends_on`](https://github.com/RedeployAB/tflint-ruleset-redeploy/blob/main/docs/rules/terraform_module_depends_on.md)
+(equivalent).
+
+```hcl
+module "cdn" {
+  source     = "./modules/cdn"
+  bucket     = aws_s3_bucket.assets.bucket
+  depends_on = [aws_s3_bucket.assets]
+}
+```
+
+## TF018: an output returns a whole resource or data source
+
+An `output` whose `value` is a bare `type.name` reference to a managed resource,
+or `data.type.name` for a data source, with no attribute selected. Report-only.
+A bare `module.x` is not reported: a module's outputs are already a curated
+surface, which is the property this rule asks for.
+
+**Why it matters.** Exporting the whole resource exports every attribute the
+provider schema happens to have, which is a much larger promise than the module
+meant to make. Consumers reach into whatever they find, the module can no
+longer change any of it, and a provider upgrade that adds or renames an
+attribute moves the module's public interface without anyone editing it.
+Sensitive attributes ride along too.
+
+**The fix.** Return the attribute the caller needs: `.id`, `.arn`, `.endpoint`.
+
+**Prior art.** Redeploy's
+[`terraform_output_resource`](https://github.com/RedeployAB/tflint-ruleset-redeploy/blob/main/docs/rules/terraform_output_resource.md)
+(equivalent).
+
+```hcl
+output "web_instance" {
+  description = "The web instance"
+  value       = aws_instance.web
+}
+```
+
+## TF019: a meta-argument is explicitly set to its default of false
+
+`sensitive` or `ephemeral` on a `variable` or an `output`, or `prevent_destroy`
+or `create_before_destroy` inside a `lifecycle` block, written as a literal
+`false`. Report-only, with a deterministic fix. An expression such as
+`prevent_destroy = var.protect` is a real decision and is not reported.
+
+**Why it matters.** All four default to false, so writing it changes nothing
+and reads as though someone considered the setting and turned it off. That is
+exactly the impression a reviewer should not get from a variable called
+`password`.
+
+**The fix.** Delete the line. This is the first TF rule with a mechanical fix,
+so `chant audit` renders the deletion as a diff in its quick-wins section, the
+same way it does for a merge-worthy deterministic rule.
+
+**Prior art.** Redeploy's
+[`terraform_redundant_default`](https://github.com/RedeployAB/tflint-ruleset-redeploy/blob/main/docs/rules/terraform_redundant_default.md)
+(equivalent), which covers the same four arguments in the same contexts, also
+reports only a literal `false`, and also ships an autofix that removes the
+line.
+
+```hcl
+variable "log_level" {
+  type        = string
+  description = "Log level the application starts with"
+  default     = "info"
+  sensitive   = false
+}
+
+resource "aws_instance" "web" {
+  ami           = "ami-0c55b159cbfafe1f0"
+  instance_type = "t3.micro"
+
+  lifecycle {
+    prevent_destroy       = false
+    create_before_destroy = false
+  }
+}
+```
+
+## TF022: a credential-named resource attribute holds a plaintext literal
+
+An attribute of a `resource` or `data` block whose name matches the
+credential-name heuristic and whose value is a committed literal. The walk
+descends into nested blocks, so a credential inside `connection {}` or
+`assume_role {}` is not invisible.
+
+**Why it matters.** The value is in git history, in state, and in plan output,
+and the blast radius is whatever the resource is: an RDS master password, an
+API token on a provider resource, the data of a Kubernetes secret. This is
+broader and noisier than TF007, which is why the name heuristic gates it rather
+than the value heuristic alone.
+
+**The fix.** Replace the literal with a reference: a `sensitive` variable, or a
+data source that reads the value from a secret manager at apply time. Then
+rotate the credential.
+
+**Prior art.** tfsec's
+[`general-secrets-no-plaintext-exposure`](https://github.com/aquasecurity/tfsec/blob/master/docs/checks/general/secrets/no-plaintext-exposure/index.md),
+the v1 consolidation of its three `general/secrets` checks, and KICS's
+[`a88baa34-e2ad-44ea-ad6f-8cac87bc7c71`](https://docs.kics.io/latest/secrets/),
+both overlaps. tfsec's consolidated check also covers the variable and locals
+cases TF007 reports separately, and the KICS query is a regex sweep over every
+file type rather than a rule about Terraform attributes.
+
+```hcl
+resource "aws_db_instance" "app" {
+  identifier = "app-prod"
+  engine     = "postgres"
+  username   = "app"
+  password   = "Pr0dDbP4ssw0rd"
+}
+```
+
+## TF023: Terraform state is committed to the repository
+
+A `terraform.tfstate`, a `terraform.tfstate.backup`, any other `*.tfstate`, or a
+`.terraform/` directory, tracked in the repository being audited.
+
+This is the one TF rule that never runs during `chant build`. It is not a check
+over a parsed root module at all: it reads the file list `chant audit`
+discovers, so it lives in core beside the other lexicon-independent families
+(`packages/core/src/audit/terraform-state.ts`, catalogued in core's own
+`RULE_CATALOG`) and fires whether or not the terraform lexicon is installed. On
+a local path the root `.gitignore` is what separates "committed" from "merely
+on disk", since almost every Terraform working tree has an ignored
+`.terraform/` in it; a fetched repository's file list is already exactly its
+tracked files. Nothing reads the contents of either: the finding is that the
+path is there.
+
+**Why it matters.** A state file records every attribute of every managed
+resource in plaintext JSON, including the ones providers mark sensitive, so a
+committed state file is a committed secret store, readable by everyone with
+clone access and preserved in history after any later deletion. `.terraform/`
+is milder, downloaded providers and vendored child modules, but it is hundreds
+of megabytes of machine-generated content and the local backend keeps its state
+there too.
+
+**The fix.** Delete the file or directory from version control, add `*.tfstate`,
+`*.tfstate.*` and `.terraform/` to `.gitignore`, move the state to a remote
+backend (see TF001), and rotate every credential the file held.
+
+**Prior art.** No linter or scanner in the survey checks for committed state.
+HashiCorp's [style guide](https://developer.hashicorp.com/terraform/language/style#gitignore)
+names the exact files in its `.gitignore` section, "Your terraform.tfstate
+state file, including terraform.tfstate.* backup state files ... Your
+.terraform directory", so the document is both the authority and the first
+written statement of the rule, and is credited as both.
+
+```hcl
+# fixtures/TF023/positive/ is a directory rather than a single file: the finding
+# is a path in the repository, not a block in a root module.
+#
+#   positive/main.tf            a perfectly ordinary root
+#   positive/terraform.tfstate  committed beside it
+```
 
 ## TF024: live root declares a backend or cloud block
 
@@ -327,6 +759,41 @@ resource "null_resource" "first" {
   }
 }
 ```
+
+## TF101: terraformApply's planFile must reference a preceding terraformPlan step
+
+A `terraformApply` step's `planFile` is a string or template literal in
+source, or a reference to a step that is not a `terraformPlan` call.
+
+**Why it matters.** The entire point of the plan/apply split is to review
+exactly what will change, then apply exactly that. Spelling the plan path out
+as a literal breaks the link between the two steps: the file applied can be
+stale, hand-edited by something else in the meantime, or simply the wrong
+plan for this root. Carrying the path forward from the producing step
+(`stepOutput(plan, "planFile")` or `plan.out.planFile`) is what keeps apply
+honest about which plan it is running.
+
+**The fix.** Reference the preceding `terraformPlan` step's output instead of
+a literal path: `stepOutput(plan, "planFile")` or `plan.out.planFile`, where
+`plan` is the `const` a `terraformPlan(...)` call was assigned to.
+
+**Prior art.** No tool in the survey covers this. TF101 is a rule about
+chant's own Op-builder DSL, not about a Terraform root. Nothing in the
+survey (linters, scanners, policy engines, or HashiCorp's own Sentinel
+examples) models "does this plan file trace back to a specific preceding
+plan step", because that question does not exist outside chant's own
+authoring surface. See `audit-lineage.ts`'s header comment for the full
+reasoning.
+
+When the referenced identifier cannot be resolved at all in the same file,
+this rule stays silent rather than guess.
+
+```typescript
+const plan = terraformPlan("app", { id: "plan" });
+const apply = terraformApply("app", { planFile: "/tmp/plan.out" });
+```
+
+To write custom rules for your project, see the [lint-rules authoring guide](/chant/lexicon-authoring/lint-rules/).
 
 ## Suppressing a finding
 

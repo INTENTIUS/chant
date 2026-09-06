@@ -1,0 +1,24 @@
+{
+  "version": 4,
+  "terraform_version": "1.5.7",
+  "serial": 3,
+  "lineage": "00000000-0000-0000-0000-000000000000",
+  "outputs": {},
+  "resources": [
+    {
+      "mode": "managed",
+      "type": "null_resource",
+      "name": "first",
+      "provider": "provider[\"registry.terraform.io/hashicorp/null\"]",
+      "instances": [
+        {
+          "schema_version": 0,
+          "attributes": {
+            "id": "1234567890123456789",
+            "triggers": { "name": "first" }
+          }
+        }
+      ]
+    }
+  ]
+}

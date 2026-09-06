@@ -39,6 +39,7 @@ import { parseYAML } from "../yaml";
 import type { LexiconPlugin } from "../lexicon";
 import type { AuditInput, AuditLexicon } from "./core";
 import { isNginxConfigPath } from "./nginx";
+import { gitignoreCoversTerraformState, isTerraformStatePath } from "./terraform-state";
 
 /** Lexicons the auditor knows how to detect and run checks for. */
 export const AUDIT_LEXICONS = ["github", "gitlab", "forgejo", "k8s", "docker", "aws", "azure", "gcp", "helm", "fountain", "terraform"] as const;
@@ -68,6 +69,8 @@ export async function loadAuditPlugins(names: readonly string[] = AUDIT_LEXICONS
 }
 
 const WALK_SKIP = new Set(["node_modules", ".git", "dist"]);
+/** Terraform's local working directory: recorded by the walk, never entered (TF023). */
+const TERRAFORM_WORK_DIR = ".terraform";
 /** Dot-directories the walk descends into anyway (CI lives here). */
 const WALK_DOT_DIRS = new Set([".github", ".forgejo"]);
 const MAX_WALK_FILES = 1000;
@@ -85,7 +88,15 @@ function walkFiles(dir: string, out: string[]): void {
   }
   for (const e of entries.sort((a, b) => (a.name < b.name ? -1 : 1))) {
     if (out.length >= MAX_WALK_FILES) return;
-    if (e.name.startsWith(".") && e.isDirectory() && !WALK_DOT_DIRS.has(e.name)) continue;
+    if (e.name.startsWith(".") && e.isDirectory() && !WALK_DOT_DIRS.has(e.name)) {
+      // `.terraform/` is never descended into: it is machine-generated,
+      // routinely hundreds of megabytes of provider binaries, and nothing in
+      // it is worth reading. Its presence is itself the finding (TF023), so
+      // the directory path alone is recorded and `collectCandidates` hands it
+      // on with no content.
+      if (e.name === TERRAFORM_WORK_DIR) out.push(join(dir, e.name));
+      continue;
+    }
     if (WALK_SKIP.has(e.name)) continue;
     const full = join(dir, e.name);
     if (e.isDirectory()) walkFiles(full, out);
@@ -479,9 +490,21 @@ export function discoverByDetection(root: string, plugins: DetectPlugin[]): Audi
 export function collectCandidates(root: string): RepoFile[] {
   const all: string[] = [];
   walkFiles(root, all);
+  // TF023 reads paths, not content: a `.tfstate` can be tens of megabytes of
+  // machine-generated JSON, and the finding is that it is in the repository at
+  // all. The root `.gitignore` is what separates "committed" from "merely on
+  // disk" here — a Terraform working tree almost always has an ignored
+  // `.terraform/` in it, and reporting that would make TF023 fire on every
+  // local audit. A fetched repository has no such ambiguity (its file list is
+  // the tracked files) and is not filtered.
+  const gitignore = readSafe(join(root, ".gitignore")) ?? "";
   const files: RepoFile[] = [];
   for (const full of all) {
     const path = relative(root, full);
+    if (isTerraformStatePath(path)) {
+      if (!gitignoreCoversTerraformState(gitignore, path)) files.push({ path, content: "" });
+      continue;
+    }
     // `.tf` is read locally so `classifyTerraform` can bundle real content.
     // It stays out of `isCandidatePath` so remote fetches still never pull HCL.
     if (isTerraformFileName(basename(path))) {

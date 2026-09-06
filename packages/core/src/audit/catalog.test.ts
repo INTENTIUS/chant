@@ -166,8 +166,12 @@ describe("RULE_CATALOG (aggregated: core static + lexicon-contributed, #687)", (
       .filter((m) => m.fixKind === "deterministic")
       .map((m) => m.id)
       .sort();
+    // TF016 and TF019 (#2110) are the first report-only rules in the set: both
+    // unquote or delete exactly the flagged line, which is as mechanical as
+    // pinning an action, and `report-model.ts` renders them as quick wins for
+    // that reason. Every entry here needs a case in `proof.ts`'s `proveFix`.
     expect(deterministic).toEqual(
-      ["GHA017", "GHA021", "GHA029", "GHA030", "GHA033", "WGL031"].sort(),
+      ["GHA017", "GHA021", "GHA029", "GHA030", "GHA033", "TF016", "TF019", "WGL031"].sort(),
     );
   });
 });

@@ -124,6 +124,73 @@ describe("proveFix — guidance findings are not auto-fixed", () => {
   });
 });
 
+/** A Terraform root with both of #2110's deterministic findings in it. */
+const TF_ROOT = `variable "log_level" {
+  type      = string
+  sensitive = false
+}
+
+resource "aws_s3_bucket" "assets" {
+  bucket = "\${var.assets_bucket}"
+  tags = {
+    name = "\${var.project}-assets"
+  }
+
+  lifecycle {
+    prevent_destroy       = false
+    create_before_destroy = var.replace_first
+  }
+}
+`;
+
+describe("proveFix — TF019, delete a meta-argument set to its default false", () => {
+  test("drops both redundant lines and leaves the expression alone", () => {
+    const res = proveFix("TF019", TF_ROOT);
+    expect(res.applied).toBe(true);
+    expect(res.patched).not.toContain("sensitive = false");
+    expect(res.patched).not.toContain("prevent_destroy       = false");
+    expect(res.patched).toContain("create_before_destroy = var.replace_first");
+    expect(res.diff).toContain("-  sensitive = false");
+    expect(res.diff).toContain("-    prevent_destroy       = false");
+    // Deletions only: nothing is added.
+    expect((res.diff ?? "").split("\n").filter((l) => l.startsWith("+") && !l.startsWith("+++"))).toEqual([]);
+  });
+
+  test("a root with no redundant default is a no-op, not a patch", () => {
+    const res = proveFix("TF019", 'resource "aws_s3_bucket" "assets" {\n  bucket = var.assets_bucket\n}\n');
+    expect(res.applied).toBe(false);
+    expect(res.reason).toBe("noop");
+  });
+
+  test("a line with a trailing comment is left alone: deleting it would delete the comment", () => {
+    const res = proveFix("TF019", "  sensitive = false # deliberate, see #123\n");
+    expect(res.applied).toBe(false);
+  });
+});
+
+describe("proveFix — TF016, unwrap an interpolation-only value", () => {
+  test("unquotes the single interpolation and leaves a real template alone", () => {
+    const res = proveFix("TF016", TF_ROOT);
+    expect(res.applied).toBe(true);
+    expect(res.patched).toContain("bucket = var.assets_bucket");
+    expect(res.patched).toContain('name = "${var.project}-assets"');
+    expect(res.diff).toContain("+  bucket = var.assets_bucket");
+  });
+
+  test("the two fixes combine into one patch, as a quick-win diff does", () => {
+    const first = proveFix("TF016", TF_ROOT);
+    const second = proveFix("TF019", first.patched ?? TF_ROOT);
+    expect(second.patched).toContain("bucket = var.assets_bucket");
+    expect(second.patched).not.toContain("prevent_destroy");
+  });
+
+  test("a root written the modern way is a no-op", () => {
+    const res = proveFix("TF016", 'output "arn" {\n  value = aws_s3_bucket.assets.arn\n}\n');
+    expect(res.applied).toBe(false);
+    expect(res.reason).toBe("noop");
+  });
+});
+
 describe("unifiedDiff", () => {
   test("identical input produces an empty diff", () => {
     expect(unifiedDiff(WF, WF)).toBe("");
