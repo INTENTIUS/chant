@@ -23,6 +23,32 @@
  * post the JSON, and `terraform-watch-op.test.ts` asserts no reference to it
  * reaches the finding step.
  *
+ * The same rule holds on a live root, where the JSON is choudoufu's own
+ * bound/omissions/unowned document rather than a plan representation, and
+ * carries live identities and tag values for every resource the estate
+ * touched. `choudoufuLivePlan` composes the plan text and the adoption ledger
+ * into one `finding` string for exactly this reason: the body is one
+ * reference to one text field, so there is no arrangement of the args in
+ * which the document reaches a body.
+ *
+ * ## A live root reports three things, not one (#2105)
+ *
+ * `live: true` swaps the Plan step for `choudoufuLivePlan`. On a choudoufu
+ * root ownership is a pair of tags on the resource rather than an entry in a
+ * state file, so a plan against the live system can answer three questions
+ * where a stock plan answers one: whether the estate drifted (the
+ * `-detailed-exitcode` exit, `Drift` as before), how many live resources sit
+ * at a declared identity carrying no marker (`Unowned`), and how many of those
+ * an exact content match makes claimable (`Adoptable`). All three come off a
+ * single live read, published as three search attributes from the one step.
+ *
+ * The finding modes then carry the adoption ledger under the plan text: one
+ * line per adoptable match with its address, its live identity and the
+ * `tofu-estate`/`tofu-address` values that claim it, in the row form
+ * `live-plan -adoption-only` prints, followed by any contested address. That
+ * is a report, not an action. `TerraformAdoptOp` next door is what writes the
+ * markers, and it gates first.
+ *
  * ## Findings reuse `reconcilePr`
  *
  * `issue` and `pull-request` call the temporal lexicon's `reconcilePr`
@@ -32,9 +58,11 @@
  * one, so #2087 added a single field to it (`ReconcilePrArgs.body`), which is
  * what carries the `-no-color` plan through. Note that the pull-request mode
  * of `reconcilePr` regenerates chant TypeScript via `chant import`; a
- * terraform-native regeneration of HCL from live state is #2089, so until
- * then `findingMode: "issue"` is the mode with an end-to-end answer and
- * `"pull-request"` opens a PR whose body is the plan.
+ * terraform-native regeneration of HCL from live state is #2089, so
+ * `findingMode: "issue"` is the mode with an end-to-end answer and
+ * `"pull-request"` opens a PR whose body is the plan. On a live root #2089's
+ * question has a different answer rather than a pending one, and it is not
+ * regeneration: see `TerraformAdoptOp`.
  *
  * ## The schedule
  *
@@ -69,14 +97,26 @@
  *   schedule: "0 6 * * *",
  *   findingMode: "issue",
  * });
+ *
+ * // a choudoufu estate: drift, unowned and adoptable, with the ledger in the issue
+ * export const { op } = TerraformWatchOp({
+ *   name: "estate-watch",
+ *   root: "estate",
+ *   live: true,
+ *   findingMode: "issue",
+ * });
  * ```
  */
 
 import { Op, phase, OpResource, type ActivityStep } from "@intentius/chant/op";
 import { createResource } from "@intentius/chant/runtime";
 import type { Declarable } from "@intentius/chant/declarable";
-import { DEFAULT_PLAN_FILE } from "../op/activities/terraform";
-import { terraformInit as initStep, terraformPlan as planStep } from "../op/builders";
+import { CHOUDOUFU_PLAN_FILE_REFUSAL, DEFAULT_PLAN_FILE } from "../op/activities/terraform";
+import {
+  terraformInit as initStep,
+  terraformPlan as planStep,
+  choudoufuLivePlan as livePlanStep,
+} from "../op/builders";
 
 /**
  * What to do with a non-empty plan. A subset of core's `OpFindingMode`
@@ -114,7 +154,30 @@ export interface TerraformWatchOpConfig {
    * the report.
    */
   findingMode?: TerraformFindingMode;
-  /** Plan file the Plan step writes, relative to the root dir. Default: `chant.tfplan`. */
+  /**
+   * Watch a live root (#2105): the root runs `terraform.binary: "choudoufu"`
+   * and declares an estate, so the Plan phase is `choudoufuLivePlan` rather
+   * than `terraformPlan`. See the module doc for what changes.
+   *
+   * Declared here rather than detected, because a composite is built by
+   * `chant build` without reading a root module's `.tf` files. The activities
+   * detect the estate at run time (`op/activities/live-detect.ts`), but by then
+   * the phases are already serialized. Setting this on a stock root fails at
+   * the first step, with choudoufu's own reason.
+   */
+  live?: boolean;
+  /**
+   * The estate to plan against, for a live root whose estate this Op should
+   * name explicitly. Omitted, `choudoufuLivePlan` auto-detects it from the
+   * root's own `live` block or `estate.chdf.hcl` sidecar, which is the usual
+   * case. Refused on a stock root.
+   */
+  estate?: string;
+  /**
+   * Plan file the Plan step writes, relative to the root dir. Default:
+   * `chant.tfplan`. Refused on a live root, where choudoufu takes no plan file
+   * at all.
+   */
   planFile?: string;
   /** `-upgrade` on the Init step: re-resolve provider and module versions. */
   upgrade?: boolean;
@@ -142,14 +205,41 @@ export interface TerraformWatchOpResources {
 
 export function TerraformWatchOp(config: TerraformWatchOpConfig): TerraformWatchOpResources {
   const taskQueue = config.taskQueue ?? config.name;
-  const planFile = config.planFile ?? DEFAULT_PLAN_FILE;
   const findingMode: TerraformFindingMode = config.findingMode ?? "report";
   const where = config.cwd ? { cwd: config.cwd } : {};
 
-  // `id` is what makes `plan.out` legal, and `plan.out.text` is the only
-  // channel by which any part of the plan leaves this Op.
-  const plan = planStep(config.root, { planFile, ...where, id: "plan" });
-  plan.outcomeAttribute = { name: "Drift", from: "changed" };
+  if (config.live && config.planFile !== undefined) {
+    throw new Error(
+      `TerraformWatchOp "${config.name}": planFile is refused on a live root. choudoufu: ` +
+        `"${CHOUDOUFU_PLAN_FILE_REFUSAL}". A live plan writes no saved plan, so there is no file to name; ` +
+        "drop planFile, or drop live if this root runs stock.",
+    );
+  }
+  if (!config.live && config.estate !== undefined) {
+    throw new Error(
+      `TerraformWatchOp "${config.name}": estate names the estate a live plan looks for markers of, and ` +
+        "this Op is not on a live root. Set live: true, or drop estate.",
+    );
+  }
+
+  // `id` is what makes `plan.out` legal, and one field of `plan.out` is the
+  // only channel by which any part of the plan leaves this Op.
+  //
+  // A live root reads the live system instead of a state file, so the three
+  // things a watch reports come off one `choudoufuLivePlan`: `drift` from
+  // `-detailed-exitcode`, and `unowned`/`adoptable` from the `-json` document
+  // the same run wrote. Three attributes, one live read: see
+  // `ActivityStep.outcomeAttribute`'s array form (#2105).
+  const plan = config.live
+    ? livePlanStep(config.root, { ...where, ...(config.estate ? { estate: config.estate } : {}), id: "plan" })
+    : planStep(config.root, { planFile: config.planFile ?? DEFAULT_PLAN_FILE, ...where, id: "plan" });
+  plan.outcomeAttribute = config.live
+    ? [
+        { name: "Drift", from: "drift" },
+        { name: "Unowned", from: "unowned" },
+        { name: "Adoptable", from: "adoptable" },
+      ]
+    : { name: "Drift", from: "changed" };
 
   const phases = [
     phase("Init", [initStep(config.root, { ...where, ...(config.upgrade ? { upgrade: true } : {}) })]),
@@ -169,7 +259,11 @@ export function TerraformWatchOp(config: TerraformWatchOpConfig): TerraformWatch
         mode: findingMode,
         entries: [],
         title: config.title ?? `Terraform drift in root "${config.root}"`,
-        body: plan.out.text,
+        // Stock: the `-no-color` plan. Live: the same plan text with the
+        // adoption ledger under it, which `choudoufuLivePlan` composes into
+        // one `finding` field precisely so that a body is one reference and
+        // the `-json` document has no path into one at all.
+        body: config.live ? plan.out.finding : plan.out.text,
         ...(config.branch ? { branch: config.branch } : {}),
       },
       outcomeAttribute:
@@ -180,11 +274,14 @@ export function TerraformWatchOp(config: TerraformWatchOpConfig): TerraformWatch
 
   const op = Op({
     name: config.name,
-    overview: `Plan the "${config.root}" terraform root and report drift`,
+    overview: config.live
+      ? `Live-plan the "${config.root}" choudoufu estate and report drift, unowned and adoptable resources`
+      : `Plan the "${config.root}" terraform root and report drift`,
     taskQueue,
     searchAttributes: {
       Watch: "true",
       TerraformRoot: config.root,
+      ...(config.live ? { TerraformMode: "live" } : {}),
     },
     phases,
   });
