@@ -48,6 +48,16 @@
  * what arrived while it had none. Only genuine silence ends the wait, after
  * `FOUNTAIN_STREAM_IDLE_TIMEOUT` seconds (default 1800), and it ends it with
  * an error that names the conversation rather than reporting success.
+ *
+ * Patience is not the answer when the conversation itself has died, though
+ * (#2167). A sandbox that fails to provision leaves the conversation `failed`
+ * with `turn_count: 0` and no `stage: turn` event will ever arrive, so waiting
+ * half an hour reports nothing anyone can act on. Whenever the stream goes
+ * quiet — every {@link DEFAULT_CONVERSATION_POLL_MS} of silence, and again
+ * whenever a connection ends — `GET /api/conversations/:id` is read, and a
+ * terminal status there settles the run with fountain's own reason. `status`
+ * reads the same thing: a conversation that failed before its first turn is a
+ * failed run, not "no run is recorded".
  */
 
 import { loadChantConfig, type ChantConfig } from "@intentius/chant/config";
@@ -193,6 +203,13 @@ interface Conversation {
   id?: string;
   status?: string;
   channel_id?: string;
+  /** Turns run on this conversation. `0` means no turn ever started. */
+  turn_count?: number;
+  /** The machine behind it, whose own status is usually why a run died. */
+  sandbox?: { status?: string } | null;
+  inserted_at?: string;
+  updated_at?: string;
+  last_active_at?: string;
 }
 
 // ── Options ───────────────────────────────────────────────────────────────
@@ -218,6 +235,11 @@ export interface FountainOpRuntimeOptions {
    * minutes — the same patience the fountain CLI has.
    */
   idleTimeoutMs?: number;
+  /**
+   * How much stream silence asks fountain what became of the conversation
+   * (#2167), in milliseconds. Default {@link DEFAULT_CONVERSATION_POLL_MS}.
+   */
+  conversationPollMs?: number;
   /** Injectable clock, so a test can age the stream without waiting. */
   now?: () => number;
   /**
@@ -238,6 +260,38 @@ export interface FountainOpRuntimeOptions {
 
 /** Silence this long ends the wait. Widened with `FOUNTAIN_STREAM_IDLE_TIMEOUT`, in seconds. */
 export const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 1_800_000;
+
+/**
+ * Silence this long asks fountain what became of the conversation (#2167).
+ *
+ * Two seconds is short enough that a conversation that died during provision
+ * is reported about as fast as fountain knew it, and long enough that a turn
+ * thinking quietly for half an hour costs a handful of cheap reads a minute
+ * rather than one per second.
+ */
+export const DEFAULT_CONVERSATION_POLL_MS = 2_000;
+
+/** Conversation statuses no turn will ever start from. */
+const TERMINAL_CONVERSATION_STATUSES = new Set(["failed", "terminated"]);
+
+/** Has fountain given up on this conversation? Pure. */
+export function conversationIsTerminal(status?: string): boolean {
+  return status !== undefined && TERMINAL_CONVERSATION_STATUSES.has(status);
+}
+
+/**
+ * Fountain's own account of a conversation that ended without running the
+ * turn — its status, its sandbox's, and how many turns it managed. Pure.
+ */
+export function conversationFailureReason(conversation: Conversation): string {
+  const sandbox = conversation.sandbox?.status;
+  const turns = conversation.turn_count ?? 0;
+  return (
+    `fountain ended conversation ${conversation.id ?? "?"} as "${conversation.status ?? "unknown"}"` +
+    (sandbox ? ` with its sandbox "${sandbox}"` : "") +
+    (turns === 0 ? ", before the turn started" : `, after ${turns} turn(s)`)
+  );
+}
 
 /** A reconnect that yields nothing is normal; a fake that always does is not. */
 const MAX_RECONNECTS = 1000;
@@ -346,6 +400,24 @@ function statusFromTurn(op: string, conversation: Conversation, turn: Turn): OpR
     state,
     startedAt: started,
     ...(ended && state !== "running" ? { endedAt: ended } : {}),
+  };
+}
+
+/**
+ * A conversation that died before its first turn, read back as a run status
+ * (#2167). The conversation is all there is — `runId` is its id, because no
+ * turn id was ever minted — and `error` carries fountain's own reason.
+ */
+function statusFromConversation(op: string, conversation: Conversation): OpRunStatus {
+  const state: OpRunState = conversation.status === "terminated" ? "cancelled" : "failed";
+  const started = conversation.inserted_at ?? new Date(0).toISOString();
+  return {
+    op,
+    runId: conversation.id ?? "unknown",
+    state,
+    startedAt: started,
+    endedAt: conversation.updated_at ?? conversation.last_active_at ?? started,
+    ...(state === "failed" ? { error: conversationFailureReason(conversation) } : {}),
   };
 }
 
@@ -622,12 +694,13 @@ export function createFountainOpRuntime(opts: FountainOpRuntimeOptions = {}): Op
   const opTurns = async (
     http: FountainHttp,
     op: string,
-  ): Promise<{ conversation: Conversation; turns: Turn[] } | undefined> => {
+  ): Promise<{ conversation: Conversation; turns: Turn[]; turnCount: number } | undefined> => {
     const steward = await resolveSteward(known.get(op));
     const conversation = await stewardConversation(http, steward);
     if (!conversation?.id) return undefined;
-    const turns = (await turnsOf(http, conversation.id)).filter((t) => turnRunsOp(t, op));
-    return { conversation, turns: turns.reverse() };
+    const all = await turnsOf(http, conversation.id);
+    const turns = all.filter((t) => turnRunsOp(t, op));
+    return { conversation, turns: turns.reverse(), turnCount: all.length };
   };
 
   return {
@@ -654,6 +727,11 @@ export function createFountainOpRuntime(opts: FountainOpRuntimeOptions = {}): Op
         startedAt,
         idleTimeoutMs,
         now,
+        // The same REST client, so a stream that goes quiet can ask what
+        // became of the conversation instead of waiting out the idle
+        // timeout on one fountain has already failed (#2167).
+        http,
+        ...(opts.conversationPollMs !== undefined ? { pollIntervalMs: opts.conversationPollMs } : {}),
         ...(startOpts.progress ? { progress: startOpts.progress } : {}),
         ...(startOpts.signal ? { signal: startOpts.signal } : {}),
       });
@@ -664,8 +742,19 @@ export function createFountainOpRuntime(opts: FountainOpRuntimeOptions = {}): Op
     async status(op: string): Promise<OpRunStatus | undefined> {
       const http = await rest();
       const found = await opTurns(http, op);
-      const latest = found?.turns[0];
-      if (!found || !latest?.id) return undefined;
+      if (!found) return undefined;
+
+      const latest = found.turns[0];
+      if (!latest?.id) {
+        // No turn to key off. A conversation fountain has already given up on,
+        // which never ran a turn at all, is the run: the prompt was accepted
+        // and the machine died under it (#2167). Saying "no run is recorded"
+        // there sends the reader looking for a run that fountain can describe.
+        if (found.turnCount === 0 && conversationIsTerminal(found.conversation.status)) {
+          return statusFromConversation(op, found.conversation);
+        }
+        return undefined;
+      }
 
       const state = runStateOfTurn(found.conversation.status, latest.state ?? latest.status);
       if (state === "running") return statusFromTurn(op, found.conversation, latest);
@@ -854,26 +943,73 @@ interface TailOptions {
   now: () => number;
   progress?: (record: StepRecord) => void;
   signal?: AbortSignal;
+  /**
+   * REST seam for the conversation poll (#2167). Without it the tail waits on
+   * the stream alone, which is what it did before the poll existed.
+   */
+  http?: FountainHttp;
+  /** How much silence asks fountain about the conversation. Default 2s. */
+  pollIntervalMs?: number;
 }
 
 const IDLE = Symbol("idle");
 
-/** `it.next()`, or {@link IDLE} once `ms` has passed with no event. */
-async function nextWithin<T>(
-  it: AsyncIterator<T>,
-  ms: number,
-): Promise<IteratorResult<T> | typeof IDLE> {
-  if (!Number.isFinite(ms) || ms <= 0) return it.next();
-  let timer: ReturnType<typeof setTimeout> | undefined;
+/**
+ * A reader over one connection: `read(ms)` answers the next event, or
+ * {@link IDLE} once `ms` has passed without one.
+ *
+ * The pending `next()` is kept across an IDLE rather than abandoned, so the
+ * poll that a quiet stream triggers cannot swallow the event that arrives
+ * while it is in flight — a second `next()` on the same iterator would be
+ * queued behind the first, and the first would take that event nowhere.
+ */
+function readerOf<T>(it: AsyncIterator<T>): (ms: number) => Promise<IteratorResult<T> | typeof IDLE> {
+  let pending: Promise<IteratorResult<T>> | undefined;
+  return async (ms) => {
+    if (!pending) {
+      pending = it.next();
+      // Keep a rejection handled while a poll is awaited elsewhere; the
+      // `await` below still sees the rejection.
+      void pending.catch(() => undefined);
+    }
+    if (!Number.isFinite(ms) || ms <= 0) {
+      const settled = await pending;
+      pending = undefined;
+      return settled;
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const result = await Promise.race([
+        pending,
+        new Promise<typeof IDLE>((res) => {
+          timer = setTimeout(() => res(IDLE), ms);
+        }),
+      ]);
+      if (result !== IDLE) pending = undefined;
+      return result;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  };
+}
+
+/**
+ * `GET /api/conversations/:id`, or nothing when it cannot be read.
+ *
+ * The poll is a second opinion on a quiet stream, so a failure to reach it is
+ * not a failure of the run: the tail carries on waiting, exactly as it did
+ * before the poll existed.
+ */
+async function readConversation(
+  http: FountainHttp,
+  conversationId: string,
+): Promise<Conversation | undefined> {
   try {
-    return await Promise.race([
-      it.next(),
-      new Promise<typeof IDLE>((res) => {
-        timer = setTimeout(() => res(IDLE), ms);
-      }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
+    const { status, json } = await http("GET", `/api/conversations/${conversationId}`);
+    if (status !== 200) return undefined;
+    return objectOf<Conversation>(json);
+  } catch {
+    return undefined;
   }
 }
 
@@ -895,9 +1031,24 @@ export async function tailConversation(opts: TailOptions): Promise<OpRunStatus> 
   let text = "";
   let phase = "Run";
   let terminal: string | undefined;
+  /** The conversation fountain reported as terminal, when the poll found one. */
+  let ended: Conversation | undefined;
   let lastEventId: string | undefined;
   let lastEventAt = now();
   let reconnects = 0;
+
+  const pollMs = opts.http
+    ? Math.min(idleTimeoutMs, opts.pollIntervalMs ?? DEFAULT_CONVERSATION_POLL_MS)
+    : idleTimeoutMs;
+
+  /** Ask fountain whether the conversation is still alive. True once it isn't. */
+  const conversationDied = async (): Promise<boolean> => {
+    if (!opts.http) return false;
+    const live = await readConversation(opts.http, conversationId);
+    if (!live || !conversationIsTerminal(live.status)) return false;
+    ended = live;
+    return true;
+  };
 
   const emit = (block: Block, status: StepRecord["status"]): void => {
     const key = toolCallId(block);
@@ -952,10 +1103,17 @@ export async function tailConversation(opts: TailOptions): Promise<OpRunStatus> 
       ...(lastEventId ? { lastEventId } : {}),
       ...(opts.signal ? { signal: opts.signal } : {}),
     })[Symbol.asyncIterator]();
+    const read = readerOf(it);
 
     for (;;) {
-      const step = await nextWithin(it, idleTimeoutMs);
+      const step = await read(pollMs);
       if (step === IDLE) {
+        // Quiet. Ask fountain about the conversation before blaming patience:
+        // one that died during provision emits no turn event, ever (#2167).
+        if (now() - lastEventAt < idleTimeoutMs) {
+          if (await conversationDied()) break;
+          continue;
+        }
         throw new Error(
           `fountain runtime: nothing arrived on conversation ${conversationId} for ` +
             `${Math.round(idleTimeoutMs / 1000)}s. The turn is not reported as finished. ` +
@@ -984,9 +1142,11 @@ export async function tailConversation(opts: TailOptions): Promise<OpRunStatus> 
       }
     }
 
-    if (settled) break;
+    if (settled || ended) break;
     // The connection ended without a terminal event: fountain's 60-second idle
-    // close. Reconnect from the last id and let it replay.
+    // close, or a conversation that has stopped existing. Ask which before
+    // reconnecting, then replay from the last id.
+    if (await conversationDied()) break;
     if (now() - lastEventAt >= idleTimeoutMs && idleTimeoutMs > 0) {
       throw new Error(
         `fountain runtime: nothing arrived on conversation ${conversationId} for ` +
@@ -1009,6 +1169,20 @@ export async function tailConversation(opts: TailOptions): Promise<OpRunStatus> 
       op,
       startedAt,
       endedAt: record.ended || endedAt,
+    };
+  }
+
+  // The conversation died before the turn could settle (#2167). Fountain's own
+  // status is the reason; there is nothing to widen a wait for.
+  if (ended && terminal === undefined) {
+    const state: OpRunState = ended.status === "terminated" ? "cancelled" : "failed";
+    return {
+      op,
+      runId: conversationId,
+      state,
+      startedAt,
+      endedAt,
+      ...(state === "failed" ? { error: conversationFailureReason(ended) } : {}),
     };
   }
 

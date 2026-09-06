@@ -12,11 +12,15 @@
  * throws, so one bad resource doesn't hide failures in the rest of the
  * manifest, and a partial apply is never silently reported as clean.
  *
- * No id resolution happens here anymore: since the server resolves an
- * agent's `environment` reference by name itself, the manifest's `spec`
- * passes through unmodified except for one shape adjustment — chant's
- * authored `secrets` is an ordered `{key, value}[]`, the wire format wants
- * `{KEY: value}` (see `toApplyPayload`).
+ * The server resolves an agent's `environment` reference by name itself, so
+ * the manifest's `spec` passes through with two adjustments. chant's authored
+ * `secrets` is an ordered `{key, value}[]` and the wire format wants
+ * `{KEY: value}` (see `toApplyPayload`). And `allowed_vault_ids` is authored
+ * as vault names — the manifest's reference form — while fountain types the
+ * column `{:array, :binary_id}` and passes it straight to the insert, so a
+ * name there crashes inside Ecto rather than failing validation (#2166).
+ * {@link vaultNameRefs} finds those, and the agents carrying them are sent in
+ * a second bulk call, after the vaults they name exist to be looked up.
  *
  * The three v0.16.0 kinds — Teammate, Schedule, Webhook — are not in bulk
  * apply yet (BinaryBourbon/fountain#1636), so each is reconciled against its
@@ -229,6 +233,23 @@ export function toApplyPayload(spec: Record<string, unknown>): Record<string, un
   return { ...rest, secrets: map };
 }
 
+/** A fountain uuid, which is what `allowed_vault_ids` is typed as on the wire. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * The `allowed_vault_ids` entries that are vault names rather than uuids (#2166).
+ *
+ * The composites author that field as a reference to the Vault declaration,
+ * and the manifest's reference form is the resource's name (FTN021). Fountain
+ * resolves a sibling `environment:` name but not these, so anything here has
+ * to be resolved before the spec is sent. Pure.
+ */
+export function vaultNameRefs(spec: Record<string, unknown>): string[] {
+  const ids = spec.allowed_vault_ids;
+  if (!Array.isArray(ids)) return [];
+  return ids.filter((v): v is string => typeof v === "string" && !UUID_RE.test(v));
+}
+
 /** Is a live resource chant-owned (by its metadata marker)? Pure. */
 export function isChantOwned(resource: { metadata?: unknown }): boolean {
   const meta = resource.metadata;
@@ -377,10 +398,15 @@ class RouteIds {
   }
 
   async vaultId(name: string): Promise<string> {
+    const id = await this.knownVaultId(name);
+    if (!id) throw new Error(`fountainApply: no vault named "${name}"`);
+    return id;
+  }
+
+  /** The vault's id, or nothing when this fountain has no vault by that name. */
+  async knownVaultId(name: string): Promise<string | undefined> {
     this.vaults ??= await listByName(this.http, "Vault");
-    const hit = this.vaults.get(name);
-    if (!hit) throw new Error(`fountainApply: no vault named "${name}"`);
-    return hit.id;
+    return this.vaults.get(name)?.id;
   }
 
   async roster(): Promise<LiveTeammate[]> {
@@ -415,6 +441,79 @@ class RouteIds {
     );
     if (!live) throw new Error(`fountainApply: no teammate named "${teammateName}"`);
     return live.agent_id;
+  }
+}
+
+/**
+ * The same resource with its `allowed_vault_ids` names replaced by uuids (#2166).
+ *
+ * A uuid already in the list is left alone, so a hand-written manifest that
+ * carries ids keeps working. A name no vault answers to fails here, naming the
+ * agent and the name — fountain would otherwise pass it to the insert and die
+ * with an `Ecto.ChangeError` behind a bare 500 that drops the connection.
+ */
+async function withResolvedVaultIds(
+  ids: RouteIds,
+  resource: ManifestResource,
+): Promise<ManifestResource> {
+  if (vaultNameRefs(resource.spec).length === 0) return resource;
+
+  const resolved: unknown[] = [];
+  for (const entry of resource.spec.allowed_vault_ids as unknown[]) {
+    if (typeof entry !== "string" || UUID_RE.test(entry)) {
+      resolved.push(entry);
+      continue;
+    }
+    const id = await ids.knownVaultId(entry);
+    if (!id) {
+      throw new Error(
+        `fountainApply: ${resource.kind}/${resource.name}: allowed_vault_ids names the vault ` +
+          `"${entry}", which does not exist on this fountain. Declare that Vault in the same ` +
+          `manifest, or point the reference at one that is already there.`,
+      );
+    }
+    resolved.push(id);
+  }
+  return { ...resource, spec: { ...resource.spec, allowed_vault_ids: resolved } };
+}
+
+/**
+ * One `POST /api/apply` call, folded into the summary.
+ *
+ * Every result is collected before this throws, so one bad resource does not
+ * hide failures in the rest of the batch.
+ */
+async function sendBulk(
+  client: FountainHttp,
+  batch: ManifestResource[],
+  summary: FountainApplySummary,
+  reported: Set<string>,
+): Promise<void> {
+  const body = {
+    resources: batch.map((r) => ({ kind: r.kind, name: r.name, spec: toApplyPayload(r.spec) })),
+  };
+  const { status, json } = await client("POST", "/api/apply", body);
+  if (status !== 200) {
+    throw new Error(`fountainApply: POST /api/apply failed (${status})`);
+  }
+  const results = (json as { data?: { results?: ApplyResult[] } })?.data?.results ?? [];
+
+  const failures: string[] = [];
+  for (const r of results) {
+    const label = `${r.kind}/${r.name}`;
+    reported.add(label);
+    if (r.action === "created") summary.created.push(label);
+    else if (r.action === "updated") summary.updated.push(label);
+    else if (r.action === "unchanged") summary.unchanged.push(label);
+    else failures.push(`${label}: ${JSON.stringify(r.errors)}`);
+
+    for (const s of r.secrets ?? []) {
+      if (s.action === "upserted") summary.secretsUpserted += 1;
+      else failures.push(`${label} secret "${s.key}": ${JSON.stringify(s.errors)}`);
+    }
+  }
+  if (failures.length > 0) {
+    throw new Error(`fountainApply: ${failures.length} failure(s):\n  ${failures.join("\n  ")}`);
   }
 }
 
@@ -573,44 +672,32 @@ export async function fountainApply(
   // Webhook; after #1636 it is only the ones an older server dropped.
   const reported = new Set<string>();
 
-  const bulk = resources.filter((r) => BULK_APPLY_KINDS.has(r.kind));
-  if (bulk.length > 0) {
-    const body = {
-      resources: bulk.map((r) => ({ kind: r.kind, name: r.name, spec: toApplyPayload(r.spec) })),
-    };
-    const { status, json } = await client("POST", "/api/apply", body);
-    if (status !== 200) {
-      throw new Error(`fountainApply: POST /api/apply failed (${status})`);
-    }
-    const results = (json as { data?: { results?: ApplyResult[] } })?.data?.results ?? [];
-
-    const failures: string[] = [];
-    for (const r of results) {
-      const label = `${r.kind}/${r.name}`;
-      reported.add(label);
-      if (r.action === "created") summary.created.push(label);
-      else if (r.action === "updated") summary.updated.push(label);
-      else if (r.action === "unchanged") summary.unchanged.push(label);
-      else failures.push(`${label}: ${JSON.stringify(r.errors)}`);
-
-      for (const s of r.secrets ?? []) {
-        if (s.action === "upserted") summary.secretsUpserted += 1;
-        else failures.push(`${label} secret "${s.key}": ${JSON.stringify(s.errors)}`);
-      }
-    }
-    if (failures.length > 0) {
-      throw new Error(`fountainApply: ${failures.length} failure(s):\n  ${failures.join("\n  ")}`);
-    }
-  }
-
   const teammates = new Map(
     resources.filter((r) => r.kind === "Teammate").map((r) => [reconcileName(r), r]),
   );
+  const ids = new RouteIds(client, teammates);
+
+  // A resource whose `allowed_vault_ids` names a vault goes out in a second
+  // bulk call (#2166): the vault it names is usually declared in this same
+  // manifest, so the id it resolves to only exists once the first call has
+  // created it. Without such a reference this is one call, as before.
+  const bulk = resources.filter((r) => BULK_APPLY_KINDS.has(r.kind));
+  const needsVaultIds = (r: ManifestResource): boolean => vaultNameRefs(r.spec).length > 0;
+  const batches = bulk.some(needsVaultIds)
+    ? [bulk.filter((r) => !needsVaultIds(r)), bulk.filter(needsVaultIds)]
+    : [bulk];
+
+  for (const batch of batches) {
+    if (batch.length === 0) continue;
+    const prepared: ManifestResource[] = [];
+    for (const resource of batch) prepared.push(await withResolvedVaultIds(ids, resource));
+    await sendBulk(client, prepared, summary, reported);
+  }
+
   const routed = resources.filter(
     (r) => ROUTED_KINDS.has(r.kind) && !reported.has(`${r.kind}/${r.name}`),
   );
   if (routed.length > 0) {
-    const ids = new RouteIds(client, teammates);
     for (const kind of APPLY_ORDER) {
       for (const resource of routed.filter((r) => r.kind === kind)) {
         if (kind === "Teammate") await applyTeammate(client, ids, resource, summary);
