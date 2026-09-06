@@ -8,6 +8,7 @@ import {
   unobservedPlanNotice,
   type ChangeSet,
   type ChangeSetEntry,
+  type HeldEntitySet,
 } from "./change-set";
 import type { ResourceMetadata } from "../lexicon";
 
@@ -587,5 +588,53 @@ describe("renderChangeSetMarkdown (#1983)", () => {
 
     const few = renderChangeSetMarkdown(set(many.slice(0, 3)));
     expect(few).not.toContain("<details>");
+  });
+});
+
+// #2162 — a held property is never a `ChangeAction`: it rides beside
+// `entries` on the change set, in its own section, in both renders.
+describe("ChangeSet.held (#2162)", () => {
+  const heldEntities: HeldEntitySet[] = [
+    {
+      name: "web",
+      type: "K8s::Apps::Deployment",
+      lexicon: "k8s",
+      held: [
+        { path: "spec.replicas", by: "hpa", reason: "the autoscaler owns replicas after the first apply", live: 5, suspicious: false },
+      ],
+    },
+  ];
+
+  test("renderChangeSet: a HELD section, separate from every action group", () => {
+    const cs: ChangeSet = { ...set([entry({ action: "noop" })]), held: heldEntities };
+    const out = renderChangeSet(cs);
+    expect(out).toContain("HELD (declared heldElsewhere(); not drift, never proposed for update)");
+    expect(out).toContain("web (K8s::Apps::Deployment) k8s");
+    expect(out).toContain("spec.replicas: held by hpa — 5 (the autoscaler owns replicas after the first apply)");
+  });
+
+  test("renderChangeSetMarkdown: its own section, held entries never counted in the header", () => {
+    const cs: ChangeSet = { ...set([entry({ action: "noop" })]), held: heldEntities };
+    const out = renderChangeSetMarkdown(cs);
+    expect(out).toContain("### HELD (declared heldElsewhere(); not drift, never proposed for update)");
+    expect(out).toContain("`web` (K8s::Apps::Deployment) `k8s`");
+    expect(out).toContain("spec.replicas: held by hpa — 5");
+    // The counts header only ever tallies `ChangeAction`s.
+    expect(out).toContain("0 create, 0 update, 0 effect, 0 delete, 0 adopt, 0 runtime, 1 noop, 0 unobserved");
+  });
+
+  test("a suspicious held property is marked in both renders", () => {
+    const suspicious: HeldEntitySet[] = [
+      { name: "cfg", type: "T", held: [{ path: "A", by: "controller", reason: "x", suspicious: true }] },
+    ];
+    const cs: ChangeSet = { ...set([]), held: suspicious };
+    expect(renderChangeSet(cs)).toContain("[SUSPICIOUS: no live value ever showed up here]");
+    expect(renderChangeSetMarkdown(cs)).toContain("SUSPICIOUS: no live value ever showed up here");
+  });
+
+  test("omitted entirely when nothing is held — no empty section in either render", () => {
+    const cs = set([entry({ action: "noop" })]);
+    expect(renderChangeSet(cs)).not.toContain("HELD");
+    expect(renderChangeSetMarkdown(cs)).not.toContain("HELD");
   });
 });

@@ -15,6 +15,7 @@
 import { diffLive, type AttributeChange, type DiffLiveInput } from "./live-diff";
 import { unobservedReasonText, type UnobservedReason } from "../observation";
 import { renderDisruption, summarizeDisruption, type Disruption } from "./disruption";
+import type { DeepEntityHeld } from "./deep-diff";
 
 /**
  * What the projection proposes for a single resource.
@@ -148,9 +149,22 @@ export interface ChangeSetEntry {
   disruptionDetail?: string;
 }
 
+/** One entity's held properties (#2162), attributed to the lexicon that observed it — a plan merges every lexicon's, so the attribution has to survive the merge the same way {@link ChangeSetEntry.lexicon} does. */
+export interface HeldEntitySet extends DeepEntityHeld {
+  lexicon?: string;
+}
+
 export interface ChangeSet {
   env: string;
   entries: ChangeSetEntry[];
+  /**
+   * Properties declared `heldElsewhere()` (#2162), across every lexicon this
+   * plan checked. Not part of `entries`: a held property is never a proposal
+   * — it carries no `ChangeAction` — so it rides beside the actionable set
+   * rather than inside it, the same way `unobservedPlanNotice` rides beside
+   * rather than inside. Omitted when nothing declared one.
+   */
+  held?: HeldEntitySet[];
 }
 
 /**
@@ -407,7 +421,56 @@ export function renderChangeSet(cs: ChangeSet): string {
     }
   }
 
+  if (cs.held && cs.held.length > 0) {
+    lines.push(`\n${heldSectionLabel()}:`);
+    for (const line of heldLines(cs.held)) lines.push(line);
+  }
+
   return lines.join("\n");
+}
+
+/**
+ * Section heading for the held set (#2162) — shared between {@link renderChangeSet}
+ * and {@link renderChangeSetMarkdown}.
+ */
+function heldSectionLabel(): string {
+  return "HELD (declared heldElsewhere(); not drift, never proposed for update)";
+}
+
+/** One held property's plain-text line, indented under its entity. */
+function heldLines(held: readonly HeldEntitySet[]): string[] {
+  const lines: string[] = [];
+  for (const entity of held) {
+    const lexicon = entity.lexicon ? ` ${entity.lexicon}` : "";
+    lines.push(`  ${entity.name} (${entity.type})${lexicon}`);
+    for (const h of entity.held) {
+      const live = "live" in h ? fmt(h.live) : "<absent>";
+      const suspicious = h.suspicious
+        ? " [SUSPICIOUS: no live value ever showed up here]"
+        : "";
+      lines.push(`      ${h.path}: held by ${h.by} — ${live} (${h.reason})${suspicious}`);
+    }
+  }
+  return lines;
+}
+
+/** One held property's markdown line, mirroring {@link renderMarkdownEntry}'s formatting. */
+function heldLinesMarkdown(held: readonly HeldEntitySet[]): string[] {
+  const lines: string[] = [];
+  for (const entity of held) {
+    const lexicon = entity.lexicon ? ` \`${entity.lexicon}\`` : "";
+    lines.push(`- \`${entity.name}\` (${entity.type})${lexicon}`);
+    if (entity.held.length > 0) {
+      lines.push("  ```");
+      for (const h of entity.held) {
+        const live = "live" in h ? fmt(h.live) : "<absent>";
+        const suspicious = h.suspicious ? "  SUSPICIOUS: no live value ever showed up here" : "";
+        lines.push(`  ${h.path}: held by ${h.by} — ${live} (${h.reason})${suspicious}`);
+      }
+      lines.push("  ```");
+    }
+  }
+  return lines;
 }
 
 /**
@@ -498,6 +561,10 @@ export function renderChangeSetMarkdown(cs: ChangeSet): string {
     } else {
       lines.push("", ...body);
     }
+  }
+
+  if (cs.held && cs.held.length > 0) {
+    lines.push("", `### ${heldSectionLabel()}`, "", ...heldLinesMarkdown(cs.held));
   }
 
   return lines.join("\n").trimEnd() + "\n";
