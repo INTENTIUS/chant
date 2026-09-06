@@ -1,6 +1,7 @@
 import type { LexiconPlugin, SkillDefinition, IntrinsicDef } from "@intentius/chant/lexicon";
 import type { LintRule } from "@intentius/chant/lint/rule";
 import type { PostSynthCheck } from "@intentius/chant/lint/post-synth";
+import type { CommandGroup } from "@intentius/chant/cli/command-group";
 import type { CompletionContext, CompletionItem, HoverContext, HoverInfo } from "@intentius/chant/lsp/types";
 import type { McpToolContribution, McpResourceContribution } from "@intentius/chant/mcp/types";
 import {
@@ -23,6 +24,7 @@ import { completions } from "./lsp/completions";
 import { hover } from "./lsp/hover";
 import { fountainDeepNormalizationHooks } from "./deep-observe-hooks";
 import { fountainConfigSchema } from "./config";
+import { acpCommandGroup } from "./acp";
 
 /**
  * fountain lexicon plugin.
@@ -74,6 +76,14 @@ export const fountainPlugin: LexiconPlugin = {
   async coverageReport(): Promise<{ unaccountedKinds?: string[] }> {
     const { coverageReportFromSnapshots } = await import("./coverage");
     return { unaccountedKinds: coverageReportFromSnapshots().unaccountedKinds };
+  },
+
+  // `chant acp` (#2125) — chant as an ACP agent over stdio. Fountain-agnostic
+  // by construction: it lives here because a fountain Agent with
+  // `runtime: "acp"` spawns `chant acp`, but any ACP client drives it
+  // unchanged. See ./acp/server.ts.
+  commands(): CommandGroup {
+    return acpCommandGroup();
   },
 
   lintRules() {

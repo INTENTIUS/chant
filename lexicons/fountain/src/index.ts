@@ -30,3 +30,11 @@ export type { FountainConfig, FountainProfile } from "./config";
 // Composites — secure-by-construction bundles.
 export { ConciergeStack } from "./composites/concierge-stack";
 export type { ConciergeStackOpts, ConciergeStackResources } from "./composites/concierge-stack";
+
+// `chant acp` (#2125) — the ACP server, mounted through the plugin's command
+// group. Exported so an embedder can serve it over its own transport.
+export { acpCommandGroup } from "./acp";
+export { AcpServer } from "./acp/server";
+export type { AcpServerOptions } from "./acp/server";
+export { createChantHost } from "./acp/host";
+export type { ChantHost } from "./acp/host";
