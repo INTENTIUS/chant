@@ -136,3 +136,67 @@ describe.skipIf(skipReason !== "")(
     );
   },
 );
+
+/**
+ * `TerraformApplyOp` on a live root, against choudoufu's own pinned emulator
+ * (#2106). Gated the same way `../op/activities/choudoufu.acceptance.test.ts`
+ * is — no `choudoufu` on PATH, no `CHOUDOUFU_EMULATOR_ENDPOINT` — plus a
+ * third, unconditional reason: choudoufu's `live-plan -json` refuses to run
+ * on a configuration that declares its own estate
+ * (`Estate named by both the live block and -estate`), which every chant
+ * live root does by construction (a root is live *because* it declares an
+ * estate). Filed upstream as
+ * [choudoufu #894](https://github.com/INTENTIUS/choudoufu/issues/894),
+ * recorded on #2104 and #2102. So this suite always skips today, even with
+ * the binary and the emulator both present — the Plan phase would throw the
+ * moment it ran `choudoufuLivePlan`, and that is a real upstream gap to name,
+ * not a chant bug to paper over by silently swallowing the failure. The unit
+ * tests above and in `../op/activities/choudoufu.test.ts` already prove the
+ * composite and the activity's contract against a stubbed child process;
+ * this one is left in place, wired up correctly, so removing the #894 clause
+ * the day that issue ships is the only change this suite needs.
+ */
+describe("TerraformApplyOp applies a live root against choudoufu's emulator (#2106)", () => {
+  const hasChoudoufu = onPath("choudoufu");
+  const emulatorEndpoint = process.env.CHOUDOUFU_EMULATOR_ENDPOINT;
+  const skipReason: string = !hasChoudoufu
+    ? "no choudoufu binary on PATH"
+    : !emulatorEndpoint
+      ? "CHOUDOUFU_EMULATOR_ENDPOINT is not set (bring up choudoufu's `just smoke` emulator stack and export it)"
+      : "choudoufu #894: live-plan -json refuses a configuration that declares its own estate, which every chant live root does";
+
+  it.skipIf(skipReason !== "")(
+    `inits, plans and applies the __fixtures__/live root, gate: "never" (skipped: ${skipReason})`,
+    { timeout: 300_000 },
+    async () => {
+      const project = mkdtempSync(join(tmpdir(), "chant-choudoufu-apply-accept-"));
+      workspaces.push(project);
+      cpSync(join(import.meta.dirname, "..", "__fixtures__", "live"), join(project, "root"), { recursive: true });
+      writeFileSync(
+        join(project, "chant.config.json"),
+        JSON.stringify(
+          { lexicons: ["terraform"], terraform: { binary: "choudoufu", roots: { estate: { dir: "./root" } } } },
+          null,
+          2,
+        ),
+      );
+
+      const { op } = TerraformApplyOp({
+        name: "choudoufu-acceptance",
+        root: "estate",
+        gate: "never",
+        cwd: project,
+      });
+
+      const activities = await loadActivities(["terraform"]);
+      const result = await runOpLocally(
+        (op as unknown as { props: OpConfig }).props,
+        activities,
+        await loadProfiles(),
+      );
+
+      expect(result.ok).toBe(true);
+      expect(result.records.map((r) => `${r.phase}:${r.status}`)).toEqual(["Init:ok", "Plan:ok", "Apply:ok"]);
+    },
+  );
+});

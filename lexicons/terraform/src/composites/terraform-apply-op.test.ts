@@ -1,9 +1,13 @@
 /**
  * TerraformApplyOp composite tests (#2086) — the phase names, the gate, the
- * plan-to-apply reference, and the compensation refusal.
+ * plan-to-apply reference, and the compensation refusal. The live-root shape
+ * (#2106) is below, in its own describe blocks.
  */
 
-import { describe, test, expect } from "vitest";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, test, expect } from "vitest";
 import {
   findGate,
   isStepOutputRef,
@@ -189,5 +193,109 @@ describe("TerraformApplyOp Op metadata (#2086)", () => {
 
   test("an explicit taskQueue wins", () => {
     expect(props({ name: "app-apply", root: "app", taskQueue: "infra" }).taskQueue).toBe("infra");
+  });
+});
+
+// ── Live root (#2106) ────────────────────────────────────────────────────────
+
+const dirs: string[] = [];
+
+afterEach(() => {
+  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
+
+/** A throwaway project whose one root is live, stock, or live with a policy block, per `policy`. */
+function project(policy?: string): string {
+  const dir = mkdtempSync(join(tmpdir(), "chant-tf-apply-op-live-"));
+  dirs.push(dir);
+  mkdirSync(join(dir, "root"), { recursive: true });
+  writeFileSync(
+    join(dir, "root", "main.tf"),
+    [
+      "terraform {",
+      "  live {",
+      '    estate = "fixture-estate"',
+      ...(policy ? ["    policy {", `      ${policy}`, "    }"] : []),
+      "  }",
+      "}",
+      "",
+      'resource "null_resource" "x" {}',
+      "",
+    ].join("\n"),
+  );
+  writeFileSync(
+    join(dir, "chant.config.json"),
+    JSON.stringify({ terraform: { binary: "choudoufu", roots: { estate: { dir: "./root" } } } }),
+  );
+  return dir;
+}
+
+describe("TerraformApplyOp on a live root (#2106)", () => {
+  test("Init, Plan (choudoufuLivePlan), Gate, Apply — no plan file or -out anywhere", () => {
+    const dir = project();
+    const op = props({ name: "estate-apply", root: "estate", cwd: dir });
+    expect(phaseNames(op)).toEqual(["Init", "Plan", "Gate", "Apply"]);
+
+    const activitySteps = op.phases.flatMap((p) => p.steps.filter(isActivity));
+    expect(activitySteps.map((s) => s.fn)).toEqual([
+      "terraformInit",
+      "choudoufuLivePlan",
+      "choudoufuLivePlan",
+      "terraformApply",
+    ]);
+    for (const step of activitySteps) {
+      expect(step.args?.planFile).toBeUndefined();
+      expect(JSON.stringify(step.args ?? {})).not.toContain("-out");
+    }
+
+    const apply = op.phases.find((p) => p.name === "Apply")!.steps[0] as ActivityStep;
+    expect(apply.args).toEqual({ root: "estate", cwd: dir });
+  });
+
+  test('gate: "never" drops the Gate phase, leaving Init, Plan, Apply', () => {
+    const dir = project();
+    const op = props({ name: "estate-apply", root: "estate", cwd: dir, gate: "never" });
+    expect(phaseNames(op)).toEqual(["Init", "Plan", "Apply"]);
+    expect(op.phases.flatMap((p) => p.steps).some(isGate)).toBe(false);
+  });
+
+  test("Plan reports Changed off drift; Gate's own step reports Destroys off destroys", () => {
+    const dir = project();
+    const op = props({ name: "estate-apply", root: "estate", cwd: dir });
+    const plan = op.phases.find((p) => p.name === "Plan")!.steps[0] as ActivityStep;
+    expect(plan.outcomeAttribute).toEqual({ name: "Changed", from: "drift" });
+
+    const gateSteps = op.phases.find((p) => p.name === "Gate")!.steps;
+    const freshen = gateSteps[0] as ActivityStep;
+    expect(freshen.fn).toBe("choudoufuLivePlan");
+    expect(freshen.outcomeAttribute).toEqual({ name: "Destroys", from: "destroys" });
+    expect(gateSteps[1].kind).toBe("gate");
+  });
+
+  test("refuses to build when the root's policy sets undeclared_untagged = \"delete\"", () => {
+    const dir = project('undeclared_untagged = "delete"');
+    expect(() => TerraformApplyOp({ name: "estate-apply", root: "estate", cwd: dir })).toThrow(
+      /TerraformApplyOp "estate-apply".*undeclared_untagged = "delete"/s,
+    );
+  });
+
+  test("builds fine when the root's policy sets undeclared_untagged to something else", () => {
+    const dir = project('undeclared_untagged = "report"');
+    expect(() => TerraformApplyOp({ name: "estate-apply", root: "estate", cwd: dir })).not.toThrow();
+  });
+
+  test("a choudoufu root with no declared estate stays on the stock shape", () => {
+    const dir = mkdtempSync(join(tmpdir(), "chant-tf-apply-op-live-"));
+    dirs.push(dir);
+    mkdirSync(join(dir, "root"), { recursive: true });
+    writeFileSync(join(dir, "root", "main.tf"), 'resource "null_resource" "x" {}\n');
+    writeFileSync(
+      join(dir, "chant.config.json"),
+      JSON.stringify({ terraform: { binary: "choudoufu", roots: { estate: { dir: "./root" } } } }),
+    );
+
+    const op = props({ name: "estate-apply", root: "estate", cwd: dir, gate: "never" });
+    const fns = op.phases.flatMap((p) => p.steps.filter(isActivity)).map((s) => s.fn);
+    expect(fns).toEqual(["terraformInit", "terraformPlan", "terraformApply"]);
   });
 });
