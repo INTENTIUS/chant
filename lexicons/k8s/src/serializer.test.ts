@@ -1,6 +1,7 @@
 import { describe, test, expect } from "vitest";
 import { k8sSerializer } from "./serializer";
 import { DECLARABLE_MARKER } from "@intentius/chant/declarable";
+import { heldElsewhere } from "@intentius/chant";
 import {
   defaultLabels,
   defaultAnnotations,
@@ -67,6 +68,31 @@ describe("k8sSerializer", () => {
     expect(result).toContain("kind: Deployment");
     expect(result).toContain("name: my-app");
     expect(result).toContain("replicas: 2");
+  });
+
+  // #2162 — the honest example the issue names: an HPA owns `spec.replicas`
+  // on a Deployment after the first apply. `heldElsewhere()` omits the field
+  // from the manifest entirely, every apply, so the API server defaults it
+  // once at creation and the HPA is free to write it from there without
+  // chant's own apply fighting it back.
+  test("a heldElsewhere() replicas field never reaches the manifest", () => {
+    const entities = new Map<string, any>();
+    entities.set(
+      "myApp",
+      mockResource("K8s::Apps::Deployment", {
+        metadata: { name: "my-app", labels: { app: "my-app" } },
+        spec: {
+          replicas: heldElsewhere<number>({ by: "hpa", reason: "the autoscaler owns replicas after the first apply" }),
+          selector: { matchLabels: { app: "my-app" } },
+        },
+      }),
+    );
+
+    const result = k8sSerializer.serialize(entities);
+    expect(result).toContain("kind: Deployment");
+    expect(result).toContain("selector:");
+    expect(result).not.toContain("replicas");
+    expect(result).not.toContain("heldElsewhere");
   });
 
   test("metadata.name auto-generated from logical name (camelCase→kebab-case)", () => {

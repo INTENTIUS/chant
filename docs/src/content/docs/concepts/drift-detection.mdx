@@ -75,10 +75,13 @@ Those seven categories are entity-level — they answer whether a resource is th
 | **undeclared** | The cloud carries a property source never declared — a console edit, an org-policy default, another tool's field |
 | **absent** | Source declares a property the live resource is not carrying |
 | **accepted** | A deviation somebody recorded in the baseline, at the value they accepted. Not drift, but reported, so what is being held back stays visible |
+| **held** | The property is declared [`heldElsewhere()`](#heldelsewhere-a-field-declared-once-then-handed-over). Never drift and never proposed for update, whatever the live value is. Reported with its holder and reason instead |
 
 `undeclared` is the interesting one and the reason the deep read exists. CloudFormation's own drift detection compares only the properties it was told about, so a property nobody declared is invisible to it no matter who changed it.
 
-A raw live model is mostly fields nobody declared and nobody changed, so both trees are normalized with the lexicon's own rules before the comparison: server-populated fields dropped, set-like arrays (tags, policy statements) canonicalized, provider defaults subtracted where source is silent. On Kubernetes, where the API server records per-field ownership (`metadata.managedFields`), each reported drift also names the manager that owns the field live — "owned by `hpa-controller`" and "owned by `kubectl-edit`" are the same drift kind and very different answers. Ownership names the writer; it does not silence the line. A field another manager owns that source never declared is `undeclared` drift like any other (a `kubectl label` from the console is the canonical case), and the way to stop hearing about a controller that legitimately owns a field — an HPA on `spec.replicas` — is to accept it into the baseline below. Only the metadata Kubernetes itself stamps on every object of a kind (`deployment.kubernetes.io/revision`, `pod-template-hash`, client-side apply's `last-applied-configuration`) is subtracted statically, with `status` and the server-minted fields.
+A raw live model is mostly fields nobody declared and nobody changed, so both trees are normalized with the lexicon's own rules before the comparison: server-populated fields dropped, set-like arrays (tags, policy statements) canonicalized, provider defaults subtracted where source is silent. On Kubernetes, where the API server records per-field ownership (`metadata.managedFields`), each reported drift also names the manager that owns the field live — "owned by `hpa-controller`" and "owned by `kubectl-edit`" are the same drift kind and very different answers. Ownership names the writer; it does not silence the line. A field another manager owns that source never declared is `undeclared` drift like any other (a `kubectl label` from the console is the canonical case). Only the metadata Kubernetes itself stamps on every object of a kind (`deployment.kubernetes.io/revision`, `pod-template-hash`, client-side apply's `last-applied-configuration`) is subtracted statically, with `status` and the server-minted fields.
+
+A field source declares and then hands over, like an HPA that takes `spec.replicas` after the first apply, belongs in the declaration itself. See [`heldElsewhere()`](#heldelsewhere-a-field-declared-once-then-handed-over) below. The accepted baseline stays useful for a value someone blessed, and for an undeclared field with no marker of its own to attach one to.
 
 Depth is opt-in per lexicon and changes nothing for the others. All five resource-observing lexicons implement it — see the [coverage matrix](/chant/lexicons/overview/#runtime-observation-coverage) for the mechanism each one reads through.
 
@@ -92,6 +95,46 @@ Two boundaries keep the baseline honest:
 
 - An `absent` finding is never accepted. The cloud not carrying a declared property is something to fix in source or in the cloud, not a value to bless — only a value that is actually live can enter the baseline.
 - The baseline is not state. It never tells a deploy what to do and is never read on the write path; deleting it costs noise suppression and nothing else. Accepted deviations are also still *reported*, in their own section and count, so what is being held back stays visible.
+
+#### `heldElsewhere()`, a field declared once, then handed over
+
+The baseline above is value-bound, saying "this exact value is fine" so a later change away from it drifts again. That fits a value that should stay put once somebody blessed it: a mandatory tag, an org-policy default.
+
+A field something else operates continuously is a different case. An autoscaler changes `spec.replicas` on its own schedule, so accepting today's value into the baseline just means tomorrow's scale-up drifts again, at a value nobody accepted yet. Terraform's `lifecycle { ignore_changes = [...] }` avoids the re-accepting treadmill, but stays a bare list of strings. No reason attached, and silent forever regardless of who ends up touching the field.
+
+`heldElsewhere()` is chant's declaration for this case, a typed, per-property marker naming who holds the field and why, written where the property's own value would go:
+
+```typescript
+import { heldElsewhere } from "@intentius/chant";
+
+export const web = new Deployment({
+  metadata: { name: "web" },
+  spec: {
+    replicas: heldElsewhere<number>({
+      by: "hpa",
+      reason: "the autoscaler owns replicas after the first apply",
+    }),
+    selector: { matchLabels: { app: "web" } },
+    template: { /* ... */ },
+  },
+});
+```
+
+Chant checks it in exactly the position `replicas: 3` would sit, against `number` on this property. The marker is generic over the property's own type. Attaching it to a property that does not exist is a type error. At synth time the manifest omits `replicas` entirely. Every apply leaves the field unset. The API server defaults it once at creation, and the HPA owns it from there. A later `chant lifecycle plan` never proposes an `update` that would fight the autoscaler back.
+
+From then on a difference on that path reports as **held** with its holder and reason. Both `lifecycle diff --live`'s HELD section and `lifecycle plan`'s carry it. So does `--json` output on either command:
+
+```
+HELD (declared heldElsewhere(); not drift, never proposed for update):
+  - web (K8s::Apps::Deployment)
+      spec.replicas: held by hpa — 5 (the autoscaler owns replicas after the first apply)
+```
+
+No live value at all, not even a provider default, gets flagged **suspicious**. Nothing read confirms the claimed hand-over ever happened. Maybe the holder never ran; maybe this is the wrong field.
+
+The comparison worth drawing is to #2111's `chant-ignore` comment. That comment suppresses a lint finding about source, a rule that would otherwise flag something wrong in the declaration itself. `heldElsewhere()` instead records a fact about who operates a field at runtime, true even when the declaration is entirely correct. A suppression-comment form was never the right shape for that fact, and the typed declaration is: a lexicon's generated types check it there, and `lifecycle plan` can render it.
+
+Reach for `heldElsewhere()` when a field is handed to another writer for good: an autoscaler, a controller, an operator's deliberate knob. Reach for the accepted baseline when one specific value is fine and a different one should still alert.
 
 #### Secret masking
 

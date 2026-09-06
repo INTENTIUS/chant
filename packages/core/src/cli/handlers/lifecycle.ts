@@ -4,7 +4,7 @@ import { build } from "../../build";
 import { takeSnapshot } from "../../lifecycle/snapshot";
 import { readSnapshot, readSnapshotAt, readEnvironmentSnapshots, listSnapshots, fetchLifecycle, pushLifecycle, snapshotStorageKey, StaleLifecycleBranchError } from "../../lifecycle/git";
 import { deepDiffForLexicon, type DeclaredEntities } from "../../lifecycle/deep-observe";
-import { countHeldFields, countPropertyDrift, type DeepDiffResult } from "../../lifecycle/deep-diff";
+import { countHeldFields, countPropertyDrift, countHeld, suspiciousHeld, type DeepDiffResult, type DeepEntityHeld } from "../../lifecycle/deep-diff";
 import { describePathOrigin, getPathProvenance } from "../../provenance";
 import {
   acceptDeviations,
@@ -18,7 +18,7 @@ import {
 } from "../../lifecycle/observation-baseline";
 import { computeBuildDigest, diffDigests } from "../../lifecycle/digest";
 import { diffLive, diffLiveArtifacts, diffSnapshots, type LiveDiffResult, type LiveArtifactDiffResult, type SnapshotDiffResult } from "../../lifecycle/live-diff";
-import { buildChangeSet, renderChangeSet, renderChangeSetMarkdown, gitlabMrReport, unobservedPlanNotice, type ChangeSet } from "../../lifecycle/change-set";
+import { buildChangeSet, renderChangeSet, renderChangeSetMarkdown, gitlabMrReport, unobservedPlanNotice, type ChangeSet, type HeldEntitySet } from "../../lifecycle/change-set";
 import { mergeReceiptEntries, observedValueResolver, planReceipts, readReceiptValue, type ReceiptReading } from "../../lifecycle/receipt-plan";
 import { annotateDisruption, disruptionNotices } from "../../lifecycle/disruption";
 import { collectEffectReceipts, isEffectReceipt } from "../../effect-receipt";
@@ -884,6 +884,14 @@ async function runLifecycleDiffLive(args: LiveDiffArgs): Promise<LiveDiffOutcome
         if (args.updateBaseline) toAccept[lexiconName] = deviationsToAccept(deep);
         if (args.json) (byLexicon[lexiconName] ??= {}).deep = deep;
         else renderDeepDiff(lexiconName, deep);
+        // Printed on stderr regardless of `--json` (#2162), same reason the
+        // unobserved/disruption notices are: a shape with no column for
+        // "suspicious" must not read as clean.
+        for (const s of suspiciousHeld(deep)) {
+          console.error(formatWarning({
+            message: `${lexiconName}: ${s.name}.${s.path} is declared heldElsewhere(by: "${s.by}") but no live value ever showed up there — the hand-over may never have happened.`,
+          }));
+        }
       }
     }
 
@@ -941,11 +949,13 @@ function deviationsToAccept(deep: DeepDiffResult): DeviationToAccept[] {
 /** Property-level drift report (#1014). Silent when a lexicon's deep read found nothing to say. */
 function renderDeepDiff(lexiconName: string, deep: DeepDiffResult): void {
   const drift = countPropertyDrift(deep);
-  const heldCount = countHeldFields(deep);
+  const heldElsewhereCount = countHeldFields(deep);
+  const heldCount = countHeld(deep);
   if (
     drift === 0 &&
     heldCount === 0 &&
     deep.accepted.length === 0 &&
+    heldCount === 0 &&
     deep.unobserved.length === 0 &&
     deep.undeclaredEntities.length === 0
   ) {
@@ -957,7 +967,8 @@ function renderDeepDiff(lexiconName: string, deep: DeepDiffResult): void {
   console.log(
     `${drift} property drift across ${deep.drifted.length} resource(s), ` +
       `${acceptedCount} accepted, ${deep.unchanged.length} unchanged` +
-      (heldCount > 0 ? `, ${heldCount} held elsewhere` : "") +
+      (heldCount > 0 ? `, ${heldCount} held` : "") +
+      (heldElsewhereCount > 0 ? `, ${heldElsewhereCount} held elsewhere` : "") +
       (deep.unobserved.length > 0 ? `, ${deep.unobserved.length} unobserved` : ""),
   );
   console.log("-".repeat(80));
@@ -995,6 +1006,10 @@ function renderDeepDiff(lexiconName: string, deep: DeepDiffResult): void {
       }
     }
   }
+  if (heldCount > 0) {
+    console.log(formatBold("\nHELD (declared heldElsewhere(); not drift, never proposed for update):"));
+    for (const line of renderHeldLines(deep.held)) console.log(line);
+  }
   if (deep.undeclaredEntities.length > 0) {
     console.log(formatBold("\nUNDECLARED (read deeply, never declared in source):"));
     for (const name of deep.undeclaredEntities) console.log(`  - ${name}`);
@@ -1005,6 +1020,30 @@ function renderDeepDiff(lexiconName: string, deep: DeepDiffResult): void {
       console.log(`  - ${entity.name}: ${entity.changes.map((c) => c.path).join(", ")}`);
     }
   }
+}
+
+/**
+ * Render one `heldElsewhere()` property (#2162) — shared between the deep
+ * diff's HELD section and the plan's, so the two never disagree about what a
+ * held field looks like on the terminal.
+ */
+function formatHeldProperty(h: { path: string; by: string; reason: string; live?: unknown; suspicious: boolean; owner?: string }): string {
+  const live = "live" in h ? formatValue(h.live) : "<absent>";
+  const owner = h.owner ? ` [owner: ${h.owner}]` : "";
+  const suspicious = h.suspicious
+    ? " [SUSPICIOUS: no live value ever showed up here — check the holder is actually running, or that this is the field it writes]"
+    : "";
+  return `      ${h.path}: held by ${h.by} — ${live}${owner} (${h.reason})${suspicious}`;
+}
+
+/** Lines for every held property across a lexicon's entities, indented and grouped by entity name. */
+function renderHeldLines(held: readonly DeepEntityHeld[]): string[] {
+  const lines: string[] = [];
+  for (const entity of held) {
+    lines.push(`  - ${entity.name} (${entity.type})`);
+    for (const h of entity.held) lines.push(formatHeldProperty(h));
+  }
+  return lines;
 }
 
 function renderLiveDiff(lexiconName: string, environment: string, diff: LiveDiffResult): void {
@@ -1165,6 +1204,9 @@ export async function runLifecyclePlan(ctx: CommandContext): Promise<number> {
 
   const merged: ChangeSet = { env: environment, entries: [] };
   let checked = 0;
+  // Held properties (#2162), across every lexicon this plan checks — not an
+  // action, so it rides beside `entries` rather than inside it.
+  const heldSets: HeldEntitySet[] = [];
 
   // Effect receipts (#1832): declared, diffed, and observed like any resource,
   // but observe-only to the generic apply path — the plan compares live value
@@ -1238,6 +1280,26 @@ export async function runLifecyclePlan(ctx: CommandContext): Promise<number> {
       });
 
       Object.assign(allObservedResources, observed.resources);
+
+      // Held properties (#2162): opt-in on the same capability the deep diff
+      // path gates on. A held property is never a proposal, so it is
+      // computed here (once per lexicon, against this same observation) and
+      // carried on the plan beside `entries` rather than folded into one.
+      if (plugin.observeResourcesDeep) {
+        const deep = await deepDiffForLexicon(plugin, {
+          environment,
+          buildOutput,
+          entities,
+          componentStacks,
+        });
+        for (const entity of deep.held) heldSets.push({ ...entity, lexicon: lexiconName });
+        for (const s of suspiciousHeld(deep)) {
+          console.error(formatWarning({
+            message: `${lexiconName}: ${s.name}.${s.path} is declared heldElsewhere(by: "${s.by}") but no live value ever showed up there — the hand-over may never have happened.`,
+          }));
+        }
+      }
+
       for (const [receiptName, receipt] of receipts) {
         if (receipt.lexicon !== lexiconName) continue;
         const live = observed.resources[receiptName];
@@ -1318,6 +1380,7 @@ export async function runLifecyclePlan(ctx: CommandContext): Promise<number> {
   }
 
   merged.entries.sort((a, b) => a.name.localeCompare(b.name));
+  if (heldSets.length > 0) merged.held = heldSets.sort((a, b) => a.name.localeCompare(b.name));
 
   // Say it on stderr too, so `--json` and `--report gitlab-mr` consumers (whose
   // shapes have no room for it) still learn the plan has a hole (#1089). The

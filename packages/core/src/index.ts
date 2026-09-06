@@ -5,6 +5,7 @@
  */
 
 export * from "./declarable";
+export * from "./held-elsewhere";
 export * from "./composite";
 export * from "./provenance";
 export * from "./secret-provenance";

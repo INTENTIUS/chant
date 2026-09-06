@@ -44,6 +44,7 @@
  */
 
 import type { UnobservedEntity } from "./observation";
+import { isHeldElsewhere, isNormalizedHeldElsewhere, normalizeHeldElsewhere } from "./held-elsewhere";
 
 /**
  * A live property tree for one declared entity, already normalized by the
@@ -357,6 +358,11 @@ export function deepPathSet(tree: Record<string, unknown>): Set<string> {
       out.add(path);
       out.add(pattern);
     }
+    // A held marker (#2162) is one declared value, not a `{ by, reason }`
+    // object to walk into — same leaf treatment `normalizeDeepProperties`
+    // gives it, so this path set agrees with what the normalized tree
+    // actually looks like a path down.
+    if (isHeldElsewhere(value)) return;
     if (Array.isArray(value)) {
       value.forEach((el, i) => walk(el, joinIndex(path, i), joinPattern(pattern)));
       return;
@@ -435,6 +441,24 @@ export function normalizeDeepProperties(
   };
 
   const normalizeValue = (value: unknown, path: string, pattern: string, key: string): unknown => {
+    // A `heldElsewhere()` marker (#2162) — declared on purpose, not
+    // unresolved and not a plain object to walk into. Checked ahead of even
+    // the secret-masking rules below: the marker carries no value at all,
+    // only who holds the field and why, so there is nothing for masking to
+    // protect and masking it would destroy the one thing worth reporting —
+    // a `heldElsewhere()` on a `password`-shaped key ("an operator rotates
+    // this out of band") must still say so, not collapse to `[REDACTED]`.
+    // Normalized to a JSON-safe tagged leaf so its identity survives this
+    // pass and a `--json` round-trip; `deep-diff.ts` reads the tag to
+    // report a live difference here as held rather than as drift, on
+    // either side (a lexicon's own reader never produces this shape, so
+    // the check is safe on the live tree too, though only the declared
+    // side ever carries one in practice). Checked ahead of the
+    // array/object branches too, same reason a property-Declarable is: it
+    // would otherwise be walked as a two-key plain object and lose the
+    // very identity that makes it a marker rather than authored data.
+    if (isHeldElsewhere(value)) return normalizeHeldElsewhere(value);
+
     if (isSensitiveKey(key)) return MASKED;
     // The lexicon's structural mask — same collapse, path-shaped rather than
     // key-named (a k8s Secret's `data.*` no matter what the key is called).
@@ -443,6 +467,7 @@ export function normalizeDeepProperties(
     // expression-string reference — collapses exactly like a class-instance
     // intrinsic does below.
     if (hooks?.unresolved?.(nodeOf(path, pattern, key, value))) return UNRESOLVED;
+
     if (isJsonPrimitive(value)) return value;
 
     // A PROPERTY-kind Declarable is authored data wearing a class, not an
@@ -584,6 +609,12 @@ export function flattenDeepProperties(
   };
 
   const walk = (value: unknown, path: string, pattern: string): void => {
+    // A normalized held marker (#2162) is one value, not a two-key object to
+    // descend into — same reason UNRESOLVED and a JSON primitive are leaves.
+    if (isNormalizedHeldElsewhere(value)) {
+      out.set(path, value);
+      return;
+    }
     if (Array.isArray(value)) {
       if (value.length === 0) {
         out.set(path, []);

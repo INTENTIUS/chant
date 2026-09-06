@@ -7,6 +7,7 @@
 
 import type { Declarable } from "./declarable";
 import { isPropertyDeclarable } from "./declarable";
+import { isHeldElsewhere } from "./held-elsewhere";
 import { INTRINSIC_MARKER } from "./intrinsic";
 import { AttrRef } from "./attrref";
 import { isAttrRefLike } from "./utils";
@@ -32,6 +33,16 @@ export function walkValue(
   if (value === null || value === undefined) {
     return value;
   }
+
+  // A `heldElsewhere()` marker (#2162) is never written to the applied
+  // payload — the provider defaults the field once at actual creation, and
+  // whoever the declaration names as holder owns it from there. Every apply
+  // this synthesizes therefore omits the field entirely, not only the
+  // first: re-asserting even the field's own value on a later apply would
+  // fight whatever the holder wrote in between. Checked first, ahead of
+  // every other dispatch branch below — a held marker is never an AttrRef,
+  // an Intrinsic, or authored Declarable data.
+  if (isHeldElsewhere(value)) return undefined;
 
   // Handle AttrRef
   if (isAttrRefLike(value)) {
@@ -77,9 +88,13 @@ export function walkValue(
     return visitor.propertyDeclarable(decl, (v) => walkValue(v, entityNames, visitor));
   }
 
-  // Handle arrays
+  // Handle arrays. A held marker element is filtered out before recursing —
+  // `walkValue` would return `undefined` for it too, but leaving it in the
+  // array would emit a hole (`[a, null, b]`) rather than omitting it.
   if (Array.isArray(value)) {
-    return value.map((item) => walkValue(item, entityNames, visitor));
+    return value
+      .filter((item) => !isHeldElsewhere(item))
+      .map((item) => walkValue(item, entityNames, visitor));
   }
 
   // Handle serialized AttrRef envelopes (produced by AttrRef.toJSON() inside intrinsics)
@@ -92,6 +107,10 @@ export function walkValue(
   if (typeof value === "object") {
     const result: Record<string, unknown> = {};
     for (const [key, val] of Object.entries(value)) {
+      // A held marker key is omitted entirely (#2162), not set to
+      // `undefined` — the two read differently to a YAML emitter, and only
+      // omission is "the provider never hears about this field".
+      if (isHeldElsewhere(val)) continue;
       const outKey = key;
       result[outKey] = walkValue(val, entityNames, visitor);
     }

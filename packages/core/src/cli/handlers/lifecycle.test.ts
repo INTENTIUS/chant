@@ -3,6 +3,7 @@ import { sep } from "node:path";
 import { createMockPlugin, staticDescribeResources, staticObservation, staticDeepObservation, staticListArtifacts } from "@intentius/chant-test-utils";
 import type { LexiconPlugin, ResourceMetadata } from "../../lexicon";
 import { deepObservation } from "../../deep-observation";
+import { heldElsewhere } from "../../held-elsewhere";
 import type { BuildResult } from "../../build";
 import type { ParsedArgs } from "../registry";
 
@@ -657,6 +658,72 @@ describe("runLifecycleDiff --live", () => {
     });
   });
 
+  // #2162 — a `heldElsewhere()` marker reports as held, not drift, and a
+  // held property nothing ever writes is flagged suspicious on stderr.
+  describe("held elsewhere (#2162)", () => {
+    const runHeldDiff = async (
+      liveProperties: Record<string, unknown>,
+      args: Partial<ParsedArgs> = {},
+    ) => {
+      const build = makeBuildResult({ k8s: ["web"] });
+      build.entities.set("web", {
+        lexicon: "k8s",
+        entityType: "K8s::Apps::Deployment",
+        props: { spec: { replicas: heldElsewhere<number>({ by: "hpa", reason: "the autoscaler owns replicas after the first apply" }) } },
+      } as never);
+      buildMock.mockResolvedValue(build);
+      fetchLifecycleMock.mockResolvedValue(undefined);
+      readSnapshotMock.mockResolvedValue(null);
+      const plugins: LexiconPlugin[] = [
+        createMockPlugin({
+          name: "k8s",
+          describeResources: staticObservation({ web: meta({ type: "K8s::Apps::Deployment" }) }),
+          observeResourcesDeep: staticDeepObservation({
+            web: { type: "K8s::Apps::Deployment", properties: { spec: liveProperties } },
+          }),
+        }),
+      ];
+      return runLifecycleDiff({
+        args: makeArgs({ command: "state", path: "diff", extraPositional: "prod", live: true, ...args }),
+        plugins,
+        serializers: plugins.map((p) => p.serializer),
+      } as never);
+    };
+
+    test("a live value on the held path renders as HELD, not drift", async () => {
+      await runHeldDiff({ replicas: 5 });
+      const output = stdoutBuf.join("\n");
+      expect(output).toContain("HELD (declared heldElsewhere(); not drift, never proposed for update)");
+      expect(output).toContain("spec.replicas: held by hpa — 5 (the autoscaler owns replicas after the first apply)");
+      expect(output).not.toContain("PROPERTY DRIFT");
+    });
+
+    test("--json carries the held set under the lexicon's deep.held key", async () => {
+      await runHeldDiff({ replicas: 5 }, { json: true });
+      const payload = JSON.parse(stdoutBuf.join("\n")) as {
+        lexicons: { k8s: { deep: { held: Array<{ name: string; held: Array<{ path: string; by: string }> }> } } };
+      };
+      expect(payload.lexicons.k8s.deep.held).toEqual([
+        {
+          name: "web",
+          type: "K8s::Apps::Deployment",
+          held: [
+            { path: "spec.replicas", by: "hpa", reason: "the autoscaler owns replicas after the first apply", live: 5, suspicious: false },
+          ],
+        },
+      ]);
+    });
+
+    test("no live value at all is flagged suspicious, on the terminal and on stderr", async () => {
+      await runHeldDiff({});
+      const output = stdoutBuf.join("\n");
+      expect(output).toContain("SUSPICIOUS: no live value ever showed up here");
+      expect(stderrBuf.join("\n")).toContain(
+        'web.spec.replicas is declared heldElsewhere(by: "hpa") but no live value ever showed up there',
+      );
+    });
+  });
+
   // #1166 — an environment can declare its own endpoint (a local emulator like
   // Floci), applied to the ambient var of every observing lexicon that has one
   // unless the ambient shell already set it.
@@ -812,6 +879,75 @@ describe("runLifecyclePlan", () => {
     const plan = JSON.parse(stdoutBuf.join("\n"));
     const web = plan.entries.find((e: { name: string }) => e.name === "web");
     expect(web.queried).toBe("/apis/apps/v1/namespaces/default/deployments/web");
+  });
+
+  // #2162 — a held property is not an action, so the plan carries it beside
+  // `entries` rather than inside one, attributed to its lexicon the same way
+  // an entry is.
+  test("--json carries the held set beside entries, attributed to its lexicon", async () => {
+    const build = makeBuildResult({ k8s: ["web"] });
+    build.entities.set("web", {
+      lexicon: "k8s",
+      entityType: "K8s::Apps::Deployment",
+      props: { spec: { replicas: heldElsewhere<number>({ by: "hpa", reason: "the autoscaler owns replicas after the first apply" }) } },
+    } as never);
+    buildMock.mockResolvedValue(build);
+    const plugins: LexiconPlugin[] = [
+      createMockPlugin({
+        name: "k8s",
+        describeResources: staticObservation({ web: meta({ type: "K8s::Apps::Deployment" }) }),
+        observeResourcesDeep: staticDeepObservation({
+          web: { type: "K8s::Apps::Deployment", properties: { spec: { replicas: 5 } } },
+        }),
+      }),
+    ];
+    const exit = await runLifecyclePlan({
+      args: makeArgs({ path: "plan", extraPositional: "prod", json: true }),
+      plugins,
+      serializers: plugins.map((p) => p.serializer),
+    });
+    expect(exit).toBe(0);
+    const plan = JSON.parse(stdoutBuf.join("\n"));
+    expect(plan.entries.find((e: { name: string }) => e.name === "web").action).not.toBe("update");
+    expect(plan.held).toEqual([
+      {
+        name: "web",
+        type: "K8s::Apps::Deployment",
+        lexicon: "k8s",
+        held: [
+          { path: "spec.replicas", by: "hpa", reason: "the autoscaler owns replicas after the first apply", live: 5, suspicious: false },
+        ],
+      },
+    ]);
+  });
+
+  test("the human render carries a HELD section, and a suspicious one warns on stderr", async () => {
+    const build = makeBuildResult({ k8s: ["web"] });
+    build.entities.set("web", {
+      lexicon: "k8s",
+      entityType: "K8s::Apps::Deployment",
+      props: { spec: { replicas: heldElsewhere<number>({ by: "hpa", reason: "x" }) } },
+    } as never);
+    buildMock.mockResolvedValue(build);
+    const plugins: LexiconPlugin[] = [
+      createMockPlugin({
+        name: "k8s",
+        describeResources: staticObservation({ web: meta({ type: "K8s::Apps::Deployment" }) }),
+        observeResourcesDeep: staticDeepObservation({
+          web: { type: "K8s::Apps::Deployment", properties: { spec: {} } },
+        }),
+      }),
+    ];
+    const exit = await runLifecyclePlan({
+      args: makeArgs({ path: "plan", extraPositional: "prod" }),
+      plugins,
+      serializers: plugins.map((p) => p.serializer),
+    });
+    expect(exit).toBe(0);
+    expect(stdoutBuf.join("\n")).toContain("HELD (declared heldElsewhere(); not drift, never proposed for update)");
+    expect(stderrBuf.join("\n")).toContain(
+      'web.spec.replicas is declared heldElsewhere(by: "hpa") but no live value ever showed up there',
+    );
   });
 
   // #1674 — the plan merges every lexicon's change set into one flat

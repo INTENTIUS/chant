@@ -147,7 +147,7 @@ The signal tells you *something* changed. The output tells you *what*. The next 
 
 - **`MISSING`** — declared in source, gone from the cloud. Usually a deletion or stack-rollback. Re-apply your stack or update source if the deletion was intentional.
 - **`ORPHAN`** — present in the cloud, not in source. Either a teammate created it manually (move it into source) or it's untracked tooling output (use `chant import` to bring it in, or scope it out of the env).
-- **`DRIFTED`** — observed in both snapshots; attributes changed. The deltas are listed inline. Decide whether to re-apply (snap back to declared) or update source (accept the new shape).
+- **`DRIFTED`** — observed in both snapshots; attributes changed. The deltas are listed inline. Decide whether to re-apply (snap back to declared) or update source (accept the new shape). A property-level drift that fires every tick because something else legitimately operates that field, an autoscaler on `replicas`, say, or a controller stamping an annotation on every sync, is worth declaring [`heldElsewhere()`](/chant/concepts/drift-detection/#heldelsewhere-a-field-declared-once-then-handed-over) rather than re-triaging on every run. It stops appearing as drift, and shows up in the plan's HELD section with who holds it and why.
 - **`DISAPPEARED`** / **`NEWLY OBSERVED`** — historical context across snapshots. Useful for incident timelines, less actionable per-tick.
 - **`ARTIFACTS ADDED` / `REMOVED` / `CHANGED`** — context-keyed (Helm releases, Docker containers). Same triage as the resource categories.
 

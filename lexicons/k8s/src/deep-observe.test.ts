@@ -36,6 +36,7 @@ const { statusBody } = await import("@intentius/chant-k8s-client/testing");
 const { isChantFieldManager } = await import("@intentius/chant-k8s-client");
 const { diffDeepObservation, observeDeep } = await import("@intentius/chant/lifecycle/deep-observe");
 const { normalizeDeepObservation, normalizeDeepProperties } = await import("@intentius/chant/deep-observation");
+const { heldElsewhere } = await import("@intentius/chant/held-elsewhere");
 
 type Entity = { name: string; entityType: string; props: Record<string, unknown> };
 function makeEntities(records: Entity[]): Map<string, { entityType: string; props: Record<string, unknown> }> {
@@ -842,6 +843,142 @@ describe("end to end: managed-fields-derived drift (#1076)", () => {
     expect(live.resources).toEqual({});
     expect(new Set(Object.values(live.unobserved).map((u) => u.reason))).toEqual(new Set(["read-failed"]));
     expect(Object.keys(live.unobserved).sort()).toEqual(["broken", "cache", "web", "worker"]);
+  });
+});
+
+/**
+ * #2162's honest example, driven through the real reader and core's real
+ * `diffDeepObservation` the same way the "end to end" suite above does — the
+ * declared alternative to the `accepted` baseline dance that suite's own
+ * `web` fixture needs for the very same field: an HPA owns `spec.replicas`
+ * on a Deployment source never sets a literal value for. Before this, the
+ * only way to stop hearing about it was `--update-baseline`, and a later
+ * scale event (7 -> 12) reported as drift again the moment the accepted
+ * value moved. `heldElsewhere()` needs no baseline entry at all, and does
+ * not re-alert when the HPA changes its mind.
+ */
+describe("heldElsewhere(): the HPA/replicas case without a baseline entry (#2162)", () => {
+  const declared = makeEntities([
+    {
+      name: "web",
+      entityType: "K8s::Apps::Deployment",
+      props: {
+        metadata: { name: "web", namespace: "prod", labels: { app: "web" } },
+        spec: {
+          replicas: heldElsewhere<number>({ by: "hpa", reason: "the autoscaler owns replicas after the first apply" }),
+          selector: { matchLabels: { app: "web" } },
+          template: { metadata: { labels: { app: "web" } }, spec: { containers: [{ name: "app", image: "web:1.0" }] } },
+        },
+      },
+    },
+  ]);
+
+  const webLiveAt = (replicas: number) => ({
+    apiVersion: "apps/v1",
+    kind: "Deployment",
+    metadata: {
+      name: "web",
+      namespace: "prod",
+      uid: "uid-web",
+      labels: { app: "web" },
+      managedFields: [
+        {
+          manager: "chant:web",
+          operation: "Apply",
+          apiVersion: "apps/v1",
+          fieldsV1: {
+            "f:metadata": { "f:labels": { "f:app": {} } },
+            "f:spec": {
+              "f:selector": {},
+              "f:template": {
+                "f:spec": { "f:containers": { 'k:{"name":"app"}': { ".": {}, "f:name": {}, "f:image": {} } } },
+              },
+            },
+          },
+        },
+        {
+          // The autoscaler: chant's own manifest never mentions `replicas`,
+          // so nothing here contests it — the HPA is the only writer.
+          manager: "kube-controller-manager",
+          operation: "Update",
+          apiVersion: "apps/v1",
+          fieldsV1: { "f:spec": { "f:replicas": {} } },
+        },
+      ],
+    },
+    spec: {
+      replicas,
+      selector: { matchLabels: { app: "web" } },
+      template: { metadata: { labels: { app: "web" } }, spec: { containers: [{ name: "app", image: "web:1.0" }] } },
+    },
+  });
+
+  const clusterAt = (replicas: number) =>
+    fakeCluster({ objects: { [objectKey("apps/v1", "Deployment", "web", "prod")]: webLiveAt(replicas) } });
+
+  test("reports held with the HPA as owner — no drift, no baseline entry needed", async () => {
+    const live = normalizeDeepObservation(
+      await observeResourcesDeepK8s({ environment: "prod", entityNames: [...declared.keys()], entities: declared }, clusterAt(7).connector),
+    );
+    const result = diffDeepObservation(declared, live, k8sDeepNormalizationHooks);
+
+    expect(result.drifted).toEqual([]);
+    expect(result.accepted).toEqual([]);
+    expect(result.held).toEqual([
+      {
+        name: "web",
+        type: "K8s::Apps::Deployment",
+        held: [
+          {
+            path: "spec.replicas",
+            by: "hpa",
+            reason: "the autoscaler owns replicas after the first apply",
+            live: 7,
+            suspicious: false,
+            owner: "kube-controller-manager",
+          },
+        ],
+      },
+    ]);
+  });
+
+  test("a later scale event does not re-alert — unlike the accepted baseline, held is not value-bound", async () => {
+    const live = normalizeDeepObservation(
+      await observeResourcesDeepK8s({ environment: "prod", entityNames: [...declared.keys()], entities: declared }, clusterAt(12).connector),
+    );
+    const result = diffDeepObservation(declared, live, k8sDeepNormalizationHooks);
+
+    expect(result.drifted).toEqual([]);
+    expect(result.held[0].held[0]).toMatchObject({ live: 12, suspicious: false });
+  });
+
+  test("no live value at all is suspicious — the declared hand-over never showed up", async () => {
+    // No managedFields entry for replicas, and the live object carries none
+    // either — a Deployment where the HPA was never actually wired up.
+    const neverScaled = {
+      apiVersion: "apps/v1",
+      kind: "Deployment",
+      metadata: { name: "web", namespace: "prod", uid: "uid-web", labels: { app: "web" } },
+      spec: {
+        selector: { matchLabels: { app: "web" } },
+        template: { metadata: { labels: { app: "web" } }, spec: { containers: [{ name: "app", image: "web:1.0" }] } },
+      },
+    };
+    const live = normalizeDeepObservation(
+      await observeResourcesDeepK8s(
+        { environment: "prod", entityNames: [...declared.keys()], entities: declared },
+        fakeCluster({ objects: { [objectKey("apps/v1", "Deployment", "web", "prod")]: neverScaled } }).connector,
+      ),
+    );
+    const result = diffDeepObservation(declared, live, k8sDeepNormalizationHooks);
+
+    expect(result.held).toEqual([
+      {
+        name: "web",
+        type: "K8s::Apps::Deployment",
+        held: [{ path: "spec.replicas", by: "hpa", reason: "the autoscaler owns replicas after the first apply", suspicious: true }],
+      },
+    ]);
   });
 });
 

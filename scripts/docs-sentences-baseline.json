@@ -350,7 +350,7 @@
   "discourse/punchy-fragments": 1
  },
  "docs/src/content/docs/concepts/drift-detection.mdx": {
-  "formatting/em-dash-density": 36,
+  "formatting/em-dash-density": 34,
   "claude/colon-reveal": 7,
   "repetition/near-duplicate": 1,
   "tricolon/comma-series": 3,
