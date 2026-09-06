@@ -30,7 +30,7 @@ import { runScenarioCheck, runScenarioUnknown } from "./handlers/scenario";
 import { runGraph } from "./handlers/graph";
 import { runExplain } from "./handlers/explain";
 import { runSearch } from "./handlers/search";
-import { runOp, runOpList, runOpStatus, runOpSignal, runOpCancel, runOpLog } from "./handlers/run";
+import { runOp, runOpList, runOpStatus, runOpApprove, runOpSignalRenamed, runOpCancel, runOpLog } from "./handlers/run";
 import { runOperator, runOperatorStatus, runOperatorLog, runApprove } from "./handlers/operator";
 import { runEmulator } from "./handlers/emulator";
 import { splitJoinedFlags, dispatchCommandGroup, collectCommandGroups, formatCommandGroupsHelp, type CommandGroup } from "./command-group";
@@ -345,6 +345,10 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.actor = args[++i];
     } else if (arg === "--approver") {
       result.approver = args[++i];
+    } else if (arg === "--on") {
+      // `chant run ... --on <lexicon>` (#2121) — which runtime hosts the run.
+      result.on = args[++i];
+      if (!result.on || result.on.startsWith("-")) throw new Error("--on needs a runtime name: --on <lexicon>");
     } else if (arg === "--compare-to") {
       result.compareTo = args[++i];
     } else if (arg === "--no-release-record") {
@@ -511,8 +515,7 @@ Ops:
                         also annotates each with its latest run status; #599)
   run status <name>     Show current workflow run state
                         --components: show a Component's durable run state instead (#599)
-  run signal <name> <signal>  Send a named signal to unblock a gate
-                        --components: signal a Component's workflow instead (#589)
+  run approve <op> <gate>  Record a gate's resolution and wake the runtime
   run cancel <name>     Cancel the active workflow run (requires --force)
                         --components: cancel a Component's workflow instead (#589)
   run log <name>        Show run history for an Op
@@ -663,6 +666,9 @@ Options:
                         resolved build parameter and per-file fold decision
                         instead of the one-line summaries
   -h, --help            Show this help message
+  --on <lexicon>        Which runtime hosts the run: a configured lexicon with
+                        an opRuntime, or the built-in local runtime when
+                        omitted (every run subcommand; #2121)
   -p, --profile <name>  Temporal worker profile to use (run command)
   --local               Run an Op with the local in-process executor (default)
   --temporal            Run an Op via a Temporal cluster (gates, schedules, durable resume)
@@ -897,7 +903,8 @@ const registry: CommandDef[] = [
   // Op / run subcommands
   { name: "run list", handler: runOpList },
   { name: "run status", handler: runOpStatus },
-  { name: "run signal", handler: runOpSignal },
+  { name: "run approve", handler: runOpApprove },
+  { name: "run signal", handler: runOpSignalRenamed },
   { name: "run cancel", handler: runOpCancel },
   { name: "run log", handler: runOpLog },
   { name: "run", handler: runOp },

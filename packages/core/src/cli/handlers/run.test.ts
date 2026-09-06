@@ -21,6 +21,8 @@ const loadComponentTemporalCodegenMock = vi.fn();
 const maybeRecordAutoReleaseMock = vi.fn();
 const maybePersistBuildManifestMock = vi.fn();
 const listComponentsMock = vi.fn();
+const loadPluginsMock = vi.fn();
+const recordGateApprovalMock = vi.fn();
 
 vi.mock("../../op/discover", () => ({ discoverOps: () => discoverOpsMock() }));
 vi.mock("../../config", async () => {
@@ -80,11 +82,18 @@ vi.mock("../../components/cli-support", () => ({
 vi.mock("../../components/temporal-codegen-loader", () => ({
   loadComponentTemporalCodegen: () => loadComponentTemporalCodegenMock(),
 }));
+vi.mock("../plugins", () => ({
+  loadPlugins: (...args: unknown[]) => loadPluginsMock(...args),
+}));
+vi.mock("./operator", () => ({
+  recordGateApproval: (...args: unknown[]) => recordGateApprovalMock(...args),
+}));
 
 // Speed up runOp polling — POLL_INTERVAL_MS is 3000 in production. We use
 // fake timers in the runOp suite below; vi.advanceTimersByTime drives the loop.
 
-const { runOpList, runOpStatus, runOpLog, runOpSignal, runOpCancel, runOp, runOpComponents } = await import("./run");
+const { runOpList, runOpStatus, runOpLog, runOpSignal, runOpApprove, runOpCancel, runOp, runOpComponents } =
+  await import("./run");
 
 function makeArgs(overrides: Partial<ParsedArgs> = {}): ParsedArgs {
   return {
@@ -1083,20 +1092,212 @@ describe("runOp: --sandbox with a policyGate step (chant #2003)", () => {
   });
 });
 
+/**
+ * chant #2121 — `run list/status/log/cancel` are runtime methods now, so the
+ * Temporal-only guard is left only where the subject is still a durable
+ * workflow: the component variants, and the legacy `run signal` handler the
+ * removal issue deletes. The Op-path counterparts are covered under "run
+ * subcommands on the resolved runtime" below.
+ */
 describe("Temporal-only subcommand guards", () => {
   const cases: Array<[string, (ctx: { args: ParsedArgs; plugins: never[]; serializers: never[] }) => Promise<number>]> = [
-    ["list", runOpList],
-    ["status", runOpStatus],
-    ["log", runOpLog],
-    ["signal", runOpSignal],
-    ["cancel", runOpCancel],
+    ["list --components", runOpList],
+    ["status --components", runOpStatus],
+    ["log --components", runOpLog],
   ];
 
   test.each(cases)("run %s without --temporal → exit 1 + actionable message", async (_name, handler) => {
     const stderr = makeStderrSpy();
-    const exit = await handler({ args: makeArgs({ temporal: false, extraPositional: "x", extraPositional2: "y" }), plugins: [], serializers: [] });
+    const exit = await handler({
+      args: makeArgs({ temporal: false, components: true, extraPositional: "x", extraPositional2: "y" }),
+      plugins: [], serializers: [],
+    });
     expect(exit).toBe(1);
     expect(stderr.join("\n")).toContain("not available in local mode");
+  });
+
+  test("the legacy run signal handler still guards", async () => {
+    const stderr = makeStderrSpy();
+    const exit = await runOpSignal({
+      args: makeArgs({ temporal: false, extraPositional: "x", extraPositional2: "y" }),
+      plugins: [], serializers: [],
+    });
+    expect(exit).toBe(1);
+    expect(stderr.join("\n")).toContain("not available in local mode");
+  });
+});
+
+// ── the runtime seam (#2121) ────────────────────────────────────────────────
+
+describe("run subcommands on the resolved runtime", () => {
+  function makeStubRuntime(overrides: Record<string, unknown> = {}) {
+    return {
+      name: "stub",
+      start: vi.fn(async (op: { name: string }) => ({
+        op: op.name,
+        runId: "stub-1",
+        result: async () => ({
+          op: op.name, runId: "stub-1", state: "completed", startedAt: "2026-01-01T00:00:00.000Z",
+          endedAt: "2026-01-01T00:00:05.000Z",
+        }),
+      })),
+      status: vi.fn(async (op: string) => ({
+        op, runId: "stub-1", state: "running", startedAt: "2026-01-01T00:00:00.000Z",
+      })),
+      log: vi.fn(async (op: string) => [
+        { op, runId: "stub-1", state: "completed", startedAt: "2026-01-01T00:00:00.000Z", endedAt: "2026-01-01T00:00:05.000Z" },
+      ]),
+      list: vi.fn(async (ops: Array<{ name: string }>) =>
+        new Map(ops.map((o) => [o.name, { op: o.name, runId: "stub-1", state: "completed", startedAt: "2026-01-01T00:00:00.000Z" }]))),
+      cancel: vi.fn(async () => undefined),
+      ...overrides,
+    };
+  }
+
+  function stubPlugin(runtime: unknown) {
+    return { name: "stub", opRuntime: runtime } as never;
+  }
+
+  beforeEach(() => {
+    discoverOpsMock.mockReset();
+    loadChantConfigMock.mockReset().mockResolvedValue({ config: { lexicons: ["stub"] } });
+    loadPluginsMock.mockReset().mockResolvedValue([]);
+    loadTemporalClientMock.mockReset();
+  });
+
+  test("--on stub reaches the stub lexicon's start, never Temporal", async () => {
+    const runtime = makeStubRuntime();
+    discoverOpsMock.mockResolvedValue({ ops: new Map([makeOp("hello")]), errors: [] });
+    makeStdoutSpy();
+    const exit = await runOp({
+      args: makeArgs({ path: "hello", temporal: false, on: "stub" }),
+      plugins: [stubPlugin(runtime)], serializers: [],
+    });
+    expect(exit).toBe(0);
+    expect(runtime.start).toHaveBeenCalledTimes(1);
+    expect((runtime.start.mock.calls[0][0] as { name: string }).name).toBe("hello");
+    expect(loadTemporalClientMock).not.toHaveBeenCalled();
+  });
+
+  test("run status/log/list/cancel --on stub reach their methods", async () => {
+    const runtime = makeStubRuntime();
+    discoverOpsMock.mockResolvedValue({ ops: new Map([makeOp("hello")]), errors: [] });
+    makeStdoutSpy();
+    makeStderrSpy();
+    const ctx = (over: Partial<ParsedArgs>) => ({
+      args: makeArgs({ temporal: false, on: "stub", ...over }),
+      plugins: [stubPlugin(runtime)], serializers: [],
+    });
+
+    expect(await runOpStatus(ctx({ extraPositional: "hello" }))).toBe(0);
+    expect(await runOpLog(ctx({ extraPositional: "hello" }))).toBe(0);
+    expect(await runOpList(ctx({}))).toBe(0);
+    expect(await runOpCancel(ctx({ extraPositional: "hello", force: true }))).toBe(0);
+
+    expect(runtime.status).toHaveBeenCalledWith("hello");
+    expect(runtime.log).toHaveBeenCalledWith("hello", undefined);
+    expect(runtime.list).toHaveBeenCalledTimes(1);
+    expect(runtime.cancel).toHaveBeenCalledWith("hello", { force: true });
+  });
+
+  test("--on nope → exit 1 naming the configured lexicons", async () => {
+    discoverOpsMock.mockResolvedValue({ ops: new Map([makeOp("hello")]), errors: [] });
+    loadChantConfigMock.mockResolvedValue({ config: { lexicons: ["aws", "k8s"] } });
+    const stderr = makeStderrSpy();
+    const exit = await runOp({
+      args: makeArgs({ path: "hello", temporal: false, on: "nope" }),
+      plugins: [], serializers: [],
+    });
+    expect(exit).toBe(1);
+    expect(stderr.join("\n")).toContain("is not a configured lexicon");
+    expect(stderr.join("\n")).toContain("aws, k8s");
+  });
+
+  test("--on a lexicon with no opRuntime → exit 1 naming the lexicon", async () => {
+    discoverOpsMock.mockResolvedValue({ ops: new Map([makeOp("hello")]), errors: [] });
+    const stderr = makeStderrSpy();
+    const exit = await runOp({
+      args: makeArgs({ path: "hello", temporal: false, on: "plain" }),
+      plugins: [{ name: "plain" } as never], serializers: [],
+    });
+    expect(exit).toBe(1);
+    expect(stderr.join("\n")).toContain('lexicon "plain" does not host Op runs');
+  });
+
+  test("--components on a runtime that cannot host them → one line, exit 1", async () => {
+    const runtime = makeStubRuntime();
+    const stderr = makeStderrSpy();
+    const exit = await runOpComponents({
+      args: makeArgs({ path: "search-service", temporal: false, components: true, on: "stub" }),
+      plugins: [stubPlugin(runtime)], serializers: [],
+    });
+    expect(exit).toBe(1);
+    expect(stderr.join("\n")).toContain('--components is not supported on the "stub" runtime');
+    expect(runComponentsMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("runOpApprove", () => {
+  beforeEach(() => {
+    recordGateApprovalMock.mockReset();
+    loadChantConfigMock.mockReset().mockResolvedValue({ config: { lexicons: ["stub"] } });
+    loadPluginsMock.mockReset().mockResolvedValue([]);
+  });
+
+  test("missing op or gate name → exit 1, nothing recorded", async () => {
+    const stderr = makeStderrSpy();
+    const exit = await runOpApprove({
+      args: makeArgs({ temporal: false, extraPositional: "alb-deploy" }),
+      plugins: [], serializers: [],
+    });
+    expect(exit).toBe(1);
+    expect(stderr.join("\n")).toContain("chant run approve <op> <gate>");
+    expect(recordGateApprovalMock).not.toHaveBeenCalled();
+  });
+
+  test("writes the resolution, then calls the provider's resolveGate", async () => {
+    const record = { version: 1, op: "alb-deploy", gate: "release", resolvedBy: "alex", timestamp: "2026-01-01T00:00:00.000Z" };
+    recordGateApprovalMock.mockResolvedValue({ ok: true, record });
+    const resolveGate = vi.fn(async () => undefined);
+    const stderr = makeStderrSpy();
+
+    const exit = await runOpApprove({
+      args: makeArgs({ temporal: false, on: "stub", extraPositional: "alb-deploy", extraPositional2: "release", approver: "alex" }),
+      plugins: [{ name: "stub", opRuntime: { name: "stub", resolveGate } } as never], serializers: [],
+    });
+
+    expect(exit).toBe(0);
+    expect(recordGateApprovalMock).toHaveBeenCalledWith("alb-deploy", "release", {
+      actor: "alex", note: undefined, url: undefined,
+    });
+    expect(resolveGate).toHaveBeenCalledWith("alb-deploy", "release", record);
+    expect(stderr.join("\n")).toContain('Runtime "stub" was notified');
+  });
+
+  test("a provider with no resolveGate still records the fact and exits 0", async () => {
+    const record = { version: 1, op: "alb-deploy", gate: "release", resolvedBy: "ci", timestamp: "2026-01-01T00:00:00.000Z" };
+    recordGateApprovalMock.mockResolvedValue({ ok: true, record });
+    const stderr = makeStderrSpy();
+
+    const exit = await runOpApprove({
+      args: makeArgs({ temporal: false, extraPositional: "alb-deploy", extraPositional2: "release" }),
+      plugins: [], serializers: [],
+    });
+
+    expect(exit).toBe(0);
+    expect(recordGateApprovalMock).toHaveBeenCalledTimes(1);
+    expect(stderr.join("\n")).toContain("when the op next runs");
+  });
+
+  test("a refused ledger write → exit 1 without waking the runtime", async () => {
+    recordGateApprovalMock.mockResolvedValue({ ok: false });
+    const resolveGate = vi.fn(async () => undefined);
+    const exit = await runOpApprove({
+      args: makeArgs({ temporal: false, on: "stub", extraPositional: "alb-deploy", extraPositional2: "release" }),
+      plugins: [{ name: "stub", opRuntime: { name: "stub", resolveGate } } as never], serializers: [],
+    });
+    expect(exit).toBe(1);
+    expect(resolveGate).not.toHaveBeenCalled();
   });
 });
 

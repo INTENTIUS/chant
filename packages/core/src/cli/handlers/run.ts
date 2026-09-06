@@ -7,7 +7,11 @@ import { discoverOps } from "../../op/discover";
 import type { OpConfig } from "../../op/types";
 import { loadActivities, loadProfiles } from "../../op/activity-registry";
 import { runOpLocally, findGate, findPolicyGateStep, LocalGateUnsupportedError, OpRunFailure, type StepRecord } from "../../op/local-executor";
+import { createLocalOpRuntime } from "../../op/runtimes/local";
+import type { OpRuntimeProvider, OpRunStatus } from "../../op/runtime";
 import { renderHuman, renderJson } from "../../op/local-output";
+import { loadPlugins } from "../plugins";
+import { recordGateApproval } from "./operator";
 import { formatError, formatWarning, formatSuccess, formatBold, formatInfo } from "../format";
 import { resolveCliBuildParams, parseParamFlags } from "../build-params-cli";
 import type { CommandContext } from "../registry";
@@ -91,10 +95,96 @@ async function ensureSearchAttributes(client: unknown, namespace: string, names:
   }
 }
 
+// ── The runtime seam (#2121) ────────────────────────────────────────────────
+
+/**
+ * Resolve the one runtime this invocation talks to.
+ *
+ * `--on <name>` picks the named lexicon's `opRuntime` (`../../lexicon.ts`);
+ * without it, core's built-in `local` provider runs the Op in this process.
+ * Every `chant run` subcommand goes through whichever comes back, so there is
+ * one dispatch path rather than a branch per runtime.
+ *
+ * A lexicon already loaded into the command context wins the lookup — that is
+ * how a test hands in a stub, and how a command that loaded plugins for its
+ * own reasons avoids loading them twice. Otherwise the project's configured
+ * lexicons are loaded on demand: `chant run` is not a `requiresPlugins`
+ * command, and a plain local run must not start paying for plugin resolution.
+ *
+ * Returns `undefined` after printing an actionable error — an unconfigured
+ * name is answered with the configured list, a configured lexicon that hosts
+ * nothing is named outright.
+ */
+async function resolveOpRuntime(ctx: CommandContext): Promise<OpRuntimeProvider | undefined> {
+  const on = ctx.args.on;
+  if (!on || on === "local") return createLocalOpRuntime({ projectPath: resolve(".") });
+
+  // Read the configured list straight from `chant.config.ts` rather than
+  // through `resolveProjectLexicons`: `--on` names a *configured* lexicon, and
+  // that helper's fallback is a source scan of the whole project, which is a
+  // long wait to be told a name is wrong.
+  let configured: string[] = [];
+  try {
+    configured = (await loadChantConfig(resolve("."))).config.lexicons ?? [];
+  } catch {
+    // No/unreadable chant.config.ts — the error below says so by listing nothing.
+  }
+
+  let plugin = ctx.plugins.find((p) => p.name === on);
+  if (!plugin && configured.includes(on)) {
+    plugin = (await loadPlugins([on]).catch(() => []))[0];
+  }
+
+  if (!plugin) {
+    const known = [...new Set([...ctx.plugins.map((p) => p.name), ...configured])];
+    console.error(formatError({
+      message: `--on ${on}: "${on}" is not a configured lexicon`,
+      hint: known.length > 0
+        ? `Configured lexicons: ${known.join(", ")}. Omit --on to run on the built-in local runtime.`
+        : "chant.config.ts configures no lexicons. Omit --on to run on the built-in local runtime.",
+    }));
+    return undefined;
+  }
+
+  if (!plugin.opRuntime) {
+    console.error(formatError({
+      message: `--on ${on}: lexicon "${on}" does not host Op runs`,
+      hint: "It declares no opRuntime. Omit --on to run on the built-in local runtime.",
+    }));
+    return undefined;
+  }
+
+  return plugin.opRuntime;
+}
+
+/** An ISO-8601 instant trimmed to what a table cell has room for. */
+function shortInstant(iso: string | undefined): string {
+  return iso ? iso.slice(0, 19).replace("T", " ") : "—";
+}
+
+/** Print what a runtime reports for a settled or in-flight run. */
+function renderRuntimeStatus(label: string, name: string, runtime: string, status: OpRunStatus): void {
+  console.log(formatBold(`${label}: ${name}`));
+  console.log(`  Runtime     : ${runtime}`);
+  console.log(`  Run ID      : ${status.runId}`);
+  console.log(`  State       : ${status.state}`);
+  console.log(`  Started     : ${shortInstant(status.startedAt)}`);
+  if (status.endedAt) console.log(`  Ended       : ${shortInstant(status.endedAt)}`);
+  if (status.records) {
+    const settled = status.records.filter((r) => r.status !== "skipped").length;
+    console.log(`  Steps       : ${settled}/${status.records.length} settled`);
+  }
+  if (status.gate) {
+    console.log(`  Gate        : ${status.gate.name} (pending since ${status.gate.since})`);
+  }
+  if (status.error) console.log(`  Error       : ${status.error}`);
+}
+
 // ── chant run list ──────────────────────────────────���─────────────────────────
 
 export async function runOpList(ctx: CommandContext): Promise<number> {
   if (ctx.args.components) return runComponentsList(ctx);
+  if (!ctx.args.temporal) return runOpListOnRuntime(ctx);
 
   if (!requireTemporalMode(ctx, "chant run list")) return 1;
   const { ops, errors } = await discoverOps();
@@ -151,6 +241,61 @@ export async function runOpList(ctx: CommandContext): Promise<number> {
       (name + statusStr).padEnd(22) +
       phases.padEnd(8) +
       tq.padEnd(20) +
+      deps.padEnd(20) +
+      overview,
+    );
+  }
+
+  return 0;
+}
+
+/**
+ * `chant run list` on the resolved runtime (#2121) — discover every Op, ask
+ * the runtime what it knows about each, print one row per Op. The runtime
+ * answers for all of them in one call (`list`), so a hosted runtime can do it
+ * in one round trip instead of N.
+ *
+ * An Op the runtime has no run for prints with no state annotation, the same
+ * way the Temporal path prints one it cannot describe.
+ */
+async function runOpListOnRuntime(ctx: CommandContext): Promise<number> {
+  const runtime = await resolveOpRuntime(ctx);
+  if (!runtime) return 1;
+
+  const { ops, errors } = await discoverOps();
+  for (const err of errors) console.error(formatError({ message: err }));
+
+  if (ops.size === 0) {
+    console.error(formatWarning({ message: "No Op definitions found (*.op.ts)" }));
+    return 0;
+  }
+
+  let states: Map<string, OpRunStatus | undefined>;
+  try {
+    states = await runtime.list([...ops.values()].map((d) => d.config));
+  } catch (err) {
+    console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
+    return 1;
+  }
+
+  console.log(
+    "NAME".padEnd(26) +
+    "PHASES".padEnd(8) +
+    "DEPENDS".padEnd(20) +
+    "OVERVIEW",
+  );
+
+  for (const [name, { config }] of ops) {
+    const phases = String(config.phases.length);
+    const deps = config.depends?.join(",") ?? "—";
+    const overview = config.overview.length > 36
+      ? config.overview.slice(0, 33) + "..."
+      : config.overview;
+    const state = states.get(name)?.state;
+
+    console.log(
+      (name + (state ? ` [${state}]` : "")).padEnd(26) +
+      phases.padEnd(8) +
       deps.padEnd(20) +
       overview,
     );
@@ -242,7 +387,6 @@ async function runComponentsList(ctx: CommandContext): Promise<number> {
 // ── chant run status <name> ───────────────────────────────────────────────────
 
 export async function runOpStatus(ctx: CommandContext): Promise<number> {
-  if (!requireTemporalMode(ctx, "chant run status")) return 1;
   const name = ctx.args.extraPositional;
   if (!name) {
     const label = ctx.args.components ? "Component" : "Op";
@@ -250,7 +394,11 @@ export async function runOpStatus(ctx: CommandContext): Promise<number> {
     return 1;
   }
 
-  if (ctx.args.components) return runComponentStatus(ctx, name);
+  if (ctx.args.components) {
+    if (!requireTemporalMode(ctx, "chant run status --components")) return 1;
+    return runComponentStatus(ctx, name);
+  }
+  if (!ctx.args.temporal) return runOpStatusOnRuntime(ctx, name);
 
   const projectPath = resolve(".");
   let client, desc: WorkflowExecutionDescription, history: WorkflowHistoryRaw, handle: WorkflowHandleRaw;
@@ -285,6 +433,32 @@ export async function runOpStatus(ctx: CommandContext): Promise<number> {
     console.log(`  Gate        : ${gate.signalName}${gate.description ? ` — ${gate.description}` : ""} (waiting since ${gate.since})`);
   }
 
+  return 0;
+}
+
+/**
+ * `chant run status <name>` on the resolved runtime (#2121). A runtime with
+ * no record of the Op is not an error: it prints one line saying so and exits
+ * 0, because "this runtime has never run it" is a true answer to the question.
+ */
+async function runOpStatusOnRuntime(ctx: CommandContext, name: string): Promise<number> {
+  const runtime = await resolveOpRuntime(ctx);
+  if (!runtime) return 1;
+
+  let status: OpRunStatus | undefined;
+  try {
+    status = await runtime.status(name);
+  } catch (err) {
+    console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
+    return 1;
+  }
+
+  if (!status) {
+    console.error(formatInfo(`No run of Op "${name}" is recorded on the "${runtime.name}" runtime.`));
+    return 0;
+  }
+
+  renderRuntimeStatus("Op", name, runtime.name, status);
   return 0;
 }
 
@@ -327,7 +501,6 @@ async function runComponentStatus(ctx: CommandContext, name: string): Promise<nu
 // ── chant run log <name> ──────────────────────────────────────────────────────
 
 export async function runOpLog(ctx: CommandContext): Promise<number> {
-  if (!requireTemporalMode(ctx, "chant run log")) return 1;
   const name = ctx.args.extraPositional;
   if (!name) {
     const label = ctx.args.components ? "Component" : "Op";
@@ -335,7 +508,11 @@ export async function runOpLog(ctx: CommandContext): Promise<number> {
     return 1;
   }
 
-  if (ctx.args.components) return runComponentLog(ctx, name);
+  if (ctx.args.components) {
+    if (!requireTemporalMode(ctx, "chant run log --components")) return 1;
+    return runComponentLog(ctx, name);
+  }
+  if (!ctx.args.temporal) return runOpLogOnRuntime(ctx, name);
 
   const projectPath = resolve(".");
   let client;
@@ -368,6 +545,45 @@ export async function runOpLog(ctx: CommandContext): Promise<number> {
   } catch (err) {
     console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
     return 1;
+  }
+
+  return 0;
+}
+
+/**
+ * `chant run log <name>` on the resolved runtime (#2121) — the runtime's own
+ * run history, newest first, `--limit <n>` rows at most.
+ */
+async function runOpLogOnRuntime(ctx: CommandContext, name: string): Promise<number> {
+  const runtime = await resolveOpRuntime(ctx);
+  if (!runtime) return 1;
+
+  let records;
+  try {
+    records = await runtime.log(name, ctx.args.limit === undefined ? undefined : { limit: ctx.args.limit });
+  } catch (err) {
+    console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
+    return 1;
+  }
+
+  if (records.length === 0) {
+    console.error(formatInfo(`No run of Op "${name}" is recorded on the "${runtime.name}" runtime.`));
+    return 0;
+  }
+
+  console.log(
+    "RUN-ID".padEnd(36) +
+    "STATE".padEnd(16) +
+    "STARTED".padEnd(26) +
+    "ENDED",
+  );
+  for (const record of records) {
+    console.log(
+      record.runId.padEnd(36) +
+      record.state.padEnd(16) +
+      shortInstant(record.startedAt).padEnd(26) +
+      shortInstant(record.endedAt),
+    );
   }
 
   return 0;
@@ -431,6 +647,79 @@ async function runComponentLog(ctx: CommandContext, name: string): Promise<numbe
 // ── chant run signal <name> <signal> ─────────────────────────────────────────
 
 /**
+ * `chant run approve <op> <gate> [--approver] [--url] [--note]` (#2121) — the
+ * rename of `chant run signal`, and a different act.
+ *
+ * A gate resolution is a fact, not a message: the ledger write is the whole
+ * of it, and it is the same write `chant approve` performs
+ * (`recordGateApproval`, ./operator.ts), so a resolution recorded here reads
+ * back identically. The runtime is told afterwards, through its optional
+ * `resolveGate`, purely so a runtime that parks a run mid-flight can wake it
+ * now rather than on its next tick. A runtime without that method is not a
+ * failure — the fact is recorded either way, and the next run re-reads it.
+ */
+export async function runOpApprove(ctx: CommandContext): Promise<number> {
+  const opName = ctx.args.extraPositional;
+  const gate = ctx.args.extraPositional2;
+  if (!opName || !gate) {
+    console.error(formatError({ message: "Usage: chant run approve <op> <gate>" }));
+    return 1;
+  }
+
+  const runtime = await resolveOpRuntime(ctx);
+  if (!runtime) return 1;
+
+  const outcome = await recordGateApproval(opName, gate, {
+    actor: ctx.args.approver ?? ctx.args.actor,
+    note: ctx.args.note,
+    url: ctx.args.url,
+  });
+  if (!outcome.ok) return 1;
+
+  if (!runtime.resolveGate) {
+    console.error(formatInfo(
+      `The "${runtime.name}" runtime reads the resolution when the op next runs — re-run \`chant run ${opName}\`.`,
+    ));
+    return 0;
+  }
+
+  try {
+    await runtime.resolveGate(opName, gate, outcome.record);
+  } catch (err) {
+    console.error(formatWarning({
+      message:
+        `The resolution is recorded, but the "${runtime.name}" runtime could not be woken: ` +
+        (err instanceof Error ? err.message : String(err)),
+      hint: `Re-run \`chant run ${opName} --on ${runtime.name}\` once the runtime is reachable.`,
+    }));
+    return 1;
+  }
+
+  console.error(formatSuccess(`Runtime "${runtime.name}" was notified of the resolution.`));
+  return 0;
+}
+
+/**
+ * `chant run signal` was renamed `chant run approve` (#2121). Registered so
+ * the old spelling says where the verb went instead of being read as an Op
+ * named "signal".
+ *
+ * `--temporal` still reaches the old signal sender: a component's durable
+ * gate on that path is cleared by an actual workflow signal, and #2116 removes
+ * the path and this branch together.
+ */
+export function runOpSignalRenamed(ctx: CommandContext): Promise<number> {
+  if (ctx.args.temporal) return runOpSignal(ctx);
+  const opName = ctx.args.extraPositional ?? "<op>";
+  const gate = ctx.args.extraPositional2 ?? "<gate>";
+  console.error(formatError({
+    message: "`chant run signal` is now `chant run approve`",
+    hint: `A gate is resolved by recording the fact, not by sending a message: chant run approve ${opName} ${gate}`,
+  }));
+  return Promise.resolve(1);
+}
+
+/**
  * `chant run signal <name> <signal> [--components]` — sends a signal to a
  * running Op workflow by default, or a component workflow when `--components`
  * is passed (#589): the durable path's gate is otherwise unclearable from the
@@ -479,7 +768,6 @@ export async function runOpSignal(ctx: CommandContext): Promise<number> {
 
 /** `chant run cancel <name> [--components]` — cancels an Op workflow by default, or a component workflow when `--components` is passed (#589), mirroring `runOpSignal`'s id resolution. */
 export async function runOpCancel(ctx: CommandContext): Promise<number> {
-  if (!requireTemporalMode(ctx, "chant run cancel")) return 1;
   const name = ctx.args.extraPositional;
   if (!name) {
     console.error(formatError({ message: "Op name is required: chant run cancel <name>" }));
@@ -494,6 +782,9 @@ export async function runOpCancel(ctx: CommandContext): Promise<number> {
     return 1;
   }
 
+  if (!ctx.args.components && !ctx.args.temporal) return runOpCancelOnRuntime(ctx, name);
+  if (!requireTemporalMode(ctx, "chant run cancel --components")) return 1;
+
   const projectPath = resolve(".");
   const workflowId = ctx.args.components ? componentWorkflowId(name) : resolveWorkflowId(name);
   let handle: WorkflowHandleRaw;
@@ -507,6 +798,27 @@ export async function runOpCancel(ctx: CommandContext): Promise<number> {
   }
 
   console.error(formatSuccess(`Cancellation requested for ${ctx.args.components ? "component" : "Op"} "${name}"`));
+  return 0;
+}
+
+/**
+ * `chant run cancel <name>` on the resolved runtime (#2121). `--force` is
+ * already checked by the caller, so a runtime only ever sees a confirmed
+ * request; a runtime with nothing to cancel says so in its own words and the
+ * command exits non-zero.
+ */
+async function runOpCancelOnRuntime(ctx: CommandContext, name: string): Promise<number> {
+  const runtime = await resolveOpRuntime(ctx);
+  if (!runtime) return 1;
+
+  try {
+    await runtime.cancel(name, { force: true });
+  } catch (err) {
+    console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
+    return 1;
+  }
+
+  console.error(formatSuccess(`Cancellation requested for Op "${name}" on the "${runtime.name}" runtime`));
   return 0;
 }
 
@@ -608,7 +920,9 @@ export async function runOp(ctx: CommandContext): Promise<number> {
     if (!requireTemporalMode(ctx, "chant run --report")) return 1;
     return runOpTemporal(ctx);
   }
-  return ctx.args.temporal ? runOpTemporal(ctx) : runOpLocal(ctx);
+  // `--temporal` is the pre-seam path, kept working (and untouched) until
+  // #2116 deletes it wholesale. Everything else goes through the runtime.
+  return ctx.args.temporal ? runOpTemporal(ctx) : runOpOnRuntime(ctx);
 }
 
 // ── Auto-release recording post-run (#597) ──────────────────────────────────
@@ -756,6 +1070,16 @@ export async function runOpComponents(ctx: CommandContext): Promise<number> {
 
   if (ctx.args.temporal) return runComponentTemporal(ctx, selector, config, paramsResolution.provenance);
 
+  const runtime = await resolveOpRuntime(ctx);
+  if (!runtime) return 1;
+  if (!runtime.runComponents) {
+    console.error(formatError({
+      message: `--components is not supported on the "${runtime.name}" runtime`,
+      hint: "Omit --on to run components on the built-in local runtime.",
+    }));
+    return 1;
+  }
+
   const env = ctx.args.env ?? "local";
   // Seed cross-component/cross-stack outputs from upstream jobs' dumped files
   // (`--seed-outputs`), so a single-component run resolves references to a
@@ -778,7 +1102,7 @@ export async function runOpComponents(ctx: CommandContext): Promise<number> {
   // `undefined` and every `onProgress?.(...)` call in the driver is a no-op —
   // behavior is byte-for-byte unchanged from before this flag existed.
   const onProgress = ctx.args.progressJson ? ndjsonProgressSink() : undefined;
-  const result = await runComponents(projectPath, selector, {
+  const result = await runtime.runComponents(projectPath, selector, {
     env: ctx.args.env,
     componentOutputs: seededOutputs,
     onProgress,
@@ -1060,16 +1384,23 @@ async function runComponentTemporal(
 }
 
 /**
- * Run an Op in-process via the local executor — no Temporal worker, server, or
- * built `worker.ts`. Reads the Op config straight from discovery and resolves
- * activities from the Temporal lexicon package.
+ * `chant run <name>` on the resolved runtime (#2121) — the built-in `local`
+ * provider by default, a lexicon's `opRuntime` under `--on <name>`.
+ *
+ * This function knows nothing about how a run happens. It discovers the Op,
+ * runs the CLI-level pre-flights that are about flags rather than execution
+ * (`--sandbox` over a `policyGate` step, #2003), hands the config to the
+ * runtime, and renders whatever comes back. On the local runtime that is the
+ * executor's own `OpRunResult`, so `--json` and the human render are exactly
+ * what they were before the seam existed; a runtime that reports only a state
+ * gets the terser render instead.
  */
-export async function runOpLocal(ctx: CommandContext): Promise<number> {
+export async function runOpOnRuntime(ctx: CommandContext): Promise<number> {
   const opName = ctx.args.path;
   if (!opName || opName === ".") {
     console.error(formatError({
       message: "Op name is required: chant run <name>",
-      hint: "Run `chant run list --temporal` to see available Ops",
+      hint: "Run `chant run list` to see available Ops",
     }));
     return 1;
   }
@@ -1094,32 +1425,12 @@ export async function runOpLocal(ctx: CommandContext): Promise<number> {
   // Pre-flight: --sandbox cannot cover a policyGate step (#2003).
   if (refusesPolicyGateUnderSandbox(ctx, config, opName)) return 1;
 
-  // Pre-flight: gates/schedules need a durable runtime — fail before any step.
-  const gate = findGate(config);
-  if (gate) {
-    console.error(formatError({
-      message: new LocalGateUnsupportedError(gate.signalName).message,
-    }));
-    return 1;
-  }
+  const runtime = await resolveOpRuntime(ctx);
+  if (!runtime) return 1;
 
-  // The project's configured lexicons decide which cloud appliers to load
-  // (aws → floci, gcp → gcpApply, azure → az group). Best-effort: an unreadable
-  // config just yields the temporal base activities.
-  let lexicons: string[] = [];
-  try {
-    lexicons = (await loadChantConfig(process.cwd())).config.lexicons ?? [];
-  } catch {
-    // No/invalid chant.config — fall back to base activities only.
-  }
-
-  let activities, profiles;
-  try {
-    [activities, profiles] = await Promise.all([loadActivities(lexicons), loadProfiles()]);
-  } catch (err) {
-    console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
-    return 1;
-  }
+  // `--progress-json` streams one NDJSON StepRecord per settled step, fed by
+  // whatever the runtime reports through `progress`.
+  const progress = ctx.args.progressJson ? ndjsonProgressSink<StepRecord>() : undefined;
 
   // Ctrl-C aborts in-flight activities (kills their child processes) instead of
   // orphaning them. The handler is removed in `finally` so it never leaks.
@@ -1131,9 +1442,27 @@ export async function runOpLocal(ctx: CommandContext): Promise<number> {
   process.once("SIGINT", onSigint);
 
   try {
-    const result = await runOpLocally(config, activities, profiles, controller.signal);
-    if (ctx.args.json) renderJson(result); else renderHuman(result);
-    return 0;
+    const handle = await runtime.start(config, {
+      env: ctx.args.env,
+      progress,
+      signal: controller.signal,
+    });
+    const status = await handle.result();
+
+    if (status.result) {
+      if (ctx.args.json) renderJson(status.result); else renderHuman(status.result);
+    } else {
+      renderRuntimeStatus("Op", opName, runtime.name, status);
+    }
+
+    if (status.state === "gated" && status.gate) {
+      console.error(formatWarning({
+        message: `Op "${opName}" is waiting on gate "${status.gate.name}"`,
+        hint: `Record the resolution with: chant approve ${opName} ${status.gate.name}`,
+      }));
+    }
+
+    return status.state === "completed" ? 0 : 1;
   } catch (err) {
     if (err instanceof OpRunFailure) {
       if (ctx.args.json) renderJson(err.result); else renderHuman(err.result);
@@ -1356,7 +1685,7 @@ async function runOpTemporal(ctx: CommandContext): Promise<number> {
 export function runOpUnknown(ctx: CommandContext): Promise<number> {
   console.error(formatError({
     message: `Unknown run subcommand: ${ctx.args.extraPositional ?? ctx.args.path}`,
-    hint: "Available: chant run <name>, run list, run status, run signal, run cancel, run log",
+    hint: "Available: chant run <name>, run list, run status, run approve, run cancel, run log",
   }));
   return Promise.resolve(1);
 }

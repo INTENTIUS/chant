@@ -385,6 +385,47 @@ export async function runApprove(ctx: CommandContext): Promise<number> {
     return 1;
   }
 
+  const outcome = await recordGateApproval(opName, gate, {
+    actor: ctx.args.actor,
+    note: ctx.args.note,
+    url: ctx.args.url,
+  });
+  if (!outcome.ok) return 1;
+
+  console.error(formatInfo(
+    "This records the resolution as a fact; it does not itself re-run the gated dispatch — " +
+      "the local executor still refuses any op with a gate. Re-run it with --temporal, or via the PR that carries the change.",
+  ));
+  return 0;
+}
+
+/** What a caller supplies alongside the op and gate names. */
+export interface GateApprovalOptions {
+  /** `--actor`/`--approver`; falls back to the CI or shell identity. */
+  actor?: string;
+  /** `--note` — free-text prose. */
+  note?: string;
+  /** `--url` — the approval surface, validated as absolute http/https. */
+  url?: string;
+}
+
+export type GateApprovalOutcome =
+  | { ok: true; record: GateResolutionRecord }
+  | { ok: false };
+
+/**
+ * The ledger write behind `chant approve` — extracted so `chant run approve`
+ * (#2121) records the identical fact before waking the runtime that hosts the
+ * gated run, instead of growing a second, drifting writer.
+ *
+ * Prints the same warning for an undiscovered op and the same success line as
+ * `chant approve` always did; the caller adds whatever it does next.
+ */
+export async function recordGateApproval(
+  opName: string,
+  gate: string,
+  opts: GateApprovalOptions,
+): Promise<GateApprovalOutcome> {
   const { ops } = await discoverOps();
   if (!ops.has(opName)) {
     console.error(formatWarning({
@@ -392,18 +433,18 @@ export async function runApprove(ctx: CommandContext): Promise<number> {
     }));
   }
 
-  const resolvedBy = ctx.args.actor ?? process.env.GITHUB_ACTOR ?? process.env.GITLAB_USER_LOGIN ?? process.env.USER ?? "unknown";
+  const resolvedBy = opts.actor ?? process.env.GITHUB_ACTOR ?? process.env.GITLAB_USER_LOGIN ?? process.env.USER ?? "unknown";
 
   // #2028: the resolution's link is typed. `--url` wins; otherwise, running
   // inside the PR/MR job that carries the change is itself the address, the
   // same env fallback `--actor` uses. `--note` stays free-text prose.
-  const url = ctx.args.url ?? resolveApprovalUrl();
+  const url = opts.url ?? resolveApprovalUrl();
   if (url && !isApprovalUrl(url)) {
     console.error(formatError({
       message: `--url must be an absolute http/https URL (got "${url}")`,
       hint: "Pass the PR/MR link, or omit --url and put prose in --note.",
     }));
-    return 1;
+    return { ok: false };
   }
 
   const { record } = await appendGateResolution({
@@ -411,7 +452,7 @@ export async function runApprove(ctx: CommandContext): Promise<number> {
     gate,
     resolvedBy,
     timestamp: new Date().toISOString(),
-    ...(ctx.args.note ? { note: ctx.args.note } : {}),
+    ...(opts.note ? { note: opts.note } : {}),
     ...(url ? { url } : {}),
   });
   await pushLifecycle().catch(() => undefined);
@@ -420,9 +461,5 @@ export async function runApprove(ctx: CommandContext): Promise<number> {
     `Gate "${gate}" on "${opName}" resolved by ${record.resolvedBy} at ${record.timestamp}` +
       (record.url ? ` (${record.url})` : ""),
   ));
-  console.error(formatInfo(
-    "This records the resolution as a fact; it does not itself re-run the gated dispatch — " +
-      "the local executor still refuses any op with a gate. Re-run it with --temporal, or via the PR that carries the change.",
-  ));
-  return 0;
+  return { ok: true, record };
 }

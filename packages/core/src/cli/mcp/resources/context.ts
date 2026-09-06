@@ -57,13 +57,13 @@ Ops are durable workflow definitions backed by Temporal. Each \`*.op.ts\` file d
 
 | Tool | Description |
 |---|---|
-| \`op-list\` | List all discovered Ops with current run status. Optional \`profile\` param. |
-| \`op-run\` | Submit an Op workflow. Requires \`name\`. Worker must already be running via \`chant run <name>\`. |
-| \`op-status\` | Get current run state (status, activity counts, times). Requires \`name\`. |
-| \`op-signal\` | Send a signal to unblock a gate step. Requires \`name\` and \`signal\`. |
-| \`op-report\` | Return a markdown deployment report for the latest run. Requires \`name\`. |
+| \`op-list\` | List all discovered Ops with their current run state. |
+| \`op-run\` | Run an Op and return its result. Requires \`name\`. |
+| \`op-status\` | Get current run state (state, step records, times). Requires \`name\`. |
+| \`op-approve\` | Record a gate's resolution and wake the runtime hosting the run. Requires \`name\` and \`gate\`. |
+| \`op-report\` | Return a markdown report for the latest run. Requires \`name\`. |
 
-All Op tools accept an optional \`profile\` parameter matching a profile name in \`chant.config.ts\` \`temporal.profiles\`.
+All Op tools accept an optional \`runtime\` parameter: a lexicon name whose \`opRuntime\` hosts the run, or \`local\` (the default) for the built-in in-process runtime.
 
 ### Op MCP Resources
 
