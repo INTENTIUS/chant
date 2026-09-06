@@ -25,13 +25,19 @@ import type {
 } from "@intentius/chant/lint/post-synth";
 import { isResourceDeclarable } from "@intentius/chant/declarable";
 import { TERRAFORM_TYPE, type BlockBody } from "../../hcl/parse";
+import { attr } from "../../hcl/value";
 
-/** `backend`/`cloud` are blocks, so hcl2json encodes them as a value under the key. */
+/**
+ * `backend`/`cloud` are blocks, so hcl2json encodes them as a value under the
+ * key, structurally the same "literal value under this key" shape `attr()`
+ * (`../../hcl/value.ts`, chant #2113) reads for an ordinary attribute, so
+ * this reads through it rather than re-deriving presence by hand.
+ */
 export function hasBlock(body: BlockBody, key: string): boolean {
-  const value = body[key];
-  if (value === undefined || value === null) return false;
-  if (Array.isArray(value)) return value.length > 0;
-  return typeof value === "object" ? Object.keys(value as object).length > 0 : true;
+  const a = attr(body, key);
+  if (a.kind === "absent") return false;
+  if (Array.isArray(a.value)) return a.value.length > 0;
+  return typeof a.value === "object" && a.value !== null ? Object.keys(a.value).length > 0 : true;
 }
 
 export const tf001: PostSynthCheck = {
@@ -64,6 +70,12 @@ export const tf001: PostSynthCheck = {
           'plaintext. Add a `backend "<type>"` or a `cloud {}` block to the terraform block.',
         entity: name,
         lexicon: "terraform",
+        // The missing-resource shape (chant #2113): there is no `backend`/
+        // `cloud` block to point at, only the root that lacks one. `entity`
+        // above still names the `terraform` block this fired from (by
+        // convenience, not because that block is what's wrong), so `missing`
+        // is what a suppression should key on instead.
+        missing: { kind: "backend", scope: root },
       });
     }
 

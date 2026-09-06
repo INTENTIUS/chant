@@ -221,6 +221,35 @@ describe("auditCommand", () => {
     expect(none.exitCode).toBe(0);
   });
 
+  test("--fail-on error is a severity floor, decoupled from tier: a warning-severity finding does not fail it, an error-severity one does (chant #2113)", async () => {
+    const onlyWarning = await auditCommand({
+      path: REPO,
+      failOn: "error",
+      checksProvider: async () => [
+        {
+          id: "TEST900",
+          description: "always fires a warning, for the --fail-on error floor test",
+          check: () => [{ checkId: "TEST900", severity: "warning" as const, message: "a new rule shipped at warning" }],
+        },
+      ],
+    });
+    expect(onlyWarning.findings.some((f) => f.checkId === "TEST900")).toBe(true);
+    expect(onlyWarning.exitCode).toBe(0);
+
+    const withAnError = await auditCommand({
+      path: REPO,
+      failOn: "error",
+      checksProvider: async () => [
+        {
+          id: "TEST901",
+          description: "always fires an error, for the --fail-on error floor test",
+          check: () => [{ checkId: "TEST901", severity: "error" as const, message: "an actual error" }],
+        },
+      ],
+    });
+    expect(withAnError.exitCode).toBe(1);
+  });
+
   test("--tier merge-worthy filters out report-only findings", async () => {
     const all = await auditCommand({ path: REPO, tier: "all" });
     const mw = await auditCommand({ path: REPO, tier: "merge-worthy" });
@@ -439,6 +468,51 @@ describe("auditCommand", () => {
     const valid = validate(doc);
     if (!valid) throw new Error(ajv.errorsText(validate.errors));
     expect(valid).toBe(true);
+  });
+
+  describe("TF001's missing-resource shape renders in all three reporters (chant #2113)", () => {
+    const dir = join(tmpdir(), `chant-audit-tf-missing-${process.pid}`);
+
+    function setup(): void {
+      mkdirSync(join(dir, "infra"), { recursive: true });
+      writeFileSync(join(dir, "infra/main.tf"), 'terraform {\n  required_version = ">= 1.5.0"\n}\n');
+    }
+    function teardown(): void {
+      rmSync(dir, { recursive: true, force: true });
+    }
+
+    test("stylish names the missing kind and scope instead of falling back to entity", async () => {
+      setup();
+      const result = await auditCommand({ path: dir, format: "stylish" });
+      expect(result.output).toContain("(missing backend in audit-root)");
+      teardown();
+    });
+
+    test("json carries `missing` on the finding", async () => {
+      setup();
+      const result = await auditCommand({ path: dir, format: "json" });
+      const doc = JSON.parse(result.output) as { findings: Array<{ checkId: string; missing?: { kind: string; scope: string } }> };
+      const tf001 = doc.findings.find((f) => f.checkId === "TF001");
+      expect(tf001?.missing).toEqual({ kind: "backend", scope: "audit-root" });
+      teardown();
+    });
+
+    test("sarif carries `missing` in the result's properties, and still validates against the SARIF schema", async () => {
+      setup();
+      const result = await auditCommand({ path: dir, format: "sarif" });
+      const doc = JSON.parse(result.output) as {
+        runs: Array<{ results: Array<{ ruleId: string; properties?: { missing?: { kind: string; scope: string } } }> }>;
+      };
+      const tf001 = doc.runs[0].results.find((r) => r.ruleId === "TF001");
+      expect(tf001?.properties?.missing).toEqual({ kind: "backend", scope: "audit-root" });
+
+      const ajv = new Ajv({ strict: false, allErrors: true });
+      const validate = ajv.compile(loadSarifSchema() as object);
+      const valid = validate(doc);
+      if (!valid) throw new Error(ajv.errorsText(validate.errors));
+      expect(valid).toBe(true);
+      teardown();
+    });
   });
 
   test("sarif schema validation also holds for the empty-result case (no findings)", async () => {

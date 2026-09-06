@@ -24,7 +24,17 @@ import type { Severity } from "../../lint/rule";
 
 export type AuditFormat = "stylish" | "json" | "sarif" | "markdown" | "html";
 export type AuditTier = "merge-worthy" | "all";
-export type AuditFailOn = "merge-worthy" | "warning" | "none";
+/**
+ * `"error"` (chant #2113) is the minimum-failure-severity floor tflint's
+ * `--minimum-failure-severity` maps onto (`error | warning | notice`): unlike
+ * `"merge-worthy"`/`"warning"` above (which key off a rule's catalog `tier`
+ * or a finding's severity being at-or-above warning), `"error"` fails only on
+ * an `error`-severity finding, decoupling what CI fails a build over from
+ * what a rule ships reporting by default. It's the lever that lets a new
+ * rule ship at `warning` and be promoted to `error` later without a pipeline
+ * pinned to `--fail-on error` breaking the moment the rule starts firing.
+ */
+export type AuditFailOn = "merge-worthy" | "warning" | "error" | "none";
 
 export interface AuditCommandOptions {
   /** Repo root/dir to scan, or an https:// repo URL to fetch and audit. */
@@ -196,6 +206,7 @@ function exitCodeFor(findings: AuditFinding[], failOn: AuditFailOn, catalog: Rec
   if (failOn === "warning") {
     return findings.some((f) => f.severity === "error" || f.severity === "warning") ? 1 : 0;
   }
+  if (failOn === "error") return findings.some((f) => f.severity === "error") ? 1 : 0;
   return 0;
 }
 
@@ -251,7 +262,15 @@ function renderStylish(findings: AuditFinding[], scanned: string[], notes: strin
     lines.push("", title);
     for (const f of list) {
       const loc = f.line ? `${f.file}:${f.line}` : f.file;
-      const where = f.entity ? `${loc} (${f.entity})` : loc;
+      // A `missing` finding (chant #2113) has nothing present to anchor
+      // `entity` to. The whole point is that `f.missing.kind` does not
+      // exist in `f.missing.scope`, so it renders that absence directly
+      // instead of falling back to `entity` (which such a check rarely sets).
+      const where = f.missing
+        ? `${loc} (missing ${f.missing.kind} in ${f.missing.scope})`
+        : f.entity
+          ? `${loc} (${f.entity})`
+          : loc;
       const title = catalog[f.checkId]?.title ?? f.checkId;
       lines.push(`  [${f.checkId}] ${f.severity}  ${where}  — ${title}`);
     }
@@ -293,6 +312,7 @@ function renderSarif(findings: AuditFinding[], catalog: Record<string, RuleMeta>
   });
   const results = findings.map((f) => {
     const tier = catalog[f.checkId]?.tier;
+    const properties = { ...(tier ? { tier } : {}), ...(f.missing ? { missing: f.missing } : {}) };
     return {
       ruleId: f.checkId,
       level: sarifLevel(f.severity),
@@ -305,7 +325,12 @@ function renderSarif(findings: AuditFinding[], catalog: Record<string, RuleMeta>
           },
         },
       ],
-      ...(tier ? { properties: { tier } } : {}),
+      // `f.missing` (chant #2113) is Snyk policy-engine's "missing-resource"
+      // archetype: nothing at `f.file` actually declares the absent thing, so
+      // there is no line to point SARIF's region at either. `missing` rides
+      // in the property bag (SARIF's core schema has no dedicated slot for an
+      // absence finding) rather than pretending a region exists.
+      ...(Object.keys(properties).length > 0 ? { properties } : {}),
     };
   });
   return JSON.stringify(
