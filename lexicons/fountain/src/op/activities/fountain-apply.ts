@@ -48,6 +48,7 @@ import { readFileSync } from "node:fs";
 import { parseYAML } from "@intentius/chant/yaml";
 import { loadChantConfig, type ChantConfig } from "@intentius/chant/config";
 import { resolveProfile } from "../../config";
+import { allowlistOf, allowlistToIds, vaultNameRefs } from "../../allowlist-refs";
 
 export const DEFAULT_FOUNTAIN_BASE_URL = "https://fountain.inevitable.fyi";
 
@@ -233,22 +234,12 @@ export function toApplyPayload(spec: Record<string, unknown>): Record<string, un
   return { ...rest, secrets: map };
 }
 
-/** A fountain uuid, which is what `allowed_vault_ids` is typed as on the wire. */
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 /**
- * The `allowed_vault_ids` entries that are vault names rather than uuids (#2166).
- *
- * The composites author that field as a reference to the Vault declaration,
- * and the manifest's reference form is the resource's name (FTN021). Fountain
- * resolves a sibling `environment:` name but not these, so anything here has
- * to be resolved before the spec is sent. Pure.
+ * The rule for which `allowed_vault_ids` entries are names, re-exported from
+ * where it used to be defined (#2166). It now lives in ../../allowlist-refs,
+ * next to the read direction that has to agree with it (#2176).
  */
-export function vaultNameRefs(spec: Record<string, unknown>): string[] {
-  const ids = spec.allowed_vault_ids;
-  if (!Array.isArray(ids)) return [];
-  return ids.filter((v): v is string => typeof v === "string" && !UUID_RE.test(v));
-}
+export { vaultNameRefs };
 
 /** Is a live resource chant-owned (by its metadata marker)? Pure. */
 export function isChantOwned(resource: { metadata?: unknown }): boolean {
@@ -456,24 +447,20 @@ async function withResolvedVaultIds(
   ids: RouteIds,
   resource: ManifestResource,
 ): Promise<ManifestResource> {
-  if (vaultNameRefs(resource.spec).length === 0) return resource;
+  const entries = allowlistOf(resource.spec, "allowed_vault_ids");
+  if (!entries || vaultNameRefs(resource.spec).length === 0) return resource;
 
-  const resolved: unknown[] = [];
-  for (const entry of resource.spec.allowed_vault_ids as unknown[]) {
-    if (typeof entry !== "string" || UUID_RE.test(entry)) {
-      resolved.push(entry);
-      continue;
-    }
-    const id = await ids.knownVaultId(entry);
+  const resolved = await allowlistToIds(entries, async (name) => {
+    const id = await ids.knownVaultId(name);
     if (!id) {
       throw new Error(
         `fountainApply: ${resource.kind}/${resource.name}: allowed_vault_ids names the vault ` +
-          `"${entry}", which does not exist on this fountain. Declare that Vault in the same ` +
+          `"${name}", which does not exist on this fountain. Declare that Vault in the same ` +
           `manifest, or point the reference at one that is already there.`,
       );
     }
-    resolved.push(id);
-  }
+    return id;
+  });
   return { ...resource, spec: { ...resource.spec, allowed_vault_ids: resolved } };
 }
 
