@@ -43,7 +43,7 @@ import { exec } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { promisify } from "node:util";
 import { resolve, dirname, join } from "node:path";
-import { safeHeartbeat } from "@intentius/chant/op";
+import { safeHeartbeat, type StepOutputRef } from "@intentius/chant/op";
 import { loadChantConfigUpward } from "@intentius/chant/config";
 import type { TerraformConfig, TerraformRootConfig } from "../../config";
 import { detectLiveEstate } from "./live-detect";
@@ -125,6 +125,22 @@ export interface TerraformApplyArgs extends TerraformRootArgs {
    * file at all.
    */
   planFile?: string;
+  /**
+   * Unused (#2106). The seam for the approval artifact
+   * [choudoufu #878](https://github.com/INTENTIUS/choudoufu/issues/878) asks
+   * for: a change-set digest apply would refuse to run against on a
+   * mismatch, or a stock-form plan file admitted with a live re-check. Today,
+   * the approval a `TerraformApplyOp` gate records covers only the plan its
+   * approver read; the apply that follows re-plans live and applies whatever
+   * that fresh plan says, and nothing refuses when the two differ (the
+   * composite's own doc comment states this caveat in full). When #878 ships,
+   * the Plan step captures the artifact `choudoufuLivePlan` would then
+   * return, the Apply step below passes it here, and this activity checks it
+   * before applying — one activity change, no composite reshape. Typed as a
+   * bare {@link StepOutputRef} rather than a resolved value's type, since
+   * there is no resolved shape to speak of until #878 lands.
+   */
+  approvalArtifact?: StepOutputRef;
 }
 
 export interface TerraformShowArgs extends TerraformRootArgs {
@@ -232,8 +248,26 @@ export interface LivePlanUnownedCounts {
   adoptable: number;
 }
 
-/** What {@link choudoufuLivePlan} resolved. */
-export interface ChoudoufuLivePlanResult extends LivePlanUnownedCounts {
+/**
+ * What {@link choudoufuLivePlan} resolved. `adds`/`changes`/`destroys` (#2106,
+ * {@link PlanChangeCounts}) are parsed off the human-readable render's own
+ * "Plan: N to add, N to change, N to destroy." summary line
+ * ({@link parseChoudoufuPlanSummary}), not off GitHub issue #788's JSON
+ * document: that document is deliberately scoped to the three sections a
+ * stock plan's `-json` has no notion of at all (`bound`, `omissions`,
+ * `unowned`; `internal/command/views/live_plan.go`'s own `LivePlanDocument`
+ * doc comment says as much — "the stock plan's -json...can stay separate")
+ * and carries no resource-change diff of its own. The ordinary create/change/
+ * destroy diff — including the delete choudoufu's own `undeclared_tagged`
+ * quadrant folds into it for an orphaned marked resource, per that same
+ * file's `StatelessRemoval` doc comment ("the plan's own resource diff
+ * carries the destroy itself for those") — renders only in the human form,
+ * the same summary line a stock `terraform plan` prints
+ * (`internal/command/views/operation_test.go`'s own fixtures confirm the
+ * exact wording), which is why the human run's text, already fetched here for
+ * the approver to read, is what this activity parses instead of the JSON.
+ */
+export interface ChoudoufuLivePlanResult extends LivePlanUnownedCounts, PlanChangeCounts {
   /** `true` when `-detailed-exitcode` reported exit 2: the live plan proposes changes. */
   drift: boolean;
   /** GitHub issue #788's JSON document (`bound`, `omissions`, `unowned`), captured whole. */
@@ -515,6 +549,21 @@ export function countPlanChanges(planJson: unknown): PlanChangeCounts {
     if (actions.includes("delete")) counts.destroys++;
   }
   return counts;
+}
+
+/**
+ * Parse the ordinary "Plan: N to add, N to change, N to destroy." (or "...N
+ * to import, N to add...") summary line out of a human-readable `live-plan`
+ * render (#2106). "No changes." — the exit-0 case — matches nothing and
+ * reads as zero on every count, the same conservative default
+ * {@link countPlanChanges} falls back to on a shape it does not recognize.
+ */
+export function parseChoudoufuPlanSummary(text: string): PlanChangeCounts {
+  const match = /Plan:\s*(?:\d+\s+to import,\s*)?(\d+)\s+to add,\s*(\d+)\s+to change,\s*(\d+)\s+to destroy\./.exec(
+    text,
+  );
+  if (!match) return { adds: 0, changes: 0, destroys: 0 };
+  return { adds: Number(match[1]), changes: Number(match[2]), destroys: Number(match[3]) };
 }
 
 // ── choudoufu version check ─────────────────────────────────────────────────
@@ -966,6 +1015,7 @@ export async function choudoufuLivePlan(
     documentPath,
     estate,
     ...countLivePlanUnowned(json),
+    ...parseChoudoufuPlanSummary(textRun.stdout),
   };
 }
 

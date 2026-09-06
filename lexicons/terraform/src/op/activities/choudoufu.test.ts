@@ -20,6 +20,7 @@ import {
   choudoufuLiveLsCommand,
   choudoufuLiveCheckCommand,
   countLivePlanUnowned,
+  parseChoudoufuPlanSummary,
   isOlderVersion,
   parseChoudoufuVersion,
   __resetChoudoufuVersionCheckForTests,
@@ -190,6 +191,36 @@ describe("countLivePlanUnowned (#2103)", () => {
   });
 });
 
+describe("parseChoudoufuPlanSummary (#2106)", () => {
+  test("parses the ordinary Plan: N to add, N to change, N to destroy. line", () => {
+    expect(parseChoudoufuPlanSummary("Plan: 3 to add, 1 to change, 2 to destroy.\n")).toEqual({
+      adds: 3,
+      changes: 1,
+      destroys: 2,
+    });
+  });
+
+  test("parses the import-prefixed form", () => {
+    expect(parseChoudoufuPlanSummary("Plan: 4 to import, 1 to add, 1 to change, 2 to destroy.\n")).toEqual({
+      adds: 1,
+      changes: 1,
+      destroys: 2,
+    });
+  });
+
+  test("zero counts for No changes.", () => {
+    expect(parseChoudoufuPlanSummary("No changes. Your infrastructure still matches the configuration.\n")).toEqual({
+      adds: 0,
+      changes: 0,
+      destroys: 0,
+    });
+  });
+
+  test("zero counts for a shape it does not recognize", () => {
+    expect(parseChoudoufuPlanSummary("")).toEqual({ adds: 0, changes: 0, destroys: 0 });
+  });
+});
+
 describe("isOlderVersion / parseChoudoufuVersion (#2103)", () => {
   test("compares major.minor.patch numerically", () => {
     expect(isOlderVersion("0.11.9", "0.12.0")).toBe(true);
@@ -302,6 +333,9 @@ describe("choudoufuLivePlan (#2103)", () => {
     expect(result.unowned).toBe(1);
     expect(result.adoptable).toBe(1);
     expect(result.documentPath).toBe(DEFAULT_LIVE_PLAN_DOCUMENT_FILE);
+    expect(result.adds).toBe(0);
+    expect(result.changes).toBe(0);
+    expect(result.destroys).toBe(0);
 
     const written = readFileSync(join(result.dir, DEFAULT_LIVE_PLAN_DOCUMENT_FILE), "utf-8");
     expect(JSON.parse(written)).toEqual(JSON.parse(DOC));
@@ -315,11 +349,20 @@ describe("choudoufuLivePlan (#2103)", () => {
   test("exit 2: drift, and the document is still captured", async () => {
     const dir = liveProject();
     replies.push({ match: "live-plan -detailed-exitcode -json", reply: execError(2, "", DOC) });
-    replies.push({ match: "live-plan -detailed-exitcode -no-color -estate", reply: { stdout: "Plan: 1 to add.\n", stderr: "" } });
+    replies.push({
+      match: "live-plan -detailed-exitcode -no-color -estate",
+      reply: { stdout: "Plan: 2 to add, 0 to change, 1 to destroy.\n", stderr: "" },
+    });
 
     const result = await choudoufuLivePlan({ root: "estate", cwd: dir });
     expect(result.drift).toBe(true);
     expect(result.json).toEqual(JSON.parse(DOC));
+    // Parsed off the human render's own summary line, not off the document
+    // (#788's JSON carries no resource-change diff of its own — see
+    // ChoudoufuLivePlanResult's doc comment).
+    expect(result.adds).toBe(2);
+    expect(result.changes).toBe(0);
+    expect(result.destroys).toBe(1);
   });
 
   test("exit 1: throws with choudoufu's stderr attached", async () => {
