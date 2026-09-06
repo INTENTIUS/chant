@@ -65,6 +65,12 @@ export const researcher = new Agent({
 // declared in `fountain.ts` builds fine and then reports "no such Op" the
 // first time anyone tries to run it. The `Steward` below imports both, so the
 // cadence is still written once, on the Op it paces.
+//
+// Each op is a NAMED export, not the default. `chant run` accepts either since
+// #2171, but only the named one folds: a file with an `export default` always
+// falls back to running under `chant build --fold`, and so does every file
+// importing it, which would take `fountain.ts` down with it. A scaffolded
+// project folds completely as it comes out.
 const STEWARD_WATCH_OP = `// Every quarter hour: snapshot prod and diff it against the declaration.
 //
 //   chant run prod-watch                 # here, on the local executor
@@ -72,13 +78,11 @@ const STEWARD_WATCH_OP = `// Every quarter hour: snapshot prod and diff it again
 
 import { WatchOp } from "@intentius/chant/op";
 
-const { op } = WatchOp({
+export const { op: prodWatch } = WatchOp({
   name: "prod-watch",
   env: "prod",
   schedule: "*/15 * * * *",
 });
-
-export default op;
 `;
 
 const STEWARD_CONVERGE_OP = `// Hourly, on the observe dial: report what has drifted and act on nothing.
@@ -89,7 +93,7 @@ const STEWARD_CONVERGE_OP = `// Hourly, on the observe dial: report what has dri
 
 import { ConvergeOp, gt, report, when } from "@intentius/chant/op";
 
-const { op } = ConvergeOp({
+export const { op: prodConverge } = ConvergeOp({
   name: "prod-converge",
   env: "prod",
   dial: "observe",
@@ -101,8 +105,6 @@ const { op } = ConvergeOp({
     }),
   ],
 });
-
-export default op;
 `;
 
 const STEWARD = `import { params } from "@intentius/chant/params";
@@ -112,8 +114,8 @@ import {
   Steward,
   Vault,
 } from "@intentius/chant-lexicon-fountain";
-import prodConverge from "./prod-converge.op";
-import prodWatch from "./prod-watch.op";
+import { prodConverge } from "./prod-converge.op";
+import { prodWatch } from "./prod-watch.op";
 
 /** The ownership marker. Owned-only reconcile, prune and drift all key on it. */
 export const chantOwned = { "managed-by": "chant" };

@@ -70,6 +70,27 @@ describe("the steward template", () => {
     expect(result.warningCount).toBe(0);
   });
 
+  /**
+   * chant #2171 — the scaffold folds as it comes out of `chant init`.
+   *
+   * The two `*.op.ts` files used to default-export their Op, which is the one
+   * export shape `chant build --fold` refuses, so every scaffolded steward
+   * project fell back to running, `fountain.ts` included, because it imports
+   * both. Named exports, and the converge rule builders joining the fold's
+   * authoring-helper allowlist, are what make this hold; a regression in either
+   * shows up here as a `run` decision with its reason attached.
+   */
+  it("folds completely under `chant build --fold`", async () => {
+    const result = await build(srcDir, [fountainSerializer], undefined, {
+      ...(await declaredBuildOptions(srcDir)),
+      fold: true,
+      lexicons: ["fountain"],
+    });
+    expect(result.errors).toEqual([]);
+    expect(result.foldDecisions.length).toBe(3);
+    expect(result.foldDecisions.filter((d) => d.mode !== "fold")).toEqual([]);
+  });
+
   it("builds the six kinds a steward is made of", async () => {
     const result = await build(srcDir, [fountainSerializer], undefined, await declaredBuildOptions(srcDir));
     expect(result.errors).toEqual([]);
