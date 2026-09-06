@@ -1,8 +1,9 @@
 import { readFileSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
-import { packagePipeline } from "@intentius/chant/codegen/package";
+import { packagePipeline, collectSkills } from "@intentius/chant/codegen/package";
 import { generate } from "./generate";
+import { terraformPlugin } from "../plugin";
 
 /**
  * This package's `src/` directory. `packagePipeline` scans it for the rule
@@ -39,7 +40,7 @@ export async function packageLexicon(options?: { verbose?: boolean; force?: bool
         namespace: "Terraform",
       }),
       srcDir,
-      collectSkills: () => new Map(),
+      collectSkills: () => collectSkills(terraformPlugin.skills?.() ?? []),
       version,
     },
     options,

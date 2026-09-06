@@ -100,7 +100,31 @@ produces a warning naming the root and contributes no entities. The rest of the
 build carries on, and the other roots are unaffected. Reading someone else's
 estate is the job here, so half of it parsing is more useful than none of it.
 
+## Driving the root: TerraformApplyOp on the local executor
+
+Reading the root's blocks doesn't run anything. To actually init/plan/apply
+it, declare a `TerraformApplyOp` and run it with `chant run`:
+
+```typescript
+import { TerraformApplyOp } from "@intentius/chant-lexicon-terraform";
+
+export const { op } = TerraformApplyOp({
+  name: "app-apply",
+  root: "app",
+  gate: "never", // required for the local executor — see below
+});
+```
+
+`gate: "never"` matters here specifically: every other gate mode emits an
+approval-wait phase, which is durable-runtime work the local executor refuses
+to run. With it, `chant run app-apply` executes Init, Plan and Apply against
+your terminal, no Temporal server involved. See [Ops](../ops/) for every
+`TerraformApplyOp` option, the four activities and builders underneath it, and
+the compensation rule for a failed apply.
+
 ## Next
 
 The worked example lives in `examples/getting-started/`: a config, a
 `terraform/` root with a local backend, and the entities it produces.
+`examples/apply-gated/` pairs a gated `TerraformApplyOp` with an explicit
+rollback command.

@@ -30,6 +30,15 @@ export default defineConfig({
                   ]
             },
             {
+                  "label": "How-to guides",
+                  "items": [
+                        {
+                              "label": "Ops",
+                              "slug": "ops"
+                        }
+                  ]
+            },
+            {
                   "label": "Reference",
                   "items": [
                         {
