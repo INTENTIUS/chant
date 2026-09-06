@@ -22,6 +22,7 @@ import { sitesToTemplateIR } from "./import/local-agents";
 import { completions } from "./lsp/completions";
 import { hover } from "./lsp/hover";
 import { fountainDeepNormalizationHooks } from "./deep-observe-hooks";
+import { fountainConfigSchema } from "./config";
 
 /**
  * fountain lexicon plugin.
@@ -31,6 +32,7 @@ import { fountainDeepNormalizationHooks } from "./deep-observe-hooks";
 export const fountainPlugin: LexiconPlugin = {
   name: "fountain",
   serializer: fountainSerializer,
+  configSchema: fountainConfigSchema,
 
   // ── Required lifecycle methods ────────────────────────────────
 

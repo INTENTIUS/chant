@@ -55,6 +55,41 @@ describe("FTN001 no-secret-literals", () => {
     );
     expect(diags).toHaveLength(0);
   });
+
+  it("flags a literal token under fountain.profiles", () => {
+    const diags = noSecretLiteralsRule.check(
+      lintCtx(`export default {
+        fountain: {
+          profiles: {
+            staging: { endpoint: "https://x", token: "not-an-env-ref" },
+          },
+        },
+      };`),
+    );
+    expect(diags).toHaveLength(1);
+    expect(diags[0].ruleId).toBe("FTN001");
+    expect(diags[0].message).toMatch(/token under fountain\.profiles/);
+  });
+
+  it("does not flag { env } token references under fountain.profiles", () => {
+    const diags = noSecretLiteralsRule.check(
+      lintCtx(`export default {
+        fountain: {
+          profiles: {
+            staging: { endpoint: "https://x", token: { env: "FOUNTAIN_STAGING_TOKEN" } },
+          },
+        },
+      };`),
+    );
+    expect(diags).toHaveLength(0);
+  });
+
+  it("does not flag a token-named property outside fountain.profiles", () => {
+    const diags = noSecretLiteralsRule.check(
+      lintCtx(`export default { other: { profiles: { p: { token: "fine-here" } } } };`),
+    );
+    expect(diags).toHaveLength(0);
+  });
 });
 
 describe("FTN010 networking-explicit", () => {

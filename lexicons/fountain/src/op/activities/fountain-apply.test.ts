@@ -5,9 +5,11 @@ import {
   toApplyPayload,
   isChantOwned,
   resolveEndpoint,
+  resolveConnection,
   type FountainHttp,
 } from "./fountain-apply";
 import { fountainRun } from "./fountain-run";
+import type { ChantConfig } from "@intentius/chant/config";
 
 interface Call {
   method: string;
@@ -99,7 +101,114 @@ describe("pure helpers", () => {
   });
 });
 
+describe("resolveConnection (#2124)", () => {
+  const configWithProfiles: ChantConfig = {
+    lexicons: ["fountain"],
+    fountain: {
+      profiles: {
+        staging: { endpoint: "https://staging.example.com/", token: { env: "STAGING_TOKEN_2124" } },
+      },
+      defaultProfile: "staging",
+    },
+  } as unknown as ChantConfig;
+
+  it("explicit endpoint and token skip config resolution entirely", async () => {
+    const result = await resolveConnection(
+      { endpoint: "http://explicit", token: "explicit-token", profile: "staging" },
+      { config: {} as ChantConfig },
+    );
+    expect(result).toEqual({ endpoint: "http://explicit", token: "explicit-token" });
+  });
+
+  it("resolves endpoint and token from the named profile's env var", async () => {
+    process.env.STAGING_TOKEN_2124 = "tok-from-env";
+    try {
+      const result = await resolveConnection(
+        { profile: "staging" },
+        { config: configWithProfiles },
+      );
+      expect(result).toEqual({ endpoint: "https://staging.example.com", token: "tok-from-env" });
+    } finally {
+      delete process.env.STAGING_TOKEN_2124;
+    }
+  });
+
+  it("falls back to defaultProfile when no profile name is given", async () => {
+    process.env.STAGING_TOKEN_2124 = "tok-from-env";
+    try {
+      const result = await resolveConnection({}, { config: configWithProfiles });
+      expect(result.endpoint).toBe("https://staging.example.com");
+    } finally {
+      delete process.env.STAGING_TOKEN_2124;
+    }
+  });
+
+  it("throws an actionable error naming the missing env var when the profile resolves but its env var is unset", async () => {
+    delete process.env.STAGING_TOKEN_2124;
+    await expect(
+      resolveConnection({ profile: "staging" }, { config: configWithProfiles }),
+    ).rejects.toThrow(/STAGING_TOKEN_2124/);
+  });
+
+  it("an explicit token wins over the profile's env var", async () => {
+    process.env.STAGING_TOKEN_2124 = "tok-from-env";
+    try {
+      const result = await resolveConnection(
+        { profile: "staging", token: "explicit-wins" },
+        { config: configWithProfiles },
+      );
+      expect(result.token).toBe("explicit-wins");
+    } finally {
+      delete process.env.STAGING_TOKEN_2124;
+    }
+  });
+
+  it("falls back to FOUNTAIN_ENDPOINT/FOUNTAIN_TOKEN when no profile resolves", async () => {
+    const saved = { endpoint: process.env.FOUNTAIN_ENDPOINT, token: process.env.FOUNTAIN_TOKEN };
+    process.env.FOUNTAIN_ENDPOINT = "http://env-endpoint";
+    process.env.FOUNTAIN_TOKEN = "env-token";
+    try {
+      const result = await resolveConnection({}, { config: {} as ChantConfig });
+      expect(result).toEqual({ endpoint: "http://env-endpoint", token: "env-token" });
+    } finally {
+      if (saved.endpoint === undefined) delete process.env.FOUNTAIN_ENDPOINT;
+      else process.env.FOUNTAIN_ENDPOINT = saved.endpoint;
+      if (saved.token === undefined) delete process.env.FOUNTAIN_TOKEN;
+      else process.env.FOUNTAIN_TOKEN = saved.token;
+    }
+  });
+});
+
 describe("fountainApply", () => {
+  it("with no http override, sends to the resolved profile's endpoint using its env-var token", async () => {
+    const configWithProfiles: ChantConfig = {
+      lexicons: ["fountain"],
+      fountain: {
+        profiles: {
+          staging: { endpoint: "https://staging.example.com", token: { env: "STAGING_TOKEN_2124B" } },
+        },
+      },
+    } as unknown as ChantConfig;
+    process.env.STAGING_TOKEN_2124B = "tok-b";
+    const originalFetch = globalThis.fetch;
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      calls.push({ url: String(url), init });
+      return new Response(JSON.stringify({ data: { results: [] } }), { status: 200 });
+    }) as typeof fetch;
+    try {
+      await fountainApply({ manifestContent: MANIFEST, profile: "staging" }, undefined, {
+        config: configWithProfiles,
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      delete process.env.STAGING_TOKEN_2124B;
+    }
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toBe("https://staging.example.com/api/apply");
+    expect((calls[0].init?.headers as Record<string, string>).authorization).toBe("Bearer tok-b");
+  });
+
   it("sends the whole manifest in one POST /api/apply call", async () => {
     const { http, calls } = fakeHttp({
       "POST /api/apply": {

@@ -44,6 +44,10 @@ export default defineConfig({
                               "slug": "ops"
                         },
                         {
+                              "label": "Profiles",
+                              "slug": "profiles"
+                        },
+                        {
                               "label": "Resources",
                               "slug": "resources"
                         },

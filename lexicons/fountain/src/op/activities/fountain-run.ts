@@ -10,10 +10,10 @@
  */
 
 import {
-  resolveEndpoint,
-  resolveToken,
+  resolveConnection,
   defaultFountainHttp,
   type FountainHttp,
+  type FountainConnectionDeps,
 } from "./fountain-apply";
 
 export const TERMINAL_STATUSES = new Set(["completed", "failed", "timed_out", "terminated"]);
@@ -26,6 +26,14 @@ export interface FountainRunArgs {
   vaultId?: string;
   endpoint?: string;
   token?: string;
+  /**
+   * Named `fountain.profiles` entry to resolve endpoint/token from (#2124).
+   * Falls back to `defaultProfile` when omitted; ignored for any field an
+   * explicit `endpoint`/`token` arg already supplies.
+   */
+  profile?: string;
+  /** Project root `chant.config.ts` is read from. Default: process.cwd(). */
+  cwd?: string;
   /** Give up (and terminate the conversation) after this long. Default 10 min. */
   timeoutMs?: number;
   /** Poll interval. Default 5s. */
@@ -56,9 +64,13 @@ export async function resolveAgentId(http: FountainHttp, agent: string): Promise
 export async function fountainRun(
   args: FountainRunArgs,
   http?: FountainHttp,
+  deps?: FountainConnectionDeps,
 ): Promise<FountainRunResult> {
-  const endpoint = resolveEndpoint(args);
-  const client = http ?? defaultFountainHttp(endpoint, resolveToken(args));
+  let client = http;
+  if (!client) {
+    const { endpoint, token } = await resolveConnection(args, deps);
+    client = defaultFountainHttp(endpoint, token);
+  }
   const sleep = args.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const timeoutMs = args.timeoutMs ?? 600_000;
   const pollMs = args.pollMs ?? 5_000;
