@@ -12,7 +12,7 @@
 import { describe, expect, it } from "vitest";
 import { diffDeepObservation, type DeclaredEntities } from "@intentius/chant/lifecycle/deep-observe";
 import { normalizeDeepObservation, MASKED } from "@intentius/chant/deep-observation";
-import { Environment } from "./generated/index";
+import { Environment, Vault } from "./generated/index";
 import { observeResourcesDeepFountain, type FountainDeepObserveOptions } from "./deep-observe";
 import { fountainDeepNormalizationHooks } from "./deep-observe-hooks";
 import { fountainPlugin } from "./plugin";
@@ -439,6 +439,174 @@ describe("the agent's environment reference", () => {
     expect(diff.unclaimed[0]?.fields).toContainEqual(
       expect.objectContaining({ path: "environment", live: "concierge-env", source: "claimed-fields" }),
     );
+  });
+});
+
+describe("the agent's vault allowlist (#2176)", () => {
+  // What the applier sends after it resolves the name (#2166), and what
+  // fountain hands back on the next read.
+  const VAULT_ID = "8f3c1f2e-0b4a-4c5d-9e6f-1a2b3c4d5e6f";
+  const OTHER_ID = "1d2e3f4a-5b6c-4d7e-8f90-a1b2c3d4e5f6";
+
+  const opsVaultDeclaration = new Vault({ name: "ops-vault", metadata: { "managed-by": "chant" } });
+
+  /** The estate, with the agent scoped to the one vault it was applied with. */
+  function scopedEstate(allowed: unknown[] = [VAULT_ID], vaults = [liveVault({ id: VAULT_ID })]): FountainHttp {
+    return routed({
+      "GET /api/environments": { status: 200, json: { data: [liveEnvironment()] } },
+      "GET /api/vaults": { status: 200, json: { data: vaults } },
+      "GET /api/agents": { status: 200, json: { data: [liveAgent({ allowed_vault_ids: allowed })] } },
+      "GET /api/environments/env-1/secrets": { status: 200, json: { data: [] } },
+      [`GET /api/vaults/${VAULT_ID}/secrets`]: { status: 200, json: { data: [] } },
+      [`GET /api/vaults/${OTHER_ID}/secrets`]: { status: 200, json: { data: [] } },
+    });
+  }
+
+  /** The steward's declaration, with the allowlist entry written however. */
+  function scopedDeclaration(entry: unknown): DeclaredEntities {
+    const entities = conciergeDeclaration();
+    const agent = entities.get("researcher")!;
+    entities.set("researcher", { ...agent, props: { ...agent.props, allowed_vault_ids: [entry] } });
+    return entities;
+  }
+
+  it("a name in the declaration is not drift against the uuid fountain returns", async () => {
+    const { live, diff } = await drift(scopedDeclaration("ops-vault"), scopedEstate());
+
+    expect(live.resources.researcher.properties.allowed_vault_ids).toEqual(["ops-vault"]);
+    expect(diff.drifted).toEqual([]);
+    expect(diff.heldElsewhere).toEqual([]);
+    expect(diff.unchanged).toContain("researcher");
+  });
+
+  it("a Vault declaration in the allowlist is not drift either", async () => {
+    // The shape `Steward` emits: the entry is the Vault declaration, because
+    // the manifest's reference form is the resource's name. Core collapses a
+    // resource reference to UNRESOLVED on the declared side, so the live entry
+    // has to come back as that same reference or the two sides key the list
+    // differently and a vault chant scoped reads as held by somebody else.
+    const { diff } = await drift(scopedDeclaration(opsVaultDeclaration), scopedEstate());
+
+    expect(diff.drifted).toEqual([]);
+    expect(diff.heldElsewhere).toEqual([]);
+    expect(diff.unchanged).toContain("researcher");
+  });
+
+  it("a vault swapped for another one is still reported", async () => {
+    const http = scopedEstate(
+      [OTHER_ID],
+      [liveVault({ id: VAULT_ID }), liveVault({ id: OTHER_ID, name: "finance-vault" })],
+    );
+    const { live, diff } = await drift(scopedDeclaration("ops-vault"), http);
+
+    expect(live.resources.researcher.properties.allowed_vault_ids).toEqual(["finance-vault"]);
+    const agent = diff.drifted.find((d) => d.name === "researcher");
+    expect(agent?.changes).toContainEqual(
+      expect.objectContaining({ path: "allowed_vault_ids[#ops-vault]", kind: "absent", declared: "ops-vault" }),
+    );
+    // The vault somebody else put on the list is reported by name, not by uuid.
+    expect(diff.heldElsewhere[0]?.fields).toContainEqual(
+      expect.objectContaining({ path: "allowed_vault_ids[#finance-vault]", live: "finance-vault" }),
+    );
+  });
+
+  it("a swap under a Vault declaration is still reported, and reported by name", async () => {
+    // The steward shape, changed out from under it. Core collapses a resource
+    // reference to UNRESOLVED on the declared side, so a swap here reaches the
+    // report as a held field rather than as drift, and the entity still counts
+    // as unchanged. That classification is core's, it is what this case did
+    // before this fix too, and it is not what #2176 is about. What this fix
+    // changes is that the finding is readable: it names "finance-vault"
+    // instead of a uuid nobody can place.
+    const http = scopedEstate(
+      [OTHER_ID],
+      [liveVault({ id: VAULT_ID }), liveVault({ id: OTHER_ID, name: "finance-vault" })],
+    );
+    const { diff } = await drift(scopedDeclaration(opsVaultDeclaration), http);
+
+    expect(diff.heldElsewhere[0]?.fields).toContainEqual(
+      expect.objectContaining({ path: "allowed_vault_ids[#finance-vault]", live: "finance-vault" }),
+    );
+  });
+
+  it("a second vault added by hand is reported by name", async () => {
+    const http = scopedEstate(
+      [VAULT_ID, OTHER_ID],
+      [liveVault({ id: VAULT_ID }), liveVault({ id: OTHER_ID, name: "finance-vault" })],
+    );
+    const { diff } = await drift(scopedDeclaration("ops-vault"), http);
+
+    expect(diff.drifted).toEqual([]);
+    expect(diff.heldElsewhere[0]?.fields).toEqual([
+      expect.objectContaining({ path: "allowed_vault_ids[#finance-vault]", live: "finance-vault" }),
+    ]);
+  });
+
+  it("passes an id through where source authored the id itself", async () => {
+    const { live, diff } = await drift(scopedDeclaration(VAULT_ID), scopedEstate());
+
+    expect(live.resources.researcher.properties.allowed_vault_ids).toEqual([VAULT_ID]);
+    expect(diff.drifted).toEqual([]);
+    expect(diff.heldElsewhere).toEqual([]);
+  });
+
+  it("an id no vault answers to survives as itself and reports as drift", async () => {
+    // The vault was deleted out of band and the agent still lists it. Dropping
+    // the entry would report a clean allowlist against a live one that is not.
+    const { live, diff } = await drift(scopedDeclaration("ops-vault"), scopedEstate([OTHER_ID]));
+
+    expect(live.resources.researcher.properties.allowed_vault_ids).toEqual([OTHER_ID]);
+    const agent = diff.drifted.find((d) => d.name === "researcher");
+    expect(agent?.changes).toContainEqual(
+      expect.objectContaining({ path: "allowed_vault_ids[#ops-vault]", kind: "absent" }),
+    );
+    expect(diff.heldElsewhere[0]?.fields).toContainEqual(
+      expect.objectContaining({ path: `allowed_vault_ids[#${OTHER_ID}]`, live: OTHER_ID }),
+    );
+  });
+
+  it("leaves the empty and the absent state alone", async () => {
+    // `[]` is a posture — no vault may attach — and `null` is fountain's
+    // legacy-permissive state. Neither is a list of ids to translate.
+    const empty = await drift(conciergeDeclaration(), estate());
+    expect(empty.live.resources.researcher.properties.allowed_vault_ids).toEqual([]);
+    expect(empty.diff.drifted).toEqual([]);
+
+    const permissive = await drift(
+      conciergeDeclaration(),
+      estate({ "GET /api/agents": { status: 200, json: { data: [liveAgent({ allowed_vault_ids: null })] } } }),
+    );
+    expect(permissive.live.resources.researcher.properties.allowed_vault_ids).toBeNull();
+  });
+
+  it("resolves allowed_environment_ids the same way", async () => {
+    // Nothing in chant authors this field today, so nothing in the fixtures
+    // exercised it. It is the same uuid column with the same reference form,
+    // and a hand-written manifest that names an environment there would have
+    // read back as permanent drift for exactly the same reason.
+    const entities = conciergeDeclaration();
+    const agent = entities.get("researcher")!;
+    entities.set("researcher", {
+      ...agent,
+      props: { ...agent.props, allowed_environment_ids: ["concierge-env"] },
+    });
+
+    const ENV_ID = "6c1b8a24-9d3e-4f05-b7a8-2e5c6d7f8091";
+    const http = routed({
+      "GET /api/environments": { status: 200, json: { data: [liveEnvironment({ id: ENV_ID })] } },
+      "GET /api/vaults": { status: 200, json: { data: [liveVault()] } },
+      "GET /api/agents": {
+        status: 200,
+        json: { data: [liveAgent({ environment_id: ENV_ID, allowed_environment_ids: [ENV_ID] })] },
+      },
+      [`GET /api/environments/${ENV_ID}/secrets`]: { status: 200, json: { data: [] } },
+      "GET /api/vaults/vault-1/secrets": { status: 200, json: { data: [] } },
+    });
+    const { live, diff } = await drift(entities, http);
+
+    expect(live.resources.researcher.properties.allowed_environment_ids).toEqual(["concierge-env"]);
+    expect(diff.drifted).toEqual([]);
+    expect(diff.heldElsewhere).toEqual([]);
   });
 });
 

@@ -43,6 +43,14 @@
  * `agent_id` becomes `teammate`; a teammate's environment and vault ids become
  * `environment` and `vault`.
  *
+ * An agent's two allowlists are the same edge in list form.
+ * `allowed_vault_ids` and `allowed_environment_ids` are uuid columns upstream
+ * and references in source — `Steward` writes the `Vault` declaration itself
+ * into the first — so each live id is put back into whichever form the
+ * declaration used for that resource before the tree is normalized (#2176).
+ * ./allowlist-refs.ts holds that rule and the applier's opposite one (#2166)
+ * together.
+ *
  * A teammate is the one kind whose live payload is not its record. `GET
  * /api/team` renders a roster row: the agent embedded whole, the current
  * conversation, presence, unread state, the last turn, usage. Almost none of
@@ -89,8 +97,16 @@ import {
   nameIndex,
   ownershipGap,
   ownershipOf,
+  referencedName,
   type LiveRecord,
 } from "./live-identity";
+import {
+  ALLOWLIST_FIELDS,
+  allowlistOf,
+  allowlistToDeclared,
+  declaredAllowlistRefs,
+  type AllowlistField,
+} from "./allowlist-refs";
 import {
   fountainDeepNormalizationHooks,
   ENVIRONMENT_TYPE,
@@ -127,6 +143,8 @@ interface NameLookups {
   vault(): Promise<Map<string, string>>;
   agent(): Promise<Map<string, string>>;
   teammate(): Promise<ReadonlyMap<string, LiveRecord>>;
+  /** The fountain name a declared reference prop points at, or nothing. */
+  declaredName(value: unknown): string | undefined;
 }
 
 /**
@@ -187,7 +205,42 @@ async function agentProperties(
   if (declared.environment_id === undefined && typeof record.environment_id === "string") {
     translateRef(tree, declared, "environment_id", "environment", await names.environment());
   }
+  await translateAllowlists(tree, declared, names);
   return tree;
+}
+
+/** Which list each allowlist field's ids are looked up in. */
+const ALLOWLIST_LOOKUP: Record<AllowlistField, (names: NameLookups) => Promise<Map<string, string>>> = {
+  allowed_vault_ids: (names) => names.vault(),
+  allowed_environment_ids: (names) => names.environment(),
+};
+
+/**
+ * The agent's two allowlists, put back into the vocabulary the declaration
+ * wrote them in (#2176).
+ *
+ * The applier resolves a vault name in `allowed_vault_ids` to its uuid before
+ * sending (#2166), so a steward that scopes a vault applies cleanly and then
+ * reads back as a uuid the declaration never mentions. Without this, one line
+ * about `allowed_vault_ids` sits on every `chant lifecycle diff --live` of an
+ * estate that is exactly in sync. ./allowlist-refs.ts holds the rule both
+ * directions share and says what each entry translates to.
+ *
+ * The empty and absent states are untouched: `[]` still reads as `[]`, and a
+ * field fountain did not return is still not in the tree.
+ */
+async function translateAllowlists(
+  tree: Record<string, unknown>,
+  declared: Record<string, unknown>,
+  names: NameLookups,
+): Promise<void> {
+  for (const field of ALLOWLIST_FIELDS) {
+    const entries = allowlistOf(tree, field);
+    if (!entries || entries.length === 0) continue;
+    const byId = await ALLOWLIST_LOOKUP[field](names);
+    const refs = declaredAllowlistRefs(allowlistOf(declared, field), names.declaredName);
+    tree[field] = allowlistToDeclared(entries, (id) => byId.get(id), refs);
+  }
 }
 
 /**
@@ -305,6 +358,7 @@ export async function observeResourcesDeepFountain(
     vault: () => lists.nameById(VAULT_TYPE),
     agent: () => lists.nameById(AGENT_TYPE),
     teammate: () => lists.roster(),
+    declaredName: (value) => referencedName(value, index),
   };
 
   for (const [entityName, { entityType, props }] of options.entities) {
