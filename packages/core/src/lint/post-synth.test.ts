@@ -1,5 +1,7 @@
 import { describe, test, expect } from "vitest";
 import { runPostSynthChecks } from "./post-synth";
+import { activityContract, type ActivityContract } from "../op/activity-contract";
+import { z } from "zod";
 import type { PostSynthCheck, PostSynthContext } from "./post-synth";
 
 function createBuildResult(overrides: Partial<PostSynthContext["buildResult"]> = {}) {
@@ -128,6 +130,35 @@ describe("environment-aware checks (#201)", () => {
     expect(runPostSynthChecks([prodOnly], createBuildResult(), "prod")).toHaveLength(1);
     expect(runPostSynthChecks([prodOnly], createBuildResult(), "dev")).toHaveLength(0);
     expect(runPostSynthChecks([prodOnly], createBuildResult())).toHaveLength(0); // env undefined
+  });
+});
+
+describe("cross-lexicon activity contracts (#2101)", () => {
+  // A check shaped like temporal's TMP012/TMP013: it reads the merged
+  // contract map the runner hands it, and behaves as it did before the field
+  // existed when the context carries none.
+  const readsContracts: PostSynthCheck = {
+    id: "CONTRACTS",
+    description: "reports the activity names the context carries contracts for",
+    check(ctx) {
+      const names = [...(ctx.activityContracts?.keys() ?? [])].sort();
+      return [{ checkId: "CONTRACTS", severity: "warning", message: names.join(",") }];
+    },
+  };
+
+  test("the contract map is threaded into the context", () => {
+    const contracts = new Map<string, ActivityContract>([
+      ["terraformPlan", activityContract("terraformPlan", z.strictObject({ root: z.string() }))],
+    ]);
+    const diags = runPostSynthChecks([readsContracts], createBuildResult(), undefined, {
+      activityContracts: contracts,
+    });
+    expect(diags[0].message).toBe("terraformPlan");
+  });
+
+  test("a run with no contracts leaves the field undefined, not an empty map", () => {
+    const diags = runPostSynthChecks([readsContracts], createBuildResult());
+    expect(diags[0].message).toBe("");
   });
 });
 

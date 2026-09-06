@@ -79,7 +79,7 @@ async function watchWorkflow(): Promise<string> {
 describe("scheduled-watch generates its GitHub Actions cron (#2087)", () => {
   it("discovers the example's own Op, and only that one", async () => {
     // `discoverOps` roots at the nearest chant.config.ts, so this resolves the
-    // example's `ops/watch.op.ts` and not the repo's other `*.op.ts` files.
+    // example's `src/watch.op.ts` and not the repo's other `*.op.ts` files.
     const result = await generateOpsPipeline([WATCH_SPEC], "github", {}, scheduledWatchDir);
     expect(result.success).toBe(true);
     expect(result.jobs).toEqual([

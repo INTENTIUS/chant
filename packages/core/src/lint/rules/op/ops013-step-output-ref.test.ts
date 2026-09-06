@@ -6,7 +6,8 @@
 import { describe, test, expect } from "vitest";
 import type { PostSynthContext } from "../../post-synth";
 import { DECLARABLE_MARKER } from "../../../declarable";
-import { stepOutput } from "../../../op";
+import { stepOutput, activityContract, type ActivityContract } from "../../../op";
+import { z } from "zod";
 import { ops013 } from "./ops013-step-output-ref";
 
 function makeEntity(entityType: string, props: Record<string, unknown>) {
@@ -40,6 +41,35 @@ function opEntity(name: string, steps: unknown[], entityType = "Chant::Op") {
 
 function opEntityPhases(name: string, phases: Array<{ name: string; steps: unknown[]; parallel?: boolean }>) {
   return makeEntity("Chant::Op", { name, overview: "test", phases });
+}
+
+
+// ── Cross-lexicon contracts (chant #2101) ────────────────────────────────
+//
+// An Op step may call an activity any configured lexicon contributes, and
+// this check is core-owned, so it fires on every project that declares one.
+// `ctx.activityContracts` is what `chant build`, `chant lint` and
+// check-lexicon's example harness fill in from `loadActivityContracts`; the
+// check merges it over its own static table.
+
+/** Stand-in for what a lexicon (terraform) declares for its own activities. */
+const foreignContracts = new Map<string, ActivityContract>([
+  [
+    "terraformPlan",
+    activityContract(
+      "terraformPlan",
+      z.strictObject({ root: z.string(), planFile: z.string().optional() }),
+      z.object({ planFile: z.string(), changed: z.boolean(), text: z.string() }),
+    ),
+  ],
+  [
+    "terraformApply",
+    activityContract("terraformApply", z.strictObject({ root: z.string(), planFile: z.string().optional() })),
+  ],
+]);
+
+function withContracts(ctx: PostSynthContext, contracts: ReadonlyMap<string, ActivityContract>): PostSynthContext {
+  return { ...ctx, activityContracts: contracts };
 }
 
 describe("OPS013: step-output-ref", () => {
@@ -151,5 +181,57 @@ describe("OPS013: step-output-ref", () => {
       ])],
     ]));
     expect(ops013.check(ctx)).toHaveLength(0);
+  });
+});
+
+describe("OPS013 reads a lexicon's activity contracts (#2101)", () => {
+  const terraformOp = () =>
+    makeCtxFromEntities(new Map([
+      ["op", opEntity("app-apply", [
+        { kind: "activity", fn: "terraformPlan", args: { root: "app" }, id: "plan" },
+        { kind: "activity", fn: "terraformApply", args: { root: "app", planFile: stepOutput("plan", "planFile") } },
+      ])],
+    ]));
+
+  test("the foreign producer is flagged when the context carries no contracts — the pre-#2101 behaviour", () => {
+    const diags = ops013.check(terraformOp());
+    expect(diags.some((d) => d.message.includes("no registered activity contract"))).toBe(true);
+  });
+
+  test("it passes once the configured lexicon's contracts reach the check", () => {
+    expect(ops013.check(withContracts(terraformOp(), foreignContracts))).toHaveLength(0);
+  });
+
+  test("a path the foreign contract's return schema does not declare is still caught", () => {
+    const ctx = makeCtxFromEntities(new Map([
+      ["op", opEntity("app-apply", [
+        { kind: "activity", fn: "terraformPlan", args: { root: "app" }, id: "plan" },
+        { kind: "activity", fn: "terraformApply", args: { root: "app", planFile: stepOutput("plan", "planFyle") } },
+      ])],
+    ]));
+    const diags = ops013.check(withContracts(ctx, foreignContracts));
+    expect(diags.some((d) => d.message.includes('path "planFyle"') && d.message.includes("does not exist"))).toBe(true);
+  });
+
+  test("a cross-lexicon type mismatch is still caught", () => {
+    const ctx = makeCtxFromEntities(new Map([
+      ["op", opEntity("app-apply", [
+        { kind: "activity", fn: "terraformPlan", args: { root: "app" }, id: "plan" },
+        { kind: "activity", fn: "terraformApply", args: { root: "app", planFile: stepOutput("plan", "changed") } },
+      ])],
+    ]));
+    const diags = ops013.check(withContracts(ctx, foreignContracts));
+    expect(diags.some((d) => d.message.includes("type mismatch"))).toBe(true);
+  });
+
+  test("core's own contracts survive the merge", () => {
+    const ctx = makeCtxFromEntities(new Map([
+      ["op", opEntity("reconcile", [
+        { kind: "activity", fn: "lifecycleDiff", args: { env: "prod" }, id: "diff" },
+        { kind: "activity", fn: "httpCheck", args: { url: "http://x", contains: stepOutput("diff", "notAField") } },
+      ])],
+    ]));
+    const diags = ops013.check(withContracts(ctx, foreignContracts));
+    expect(diags.some((d) => d.message.includes('path "notAField"'))).toBe(true);
   });
 });

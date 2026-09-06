@@ -57,7 +57,7 @@ npm run reconcile      # chant run prod-reconcile  (ReconcileOp, owned-only)
 ```
 
 `ReconcileOp` runs one-shot on the local executor. Add a `schedule` (see
-`ops/reconcile.op.ts`) and `chant operator` — or a generated CI cron — ticks it
+`src/reconcile.op.ts`) and `chant operator` — or a generated CI cron — ticks it
 continuously.
 
 ## 4b. Apply (code → cloud)
@@ -95,5 +95,5 @@ npm run teardown       # delete the CloudFormation stack
 |---|---|
 | `src/` | the declared stack (default VPC) |
 | `chant.config.ts` | lexicons, environments, **ownership** marking |
-| `ops/reconcile.op.ts` | `ReconcileOp` — cloud → code, owned-only, PR on drift |
-| `ops/apply.op.ts` | `ApplyOp` — code → cloud, CloudFormation, gated destructive apply |
+| `src/reconcile.op.ts` | `ReconcileOp` — cloud → code, owned-only, PR on drift |
+| `src/apply.op.ts` | `ApplyOp` — code → cloud, CloudFormation, gated destructive apply |

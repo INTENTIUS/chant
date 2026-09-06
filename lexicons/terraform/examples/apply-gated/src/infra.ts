@@ -6,8 +6,13 @@
  * `chant.config.ts` next door, parsed at build time by `buildRoots()` (TF001
  * passes: the root declares a `backend "local"`). The Op this example is
  * actually about — `TerraformApplyOp` with a gate and a rollback command —
- * lives in `ops/apply-gated.op.ts`, not here. `ops/` is where a project's
- * `*.op.ts` files live regardless: `chant run` finds them there, same as
- * `lexicons/aws/examples/lifecycle-reconcile-aws`.
+ * lives in `apply-gated.op.ts`, beside this file, so the example build
+ * discovers it and core's OPS012/OPS013 validate every step.
+ *
+ * It sat under `ops/` until chant #2101: those checks knew only about the
+ * activities core itself declares a contract for, so `plan.out.planFile`
+ * reaching the Show and Apply steps was flagged for the absence of a
+ * contract terraform does in fact declare. They now merge the contracts each
+ * configured lexicon contributes.
  */
 export {};

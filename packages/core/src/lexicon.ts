@@ -14,6 +14,7 @@ import type { DriverComponent } from "./components/driver";
 import type { EmulatorDeclaration } from "./op/emulator-lifecycle";
 import type { OpRuntimeProvider } from "./op/runtime";
 import type { OpSchedule } from "./op/types";
+import type { ActivityContract } from "./op/activity-contract";
 import type { OwnershipChannel, OwnershipMarker } from "./ownership";
 import type { LexiconConfigSchema } from "./lexicon-config";
 import type { RuleMeta } from "./audit/catalog";
@@ -742,6 +743,22 @@ export interface LexiconPlugin {
 
   /** Return post-synthesis checks for build validation */
   postSynthChecks?(): PostSynthCheck[];
+
+  /**
+   * Activity contracts (`ActivityContract`, `./op/activity-contract.ts`) for
+   * the activities this lexicon implements, so another lexicon's post-synth
+   * check can validate an Op step calling one of them (chant #2101).
+   *
+   * The ordinary way to contribute these is the same convention activities
+   * themselves use: export them from
+   * `@intentius/chant-lexicon-<name>/op/activity-contracts`, and
+   * `loadActivityContracts` (`./op/activity-contract-registry.ts`) finds them
+   * with no plugin member at all. This member is the escape hatch for a
+   * lexicon whose contracts are not reachable at that subpath — a bundled
+   * single-file plugin, a project-local one — and both sources are merged
+   * when both are present. Omit it in the common case.
+   */
+  activityContracts?(): ActivityContract[];
 
   /**
    * Audit catalog metadata (title/tier/fix/authority/category) for this
