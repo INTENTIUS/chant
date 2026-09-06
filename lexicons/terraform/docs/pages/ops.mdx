@@ -148,7 +148,7 @@ export const { op } = TerraformWatchOp({
 });
 ```
 
-A stock plan answers one question, so a stock watch reports one thing: whether the root drifted. A live plan reads the live system against the markers, so it answers three, and the Plan step publishes all three off that single read: `Drift` from the `-detailed-exitcode` exit, `Unowned` for live resources sitting at a declared identity with no marker, and `Adoptable` for the subset an exact content match makes claimable. `planFile` is refused with `live: true` (choudoufu takes no plan file at all) and `estate` is refused without it.
+A stock plan answers one question, so a stock watch reports one thing: whether the root drifted. A live plan reads the live system against the markers, so it answers three, and the Plan step publishes all three off that single read: `Drift` from the `-detailed-exitcode` exit, `Unowned` for live resources sitting at a declared identity with no marker, and `Adoptable` for the subset an exact content match makes claimable. `planFile` is refused with `live: true` (`live-plan` writes no saved plan, and `-out` is still refused on its own `-estate` surface) and `estate` is refused without it.
 
 In `issue` and `pull-request` mode the body is the `-no-color` plan text followed by the adoption ledger: one line per adoptable match with its address, its live identity and the two tag values that claim it, then any address more than one live resource sits at, listed and not offered. Only that text reaches the body. The `-json` document stays in the Op, the same rule the stock mode holds for `terraform show -json` and for the same reason: it carries live identities and attribute values for everything the run touched.
 
