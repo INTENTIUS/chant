@@ -1,0 +1,16 @@
+{
+  "name": "fountain-steward-example",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "chant build src --lexicon fountain -o dist/fountain.yaml",
+    "lint": "chant lint src",
+    "watch": "chant run prod-watch --on fountain",
+    "status": "chant run status prod-watch --on fountain"
+  },
+  "dependencies": {
+    "@intentius/chant": "*",
+    "@intentius/chant-lexicon-fountain": "*"
+  }
+}

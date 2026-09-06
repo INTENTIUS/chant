@@ -19,6 +19,7 @@ import { gitlabSerializer } from "@intentius/chant-lexicon-gitlab";
 import { githubSerializer } from "@intentius/chant-lexicon-github";
 import { helmSerializer } from "@intentius/chant-lexicon-helm";
 import { flySerializer } from "@intentius/chant-lexicon-fly";
+import { fountainSerializer } from "@intentius/chant-lexicon-fountain";
 import type { PostSynthContext } from "@intentius/chant/lint/post-synth";
 import { k8sPlugin } from "@intentius/chant-lexicon-k8s/plugin";
 import deployOp from "./getting-started/deploy.op";
@@ -1825,4 +1826,33 @@ describe("local-op-quickstart gated migration (#1835)", () => {
     // The gate pauses only when the effect will fire; the seed runs after it.
     expect(migrate.steps!.map((s) => s.kind)).toEqual(["gate", "activity"]);
   });
+});
+
+// ── fountain steward (#2129, epic #2115) ─────────────────────────────
+// The hosted-runtime story: one Environment + Vault + Steward, two Ops with
+// cadences, and the six kinds the manifest carries. The live half — applying
+// it and running `chant run prod-watch --on fountain` against a real fountain
+// instance — is the README's walkthrough; this is the offline half.
+
+describeExample("fountain-steward", {
+  lexicon: "fountain",
+  serializer: fountainSerializer,
+  outputKey: "fountain",
+  examplesDir: import.meta.dirname,
+}, {
+  checks: (output) => {
+    const kinds = [...output.matchAll(/^kind:\s+(\S+)$/gm)].map((m) => m[1]);
+    // Every kind the steward composes, in the serializer's dependency order.
+    expect(kinds).toEqual(["Environment", "Vault", "Agent", "Teammate", "Schedule", "Schedule"]);
+    // The steward is an ACP agent on a persistent computer.
+    expect(output).toContain("runtime: acp");
+    expect(output).toContain("runtime_command: chant acp");
+    expect(output).toContain("sandbox_mode: persistent");
+    // One Schedule per Op that carries a cadence, prompted with the exact
+    // command line `chant acp` parses back.
+    expect(output).toContain("prompt: chant run prod-watch");
+    expect(output).toContain("prompt: chant run prod-converge");
+    // The build parameter reached the manifest as a literal, not a reference.
+    expect(output).toContain("https://github.com/INTENTIUS/chant");
+  },
 });

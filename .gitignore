@@ -35,3 +35,6 @@ test/example-builds/
 # Claude Code
 .claude/
 CLAUDE.md
+
+# Scratch project the fountain init-template test materializes (cleaned up in afterAll)
+lexicons/fountain/.init-template-*/

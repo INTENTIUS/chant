@@ -27,8 +27,22 @@ const require = createRequire(import.meta.url);
  * objects re-export their lint rules eagerly — so bundling ANY run-fallback
  * file that imports a lexicon package pulls `typescript` in transitively,
  * every time, not just for the rare file that uses the compiler itself.
+ *
+ * `@cdktf/hcl2json` is here for the same reason and by a longer road. It is
+ * an OPTIONAL dependency — `../../terraform/parse.ts` reaches it through
+ * `await import(...)` and turns a missing module into an actionable "npm
+ * install -D @cdktf/hcl2json" — but esbuild follows a dynamic import as
+ * eagerly as a static one, and the package ships a Go `wasm_exec` shim whose
+ * `performance` reference does not resolve under `platform: "node"`. So a
+ * bundle that merely *reaches* the carve commands fails outright. Reaching
+ * them is easy: the fountain lexicon's ACP server dynamically imports
+ * `cli/main` to resolve a prompt against chant's verb registry (chant #2125),
+ * so every project that imports `@intentius/chant-lexicon-fountain` and needs
+ * the run fallback — a `Steward` declaration does, since a composite call
+ * cannot fold — pulled the whole CLI, and carve with it, into its sandbox
+ * bundle (chant #2129).
  */
-const EXTERNAL_PACKAGES = ["typescript"];
+const EXTERNAL_PACKAGES = ["typescript", "@cdktf/hcl2json"];
 
 /**
  * Resolve each of {@link EXTERNAL_PACKAGES} to its real, absolute path on

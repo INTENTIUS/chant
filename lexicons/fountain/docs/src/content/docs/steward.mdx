@@ -1,0 +1,109 @@
+---
+title: "The Steward"
+description: "One writer per environment: what a steward is, which chant need each fountain noun answers, and which store owns what."
+diataxis: explanation
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-fountain` — DO NOT EDIT.
+    Edit lexicons/fountain/docs/pages/steward.mdx instead; changes here are overwritten. */}
+
+
+A steward is the machine an environment is operated from, declared. It is one `Agent` running `chant acp` on a persistent sandbox, seated on the team as a `Teammate` so it has a standing conversation, with a `Schedule` for every op that carries a cadence and an optional `Webhook` for whoever has to hear about a turn.
+
+The teammate's thread is that environment's operational history. Each turn is one chant command line, so scrolling the thread is scrolling what was done to the environment, redacted and searchable, without anyone having kept a separate log.
+
+## The mesh
+
+chant needs six things from a place to run ops. fountain already has a noun for each:
+
+| chant need | fountain noun |
+|---|---|
+| a place to run | `Environment` (repo, chant, kubectl) + `Vault` (creds, or the broker) + a persistent sandbox |
+| a record | the conversation: turns, events, SSE, search, audit |
+| a cadence | a `Schedule` on the teammate, in-thread, busy means skip |
+| waiting on a human | a gate fact on chant's ledger, resolved by `chant approve` or a merged PR |
+| waiting on the world | the next tick's observation |
+| telling someone | a `Webhook`, or a message to a human teammate |
+| one writer per environment | the thread |
+
+Nothing in that table is new machinery. The steward composite is the declaration that wires the existing nouns together in one place, so an author writes the environment once instead of six resources that have to agree with each other.
+
+## Declaring one
+
+```typescript
+import { ConvergeOp, WatchOp, gt, report, when } from "@intentius/chant/op";
+import { Environment, Repository, Steward, Vault } from "@intentius/chant-lexicon-fountain";
+
+export const toolchain = new Environment({
+  name: "prod-toolchain",
+  repositories: [new Repository({ url: "https://github.com/acme/estate", mount_path: "/workspace/estate", ref: "main" })],
+  setup_script: "npm ci && npm install -g @intentius/chant",
+  networking_type: "limited",
+  networking_config: { allowed_hosts: ["github.com", "registry.npmjs.org"] },
+  metadata: { "managed-by": "chant" },
+});
+
+export const prodCreds = new Vault({ name: "prod-creds", metadata: { "managed-by": "chant" } });
+
+export const { op: prodWatch } = WatchOp({ name: "prod-watch", env: "prod", schedule: "*/15 * * * *" });
+export const { op: prodConverge } = ConvergeOp({
+  name: "prod-converge",
+  env: "prod",
+  schedule: "0 * * * *",
+  rules: [
+    when(gt("updateCount", 0), report("declared and live state disagree"), {
+      id: "prod-drift",
+      why: "An update pending against prod means something changed outside this repo.",
+    }),
+  ],
+});
+
+export const { agent, teammate, schedules } = Steward({
+  name: "prod-steward",
+  environment: toolchain,
+  vault: prodCreds,
+  ops: [prodWatch, prodConverge],
+});
+```
+
+`ops` takes the `Op` declarations the composites hand back, or plain `OpConfig` objects for an Op assembled by hand. Either way the steward reads two fields off each: the name, which becomes the prompt `chant run <op>`, and the schedule, which becomes the cron.
+
+## What the defaults commit to
+
+| Default | Effect |
+|---|---|
+| `runtime: acp`, `runtime_command: "chant acp"` | the sandbox launches chant's own ACP server, so a prompt is a chant command line |
+| `sandbox_mode: persistent` | one computer per steward: the checkout and the tool cache survive a turn ending |
+| `permission_policy: { default: "auto_allow" }` | nobody is at the keyboard to answer a permission card; chant's gates are where a human belongs |
+| no `model` | an acp agent's model is whatever the command on the other end of the protocol chooses |
+| no skills | a steward's competence is the project's op definitions |
+| `allowed_vault_ids` scoped to the given vault, `[]` with none | no conversation may attach a vault the steward was not given |
+| `managed-by: chant` on the Agent | owned-only reconcile, prune and drift filtering see it |
+
+## Which store owns what
+
+Two stores, each authoritative for one kind of thing, and nothing stored twice.
+
+| Fact | Store | Read it with |
+|---|---|---|
+| A run: its turn, its steps, its stdout, when it started and how it ended | fountain's database, as the conversation | `chant run status\|log\|list --on fountain`, or the thread in the UI |
+| A gate's resolution, and anything that has to survive across runs | chant's ledger branch in git | `chant approve`, `chant run approve <op> <gate>` |
+| The declared shape of the estate | the repo | `chant build`, `chant lifecycle diff --live` |
+
+A gate is a fact, not a wait. A run that reaches an unapproved gate ends its turn saying so; the resolution is recorded on chant's ledger by a person or a merged PR, and the next run re-evaluates it. Nothing sits blocked inside a sandbox holding a machine open, which is what lets the steward be one computer rather than one per pending decision.
+
+## Why one writer
+
+A teammate runs one turn at a time. That is fountain's rule, not chant's, and the steward is built to sit exactly on top of it: a schedule that fires while a turn is in flight is dropped with `teammate was busy` rather than queued, and a `chant run --on fountain` against a busy steward is refused with the conversation's address rather than retried.
+
+The composite refuses three things at construction, so the failure arrives while the author is looking at the declaration:
+
+- Two stewards on the same environment and vault. That is two processes on one checkout; fountain would accept both and their turns would interleave.
+- An op whose `schedule.overlap` is anything but `skip`. Any other policy would be a promise the server does not keep.
+- A webhook url FTN022 would reject: plaintext http, or a loopback, link-local or RFC1918 target.
+
+## What `chant build` emits
+
+All six kinds, in dependency order: Environment, Vault, Agent, Teammate, Schedule, Webhook. `fountainApply` sends the first three through fountain's bulk `POST /api/apply` and the other three through their own routes afterwards, matched by name and by url, so a second apply of an unchanged manifest makes no writes.
+
+See [Composites](/chant/lexicons/fountain/composites/) for the constructor's full option list, [Runtime](/chant/lexicons/fountain/runtime/) for running an op on the steward, and [ACP](/chant/lexicons/fountain/acp/) for what the sandbox is actually speaking.

@@ -134,6 +134,18 @@ export const fountainPlugin: LexiconPlugin = {
       ],
     },
     {
+      file: "chant-fountain-ops.md",
+      name: "chant-fountain-ops",
+      description:
+        "Declare a fountain steward, run a chant op on it, read its thread, and approve a gate",
+      triggers: [
+        { type: "context" as const, value: "steward" },
+        { type: "context" as const, value: "run on fountain" },
+        { type: "context" as const, value: "teammate" },
+        { type: "context" as const, value: "schedule an op" },
+      ],
+    },
+    {
       file: "chant-fountain-locked-sandboxes.md",
       name: "chant-fountain-locked-sandboxes",
       description:

@@ -343,10 +343,17 @@ export async function initCommand(options: InitOptions): Promise<InitResult> {
     warnings,
   );
 
-  // Generate chant.config.ts
+  // Generate chant.config.ts. A template that ships its own wins: core's
+  // version knows only the lexicon name, while a template that declares a
+  // config namespace (fountain's steward scaffold and its `fountain.profiles`
+  // block, chant #2129) is scaffolding a project that needs it to run at all.
+  // The root-file loop below runs *after* this write, and `writeIfNotExists`
+  // keeps the first file, so a template's config would otherwise be discarded
+  // in silence — see lexicons/cedar/src/init-templates.ts, which documents
+  // having had to work around exactly that.
   writeIfNotExists(
     join(targetDir, "chant.config.ts"),
-    generateChantConfig(options.lexicon),
+    templateSet?.root?.["chant.config.ts"] ?? generateChantConfig(options.lexicon),
     "chant.config.ts",
     createdFiles,
     warnings,
@@ -372,9 +379,13 @@ export async function initCommand(options: InitOptions): Promise<InitResult> {
         warnings,
       );
     }
-    // Write root scaffold files (e.g. index.js, test.js, Dockerfile)
+    // Write root scaffold files (e.g. index.js, test.js, Dockerfile).
+    // `chant.config.ts` is skipped: it was already written above, from this
+    // same template set, and re-offering it here would only produce an
+    // "already exists, skipping" warning about a file the template supplied.
     if (templateSet.root) {
       for (const [filename, content] of Object.entries(templateSet.root)) {
+        if (filename === "chant.config.ts") continue;
         writeIfNotExists(
           join(targetDir, filename),
           content,

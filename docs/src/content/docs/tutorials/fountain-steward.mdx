@@ -1,0 +1,202 @@
+---
+title: "Run ops on a fountain steward"
+description: "Declare one writer for an environment and run chant ops on its thread, with gates that stay on the chant ledger branch."
+diataxis: tutorial
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+This tutorial declares a **steward**: one writer for an environment, running on
+fountain. A steward is an agent that speaks chant's own ACP server on a
+persistent sandbox, seated on a fountain team so it has a standing
+conversation. Every op you run against that environment becomes a turn on that
+conversation, so the thread is the environment's operational history.
+
+Steps 1 and 2 run offline. Steps 3 onward need a fountain instance and a token.
+
+The runnable project is
+[`examples/fountain-steward`](https://github.com/intentius/chant/tree/main/examples/fountain-steward).
+
+## Prerequisites
+
+```bash
+npm install --save-dev @intentius/chant @intentius/chant-lexicon-fountain
+```
+
+For the live half, a fountain endpoint and a token in `FOUNTAIN_TOKEN`. Mint
+one with `POST /api/auth/token` or from the account UI. A local
+`mix phx.server` fountain works the same way.
+
+<Aside type="caution" title="Two upstream pieces are not in v0.16.0">
+The `runtime: "acp"` and `runtime_command` pair a steward sets is
+[fountain#1634](https://github.com/BinaryBourbon/fountain/pull/1634); an
+instance without it rejects the pair at apply. Answering a gate as a fountain
+permission card is [fountain#1635](https://github.com/BinaryBourbon/fountain/issues/1635).
+Everything else here works against the routes fountain has today.
+</Aside>
+
+## 1. Scaffold the project
+
+```bash
+npx chant init --lexicon fountain --template steward
+npm install
+```
+
+Four files come out. `src/fountain.ts` declares the toolchain `Environment`,
+the `Vault`, and the `Steward` that binds them. `src/prod-watch.op.ts` and
+`src/prod-converge.op.ts` are the two ops, each carrying its own cadence.
+`chant.config.ts` declares `fountain.profiles` and the `repoUrl` build
+parameter.
+
+The steward itself is five lines:
+
+```typescript
+export const { agent, teammate, schedules } = Steward({
+  name: "prod-steward",
+  environment: toolchain,
+  vault: prodCreds,
+  ops: [prodWatch, prodConverge],
+});
+```
+
+Each op is listed once. An op that carries a `schedule` gets a fountain
+`Schedule`; one without still appears on the steward, which is how a run of it
+knows which thread it belongs on.
+
+## 2. Build the manifest
+
+```bash
+npx chant build src --lexicon fountain -o dist/fountain.yaml
+```
+
+Six documents come out in dependency order: `Environment`, `Vault`, `Agent`,
+`Teammate`, and a `Schedule` per scheduled op. The agent is where the steward's
+defaults land:
+
+```yaml
+kind: Agent
+metadata:
+  name: prod-steward
+spec:
+  runtime: acp
+  runtime_command: chant acp
+  sandbox_mode: persistent
+  environment: prod-toolchain
+  permission_policy:
+    default: auto_allow
+  allowed_vault_ids:
+    - prod-creds
+```
+
+`runtime_command: chant acp` is what makes a prompt on this thread a chant
+command line. `sandbox_mode: persistent` gives the steward one computer whose
+checkout and tool cache survive a turn ending. `auto_allow` is there because
+nobody is at the keyboard to answer a permission card; approvals belong to
+chant's gates, which step 5 covers.
+
+Lint it before going further:
+
+```bash
+npx chant lint src
+```
+
+FTN020 checks the cron is five valid fields, FTN021 that the schedule's
+teammate resolves, FTN023 that an acp agent carries its command.
+
+## 3. Apply it
+
+```bash
+export FOUNTAIN_TOKEN=...
+npx chant run steward-apply     # or call fountainApply directly
+```
+
+`fountainApply` sends `Environment`, `Vault` and `Agent` through fountain's
+bulk `POST /api/apply`, then reconciles the teammate and the schedules through
+their own routes, matched by name. Running it a second time writes nothing.
+
+## 4. Run an op on the thread
+
+```bash
+npx chant run prod-watch --on fountain
+```
+
+The line `chant run prod-watch` is posted to the steward's conversation, and
+the CLI tails the event stream until the turn settles. What comes back is the
+same run record a local `chant run prod-watch` would have written.
+
+A quiet turn loses its connection after 60 seconds, which is fountain closing
+an idle stream rather than the turn ending; the reader reconnects with
+`Last-Event-ID` and picks up what it missed.
+
+If the steward is already running something, the post is refused with the
+conversation's address:
+
+```
+fountain runtime: the steward "prod-steward" is running another op
+(https://fountain.inevitable.fyi/conversations/c_01J…). A teammate runs one
+turn at a time; wait for it to finish and run this again.
+```
+
+That is fountain's single-writer rule, and it is the reason a steward thread is
+the right place for an op to run: two runs on one checkout would interleave.
+The schedules are in-thread for the same reason, so a cron fire that lands
+mid-turn is dropped rather than opening a second machine.
+
+## 5. Read the thread back
+
+```bash
+npx chant run status prod-watch --on fountain
+npx chant run log prod-watch --on fountain
+npx chant run list --on fountain
+```
+
+`status` reads the latest turn that ran this op, `log` every turn, and `list`
+one row per declared Op, grouped by steward so a team of twenty ops costs one
+round trip.
+
+Open the conversation in fountain's UI and you see the same history as prose:
+one command line per turn, with each step of a run rendered as a tool call. The
+whole plan appears before the first step finishes, because an Op's declaration
+already says what the steps are.
+
+## 6. Approve a gated apply
+
+The example adds a third op, `steward-apply`, with an approval gate before the
+apply.
+
+```bash
+npx chant run steward-apply --on fountain
+```
+
+The turn builds, reaches the gate, and ends with the approve line in its reply.
+Nothing is blocked, because the gate is a fact on chant's ledger branch rather
+than a wait held open inside the sandbox. No machine is pinned by a decision
+nobody has made yet.
+
+Record the resolution, then wake the thread:
+
+```bash
+npx chant approve steward-apply approve-steward-apply --approver you
+npx chant run approve steward-apply approve-steward-apply --on fountain
+```
+
+The second command posts `chant run approve …` back onto the steward's thread.
+The sandbox re-runs the op, re-reads the ledger, and walks through the gate.
+
+## Where the facts live
+
+Two stores, each authoritative for one thing.
+
+| Fact | Store |
+|---|---|
+| A run: its turn, steps, output, and how it ended | fountain's database, as the conversation |
+| A gate's resolution, and anything that outlives a run | chant's ledger branch in git |
+| The declared shape of the estate | the repo |
+
+Nothing is written to both.
+
+## Next
+
+- [The Steward](/chant/lexicons/fountain/steward/) for the composite's defaults and refusals
+- [Running an Op on fountain](/chant/lexicons/fountain/runtime/) for profiles and the steward lookup
+- [chant acp](/chant/lexicons/fountain/acp/) for the protocol the sandbox speaks
