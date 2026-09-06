@@ -109,7 +109,7 @@ export function deriveSymptoms(env: string, cs: ChangeSet, statusRows: Component
   };
 }
 
-/** Every field name a `ConvergeSymptom` produces — the runtime whitelist `TMP014` (lexicons/temporal) re-validates a serialized rule table's predicates against. Kept in sync with {@link ConvergeSymptom} by hand (deliberately small, changes rarely). */
+/** Every field name a `ConvergeSymptom` produces — the runtime whitelist `OPS014` (packages/core/src/lint/rules/op/ops014-converge-rule-refusals.ts) re-validates a serialized rule table's predicates against. Kept in sync with {@link ConvergeSymptom} by hand (deliberately small, changes rarely). */
 export const CONVERGE_SYMPTOM_FIELDS: ReadonlySet<string> = new Set([
   "env",
   "status",

@@ -25,7 +25,8 @@
  * produces" refusal, satisfied for free. {@link isWellFormedPredicate} is the
  * runtime backstop for a rule assembled by hand (bypassing `when()`/the
  * comparison builders) rather than authored through them, and is what a
- * build-time check (TMP014) re-validates the serialized rule table against.
+ * build-time check (OPS014, ../lint/rules/op/ops014-converge-rule-refusals.ts)
+ * re-validates the serialized rule table against.
  */
 
 // ── Predicates ───────────────────────────────────────────────────────────────
@@ -76,8 +77,9 @@ const FIELD_TRUTHINESS_OPS: ReadonlySet<string> = new Set(["truthy", "falsy"]);
 
 /**
  * Structural validator for a value claiming to be a {@link SymptomPredicate}
- * — the runtime backstop `TMP014` (lexicons/temporal's post-synth check)
- * re-checks a serialized rule table against, since nothing forces a rule
+ * — the runtime backstop OPS014
+ * (../lint/rules/op/ops014-converge-rule-refusals.ts) re-checks a serialized
+ * rule table against, since nothing forces a rule
  * assembled by hand (rather than through the builders below) to match this
  * shape. Recurses through `allOf`/`anyOf`; `fieldWhitelist`, when given,
  * additionally refuses a field name the symptom record doesn't actually
@@ -152,9 +154,9 @@ export function evaluatePredicate<S>(predicate: SymptomPredicate<S>, symptom: S)
  * Does a predicate reference the given symptom field anywhere in it,
  * recursing through `allOf`/`anyOf`? The build-time backstop for a claim
  * about a *category* of rule (e.g. "a rule reading `adoptCount`") rather
- * than a single comparison — `TMP014`'s adopt-safety check
- * (../../../lexicons/temporal/src/lint/post-synth/tmp014-converge-rule-refusals.ts)
- * uses this to refuse a rule that both reads `adoptCount` and dispatches a
+ * than a single comparison — OPS014's adopt-safety check
+ * (../lint/rules/op/ops014-converge-rule-refusals.ts) uses this to refuse a
+ * rule that both reads `adoptCount` and dispatches a
  * mutating op, rather than merely documenting that authors shouldn't write
  * one.
  */

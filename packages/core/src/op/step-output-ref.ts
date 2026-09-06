@@ -42,10 +42,10 @@
  * Cross-contract type compatibility (chant #1950 pre-merge review, finding
  * 3): `validateStepOutputRefs` checks the producer side (a registered
  * contract with a `returns` schema, and — when `path` is set — that the path
- * resolves on it) and, separately, `validateActivitySteps`/TMP012 checks a
+ * resolves on it) and, separately, `validateActivitySteps`/OPS012 checks a
  * step's `args` against its own contract's `args` schema — but a
  * {@link StepOutputRef} sitting in `args` is a placeholder object at build
- * time, not the value it resolves to, so TMP012 skips it (see
+ * time, not the value it resolves to, so OPS012 skips it (see
  * `activity-contract.ts`'s `isStepOutputRefValue` guard) rather than
  * false-positive on it. Nothing before this compared the *consumer's*
  * declared type at that position against the *producer's* declared type at
@@ -269,7 +269,7 @@ function indexById(locations: StepLocation[]): { byId: Map<string, StepLocation>
  * as its own export so a caller with no contracts on hand (or that wants to
  * defend against exactly this class of bug regardless of what contracts are
  * registered) can still refuse a scope-invalid reference. The temporal
- * lexicon's serializer (`serializeOps`) is exactly this caller: TMP013 (which
+ * lexicon's serializer (`serializeOps`) is exactly this caller: OPS013 (which
  * calls the fuller {@link validateStepOutputRefs}) protects `chant build`,
  * but `serializeOps` is a public export a caller can invoke directly,
  * bypassing that lint pass — this is its own defense-in-depth.

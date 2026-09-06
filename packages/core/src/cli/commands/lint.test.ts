@@ -69,6 +69,54 @@ export const b = new Bucket({ encryption: { algo: "AES256" } });
     expect(result.diagnostics.some((d) => d.ruleId === "COR001")).toBe(true);
   });
 
+  // #2122 (epic #2114 sub-issue 6) — OPS013 is a core-owned Op-model
+  // post-synth check, run over every `*.op.ts` file `chant lint` finds under
+  // the target path with no lexicon or build needed. This is the acceptance
+  // criterion: it fires on a fixture with a dangling `stepOutput` reference,
+  // on a project with no lexicons configured (no `plugins` in `options`
+  // below, the same as every other test in this file).
+  test("OPS013 fires on a dangling stepOutput reference with no lexicons configured", async () => {
+    await writeFile(
+      join(testDir, "reconcile.op.ts"),
+      `
+export default {
+  [Symbol.for("chant.declarable")]: true,
+  entityType: "Chant::Op",
+  lexicon: "chant",
+  kind: "resource",
+  props: {
+    name: "reconcile",
+    overview: "test",
+    phases: [
+      { name: "Phase", steps: [
+        {
+          kind: "activity",
+          fn: "httpCheck",
+          args: {
+            url: "http://x",
+            contains: { [Symbol.for("chant.op.stepOutputRef")]: true, kind: "step-output-ref", step: "nope", path: "x" },
+          },
+        },
+      ] },
+    ],
+  },
+};
+      `,
+    );
+
+    const options: LintOptions = {
+      path: testDir,
+      format: "stylish",
+    };
+
+    const result = await lintCommand(options);
+
+    expect(result.success).toBe(false);
+    expect(
+      result.diagnostics.some((d) => d.ruleId === "OPS013" && d.message.includes('unknown step id "nope"')),
+    ).toBe(true);
+  });
+
   test("formats output as JSON", async () => {
     await writeFile(
       join(testDir, "nested.ts"),

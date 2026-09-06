@@ -90,7 +90,7 @@ describe("validateActivitySteps() — passing Ops", () => {
 
   it("a step-output reference standing in for a typed arg does not trip a false-positive type mismatch (#1290)", () => {
     // args.env is z.string() — a StepOutputRef placeholder there is not a
-    // string, but it's not a real error either; TMP013 validates it against
+    // string, but it's not a real error either; OPS013 validates it against
     // the producer's return schema separately.
     const step = activity("lifecycleDiff", { env: stepOutput("diff", "name") as unknown as string });
     const config = opWith({ phases: [phase("Diff", [step])] });

@@ -24,6 +24,7 @@ import { coreKnowledgeChecks } from "../../lint/knowledge-checks";
 import { applyConfiguredSeverity, applyConfiguredPreset, resolvePresetIds } from "../../lint/config";
 import { applyInlineSuppressions, type SuppressionMetaFinding } from "../../lint/suppressions";
 import type { Declarable } from "../../declarable";
+import { coreOpChecks } from "../../lint/rules/op";
 import { loadPolicyChecks } from "../../lint/policy";
 import { armSandboxPolicyExecution, runProjectPolicies } from "../../lint/policy-sandbox";
 import { sortedJsonReplacer } from "../../utils";
@@ -481,6 +482,27 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
     const bundle = await loadOkfBundle(resolveKnowledgeDir(config, configDir));
     const knowledgeDiags = runPostSynthChecks(coreKnowledgeChecks(bundle), result, env);
     for (const diag of resolvePostSynth(knowledgeDiags, result.entities)) {
+      const prefix = diag.entity ? `[${diag.entity}] ` : "";
+      const lexiconSuffix = diag.lexicon ? ` (${diag.lexicon})` : "";
+      if (diag.severity === "error") {
+        errors.push(formatError({ message: `${prefix}${diag.message}${lexiconSuffix}` }));
+      } else {
+        warnings.push(formatWarning({ message: `${prefix}${diag.message}${lexiconSuffix}` }));
+      }
+    }
+  }
+
+  // Core-owned post-synth checks over the Op model (#2122, epic #2114
+  // sub-issue 6) — OPS012/OPS013/OPS014, ported from the temporal lexicon's
+  // TMP012/TMP013/TMP014. An Op is recognized by entity type
+  // (`OpResource`), not by which lexicon declared it, so this runs over the
+  // FULL build result regardless of which plugins loaded — same as the
+  // receipt/output/knowledge checks above.
+  if (result.errors.length === 0) {
+    const opDiags = runPostSynthChecks(coreOpChecks(), result, env);
+    const { diagnostics: activeDiags, suppressed } = applyConfiguredSeverity(opDiags, config.lint?.rules);
+    suppressedPostSynthCount += suppressed.length;
+    for (const diag of activeDiags) {
       const prefix = diag.entity ? `[${diag.entity}] ` : "";
       const lexiconSuffix = diag.lexicon ? ` (${diag.lexicon})` : "";
       if (diag.severity === "error") {
