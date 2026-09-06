@@ -323,3 +323,89 @@ resource "null_resource" "first" {
   }
 }
 ```
+
+## Suppressing a finding
+
+The TypeScript lint's `chant-disable` comments (see [Disable
+Directives](/chant/lint-rules/disable-directives/)) don't apply here: a
+post-synth check like TF001 reads the parsed HCL model, not a `ts.SourceFile`,
+so it has no AST position to disable at. Terraform gets its own comment forms
+instead, read from the raw `.tf` text in a second pass over the file (`hcl2json`
+drops comments entirely), so `terraform fmt` leaves every one of them alone.
+Every form works identically through `chant build` and `chant audit`, and a
+suppressed finding is always counted in the build/audit summary, never dropped
+silently.
+
+```hcl
+# chant-ignore: TF010, TF011
+variable "region" {
+  type = string
+}
+```
+
+`# chant-ignore` on the line before a block (or an attribute) suppresses the
+listed rule ids on that block. Write `all` instead of a list to suppress every
+rule id there.
+
+```hcl
+# chant-ignore-file: TF011
+```
+
+`# chant-ignore-file` suppresses a rule id for the whole file, but only when it
+is the first non-blank line of the file. Anywhere else it has no effect and is
+itself reported as a finding, the same constraint tflint's `tflint-ignore-file`
+enforces: a file-level suppression that could sit anywhere in the file is one a
+reader has to read the whole file to rule out, so it isn't findable.
+
+```hcl
+# chant-ignore-block: TF001
+terraform {
+  required_version = ">= 1.5.0"
+}
+```
+
+`# chant-ignore-block` anchors to the next block rather than to a finding's
+entity, borrowed from KICS's `kics-scan ignore-block`. This is the form TF001
+needs: its finding is about a backend block that is *not there*, so there is no
+attribute or sub-block a plain `# chant-ignore` could sit in front of. The
+comment goes on the `terraform` block itself instead, the nearest thing the
+missing backend has to a location. A plain `# chant-ignore` placed on the same
+`terraform` block works too, because the block TF001 reports against and the
+block the comment precedes happen to be the same one here; reach for
+`# chant-ignore-block` on purpose whenever what's wrong is an absence, so the
+comment reads as "nothing here should trigger a finding" rather than "this
+block has a problem." trivy's own suppression comments can't do this at
+all, because trivy's `ctx.entities` never carries a location for a block that
+isn't present; chant's does, because the terraform lexicon always parses a
+root's `terraform` block into an entity even when the thing it's missing
+lives inside it.
+
+Add `exp:2026-12-31` to any of the three forms to make the suppression expire:
+
+```hcl
+# chant-ignore: TF010 exp:2026-12-31
+```
+
+Past that date the suppression stops suppressing and is reported once as its
+own finding, so an ignore written for a known-in-progress fix doesn't rot into
+a permanent blind spot.
+
+### Un-ignorable rules
+
+A project can lock a rule id against being ignored at all. In `chant.config.ts`:
+
+```typescript
+export default {
+  lint: {
+    rules: {
+      TF008: ["error", { ignorable: false }],
+    },
+  },
+};
+```
+
+A `# chant-ignore` (in any form) that names an id configured `ignorable: false`
+has no suppressing effect on that id, and is itself reported as a finding,
+matching tflint's own `ignorable = false` setting. Every rule is ignorable
+by default; TF008 (hardcoded provider credentials) is the kind of rule a
+project might want to lock this way.

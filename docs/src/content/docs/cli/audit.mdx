@@ -310,6 +310,8 @@ Two ways, matching the other false-positive escape hatches in the tool:
 
   Copy the `fingerprint` straight from the finding's message or JSON output — it's a hash of the value, so allowlisting a false positive never means writing the secret into the config. An allow entry needs `ruleId` and/or `fingerprint`; `file` alone never blanket-suppresses everything in a file.
 
+A Terraform finding (`TF*`) is a different mechanism: it reads `# chant-ignore`, `# chant-ignore-file`, and `# chant-ignore-block` comments straight out of the `.tf` source, so it works identically through `chant audit` and `chant build`. See the terraform lexicon's [Suppressing a finding](/chant/lexicons/terraform/lint-rules/#suppressing-a-finding) section.
+
 ## Wrangler config detection
 
 The `WRG*` rules (see the [rules reference](/chant/lint-rules/audit-rules/)) read `wrangler.toml` — parsed with a small dependency-free TOML parser built for this (`packages/core/src/toml.ts`), not a full spec implementation, but enough for real deploy configs (tables, arrays of tables, dotted/nested `[env.<name>]` blocks, inline tables). Like `SEC*`, this runs independent of lexicon — it does not need any `@intentius/chant-lexicon-*` package installed, since Wrangler config is audit-only: chant has no authoring surface or serializer for it.
