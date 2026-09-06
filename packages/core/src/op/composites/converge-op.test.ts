@@ -1,9 +1,9 @@
 import { describe, test, expect } from "vitest";
-import { runOpLocally } from "@intentius/chant/op";
-import type { ActivityFn, ActivityProfile } from "@intentius/chant/op";
-import type { OpConfig } from "@intentius/chant/op";
-import { eq, gt, run, report, when } from "@intentius/chant/op";
-import type { ConvergeSymptom } from "@intentius/chant/lifecycle/symptoms";
+import { runOpLocally } from "../local-executor";
+import type { ActivityFn, ActivityProfile } from "../activity-registry";
+import type { OpConfig } from "../types";
+import { eq, gt, run, report, when } from "../converge-rule";
+import type { ConvergeSymptom } from "../../lifecycle/symptoms";
 import { ConvergeOp } from "./converge-op";
 
 function props(op: unknown): OpConfig {
@@ -66,22 +66,27 @@ describe("ConvergeOp composite (#1484)", () => {
     expect(diff.args.live).toBe(true);
   });
 
-  test("no schedule -> { op } only; a schedule -> { op, schedule }", () => {
+  test("no schedule -> no cadence on the op; a schedule -> op.schedule.cron (#2120)", () => {
     const noSchedule = ConvergeOp({ name: "staging-converge", env: "staging", rules: [driftRule] });
-    expect(noSchedule.schedule).toBeUndefined();
+    expect(props(noSchedule.op).schedule).toBeUndefined();
 
     const scheduled = ConvergeOp({ name: "staging-converge", env: "staging", rules: [driftRule], schedule: "*/10 * * * *" });
-    expect(scheduled.schedule).toBeDefined();
+    expect(props(scheduled.op).schedule?.cron).toBe("*/10 * * * *");
   });
 
   // Finding D (#1954 pre-merge review): issue #1484's acceptance criterion is
   // "skip-and-report when a prior remediation is in flight ... never queue".
-  // `"Skip"` is the schedule-level overlap policy that drops a fire whose
-  // predecessor is still running, rather than buffering/queuing it.
-  test("a scheduled ConvergeOp sets an explicit \"Skip\" overlap policy — never queue an in-flight tick", () => {
-    const { schedule } = ConvergeOp({ name: "staging-converge", env: "staging", rules: [driftRule], schedule: "*/10 * * * *" });
-    const scheduleProps = (schedule as unknown as { props: { policies?: { overlap?: string } } }).props;
-    expect(scheduleProps.policies?.overlap).toBe("Skip");
+  // `"skip"` is the overlap policy that drops a fire whose predecessor is
+  // still running, rather than buffering/queuing it.
+  test("a scheduled ConvergeOp sets an explicit \"skip\" overlap — never queue an in-flight tick", () => {
+    const { op } = ConvergeOp({ name: "staging-converge", env: "staging", rules: [driftRule], schedule: "*/10 * * * *" });
+    expect(props(op).schedule?.overlap).toBe("skip");
+  });
+
+  test("an invalid cron is refused at construction, with TMP010's wording (#2120)", () => {
+    expect(() =>
+      ConvergeOp({ name: "staging-converge", env: "staging", rules: [driftRule], schedule: "every ten minutes" }),
+    ).toThrow(/does not look like valid 5- or 6-field cron syntax/);
   });
 });
 

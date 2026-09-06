@@ -43,6 +43,27 @@ describe("Op()", () => {
     expect(props.depends).toEqual(["first-op"]);
   });
 
+  it("stores an optional schedule in props (#2120)", () => {
+    const op = Op({ name: "op", overview: "o", phases: [], schedule: { cron: "*/10 * * * *" } });
+    expect(opProps(op).schedule).toEqual({ cron: "*/10 * * * *" });
+  });
+
+  it("accepts the only overlap policy there is", () => {
+    const op = Op({ name: "op", overview: "o", phases: [], schedule: { cron: "0 6 * * *", overlap: "skip" } });
+    expect(opProps(op).schedule).toEqual({ cron: "0 6 * * *", overlap: "skip" });
+  });
+
+  it("refuses an invalid cron at construction, with TMP010's message (#2120)", () => {
+    expect(() => Op({ name: "nightly", overview: "o", phases: [], schedule: { cron: "0 6 * *" } })).toThrow(
+      'Op "nightly": cron expression "0 6 * *" does not look like valid 5- or 6-field cron syntax',
+    );
+  });
+
+  it("an Op with no schedule is unchanged — nothing is validated and nothing is added", () => {
+    const op = Op({ name: "op", overview: "o", phases: [] });
+    expect(opProps(op).schedule).toBeUndefined();
+  });
+
   it("stores optional onFailure in props", () => {
     const compensation = phase("Rollback", [shell("echo rollback")]);
     const op = Op({ name: "op", overview: "o", phases: [], onFailure: [compensation] });

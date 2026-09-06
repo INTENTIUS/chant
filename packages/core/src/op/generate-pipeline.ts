@@ -16,7 +16,7 @@
  * `resolveComponentGraph`; each `ScheduledOpSpec` is generated independently.
  */
 
-import { discoverOps } from "./discover";
+import { discoverOps, type DiscoveredOp } from "./discover";
 import {
   isLexiconPlugin,
   type LexiconPlugin,
@@ -44,6 +44,23 @@ async function loadLexiconPlugin(name: string): Promise<LexiconPlugin | null> {
     if (isLexiconPlugin(value)) return value;
   }
   return null;
+}
+
+/**
+ * Copy each discovered Op's own `schedule` (#2120) onto its spec, so a CI
+ * generator can render the cron the Op already declares — `WatchOp({ name,
+ * schedule })` then needs no second cron in the `generateOpsPipeline` call.
+ * The spec's own `trigger`/`schedule` still win; `resolveOpTrigger` reads
+ * `opSchedule` last. Specs for Ops with no cadence pass through untouched.
+ */
+export function withOpSchedules(
+  specs: ScheduledOpSpec[],
+  discovered: Map<string, DiscoveredOp>,
+): ScheduledOpSpec[] {
+  return specs.map((spec) => {
+    const schedule = discovered.get(spec.name)?.config.schedule;
+    return schedule ? { ...spec, opSchedule: schedule } : spec;
+  });
 }
 
 /** Result of generating scheduled CI for a set of Ops (generate mode's Op counterpart, #927). */
@@ -94,6 +111,6 @@ export async function generateOpsPipeline(
     };
   }
 
-  const { files, jobs } = plugin.generateOpPipeline(ops, options);
+  const { files, jobs } = plugin.generateOpPipeline(withOpSchedules(ops, discovered.ops), options);
   return { success: true, files, jobs };
 }

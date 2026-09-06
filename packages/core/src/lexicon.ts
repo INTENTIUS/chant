@@ -13,6 +13,7 @@ import type { McpToolContribution, McpResourceContribution } from "./mcp/types";
 import type { DriverComponent } from "./components/driver";
 import type { EmulatorDeclaration } from "./op/emulator-lifecycle";
 import type { OpRuntimeProvider } from "./op/runtime";
+import type { OpSchedule } from "./op/types";
 import type { OwnershipChannel, OwnershipMarker } from "./ownership";
 import type { LexiconConfigSchema } from "./lexicon-config";
 import type { RuleMeta } from "./audit/catalog";
@@ -524,22 +525,35 @@ export interface ScheduledOpSpec {
    * set explicitly for `pull_request`/`push`, or to spell cron the same way.
    */
   trigger?: OpTrigger;
+  /**
+   * The declaring Op's own cadence (#2120) — `OpConfig.schedule`, filled in
+   * by `generateOpsPipeline` from the discovered Op so a scheduled Op needs
+   * no second cron declaration on the CI side. The lowest-precedence source
+   * of a trigger: an explicit `trigger` first, then an explicit `schedule` on
+   * this spec, then this (see {@link resolveOpTrigger}).
+   */
+  opSchedule?: OpSchedule;
   /** This Op's finding-mode, for permission/token wiring only (see {@link OpFindingMode}). Default: "report" — no elevated permissions. */
   findingMode?: OpFindingMode;
 }
 
 /**
- * Resolve a `ScheduledOpSpec`'s effective trigger: `trigger` when given,
- * else the backward-compatible `{ kind: "cron", schedule }` built from
- * `schedule` — every pre-#2084 caller (`WorkflowAuditOp`, `PipelineAuditOp`,
- * `ReconcileOp`, …, and their tests) sets only `schedule` and keeps meaning
- * cron unchanged. Throws when neither is set — a `ScheduledOpSpec` needs
- * exactly one trigger.
+ * Resolve a `ScheduledOpSpec`'s effective trigger, most specific first:
+ * `trigger` when given; else the backward-compatible `{ kind: "cron",
+ * schedule }` built from this spec's own `schedule` — every pre-#2084 caller
+ * (`WorkflowAuditOp`, `PipelineAuditOp`, `ReconcileOp`, …, and their tests)
+ * sets only that and keeps meaning cron unchanged; else the declaring Op's
+ * own `schedule.cron` (#2120), so an Op that already carries its cadence
+ * needs no second cron declaration on the CI side. Throws when none of the
+ * three is present — a `ScheduledOpSpec` needs exactly one trigger.
  */
 export function resolveOpTrigger(spec: ScheduledOpSpec): OpTrigger {
   if (spec.trigger) return spec.trigger;
   if (spec.schedule) return { kind: "cron", schedule: spec.schedule };
-  throw new Error(`Scheduled Op "${spec.name}" has neither \`trigger\` nor \`schedule\` — one is required.`);
+  if (spec.opSchedule) return { kind: "cron", schedule: spec.opSchedule.cron };
+  throw new Error(
+    `Scheduled Op "${spec.name}" has neither \`trigger\` nor \`schedule\`, and the Op itself declares no \`schedule\` — one is required.`,
+  );
 }
 
 /** One CI job generated for a scheduled Op. */

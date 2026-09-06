@@ -86,6 +86,7 @@ import { z } from "zod";
 import type {
   OutcomeAttribute,
   OpConfig,
+  OpSchedule,
   PhaseDefinition,
   StepDefinition,
   ActivityStep,
@@ -168,6 +169,14 @@ export interface OpIR {
   depends: string[];
   /** The Op's discovery keys (#2118) — `OpConfig.labels` verbatim, `{}` when it declares none. */
   labels: Record<string, string>;
+  /**
+   * The Op's cadence (#2120) — `OpConfig.schedule` verbatim, absent when it
+   * declares none. Op data, not runtime data: the cron says how often this Op
+   * should run, and which scheduler honours it is the reader's business, the
+   * same way `profile` states a retry policy without naming a retrier. An
+   * additive optional key, so it needs no `formatVersion` bump.
+   */
+  schedule?: OpSchedule;
   phases: OpIRPhase[];
   onFailure: OpIRPhase[];
   /** Every activity profile referenced by a step in this Op, keyed by profile name — from the registry passed to {@link buildOpIR}, empty when none was. */
@@ -328,6 +337,7 @@ export function buildOpIR(
     overview: config.overview,
     depends: config.depends ?? [],
     labels: config.labels ?? {},
+    ...(config.schedule ? { schedule: config.schedule } : {}),
     phases: config.phases.map((p) => irPhase(p, contractRegistry)),
     onFailure: (config.onFailure ?? []).map((p) => irPhase(p, contractRegistry)),
     activityProfiles: sortedEntries(profiles),
@@ -403,5 +413,6 @@ export function opConfigFromIR(ir: OpIR): OpConfig {
     ...(ir.depends.length > 0 ? { depends: ir.depends } : {}),
     ...(ir.onFailure.length > 0 ? { onFailure: ir.onFailure.map(opPhaseFromIR) } : {}),
     ...(Object.keys(ir.labels).length > 0 ? { labels: ir.labels } : {}),
+    ...(ir.schedule ? { schedule: ir.schedule } : {}),
   };
 }

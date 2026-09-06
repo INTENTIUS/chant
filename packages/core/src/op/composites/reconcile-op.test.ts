@@ -33,3 +33,19 @@ describe("ReconcileOp composite — PR/issue URL outcome (#8)", () => {
     expect(step.outcomeAttribute).toBeUndefined();
   });
 });
+
+describe("ReconcileOp composite — cadence on the op (#2120)", () => {
+  function opProps(op: unknown): Record<string, unknown> {
+    return (op as { props: Record<string, unknown> }).props;
+  }
+
+  test("one-shot form carries no schedule", () => {
+    const { op } = ReconcileOp({ name: "prod-reconcile", env: "prod" });
+    expect(opProps(op).schedule).toBeUndefined();
+  });
+
+  test("a cron lands on the op as { cron, overlap: \"skip\" }", () => {
+    const { op } = ReconcileOp({ name: "prod-reconcile", env: "prod", schedule: "0 * * * *" });
+    expect(opProps(op).schedule).toEqual({ cron: "0 * * * *", overlap: "skip" });
+  });
+});

@@ -12,6 +12,7 @@ import type { EnvTeardownArgs } from "./activities/env-teardown";
 import type { HttpCheckArgs } from "./activities/http-check";
 import type { PolicyGateArgs } from "./activities/policy";
 import type { GuardValidateArgs } from "./activities/guard-validate";
+import { isValidCronExpression, cronSyntaxMessage } from "./cron";
 
 /** An `activity()` result — the plain `ActivityStep` shape plus the `.out` reference sugar (#1290). */
 export interface NamedActivityStep extends ActivityStep {
@@ -40,8 +41,15 @@ export interface NamedActivityStep extends ActivityStep {
  *   ],
  * });
  * ```
+ *
+ * A `schedule` may be supplied for an Op that runs on a cadence (#2120); its
+ * cron is validated here, at construction, so a typo fails on `chant build`
+ * rather than becoming a schedule that silently never fires.
  */
 export function Op(config: OpConfig): InstanceType<typeof OpResource> {
+  if (config.schedule && !isValidCronExpression(config.schedule.cron)) {
+    throw new Error(`Op "${config.name}": ${cronSyntaxMessage(config.schedule.cron)}`);
+  }
   return new OpResource(config as unknown as Record<string, unknown>);
 }
 

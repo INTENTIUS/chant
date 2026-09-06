@@ -15,8 +15,22 @@ export { emulatorLifecycle, emulatorsOf, endpointEnvVars } from "./emulator-life
 export type { EmulatorSpec, EmulatorCapability, EmulatorDeclaration, EmulatorUpArgs, EmulatorLifecycle } from "./emulator-lifecycle";
 export { checkFreshness, compare, formatResult, latestRelease, parseVersion, unpinned } from "./emulator-freshness";
 export type { FreshnessResult } from "./emulator-freshness";
-export type { OpConfig, PhaseDefinition, StepDefinition, ActivityStep, GateStep, EffectStep, OutcomeAttribute } from "./types";
+export type { OpConfig, OpSchedule, PhaseDefinition, StepDefinition, ActivityStep, GateStep, EffectStep, OutcomeAttribute } from "./types";
 export { outcomeAttributesOf } from "./types";
+export { isValidCronExpression, cronSyntaxMessage, cronMatches, cronDueBetween } from "./cron";
+export {
+  WatchOp, ReconcileOp, ApplyOp, ConvergeOp,
+  WorkflowAuditOp, PipelineAuditOp, LexiconUpgradeOp, IN_SCOPE_LEXICONS,
+} from "./composites";
+export type {
+  WatchOpConfig, WatchOpResources,
+  ReconcileOpConfig, ReconcileOpResources,
+  ApplyOpConfig, ApplyOpResources,
+  ConvergeOpConfig, ConvergeOpResources, ConvergeDial,
+  WorkflowAuditOpConfig, WorkflowAuditOpResources,
+  PipelineAuditOpConfig, PipelineAuditOpResources,
+  LexiconUpgradeOpConfig, LexiconUpgradeOpResources,
+} from "./composites";
 export { receiptActivities, receiptCheckInput } from "./receipt-store";
 export type {
   ReceiptStore, EffectReceiptRef, ReceiptCheckInput, ReceiptActivities, ReceiptActivityOptions,
@@ -25,7 +39,7 @@ export type {
 } from "./receipt-store";
 export { discoverOps } from "./discover";
 export type { DiscoveredOp, OpDiscoveryResult } from "./discover";
-export { generateOpsPipeline } from "./generate-pipeline";
+export { generateOpsPipeline, withOpSchedules } from "./generate-pipeline";
 export type { GenerateOpsPipelineResult } from "./generate-pipeline";
 export { loadActivities, loadProfiles, resolveActivity } from "./activity-registry";
 export type { ActivityFn } from "./activity-registry";

@@ -222,3 +222,38 @@ describe("generateGithubOpPipeline: a cross-cutting change is one generator edit
     expect(result.jobs).toEqual([]);
   });
 });
+
+describe("generateGithubOpPipeline: the Op's own schedule (#2120)", () => {
+  test("an Op that declares its cadence needs no cron on the spec — opSchedule supplies it", () => {
+    const specs: ScheduledOpSpec[] = [{ name: "prod-watch", opSchedule: { cron: "*/10 * * * *", overlap: "skip" } }];
+    const result = generateGithubOpPipeline(specs);
+    const doc = parseFile(result.files[0].yaml);
+
+    expect(doc.on).toEqual({ schedule: [{ cron: "*/10 * * * *" }], workflow_dispatch: {} });
+    expect(result.jobs[0].trigger).toEqual({ kind: "cron", schedule: "*/10 * * * *" });
+  });
+
+  test("an explicit spec `schedule` still wins over the Op's own", () => {
+    const specs: ScheduledOpSpec[] = [
+      { name: "prod-watch", schedule: "0 6 * * *", opSchedule: { cron: "*/10 * * * *" } },
+    ];
+    const doc = parseFile(generateGithubOpPipeline(specs).files[0].yaml);
+    expect(doc.on).toEqual({ schedule: [{ cron: "0 6 * * *" }], workflow_dispatch: {} });
+  });
+
+  test("an explicit `trigger` overrides the Op's own cadence entirely", () => {
+    const specs: ScheduledOpSpec[] = [
+      { name: "tf-plan", trigger: { kind: "pull_request" }, opSchedule: { cron: "*/10 * * * *" } },
+    ];
+    const result = generateGithubOpPipeline(specs);
+    const doc = parseFile(result.files[0].yaml);
+    expect(doc.on).toEqual({ pull_request: {} });
+    expect(result.jobs[0].trigger).toEqual({ kind: "pull_request" });
+  });
+
+  test("an Op with no cadence anywhere is still an error naming the Op", () => {
+    expect(() => generateGithubOpPipeline([{ name: "no-cadence" }])).toThrow(
+      /Scheduled Op "no-cadence" has neither/,
+    );
+  });
+});

@@ -32,6 +32,30 @@ export interface OpConfig {
    * (`../lifecycle/run-ledger.ts`), written per run rather than declared once.
    */
   labels?: Record<string, string>;
+  /**
+   * The cadence this Op runs on, when it has one (#2120). Runtime-neutral
+   * data, not a scheduler: the github/gitlab/forgejo lexicons render it as a
+   * CI cron ({@link ScheduledOpSpec}), `chant operator` reads it as this Op's
+   * tick cadence, a Temporal project pairs it with a `TemporalSchedule` of its
+   * own, and the local one-shot executor ignores it.
+   */
+  schedule?: OpSchedule;
+}
+
+/**
+ * An Op's cadence (#2120). The cron is validated at `Op()` construction by
+ * the same permissive 5-/6-field parser TMP010 uses (`./cron.ts`).
+ */
+export interface OpSchedule {
+  /** 5- or 6-field cron expression, read in the running host's local time. */
+  cron: string;
+  /**
+   * What a fire does while the previous run is still going. `"skip"` is the
+   * only value — and the default — because that is what a level-triggered
+   * tick wants: the next fire re-observes everything anyway, so queueing a
+   * backlog buys nothing a single later tick does not.
+   */
+  overlap?: "skip";
 }
 
 export interface PhaseDefinition {

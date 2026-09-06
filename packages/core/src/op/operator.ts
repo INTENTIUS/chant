@@ -40,11 +40,20 @@ import { discoverOps, type DiscoveredOp } from "./discover";
 import { runOpLocally, OpRunFailure, type OpRunResult } from "./local-executor";
 import { acquireLease, stillHoldsLease, currentHolderId, DEFAULT_LEASE_TTL_MS, type LeaseRecord, type AcquireLeaseResult } from "../lifecycle/lease";
 import { StaleLockError } from "../lifecycle/git";
+import { cronMatches, cronDueBetween } from "./cron";
 
-/** Poll interval between rounds — the operator's own cadence, distinct from a `ConvergeOp`'s Temporal `schedule` cron (that field drives the durable path's `TemporalSchedule`, not anything the local executor can read back at discovery time; see this module's doc). Chosen short enough to converge promptly, long enough not to hammer `chant lifecycle plan --live` every few seconds. */
+/**
+ * Poll interval between rounds — the operator's own cadence, and the fallback
+ * for an Op that declares none. Since #2120 an Op can carry its own
+ * `schedule.cron` (`./composites/converge-op.ts`), which this loop honours per
+ * Op: the round still wakes every `intervalMs`, but an Op with a cron is
+ * ticked only on the minutes that cron fires. Chosen short enough to converge
+ * promptly, long enough not to hammer `chant lifecycle plan --live` every few
+ * seconds — and short enough that a per-minute cron is not missed.
+ */
 export const DEFAULT_OPERATOR_INTERVAL_MS = 60_000;
 
-/** One ConvergeOp's own `labels.Env` (`../../lexicons/temporal/src/composites/converge-op.ts` always sets it). `undefined` for a non-ConvergeOp or a hand-built one missing it — filtered out by `isConvergeOp` before this is trusted. */
+/** One ConvergeOp's own `labels.Env` (`./composites/converge-op.ts` always sets it). `undefined` for a non-ConvergeOp or a hand-built one missing it — filtered out by `isConvergeOp` before this is trusted. */
 function envOf(config: DiscoveredOp["config"]): string | undefined {
   return config.labels?.Env;
 }
@@ -67,6 +76,8 @@ export async function discoverConvergeOps(
 export type OperatorTickEvent =
   | { kind: "ticked"; op: string; env: string; result: OpRunResult }
   | { kind: "skipped-lease-held"; op: string; env: string; heldBy?: string }
+  /** The Op declares its own `schedule.cron` (#2120) and this round did not land on a firing minute — the lease was never touched. An Op without a cron is never reported this way: it ticks every round, on `--interval`. */
+  | { kind: "skipped-not-due"; op: string; env: string; cron: string }
   | { kind: "tick-failed"; op: string; env: string; error: string }
   /** The lease was lost between acquiring it and the tick finishing (e.g. this process stalled past its TTL and another operator reclaimed it) — the tick's own ledger record (written inside `convergeTick`) still landed, since a converge tick is idempotent by design; this event exists purely so `chant operator`'s log and the ledger-independent test surface can see the fencing violation happened. Never a hard failure. */
   | { kind: "fenced"; op: string; env: string }
@@ -96,6 +107,16 @@ export interface OperatorRoundOptions {
   profiles: Record<string, ActivityProfile>;
   now?: () => Date;
   signal?: AbortSignal;
+  /**
+   * When each Op with its own `schedule.cron` was last considered (#2120) —
+   * the state a round needs to answer "has a firing minute passed since I
+   * last looked at this Op?". `runOperatorForever` owns one map across
+   * rounds; a bare `runOperatorRound` with none given falls back to "is this
+   * minute a firing minute", which is what a single round can know on its
+   * own. Every considered Op's entry is updated, ticked or not, so a late
+   * round makes up exactly one tick rather than a backlog.
+   */
+  scheduleState?: Map<string, Date>;
 }
 
 /**
@@ -111,6 +132,24 @@ export async function runOperatorRound(opts: OperatorRoundOptions): Promise<Oper
 
   for (const { config } of ops) {
     const env = envOf(config) ?? "unknown";
+
+    // An Op that declares its own cadence (#2120) is ticked on that cron
+    // rather than on every round. Level-triggered: the question is whether a
+    // firing minute has passed since this Op was last looked at, so a round
+    // that arrives late still owes exactly one tick — a converge tick
+    // re-observes everything anyway, and several missed fires are one tick's
+    // worth of work.
+    const cron = config.schedule?.cron;
+    if (cron) {
+      const now = (opts.now ?? (() => new Date()))();
+      const lastSeen = opts.scheduleState?.get(config.name);
+      const due = lastSeen === undefined ? cronMatches(cron, now) : cronDueBetween(cron, lastSeen, now);
+      opts.scheduleState?.set(config.name, now);
+      if (!due) {
+        events.push({ kind: "skipped-not-due", op: config.name, env, cron });
+        continue;
+      }
+    }
 
     let acquired: AcquireLeaseResult;
     try {
@@ -188,8 +227,13 @@ export interface OperatorLoopOptions extends OperatorRoundOptions {
  */
 export async function runOperatorForever(opts: OperatorLoopOptions): Promise<void> {
   const holder = opts.holder ?? currentHolderId();
+  // Per-op cron state (#2120) lives for the life of the loop. A restart starts
+  // it empty, which means the first round ticks a scheduled Op only if it
+  // lands on a firing minute — a fresh operator owes no catch-up for the ticks
+  // it was not running for.
+  const scheduleState = opts.scheduleState ?? new Map<string, Date>();
   while (!opts.signal?.aborted) {
-    const events = await runOperatorRound({ ...opts, holder });
+    const events = await runOperatorRound({ ...opts, holder, scheduleState });
     opts.onRound?.(events);
     if (opts.signal?.aborted) break;
     await sleepAbortable(opts.intervalMs ?? DEFAULT_OPERATOR_INTERVAL_MS, opts.signal);
@@ -204,6 +248,8 @@ export function formatRoundLine(event: OperatorTickEvent): string {
         (event.result.gate ? ` gate="${event.result.gate.gate}"` : "");
     case "skipped-lease-held":
       return `operator: ${event.op}@${event.env} skipped=1(lease-held${event.heldBy ? `:${event.heldBy}` : ""})`;
+    case "skipped-not-due":
+      return `operator: ${event.op}@${event.env} skipped=1(not-due:${event.cron})`;
     case "tick-failed":
       return `operator: ${event.op}@${event.env} failed=1 error="${event.error}"`;
     case "fenced":
