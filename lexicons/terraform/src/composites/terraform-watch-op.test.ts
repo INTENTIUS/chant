@@ -145,6 +145,84 @@ describe("TerraformWatchOp posts the human plan and never the plan JSON (#2087)"
   });
 });
 
+describe("TerraformWatchOp on a live root (#2105)", () => {
+  const live = (over: Partial<Parameters<typeof TerraformWatchOp>[0]> = {}): OpConfig =>
+    props({ name: "estate-watch", root: "estate", live: true, ...over });
+
+  test("the Plan step is choudoufuLivePlan, and Init is unchanged", () => {
+    const op = live();
+    expect(phaseNames(op)).toEqual(["Init", "Plan"]);
+    expect(steps(op).map((s) => s.fn)).toEqual(["terraformInit", "choudoufuLivePlan"]);
+  });
+
+  test("one live read publishes Drift, Unowned and Adoptable", () => {
+    const plan = live().phases[1].steps[0] as ActivityStep;
+    expect(plan.id).toBe("plan");
+    // `drift` off `-detailed-exitcode`, `unowned`/`adoptable` off the same
+    // run's #788 document: three answers, one estate-wide sweep.
+    expect(plan.outcomeAttribute).toEqual([
+      { name: "Drift", from: "drift" },
+      { name: "Unowned", from: "unowned" },
+      { name: "Adoptable", from: "adoptable" },
+    ]);
+  });
+
+  test("the Op is marked live, and no plan file is named anywhere", () => {
+    const op = live();
+    expect(op.searchAttributes).toMatchObject({ TerraformMode: "live" });
+    expect(JSON.stringify(op)).not.toContain("chant.tfplan");
+  });
+
+  test("planFile on a live root is refused at build time, quoting choudoufu", () => {
+    expect(() => live({ planFile: "estate.tfplan" })).toThrow(/planFile is refused on a live root/);
+  });
+
+  test("estate off a live root is refused: there is no live plan to name one for", () => {
+    expect(() => props({ name: "app-watch", root: "app", estate: "prod" })).toThrow(/not on a live root/);
+  });
+
+  test("an explicit estate rides the Plan step", () => {
+    const plan = live({ estate: "prod-networking" }).phases[1].steps[0] as ActivityStep;
+    expect(plan.args?.estate).toBe("prod-networking");
+  });
+
+  test("a stock root is untouched: still terraformPlan, still one Drift attribute", () => {
+    const plan = props({ name: "app-watch", root: "app" }).phases[1].steps[0] as ActivityStep;
+    expect(plan.fn).toBe("terraformPlan");
+    expect(plan.outcomeAttribute).toEqual({ name: "Drift", from: "changed" });
+  });
+
+  for (const mode of ["issue", "pull-request"] as const) {
+    test(`${mode}: the body is the plan text plus the adoption ledger, as one field`, () => {
+      const op = live({ findingMode: mode });
+      expect(phaseNames(op)).toEqual(["Init", "Plan", "Report"]);
+      const report = op.phases[2].steps[0] as ActivityStep;
+      expect(report.fn).toBe("reconcilePr");
+      expect(isStepOutputRef(report.args?.body)).toBe(true);
+      expect(report.args?.body).toMatchObject({ step: "plan", path: "finding" });
+    });
+
+    test(`${mode}: no reference to the live-plan document reaches the body`, () => {
+      // On a live root the JSON is choudoufu's bound/omissions/unowned
+      // document: live identities and tag values for every resource the
+      // estate touched. Same rule as the stock plan's JSON, same test.
+      const op = live({ findingMode: mode });
+      const report = op.phases[2].steps[0] as ActivityStep;
+      const paths = collectStepOutputRefs(report.args).map((r) => r.path);
+      expect(paths).toEqual(["finding"]);
+      expect(paths).not.toContain("json");
+      expect(JSON.stringify(report.args)).not.toContain("json");
+    });
+  }
+
+  test("the whole live Op references exactly one field of the plan", () => {
+    const op = live({ findingMode: "issue" });
+    const refs = op.phases.flatMap((p) => p.steps.filter(isActivity)).flatMap((s) => collectStepOutputRefs(s.args));
+    expect(refs).toHaveLength(1);
+    expect(refs[0]).toMatchObject({ step: "plan", path: "finding" });
+  });
+});
+
 describe("TerraformWatchOp schedule (#2087)", () => {
   test("omitting `schedule` returns no schedule", () => {
     const result = TerraformWatchOp({ name: "app-watch", root: "app" });

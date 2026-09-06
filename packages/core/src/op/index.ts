@@ -14,7 +14,8 @@ export { emulatorLifecycle, emulatorsOf, endpointEnvVars } from "./emulator-life
 export type { EmulatorSpec, EmulatorCapability, EmulatorDeclaration, EmulatorUpArgs, EmulatorLifecycle } from "./emulator-lifecycle";
 export { checkFreshness, compare, formatResult, latestRelease, parseVersion, unpinned } from "./emulator-freshness";
 export type { FreshnessResult } from "./emulator-freshness";
-export type { OpConfig, PhaseDefinition, StepDefinition, ActivityStep, GateStep, EffectStep } from "./types";
+export type { OpConfig, PhaseDefinition, StepDefinition, ActivityStep, GateStep, EffectStep, OutcomeAttribute } from "./types";
+export { outcomeAttributesOf } from "./types";
 export { receiptActivities, receiptCheckInput } from "./receipt-store";
 export type {
   ReceiptStore, EffectReceiptRef, ReceiptCheckInput, ReceiptActivities, ReceiptActivityOptions,

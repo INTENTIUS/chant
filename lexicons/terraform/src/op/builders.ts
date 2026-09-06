@@ -30,6 +30,7 @@ import type {
   ChoudoufuLivePlanArgs,
   ChoudoufuLiveLsArgs,
   ChoudoufuLiveCheckArgs,
+  ChoudoufuAdoptArgs,
 } from "./activities/terraform";
 
 /** Extra opts every wrapper below accepts alongside its activity's own fields. */
@@ -141,6 +142,27 @@ export const choudoufuLiveCheck = (
     "choudoufuLiveCheck",
     { root, ...args },
     { profile: profile ?? "fastIdempotent", ...(id ? { id } : {}) },
+  );
+};
+
+/**
+ * Write the ownership markers that claim an adoption ledger's matches, in the
+ * named root. The fully typed twin of the `choudoufuAdopt` activity (#2105).
+ * `opts` is {@link ChoudoufuAdoptArgs} itself, minus the positional `root`, so
+ * `adoptions` is required at the call site — an adopt step with nothing to
+ * adopt is an authoring mistake, not a no-op worth defaulting to. Defaults to
+ * the `longInfra` profile: one tagging round trip per resource, against the
+ * cloud.
+ */
+export const choudoufuAdopt = (
+  root: string,
+  opts: WithStepRefs<Omit<ChoudoufuAdoptArgs, "root">> & StepOpts,
+): NamedActivityStep => {
+  const { args, profile, id } = takeProfileAndId(opts as Record<string, unknown> | undefined);
+  return activity(
+    "choudoufuAdopt",
+    { root, ...args },
+    { profile: profile ?? "longInfra", ...(id ? { id } : {}) },
   );
 };
 

@@ -22,7 +22,7 @@
 import type { Declarable } from "@intentius/chant/declarable";
 import { isResourceDeclarable } from "@intentius/chant/declarable";
 import type { OpConfig, PhaseDefinition, StepDefinition, ActivityStep, GateStep, EffectStep } from "@intentius/chant/op";
-import { isStepOutputRef, collectStepOutputRefs, validateStepOutputRefScope } from "@intentius/chant/op";
+import { isStepOutputRef, collectStepOutputRefs, validateStepOutputRefScope, outcomeAttributesOf } from "@intentius/chant/op";
 import { kebabToCamel, signalVarName, generateWorkerBootstrap } from "../codegen-shared";
 import { serializeOpIR } from "./op-ir";
 
@@ -260,7 +260,7 @@ function generateWorkflow(config: OpConfig): string {
   }
   const varNameForStepId = new Map<string, string>();
   const needsCapture = (step: ActivityStep): boolean =>
-    !!step.outcomeAttribute || (!!step.id && referencedStepIds.has(step.id));
+    outcomeAttributesOf(step).length > 0 || (!!step.id && referencedStepIds.has(step.id));
 
   // Build a `String(<var>?.<from-path>)` fragment from a dot-path.
   const stringifyFromPath = (varName: string, from?: string): string => {
@@ -269,15 +269,21 @@ function generateWorkflow(config: OpConfig): string {
     return `String(${varName}?.${parts.join("?.")})`;
   };
 
-  // Emit `upsertSearchAttributes({ <name>: [<expr>] })` for an outcome attr.
+  // Emit `upsertSearchAttributes({ <name>: [<expr>] })` for a step's outcome
+  // attributes. A step publishing several (#2105) gets one upsert carrying
+  // every key, not one call per key: the attributes describe a single
+  // activity result and land together or not at all.
   const emitOutcomeUpsert = (
     step: ActivityStep,
     varName: string,
     indent = "  ",
   ): string | null => {
-    if (!step.outcomeAttribute) return null;
-    const { name, from } = step.outcomeAttribute;
-    return `${indent}upsertSearchAttributes({ ${JSON.stringify(name)}: [${stringifyFromPath(varName, from)}] });`;
+    const attrs = outcomeAttributesOf(step);
+    if (attrs.length === 0) return null;
+    const entries = attrs
+      .map(({ name, from }) => `${JSON.stringify(name)}: [${stringifyFromPath(varName, from)}]`)
+      .join(", ");
+    return `${indent}upsertSearchAttributes({ ${entries} });`;
   };
 
   // Counter for effect-step capture variables (workflow-scoped).

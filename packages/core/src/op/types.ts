@@ -66,18 +66,45 @@ export interface ActivityStep {
    */
   profile?: "fastIdempotent" | "longInfra" | "k8sWait" | "humanGate" | "argoSync" | "policyCheck";
   /**
-   * Surface this activity's return value as a workflow search attribute.
+   * Surface this activity's return value as one or more workflow search
+   * attributes.
    *
    * The serializer captures the awaited result into a temporary, then emits
    * `upsertSearchAttributes({ <name>: [String(<from-path>)] })` immediately
    * after. Useful for filtering runs by outcome (e.g. `Drift: "true"/"false"`
    * from a lifecycleDiff activity).
    *
+   * An array publishes several attributes off the same result in one upsert
+   * (#2105): one activity can answer more than one question about a run, and
+   * `choudoufuLivePlan`'s drift boolean plus its unowned and adoptable counts
+   * are three attributes over a single live read that nothing would be gained
+   * by splitting into three steps. A single object is the same thing with one
+   * entry, and stays the authored form everywhere one attribute is enough.
+   *
    * `from` is a dot-path into the return value (e.g. `"drifted"` for
    * `{ drifted: boolean }`); when omitted, the whole return value is
    * stringified.
    */
-  outcomeAttribute?: { name: string; from?: string };
+  outcomeAttribute?: OutcomeAttribute | OutcomeAttribute[];
+}
+
+/** One workflow search attribute published off a step's return value. */
+export interface OutcomeAttribute {
+  /** Search attribute name, as registered on the Temporal namespace. */
+  name: string;
+  /** Dot-path into the activity's return value; the whole value when omitted. */
+  from?: string;
+}
+
+/**
+ * {@link ActivityStep.outcomeAttribute} as a list, whichever form it was
+ * authored in. `[]` when the step publishes none, so every consumer can
+ * iterate without first asking which of the two shapes it is holding.
+ */
+export function outcomeAttributesOf(step: { outcomeAttribute?: OutcomeAttribute | OutcomeAttribute[] }): OutcomeAttribute[] {
+  const declared = step.outcomeAttribute;
+  if (!declared) return [];
+  return Array.isArray(declared) ? declared : [declared];
 }
 
 /**

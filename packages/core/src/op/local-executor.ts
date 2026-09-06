@@ -11,6 +11,7 @@
  * so core never statically depends on `@intentius/chant-lexicon-temporal`.
  */
 
+import { outcomeAttributesOf } from "./types";
 import type { OpConfig, PhaseDefinition, ActivityStep, GateStep, EffectStep, StepDefinition } from "./types";
 import { resolveActivity, type ActivityFn, type ActivityProfile } from "./activity-registry";
 import type { ReceiptReadResult } from "./receipt-store";
@@ -30,7 +31,14 @@ export interface StepRecord {
   args?: Record<string, unknown>;
   status: "ok" | "fail" | "skipped";
   durationMs: number;
+  /**
+   * The first search attribute the step published, kept singular because a
+   * step publishing one is the ordinary case and every reader of this field
+   * predates the plural form. {@link StepRecord.outcomes} is the whole list.
+   */
   outcome?: { name: string; value: unknown };
+  /** Every search attribute the step published, in authored order (#2105). Absent when it published none. */
+  outcomes?: Array<{ name: string; value: unknown }>;
   error?: string;
 }
 
@@ -261,11 +269,10 @@ async function runStep(
       const result = await callWithTimeout(fn, args, timeoutMs, signal);
       if (step.id) resultsById.set(step.id, result);
       const record: StepRecord = { ...base, status: "ok", durationMs: Date.now() - start };
-      if (step.outcomeAttribute) {
-        record.outcome = {
-          name: step.outcomeAttribute.name,
-          value: resolvePath(result, step.outcomeAttribute.from),
-        };
+      const attrs = outcomeAttributesOf(step);
+      if (attrs.length > 0) {
+        record.outcomes = attrs.map((a) => ({ name: a.name, value: resolvePath(result, a.from) }));
+        record.outcome = record.outcomes[0];
       }
       return { record, result };
     } catch (err) {

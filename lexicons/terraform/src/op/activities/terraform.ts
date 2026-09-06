@@ -47,6 +47,12 @@ import { safeHeartbeat } from "@intentius/chant/op";
 import { loadChantConfigUpward } from "@intentius/chant/config";
 import type { TerraformConfig, TerraformRootConfig } from "../../config";
 import { detectLiveEstate } from "./live-detect";
+import {
+  parseAdoptionCommands,
+  readAdoptionLedger,
+  renderAdoptionLedger,
+  type AdoptionCandidate,
+} from "../adoption";
 
 const execAsync = promisify(exec);
 
@@ -134,6 +140,21 @@ export interface ChoudoufuLivePlanArgs extends TerraformRootArgs {
    * declares, which is what a live root's every other activity assumes too.
    */
   estate?: string;
+  /**
+   * Render the human half as choudoufu's adoption ledger (`-adoption-only`)
+   * instead of the ordinary plan (#2105).
+   *
+   * This activity already makes two live reads, one for the `-json` document
+   * and one for the human render, because the document carries no rendering of
+   * the plan itself. This flag changes only the second of them, which is what
+   * makes it possible at all: choudoufu refuses `-adoption-only` and `-json` on
+   * one invocation ("this run cannot produce both reports at once"), so the two
+   * reports have to come from two runs whether or not chant wants both. The
+   * cost is that the second read asks the estate-wide sweep the account-bounded
+   * question ("which live resources carry no ownership marker at all"), so it
+   * is slower than the ordinary render, not faster.
+   */
+  adoptionOnly?: boolean;
 }
 
 export interface ChoudoufuLiveLsArgs extends TerraformRootArgs {
@@ -144,6 +165,22 @@ export interface ChoudoufuLiveLsArgs extends TerraformRootArgs {
 }
 
 export type ChoudoufuLiveCheckArgs = TerraformRootArgs;
+
+export interface ChoudoufuAdoptArgs extends TerraformRootArgs {
+  /**
+   * The adoptable matches to claim, normally `ledger.out.adoptions` from a
+   * {@link choudoufuLivePlan} step run with `adoptionOnly`. Each carries the
+   * two marker values and, where choudoufu printed one, the tagging command
+   * that writes them.
+   */
+  adoptions: AdoptionCandidate[];
+  /**
+   * The contested candidates the same ledger refused, normally
+   * `ledger.out.contested`. Passed in so the Op's result names what was not
+   * adopted and why, beside what was; nothing here is ever written.
+   */
+  contested?: AdoptionCandidate[];
+}
 
 /** What {@link terraformInit} resolved. */
 export interface TerraformInitResult {
@@ -201,8 +238,32 @@ export interface ChoudoufuLivePlanResult extends LivePlanUnownedCounts {
   drift: boolean;
   /** GitHub issue #788's JSON document (`bound`, `omissions`, `unowned`), captured whole. */
   json: unknown;
-  /** The human-readable plan, from a second `live-plan` run without `-json` (the document carries no render of it). */
+  /**
+   * The human-readable plan, from a second `live-plan` run without `-json`
+   * (the document carries no render of it) — or, under
+   * {@link ChoudoufuLivePlanArgs.adoptionOnly}, choudoufu's own adoption ledger.
+   */
   text: string;
+  /**
+   * chant's rendering of the adoption ledger over the `-json` document
+   * (#2105): one line per adoptable match with its address, its live identity
+   * and the two marker values, then any contested address, listed and never
+   * offered. Present on every run, `-adoption-only` or not, since it is a
+   * projection of the document rather than a second report.
+   */
+  ledger: string;
+  /**
+   * What a finding mode posts: {@link ChoudoufuLivePlanResult.text} and then
+   * {@link ChoudoufuLivePlanResult.ledger}. The one field an issue or PR body
+   * references, so that the JSON document has no path into a body at all.
+   */
+  finding: string;
+  /** Adoptable matches: exactly one live resource at the declared address, with the marker pair that claims it. */
+  adoptions: AdoptionCandidate[];
+  /** Every candidate at a declared address more than one live resource sits at. Never adoptable. */
+  contested: AdoptionCandidate[];
+  /** How many declared addresses are contested — the count `contested` above spells out. */
+  ambiguous: number;
   /** Absolute path of the root module directory. */
   dir: string;
   /** Where the JSON document was written, relative to `dir`; {@link DEFAULT_LIVE_PLAN_DOCUMENT_FILE} unless overridden. */
@@ -219,6 +280,39 @@ export interface ChoudoufuLiveLsResult {
   dir: string;
   /** The estate that was listed. */
   estate: string;
+}
+
+/** One adoption {@link choudoufuAdopt} declined, with the reason an operator acts on. */
+export interface AdoptionRefusal {
+  /** The declared instance address that was not claimed. */
+  addr: string;
+  /** The live resource's identity, when the refusal is about a particular one. */
+  identity: string;
+  /** Why, in a sentence, always naming the two marker values a hand-write would need. */
+  reason: string;
+}
+
+/** What {@link choudoufuAdopt} resolved. */
+export interface ChoudoufuAdoptResult {
+  /**
+   * How the markers were written. Only `"tag-write"` today; the field exists
+   * because #2105 weighed a second mechanism (choudoufu's `adopt` policy verb)
+   * and a later run of this activity should say which one it used rather than
+   * leave a reader to infer it from the absence of a field. See the activity's
+   * own doc for why the policy verb is not reachable from outside the
+   * configuration.
+   */
+  mechanism: "tag-write";
+  /** The declared addresses whose live resources now carry this estate's markers. */
+  adopted: string[];
+  /** `adopted.length`, as a scalar a search attribute can carry. */
+  adoptedCount: number;
+  /** Every candidate this run declined, contested addresses included, with the reason. */
+  refused: AdoptionRefusal[];
+  /** How many declared addresses were contested — never adopted, always reported. */
+  ambiguous: number;
+  /** Absolute path of the root module directory. */
+  dir: string;
 }
 
 /** What {@link choudoufuLiveCheck} resolved. */
@@ -329,10 +423,31 @@ export function choudoufuLiveApplyCommand(opts: { binary: string }): string {
  * `live-plan -detailed-exitcode -json -estate=<estate>`. `-json` is what
  * prints GitHub issue #788's document instead of the plan; the human render
  * needs a second invocation without it (see {@link choudoufuLivePlan}).
+ *
+ * `adoptionOnly` makes that second invocation print the adoption ledger and
+ * nothing else (GitHub issue #587). It is refused here alongside `json`
+ * because choudoufu refuses the pair itself, and a builder that emitted a
+ * command the binary rejects would move the error to the far side of a
+ * process spawn for no gain.
  */
-export function choudoufuLivePlanCommand(opts: { binary: string; estate: string; json: boolean }): string {
+export function choudoufuLivePlanCommand(opts: {
+  binary: string;
+  estate: string;
+  json: boolean;
+  adoptionOnly?: boolean;
+  noColor?: boolean;
+}): string {
+  if (opts.json && opts.adoptionOnly) {
+    throw new Error(
+      "choudoufuLivePlanCommand: -adoption-only and -json cannot be combined. choudoufu refuses the pair " +
+        "(-adoption-only asks for the adoption ledger and -json asks for the bound/omissions/unowned " +
+        "document), so the two reports come from two runs.",
+    );
+  }
   const parts = [opts.binary, "live-plan", "-detailed-exitcode"];
   if (opts.json) parts.push("-json");
+  if (opts.adoptionOnly) parts.push("-adoption-only");
+  if (opts.noColor) parts.push("-no-color");
   parts.push(`-estate=${quoteArg(opts.estate)}`);
   return parts.join(" ");
 }
@@ -812,15 +927,41 @@ export async function choudoufuLivePlan(
   const json: unknown = JSON.parse(document);
   // #788's document carries no render of the human plan itself
   // (`views.LivePlanDocument` has no such field), so the human text needs a
-  // second live read rather than a field on the same response.
-  const textRun = await run(choudoufuLivePlanCommand({ binary, estate, json: false }), dir, env, signal);
+  // second live read rather than a field on the same response. `-adoption-only`
+  // (#2105) changes which report that second read prints, never whether there
+  // is one: choudoufu refuses the flag alongside `-json`, so the two reports
+  // were always going to be two runs.
+  const textRun = await run(
+    choudoufuLivePlanCommand({
+      binary,
+      estate,
+      json: false,
+      noColor: true,
+      ...(args.adoptionOnly ? { adoptionOnly: true } : {}),
+    }),
+    dir,
+    env,
+    signal,
+  );
+  const text = textRun.stdout;
 
   writeFileSync(join(dir, documentPath), document);
+
+  // The adoption commands only exist in the `-adoption-only` render, so a
+  // candidate off an ordinary run carries the two marker values and no
+  // command — which is the whole ownership contract either way.
+  const ledger = readAdoptionLedger(json, args.adoptionOnly ? parseAdoptionCommands(text) : undefined);
+  const ledgerText = renderAdoptionLedger(ledger, estate);
 
   return {
     drift,
     json,
-    text: textRun.stdout,
+    text,
+    ledger: ledgerText,
+    finding: `${text.trimEnd()}\n\n${ledgerText}\n`,
+    adoptions: ledger.adoptions,
+    contested: ledger.contested,
+    ambiguous: ledger.ambiguous,
     dir,
     documentPath,
     estate,
@@ -852,6 +993,112 @@ export async function choudoufuLiveLs(
   report(stdout, stderr);
 
   return { json: JSON.parse(stdout), dir, estate };
+}
+
+/**
+ * Claim the adoptable matches an adoption ledger found, by writing the two
+ * ownership markers onto each live resource (#2105).
+ *
+ * ## Why a tag write and not a policy verb
+ *
+ * choudoufu's `policy` block has an `adopt` verb for exactly this cell
+ * (`declared_untagged`), and `site/content/docs/use/migrate.md` names
+ * `policy { declared_untagged = "adopt" }` as the way to adopt a whole estate
+ * at once instead of one resource at a time. That would have been the smaller
+ * write: one apply, no tagging calls of chant's own. It is not reachable from
+ * outside the configuration, and #2105 checked both ways in:
+ *
+ *   - a `live` block in a terraform override file is dropped in silence.
+ *     `Module.mergeFile` (choudoufu's `internal/configs/module.go`) merges
+ *     backends, cloud blocks, providers and resources from an override file
+ *     and has no `Lives` case at all, so an `override.tf` carrying
+ *     `terraform { live { policy { declared_untagged = "adopt" } } }` changes
+ *     nothing. Measured, not inferred: a policy block with a deliberately
+ *     invalid verb in an override file passes `live-check` clean, and the same
+ *     block in a primary file is refused by name.
+ *   - a second primary file carrying one is refused outright: "A module may
+ *     have only one 'live' block." So is a sidecar beside an in-block form.
+ *
+ * Which leaves editing the root's own checked-in live configuration, running
+ * an apply, and putting it back — a mutation of a reviewed file, with a
+ * failure mode (a run that dies between the two edits) that leaves the estate
+ * declaring "adopt everything declared and unmarked" for every later apply.
+ * chant does not do that to a repository it does not own.
+ *
+ * So the mechanism is the tag write, which choudoufu's own migration guide
+ * calls the whole contract: "There is no `choudoufu adopt` command and no need
+ * for one. Two tags is the whole contract (`live/MARKERS.md`), so any tool
+ * that writes two tags can adopt a resource." The command each write runs is
+ * the paste-ready one choudoufu printed under `live-plan -adoption-only`,
+ * carried on the candidate — built from choudoufu's own provider
+ * configuration, so it lands on the region and endpoint the plan just read
+ * rather than wherever an operator's AWS CLI profile points, and shell-quoted
+ * by choudoufu for exactly this use.
+ *
+ * ## What it refuses
+ *
+ * A candidate with no printed command (a service whose tagging call this fork
+ * does not spell out: IAM, Route53, S3) is refused with its two marker values
+ * named, not guessed at. A contested address — more than one live resource at
+ * one declared identity — is refused because no single tag write claims it;
+ * `contested` is passed in so the Op's own result names what was refused
+ * beside what was written, and nothing in this function can adopt one, since
+ * `readAdoptionLedger` never puts a contested candidate in `adoptions`.
+ *
+ * Uses the longInfra profile: one tagging round trip per resource, against the
+ * cloud.
+ */
+export async function choudoufuAdopt(
+  args: ChoudoufuAdoptArgs,
+  signal?: AbortSignal,
+): Promise<ChoudoufuAdoptResult> {
+  const resolved = await resolveRoot(args, signal);
+  const { dir } = resolved;
+  const env = terraformEnvironment(resolved.root);
+  const adoptions = args.adoptions ?? [];
+  const contested = args.contested ?? [];
+
+  const adopted: string[] = [];
+  const refused: AdoptionRefusal[] = [];
+
+  for (const candidate of contested) {
+    refused.push({
+      addr: candidate.addr,
+      identity: candidate.identity,
+      reason:
+        "more than one live resource sits at this declared identity, so no single tag write claims it. " +
+        `Delete the duplicate, or write tofu-estate=${candidate.markerEstate} ` +
+        `tofu-address=${candidate.markerAddress} onto the one you mean.`,
+    });
+  }
+
+  await withHeartbeat({ step: "choudoufu adopt", root: args.root, dir }, async () => {
+    for (const candidate of adoptions) {
+      if (!candidate.command) {
+        refused.push({
+          addr: candidate.addr,
+          identity: candidate.identity,
+          reason:
+            `${candidate.type} is tagged through its own service call, which choudoufu does not print a ` +
+            `command for. Write tofu-estate=${candidate.markerEstate} ` +
+            `tofu-address=${candidate.markerAddress} onto it with that call.`,
+        });
+        continue;
+      }
+      const { stdout, stderr } = await run(candidate.command, dir, env, signal);
+      report(stdout, stderr);
+      adopted.push(candidate.addr);
+    }
+  });
+
+  return {
+    mechanism: "tag-write",
+    adopted,
+    adoptedCount: adopted.length,
+    refused,
+    ambiguous: new Set(contested.map((c) => c.addr)).size,
+    dir,
+  };
 }
 
 /**

@@ -54,7 +54,19 @@ export {
   choudoufuLivePlan,
   choudoufuLiveLs,
   choudoufuLiveCheck,
+  choudoufuAdopt,
 } from "./op/builders";
+
+// The adoption ledger over `live-plan -json`'s document (#2105). Pure, and
+// exported because the ledger's shape is what a project reading an Op's own
+// result is reading.
+export {
+  parseAdoptionCommands,
+  readAdoptionLedger,
+  renderAdoptionLedger,
+  type AdoptionCandidate,
+  type AdoptionLedger,
+} from "./op/adoption";
 
 // The Init/Plan/Gate/Apply composite (#2086).
 export { TerraformApplyOp } from "./composites/terraform-apply-op";
@@ -71,6 +83,11 @@ export type {
   TerraformWatchOpResources,
   TerraformFindingMode,
 } from "./composites/terraform-watch-op";
+
+// The Check/Ledger/Gate/Adopt composite (#2105): reconcile for a choudoufu
+// estate, and #2089's answer for this backend.
+export { TerraformAdoptOp } from "./composites/terraform-adopt-op";
+export type { TerraformAdoptOpConfig, TerraformAdoptOpResources } from "./composites/terraform-adopt-op";
 
 // Live observation over `terraform show -json` (#2087). The plugin reaches
 // `describeResources` through a dynamic import; the ownership keys are here

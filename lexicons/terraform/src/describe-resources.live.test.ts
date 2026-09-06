@@ -94,6 +94,14 @@ function deps(overrides?: Partial<TerraformReadDeps>): TerraformReadDeps {
       drift: true,
       json: PLAN,
       text: "",
+      // The adoption ledger fields (#2105) are a projection of the same
+      // document; `describeResources` reads none of them, so the stub carries
+      // the empty shape rather than a second copy of PLAN's unowned rows.
+      ledger: "",
+      finding: "",
+      adoptions: [],
+      contested: [],
+      ambiguous: 0,
       dir: ROOT_DIR,
       documentPath: "chant.live-plan.json",
       estate: ESTATE,

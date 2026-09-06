@@ -1,6 +1,6 @@
 ---
 title: Ops
-description: The init/plan/apply/show activities, the typed builders, and TerraformApplyOp.
+description: The terraform and choudoufu activities, the typed builders, and the apply, watch and adopt composites.
 diataxis: how-to
 ---
 
@@ -8,7 +8,7 @@ diataxis: how-to
     Edit lexicons/terraform/docs/pages/ops.mdx instead; changes here are overwritten. */}
 
 
-Seven activities ship with the lexicon, resolvable by name via `loadActivities(["terraform"])`, plus one composite Op that phases four of them into a gated apply.
+Eight activities ship with the lexicon, resolvable by name via `loadActivities(["terraform"])`, plus three composite Ops built from them: a gated apply, a scheduled watch, and a gated adoption.
 
 ## The activities
 
@@ -102,20 +102,86 @@ estate = "prod-networking"
 
 Declaring `binary: "choudoufu"` with no estate anywhere runs the root stock, exactly as `"terraform"`/`"tofu"` do; declaring an estate under any other binary parses fine but is inert, and `chant dev check-lexicon`/`buildRoots()` warns about it.
 
-Three more activities exist for a live root, alongside the four above:
+Four more activities exist for a live root, alongside the four above:
 
 | Activity | Runs | Notes |
 |---|---|---|
-| `choudoufuLivePlan` | `live-plan -detailed-exitcode -json -estate=<estate>`, plus a second `live-plan` without `-json` | Exit 0 means no drift, exit 2 means drift, and both are success. Returns GitHub issue #788's JSON document captured whole (`.out.documentPath` names where it was written, under the root dir), the human-readable plan, and `drift`/`unowned`/`adoptable` counts projected from the document. `estate` is auto-detected from the root's own `live` block or sidecar when omitted. |
+| `choudoufuLivePlan` | `live-plan -detailed-exitcode -json -estate=<estate>`, plus a second `live-plan` without `-json` | Exit 0 means no drift, exit 2 means drift, and both are success. Returns GitHub issue #788's JSON document captured whole (`.out.documentPath` names where it was written, under the root dir), the human-readable plan, and `drift`/`unowned`/`adoptable` counts projected from the document. `estate` is auto-detected from the root's own `live` block or sidecar when omitted. Also returns the adoption ledger over that document (`.out.ledger`), the adoptable and contested candidate lists, and `.out.finding`, the plan text with the ledger under it. `adoptionOnly` makes the second run print choudoufu's own `-adoption-only` ledger, whose paste-ready tagging commands ride back on each candidate. |
 | `choudoufuLiveLs` | `live-ls -estate=<estate> -json [-consistent]` | Lists every resource the account holds under the estate, straight off the Resource Groups Tagging API. No configuration, state or record store is read. |
 | `choudoufuLiveCheck` | `live-check -json` | Whether the root can move under live resource markers, and what stops it if not. Makes no cloud calls and needs no estate at all; `refused: true` on a non-zero exit carries the answer back rather than throwing. |
+| `choudoufuAdopt` | one tagging call per adoptable match | Writes the `tofu-estate` and `tofu-address` markers that claim the live resources an adoption ledger found. Takes the ledger's own `adoptions` and `contested` lists; a contested address is reported and never written. See [Reconcile](#reconcile-adoption-not-regeneration). |
 
 `terraformInit` is reused as-is on a live root. `terraformApply` takes no plan file there and runs `apply -auto-approve`, which re-plans against the live system at apply time; passing `planFile` on a live root is refused, quoting choudoufu's own reason. Every choudoufu invocation still gets `TF_IN_AUTOMATION=1`. `choudoufu version` is checked once per activity-module load and refuses a binary older than v0.12.0 (needed for `live-plan -json`, `live-ls` and `live-check -json`).
 
-`choudoufuLivePlan`, `choudoufuLiveLs` and `choudoufuLiveCheck` exist as typed step builders too, the same shape as the four above (`root` positional, `opts` the activity's own args minus `root`). `choudoufuLivePlan`/`choudoufuLiveLs` default to the `longInfra`/`fastIdempotent` profiles respectively the same way `terraformPlan`/`terraformShow` do; `choudoufuLiveCheck` defaults to `fastIdempotent`, no cloud calls, no state.
+`choudoufuLivePlan`, `choudoufuLiveLs`, `choudoufuLiveCheck` and `choudoufuAdopt` exist as typed step builders too, the same shape as the four above (`root` positional, `opts` the activity's own args minus `root`). `choudoufuLivePlan`/`choudoufuLiveLs` default to the `longInfra`/`fastIdempotent` profiles respectively the same way `terraformPlan`/`terraformShow` do; `choudoufuLiveCheck` defaults to `fastIdempotent`, no cloud calls, no state; `choudoufuAdopt` defaults to `longInfra`, one tagging round trip per resource.
 
 TF001 (no remote backend) does not fire on a live root, since a `backend` block is exactly what choudoufu refuses there. TF024 and TF025 are the live-root equivalents; see [Lint Rules](../lint-rules/).
 
 ## TerraformWatchOp
 
 A second composite, `TerraformWatchOp`, polls a root's state on a schedule rather than driving an apply. See the lexicon's "Live Observation" doc page for how a scheduled watch reads a Terraform root's state file as its ownership answer.
+
+Pass `live: true` and the Plan phase becomes `choudoufuLivePlan` instead of `terraformPlan`:
+
+```typescript
+export const { op } = TerraformWatchOp({
+  name: "estate-watch",
+  root: "estate",
+  live: true,
+  schedule: "0 6 * * *",
+  findingMode: "issue",
+});
+```
+
+A stock plan answers one question, so a stock watch reports one thing: whether the root drifted. A live plan reads the live system against the markers, so it answers three, and the Plan step publishes all three off that single read: `Drift` from the `-detailed-exitcode` exit, `Unowned` for live resources sitting at a declared identity with no marker, and `Adoptable` for the subset an exact content match makes claimable. `planFile` is refused with `live: true` (choudoufu takes no plan file at all) and `estate` is refused without it.
+
+In `issue` and `pull-request` mode the body is the `-no-color` plan text followed by the adoption ledger: one line per adoptable match with its address, its live identity and the two tag values that claim it, then any address more than one live resource sits at, listed and not offered. Only that text reaches the body. The `-json` document stays in the Op, the same rule the stock mode holds for `terraform show -json` and for the same reason: it carries live identities and attribute values for everything the run touched.
+
+## Reconcile: adoption, not regeneration
+
+Cloud-to-code is the position on the lifecycle dial chant [#2089](https://github.com/INTENTIUS/chant/issues/2089) left open for this lexicon, because stock Terraform has no typed path from a live resource back to HCL. On choudoufu the question is different rather than harder. Ownership is two tags, `live-plan` already names every live resource that exactly matches a declared block and carries no marker, and it prints the two values that would claim it. So reconcile here is "claim what the configuration already describes", which is a tag write.
+
+`TerraformAdoptOp` is that, in four phases:
+
+```typescript
+import { TerraformAdoptOp } from "@intentius/chant-lexicon-terraform";
+
+export const { op } = TerraformAdoptOp({ name: "estate-adopt", root: "estate" });
+```
+
+| Phase | Step | What it settles |
+|---|---|---|
+| Check | `choudoufuLiveCheck` | Whether this root can move under markers at all. No cloud calls, so it is the cheapest place to find out that the ledger below would not be authoritative. |
+| Ledger | `choudoufuLivePlan` with `adoptionOnly` | The adoption ledger, which is what the gate approves, plus the machine-readable document the Adopt phase acts on. |
+| Gate | always | Adoption writes tags onto resources this estate does not yet own. There is no `gate: "never"` here, which does mean the Op needs Temporal rather than `chant run`. |
+| Adopt | `choudoufuAdopt` | The marker writes themselves, and a named refusal for everything it declined. |
+
+| Option | Default | Notes |
+|---|---|---|
+| `name` | — required | Op name (kebab-case). Also the default task queue and gate signal suffix. |
+| `root` | — required | Key into `terraform.roots`. Must be a live root. |
+| `estate` | auto-detected | The estate whose markers to look for; normally the root's own `live` block or sidecar answers this. |
+| `signalName` | `approve-<name>` | Gate signal name. |
+| `gateTimeout` | core's own (48h) | How long the gate waits. |
+| `gateDescription` | a generated description naming the ledger | Override text shown to the approver. |
+| `cwd` | the process's cwd | Directory each step starts its `chant.config.*` search from. |
+| `compensate` | unset | Refused without a command. See below. |
+| `taskQueue` | `name` | Override the task queue. |
+
+### The adopt mechanism
+
+The write is the two tags, run through the paste-ready command choudoufu itself printed in the ledger. That command comes from choudoufu's own provider configuration, so it carries the region and endpoint the plan just read rather than wherever an operator's AWS CLI profile points, and it uses the right tagging verb per service rather than a guess. A type whose service has its own tagging call choudoufu does not spell out (IAM, Route53, S3) is refused with both marker values named, not adopted with an invented command.
+
+choudoufu's `policy` block has an `adopt` verb for exactly this situation, and its migration guide names `policy { declared_untagged = "adopt" }` as the bulk path. That would have been the smaller write, and it is not reachable from outside the configuration: a `live` block in a terraform override file is dropped in silence (choudoufu's `Module.mergeFile` has no case for one), a second primary file carrying one is refused as a duplicate, and a sidecar beside an in-block form is refused as two sources of truth. What is left is editing the root's own checked-in live configuration around an apply, which leaves an estate declaring "adopt everything declared and unmarked" if the run dies between the two edits. So chant writes the tags instead, which is what choudoufu's own guide calls the whole contract.
+
+### Ambiguity, and compensation
+
+Two live resources at one declared identity are two `unowned` entries with the same address, and no single tag write claims that address. Those never enter the adoptable set. The Adopt step is handed them separately, so the Op's result names what it declined and why beside what it wrote, and the `Ambiguous` search attribute on the Ledger phase counts them.
+
+`compensate` is refused without a command, as on `TerraformApplyOp`. Undoing an adoption is `untag`, removing this estate's marker from a live resource, which is a decision about the estate rather than something chant can synthesize; it is also not always the right undo, since a resource that already carried the markers is not one the run claimed.
+
+### `live-import` comes first, and is not an Op
+
+For an estate that still has its `terraform.tfstate`, do not start with the ledger loop above. `choudoufu live-import -state=terraform.tfstate -estate=<name>` reads that state file once, verifies each entry against the live system, and stamps markers on everything that verifies, which lands the whole estate in the "already marked" group with nothing left to adopt by hand. It is also the only path that answers the `count`/`for_each` blind spot: content matching never offers an indexed or keyed address, while `live-import` reads every instance, index and key included, straight out of the state. Two runs, the same two flags: the first prints a ratification report and writes nothing, the second stamps what the report showed as `VERIFIED` or `DRIFTED`.
+
+chant does not wrap it in an Op, on purpose. It reads a state file, once, and chant does not host one: the file is the migration's input rather than part of the estate, and an Op that took a path to somebody's `terraform.tfstate` as an argument would be pretending otherwise. Run it by hand in the root directory, keep the state file until it has run, then let `TerraformWatchOp` and `TerraformAdoptOp` cover what is left. choudoufu's "Migrate an existing estate" guide has the full sequence.
