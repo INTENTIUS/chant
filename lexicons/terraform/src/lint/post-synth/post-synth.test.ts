@@ -1,12 +1,16 @@
 import { describe, expect, test } from "vitest";
 import type { PostSynthContext } from "@intentius/chant/lint/post-synth";
 import { tf001 } from "./tf001";
+import { loadFixture } from "./fixtures/load";
 import { TERRAFORM_TYPE, terraformEntity } from "../../hcl/parse";
 
 /**
- * The local context builder the k3s checks use. `createPostSynthContext` from
- * the test-utils package hands back an empty entity map, and every check here
- * reads `ctx.entities`.
+ * The local context builder for the edge cases below that are about the
+ * *collection* (several roots or several blocks sharing one root), not about
+ * one root's parsed shape, which is what real HCL fixtures represent. The two
+ * headline cases (a backendless root, a root with a backend) go through
+ * `fixtures/TF001/` and `loadFixture` instead; see that module's doc comment
+ * for why.
  */
 function makeCtx(entities: Record<string, ReturnType<typeof terraformEntity>>): PostSynthContext {
   return {
@@ -21,23 +25,17 @@ function terraformBlock(root: string, body: Record<string, unknown>): ReturnType
 }
 
 describe("TF001: root module declares no remote backend", () => {
-  test("flags a root whose terraform block has no backend", () => {
-    const diags = tf001.check(
-      makeCtx({ "legacy/terraform": terraformBlock("legacy", { required_version: ">= 1.5.0" }) }),
-    );
+  test("flags a root whose terraform block has no backend", async () => {
+    const diags = tf001.check(await loadFixture("TF001", "positive"));
     expect(diags).toHaveLength(1);
     expect(diags[0].checkId).toBe("TF001");
-    expect(diags[0].entity).toBe("legacy/terraform");
+    expect(diags[0].entity).toBe("TF001/terraform");
     expect(diags[0].lexicon).toBe("terraform");
-    expect(diags[0].message).toContain("legacy");
+    expect(diags[0].message).toContain("TF001");
   });
 
-  test("passes a root with a backend block", () => {
-    const diags = tf001.check(
-      makeCtx({
-        "app/terraform": terraformBlock("app", { backend: { local: [{ path: "terraform.tfstate" }] } }),
-      }),
-    );
+  test("passes a root with a backend block", async () => {
+    const diags = tf001.check(await loadFixture("TF001", "negative"));
     expect(diags).toHaveLength(0);
   });
 
