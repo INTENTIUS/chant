@@ -104,6 +104,14 @@ export function getAdditionalFiles(output: string | SerializerResult): Record<st
  * comment (`chant-disable`) suppression is out of scope for post-synth
  * findings — see `./config.ts`'s `applyConfiguredSeverity` doc for the full
  * reasoning and what suppression surface post-synth findings get instead.
+ *
+ * chant #2111 finds a narrower anchor that does generalize: `./suppressions.ts`'s
+ * `applyInlineSuppressions` matches `entity` against `ctx.entities` (a map key
+ * every context already carries, source-level, before serialization), not
+ * against a name in the synthesized OUTPUT. A lexicon whose entities carry a
+ * `suppressions` field (see that file's module doc) gets inline `# chant-
+ * ignore`-style comments this way; one that doesn't is unaffected, and this
+ * interface's own contract (no `file`/`line`) is unchanged either way.
  */
 export interface PostSynthDiagnostic {
   /** ID of the check that produced this diagnostic */
