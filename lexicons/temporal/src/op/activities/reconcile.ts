@@ -47,7 +47,7 @@ export interface ReconcilePrArgs {
    * plan and run a second, differently-timed read.
    *
    * Supplying it also suppresses the `chant lifecycle plan --json` derivation
-   * that fills `entries` — a caller that already knows what it wants to say
+   * that fills `entries`: a caller that already knows what it wants to say
    * is not asking this activity to go and find out.
    */
   body?: string;
@@ -133,13 +133,13 @@ async function derivePlanEntries(
  *
  * - `report` — return the summary only; no git, no network.
  * - `issue` — open a GitHub issue describing the drift (no code change).
+ * - `pull-request` — create a branch, regenerate source via
+ *   `chant import --from <env>`, commit, push, and open a PR whose diff is the
+ *   regenerated TypeScript. Never commits to the main branch.
  *
  * The body is {@link reconcileSummary}'s change-set table unless `args.body`
  * supplies one, in which case that text is used verbatim and no plan is
  * derived (chant #2087).
- * - `pull-request` — create a branch, regenerate source via
- *   `chant import --from <env>`, commit, push, and open a PR whose diff is the
- *   regenerated TypeScript. Never commits to the main branch.
  *
  * Requires `chant` and (for non-report modes) `gh`/`git` in the environment.
  */

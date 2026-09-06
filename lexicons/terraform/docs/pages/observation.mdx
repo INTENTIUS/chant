@@ -1,0 +1,87 @@
+---
+title: Observation
+description: What chant can honestly say about a terraform root, and why the state file answers "is this mine?"
+diataxis: explanation
+---
+
+chant reads a terraform root two ways, and they answer different questions.
+
+`TerraformWatchOp` asks **has the world moved?** It runs `terraform init`, then
+`terraform plan -detailed-exitcode`, and reports the answer terraform itself
+gives: exit 0 is a plan with nothing in it, exit 2 is drift. That boolean
+leaves the Op as the `Drift` search attribute, and on a finding mode of
+`issue` or `pull-request` the plan is opened as one.
+
+`describeResources()` asks **does this declared block exist?** It runs
+`terraform show -json` over the root's current state and matches
+`values.root_module.resources[]`, `child_modules[]` included, against the
+`<root>/<address>` keys `buildRoots()` produced at build time. That is what
+`chant lifecycle diff <env> --live` and `chant lifecycle plan` read.
+
+## The state file is the ownership answer
+
+[Lifecycle models](/chant/concepts/lifecycle-models/) draws three axes, and
+the third one is "who answers *is this mine?*". It has three rows: a trusted
+state file, a live ownership marker, or nobody.
+
+chant sits on the **live ownership marker** row almost everywhere. A
+chant-managed AWS resource carries `chant:managed-by` as an ordinary tag; a
+Kubernetes object carries `app.kubernetes.io/managed-by` as an ordinary label.
+Ownership is a fact recorded on the resource, read back on every observation,
+and no file has to be hosted or locked for it to be true.
+
+Terraform sits on the **trusted state file** row, and this lexicon does not
+pretend otherwise. There is nowhere for chant to stamp a marker here: a
+resource's provider-side tags belong to whoever wrote the HCL, and writing
+into them would edit an estate this lexicon promises never to write. What
+terraform has instead is the record chant declines to host elsewhere, and that
+record already says precisely which addresses the configuration manages.
+
+So the rule is state membership, and it is the whole rule:
+
+- an address `terraform show -json` returns is `owned`;
+- anything else is `unknown`.
+
+Never `foreign`. `foreign` would mean chant read a marker and found somebody
+else's name on it. There is no marker, so there is no such reading to report.
+
+A declared `module` block is the case where the difference shows. The state
+carries the module's resources, never a row for the block itself, so chant can
+see the block is live without the state ever saying that block is managed. It
+comes back present with `ownership: "unknown"`, and an `unknown` never becomes
+a delete.
+
+## What has no answer at all
+
+Only `resource` and `data` blocks have rows in state. A `terraform`,
+`provider`, `variable`, `output` or `locals` block is reported as not-observed
+with reason `unsupported-kind`. That is honest rather than a gap: those blocks
+have no live counterpart to look for.
+
+## A failed read is never a list of creates
+
+Per the [observation contract](/chant/lexicon-authoring/observation-contract/),
+a declared entity comes back in one of three states, and "absent" is only one
+of them. If a root's `init` or `show` fails, for a held state lock, an
+unreachable backend or missing credentials, every entity declared in that root
+is reported not-observed with reason `read-failed` and the root named in the
+detail. None of them is reported absent, because absent plus declared
+classifies as `create`, and a broken read must not propose recreating an
+estate that is sitting there working.
+
+Roots are read one at a time and merged, so a root with a broken backend never
+un-observes a root that answered.
+
+## The plan JSON never leaves the process
+
+`terraform show -json` over a plan file carries the attribute values the plan
+touches. Some of those are secrets that no `sensitive` marking covers, because
+`sensitive_values` describes what the configuration declared, not what a
+provider put in the plan. `TerraformWatchOp` therefore posts the `-no-color`
+render and only that. There is no option to post the other, and the composite's
+tests assert that no reference to it reaches the step that opens an issue or a
+pull request.
+
+The same care applies to observation: an observed resource reports its
+address, type, mode, provider and root, plus the `id` as its physical id.
+Nothing else out of the state row's `values` is surfaced.

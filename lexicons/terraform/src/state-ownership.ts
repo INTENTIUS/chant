@@ -1,5 +1,5 @@
 /**
- * Terraform's ownership channel (#2087) — the state file.
+ * Terraform's ownership channel (#2087): the state file.
  *
  * Its own module, and a tiny one, for the same reason cedar's
  * `src/avp/ownership.ts` is: `plugin.ts` declares `ownershipChannel` eagerly

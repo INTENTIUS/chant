@@ -1,5 +1,5 @@
 /**
- * TerraformWatchOp composite (#2087) — drift reporting for one root module,
+ * TerraformWatchOp composite (#2087): drift reporting for one root module,
  * on a schedule.
  *
  * The observe position on the lifecycle dial. `TerraformApplyOp` next door
@@ -26,8 +26,8 @@
  * ## Findings reuse `reconcilePr`
  *
  * `issue` and `pull-request` call the temporal lexicon's `reconcilePr`
- * activity — the one place in chant that shells to `gh issue create` /
- * `gh pr create` — rather than growing a second copy of those calls here.
+ * activity, the one place in chant that shells to `gh issue create` /
+ * `gh pr create`, rather than growing a second copy of those calls here.
  * That activity built its own change-set summary and had no way to be handed
  * one, so #2087 added a single field to it (`ReconcilePrArgs.body`), which is
  * what carries the `-no-color` plan through. Note that the pull-request mode
@@ -110,7 +110,7 @@ export interface TerraformWatchOpConfig {
   schedule?: string;
   /**
    * What to do when the plan proposes changes. Default: `"report"`, which
-   * opens nothing — the `Drift` search attribute and the run's own log are
+   * opens nothing. The `Drift` search attribute and the run's own log are
    * the report.
    */
   findingMode?: TerraformFindingMode;
@@ -134,7 +134,7 @@ export interface TerraformWatchOpConfig {
 }
 
 export interface TerraformWatchOpResources {
-  /** Op resource — generates the Init/Plan/[Report] workflow. */
+  /** Op resource. Generates the Init/Plan/[Report] workflow. */
   op: InstanceType<typeof OpResource>;
   /** `Temporal::Schedule`, present only when `schedule` was given. */
   schedule?: Declarable;

@@ -97,7 +97,7 @@ describe("indexStateResources (#2087)", () => {
 
   it("does not double-prefix an address terraform already qualified", () => {
     // Real `terraform show -json` writes `module.cdn.null_resource.edge`
-    // inside `child_modules`, already qualified — see the fixture.
+    // inside `child_modules`, already qualified. See the fixture.
     const index = indexStateResources(STATE);
     expect(index.rows.has("module.cdn.module.cdn.null_resource.edge")).toBe(false);
   });
@@ -122,7 +122,7 @@ describe("indexStateResources (#2087)", () => {
 describe("classifyStateOwnership (#2087)", () => {
   const index = indexStateResources(STATE);
 
-  it("an address in state is owned — state membership IS the channel", () => {
+  it("an address in state is owned, since state membership IS the channel", () => {
     expect(classifyStateOwnership("null_resource.first", index)).toBe("owned");
     expect(classifyStateOwnership("module.cdn.null_resource.edge", index)).toBe("owned");
   });
@@ -184,7 +184,7 @@ describe("terraform describeResources (#2087)", () => {
     expect(queried["app/null_resource.third"]).toContain("null_resource.third");
   });
 
-  it("reports a declared module block as present but unknown — the state has no row for it", async () => {
+  it("reports a declared module block as present but unknown, since state has no row for it", async () => {
     const { resources } = normalizeObservation(await describeResources(await options(), deps()));
     expect(resources["app/module.cdn"]).toMatchObject({
       type: "Terraform::Module",
@@ -202,7 +202,7 @@ describe("terraform describeResources (#2087)", () => {
     }
   });
 
-  it("surfaces no ownership marker — there is no marker channel to read one off", async () => {
+  it("surfaces no ownership marker, because there is no marker channel to read one off", async () => {
     const { resources } = normalizeObservation(await describeResources(await options(), deps()));
     for (const meta of Object.values(resources)) expect(meta.marker).toBeUndefined();
   });

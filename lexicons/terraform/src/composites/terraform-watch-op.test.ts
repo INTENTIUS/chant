@@ -1,5 +1,5 @@
 /**
- * TerraformWatchOp composite tests (#2087) — the phases, the Drift outcome
+ * TerraformWatchOp composite tests (#2087): the phases, the Drift outcome
  * attribute, the three finding modes, the schedule, and the hard rule that
  * only the `-no-color` plan text can reach an issue or PR body.
  */
@@ -50,7 +50,7 @@ describe("TerraformWatchOp phases (#2087)", () => {
     expect(plan.fn).toBe("terraformPlan");
     expect(plan.id).toBe("plan");
     // `terraformPlanCommand` always emits -detailed-exitcode, which is what
-    // makes `changed` answerable at all — see ../op/activities/terraform.ts.
+    // makes `changed` answerable at all. See ../op/activities/terraform.ts.
     expect(plan.outcomeAttribute).toEqual({ name: "Drift", from: "changed" });
     expect(plan.args?.planFile).toBe("chant.tfplan");
   });

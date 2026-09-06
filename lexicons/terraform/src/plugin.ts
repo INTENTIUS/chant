@@ -63,8 +63,8 @@ export const terraformPlugin: LexiconPlugin = {
    * Terraform's ownership channel is the state file, not a tag or a label
    * (#2087). Every address `terraform show -json` returns is `owned`;
    * everything else is `unknown`. Declaring the channel is what makes that a
-   * claim the conformance suite checks rather than a silent degradation —
-   * see `./describe-resources.ts` and `docs/pages/observation.mdx`.
+   * claim the conformance suite checks rather than a silent degradation.
+   * See `./describe-resources.ts` and `docs/pages/observation.mdx`.
    */
   ownershipChannel: {
     keys: TERRAFORM_STATE_OWNERSHIP_KEYS,

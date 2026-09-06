@@ -13,7 +13,7 @@
  * nowhere to stamp: a resource's provider-side tags are the practitioner's
  * own, and writing chant's marker into them would edit an estate this lexicon
  * promises never to write. What terraform has instead is the thing chant
- * elsewhere refuses to host — a trusted state file that already records
+ * elsewhere refuses to host, a trusted state file that already records
  * exactly which addresses this configuration manages.
  *
  * So the answer here is state membership. An address `terraform show -json`
@@ -33,15 +33,15 @@
  *
  * `values.root_module.resources[]` (and, recursively, `child_modules[]`)
  * carries `resource` and `data` blocks. A `terraform`, `provider`, `variable`,
- * `output` or `locals` block has no row there and reads `unsupported-kind` —
- * honest, and not a gap to close by inventing an address for something that
- * has none.
+ * `output` or `locals` block has no row there and reads `unsupported-kind`.
+ * That is honest, not a gap to close by inventing an address for something
+ * that has none.
  *
  * ## Tri-state (#1089)
  *
  * A root whose `init` or `show` fails reports EVERY entity declared in that
  * root as not-observed with reason `read-failed` and the root named, never
- * absent — a failed read must never render as a list of creates. Roots are
+ * absent. A failed read must never render as a list of creates. Roots are
  * read independently and merged (`mergeObservations`), so one broken backend
  * does not un-observe a root that answered.
  *
@@ -114,7 +114,7 @@ function asString(value: unknown): string | undefined {
  * Terraform already writes fully qualified addresses inside `child_modules`
  * (`module.cdn.null_resource.edge`, as `src/__fixtures__/show-state.json`
  * records), so the module prefix is applied only when a row's own address is
- * missing it — belt and braces for an older `format_version`, never a second
+ * missing it. Belt and braces for an older `format_version`, never a second
  * `module.cdn.` on top of the first.
  */
 export function indexStateResources(showJson: unknown): StateIndex {
@@ -210,7 +210,7 @@ function adapter(root: string, cwd: string | undefined, deps: TerraformReadDeps)
   return {
     async bind(): Promise<StateIndex> {
       // `init` first: `show` against an uninitialized root reports no state at
-      // all, which would read as "everything is absent" — the exact failure
+      // all, which would read as "everything is absent", the exact failure
       // the tri-state exists to prevent.
       const initialized = await deps.init({ root, ...where });
       dir = initialized.dir;
@@ -255,8 +255,8 @@ function adapter(root: string, cwd: string | undefined, deps: TerraformReadDeps)
       if (entity.type === MODULE_TYPE) {
         if (!moduleIsLive(address, index)) return { absent: true, queried };
         // The state has resources under this module but no row for the block
-        // itself, so state membership — the whole ownership channel here —
-        // has nothing to say about it. See the module doc.
+        // itself, so state membership, which is the whole ownership channel
+        // here, has nothing to say about it. See the module doc.
         return {
           present: {
             type: entity.type,
@@ -272,7 +272,7 @@ function adapter(root: string, cwd: string | undefined, deps: TerraformReadDeps)
       return {
         unobserved: {
           reason: "unsupported-kind",
-          detail: `${entity.type} has no row in terraform state — only resource and data blocks do`,
+          detail: `${entity.type} has no row in terraform state: only resource and data blocks do`,
         },
         queried,
       };
