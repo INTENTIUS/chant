@@ -27,8 +27,7 @@
  * list.
  */
 
-import { findGate } from "./local-executor";
-import type { ActivityStep, EffectStep, OpConfig, StepDefinition } from "./types";
+import type { ActivityStep, EffectStep, GateStep, OpConfig, StepDefinition } from "./types";
 
 export type OpVerbClass = "read-only" | "mutating" | "destructive";
 
@@ -109,7 +108,22 @@ export function classifyOpVerbClass(config: Pick<OpConfig, "phases" | "onFailure
   return sawMutating ? "mutating" : "read-only";
 }
 
-/** Does this Op have its own approval gate anywhere in its phases (main or `onFailure`)? Thin re-export of `findGate` under the name this module's callers reach for. */
+/**
+ * Does this Op have its own approval gate anywhere in its phases (main or
+ * `onFailure`), including one nested inside an effect step?
+ *
+ * A declaration-time question, not a run-time one: a gate is a fact the
+ * executor decides against the ledger when it reaches one (#2119,
+ * `./gate.ts`), so this says "this op can stop for a human", never "this op
+ * will stop". `TMP014`'s dispatch refusals are the caller that needs it.
+ */
 export function isGated(config: Pick<OpConfig, "phases" | "onFailure">): boolean {
-  return findGate(config as OpConfig) !== undefined;
+  const isGate = (s: StepDefinition): s is GateStep => s.kind === "gate";
+  for (const phase of [...config.phases, ...(config.onFailure ?? [])]) {
+    for (const step of phase.steps) {
+      if (isGate(step)) return true;
+      if (step.kind === "effect" && step.steps.some(isGate)) return true;
+    }
+  }
+  return false;
 }

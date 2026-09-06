@@ -20,8 +20,12 @@ import {
 } from "../../op/operator";
 import { readLease, DEFAULT_LEASE_TTL_MS } from "../../lifecycle/lease";
 import { readConvergeLedger, type ConvergeTickRecord } from "../../lifecycle/converge-ledger";
-import type { GateResolutionRecord } from "../../lifecycle/gate-ledger";
-import { appendGateResolution, readGateResolutions, latestResolutionSince, resolveApprovalUrl, isApprovalUrl } from "../../lifecycle/gate-ledger";
+import type { GateResolutionRecord, PendingGateRecord } from "../../lifecycle/gate-ledger";
+import {
+  appendGateResolution, appendPendingGate, readGateResolutions, readGateLedger,
+  latestResolutionSince, latestPendingGate, isPendingGateExpired,
+  resolveApprovalUrl, isApprovalUrl,
+} from "../../lifecycle/gate-ledger";
 import { pushLifecycle } from "../../lifecycle/git";
 import { formatError, formatWarning, formatSuccess, formatBold, formatInfo } from "../format";
 import type { CommandContext } from "../registry";
@@ -113,9 +117,35 @@ interface OpStatusLine {
   op: string;
   env: string;
   lastTick?: ConvergeTickRecord;
-  /** `url` (#2028) is the gate's approval surface, when the tick that recorded it knew one — what a renderer points its approve affordance at instead of a shell command. */
-  pendingGates: { rule: string; op?: string; gate: string; url?: string }[];
+  /** `url` (#2028) is the gate's approval surface, when whatever recorded it knew one — what a renderer points its approve affordance at instead of a shell command. `rule` is present only for a gate a converge rule's dispatch reached; a gate an ordinary `chant run` stopped at has none. */
+  pendingGates: { rule?: string; op?: string; gate: string; url?: string; expiresAt?: string; description?: string }[];
   lease?: { holder: string; expiresAt: string };
+}
+
+/**
+ * Every gate an op is currently standing at, read from its own gate ledger
+ * (#2119) — a live (unexpired) pending fact with no resolution newer than it.
+ *
+ * Ledger-first, so `chant operator status` sees a gate any run recorded, not
+ * only one a converge tick's dispatch reached. Before this, a plain `chant run
+ * <op>` could not produce a pending gate at all (the executor refused the op
+ * outright), so reading the converge ledger's `gated` outcomes was the whole
+ * story; now it is one source among the ops' own.
+ */
+export async function pendingGatesFor(
+  opName: string,
+  opts: { cwd?: string; now?: string } = {},
+): Promise<PendingGateRecord[]> {
+  const now = opts.now ?? new Date().toISOString();
+  const { resolutions, pending } = await readGateLedger(opName, { cwd: opts.cwd });
+  const standing: PendingGateRecord[] = [];
+  for (const gate of new Set(pending.map((p) => p.gate))) {
+    const latest = latestPendingGate(pending, gate);
+    if (!latest || isPendingGateExpired(latest, now)) continue;
+    if (latestResolutionSince(resolutions, gate, latest.timestamp)) continue;
+    standing.push(latest);
+  }
+  return standing.sort((a, b) => a.gate.localeCompare(b.gate));
 }
 
 async function statusFor(opName: string, env: string, cwd?: string): Promise<OpStatusLine> {
@@ -127,19 +157,47 @@ async function statusFor(opName: string, env: string, cwd?: string): Promise<OpS
   const lastTick = ownRecords.at(-1);
 
   const pendingGates: OpStatusLine["pendingGates"] = [];
+  const seen = new Set<string>();
+
+  // The dispatched ops this ConvergeOp's last tick recorded as gated, plus the
+  // ConvergeOp itself — a gate can sit on either.
+  const gateOps = new Set<string>([opName]);
+  const ruleFor = new Map<string, string>();
+  for (const outcome of lastTick?.outcomes ?? []) {
+    if (outcome.action !== "gated" || !outcome.gateName || !outcome.op) continue;
+    gateOps.add(outcome.op);
+    ruleFor.set(`${outcome.op}\0${outcome.gateName}`, outcome.ruleId);
+  }
+
+  for (const gateOp of [...gateOps].sort()) {
+    for (const record of await pendingGatesFor(gateOp, { cwd })) {
+      seen.add(`${gateOp}\0${record.gate}`);
+      pendingGates.push({
+        op: gateOp,
+        gate: record.gate,
+        expiresAt: record.expiresAt,
+        ...(ruleFor.get(`${gateOp}\0${record.gate}`) ? { rule: ruleFor.get(`${gateOp}\0${record.gate}`) } : {}),
+        ...(record.description ? { description: record.description } : {}),
+        ...(record.url ? { url: record.url } : {}),
+      });
+    }
+  }
+
+  // A tick that recorded a `gated` outcome before the executor started writing
+  // pending facts (#2119) still has nothing in `_gates` to read; fall back to
+  // the outcome itself so an in-flight gate isn't dropped on upgrade.
   if (lastTick) {
     for (const outcome of lastTick.outcomes) {
       if (outcome.action !== "gated" || !outcome.gateName || !outcome.op) continue;
+      if (seen.has(`${outcome.op}\0${outcome.gateName}`)) continue;
       const { records: resolutions } = await readGateResolutions(outcome.op, { cwd });
-      const resolved = latestResolutionSince(resolutions, outcome.gateName, lastTick.timestamp);
-      if (!resolved) {
-        pendingGates.push({
-          rule: outcome.ruleId,
-          op: outcome.op,
-          gate: outcome.gateName,
-          ...(outcome.url ? { url: outcome.url } : {}),
-        });
-      }
+      if (latestResolutionSince(resolutions, outcome.gateName, lastTick.timestamp)) continue;
+      pendingGates.push({
+        rule: outcome.ruleId,
+        op: outcome.op,
+        gate: outcome.gateName,
+        ...(outcome.url ? { url: outcome.url } : {}),
+      });
     }
   }
 
@@ -152,6 +210,15 @@ async function statusFor(opName: string, env: string, cwd?: string): Promise<OpS
   };
 }
 
+/** One op standing at a gate that no ConvergeOp row above already reported (#2119) — an ordinary `chant run <op>` records these now, so they belong on this page even where no converge tick was ever involved. */
+export interface StandaloneGateLine {
+  op: string;
+  gate: string;
+  description?: string;
+  expiresAt: string;
+  url?: string;
+}
+
 /**
  * `chant operator status [--env <env>] [--json]` — last tick, outcome
  * counts, and pending gates, read from the `chant/lifecycle` orphan branch
@@ -159,22 +226,46 @@ async function statusFor(opName: string, env: string, cwd?: string): Promise<OpS
  * running: everything here was already durably recorded by whichever
  * process (this operator, a bare `chant run <op>`, or another machine's
  * operator) ran the last tick.
+ *
+ * Pending gates are read from every discovered op's own gate ledger, not only
+ * from a converge tick's `gated` outcomes (#2119) — a gate an ordinary `chant
+ * run <op>` stopped at is the same standing fact and shows up the same way,
+ * under "pending gates" for ops with no converge tick behind them.
  */
 export async function runOperatorStatus(ctx: CommandContext): Promise<number> {
   const { ops, errors } = await discoverConvergeOps({ env: ctx.args.env });
   for (const err of errors) console.error(formatWarning({ message: err }));
 
-  if (ops.length === 0) {
-    console.error(formatWarning({ message: "No ConvergeOp declarations found" }));
-    return 0;
-  }
-
   const rows = await Promise.all(
     ops.map((d) => statusFor(d.config.name, d.config.searchAttributes?.Env ?? "unknown")),
   );
 
+  // Every other discovered op that is standing at a gate. `discoverOps` sees
+  // the whole project, so an ApplyOp someone ran by hand this morning is here
+  // even though no ConvergeOp ever dispatched it.
+  const covered = new Set(rows.flatMap((r) => r.pendingGates.map((g) => `${g.op ?? r.op} ${g.gate}`)));
+  const { ops: allOps } = await discoverOps();
+  const standalone: StandaloneGateLine[] = [];
+  for (const opName of [...allOps.keys()].sort()) {
+    for (const record of await pendingGatesFor(opName)) {
+      if (covered.has(`${opName} ${record.gate}`)) continue;
+      standalone.push({
+        op: opName,
+        gate: record.gate,
+        expiresAt: record.expiresAt,
+        ...(record.description ? { description: record.description } : {}),
+        ...(record.url ? { url: record.url } : {}),
+      });
+    }
+  }
+
+  if (ops.length === 0 && standalone.length === 0) {
+    console.error(formatWarning({ message: "No ConvergeOp declarations found" }));
+    return 0;
+  }
+
   if (ctx.args.json) {
-    console.log(JSON.stringify(rows, null, 2));
+    console.log(JSON.stringify(standalone.length > 0 ? { rows, pendingGates: standalone } : rows, null, 2));
     return 0;
   }
 
@@ -190,9 +281,24 @@ export async function runOperatorStatus(ctx: CommandContext): Promise<number> {
     if (row.pendingGates.length > 0) {
       console.log(`  pending gates:`);
       for (const g of row.pendingGates) {
-        console.log(`    - ${g.op ?? row.op} gate "${g.gate}" (rule ${g.rule}) — resolve: chant approve ${g.op ?? row.op} ${g.gate}`);
+        const op = g.op ?? row.op;
+        console.log(
+          `    - ${op} gate "${g.gate}"${g.rule ? ` (rule ${g.rule})` : ""} — resolve: chant approve ${op} ${g.gate}`,
+        );
+        if (g.expiresAt) console.log(`      expires: ${g.expiresAt}`);
         if (g.url) console.log(`      approve at: ${g.url}`);
       }
+    }
+    console.log("");
+  }
+
+  if (standalone.length > 0) {
+    console.log(formatBold("pending gates (no converge tick)"));
+    for (const g of standalone) {
+      console.log(`  - ${g.op} gate "${g.gate}" — resolve: chant approve ${g.op} ${g.gate}`);
+      if (g.description) console.log(`    ${g.description}`);
+      console.log(`    expires: ${g.expiresAt}`);
+      if (g.url) console.log(`    approve at: ${g.url}`);
     }
     console.log("");
   }
@@ -366,16 +472,22 @@ export async function runOperatorLog(ctx: CommandContext): Promise<number> {
 // ── chant approve <op> <gate> ───────────────────────────────────────────────
 
 /**
- * `chant approve <op> <gate> [--actor <name>] [--note <text>] [--url <url>]`
- * — record the
- * out-of-band resolution fact for a gate a converge tick recorded as gated
- * (issue: "resolution is an out-of-band act that writes the counterpart
- * fact"). Per the issue's own leaning on open question 3 ("local trust in
- * v1"), this performs no authorization check beyond "you can run `chant
- * approve` locally" — see `../../lifecycle/gate-ledger.ts`'s doc for what
- * this record does and, just as importantly, does not (yet) do: it does
- * not retroactively unblock the gated op's own local dispatch, which the
- * local executor still refuses unconditionally.
+ * `chant approve <op> <gate> [--actor <name>] [--note <text>] [--url <url>]
+ * [--expire]` — record the out-of-band resolution fact for a gate a run
+ * stopped at (issue #1485: "resolution is an out-of-band act that writes the
+ * counterpart fact"). Per that issue's leaning on open question 3 ("local
+ * trust in v1"), this performs no authorization check beyond "you can run
+ * `chant approve` locally".
+ *
+ * Since #2119 this closes the loop rather than just narrating it: the next
+ * `chant run <op>` reads the resolution, finds it newer than the gate's
+ * pending fact, and walks through.
+ *
+ * `--expire` is the other half — clear a standing pending fact *without*
+ * approving anything, for a gate that was recorded against a run nobody
+ * intends to finish. It writes no resolution; it appends a pending fact that
+ * is already expired, which supersedes the standing one on an append-only
+ * ledger, so the next run decides the gate from scratch.
  */
 export async function runApprove(ctx: CommandContext): Promise<number> {
   const opName = ctx.args.path;
@@ -383,6 +495,30 @@ export async function runApprove(ctx: CommandContext): Promise<number> {
   if (!opName || opName === "." || !gate) {
     console.error(formatError({ message: "Usage: chant approve <op> <gate>" }));
     return 1;
+  }
+
+  if (ctx.args.expire) {
+    const now = new Date().toISOString();
+    const standing = latestPendingGate((await readGateLedger(opName)).pending, gate);
+    if (!standing || isPendingGateExpired(standing, now)) {
+      console.error(formatWarning({
+        message: `Gate "${gate}" on "${opName}" has no standing pending fact — nothing to expire`,
+      }));
+      return 0;
+    }
+    await appendPendingGate({
+      op: opName,
+      gate,
+      timestamp: now,
+      expiresAt: now,
+      ...(standing.description ? { description: standing.description } : {}),
+    });
+    await pushLifecycle().catch(() => undefined);
+    console.error(formatSuccess(`Gate "${gate}" on "${opName}" expired at ${now} — not approved`));
+    console.error(formatInfo(
+      `The next \`chant run ${opName}\` decides this gate from scratch and records a fresh pending fact.`,
+    ));
+    return 0;
   }
 
   const outcome = await recordGateApproval(opName, gate, {
@@ -393,8 +529,8 @@ export async function runApprove(ctx: CommandContext): Promise<number> {
   if (!outcome.ok) return 1;
 
   console.error(formatInfo(
-    "This records the resolution as a fact; it does not itself re-run the gated dispatch — " +
-      "the local executor still refuses any op with a gate. Re-run it with --temporal, or via the PR that carries the change.",
+    `This records the resolution as a fact; it does not itself re-run anything. ` +
+      `Run \`chant run ${opName}\` and it walks through gate "${gate}".`,
   ));
   return 0;
 }

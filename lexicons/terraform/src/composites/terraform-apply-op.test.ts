@@ -9,10 +9,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, test, expect } from "vitest";
 import {
-  findGate,
+  isGated,
   isStepOutputRef,
   runOpLocally,
-  LocalGateUnsupportedError,
+  memoryGateLedgerPort,
   type ActivityStep,
   type GateStep,
   type OpConfig,
@@ -172,14 +172,28 @@ describe("TerraformApplyOp compensation — total or refused (#2086)", () => {
   });
 });
 
-describe("TerraformApplyOp on the local executor (#2086)", () => {
-  test("a gated Op is refused up front, naming the signal the local executor cannot wait for", async () => {
+describe("TerraformApplyOp on the local executor (#2086, gate-as-fact #2119)", () => {
+  test("a gated Op stops at the gate and records the pending fact, naming the signal", async () => {
     const op = props({ name: "prod-apply", root: "app" });
-    await expect(runOpLocally(op, new Map(), {})).rejects.toBeInstanceOf(LocalGateUnsupportedError);
+    const ran: string[] = [];
+    const stub = (fn: string) => [fn, async () => { ran.push(fn); return {}; }] as const;
+    const activities = new Map(
+      ["terraformInit", "terraformPlan", "terraformShow", "terraformApply"].map(stub),
+    );
+    const gates = memoryGateLedgerPort();
+    const result = await runOpLocally(op, activities, {}, undefined, { gates, now: "2026-09-05T12:00:00.000Z" });
+
+    expect(result.status).toBe("gated");
+    expect(result.gate?.op).toBe("prod-apply");
+    expect(result.gate?.gate).toBe(op.phases.flatMap((p) => p.steps).find(isGate)?.signalName);
+    expect(gates.appended).toHaveLength(1);
+    // Init, Plan and the pre-gate `show` ran; Apply is behind the gate and did not.
+    expect(ran).toEqual(["terraformInit", "terraformPlan", "terraformShow"]);
   });
 
-  test('gate: "never" clears that refusal, which is what makes `chant run` viable', () => {
-    expect(findGate(props({ name: "prod-apply", root: "app", gate: "never" }))).toBeUndefined();
+  test('gate: "never" means there is no gate to stop at', () => {
+    expect(isGated(props({ name: "prod-apply", root: "app", gate: "never" }))).toBe(false);
+    expect(isGated(props({ name: "prod-apply", root: "app" }))).toBe(true);
   });
 });
 

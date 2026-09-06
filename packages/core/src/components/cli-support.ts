@@ -31,12 +31,13 @@ import {
   runComponentDeploy,
   UnknownDependencyError,
   DependencyCycleError,
-  DriverGateUnsupportedError,
   DriverRunFailure,
   type DriverComponent,
   type DriverPhase,
   type DriverRunResult,
 } from "./driver";
+import type { PendingGateRecord } from "../lifecycle/gate-ledger";
+import type { GateLedgerPort } from "../op/gate";
 import { isLexiconPlugin, type LexiconPlugin, type ComponentPipelineOptions } from "../lexicon";
 import type { RunProgressEvent } from "./run-progress";
 import { relative } from "node:path";
@@ -313,11 +314,13 @@ function toDriverComponent(component: { name: string; dependsOn: string[]; deplo
 
 /**
  * Find the first `gate` step anywhere in a component's `deploy`/`rollback`
- * composition (including nested fan-out phases), mirroring
- * `../op/local-executor.ts`'s `findGate`. Used as a pre-flight check so
- * `chant run --components` fails before any step runs — matching
- * `runOpLocal`'s behavior for Ops — rather than only failing mid-run when the
- * driver itself reaches the gated phase (`DriverGateUnsupportedError`).
+ * composition (including nested fan-out phases).
+ *
+ * A declaration-time question, not a pre-flight refusal: since #2119 the local
+ * driver decides a gate against the ledger when it reaches one, so nothing
+ * needs to know up front that a component has one. What still does is the
+ * `--temporal` path (`../cli/handlers/run.ts`), which prints the signal command
+ * that unblocks the durable workflow it just started.
  */
 export function findComponentGate(component: DriverComponent): { signalName: string } | undefined {
   const search = (phases: DriverPhase[] | undefined): { signalName: string } | undefined => {
@@ -406,6 +409,8 @@ export interface RunComponentsOptions {
    * every test in `cli-support.test.ts`) that doesn't supply this.
    */
   buildParams?: BuildParamProvenance[];
+  /** Where a `gate` step's facts are read and written (#2119). Defaults to the `chant/lifecycle` orphan branch; a test passes `memoryGateLedgerPort()` from `../op/gate.ts`. */
+  gates?: GateLedgerPort;
 }
 
 /** Result of `chant run --components <name|all>`. */
@@ -416,8 +421,8 @@ export interface RunComponentsResult {
   /** Component names actually dispatched to the driver, in run order. */
   selected: string[];
   error?: string;
-  /** Set when a selected component (or one of its `deploy`/`rollback` phases) contains a `gate` the local executor cannot run. */
-  gateUnsupported?: { component: string; signalName: string };
+  /** Set when the run stopped at a `gate` nobody has approved (#2119): the component it stopped at and the pending fact recorded for it. */
+  gated?: { component: string; gate: PendingGateRecord };
   /** This run's resolved build-time parameters (chant #1108) — the component-driver counterpart of `../cli/commands/build.ts`'s `BuildResult.buildParams`. Present only once the run actually reached dispatch (mirrors `BuildResult.buildParams`, which is likewise absent on an early-error return). */
   buildParams?: BuildParamProvenance[];
 }
@@ -441,12 +446,10 @@ export interface RunComponentsResult {
  *    infra outside the discovered set (e.g. a shared stack, per the
  *    `search-service` pilot), which is exactly the common case.
  *
- * Pre-flights every selected component for a `gate` step and fails before any
- * step runs (`gateUnsupported`), matching `runOpLocal`'s pre-flight
- * `findGate` check for Ops — gated components need a durable (Temporal)
- * backend, which is out of scope here (issue #585 scopes Temporal-backed
- * component execution to what already exists for Ops; the epic tracks
- * graduating a gated component to `--temporal` separately).
+ * A `gate` no longer refuses the run up front (#2119). The driver decides each
+ * one against the gate ledger as it reaches it; a gate nobody has approved
+ * stops the run there with `gated` set, which the CLI turns into exit code 3
+ * and the `chant approve` line.
  */
 /** Result of resolving a `<name|all>` selector against discovered components — shared by the local (`runComponents`) and durable (Temporal codegen, #589) entrypoints. */
 export interface ResolvedComponentTargets {
@@ -526,17 +529,6 @@ export async function runComponents(
   }
   const targets = resolved.targets;
 
-  for (const component of targets) {
-    const gate = findComponentGate(component);
-    if (gate) {
-      return {
-        success: false,
-        selected: targets.map((c) => c.name),
-        gateUnsupported: { component: component.name, signalName: gate.signalName },
-      };
-    }
-  }
-
   // (#629) Resolve `chant.config.ts`'s `sbom`/`signing`/`vulnPolicy` sections
   // and fill their defaults into every recognized step (`generate-sbom`,
   // `sign`/`attest-provenance`, `verify`, `vuln-gate`) that didn't already
@@ -563,10 +555,25 @@ export async function runComponents(
   const seedOutputs = options.componentOutputs ?? {};
   const { onProgress } = options;
 
+  const gates = options.gates;
+
   try {
     if (selector === "all") {
-      const run = await runInterpretDriver(resolvedTargets, registry, { env, componentOutputs: seedOutputs, onProgress });
-      return { success: true, run, selected, buildParams: options.buildParams };
+      const run = await runInterpretDriver(resolvedTargets, registry, {
+        env,
+        componentOutputs: seedOutputs,
+        onProgress,
+        ...(gates ? { gates } : {}),
+      });
+      return {
+        success: run.status === "ok",
+        run,
+        selected,
+        buildParams: options.buildParams,
+        ...(run.status === "gated" && run.gate
+          ? { gated: { component: run.gatedComponent ?? selected[0], gate: run.gate } }
+          : {}),
+      };
     }
 
     // Single-component invocation: run just this component, bypassing
@@ -592,8 +599,9 @@ export async function runComponents(
       registry,
       componentOutputs,
       onProgress,
+      gates ? { port: gates } : undefined,
     );
-    const status: "ok" | "failed" = componentResult.ok ? "ok" : "failed";
+    const status = componentResult.status === "fail" ? "failed" : componentResult.status;
     onProgress?.({ type: "component-done", wave: 1, component: componentName, status });
     onProgress?.({ type: "wave-done", wave: 1, status });
     onProgress?.({ type: "run-done", status });
@@ -602,20 +610,25 @@ export async function runComponents(
       waves: [selected],
       results: [componentResult],
       ok: componentResult.ok,
-      failedComponent: componentResult.ok ? undefined : componentResult.component,
+      status: componentResult.status,
+      failedComponent: componentResult.status === "fail" ? componentResult.component : undefined,
+      ...(componentResult.status === "gated"
+        ? { gatedComponent: componentResult.component, gate: componentResult.gate }
+        : {}),
       componentOutputs,
     };
-    return { success: componentResult.ok, run, selected, buildParams: options.buildParams };
+    return {
+      success: componentResult.ok,
+      run,
+      selected,
+      buildParams: options.buildParams,
+      ...(componentResult.status === "gated" && componentResult.gate
+        ? { gated: { component: componentResult.component, gate: componentResult.gate } }
+        : {}),
+    };
   } catch (err) {
     if (err instanceof DriverRunFailure) {
       return { success: false, run: err.result, selected, error: err.message };
-    }
-    if (err instanceof DriverGateUnsupportedError) {
-      return {
-        success: false,
-        selected,
-        gateUnsupported: { component: err.component, signalName: err.signalName },
-      };
     }
     if (err instanceof UnknownDependencyError || err instanceof DependencyCycleError) {
       return { success: false, selected, error: err.message };

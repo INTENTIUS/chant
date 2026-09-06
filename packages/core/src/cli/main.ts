@@ -86,6 +86,7 @@ const BOOLEAN_FLAGS = new Set([
   "--yes",
   "--confirm-prod",
   "--once",
+  "--expire",
   "--check-live",
   "--check-snapshot",
   "--fail-on-drift",
@@ -393,6 +394,8 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.once = true;
     } else if (arg === "--note") {
       result.note = args[++i];
+    } else if (arg === "--expire") {
+      result.expire = true;
     } else if (arg === "--url") {
       result.url = args[++i];
     } else if (arg === "--op") {
@@ -551,13 +554,14 @@ Ops:
                         silently short
   approve <op> <gate>    Record a gate's out-of-band resolution fact
                         (--actor <name>, --note <text>, --url <url>) — the
-                        durable counterpart to a converge tick's
-                        gate-as-fact outcome; see the pending-gates list in
-                        operator status. --url is the PR/MR the resolution
+                        durable counterpart to the pending fact a run records
+                        when it reaches the gate; see the pending-gates list
+                        in operator status. --url is the PR/MR the resolution
                         happened at, recorded typed rather than as free text,
                         and defaults to the PR/MR of the surrounding CI job.
-                        Does not itself unblock the gated op's local
-                        dispatch (re-run --temporal, or merge its PR)
+                        The next "chant run <op>" walks through the gate.
+                        --expire clears a pending fact without approving it,
+                        so the gate is re-decided from scratch next run
 
   graph                 Show Op dependency graph (--stacks for cross-stack order,
                         --format ir|mermaid|dot|layout for the lint-gated graph IR,
@@ -671,7 +675,7 @@ Options:
                         omitted (every run subcommand; #2121)
   -p, --profile <name>  Temporal worker profile to use (run command)
   --local               Run an Op with the local in-process executor (default)
-  --temporal            Run an Op via a Temporal cluster (gates, schedules, durable resume)
+  --temporal            Run an Op via a Temporal cluster (schedules, durable resume, a gate as a wait)
   --json                Emit the structured run result as JSON (run command)
   --report              Print deployment report instead of running (run command)
                         OR with a path arg: SARIF report destination (migrate)

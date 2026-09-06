@@ -294,28 +294,35 @@ describe("sanitizeOneLine", () => {
   });
 });
 
-// ── Gate-as-fact dispatch classification (#1485) ──────────────────────────
+// ── Gate-as-fact dispatch classification (#1485, #2119) ────────────────────
 //
-// `dispatchOp` shells to `chant run <op>`; when the target is gated, the
-// local executor's `LocalGateUnsupportedError` message is the one contract
-// this tick reads to tell "hit a gate" apart from every other dispatch
-// failure (see `classifyDispatchFailure`'s doc for why a message match, not
-// a typed error, crosses the subprocess boundary). Tested directly against
-// the exact message shape `../../../../../packages/core/src/op/local-
-// executor.ts`'s `LocalGateUnsupportedError` produces, so a wording change
-// there would be caught here too.
+// `dispatchOp` shells to `chant run <op> --json`; a gated target exits 3 with
+// its pending fact in the JSON result (the executor wrote the ledger line
+// itself since #2119). This reads the gate off that result to tell "hit a
+// gate" apart from every other dispatch failure. Tested against both the JSON
+// shape and the human line, since a tick that ran without `--json` still has
+// only stderr to go on.
 describe("classifyDispatchFailure", () => {
-  test("recognizes the local executor's own gate-rejection message and extracts the gate name", () => {
-    const raw = 'gate "rollout-gate" is not supported in local mode — gates and schedules need a durable runtime. Re-run with --temporal.';
+  test("reads the gate off a gated run's JSON result", () => {
+    const raw = JSON.stringify({
+      op: "fountain-apply",
+      status: "gated",
+      gate: { version: 1, kind: "pending", op: "fountain-apply", gate: "rollout-gate", timestamp: "t", expiresAt: "t2" },
+      records: [],
+    });
     expect(classifyDispatchFailure(raw)).toEqual({ gateName: "rollout-gate" });
   });
 
-  test("matches the message wherever it appears in raw stderr, not only at the start", () => {
-    const raw = 'Error running op:\ngate "prod-approval" is not supported in local mode — gates and schedules need a durable runtime.';
+  test("falls back to the human summary line, wherever it appears in the output", () => {
+    const raw = 'some earlier noise\nOp "prod-apply" is gated on "prod-approval" after 0.3s\n  approve : chant approve prod-apply prod-approval';
     expect(classifyDispatchFailure(raw)).toEqual({ gateName: "prod-approval" });
   });
 
-  test("returns undefined for an ordinary dispatch failure — never misclassifies a ordinary error as a gate", () => {
+  test("a successful run's JSON is not a gate", () => {
+    expect(classifyDispatchFailure(JSON.stringify({ op: "x", status: "ok", records: [] }))).toBeUndefined();
+  });
+
+  test("returns undefined for an ordinary dispatch failure — never misclassifies an ordinary error as a gate", () => {
     expect(classifyDispatchFailure("Error: op \"fountain-apply\" not found")).toBeUndefined();
     expect(classifyDispatchFailure("kubectl: connection refused")).toBeUndefined();
     expect(classifyDispatchFailure("")).toBeUndefined();

@@ -136,7 +136,7 @@ describe("ConvergeOp — end-to-end local run (#1484)", () => {
 
     const result = await runOpLocally(config, activities, PROFILES);
 
-    expect(result.ok).toBe(true);
+    expect(result.status).toBe("ok");
     // The step-output reference resolved to the real value the Observe phase produced.
     expect(receivedArgs?.preflightDrift).toBe(true);
     expect(receivedArgs?.dial).toBe("apply");
@@ -158,6 +158,6 @@ describe("ConvergeOp — end-to-end local run (#1484)", () => {
       ["convergeTick", (async () => ({ drifted: false, remediated: 0, reported: 0, skippedBudget: 0, skippedFlap: 0, unobserved: 0, adopted: 0, log: "" })) as ActivityFn],
     ]);
     const result = await runOpLocally(config, activities, PROFILES);
-    expect(result.ok).toBe(true);
+    expect(result.status).toBe("ok");
   });
 });

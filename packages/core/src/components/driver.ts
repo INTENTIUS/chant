@@ -11,11 +11,18 @@
  * component.schema.json (`@Phase.field` prior-step references,
  * `@<component>.publish.<field>` cross-component artifact references, and
  * passes through `$env.*`/`stackOutput` values as opaque env config), runs
- * `parallel` phases concurrently, rejects a `gate` locally (matching
- * ../op/local-executor.ts's `LocalGateUnsupportedError`), and on terminal
- * failure unwinds every executed step in reverse via that step's capability
- * `rollback`, then runs `onFailure` phases in reverse order (best-effort),
- * mirroring the Op local executor's saga semantics.
+ * `parallel` phases concurrently, decides a `gate` against the gate ledger
+ * (#2119 — the same `../op/gate.ts` the Op executor uses, so `chant run
+ * --components` and `chant run <op>` can never disagree about what a gate
+ * means), and on terminal failure unwinds every executed step in reverse via
+ * that step's capability `rollback`, then runs `onFailure` phases in reverse
+ * order (best-effort), mirroring the Op local executor's saga semantics.
+ *
+ * A gate nobody has approved is not a failure: the component stops there with
+ * status `gated`, the pending fact is on the ledger, and no rollback and no
+ * `onFailure` phase runs — nothing failed and the steps that did run are the
+ * steps the author meant to run before the approval. The next run re-reads the
+ * ledger and continues past the gate if `chant approve` has answered it.
  *
  * A step whose capability declares no `rollback` is never silently passed
  * over during unwind: it gets a `"rollback-opted-out"` record (see
@@ -42,8 +49,10 @@
  */
 
 import { topoSort } from "../codegen/topo-sort";
+import { evaluateGate, gitGateLedgerPort, type GateLedgerPort } from "../op/gate";
+import type { PendingGateRecord } from "../lifecycle/gate-ledger";
 import type { CapabilityRegistry, DeployContext } from "./capability";
-import type { RunProgressEvent } from "./run-progress";
+import type { RunProgressEvent, RunProgressStatus } from "./run-progress";
 
 export type { RunProgressEvent } from "./run-progress";
 
@@ -61,7 +70,7 @@ export interface DriverStep {
   [param: string]: unknown;
 }
 
-/** A gate step — pauses for an external signal; unsupported on the local executor (schema `Gate`). */
+/** A gate step — a human approval, decided against the gate ledger when the run reaches it (schema `Gate`). */
 export interface DriverGate {
   kind: "gate";
   signalName: string;
@@ -95,20 +104,6 @@ function isPhaseStep(step: DriverStep | DriverGate | DriverPhase): step is Drive
 }
 
 // ── Errors ────────────────────────────────────────────────────────────────
-
-/** Thrown when a component's composition contains a `gate` — gates need a durable runtime, matching chant's Op local executor. */
-export class DriverGateUnsupportedError extends Error {
-  constructor(
-    public readonly component: string,
-    public readonly signalName: string,
-  ) {
-    super(
-      `component "${component}": gate "${signalName}" is not supported on the local executor — ` +
-        `gates need a durable runtime. Re-run with a durable (Temporal) backend.`,
-    );
-    this.name = "DriverGateUnsupportedError";
-  }
-}
 
 /** Thrown when a dependency cycle is found among `dependsOn` edges. */
 export class DependencyCycleError extends Error {
@@ -147,12 +142,18 @@ export interface DriverStepRecord {
   durationMs: number;
   output?: unknown;
   error?: string;
+  /** Set on a `gate` step that passed (#2119): who resolved it, when, and at what address. */
+  approval?: { gate: string; resolvedBy: string; timestamp: string; url?: string };
 }
 
 export interface DriverComponentResult {
   component: string;
   ok: boolean;
+  /** Three-state outcome (#2119) — `gated` is `ok: false` without being a failure: the component stopped at a gate awaiting `chant approve`, and nothing was rolled back. */
+  status: "ok" | "fail" | "gated";
   records: DriverStepRecord[];
+  /** Present when `status === "gated"`: the pending fact this component stopped on. */
+  gate?: PendingGateRecord;
 }
 
 export interface DriverRunResult {
@@ -162,8 +163,14 @@ export interface DriverRunResult {
   waves: string[][];
   results: DriverComponentResult[];
   ok: boolean;
+  /** Three-state outcome (#2119), matching `OpRunResult.status`. */
+  status: "ok" | "fail" | "gated";
   /** Name of the component that terminated the run, if any. */
   failedComponent?: string;
+  /** Name of the component the run stopped at for approval, when `status === "gated"`. */
+  gatedComponent?: string;
+  /** The pending fact the run stopped on, when `status === "gated"`. */
+  gate?: PendingGateRecord;
   /**
    * The accumulated cross-component/cross-stack outputs after the run — each
    * component's `publish` output and, for an applied stack, its `cfn-deploy`
@@ -338,6 +345,29 @@ class StepFailure extends Error {
   }
 }
 
+/** Internal: a phase stopped at an unapproved gate (#2119). Carries what ran before it, so the records survive; not a failure, so no unwind follows. */
+class GateStop extends Error {
+  constructor(
+    public readonly records: DriverStepRecord[],
+    public readonly executed: ExecutedStep[],
+    public readonly pending: PendingGateRecord,
+  ) {
+    super(`gate "${pending.gate}" is pending approval`);
+    this.name = "GateStop";
+  }
+}
+
+/** A result status as the progress stream spells it — the only difference is `fail` vs `failed`, which the two vocabularies have always disagreed on. */
+function progressStatus(status: DriverComponentResult["status"]): RunProgressStatus {
+  return status === "fail" ? "failed" : status;
+}
+
+/** How a component's run reaches the gate ledger — see `../op/gate.ts`. */
+export interface GateContext {
+  port: GateLedgerPort;
+  now?: string;
+}
+
 /** Run a single capability step. Never throws for a capability-run failure; returns a fail record instead. */
 async function runCapabilityStep(
   step: DriverStep,
@@ -381,11 +411,16 @@ async function runCapabilityStep(
 }
 
 /**
- * Run a phase's steps. A step may be a `Gate` (rejected — local executor has
- * no durable wait) or a nested `Phase` (a fan-out unit; recursed into,
- * inheriting `parallel` from its own definition, not its parent's). Steps run
- * sequentially unless `phase.parallel` is set, in which case they run via
- * `Promise.all`, matching ../op/local-executor.ts's phase semantics.
+ * Run a phase's steps. A step may be a `Gate` (decided against the gate
+ * ledger, in authored order — a resolution newer than the gate's newest
+ * pending fact lets it pass carrying the approver, anything else records the
+ * fact and stops the component) or a nested `Phase` (a fan-out unit; recursed
+ * into, inheriting `parallel` from its own definition, not its parent's).
+ * Steps run sequentially unless `phase.parallel` is set, in which case they run
+ * via `Promise.all`, matching ../op/local-executor.ts's phase semantics — and
+ * as there, a gate in a parallel phase is decided before the fan-out, since a
+ * gate is a read of the ledger rather than work, and starting activities a
+ * pending gate is about to strand defeats the point of stopping at it.
  *
  * `onProgress`, when supplied, is called with a `phase-start` event before any
  * step runs, a `step` event around each capability invocation (`"running"`
@@ -402,22 +437,60 @@ async function runPhase(
   registry: CapabilityRegistry,
   phaseOutputs: Record<string, Record<string, unknown>>,
   componentOutputs: Record<string, Record<string, unknown>>,
+  gates: GateContext,
   onProgress?: (event: RunProgressEvent) => void,
 ): Promise<{ records: DriverStepRecord[]; executed: ExecutedStep[] }> {
-  const gate = phaseDef.steps.find(isGateStep);
-  if (gate) throw new DriverGateUnsupportedError(ctx.component, gate.signalName);
+  /** Decide this phase's gates against the ledger, in authored order, before any of its work starts. Throws `GateStop` at the first one nobody has approved. */
+  const decideGates = async (): Promise<DriverStepRecord[]> => {
+    const gateRecords: DriverStepRecord[] = [];
+    for (const gate of phaseDef.steps.filter(isGateStep)) {
+      const start = Date.now();
+      const check = await evaluateGate(gates.port, {
+        op: ctx.component,
+        gate: gate.signalName,
+        ...(gate.description ? { description: gate.description } : {}),
+        ...(gate.timeout ? { timeout: gate.timeout } : {}),
+        ...(gates.now ? { now: gates.now } : {}),
+      });
+      const base = { component: ctx.component, phase: phaseDef.phase, kind: `gate:${gate.signalName}` };
+      if (!check.satisfied) {
+        gateRecords.push({ ...base, status: "skipped" as const, durationMs: Date.now() - start });
+        for (const skipped of phaseDef.steps.filter((s): s is DriverStep | DriverPhase => !isGateStep(s))) {
+          gateRecords.push(skippedRecord(skipped));
+        }
+        throw new GateStop(gateRecords, [], check.pending);
+      }
+      gateRecords.push({
+        ...base,
+        status: "ok" as const,
+        durationMs: Date.now() - start,
+        approval: {
+          gate: gate.signalName,
+          resolvedBy: check.resolution.resolvedBy,
+          timestamp: check.resolution.timestamp,
+          ...(check.resolution.url ? { url: check.resolution.url } : {}),
+        },
+      });
+    }
+    return gateRecords;
+  };
 
   const entries = phaseDef.steps.filter((s): s is DriverStep | DriverPhase => !isGateStep(s));
 
   const runEntry = async (
     entry: DriverStep | DriverPhase,
-  ): Promise<{ records: DriverStepRecord[]; executed: ExecutedStep[]; failed: boolean }> => {
+  ): Promise<{ records: DriverStepRecord[]; executed: ExecutedStep[]; failed: boolean; pending?: PendingGateRecord }> => {
     if (isPhaseStep(entry)) {
       try {
-        const nested = await runPhase(entry, ctx, registry, phaseOutputs, componentOutputs, onProgress);
+        const nested = await runPhase(entry, ctx, registry, phaseOutputs, componentOutputs, gates, onProgress);
         return { ...nested, failed: false };
       } catch (err) {
         if (err instanceof StepFailure) return { records: err.records, executed: err.executed, failed: true };
+        // A nested fan-out phase's gate stops the whole component, but the
+        // records it produced before the gate still belong in the run.
+        if (err instanceof GateStop) {
+          return { records: err.records, executed: err.executed, failed: false, pending: err.pending };
+        }
         throw err;
       }
     }
@@ -448,32 +521,38 @@ async function runPhase(
     };
   };
 
+  const skippedRecord = (entry: DriverStep | DriverPhase): DriverStepRecord => ({
+    component: ctx.component,
+    phase: phaseDef.phase,
+    kind: isPhaseStep(entry) ? entry.phase : (entry as DriverStep).kind,
+    status: "skipped",
+    durationMs: 0,
+  });
+
   const runEntries = async (): Promise<{ records: DriverStepRecord[]; executed: ExecutedStep[] }> => {
+    const gateRecords = await decideGates();
     if (phaseDef.parallel) {
       const results = await Promise.all(entries.map(runEntry));
-      const records = results.flatMap((r) => r.records);
+      const records = gateRecords.concat(results.flatMap((r) => r.records));
       const executed = results.flatMap((r) => r.executed);
+      const pending = results.find((r) => r.pending)?.pending;
+      if (pending) throw new GateStop(records, executed, pending);
       if (results.some((r) => r.failed)) throw new StepFailure(records, executed);
       return { records, executed };
     }
 
-    const records: DriverStepRecord[] = [];
+    const records: DriverStepRecord[] = [...gateRecords];
     const executed: ExecutedStep[] = [];
     for (let i = 0; i < entries.length; i++) {
       const result = await runEntry(entries[i]);
       records.push(...result.records);
       executed.push(...result.executed);
+      if (result.pending) {
+        for (const skipped of entries.slice(i + 1)) records.push(skippedRecord(skipped));
+        throw new GateStop(records, executed, result.pending);
+      }
       if (result.failed) {
-        for (const skipped of entries.slice(i + 1)) {
-          const skippedKind = isPhaseStep(skipped) ? skipped.phase : (skipped as DriverStep).kind;
-          records.push({
-            component: ctx.component,
-            phase: phaseDef.phase,
-            kind: skippedKind,
-            status: "skipped",
-            durationMs: 0,
-          });
-        }
+        for (const skipped of entries.slice(i + 1)) records.push(skippedRecord(skipped));
         throw new StepFailure(records, executed);
       }
     }
@@ -486,7 +565,9 @@ async function runPhase(
     onProgress?.({ type: "phase-done", component: ctx.component, phase: phaseDef.phase, status: "ok" });
     return result;
   } catch (err) {
-    if (err instanceof StepFailure) {
+    if (err instanceof GateStop) {
+      onProgress?.({ type: "phase-done", component: ctx.component, phase: phaseDef.phase, status: "gated" });
+    } else if (err instanceof StepFailure) {
       onProgress?.({ type: "phase-done", component: ctx.component, phase: phaseDef.phase, status: "failed" });
     }
     throw err;
@@ -577,6 +658,7 @@ export async function runComponentDeploy(
   registry: CapabilityRegistry,
   componentOutputs: Record<string, Record<string, unknown>>,
   onProgress?: (event: RunProgressEvent) => void,
+  gates: GateContext = { port: gitGateLedgerPort() },
 ): Promise<DriverComponentResult> {
   const phaseOutputs: Record<string, Record<string, unknown>> = {};
   const records: DriverStepRecord[] = [];
@@ -584,11 +666,20 @@ export async function runComponentDeploy(
 
   try {
     for (const phaseDef of component.deploy) {
-      const result = await runPhase(phaseDef, ctx, registry, phaseOutputs, componentOutputs, onProgress);
+      const result = await runPhase(phaseDef, ctx, registry, phaseOutputs, componentOutputs, gates, onProgress);
       records.push(...result.records);
       allExecuted.push(...result.executed);
     }
   } catch (err) {
+    // A pending gate stops the component where it stands (#2119): no saga
+    // unwind and no `rollback` phase. The steps before the gate ran on
+    // purpose and are meant to survive the wait for an approval — undoing
+    // them would make every gated run a no-op with a rollback attached.
+    if (err instanceof GateStop) {
+      records.push(...err.records);
+      return { component: component.name, ok: false, status: "gated", records, gate: err.pending };
+    }
+
     if (err instanceof StepFailure) {
       records.push(...err.records);
       allExecuted.push(...err.executed);
@@ -600,15 +691,15 @@ export async function runComponentDeploy(
 
     for (const phaseDef of [...(component.rollback ?? [])].reverse()) {
       try {
-        const result = await runPhase(phaseDef, ctx, registry, phaseOutputs, componentOutputs, onProgress);
+        const result = await runPhase(phaseDef, ctx, registry, phaseOutputs, componentOutputs, gates, onProgress);
         records.push(...result.records);
       } catch (compErr) {
-        if (compErr instanceof StepFailure) records.push(...compErr.records);
+        if (compErr instanceof StepFailure || compErr instanceof GateStop) records.push(...compErr.records);
         else throw compErr;
       }
     }
 
-    return { component: component.name, ok: false, records };
+    return { component: component.name, ok: false, status: "fail", records };
   }
 
   // Publish-family and stack outputs become this component's entry in
@@ -617,7 +708,7 @@ export async function runComponentDeploy(
   // Temporal runs can never diverge on what downstream references see.
   accumulateComponentOutputs(componentOutputs, component.name, phaseOutputs);
 
-  return { component: component.name, ok: true, records };
+  return { component: component.name, ok: true, status: "ok", records };
 }
 
 /**
@@ -736,6 +827,10 @@ export interface InterpretRunOptions {
    * byte-for-byte the same as before this option existed.
    */
   onProgress?: (event: RunProgressEvent) => void;
+  /** Where a `gate` step's facts are read and written (#2119). Defaults to the `chant/lifecycle` orphan branch; a test passes `memoryGateLedgerPort()` from `../op/gate.ts`. */
+  gates?: GateLedgerPort;
+  /** ISO-8601 "now" for gate decisions, so a test is deterministic. */
+  now?: string;
 }
 
 /**
@@ -747,6 +842,11 @@ export interface InterpretRunOptions {
  * component (after that component's own saga rollback completes), returning
  * a result with `ok: false`; throws `DriverRunFailure` carrying that result
  * so callers can choose to inspect or propagate it.
+ *
+ * A component that stops at an unapproved gate (#2119) ends the run the same
+ * way, with `status: "gated"` and the pending fact on `gate` — but it is
+ * *returned*, never thrown, because nothing failed. Downstream waves do not
+ * run: a gate is the author saying a human decides before the rest happens.
  *
  * Zero per-component logic: this function and everything it calls dispatches
  * purely on the generic `Component`/`Phase`/`Step` shapes and the registry —
@@ -761,11 +861,16 @@ export async function runInterpretDriver(
   const byName = new Map(components.map((c) => [c.name, c]));
   const componentOutputs: Record<string, Record<string, unknown>> = { ...(options.componentOutputs ?? {}) };
   const { onProgress } = options;
+  const gates: GateContext = {
+    port: options.gates ?? gitGateLedgerPort(),
+    ...(options.now ? { now: options.now } : {}),
+  };
 
   onProgress?.({ type: "run-start", waves });
 
   const results: DriverComponentResult[] = [];
   let failedComponent: string | undefined;
+  let gated: DriverComponentResult | undefined;
 
   waveLoop: for (const [waveIndex, wave] of waves.entries()) {
     const waveNum = waveIndex + 1;
@@ -780,23 +885,32 @@ export async function runInterpretDriver(
           registry,
           componentOutputs,
           onProgress,
+          gates,
         );
-        onProgress?.({ type: "component-done", wave: waveNum, component: component.name, status: result.ok ? "ok" : "failed" });
+        onProgress?.({ type: "component-done", wave: waveNum, component: component.name, status: progressStatus(result.status) });
         return result;
       }),
     );
     results.push(...waveResults);
-    const failed = waveResults.find((r) => !r.ok);
-    onProgress?.({ type: "wave-done", wave: waveNum, status: failed ? "failed" : "ok" });
-    if (failed) {
-      failedComponent = failed.component;
+    const stopped = waveResults.find((r) => r.status !== "ok");
+    onProgress?.({ type: "wave-done", wave: waveNum, status: progressStatus(stopped?.status ?? "ok") });
+    if (stopped) {
+      // A failure in the same wave outranks a gate: something is actually
+      // broken, and reporting the run as "waiting on a human" would hide it.
+      const failure = waveResults.find((r) => r.status === "fail");
+      if (failure) failedComponent = failure.component;
+      else gated = stopped;
       break waveLoop;
     }
   }
 
-  const ok = failedComponent === undefined;
-  onProgress?.({ type: "run-done", status: ok ? "ok" : "failed" });
-  const result: DriverRunResult = { order, waves, results, ok, failedComponent, componentOutputs };
-  if (!ok) throw new DriverRunFailure(result);
+  const status: DriverRunResult["status"] = failedComponent ? "fail" : gated ? "gated" : "ok";
+  const ok = status === "ok";
+  onProgress?.({ type: "run-done", status: progressStatus(status) });
+  const result: DriverRunResult = {
+    order, waves, results, ok, status, failedComponent, componentOutputs,
+    ...(gated ? { gatedComponent: gated.component, gate: gated.gate } : {}),
+  };
+  if (status === "fail") throw new DriverRunFailure(result);
   return result;
 }

@@ -95,7 +95,7 @@ export {
   accumulateComponentOutputs,
   runComponentDeploy,
   runInterpretDriver,
-  DriverGateUnsupportedError,
+  type GateContext,
   DependencyCycleError,
   UnknownDependencyError,
   DriverRunFailure,

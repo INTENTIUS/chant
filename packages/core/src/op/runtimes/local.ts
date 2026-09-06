@@ -5,8 +5,8 @@
  * contract so `chant run <op>` has one dispatch path whether the run is hosted
  * here or by a lexicon's `opRuntime`. Behaviour is the executor's, unchanged:
  * activities and profiles come from the project's configured lexicons, a gate
- * is still refused up front (gate-as-fact is #2119), and Ctrl-C aborts through
- * the caller's `AbortSignal`.
+ * is decided against the gate ledger and ends the run `gated` (#2119), and
+ * Ctrl-C aborts through the caller's `AbortSignal`.
  *
  * Status, log and list are derived from the `OpRunResult` this process
  * produced, held in memory for the lifetime of the process. #2118 owns the
@@ -16,13 +16,7 @@
 
 import { loadChantConfig } from "../../config";
 import { loadActivities, loadProfiles } from "../activity-registry";
-import {
-  runOpLocally,
-  findGate,
-  LocalGateUnsupportedError,
-  OpRunFailure,
-  type OpRunResult,
-} from "../local-executor";
+import { runOpLocally, OpRunFailure, type OpRunResult } from "../local-executor";
 import { runComponents } from "../../components/cli-support";
 import type { OpConfig } from "../types";
 import type {
@@ -45,11 +39,12 @@ function statusFrom(
   return {
     op,
     runId,
-    state: result.ok ? "completed" : "failed",
+    state: result.status === "ok" ? "completed" : result.status === "gated" ? "gated" : "failed",
     startedAt,
     endedAt: new Date().toISOString(),
     records: result.records,
     result,
+    ...(result.gate ? { gate: { name: result.gate.gate, since: result.gate.timestamp } } : {}),
   };
 }
 
@@ -82,12 +77,6 @@ export function createLocalOpRuntime(opts: { projectPath?: string } = {}): OpRun
     name: "local",
 
     async start(op: OpConfig, startOpts: OpRunStartOptions): Promise<OpRunHandle> {
-      // Gates need a durable fact, not an in-process wait. Refused before any
-      // step runs, with the executor's own message (#2119 replaces this with a
-      // pending-gate fact and a `gated` run state).
-      const gate = findGate(op);
-      if (gate) throw new LocalGateUnsupportedError(gate.signalName);
-
       // The project's configured lexicons decide which cloud appliers to load
       // (aws -> floci, gcp -> gcpApply, azure -> az group). Best-effort: an
       // unreadable config just yields the base activities.
@@ -110,7 +99,7 @@ export function createLocalOpRuntime(opts: { projectPath?: string } = {}): OpRun
             activities,
             profiles,
             startOpts.signal,
-            startOpts.progress,
+            { runId, ...(startOpts.progress ? { onRecord: startOpts.progress } : {}) },
           );
           const status = statusFrom(op.name, runId, startedAt, result);
           record(status);

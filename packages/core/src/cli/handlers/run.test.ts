@@ -24,6 +24,9 @@ const listComponentsMock = vi.fn();
 const loadPluginsMock = vi.fn();
 const recordGateApprovalMock = vi.fn();
 
+const { memoryGateLedgerPort } = await vi.importActual<typeof import("../../op/gate")>("../../op/gate");
+let gateLedger = memoryGateLedgerPort();
+
 vi.mock("../../op/discover", () => ({ discoverOps: () => discoverOpsMock() }));
 vi.mock("../../config", async () => {
   const actual = await vi.importActual<typeof import("../../config")>("../../config");
@@ -88,6 +91,13 @@ vi.mock("../plugins", () => ({
 vi.mock("./operator", () => ({
   recordGateApproval: (...args: unknown[]) => recordGateApprovalMock(...args),
 }));
+// The gate ledger a local run consults (#2119) is the `chant/lifecycle` orphan
+// branch by default. Point it at memory here: these tests exercise the CLI's
+// gate handling, and a unit test must never write a fact to the real repo.
+vi.mock("../../op/gate", async () => {
+  const actual = await vi.importActual<typeof import("../../op/gate")>("../../op/gate");
+  return { ...actual, gitGateLedgerPort: () => gateLedger };
+});
 
 // Speed up runOp polling — POLL_INTERVAL_MS is 3000 in production. We use
 // fake timers in the runOp suite below; vi.advanceTimersByTime drives the loop.
@@ -958,16 +968,48 @@ describe("runOp dispatcher", () => {
     expect(stderr.join("\n")).toContain("worker.ts not found");
   });
 
-  test("gate in local mode → fast-fail before execution, suggests --temporal", async () => {
+  test("gate in local mode → exit 3, the approve line, and no --temporal hint (#2119)", async () => {
+    gateLedger = memoryGateLedgerPort();
     discoverOpsMock.mockResolvedValue({
       ops: new Map([localOp("gated", [{ kind: "gate", signalName: "approve-prod" }])]),
       errors: [],
     });
-    const stderr = makeStderrSpy();
+    // `renderHuman` writes straight to process.stderr, not through console.error.
+    const stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     const exit = await runOp({ args: makeArgs({ path: "gated", temporal: false }), plugins: [], serializers: [] });
-    expect(exit).toBe(1);
-    expect(stderr.join("\n")).toContain("--temporal");
+    expect(exit).toBe(3);
+    const out = stderrWrite.mock.calls.map((c) => String(c[0])).join("");
+    stderrWrite.mockRestore();
+    expect(out).toContain('is gated on "approve-prod"');
+    expect(out).toContain("chant approve gated approve-prod");
+    expect(out).not.toContain("--temporal");
+    expect(gateLedger.appended).toHaveLength(1);
     expect(loadTemporalClientMock).not.toHaveBeenCalled();
+  });
+
+  test("an approved gate lets the run through and exits 0", async () => {
+    gateLedger = memoryGateLedgerPort({
+      pending: [{
+        version: 1, kind: "pending", op: "gated", gate: "approve-prod",
+        timestamp: "2026-09-05T10:00:00.000Z", expiresAt: "2099-01-01T00:00:00.000Z",
+      }],
+      resolutions: [{
+        version: 1, op: "gated", gate: "approve-prod",
+        resolvedBy: "alex", timestamp: "2026-09-05T11:00:00.000Z",
+      }],
+    });
+    discoverOpsMock.mockResolvedValue({
+      ops: new Map([localOp("gated", [
+        { kind: "gate", signalName: "approve-prod" },
+        { kind: "activity", fn: "shellCmd", args: { cmd: "true" } },
+      ])]),
+      errors: [],
+    });
+    const stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const exit = await runOp({ args: makeArgs({ path: "gated", temporal: false }), plugins: [], serializers: [] });
+    expect(exit).toBe(0);
+    expect(stderrWrite.mock.calls.map((c) => String(c[0])).join("")).toContain("[approved] alex");
+    stderrWrite.mockRestore();
   });
 
   test("--local and --temporal together → exit 1 before any work", async () => {
@@ -991,7 +1033,7 @@ describe("runOp dispatcher", () => {
     const printed = stdoutWrite.mock.calls.map((c) => String(c[0])).join("");
     const parsed = JSON.parse(printed.trim());
     expect(parsed.op).toBe("hello");
-    expect(parsed.ok).toBe(true);
+    expect(parsed.status).toBe("ok");
     vi.restoreAllMocks();
   });
 });
@@ -1313,7 +1355,7 @@ describe("runOp dispatcher: --components routes to runOpComponents", () => {
 
   test("runOp with --components dispatches to runComponents, not Op discovery", async () => {
     discoverOpsMock.mockReset();
-    runComponentsMock.mockResolvedValue({ success: true, selected: ["svc"], run: { order: ["svc"], waves: [["svc"]], results: [{ component: "svc", ok: true, records: [] }], ok: true } });
+    runComponentsMock.mockResolvedValue({ success: true, selected: ["svc"], run: { order: ["svc"], waves: [["svc"]], results: [{ component: "svc", ok: true, status: "ok", records: [] }], ok: true, status: "ok" } });
     vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 
     const exit = await runOp({ args: makeArgs({ path: "svc", components: true, temporal: false }), plugins: [], serializers: [] });
@@ -1345,7 +1387,7 @@ describe("runOp dispatcher: --components routes to runOpComponents", () => {
   // real dispatch through runComponents — mocked here, never a real cloud call.
   test("plain --components (no --report) still dispatches to runComponents (#1116 regression guard)", async () => {
     discoverOpsMock.mockReset();
-    runComponentsMock.mockResolvedValue({ success: true, selected: ["svc"], run: { order: ["svc"], waves: [["svc"]], results: [{ component: "svc", ok: true, records: [] }], ok: true } });
+    runComponentsMock.mockResolvedValue({ success: true, selected: ["svc"], run: { order: ["svc"], waves: [["svc"]], results: [{ component: "svc", ok: true, status: "ok", records: [] }], ok: true, status: "ok" } });
     vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 
     const exit = await runOp({ args: makeArgs({ path: "svc", components: true, report: false, temporal: false }), plugins: [], serializers: [] });
@@ -1382,7 +1424,7 @@ describe("runOpComponents", () => {
       runComponentsMock.mockResolvedValue({
         success: true,
         selected: ["svc"],
-        run: { order: ["svc"], waves: [["svc"]], results: [{ component: "svc", ok: true, records: [] }], ok: true },
+        run: { order: ["svc"], waves: [["svc"]], results: [{ component: "svc", ok: true, status: "ok", records: [] }], ok: true, status: "ok" },
       });
       const stderr = makeStderrSpy();
 
@@ -1404,7 +1446,7 @@ describe("runOpComponents", () => {
       runComponentsMock.mockResolvedValue({
         success: true,
         selected: ["svc"],
-        run: { order: ["svc"], waves: [["svc"]], results: [{ component: "svc", ok: true, records: [] }], ok: true },
+        run: { order: ["svc"], waves: [["svc"]], results: [{ component: "svc", ok: true, status: "ok", records: [] }], ok: true, status: "ok" },
       });
       vi.spyOn(process.stderr, "write").mockImplementation(() => true);
       const stderr = makeStderrSpy();
@@ -1462,8 +1504,9 @@ describe("runOpComponents", () => {
       run: {
         order: ["svc"],
         waves: [["svc"]],
-        results: [{ component: "svc", ok: true, records: [{ component: "svc", phase: "Apply", kind: "cfn-deploy", status: "ok", durationMs: 5 }] }],
+        results: [{ component: "svc", ok: true, status: "ok", records: [{ component: "svc", phase: "Apply", kind: "cfn-deploy", status: "ok", durationMs: 5 }] }],
         ok: true,
+        status: "ok",
       },
     });
     const stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
@@ -1478,7 +1521,7 @@ describe("runOpComponents", () => {
   });
 
   test("threads --env through to runComponents", async () => {
-    runComponentsMock.mockResolvedValue({ success: true, selected: ["svc"], run: { order: ["svc"], waves: [["svc"]], results: [{ component: "svc", ok: true, records: [] }], ok: true } });
+    runComponentsMock.mockResolvedValue({ success: true, selected: ["svc"], run: { order: ["svc"], waves: [["svc"]], results: [{ component: "svc", ok: true, status: "ok", records: [] }], ok: true, status: "ok" } });
     vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 
     await runOpComponents({ args: makeArgs({ path: "svc", env: "staging", temporal: false }), plugins: [], serializers: [] });
@@ -1488,7 +1531,7 @@ describe("runOpComponents", () => {
   });
 
   test("--json emits the DriverRunResult as JSON on stdout", async () => {
-    const run = { order: ["svc"], waves: [["svc"]], results: [{ component: "svc", ok: true, records: [] }], ok: true };
+    const run = { order: ["svc"], waves: [["svc"]], results: [{ component: "svc", ok: true, status: "ok", records: [] }], ok: true, status: "ok" };
     runComponentsMock.mockResolvedValue({ success: true, selected: ["svc"], run });
     const stdoutWrite = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
 
@@ -1510,7 +1553,7 @@ describe("runOpComponents", () => {
         return {
           success: true,
           selected: ["svc"],
-          run: { order: ["svc"], waves: [["svc"]], results: [{ component: "svc", ok: true, records: [] }], ok: true },
+          run: { order: ["svc"], waves: [["svc"]], results: [{ component: "svc", ok: true, status: "ok", records: [] }], ok: true, status: "ok" },
         };
       },
     );
@@ -1538,7 +1581,7 @@ describe("runOpComponents", () => {
     runComponentsMock.mockResolvedValue({
       success: true,
       selected: ["svc"],
-      run: { order: ["svc"], waves: [["svc"]], results: [{ component: "svc", ok: true, records: [] }], ok: true },
+      run: { order: ["svc"], waves: [["svc"]], results: [{ component: "svc", ok: true, status: "ok", records: [] }], ok: true, status: "ok" },
     });
     const stdoutWrite = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
     vi.spyOn(process.stderr, "write").mockImplementation(() => true);
@@ -1563,10 +1606,11 @@ describe("runOpComponents", () => {
         order: ["shared-alb", "search-service"],
         waves: [["shared-alb"], ["search-service"]],
         results: [
-          { component: "shared-alb", ok: true, records: [] },
-          { component: "search-service", ok: true, records: [] },
+          { component: "shared-alb", ok: true, status: "ok", records: [] },
+          { component: "search-service", ok: true, status: "ok", records: [] },
         ],
         ok: true,
+        status: "ok",
       },
     });
     const stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
@@ -1588,8 +1632,9 @@ describe("runOpComponents", () => {
       run: {
         order: ["svc"],
         waves: [["svc"]],
-        results: [{ component: "svc", ok: false, records: [{ component: "svc", phase: "Apply", kind: "cfn-deploy", status: "fail", durationMs: 5, error: "boom" }] }],
+        results: [{ component: "svc", ok: false, status: "fail", records: [{ component: "svc", phase: "Apply", kind: "cfn-deploy", status: "fail", durationMs: 5, error: "boom" }] }],
         ok: false,
+        status: "fail",
         failedComponent: "svc",
       },
     });
@@ -1613,20 +1658,28 @@ describe("runOpComponents", () => {
     expect(stderr.join("\n")).toContain('Component "missing" not found');
   });
 
-  test("a gate in the component (local mode) → exit 1 with an actionable, Temporal-pointing message", async () => {
+  test("a gate in the component (local mode) → exit 3, the approve line, no --temporal hint (#2119)", async () => {
     runComponentsMock.mockResolvedValue({
       success: false,
       selected: ["svc"],
-      gateUnsupported: { component: "svc", signalName: "release-approval" },
+      gated: {
+        component: "svc",
+        gate: {
+          version: 1, kind: "pending", op: "svc", gate: "release-approval",
+          timestamp: "2026-09-05T12:00:00.000Z", expiresAt: "2026-09-07T12:00:00.000Z",
+        },
+      },
     });
     const stderr = makeStderrSpy();
 
     const exit = await runOpComponents({ args: makeArgs({ path: "svc", temporal: false }), plugins: [], serializers: [] });
 
-    expect(exit).toBe(1);
+    expect(exit).toBe(3);
     const out = stderr.join("\n");
-    expect(out).toContain('gate "release-approval"');
-    expect(out).toContain("--temporal");
+    expect(out).toContain('gated on "release-approval"');
+    expect(out).toContain("chant approve svc release-approval");
+    expect(out).toContain("expires : 2026-09-07T12:00:00.000Z");
+    expect(out).not.toContain("--temporal");
   });
 
   // ── auto-release recording post-run (#597) ────────────────────────────────
@@ -1639,8 +1692,9 @@ describe("runOpComponents", () => {
         run: {
           order: ["svc"],
           waves: [["svc"]],
-          results: [{ component: "svc", ok: true, records: [{ component: "svc", phase: "Publish", kind: "publish-image", status: "ok", durationMs: 5, output: { digest: "sha256:abc" } }] }],
+          results: [{ component: "svc", ok: true, status: "ok", records: [{ component: "svc", phase: "Publish", kind: "publish-image", status: "ok", durationMs: 5, output: { digest: "sha256:abc" } }] }],
           ok: true,
+          status: "ok",
         },
       });
       maybeRecordAutoReleaseMock.mockResolvedValue({ recorded: true, commit: "a".repeat(40), record: { version: 1, component: "svc", env: "staging", digest: "sha256:abc", gitSha: "x", runId: "local-1", timestamp: "t", actor: "a" } });
@@ -1664,8 +1718,9 @@ describe("runOpComponents", () => {
         run: {
           order: ["svc"],
           waves: [["svc"]],
-          results: [{ component: "svc", ok: false, records: [{ component: "svc", phase: "Apply", kind: "cfn-deploy", status: "fail", durationMs: 5, error: "boom" }] }],
+          results: [{ component: "svc", ok: false, status: "fail", records: [{ component: "svc", phase: "Apply", kind: "cfn-deploy", status: "fail", durationMs: 5, error: "boom" }] }],
           ok: false,
+          status: "fail",
           failedComponent: "svc",
         },
       });
@@ -1682,7 +1737,7 @@ describe("runOpComponents", () => {
       runComponentsMock.mockResolvedValue({
         success: true,
         selected: ["svc"],
-        run: { order: ["svc"], waves: [["svc"]], results: [{ component: "svc", ok: true, records: [] }], ok: true },
+        run: { order: ["svc"], waves: [["svc"]], results: [{ component: "svc", ok: true, status: "ok", records: [] }], ok: true, status: "ok" },
       });
       maybeRecordAutoReleaseMock.mockResolvedValue({ recorded: false, reason: "opted-out" });
       vi.spyOn(process.stderr, "write").mockImplementation(() => true);
@@ -1700,7 +1755,7 @@ describe("runOpComponents", () => {
       runComponentsMock.mockResolvedValue({
         success: true,
         selected: ["svc"],
-        run: { order: ["svc"], waves: [["svc"]], results: [{ component: "svc", ok: true, records: [] }], ok: true },
+        run: { order: ["svc"], waves: [["svc"]], results: [{ component: "svc", ok: true, status: "ok", records: [] }], ok: true, status: "ok" },
       });
       loadChantConfigMock.mockResolvedValue({ config: { release: { autoRecord: false } } });
       maybeRecordAutoReleaseMock.mockResolvedValue({ recorded: false, reason: "opted-out" });
@@ -1717,7 +1772,7 @@ describe("runOpComponents", () => {
       runComponentsMock.mockResolvedValue({
         success: true,
         selected: ["svc"],
-        run: { order: ["svc"], waves: [["svc"]], results: [{ component: "svc", ok: true, records: [] }], ok: true },
+        run: { order: ["svc"], waves: [["svc"]], results: [{ component: "svc", ok: true, status: "ok", records: [] }], ok: true, status: "ok" },
       });
       maybeRecordAutoReleaseMock.mockResolvedValue({ recorded: false, reason: "error", error: "ledger push failed" });
       const stderr = makeStderrSpy();
@@ -1744,6 +1799,7 @@ describe("runOpComponents", () => {
           waves: [["svc"]],
           results: [{ component: "svc", ok: true, records: [{ component: "svc", phase: "Build", kind: "docker-build", status: "ok", durationMs: 5, output: buildOutput }] }],
           ok: true,
+          status: "ok",
         },
       });
       maybePersistBuildManifestMock.mockResolvedValue({ persisted: true, commit: "a".repeat(40), manifestDigest: "sha256:manifestabc" });
@@ -1767,8 +1823,9 @@ describe("runOpComponents", () => {
         run: {
           order: ["svc"],
           waves: [["svc"]],
-          results: [{ component: "svc", ok: false, records: [{ component: "svc", phase: "Apply", kind: "cfn-deploy", status: "fail", durationMs: 5, error: "boom" }] }],
+          results: [{ component: "svc", ok: false, status: "fail", records: [{ component: "svc", phase: "Apply", kind: "cfn-deploy", status: "fail", durationMs: 5, error: "boom" }] }],
           ok: false,
+          status: "fail",
           failedComponent: "svc",
         },
       });
@@ -1785,7 +1842,7 @@ describe("runOpComponents", () => {
       runComponentsMock.mockResolvedValue({
         success: true,
         selected: ["svc"],
-        run: { order: ["svc"], waves: [["svc"]], results: [{ component: "svc", ok: true, records: [] }], ok: true },
+        run: { order: ["svc"], waves: [["svc"]], results: [{ component: "svc", ok: true, status: "ok", records: [] }], ok: true, status: "ok" },
       });
       maybePersistBuildManifestMock.mockResolvedValue({ persisted: false, reason: "opted-out" });
       vi.spyOn(process.stderr, "write").mockImplementation(() => true);
@@ -1803,7 +1860,7 @@ describe("runOpComponents", () => {
       runComponentsMock.mockResolvedValue({
         success: true,
         selected: ["svc"],
-        run: { order: ["svc"], waves: [["svc"]], results: [{ component: "svc", ok: true, records: [] }], ok: true },
+        run: { order: ["svc"], waves: [["svc"]], results: [{ component: "svc", ok: true, status: "ok", records: [] }], ok: true, status: "ok" },
       });
       maybePersistBuildManifestMock.mockResolvedValue({ persisted: false, reason: "error", error: "manifest push failed" });
       const stderr = makeStderrSpy();

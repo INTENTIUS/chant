@@ -6,7 +6,8 @@ import { loadChantConfig, resolveAutoReleaseDisabled, type ChantConfig } from ".
 import { discoverOps } from "../../op/discover";
 import type { OpConfig } from "../../op/types";
 import { loadActivities, loadProfiles } from "../../op/activity-registry";
-import { runOpLocally, findGate, findPolicyGateStep, LocalGateUnsupportedError, OpRunFailure, type StepRecord } from "../../op/local-executor";
+import { runOpLocally, findPolicyGateStep, OpRunFailure, type StepRecord } from "../../op/local-executor";
+import { approveCommand } from "../../op/gate";
 import { createLocalOpRuntime } from "../../op/runtimes/local";
 import type { OpRuntimeProvider, OpRunStatus } from "../../op/runtime";
 import { renderHuman, renderJson } from "../../op/local-output";
@@ -36,6 +37,14 @@ import { maybeRecordAutoRelease, extractRunDigestFromPhaseOutputs } from "../../
 import { maybePersistBuildManifest, extractRunManifestFromPhaseOutputs } from "../../components/manifest-persistence";
 import type { DriverComponentResult } from "../../components/driver";
 import type { BuildParamProvenance } from "../../provenance";
+
+/**
+ * The exit code a run that stopped at an unapproved gate uses (#2119).
+ * Deliberately not 1: a gate is a standing fact waiting on a human, and a CI
+ * job that treats it as a failure would page someone for a decision nobody has
+ * made yet.
+ */
+export const GATED_EXIT_CODE = 3;
 
 function kebabToCamel(s: string): string {
   return s.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
@@ -857,7 +866,9 @@ function renderProgress(opName: string, history: WorkflowHistoryRaw): void {
  * `chant run <name>` dispatcher.
  *
  * Local mode is the default — it runs the Op in-process with no Temporal
- * server. `--temporal` opts into a cluster (gates, schedules, durable resume).
+ * server — a `gate` there is decided against the gate ledger and ends the run
+ * pending approval (#2119), exit code 3. `--temporal` opts into a cluster,
+ * where a gate is instead a durable wait for a signal.
  * `--report` reads a past durable run and is therefore Temporal-only.
  *
  * `chant run --components <name|all>` (#585) is a separate target: discovered
@@ -1013,9 +1024,9 @@ async function recordAutoReleasesForRun(
  *
  * Local mode (the default) resolves the selector through `runComponents`
  * (`../../components/cli-support.ts`) and runs it on the local in-process
- * executor; gated components are rejected before any step runs (matching
- * `runOpLocal`'s pre-flight `findGate` guard) with an actionable message
- * pointing at `--temporal`.
+ * executor; a `gate` is decided against the gate ledger when the driver
+ * reaches it (#2119), and one nobody has approved ends the run with exit code
+ * 3 and the `chant approve` line, exactly as `chant run <op>` does.
  *
  * `--temporal` (#589) takes the durable path instead: compiles the named
  * component's composition to a Temporal workflow/worker (mirroring
@@ -1118,23 +1129,26 @@ export async function runOpComponents(ctx: CommandContext): Promise<number> {
     writeFileSync(dumpPath, JSON.stringify(result.run.componentOutputs, null, 2));
   }
 
-  if (result.gateUnsupported) {
-    console.error(formatError({
-      message:
-        `component "${result.gateUnsupported.component}": gate "${result.gateUnsupported.signalName}" is not ` +
-        `supported on the local executor — gates need a durable runtime.`,
-      hint: "Re-run with `chant run --components " + result.gateUnsupported.component + " --temporal`.",
-    }));
-    return 1;
-  }
-
-  if (!result.success && !result.run) {
+  if (!result.success && !result.run && !result.gated) {
     console.error(formatError({ message: result.error ?? "Failed to run component(s)" }));
     return 1;
   }
 
   if (result.run) {
     if (ctx.args.json) renderDriverJson(result.run); else renderDriverHuman(result.run);
+  }
+
+  // Gated (#2119): the same fact-and-stop the Op path takes, and the same
+  // exit code. Nothing to release — the component stopped short of finishing.
+  if (result.gated) {
+    const { gate } = result.gated;
+    console.error(formatWarning({
+      message: `component "${result.gated.component}" is gated on "${gate.gate}" — pending approval`,
+    }));
+    console.error(formatInfo(`approve : ${approveCommand(gate.op, gate.gate)}`));
+    if (gate.url) console.error(formatInfo(`approve at: ${gate.url}`));
+    console.error(formatInfo(`expires : ${gate.expiresAt}`));
+    return GATED_EXIT_CODE;
   }
 
   if (result.success && result.run) {
@@ -1450,26 +1464,27 @@ export async function runOpOnRuntime(ctx: CommandContext): Promise<number> {
     const status = await handle.result();
 
     if (status.result) {
+      // The executor's own render already prints a gate, its approve line
+      // and its expiry (#2119).
       if (ctx.args.json) renderJson(status.result); else renderHuman(status.result);
     } else {
       renderRuntimeStatus("Op", opName, runtime.name, status);
+      if (status.state === "gated" && status.gate) {
+        console.error(formatWarning({
+          message: `Op "${opName}" is waiting on gate "${status.gate.name}"`,
+          hint: `Record the resolution with: ${approveCommand(opName, status.gate.name)}`,
+        }));
+      }
     }
 
-    if (status.state === "gated" && status.gate) {
-      console.error(formatWarning({
-        message: `Op "${opName}" is waiting on gate "${status.gate.name}"`,
-        hint: `Record the resolution with: chant approve ${opName} ${status.gate.name}`,
-      }));
-    }
-
+    // Exit 3 for a gated run (#2119) — a distinct code so CI can tell
+    // "waiting on a human" from a broken op, and retry the one but not the
+    // other.
+    if (status.state === "gated") return GATED_EXIT_CODE;
     return status.state === "completed" ? 0 : 1;
   } catch (err) {
     if (err instanceof OpRunFailure) {
       if (ctx.args.json) renderJson(err.result); else renderHuman(err.result);
-      return 1;
-    }
-    if (err instanceof LocalGateUnsupportedError) {
-      console.error(formatError({ message: err.message }));
       return 1;
     }
     console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));

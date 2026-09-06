@@ -4,10 +4,10 @@ import type { ActivityFn, ActivityProfile } from "./activity-registry";
 import {
   runOpLocally,
   parseDuration,
-  findGate,
-  LocalGateUnsupportedError,
   OpRunFailure,
 } from "./local-executor";
+import { memoryGateLedgerPort } from "./gate";
+import type { GateResolutionRecord, PendingGateRecord } from "../lifecycle/gate-ledger";
 import { stepOutput } from "./step-output-ref";
 
 // Fast profiles so retry/timeout tests run in milliseconds.
@@ -56,7 +56,7 @@ describe("runOpLocally — sequencing", () => {
     });
     const result = await runOpLocally(config, activities, PROFILES);
     expect(order).toEqual(["a", "b", "c"]);
-    expect(result.ok).toBe(true);
+    expect(result.status).toBe("ok");
     expect(result.records.map((r) => r.fn)).toEqual(["a", "b", "c"]);
   });
 
@@ -240,7 +240,7 @@ describe("runOpLocally — outcomeAttribute", () => {
 });
 
 describe("runOpLocally — onFailure", () => {
-  test("runs compensation phases in reverse and rejects with ok=false", async () => {
+  test("runs compensation phases in reverse and rejects with status=fail", async () => {
     const order: string[] = [];
     const make = (tag: string, fail = false): ActivityFn => async () => {
       order.push(tag);
@@ -260,35 +260,135 @@ describe("runOpLocally — onFailure", () => {
     });
     const err = await runOpLocally(config, activities, PROFILES).catch((e) => e);
     expect(err).toBeInstanceOf(OpRunFailure);
-    expect(err.result.ok).toBe(false);
+    expect(err.result.status).toBe("fail");
     // Main fails (3 attempts), then compensation runs in reverse: comp2, comp1.
     expect(order).toEqual(["main", "main", "main", "comp2", "comp1"]);
   });
 });
 
-describe("runOpLocally — gate rejection", () => {
-  test("rejects before running any step when a gate is present", async () => {
-    const ran = vi.fn();
-    const activities = new Map<string, ActivityFn>([["a", async () => { ran(); }]]);
-    const config = op({
-      phases: [
-        { name: "P", steps: [
-          { kind: "activity", fn: "a" },
-          { kind: "gate", signalName: "approve-prod" },
-        ] },
-      ],
-    });
-    await expect(runOpLocally(config, activities, PROFILES)).rejects.toBeInstanceOf(LocalGateUnsupportedError);
-    await expect(runOpLocally(config, activities, PROFILES)).rejects.toThrow(/--temporal/);
-    expect(ran).not.toHaveBeenCalled();
+describe("runOpLocally — gate as fact (#2119)", () => {
+  const NOW = "2026-09-05T12:00:00.000Z";
+
+  const resolution = (over: Partial<GateResolutionRecord> = {}): GateResolutionRecord => ({
+    version: 1, op: "test-op", gate: "approve-prod", resolvedBy: "alex",
+    timestamp: "2026-09-05T11:00:00.000Z", ...over,
+  });
+  const pending = (over: Partial<PendingGateRecord> = {}): PendingGateRecord => ({
+    version: 1, kind: "pending", op: "test-op", gate: "approve-prod",
+    timestamp: "2026-09-05T10:00:00.000Z", expiresAt: "2026-09-07T10:00:00.000Z", ...over,
   });
 
-  test("findGate locates a gate in phases or onFailure", () => {
-    expect(findGate(op({ phases: [{ name: "P", steps: [{ kind: "activity", fn: "a" }] }] }))).toBeUndefined();
-    const gated = findGate(op({
-      phases: [{ name: "P", steps: [{ kind: "gate", signalName: "g" }] }],
-    }));
-    expect(gated?.signalName).toBe("g");
+  /** A gate between two steps, so "no phase after the gate ran" is observable. */
+  function gatedOp(): OpConfig {
+    return op({
+      phases: [
+        { name: "P1", steps: [
+          { kind: "activity", fn: "before" },
+          { kind: "gate", signalName: "approve-prod", description: "release manager signs off", timeout: "24h" },
+          { kind: "activity", fn: "after" },
+        ] },
+        { name: "P2", steps: [{ kind: "activity", fn: "later" }] },
+      ],
+      onFailure: [{ name: "Comp", steps: [{ kind: "activity", fn: "compensate" }] }],
+    });
+  }
+
+  function tracked() {
+    const calls: string[] = [];
+    const fn = (tag: string): ActivityFn => async () => { calls.push(tag); };
+    return {
+      calls,
+      activities: new Map<string, ActivityFn>([
+        ["before", fn("before")], ["after", fn("after")],
+        ["later", fn("later")], ["compensate", fn("compensate")],
+      ]),
+    };
+  }
+
+  test("with no resolution: ends gated, records the pending fact, runs nothing after the gate", async () => {
+    const { calls, activities } = tracked();
+    const port = memoryGateLedgerPort();
+    const result = await runOpLocally(gatedOp(), activities, PROFILES, undefined, { gates: port, now: NOW });
+
+    expect(result.status).toBe("gated");
+    expect(calls).toEqual(["before"]);
+    expect(result.gate).toMatchObject({ op: "test-op", gate: "approve-prod", description: "release manager signs off" });
+    // The gate's own `timeout` is the pending fact's expiry.
+    expect(result.gate?.expiresAt).toBe("2026-09-06T12:00:00.000Z");
+    expect(port.appended).toHaveLength(1);
+    expect(result.records.map((r) => [r.fn, r.status])).toEqual([
+      ["before", "ok"],
+      ["gate:approve-prod", "skipped"],
+      ["after", "skipped"],
+      ["later", "skipped"],
+    ]);
+  });
+
+  test("onFailure phases do not run on a gated run", async () => {
+    const { calls, activities } = tracked();
+    await runOpLocally(gatedOp(), activities, PROFILES, undefined, { gates: memoryGateLedgerPort(), now: NOW });
+    expect(calls).not.toContain("compensate");
+  });
+
+  test("a resolution newer than the pending fact passes the gate and carries the approver", async () => {
+    const { calls, activities } = tracked();
+    const port = memoryGateLedgerPort({
+      pending: [pending()],
+      resolutions: [resolution({ url: "https://github.com/org/repo/pull/7" })],
+    });
+    const result = await runOpLocally(gatedOp(), activities, PROFILES, undefined, { gates: port, now: NOW });
+
+    expect(result.status).toBe("ok");
+    expect(calls).toEqual(["before", "after", "later"]);
+    expect(result.records.find((r) => r.fn === "gate:approve-prod")?.approval).toEqual({
+      gate: "approve-prod",
+      resolvedBy: "alex",
+      timestamp: "2026-09-05T11:00:00.000Z",
+      url: "https://github.com/org/repo/pull/7",
+    });
+    expect(port.appended).toHaveLength(0);
+  });
+
+  test("a resolution dated before the pending fact is ignored", async () => {
+    const port = memoryGateLedgerPort({
+      pending: [pending({ timestamp: "2026-09-05T11:30:00.000Z" })],
+      resolutions: [resolution({ timestamp: "2026-09-05T09:00:00.000Z" })],
+    });
+    const result = await runOpLocally(gatedOp(), tracked().activities, PROFILES, undefined, { gates: port, now: NOW });
+    expect(result.status).toBe("gated");
+  });
+
+  test("a live pending fact is reused, not re-recorded", async () => {
+    const port = memoryGateLedgerPort({ pending: [pending()] });
+    const result = await runOpLocally(gatedOp(), tracked().activities, PROFILES, undefined, { gates: port, now: NOW });
+    expect(result.status).toBe("gated");
+    expect(port.appended).toHaveLength(0);
+    expect(result.gate?.timestamp).toBe("2026-09-05T10:00:00.000Z");
+  });
+
+  test("an expired pending fact is ignored and re-recorded", async () => {
+    const port = memoryGateLedgerPort({ pending: [pending({ expiresAt: "2026-09-05T11:00:00.000Z" })] });
+    const result = await runOpLocally(gatedOp(), tracked().activities, PROFILES, undefined, { gates: port, now: NOW });
+    expect(result.status).toBe("gated");
+    expect(port.appended).toHaveLength(1);
+    expect(result.gate?.timestamp).toBe(NOW);
+  });
+
+  test("approve then re-run completes the op", async () => {
+    const port = memoryGateLedgerPort();
+    const first = await runOpLocally(gatedOp(), tracked().activities, PROFILES, undefined, { gates: port, now: NOW });
+    expect(first.status).toBe("gated");
+
+    // `chant approve` writes the counterpart fact, dated after the pending one.
+    const approved = memoryGateLedgerPort({
+      pending: [first.gate!],
+      resolutions: [resolution({ timestamp: "2026-09-05T12:30:00.000Z" })],
+    });
+    const second = await runOpLocally(gatedOp(), tracked().activities, PROFILES, undefined, {
+      gates: approved,
+      now: "2026-09-05T13:00:00.000Z",
+    });
+    expect(second.status).toBe("ok");
   });
 });
 
@@ -306,7 +406,7 @@ describe("runOpLocally — step-output references (#1290)", () => {
       ] }],
     });
     const result = await runOpLocally(config, activities, PROFILES);
-    expect(result.ok).toBe(true);
+    expect(result.status).toBe("ok");
     expect(received).toEqual([{ stacks: ["a", "b"] }]);
     // The recorded step also shows the resolved value, not the raw ref object.
     expect(result.records[1].args).toEqual({ stacks: ["a", "b"] });
@@ -361,7 +461,7 @@ describe("runOpLocally — step-output references (#1290)", () => {
       ] }],
     });
     const result = await runOpLocally(config, activities, PROFILES);
-    expect(result.ok).toBe(true);
+    expect(result.status).toBe("ok");
     expect(received).toEqual([{ v: undefined }]);
   });
 
@@ -377,7 +477,7 @@ describe("runOpLocally — step-output references (#1290)", () => {
       ],
     });
     const result = await runOpLocally(config, activities, PROFILES);
-    expect(result.ok).toBe(true);
+    expect(result.status).toBe("ok");
     expect(result.records.every((r) => r.status === "ok")).toBe(true);
     expect(result.records[1].args).toEqual({ stacks: ["stack-a"] });
   });

@@ -125,7 +125,7 @@ describe("Managed Agents session Op (#847)", () => {
       ],
     };
     const result = await runOpLocally(op, activities, PROFILES);
-    expect(result.ok).toBe(true);
+    expect(result.status).toBe("ok");
     expect(result.records.map((r) => r.fn)).toEqual([
       "spriteCreate",
       "spriteApplyNetworkPolicy",

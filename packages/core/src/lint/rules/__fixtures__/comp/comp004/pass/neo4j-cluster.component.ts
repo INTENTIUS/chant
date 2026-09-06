@@ -1,4 +1,4 @@
-// chant-disable COMP004 -- graduates to `chant run --temporal`; the Node 1 gate is a deliberate human-approval wait, see docs/components/orchestration.mdx
+// chant-disable COMP004 -- the Node 1 gate is a deliberate human-approval wait, cleared with `chant approve neo4j-cluster approve-neo4j-node-1`
 import type { Component } from "../../../../../../components/component";
 import { gate, phase } from "../../../../../../components/component";
 

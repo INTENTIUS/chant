@@ -4,7 +4,15 @@
  * A first-class peer to Temporal mode for dev loops, CI, and drift/observation
  * Ops. Provides phase sequencing, parallel phases, per-step retry + timeout via
  * activity profiles, `outcomeAttribute` capture, and `onFailure` compensation.
- * Gates and schedules are unsupported and rejected before any phase runs.
+ *
+ * A gate is a fact, not a wait (#2119). Reaching one, the executor consults the
+ * gate ledger through `./gate.ts`: a resolution newer than the gate's newest
+ * pending fact lets the step pass, carrying the approver onto its record;
+ * anything else records the pending fact and ends the run with status `gated`.
+ * No later phase runs and `onFailure` does not run — a gate is not a failure,
+ * and there is nothing to compensate for. The next run re-evaluates from the
+ * ledger, so `chant approve <op> <gate>` followed by `chant run <op>` is the
+ * whole loop.
  *
  * The executor is deliberately decoupled from the Temporal lexicon: activity
  * implementations and profiles are passed in (loaded dynamically by the CLI),
@@ -16,6 +24,11 @@ import type { OpConfig, PhaseDefinition, ActivityStep, GateStep, EffectStep, Ste
 import { resolveActivity, type ActivityFn, type ActivityProfile } from "./activity-registry";
 import type { ReceiptReadResult } from "./receipt-store";
 import { isStepOutputRef } from "./step-output-ref";
+import { parseDuration } from "./duration";
+import { evaluateGate, gitGateLedgerPort, type GateLedgerPort } from "./gate";
+import type { PendingGateRecord } from "../lifecycle/gate-ledger";
+
+export { parseDuration } from "./duration";
 
 // ── Records ─────────────────────────────────────────────────────────────────
 
@@ -40,27 +53,29 @@ export interface StepRecord {
   /** Every search attribute the step published, in authored order (#2105). Absent when it published none. */
   outcomes?: Array<{ name: string; value: unknown }>;
   error?: string;
+  /** Set on a `gate` step that passed (#2119): who resolved it, when, and at what address. */
+  approval?: { gate: string; resolvedBy: string; timestamp: string; url?: string };
 }
 
 export interface OpRunResult {
   op: string;
   records: StepRecord[];
   totalMs: number;
-  ok: boolean;
+  /**
+   * Three-state outcome (#2119). `gated` is neither success nor failure: the
+   * run reached a gate nobody has approved, recorded the fact, and stopped.
+   * The CLI exits 3 for it so CI can tell "waiting on a human" from "broken".
+   *
+   * #2118: written to the run ledger.
+   */
+  status: "ok" | "fail" | "gated";
+  /** ISO-8601 start of this run. */
+  startedAt: string;
+  /** Present when `status === "gated"`: the pending fact the run ended on. */
+  gate?: PendingGateRecord;
 }
 
 // ── Errors ────────────────────────────────────────────────────────────────��─
-
-/** Thrown when an Op contains a gate (or schedule) that local mode cannot run. */
-export class LocalGateUnsupportedError extends Error {
-  constructor(public readonly signalName: string) {
-    super(
-      `gate "${signalName}" is not supported in local mode — gates and schedules ` +
-        `need a durable runtime. Re-run with --temporal.`,
-    );
-    this.name = "LocalGateUnsupportedError";
-  }
-}
 
 /** Thrown on terminal Op failure; carries the partial run result for rendering. */
 export class OpRunFailure extends Error {
@@ -78,6 +93,18 @@ class PhaseFailure extends Error {
   }
 }
 
+/** Internal: a phase stopped on an unapproved gate. Not a failure — no compensation follows it. */
+class GateStop extends Error {
+  constructor(
+    public readonly records: StepRecord[],
+    public readonly pending: PendingGateRecord,
+    public readonly phase: string,
+  ) {
+    super(`gate "${pending.gate}" is pending approval`);
+    this.name = "GateStop";
+  }
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────��─
 
 const DEFAULT_PROFILE = "fastIdempotent";
@@ -86,19 +113,6 @@ const FALLBACK_TIMEOUT_MS = 5 * 60_000;
 const isActivity = (s: StepDefinition): s is ActivityStep => s.kind === "activity";
 const isGate = (s: StepDefinition): s is GateStep => s.kind === "gate";
 const isEffect = (s: StepDefinition): s is EffectStep => s.kind === "effect";
-
-/** Parse a Temporal duration string ("5m", "30s", "1h30m", "100ms") to ms. */
-export function parseDuration(s: string): number {
-  const units: Record<string, number> = { ms: 1, s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 };
-  let total = 0;
-  let matched = false;
-  for (const m of s.matchAll(/(\d+)(ms|s|m|h|d)/g)) {
-    total += Number(m[1]) * units[m[2]];
-    matched = true;
-  }
-  if (!matched) throw new Error(`unparseable duration: "${s}"`);
-  return total;
-}
 
 /** Resolve a dot-path into a value; returns the whole value when path is absent. */
 function resolvePath(value: unknown, path?: string): unknown {
@@ -128,22 +142,6 @@ function resolveStepOutputRefs(value: unknown, resultsById: ReadonlyMap<string, 
   return value;
 }
 
-/** Find the first gate step anywhere in the Op (phases + onFailure, including
- * gates nested inside effect steps), if any. */
-export function findGate(config: OpConfig): GateStep | undefined {
-  const all = [...config.phases, ...(config.onFailure ?? [])];
-  for (const phase of all) {
-    for (const step of phase.steps) {
-      if (isGate(step)) return step;
-      if (isEffect(step)) {
-        const nested = step.steps.find(isGate);
-        if (nested) return nested;
-      }
-    }
-  }
-  return undefined;
-}
-
 /**
  * Find the first `policyGate` step anywhere in the Op (phases + `onFailure`,
  * including steps nested inside effect steps), if any.
@@ -155,7 +153,8 @@ export function findGate(config: OpConfig): GateStep | undefined {
  * shown to a user who passed a documented flag. The combination cannot be
  * honoured until the gate can build and load policies inside the boundary
  * (#1157), so both `chant run` paths pre-flight it with this and refuse before
- * any phase executes, the same shape as {@link findGate}'s pre-flight.
+ * any phase executes. This is the one pre-flight refusal left on the Op path —
+ * a `gate` no longer is one (#2119).
  */
 export function findPolicyGateStep(config: OpConfig): ActivityStep | undefined {
   const all = [...config.phases, ...(config.onFailure ?? [])];
@@ -314,6 +313,75 @@ function skippedRecord(phaseName: string, fn: string, args?: Record<string, unkn
   return { phase: phaseName, fn, args: args ?? {}, status: "skipped", durationMs: 0 };
 }
 
+// ── Gate steps (#2119) ───────────────────────────────────────────────────────
+
+/** What a run needs to decide a gate against the ledger — see `./gate.ts`. */
+interface GateContext {
+  op: string;
+  port: GateLedgerPort;
+  now?: string;
+  runId?: string;
+  /** Called once per settled step, in production order (#2121) — what `--progress-json` streams from. */
+  onRecord?: (record: StepRecord) => void;
+}
+
+/** Collect records and hand each to the caller's progress sink in one move. */
+function pushRecord(sink: StepRecord[], ctx: GateContext, ...recs: StepRecord[]): void {
+  sink.push(...recs);
+  for (const r of recs) ctx.onRecord?.(r);
+}
+
+/** The record name a gate step lands under, so a reader (and a JSON consumer) can pick it out of `records`. */
+function gateFn(step: GateStep): string {
+  return `gate:${step.signalName}`;
+}
+
+/**
+ * Decide one gate against the ledger. A resolution newer than the gate's
+ * newest pending fact passes it, and the approver lands on the step record; a
+ * pending fact is recorded (or left standing) otherwise, and the caller stops
+ * the run.
+ */
+async function runGateStep(
+  step: GateStep,
+  phaseName: string,
+  gates: GateContext,
+): Promise<{ record: StepRecord; pending?: PendingGateRecord }> {
+  const start = Date.now();
+  const check = await evaluateGate(gates.port, {
+    op: gates.op,
+    gate: step.signalName,
+    ...(step.description ? { description: step.description } : {}),
+    ...(step.timeout ? { timeout: step.timeout } : {}),
+    ...(gates.runId ? { runId: gates.runId } : {}),
+    ...(gates.now ? { now: gates.now } : {}),
+  });
+
+  if (check.satisfied) {
+    const { resolution } = check;
+    return {
+      record: {
+        phase: phaseName,
+        fn: gateFn(step),
+        args: {},
+        status: "ok",
+        durationMs: Date.now() - start,
+        approval: {
+          gate: step.signalName,
+          resolvedBy: resolution.resolvedBy,
+          timestamp: resolution.timestamp,
+          ...(resolution.url ? { url: resolution.url } : {}),
+        },
+      },
+    };
+  }
+
+  return {
+    record: { phase: phaseName, fn: gateFn(step), args: {}, status: "skipped", durationMs: Date.now() - start },
+    pending: check.pending,
+  };
+}
+
 /**
  * Run one effect step: read-compare-run-write. On a match the nested steps are
  * recorded as skipped ("effect already applied") and nothing is written. On a
@@ -321,6 +389,11 @@ function skippedRecord(phaseName: string, fn: string, args?: Record<string, unkn
  * succeeds is the receipt written — last, once (the sole writer, #1703
  * decision 3). Any failure leaves the receipt untouched (stale), so the next
  * run re-proposes the effect.
+ *
+ * A nested `gate` is decided in authored order like any other nested step
+ * (#2119). Unapproved, it stops the effect before the receipt is written, so
+ * the next run re-reads the receipt, re-proposes the effect, and re-evaluates
+ * the gate — the receipt stays honest about what actually happened.
  */
 async function runEffectStep(
   step: EffectStep,
@@ -328,20 +401,18 @@ async function runEffectStep(
   activities: Map<string, ActivityFn>,
   profiles: Record<string, ActivityProfile>,
   resultsById: Map<string, unknown>,
+  gates: GateContext,
   signal?: AbortSignal,
-  onRecord?: (record: StepRecord) => void,
-): Promise<{ records: StepRecord[]; failed: boolean }> {
+): Promise<{ records: StepRecord[]; failed: boolean; pending?: PendingGateRecord }> {
   const records: StepRecord[] = [];
-  /** Collect a record and hand it to the caller's progress sink in one move. */
-  const push = (record: StepRecord): void => { records.push(record); onRecord?.(record); };
 
   const read = await runStep(receiptReadStep(step), phaseName, activities, profiles, resultsById, signal);
-  push(read.record);
+  pushRecord(records, gates, read.record);
   if (read.record.status === "fail") return { records, failed: true };
 
   const result = read.result as Partial<ReceiptReadResult> | undefined;
   if (typeof result?.expectation !== "string") {
-    push({
+    pushRecord(records, gates, {
       phase: phaseName,
       fn: `effect:${step.receipt.name}`,
       args: {},
@@ -356,22 +427,44 @@ async function runEffectStep(
   if (result.current === expectation) {
     // Effect already applied — skip the nested steps, write nothing.
     for (const nested of step.steps) {
-      if (nested.kind === "activity") push(skippedRecord(phaseName, nested.fn, nested.args));
+      pushRecord(records, gates, 
+        nested.kind === "activity"
+          ? skippedRecord(phaseName, nested.fn, nested.args)
+          : skippedRecord(phaseName, gateFn(nested)),
+      );
     }
     return { records, failed: false };
   }
 
-  // Gates are pre-flighted by findGate; only activities remain here.
-  const nestedActivities = step.steps.filter(isActivity);
-  for (let i = 0; i < nestedActivities.length; i++) {
-    const ran = await runStep(nestedActivities[i], phaseName, activities, profiles, resultsById, signal);
-    push(ran.record);
+  const skipRest = (from: number) => {
+    for (const skipped of step.steps.slice(from)) {
+      pushRecord(records, gates, 
+        skipped.kind === "activity"
+          ? skippedRecord(phaseName, skipped.fn, skipped.args)
+          : skippedRecord(phaseName, gateFn(skipped)),
+      );
+    }
+    pushRecord(records, gates, skippedRecord(phaseName, "receiptWrite"));
+  };
+
+  for (let i = 0; i < step.steps.length; i++) {
+    const nested = step.steps[i];
+    if (isGate(nested)) {
+      const { record, pending } = await runGateStep(nested, phaseName, gates);
+      pushRecord(records, gates, record);
+      if (pending) {
+        // Receipt left untouched — the next run re-proposes the effect and
+        // re-evaluates the gate against whatever the ledger says by then.
+        skipRest(i + 1);
+        return { records, failed: false, pending };
+      }
+      continue;
+    }
+    const ran = await runStep(nested, phaseName, activities, profiles, resultsById, signal);
+    pushRecord(records, gates, ran.record);
     if (ran.record.status === "fail") {
       // Receipt left untouched (stale) — the next run re-proposes the effect.
-      for (const skipped of nestedActivities.slice(i + 1)) {
-        push(skippedRecord(phaseName, skipped.fn, skipped.args));
-      }
-      push(skippedRecord(phaseName, "receiptWrite"));
+      skipRest(i + 1);
       return { records, failed: true };
     }
   }
@@ -390,26 +483,22 @@ async function runEffectStep(
     resultsById,
     signal,
   );
-  push(wrote.record);
+  pushRecord(records, gates, wrote.record);
   return { records, failed: wrote.record.status === "fail" };
 }
 
-/** Run a phase. Throws PhaseFailure (with records so far) if any step fails. */
+/**
+ * Run a phase. Throws `PhaseFailure` (with the records so far) if any step
+ * fails, or `GateStop` if a `gate` step in it is still pending approval.
+ */
 async function runPhase(
   phase: PhaseDefinition,
   activities: Map<string, ActivityFn>,
   profiles: Record<string, ActivityProfile>,
   resultsById: Map<string, unknown>,
+  gates: GateContext,
   signal?: AbortSignal,
-  onRecord?: (record: StepRecord) => void,
 ): Promise<StepRecord[]> {
-  // Defensive: gates are pre-flighted, but never execute one if it slips
-  // through — including a gate nested inside an effect step.
-  const gate =
-    phase.steps.find(isGate) ??
-    phase.steps.filter(isEffect).flatMap((e) => e.steps).find(isGate);
-  if (gate) throw new LocalGateUnsupportedError(gate.signalName);
-
   if (phase.parallel) {
     const eff = phase.steps.find(isEffect);
     if (eff) {
@@ -417,36 +506,65 @@ async function runPhase(
         `effect step "${eff.receipt.name}" cannot run in a parallel phase — read-compare-run-write is ordered`,
       );
     }
+    // Gates in a parallel phase are decided before the fan-out: a gate is a
+    // read of the ledger, not work, and starting activities that a pending
+    // gate is about to strand would defeat the point of stopping at it.
+    const gateRecords: StepRecord[] = [];
+    for (const step of phase.steps.filter(isGate)) {
+      const { record, pending } = await runGateStep(step, phase.name, gates);
+      pushRecord(gateRecords, gates, record);
+      if (pending) {
+        for (const skipped of phase.steps.filter(isActivity)) {
+          pushRecord(gateRecords, gates, skippedRecord(phase.name, skipped.fn, skipped.args));
+        }
+        throw new GateStop(gateRecords, pending, phase.name);
+      }
+    }
     const steps = phase.steps.filter(isActivity);
-    const records = (
+    const ran = (
       await Promise.all(steps.map((s) => runStep(s, phase.name, activities, profiles, resultsById, signal)))
     ).map((r) => r.record);
-    for (const record of records) onRecord?.(record);
+    for (const r of ran) gates.onRecord?.(r);
+    const records = gateRecords.concat(ran);
     if (records.some((r) => r.status === "fail")) throw new PhaseFailure(records);
     return records;
   }
 
-  const steps = phase.steps.filter((s): s is ActivityStep | EffectStep => !isGate(s));
+  const steps = phase.steps;
   const records: StepRecord[] = [];
-  /** Collect a record and hand it to the caller's progress sink in one move. */
-  const push = (record: StepRecord): void => { records.push(record); onRecord?.(record); };
 
   const skipRemaining = (from: number) => {
     for (const skipped of steps.slice(from)) {
       if (isEffect(skipped)) {
-        push(skippedRecord(phase.name, `effect:${skipped.receipt.name}`));
+        pushRecord(records, gates, skippedRecord(phase.name, `effect:${skipped.receipt.name}`));
+      } else if (isGate(skipped)) {
+        pushRecord(records, gates, skippedRecord(phase.name, gateFn(skipped)));
       } else {
-        push(skippedRecord(phase.name, skipped.fn, skipped.args));
+        pushRecord(records, gates, skippedRecord(phase.name, skipped.fn, skipped.args));
       }
     }
   };
 
   for (let i = 0; i < steps.length; i++) {
     const step = steps[i];
+    if (isGate(step)) {
+      const { record, pending } = await runGateStep(step, phase.name, gates);
+      pushRecord(records, gates, record);
+      if (pending) {
+        skipRemaining(i + 1);
+        throw new GateStop(records, pending, phase.name);
+      }
+      continue;
+    }
     if (isEffect(step)) {
-      // The nested run already fed `onRecord`; only collect here.
-      const { records: effRecords, failed } = await runEffectStep(step, phase.name, activities, profiles, resultsById, signal, onRecord);
-      records.push(...effRecords);
+      const { records: effRecords, failed, pending } = await runEffectStep(
+        step, phase.name, activities, profiles, resultsById, gates, signal,
+      );
+      records.push(...effRecords); // already emitted by runEffectStep
+      if (pending) {
+        skipRemaining(i + 1);
+        throw new GateStop(records, pending, phase.name);
+      }
       if (failed) {
         skipRemaining(i + 1);
         throw new PhaseFailure(records);
@@ -454,7 +572,7 @@ async function runPhase(
       continue;
     }
     const { record } = await runStep(step, phase.name, activities, profiles, resultsById, signal);
-    push(record);
+    pushRecord(records, gates, record);
     if (record.status === "fail") {
       // Mark the remaining steps in this phase as skipped, then abort.
       skipRemaining(i + 1);
@@ -466,26 +584,53 @@ async function runPhase(
 
 // ── Public API ────────────────────────────────────────────────────────────��─
 
+/** How a run reaches the gate ledger, and what it calls itself there (#2119). */
+export interface RunOpOptions {
+  /**
+   * Where gate facts are read and written. Defaults to the `chant/lifecycle`
+   * orphan branch under `cwd`; a test (or a caller that already holds the
+   * ledger) passes `memoryGateLedgerPort()` from `./gate.ts` instead.
+   */
+  gates?: GateLedgerPort;
+  /** Working directory for the default git-backed gate ledger. */
+  cwd?: string;
+  /** ISO-8601 "now", so a gate decision is deterministic under test. */
+  now?: string;
+  /** Identifies this run on any pending fact it records. */
+  runId?: string;
+  /**
+   * Called once per settled step, in the order the records are produced
+   * (#2121) — what the local op runtime (./runtimes/local.ts) feeds
+   * `--progress-json` from. Side-effect free when omitted.
+   */
+  onRecord?: (record: StepRecord) => void;
+}
+
 /**
- * Execute an Op locally. Resolves with the run result on success; rejects with
- * `OpRunFailure` (carrying the partial result) on terminal failure, after
- * running any `onFailure` phases in reverse order. Throws
- * `LocalGateUnsupportedError` up front if the Op contains a gate.
+ * Execute an Op locally.
  *
- * `onRecord` (#2121) is called once per settled step, in the order the records
- * are produced — what the local op runtime (./runtimes/local.ts) feeds
- * `--progress-json` from. Optional and side-effect free when omitted: the
- * returned result is byte-for-byte what it was before the parameter existed.
+ * Resolves with the run result when every phase succeeds (`status: "ok"`), and
+ * also when the run stopped at an unapproved gate (`status: "gated"`, with the
+ * pending fact on `result.gate`) — a gate is a fact, not an error, so it is not
+ * thrown. Rejects with `OpRunFailure` (carrying the partial result) on terminal
+ * failure, after running any `onFailure` phases in reverse order; a gated run
+ * runs no `onFailure` phase, because nothing failed and nothing was left
+ * half-applied to compensate for.
  */
 export async function runOpLocally(
   config: OpConfig,
   activities: Map<string, ActivityFn>,
   profiles: Record<string, ActivityProfile>,
   signal?: AbortSignal,
-  onRecord?: (record: StepRecord) => void,
+  options: RunOpOptions = {},
 ): Promise<OpRunResult> {
-  const gate = findGate(config);
-  if (gate) throw new LocalGateUnsupportedError(gate.signalName);
+  const gates: GateContext = {
+    op: config.name,
+    port: options.gates ?? gitGateLedgerPort(options.cwd ? { cwd: options.cwd } : undefined),
+    ...(options.now ? { now: options.now } : {}),
+    ...(options.runId ? { runId: options.runId } : {}),
+    ...(options.onRecord ? { onRecord: options.onRecord } : {}),
+  };
 
   // Effect steps are ordered (read-compare-run-write): refuse them in a
   // parallel phase up front, with the phase named, rather than mid-run.
@@ -501,6 +646,7 @@ export async function runOpLocally(
 
   const records: StepRecord[] = [];
   const start = Date.now();
+  const startedAt = options.now ?? new Date(start).toISOString();
 
   // Completed step id → its activity result (#1290). Populated as main-phase
   // steps finish, so a later step's step-output references resolve to real
@@ -510,9 +656,35 @@ export async function runOpLocally(
   try {
     for (const phase of config.phases) {
       if (signal?.aborted) throw new PhaseFailure([]);
-      records.push(...(await runPhase(phase, activities, profiles, resultsById, signal, onRecord)));
+      records.push(...(await runPhase(phase, activities, profiles, resultsById, gates, signal)));
     }
   } catch (err) {
+    // A pending gate ends the run where it stands: no later phase, and no
+    // `onFailure` compensation — nothing failed, so there is nothing to undo.
+    if (err instanceof GateStop) {
+      records.push(...err.records);
+      const stoppedAt = config.phases.findIndex((p) => p.name === err.phase);
+      for (const phase of config.phases.slice(stoppedAt + 1)) {
+        for (const step of phase.steps) {
+          records.push(
+            isEffect(step)
+              ? skippedRecord(phase.name, `effect:${step.receipt.name}`)
+              : isGate(step)
+                ? skippedRecord(phase.name, gateFn(step))
+                : skippedRecord(phase.name, step.fn, step.args),
+          );
+        }
+      }
+      return {
+        op: config.name,
+        records,
+        totalMs: Date.now() - start,
+        status: "gated",
+        startedAt,
+        gate: err.pending,
+      };
+    }
+
     if (err instanceof PhaseFailure) records.push(...err.records);
 
     // Compensation: run onFailure phases in reverse order (best-effort). Skipped
@@ -520,17 +692,17 @@ export async function runOpLocally(
     if (!signal?.aborted) {
       for (const phase of [...(config.onFailure ?? [])].reverse()) {
         try {
-          records.push(...(await runPhase(phase, activities, profiles, resultsById, signal, onRecord)));
+          records.push(...(await runPhase(phase, activities, profiles, resultsById, gates, signal)));
         } catch (compErr) {
-          if (compErr instanceof PhaseFailure) records.push(...compErr.records);
+          if (compErr instanceof PhaseFailure || compErr instanceof GateStop) records.push(...compErr.records);
         }
       }
     }
 
-    throw new OpRunFailure({ op: config.name, records, totalMs: Date.now() - start, ok: false });
+    throw new OpRunFailure({ op: config.name, records, totalMs: Date.now() - start, status: "fail", startedAt });
   }
 
-  return { op: config.name, records, totalMs: Date.now() - start, ok: true };
+  return { op: config.name, records, totalMs: Date.now() - start, status: "ok", startedAt };
 }
 
 function errMessage(err: unknown): string {

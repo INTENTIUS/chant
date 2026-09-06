@@ -18,6 +18,14 @@ vi.mock("../../config", async () => {
   return { ...actual, loadChantConfig: (...args: unknown[]) => loadChantConfigMock(...args) };
 });
 
+// The gate ledger a local run consults (#2119) is the `chant/lifecycle` orphan
+// branch by default. Point it at memory here so a unit test never writes a
+// fact to the real repo.
+vi.mock("../gate", async () => {
+  const actual = await vi.importActual<typeof import("../gate")>("../gate");
+  return { ...actual, gitGateLedgerPort: () => actual.memoryGateLedgerPort() };
+});
+
 const { createLocalOpRuntime } = await import("./local");
 
 function op(name: string, steps: unknown[]): OpConfig {
@@ -44,7 +52,7 @@ describe("the local op runtime", () => {
 
     expect(runtime.name).toBe("local");
     expect(status.state).toBe("completed");
-    expect(status.result?.ok).toBe(true);
+    expect(status.result?.status).toBe("ok");
     expect(status.records?.map((r) => r.fn)).toEqual(["ok"]);
   });
 
@@ -63,7 +71,7 @@ describe("the local op runtime", () => {
     const status = await handle.result();
 
     expect(status.state).toBe("failed");
-    expect(status.result?.ok).toBe(false);
+    expect(status.result?.status).toBe("fail");
   });
 
   test("progress is called once per settled step", async () => {
@@ -83,13 +91,24 @@ describe("the local op runtime", () => {
     expect(seen).toEqual(["ok", "ok"]);
   });
 
-  test("a gated Op is refused before any step runs", async () => {
-    loadActivitiesMock.mockResolvedValue(new Map());
+  test("a gated Op settles as gated, naming the gate, and runs nothing after it (#2119)", async () => {
+    const after = vi.fn(async () => ({}));
+    loadActivitiesMock.mockResolvedValue(new Map([["after", after]]));
     const runtime = createLocalOpRuntime();
 
-    await expect(runtime.start(op("gated", [{ kind: "gate", signalName: "approve-prod" }]), {}))
-      .rejects.toThrow(/approve-prod/);
-    expect(loadActivitiesMock).not.toHaveBeenCalled();
+    const handle = await runtime.start(
+      op("gated", [
+        { kind: "gate", signalName: "approve-prod" },
+        { kind: "activity", fn: "after", args: {} },
+      ]),
+      {},
+    );
+    const status = await handle.result();
+
+    expect(status.state).toBe("gated");
+    expect(status.gate?.name).toBe("approve-prod");
+    expect(status.result?.status).toBe("gated");
+    expect(after).not.toHaveBeenCalled();
   });
 
   test("status, log and list answer from the runs this process made", async () => {

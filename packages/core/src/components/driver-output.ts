@@ -51,15 +51,27 @@ export function renderDriverHuman(result: DriverRunResult, write: Writer = stder
       } else {
         write(`    ${mark} ${record.kind}   ${formatDuration(record.durationMs)}`);
       }
+      if (record.approval) {
+        write(`      [approved] ${record.approval.resolvedBy} at ${record.approval.timestamp}` +
+          (record.approval.url ? ` (${record.approval.url})` : ""));
+      }
       if (record.error) {
         write(`      ${record.error}`);
       }
     }
-    write(componentResult.ok ? `  component "${componentResult.component}" completed` : `  component "${componentResult.component}" failed`);
+    write(
+      componentResult.status === "ok"
+        ? `  component "${componentResult.component}" completed`
+        : componentResult.status === "gated"
+          ? `  component "${componentResult.component}" gated on "${componentResult.gate?.gate ?? "?"}"`
+          : `  component "${componentResult.component}" failed`,
+    );
   }
 
-  if (result.ok) {
+  if (result.status === "ok") {
     write(`interpret run completed (${result.order.length} component(s))`);
+  } else if (result.status === "gated") {
+    write(`interpret run is gated at component "${result.gatedComponent}"`);
   } else {
     write(`interpret run failed at component "${result.failedComponent}"`);
   }

@@ -3,8 +3,12 @@ import { withTestDir } from "@intentius/chant-test-utils";
 import { spawnSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { appendGateResolution, readGateResolutions, latestResolutionSince, resolveApprovalUrl, isApprovalUrl } from "./gate-ledger";
-import { readBlobFromPath } from "./git";
+import {
+  appendGateResolution, appendPendingGate, readGateResolutions, readGateLedger,
+  latestResolutionSince, latestPendingGate, isPendingGateExpired,
+  resolveApprovalUrl, isApprovalUrl, type PendingGateRecord,
+} from "./gate-ledger";
+import { readBlobFromPath, writeBlobToPath } from "./git";
 
 function git(args: string[], cwd: string): { stdout: string; exitCode: number } {
   const r = spawnSync("git", args, { cwd, encoding: "utf-8" });
@@ -178,6 +182,74 @@ describe("lifecycle/gate-ledger", () => {
       const { records, malformed } = await readGateResolutions("fountain-apply", { cwd: dir });
       expect(malformed).toBe(0);
       expect(records[0].url).toBeUndefined();
+    });
+  });
+});
+
+describe("lifecycle/gate-ledger — pending facts (#2119)", () => {
+  test("pending facts and resolutions share the file and read back separately", async () => {
+    await withTestDir(async (dir) => {
+      await initRepo(dir);
+      const { record: pending } = await appendPendingGate(
+        {
+          op: "fountain-apply", gate: "rollout-gate",
+          description: "release manager signs off",
+          runId: "local-1",
+          timestamp: "2026-01-01T00:00:00.000Z",
+          expiresAt: "2026-01-03T00:00:00.000Z",
+        },
+        { cwd: dir },
+      );
+      await appendGateResolution(
+        { op: "fountain-apply", gate: "rollout-gate", resolvedBy: "alex", timestamp: "2026-01-02T00:00:00.000Z" },
+        { cwd: dir },
+      );
+
+      const { resolutions, pending: pendings, malformed } = await readGateLedger("fountain-apply", { cwd: dir });
+      expect(malformed).toBe(0);
+      expect(pendings).toEqual([pending]);
+      expect(resolutions.map((r) => r.resolvedBy)).toEqual(["alex"]);
+
+      // A pending line is not a malformed resolution to the narrow reader.
+      const narrow = await readGateResolutions("fountain-apply", { cwd: dir });
+      expect(narrow.malformed).toBe(0);
+      expect(narrow.records).toHaveLength(1);
+    });
+  });
+
+  test("latestPendingGate picks the newest fact for the gate, expired or not", () => {
+    const at = (timestamp: string, gate = "g"): PendingGateRecord => ({
+      version: 1, kind: "pending", op: "o", gate, timestamp,
+      expiresAt: "2026-01-09T00:00:00.000Z",
+    });
+    const records = [at("2026-01-01T00:00:00.000Z"), at("2026-01-05T00:00:00.000Z"), at("2026-01-07T00:00:00.000Z", "other")];
+    expect(latestPendingGate(records, "g")?.timestamp).toBe("2026-01-05T00:00:00.000Z");
+    expect(latestPendingGate(records, "absent")).toBeUndefined();
+  });
+
+  test("isPendingGateExpired is true at and after expiresAt", () => {
+    const record: PendingGateRecord = {
+      version: 1, kind: "pending", op: "o", gate: "g",
+      timestamp: "2026-01-01T00:00:00.000Z", expiresAt: "2026-01-03T00:00:00.000Z",
+    };
+    expect(isPendingGateExpired(record, "2026-01-02T23:59:59.000Z")).toBe(false);
+    expect(isPendingGateExpired(record, "2026-01-03T00:00:00.000Z")).toBe(true);
+    expect(isPendingGateExpired(record, "2026-01-04T00:00:00.000Z")).toBe(true);
+  });
+
+  test("a pending line missing expiresAt is malformed, not read as a resolution", async () => {
+    await withTestDir(async (dir) => {
+      await initRepo(dir);
+      await writeBlobToPath(
+        "_gates", "fountain-apply.jsonl",
+        JSON.stringify({ version: 1, kind: "pending", op: "fountain-apply", gate: "g", timestamp: "2026-01-01T00:00:00.000Z" }),
+        "hand-written",
+        { cwd: dir },
+      );
+      const { resolutions, pending, malformed } = await readGateLedger("fountain-apply", { cwd: dir });
+      expect(malformed).toBe(1);
+      expect(pending).toEqual([]);
+      expect(resolutions).toEqual([]);
     });
   });
 });

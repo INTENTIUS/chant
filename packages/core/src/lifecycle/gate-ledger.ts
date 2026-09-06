@@ -15,26 +15,24 @@
  * second non-env top-level directory.
  *
  * `chant approve <op> <gate>` (`../cli/handlers/operator.ts`) is what
- * appends here — issue #1485's "resolution is an out-of-band act that
- * writes the counterpart fact". Per the issue's own leaning on open
+ * appends a resolution — issue #1485's "resolution is an out-of-band act
+ * that writes the counterpart fact". Per that issue's leaning on open
  * question 3 ("local trust in v1, signature as an additive follow-up"),
  * this record is *not* itself an authorization check — anyone who can run
  * `chant approve` locally can write one, the same trust boundary a local
- * `git commit` already has. What it changes: `chant operator status` (and
- * any future gate-aware dispatch retry) can tell a resolved gate from a
- * still-pending one by finding a resolution newer than the tick that
- * recorded it. It does **not** (v1) retroactively make a gated op's local
- * dispatch succeed — the local executor still refuses any op containing a
- * gate outright (`../op/local-executor.ts`'s `LocalGateUnsupportedError`),
- * unconditionally, gate resolution or not. Wiring an approved gate back
- * into the local executor's dispatch path is the GateStep semantic change
- * issue #1485 itself flags as open question 1 ("suspension → fact... does
- * it land as its own issue first? Leaning: yes, split it out") — deferred
- * here for the same reason the issue defers it: it touches both the local
- * executor and the generated Temporal workflow, and has migration impact on
- * shipped ops. `chant approve` in v1 is the durable, queryable record of
- * "this gate is cleared" that a human (or a future auto-resume path) reads;
- * it is not itself the unblock.
+ * commit already has.
+ *
+ * Since #2119 the file carries both halves of the loop. A `gate` step the
+ * local executor reaches (`../op/local-executor.ts`) appends a
+ * {@link PendingGateRecord} and ends that run with status `gated`; `chant
+ * approve` appends the {@link GateResolutionRecord} that answers it; the next
+ * run reads both, finds a resolution newer than the pending fact, and walks
+ * through the gate carrying the approver. A resolution older than the newest
+ * pending fact is not an answer to it — {@link latestResolutionSince} applies
+ * that rule for the executor and for `chant operator status` alike. Both kinds
+ * of line share one file, told apart by {@link GateLedgerRecord}'s `kind`
+ * (absent on the resolution lines written before #2119, which is why
+ * `"resolution"` is the default reading).
  */
 import { sortedJsonReplacer } from "../utils";
 import { readBlobFromPath, readPathSha, readBlobBySha, writeBlobToPath, RefCASConflictError } from "./git";
@@ -98,6 +96,8 @@ export function isApprovalUrl(raw: string): boolean {
 export interface GateResolutionRecord {
   /** Schema version, so an incompatible future shape is detected before being misread. */
   version: 1;
+  /** Discriminator against {@link PendingGateRecord}, which shares this file. Absent on every line written before #2119, so a reader must treat "no kind" as `"resolution"`. */
+  kind?: "resolution";
   /** The dispatched op the gate belongs to. */
   op: string;
   /** The gate's signal name (matches `ConvergeRuleOutcome.gateName`). */
@@ -121,7 +121,53 @@ export interface GateResolutionRecord {
   url?: string;
 }
 
-export type GateResolutionInput = Omit<GateResolutionRecord, "version">;
+export type GateResolutionInput = Omit<GateResolutionRecord, "version" | "kind">;
+
+/**
+ * One immutable pending-gate record (#2119) — what an executor writes when a
+ * run reaches a `gate` step with no resolution standing against it. The run
+ * ends here with status `gated`; this line is the durable trace of that, and
+ * the anchor a later {@link GateResolutionRecord} has to be newer than to
+ * count as its answer.
+ *
+ * Idempotent by design: a run that finds a live (unexpired) pending fact for
+ * the same gate reuses it rather than appending a second one, so a converge
+ * loop ticking every minute against an unapproved gate does not grow the
+ * ledger by a line a minute. Once `expiresAt` passes, the fact is stale and
+ * the next run records a fresh one.
+ */
+export interface PendingGateRecord {
+  /** Schema version, so an incompatible future shape is detected before being misread. */
+  version: 1;
+  kind: "pending";
+  /** The op (or, on the component driver, the component) the gate belongs to. */
+  op: string;
+  /** The gate's signal name (matches `GateStep.signalName`). */
+  gate: string;
+  /** The gate's human-readable description, when it declared one — what `chant operator status` shows a reader who wasn't there for the run. */
+  description?: string;
+  /** The run that reached the gate, when the caller identifies its runs. */
+  runId?: string;
+  /** ISO-8601 timestamp, caller-supplied (library code never calls `Date.now()` internally). */
+  timestamp: string;
+  /** ISO-8601 expiry, from the gate's `timeout` (default {@link DEFAULT_GATE_EXPIRY}). Past it, the fact is stale and a run re-records it. */
+  expiresAt: string;
+  /** The address approval happens at, when the run knew one — see {@link resolveApprovalUrl}. */
+  url?: string;
+}
+
+export type PendingGateInput = Omit<PendingGateRecord, "version" | "kind">;
+
+/** Either kind of line in `_gates/<op>.jsonl`. */
+export type GateLedgerRecord = GateResolutionRecord | PendingGateRecord;
+
+/** The default a gate's pending fact expires after when its `GateStep` declares no `timeout` — the same 48h `GateStep.timeout` documents as its own default. */
+export const DEFAULT_GATE_EXPIRY = "48h";
+
+/** Whether a pending fact has aged out of relevance at `nowIso`. */
+export function isPendingGateExpired(record: PendingGateRecord, nowIso: string): boolean {
+  return new Date(record.expiresAt).getTime() <= new Date(nowIso).getTime();
+}
 
 function filename(op: string): string {
   return `${op}.jsonl`;
@@ -133,6 +179,30 @@ export async function appendGateResolution(
   opts?: { cwd?: string },
 ): Promise<{ commit: string; record: GateResolutionRecord }> {
   const record: GateResolutionRecord = { version: 1, ...input };
+  const commit = await appendGateLine(record, "Gate resolution record", opts);
+  return { commit, record };
+}
+
+/**
+ * Append one immutable pending-gate record (#2119) — the fact a run leaves
+ * behind when it reaches a gate nobody has approved. Same file, same
+ * append-and-retry discipline, same "does not push" contract as
+ * {@link appendGateResolution}.
+ */
+export async function appendPendingGate(
+  input: PendingGateInput,
+  opts?: { cwd?: string },
+): Promise<{ commit: string; record: PendingGateRecord }> {
+  const record: PendingGateRecord = { version: 1, kind: "pending", ...input };
+  const commit = await appendGateLine(record, "Pending gate record", opts);
+  return { commit, record };
+}
+
+async function appendGateLine(
+  record: GateLedgerRecord,
+  message: string,
+  opts?: { cwd?: string },
+): Promise<string> {
   const json = JSON.stringify(record, sortedJsonReplacer);
 
   let lastErr: unknown;
@@ -141,11 +211,10 @@ export async function appendGateResolution(
       const priorSha = await readPathSha(DIR, filename(record.op), opts);
       const existing = priorSha ? await readBlobBySha(priorSha, opts) : null;
       const content = existing ? `${existing.replace(/\n$/, "")}\n${json}` : json;
-      const commit = await writeBlobToPath(DIR, filename(record.op), content, "Gate resolution record", {
+      return await writeBlobToPath(DIR, filename(record.op), content, message, {
         ...opts,
         expectPriorPathSha: priorSha,
       });
-      return { commit, record };
     } catch (err) {
       if (!(err instanceof RefCASConflictError)) throw err;
       lastErr = err;
@@ -154,36 +223,74 @@ export async function appendGateResolution(
   throw lastErr;
 }
 
-/** Read every gate-resolution record for `op`, oldest first. Malformed lines are skipped, not thrown on, the same graceful-degradation stance `readConvergeLedger` takes. Returns `[]` (never throws) when `op` has no resolutions recorded yet. */
-export async function readGateResolutions(
+/**
+ * Read every line of `op`'s gate file, oldest first, split into the two kinds
+ * (#2119). Malformed lines are skipped and counted, not thrown on — the same
+ * graceful-degradation stance `readConvergeLedger` takes. Returns empty arrays
+ * (never throws) when `op` has nothing recorded yet.
+ */
+export async function readGateLedger(
   op: string,
   opts?: { cwd?: string },
-): Promise<{ records: GateResolutionRecord[]; malformed: number }> {
+): Promise<{ resolutions: GateResolutionRecord[]; pending: PendingGateRecord[]; malformed: number }> {
   const content = await readBlobFromPath(DIR, filename(op), opts);
-  if (!content) return { records: [], malformed: 0 };
+  if (!content) return { resolutions: [], pending: [], malformed: 0 };
 
   const lines = content.split("\n").map((l) => l.trim()).filter(Boolean);
-  const records: GateResolutionRecord[] = [];
+  const resolutions: GateResolutionRecord[] = [];
+  const pending: PendingGateRecord[] = [];
   let malformed = 0;
   for (const line of lines) {
     try {
-      const parsed = JSON.parse(line) as Partial<GateResolutionRecord>;
-      if (
-        parsed.version !== 1 ||
-        typeof parsed.op !== "string" ||
-        typeof parsed.gate !== "string" ||
-        typeof parsed.resolvedBy !== "string" ||
-        typeof parsed.timestamp !== "string"
-      ) {
+      const parsed = JSON.parse(line) as Partial<Omit<GateResolutionRecord, "kind">> &
+        Partial<Omit<PendingGateRecord, "kind">> & { kind?: string };
+      const common =
+        parsed.version === 1 && typeof parsed.op === "string" &&
+        typeof parsed.gate === "string" && typeof parsed.timestamp === "string";
+      if (!common) {
         malformed++;
         continue;
       }
-      records.push(parsed as GateResolutionRecord);
+      if (parsed.kind === "pending") {
+        if (typeof parsed.expiresAt !== "string") {
+          malformed++;
+          continue;
+        }
+        pending.push(parsed as PendingGateRecord);
+        continue;
+      }
+      if (typeof parsed.resolvedBy !== "string") {
+        malformed++;
+        continue;
+      }
+      resolutions.push(parsed as GateResolutionRecord);
     } catch {
       malformed++;
     }
   }
-  return { records, malformed };
+  return { resolutions, pending, malformed };
+}
+
+/** Read every gate-*resolution* record for `op`, oldest first — {@link readGateLedger} narrowed to the half every caller before #2119 wanted. Pending facts are not malformed lines and are not counted as such. */
+export async function readGateResolutions(
+  op: string,
+  opts?: { cwd?: string },
+): Promise<{ records: GateResolutionRecord[]; malformed: number }> {
+  const { resolutions, malformed } = await readGateLedger(op, opts);
+  return { records: resolutions, malformed };
+}
+
+/** The most recent pending fact for `gate`, expired or not — the anchor {@link latestResolutionSince} measures a resolution against. `undefined` when the gate has never been recorded pending. */
+export function latestPendingGate(
+  records: PendingGateRecord[],
+  gate: string,
+): PendingGateRecord | undefined {
+  let latest: PendingGateRecord | undefined;
+  for (const r of records) {
+    if (r.gate !== gate) continue;
+    if (!latest || new Date(r.timestamp).getTime() >= new Date(latest.timestamp).getTime()) latest = r;
+  }
+  return latest;
 }
 
 /** The most recent resolution for `gate` recorded after `sinceIso` (a gated tick's own timestamp) — what `chant operator status` uses to tell a resolved gate from a still-pending one. `undefined` when no such resolution exists. */

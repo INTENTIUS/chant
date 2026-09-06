@@ -25,6 +25,7 @@ import {
   generateComponentsPipeline,
 } from "./cli-support";
 import { CapabilityRegistry, type DeployContext } from "./capability";
+import { memoryGateLedgerPort } from "../op/gate";
 import type { DriverComponent, RunProgressEvent } from "./driver";
 
 // A minimal stand-in for the real gitlab lexicon plugin, satisfying
@@ -587,7 +588,7 @@ describe("runComponents", () => {
     expect(result.error).toContain("svc");
   });
 
-  test("a gate in the selected component is rejected before any step runs", async () => {
+  test("a gate in the selected component ends the run pending approval (#2119)", async () => {
     await writeFile(
       join(testDir, "svc.component.ts"),
       `export const svc = { name: "svc", dependsOn: [], deploy: [
@@ -600,11 +601,15 @@ describe("runComponents", () => {
     const registry = new CapabilityRegistry();
     registry.register(capability);
 
-    const result = await runComponents(testDir, "svc", { registry });
+    const gates = memoryGateLedgerPort();
+    const result = await runComponents(testDir, "svc", { registry, gates });
 
     expect(result.success).toBe(false);
-    expect(result.gateUnsupported).toEqual({ component: "svc", signalName: "release-approval" });
-    // Pre-flighted: the deploy-thing step after the gate never ran.
+    expect(result.gated?.component).toBe("svc");
+    expect(result.gated?.gate.gate).toBe("release-approval");
+    expect(result.run?.status).toBe("gated");
+    expect(gates.appended).toHaveLength(1);
+    // Nothing after the gate ran.
     expect(capability.calls).toHaveLength(0);
   });
 

@@ -117,7 +117,7 @@ jobs:
         working-directory: examples/local-op-quickstart
         run: |
           npx tsx ../../packages/core/src/cli/main.ts run hello --local --json > result.json
-          node -e "process.exit(JSON.parse(require('fs').readFileSync('result.json','utf8')).ok ? 0 : 1)"
+          node -e "process.exit(JSON.parse(require('fs').readFileSync('result.json','utf8')).status === 'ok' ? 0 : 1)"
 
       - name: Run supply-chain example component (regression guard, #630)
         working-directory: examples/supply-chain
