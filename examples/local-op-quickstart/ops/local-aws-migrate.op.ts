@@ -29,7 +29,6 @@ import { schemaSeeded } from "./receipts";
 export default Op({
   name: "local-aws-migrate",
   overview: "Deploy locally, then a gated one-shot schema seed witnessed by an SSM effect receipt",
-  taskQueue: "local-aws-migrate",
   phases: [
     phase("Emulator", [
       flociUp({ dockerSocket: true }),

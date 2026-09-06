@@ -94,8 +94,6 @@ export interface FlyDeployOpts {
   name?: string;
   /** Op overview line. */
   overview?: string;
-  /** Temporal task queue (unused by the local executor). Default: `local-fly`. */
-  taskQueue?: string;
   /** Directory the `build:fly` script and plan path are relative to. Default: `.`. */
   path?: string;
   /** npm build script to run. Default: `build:fly`. */
@@ -163,7 +161,6 @@ export function flyDeploy(opts: FlyDeployOpts = {}): InstanceType<typeof OpResou
   return Op({
     name: opts.name ?? "fly",
     overview: opts.overview ?? "Fly: App + Machine → mudflaps (direct flaps apply), local, no account",
-    taskQueue: opts.taskQueue ?? "local-fly",
     phases,
   });
 }

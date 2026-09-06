@@ -68,7 +68,6 @@ describe("sprites against the live spritzer image (#786)", () => {
     const op: OpConfig = {
       name: "guarded-task",
       overview: "checkpoint, run a risky step, restore on failure",
-      taskQueue: "sprites",
       phases: [
         phase("Create", [spriteCreate({ name: "guard-1" })]),
         phase("Seed", [spriteExec({ id: "guard-1", cmd: "echo good > /state" })]),

@@ -1,6 +1,6 @@
 /**
  * Op serializer — generates Temporal workflow, worker, and activities files
- * for each Temporal::Op entity.
+ * for each Chant::Op entity.
  *
  * For an Op named "alb-deploy" it emits three files under dist/ops/alb-deploy/:
  *   workflow.ts   — the Temporal workflow function
@@ -220,13 +220,16 @@ function generateWorkflow(config: OpConfig): string {
   // Workflow function
   lines.push(`export async function ${fnName}(): Promise<void> {`);
 
-  // Initial search attributes — OpName plus any user-provided attrs.
-  // Each value is wrapped in a single-element array (classic
+  // Initial search attributes — OpName plus the Op's own discovery labels
+  // (#2118: `OpConfig.searchAttributes` split into `labels` for discovery and
+  // ledger facts for run outcomes; this generator renders the discovery half
+  // as Temporal search attributes, which is what a Temporal deployment can
+  // filter on). Each value is wrapped in a single-element array (classic
   // upsertSearchAttributes API takes arrays).
   const initialAttrs: Record<string, string[]> = {
     OpName: [config.name],
   };
-  for (const [k, v] of Object.entries(config.searchAttributes ?? {})) {
+  for (const [k, v] of Object.entries(config.labels ?? {})) {
     initialAttrs[k] = [v];
   }
   lines.push(`  upsertSearchAttributes(${JSON.stringify(initialAttrs)});`);
@@ -399,10 +402,10 @@ function generateWorkflow(config: OpConfig): string {
     out.push(`${indent}await condition(() => ${varName}Cleared, ${JSON.stringify(timeout)});`);
     out.push(`${indent}__gateState = null;`);
     // Surface the approver in a search attribute when the caller opted a
-    // stack into one (config.searchAttributes contains "Approver"): only
-    // then is the attribute guaranteed registered, so an unconditional
-    // upsert can never break a gate on a cluster that never declared it.
-    if (config.searchAttributes && "Approver" in config.searchAttributes) {
+    // stack into one (config.labels contains "Approver"): only then is the
+    // attribute guaranteed registered, so an unconditional upsert can never
+    // break a gate on a cluster that never declared it.
+    if (config.labels && "Approver" in config.labels) {
       out.push(`${indent}upsertSearchAttributes({ Approver: [${varName}Approver ?? "unknown"] });`);
     } else {
       out.push(`${indent}void ${varName}Approver;`);
@@ -516,7 +519,11 @@ function generateWorker(config: OpConfig): string {
   return generateWorkerBootstrap({
     dir: "ops",
     name: config.name,
-    taskQueue: config.taskQueue ?? config.name,
+    // #2118: an Op no longer declares a task queue — that was a Temporal
+    // deployment detail on a runtime-neutral model. The generated worker
+    // polls a queue named after the Op, which is what `taskQueue` defaulted
+    // to for every Op that never set it.
+    taskQueue: config.name,
   });
 }
 
@@ -530,7 +537,7 @@ function getProps(entity: Declarable): Record<string, unknown> {
 }
 
 /**
- * Serialize a map of Temporal::Op entities into generated file content.
+ * Serialize a map of Chant::Op entities into generated file content.
  *
  * Returns a map of relative output paths → file content.
  * e.g. `{ "ops/alb-deploy/workflow.ts": "...", ... }`

@@ -62,8 +62,6 @@ export interface RenderDeployOpts {
   name?: string;
   /** Op overview line. */
   overview?: string;
-  /** Temporal task queue (unused by the local executor). Default: `local-render`. */
-  taskQueue?: string;
   /** Directory the `build:render` script and plan path are relative to. Default: `.`. */
   path?: string;
   /** npm build script to run. Default: `build:render`. */
@@ -127,7 +125,6 @@ export function renderDeploy(opts: RenderDeployOpts = {}): InstanceType<typeof O
   return Op({
     name: opts.name ?? "render",
     overview: opts.overview ?? "Render: build the plan, apply it to the workspace over the Public API, verify",
-    taskQueue: opts.taskQueue ?? "local-render",
     phases,
   });
 }

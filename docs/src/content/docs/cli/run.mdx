@@ -44,7 +44,7 @@ Run an Op. Local by default — executes in-process, rendering each phase and st
 
 ```bash
 chant run alb-deploy              # local executor (default)
-chant run alb-deploy --json       # structured result on stdout
+chant run alb-deploy --json       # the run's ledger record on stdout
 chant run alb-deploy --temporal             # run via Temporal
 chant run alb-deploy --temporal --profile cloud
 chant run alb-deploy --temporal --report    # print deployment report instead of running
@@ -52,9 +52,11 @@ chant run alb-deploy --temporal --report    # print deployment report instead of
 
 A gate or schedule in the Op fails fast in local mode with an actionable message — re-run with `--temporal`.
 
+Every local run appends one record to the run ledger on the `chant/lifecycle` branch, at `<env>/runs__<name>.jsonl` beside the converge ledger. The record carries the run id, the start and end instants, the status (`ok`, `fail`), the Op's `labels`, every `outcomeAttribute` the run captured, and each phase's per-step status. `--json` prints that same record, so what you read on stdout and what `chant operator log` reads back later are one document. `<env>` is the Op's own `labels.Env`, or `local` when it declares none.
+
 ### `run list`
 
-List all discovered Ops (`*.op.ts` files) with the run state the selected runtime reports for each. With `--components`, list discovered components and their component workflows instead, which still requires `--temporal`.
+List all discovered Ops (`*.op.ts` files) with their declared `labels` and the run state the selected runtime reports for each. With `--components`, list discovered components and their component workflows instead, which still requires `--temporal`.
 
 ```bash
 chant run list
@@ -135,7 +137,7 @@ On a successful run, `chant run --components` auto-emits one immutable release r
 
 #### `run --components <name> --temporal`
 
-Compiles the named component's composition to a Temporal workflow (phases -> workflow, capability steps -> activities, `gate` -> durable wait-for-signal, `onFailure`/`rollback` -> saga compensation — mirroring `Temporal::Op` codegen), writes it to `dist/components/<name>/`, spawns the worker, and submits the workflow. Unlike local mode, a `gate` is fully supported here: the workflow durably waits for the signal, survivable across a worker crash.
+Compiles the named component's composition to a Temporal workflow (phases -> workflow, capability steps -> activities, `gate` -> durable wait-for-signal, `onFailure`/`rollback` -> saga compensation — mirroring `Chant::Op` codegen), writes it to `dist/components/<name>/`, spawns the worker, and submits the workflow. Unlike local mode, a `gate` is fully supported here: the workflow durably waits for the signal, survivable across a worker crash.
 
 ```bash
 chant run --components search-service --temporal
@@ -176,7 +178,7 @@ The `--no-release-record` flag always wins over config for that one invocation. 
 | `--components` | Target a component instead of an Op (`run --components`, and `run cancel` against a component's workflow) |
 | `--no-release-record` | Skip auto-emitting a release-ledger record after a successful `run --components` deploy — default is ON (`run --components`) |
 | `--env <name>` | Target [environment](/chant/configuration/config-file/#environments), threaded into every capability's context (`run --components`); defaults to `local` |
-| `--json` | Emit the structured run result as JSON on stdout (`run <name>`, `run --components`) |
+| `--json` | Emit the run's ledger record as JSON on stdout (`run <name>`); the structured run result for `run --components` |
 | `-p, --profile <name>` | Temporal worker profile to use (from `chant.config.ts`); implies Temporal mode |
 | `--report` | Print a deployment report instead of running (`run <name> --temporal` only) |
 | `--force` | Required for `run cancel` |

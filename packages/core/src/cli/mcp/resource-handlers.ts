@@ -167,7 +167,7 @@ export async function handleResourcesRead(
       name: config.name,
       overview: config.overview,
       phases: config.phases.length,
-      taskQueue: config.taskQueue ?? config.name,
+      labels: config.labels ?? {},
       depends: config.depends ?? [],
     }));
     return {

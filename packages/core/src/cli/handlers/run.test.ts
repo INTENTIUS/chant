@@ -98,6 +98,22 @@ vi.mock("../../op/gate", async () => {
   const actual = await vi.importActual<typeof import("../../op/gate")>("../../op/gate");
   return { ...actual, gitGateLedgerPort: () => gateLedger };
 });
+// The local runtime appends each run's record to that same branch (#2118).
+// Real behavior in a project, and exactly what this suite must not do in
+// chant's own checkout, since the append is against `process.cwd()`. Only the
+// write and the read-back are stubbed — `buildRunRecord` stays real, so
+// `--json` is still asserted against the record the executor actually built.
+vi.mock("../../lifecycle/run-ledger", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../lifecycle/run-ledger")>();
+  return {
+    ...actual,
+    appendRunRecord: async (input: Parameters<typeof actual.appendRunRecord>[0]) => ({
+      commit: "0".repeat(40),
+      record: { version: 1 as const, ...input, id: input.id ?? "test-run-id" },
+    }),
+    readRunLedger: async () => ({ records: [], malformed: 0 }),
+  };
+});
 
 // Speed up runOp polling — POLL_INTERVAL_MS is 3000 in production. We use
 // fake timers in the runOp suite below; vi.advanceTimersByTime drives the loop.
@@ -1021,7 +1037,7 @@ describe("runOp dispatcher", () => {
     expect(loadTemporalClientMock).not.toHaveBeenCalled();
   });
 
-  test("--json → structured result on stdout", async () => {
+  test("--json → the run's ledger record on stdout (#2118)", async () => {
     discoverOpsMock.mockResolvedValue({
       ops: new Map([localOp("hello", [{ kind: "activity", fn: "shellCmd", args: { cmd: "true" } }])]),
       errors: [],
@@ -1033,7 +1049,9 @@ describe("runOp dispatcher", () => {
     const printed = stdoutWrite.mock.calls.map((c) => String(c[0])).join("");
     const parsed = JSON.parse(printed.trim());
     expect(parsed.op).toBe("hello");
+    expect(parsed.version).toBe(1);
     expect(parsed.status).toBe("ok");
+    expect(parsed.phases[0].steps[0]).toMatchObject({ fn: "shellCmd", status: "ok" });
     vi.restoreAllMocks();
   });
 });
@@ -1186,8 +1204,13 @@ describe("run subcommands on the resolved runtime", () => {
       status: vi.fn(async (op: string) => ({
         op, runId: "stub-1", state: "running", startedAt: "2026-01-01T00:00:00.000Z",
       })),
+      // A provider's `log` returns run-ledger records (#2118), newest first.
       log: vi.fn(async (op: string) => [
-        { op, runId: "stub-1", state: "completed", startedAt: "2026-01-01T00:00:00.000Z", endedAt: "2026-01-01T00:00:05.000Z" },
+        {
+          version: 1, id: "stub-1", op, env: "staging", status: "ok",
+          started: "2026-01-01T00:00:00.000Z", ended: "2026-01-01T00:00:05.000Z",
+          labels: {}, outcomes: {}, phases: [],
+        },
       ]),
       list: vi.fn(async (ops: Array<{ name: string }>) =>
         new Map(ops.map((o) => [o.name, { op: o.name, runId: "stub-1", state: "completed", startedAt: "2026-01-01T00:00:00.000Z" }]))),

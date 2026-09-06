@@ -20,5 +20,6 @@ export * from "./teardown";
 export * from "./assert-live";
 export * from "./symptoms";
 export * from "./converge-ledger";
+export * from "./run-ledger";
 export * from "./scenario";
 export * from "./scenario-eval";

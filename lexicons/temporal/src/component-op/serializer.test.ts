@@ -1,7 +1,7 @@
 /**
  * Component serializer tests (#589) — string-level assertions on the
  * generated workflow/activities/worker files, mirroring
- * ../op/op-serializer.test.ts's pattern for `Temporal::Op` codegen. The
+ * ../op/op-serializer.test.ts's pattern for `Chant::Op` codegen. The
  * runtime harness (./runtime.test.ts) proves the generated code actually
  * behaves correctly under a real Temporal worker; these tests are the fast,
  * no-server-needed counterpart for codegen shape and edge cases.

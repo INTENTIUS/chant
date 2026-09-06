@@ -198,15 +198,11 @@ describe("TerraformApplyOp on the local executor (#2086, gate-as-fact #2119)", (
 });
 
 describe("TerraformApplyOp Op metadata (#2086)", () => {
-  test("task queue defaults to the name and search attributes name the root", () => {
+  test("labels name the root, and no task queue rides on the Op (#2118)", () => {
     const op = props({ name: "app-apply", root: "app" });
     expect(op.name).toBe("app-apply");
-    expect(op.taskQueue).toBe("app-apply");
-    expect(op.searchAttributes).toEqual({ Apply: "true", TerraformRoot: "app" });
-  });
-
-  test("an explicit taskQueue wins", () => {
-    expect(props({ name: "app-apply", root: "app", taskQueue: "infra" }).taskQueue).toBe("infra");
+    expect(op.labels).toEqual({ Apply: "true", TerraformRoot: "app" });
+    expect(op).not.toHaveProperty("taskQueue");
   });
 });
 

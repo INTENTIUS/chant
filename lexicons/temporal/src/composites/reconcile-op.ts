@@ -53,7 +53,7 @@ export interface ReconcileOpConfig {
   onDrift?: ReconcileMode;
   /** Restrict reconciliation to chant-owned resources. */
   scope?: { owned?: boolean };
-  /** Override the task queue. Defaults to `name`. */
+  /** The task queue the generated `TemporalSchedule`'s action targets. Defaults to `name`. */
   taskQueue?: string;
 }
 
@@ -82,8 +82,7 @@ export function ReconcileOp(config: ReconcileOpConfig): ReconcileOpResources {
   const op = Op({
     name: config.name,
     overview: `Reconcile the ${config.env} environment into source (cloud → code)`,
-    taskQueue,
-    searchAttributes: {
+    labels: {
       Reconcile: "true",
       Env: config.env,
     },

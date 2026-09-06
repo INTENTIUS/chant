@@ -144,9 +144,9 @@ describe("WatchOp: shape", () => {
     expect(result.schedule).toBeDefined();
   });
 
-  test("op has entityType Temporal::Op", () => {
+  test("op has entityType Chant::Op", () => {
     const { op } = WatchOp({ name: "prod-watch", env: "prod", schedule: "*/15 * * * *" });
-    expect(getEntityType(op)).toBe("Temporal::Op");
+    expect(getEntityType(op)).toBe("Chant::Op");
   });
 
   test("schedule has entityType Temporal::Schedule", () => {
@@ -178,7 +178,7 @@ describe("WatchOp: configuration", () => {
 
   test("auto-emit search attrs include Watch + Env", () => {
     const { op } = WatchOp({ name: "p", env: "prod", schedule: "* * * * *" });
-    expect(getProps(op).searchAttributes).toEqual({ Watch: "true", Env: "prod" });
+    expect(getProps(op).labels).toEqual({ Watch: "true", Env: "prod" });
   });
 
   test("schedule.action.workflowType is camelCase + 'Workflow'", () => {
@@ -198,15 +198,16 @@ describe("WatchOp: configuration", () => {
     expect(getProps(schedule).scheduleId).toBe("prod-watch-schedule");
   });
 
-  test("taskQueue defaults to name and is shared by op + schedule", () => {
+  test("the schedule's action targets a task queue named after the op", () => {
     const { op, schedule } = WatchOp({ name: "p-watch", env: "prod", schedule: "* * * * *" });
-    expect(getProps(op).taskQueue).toBe("p-watch");
     expect((getProps(schedule).action as Record<string, unknown>).taskQueue).toBe("p-watch");
+    // The Op itself carries no task queue any more (#2118) — that is a
+    // property of where a Temporal schedule dispatches it, not of the Op.
+    expect(getProps(op).taskQueue).toBeUndefined();
   });
 
-  test("taskQueue override is honored", () => {
-    const { op, schedule } = WatchOp({ name: "p", env: "prod", schedule: "* * * * *", taskQueue: "custom-q" });
-    expect(getProps(op).taskQueue).toBe("custom-q");
+  test("taskQueue override reaches the schedule's action", () => {
+    const { schedule } = WatchOp({ name: "p", env: "prod", schedule: "* * * * *", taskQueue: "custom-q" });
     expect((getProps(schedule).action as Record<string, unknown>).taskQueue).toBe("custom-q");
   });
 
@@ -242,7 +243,7 @@ describe("ReconcileOp: shape", () => {
     const result = ReconcileOp({ name: "prod-reconcile", env: "prod" });
     expect(result.op).toBeDefined();
     expect(result.schedule).toBeUndefined();
-    expect(getEntityType(result.op)).toBe("Temporal::Op");
+    expect(getEntityType(result.op)).toBe("Chant::Op");
     expect((result.op as Record<symbol, unknown>)[DECLARABLE_MARKER]).toBe(true);
   });
 
@@ -273,7 +274,7 @@ describe("ReconcileOp: configuration", () => {
 
   test("auto-emit search attrs include Reconcile + Env", () => {
     const { op } = ReconcileOp({ name: "p", env: "prod" });
-    expect(getProps(op).searchAttributes).toEqual({ Reconcile: "true", Env: "prod" });
+    expect(getProps(op).labels).toEqual({ Reconcile: "true", Env: "prod" });
   });
 
   test("Plan phase surfaces Drift as a search attribute", () => {
@@ -290,7 +291,7 @@ describe("ApplyOp: shape", () => {
   test("returns an op (no schedule)", () => {
     const result = ApplyOp({ name: "prod-apply", env: "prod" });
     expect(result.op).toBeDefined();
-    expect(getEntityType(result.op)).toBe("Temporal::Op");
+    expect(getEntityType(result.op)).toBe("Chant::Op");
     expect((result.op as Record<symbol, unknown>)[DECLARABLE_MARKER]).toBe(true);
   });
 
@@ -335,7 +336,7 @@ describe("ApplyOp: gating + deletes", () => {
 
   test("auto-emit search attrs include Apply + Env", () => {
     const { op } = ApplyOp({ name: "p", env: "prod" });
-    expect(getProps(op).searchAttributes).toEqual({ Apply: "true", Env: "prod" });
+    expect(getProps(op).labels).toEqual({ Apply: "true", Env: "prod" });
   });
 });
 

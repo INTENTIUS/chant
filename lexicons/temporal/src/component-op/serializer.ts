@@ -2,7 +2,7 @@
  * Component → Temporal workflow/worker/activities codegen (#589, epic #551
  * §5/§8 "Durable Workflows").
  *
- * Mirrors `../op/serializer.ts` (the `Temporal::Op` codegen) as closely as a
+ * Mirrors `../op/serializer.ts` (the `Chant::Op` codegen) as closely as a
  * structurally different input allows, and is the durable counterpart to the
  * local interpret driver (`@intentius/chant/components`'s `driver.ts`):
  *

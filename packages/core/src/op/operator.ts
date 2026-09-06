@@ -7,7 +7,7 @@
  * orphan branch via the same `convergeTick` activity `chant run <op>`
  * already calls for a single one-shot tick.
  *
- * One round: discover every `ConvergeOp` (searchAttributes `Converge:
+ * One round: discover every `ConvergeOp` (label `Converge:
  * "true"`, optionally filtered to one env), and for each one, try to
  * acquire (or renew) its lease. Win it — run one tick via `runOpLocally` on
  * the Op's own Observe → Converge phases, the identical path `chant run
@@ -44,16 +44,16 @@ import { StaleLockError } from "../lifecycle/git";
 /** Poll interval between rounds — the operator's own cadence, distinct from a `ConvergeOp`'s Temporal `schedule` cron (that field drives the durable path's `TemporalSchedule`, not anything the local executor can read back at discovery time; see this module's doc). Chosen short enough to converge promptly, long enough not to hammer `chant lifecycle plan --live` every few seconds. */
 export const DEFAULT_OPERATOR_INTERVAL_MS = 60_000;
 
-/** One ConvergeOp's own `searchAttributes.Env` (`../../lexicons/temporal/src/composites/converge-op.ts` always sets it). `undefined` for a non-ConvergeOp or a hand-built one missing it — filtered out by `isConvergeOp` before this is trusted. */
+/** One ConvergeOp's own `labels.Env` (`../../lexicons/temporal/src/composites/converge-op.ts` always sets it). `undefined` for a non-ConvergeOp or a hand-built one missing it — filtered out by `isConvergeOp` before this is trusted. */
 function envOf(config: DiscoveredOp["config"]): string | undefined {
-  return config.searchAttributes?.Env;
+  return config.labels?.Env;
 }
 
 function isConvergeOp(config: DiscoveredOp["config"]): boolean {
-  return config.searchAttributes?.Converge === "true";
+  return config.labels?.Converge === "true";
 }
 
-/** Discover every `ConvergeOp` in the project (`searchAttributes.Converge === "true"`), optionally filtered to one environment. Ops that don't declare an `Env` search attribute are excluded from an `--env`-filtered discovery (there's nothing to match), but included when no `env` filter is given. */
+/** Discover every `ConvergeOp` in the project (`labels.Converge === "true"`), optionally filtered to one environment. Ops that don't declare an `Env` label are excluded from an `--env`-filtered discovery (there's nothing to match), but included when no `env` filter is given. */
 export async function discoverConvergeOps(
   opts?: { cwd?: string; env?: string },
 ): Promise<{ ops: DiscoveredOp[]; errors: string[] }> {
@@ -137,7 +137,9 @@ export async function runOperatorRound(opts: OperatorRoundOptions): Promise<Oper
 
     const lease = acquired.lease as LeaseRecord;
     try {
-      const result = await runOpLocally(config, opts.activities, opts.profiles, opts.signal);
+      const result = await runOpLocally(config, opts.activities, opts.profiles, opts.signal, {
+        ledger: { cwd: opts.cwd },
+      });
       const held = await stillHoldsLease(config.name, holder, lease.token, { cwd: opts.cwd });
       events.push(held ? { kind: "ticked", op: config.name, env, result } : { kind: "fenced", op: config.name, env });
     } catch (err) {

@@ -210,7 +210,7 @@ export async function runOpList(ctx: CommandContext): Promise<number> {
   console.log(
     "NAME".padEnd(22) +
     "PHASES".padEnd(8) +
-    "TASK-QUEUE".padEnd(20) +
+    "LABELS".padEnd(28) +
     "DEPENDS".padEnd(20) +
     "OVERVIEW",
   );
@@ -238,7 +238,10 @@ export async function runOpList(ctx: CommandContext): Promise<number> {
 
   for (const [name, { config }] of ops) {
     const phases = String(config.phases.length);
-    const tq = config.taskQueue ?? config.name;
+    // The Op's discovery keys (#2118) — what `discoverConvergeOps` filters on
+    // and the only free-form metadata an Op declaration still carries.
+    const labelPairs = Object.entries(config.labels ?? {}).map(([k, v]) => `${k}=${v}`).join(",");
+    const labels = labelPairs.length > 26 ? labelPairs.slice(0, 25) + "…" : labelPairs || "—";
     const deps = config.depends?.join(",") ?? "—";
     const overview = config.overview.length > 36
       ? config.overview.slice(0, 33) + "..."
@@ -249,7 +252,7 @@ export async function runOpList(ctx: CommandContext): Promise<number> {
     console.log(
       (name + statusStr).padEnd(22) +
       phases.padEnd(8) +
-      tq.padEnd(20) +
+      labels.padEnd(28) +
       deps.padEnd(20) +
       overview,
     );
@@ -581,17 +584,17 @@ async function runOpLogOnRuntime(ctx: CommandContext, name: string): Promise<num
   }
 
   console.log(
-    "RUN-ID".padEnd(36) +
-    "STATE".padEnd(16) +
+    "RUN-ID".padEnd(38) +
+    "STATUS".padEnd(10) +
     "STARTED".padEnd(26) +
     "ENDED",
   );
   for (const record of records) {
     console.log(
-      record.runId.padEnd(36) +
-      record.state.padEnd(16) +
-      shortInstant(record.startedAt).padEnd(26) +
-      shortInstant(record.endedAt),
+      record.id.padEnd(38) +
+      record.status.padEnd(10) +
+      shortInstant(record.started).padEnd(26) +
+      shortInstant(record.ended),
     );
   }
 
@@ -1030,7 +1033,7 @@ async function recordAutoReleasesForRun(
  *
  * `--temporal` (#589) takes the durable path instead: compiles the named
  * component's composition to a Temporal workflow/worker (mirroring
- * `Temporal::Op` codegen — see `runComponentTemporal` below), and gates are
+ * `Chant::Op` codegen — see `runComponentTemporal` below), and gates are
  * now ACCEPTED — a gate is durable wait-for-signal there, not a local
  * in-process block. Scoped to a single named component (`all --temporal` is
  * out of scope for #589: coordinating N durable workflows' cross-component
@@ -1601,7 +1604,7 @@ async function runOpTemporal(ctx: CommandContext): Promise<number> {
     await ensureSearchAttributes(client, profile.namespace, [
       "OpName",
       "Phase",
-      ...Object.keys((config as { searchAttributes?: Record<string, string> }).searchAttributes ?? {}),
+      ...Object.keys(config.labels ?? {}),
     ]);
   }
 

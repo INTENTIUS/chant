@@ -19,7 +19,6 @@ import { flyApplyStep } from "@intentius/chant-lexicon-fly";
 export default Op({
   name: "fly-reconcile",
   overview: "Reconcile the plan against a running mudflaps (create / update / prune)",
-  taskQueue: "fly",
   phases: [
     phase("Build", [build(".", { script: "build:fly" })]),
     phase("Apply", [flyApplyStep("dist/fly.json", { endpoint: "http://localhost:4280", prune: true })]),

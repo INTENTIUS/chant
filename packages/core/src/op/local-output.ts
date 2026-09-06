@@ -74,14 +74,19 @@ export function renderHuman(result: OpRunResult, write: Writer = stderr): void {
 }
 
 /**
- * Render a run result as JSON on stdout (and nothing else on stdout). A gated
- * run carries its pending fact under `gate` — expiry included — plus the
- * `approve` command line spelled out, so a CI job reporting the gate doesn't
- * have to reassemble it from the op and gate names.
+ * Render the run's ledger record as JSON on stdout (and nothing else on
+ * stdout).
+ *
+ * The record, not the whole `OpRunResult` (#2118): what `chant run <op> --json`
+ * emits is byte-for-byte what the run appended to `<env>/runs__<op>.jsonl`, so
+ * a consumer reading stdout and one reading the ledger back later agree on
+ * every field, the run id included. A gated run's record names the gate it
+ * stopped on; the `approve` command line rides alongside so a CI job reporting
+ * the gate doesn't have to reassemble it from the op and gate names.
  */
 export function renderJson(result: OpRunResult, write: Writer = stdout): void {
   const approve = result.gate ? { approve: approveCommand(result.gate.op, result.gate.gate) } : {};
-  write(JSON.stringify({ ...result, ...approve }));
+  write(JSON.stringify({ ...result.record, ...approve }));
 }
 
 export type { OpRunResult, StepRecord };

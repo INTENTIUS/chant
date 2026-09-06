@@ -50,14 +50,14 @@ describe("mergeProjectOps (#1675)", () => {
 
     const ir = buildGraphIr(result.entities, root);
     const node = ir.nodes.find((n) => n.id === "deploy");
-    expect(node).toMatchObject({ kind: "Temporal::Op", lexicon: "temporal", sourceLoc: { file: "deploy.op.ts" } });
+    expect(node).toMatchObject({ kind: "Chant::Op", lexicon: "chant", sourceLoc: { file: "deploy.op.ts" } });
     expect(node?.attrs.name).toBe("deploy");
     expect(node?.attrs.depends).toEqual(["inner"]);
     expect(node?.attrs.phases).toEqual([
       { name: "Apply", steps: [{ kind: "activity", fn: "build" }, { kind: "gate", signalName: "approve" }] },
     ]);
     // The sourceDir op discovery already loaded is untouched, not duplicated.
-    expect(ir.nodes.filter((n) => n.kind === "Temporal::Op")).toHaveLength(2);
+    expect(ir.nodes.filter((n) => n.kind === "Chant::Op")).toHaveLength(2);
   });
 
   test("is idempotent — a second merge adds nothing", async () => {

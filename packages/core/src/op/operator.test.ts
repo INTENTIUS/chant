@@ -13,8 +13,26 @@ import {
 } from "./operator";
 import { readLease } from "../lifecycle/lease";
 import { appendConvergeRecord, readConvergeLedger } from "../lifecycle/converge-ledger";
+import { readRunLedger } from "../lifecycle/run-ledger";
+import type { OpRunRecord } from "./runtime";
 
 const PROFILES: Record<string, ActivityProfile> = {};
+
+/** A minimal `OpRunRecord` for a result literal that never touches a ledger. */
+function runRecord(op: string, status: OpRunRecord["status"] = "ok"): OpRunRecord {
+  return {
+    version: 1,
+    id: "00000000-0000-4000-8000-000000000000",
+    op,
+    env: "staging",
+    started: "2026-01-01T00:00:00.000Z",
+    ended: "2026-01-01T00:00:01.000Z",
+    status,
+    labels: {},
+    outcomes: {},
+    phases: [],
+  };
+}
 
 function git(args: string[], cwd: string): { stdout: string; exitCode: number } {
   const r = spawnSync("git", args, { cwd, encoding: "utf-8" });
@@ -50,7 +68,7 @@ function writeFixtureConvergeOp(dir: string, opName: string, env: string): void 
     name: ${JSON.stringify(opName)},
     overview: "fixture converge op",
     phases: [{ name: "Converge", steps: [{ kind: "activity", fn: "fakeTick", args: {} }] }],
-    searchAttributes: { Converge: "true", Env: ${JSON.stringify(env)}, Dial: "observe" },
+    labels: { Converge: "true", Env: ${JSON.stringify(env)}, Dial: "observe" },
   },
 };
 `,
@@ -99,7 +117,7 @@ function fakeTickActivities(dir: string, env: string, opName: string, opts?: { t
 }
 
 describe("discoverConvergeOps", () => {
-  test("finds only ops with searchAttributes.Converge === 'true'", async () => {
+  test("finds only ops with labels.Converge === 'true'", async () => {
     await withTestDir(async (dir) => {
       await initRepo(dir);
       writeFixtureConvergeOp(dir, "staging-converge", "staging");
@@ -132,6 +150,28 @@ describe("discoverConvergeOps", () => {
       expect(ops.map((d) => d.config.name)).toEqual(["prod-converge", "staging-converge"]);
     });
   });
+
+  test("a ConvergeOp declaring no labels.Env is discovered unfiltered but never matches --env", async () => {
+    await withTestDir(async (dir) => {
+      await initRepo(dir);
+      mkdirSync(join(dir, "ops"), { recursive: true });
+      writeFileSync(
+        join(dir, "ops", "envless-converge.op.ts"),
+        `export default {
+  props: {
+    name: "envless-converge",
+    overview: "a hand-built ConvergeOp with no Env label",
+    phases: [{ name: "Converge", steps: [{ kind: "activity", fn: "fakeTick", args: {} }] }],
+    labels: { Converge: "true" },
+  },
+};
+`,
+      );
+
+      expect((await discoverConvergeOps({ cwd: dir })).ops.map((d) => d.config.name)).toEqual(["envless-converge"]);
+      expect((await discoverConvergeOps({ cwd: dir, env: "staging" })).ops).toEqual([]);
+    });
+  });
 });
 
 describe("runOperatorRound — lease + tick execution over a fixture ConvergeOp (offline)", () => {
@@ -147,6 +187,27 @@ describe("runOperatorRound — lease + tick execution over a fixture ConvergeOp 
       const { records } = await readConvergeLedger("staging", { cwd: dir });
       expect(records).toHaveLength(1);
       expect(records[0].op).toBe("staging-converge");
+    });
+  });
+
+  test("the tick's own run lands on the run ledger, keyed by the op's labels.Env (#2118)", async () => {
+    await withTestDir(async (dir) => {
+      await initRepo(dir);
+      writeFixtureConvergeOp(dir, "staging-converge", "staging");
+      const activities = fakeTickActivities(dir, "staging", "staging-converge");
+
+      await runOperatorRound({ cwd: dir, holder: "op-a", activities, profiles: PROFILES });
+
+      const { records, malformed } = await readRunLedger("staging", "staging-converge", { cwd: dir });
+      expect(malformed).toBe(0);
+      expect(records).toHaveLength(1);
+      expect(records[0]).toMatchObject({
+        op: "staging-converge",
+        env: "staging",
+        status: "ok",
+        labels: { Converge: "true", Env: "staging", Dial: "observe" },
+      });
+      expect(records[0].phases.map((p) => p.name)).toEqual(["Converge"]);
     });
   });
 
@@ -334,7 +395,10 @@ describe("formatRoundLine", () => {
   test("renders each event kind as one line", () => {
     expect(formatRoundLine({
       kind: "ticked", op: "x", env: "staging",
-      result: { op: "x", records: [], totalMs: 1, status: "ok", startedAt: "2026-09-05T12:00:00.000Z" },
+      result: {
+        op: "x", records: [], totalMs: 1, status: "ok", startedAt: "2026-09-05T12:00:00.000Z",
+        record: runRecord("x", "ok"),
+      },
     })).toContain("ticked=1 status=ok");
     expect(formatRoundLine({
       kind: "ticked", op: "x", env: "staging",
@@ -344,6 +408,7 @@ describe("formatRoundLine", () => {
           version: 1, kind: "pending", op: "x", gate: "rollout-gate",
           timestamp: "2026-09-05T12:00:00.000Z", expiresAt: "2026-09-07T12:00:00.000Z",
         },
+        record: runRecord("x", "gated"),
       },
     })).toContain('status=gated gate="rollout-gate"');
     expect(formatRoundLine({ kind: "skipped-lease-held", op: "x", env: "staging", heldBy: "holder-a" }))

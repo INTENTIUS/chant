@@ -8,7 +8,7 @@
  * just the pre-built composites — so classification walks `OpConfig`'s
  * steps rather than trusting a self-reported tag.
  *
- * There is no existing per-Op verb-class field (`searchAttributes` is a free
+ * There is no existing per-Op verb-class field (`labels` is a free
  * `Record<string,string>` an author may or may not set — `ApplyOp` tags
  * `{ Apply: "true" }` but nothing requires it, and it carries no verb-class
  * semantics on its own) and no existing "which activity names are

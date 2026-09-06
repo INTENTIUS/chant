@@ -13,7 +13,6 @@ import { spriteCreate, spriteCheckpoint, spriteExec, spriteDestroy, spriteRestor
 export default Op({
   name: "guarded-task",
   overview: "Checkpoint, run a risky step, restore on failure",
-  taskQueue: "sprites",
   phases: [
     phase("Create",     [spriteCreate({ name: "task-1" })]),
     phase("Checkpoint", [spriteCheckpoint({ id: "task-1", comment: "pre-run" })]),

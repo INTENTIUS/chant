@@ -54,8 +54,7 @@ const REGIONS = ["east", "central", "west"] as const;
 export default Op({
   name: "crdb-k3d-smoke",
   overview: "Three CockroachDB regions on one local k3d cluster — no GCP, no credentials",
-  taskQueue: "crdb",
-  searchAttributes: { Estate: "crdb-multi-region", Environment: "local" },
+  labels: { Estate: "crdb-multi-region", Environment: "local" },
 
   phases: [
     phase("Preflight", [

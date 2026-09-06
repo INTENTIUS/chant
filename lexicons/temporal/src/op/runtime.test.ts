@@ -31,7 +31,7 @@ import type { Declarable } from "@intentius/chant/declarable";
 const GEN_DIR = fileURLToPath(new URL("./__generated__", import.meta.url));
 
 // Search attributes the generated workflows upsert (OpName/Phase always; the
-// rest from ApplyOp's searchAttributes + the Drift outcome attribute).
+// rest from ApplyOp's labels + the Drift outcome attribute).
 const SEARCH_ATTRS = { OpName: 2, Phase: 2, Drift: 2, Apply: 2, Env: 2 } as const;
 
 function camel(name: string): string {

@@ -62,7 +62,6 @@ describe("agent-task happy path", () => {
     const op: OpConfig = {
       name: "agent-task",
       overview: "happy path",
-      taskQueue: "sprites",
       phases: [
         phase("Create", [spriteCreate({ name: "task-1" })]),
         phase("Checkpoint", [spriteCheckpoint({ id: "task-1", comment: "pre-run" })]),
@@ -103,7 +102,6 @@ describe("guarded-task — checkpoint-as-compensation (S5)", () => {
     const op: OpConfig = {
       name: "guarded-task",
       overview: "checkpoint, run a risky step, restore on failure",
-      taskQueue: "sprites",
       phases: [
         phase("Create", [spriteCreate({ name: "guard-1" })]),
         phase("Seed", [spriteExec({ id: "guard-1", cmd: "echo good > /state" })]),

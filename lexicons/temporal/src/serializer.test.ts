@@ -343,10 +343,10 @@ describe("temporal serializer", () => {
     expect(result.files["temporal-setup.sh"]).toContain("set -euo pipefail");
   });
 
-  // ── Temporal::Op ──────────────────────────────────────────────────
+  // ── Chant::Op ──────────────────────────────────────────────────
 
   function makeOp(name: string, phases: unknown[] = []): [string, Declarable] {
-    return [name, makeEntity("Temporal::Op", { name, overview: `${name} op`, phases })];
+    return [name, makeEntity("Chant::Op", { name, overview: `${name} op`, phases })];
   }
 
   it("includes ops/<name>/workflow.ts when an Op entity is present", () => {

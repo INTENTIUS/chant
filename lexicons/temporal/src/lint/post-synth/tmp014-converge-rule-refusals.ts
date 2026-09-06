@@ -3,14 +3,14 @@
  *
  * Cross-Op build-time refusals for a `ConvergeOp`'s rule table — the checks
  * `../../composites/converge-op.ts`'s factory can't make on its own, since
- * they need the *whole* discovered graph of `Temporal::Op` entities
+ * they need the *whole* discovered graph of `Chant::Op` entities
  * (`PostSynthContext.entities`), not just the ConvergeOp instance under
  * construction: a sibling `*.op.ts` file's Op may not exist yet at the
  * moment a composite factory runs, the same reason TMP012/TMP013 exist as
  * post-synth checks rather than builder-time throws.
  *
  * A `ConvergeOp`-produced Op is identified by its own
- * `searchAttributes.Converge === "true"` marker (mirroring `ApplyOp`'s
+ * `labels.Converge === "true"` marker (mirroring `ApplyOp`'s
  * `{ Apply: "true" }` / `WatchOp`'s `{ Watch: "true" }`); its rule table is
  * read back off the `convergeTick` activity step's `args.rules` (there is no
  * dedicated `OpConfig` field for it — see `converge-op.ts`'s doc on why the
@@ -23,7 +23,7 @@
  *  - a rule whose predicate isn't in the evaluable subset
  *    (`isWellFormedPredicate`, re-validated here as the runtime backstop
  *    over a rule table not authored through `when()`),
- *  - a `run()` action naming an Op no declared `Temporal::Op` entity has as
+ *  - a `run()` action naming an Op no declared `Chant::Op` entity has as
  *    its `name`,
  *  - a `run()` action dispatching a `mutating` Op under any dial other than
  *    `"apply"` — the issue's Autonomy table gives `reconcile` "open PR", not
@@ -76,7 +76,7 @@ export const tmp014: PostSynthCheck = {
     const opsByName = new Map<string, OpConfig>();
     for (const entity of ctx.entities.values()) {
       const et = (entity as unknown as Record<string, unknown>).entityType as string;
-      if (et !== "Temporal::Op") continue;
+      if (et !== "Chant::Op") continue;
       const rawProps = ((entity as { props?: Record<string, unknown> }).props ?? {}) as Record<string, unknown>;
       if (!looksLikeOpProps(rawProps)) continue;
       const opProps = rawProps as unknown as OpConfig;
@@ -85,14 +85,14 @@ export const tmp014: PostSynthCheck = {
 
     for (const [entityKey, entity] of ctx.entities) {
       const et = (entity as unknown as Record<string, unknown>).entityType as string;
-      if (et !== "Temporal::Op") continue;
+      if (et !== "Chant::Op") continue;
 
       const rawProps = ((entity as { props?: Record<string, unknown> }).props ?? {}) as Record<string, unknown>;
       if (!looksLikeOpProps(rawProps)) continue;
       const props = rawProps as unknown as OpConfig;
-      if (props.searchAttributes?.Converge !== "true") continue;
+      if (props.labels?.Converge !== "true") continue;
 
-      const dial = props.searchAttributes?.Dial ?? "observe";
+      const dial = props.labels?.Dial ?? "observe";
       const rules = findConvergeRules(props);
       if (!rules) continue;
 

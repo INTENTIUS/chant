@@ -2,7 +2,7 @@
  * Dynamic loader for the durable component → Temporal codegen (#589, epic
  * #551 §5/§8). The actual `serializeComponent` generator lives in
  * `@intentius/chant-lexicon-temporal` (`src/component-op/serializer.ts`),
- * mirroring `Temporal::Op` codegen — core never statically depends on the
+ * mirroring `Chant::Op` codegen — core never statically depends on the
  * Temporal lexicon, the same boundary `../op/activity-registry.ts`'s
  * `loadActivities`/`loadProfiles` already keep for Op activities.
  */

@@ -95,8 +95,6 @@ export interface ApplyOpConfig {
    * created is the usual case).
    */
   forceConflicts?: boolean;
-  /** Override the task queue. Defaults to `name`. */
-  taskQueue?: string;
 }
 
 export interface ApplyOpResources {
@@ -105,7 +103,6 @@ export interface ApplyOpResources {
 }
 
 export function ApplyOp(config: ApplyOpConfig): ApplyOpResources {
-  const taskQueue = config.taskQueue ?? config.name;
   const target = config.target ?? "kubectl";
   const output = config.output ?? defaultOutput(target);
   const deleteMode = config.delete ?? "never";
@@ -181,8 +178,7 @@ export function ApplyOp(config: ApplyOpConfig): ApplyOpResources {
   const op = Op({
     name: config.name,
     overview: `Apply declared source to the ${config.env} environment (code → cloud)`,
-    taskQueue,
-    searchAttributes: {
+    labels: {
       Apply: "true",
       Env: config.env,
     },

@@ -112,7 +112,6 @@ describe("Op-level stage → process → collect (the example flow)", () => {
     const op: OpConfig = {
       name: "fs-agent-task",
       overview: "stage an input file, process it, collect the result",
-      taskQueue: "sprites",
       phases: [
         phase("Create", [spriteCreate({ name: "fs-op-1" })]),
         phase("Stage", [spriteWriteFile({ id: "fs-op-1", path: "/work/input", content: "hello" })]),

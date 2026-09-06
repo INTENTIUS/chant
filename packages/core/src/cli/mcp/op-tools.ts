@@ -85,6 +85,7 @@ export function createOpListTool(): ToolRegistration {
           name,
           overview: config.overview,
           phases: config.phases.length,
+          labels: config.labels ?? {},
           depends: config.depends ?? [],
           runState: states.get(name)?.state ?? "—",
         });

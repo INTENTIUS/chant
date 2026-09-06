@@ -14,7 +14,6 @@ import { Op, phase, k3dUp, kubectlApply, waitForStack, k3dDown } from "@intentiu
 export default Op({
   name: "local-k8s",
   overview: "k3d up → apply → wait → k3d down: a no-account local Kubernetes deploy",
-  taskQueue: "local-k8s",
   phases: [
     phase("Cluster", [
       // Opt into merging the cluster into ~/.kube/config and switching the

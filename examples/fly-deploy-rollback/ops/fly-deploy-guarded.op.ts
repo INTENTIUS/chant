@@ -60,7 +60,6 @@ if (spritesBase) rollback.push(spritesDown());
 export default Op({
   name: "fly-deploy-guarded",
   overview: "A risky post-deploy step fails; the Sprite rewinds to its known-good checkpoint",
-  taskQueue: "fly-deploy",
   phases: [
     ...setup,
     phase("Sandbox", [

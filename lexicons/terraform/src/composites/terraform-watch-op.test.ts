@@ -244,17 +244,16 @@ describe("TerraformWatchOp schedule (#2087)", () => {
       spec: { cronExpressions: ["0 6 * * *"] },
       action: { workflowType: "appWatchWorkflow", taskQueue: "app-watch" },
     });
-    expect((op as unknown as { props: OpConfig }).props.taskQueue).toBe("app-watch");
+    expect((op as unknown as { props: OpConfig }).props).not.toHaveProperty("taskQueue");
   });
 
-  test("an explicit taskQueue reaches both the Op and the schedule action", () => {
-    const { op, schedule } = TerraformWatchOp({
+  test("an explicit taskQueue reaches the schedule action", () => {
+    const { schedule } = TerraformWatchOp({
       name: "app-watch",
       root: "app",
       schedule: "0 6 * * *",
       taskQueue: "infra",
     });
-    expect((op as unknown as { props: OpConfig }).props.taskQueue).toBe("infra");
     expect(
       ((schedule as unknown as { props: { action: { taskQueue: string } } }).props.action).taskQueue,
     ).toBe("infra");

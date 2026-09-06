@@ -52,7 +52,7 @@ export const tmp013: PostSynthCheck = {
 
     for (const [entityKey, entity] of ctx.entities) {
       const et = (entity as unknown as Record<string, unknown>).entityType as string;
-      if (et !== "Temporal::Op") continue;
+      if (et !== "Chant::Op") continue;
 
       const props = ((entity as { props?: Record<string, unknown> }).props ?? {}) as unknown as OpConfig;
       if (typeof props.name !== "string" || !Array.isArray(props.phases)) continue;

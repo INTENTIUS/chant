@@ -9,9 +9,11 @@
  * {@link OpRuntimeProvider} and hangs it off `LexiconPlugin.opRuntime`, where
  * `chant run <op> --on <lexicon>` finds it.
  *
- * The record shapes below are deliberately small. #2118 owns the ledger-backed
- * shape; reconcile at merge — until then the local provider derives status and
- * log from an in-memory `OpRunResult`.
+ * The record shapes below are the run ledger's (#2118): what a run wrote to
+ * `<env>/runs__<op>.jsonl` is what a provider's `status` and `log` read back,
+ * so a run's outcome survives the process that produced it. A provider with no
+ * ledger behind it (a hosting lexicon reporting a live run) fills the same
+ * shape from whatever it does know.
  */
 
 import type { OpConfig } from "./types";
@@ -21,19 +23,50 @@ import type { RunComponentsOptions, RunComponentsResult } from "../components/cl
 
 /**
  * How a run ended, or that it has not. `gated` is the state a run reaches when
- * a gate has no recorded resolution — a fact, not a wait (#2119 makes the local
- * executor produce it; today only a hosting runtime can).
+ * a gate has no recorded resolution — a fact, not a wait (#2119).
+ *
+ * This is the coarse state a *runtime* reports. The ledger records the
+ * executor's own three-state outcome instead ({@link OpRunRecord.status}),
+ * which has no `running` or `cancelled`: a record is only written once a run
+ * has settled.
  */
 export type OpRunState = "running" | "completed" | "failed" | "gated" | "cancelled";
+
+/** Map a settled run's ledger status onto the coarser runtime state. */
+export function runStateOf(status: OpRunRecord["status"]): OpRunState {
+  return status === "ok" ? "completed" : status === "gated" ? "gated" : "failed";
+}
+
+/** One step's outcome as the run ledger keeps it — `StepRecord` minus the fields only a live renderer needs. */
+export interface OpRunStepRecord {
+  /** The activity function name, or `gate:<signal>` for a gate step. */
+  fn: string;
+  status: StepRecord["status"];
+  durationMs: number;
+  /** The step's `outcomeAttribute` capture, when it declared one. */
+  outcome?: { name: string; value: unknown };
+  /** Who cleared this gate step and when (#2119), for a gate the run passed. */
+  approval?: { gate: string; resolvedBy: string; timestamp: string; url?: string };
+  /** The failure message, for `status: "fail"`. */
+  error?: string;
+}
+
+/** One phase's steps and the verdict they add up to. */
+export interface OpRunPhaseRecord {
+  name: string;
+  /** `fail` if any step failed, `skipped` if every step was skipped, else `ok`. */
+  status: "ok" | "fail" | "skipped";
+  steps: OpRunStepRecord[];
+}
 
 /**
  * A run's current state, as every runtime reports it.
  *
  * `records` and `result` are populated by a runtime that has the executor's
- * own step records to hand (the local one does); a runtime that only knows the
- * coarse state omits them rather than inventing them.
+ * own step records to hand (the local one does, for a run it just executed in
+ * this process); a runtime answering from the ledger alone omits them rather
+ * than inventing them.
  */
-// #2118 owns the ledger-backed shape; reconcile at merge
 export interface OpRunStatus {
   op: string;
   runId: string;
@@ -52,15 +85,49 @@ export interface OpRunStatus {
   error?: string;
 }
 
-/** One entry in a run history — what `chant run log <op>` prints a row per. */
-// #2118 owns the ledger-backed shape; reconcile at merge
+/**
+ * One immutable, settled Op run — the run ledger's line
+ * (`../lifecycle/run-ledger.ts`), and what `chant run log <op>` prints a row
+ * per.
+ *
+ * This is where a run's outcome lives now that `OpConfig` no longer carries
+ * `searchAttributes` for the generated workflow to upsert (#2118). `labels` is
+ * copied off the declaration so a reader can filter runs the way it filters
+ * declarations; `outcomes` is every `outcomeAttribute` the run captured, later
+ * steps winning over earlier ones for a repeated name, exactly as an upsert
+ * would have.
+ */
 export interface OpRunRecord {
+  /** Schema version, so an incompatible future shape is detected before being misread. */
+  version: 1;
+  /** Stable run id — the same string a pending gate fact records for this run. */
+  id: string;
+  /** The Op's name (`OpConfig.name`). */
   op: string;
-  runId: string;
-  state: OpRunState;
-  startedAt: string;
-  endedAt?: string;
+  /** The Op's `labels.Env`, or `local` when it declares none. */
+  env: string;
+  /** ISO-8601 instant the run started. */
+  started: string;
+  /** ISO-8601 instant the run settled. */
+  ended: string;
+  /**
+   * The executor's three-state outcome. `gated` is neither success nor
+   * failure: the run reached a gate nobody has approved, recorded the fact,
+   * and stopped (#2119).
+   */
+  status: "ok" | "fail" | "gated";
+  /** The Op's own `labels`, copied at run time. */
+  labels: Record<string, string>;
+  /** Every `outcomeAttribute` the run captured, name → value. */
+  outcomes: Record<string, unknown>;
+  /** Per-phase, per-step status, in execution order. */
+  phases: OpRunPhaseRecord[];
+  /** The gate the run stopped on, for `status: "gated"`. */
+  gate?: { name: string; since: string };
 }
+
+/** An {@link OpRunRecord} before the ledger stamps its version and mints an id. */
+export type OpRunRecordInput = Omit<OpRunRecord, "version" | "id"> & { id?: string };
 
 /** A started run. `result()` settles with the run's final status. */
 export interface OpRunHandle {

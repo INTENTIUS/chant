@@ -8,23 +8,30 @@
  * is decided against the gate ledger and ends the run `gated` (#2119), and
  * Ctrl-C aborts through the caller's `AbortSignal`.
  *
- * Status, log and list are derived from the `OpRunResult` this process
- * produced, held in memory for the lifetime of the process. #2118 owns the
- * ledger-backed shape; reconcile at merge — at that point these three read the
- * run ledger and survive the process instead.
+ * Status, log and list read the run ledger (#2118): every run this provider
+ * starts appends one `OpRunRecord` to `<env>/runs__<op>.jsonl` on the
+ * lifecycle branch, so an answer here outlives the process that produced it
+ * and a run started by cron, CI or another machine is visible too. The
+ * in-memory history stays as the fallback for the case the ledger cannot cover
+ * — a project that is not a checkout, or a run whose append failed — so a
+ * `chant run` followed by `chant run status` in the same process still
+ * answers.
  */
 
 import { loadChantConfig } from "../../config";
 import { loadActivities, loadProfiles } from "../activity-registry";
 import { runOpLocally, OpRunFailure, type OpRunResult } from "../local-executor";
 import { runComponents } from "../../components/cli-support";
+import { discoverOps } from "../discover";
+import { readRunLedger, runEnvOf, DEFAULT_RUN_ENV } from "../../lifecycle/run-ledger";
 import type { OpConfig } from "../types";
-import type {
-  OpRunHandle,
-  OpRunRecord,
-  OpRunStartOptions,
-  OpRunStatus,
-  OpRuntimeProvider,
+import {
+  runStateOf,
+  type OpRunHandle,
+  type OpRunRecord,
+  type OpRunStartOptions,
+  type OpRunStatus,
+  type OpRuntimeProvider,
 } from "../runtime";
 
 /** Every run this process has started, newest last, keyed by op name. */
@@ -39,7 +46,7 @@ function statusFrom(
   return {
     op,
     runId,
-    state: result.status === "ok" ? "completed" : result.status === "gated" ? "gated" : "failed",
+    state: runStateOf(result.status),
     startedAt,
     endedAt: new Date().toISOString(),
     records: result.records,
@@ -48,13 +55,20 @@ function statusFrom(
   };
 }
 
-function toRecord(status: OpRunStatus): OpRunRecord {
+/**
+ * A ledger record read back as a runtime status. `records` and `result` are
+ * absent on purpose: the ledger keeps each step's verdict, not the activity
+ * return values a live `OpRunResult` carries, and inventing them would make a
+ * replayed answer look like a live one.
+ */
+function statusFromRecord(record: OpRunRecord): OpRunStatus {
   return {
-    op: status.op,
-    runId: status.runId,
-    state: status.state,
-    startedAt: status.startedAt,
-    ...(status.endedAt ? { endedAt: status.endedAt } : {}),
+    op: record.op,
+    runId: record.id,
+    state: runStateOf(record.status),
+    startedAt: record.started,
+    endedAt: record.ended,
+    ...(record.gate ? { gate: record.gate } : {}),
   };
 }
 
@@ -71,6 +85,39 @@ export function createLocalOpRuntime(opts: { projectPath?: string } = {}): OpRun
     const existing = runs.get(status.op);
     if (existing) existing.push(status);
     else runs.set(status.op, [status]);
+  };
+
+  // A run ledger is keyed `<env>/runs__<op>.jsonl`, and `status`/`log` are
+  // handed a name rather than a config. `start` and `list` know the config and
+  // seed this; otherwise the same `*.op.ts` scan that found the Op in the
+  // first place resolves its `labels.Env`.
+  const envs = new Map<string, string>();
+  const noteEnv = (op: OpConfig): string => {
+    const env = runEnvOf(op);
+    envs.set(op.name, env);
+    return env;
+  };
+
+  const envFor = async (op: string): Promise<string> => {
+    const known = envs.get(op);
+    if (known) return known;
+    try {
+      const { ops } = await discoverOps({ cwd: projectPath });
+      for (const discovered of ops.values()) noteEnv(discovered.config);
+    } catch {
+      // Not a checkout — nothing to scan; fall through to the default env.
+    }
+    return envs.get(op) ?? DEFAULT_RUN_ENV;
+  };
+
+  /** This op's ledger history, oldest first. Empty when there is no ledger to read. */
+  const ledgerFor = async (op: string, env?: string): Promise<OpRunRecord[]> => {
+    try {
+      const { records } = await readRunLedger(env ?? (await envFor(op)), op, { cwd: projectPath });
+      return records;
+    } catch {
+      return [];
+    }
   };
 
   return {
@@ -91,6 +138,7 @@ export function createLocalOpRuntime(opts: { projectPath?: string } = {}): OpRun
 
       const runId = `local-${Date.now()}`;
       const startedAt = new Date().toISOString();
+      noteEnv(op);
 
       const settled = (async (): Promise<OpRunStatus> => {
         try {
@@ -99,7 +147,14 @@ export function createLocalOpRuntime(opts: { projectPath?: string } = {}): OpRun
             activities,
             profiles,
             startOpts.signal,
-            { runId, ...(startOpts.progress ? { onRecord: startOpts.progress } : {}) },
+            {
+              runId,
+              // The run's outcome is a durable fact (#2118): the executor
+              // appends it here, at the one seam every local run passes
+              // through, rather than in the CLI handler above it.
+              ledger: { cwd: projectPath },
+              ...(startOpts.progress ? { onRecord: startOpts.progress } : {}),
+            },
           );
           const status = statusFrom(op.name, runId, startedAt, result);
           record(status);
@@ -118,18 +173,25 @@ export function createLocalOpRuntime(opts: { projectPath?: string } = {}): OpRun
     },
 
     async status(op: string): Promise<OpRunStatus | undefined> {
+      const newest = (await ledgerFor(op)).at(-1);
+      if (newest) return statusFromRecord(newest);
       const history = runs.get(op);
       return history?.[history.length - 1];
     },
 
     async log(op: string, logOpts?: { limit?: number }): Promise<OpRunRecord[]> {
-      const history = [...(runs.get(op) ?? [])].reverse().map(toRecord);
+      const history = (await ledgerFor(op)).reverse();
       return logOpts?.limit === undefined ? history : history.slice(0, logOpts.limit);
     },
 
     async list(ops: OpConfig[]): Promise<Map<string, OpRunStatus | undefined>> {
       const out = new Map<string, OpRunStatus | undefined>();
       for (const op of ops) {
+        const newest = (await ledgerFor(op.name, noteEnv(op))).at(-1);
+        if (newest) {
+          out.set(op.name, statusFromRecord(newest));
+          continue;
+        }
         const history = runs.get(op.name);
         out.set(op.name, history?.[history.length - 1]);
       }

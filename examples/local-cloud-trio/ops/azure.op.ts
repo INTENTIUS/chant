@@ -9,7 +9,6 @@ import { Op, phase, build, azApply, flociAzUp, flociAzDown, httpCheck } from "@i
 export default Op({
   name: "azure",
   overview: "Azure: storage account → floci-az (direct ARM apply), local, no account",
-  taskQueue: "trio-azure",
   phases: [
     phase("Emulator", [flociAzUp()]),
     phase("Build", [build(".", { script: "build:azure" })]),

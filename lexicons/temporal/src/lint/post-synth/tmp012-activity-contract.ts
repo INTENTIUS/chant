@@ -2,7 +2,7 @@
  * TMP012: activity step args/outcomeAttribute must match the activity's
  * declared contract (chant #1288 Stage 1).
  *
- * Validates every `Temporal::Op`'s steps against the contracts this lexicon
+ * Validates every `Chant::Op`'s steps against the contracts this lexicon
  * registers for its own activities in `../../op/activity-contracts.ts`,
  * using the generic walk in `@intentius/chant/op`'s `validateActivitySteps`.
  * A step whose `fn` has no registered contract here is skipped — most
@@ -29,7 +29,7 @@ export const tmp012: PostSynthCheck = {
 
     for (const [entityKey, entity] of ctx.entities) {
       const et = (entity as unknown as Record<string, unknown>).entityType as string;
-      if (et !== "Temporal::Op") continue;
+      if (et !== "Chant::Op") continue;
 
       const props = ((entity as { props?: Record<string, unknown> }).props ?? {}) as unknown as OpConfig;
       if (typeof props.name !== "string" || !Array.isArray(props.phases)) continue;

@@ -13,18 +13,25 @@ export interface OpConfig {
   name: string;
   /** Human-readable description shown in `chant run list` and deployment reports. */
   overview: string;
-  /** Temporal task queue. Defaults to `name`. */
-  taskQueue?: string;
-  /** Temporal namespace. Defaults to chant.config.ts defaultProfile's namespace. */
-  namespace?: string;
   /** Ordered list of execution phases. */
   phases: PhaseDefinition[];
   /** Other Op names that must be complete before this Op can run. */
   depends?: string[];
   /** Compensation phases executed on terminal failure (run in reverse order). */
   onFailure?: PhaseDefinition[];
-  /** Search attributes to upsert at workflow start. */
-  searchAttributes?: Record<string, string>;
+  /**
+   * Discovery keys for this Op — free-form `name: value` pairs a reader
+   * filters on. `ConvergeOp` sets `Converge: "true"` and `Env`, `WatchOp`
+   * sets `Watch`, and `discoverConvergeOps` (`./operator.ts`) reads both;
+   * `chant run list` prints whatever is here.
+   *
+   * These are the discovery half of what `searchAttributes` used to carry
+   * (#2118). The other half — a run's own outcome (`Phase`, `Drift`,
+   * `Approver`, `RollbackFailed`) — is not a property of the declaration at
+   * all and now lands on the run ledger as a fact
+   * (`../lifecycle/run-ledger.ts`), written per run rather than declared once.
+   */
+  labels?: Record<string, string>;
 }
 
 export interface PhaseDefinition {
@@ -67,13 +74,13 @@ export interface ActivityStep {
    */
   profile?: ActivityProfileName;
   /**
-   * Surface this activity's return value as one or more workflow search
-   * attributes.
+   * Surface this activity's return value as a named run outcome.
    *
-   * The serializer captures the awaited result into a temporary, then emits
-   * `upsertSearchAttributes({ <name>: [String(<from-path>)] })` immediately
-   * after. Useful for filtering runs by outcome (e.g. `Drift: "true"/"false"`
-   * from a lifecycleDiff activity).
+   * The local executor captures it into the step's record and folds it into
+   * the run ledger's `outcomes` (`../lifecycle/run-ledger.ts`); the Temporal
+   * serializer additionally upserts it as a workflow search attribute. Useful
+   * for reading back a run by outcome (e.g. `Drift: "true"/"false"` from a
+   * lifecycleDiff activity).
    *
    * An array publishes several attributes off the same result in one upsert
    * (#2105): one activity can answer more than one question about a run, and
@@ -84,7 +91,7 @@ export interface ActivityStep {
    *
    * `from` is a dot-path into the return value (e.g. `"drifted"` for
    * `{ drifted: boolean }`); when omitted, the whole return value is
-   * stringified.
+   * recorded.
    */
   outcomeAttribute?: OutcomeAttribute | OutcomeAttribute[];
 }

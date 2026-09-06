@@ -983,6 +983,28 @@ export const x = { [Symbol.for("chant.declarable")]: true, entityType: "X", lexi
     expect(existsSync(join(testDir, "dist", "ops", "durable-hello", "workflow.ts"))).toBe(true);
   });
 
+  test("an Op entity emits dist/ops/<name>/op.json from core, with no serializer involved (#2118)", async () => {
+    await writeFile(
+      join(testDir, "deploy.op.ts"),
+      `export default { [Symbol.for("chant.declarable")]: true, entityType: "Chant::Op", lexicon: "chant", kind: "resource", attributes: {},` +
+        ` props: { name: "deploy", overview: "Deploy the thing", labels: { Env: "staging" },` +
+        ` phases: [{ name: "Apply", steps: [{ kind: "activity", fn: "shellCmd", args: { cmd: "true" } }] }] } };`,
+    );
+
+    const result = await buildCommand({ path: testDir, format: "json", serializers: [] } as BuildOptions);
+
+    expect(result.errors).toEqual([]);
+    const ir = JSON.parse(readFileSync(join(testDir, "dist", "ops", "deploy", "op.json"), "utf-8"));
+    expect(ir.formatVersion).toBe("2.0");
+    expect(ir.name).toBe("deploy");
+    expect(ir.labels).toEqual({ Env: "staging" });
+    expect(ir).not.toHaveProperty("taskQueue");
+    expect(ir.phases[0].steps[0]).toMatchObject({ kind: "activity", fn: "shellCmd", profile: "fastIdempotent" });
+    // Ops are held out of `partitionByLexicon` (they have no serializer and
+    // need none), so core's own `chant` lexicon never trips the warning.
+    expect(result.warnings.filter((w) => w.includes("No serializer"))).toEqual([]);
+  });
+
   // ── #284 bug 2: array-of-objects must serialize to valid YAML ──────────
   test("yaml format serializes an array of objects to valid, round-trippable YAML", async () => {
     // A serializer that emits a CloudFormation-shaped template with a tag list.

@@ -27,6 +27,9 @@ import { isStepOutputRef } from "./step-output-ref";
 import { parseDuration } from "./duration";
 import { evaluateGate, gitGateLedgerPort, type GateLedgerPort } from "./gate";
 import type { PendingGateRecord } from "../lifecycle/gate-ledger";
+import { appendRunRecord, buildRunRecord } from "../lifecycle/run-ledger";
+import type { OpRunRecord } from "./runtime";
+import { randomUUID } from "node:crypto";
 
 export { parseDuration } from "./duration";
 
@@ -66,13 +69,20 @@ export interface OpRunResult {
    * run reached a gate nobody has approved, recorded the fact, and stopped.
    * The CLI exits 3 for it so CI can tell "waiting on a human" from "broken".
    *
-   * #2118: written to the run ledger.
+   * Written to the run ledger as the record's own `status` (#2118).
    */
   status: "ok" | "fail" | "gated";
   /** ISO-8601 start of this run. */
   startedAt: string;
   /** Present when `status === "gated"`: the pending fact the run ended on. */
   gate?: PendingGateRecord;
+  /**
+   * The run's ledger record (#2118) — always built, whether or not it was
+   * appended. `chant run <op> --json` prints exactly this, so what a caller
+   * reads on stdout and what a later `readRunLedger` reads back are the same
+   * document.
+   */
+  record: OpRunRecord;
 }
 
 // ── Errors ────────────────────────────────────────────────────────────────��─
@@ -604,6 +614,21 @@ export interface RunOpOptions {
    * `--progress-json` from. Side-effect free when omitted.
    */
   onRecord?: (record: StepRecord) => void;
+  /**
+   * Append the run's {@link OpRunRecord} to the run ledger
+   * (`../lifecycle/run-ledger.ts`) when the run settles (#2118). Opt-in on
+   * purpose: the executor is called from unit tests and in-process harnesses
+   * whose working directory is an ordinary checkout, and a run there must not
+   * write to the lifecycle branch. The local runtime (./runtimes/local.ts) and
+   * `chant operator` pass it; nothing else does.
+   */
+  ledger?: { cwd?: string };
+  /**
+   * Called when the ledger append itself fails. The run's own outcome is
+   * already decided by then, so a ledger failure is reported to the caller,
+   * never promoted into a run failure.
+   */
+  onLedgerError?: (err: unknown) => void;
 }
 
 /**
@@ -616,6 +641,12 @@ export interface RunOpOptions {
  * failure, after running any `onFailure` phases in reverse order; a gated run
  * runs no `onFailure` phase, because nothing failed and nothing was left
  * half-applied to compensate for.
+ *
+ * Whichever of the three ways it settles, the run carries an
+ * {@link OpRunRecord} on `result.record` (#2118). With `options.ledger` that
+ * record is also appended to `<env>/runs__<op>.jsonl` on the lifecycle branch
+ * before this returns or rejects, so an Op's outcome outlives the process that
+ * produced it.
  */
 export async function runOpLocally(
   config: OpConfig,
@@ -624,11 +655,15 @@ export async function runOpLocally(
   signal?: AbortSignal,
   options: RunOpOptions = {},
 ): Promise<OpRunResult> {
+  // The run id is the gate ledger's and the run ledger's alike: a pending gate
+  // fact and the record naming that gate carry the same string.
+  const runId = options.runId ?? randomUUID();
+
   const gates: GateContext = {
     op: config.name,
     port: options.gates ?? gitGateLedgerPort(options.cwd ? { cwd: options.cwd } : undefined),
     ...(options.now ? { now: options.now } : {}),
-    ...(options.runId ? { runId: options.runId } : {}),
+    runId,
     ...(options.onRecord ? { onRecord: options.onRecord } : {}),
   };
 
@@ -647,6 +682,32 @@ export async function runOpLocally(
   const records: StepRecord[] = [];
   const start = Date.now();
   const startedAt = options.now ?? new Date(start).toISOString();
+
+  /**
+   * Build the run's ledger record, append it when asked, and hand it back for
+   * the result. Called once, at whichever of the three exits the run takes.
+   */
+  const settle = async (
+    settled: StepRecord[],
+    status: OpRunResult["status"],
+    gate?: PendingGateRecord,
+  ): Promise<OpRunRecord> => {
+    const input = buildRunRecord(config, settled, {
+      started: startedAt,
+      ended: options.now ?? new Date().toISOString(),
+      status,
+      id: runId,
+      ...(gate ? { gate: { name: gate.gate, since: gate.timestamp } } : {}),
+    });
+    const record: OpRunRecord = { version: 1, ...input, id: runId };
+    if (!options.ledger) return record;
+    try {
+      return (await appendRunRecord(input, options.ledger)).record;
+    } catch (err) {
+      options.onLedgerError?.(err);
+      return record;
+    }
+  };
 
   // Completed step id → its activity result (#1290). Populated as main-phase
   // steps finish, so a later step's step-output references resolve to real
@@ -682,6 +743,7 @@ export async function runOpLocally(
         status: "gated",
         startedAt,
         gate: err.pending,
+        record: await settle(records, "gated", err.pending),
       };
     }
 
@@ -699,10 +761,24 @@ export async function runOpLocally(
       }
     }
 
-    throw new OpRunFailure({ op: config.name, records, totalMs: Date.now() - start, status: "fail", startedAt });
+    throw new OpRunFailure({
+      op: config.name,
+      records,
+      totalMs: Date.now() - start,
+      status: "fail",
+      startedAt,
+      record: await settle(records, "fail"),
+    });
   }
 
-  return { op: config.name, records, totalMs: Date.now() - start, status: "ok", startedAt };
+  return {
+    op: config.name,
+    records,
+    totalMs: Date.now() - start,
+    status: "ok",
+    startedAt,
+    record: await settle(records, "ok"),
+  };
 }
 
 function errMessage(err: unknown): string {

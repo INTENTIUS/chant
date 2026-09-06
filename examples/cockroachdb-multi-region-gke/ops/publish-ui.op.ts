@@ -48,9 +48,8 @@ const DOMAIN = process.env.CRDB_DOMAIN ?? PLACEHOLDER_DOMAIN;
 export default Op({
   name: "crdb-publish-ui",
   overview: "Hold for DNS delegation, then verify the three regional UIs answer",
-  taskQueue: "crdb",
   depends: ["crdb-deploy"],
-  searchAttributes: { Estate: "crdb-multi-region" },
+  labels: { Estate: "crdb-multi-region" },
 
   phases: [
     phase("Preflight", [

@@ -441,10 +441,9 @@ describe("fly-reconcile op (#868)", () => {
 describe("sprites-agent-task Ops (#762)", () => {
   test("agent-task compiles to the happy-path phase sequence", () => {
     const props = (agentTaskOp as unknown as {
-      props: { name: string; taskQueue?: string; phases: Array<{ name: string; steps: Array<{ fn: string }> }> };
+      props: { name: string; phases: Array<{ name: string; steps: Array<{ fn: string }> }> };
     }).props;
     expect(props.name).toBe("agent-task");
-    expect(props.taskQueue).toBe("sprites");
     expect(props.phases.map((p) => p.name)).toEqual([
       "Create",
       "Checkpoint",
@@ -495,13 +494,11 @@ describe("sprites-managed-agent-worker Op (#847)", () => {
     const props = (managedAgentSessionOp as unknown as {
       props: {
         name: string;
-        taskQueue?: string;
         phases: Array<{ name: string; steps: Array<{ fn: string; args?: Record<string, unknown> }> }>;
         onFailure?: Array<{ name: string; steps: Array<{ fn: string }> }>;
       };
     }).props;
     expect(props.name).toBe("managed-agent-session");
-    expect(props.taskQueue).toBe("sprites");
     expect(props.phases.map((p) => p.name)).toEqual([
       "Create",
       "Secure",
@@ -544,10 +541,9 @@ describe("sprites-managed-agent-worker Op (#847)", () => {
 describe("sprites-build-sandbox Op (#869)", () => {
   test("build-sandbox composes the warm → checkpoint → build → reset sequence", () => {
     const props = (buildSandboxOp as unknown as {
-      props: { name: string; taskQueue?: string; phases: Array<{ name: string; steps: Array<{ fn: string; args?: Record<string, unknown> }> }> };
+      props: { name: string; phases: Array<{ name: string; steps: Array<{ fn: string; args?: Record<string, unknown> }> }> };
     }).props;
     expect(props.name).toBe("build-sandbox");
-    expect(props.taskQueue).toBe("sprites");
     expect(props.phases.map((p) => p.name)).toEqual([
       "Create",
       "Warm",
@@ -585,11 +581,10 @@ describe("sprites-build-sandbox Op (#869)", () => {
 describe("fly-durable-deploy Op (#870)", () => {
   test("composes Build → Deploy with flyApply on its own task queue", () => {
     const props = (flyDurableDeployOp as unknown as {
-      props: { name: string; taskQueue?: string; phases: Array<{ name: string; steps: Array<{ fn: string }> }> };
+      props: { name: string; phases: Array<{ name: string; steps: Array<{ fn: string }> }> };
     }).props;
     // Globally-unique Op name (must not collide with fly-deploy-rollback's "fly-deploy").
     expect(props.name).toBe("fly-durable-deploy");
-    expect(props.taskQueue).toBe("fly-durable");
     expect(props.phases.map((p) => p.name)).toEqual(["Build", "Deploy"]);
     expect(props.phases.find((p) => p.name === "Build")!.steps[0].fn).toBe("chantBuild");
     expect(props.phases.find((p) => p.name === "Deploy")!.steps[0].fn).toBe("flyApply");
@@ -640,10 +635,9 @@ describeExample(
 describe("fly-deploy-rollback Ops", () => {
   test("deploy composes the sprite + fly phases (checkpoint → deploy)", () => {
     const props = (flyRollbackOp as unknown as {
-      props: { name: string; taskQueue?: string; phases: Array<{ name: string; steps: Array<{ fn: string }> }> };
+      props: { name: string; phases: Array<{ name: string; steps: Array<{ fn: string }> }> };
     }).props;
     expect(props.name).toBe("fly-deploy");
-    expect(props.taskQueue).toBe("fly-deploy");
     // The optional Verify phase is env-gated (offline only), so assert the core
     // sequence with Verify filtered out — stable whether or not FLY_FLAPS_BASE_URL
     // is set when the Op module loads.
@@ -1366,8 +1360,8 @@ describe("ray-kuberay-gke example", () => {
 describe("cockroachdb-multi-region-gke Ops (#1707)", () => {
   type OpProps = {
     name: string;
-    taskQueue?: string;
     depends?: string[];
+    labels?: Record<string, string>;
     phases: Array<{
       name: string;
       parallel?: boolean;
@@ -1554,9 +1548,10 @@ describe("cockroachdb-multi-region-gke Ops (#1707)", () => {
     expect(guard).not.toContain("containerclusters.container.cnrm.cloud.google.com >/dev/null || true");
   });
 
-  test("all three share a task queue", () => {
+  test("all three carry the estate label (#2118 — an Op declares labels, not a task queue)", () => {
     for (const op of [crdbDeployOp, crdbPublishUiOp, crdbTeardownOp]) {
-      expect(propsOf(op).taskQueue).toBe("crdb");
+      expect(propsOf(op).labels?.Estate).toBe("crdb-multi-region");
+      expect(propsOf(op)).not.toHaveProperty("taskQueue");
     }
   });
 });

@@ -58,7 +58,7 @@ describe("ConvergeOp composite (#1484)", () => {
   test("defaults: dial observe, budget 3, live true", () => {
     const { op } = ConvergeOp({ name: "staging-converge", env: "staging", rules: [driftRule] });
     const config = props(op);
-    expect(config.searchAttributes).toEqual({ Converge: "true", Env: "staging", Dial: "observe" });
+    expect(config.labels).toEqual({ Converge: "true", Env: "staging", Dial: "observe" });
     const tick = phaseNamed(op, "Converge").steps[0] as { args: Record<string, unknown> };
     expect(tick.args.dial).toBe("observe");
     expect(tick.args.budget).toBe(3);

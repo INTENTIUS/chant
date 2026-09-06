@@ -283,7 +283,7 @@ describe("TMP011: namespace-reference", () => {
 // ── TMP012: activity-contract (chant #1288 Stage 1) ─────────────────
 
 function opEntity(name: string, steps: unknown[]) {
-  return makeEntity("Temporal::Op", { name, overview: "test", phases: [{ name: "Phase", steps }] });
+  return makeEntity("Chant::Op", { name, overview: "test", phases: [{ name: "Phase", steps }] });
 }
 
 describe("TMP012: activity-contract", () => {
@@ -342,7 +342,7 @@ describe("TMP012: activity-contract", () => {
 // ── TMP013: step-output-ref (chant #1290) ────────────────────────────
 
 function opEntityPhases(name: string, phases: Array<{ name: string; steps: unknown[]; parallel?: boolean }>) {
-  return makeEntity("Temporal::Op", { name, overview: "test", phases });
+  return makeEntity("Chant::Op", { name, overview: "test", phases });
 }
 
 describe("TMP013: step-output-ref", () => {
@@ -441,10 +441,10 @@ function convergeOpEntity(
   rules: ConvergeRule<ConvergeSymptom>[],
   opts?: { dial?: "observe" | "reconcile" | "apply" },
 ) {
-  return makeEntity("Temporal::Op", {
+  return makeEntity("Chant::Op", {
     name,
     overview: "test",
-    searchAttributes: { Converge: "true", Env: "staging", Dial: opts?.dial ?? "observe" },
+    labels: { Converge: "true", Env: "staging", Dial: opts?.dial ?? "observe" },
     phases: [
       { name: "Observe", steps: [{ kind: "activity", fn: "lifecycleDiff", args: { env: "staging" }, id: "diff" }] },
       { name: "Converge", steps: [{ kind: "activity", fn: "convergeTick", args: { rules } }] },
@@ -637,7 +637,7 @@ describe("TMP014: converge-rule-refusals", () => {
     expect(tmp014.check(ctx)).toHaveLength(0);
   });
 
-  test("ignores a Temporal::Op with no Converge search attribute", () => {
+  test("ignores a Chant::Op with no Converge search attribute", () => {
     const ctx = makeCtxFromEntities(new Map([["op", readOnlyOpEntity("op")]]));
     expect(tmp014.check(ctx)).toHaveLength(0);
   });

@@ -20,6 +20,8 @@ import {
 } from "../../op/operator";
 import { readLease, DEFAULT_LEASE_TTL_MS } from "../../lifecycle/lease";
 import { readConvergeLedger, type ConvergeTickRecord } from "../../lifecycle/converge-ledger";
+import { readRunLedger } from "../../lifecycle/run-ledger";
+import type { OpRunRecord } from "../../op/runtime";
 import type { GateResolutionRecord, PendingGateRecord } from "../../lifecycle/gate-ledger";
 import {
   appendGateResolution, appendPendingGate, readGateResolutions, readGateLedger,
@@ -237,7 +239,7 @@ export async function runOperatorStatus(ctx: CommandContext): Promise<number> {
   for (const err of errors) console.error(formatWarning({ message: err }));
 
   const rows = await Promise.all(
-    ops.map((d) => statusFor(d.config.name, d.config.searchAttributes?.Env ?? "unknown")),
+    ops.map((d) => statusFor(d.config.name, d.config.labels?.Env ?? "unknown")),
   );
 
   // Every other discovered op that is standing at a gate. `discoverOps` sees
@@ -311,17 +313,20 @@ export async function runOperatorStatus(ctx: CommandContext): Promise<number> {
 /** One entry of the merged tick/gate timeline `chant operator log` prints. */
 export type OperatorLogEntry =
   | { kind: "tick"; timestamp: string; record: ConvergeTickRecord }
-  | { kind: "gate-resolution"; timestamp: string; record: GateResolutionRecord };
+  | { kind: "gate-resolution"; timestamp: string; record: GateResolutionRecord }
+  /** One Op run (#2118), timestamped at the instant it ended — the tick that dispatched it precedes it. */
+  | { kind: "run"; timestamp: string; record: OpRunRecord };
 
 export interface OperatorLogResult {
   entries: OperatorLogEntry[];
   /**
-   * Unreadable lines behind this answer, per ledger. `readConvergeLedger` and
-   * `readGateResolutions` both skip a malformed line and count it rather than
-   * throwing, so a corrupted ledger renders a shorter timeline; without this a
-   * consumer could not tell that from a genuinely quiet environment.
+   * Unreadable lines behind this answer, per ledger. `readConvergeLedger`,
+   * `readGateResolutions` and `readRunLedger` all skip a malformed line and
+   * count it rather than throwing, so a corrupted ledger renders a shorter
+   * timeline; without this a consumer could not tell that from a genuinely
+   * quiet environment.
    */
-  malformed: { converge: number; gates: number };
+  malformed: { converge: number; gates: number; runs: number };
 }
 
 /**
@@ -340,7 +345,7 @@ export async function collectOperatorLog(
   const sinceMs = opts.since ? new Date(opts.since).getTime() : undefined;
 
   const entries: OperatorLogEntry[] = [];
-  const malformed = { converge: 0, gates: 0 };
+  const malformed = { converge: 0, gates: 0, runs: 0 };
 
   // One read per distinct environment — several ConvergeOps can share one
   // `<env>/converge.jsonl`, and re-reading it per op would both cost more and
@@ -369,11 +374,23 @@ export async function collectOperatorLog(
     }
   }
 
+  // The runs each discovered Op recorded (#2118). Keyed `<env>/runs__<op>`,
+  // so unlike the converge ledger this is one read per (env, op) pair rather
+  // than per env — a ConvergeOp's own ticks and its own runs interleave here.
+  for (const { name, env } of wanted) {
+    const { records, malformed: bad } = await readRunLedger(env, name, { cwd: opts.cwd });
+    malformed.runs += bad;
+    for (const record of records) {
+      entries.push({ kind: "run", timestamp: record.ended, record });
+    }
+  }
+
+  // Within one instant: the tick first (it is what dispatched anything else),
+  // then the run it dispatched, then the gate resolution against that run.
+  const rank: Record<OperatorLogEntry["kind"], number> = { tick: 0, run: 1, "gate-resolution": 2 };
   let merged = entries.sort((a, b) => {
     const delta = new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
-    // A gate resolution recorded in the same instant as a tick reads after it:
-    // the tick is what made the gate pending in the first place.
-    return delta !== 0 ? delta : (a.kind === b.kind ? 0 : a.kind === "tick" ? -1 : 1);
+    return delta !== 0 ? delta : rank[a.kind] - rank[b.kind];
   });
   if (sinceMs !== undefined) merged = merged.filter((e) => new Date(e.timestamp).getTime() >= sinceMs);
   if (opts.limit !== undefined && merged.length > opts.limit) merged = merged.slice(-opts.limit);
@@ -382,6 +399,17 @@ export async function collectOperatorLog(
 }
 
 function renderLogEntry(entry: OperatorLogEntry): string[] {
+  if (entry.kind === "run") {
+    const { record } = entry;
+    const id = `[${record.id.slice(0, 8)}]`;
+    const outcomes = Object.entries(record.outcomes).map(([k, v]) => `${k}=${String(v)}`).join(" ");
+    const steps = record.phases.reduce((n, p) => n + p.steps.length, 0);
+    return [
+      `${record.ended}  ${record.op}@${record.env}  ${id}  run ${record.status} ` +
+        `phases=${record.phases.length} steps=${steps}${outcomes ? `  ${outcomes}` : ""}`,
+    ];
+  }
+
   if (entry.kind === "gate-resolution") {
     const { record } = entry;
     return [
@@ -441,7 +469,7 @@ export async function runOperatorLog(ctx: CommandContext): Promise<number> {
   }
 
   const { entries, malformed } = await collectOperatorLog(
-    ops.map((d) => ({ name: d.config.name, env: d.config.searchAttributes?.Env ?? "unknown" })),
+    ops.map((d) => ({ name: d.config.name, env: d.config.labels?.Env ?? "unknown" })),
     { op: ctx.args.op, since: ctx.args.since, limit: ctx.args.limit },
   );
 
@@ -450,16 +478,16 @@ export async function runOperatorLog(ctx: CommandContext): Promise<number> {
     return 0;
   }
 
-  const unreadable = malformed.converge + malformed.gates;
+  const unreadable = malformed.converge + malformed.gates + malformed.runs;
   if (unreadable > 0) {
     console.error(formatWarning({
       message: `${unreadable} ledger line(s) were unreadable and are missing from this timeline ` +
-        `(converge: ${malformed.converge}, gates: ${malformed.gates})`,
+        `(converge: ${malformed.converge}, gates: ${malformed.gates}, runs: ${malformed.runs})`,
     }));
   }
 
   if (entries.length === 0) {
-    console.error(formatWarning({ message: "No converge ticks recorded yet" }));
+    console.error(formatWarning({ message: "No converge ticks or Op runs recorded yet" }));
     return 0;
   }
 

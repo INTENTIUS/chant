@@ -36,7 +36,6 @@ import { spriteCreate, spriteCheckpoint, spriteExec, spriteDestroy }
 export default Op({
   name: "agent-task",
   overview: "Create a sprite, checkpoint, run the task, verify, destroy",
-  taskQueue: "sprites",
   phases: [
     phase("Create", [spriteCreate({ name: "task-1", image: "sprites/base:latest" })]),
     phase("Checkpoint", [spriteCheckpoint({ id: "task-1", label: "pre-run" })]),
@@ -63,7 +62,6 @@ import { spriteCreate, spriteCheckpoint, spriteExec, spriteDestroy, spriteRestor
 export default Op({
   name: "guarded-task",
   overview: "Checkpoint, run a risky step, restore on failure",
-  taskQueue: "sprites",
   phases: [
     phase("Create",     [spriteCreate({ name: "task-1" })]),
     phase("Checkpoint", [spriteCheckpoint({ id: "task-1", label: "pre-run" })]),

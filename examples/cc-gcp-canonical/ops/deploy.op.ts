@@ -12,7 +12,6 @@ import { Op, phase, build, gcpApply } from "@intentius/chant-lexicon-temporal";
 export default Op({
   name: "cc-gcp-deploy",
   overview: "GCP: the CC canonical estate → floci-gcp (direct REST apply), local, no account",
-  taskQueue: "cc-gcp",
   phases: [
     phase("Build", [build(".", { script: "build" })]),
     phase("Apply", [gcpApply("dist/gcp.yaml", { endpoint: "http://localhost:4588", project: "local-project" })]),

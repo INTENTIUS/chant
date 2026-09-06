@@ -34,7 +34,7 @@ chant operator --once
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--env <name>` | all | Scope discovery to ConvergeOps declaring this environment (`searchAttributes.Env`) |
+| `--env <name>` | all | Scope discovery to ConvergeOps declaring this environment (`labels.Env`) |
 | `--interval <duration>` | `60s` | How often the daemon runs a round. Accepts the same duration syntax as an activity profile timeout (`30s`, `5m`, `1h30m`) |
 | `--lease-ttl <duration>` | `5m` | How long an acquired lease is valid before another operator can reclaim it |
 | `--once` | off | Run a single round and exit, instead of looping. Exits non-zero if any op's tick failed this round. What a cron job, CI step, systemd timer, or Kubernetes CronJob should pass — the daemon form (`--once` omitted) is for a machine that stays up |

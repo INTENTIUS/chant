@@ -9,7 +9,6 @@ import { Op, phase, build, gcpApply, flociGcpUp, flociGcpDown, httpCheck } from 
 export default Op({
   name: "gcp",
   overview: "GCP: GCS bucket → floci-gcp (direct REST apply), local, no account",
-  taskQueue: "trio-gcp",
   phases: [
     phase("Emulator", [flociGcpUp()]),
     phase("Build", [build(".", { script: "build:gcp" })]),

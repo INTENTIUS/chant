@@ -15,7 +15,6 @@ import { Op, phase, activity, azGroupEnsure, build, azGroupDelete } from "@inten
 export default Op({
   name: "azure-deploy",
   overview: "az group ensure → build → arm deploy → group delete: a first-class Azure deploy",
-  taskQueue: "azure-deploy",
   phases: [
     phase("Group", [
       azGroupEnsure("chant-rg", { location: "eastus" }),
