@@ -4,7 +4,7 @@
  *
  * `chant dev check-lexicon` already gates "builds". What it does not cover is
  * the second half of `examples/scheduled-watch`: the Op there exists to be put
- * on a cron by something, and for a project with no Temporal that something is
+ * on a cron by something, and the something this example ships is
  * `generateOpsPipeline` against the github lexicon. So the emitted workflow is
  * asserted here, field by field, against the real generator and the real Op
  * discovery, rather than described in a README nothing checks.

@@ -7,9 +7,9 @@
 // Typed Op step-builder wrappers (chant #1288 Stage 2) — azApply/azDelete/
 // azGroupEnsure/azGroupDelete/flociAzUp/flociAzDown with authoring-time
 // types derived from this lexicon's own *Args interfaces (see
-// ./op/builders.ts's module doc for why these live here rather than in core
-// or the temporal barrel). Opt-in: `@intentius/chant-lexicon-temporal`'s
-// same-named exports are core's original untyped builders, unchanged.
+// ./op/builders.ts's module doc for why these live here rather than in
+// core). Opt-in: `@intentius/chant/op`'s same-named exports are core's
+// original untyped builders, unchanged.
 export { azApply, azDelete, azGroupEnsure, azGroupDelete, flociAzUp, flociAzDown } from "./op/builders";
 
 // --- Core ---

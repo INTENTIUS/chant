@@ -13,13 +13,13 @@
  * Every field also accepts a {@link StepOutputRef} in its place
  * ({@link WithStepRefs}, chant #1950).
  *
- * `core`'s own `helmInstall`/`helmInstallPinned` (in `@intentius/chant/op`,
- * re-exported from `@intentius/chant-lexicon-temporal`) are UNCHANGED and
- * produce byte-identical `ActivityStep` output for the same inputs — these
- * are purely additive. Deliberately not swapped into the temporal barrel
- * (see `lexicons/k8s/src/op/builders.ts`'s module doc for why: it would make
- * temporal depend on this package at runtime, undoing the product-agnostic
- * split #809 did). An author who wants the typed surface imports it from
+ * `core`'s own `helmInstall`/`helmInstallPinned` (in `@intentius/chant/op`)
+ * are UNCHANGED and produce byte-identical `ActivityStep` output for the same
+ * inputs — these are purely additive. Deliberately not swapped into core's
+ * barrel (see `lexicons/k8s/src/op/builders.ts`'s module doc for why: it
+ * would make core depend on this package at runtime, undoing the
+ * product-agnostic split #809 did). An author who wants the typed surface
+ * imports it from
  * here — `@intentius/chant-lexicon-helm` — which a project using
  * `helmInstall` already depends on.
  */

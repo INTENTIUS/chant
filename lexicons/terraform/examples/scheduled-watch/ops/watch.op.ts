@@ -7,16 +7,15 @@ import { TerraformWatchOp } from "@intentius/chant-lexicon-terraform";
  *
  * One-shot on the local executor: `chant run app-watch`. On a GitHub Actions
  * cron: `generateOpsPipeline` against the github lexicon, which turns this Op
- * plus its cron into a workflow file. On Temporal: the `schedule` exported
- * below.
+ * plus its cron into a workflow file.
  *
- * `schedule` is a `Temporal::Schedule`, exported so a project that runs
- * Temporal picks it up on `chant build`. A project that does not is the more
- * common case here, and for it the same cron reaches CI through
- * `generateOpsPipeline`. See `../../examples.test.ts` for the workflow that
- * produces, including the terraform install the runner needs.
+ * The cron lands on the Op itself as `schedule` (#2120) — runtime-neutral
+ * data. `chant operator` ticks on it, `generateOpsPipeline` renders it as the
+ * workflow's `on: schedule`, and a hosting lexicon hands it to its own
+ * scheduler. See `../../examples.test.ts` for the workflow that produces,
+ * including the terraform install the runner needs.
  */
-export const { op, schedule } = TerraformWatchOp({
+export const { op } = TerraformWatchOp({
   name: "app-watch",
   root: "app",
   schedule: "0 6 * * *",

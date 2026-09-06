@@ -29,12 +29,3 @@ export type {
   PruneScenario,
   IdempotenceScenario,
 } from "./apply-conformance";
-export { createMockTemporalClient } from "./mock-temporal-client";
-export type {
-  MockTemporalClientOptions,
-  MockTemporalClient,
-  MockWorkflowDescription,
-  MockHistoryEvent,
-  MockWorkflowSummary,
-  RecordedCalls,
-} from "./mock-temporal-client";

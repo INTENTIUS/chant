@@ -22,8 +22,8 @@
  *    `pull_request` trigger, whether that mode posts a comment) needs —
  *    `report` stays read-only, `issue`/`pull-request` add the write scope
  *    the Op's own activity uses (`gh issue create` / `gh pr create`, see
- *    `@intentius/chant-lexicon-temporal`'s `reconcilePr` activity) — never a
- *    blanket `write-all`;
+ *    `@intentius/chant/op`'s `reconcilePr` activity) — never a blanket
+ *    `write-all`;
  *  - runs exactly one invocation, `chant run <name>` by default — never
  *    inlined audit/reconcile logic. The finding-mode itself is already baked
  *    into the Op's own activity args at build time by the composite that

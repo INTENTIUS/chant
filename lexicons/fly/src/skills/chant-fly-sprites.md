@@ -1,5 +1,5 @@
 ---
-skill: chant-temporal-sprites
+skill: chant-fly-sprites
 description: Run an agent task in a Sprite as a chant Op — create, exec, checkpoint, restore, and destroy, with checkpoint-as-compensation
 user-invocable: true
 ---
@@ -29,7 +29,7 @@ The sprite `id` and the checkpoint `label` are static strings the Op author writ
 Compose the activities into an Op as phases:
 
 ```ts
-import { Op, phase } from "@intentius/chant-lexicon-temporal";
+import { Op, phase } from "@intentius/chant/op";
 import { spriteCreate, spriteCheckpoint, spriteExec, spriteDestroy }
   from "@intentius/chant-lexicon-fly";
 
@@ -55,7 +55,7 @@ The reason Sprites map onto chant Ops so well is rollback. A VM checkpoint is a 
 Put the `spriteRestore` in the Op's `onFailure`, referencing the same label the `Checkpoint` phase wrote:
 
 ```ts
-import { Op, phase } from "@intentius/chant-lexicon-temporal";
+import { Op, phase } from "@intentius/chant/op";
 import { spriteCreate, spriteCheckpoint, spriteExec, spriteDestroy, spriteRestore }
   from "@intentius/chant-lexicon-fly";
 

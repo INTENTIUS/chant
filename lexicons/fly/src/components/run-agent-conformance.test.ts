@@ -21,18 +21,15 @@
  *     the Op-level `onFailure` path `examples/sprites-agent-task` already
  *     demonstrates.
  *  2. **The durable-identity channel (#1944's scope addition, from #1949's
- *     review).** On the Temporal durable path, `run()` and `rollback()`
- *     execute as separate Activities, each rebuilding `input` fresh — the
- *     in-process `WeakMap` `run-agent`'s capability keeps never gets a hit
- *     there. `Capability.rollback` grew an optional third `output` parameter
- *     for exactly this (`../../../packages/core/src/components/capability.ts`),
+ *     review).** On a durable runtime, `run()` and `rollback()` execute as
+ *     separate steps, each rebuilding `input` fresh — the in-process
+ *     `WeakMap` `run-agent`'s capability keeps never gets a hit there.
+ *     `Capability.rollback` grew an optional third `output` parameter for
+ *     exactly this (`../../../packages/core/src/components/capability.ts`),
  *     and `run-agent`'s own rollback prefers it. This file proves the
- *     capability's own logic honors that channel — simulating the Activity
+ *     capability's own logic honors that channel — simulating the step
  *     boundary directly (a completely different `input` object at rollback
- *     time, no WeakMap hit possible) — while
- *     `lexicons/temporal/src/component-op/runtime.test.ts` proves the
- *     generated *codegen* actually threads it end to end through a real
- *     Temporal worker.
+ *     time, no WeakMap hit possible).
  *  3. **Attestation conformance, as a composition.** The
  *     `run-agent -> sign -> attest-provenance -> verify` chain, run through
  *     the driver (not called capability-by-capability, which `./run-agent.
@@ -175,13 +172,12 @@ describe("run-agent — saga-unwind restore through the component driver (#1944)
 });
 
 describe("run-agent — durable identity channel (#1944, scope addition from #1949's review)", () => {
-  test("rollback restores via output.spriteId/checkpointId even when called with a freshly-rebuilt input object (no WeakMap hit) — the Temporal Activity-boundary shape", async () => {
-    // On the Temporal durable path, rollbackCapabilityStep resolves its own
-    // fresh `resolvedInput` from JSON every call
-    // (lexicons/temporal/src/component-op/activities.ts) — never the same
-    // object run() was called with. This test reproduces that exact shape
-    // directly against the real capability, without needing a Temporal
-    // worker: build input, run(), then rollback() with a DIFFERENT (shallow-
+  test("rollback restores via output.spriteId/checkpointId even when called with a freshly-rebuilt input object (no WeakMap hit) — the durable step-boundary shape", async () => {
+    // On a durable runtime, a rollback step resolves its own fresh
+    // `resolvedInput` from JSON every call — never the same object run() was
+    // called with. This test reproduces that exact shape directly against the
+    // real capability, without needing a worker: build input, run(), then
+    // rollback() with a DIFFERENT (shallow-
     // cloned) input object, passing run()'s own output as the third
     // parameter — the durable identity channel.
     const capability = createFlyRunAgentCapability();

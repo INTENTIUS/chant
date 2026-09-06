@@ -11,10 +11,10 @@
  *
  * Turning this on for the first time immediately surfaced real, pre-existing
  * gaps this contract was never run against before — some are architecture
- * mismatches (forgejo/temporal don't fit the tier-1 bar's assumptions that
- * every lexicon has its own lint rules, LSP support, and example projects;
- * neither is a "cloud resource" lexicon in the sense the bar was written
- * for), others are real defects the new example-build check caught for the
+ * mismatches (forgejo doesn't fit the tier-1 bar's assumptions that every
+ * lexicon has its own lint rules, LSP support, and example projects; it is
+ * not a "cloud resource" lexicon in the sense the bar was written for),
+ * others are real defects the new example-build check caught for the
  * first time (github's composites use a lazy `require()` that doesn't run
  * under ESM; helm's per-composite demo files collide on generic destructured
  * names like `chart`/`values`; fly's only example is still the unfilled
@@ -43,11 +43,7 @@
  * manifest, a plugin.test.ts, docs, and an example project, and its lint
  * rules/LSP completions/hover wrap or delegate to github's rather than
  * forking them — see lexicons/forgejo/src/lint/rules/delegate-to-github.ts
- * and lexicons/forgejo/src/lsp/. Temporal now has a real source-level lint
- * rule (TMP020, alongside its existing TMP00x post-synth checks), LSP
- * completions/hover over its own 4-resource catalog, and an example project
- * — see lexicons/temporal/src/lint/rules/use-activity-profiles.ts and
- * lexicons/temporal/src/lsp/. Neither has an entry in KNOWN_FAILURES below
+ * and lexicons/forgejo/src/lsp/. It has no entry in KNOWN_FAILURES below
  * anymore.
  */
 

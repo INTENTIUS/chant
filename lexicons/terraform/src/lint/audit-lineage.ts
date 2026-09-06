@@ -80,7 +80,7 @@
  * block), never against a `delete: "never" | "owned-only" | "gated"`
  * classification, because choudoufu has no such classification — that
  * vocabulary is chant's own, shared across lexicons (`lexicons/k8s/src/op/
- * activities/kubectl.ts`'s `ApplyDeleteMode`, `lexicons/temporal/src/op/
+ * activities/kubectl.ts`'s `ApplyDeleteMode`, `packages/core/src/op/
  * activities/apply.ts`'s `DeleteMode`), applied here to a tool that does not
  * itself carry the concept. Ship with no lineage rather than invent a credit.
  */

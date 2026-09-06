@@ -122,7 +122,6 @@ mkdir -p "$PROJECT/node_modules/@intentius"
 ln -sfn "$ROOT/packages/core" "$PROJECT/node_modules/@intentius/chant"
 ln -sfn "$ROOT/lexicons/azure" "$PROJECT/node_modules/@intentius/chant-lexicon-azure"
 ln -sfn "$ROOT/lexicons/k8s" "$PROJECT/node_modules/@intentius/chant-lexicon-k8s"
-ln -sfn "$ROOT/lexicons/temporal" "$PROJECT/node_modules/@intentius/chant-lexicon-temporal"
 cd "$PROJECT"
 git init -q
 git config user.email cc-e2e@example.com

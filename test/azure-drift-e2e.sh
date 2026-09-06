@@ -86,7 +86,6 @@ PROJECT="$WORK/project"
 mkdir -p "$PROJECT/src" "$PROJECT/ops" "$PROJECT/node_modules/@intentius"
 ln -sfn "$ROOT/packages/core" "$PROJECT/node_modules/@intentius/chant"
 ln -sfn "$ROOT/lexicons/azure" "$PROJECT/node_modules/@intentius/chant-lexicon-azure"
-ln -sfn "$ROOT/lexicons/temporal" "$PROJECT/node_modules/@intentius/chant-lexicon-temporal"
 
 cat >"$PROJECT/package.json" <<'EOF'
 { "name": "azure-drift-e2e", "private": true, "type": "module" }
@@ -141,7 +140,8 @@ export const { virtualNetwork, subnet1, subnet2, nsg, routeTable } = VnetDefault
 EOF
 
 cat >"$PROJECT/ops/deploy.op.ts" <<EOF
-import { Op, phase, azApply } from "@intentius/chant-lexicon-temporal";
+import { Op, phase } from "@intentius/chant/op";
+import { azApply } from "@intentius/chant-lexicon-azure";
 
 // Apply only — the harness owns the emulator lifecycle, because restarting it
 // mid-run IS one of the drift conditions under test.

@@ -1,10 +1,10 @@
 // The deploy verb the on-open job runs: build the plan for the resolved env,
 // then apply it through flyApply (direct Machines API, waits each machine to
-// `started`). Runs on the local Op executor — no Temporal server. The
-// endpoint comes from the ambient FLY_FLAPS_BASE_URL the workflow sets, so
-// the same op targets real flaps by dropping that variable.
+// `started`). Runs on the local Op executor. The endpoint comes from the
+// ambient FLY_FLAPS_BASE_URL the workflow sets, so the same op targets real
+// flaps by dropping that variable.
 
-import { Op, phase, activity, build } from "@intentius/chant-lexicon-temporal";
+import { Op, phase, activity, build } from "@intentius/chant/op";
 import { params } from "@intentius/chant/params";
 
 export default Op({

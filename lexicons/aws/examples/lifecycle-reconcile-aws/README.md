@@ -12,14 +12,13 @@ workflow is identical for any declared stack. Ownership marking is on
 resources only.
 
 > **This is a real-cloud E2E.** The steps below create and destroy AWS
-> infrastructure and require credentials and a Temporal endpoint for the gated
-> apply. CI only builds the example (`npm run build`); it never deploys. Run the
-> live steps yourself per the repo's E2E policy.
+> infrastructure and require credentials. CI only builds the example
+> (`npm run build`); it never deploys. Run the live steps yourself per the
+> repo's E2E policy.
 
 ## Prerequisites
 
 - AWS credentials with CloudFormation + VPC permissions (`aws sts get-caller-identity` works)
-- For the gated apply (`ApplyOp`): a Temporal endpoint (e.g. `temporal server start-dev`)
 
 ## 1. Build & deploy
 
@@ -58,8 +57,8 @@ npm run reconcile      # chant run prod-reconcile  (ReconcileOp, owned-only)
 ```
 
 `ReconcileOp` runs one-shot on the local executor. Add a `schedule` (see
-`ops/reconcile.op.ts`) and run the generated worker to reconcile continuously on
-Temporal.
+`ops/reconcile.op.ts`) and `chant operator` — or a generated CI cron — ticks it
+continuously.
 
 ## 4b. Apply (code → cloud)
 
@@ -67,17 +66,22 @@ Push declared source to the cloud via native CloudFormation deploy, with an
 approval gate before any destructive change:
 
 ```bash
-npm run apply          # chant run prod-apply --temporal  (ApplyOp)
+npm run apply          # chant run prod-apply  (ApplyOp)
 ```
 
-Because `apply.op.ts` has an approval gate (`delete: "gated"`), it runs on the
-**Temporal** executor — the local executor rejects gates. That needs a Temporal
-profile in `chant.config.ts` (see [Local vs
-Temporal](https://intentius.dev/chant/guide/local-vs-temporal/)). The workflow
-blocks at the gate until you signal `approve-prod-apply`; only then does the
-apply proceed, and deletes ride the marker-scoped CloudFormation path so they
-only ever touch chant-owned orphans. Partial failures trigger a saga-style
-rollback.
+`apply.op.ts` has an approval gate (`delete: "gated"`), and a gate is a fact
+rather than a wait. The first run reads chant's gate ledger, finds no
+resolution, records the gate as pending and ends with exit 3 — nothing is held
+open. Record the answer and run it again:
+
+```bash
+chant approve prod-apply approve-prod-apply --approver you
+npm run apply
+```
+
+The second run walks through the gate carrying the approver and applies.
+Deletes ride the marker-scoped CloudFormation path, so they only ever touch
+chant-owned orphans. Partial failures trigger a saga-style rollback.
 
 ## 5. Tear down
 

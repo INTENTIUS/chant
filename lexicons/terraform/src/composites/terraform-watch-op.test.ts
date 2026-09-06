@@ -223,39 +223,21 @@ describe("TerraformWatchOp on a live root (#2105)", () => {
   });
 });
 
-describe("TerraformWatchOp schedule (#2087)", () => {
-  test("omitting `schedule` returns no schedule", () => {
-    const result = TerraformWatchOp({ name: "app-watch", root: "app" });
-    expect(result.schedule).toBeUndefined();
-    expect(Object.prototype.hasOwnProperty.call(result, "schedule")).toBe(false);
+describe("TerraformWatchOp schedule (#2087, #2120)", () => {
+  test("omitting `schedule` leaves the Op with no cadence", () => {
+    const { op } = TerraformWatchOp({ name: "app-watch", root: "app" });
+    expect((op as unknown as { props: OpConfig }).props).not.toHaveProperty("schedule");
   });
 
-  test("a cron returns a Temporal::Schedule beside the Op", () => {
-    const { op, schedule } = TerraformWatchOp({
+  test("a cron lands on the Op itself", () => {
+    const { op } = TerraformWatchOp({
       name: "app-watch",
       root: "app",
       schedule: "0 6 * * *",
     });
-    expect(schedule).toBeDefined();
-    expect(schedule!.entityType).toBe("Temporal::Schedule");
-    expect(schedule!.lexicon).toBe("temporal");
-    expect((schedule as unknown as { props: Record<string, unknown> }).props).toEqual({
-      scheduleId: "app-watch-schedule",
-      spec: { cronExpressions: ["0 6 * * *"] },
-      action: { workflowType: "appWatchWorkflow", taskQueue: "app-watch" },
+    expect((op as unknown as { props: OpConfig }).props.schedule).toEqual({
+      cron: "0 6 * * *",
+      overlap: "skip",
     });
-    expect((op as unknown as { props: OpConfig }).props).not.toHaveProperty("taskQueue");
-  });
-
-  test("an explicit taskQueue reaches the schedule action", () => {
-    const { schedule } = TerraformWatchOp({
-      name: "app-watch",
-      root: "app",
-      schedule: "0 6 * * *",
-      taskQueue: "infra",
-    });
-    expect(
-      ((schedule as unknown as { props: { action: { taskQueue: string } } }).props.action).taskQueue,
-    ).toBe("infra");
   });
 });

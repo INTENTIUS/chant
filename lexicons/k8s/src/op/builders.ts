@@ -18,20 +18,19 @@
  * earlier step's declared output.
  *
  * `core`'s own `kubectlApply`/`waitForReady`/`ensureSecret` (in
- * `@intentius/chant/op`, re-exported from `@intentius/chant-lexicon-temporal`
- * for lexicon-agnostic single-import convenience) are UNCHANGED and produce
- * byte-identical `ActivityStep` output for the same inputs — these are purely
- * additive. Deliberately not swapped into the temporal barrel: that would
- * make `@intentius/chant-lexicon-temporal` depend on this package (and on
+ * `@intentius/chant/op`, the lexicon-agnostic single-import barrel) are
+ * UNCHANGED and produce byte-identical `ActivityStep` output for the same
+ * inputs — these are purely additive. Deliberately not swapped into core's
+ * barrel: that would make `@intentius/chant` depend on this package (and on
  * helm, for `helmInstall`) at runtime, which is exactly the "a worker image
- * needs no kubectl binary" / "temporal stays product-agnostic" property the
+ * needs no kubectl binary" / "core stays product-agnostic" property the
  * `op/activities/index.ts` module docs across this repo call out on purpose
- * (activities were moved OUT of temporal into per-product lexicons for this
- * reason; the step-builder layer shouldn't reintroduce the coupling from the
- * other direction). An author who wants the typed surface imports it from
- * here — `@intentius/chant-lexicon-k8s` — which a project using `kubectlApply`
- * already depends on; existing `@intentius/chant-lexicon-temporal` imports
- * keep working exactly as before, opting in only if the import is changed.
+ * (activities live in per-product lexicons for this reason; the step-builder
+ * layer shouldn't reintroduce the coupling from the other direction). An
+ * author who wants the typed surface imports it from here —
+ * `@intentius/chant-lexicon-k8s` — which a project using `kubectlApply`
+ * already depends on; existing `@intentius/chant/op` imports keep working
+ * exactly as before, opting in only if the import is changed.
  */
 
 import {

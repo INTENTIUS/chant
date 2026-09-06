@@ -16,15 +16,15 @@
  * (lease fencing, `chant operator status`, durable gate-as-fact semantics).
  * `OperatorStack`'s container command is deliberately `chant run <name>`,
  * the one-shot local tick `ConvergeOp` (#1484) already ships and tests
- * against (`lexicons/temporal/src/composites/converge-op.ts`'s own doc:
+ * against (`packages/core/src/op/composites/converge-op.ts`'s own doc:
  * "one-shot runnable locally for a single tick"). When #1485 lands, a
  * caller can override `command` to shell out to `chant operator tick`
  * instead — this composite doesn't need to change for that; only the
  * command a caller passes does.
  *
  * `concurrencyPolicy: "Forbid"` is the k8s-native analogue of
- * `ConvergeOp`'s own Temporal schedule `overlap: "Skip"` policy — never
- * queue a second tick behind one still running.
+ * `ConvergeOp`'s own `schedule.overlap: "skip"` policy — never queue a
+ * second tick behind one still running.
  *
  * ## RBAC derivation
  *
@@ -61,11 +61,11 @@
  *
  * ## Layering
  *
- * `lexicons/k8s` has no workspace dependency on `lexicons/temporal` (nor
- * the reverse — see both packages' `package.json`), so this module doesn't
- * import `ConvergeOpConfig`/`ConvergeRule` types. `OperatorStackConvergeHost`
- * restates the handful of `ConvergeOp` fields this composite actually needs
- * (`name`, `schedule`, `env`, `dial`) structurally; `dispatchTargets` takes
+ * `OperatorStackConvergeHost` restates the handful of `ConvergeOp` fields
+ * this composite actually needs (`name`, `schedule`, `env`, `dial`)
+ * structurally rather than importing `ConvergeOpConfig`: the CronJob is
+ * built from a host description, not from an Op config, and a caller that
+ * has neither should still be able to describe one. `dispatchTargets` takes
  * plain `OpConfig`-shaped values from `@intentius/chant/op` (a dependency
  * this lexicon already has via the `@intentius/chant` peer dependency),
  * the same type `classifyOpVerbClass` itself takes.
@@ -80,7 +80,7 @@ import { Namespace, CronJob, ServiceAccount, Role, RoleBinding } from "../genera
 
 /**
  * Mirrors `ConvergeOp`'s own `ConvergeDial`
- * (`lexicons/temporal/src/composites/converge-op.ts`) structurally — see
+ * (`packages/core/src/op/composites/converge-op.ts`) structurally — see
  * this module's Layering doc for why it's restated rather than imported.
  */
 export type OperatorDial = "observe" | "reconcile" | "apply";
@@ -183,7 +183,7 @@ function rbacVerbsFor(verbClass: OpVerbClass): string[] {
 /**
  * Whether `dial` ever actually free-runs a dispatch classified `verbClass` —
  * restates `convergeTick`'s own `verbClassAllowedToDispatch`
- * (`lexicons/temporal/src/op/activities/converge.ts`) so the RBAC ceiling
+ * (`packages/core/src/op/activities/converge.ts`) so the RBAC ceiling
  * this composite grants matches the ceiling the tick itself enforces at
  * runtime, without importing across the lexicon boundary (see this module's
  * Layering doc).

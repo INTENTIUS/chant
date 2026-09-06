@@ -27,7 +27,7 @@ import type { ChantConfig } from "@intentius/chant/config";
 
 /**
  * chant's cross-lexicon delete-mode vocabulary (`lexicons/k8s/src/op/
- * activities/kubectl.ts`'s `ApplyDeleteMode`, `lexicons/temporal/src/op/
+ * activities/kubectl.ts`'s `ApplyDeleteMode`, `packages/core/src/op/
  * activities/apply.ts`'s `DeleteMode`), read here for a live root and mapped
  * onto choudoufu's `policy` block (#2106): `"never"` requires the root's
  * `policy` to set `undeclared_tagged` to `"keep"`, `"untag"` or `"report"`

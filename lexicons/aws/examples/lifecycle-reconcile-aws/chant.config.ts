@@ -6,7 +6,7 @@ import type { ChantConfig } from "@intentius/chant";
 // scope deletes to chant-owned resources only — a foreign resource is never
 // auto-deleted.
 export default {
-  lexicons: ["aws", "temporal"],
+  lexicons: ["aws"],
   environments: ["prod"],
   ownership: { stack: "lifecycle-reconcile-aws", env: "prod" },
 } satisfies ChantConfig;

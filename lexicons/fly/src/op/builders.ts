@@ -16,7 +16,7 @@
  * `helmInstall`): this package already owns both the activities and (per
  * `./composites/fly-deploy.ts`'s existing `flapsUp`/`flapsDown`/
  * `flyApplyStep` precedent, #744) the step-builder layer. So — matching how
- * `lexicons/temporal/src/op/builders.ts` handles ITS OWN activities — this
+ * `packages/core/src/op/builders.ts` handles ITS OWN activities — this
  * module REPLACES (not adds alongside) the sprite builders this package's
  * `src/index.ts` used to re-export from `@intentius/chant/op`: same names,
  * same import path (`@intentius/chant-lexicon-fly`), so an existing

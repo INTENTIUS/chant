@@ -1,4 +1,4 @@
-import { LexiconUpgradeOp } from "@intentius/chant-lexicon-temporal";
+import { LexiconUpgradeOp } from "@intentius/chant/op";
 
 /**
  * aws lexicon upgrade Op (epic #523 / #527).

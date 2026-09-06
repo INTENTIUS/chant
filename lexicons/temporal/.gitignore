@@ -1,5 +1,0 @@
-dist/
-node_modules/
-# Transient files written by the op test harnesses (#161 runtime, #162 compile-smoke)
-src/op/__generated__/
-src/op/__compile__/

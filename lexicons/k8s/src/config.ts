@@ -40,8 +40,8 @@
  *   and the missing binding.
  *
  * `ChantConfig` uses `.passthrough()` in its Zod schema so the `k8s` key is
- * accepted at runtime without core changes, exactly like `temporal.profiles`
- * (see `lexicons/temporal/src/config.ts`). The type side is the declaration
+ * accepted at runtime without core changes, exactly like the `terraform` key
+ * (see `lexicons/terraform/src/config.ts`). The type side is the declaration
  * merge at the bottom of this file — without it the snippet above compiles
  * only until someone adds `satisfies ChantConfig`, which every example
  * project does and which is the only thing type-checking the rest of the
