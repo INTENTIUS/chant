@@ -15,6 +15,7 @@
  *     plus a second `live-plan` for the human render (#2103).
  *   - choudoufuLiveLs: `live-ls -estate=<estate> -json [-consistent]` (#2103).
  *   - choudoufuLiveCheck: `live-check -json`, no cloud calls (#2103).
+ *   - choudoufuAdopt: the tag writes that claim an adoption ledger's matches (#2105).
  *
  * The module is dependency-light on purpose: it shells out to the configured
  * binary and reads the `terraform` config namespace, and never touches the
@@ -30,6 +31,7 @@ export {
   choudoufuLivePlan,
   choudoufuLiveLs,
   choudoufuLiveCheck,
+  choudoufuAdopt,
   terraformInitCommand,
   terraformPlanCommand,
   terraformApplyCommand,
@@ -61,6 +63,7 @@ export type {
   ChoudoufuLivePlanArgs,
   ChoudoufuLiveLsArgs,
   ChoudoufuLiveCheckArgs,
+  ChoudoufuAdoptArgs,
   TerraformInitResult,
   TerraformPlanResult,
   TerraformApplyResult,
@@ -68,6 +71,8 @@ export type {
   ChoudoufuLivePlanResult,
   ChoudoufuLiveLsResult,
   ChoudoufuLiveCheckResult,
+  ChoudoufuAdoptResult,
+  AdoptionRefusal,
   PlanChangeCounts,
   LivePlanUnownedCounts,
 } from "./terraform";

@@ -14,6 +14,7 @@ import {
   choudoufuLivePlan,
   choudoufuLiveLs,
   choudoufuLiveCheck,
+  choudoufuAdopt,
   choudoufuLiveApplyCommand,
   choudoufuLivePlanCommand,
   choudoufuLiveLsCommand,
@@ -136,6 +137,18 @@ describe("choudoufuLivePlanCommand (#2103)", () => {
     expect(choudoufuLivePlanCommand({ binary: "choudoufu", estate: "has space", json: true })).toContain(
       "-estate='has space'",
     );
+  });
+
+  test("-adoption-only and -no-color ride the human form (#2105)", () => {
+    expect(
+      choudoufuLivePlanCommand({ binary: "choudoufu", estate: "prod", json: false, adoptionOnly: true, noColor: true }),
+    ).toBe("choudoufu live-plan -detailed-exitcode -adoption-only -no-color -estate=prod");
+  });
+
+  test("-adoption-only with -json is refused here, as choudoufu refuses it (#2105)", () => {
+    expect(() =>
+      choudoufuLivePlanCommand({ binary: "choudoufu", estate: "prod", json: true, adoptionOnly: true }),
+    ).toThrow(/cannot be combined/);
   });
 });
 
@@ -279,7 +292,7 @@ describe("choudoufuLivePlan (#2103)", () => {
   test("exit 0: no drift, the document is captured and written, the human plan comes from a second call", async () => {
     const dir = liveProject();
     replies.push({ match: "live-plan -detailed-exitcode -json", reply: { stdout: DOC, stderr: "" } });
-    replies.push({ match: "live-plan -detailed-exitcode -estate", reply: { stdout: "No changes.\n", stderr: "" } });
+    replies.push({ match: "live-plan -detailed-exitcode -no-color -estate", reply: { stdout: "No changes.\n", stderr: "" } });
 
     const result = await choudoufuLivePlan({ root: "estate", cwd: dir });
     expect(result.drift).toBe(false);
@@ -295,14 +308,14 @@ describe("choudoufuLivePlan (#2103)", () => {
 
     expect(commandsRun()).toEqual([
       "choudoufu live-plan -detailed-exitcode -json -estate=prod-networking",
-      "choudoufu live-plan -detailed-exitcode -estate=prod-networking",
+      "choudoufu live-plan -detailed-exitcode -no-color -estate=prod-networking",
     ]);
   });
 
   test("exit 2: drift, and the document is still captured", async () => {
     const dir = liveProject();
     replies.push({ match: "live-plan -detailed-exitcode -json", reply: execError(2, "", DOC) });
-    replies.push({ match: "live-plan -detailed-exitcode -estate", reply: { stdout: "Plan: 1 to add.\n", stderr: "" } });
+    replies.push({ match: "live-plan -detailed-exitcode -no-color -estate", reply: { stdout: "Plan: 1 to add.\n", stderr: "" } });
 
     const result = await choudoufuLivePlan({ root: "estate", cwd: dir });
     expect(result.drift).toBe(true);
@@ -320,7 +333,7 @@ describe("choudoufuLivePlan (#2103)", () => {
   test("an explicit estate overrides auto-detection", async () => {
     const dir = liveProject();
     replies.push({ match: "live-plan -detailed-exitcode -json", reply: { stdout: DOC, stderr: "" } });
-    replies.push({ match: "live-plan -detailed-exitcode -estate", reply: { stdout: "", stderr: "" } });
+    replies.push({ match: "live-plan -detailed-exitcode -no-color -estate", reply: { stdout: "", stderr: "" } });
     await choudoufuLivePlan({ root: "estate", cwd: dir, estate: "other-estate" });
     expect(commandsRun()[0]).toContain("-estate=other-estate");
   });
@@ -329,6 +342,169 @@ describe("choudoufuLivePlan (#2103)", () => {
     const dir = liveProject({ withLiveBlock: false });
     await expect(choudoufuLivePlan({ root: "estate", cwd: dir })).rejects.toThrow(/no estate to run against/);
     expect(commandsRun()).toHaveLength(0);
+  });
+});
+
+// ── choudoufuLivePlan's adoption ledger (#2105) ──────────────────────────────
+
+describe("choudoufuLivePlan adoption ledger (#2105)", () => {
+  const ADOPTABLE = JSON.stringify({
+    estate: "prod-networking",
+    bound: [{ addr: "aws_subnet.app", identity: "subnet-99" }],
+    omissions: [],
+    unowned: [
+      {
+        addr: "aws_vpc.main",
+        type: "aws_vpc",
+        identity: "vpc-0abc",
+        adopt_tofu_estate: "prod-networking",
+        adopt_tofu_address: "aws_vpc.main",
+      },
+    ],
+  });
+
+  const LEDGER_RENDER = [
+    "Adoptable now: 1 resource instance",
+    "",
+    "  aws_vpc.main <- aws_vpc vpc-0abc",
+    "      adopt with: aws ec2 create-tags --resources 'vpc-0abc' --tags 'Key=tofu-estate,Value=prod-networking'",
+    "      or write: tofu-estate=prod-networking tofu-address=aws_vpc.main",
+    "",
+  ].join("\n");
+
+  test("every run projects the document into a ledger, adoptions and contested", async () => {
+    const dir = liveProject();
+    replies.push({ match: "live-plan -detailed-exitcode -json", reply: { stdout: ADOPTABLE, stderr: "" } });
+    replies.push({
+      match: "live-plan -detailed-exitcode -no-color -estate",
+      reply: { stdout: "Plan: 1 to add.\n", stderr: "" },
+    });
+
+    const result = await choudoufuLivePlan({ root: "estate", cwd: dir });
+    expect(result.adoptions.map((c) => c.addr)).toEqual(["aws_vpc.main"]);
+    expect(result.contested).toEqual([]);
+    expect(result.ambiguous).toBe(0);
+    expect(result.ledger).toContain(
+      "  aws_vpc.main <- aws_vpc vpc-0abc  write: tofu-estate=prod-networking tofu-address=aws_vpc.main",
+    );
+  });
+
+  test("`finding` is the plan text and then the ledger, and carries no JSON", async () => {
+    const dir = liveProject();
+    replies.push({ match: "live-plan -detailed-exitcode -json", reply: { stdout: ADOPTABLE, stderr: "" } });
+    replies.push({
+      match: "live-plan -detailed-exitcode -no-color -estate",
+      reply: { stdout: "Plan: 1 to add.\n", stderr: "" },
+    });
+
+    const result = await choudoufuLivePlan({ root: "estate", cwd: dir });
+    expect(result.finding.startsWith("Plan: 1 to add.")).toBe(true);
+    expect(result.finding).toContain("Adoptable now: 1 live resource");
+    // The document's bound section names a resource the ledger has no reason
+    // to mention; if any of the JSON leaked into `finding`, this is where.
+    expect(result.finding).not.toContain("subnet-99");
+    expect(result.finding).not.toContain("adopt_tofu_address");
+  });
+
+  test("adoptionOnly renders the human half as choudoufu's ledger and reads its commands", async () => {
+    const dir = liveProject();
+    replies.push({ match: "live-plan -detailed-exitcode -json", reply: { stdout: ADOPTABLE, stderr: "" } });
+    replies.push({ match: "-adoption-only", reply: { stdout: LEDGER_RENDER, stderr: "" } });
+
+    const result = await choudoufuLivePlan({ root: "estate", cwd: dir, adoptionOnly: true });
+    expect(commandsRun()).toEqual([
+      "choudoufu live-plan -detailed-exitcode -json -estate=prod-networking",
+      "choudoufu live-plan -detailed-exitcode -adoption-only -no-color -estate=prod-networking",
+    ]);
+    expect(result.adoptions[0].command).toBe(
+      "aws ec2 create-tags --resources 'vpc-0abc' --tags 'Key=tofu-estate,Value=prod-networking'",
+    );
+  });
+
+  test("without adoptionOnly a candidate carries the marker values and no command", async () => {
+    const dir = liveProject();
+    replies.push({ match: "live-plan -detailed-exitcode -json", reply: { stdout: ADOPTABLE, stderr: "" } });
+    replies.push({ match: "live-plan -detailed-exitcode -no-color -estate", reply: { stdout: "", stderr: "" } });
+
+    const result = await choudoufuLivePlan({ root: "estate", cwd: dir });
+    expect(result.adoptions[0].command).toBeUndefined();
+    expect(result.adoptions[0].markerAddress).toBe("aws_vpc.main");
+  });
+});
+
+// ── choudoufuAdopt (#2105) ───────────────────────────────────────────────────
+
+describe("choudoufuAdopt (#2105)", () => {
+  const candidate = (addr: string, identity: string, command?: string) => ({
+    addr,
+    type: "aws_vpc",
+    identity,
+    markerEstate: "prod-networking",
+    markerAddress: addr,
+    ...(command ? { command } : {}),
+  });
+
+  test("runs each candidate's own tagging command, in the root directory", async () => {
+    const dir = liveProject();
+    const result = await choudoufuAdopt({
+      root: "estate",
+      cwd: dir,
+      adoptions: [
+        candidate("aws_vpc.main", "vpc-0abc", "aws ec2 create-tags --resources 'vpc-0abc'"),
+        candidate("aws_subnet.app", "subnet-01", "aws ec2 create-tags --resources 'subnet-01'"),
+      ],
+    });
+    expect(result.mechanism).toBe("tag-write");
+    expect(result.adopted).toEqual(["aws_vpc.main", "aws_subnet.app"]);
+    expect(result.adoptedCount).toBe(2);
+    expect(commandsRun()).toEqual([
+      "aws ec2 create-tags --resources 'vpc-0abc'",
+      "aws ec2 create-tags --resources 'subnet-01'",
+    ]);
+    expect(
+      execCalls.filter((c) => c.cmd !== "choudoufu version").every((c) => c.opts.cwd === resolve(dir, "estate")),
+    ).toBe(true);
+  });
+
+  test("a candidate with no printed command is refused, naming both marker values", async () => {
+    const dir = liveProject();
+    const result = await choudoufuAdopt({
+      root: "estate",
+      cwd: dir,
+      adoptions: [candidate("aws_iam_role.app", "app-role")],
+    });
+    expect(result.adopted).toEqual([]);
+    expect(result.refused).toHaveLength(1);
+    expect(result.refused[0].reason).toContain("tofu-estate=prod-networking");
+    expect(result.refused[0].reason).toContain("tofu-address=aws_iam_role.app");
+    expect(commandsRun()).toEqual([]);
+  });
+
+  test("a contested candidate is reported and never written", async () => {
+    const dir = liveProject();
+    const result = await choudoufuAdopt({
+      root: "estate",
+      cwd: dir,
+      adoptions: [],
+      contested: [
+        candidate("aws_vpc.main", "vpc-0abc", "aws ec2 create-tags --resources 'vpc-0abc'"),
+        candidate("aws_vpc.main", "vpc-0def", "aws ec2 create-tags --resources 'vpc-0def'"),
+      ],
+    });
+    expect(result.adopted).toEqual([]);
+    expect(result.ambiguous).toBe(1);
+    expect(result.refused.map((r) => r.identity)).toEqual(["vpc-0abc", "vpc-0def"]);
+    expect(result.refused[0].reason).toContain("more than one live resource");
+    // A contested candidate carries a command; running it anyway is the whole
+    // thing this refuses to do.
+    expect(commandsRun()).toEqual([]);
+  });
+
+  test("nothing to adopt runs nothing and fails nothing", async () => {
+    const dir = liveProject();
+    const result = await choudoufuAdopt({ root: "estate", cwd: dir, adoptions: [] });
+    expect(result).toMatchObject({ adopted: [], adoptedCount: 0, refused: [], ambiguous: 0 });
+    expect(commandsRun()).toEqual([]);
   });
 });
 
