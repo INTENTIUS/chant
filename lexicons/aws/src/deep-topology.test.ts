@@ -360,7 +360,7 @@ describe("the fold answers (#1269)", () => {
     ]);
   });
 
-  test("an out-of-band MapPublicIpOnLaunch flip reports; the service default does not", async () => {
+  test("an out-of-band MapPublicIpOnLaunch flip reports as held elsewhere; the service default does not", async () => {
     const subnetRow = (mapPublic: boolean) => ({
       Subnets: [{ SubnetId: "subnet-01", VpcId: "vpc-01", CidrBlock: "10.0.1.0/24", MapPublicIpOnLaunch: mapPublic }],
     });
@@ -381,11 +381,15 @@ describe("the fold answers (#1269)", () => {
 
     ec2Describes({ "describe-subnets": subnetRow(true) });
     const diff = diffDeepObservation(declared, await observe(), awsDeepNormalizationHooks);
-    expect(diff.drifted).toEqual([
+    // Source never set MapPublicIpOnLaunch, so the flip is somebody else's
+    // (#2160): reported with its value, not counted as drift, and never
+    // proposed for an update.
+    expect(diff.drifted).toEqual([]);
+    expect(diff.heldElsewhere).toEqual([
       {
         name: "PublicSubnet",
         type: "AWS::EC2::Subnet",
-        changes: [{ path: "MapPublicIpOnLaunch", kind: "undeclared", live: true }],
+        fields: [{ path: "MapPublicIpOnLaunch", live: true, source: "claimed-fields" }],
       },
     ]);
   });
