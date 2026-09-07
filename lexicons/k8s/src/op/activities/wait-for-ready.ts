@@ -6,8 +6,8 @@ import { defaultK8sConnector, type K8sConnector } from "../../api/connect";
  * ready, driven by a data-only **readiness spec** rather than per-CRD code.
  *
  * Like `waitForArgoSync`, this activity is intentionally **dependency-light**:
- * its signature is primitives + a plain readiness spec, so a Temporal worker
- * loads it without importing the generated CRD declarable surface. It reads the
+ * its signature is primitives + a plain readiness spec, so the activity module
+ * loads without pulling in the generated CRD declarable surface. It reads the
  * resource and evaluates the spec's predicates. It generalizes the bespoke
  * `waitForArgoSync` / `waitForStack` waits — see #365.
  *
@@ -271,7 +271,7 @@ export interface WaitForReadyArgs {
   group?: string;
   /** Explicit readiness spec — wins over the registry/default. */
   spec?: ReadinessSpec;
-  /** Poll interval in ms (default 15000). Heartbeats every poll. */
+  /** Poll interval in ms (default 15000). */
   intervalMs?: number;
 }
 
@@ -335,8 +335,9 @@ export const defaultResourceFetcher: ResourceFetcher = (args, signal) => apiReso
 
 /**
  * Poll until the resource satisfies its readiness spec. Throws
- * `ReadinessFailedError` on a terminal state. Heartbeats every poll so the
- * `k8sWait` profile's 60s heartbeat timeout never trips.
+ * `ReadinessFailedError` on a terminal state, which the `k8sWait` profile lists
+ * as non-retryable, so a resource that will never become ready fails on the
+ * first attempt instead of burning the profile's 15m timeout three times.
  *
  * @param fetcher injectable reader (defaults to kubectl). Tests pass a fake to
  *   drive not-ready → ready / terminal transitions.

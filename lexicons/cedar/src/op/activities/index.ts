@@ -10,8 +10,8 @@
  * being registered as activities nobody would ever name in a step.
  *
  * Contributed the `flyApply` way: a plain async function taking one args
- * object, with no Temporal import anywhere beneath it, so the local executor
- * runs it unchanged and a Temporal worker registers the same function.
+ * object, depending on no runtime beyond node, so the local executor
+ * (`packages/core/src/op/local-executor.ts`) calls it directly.
  */
 
 export { dogwoodReplay, dogwoodReplayReport } from "../../dogwood/replay-activity";

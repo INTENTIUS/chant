@@ -137,8 +137,9 @@ async function resolveConnection(args: K3dUpArgs, signal?: AbortSignal): Promise
 
 /**
  * Create a local k3d cluster (vanilla Kubernetes in Docker). Idempotent: if a
- * cluster of the same name already exists it is left as-is. Uses longInfra
- * profile — 20m timeout, heartbeat every 15s (creation may pull the k3s image).
+ * cluster of the same name already exists it is left as-is. Uses the longInfra
+ * profile: a 20m timeout, wide enough that creation can pull the k3s image, and
+ * three attempts backing off from 30s.
  *
  * Unlike the upstream CLI, this does NOT touch the caller's default kubeconfig
  * or current context unless asked (see {@link K3dUpArgs.updateDefaultKubeconfig}).

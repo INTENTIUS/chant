@@ -4,10 +4,11 @@
  * The Op counterpart to `./generate-pipeline.ts` (#891): that module
  * synthesizes a `workflow_dispatch`-triggered pipeline from a deploy-time
  * component graph, this one synthesizes a cron-triggered workflow per
- * stateless Op — the CI-native alternative to a Temporal `TemporalSchedule`
- * for downstream projects that don't run Temporal (`WorkflowAuditOp`,
- * `PipelineAuditOp`, `ReconcileOp`, … all accept an optional `schedule`
- * precisely for this).
+ * stateless Op. An Op's cadence is an `OpSchedule` on the Op itself
+ * (`packages/core/src/op/types.ts`), runtime-neutral data each reader
+ * interprets; this module is the reader that turns it into a cron a GitHub
+ * runner fires (`WorkflowAuditOp`, `PipelineAuditOp`, `ReconcileOp`, … all
+ * accept an optional `schedule` precisely for this).
  *
  * GitHub Actions' `on.schedule` is workflow-scoped, not job-scoped, so unlike
  * the component generator (one combined pipeline for the whole graph) this

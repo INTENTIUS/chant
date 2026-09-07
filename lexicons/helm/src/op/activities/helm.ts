@@ -394,7 +394,7 @@ async function recordHelmRelease(
  * finished deploy into a failed activity — the record is observability, not
  * part of the deploy itself.
  *
- * Uses longInfra profile — 20m timeout, heartbeat every 15s.
+ * Uses the longInfra profile: 20m timeout, three attempts backing off from 30s.
  */
 export async function helmInstall(
   args: HelmInstallArgs,

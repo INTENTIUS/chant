@@ -14,7 +14,7 @@ The teammate's thread is that environment's operational history. Each turn is on
 
 ## The mesh
 
-chant needs six things from a place to run ops. fountain already has a noun for each:
+chant needs seven things from a place to run ops. fountain already has a noun for each:
 
 | chant need | fountain noun |
 |---|---|
@@ -104,6 +104,6 @@ The composite refuses three things at construction, so the failure arrives while
 
 ## What `chant build` emits
 
-All six kinds, in dependency order: Environment, Vault, Agent, Teammate, Schedule, Webhook. `fountainApply` sends the first three through fountain's bulk `POST /api/apply` and the other three through their own routes afterwards, matched by name and by url, so a second apply of an unchanged manifest makes no writes.
+All six kinds, in dependency order: Environment, Vault, Agent, Teammate, Schedule, Webhook. `fountainApply` sends the first three through fountain's bulk `POST /api/apply` and the other three through their own routes afterwards, matched by name and by url. Bulk apply reports each resource as `created` or `updated` and nothing else, so an Environment that changed in no way still comes back `updated`. The per-route reconcilers read what is live and compare before they write, so a second apply of an unchanged manifest makes no Teammate, Schedule or Webhook writes.
 
 See [Composites](/chant/lexicons/fountain/composites/) for the constructor's full option list, [Runtime](/chant/lexicons/fountain/runtime/) for running an op on the steward, and [ACP](/chant/lexicons/fountain/acp/) for what the sandbox is actually speaking.

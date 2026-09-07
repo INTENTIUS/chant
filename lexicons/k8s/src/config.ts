@@ -2,8 +2,8 @@
  * K8s environment → cluster binding — chant #1100.
  *
  * Every cloud lexicon binds an environment to a scope: AWS resolves `<env>`
- * to a CloudFormation stack, Azure treats `<env>` as the resource group,
- * Temporal looks up `temporal.profiles.<env>`. Before this, k8s bound
+ * to a CloudFormation stack, Azure treats `<env>` as the resource group.
+ * Before this, k8s bound
  * nothing — `describeResources` shelled out to `kubectl get` with no
  * `--context`, so `chant lifecycle diff prod --live` read whichever cluster
  * `kubectl config current-context` happened to point at.

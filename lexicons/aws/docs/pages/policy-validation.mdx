@@ -53,7 +53,7 @@ export default Op({
     // (`chant build src --lexicon aws -o template.json`).
     phase("Build", [build(".")]),
     // Runs `cfn-guard validate -r rules.guard -d template.json`.
-    // A violation fails the workflow here, so nothing is applied.
+    // A violation fails the run here, so nothing is applied.
     phase("Policy", [guardValidate("rules.guard")]),
     phase("Apply", [awsApply("template.json", { stackName: "prod" })]),
   ],

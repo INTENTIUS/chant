@@ -75,8 +75,10 @@ chant run <apply op>             # or call fountainApply directly
 
 `fountainApply` sends Environment, Vault and Agent through fountain's bulk
 `POST /api/apply`, then Teammate, Schedule and Webhook through their own routes,
-matched by name and by url. A second apply of an unchanged manifest writes
-nothing.
+matched by name and by url. Bulk apply reports each resource as `created` or
+`updated` and nothing else, so it never says a resource was already right. The
+per-route reconcilers compare live state before they write, so a second apply of
+an unchanged manifest makes no Teammate, Schedule or Webhook writes.
 
 Endpoint and token come from `fountain.profiles` in `chant.config.ts`, falling
 back to `FOUNTAIN_ENDPOINT` / `FOUNTAIN_TOKEN`. A profile's `token` is always

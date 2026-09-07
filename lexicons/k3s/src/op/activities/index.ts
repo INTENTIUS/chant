@@ -11,11 +11,12 @@
  * as a value — only `tokenFile`, a path — see the token-boundary note on
  * {@link k3sInstall} in ./k3s.
  *
- * The step builders (k3sInstall, k3sUninstall) live in core, re-exported from
- * the temporal Op-authoring barrel like k3dUp/k3dDown. The activities here are
+ * The step builders (k3sInstall, k3sUninstall) live in core and reach authors
+ * through `@intentius/chant/op` like k3dUp/k3dDown. The activities here are
  * dependency-light — they shell out to the k3s installer/uninstall scripts and
- * only pull in the lexicon's version pin, not its declarable surface — so a
- * Temporal worker loads them cheaply.
+ * only pull in the lexicon's version pin, not its declarable surface — so
+ * `loadActivities` (`packages/core/src/op/activity-registry.ts`), which imports
+ * this module at run time, pulls in nothing expensive.
  */
 export {
   k3sInstall,

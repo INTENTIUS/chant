@@ -282,8 +282,11 @@ Three phases — Artifacts (`chantBuild`, skippable with `buildScript: false`),
 Replay (`dogwoodReplay`, writes `dist/dogwood-replay.json`), Report
 (`dogwoodReplayReport`, acts on `report | issue | pull-request`).
 `failOnDivergence` defaults to false: an observe-dial Op reports. The composite
-ships from cedar and carries no dependency on the temporal lexicon; a scheduled
-form is a project-side `TemporalSchedule` pairing.
+ships from cedar; it imports `@intentius/chant/op` and nothing else. Cadence is
+a `schedule` on the Op itself (#2120): pass `schedule: "0 6 * * *"` and it lands
+as `schedule: { cron, overlap: "skip" }`, which `chant operator` ticks locally
+and the github/gitlab/forgejo lexicons render as a CI cron. The one-shot
+executor behind `chant run` ignores it.
 
 Build traces with `dogwood.traceEvent()` rather than by hand. Two traps it
 exists to close, and both are worth naming whenever a user assembles a fixture:

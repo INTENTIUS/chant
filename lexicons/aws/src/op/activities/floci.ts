@@ -101,8 +101,9 @@ export function flociRunCommand(args: FlociUpArgs = {}): string {
  * Idempotent: reuses a running container of the same name. Waits for the health
  * endpoint to report `readyService`, then sets `AWS_ENDPOINT_URL` + test creds in
  * the process environment so a following `nativeApply`/`cfn-deploy` targets the
- * emulator. Env injection assumes the in-process local executor; under a
- * distributed Temporal worker, pass the endpoint explicitly instead.
+ * emulator. Env injection works because the local executor runs every step of a
+ * run in this process; a step that runs anywhere else needs the endpoint passed
+ * to it explicitly.
  */
 export async function flociUp(args: FlociUpArgs = {}, signal?: AbortSignal): Promise<{ endpoint: string }> {
   const region = args.region ?? DEFAULT_REGION;

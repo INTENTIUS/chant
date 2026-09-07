@@ -166,7 +166,7 @@ Detects `needs:` entries already implied by stage ordering. Not incorrect, but r
 
 WGL029 onward are a CI/CD supply-chain security pass, the GitLab counterpart to the github lexicon's GHA029–058: pin & vet includes/components/images, scope `CI_JOB_TOKEN` and OIDC, guard trust boundaries against untrusted CI input, mask/protect/scope secrets, reject unsound `rules:` expressions, and keep artifacts/caches honest. They run statically on the emitted `.gitlab-ci.yml`.
 
-The checks that need a *moving external truth* — whether a pinned component/include ref still resolves, whether an upstream was archived or moved, whether a new advisory covers a component in use — live in the operational layer instead. Schedule the [`PipelineAuditOp`](/chant/guide/ops/#audit-supply-chain-drift) (temporal lexicon) for that live half; it reads the emitted `include:` / `component:` / `image:` references and reports drift via `report | issue | merge-request`.
+The checks that need a *moving external truth* — whether a pinned component/include ref still resolves, whether an upstream was archived or moved, whether a new advisory covers a component in use — live in the operational layer instead. Schedule the [`PipelineAuditOp`](/chant/guide/ops/#audit-supply-chain-drift), which ships from core's `@intentius/chant/op`, for that live half; it reads the emitted `include:` / `component:` / `image:` references and reports drift via `report | issue | merge-request`.
 
 ### WGL029 — Unpinned include:project / component
 

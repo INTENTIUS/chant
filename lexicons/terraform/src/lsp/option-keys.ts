@@ -30,7 +30,7 @@ export const ROOT_ENTRY_KEYS: OptionKey[] = [
 
 /** `TerraformApplyOpConfig`'s keys (`TerraformApplyOp({ <here> })`). */
 export const APPLY_OP_KEYS: OptionKey[] = [
-  { key: "name", detail: "Op name (kebab-case). Also the default task queue and gate signal suffix." },
+  { key: "name", detail: "Op name (kebab-case). `signalName` defaults to `approve-<name>`." },
   { key: "root", detail: "Key into the project's `terraform.roots`." },
   { key: "planFile", detail: "Plan file written by Plan and consumed by Apply. Default: `chant.tfplan`." },
   { key: "gate", detail: '"on-destroy" | "always" | "never" — when to emit the approval gate. Default: "on-destroy".' },
@@ -40,7 +40,6 @@ export const APPLY_OP_KEYS: OptionKey[] = [
   { key: "upgrade", detail: "`-upgrade` on the Init step: re-resolve provider and module versions." },
   { key: "cwd", detail: "Directory each step starts the `chant.config.*` search from." },
   { key: "compensate", detail: "Saga-style rollback on a failed apply: `true` with no command throws; supply `{ command }`." },
-  { key: "taskQueue", detail: "Override the task queue. Defaults to `name`." },
 ];
 
 /** `compensate`'s own shape when it is an object: `compensate: { <here> }`. */

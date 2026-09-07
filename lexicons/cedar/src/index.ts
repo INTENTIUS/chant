@@ -115,8 +115,8 @@ export { DOGWOOD_UPSTREAM } from "./dogwood/upstream";
 
 // The replay Op composite and its typed step builders (#1661). Flat, like
 // fly's `flyDeploy`: an Op factory is what a project's `ops/*.op.ts` names,
-// and it carries no dependency on the temporal lexicon — see
-// ./dogwood/replay-op.ts for why the composite ships from cedar.
+// and it depends on no lexicon but this one — see ./dogwood/replay-op.ts for
+// why the composite ships from cedar.
 export {
   DEFAULT_REPLAY_REPORT_PATH,
   PolicyReplayOp,

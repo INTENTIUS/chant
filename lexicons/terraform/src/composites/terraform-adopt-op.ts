@@ -89,7 +89,7 @@ import {
 } from "../op/builders";
 
 export interface TerraformAdoptOpConfig {
-  /** Op name (kebab-case). Also the default task queue and gate signal suffix. */
+  /** Op name (kebab-case). `signalName` defaults to `approve-<name>`. */
   name: string;
   /** Key into the project's `terraform.roots`. Must be a live root: choudoufu, with a declared estate. */
   root: string;

@@ -91,7 +91,8 @@ describe("LSP completions", () => {
     const labels = items.map((i) => i.label);
     expect(labels).toContain("gate");
     expect(labels).toContain("compensate");
-    expect(labels).toContain("taskQueue");
+    expect(labels).toContain("gateTimeout");
+    expect(labels).not.toContain("taskQueue");
   });
 
   it("completes a builder's own opts keys inside its second argument", () => {

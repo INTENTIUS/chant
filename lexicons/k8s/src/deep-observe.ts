@@ -9,10 +9,10 @@
  *
  * ## What managedFields decides, and what it does not
  *
- * AWS, Azure and Temporal's rows all prune by a **static, entityType-keyed**
- * table: an ARN always looks like an ARN, `provisioningState` is always
- * server-populated, a namespace's retention default is always the same
- * value. None of that needs the specific live object in hand — it is exactly
+ * The AWS and Azure rows both prune by a **static, entityType-keyed** table
+ * (`AWS_SERVICE_DEFAULTS`, `AZURE_SERVICE_DEFAULTS`): an ARN always looks like
+ * an ARN, `provisioningState` is always server-populated. Neither needs the
+ * specific live object in hand — it is exactly
  * what `./deep-observe-hooks.ts`'s `k8sDeepNormalizationHooks` is, and it
  * covers Kubernetes' *equivalent* static noise (`status`,
  * `metadata.{uid,resourceVersion,generation,creationTimestamp}`, a handful of
@@ -121,7 +121,7 @@ import { k8sDeepNormalizationHooks } from "./deep-observe-hooks";
 
 // Re-exported so a dynamic importer of this module (plugin.ts's
 // `observeResourcesDeep`, a test) can get the reader and its hooks from one
-// place, the same shape AWS/Azure/Temporal's single deep-observe.ts offers.
+// place, the same shape the AWS and Azure deep-observe.ts modules offer.
 // `plugin.ts`'s own `deepNormalizationHooks` field imports the hooks
 // separately, directly from `./deep-observe-hooks` — that file has no
 // dependency on `@intentius/chant-k8s-client`, so it is safe to import

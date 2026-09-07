@@ -1,6 +1,6 @@
 ---
 skill: chant-k8s-argo
-description: Argo CD composites for GitOps reconciliation — ArgoAppFor, ArgoAppSetForRegions, AppProject scoping, cluster registration, and the Argo-vs-Temporal split
+description: Argo CD composites for GitOps reconciliation — ArgoAppFor, ArgoAppSetForRegions, AppProject scoping, cluster registration, and how a deploy splits between Argo and a chant Op
 user-invocable: true
 ---
 
@@ -14,9 +14,9 @@ Chant authors typed infrastructure into manifests. Argo CD continuously reconcil
 |---|---|---|
 | **Chant** | Authoring typed infra → manifests | the lexicons |
 | **Argo CD** | Continuously reconciling declarative manifests (the apply layer) | `ArgoAppFor` / `ArgoAppSetForRegions` |
-| **Temporal** | Procedural steps Argo can't express — ordering, signals, human gates, one-shot RPCs | the temporal lexicon + `waitForArgoSync` |
+| **A chant Op** | Procedural steps Argo can't express: ordering, human gates, one-shot RPCs | an `Op` in the project, plus this lexicon's `waitForArgoSync` |
 
-Rule of thumb: **if it's declarative and converges, let Argo reconcile it. If it's a procedure with ordering, gates, or out-of-band steps, orchestrate it in Temporal.** Prefer Argo CD over Argo Workflows — the procedural layer stays Temporal.
+Rule of thumb: **if it's declarative and converges, let Argo reconcile it. If it's a procedure with ordering, gates, or out-of-band steps, write it as a chant Op and run it from CI or a steward.** Prefer Argo CD over Argo Workflows; the procedural layer stays an Op.
 
 ## Prerequisites
 
@@ -138,9 +138,9 @@ Produces a `Secret` labelled `argocd.argoproj.io/secret-type: cluster`. After th
 
 ---
 
-## The Argo-vs-Temporal split
+## Splitting a deploy between Argo and an Op
 
-When a deploy has both declarative and procedural parts, let each layer own what it's good at. Example — the multi-region CockroachDB deploy:
+When a deploy has both declarative and procedural parts, let each layer own what it's good at. Example, the multi-region CockroachDB deploy:
 
 | Step | Owner | Why |
 |---|---|---|
@@ -148,16 +148,30 @@ When a deploy has both declarative and procedural parts, let each layer own what
 | Install ESO / operators (Helm) | **Argo** | Declarative Helm source |
 | Apply per-cluster K8s manifests | **Argo** (`ApplicationSet`) | One App per workload cluster |
 | Wait for workloads Healthy | **Argo** (`Health=Healthy`) | Subsumed by Application health |
-| Wait for DNS delegation | **Temporal** | Signal/update/auto-poll race — out of band |
-| Generate + push TLS certs | **Temporal** | One-shot procedure, secrets not in git |
-| `cockroach init`, configure regions | **Temporal** | Ordered one-shot RPCs |
+| Wait for DNS delegation | **an Op** | Out of band, and a human confirms it |
+| Generate + push TLS certs | **an Op** | One-shot procedure, secrets not in git |
+| `cockroach init`, configure regions | **an Op** | Ordered one-shot RPCs |
 
-From a Temporal workflow, gate procedural steps on Argo finishing a declarative apply with the `waitForArgoSync` activity (temporal lexicon, `argoSync` profile):
+Argo owns the sync. The Op owns the ordering and the gates: its phases run in
+sequence in one process (`packages/core/src/op/local-executor.ts`), and a `gate`
+step reads the gate ledger, so a run that reaches a gate nobody has approved
+records the pending fact, ends with status `gated` and exits 3. Someone runs
+`chant approve <op> <gate>`, the next run reads the resolution and walks
+through. CI is what runs the Op, on whatever cadence the Op's `schedule`
+names.
+
+To make a step wait on Argo, use this lexicon's `waitForArgoSync` activity. It is
+exported from `lexicons/k8s/src/op/activities/index.ts`, and the core activity
+registry resolves it by export name once `k8s` is in the project's `lexicons`.
+Give the step core's `argoSync` profile
+(`packages/core/src/op/activity-profiles.ts`): a 30m timeout, five attempts
+backing off from 10s, and `ArgoSyncFailedError` marked non-retryable so a
+terminally unhealthy Application fails fast instead of polling to the cap.
 
 ```typescript
-// In a Temporal Op workflow:
-await waitForArgoSync({ appName: "east-crdb", namespace: "argocd" });
-// ...now run the procedural steps that depend on the workloads being Healthy.
+// In an Op phase:
+activity("waitForArgoSync", { appName: "east-crdb", namespace: "argocd" }, "argoSync"),
+// Later steps in the phase run once the workloads are Healthy.
 ```
 
 `waitForArgoSync` is dependency-free — it polls the Application's status (`health=Healthy && sync=Synced`) and never imports the Argo CRD types.

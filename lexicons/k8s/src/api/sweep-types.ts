@@ -10,8 +10,7 @@
  *
  * It lives in its own module, with no imports of its own, because both
  * consumers reach it from different directions — `../export-resources.ts`
- * pulls in the whole import parser, and a Temporal worker loading the apply
- * activity should not.
+ * pulls in the whole import parser, and the apply activity should not.
  */
 export const DEFAULT_IMPORT_TYPES: readonly string[] = [
   "K8s::Apps::Deployment",

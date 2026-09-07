@@ -7,10 +7,12 @@
  *     context are left alone unless explicitly requested, and `k3dUp` returns
  *     `{ context, kubeconfigPath? }` so later steps know what to talk to.
  *
- * The step builders (k3dUp, k3dDown) stay in core, re-exported from the
- * temporal Op-authoring barrel like the other core builders. The activities are
+ * The step builders (k3dUp, k3dDown) stay in core and reach authors through
+ * `@intentius/chant/op` like the other core builders. The activities are
  * dependency-light — they shell out to the k3d CLI and do not import the k3d
- * declarable surface — so a Temporal worker loads them cheaply.
+ * declarable surface — so `loadActivities`
+ * (`packages/core/src/op/activity-registry.ts`), which imports this module at
+ * run time, pulls in nothing expensive.
  */
 export {
   k3dUp,

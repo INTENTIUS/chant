@@ -70,11 +70,22 @@ markdown, and the other two hand back a title and body for whatever opens them
 division `workflowSupplyChainAudit` draws. `failOnDivergence` defaults to
 false: an observe-dial Op reports, and a red run is the caller's decision.
 
-The composite ships from cedar, not from temporal, because it hands back an Op
-and nothing else. It imports `@intentius/chant/op` and carries no dependency on
-the temporal lexicon. A project that wants it scheduled pairs it with a
-`TemporalSchedule` of its own — two lines, project-side, rather than a config
-flag that would drag the dependency in for everyone.
+The composite ships from cedar because it hands back an Op and nothing else. It
+imports `@intentius/chant/op` and depends on no other lexicon.
+
+A project that wants it scheduled sets `schedule` on the composite (#2120). The
+string lands on the Op as `schedule: { cron, overlap: "skip" }`, which is
+runtime-neutral data each reader interprets: `chant operator` ticks it locally,
+the github/gitlab/forgejo lexicons render it as a CI cron, and the one-shot
+executor behind `chant run policy-replay` ignores it.
+
+```typescript
+export const { op } = PolicyReplayOp({
+  name: "policy-replay",
+  schedule: "0 6 * * *",
+  // …
+});
+```
 
 ## Typed traces
 

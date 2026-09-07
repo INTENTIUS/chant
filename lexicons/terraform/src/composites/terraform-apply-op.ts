@@ -96,7 +96,7 @@ import {
 export type TerraformGateMode = "on-destroy" | "always" | "never";
 
 export interface TerraformApplyOpConfig {
-  /** Op name (kebab-case). Also the default task queue and gate signal suffix. */
+  /** Op name (kebab-case). `signalName` defaults to `approve-<name>`. */
   name: string;
   /** Key into the project's `terraform.roots`. The root carries dir, workspace, var files and backend config. */
   root: string;

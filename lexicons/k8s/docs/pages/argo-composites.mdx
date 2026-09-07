@@ -1,6 +1,6 @@
 ---
 title: "Argo CD Composites"
-description: "Argo CD support in the k8s lexicon — the argoproj.io CRDs, ArgoAppFor / ArgoAppSetForRegions composites, cluster registration, the ARGO00x rules, and the Argo-vs-Temporal split."
+description: "Argo CD support in the k8s lexicon — the argoproj.io CRDs, ArgoAppFor / ArgoAppSetForRegions composites, cluster registration, the ARGO00x rules, and how a deploy splits between Argo, an Op and CI."
 diataxis: reference
 ---
 
@@ -12,14 +12,14 @@ Argo CD's `Application`, `ApplicationSet`, and `AppProject` are Kubernetes CRDs 
 The k8s lexicon stays **runtime-agnostic** — it only emits manifests. Argo is **opt-in** via the composites below; nothing here is implied unless you reach for it.
 </Aside>
 
-## The three-layer model: Argo vs Temporal vs CI
+## The three-layer model: Argo, an Op and CI
 
 Chant authors typed infra into manifests. From there, who applies them?
 
 | Layer | Owns | Reach for it when |
 |---|---|---|
 | **Argo CD** | Continuously reconciling declarative manifests | the desired state lives in git and *converges* — Deployments, CRs, Helm releases |
-| **Temporal** | Procedural steps with ordering, signals, human gates, one-shot RPCs | the step is a *procedure*, not a state — DNS delegation, cert generation, `db init` |
+| **A chant Op** | Procedural steps with ordering, human gates, one-shot RPCs | the step is a *procedure*, not a state — DNS delegation, cert generation, `db init` |
 | **CI** | One-shot, fire-and-forget apply | a simple pipeline with no reconciliation or long-running orchestration need |
 
 Rule of thumb: **if it's declarative and converges, let Argo reconcile it; if it's a procedure with ordering or gates, run it as a chant Op.** Prefer Argo CD over Argo *Workflows* — the procedural layer stays an Op. See the [CockroachDB multi-region tutorial](/chant/tutorials/cockroachdb-multi-region/) for a deployment that uses both.
