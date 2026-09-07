@@ -30,7 +30,7 @@
  *   env: "prod",
  *   target: "kubectl",
  *   delete: "gated",
- *   gate: { signalName: "approve-apply", description: "Approve prod apply with deletes" },
+ *   gate: { gate: "approve-apply", description: "Approve prod apply with deletes" },
  * });
  * ```
  *
@@ -38,6 +38,7 @@
  */
 
 import { Op, phase, activity, gate } from "../builders";
+import { gateName } from "../gate-name";
 import type { OpResource } from "../resource";
 import { defaultOutput, hasNativeRollback, type ApplyTarget, type DeleteMode } from "../activities/apply";
 
@@ -69,11 +70,20 @@ export interface ApplyOpConfig {
   effects?: "gated";
   /**
    * Approval gate before the apply. Implied when `delete: "gated"`; may also be
-   * set explicitly. Omit `signalName` to default to `approve-<name>`. The gate
+   * set explicitly. Omit `gate` to default to `approve-<name>`. The gate
    * is resolved by `chant approve` on the ledger (#2119), which the next run
    * reads; nothing waits in the meantime.
+   *
+   * `signalName` is the key `gate` carried through 0.58.0 (#2202): still read,
+   * removed in 0.60.0.
    */
-  gate?: { signalName?: string; timeout?: string; description?: string };
+  gate?: {
+    gate?: string;
+    /** @deprecated Renamed to `gate` in #2202. Accepted through 0.59.0, removed in 0.60.0. */
+    signalName?: string;
+    timeout?: string;
+    description?: string;
+  };
   /**
    * Saga-style rollback on partial apply failure, run as an `onFailure` phase.
    *
@@ -129,7 +139,7 @@ export function ApplyOp(config: ApplyOpConfig): ApplyOpResources {
   if (gated) {
     phases.push(
       phase("Approve", [
-        gate(config.gate?.signalName ?? `approve-${config.name}`, {
+        gate(gateName(config.gate ?? {}) || `approve-${config.name}`, {
           ...(config.gate?.timeout ? { timeout: config.gate.timeout } : {}),
           description:
             config.gate?.description ??

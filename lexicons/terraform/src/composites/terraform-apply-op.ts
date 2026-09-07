@@ -96,7 +96,7 @@ import {
 export type TerraformGateMode = "on-destroy" | "always" | "never";
 
 export interface TerraformApplyOpConfig {
-  /** Op name (kebab-case). `signalName` defaults to `approve-<name>`. */
+  /** Op name (kebab-case). `gateName` defaults to `approve-<name>`. */
   name: string;
   /** Key into the project's `terraform.roots`. The root carries dir, workspace, var files and backend config. */
   root: string;
@@ -108,7 +108,13 @@ export interface TerraformApplyOpConfig {
    * same phase.
    */
   gate?: TerraformGateMode;
-  /** Gate signal name. Default: `approve-<name>`, as `ApplyOp` does. */
+  /** The gate's name. Default: `approve-<name>`, as `ApplyOp` does. */
+  gateName?: string;
+  /**
+   * @deprecated The gate's name was `signalName` through 0.58.0 and is
+   * `gateName` since #2202 (`gate` is taken here by {@link TerraformGateMode}).
+   * Still read; removed in 0.60.0.
+   */
   signalName?: string;
   /** How long a recorded pending gate stays valid, as a duration string. Default: core's own (48h). */
   gateTimeout?: string;
@@ -218,7 +224,7 @@ export function TerraformApplyOp(config: TerraformApplyOpConfig): TerraformApply
     phases.push(
       phase("Gate", [
         show,
-        gate(config.signalName ?? `approve-${config.name}`, {
+        gate(config.gateName ?? config.signalName ?? `approve-${config.name}`, {
           ...(config.gateTimeout ? { timeout: config.gateTimeout } : {}),
           description:
             config.gateDescription ??

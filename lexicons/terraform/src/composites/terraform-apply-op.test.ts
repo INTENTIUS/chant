@@ -78,20 +78,28 @@ describe("TerraformApplyOp gate (#2086)", () => {
   test("signal name defaults to approve-<name>", () => {
     const op = props({ name: "prod-apply", root: "app" });
     const gate = op.phases.find((p) => p.name === "Gate")!.steps.find(isGate)!;
-    expect(gate.signalName).toBe("approve-prod-apply");
+    expect(gate.gate).toBe("approve-prod-apply");
   });
 
-  test("an explicit signalName, timeout and description win", () => {
+  // #2202: `gate` on this config already means the gate MODE, so the gate's
+  // name is `gateName` here. `signalName` is read through 0.59.0.
+  test("the deprecated `signalName` option still names the gate", () => {
+    const op = props({ name: "prod-apply", root: "app", signalName: "approve-terraform" });
+    const gate = op.phases.find((p) => p.name === "Gate")!.steps.find(isGate)!;
+    expect(gate.gate).toBe("approve-terraform");
+  });
+
+  test("an explicit gateName, timeout and description win", () => {
     const op = props({
       name: "prod-apply",
       root: "app",
-      signalName: "approve-terraform",
+      gateName: "approve-terraform",
       gateTimeout: "72h",
       gateDescription: "Change window only",
     });
     const gate = op.phases.find((p) => p.name === "Gate")!.steps.find(isGate)!;
     expect(gate).toMatchObject({
-      signalName: "approve-terraform",
+      gate: "approve-terraform",
       timeout: "72h",
       description: "Change window only",
     });
@@ -186,7 +194,7 @@ describe("TerraformApplyOp on the local executor (#2086, gate-as-fact #2119)", (
 
     expect(result.status).toBe("gated");
     expect(result.gate?.op).toBe("prod-apply");
-    expect(result.gate?.gate).toBe(op.phases.flatMap((p) => p.steps).find(isGate)?.signalName);
+    expect(result.gate?.gate).toBe(op.phases.flatMap((p) => p.steps).find(isGate)?.gate);
     expect(gates.appended).toHaveLength(1);
     // Init, Plan and the pre-gate `show` ran; Apply is behind the gate and did not.
     expect(ran).toEqual(["terraformInit", "terraformPlan", "terraformShow"]);

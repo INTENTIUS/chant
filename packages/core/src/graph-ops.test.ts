@@ -54,7 +54,7 @@ describe("mergeProjectOps (#1675)", () => {
     expect(node?.attrs.name).toBe("deploy");
     expect(node?.attrs.depends).toEqual(["inner"]);
     expect(node?.attrs.phases).toEqual([
-      { name: "Apply", steps: [{ kind: "activity", fn: "build" }, { kind: "gate", signalName: "approve" }] },
+      { name: "Apply", steps: [{ kind: "activity", fn: "build" }, { kind: "gate", gate: "approve" }] },
     ]);
     // The sourceDir op discovery already loaded is untouched, not duplicated.
     expect(ir.nodes.filter((n) => n.kind === "Chant::Op")).toHaveLength(2);

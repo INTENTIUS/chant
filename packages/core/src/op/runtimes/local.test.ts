@@ -123,7 +123,7 @@ describe("the local op runtime", () => {
 
     const handle = await runtime.start(
       op("gated", [
-        { kind: "gate", signalName: "approve-prod" },
+        { kind: "gate", gate: "approve-prod" },
         { kind: "activity", fn: "after", args: {} },
       ]),
       {},

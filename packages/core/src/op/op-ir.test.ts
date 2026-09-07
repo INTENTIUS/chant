@@ -126,7 +126,7 @@ describe("op.json IR", () => {
     expect(build.steps[0]).toMatchObject({ kind: "activity", fn: "shellCmd", profile: "fastIdempotent" });
     expect(approve.steps[0]).toMatchObject({
       kind: "gate",
-      signalName: "approve-deploy",
+      gate: "approve-deploy",
       timeout: "24h",
       description: "Release manager sign-off",
     });
@@ -139,6 +139,17 @@ describe("op.json IR", () => {
     expect(verify.steps[0]).toMatchObject({ kind: "activity", fn: "httpCheck", profile: "fastIdempotent" });
     expect(ir.onFailure).toHaveLength(1);
     expect(ir.onFailure[0].name).toBe("Rollback");
+  });
+
+  // #2202: whichever key an authored gate step used, the IR writes `gate`, so
+  // a foreign consumer of op.json never sees the deprecated spelling.
+  it("normalizes a gate step's deprecated `signalName` key onto `gate`", () => {
+    const config = representativeOp();
+    const approve = config.phases.find((p) => p.name === "Approve")!;
+    approve.steps[0] = { kind: "gate", signalName: "approve-deploy", timeout: "24h" };
+    const ir = buildOpIR(config);
+    expect(ir.phases[1].steps[0]).toMatchObject({ kind: "gate", gate: "approve-deploy", timeout: "24h" });
+    expect(serializeOpIR(config)).not.toContain("signalName");
   });
 
   it("contracts are the injected registry's: empty until a caller supplies one", () => {

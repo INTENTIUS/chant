@@ -18,6 +18,7 @@ import { runPostSynthChecks, type PostSynthDiagnostic } from "../../lint/post-sy
 import { loadActivityContracts } from "../../op/activity-contract-registry";
 import { isOpEntity } from "../../op/resource";
 import { serializeOpIR } from "../../op/op-ir";
+import { opUsesDeprecatedGateKey, DEPRECATED_GATE_KEY_WARNING } from "../../op/gate-name";
 import type { OpConfig } from "../../op/types";
 import { coreReceiptChecks } from "../../lint/receipt-checks";
 import { coreOutputChecks } from "../../lint/output-checks";
@@ -639,6 +640,19 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
   // not a resource manifest, so an Ops-only project legitimately produces no
   // serializer output and must not be reported as a broken import.
   const declaredOps = [...result.entities.values()].filter(isOpEntity);
+
+  // The gate step's name key was renamed from `signalName` to `gate` in #2202.
+  // The old key is still read; a build that finds an Op still using it says so
+  // once, naming every Op involved, rather than once per gate step.
+  const opsOnOldGateKey = declaredOps
+    .map((entity) => (entity as unknown as { props?: OpConfig }).props)
+    .filter((config): config is OpConfig => Boolean(config?.name) && opUsesDeprecatedGateKey(config as OpConfig))
+    .map((config) => config.name);
+  if (opsOnOldGateKey.length > 0) {
+    warnings.push(
+      formatWarning({ message: `${DEPRECATED_GATE_KEY_WARNING} Ops: ${opsOnOldGateKey.join(", ")}.` }),
+    );
+  }
   if (
     result.sourceFileCount > 0 &&
     result.outputs.size === 0 &&

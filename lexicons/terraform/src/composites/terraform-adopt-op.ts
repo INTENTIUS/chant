@@ -89,7 +89,7 @@ import {
 } from "../op/builders";
 
 export interface TerraformAdoptOpConfig {
-  /** Op name (kebab-case). `signalName` defaults to `approve-<name>`. */
+  /** Op name (kebab-case). `gateName` defaults to `approve-<name>`. */
   name: string;
   /** Key into the project's `terraform.roots`. Must be a live root: choudoufu, with a declared estate. */
   root: string;
@@ -99,7 +99,12 @@ export interface TerraformAdoptOpConfig {
    * sidecar, which is the usual case.
    */
   estate?: string;
-  /** Gate signal name. Default: `approve-<name>`, as `TerraformApplyOp` does. */
+  /** The gate's name. Default: `approve-<name>`, as `TerraformApplyOp` does. */
+  gateName?: string;
+  /**
+   * @deprecated The gate's name was `signalName` through 0.58.0 and is
+   * `gateName` since #2202, matching `TerraformApplyOp`. Removed in 0.60.0.
+   */
   signalName?: string;
   /** How long a recorded pending gate stays valid, as a duration string. Default: core's own (48h). */
   gateTimeout?: string;
@@ -176,7 +181,7 @@ export function TerraformAdoptOp(config: TerraformAdoptOpConfig): TerraformAdopt
       phase("Check", [check]),
       phase("Ledger", [ledger]),
       phase("Gate", [
-        gate(config.signalName ?? `approve-${config.name}`, {
+        gate(config.gateName ?? config.signalName ?? `approve-${config.name}`, {
           ...(config.gateTimeout ? { timeout: config.gateTimeout } : {}),
           description:
             config.gateDescription ??

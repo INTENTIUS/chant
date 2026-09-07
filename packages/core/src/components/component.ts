@@ -77,15 +77,35 @@ export interface Step {
   [param: string]: unknown;
 }
 
-/** Mirrors `$defs.Gate` — a human approval decided against the gate ledger; the run stops here with status `gated` until `chant approve` has answered it. */
-export interface Gate {
+/** Everything on a component gate step except the key that names it. */
+export interface GateBase {
   kind: "gate";
-  signalName: string;
   /** How long a recorded pending gate stays valid, as a duration string. Default: "48h". */
   timeout?: string;
   /** Human-readable description of the action required to unblock this gate. */
   description?: string;
 }
+
+/**
+ * Mirrors `$defs.Gate` — a human approval decided against the gate ledger; the
+ * run stops here with status `gated` until `chant approve` has answered it.
+ * The name lives on `gate`; `signalName` is the key it carried through 0.58.0
+ * and is still accepted (#2202). Read both through `gateName()`.
+ */
+export type Gate = GateBase &
+  (
+    | {
+        /** The gate's name — what `chant approve <component> <gate>` resolves. */
+        gate: string;
+        /** @deprecated Renamed to `gate` in #2202. Accepted through 0.59.0, removed in 0.60.0. */
+        signalName?: string;
+      }
+    | {
+        gate?: undefined;
+        /** @deprecated Renamed to `gate` in #2202. Accepted through 0.59.0, removed in 0.60.0. */
+        signalName: string;
+      }
+  );
 
 /**
  * Mirrors `$defs.Phase` — one named phase of a deploy composition. A step may
@@ -171,8 +191,8 @@ export function phase(name: string, steps: Array<Step | Gate | Phase>, opts?: { 
 }
 
 /** Author a gate step — a human approval the driver decides against the gate ledger, stopping the run `gated` when nothing has answered it. */
-export function gate(signalName: string, opts?: { timeout?: string; description?: string }): Gate {
-  return { kind: "gate", signalName, ...opts };
+export function gate(name: string, opts?: { timeout?: string; description?: string }): Gate {
+  return { kind: "gate", gate: name, ...opts };
 }
 
 /**

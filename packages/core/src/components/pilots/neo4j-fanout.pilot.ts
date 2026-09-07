@@ -31,7 +31,7 @@ interface Neo4jInstanceConfig {
    */
   health: { size: number } | { quorum: true };
   /** Optional human gate placed before this instance's steps (rolling instances only, never the seed). */
-  approval?: { signalName: string; description: string; timeout: string };
+  approval?: { gate: string; description: string; timeout: string };
 }
 
 const SEED: Neo4jInstanceConfig = {
@@ -55,7 +55,7 @@ const FOLLOWERS: Neo4jInstanceConfig[] = [
     template: "archive:neo4j-1.template.json",
     health: { quorum: true },
     approval: {
-      signalName: "approve-neo4j-node-1",
+      gate: "approve-neo4j-node-1",
       description: "Confirm the seed node is healthy before rolling to node 1",
       timeout: "24h",
     },
@@ -71,7 +71,7 @@ const FOLLOWERS: Neo4jInstanceConfig[] = [
 /** Build one instance's mini-composition phase — the unit that repeats N times for an N-node cluster. */
 function instancePhase(instance: Neo4jInstanceConfig): Phase {
   const steps = [
-    ...(instance.approval ? [gate(instance.approval.signalName, instance.approval)] : []),
+    ...(instance.approval ? [gate(instance.approval.gate, instance.approval)] : []),
     { kind: "cfn-deploy", template: instance.template },
     { kind: "code-deploy", instance: instance.index, revision: "@Seed.templateUri" },
     { kind: "wait-cluster-healthy", ...instance.health },

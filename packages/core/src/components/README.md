@@ -50,7 +50,7 @@ adopting chant.
   be a nested `Phase`, which is how fan-out (e.g. a Neo4j cluster seeding one
   node then rolling through the rest) is expressed as composition rather than
   orchestrator knowledge.
-- **Gates** — a distinct step shape (`kind: "gate"`, `signalName`) for a human
+- **Gates** — a distinct step shape (`kind: "gate"`, `gate`) for a human
   approval, decided against the gate ledger: a run that reaches one with no
   resolution stops there with status `gated` and the pending fact recorded.
 - **Wiring reference forms**, all resolved by the graph, never by orchestrator
@@ -89,7 +89,7 @@ Lambda function. `component-schema.test.ts` validates every fixture against
 `component.schema.json` with [ajv](https://ajv.js.org/) (`ajv/dist/2020` — the
 draft 2020-12 build) and exercises the schema's negative cases (missing
 required fields, malformed wiring references, an invalid archetype, a gate
-missing `signalName`, and so on).
+naming neither `gate` nor its deprecated `signalName` spelling, and so on).
 
 ## Typed authoring form (`component.ts`, #560)
 

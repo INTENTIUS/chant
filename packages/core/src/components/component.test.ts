@@ -37,13 +37,13 @@ describe("phase()", () => {
 
 describe("gate()", () => {
   it("builds a minimal Gate", () => {
-    expect(gate("approve-x")).toEqual({ kind: "gate", signalName: "approve-x" });
+    expect(gate("approve-x")).toEqual({ kind: "gate", gate: "approve-x" });
   });
 
   it("carries optional timeout/description", () => {
     expect(gate("approve-x", { timeout: "24h", description: "confirm" })).toEqual({
       kind: "gate",
-      signalName: "approve-x",
+      gate: "approve-x",
       timeout: "24h",
       description: "confirm",
     });

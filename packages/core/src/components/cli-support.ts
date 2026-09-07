@@ -33,11 +33,13 @@ import {
   DependencyCycleError,
   DriverRunFailure,
   type DriverComponent,
+  type DriverGate,
   type DriverPhase,
   type DriverRunResult,
 } from "./driver";
 import type { PendingGateRecord } from "../lifecycle/gate-ledger";
 import type { GateLedgerPort } from "../op/gate";
+import { gateName } from "../op/gate-name";
 import { isLexiconPlugin, type LexiconPlugin, type ComponentPipelineOptions } from "../lexicon";
 import type { RunProgressEvent } from "./run-progress";
 import { relative } from "node:path";
@@ -319,13 +321,16 @@ function toDriverComponent(component: { name: string; dependsOn: string[]; deplo
  * A declaration-time question, not a pre-flight refusal: since #2119 the
  * driver decides a gate against the ledger when it reaches one, so nothing
  * needs to know up front that a component has one.
+ *
+ * The name comes back on `gate` whichever key the component spelled it with,
+ * so a caller never has to know about the deprecated `signalName` (#2202).
  */
-export function findComponentGate(component: DriverComponent): { signalName: string } | undefined {
-  const search = (phases: DriverPhase[] | undefined): { signalName: string } | undefined => {
+export function findComponentGate(component: DriverComponent): { gate: string } | undefined {
+  const search = (phases: DriverPhase[] | undefined): { gate: string } | undefined => {
     for (const phaseDef of phases ?? []) {
       for (const entry of phaseDef.steps) {
         if ((entry as { kind?: unknown }).kind === "gate") {
-          return entry as unknown as { signalName: string };
+          return { gate: gateName(entry as DriverGate) };
         }
         if (typeof (entry as DriverPhase).phase === "string" && Array.isArray((entry as DriverPhase).steps)) {
           const nested = search([entry as DriverPhase]);

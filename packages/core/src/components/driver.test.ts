@@ -217,7 +217,7 @@ describe("runComponentDeploy — gate as fact (#2119)", () => {
     name: "neo4j-cluster",
     deploy: [
       { phase: "Prepare", steps: [{ kind: "cfn-deploy" }] },
-      { phase: "Node 1", steps: [{ kind: "gate", signalName: "approve-node-1" }, { kind: "code-deploy" }] },
+      { phase: "Node 1", steps: [{ kind: "gate", gate: "approve-node-1" }, { kind: "code-deploy" }] },
     ],
     rollback: [{ phase: "Undo", steps: [{ kind: "cfn-deploy" }] }],
   });
@@ -257,6 +257,25 @@ describe("runComponentDeploy — gate as fact (#2119)", () => {
       ["gate:approve-node-1", "skipped"],
       ["code-deploy", "skipped"],
     ]);
+  });
+
+  // #2202: `signalName` was the key that named a component gate through 0.58.0
+  // and is still read, so a component on the old key gates identically.
+  it("still reads a gate step's deprecated `signalName` key", async () => {
+    const { registry } = registryWithCalls();
+    const legacy: DriverComponent = {
+      name: "neo4j-cluster",
+      deploy: [{ phase: "Node 1", steps: [{ kind: "gate", signalName: "approve-node-1" }, { kind: "code-deploy" }] }],
+    };
+    const port = memoryGateLedgerPort();
+    const result = await runComponentDeploy(
+      legacy, { env: "dev", component: "neo4j-cluster" }, registry, {}, undefined,
+      { port, now: NOW },
+    );
+
+    expect(result.status).toBe("gated");
+    expect(result.gate).toMatchObject({ op: "neo4j-cluster", gate: "approve-node-1" });
+    expect(result.records.map((r) => r.kind)).toEqual(["gate:approve-node-1", "code-deploy"]);
   });
 
   it("a resolution newer than the pending fact passes the gate and carries the approver", async () => {

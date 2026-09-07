@@ -192,20 +192,36 @@ describe("Component JSON Schema", () => {
       deploy: [
         {
           phase: "Approve",
-          steps: [{ kind: "gate", signalName: "approve-gated", description: "confirm", timeout: "24h" }],
+          steps: [{ kind: "gate", gate: "approve-gated", description: "confirm", timeout: "24h" }],
         },
       ],
     };
     expect(validate(withGate)).toBe(true);
   });
 
-  it("rejects a gate step missing signalName", () => {
+  it("rejects a gate step naming neither `gate` nor `signalName`", () => {
     const invalid = {
       name: "gated",
       dependsOn: [],
       deploy: [{ phase: "Approve", steps: [{ kind: "gate" }] }],
     };
     expect(validate(invalid)).toBe(false);
+  });
+
+  // The gate step's name key was renamed from `signalName` to `gate` in #2202.
+  // The schema takes either one and exactly one, through 0.59.0.
+  const gated = (step: Record<string, unknown>): Record<string, unknown> => ({
+    name: "gated",
+    dependsOn: [],
+    deploy: [{ phase: "Approve", steps: [step] }],
+  });
+
+  it("still accepts the deprecated `signalName` key on a gate step", () => {
+    expect(validate(gated({ kind: "gate", signalName: "approve-gated" }))).toBe(true);
+  });
+
+  it("rejects a gate step carrying both `gate` and `signalName`", () => {
+    expect(validate(gated({ kind: "gate", gate: "approve-gated", signalName: "approve-gated" }))).toBe(false);
   });
 
   it("accepts a stackOutput cross-stack reference", () => {

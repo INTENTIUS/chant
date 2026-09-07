@@ -142,7 +142,7 @@ export interface PendingGateRecord {
   kind: "pending";
   /** The op (or, on the component driver, the component) the gate belongs to. */
   op: string;
-  /** The gate's signal name (matches `GateStep.signalName`). */
+  /** The gate's name (matches `GateStep.gate`). */
   gate: string;
   /** The gate's human-readable description, when it declared one — what `chant operator status` shows a reader who wasn't there for the run. */
   description?: string;

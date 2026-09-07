@@ -284,7 +284,7 @@ describe("runOpLocally — gate as fact (#2119)", () => {
       phases: [
         { name: "P1", steps: [
           { kind: "activity", fn: "before" },
-          { kind: "gate", signalName: "approve-prod", description: "release manager signs off", timeout: "24h" },
+          { kind: "gate", gate: "approve-prod", description: "release manager signs off", timeout: "24h" },
           { kind: "activity", fn: "after" },
         ] },
         { name: "P2", steps: [{ kind: "activity", fn: "later" }] },
@@ -322,6 +322,21 @@ describe("runOpLocally — gate as fact (#2119)", () => {
       ["after", "skipped"],
       ["later", "skipped"],
     ]);
+  });
+
+  // #2202: the gate step's name key is `gate`; `signalName` is read through
+  // 0.59.0, so a step still spelling it that way reaches the same ledger entry.
+  test("a gate step still using the deprecated `signalName` key names the same gate", async () => {
+    const { activities } = tracked();
+    const legacy = op({
+      phases: [{ name: "P1", steps: [{ kind: "gate", signalName: "approve-prod" }] }],
+    });
+    const port = memoryGateLedgerPort();
+    const result = await runOpLocally(legacy, activities, PROFILES, undefined, { gates: port, now: NOW });
+
+    expect(result.status).toBe("gated");
+    expect(result.gate).toMatchObject({ op: "test-op", gate: "approve-prod" });
+    expect(result.records.map((r) => r.fn)).toEqual(["gate:approve-prod"]);
   });
 
   test("onFailure phases do not run on a gated run", async () => {

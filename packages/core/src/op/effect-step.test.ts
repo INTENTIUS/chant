@@ -58,7 +58,7 @@ describe("effect() builder", () => {
       inputs: { file: "seed.sql", version: 3 },
     });
     expect(s.expectation).toBe(receiptExpectation(seeded));
-    expect(s.steps.map((n) => (n.kind === "activity" ? n.fn : n.signalName))).toEqual(["shellCmd"]);
+    expect(s.steps.map((n) => (n.kind === "activity" ? n.fn : n.gate))).toEqual(["shellCmd"]);
   });
 
   test("existence receipts always get the constant expectation, reference inputs or not", () => {
@@ -83,7 +83,7 @@ describe("effect() builder", () => {
 
   test("preserves authored order and nested gates", () => {
     const s = effect(seeded, [
-      { kind: "gate", signalName: "approve-seed" },
+      { kind: "gate", gate: "approve-seed" },
       step("shellCmd", { cmd: "seed" }),
     ]);
     expect(s.steps.map((n) => n.kind)).toEqual(["gate", "activity"]);
@@ -288,7 +288,7 @@ describe("runOpLocally — effect steps", () => {
       name: "gated",
       overview: "",
       phases: [
-        phase("Seed", [effect(seeded, [{ kind: "gate", signalName: "approve-seed" }, step("runSeed")])]),
+        phase("Seed", [effect(seeded, [{ kind: "gate", gate: "approve-seed" }, step("runSeed")])]),
       ],
     };
     const { store } = memStore();

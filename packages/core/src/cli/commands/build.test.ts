@@ -1445,7 +1445,7 @@ export const pruneStaging = {
     name: "prune-staging",
     overview: "test",
     phases: [
-      { name: "Approve", steps: [{ kind: "gate", signalName: "approve-x" }] },
+      { name: "Approve", steps: [{ kind: "gate", gate: "approve-x" }] },
       { name: "Apply", steps: [
         { kind: "activity", fn: "nativeApply", args: { target: "kubectl", env: "staging", output: "dist", deleteMode: "gated" } },
       ] },
@@ -1501,6 +1501,44 @@ export const converge = {
         (e) => e.includes("destructive") && e.includes("prune-staging") && e.includes("refused in v1"),
       ),
     ).toBe(true);
+  });
+
+  // #2202: a gate step spelling its name `signalName` still builds, and the
+  // build says so once, naming the Ops involved rather than each gate step.
+  test("warns once, naming the Ops, when a gate step still uses the deprecated `signalName` key", async () => {
+    const opFile = (name: string): string => `
+export const ${name.replace(/-/g, "")} = {
+  [Symbol.for("chant.declarable")]: true,
+  entityType: "Chant::Op",
+  lexicon: "chant",
+  kind: "resource",
+  props: {
+    name: "${name}",
+    overview: "test",
+    phases: [{ name: "Approve", steps: [{ kind: "gate", signalName: "approve-x" }] }],
+  },
+};
+      `;
+    await writeFile(join(testDir, "old-a.op.ts"), opFile("old-a"));
+    await writeFile(join(testDir, "old-b.op.ts"), opFile("old-b"));
+    await writeFile(
+      join(testDir, "new-c.op.ts"),
+      opFile("new-c").replace("signalName", "gate"),
+    );
+
+    const result = await buildCommand({
+      path: testDir,
+      format: "json",
+      serializers: [mockSerializer],
+      plugins: [],
+    });
+
+    const deprecation = result.warnings.filter((w) => w.includes("signalName"));
+    expect(deprecation).toHaveLength(1);
+    expect(deprecation[0]).toContain("old-a");
+    expect(deprecation[0]).toContain("old-b");
+    expect(deprecation[0]).not.toContain("new-c");
+    expect(deprecation[0]).toContain("0.60.0");
   });
 });
 

@@ -44,7 +44,7 @@ describe("classifyComponentPipelineChange (#1569)", () => {
 
   test("gate steps are never mistaken for an escape hatch", () => {
     const withGate = component([
-      { phase: "Approve", steps: [{ kind: "gate", signalName: "release-approved" }] },
+      { phase: "Approve", steps: [{ kind: "gate", gate: "release-approved" }] },
     ]);
     expect(classifyComponentPipelineChange(withGate, { knownKinds: KNOWN })).toEqual({
       pipelineChange: false,
@@ -78,7 +78,7 @@ describe("componentVerbSet (#1569)", () => {
     const c = component([
       {
         phase: "Deploy",
-        steps: [{ kind: "cfn-deploy" }, { kind: "gate", signalName: "go" }, { kind: "wait-for-stack" }],
+        steps: [{ kind: "cfn-deploy" }, { kind: "gate", gate: "go" }, { kind: "wait-for-stack" }],
       },
     ]);
     expect(componentVerbSet(c)).toEqual(new Set(["cfn-deploy", "wait-for-stack"]));

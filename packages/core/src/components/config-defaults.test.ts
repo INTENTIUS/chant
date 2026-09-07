@@ -257,11 +257,11 @@ describe("applyConfigDefaults", () => {
   test("leaves gate steps untouched", () => {
     const config: ChantConfig = { sbom: { format: "cyclonedx" } };
     const comp = component([
-      { phase: "Approve", steps: [{ kind: "gate", signalName: "release-approval" }] },
+      { phase: "Approve", steps: [{ kind: "gate", gate: "release-approval" }] },
     ]);
 
     const result = applyConfigDefaults(comp, config);
-    expect(result.deploy[0]!.steps[0]).toEqual({ kind: "gate", signalName: "release-approval" });
+    expect(result.deploy[0]!.steps[0]).toEqual({ kind: "gate", gate: "release-approval" });
   });
 
   test("applies defaults to rollback phases too", () => {

@@ -105,16 +105,16 @@ export function activity(
 /**
  * Insert a human gate. A gate is a fact on the gate ledger, not a wait: a run
  * that reaches this step with no resolution newer than its pending fact
- * records the pending fact and ends `gated`. `chant approve <op> <signalName>`
+ * records the pending fact and ends `gated`. `chant approve <op> <gate>`
  * writes the resolution, and the next run walks through carrying the approver.
  */
 export function gate(
-  signalName: string,
+  name: string,
   opts?: { timeout?: string; description?: string },
 ): GateStep {
   return {
     kind: "gate",
-    signalName,
+    gate: name,
     ...(opts?.timeout ? { timeout: opts.timeout } : {}),
     ...(opts?.description ? { description: opts.description } : {}),
   };

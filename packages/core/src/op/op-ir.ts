@@ -95,6 +95,7 @@ import type {
 import type { EffectReceiptRef } from "./receipt-store";
 import type { ActivityContract } from "./activity-contract";
 import { ACTIVITY_PROFILES, type ActivityProfile } from "./activity-profiles";
+import { gateName } from "./gate-name";
 
 /**
  * The op.json IR schema version. Bumped on a breaking change to this
@@ -131,7 +132,8 @@ export interface OpIRActivityStep {
 
 export interface OpIRGateStep {
   kind: "gate";
-  signalName: string;
+  /** The gate's name — `GateStep.gate`, or its deprecated `signalName` spelling (#2202). */
+  gate: string;
   /** Resolved to its effective value — `GateStep.timeout ?? "48h"`. */
   timeout: string;
   description?: string;
@@ -227,7 +229,7 @@ function irActivityStep(step: ActivityStep, contracts: ReadonlyMap<string, Activ
 function irGateStep(step: GateStep): OpIRGateStep {
   return {
     kind: "gate",
-    signalName: step.signalName,
+    gate: gateName(step),
     timeout: step.timeout ?? "48h",
     ...(step.description ? { description: step.description } : {}),
   };
@@ -375,7 +377,7 @@ function opStepFromIR(step: OpIRStep): StepDefinition {
   if (step.kind === "gate") {
     return {
       kind: "gate",
-      signalName: step.signalName,
+      gate: step.gate,
       timeout: step.timeout,
       ...(step.description ? { description: step.description } : {}),
     };

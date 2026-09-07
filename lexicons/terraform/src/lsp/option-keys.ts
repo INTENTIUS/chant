@@ -30,11 +30,12 @@ export const ROOT_ENTRY_KEYS: OptionKey[] = [
 
 /** `TerraformApplyOpConfig`'s keys (`TerraformApplyOp({ <here> })`). */
 export const APPLY_OP_KEYS: OptionKey[] = [
-  { key: "name", detail: "Op name (kebab-case). `signalName` defaults to `approve-<name>`." },
+  { key: "name", detail: "Op name (kebab-case). `gateName` defaults to `approve-<name>`." },
   { key: "root", detail: "Key into the project's `terraform.roots`." },
   { key: "planFile", detail: "Plan file written by Plan and consumed by Apply. Default: `chant.tfplan`." },
   { key: "gate", detail: '"on-destroy" | "always" | "never" — when to emit the approval gate. Default: "on-destroy".' },
-  { key: "signalName", detail: "Gate signal name. Default: `approve-<name>`." },
+  { key: "gateName", detail: "The gate's name. Default: `approve-<name>`." },
+  { key: "signalName", detail: "Deprecated spelling of `gateName` (#2202). Accepted through 0.59.0, removed in 0.60.0." },
   { key: "gateTimeout", detail: "How long a recorded pending gate stays valid, as a duration string. Default: core's own (48h)." },
   { key: "gateDescription", detail: "Override the gate description shown to the approver." },
   { key: "upgrade", detail: "`-upgrade` on the Init step: re-resolve provider and module versions." },
