@@ -436,6 +436,26 @@ export async function parseTerraformRootContent(
   return blocksToEntities(splitBundleContent(content), root, hcl2json, modeOptions);
 }
 
+/** The root name an audit of the audited directory itself parses under. */
+export const AUDIT_ROOT_NAME = "audit-root";
+
+/**
+ * The root name one `chant audit` input parses under (#2217).
+ *
+ * A build names its roots from `terraform.roots`; an audit has no such
+ * config, so the name comes from the input's own path, which is the one thing
+ * that tells two discovered roots apart. `envs/prod` becomes `envs.prod`,
+ * because an entity key is `<root>/<address>` with the module chain between
+ * them and a `/` inside the root name would read as a module scope. The
+ * audited directory itself keeps the name {@link AUDIT_ROOT_NAME}, so a
+ * single-root audit reads the way it did before an input path was available.
+ */
+export function auditRootName(path?: string): string {
+  const trimmed = (path ?? "").replace(/^\.\//, "").replace(/\/+$/, "");
+  if (trimmed === "" || trimmed === ".") return AUDIT_ROOT_NAME;
+  return trimmed.replace(/\//g, ".");
+}
+
 /**
  * The module scope an entity key names: the part before the address.
  *

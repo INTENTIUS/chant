@@ -408,7 +408,11 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
     // shape alone can't disambiguate them.
     candidates = collectCandidates(options.path);
   }
-  const inputs = classifyFiles(candidates, plugins);
+  // A local target hands its directory to the classifier, so an input whose
+  // path names a directory carries the directory itself (#2217): terraform's
+  // parse-to-graph follows a root module's local `module` calls from there. A
+  // URL target has no local tree, and never fetches `.tf` in the first place.
+  const inputs = classifyFiles(candidates, plugins, isUrl ? {} : { baseDir: options.path });
   const unclaimed = unclaimedFiles(candidates, inputs, plugins);
   const scanned = inputs.map((i) => i.path);
 

@@ -663,6 +663,29 @@ export type BuildRootContributor = (
   ctx: Pick<BuildRootContext, "entities">,
 ) => Promise<BuildRootContribution>;
 
+/**
+ * Where the content handed to `auditEntities` came from (#2217).
+ *
+ * The hook's first argument is the text audit discovery classified for a
+ * lexicon. For most lexicons that is the whole unit of parsing. For terraform
+ * it is not: a root module's `module` blocks name sibling directories, and a
+ * rule about what a CHILD module may contain cannot be answered from one
+ * directory's text. So the discovery facts a lexicon may need to read further
+ * travel with the content.
+ *
+ * `dir` and `baseDir` are set only when discovery walked a local filesystem.
+ * A remote tree fetch leaves both undefined, and a lexicon that finds them
+ * undefined parses the content it was given and nothing else.
+ */
+export interface AuditEntitiesInput {
+  /** The input's path as discovery recorded it, relative to the audited root. `"."` for the root itself. */
+  path: string;
+  /** Absolute path of the directory this input's files were read from. */
+  dir?: string;
+  /** Absolute path of the audited root: the boundary a lexicon may read within. */
+  baseDir?: string;
+}
+
 export interface LexiconPlugin {
   // ── Required ──────────────────────────────────────────────
   /** Human-readable name (e.g. "aws", "gcp") */
@@ -791,8 +814,17 @@ export interface LexiconPlugin {
    * return a `Promise` for a lexicon whose parser is inherently async (e.g.
    * terraform's HCL parser, a lazy-loaded wasm module). `auditLexicon` awaits
    * it before reading `ctx.entities`.
+   *
+   * `input` says where the content came from (#2217). It is optional so a
+   * caller can still parse a bare string, and a lexicon that only needs the
+   * text ignores it. A lexicon whose unit of parsing is a directory rather
+   * than a file (terraform: a root module and the local modules it calls)
+   * reads `dir` to descend, and stays inside `baseDir` while doing it.
    */
-  auditEntities?(content: string): Map<string, Declarable> | Promise<Map<string, Declarable>>;
+  auditEntities?(
+    content: string,
+    input?: AuditEntitiesInput,
+  ): Map<string, Declarable> | Promise<Map<string, Declarable>>;
 
   /**
    * Machine-readable spec-coverage accounting for `check-lexicon` (#1330).

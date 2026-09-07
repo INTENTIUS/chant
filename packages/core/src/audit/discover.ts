@@ -23,9 +23,10 @@
  *     read `output.files`, so the whole chart is one AuditInput.
  *   - Terraform is also a directory BUNDLE, keyed by that directory's own
  *     `.tf` filenames, not recursively: a nested directory with its own
- *     `.tf` files (e.g. `modules/foo`) is a separate root module and gets its
- *     own AuditInput. `.tf` isn't YAML/JSON either, so `detectTemplate` can't
- *     see it.
+ *     `.tf` files (e.g. `modules/foo`) is its own AuditInput, UNLESS another
+ *     directory's `.tf` calls it as a local module, in which case it is a
+ *     child module of that root and is parsed as part of it (#2217). `.tf`
+ *     isn't YAML/JSON either, so `detectTemplate` can't see it.
  *   - k8s `detectTemplate` matches any `apiVersion`+`kind`, including GCP Config
  *     Connector (`cnrm.cloud.google.com`) resources and fountain
  *     (`fountain.dev/v1`) manifests, so gcp and fountain must be tried first.
@@ -34,7 +35,7 @@
  */
 
 import { readdirSync, readFileSync, statSync } from "fs";
-import { basename, join, relative } from "path";
+import { basename, join, relative, resolve } from "path";
 import { parseYAML } from "../yaml";
 import type { LexiconPlugin } from "../lexicon";
 import type { AuditInput, AuditLexicon } from "./core";
@@ -392,16 +393,102 @@ function classifyHelm(files: RepoFile[], plugin: DetectPlugin | undefined): { in
 }
 
 /**
+ * A `source` attribute naming a local path, the only module source Terraform
+ * reads from the repository itself. A registry or git source ("hashicorp/aws",
+ * "git::https://...") never starts with `./` or `../`, and `source` inside
+ * `required_providers` is a registry address, so the prefix is what tells the
+ * two apart without an HCL parser here. `classifyTerraform` uses this to tell
+ * a root module from a directory that is somebody's child module; the lexicon
+ * plugin parses the calls properly once it has the root.
+ */
+const LOCAL_MODULE_SOURCE = /(?:^|[\s{,])source\s*=\s*"(\.{1,2}\/[^"]*)"/g;
+
+/**
+ * Resolve `rel` against the repo-relative directory `dir`. Returns undefined
+ * when the path climbs above the audited root, which is a directory this walk
+ * never read and so can never be one of its inputs.
+ */
+function resolveRepoDir(dir: string, rel: string): string | undefined {
+  const parts = dir === "" ? [] : dir.split("/");
+  for (const segment of rel.split("/")) {
+    if (segment === "" || segment === ".") continue;
+    if (segment === "..") {
+      if (parts.length === 0) return undefined;
+      parts.pop();
+      continue;
+    }
+    parts.push(segment);
+  }
+  return parts.join("/");
+}
+
+/**
+ * The directories that are somebody's local child module: a `.tf` file in
+ * another directory of this walk calls them with a relative `source`.
+ *
+ * They are dropped as audit inputs of their own, because the root that calls
+ * them parses them as child scopes (the terraform plugin's `auditEntities`
+ * descends from `AuditInput.dir`, #2217). Auditing them twice would report
+ * every finding in them twice, once per scope, and auditing them as roots is
+ * what made `chant audit` disagree with `chant build` about which rules apply
+ * to a child module at all.
+ *
+ * A directory a cycle reaches but no root does is kept: `a` calling `b`
+ * calling `a` is a configuration Terraform refuses, and dropping both would
+ * leave the files audited by nothing.
+ */
+function calledAsLocalModule(byDir: Map<string, Record<string, string>>): Set<string> {
+  const callees = new Map<string, Set<string>>();
+  const called = new Set<string>();
+  for (const [dir, bundle] of byDir) {
+    const targets = new Set<string>();
+    for (const source of Object.values(bundle)) {
+      for (const match of source.matchAll(LOCAL_MODULE_SOURCE)) {
+        const target = resolveRepoDir(dir, match[1]);
+        if (target === undefined || target === dir || !byDir.has(target)) continue;
+        targets.add(target);
+        called.add(target);
+      }
+    }
+    callees.set(dir, targets);
+  }
+
+  const queue = [...byDir.keys()].filter((dir) => !called.has(dir));
+  const reached = new Set<string>(queue);
+  while (queue.length > 0) {
+    for (const target of callees.get(queue.shift()!) ?? []) {
+      if (reached.has(target)) continue;
+      reached.add(target);
+      queue.push(target);
+    }
+  }
+  return new Set([...called].filter((dir) => reached.has(dir)));
+}
+
+/**
  * Collect Terraform root modules as directory bundles from an in-memory file
  * set, modeled on `classifyHelm`. Unlike a Helm chart (its whole subtree is
  * one bundle), a Terraform root module references only its own sibling
  * files, so grouping is by each `.tf` file's immediate directory, not
- * recursive: a nested directory with its own `.tf` files (`modules/foo`) is
- * a separate root module and gets its own AuditInput. Returns inputs plus
- * the exact `.tf` paths claimed, so the loose-file pass in `classifyFiles`
- * can skip them.
+ * recursive.
+ *
+ * A directory another one calls as a local module is not a root module and
+ * gets no input of its own (#2217): the root that calls it parses it as a
+ * child scope, which is what Terraform does and what `chant build` already
+ * did. That descent reads the child's directory from disk, so it only happens
+ * when `baseDir` says a local walk found these files; an in-memory file set
+ * with no directory behind it keeps every `.tf` directory as its own input,
+ * as before.
+ *
+ * Returns inputs plus the exact `.tf` paths claimed, so the loose-file pass in
+ * `classifyFiles` can skip them — a child module's files are claimed too, by
+ * the root that will parse them.
  */
-function classifyTerraform(files: RepoFile[], plugin: DetectPlugin | undefined): { inputs: AuditInput[]; claimed: Set<string> } {
+function classifyTerraform(
+  files: RepoFile[],
+  plugin: DetectPlugin | undefined,
+  baseDir?: string,
+): { inputs: AuditInput[]; claimed: Set<string> } {
   const inputs: AuditInput[] = [];
   const claimed = new Set<string>();
   if (!plugin) return { inputs, claimed };
@@ -416,18 +503,38 @@ function classifyTerraform(files: RepoFile[], plugin: DetectPlugin | undefined):
     byDir.set(dir, bundle);
     claimed.add(f.path);
   }
+  const childModules = baseDir === undefined ? new Set<string>() : calledAsLocalModule(byDir);
   for (const [dir, bundle] of byDir) {
+    if (childModules.has(dir)) continue;
     // `content` is the whole root module, every `.tf` in filename order with a
     // `# file:` line comment (legal HCL) marking each boundary, so a lexicon's
     // `auditEntities(content)` sees the module Terraform itself would load,
-    // not one arbitrary file of it. `files` keeps the per-file split.
+    // not one arbitrary file of it. `files` keeps the per-file split, and
+    // `dir` is where the local modules it calls are read from.
     const content = Object.keys(bundle)
       .sort()
       .map((name) => `# file: ${name}\n${bundle[name]}`)
       .join("\n");
-    inputs.push({ path: dir === "" ? "." : dir, content, lexicon: "terraform", files: bundle });
+    inputs.push({
+      path: dir === "" ? "." : dir,
+      content,
+      lexicon: "terraform",
+      files: bundle,
+      ...(baseDir === undefined ? {} : { dir: resolve(baseDir, dir), baseDir }),
+    });
   }
   return { inputs, claimed };
+}
+
+/** Where a set of classified files came from, when they came from a local walk (#2217). */
+export interface ClassifyOptions {
+  /**
+   * Absolute path of the directory that was walked. Travels onto the inputs
+   * whose `path` names a directory, so a lexicon's `auditEntities` can read
+   * the files that directory references (terraform's local module calls).
+   * Omit for an in-memory or fetched file set: there is no directory to read.
+   */
+  baseDir?: string;
 }
 
 /**
@@ -439,15 +546,16 @@ function classifyTerraform(files: RepoFile[], plugin: DetectPlugin | undefined):
  * (delegating to each plugin's `detectTemplate`). Lexicons whose plugin isn't
  * provided are skipped.
  */
-export function classifyFiles(files: RepoFile[], plugins: DetectPlugin[]): AuditInput[] {
+export function classifyFiles(files: RepoFile[], plugins: DetectPlugin[], opts: ClassifyOptions = {}): AuditInput[] {
   const byName = new Map(plugins.map((p) => [p.name, p]));
+  const baseDir = opts.baseDir === undefined ? undefined : resolve(opts.baseDir);
 
   // Helm claims whole chart directories first; chart-internal files are excluded
   // from the loose-file pass so templates aren't double-audited.
   const helm = classifyHelm(files, byName.get("helm"));
   const underChart = (p: string): boolean => helm.prefixes.some((pre) => (pre === "" ? true : p.startsWith(pre)));
 
-  const terraform = classifyTerraform(files, byName.get("terraform"));
+  const terraform = classifyTerraform(files, byName.get("terraform"), baseDir);
 
   const inputs: AuditInput[] = [...helm.inputs, ...terraform.inputs];
   for (const { path, content } of files) {
@@ -483,7 +591,7 @@ export function classifyFiles(files: RepoFile[], plugins: DetectPlugin[]): Audit
  * lexicon whose plugin isn't provided, so a caller can scope discovery.
  */
 export function discoverByDetection(root: string, plugins: DetectPlugin[]): AuditInput[] {
-  return classifyFiles(collectCandidates(root), plugins);
+  return classifyFiles(collectCandidates(root), plugins, { baseDir: root });
 }
 
 /** The walk half of `discoverByDetection`: candidate files read into memory, paths relative to the root. */

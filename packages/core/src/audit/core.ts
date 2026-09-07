@@ -25,7 +25,7 @@ import type { Severity } from "../lint/rule";
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "../lint/post-synth";
 import { applyInlineSuppressions, type SuppressionMetaFinding } from "../lint/suppressions";
 import type { SerializerResult } from "../serializer";
-import type { LexiconPlugin } from "../lexicon";
+import type { AuditEntitiesInput, LexiconPlugin } from "../lexicon";
 import type { Declarable } from "../declarable";
 
 /**
@@ -61,6 +61,16 @@ export interface AuditInput {
    * — checks that read `output.files` (helm, docker) see the whole bundle.
    */
   files?: Record<string, string>;
+  /**
+   * Absolute directory this input's files were read from, set by discovery on
+   * a local walk for the inputs whose `path` names a directory (#2217). It
+   * reaches a lexicon's `auditEntities` as `AuditEntitiesInput.dir`, which is
+   * what lets terraform follow a root module's local `module` calls. Undefined
+   * for a remote tree fetch and for a single-file input.
+   */
+  dir?: string;
+  /** Absolute path of the audited root, when discovery walked one (#2217). The boundary `dir` may read within. */
+  baseDir?: string;
 }
 
 /** A finding produced by a post-synth check against an audited file. */
@@ -99,8 +109,16 @@ export type ChecksProvider = (lexicon: AuditLexicon) => Promise<PostSynthCheck[]
  * `ctx.entities` holds during a build, so entity-reading checks run unchanged.
  * May return a `Promise` for a lexicon whose parser is inherently async (e.g.
  * terraform's HCL parser); `auditLexicon`'s `entitiesFor` awaits it.
+ *
+ * The second argument carries the input's discovery facts (its path, and the
+ * directory it was read from on a local walk), so a lexicon whose unit of
+ * parsing is a directory can name its scope after that directory and read the
+ * directories it references (#2217).
  */
-export type EntitiesParser = (content: string) => Map<string, Declarable> | Promise<Map<string, Declarable>>;
+export type EntitiesParser = (
+  content: string,
+  input?: AuditEntitiesInput,
+) => Map<string, Declarable> | Promise<Map<string, Declarable>>;
 
 /**
  * Resolve the entities parser for a lexicon (its plugin's `auditEntities`,
@@ -322,7 +340,11 @@ async function auditLexicon(
   const entitiesFor = async (file: AuditInput): Promise<Map<string, Declarable>> => {
     if (!parseEntities) return new Map();
     try {
-      return await parseEntities(file.content);
+      return await parseEntities(file.content, {
+        path: file.path,
+        ...(file.dir !== undefined ? { dir: file.dir } : {}),
+        ...(file.baseDir !== undefined ? { baseDir: file.baseDir } : {}),
+      });
     } catch {
       // The audit contract is "runs against any repo" — unparseable content
       // contributes no entities, never a crash.
