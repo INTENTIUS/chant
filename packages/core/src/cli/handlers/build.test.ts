@@ -149,3 +149,83 @@ describe("runBuild --components --generate (chant #1108 build-time parameters)",
     expect(generateComponentsPipelineMock).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * chant #2060. `chant build --components --generate --format json` forwarded
+ * only `{ stages, jobs, yaml }`, dropping `result.env` even though the
+ * generator (#2046, PR #2050) resolves and returns it. A consumer reading the
+ * structured output (behold does) had no environment identity except by
+ * parsing the YAML back, which #2046 was meant to retire.
+ */
+describe("runBuild --components --generate --format json (chant #2060 env passthrough)", () => {
+  beforeEach(() => {
+    generateComponentsPipelineMock.mockReset();
+    loadChantConfigUpwardMock.mockReset().mockResolvedValue({ config: {} });
+  });
+
+  test("--format json includes result.env alongside stages, jobs and yaml", async () => {
+    generateComponentsPipelineMock.mockResolvedValue({
+      success: true,
+      yaml: "name: chant-components-prod\nenv:\n  CHANT_ENV: prod\n",
+      stages: ["deploy"],
+      jobs: [{ jobName: "deploy-web", component: "web", stage: "deploy", needs: [] }],
+      env: "prod",
+    });
+    const stdout: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((s: string) => { stdout.push(s); });
+
+    const exit = await runBuild({
+      args: makeArgs({ format: "json", env: "prod" }),
+      plugins: [],
+      serializers: [],
+    });
+
+    expect(exit).toBe(0);
+    expect(stdout).toHaveLength(1);
+    const printed = JSON.parse(stdout[0]);
+    expect(printed).toEqual({
+      stages: ["deploy"],
+      jobs: [{ jobName: "deploy-web", component: "web", stage: "deploy", needs: [] }],
+      yaml: "name: chant-components-prod\nenv:\n  CHANT_ENV: prod\n",
+      env: "prod",
+    });
+    vi.restoreAllMocks();
+  });
+
+  test("--format json omits env when the generator's result carries none", async () => {
+    generateComponentsPipelineMock.mockResolvedValue({
+      success: true,
+      yaml: "stages: []",
+      stages: [],
+      jobs: [],
+    });
+    const stdout: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((s: string) => { stdout.push(s); });
+
+    const exit = await runBuild({ args: makeArgs({ format: "json" }), plugins: [], serializers: [] });
+
+    expect(exit).toBe(0);
+    const printed = JSON.parse(stdout[0]);
+    expect(printed).toEqual({ stages: [], jobs: [], yaml: "stages: []" });
+    expect(printed).not.toHaveProperty("env");
+    vi.restoreAllMocks();
+  });
+
+  test("the default text format is unchanged: env is not forwarded and only the raw yaml is printed", async () => {
+    generateComponentsPipelineMock.mockResolvedValue({
+      success: true,
+      yaml: "name: chant-components-prod\nenv:\n  CHANT_ENV: prod\n",
+      stages: ["deploy"],
+      jobs: [{ jobName: "deploy-web", component: "web", stage: "deploy", needs: [] }],
+      env: "prod",
+    });
+    const stdout: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((s: string) => { stdout.push(s); });
+
+    const exit = await runBuild({ args: makeArgs({ env: "prod" }), plugins: [], serializers: [] });
+
+    expect(exit).toBe(0);
+    expect(stdout).toEqual(["name: chant-components-prod\nenv:\n  CHANT_ENV: prod\n"]);
+    vi.restoreAllMocks();
+  });
+});

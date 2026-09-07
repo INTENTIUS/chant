@@ -123,7 +123,7 @@ The `--sandbox` flag always wins over `build.sandbox` when both are present.
 
 A components-only project need not declare a lexicon plugin at all. Lexicons are loaded best-effort here, so a project whose `chant.config.ts` lists none still generates.
 
-`--env <name>` is threaded into the generated pipeline as the environment it deploys, and `--param` / `--params-file` bind build-time parameters the same way they do for a resource build. With `--format json` the result is `{ stages, jobs, yaml }` on stdout. The same stages and jobs are available as graph IR through [`chant graph --components --format ir --projection <lexicon>`](/chant/cli/graph/#--projection-lexicon--the-cipipeline-projection-989).
+`--env <name>` is threaded into the generated pipeline as the environment it deploys, and `--param` / `--params-file` bind build-time parameters the same way they do for a resource build. With `--format json` the result is `{ stages, jobs, yaml, env }` on stdout, where `env` is the generator's own resolved environment (present whenever the generator returns one; omitted otherwise) rather than something a consumer has to re-derive by parsing the YAML back. The same stages, jobs and env are available as graph IR through [`chant graph --components --format ir --projection <lexicon>`](/chant/cli/graph/#--projection-lexicon--the-cipipeline-projection-989).
 
 ## Build-time parameters
 
