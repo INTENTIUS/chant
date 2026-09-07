@@ -85,7 +85,7 @@ A reconcile activity is also available via `activity("reconcilePr", args)`: give
 
 ## Gate steps
 
-A gate stops the run until someone records a resolution on the gate ledger. Typical gate scenarios:
+A gate is a fact on the gate ledger: a run that reaches one with no resolution records that it is waiting and ends there. Typical gate scenarios:
 
 - Human approval inside a change window
 - Manual QA sign-off before promoting to prod
@@ -116,7 +116,7 @@ chant approve dns-delegation gate-dns-delegation --actor alex
 chant run dns-delegation
 ```
 
-The second run reads the resolution, walks through the gate carrying the approver onto the step record, and finishes. `chant run approve <op> <gate> --on <lexicon>` does the same write and then tells the hosting runtime, so a run parked on a steward's thread picks it up now rather than on its next tick. See [Gate-as-fact](/chant/guide/operator/#gate-as-fact) for the ordering rules.
+The second run reads the resolution, walks through the gate carrying the approver onto the step record, and finishes. `chant run approve <op> <gate> --on <lexicon>` does the same write and then tells the hosting runtime, so a runtime that can wake a gated run of its own does it now rather than on its next tick. See [Gate-as-fact](/chant/guide/operator/#gate-as-fact) for the ordering rules.
 
 ## Compensation on failure
 

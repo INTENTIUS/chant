@@ -77,11 +77,11 @@ export interface Step {
   [param: string]: unknown;
 }
 
-/** Mirrors `$defs.Gate` — pauses the composition for an external signal (typically human approval). */
+/** Mirrors `$defs.Gate` — a human approval decided against the gate ledger; the run stops here with status `gated` until `chant approve` has answered it. */
 export interface Gate {
   kind: "gate";
   signalName: string;
-  /** Duration string bounding the wait, e.g. "48h". Default: "48h". */
+  /** How long a recorded pending gate stays valid, as a duration string. Default: "48h". */
   timeout?: string;
   /** Human-readable description of the action required to unblock this gate. */
   description?: string;
@@ -170,7 +170,7 @@ export function phase(name: string, steps: Array<Step | Gate | Phase>, opts?: { 
   return { phase: name, steps, ...(opts?.parallel ? { parallel: true } : {}) };
 }
 
-/** Author a gate step — pauses the composition for an external signal (typically human approval). */
+/** Author a gate step — a human approval the driver decides against the gate ledger, stopping the run `gated` when nothing has answered it. */
 export function gate(signalName: string, opts?: { timeout?: string; description?: string }): Gate {
   return { kind: "gate", signalName, ...opts };
 }

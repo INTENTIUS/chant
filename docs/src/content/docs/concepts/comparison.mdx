@@ -8,7 +8,7 @@ diataxis: explanation
 
 chant is typed infrastructure, end to end: a **compiler at its core** — TypeScript in, spec-native output out — with the lifecycle you choose built on top. You declare infrastructure as typed TypeScript objects, chant validates them against a lexicon's semantic rules, and emits the target format — CloudFormation, GitLab CI, or whatever the lexicon targets.
 
-The build path is pure synthesis: parsing, type-checking, linting, and emitting artifacts, with no API calls and no state. Deployment and drift live one layer up, in the lifecycle you choose — observational diff, `cloud → code` reconcile, or gated `code → cloud` apply — built as durable Ops on that core rather than welded into it.
+The build path is pure synthesis: parsing, type-checking, linting, and emitting artifacts, with no API calls and no state. Deployment and drift live one layer up, in the lifecycle you choose — observational diff, `cloud → code` reconcile, or gated `code → cloud` apply — built as Ops on that core rather than welded into it.
 
 This isn't a reaction to other tools' failures — it's an approach that was always available. Nobody built it because the industry was racing to weld one lifecycle to the compiler. chant keeps the compiler deterministic and lets the lifecycle be yours.
 
@@ -146,7 +146,7 @@ The most consequential design difference after execution model is the lifecycle 
 
 chant's design decisions have real consequences:
 
-- **The build path doesn't apply.** Deployment runs one layer up — a chant Op (local or durable), the CloudFormation CLI, a CI pipeline, an agent. chant produces the artifact; an Op or your pipeline applies it. The build stays pure so that step is a choice, not a coupling.
+- **The build path doesn't apply.** Deployment runs one layer up — a chant Op (local or on a steward), the CloudFormation CLI, a CI pipeline, an agent. chant produces the artifact; an Op or your pipeline applies it. The build stays pure so that step is a choice, not a coupling.
 
 - **Static evaluation means no runtime lookups at build time.** You can't call an API during synthesis to get a VPC ID or read a secret. Cross-resource references within a project work (via attribute references). For values that need to be resolved at deploy time, lexicons provide intrinsics. For values that need to be resolved before synthesis, agents or scripts can populate source files.
 

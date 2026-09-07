@@ -32,7 +32,7 @@ Publishing the UIs is separate from the deploy, deliberately. Delegating three s
 It used to wait anyway: `crdb-publish-ui` held a 72-hour gate that somebody released with a signal once they had done the work at the registrar. The gate is a converge rule now. `crdb-ui-converge` observes prod every quarter hour, and while the UI ingresses and their certificates are still short of what `src/` declares it dispatches `crdb-publish-ui`. Before delegation that dispatch fails on the certificate wait, cheaply and honestly. The first tick after the NS records propagate is the one that publishes. The delegation is the signal.
 
 ```bash
-chant run crdb-publish-ui        # once, by hand: prints the nameservers, then waits
+chant run crdb-publish-ui        # once, by hand: prints the nameservers, then fails on the certificate wait
 # ... create the NS records it printed at your registrar ...
 chant run crdb-ui-converge       # or leave the schedule to notice
 ```
@@ -237,7 +237,7 @@ central.<your-domain>  →  NS  (gke-crdb-central-zone)
 west.<your-domain>     →  NS  (gke-crdb-west-zone)
 ```
 
-Check with `dig NS "east.${CRDB_DOMAIN}"`, then send the signal. The Op waits up to 72 hours, durably — a worker restart does not lose it.
+Check with `dig NS "east.${CRDB_DOMAIN}"`, then run `chant run crdb-publish-ui` again. Nothing is held open in between: the second run's Certificates phase waits for the managed certificates to go Active and its Verify phase proves the three UIs answer. Leaving `crdb-ui-converge` to dispatch it on its next tick does the same thing without you.
 
 ### External Secrets Operator
 

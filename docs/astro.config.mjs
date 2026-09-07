@@ -42,7 +42,7 @@ export default defineConfig({
 				// its own Astro routes and renders every Starlight doc to Markdown.
 				starlightLlmsTxt({
 					description:
-						'chant is a TypeScript-first infrastructure tool: typed resources in, spec-native output (CloudFormation, GitLab CI, Kubernetes YAML, and more) out, validated by semantic lint rules, with an optional durable deployment lifecycle on top.',
+						'chant is a TypeScript-first infrastructure tool: typed resources in, spec-native output (CloudFormation, GitLab CI, Kubernetes YAML, and more) out, validated by semantic lint rules, with an optional deployment lifecycle on top: Ops that run in-process or on a fountain steward.',
 					details:
 						'- Agents: start at /agents/ for a copy-paste setup prompt, then /guide/agent-integration/ for the skills, MCP tools, and Ops surfaces available after `chant init`.\n- No YAML, no DSL: infrastructure is exported TypeScript, type-checked against a provider lexicon.\n- No authoritative state file: `chant build` synthesizes deterministically from source; drift and apply are computed against the live system.',
 					// The agent prompt page is the entry point machine readers want

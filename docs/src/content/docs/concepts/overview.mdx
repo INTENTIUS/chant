@@ -6,7 +6,7 @@ diataxis: explanation
 
 chant is typed infrastructure, end to end. A deterministic core you can trust, and the lifecycle you choose on top of it.
 
-The core is a **compiler**: typed TypeScript in, spec-native artifacts out, validated by semantic lint rules. On top of that core you pick a lifecycle — observe drift, reconcile `cloud → code`, or apply `code → cloud`, per environment, durable when you need it. The compiler is what makes the whole thing auditable and safe. It is the foundation, not the ceiling.
+The core is a **compiler**: typed TypeScript in, spec-native artifacts out, validated by semantic lint rules. On top of that core you pick a lifecycle — observe drift, reconcile `cloud → code`, or apply `code → cloud`, per environment, hosted when you need it. The compiler is what makes the whole thing auditable and safe. It is the foundation, not the ceiling.
 
 ## The core is a compiler
 
@@ -41,7 +41,7 @@ On top of Ops sits the [component release model](/chant/concepts/components/): d
 | Author | typed TypeScript resources, composites, presets | [Writing Resources](/chant/guide/writing-resources/) |
 | Validate | semantic lint + type-check, one local pass | [Linting](/chant/guide/linting/) |
 | Emit | `chant build` → spec-native artifacts | [Building](/chant/guide/building/) |
-| Deploy | Ops (local or durable), or hand off to your pipeline | [Ops](/chant/guide/ops/) · [Deployment Model](/chant/concepts/deployment-paths/) |
+| Deploy | Ops (local or on a steward), or hand off to your pipeline | [Ops](/chant/guide/ops/) · [Deployment Model](/chant/concepts/deployment-paths/) |
 | Observe | live drift against the deployed system | [Drift Detection](/chant/concepts/drift-detection/) |
 | Reconcile / apply | `cloud → code` PRs, or gated `code → cloud` | [Lifecycle Models](/chant/concepts/lifecycle-models/) |
 

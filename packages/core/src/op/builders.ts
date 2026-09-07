@@ -102,7 +102,12 @@ export function activity(
   return step;
 }
 
-/** Insert a human gate — the workflow pauses until the named signal is received. */
+/**
+ * Insert a human gate. A gate is a fact on the gate ledger, not a wait: a run
+ * that reaches this step with no resolution newer than its pending fact
+ * records the pending fact and ends `gated`. `chant approve <op> <signalName>`
+ * writes the resolution, and the next run walks through carrying the approver.
+ */
 export function gate(
   signalName: string,
   opts?: { timeout?: string; description?: string },
@@ -130,9 +135,10 @@ export function gate(
  * would sever the step from the declaration that lint, plan, and the lexicon
  * row all key on.
  *
- * A gate authored inside `steps` pauses only when the effect will fire (the
- * matched path never reaches it). The receipt-store activities (`receiptRead`,
- * `receiptWrite`) are provided by the receipt row's lexicon (#1835, aws).
+ * A gate authored inside `steps` is reached only when the effect will fire
+ * (the matched path never reaches it). The receipt-store activities
+ * (`receiptRead`, `receiptWrite`) are provided by the receipt row's lexicon
+ * (#1835, aws).
  *
  * @example
  * ```ts

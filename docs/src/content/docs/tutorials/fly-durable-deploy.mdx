@@ -52,8 +52,10 @@ export default Op({
 
 ## The steward
 
-`ops/fountain.ts` declares the machine that runs it. Four documents come out of
-the composite, plus one `Schedule` because the op carries a cron:
+`ops/fountain.ts` declares the machine that runs it. The `Steward` composite
+returns the `Agent`, the `Teammate`, and one `Schedule` per op that carries a
+cron (plus a `Webhook` when you declare one); the `Environment` and the `Vault`
+it reads are declared in the same file and emitted alongside them:
 
 ```ts
 export const { agent, teammate, schedules } = Steward({

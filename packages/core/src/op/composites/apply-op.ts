@@ -58,10 +58,11 @@ export interface ApplyOpConfig {
   /** Delete handling. Default: "never". */
   delete?: DeleteMode;
   /**
-   * Effect handling (#1834, epic #1703 decision 6). `"gated"` pauses the run
-   * at the approval gate whenever the plan proposes an effect, so the Plan
+   * Effect handling (#1834, epic #1703 decision 6). `"gated"` routes the run
+   * through the approval gate whenever the plan proposes an effect, so the Plan
    * phase's effect-will-fire rows (#1832) are reviewed before any effect
-   * runs — the same durable-signal shape as `delete: "gated"`. The generic
+   * runs. A run that reaches the gate unapproved ends `gated` and is answered
+   * by `chant approve`, the same shape `delete: "gated"` has. The generic
    * apply itself never writes a receipt regardless (#1832); only an
    * `effect()` step does, on success, last.
    */
