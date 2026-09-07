@@ -22,25 +22,16 @@
  *     port; `http://localhost:<port>` is this variable's value) and export
  *     it before running this suite.
  *
- * ## Why this skips today even with both present
- *
- * choudoufu#894: `live-plan -json` is reachable only through the `-estate`
- * form, and that form is refused on a configuration that names its own estate
- * ("Estate named by both the live block and -estate"), while the same root
- * without `-estate` refuses with "Machine-readable output is not available
- * under live resource markers yet". `__fixtures__/live` is exactly that
- * shape, so `choudoufuLivePlan` throws here on any real binary. Found by
- * chant #2104; `../../composites/terraform-adopt-op.acceptance.test.ts`
- * carries the same gate for the same reason. When #894 ships, drop
- * `CHOUDOUFU_894_OPEN` from both and the suites run as written.
- *
  * Gating copied from `../../composites/terraform-apply-op.acceptance.test.ts`
  * (`onPath`), which in turn copies `lexicons/k3s/src/serializer.acceptance.
  * test.ts`'s pattern of skipping with the reason named in the describe title
  * rather than failing when the real dependency is absent.
  *
  * `../../__fixtures__/ACCEPTANCE.md` records what this block has last passed
- * against, which for the `live-plan` half is nothing at all (#2220).
+ * against. The `live-plan` half was gated shut on choudoufu#894 until
+ * v0.14.0, which made the `-json` document reachable on a configuration that
+ * names its own estate and kept stdout to it (choudoufu PR 915); chant #2168
+ * dropped the gate and recorded the first run.
  */
 
 import { execSync } from "node:child_process";
@@ -62,21 +53,11 @@ function onPath(cmd: string): boolean {
 const hasChoudoufu = onPath("choudoufu");
 const emulatorEndpoint = process.env.CHOUDOUFU_EMULATOR_ENDPOINT;
 
-/**
- * https://github.com/INTENTIUS/choudoufu/issues/894. Flip to `false` when the
- * `-json` document becomes reachable on a root that declares its own estate.
- * chant #2168 tracks this and the other four reversals that unblock together.
- */
-const CHOUDOUFU_894_OPEN = true;
-
 const skipReason = !hasChoudoufu
   ? "no choudoufu binary on PATH"
   : !emulatorEndpoint
     ? "CHOUDOUFU_EMULATOR_ENDPOINT is not set (bring up choudoufu's `just smoke` emulator stack and export it)"
-    : CHOUDOUFU_894_OPEN
-      ? "choudoufu#894: live-plan -json is refused on a configuration that declares its own estate, " +
-        "so the fixture's live plan cannot produce the #788 document yet"
-      : "";
+    : "";
 
 const FIXTURE = join(import.meta.dirname, "..", "..", "__fixtures__", "live");
 const workspaces: string[] = [];
