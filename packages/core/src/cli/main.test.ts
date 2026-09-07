@@ -1,6 +1,6 @@
 import { describe, test, expect } from "vitest";
 import { EventEmitter } from "node:events";
-import { parseArgs, waitForStreamDrain, usesRemovedTemporalFlag, REMOVED_TEMPORAL_FLAG, REMOVED_FLAG_EXIT_CODE } from "./main";
+import { parseArgs, waitForStreamDrain } from "./main";
 import { resolveCommand, type CommandDef, type ParsedArgs } from "./registry";
 
 describe("parseArgs", () => {
@@ -590,16 +590,14 @@ describe("resolveCommand", () => {
 });
 
 describe("--temporal, removed in #2116", () => {
-  test("the flag is caught before parseArgs, with the line that says where the runtime went", () => {
-    expect(usesRemovedTemporalFlag(["run", "alb-deploy", "--temporal"])).toBe(true);
-    expect(usesRemovedTemporalFlag(["run", "alb-deploy", "--temporal=true"])).toBe(true);
-    expect(REMOVED_TEMPORAL_FLAG).toBe("--temporal was removed in #2116; use --on fountain");
-    expect(REMOVED_FLAG_EXIT_CODE).toBe(2);
-  });
-
-  test("an invocation without it is untouched, and the parser has forgotten the flag", () => {
-    expect(usesRemovedTemporalFlag(["run", "alb-deploy", "--on", "fountain"])).toBe(false);
-    expect(() => parseArgs(["run", "alb-deploy", "--temporal"])).toThrow(/Unknown flag/);
+  // #2204 removed the bridge that caught the flag ahead of the parser and
+  // exited 2. Both spellings now take the same route any other unrecognised
+  // flag takes, and nothing in the CLI knows the word.
+  test("both spellings fail as an unknown flag, like any other unrecognised flag", () => {
+    expect(() => parseArgs(["run", "alb-deploy", "--temporal"])).toThrow(/Unknown flag: --temporal/);
+    expect(() => parseArgs(["run", "alb-deploy", "--temporal=true"])).toThrow(/Unknown flag: --temporal/);
+    // The message and the throw match what an invented flag gets.
+    expect(() => parseArgs(["run", "alb-deploy", "--nonesuch"])).toThrow(/Unknown flag: --nonesuch/);
   });
 });
 

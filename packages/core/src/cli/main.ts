@@ -95,27 +95,6 @@ const BOOLEAN_FLAGS = new Set([
 /**
  * Parse command line arguments
  */
-/**
- * `--temporal` picked the Temporal runtime, which #2116 deleted. It is caught
- * ahead of {@link parseArgs} — which no longer knows the flag at all — for one
- * minor version, so an invocation that still carries it is told where the
- * runtime went instead of getting "Unknown flag: --temporal" and a pointer at
- * `--help`. Delete this, its test and the constants below once that version
- * has shipped.
- */
-export const REMOVED_TEMPORAL_FLAG = "--temporal was removed in #2116; use --on fountain";
-
-/**
- * Not 1: a removed flag means the command never started, so a CI job that
- * retries a failed run has nothing to retry here.
- */
-export const REMOVED_FLAG_EXIT_CODE = 2;
-
-/** Matches the bare flag and the joined `--temporal=…` form `splitJoinedFlags` would otherwise split. */
-export function usesRemovedTemporalFlag(argv: string[]): boolean {
-  return argv.some((arg) => arg === "--temporal" || arg.startsWith("--temporal="));
-}
-
 export function parseArgs(args: string[]): ParsedArgs {
   // Local mutable copy — chant #1127's joined-`--flag=value` splitting below
   // rewrites the array in place (one token becomes two), so this must not
@@ -1005,12 +984,6 @@ export const commandRegistry: CommandDef[] = [
  */
 async function main(): Promise<void> {
   const rawArgv = process.argv.slice(2);
-
-  if (usesRemovedTemporalFlag(rawArgv)) {
-    console.error(formatError({ message: REMOVED_TEMPORAL_FLAG }));
-    await flushAndExit(REMOVED_FLAG_EXIT_CODE);
-    return;
-  }
 
   let args: ParsedArgs;
   try {
