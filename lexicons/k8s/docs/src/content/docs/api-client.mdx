@@ -20,7 +20,7 @@ Everything chant does against a live cluster — `chant lifecycle diff --live`, 
 
 **Typed failures.** The API server sends a `Status` object with a numeric code and a `reason` enum. Chant reads those fields instead of matching English on stderr, so `403 Forbidden` becomes "not observed, no credentials" and `404 NotFound` becomes a genuine absence, by construction rather than by regex.
 
-**No `kubectl` in the image.** A Temporal worker running `kubectlApply` or `waitForReady` needs no `kubectl` binary. (The activity is still called `kubectlApply`: workers register activities by name, and renaming it would break every registered workflow.)
+**No `kubectl` in the image.** A process running `kubectlApply` or `waitForReady` needs no `kubectl` binary. (The activity is still called `kubectlApply`: core's activity registry keys the activity map by export name and an Op step resolves its `fn` string against it, so renaming the export would break every Op that names the step.)
 
 ## Installation
 
@@ -81,7 +81,7 @@ The allowlist matches the command *name*, not its full path: `aws`, `/usr/local/
 
 `kubectlApply` performs a **server-side apply**, rather than the client-side three-way merge `kubectl apply` does by default. Server-side apply is where Kubernetes itself has gone, it removes the `last-applied-configuration` annotation from the story, and it is what makes field ownership something the API server tracks rather than something chant has to infer.
 
-`ApplyOp({ target: "kubectl" })` goes through the same path. The kubectl branch of `nativeApply` used to shell `kubectl apply -f`; it now dispatches into this lexicon, where the apply is server-side and the prune runs against the typed client. The dispatcher itself stays in the Temporal lexicon, because "which mechanism applies this target" is not Kubernetes knowledge — but applying to Kubernetes is.
+`ApplyOp({ target: "kubectl" })` goes through the same path. The kubectl branch of `nativeApply` used to shell `kubectl apply -f`; it now dispatches into this lexicon, where the apply is server-side and the prune runs against the typed client. `nativeApply`, the dispatcher itself, stays in core, because "which mechanism applies this target" is not Kubernetes knowledge; applying to Kubernetes is.
 
 ### chant's field manager
 

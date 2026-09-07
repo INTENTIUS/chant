@@ -28,7 +28,7 @@ import { DEFAULT_IMPORT_TYPES } from "./api/sweep-types";
  * reachable by naming it with `--selector type=...`. Defined in
  * `./api/sweep-types.ts` and re-exported here, its original home — chant
  * #1075's ownership-scoped prune needs the same list without pulling the
- * import parser into a Temporal worker.
+ * import parser in behind the apply activity.
  */
 export { DEFAULT_IMPORT_TYPES };
 

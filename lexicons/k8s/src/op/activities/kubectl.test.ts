@@ -1,10 +1,11 @@
 /**
  * `kubectlApply` over the typed API client (chant #1074, #1075).
  *
- * The activity contract is what Temporal workers register, so the shape of the
- * arguments and the `Promise<void>` return are asserted alongside the new
- * behavior. Nothing here spawns a process or reads an ambient kubeconfig,
- * which is the acceptance criterion: a worker image needs no `kubectl` binary.
+ * The activity contract is what an Op step names and core's registry resolves,
+ * so the shape of the arguments and the `Promise<void>` return are asserted
+ * alongside the new behavior. Nothing here spawns a process or reads an ambient
+ * kubeconfig, which is the acceptance criterion: the image a run happens in
+ * needs no `kubectl` binary.
  *
  * chant #1075 adds two things to assert: that the field manager is derived
  * from the project's `ownership.stack` rather than hardcoded, and that the

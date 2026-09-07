@@ -3,10 +3,12 @@
  *
  * The Op counterpart to `./generate-pipeline.ts` (#563): that module
  * synthesizes a deploy-time component graph as one `.gitlab-ci.yml`; this one
- * synthesizes a cron-triggered job per stateless Op — the CI-native
- * alternative to a Temporal `TemporalSchedule` for downstream projects that
- * don't run Temporal (`WorkflowAuditOp`/`PipelineAuditOp`/`ReconcileOp` all
- * accept an optional `schedule` precisely for this).
+ * synthesizes a cron-triggered job per stateless Op. An Op's cadence is an
+ * `OpSchedule` on the Op itself (`packages/core/src/op/types.ts`),
+ * runtime-neutral data each reader interprets; this module is the reader that
+ * turns it into a GitLab pipeline schedule (`WorkflowAuditOp`/
+ * `PipelineAuditOp`/`ReconcileOp` all accept an optional `schedule` precisely
+ * for this).
  *
  * Unlike GitHub Actions' per-workflow `on.schedule`, GitLab has no in-file
  * cron at all — a schedule is a project-level object (Settings → CI/CD →

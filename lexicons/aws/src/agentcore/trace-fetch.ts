@@ -6,10 +6,11 @@
  * lexicon contributes `dogwoodReplay`: a plain exported async function taking
  * one args object, re-exported from `src/op/activities/index.ts`, resolved **by
  * name** by core's activity registry when a project lists the `aws` lexicon.
- * No Temporal import beneath it, so the local executor runs it unchanged and a
- * Temporal worker registers the same function. Transport is injectable through
- * the same `AwsReadHttp` seam `src/api/read-client.ts` already uses, so tests
- * never touch the network and `endpoint` retargets the whole thing.
+ * It imports no runtime of its own, so the local executor
+ * (`packages/core/src/op/local-executor.ts`) calls it as-is. Transport is
+ * injectable through the same `AwsReadHttp` seam `src/api/read-client.ts`
+ * already uses, so tests never touch the network and `endpoint` retargets the
+ * whole thing.
  *
  * The output is text. The cedar lexicon's `PolicyReplayOp` reads a trace from
  * `tracePath`, so `outPath` here is the handoff — and it is the *only* handoff.

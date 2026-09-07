@@ -3,9 +3,9 @@
  *
  * chant #1074 moved this off `kubectl apply -f`. The activity contract is
  * unchanged (a manifest path, an optional context, `Promise<void>`, the
- * `longInfra` profile's 15s heartbeat) because Temporal workers register it by
- * that signature; what changed is underneath. The name is kept for the same
- * reason.
+ * `longInfra` profile) because an Op step names the activity by its export
+ * name and core's registry resolves it there; what changed is underneath. The
+ * name is kept for the same reason.
  *
  * chant #1075 finished the job on two axes:
  *
@@ -58,7 +58,7 @@ export type ApplyDeleteMode = "never" | "owned-only" | "gated";
 export interface KubectlApplyArgs {
   /**
    * Path to a manifest file, or a directory of them. With `documents` given,
-   * this becomes only the human-facing label the heartbeats and logs carry
+   * this becomes only the human-facing label the step's log lines carry
    * (e.g. `kustomize:<dir>`), and nothing is read from disk.
    */
   manifest: string;
@@ -377,7 +377,7 @@ export async function applyManifest(
 
 /**
  * Apply every document in `args.manifest`.
- * Uses longInfra profile — 20m timeout, heartbeat every 15s.
+ * Uses the longInfra profile: 20m timeout, three attempts backing off from 30s.
  */
 export async function kubectlApply(
   args: KubectlApplyArgs,

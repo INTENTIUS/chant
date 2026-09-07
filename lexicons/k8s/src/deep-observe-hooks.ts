@@ -61,7 +61,8 @@ import { GENERATED_ONCE_LABEL_KEY } from "./secret-labels";
  * Kubernetes-defaulted fields, per entity type, as index-erased property
  * paths. Subtracted only where source never declared the property
  * (`side === "live" && counterpart === "absent"`) — cdk-real-drift's default
- * subtraction, same convention as AWS/Azure/Temporal's tables.
+ * subtraction, same convention as the AWS and Azure tables
+ * (`AWS_SERVICE_DEFAULTS`, `AZURE_SERVICE_DEFAULTS`).
  *
  * Sparse and evidence-based rather than derived from the generated schema:
  * the k8s OpenAPI spec this lexicon's codegen consumes
@@ -70,9 +71,8 @@ import { GENERATED_ONCE_LABEL_KEY } from "./secret-labels";
  * actually expressible today. Widening this table is additive and needs no
  * contract change.
  *
- * `spec.strategy` is listed whole, not as `spec.strategy.type`, for the same
- * reason Temporal's `TEMPORAL_SCHEDULE_DEFAULTS` lists `state` whole: pruning
- * only the leaf would still recurse into the object, and a nested default the
+ * `spec.strategy` is listed whole rather than as `spec.strategy.type`, because
+ * pruning only the leaf would still recurse into the object, and a nested default the
  * table does not separately name (`rollingUpdate.maxSurge`/`maxUnavailable`,
  * both `"25%"` when `spec.strategy` is omitted entirely) would leave behind an
  * empty `strategy: {}` — a value distinct from no `strategy` key at all, and

@@ -111,9 +111,9 @@ export function k3sUninstallCommand(args: K3sUninstallArgs): string {
 /**
  * Run the pinned k3s installer against a reachable host. Idempotent on an
  * already-installed matching version: if `k3s --version` already reports the
- * target version, the install is skipped. Uses longInfra profile — 20m
- * timeout, heartbeat every 15s (the installer downloads and starts the
- * k3s binary).
+ * target version, the install is skipped. Uses the longInfra profile: a 20m
+ * timeout, wide enough for the installer to download and start the k3s binary,
+ * and three attempts backing off from 30s.
  *
  * Bounded exactly as `k3dUp`/`k3dDown` were (chant#1410, epic #1598): this
  * drives the case where the host is reachable from where the Op runs. It

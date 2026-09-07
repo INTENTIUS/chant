@@ -16,8 +16,8 @@ const execAsync = promisify(exec);
  * `ResourceFetcher` for `waitForReady`.
  *
  * It stays **dependency-light** — primitives-only signature (app name /
- * namespace / server), no generated Argo CRD types — so a Temporal worker loads
- * it cheaply.
+ * namespace / server), no generated Argo CRD types — so importing the lexicon's
+ * activity module at run time stays cheap.
  */
 
 export interface WaitForArgoSyncArgs {
@@ -36,7 +36,7 @@ export interface WaitForArgoSyncArgs {
   insecure?: boolean;
   /** kubectl context (used when `server` is not set). */
   context?: string;
-  /** Poll interval in ms (default 15000). Heartbeats every poll. */
+  /** Poll interval in ms (default 15000). */
   intervalMs?: number;
 }
 
@@ -113,7 +113,7 @@ export const defaultArgoStatusFetcher: ArgoStatusFetcher = (args, signal) =>
  * `ArgoSyncFailedError` if it reaches a terminal unhealthy state (Degraded /
  * Missing).
  *
- * Delegates the poll loop, heartbeat, and ready/terminal evaluation to the
+ * Delegates the poll loop and the ready/terminal evaluation to the
  * generic `waitForReady` using the shared `argoproj.io/Application` readiness
  * spec. The Argo `ArgoStatusFetcher` is adapted into a `ResourceFetcher` that
  * shapes `{health, sync}` into the `status.health.status` / `status.sync.status`

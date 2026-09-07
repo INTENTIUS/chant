@@ -217,7 +217,7 @@ Flags a workflow file with no top-level `on:` key. Without a trigger the workflo
 
 GHA029 onward are a CI/CD supply-chain security pass: pin & vet external references, enforce least-privilege token scopes, guard trust boundaries against untrusted input, contain secrets, reject unsound expressions, and keep artifacts/caches honest. They run statically on the emitted YAML — everything answerable without leaving the build.
 
-The checks that need a *moving external truth* — whether a pinned SHA still maps to a real upstream tag, whether a ref still exists, whether a new advisory now covers an action in use — can't be deterministic, so they live in the operational layer instead. Schedule the [`WorkflowAuditOp`](/chant/guide/ops/#audit-supply-chain-drift) (temporal lexicon) for that live, always-fresh half; it reads the same emitted workflow references and reports drift via `report | issue | pull-request`.
+The checks that need a *moving external truth* — whether a pinned SHA still maps to a real upstream tag, whether a ref still exists, whether a new advisory now covers an action in use — can't be deterministic, so they live in the operational layer instead. Schedule the [`WorkflowAuditOp`](/chant/guide/ops/#audit-supply-chain-drift), which ships from core's `@intentius/chant/op`, for that live, always-fresh half; it reads the same emitted workflow references and reports drift via `report | issue | pull-request`.
 
 ### GHA029 — Action or reusable workflow not pinned to a commit SHA
 

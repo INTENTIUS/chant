@@ -50,7 +50,7 @@ export const { op } = TerraformApplyOp({
 
 | Option | Default | Notes |
 |---|---|---|
-| `name` | — required | Op name (kebab-case). Also the default task queue and gate signal suffix. |
+| `name` | — required | Op name (kebab-case). `signalName` defaults to `approve-<name>`. |
 | `root` | — required | Key into `terraform.roots`. |
 | `planFile` | `chant.tfplan` | Written by Plan, consumed by Apply — relative to the root dir. |
 | `gate` | `"on-destroy"` | `"on-destroy"` and `"always"` build the identical four-phase shape (`GateStep` carries no condition to branch a plan's destroy count at build time — see below); `"never"` drops the Gate phase entirely. |
@@ -60,7 +60,6 @@ export const { op } = TerraformApplyOp({
 | `upgrade` | `false` | `-upgrade` on the Init step. |
 | `cwd` | the process's cwd | Directory each step starts its `chant.config.*` search from. |
 | `compensate` | unset | Saga-style rollback on a failed apply — see below. |
-| `taskQueue` | `name` | Override the task queue. |
 
 ### The gate
 
@@ -177,7 +176,7 @@ export const { op } = TerraformAdoptOp({ name: "estate-adopt", root: "estate" })
 
 | Option | Default | Notes |
 |---|---|---|
-| `name` | — required | Op name (kebab-case). Also the default task queue and gate signal suffix. |
+| `name` | — required | Op name (kebab-case). `signalName` defaults to `approve-<name>`. |
 | `root` | — required | Key into `terraform.roots`. Must be a live root. |
 | `estate` | auto-detected | The estate whose markers to look for; normally the root's own `live` block or sidecar answers this. |
 | `signalName` | `approve-<name>` | Gate signal name. |
@@ -185,7 +184,6 @@ export const { op } = TerraformAdoptOp({ name: "estate-adopt", root: "estate" })
 | `gateDescription` | a generated description naming the ledger | Override text shown to the approver. |
 | `cwd` | the process's cwd | Directory each step starts its `chant.config.*` search from. |
 | `compensate` | unset | Refused without a command. See below. |
-| `taskQueue` | `name` | Override the task queue. |
 
 ### The adopt mechanism
 

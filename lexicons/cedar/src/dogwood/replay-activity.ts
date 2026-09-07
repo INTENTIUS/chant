@@ -5,9 +5,8 @@
  * Contributed the way the fly lexicon contributes `flyApply`: a plain exported
  * async function taking one args object, re-exported from
  * `src/op/activities/index.ts`, resolved **by name** by core's activity
- * registry when a project lists the `cedar` lexicon. There is no Temporal
- * import here and no Temporal dependency in the package — the local executor
- * runs it as-is, and a Temporal worker registers the same function.
+ * registry when a project lists the `cedar` lexicon. It imports no runtime of
+ * its own, so the local executor calls it as-is.
  *
  * What it does: takes a policy bundle (inline text or paths), an event trace
  * (typed events, inline text, or a path) and a set of expectations, runs

@@ -26,8 +26,8 @@
  *
  * fountain's JSON views name their fields the same way the request schema does
  * (`networking_type`, `env_vars`, `skills`), so the live tree and the declared
- * tree already speak one vocabulary — the AWS situation, not temporal's. The
- * payload is therefore forwarded as-is and the noise rules
+ * tree already speak one vocabulary and nothing has to be renamed on the way in.
+ * The payload is therefore forwarded as-is and the noise rules
  * (./deep-observe-hooks.ts) do the rest. A field fountain adds in a later
  * release surfaces as unclaimed until the table names it (#2160: source
  * never set it, so it is not drift and is never proposed for update), which is

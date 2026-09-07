@@ -16,7 +16,7 @@ export interface GitlabPipelineArgs {
 /**
  * Trigger a GitLab CI pipeline and wait for it to complete successfully.
  * Requires `glab` CLI authenticated in the environment.
- * Uses longInfra profile — 20m timeout, heartbeat every poll.
+ * Uses the longInfra profile: 20m timeout, three attempts backing off from 30s.
  */
 export async function gitlabPipeline(args: GitlabPipelineArgs, signal?: AbortSignal): Promise<void> {
   const ref = args.ref ?? "HEAD";

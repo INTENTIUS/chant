@@ -5,8 +5,8 @@ import {
   type ArgoAppStatus,
   type ArgoStatusFetcher,
 } from "./argo";
-// Activity profiles live centrally in the temporal lexicon (loadProfiles reads
-// them there); argoSync marks ArgoSyncFailedError non-retryable for this activity.
+// Activity profiles live centrally in core (loadProfiles serves this table);
+// argoSync marks ArgoSyncFailedError non-retryable for this activity.
 import { ACTIVITY_PROFILES } from "@intentius/chant/op/activity-profiles";
 
 /** A fetcher that returns a scripted sequence of statuses, repeating the last. */
@@ -66,7 +66,7 @@ describe("waitForArgoSync", () => {
 });
 
 describe("argoSync profile", () => {
-  test("is exported with a long timeout and 60s heartbeat", () => {
+  test("is exported with a long timeout", () => {
     const p = ACTIVITY_PROFILES.argoSync;
     expect(p.timeout).toBe("30m");
   });

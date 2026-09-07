@@ -632,7 +632,7 @@ const { deployment, service, serviceMonitor, prometheusRule } = MonitoredService
       {
         file: "chant-k8s-argo.md",
         name: "chant-k8s-argo",
-        description: "Argo CD composites — ArgoAppFor, ArgoAppSetForRegions, AppProject scoping, cluster registration, and the Argo-vs-Temporal split",
+        description: "Argo CD composites — ArgoAppFor, ArgoAppSetForRegions, AppProject scoping, cluster registration, and how a deploy splits between Argo and a chant Op",
         triggers: [
           { type: "context", value: "argo" },
           { type: "context", value: "argo cd" },
