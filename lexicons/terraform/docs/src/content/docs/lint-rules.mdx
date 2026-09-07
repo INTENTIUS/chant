@@ -1035,6 +1035,95 @@ terraform {
 resource "null_resource" "first" {}
 ```
 
+## TF027: live root's policy block deletes what chant does not own
+
+A live root whose `policy` block sets `undeclared_untagged = "delete"`, with
+or without a `scope` block beside it.
+
+**Why it matters.** The `undeclared_untagged` quadrant covers a live resource
+this estate never marked and the configuration does not declare: a resource
+chant does not own. `"delete"` there is account-scoped reconciliation, and it
+can reach a resource nothing in the project has ever named. chant never
+proposes deleting a resource it does not own, and neither does an Op it
+generates, so the setting is refused on any live root the project builds.
+`TerraformApplyOp` refuses the same thing when it is built, but only for a
+project whose root it can resolve from a `chant.config.json`; this check reads
+the parsed HCL, so it fires whatever the config file is written in, and on a
+live root with no apply Op at all.
+
+**The fix.** Remove `undeclared_untagged = "delete"` from the `policy` block.
+Where the estate really should reclaim orphans, narrow its own ownership
+answer instead: `undeclared_tagged` governs the resources this estate marked,
+and its default is already `"delete"`.
+
+**Prior art.** choudoufu `RulePolicyScope`
+([`internal/live/lint/policy.go`](https://github.com/INTENTIUS/choudoufu/blob/main/internal/live/lint/policy.go)),
+extends. choudoufu refuses the same assignment when no `scope` block narrows
+the purge, on the reasoning of its own issue #67. chant refuses it either way:
+a `scope` block bounds the sweep to a service, type or region, and every
+resource inside that boundary is still one this estate never marked.
+
+```hcl
+terraform {
+  required_version = ">= 1.5.0"
+
+  live {
+    estate = "fixture-estate"
+
+    policy {
+      undeclared_untagged = "delete"
+    }
+  }
+}
+
+resource "null_resource" "first" {}
+```
+
+## TF028: live root watched by a stock-mode watch Op
+
+A root that runs choudoufu with a declared estate, named by a
+`TerraformWatchOp` built without `live: true`.
+
+**Why it matters.** `live` is declared, not detected: a composite is built by
+`chant build` without reading a root module's `.tf` files, so the Op author
+says which shape the Plan phase takes and, until this check, nothing compared
+that answer with the root. Getting it wrong is silent and lossy. `live: true`
+swaps the Plan step for `choudoufuLivePlan`, whose single read of the live
+system answers three questions: whether the estate drifted, how many live
+resources sit at a declared identity carrying no marker, and how many of those
+an exact content match makes claimable. A stock `terraformPlan` step answers
+the first alone, so the watch reports drift and stays quiet about every
+unowned and adoptable resource in the estate.
+
+**The fix.** Set `live: true` on the `TerraformWatchOp` that names the root.
+Drop the root's estate instead if it is not a live root. `TerraformWatchOp`
+also refuses the mismatch outright where it can read the root's mode from a
+`chant.config.json`; this check covers the projects on a `chant.config.ts`,
+where that read returns nothing.
+
+**Prior art.** No tool in the survey covers this. The check reads a chant Op's
+own configuration against a root's mode, and no surveyed tool has an Op model
+to read: choudoufu lints HCL, and so does every tflint ruleset, tfsec and
+trivy-checks, and the reference Sentinel policies. See `audit-lineage.ts`.
+
+```hcl
+terraform {
+  required_version = ">= 1.5.0"
+
+  live {
+    estate = "fixture-estate"
+  }
+}
+
+resource "null_resource" "first" {}
+```
+
+The Op that turns that root into a finding, missing the one field:
+
+```typescript
+const { op } = TerraformWatchOp({ name: "estate-watch", root: "estate" });
+```
+
 ## TF101: terraformApply's planFile must reference a preceding terraformPlan step
 
 A `terraformApply` step's `planFile` is a string or template literal in
