@@ -368,8 +368,8 @@ export const teardown = (path: string, opts?: { id?: string }): NamedActivitySte
  * ]),
  * ```
  *
- * `opts` also accepts `path` (the chant project directory, default the
- * worker's cwd). Defaults to the `longInfra` profile (override via
+ * `opts` also accepts `path` (the chant project directory, default the chant
+ * process's cwd). Defaults to the `longInfra` profile (override via
  * `opts.profile`).
  */
 export const envTeardown = (
@@ -871,8 +871,8 @@ export const spritesDown = (args: {
 
 /**
  * Gate an apply on organizational policy: build the project and run its
- * `lint.policies` over the resolved resources, blocking the workflow on any
- * violation. Place it before the apply phase. `env` (or `ownership.env`) lets a
+ * `lint.policies` over the resolved resources, failing the step on any
+ * violation so no later phase runs. Place it before the apply phase. `env` (or `ownership.env`) lets a
  * policy branch on environment. Single-attempt (`policyCheck` profile) — a
  * deterministic violation is not retried.
  */

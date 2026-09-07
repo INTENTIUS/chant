@@ -272,10 +272,9 @@ const report: PhaseReport[] = [];
  *
  * Each of those is one test doing a hundred-odd builds or lints — a batch, not
  * a unit — and they are among the heaviest tests in the suite. Standalone they
- * take two to four seconds; on a saturated run (the fourteen-fork pool, the
- * temporal suites bundling workflows with webpack in-process) they have been
- * seen past the file's 20s default and reported as a timeout, which reads as a
- * network violation to anyone skimming CI. The generous ceiling is not masking
+ * take two to four seconds; sharing a machine with the rest of the fork pool
+ * they have been seen past the file's 20s default and reported as a timeout,
+ * which reads as a network violation to anyone skimming CI. The generous ceiling is not masking
  * a hang: a guarded phase that genuinely blocks on a socket throws at the call
  * site rather than waiting, because the guard never lets a connection open.
  */

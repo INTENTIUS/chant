@@ -60,8 +60,8 @@ export interface LexiconUpgradeOpConfig {
   /** Which in-scope lexicon to check. */
   lexicon: SupportedLexicon;
   /**
-   * Op name (kebab-case). Also the generated workflow function name,
-   * camelCased. Defaults to `<lexicon>-upgrade`.
+   * Op name (kebab-case). Names the Op's output directory and is what `chant
+   * run` takes. Defaults to `<lexicon>-upgrade`.
    */
   name?: string;
   /**
@@ -82,7 +82,7 @@ export interface LexiconUpgradeOpConfig {
 }
 
 export interface LexiconUpgradeOpResources {
-  /** Op resource — generates the upgrade workflow on `chant build`. */
+  /** Op resource — the upgrade Op, emitted on `chant build`. */
   op: InstanceType<typeof OpResource>;
 }
 
@@ -121,9 +121,9 @@ export function LexiconUpgradeOp(config: LexiconUpgradeOpConfig): LexiconUpgrade
             ...(config.lexiconDir ? { lexiconDir: config.lexiconDir } : {}),
             mode: onFinding,
           },
-          // Surface whether a PR-worthy upgrade was found as a workflow-level
-          // search attribute so "show me lexicons with an upgrade ready" is a
-          // one-filter query.
+          // Surface whether a PR-worthy upgrade was found as the run's
+          // `HasUpgrade` outcome on the run ledger, so a reader can pick out
+          // the lexicons with an upgrade ready.
           outcomeAttribute: { name: "HasUpgrade", from: "hasUpgrade" },
         },
       ]),

@@ -30,7 +30,7 @@ import type { OpResource } from "../resource";
 import type { PipelineAuditMode } from "../activities/pipeline-audit";
 
 export interface PipelineAuditOpConfig {
-  /** Op name (kebab-case). Also the generated workflow function name, camelCased. */
+  /** Op name (kebab-case). Names the Op's output directory and is what `chant run` takes. */
   name: string;
   /** Cron expression. When set, it lands on the Op as `schedule`; omit for one-shot. */
   schedule?: string;
@@ -47,7 +47,7 @@ export interface PipelineAuditOpConfig {
 }
 
 export interface PipelineAuditOpResources {
-  /** Op resource — generates the audit workflow on `chant build`. */
+  /** Op resource — the audit Op, emitted on `chant build`. */
   op: InstanceType<typeof OpResource>;
 }
 

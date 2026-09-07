@@ -57,8 +57,8 @@
  *
  * A step's `args` may hold a {@link StepOutputRef} (`./step-output-ref.ts`)
  * anywhere in its structure — a placeholder for a
- * prior step's declared return value, resolved by the serializer into a
- * local variable in the generated `workflow.ts`. This module does not
+ * prior step's declared return value, which the executor substitutes for at
+ * run time from the producing step's record. This module does not
  * special-case it: `irActivityStep` copies `step.args` through as-is (same as
  * every other value), and `JSON.stringify` — both the literal one in
  * `serializeOpIR` and the structural-equality one `z.toJSONSchema`-adjacent

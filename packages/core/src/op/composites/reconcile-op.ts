@@ -33,7 +33,7 @@ import type { OpResource } from "../resource";
 import type { ReconcileMode } from "../activities/reconcile";
 
 export interface ReconcileOpConfig {
-  /** Op name (kebab-case). Also the generated workflow function name, camelCased. */
+  /** Op name (kebab-case). Names the Op's output directory and is what `chant run` takes. */
   name: string;
   /** Environment to reconcile (e.g. "prod"). */
   env: string;
@@ -52,7 +52,7 @@ export interface ReconcileOpConfig {
 }
 
 export interface ReconcileOpResources {
-  /** Op resource — generates the snapshot→plan→regenerate→PR workflow. */
+  /** Op resource — the snapshot→plan→regenerate→PR Op. */
   op: InstanceType<typeof OpResource>;
 }
 

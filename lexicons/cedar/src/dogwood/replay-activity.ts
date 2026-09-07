@@ -94,7 +94,7 @@ export interface PolicyReplayReport {
   /** Every decision point, in stream order. */
   readonly verdicts: readonly DogwoodVerdict[];
   readonly divergences: readonly ReplayDivergence[];
-  /** Divergence count — the number a search attribute or a gate reads. */
+  /** Divergence count — the number an outcome attribute or a gate reads. */
   readonly findings: number;
   /** Trace weaknesses found by `auditTrace`, when typed events were supplied. */
   readonly traceIssues: readonly TraceIssue[];

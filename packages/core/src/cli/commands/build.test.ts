@@ -950,19 +950,21 @@ export const x = { [Symbol.for("chant.declarable")]: true, entityType: "X", lexi
     });
   });
 
-  test("op worker files go to <project>/dist/ops even with no --output (#878)", async () => {
-    // The generated Op worker must land where its hosting runtime reads it
-    // (`<project>/dist/ops/<name>/worker.ts`) even when the build has no --output
-    // (an Op-only project often has no primary resource manifest to route).
+  test("serializer files under ops/ go to <project>/dist/ops even with no --output (#878)", async () => {
+    // Whatever a serializer emits under `ops/` must land in
+    // `<project>/dist/ops/<name>/`, beside the `op.json` core writes there,
+    // even when the build has no --output (an Op-only project often has no
+    // primary resource manifest to route). The routing is on the `ops/`
+    // prefix alone — it does not know or care what the files are.
     const opSerializer: Serializer = {
       name: "multi",
       rulePrefix: "MULTI",
       serialize: () => ({
         primary: "{}",
         files: {
-          "ops/durable-hello/workflow.ts": "// workflow\n",
-          "ops/durable-hello/worker.ts": "// worker\n",
-          "ops/durable-hello/activities.ts": "// activities\n",
+          "ops/nightly-report/steps.json": "{}\n",
+          "ops/nightly-report/notes.md": "# notes\n",
+          "ops/nightly-report/nested/extra.txt": "extra\n",
         },
       }),
     };
@@ -979,8 +981,9 @@ export const x = { [Symbol.for("chant.declarable")]: true, entityType: "X", lexi
     } as BuildOptions);
 
     expect(result.errors).toEqual([]);
-    expect(existsSync(join(testDir, "dist", "ops", "durable-hello", "worker.ts"))).toBe(true);
-    expect(existsSync(join(testDir, "dist", "ops", "durable-hello", "workflow.ts"))).toBe(true);
+    expect(existsSync(join(testDir, "dist", "ops", "nightly-report", "steps.json"))).toBe(true);
+    expect(existsSync(join(testDir, "dist", "ops", "nightly-report", "notes.md"))).toBe(true);
+    expect(existsSync(join(testDir, "dist", "ops", "nightly-report", "nested", "extra.txt"))).toBe(true);
   });
 
   test("an Op entity emits dist/ops/<name>/op.json from core, with no serializer involved (#2118)", async () => {

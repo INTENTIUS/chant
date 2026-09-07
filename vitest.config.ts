@@ -108,10 +108,11 @@ export default defineConfig({
     // Vitest 4 moved the per-worker node flags from poolOptions.forks.execArgv
     // to this top-level key; the default pool is still forks.
     execArgv: [`--max-old-space-size=${forkHeapMb}`],
-    // The Temporal runtime/compile-smoke suites bundle workflows with webpack
-    // in-process, which loads the CI runner enough to push short-timeout tests
-    // (e.g. build.test.ts discovery) past the 5s default under contention.
-    // 20s absorbs that without masking a genuinely hung test for long.
+    // 20s rather than the 5s default. The heaviest tests here do real work on
+    // disk — build.test.ts's discovery, the CLI end-to-end cases — and sharing
+    // a machine with the rest of the fork pool they have been seen past 5s
+    // while still making progress. 20s absorbs that without masking a
+    // genuinely hung test for long.
     testTimeout: 20_000,
   },
 });

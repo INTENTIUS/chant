@@ -2,6 +2,13 @@
  * COMP004: gate-needs-durable-runtime (the file is renamed in #2116; the
  * behaviour changed in #2119)
  *
+ * The file name and the exported symbol keep the old wording on purpose
+ * (#2195): the id is what an author writes in a `chant-disable` comment and
+ * what every import names, and churning both buys nothing. `description`
+ * below is the accurate sentence, and it is what the docs page uses as its
+ * heading — since #2119 the rule has nothing to do with which runtime hosts
+ * the run.
+ *
  * Flags a `gate` step anywhere in a component's composition — the point where
  * a run stops and waits for a person. Since #2119 that is not a refusal: the
  * driver decides the gate against the gate ledger (`../../../op/gate.ts`), and

@@ -21,8 +21,8 @@ export interface ReconcilePrArgs {
   env: string;
   /**
    * The change-set entries that triggered this reconcile. Omit to derive them
-   * from `chant lifecycle plan <env> --json` at run time — the form used inside a
-   * workflow, where the entries aren't known until the activity runs.
+   * from `chant lifecycle plan <env> --json` at run time — the form used inside
+   * an Op, where the entries aren't known until the activity runs.
    */
   entries?: ReconcileEntry[];
   /** What to produce. Default: pull-request. */

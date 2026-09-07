@@ -130,7 +130,7 @@ describe.skipIf(skipReason !== "")(
         ]);
 
         // The plan proposed two creates, and said so through the outcome the
-        // Plan step surfaces as the `Changed` search attribute.
+        // Plan step surfaces as the `Changed` run outcome.
         const plan = result.records.find((r) => r.phase === "Plan")!;
         expect(plan.outcome).toEqual({ name: "Changed", value: true });
 

@@ -34,7 +34,7 @@ import type { OpResource } from "../resource";
 import type { WorkflowAuditMode } from "../activities/workflow-audit";
 
 export interface WorkflowAuditOpConfig {
-  /** Op name (kebab-case). Also the generated workflow function name, camelCased. */
+  /** Op name (kebab-case). Names the Op's output directory and is what `chant run` takes. */
   name: string;
   /**
    * Cron expression. When set, it lands on the Op as `schedule` for
@@ -75,8 +75,9 @@ export function WorkflowAuditOp(config: WorkflowAuditOpConfig): WorkflowAuditOpR
           kind: "activity",
           fn: "workflowSupplyChainAudit",
           args: { workflowsDir: config.workflowsDir ?? ".github/workflows", mode: onFinding },
-          // Surface the finding count as a workflow-level search attribute so
-          // "show me audits that found drift" is a one-filter UI query.
+          // Surface the finding count as the run's `Findings` outcome on the
+          // run ledger, so a reader can pick out the audits that found
+          // something.
           outcomeAttribute: { name: "Findings", from: "findings" },
         },
       ]),

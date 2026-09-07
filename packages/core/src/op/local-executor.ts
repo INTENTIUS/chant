@@ -47,12 +47,12 @@ export interface StepRecord {
   status: "ok" | "fail" | "skipped";
   durationMs: number;
   /**
-   * The first search attribute the step published, kept singular because a
+   * The first outcome attribute the step published, kept singular because a
    * step publishing one is the ordinary case and every reader of this field
    * predates the plural form. {@link StepRecord.outcomes} is the whole list.
    */
   outcome?: { name: string; value: unknown };
-  /** Every search attribute the step published, in authored order (#2105). Absent when it published none. */
+  /** Every outcome attribute the step published, in authored order (#2105). Absent when it published none. */
   outcomes?: Array<{ name: string; value: unknown }>;
   error?: string;
   /** Set on a `gate` step that passed (#2119): who resolved it, when, and at what address. */

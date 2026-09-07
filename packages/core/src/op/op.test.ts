@@ -53,7 +53,7 @@ describe("Op()", () => {
     expect(opProps(op).schedule).toEqual({ cron: "0 6 * * *", overlap: "skip" });
   });
 
-  it("refuses an invalid cron at construction, with TMP010's message (#2120)", () => {
+  it("refuses an invalid cron at construction, with cronSyntaxMessage's wording (#2120)", () => {
     expect(() => Op({ name: "nightly", overview: "o", phases: [], schedule: { cron: "0 6 * *" } })).toThrow(
       'Op "nightly": cron expression "0 6 * *" does not look like valid 5- or 6-field cron syntax',
     );

@@ -9,7 +9,7 @@ import type { EffectReceiptRef } from "./receipt-store";
 import type { ActivityProfileName } from "./activity-profiles";
 
 export interface OpConfig {
-  /** Kebab-case identifier. Used as the workflow function name (camelCase) and output directory name. */
+  /** Kebab-case identifier. Names the Op's output directory (`dist/ops/<name>/`), and is the name `chant run <name>` and another Op's `depends` refer to. */
   name: string;
   /** Human-readable description shown in `chant run list` and deployment reports. */
   overview: string;
@@ -44,7 +44,8 @@ export interface OpConfig {
 
 /**
  * An Op's cadence (#2120). The cron is validated at `Op()` construction by
- * the same permissive 5-/6-field parser TMP010 uses (`./cron.ts`).
+ * the permissive 5-/6-field parser in `./cron.ts`, the same one a lexicon's
+ * own post-synth cron check imports.
  */
 export interface OpSchedule {
   /** 5- or 6-field cron expression, read in the running host's local time. */
@@ -165,7 +166,7 @@ export interface EffectStep {
    * nest.
    */
   steps: Array<ActivityStep | GateStep>;
-  /** Annotation carried into the generated workflow as a comment. */
+  /** Annotation carried into the Op's build output as a comment. */
   description?: string;
 }
 

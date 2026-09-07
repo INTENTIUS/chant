@@ -89,7 +89,7 @@ import {
  * cannot branch at build time on a count the plan only produces at run time.
  * The workable v1 is that `"on-destroy"` and `"always"` emit the same Gate
  * phase, and the approver is told what is at stake instead: the phase reports
- * the plan's `destroys` count as the `Destroys` search attribute before the
+ * the plan's `destroys` count as the `Destroys` run outcome before the
  * gate is reached, and the gate description says so. A gate that skips itself
  * when the plan turns out additive is a new step kind, out of scope here.
  */
@@ -213,7 +213,7 @@ export function TerraformApplyOp(config: TerraformApplyOpConfig): TerraformApply
           description:
             config.gateDescription ??
             `Approve terraform apply of ${live ? "live " : ""}root "${config.root}" (gate: ${gateMode}). ` +
-              `The Destroys search attribute on this phase is the plan's destroy count.` +
+              `The Destroys run outcome from this phase is the plan's destroy count.` +
               (live
                 ? " The apply that follows re-plans against the live system and applies this plan file only" +
                   " if its own fresh plan agrees; otherwise it refuses with exit status 3 and the Apply" +

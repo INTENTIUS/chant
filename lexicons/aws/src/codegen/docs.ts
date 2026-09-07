@@ -113,9 +113,9 @@ export async function generateDocs(options?: { verbose?: boolean }): Promise<voi
     // `rules` is NOT suppressed: the hand-written `lint-rules` page in docs/pages/
     // explains 26 of the lexicon's 50 rules in depth, and the whole WAW032+
     // hardening pass had no entry there at all (#1312). The generated table is
-    // the complete, always-current list, so both ship — the overview/reference
-    // pairing temporal uses. Duplicating 24 descriptions into the prose page
-    // would just create a third copy to drift.
+    // the complete, always-current list, so both ship: a hand-written overview
+    // beside a generated reference. Duplicating 24 descriptions into the prose
+    // page would just create a third copy to drift.
     suppressPages: ["pseudo-parameters"],
     examplesDir: join(pkgDir, "examples"),
   };

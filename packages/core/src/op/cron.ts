@@ -34,8 +34,9 @@ export function isValidCronExpression(expr: string): boolean {
 }
 
 /**
- * The message TMP010 reports and `Op()` throws with, so one wording covers
- * both the build-time refusal and the post-synth warning.
+ * The message `Op()` throws with and a lexicon's post-synth cron check
+ * reports, so one wording covers both the build-time refusal and the
+ * post-synth diagnostic.
  */
 export function cronSyntaxMessage(expr: string): string {
   return `cron expression "${expr}" does not look like valid 5- or 6-field cron syntax`;

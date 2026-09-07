@@ -65,7 +65,7 @@ export const { op } = TerraformApplyOp({
 });
 ```
 
-`gate: "never"` drops the Gate phase, so `chant run` walks straight from Plan to Apply; any other mode emits a Gate phase, and a run that reaches an unapproved gate records a pending fact on the gate ledger, ends `gated` and exits 3 until someone runs `chant approve <op> <gate>`. The Gate phase always shows the saved plan first and reports its `destroys` count as a `Destroys` search attribute, because `GateStep` carries no condition to branch on at build time — the approver sees what's at stake before approving, rather than the Op deciding for them.
+`gate: "never"` drops the Gate phase, so `chant run` walks straight from Plan to Apply; any other mode emits a Gate phase, and a run that reaches an unapproved gate records a pending fact on the gate ledger, ends `gated` and exits 3 until someone runs `chant approve <op> <gate>`. The Gate phase always shows the saved plan first and reports its `destroys` count as a `Destroys` run outcome, because `GateStep` carries no condition to branch on at build time — the approver sees what's at stake before approving, rather than the Op deciding for them.
 
 Terraform has no automatic rollback, so `compensate: true` with no command throws at build time, naming the Op, rather than warning once an apply has already half-run:
 

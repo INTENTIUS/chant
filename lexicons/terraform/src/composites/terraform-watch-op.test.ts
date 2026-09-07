@@ -45,7 +45,7 @@ describe("TerraformWatchOp phases (#2087)", () => {
     }
   });
 
-  test("the Plan step reports drift as a search attribute", () => {
+  test("the Plan step reports drift as a run outcome", () => {
     const plan = props({ name: "app-watch", root: "app" }).phases[1].steps[0] as ActivityStep;
     expect(plan.fn).toBe("terraformPlan");
     expect(plan.id).toBe("plan");

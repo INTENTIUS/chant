@@ -18,7 +18,7 @@ teardown pr-<n> --yes` (#1222) sweeps exactly that.
 `../forgejo-preview-e2e.sh`:
 
 1. builds `.forgejo/workflows/preview.yml` from `src/`,
-2. packs core + fly + temporal into tarballs the jobs `npm install`,
+2. packs core + fly into tarballs the jobs `npm install`,
 3. boots mudflaps (Fly Machines emulator) on a Docker network the job
    containers share (`http://mudflaps:4280`),
 4. runs the workflow twice with stubbed `pull_request` payloads

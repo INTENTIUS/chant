@@ -50,7 +50,7 @@ describe("WatchOp: shape", () => {
     expect(getProps(op).schedule).toBeUndefined();
   });
 
-  test("an invalid cron is refused at construction with TMP010's wording", () => {
+  test("an invalid cron is refused at construction with cronSyntaxMessage's wording", () => {
     expect(() => WatchOp({ name: "prod-watch", env: "prod", schedule: "every 15 minutes" })).toThrow(
       /does not look like valid 5- or 6-field cron syntax/,
     );
@@ -68,11 +68,11 @@ describe("WatchOp: configuration", () => {
     expect(diffStep.fn).toBe("lifecycleDiff");
     expect(snapStep.args).toEqual({ env: "prod" });
     expect(diffStep.args).toEqual({ env: "prod", live: true });
-    // Drift is surfaced as a workflow search attribute via outcomeAttribute (#41)
+    // Drift is surfaced as a run outcome via outcomeAttribute (#41)
     expect(diffStep.outcomeAttribute).toEqual({ name: "Drift", from: "drifted" });
   });
 
-  test("auto-emit search attrs include Watch + Env", () => {
+  test("labels include Watch + Env", () => {
     const { op } = WatchOp({ name: "p", env: "prod", schedule: "* * * * *" });
     expect(getProps(op).labels).toEqual({ Watch: "true", Env: "prod" });
   });
@@ -125,12 +125,12 @@ describe("ReconcileOp: configuration", () => {
     expect(reconcileStep.args).toEqual({ env: "prod", mode: "issue", owned: true });
   });
 
-  test("auto-emit search attrs include Reconcile + Env", () => {
+  test("labels include Reconcile + Env", () => {
     const { op } = ReconcileOp({ name: "p", env: "prod" });
     expect(getProps(op).labels).toEqual({ Reconcile: "true", Env: "prod" });
   });
 
-  test("Plan phase surfaces Drift as a search attribute", () => {
+  test("Plan phase surfaces Drift as a run outcome", () => {
     const { op } = ReconcileOp({ name: "p", env: "prod" });
     const phases = getProps(op).phases as Array<Record<string, unknown>>;
     const diffStep = (phases[1].steps as Array<Record<string, unknown>>)[0];
@@ -187,7 +187,7 @@ describe("ApplyOp: gating + deletes", () => {
     expect((applyStep.args as Record<string, unknown>).deleteMode).toBe("owned-only");
   });
 
-  test("auto-emit search attrs include Apply + Env", () => {
+  test("labels include Apply + Env", () => {
     const { op } = ApplyOp({ name: "p", env: "prod" });
     expect(getProps(op).labels).toEqual({ Apply: "true", Env: "prod" });
   });
@@ -351,7 +351,7 @@ describe("WatchOp: receipt staleness (#1834)", () => {
         },
       ],
     });
-    // Staleness surfaces as a workflow search attribute, like Drift.
+    // Staleness surfaces as a run outcome, like Drift.
     expect(step.outcomeAttribute).toEqual({ name: "StaleReceipts", from: "stale" });
   });
 

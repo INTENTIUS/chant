@@ -42,7 +42,7 @@ describe("LexiconUpgradeOp composite (#527)", () => {
     expect(config.schedule).toEqual({ cron: "0 6 * * 1", overlap: "skip" });
   });
 
-  test("surfaces HasUpgrade as an outcome search attribute", () => {
+  test("surfaces HasUpgrade as a run outcome attribute", () => {
     const { op } = LexiconUpgradeOp({ lexicon: "docker" });
     const config = (op as unknown as { props: Record<string, unknown> }).props;
     const phases = config.phases as Array<{ steps: Array<{ outcomeAttribute?: { name: string; from: string } }> }>;

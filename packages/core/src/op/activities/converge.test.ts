@@ -192,7 +192,7 @@ describe("planConvergeTick — flap damping", () => {
 
 // ── Runtime backstop (Finding A, #1954 pre-merge review) ────────────────
 //
-// TMP014 (build time) is the primary defense against a mutating dispatch
+// OPS014 (build time) is the primary defense against a mutating dispatch
 // escalating under "reconcile" or a destructive dispatch reaching any dial.
 // `verbClassAllowedToDispatch`/`enforceVerbClassAtDispatch` are the runtime
 // backstop `convergeTick` applies to every "ran" outcome just before

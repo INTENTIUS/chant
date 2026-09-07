@@ -108,7 +108,7 @@ export interface ReceiptReadArgs extends ReceiptCheckInput {}
 export interface ReceiptReadResult {
   /** The receipt's live stored value, or null when absent. */
   current: string | null;
-  /** The resolved expectation the workflow compares and later writes. */
+  /** The resolved expectation the effect step compares and later writes. */
   expectation: string;
   /** Convenience: `current === expectation`. */
   applied: boolean;

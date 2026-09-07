@@ -3868,7 +3868,7 @@ describe("OperatorStack", () => {
     }
   });
 
-  test("observe-dial ConvergeOp with a mutating dispatch target still gets read-only RBAC — observe never dispatches, per TMP014/convergeTick", () => {
+  test("observe-dial ConvergeOp with a mutating dispatch target still gets read-only RBAC — observe never dispatches, per OPS014/convergeTick", () => {
     const result: any = OperatorStack({
       name: "chant-operator",
       image: "chant:latest",
@@ -3880,7 +3880,7 @@ describe("OperatorStack", () => {
     }
   });
 
-  test("reconcile-dial ConvergeOp with a mutating dispatch target still gets read-only RBAC — TMP014 only lets apply free-run a mutating dispatch", () => {
+  test("reconcile-dial ConvergeOp with a mutating dispatch target still gets read-only RBAC — OPS014 only lets apply free-run a mutating dispatch", () => {
     const result: any = OperatorStack({
       name: "chant-operator",
       image: "chant:latest",

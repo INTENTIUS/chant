@@ -1,9 +1,11 @@
 /**
  * Typed step-builder wrappers for this lexicon's activities (chant #1288
  * Stage 2). See `lexicons/k8s/src/op/builders.ts`'s module doc for why these
- * live beside their `*Args` interfaces rather than in core or the temporal
- * barrel. `opts`'s type in each wrapper below IS the activity's own `*Args`
- * interface (via `Omit`/`WithStepRefs`) — never restated. `core`'s own
+ * live beside their `*Args` interfaces rather than in core: core cannot
+ * import a lexicon's types, so a wrapper whose `opts` IS the activity's own
+ * `*Args` interface can only sit in the lexicon that declares that
+ * interface. `opts`'s type in each wrapper below IS the activity's own
+ * `*Args` interface (via `Omit`/`WithStepRefs`) — never restated. `core`'s own
  * `gcpApply`/`gcpDelete`/`flociGcpUp`/`flociGcpDown` are unchanged and
  * produce byte-identical `ActivityStep` output; these are purely additive.
  */

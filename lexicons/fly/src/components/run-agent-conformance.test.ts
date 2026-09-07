@@ -20,10 +20,12 @@
  *     to the pre-run checkpoint, through `driver.ts`'s `rollbackExecuted`, not
  *     the Op-level `onFailure` path `examples/sprites-agent-task` already
  *     demonstrates.
- *  2. **The durable-identity channel (#1944's scope addition, from #1949's
- *     review).** On a durable runtime, `run()` and `rollback()` execute as
- *     separate steps, each rebuilding `input` fresh — the in-process
- *     `WeakMap` `run-agent`'s capability keeps never gets a hit there.
+ *  2. **The rollback identity channel (#1944's scope addition, from #1949's
+ *     review).** A runtime that splits a run across process boundaries — a
+ *     generated CI pipeline running each component as its own job, say —
+ *     rebuilds `input` from JSON for every call, so `run()` and `rollback()`
+ *     never see the same object. The in-process `WeakMap` `run-agent`'s
+ *     capability keeps never gets a hit there.
  *     `Capability.rollback` grew an optional third `output` parameter for
  *     exactly this (`../../../packages/core/src/components/capability.ts`),
  *     and `run-agent`'s own rollback prefers it. This file proves the
@@ -171,17 +173,16 @@ describe("run-agent — saga-unwind restore through the component driver (#1944)
   });
 });
 
-describe("run-agent — durable identity channel (#1944, scope addition from #1949's review)", () => {
-  test("rollback restores via output.spriteId/checkpointId even when called with a freshly-rebuilt input object (no WeakMap hit) — the durable step-boundary shape", async () => {
-    // On a durable runtime, a rollback step resolves its own fresh
-    // `resolvedInput` from JSON every call — never the same object run() was
-    // called with. This test reproduces that exact shape directly against the
-    // real capability, without needing a worker: build input, run(), then
-    // rollback() with a DIFFERENT (shallow-
-    // cloned) input object, passing run()'s own output as the third
-    // parameter — the durable identity channel.
+describe("run-agent — rollback identity channel (#1944, scope addition from #1949's review)", () => {
+  test("rollback restores via output.spriteId/checkpointId even when called with a freshly-rebuilt input object (no WeakMap hit) — the cross-process step shape", async () => {
+    // A runtime that splits a run across process boundaries resolves each
+    // step's `resolvedInput` from JSON afresh — never the same object run()
+    // was called with. This test reproduces that exact shape directly against
+    // the real capability, in one process: build input, run(), then
+    // rollback() with a DIFFERENT (shallow-cloned) input object, passing
+    // run()'s own output as the third parameter — the identity channel.
     const capability = createFlyRunAgentCapability();
-    const spriteName = `durable-identity-${Date.now()}`;
+    const spriteName = `rollback-identity-${Date.now()}`;
     const sprites = createFlySpriteActivities();
     await sprites.create({ name: spriteName });
 

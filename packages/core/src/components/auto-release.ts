@@ -13,9 +13,10 @@
  *    is exactly the kind of side effect that doesn't belong in a step
  *    dispatcher tests exercise against a bare `CapabilityRegistry`.
  *  - A ledger write is a non-idempotent git push with real-world side
- *    effects (network, `Date.now()`, file writes) — the kind of thing a
- *    replay-safe hosted runtime must not do inline either. It happens in the
- *    CLI, once the run has reported a terminal outcome.
+ *    effects (network, `Date.now()`, file writes) — the kind of thing that
+ *    belongs at the edge of a run rather than inside a step a retry may run
+ *    a second time. It happens in the CLI, once the run has reported a
+ *    terminal outcome.
  *
  * Reuses ../lifecycle/release-ledger.ts's `appendReleaseRecord` verbatim —
  * this module only decides *whether* to call it and *what digest* to record,

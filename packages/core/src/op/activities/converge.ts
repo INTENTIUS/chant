@@ -1,5 +1,5 @@
 /**
- * `convergeTick` — the activity a `ConvergeOp`-generated workflow's Converge
+ * `convergeTick` — the activity a `ConvergeOp`-generated Op's Converge
  * phase runs (../../composites/converge-op.ts). One call is one tick:
  * observe (shell to `chant lifecycle plan`/`chant components status`, the
  * same CLI surface `reconcilePr`/`lifecycleDiff` already shell to — see
@@ -57,7 +57,7 @@ import type { ComponentStatusRow } from "../../lifecycle/status";
 
 const execAsync = promisify(exec);
 
-/** A `ConvergeRule<ConvergeSymptom>`, restated with `S = ConvergeSymptom` fixed — the JSON shape `ConvergeOp` bakes into the workflow's `convergeTick` step args. */
+/** A `ConvergeRule<ConvergeSymptom>`, restated with `S = ConvergeSymptom` fixed — the JSON shape `ConvergeOp` bakes into the Op's `convergeTick` step args. */
 export type SerializedConvergeRule = ConvergeRule<ConvergeSymptom>;
 
 export interface ConvergeTickArgs {
@@ -70,10 +70,10 @@ export interface ConvergeTickArgs {
    * (report-only); `"reconcile"` free-runs a read-only op but never a
    * mutating one — the issue's table answer for `reconcile` × mutating is
    * "open PR", which v1 doesn't implement (epic #1487's onDrift-channel open
-   * question), so `reconcile` refuses that dispatch (`TMP014`, build time)
+   * question), so `reconcile` refuses that dispatch (`OPS014`, build time)
    * rather than silently escalating it to "run directly"; `"apply"` is the
    * only dial that free-runs a mutating op. A destructive op is refused
-   * under every dial, `"apply"` included, in v1 — see `TMP014`'s doc on why
+   * under every dial, `"apply"` included, in v1 — see `OPS014`'s doc on why
    * "destructive + apply + gated" can never actually dispatch.
    */
   dial: "observe" | "reconcile" | "apply";
@@ -202,7 +202,7 @@ async function dispatchOp(
  * Verb class allowed to free-run for a given dial — the coarse first-pass
  * gate: `"observe"` never dispatches anything (report only), `"reconcile"`
  * and `"apply"` both allow *some* dispatch. Which verb classes each of those
- * two actually permits is `TMP014`'s job at build time
+ * two actually permits is `OPS014`'s job at build time
  * (`../../lint/post-synth/tmp014-converge-rule-refusals.ts`) and
  * {@link verbClassAllowedToDispatch}'s job as this tick's own runtime
  * backstop, below.
@@ -213,7 +213,7 @@ function dialAllowsDispatch(dial: ConvergeTickArgs["dial"]): boolean {
 
 /**
  * Runtime backstop for issue #1484's Autonomy table (pre-merge review of
- * #1954): `TMP014` already refuses, at build time, a rule table shaped to
+ * #1954): `OPS014` already refuses, at build time, a rule table shaped to
  * reach this point with a mutating dispatch outside `"apply"` or any
  * destructive dispatch at all. This is the defense-in-depth check for a rule
  * table that reached `convergeTick` without going through that build — the
@@ -229,7 +229,7 @@ export function verbClassAllowedToDispatch(dial: ConvergeTickArgs["dial"], verbC
   const effective = verbClass ?? "mutating";
   if (effective === "read-only") return true;
   if (effective === "mutating") return dial === "apply";
-  return false; // destructive: refused at runtime, unconditionally — see TMP014's doc on why the gate can never actually run.
+  return false; // destructive: refused at runtime, unconditionally — see OPS014's doc on why the gate can never actually run.
 }
 
 /**
@@ -251,7 +251,7 @@ export function enforceVerbClassAtDispatch(
     action: "reported",
     reason:
       `runtime backstop: dial "${dial}" does not permit dispatching "${outcome.op}" ` +
-      `(${verbClass ?? "unclassifiable — treated as mutating, fail-closed"}) — TMP014 should already refuse ` +
+      `(${verbClass ?? "unclassifiable — treated as mutating, fail-closed"}) — OPS014 should already refuse ` +
       `this at build; reporting instead of risking a silent authority escalation`,
   };
 }
@@ -372,7 +372,7 @@ export async function convergeTick(args: ConvergeTickArgs, signal?: AbortSignal)
   // Execute: only "ran" outcomes cause a subprocess dispatch. Before that
   // dispatch, the runtime backstop (Finding A, #1954 pre-merge review)
   // re-classifies the target and downgrades to "reported" if this dial/verb
-  // class pairing was never supposed to reach dispatch — TMP014 (build time)
+  // class pairing was never supposed to reach dispatch — OPS014 (build time)
   // is the primary defense; this is what catches a rule table that reached
   // `convergeTick` without going through it.
   for (const outcome of plan.outcomes) {

@@ -10,8 +10,8 @@ set -euo pipefail
 # `== 'closed'`. This script:
 #
 #   1. builds the workflow (`.forgejo/workflows/preview.yml`) from ./src,
-#   2. packs @intentius/chant + the fly and temporal lexicons into tarballs
-#      and assembles a consuming chant project around them,
+#   2. packs @intentius/chant and the fly lexicon into tarballs and assembles
+#      a consuming chant project around them,
 #   3. boots mudflaps (the Fly Machines API emulator) on a dedicated Docker
 #      network, reachable as `http://mudflaps:4280` from job containers,
 #   4. drives the workflow twice through a runner with stubbed PR event

@@ -22,8 +22,9 @@
  * UNCHANGED and produce byte-identical `ActivityStep` output for the same
  * inputs — these are purely additive. Deliberately not swapped into core's
  * barrel: that would make `@intentius/chant` depend on this package (and on
- * helm, for `helmInstall`) at runtime, which is exactly the "a worker image
- * needs no kubectl binary" / "core stays product-agnostic" property the
+ * helm, for `helmInstall`) at runtime, so a project that never touches
+ * Kubernetes would install both just to import anything from `op`. That is
+ * exactly the "core stays product-agnostic" property the
  * `op/activities/index.ts` module docs across this repo call out on purpose
  * (activities live in per-product lexicons for this reason; the step-builder
  * layer shouldn't reintroduce the coupling from the other direction). An
