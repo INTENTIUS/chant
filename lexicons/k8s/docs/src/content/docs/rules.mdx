@@ -64,4 +64,4 @@ Post-synth checks validate the serialized output after the build pipeline comple
 | `WK8502` | Custom resource spec field has the wrong type or a value outside its enum |
 | `WK8503` | Workload consumes a Secret nothing in the output produces — produce it (Secret, ExternalSecret, InfisicalSecret, Certificate) or declare its provenance with declareSecret() |
 | `WK8504` | committed-encrypted secret declaration does not resolve — the declared file is missing, is not the named Secret, or is not encrypted |
-| `WK8505` | committed-encrypted secret with no Flux decryption wiring — add decryption: 'sops' to the FluxAppFor reconciling the path that carries it |
+| `WK8505` | committed-encrypted secret with no Flux decryption wiring — add decryption: 'sops' to the FluxAppFor reconciling the path that carries it. Sees one build root at a time, so it goes silent when that Kustomization lives in a different build root (chant #1939). |
