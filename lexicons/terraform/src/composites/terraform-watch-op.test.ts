@@ -74,7 +74,7 @@ describe("TerraformWatchOp phases (#2087)", () => {
 });
 
 describe("TerraformWatchOp finding modes (#2087)", () => {
-  const findingStep = (mode: "issue" | "pull-request"): ActivityStep => {
+  const findingStep = (mode: "issue" | "comment" | "pull-request"): ActivityStep => {
     const op = props({ name: "app-watch", root: "app", findingMode: mode });
     expect(phaseNames(op)).toEqual(["Init", "Plan", "Report"]);
     return op.phases[2].steps[0] as ActivityStep;
@@ -93,6 +93,14 @@ describe("TerraformWatchOp finding modes (#2087)", () => {
     expect(step.fn).toBe("reconcilePr");
     expect(step.args?.mode).toBe("pull-request");
     expect(step.outcomeAttribute).toEqual({ name: "PR", from: "prUrl" });
+  });
+
+  test("comment mode posts on the triggering pull request and surfaces the comment URL (#2231)", () => {
+    const step = findingStep("comment");
+    expect(step.fn).toBe("reconcilePr");
+    expect(step.args?.mode).toBe("comment");
+    expect(step.args?.env).toBe("app");
+    expect(step.outcomeAttribute).toEqual({ name: "Comment", from: "commentUrl" });
   });
 
   test("the finding step derives no plan of its own", () => {
@@ -117,7 +125,7 @@ describe("TerraformWatchOp finding modes (#2087)", () => {
 });
 
 describe("TerraformWatchOp posts the human plan and never the plan JSON (#2087)", () => {
-  for (const mode of ["issue", "pull-request"] as const) {
+  for (const mode of ["issue", "comment", "pull-request"] as const) {
     test(`${mode}: the body is a reference to the Plan step's -no-color text`, () => {
       const op = props({ name: "app-watch", root: "app", findingMode: mode });
       const report = op.phases[2].steps[0] as ActivityStep;
@@ -195,7 +203,7 @@ describe("TerraformWatchOp on a live root (#2105)", () => {
     expect(plan.outcomeAttribute).toEqual({ name: "Drift", from: "changed" });
   });
 
-  for (const mode of ["issue", "pull-request"] as const) {
+  for (const mode of ["issue", "comment", "pull-request"] as const) {
     test(`${mode}: the body is the plan text plus the adoption ledger, as one field`, () => {
       const op = live({ findingMode: mode });
       expect(phaseNames(op)).toEqual(["Init", "Plan", "Report"]);

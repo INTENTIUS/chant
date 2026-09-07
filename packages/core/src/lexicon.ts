@@ -492,9 +492,14 @@ export interface ComponentPipelineResult {
  * into the Op's own activity args at build time and is never re-passed on the
  * generated CI invocation; here it decides only what token/permission wiring
  * the generated job needs to act on a finding — elevated write access for
- * `issue`/`pull-request`/`merge-request`, none for `report`.
+ * `issue`/`comment`/`pull-request`/`merge-request`, none for `report`.
+ *
+ * `comment` posts the finding on the pull request that triggered the run
+ * (#2231), so unlike every other mode it constrains the trigger: the github
+ * generator refuses it by name on anything but `pull_request`, and the gitlab
+ * and forgejo generators refuse it outright.
  */
-export type OpFindingMode = "report" | "issue" | "pull-request" | "merge-request";
+export type OpFindingMode = "report" | "issue" | "comment" | "pull-request" | "merge-request";
 
 /**
  * The CI-native trigger driving a scheduled Op's generated workflow. `cron`

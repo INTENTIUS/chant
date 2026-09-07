@@ -51,16 +51,20 @@
  *
  * ## Findings reuse `reconcilePr`
  *
- * `issue` and `pull-request` call core's `reconcilePr` activity, the one place
- * in chant that shells to `gh issue create` / `gh pr create`, rather than
- * growing a second copy of those calls here.
+ * `issue`, `comment` and `pull-request` call core's `reconcilePr` activity,
+ * the one place in chant that shells to `gh`, rather than growing a second
+ * copy of those calls here.
  * That activity built its own change-set summary and had no way to be handed
  * one, so #2087 added a single field to it (`ReconcilePrArgs.body`), which is
  * what carries the `-no-color` plan through. Note that the pull-request mode
  * of `reconcilePr` regenerates chant TypeScript via `chant import`; a
  * terraform-native regeneration of HCL from live state is #2089, so
  * `findingMode: "issue"` is the mode with an end-to-end answer and
- * `"pull-request"` opens a PR whose body is the plan. On a live root #2089's
+ * `"pull-request"` opens a PR whose body is the plan. `"comment"` (#2231) is
+ * the mode for the plan-on-pull-request shape: the plan is posted onto the
+ * pull request that triggered the run and re-edited there on the next push,
+ * which is where a reviewer is already looking. It needs that trigger; a run
+ * without one fails the Report step by name rather than posting elsewhere. On a live root #2089's
  * question has a different answer rather than a pending one, and it is not
  * regeneration: see `TerraformAdoptOp`.
  *
@@ -79,6 +83,13 @@
  *
  * // one-shot, local executor: chant run app-watch
  * export const { op } = TerraformWatchOp({ name: "app-watch", root: "app" });
+ *
+ * // the plan as a sticky comment on the pull request that triggered the run
+ * export const { op } = TerraformWatchOp({
+ *   name: "app-plan",
+ *   root: "app",
+ *   findingMode: "comment",
+ * });
  *
  * // nightly, opening an issue when the plan is non-empty
  * export const { op } = TerraformWatchOp({
@@ -111,8 +122,14 @@ import {
  * What to do with a non-empty plan. A subset of core's `OpFindingMode`
  * (`packages/core/src/lexicon.ts`): `merge-request` is GitLab's spelling of
  * `pull-request` and is produced by the CI generator, not chosen here.
+ *
+ * `comment` (#2231) is the mode a plan-on-pull-request Op wants: the plan
+ * lands as one comment on the pull request that triggered the run and the
+ * next push edits that same comment. It needs a `pull_request` trigger on the
+ * `ScheduledOpSpec` the workflow is generated from, and the github generator
+ * refuses it by name on any other trigger.
  */
-export type TerraformFindingMode = "report" | "issue" | "pull-request";
+export type TerraformFindingMode = "report" | "issue" | "comment" | "pull-request";
 
 export interface TerraformWatchOpConfig {
   /** Op name (kebab-case). */
@@ -268,7 +285,11 @@ export function TerraformWatchOp(config: TerraformWatchOpConfig): TerraformWatch
         ...(config.branch ? { branch: config.branch } : {}),
       },
       outcomeAttribute:
-        findingMode === "pull-request" ? { name: "PR", from: "prUrl" } : { name: "Issue", from: "issueUrl" },
+        findingMode === "pull-request"
+          ? { name: "PR", from: "prUrl" }
+          : findingMode === "comment"
+            ? { name: "Comment", from: "commentUrl" }
+            : { name: "Issue", from: "issueUrl" },
     };
     phases.push(phase("Report", [report]));
   }

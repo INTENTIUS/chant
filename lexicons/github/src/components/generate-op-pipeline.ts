@@ -21,10 +21,13 @@
  *    branch);
  *  - declares only the `permissions:` its `findingMode` (and, for a
  *    `pull_request` trigger, whether that mode posts a comment) needs —
- *    `report` stays read-only, `issue`/`pull-request` add the write scope
- *    the Op's own activity uses (`gh issue create` / `gh pr create`, see
- *    `@intentius/chant/op`'s `reconcilePr` activity) — never a blanket
- *    `write-all`;
+ *    `report` stays read-only, `issue`/`comment`/`pull-request` add the write
+ *    scope the Op's own activity uses (`gh issue create` / a comment on the
+ *    triggering PR / `gh pr create`, see `@intentius/chant/op`'s
+ *    `reconcilePr` activity) — never a blanket `write-all`. `comment` is the
+ *    one mode that constrains the trigger rather than only the scope: it
+ *    needs a pull request to post onto, so this generator refuses it by name
+ *    on any other trigger (#2231);
  *  - runs exactly one invocation, `chant run <name>` by default — never
  *    inlined audit/reconcile logic. The finding-mode itself is already baked
  *    into the Op's own activity args at build time by the composite that
@@ -119,11 +122,16 @@ function onFor(trigger: OpTrigger): Record<string, unknown> {
  * PR itself (#2084): any mode but `report` posts something to act on a
  * finding, so on that trigger every such mode also gets `pull-requests:
  * write` for the comment, whether or not its own scope already included it.
+ * `comment` is the mode that actually spends that grant (#2231), and it
+ * changes nothing in the repository, so its whole scope is `{ contents: read,
+ * pull-requests: write }`.
  */
 function permissionsForMode(mode: OpFindingMode): Record<string, "read" | "write"> {
   switch (mode) {
     case "issue":
       return { contents: "read", issues: "write" };
+    case "comment":
+      return { contents: "read", "pull-requests": "write" };
     case "pull-request":
     case "merge-request":
       return { contents: "write", "pull-requests": "write" };
@@ -141,10 +149,29 @@ function permissionsFor(mode: OpFindingMode, trigger: OpTrigger): Record<string,
 }
 
 /**
- * Build one `GithubOpPipelineDoc` per scheduled Op: cron trigger,
+ * Refuse `findingMode: "comment"` on a trigger that has no pull request
+ * (#2231). The mode's activity reads the triggering PR out of the event
+ * payload at run time, so a cron- or push-triggered job carrying it would
+ * generate fine and then fail on every run. Refusing here names the Op, the
+ * mode and the trigger at build time instead.
+ */
+function assertTriggerSupportsMode(name: string, mode: OpFindingMode, trigger: OpTrigger): void {
+  if (mode !== "comment" || trigger.kind === "pull_request") return;
+  throw new Error(
+    `Scheduled Op "${name}" has findingMode "comment", which posts its finding on the pull request that ` +
+      `triggered the run, but its trigger is "${trigger.kind}". A ${trigger.kind} run has no pull request ` +
+      `to comment on. Give it a { kind: "pull_request" } trigger, or use findingMode "issue".`,
+  );
+}
+
+/**
+ * Build one `GithubOpPipelineDoc` per scheduled Op: its trigger,
  * least-privilege `permissions:` for its finding-mode, one job that runs
- * `chant run <name>`. Throws nothing — every `ScheduledOpSpec` is independent,
- * unlike the component generator there is no shared graph to resolve.
+ * `chant run <name>`. Every `ScheduledOpSpec` is independent — unlike the
+ * component generator there is no shared graph to resolve — so the only thing
+ * this refuses is a spec that contradicts itself: no trigger at all
+ * (`resolveOpTrigger`), or `findingMode: "comment"` on a trigger that has no
+ * pull request ({@link assertTriggerSupportsMode}).
  */
 export function buildGithubOpPipelineDocs(
   ops: ScheduledOpSpec[],
@@ -161,6 +188,7 @@ export function buildGithubOpPipelineDocs(
   for (const spec of ops) {
     const findingMode = spec.findingMode ?? "report";
     const trigger = resolveOpTrigger(spec);
+    assertTriggerSupportsMode(spec.name, findingMode, trigger);
     const jobName = toJobName(spec.name);
     jobs.push({ jobName, op: spec.name, trigger, findingMode });
 

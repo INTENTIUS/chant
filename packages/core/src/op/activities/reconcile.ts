@@ -1,10 +1,19 @@
 import { exec } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
 
 const execAsync = promisify(exec);
 
-/** What the reconcile activity does with the regenerated source. */
-export type ReconcileMode = "pull-request" | "issue" | "report";
+/**
+ * What the reconcile activity does with the regenerated source.
+ *
+ * `comment` is the one mode that posts nothing new: it writes the body onto
+ * the pull request that triggered the run, updating the same comment on every
+ * re-run (chant #2231). It therefore needs a pull-request trigger, and
+ * {@link resolvePullRequestContext} fails the step by name when the run has
+ * none.
+ */
+export type ReconcileMode = "pull-request" | "issue" | "report" | "comment";
 
 /** A change-set entry that triggered reconciliation. */
 export interface ReconcileEntry {
@@ -36,6 +45,14 @@ export interface ReconcilePrArgs {
   /** PR / issue title. Default derived from env. */
   title?: string;
   /**
+   * Hidden marker identifying this Op's comment on the pull request (comment
+   * mode). The activity writes it as the comment's first line and finds the
+   * comment again by it on the next run, so a re-run edits one comment instead
+   * of stacking a new one. Default: {@link commentMarker} keyed on `env`, so
+   * two Ops over two roots get two comments and each updates in place.
+   */
+  marker?: string;
+  /**
    * A finding body built by the caller, used verbatim as the issue/PR body in
    * place of {@link reconcileSummary} (chant #2087).
    *
@@ -61,6 +78,10 @@ export interface ReconcileResult {
   prUrl?: string;
   /** Opened issue URL (issue mode). */
   issueUrl?: string;
+  /** The posted or updated PR comment's URL (comment mode). */
+  commentUrl?: string;
+  /** The pull request the comment landed on, `owner/repo#number` (comment mode). */
+  pullRequest?: string;
   /** The markdown summary used as the PR/issue body. */
   summary: string;
   /** The entries that triggered the reconcile. */
@@ -101,6 +122,136 @@ function shellQuote(s: string): string {
   return `'${s.replace(/'/g, "'\\''")}'`;
 }
 
+/** The pull request a `comment`-mode run posts onto. */
+export interface PullRequestContext {
+  /** `owner/repo`, from `GITHUB_REPOSITORY`. */
+  repo: string;
+  /** The pull request number. */
+  number: number;
+}
+
+/**
+ * The hidden marker that makes a `comment`-mode finding findable across
+ * re-runs: written as the comment's first line, matched with `startswith` on
+ * the next run. Keyed on `env` (slugified the same way {@link
+ * reconcileBranchName} slugifies it, which also keeps the value free of the
+ * quotes and backslashes it is interpolated next to), so two Ops over two
+ * environments own two comments and each updates in place.
+ */
+export function commentMarker(env: string): string {
+  return `<!-- chant-reconcile:${env.replace(/[^a-zA-Z0-9._-]+/g, "-")} -->`;
+}
+
+/** What a `comment`-mode step says when the run it is in has no pull request. */
+export function noPullRequestContextMessage(): string {
+  return (
+    'reconcilePr mode "comment" posts the finding on the pull request that triggered the run, and this run ' +
+    "has none. It needs GITHUB_REPOSITORY plus a pull request number, read from the event payload at " +
+    "GITHUB_EVENT_PATH (`.number` / `.pull_request.number`) or from GITHUB_REF (`refs/pull/<n>/merge`). " +
+    "GitHub Actions sets those on a pull_request event and on nothing else. Trigger this Op from a " +
+    'pull_request workflow, or give it findingMode "issue" or "report".'
+  );
+}
+
+/**
+ * Read the pull request number out of a parsed webhook event payload. Pure.
+ * A `pull_request` event carries it top-level as `number` and again under
+ * `pull_request.number`; both are accepted, neither is invented.
+ */
+function prNumberFromPayload(payload: unknown): number | undefined {
+  if (typeof payload !== "object" || payload === null) return undefined;
+  const p = payload as { number?: unknown; pull_request?: { number?: unknown } };
+  if (typeof p.number === "number") return p.number;
+  if (typeof p.pull_request?.number === "number") return p.pull_request.number;
+  return undefined;
+}
+
+/**
+ * Derive the triggering pull request from CI environment variables plus the
+ * already-parsed event payload. Pure — exported for testing; the IO (reading
+ * `GITHUB_EVENT_PATH`) is {@link resolvePullRequestContext}'s.
+ *
+ * Returns undefined rather than throwing, so the caller owns the message.
+ */
+export function pullRequestContextFrom(
+  env: Record<string, string | undefined>,
+  eventPayload?: unknown,
+): PullRequestContext | undefined {
+  const repo = env.GITHUB_REPOSITORY;
+  if (!repo) return undefined;
+  const fromRef = /^refs\/pull\/(\d+)\//.exec(env.GITHUB_REF ?? "")?.[1];
+  const number = prNumberFromPayload(eventPayload) ?? (fromRef ? Number(fromRef) : undefined);
+  if (number === undefined || !Number.isInteger(number) || number <= 0) return undefined;
+  return { repo, number };
+}
+
+/**
+ * Resolve the triggering pull request, reading and parsing the event payload
+ * `GITHUB_EVENT_PATH` names. Throws {@link noPullRequestContextMessage} when
+ * the run has no pull request, which is the whole point: a `comment` mode that
+ * quietly fell back to an issue would post the finding somewhere nobody asked
+ * for it.
+ */
+export async function resolvePullRequestContext(
+  env: Record<string, string | undefined> = process.env,
+): Promise<PullRequestContext> {
+  let payload: unknown;
+  const eventPath = env.GITHUB_EVENT_PATH;
+  if (eventPath) {
+    try {
+      payload = JSON.parse(await readFile(eventPath, "utf8"));
+    } catch {
+      // An unreadable or malformed payload is not fatal on its own: GITHUB_REF
+      // may still name the pull request. If it does not, the error below says so.
+      payload = undefined;
+    }
+  }
+  const ctx = pullRequestContextFrom(env, payload);
+  if (!ctx) throw new Error(noPullRequestContextMessage());
+  return ctx;
+}
+
+/**
+ * Post `body` as one comment on `ctx`'s pull request, or edit the comment this
+ * Op already owns there. The sticky-comment recipe the github lexicon's
+ * `PrPlanReport` uses, run from the activity instead of from generated YAML:
+ * find the comment whose body starts with `marker`, PATCH it when there is
+ * one, POST otherwise. `gh` ships on GitHub's hosted runners and is already
+ * this activity's dependency for the issue and pull-request modes, so the
+ * mode needs nothing new on the runner.
+ */
+async function postOrUpdateComment(
+  ctx: PullRequestContext,
+  marker: string,
+  body: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  const listPath = `repos/${ctx.repo}/issues/${ctx.number}/comments`;
+  const jq = `map(select(.body | startswith("${marker}"))) | .[0].id // empty`;
+  const { stdout: found } = await execAsync(
+    `gh api ${shellQuote(listPath)} --paginate --jq ${shellQuote(jq)}`,
+    { signal },
+  );
+  // `--paginate` prints one `--jq` result per page, so take the first line
+  // that is an id and ignore the empty ones the other pages produce.
+  const existing = found.split("\n").map((l) => l.trim()).find((l) => /^\d+$/.test(l));
+  const field = `body=${marker}\n\n${body}`;
+
+  if (existing) {
+    const { stdout } = await execAsync(
+      `gh api --method PATCH ${shellQuote(`repos/${ctx.repo}/issues/comments/${existing}`)} ` +
+        `-f ${shellQuote(field)} --jq .html_url`,
+      { signal },
+    );
+    return stdout.trim();
+  }
+  const { stdout } = await execAsync(
+    `gh api --method POST ${shellQuote(listPath)} -f ${shellQuote(field)} --jq .html_url`,
+    { signal },
+  );
+  return stdout.trim();
+}
+
 /**
  * Map a `chant lifecycle plan --json` ChangeSet to reconcile entries, dropping
  * `noop` entries (nothing to reconcile). Pure — exported for testing.
@@ -133,6 +284,12 @@ async function derivePlanEntries(
  *
  * - `report` — return the summary only; no git, no network.
  * - `issue` — open a GitHub issue describing the drift (no code change).
+ * - `comment` — post the body as one comment on the pull request that
+ *   triggered the run, editing that same comment on every re-run rather than
+ *   stacking a new one (#2231). Needs a pull-request-triggered run; fails by
+ *   name when there is none. No code change, and the `pull-requests: write`
+ *   the generated workflow already grants on that trigger is the whole scope
+ *   it spends.
  * - `pull-request` — create a branch, regenerate source via
  *   `chant import --from <env>`, commit, push, and open a PR whose diff is the
  *   regenerated TypeScript. Never commits to the main branch.
@@ -162,6 +319,16 @@ export async function reconcilePr(args: ReconcilePrArgs, signal?: AbortSignal): 
       { signal },
     );
     return { mode, summary, entries, issueUrl: stdout.trim() };
+  }
+
+  if (mode === "comment") {
+    // The trigger context is read here rather than passed in: a step's args
+    // are serialized at build time, and the pull request is not known until
+    // the run. Missing context is fatal — see `noPullRequestContextMessage`.
+    const ctx = await resolvePullRequestContext();
+    const marker = args.marker ?? commentMarker(args.env);
+    const commentUrl = await postOrUpdateComment(ctx, marker, summary, signal);
+    return { mode, summary, entries, commentUrl, pullRequest: `${ctx.repo}#${ctx.number}` };
   }
 
   // pull-request

@@ -16,6 +16,13 @@
  * needs still rides the trigger step's `env:` (`GH_TOKEN`/`GITHUB_TOKEN`,
  * built by github's generator); actual write access on Forgejo is a property
  * of the runner/token configuration, not the workflow YAML.
+ *
+ * One finding-mode does not cross over: `comment` (#2231) posts onto the
+ * triggering pull request by shelling to `gh` against the GitHub API and
+ * reading the GitHub Actions event payload. Forgejo's API is
+ * GitHub-compatible in shape, but chant has no Forgejo client and no host
+ * configuration to point `gh` at a Forgejo instance, so this refuses the mode
+ * by name rather than generating a job whose finding step fails on every run.
  */
 
 import {
@@ -47,6 +54,17 @@ export function generateForgejoOpPipeline(
   options: ComponentPipelineOptions = {},
   dialectOptions: ForgejoDialectOptions = {},
 ): OpPipelineResult {
+  for (const spec of ops) {
+    if (spec.findingMode === "comment") {
+      throw new Error(
+        `Scheduled Op "${spec.name}" has findingMode "comment", which posts its finding on the pull request ` +
+          `that triggered the run. That activity shells to \`gh\` against the GitHub API and reads the ` +
+          `GitHub Actions event payload; chant carries no Forgejo API client to post the equivalent comment ` +
+          `(#2231). Use findingMode "issue" here, or generate this Op for github.`,
+      );
+    }
+  }
+
   const { files, jobs } = buildGithubOpPipelineDocs(ops, options);
 
   return {

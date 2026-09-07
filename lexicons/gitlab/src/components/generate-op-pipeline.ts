@@ -22,7 +22,9 @@
  * inlined audit/reconcile logic. The finding-mode itself is already baked
  * into the Op's own activity args at build time by the composite that
  * created it; GitLab has no per-job `permissions:` concept (unlike GitHub
- * Actions), so a non-`report` mode's write access comes from whatever
+ * Actions), and `findingMode: "comment"` is refused by name here because it
+ * posts onto a GitHub pull-request event GitLab does not have (#2231), so a
+ * non-`report` mode's write access comes from whatever
  * `GITLAB_TOKEN`/CI-CD-variable configuration the project already has —
  * this generator documents the requirement rather than fabricating a
  * variable nothing reads.
@@ -86,6 +88,20 @@ export function generateGitlabOpPipeline(
 
   for (const spec of ops) {
     const findingMode = spec.findingMode ?? "report";
+    if (findingMode === "comment") {
+      // The mode posts onto the pull request that triggered the run (#2231),
+      // read out of the GitHub Actions event payload by `reconcilePr`. GitLab
+      // has neither that event model nor that payload, and core carries no
+      // GitLab API client that would post the merge-request note instead, so
+      // this refuses the mode by name rather than emitting a job whose finding
+      // step fails on every pipeline.
+      throw new Error(
+        `Scheduled Op "${spec.name}" has findingMode "comment", which posts its finding on the pull request ` +
+          `that triggered the run. GitLab has no pull_request event and chant has no GitLab merge-request ` +
+          `note activity (#2231). Use findingMode "issue" or "merge-request" here, or generate this Op for ` +
+          `github.`,
+      );
+    }
     const trigger = resolveOpTrigger(spec);
     if (trigger.kind !== "cron") {
       throw new Error(

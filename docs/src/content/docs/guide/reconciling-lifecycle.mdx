@@ -24,13 +24,15 @@ const { op } = ReconcileOp({
   env: "prod",
   schedule: "0 * * * *",      // hourly
   scope: { owned: true },     // only chant-owned resources
-  onDrift: "pull-request",    // or "issue" | "report"
+  onDrift: "pull-request",    // or "issue" | "comment" | "report"
 });
 
 export default op;        // discovered by `chant run prod-reconcile`
 ```
 
 Phases: **Snapshot -> Plan -> Reconcile**, where the Reconcile phase's `reconcilePr` activity regenerates source ([live import](/chant/guide/live-import/)) and opens the PR in one step. Run `chant run prod-reconcile` for a one-shot reconcile here. For the continuous form, give it a `schedule` and hand it to whatever fires the cadence: a generated CI workflow, `chant operator`, or a fountain [`Steward`](/chant/lexicons/fountain/steward/). The PR's diff *is* the regenerated TypeScript, so review is a normal code review.
+
+`onDrift: "comment"` is the mode for a reconcile that runs on a pull request rather than on a cron: the body lands as one comment on the pull request that triggered the run, re-edited in place on each push, and the generated workflow costs `contents: read` plus `pull-requests: write` and nothing else. It needs that trigger, so the github Op generator refuses it by name on a cron or push trigger, and gitlab and forgejo refuse it outright.
 
 Reconcile never mutates the cloud. It only changes source — the safest reconciliation direction, and a good first step past pure observation.
 
