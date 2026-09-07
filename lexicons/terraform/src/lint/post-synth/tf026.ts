@@ -28,8 +28,12 @@ import { LIVE_TYPE, type BlockBody } from "../../hcl/parse";
 /** Verbs that satisfy `delete: "never"` for the `undeclared_tagged` quadrant. */
 const SATISFIES_NEVER = new Set(["keep", "untag", "report"]);
 
-/** The `policy { }` block nested in a `live { }` block's body, hcl2json's own "one block, wrapped in an array" shape. */
-function policyBlockOf(liveBody: BlockBody): BlockBody | undefined {
+/**
+ * The `policy { }` block nested in a `live { }` block's body, hcl2json's own
+ * "one block, wrapped in an array" shape. Exported for TF027 (`./tf027.ts`),
+ * which reads the other quadrant of the same block.
+ */
+export function policyBlockOf(liveBody: BlockBody): BlockBody | undefined {
   const policy = liveBody["policy"];
   return Array.isArray(policy) && policy.length > 0 && typeof policy[0] === "object" && policy[0] !== null
     ? (policy[0] as BlockBody)

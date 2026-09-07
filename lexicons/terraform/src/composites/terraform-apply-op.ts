@@ -164,10 +164,14 @@ export function TerraformApplyOp(config: TerraformApplyOpConfig): TerraformApply
   // travels with each of them rather than being read off the process once.
   const where = config.cwd ? { cwd: config.cwd } : {};
 
-  // Best-effort, synchronous (chant.config.json only — see
-  // resolveRootModeSync's own doc comment): "unknown" reads as stock, the
-  // conservative direction. The mode no longer changes which steps are
-  // emitted; it decides the policy refusal below and the wording of the gate.
+  // Best-effort, synchronous (chant.config.json only, see resolveRootModeSync's
+  // own doc comment). The mode no longer changes which steps are emitted; it
+  // words the gate below, and it decides whether the policy refusal is even
+  // asked. "Unknown" reads as stock, which for the gate wording is harmless
+  // and for the refusal is the permissive direction, so the refusal is not
+  // this function's to guarantee: on a chant.config.ts project, which is
+  // every project in this repository, the mode never resolves and the
+  // refusal below never runs (#2216).
   const resolved = resolveRootModeSync(config.root, config.cwd);
   const live = resolved?.mode === "live";
 
@@ -175,6 +179,12 @@ export function TerraformApplyOp(config: TerraformApplyOpConfig): TerraformApply
     // Regardless of `delete`: an account-scoped purge is never something
     // chant proposes on an Op's own initiative. TF026 handles the narrower,
     // config-driven `delete: "never"` requirement; this is unconditional.
+    //
+    // TF027 (`../lint/post-synth/tf027.ts`) makes the same refusal off the
+    // parsed HCL, whatever the config file is written in, and is the check
+    // that guarantees it. This throw is kept for the projects whose mode does
+    // resolve here, where failing at the moment the Op is built names the Op
+    // as well as the root.
     const verbs = detectLivePolicyVerbs(resolved!.dir);
     if (verbs?.undeclaredUntagged === "delete") {
       throw new Error(

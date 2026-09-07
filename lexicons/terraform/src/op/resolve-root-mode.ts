@@ -1,31 +1,45 @@
 /**
  * Best-effort, synchronous read of whether a named `terraform.roots` entry is
  * live: `terraform.binary` is `"choudoufu"` and the root's directory declares
- * an estate — a `live { }` block or an `estate.chdf.hcl` sidecar (#2103).
+ * an estate, either a `live { }` block or an `estate.chdf.hcl` sidecar (#2103).
  *
- * Two callers decide something at build time, before any activity runs, and
- * neither can afford the async work `../op/activities/terraform.ts`'s own
+ * Three callers decide something at build time, before any activity runs, and
+ * none can afford the async work `../op/activities/terraform.ts`'s own
  * `resolveRoot` does (`loadChantConfigUpward`, a full `chant.config.ts`/`.json`
  * walk):
  *
- *   - `TerraformApplyOp` (`../composites/terraform-apply-op.ts`) decides which
- *     phase shape to build — a stock plan-file pairing or a live re-plan-at-
- *     apply shape — before any step is emitted.
+ *   - `TerraformApplyOp` (`../composites/terraform-apply-op.ts`) reads the
+ *     mode to word the Gate phase's approval description, and to refuse a
+ *     root whose `policy` block sets `undeclared_untagged = "delete"`. The
+ *     mode no longer picks a phase shape: #2157 made the live and stock Apply
+ *     steps one step, so both roots build the same phases.
+ *   - `TerraformWatchOp` (`../composites/terraform-watch-op.ts`) cross-checks
+ *     its hand-set `live` flag against the root's real mode and refuses a
+ *     mismatch (#2216).
  *   - TF101 (`../lint/rules/plan-before-apply.ts`) decides whether a
  *     `terraformApply` call it is statically inspecting is exempt from the
  *     plan-file pairing it otherwise enforces.
  *
- * Both run in the build process (`chant build`/`chant lint`) rather than in
- * an activity at run time, so a synchronous read is available, but only the
- * cheap half of it: `findProjectConfig` (`@intentius/chant/project-root`) is a plain, already-
- * synchronous upward filesystem walk, but a `chant.config.ts` is project-
- * authored code, and evaluating it synchronously outside chant's own
- * config-sandbox machinery is more than either caller's best-effort question
+ * All three run in the build process (`chant build`/`chant lint`) rather than
+ * in an activity at run time, so a synchronous read is available, but only the
+ * cheap half of it: `findProjectConfig` (`@intentius/chant/project-root`) is a
+ * plain, already-synchronous upward filesystem walk, but a `chant.config.ts`
+ * is project-authored code, and evaluating it synchronously outside chant's
+ * own config-sandbox machinery is more than any caller's best-effort question
  * is worth. So this reads `chant.config.json` only; a project on a `.ts`
  * config, or with no config discoverable at all, or naming no matching root,
- * resolves to `undefined` — "unknown" reads as "stock" to both callers, which
- * is the conservative direction: TF101 keeps firing, and the composite keeps
- * building the plan-file-carrying shape.
+ * resolves to `undefined`, and "unknown" reads as "stock" to every caller.
+ *
+ * That default is conservative for the two callers that only ever add a
+ * requirement by knowing more: TF101 keeps enforcing the plan-file pairing,
+ * and the watch Op keeps accepting the flag it was given. It is the
+ * permissive direction for the apply Op's policy refusal and for the watch
+ * Op's mismatch, which is why neither refusal is left to this function alone:
+ * TF027 and TF028 (`../lint/post-synth/`) ask the same questions of the
+ * parsed HCL the build already stamped `mode` onto, whatever the config file
+ * is written in, and those checks are the guarantee (#2216). Every project in
+ * this repository is on a `chant.config.ts`, so a refusal that resolves the
+ * mode through this function alone never fires for anyone.
  */
 
 import { existsSync, readFileSync } from "node:fs";
