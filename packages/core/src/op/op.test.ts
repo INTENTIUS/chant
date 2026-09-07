@@ -131,10 +131,10 @@ describe("activity()", () => {
 // ── gate() ────────────────────────────────────────────────────────────────────
 
 describe("gate()", () => {
-  it("returns GateStep with kind 'gate' and signalName", () => {
+  it("returns GateStep with kind 'gate' and the gate name", () => {
     const g = gate("dns-delegation");
     expect(g.kind).toBe("gate");
-    expect(g.signalName).toBe("dns-delegation");
+    expect(g.gate).toBe("dns-delegation");
   });
 
   it("includes timeout when provided", () => {

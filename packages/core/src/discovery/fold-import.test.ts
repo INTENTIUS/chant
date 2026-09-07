@@ -1276,7 +1276,7 @@ describe("tryFoldFile — registered authoring helpers (#1082)", () => {
               stack: "web",
               inputs: { pVpcId: { stackOutput: { stack: "shared-foundation", name: "oVpcId" } } },
             },
-            { kind: "gate", signalName: "approve", timeout: "24h" },
+            { kind: "gate", gate: "approve", timeout: "24h" },
           ],
         },
       ],

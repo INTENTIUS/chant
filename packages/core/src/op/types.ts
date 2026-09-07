@@ -170,13 +170,33 @@ export interface EffectStep {
   description?: string;
 }
 
-export interface GateStep {
+/** Everything on a gate step except the key that names it. */
+export interface GateStepBase {
   kind: "gate";
-  /** The gate's name — what `chant approve <op> <gate>` resolves. */
-  signalName: string;
   /** How long a recorded pending gate stays valid, as a duration string. Default: "48h". */
   timeout?: string;
   /** Human-readable description of the action required to unblock this gate. */
   description?: string;
 }
+
+/**
+ * A human approval decided against the gate ledger. The name lives on `gate`;
+ * `signalName` is the key it carried through 0.58.0 and is still accepted
+ * (#2202) — read both through `gateName()` in `./gate-name.ts` rather than
+ * reaching for either key directly.
+ */
+export type GateStep = GateStepBase &
+  (
+    | {
+        /** The gate's name — what `chant approve <op> <gate>` resolves. */
+        gate: string;
+        /** @deprecated Renamed to `gate` in #2202. Accepted through 0.59.0, removed in 0.60.0. */
+        signalName?: string;
+      }
+    | {
+        gate?: undefined;
+        /** @deprecated Renamed to `gate` in #2202. Accepted through 0.59.0, removed in 0.60.0. */
+        signalName: string;
+      }
+  );
 

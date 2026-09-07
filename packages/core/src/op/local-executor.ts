@@ -26,6 +26,7 @@ import type { ReceiptReadResult } from "./receipt-store";
 import { isStepOutputRef } from "./step-output-ref";
 import { parseDuration } from "./duration";
 import { evaluateGate, gitGateLedgerPort, type GateLedgerPort } from "./gate";
+import { gateName } from "./gate-name";
 import type { PendingGateRecord } from "../lifecycle/gate-ledger";
 import { appendRunRecord, buildRunRecord } from "../lifecycle/run-ledger";
 import type { OpRunRecord } from "./runtime";
@@ -342,7 +343,7 @@ function pushRecord(sink: StepRecord[], ctx: GateContext, ...recs: StepRecord[])
 
 /** The record name a gate step lands under, so a reader (and a JSON consumer) can pick it out of `records`. */
 function gateFn(step: GateStep): string {
-  return `gate:${step.signalName}`;
+  return `gate:${gateName(step)}`;
 }
 
 /**
@@ -359,7 +360,7 @@ async function runGateStep(
   const start = Date.now();
   const check = await evaluateGate(gates.port, {
     op: gates.op,
-    gate: step.signalName,
+    gate: gateName(step),
     ...(step.description ? { description: step.description } : {}),
     ...(step.timeout ? { timeout: step.timeout } : {}),
     ...(gates.runId ? { runId: gates.runId } : {}),
@@ -376,7 +377,7 @@ async function runGateStep(
         status: "ok",
         durationMs: Date.now() - start,
         approval: {
-          gate: step.signalName,
+          gate: gateName(step),
           resolvedBy: resolution.resolvedBy,
           timestamp: resolution.timestamp,
           ...(resolution.url ? { url: resolution.url } : {}),

@@ -208,7 +208,7 @@ describe("runOp dispatcher", () => {
   test("gate in local mode → exit 3 and the approve line (#2119)", async () => {
     gateLedger = memoryGateLedgerPort();
     discoverOpsMock.mockResolvedValue({
-      ops: new Map([localOp("gated", [{ kind: "gate", signalName: "approve-prod" }])]),
+      ops: new Map([localOp("gated", [{ kind: "gate", gate: "approve-prod" }])]),
       errors: [],
     });
     // `renderHuman` writes straight to process.stderr, not through console.error.
@@ -235,7 +235,7 @@ describe("runOp dispatcher", () => {
     });
     discoverOpsMock.mockResolvedValue({
       ops: new Map([localOp("gated", [
-        { kind: "gate", signalName: "approve-prod" },
+        { kind: "gate", gate: "approve-prod" },
         { kind: "activity", fn: "shellCmd", args: { cmd: "true" } },
       ])]),
       errors: [],

@@ -123,7 +123,7 @@ export const FOLDABLE_AUTHORING_HELPERS: readonly FoldableHelperDef[] = [
   {
     name: "gate",
     module: "components/component.ts, op/builders.ts",
-    note: "Returns a plain `{ kind: 'gate', signalName, ... }` object literal built from its arguments.",
+    note: "Returns a plain `{ kind: 'gate', gate, ... }` object literal built from its arguments.",
   },
   {
     name: "activity",

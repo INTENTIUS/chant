@@ -72,7 +72,7 @@ function destructiveOpEntity(name: string, opts?: { gated?: boolean }) {
   ];
   const phases = opts?.gated
     ? [
-        { name: "Approve", steps: [{ kind: "gate", signalName: "approve-x" }] },
+        { name: "Approve", steps: [{ kind: "gate", gate: "approve-x" }] },
         { name: "Apply", steps },
       ]
     : [{ name: "Apply", steps }];

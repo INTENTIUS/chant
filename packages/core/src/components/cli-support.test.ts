@@ -428,9 +428,9 @@ describe("findComponentGate", () => {
     const component: DriverComponent = {
       name: "svc",
       dependsOn: [],
-      deploy: [{ phase: "Approve", steps: [{ kind: "gate", signalName: "release-approval" }] }],
+      deploy: [{ phase: "Approve", steps: [{ kind: "gate", gate: "release-approval" }] }],
     };
-    expect(findComponentGate(component)).toEqual({ kind: "gate", signalName: "release-approval" });
+    expect(findComponentGate(component)).toEqual({ gate: "release-approval" });
   });
 
   test("finds a gate nested inside a fan-out phase", () => {
@@ -443,13 +443,13 @@ describe("findComponentGate", () => {
           steps: [
             {
               phase: "instance-2",
-              steps: [{ kind: "gate", signalName: "instance-2-approval" }],
+              steps: [{ kind: "gate", gate: "instance-2-approval" }],
             },
           ],
         },
       ],
     };
-    expect(findComponentGate(component)?.signalName).toBe("instance-2-approval");
+    expect(findComponentGate(component)?.gate).toBe("instance-2-approval");
   });
 
   test("finds a gate in a component's rollback phases", () => {
@@ -457,9 +457,20 @@ describe("findComponentGate", () => {
       name: "svc",
       dependsOn: [],
       deploy: [{ phase: "Apply", steps: [{ kind: "deploy-thing" }] }],
-      rollback: [{ phase: "Rollback", steps: [{ kind: "gate", signalName: "rollback-approval" }] }],
+      rollback: [{ phase: "Rollback", steps: [{ kind: "gate", gate: "rollback-approval" }] }],
     };
-    expect(findComponentGate(component)?.signalName).toBe("rollback-approval");
+    expect(findComponentGate(component)?.gate).toBe("rollback-approval");
+  });
+
+  // #2202: the name comes back on `gate` whichever key the component spelled
+  // it with, so no caller has to know about the deprecated one.
+  test("normalizes a gate step's deprecated `signalName` key onto `gate`", () => {
+    const component = {
+      name: "svc",
+      dependsOn: [],
+      deploy: [{ phase: "Approve", steps: [{ kind: "gate", signalName: "release-approval" }] }],
+    };
+    expect(findComponentGate(component)).toEqual({ gate: "release-approval" });
   });
 });
 
@@ -592,7 +603,7 @@ describe("runComponents", () => {
     await writeFile(
       join(testDir, "svc.component.ts"),
       `export const svc = { name: "svc", dependsOn: [], deploy: [
-        { phase: "Approve", steps: [{ kind: "gate", signalName: "release-approval" }] },
+        { phase: "Approve", steps: [{ kind: "gate", gate: "release-approval" }] },
         { phase: "Apply", steps: [{ kind: "deploy-thing" }] },
       ] };`,
     );

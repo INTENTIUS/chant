@@ -48,6 +48,7 @@
 
 import { topoSort } from "../codegen/topo-sort";
 import { evaluateGate, gitGateLedgerPort, type GateLedgerPort } from "../op/gate";
+import { gateName } from "../op/gate-name";
 import type { PendingGateRecord } from "../lifecycle/gate-ledger";
 import type { CapabilityRegistry, DeployContext } from "./capability";
 import type { RunProgressEvent, RunProgressStatus } from "./run-progress";
@@ -68,10 +69,16 @@ export interface DriverStep {
   [param: string]: unknown;
 }
 
-/** A gate step — a human approval, decided against the gate ledger when the run reaches it (schema `Gate`). */
+/**
+ * A gate step — a human approval, decided against the gate ledger when the run
+ * reaches it (schema `Gate`). The name is on `gate`; `signalName` is the
+ * deprecated spelling (#2202), so read the name through `gateName()`.
+ */
 export interface DriverGate {
   kind: "gate";
-  signalName: string;
+  gate?: string;
+  /** @deprecated Renamed to `gate` in #2202. Accepted through 0.59.0, removed in 0.60.0. */
+  signalName?: string;
   timeout?: string;
   description?: string;
 }
@@ -444,12 +451,12 @@ async function runPhase(
       const start = Date.now();
       const check = await evaluateGate(gates.port, {
         op: ctx.component,
-        gate: gate.signalName,
+        gate: gateName(gate),
         ...(gate.description ? { description: gate.description } : {}),
         ...(gate.timeout ? { timeout: gate.timeout } : {}),
         ...(gates.now ? { now: gates.now } : {}),
       });
-      const base = { component: ctx.component, phase: phaseDef.phase, kind: `gate:${gate.signalName}` };
+      const base = { component: ctx.component, phase: phaseDef.phase, kind: `gate:${gateName(gate)}` };
       if (!check.satisfied) {
         gateRecords.push({ ...base, status: "skipped" as const, durationMs: Date.now() - start });
         for (const skipped of phaseDef.steps.filter((s): s is DriverStep | DriverPhase => !isGateStep(s))) {
@@ -462,7 +469,7 @@ async function runPhase(
         status: "ok" as const,
         durationMs: Date.now() - start,
         approval: {
-          gate: gate.signalName,
+          gate: gateName(gate),
           resolvedBy: check.resolution.resolvedBy,
           timestamp: check.resolution.timestamp,
           ...(check.resolution.url ? { url: check.resolution.url } : {}),

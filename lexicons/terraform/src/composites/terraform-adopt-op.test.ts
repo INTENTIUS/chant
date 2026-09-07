@@ -80,7 +80,7 @@ describe("TerraformAdoptOp gates on the ledger (#2105)", () => {
     // Unlike TerraformApplyOp there is no `gate: "never"` here. Adoption moves
     // the estate's boundary onto resources it did not own, which is not a
     // thing to do unattended.
-    expect(gateOf(props(base)).signalName).toBe("approve-estate-adopt");
+    expect(gateOf(props(base)).gate).toBe("approve-estate-adopt");
     expect(Object.keys(TerraformAdoptOp(base))).toEqual(["op"]);
   });
 
@@ -91,9 +91,14 @@ describe("TerraformAdoptOp gates on the ledger (#2105)", () => {
     expect(description).toContain("an ambiguous address is never adopted");
   });
 
-  test("signal name, timeout and description are overridable", () => {
-    const gate = gateOf(props({ ...base, signalName: "ok", gateTimeout: "2h", gateDescription: "mine" }));
-    expect(gate).toMatchObject({ signalName: "ok", timeout: "2h", description: "mine" });
+  // #2202: `gateName` is the option; `signalName` is read through 0.59.0.
+  test("the deprecated `signalName` option still names the gate", () => {
+    expect(gateOf(props({ ...base, signalName: "ok" })).gate).toBe("ok");
+  });
+
+  test("gate name, timeout and description are overridable", () => {
+    const gate = gateOf(props({ ...base, gateName: "ok", gateTimeout: "2h", gateDescription: "mine" }));
+    expect(gate).toMatchObject({ gate: "ok", timeout: "2h", description: "mine" });
   });
 
   test("no timeout given means the gate carries none, so core's own default applies", () => {

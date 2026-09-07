@@ -118,6 +118,8 @@ interface GateState {
 
 Read it off `chant run status <name>`'s `Gate` line, the `op-status` MCP tool's `gate` field, or `chant operator status`'s pending-gates list. An Op with no gate steps reports nothing rather than an error.
 
+The `GateStep` the run stopped at names itself on `gate`, which is the argument `chant approve <op> <gate>` takes; the same key names the gate on a component's `kind: "gate"` step and inside `ApplyOp`'s `gate` config. That key was `signalName` through `0.58.0`, and while a declaration still spelling it that way is read as before, `chant build` warns once per build and the old key is removed in `0.60.0` ([#2202](https://github.com/INTENTIUS/chant/issues/2202)). The terraform composites spell it `gateName`, since `gate` there already selects the gate mode.
+
 ## Delete paths
 
 `delete` controls how apply treats resources no longer declared. The delete rides the target's own delete path, and what bounds that path differs per target:

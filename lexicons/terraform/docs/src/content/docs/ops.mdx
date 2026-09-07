@@ -50,11 +50,11 @@ export const { op } = TerraformApplyOp({
 
 | Option | Default | Notes |
 |---|---|---|
-| `name` | — required | Op name (kebab-case). `signalName` defaults to `approve-<name>`. |
+| `name` | — required | Op name (kebab-case). `gateName` defaults to `approve-<name>`. |
 | `root` | — required | Key into `terraform.roots`. |
 | `planFile` | `chant.tfplan` | Written by Plan, consumed by Apply — relative to the root dir. |
 | `gate` | `"on-destroy"` | `"on-destroy"` and `"always"` build the identical four-phase shape (`GateStep` carries no condition to branch a plan's destroy count at build time — see below); `"never"` drops the Gate phase entirely. |
-| `signalName` | `approve-<name>` | Gate signal name. |
+| `gateName` | `approve-<name>` | The gate's name. `signalName` is the deprecated spelling, accepted through 0.59.0 and removed in 0.60.0. |
 | `gateTimeout` | core's own (48h) | How long a recorded pending gate stays valid, as a duration string. |
 | `gateDescription` | a generated description naming the root and gate mode | Override text shown to the approver. |
 | `upgrade` | `false` | `-upgrade` on the Init step. |
@@ -235,10 +235,10 @@ export const { op } = TerraformAdoptOp({ name: "estate-adopt", root: "estate" })
 
 | Option | Default | Notes |
 |---|---|---|
-| `name` | — required | Op name (kebab-case). `signalName` defaults to `approve-<name>`. |
+| `name` | — required | Op name (kebab-case). `gateName` defaults to `approve-<name>`. |
 | `root` | — required | Key into `terraform.roots`. Must be a live root. |
 | `estate` | auto-detected | The estate whose markers to look for; normally the root's own `live` block or sidecar answers this. |
-| `signalName` | `approve-<name>` | Gate signal name. |
+| `gateName` | `approve-<name>` | The gate's name. `signalName` is the deprecated spelling, accepted through 0.59.0 and removed in 0.60.0. |
 | `gateTimeout` | core's own (48h) | How long a recorded pending gate stays valid. |
 | `gateDescription` | a generated description naming the ledger | Override text shown to the approver. |
 | `cwd` | the process's cwd | Directory each step starts its `chant.config.*` search from. |

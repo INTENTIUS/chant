@@ -334,7 +334,7 @@ describe("alert-triage triage Op (#74)", () => {
     const props = (triageOp as unknown as {
       props: {
         name: string;
-        phases: Array<{ name: string; steps: Array<{ kind: string; signalName?: string }> }>;
+        phases: Array<{ name: string; steps: Array<{ kind: string; gate?: string }> }>;
       };
     }).props;
     expect(props.name).toBe("triage");
@@ -345,7 +345,7 @@ describe("alert-triage triage Op (#74)", () => {
     // half cannot be reached without a resolution on the ledger.
     const gates = props.phases.flatMap((p) => p.steps).filter((s) => s.kind === "gate");
     expect(gates).toHaveLength(1);
-    expect(gates[0].signalName).toBe("approve-remediation");
+    expect(gates[0].gate).toBe("approve-remediation");
     expect(props.phases.findIndex((p) => p.name === "Approve")).toBeLessThan(
       props.phases.findIndex((p) => p.name === "Remediate"),
     );
@@ -1399,7 +1399,7 @@ describe("cockroachdb-multi-region-gke Ops (#1707)", () => {
     phases: Array<{
       name: string;
       parallel?: boolean;
-      steps: Array<{ kind: string; fn?: string; signalName?: string }>;
+      steps: Array<{ kind: string; fn?: string; gate?: string }>;
     }>;
     onFailure?: Array<{ name: string }>;
   };
@@ -1867,7 +1867,7 @@ describe("local-op-quickstart gated migration (#1835)", () => {
             fn?: string;
             receipt?: { name: string; effect: string };
             expectation?: string;
-            steps?: Array<{ kind: string; signalName?: string; fn?: string }>;
+            steps?: Array<{ kind: string; gate?: string; fn?: string }>;
           }>;
         }>;
       };

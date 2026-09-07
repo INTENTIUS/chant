@@ -165,10 +165,23 @@ describe("ApplyOp: gating + deletes", () => {
     expect(phases.map((p) => p.name)).toEqual(["Build", "Plan", "Approve", "Apply"]);
     const gateStep = (phases[2].steps as Array<Record<string, unknown>>)[0];
     expect(gateStep.kind).toBe("gate");
-    expect(gateStep.signalName).toBe("approve-p");
+    expect(gateStep.gate).toBe("approve-p");
   });
 
   test("explicit gate config is honored", () => {
+    const { op } = ApplyOp({
+      name: "p",
+      env: "prod",
+      gate: { gate: "go", description: "ship it" },
+    });
+    const phases = getProps(op).phases as Array<Record<string, unknown>>;
+    const gateStep = (phases[2].steps as Array<Record<string, unknown>>)[0];
+    expect(gateStep.gate).toBe("go");
+    expect(gateStep.description).toBe("ship it");
+  });
+
+  // #2202: the gate config's key is `gate`; `signalName` is read through 0.59.0.
+  test("the deprecated `signalName` key on the gate config still names the gate", () => {
     const { op } = ApplyOp({
       name: "p",
       env: "prod",
@@ -176,8 +189,8 @@ describe("ApplyOp: gating + deletes", () => {
     });
     const phases = getProps(op).phases as Array<Record<string, unknown>>;
     const gateStep = (phases[2].steps as Array<Record<string, unknown>>)[0];
-    expect(gateStep.signalName).toBe("go");
-    expect(gateStep.description).toBe("ship it");
+    expect(gateStep.gate).toBe("go");
+    expect(gateStep.signalName).toBeUndefined();
   });
 
   test("deleteMode flows into the nativeApply step", () => {
@@ -301,7 +314,7 @@ describe("ApplyOp: effects gated (#1834, #1703 decision 6)", () => {
     expect(phases.map((p) => p.name)).toEqual(["Build", "Plan", "Approve", "Apply"]);
     const gateStep = (phases[2].steps as Array<Record<string, unknown>>)[0];
     expect(gateStep.kind).toBe("gate");
-    expect(gateStep.signalName).toBe("approve-p");
+    expect(gateStep.gate).toBe("approve-p");
     expect(gateStep.description).toBe("Approve apply to prod (delete mode: never, effects: gated)");
   });
 

@@ -48,7 +48,7 @@ const { op } = ApplyOp({
   env: "prod",
   target: "kubectl",
   delete: "gated",   // "never" | "owned-only" | "gated"
-  gate: { signalName: "approve-apply" },
+  gate: { gate: "approve-apply" },
 });
 
 export default op;

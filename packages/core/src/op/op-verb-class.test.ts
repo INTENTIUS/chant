@@ -106,7 +106,7 @@ describe("isGated", () => {
     expect(
       isGated(
         cfg([
-          { name: "Approve", steps: [{ kind: "gate", signalName: "approve-x" }] },
+          { name: "Approve", steps: [{ kind: "gate", gate: "approve-x" }] },
           { name: "Apply", steps: [{ kind: "activity", fn: "nativeApply", args: {} }] },
         ]),
       ),
@@ -118,7 +118,7 @@ describe("isGated", () => {
       isGated(
         cfg(
           [{ name: "Apply", steps: [{ kind: "activity", fn: "nativeApply", args: {} }] }],
-          [{ name: "Rollback", steps: [{ kind: "gate", signalName: "approve-rollback" }] }],
+          [{ name: "Rollback", steps: [{ kind: "gate", gate: "approve-rollback" }] }],
         ),
       ),
     ).toBe(true);

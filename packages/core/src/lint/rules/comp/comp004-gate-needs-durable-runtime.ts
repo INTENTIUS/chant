@@ -41,6 +41,7 @@
  */
 
 import type { ComponentCheck, ComponentCheckContext, ComponentCheckDiagnostic } from "../../component-checks";
+import { gateName } from "../../../op/gate-name";
 import { walkComponent } from "./support";
 
 export const comp004GateNeedsDurableRuntimeRule: ComponentCheck = {
@@ -54,15 +55,16 @@ export const comp004GateNeedsDurableRuntimeRule: ComponentCheck = {
     for (const [name, { component, filePath }] of ctx.components) {
       const { gates } = walkComponent(component);
       for (const { gate, phaseName } of gates) {
+        const label = gateName(gate);
         diagnostics.push({
           checkId: "COMP004",
           severity: "error",
           component: name,
           file: filePath,
           message:
-            `Component "${name}": gate "${gate.signalName}" (phase "${phaseName}") ends the run pending approval — ` +
+            `Component "${name}": gate "${label}" (phase "${phaseName}") ends the run pending approval — ` +
             `a run that reaches it records the gate as a fact and stops there until someone runs ` +
-            `"chant approve ${name} ${gate.signalName}", and no later phase runs. If that wait is intended, ` +
+            `"chant approve ${name} ${label}", and no later phase runs. If that wait is intended, ` +
             `suppress with a file-level "// chant-disable COMP004 -- <reason>" comment anywhere in this file to ` +
             `document who approves it and why.`,
         });

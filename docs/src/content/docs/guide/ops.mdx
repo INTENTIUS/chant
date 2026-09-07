@@ -118,6 +118,8 @@ chant approve dns-delegation gate-dns-delegation --actor alex
 chant run dns-delegation
 ```
 
+The name lives on the step's `gate` field, which is the same argument `chant approve` takes on the command line, and that is what `gate()` writes there. Through `0.58.0` the field was called `signalName`, so a step or a composite option still spelling it that way is read exactly as before while warning once at build, and the old key is removed in `0.60.0` ([#2202](https://github.com/INTENTIUS/chant/issues/2202)).
+
 The second run reads the resolution, walks through the gate carrying the approver onto the step record, and finishes. `chant run approve <op> <gate> --on <lexicon>` does the same write and then tells the hosting runtime, so a runtime that can wake a gated run of its own does it now rather than on its next tick. See [Gate-as-fact](/chant/guide/operator/#gate-as-fact) for the ordering rules.
 
 ## Compensation on failure
@@ -185,7 +187,7 @@ const { op } = ApplyOp({
   env: "prod",
   target: "kubectl",
   delete: "gated",   // "never" | "owned-only" | "gated"
-  gate: { signalName: "approve-apply", description: "Approve prod apply with deletes" },
+  gate: { gate: "approve-apply", description: "Approve prod apply with deletes" },
 });
 
 export default op;

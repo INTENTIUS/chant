@@ -160,17 +160,30 @@
       }
     },
 
+    "GateName": {
+      "type": "string",
+      "minLength": 1,
+      "description": "A gate's name, on either of the two keys that may carry it."
+    },
+
     "Gate": {
       "type": "object",
       "description": "Ends the run pending human approval. The driver decides a gate against the gate ledger when it reaches one; a gate nobody has approved stops the run there, and `chant approve <component> <gate>` records the resolution the next run reads.",
-      "required": ["kind", "signalName"],
+      "required": ["kind"],
+      "oneOf": [
+        { "required": ["gate"], "properties": { "gate": { "$ref": "#/$defs/GateName" } } },
+        { "required": ["signalName"], "properties": { "signalName": { "$ref": "#/$defs/GateName" } } }
+      ],
       "additionalProperties": false,
       "properties": {
         "kind": { "type": "string", "const": "gate" },
-        "signalName": {
-          "type": "string",
-          "minLength": 1,
+        "gate": {
+          "$ref": "#/$defs/GateName",
           "description": "The gate's name — what `chant approve <component> <gate>` resolves."
+        },
+        "signalName": {
+          "$ref": "#/$defs/GateName",
+          "description": "Deprecated spelling of `gate` (chant #2202), accepted through 0.59.0 and removed in 0.60.0. Exactly one of `gate` and `signalName` may be present."
         },
         "timeout": {
           "type": "string",

@@ -23,6 +23,7 @@ import type { StepRecord } from "@intentius/chant/op/local-executor";
 import type { OpRunStatus } from "@intentius/chant/op/runtime";
 import type { PendingGateRecord } from "@intentius/chant/lifecycle/gate-ledger";
 import { approveCommand } from "@intentius/chant/op/gate";
+import { gateName } from "@intentius/chant/op/gate-name";
 import type { ChantCommand } from "./command-line";
 import type { ChantHost } from "./host";
 import type { PermissionOption, StopReason, ToolCallStatus } from "./protocol";
@@ -78,7 +79,7 @@ function declaredSteps(config: OpConfig): Array<{ phase: string; fn: string; arg
   const out: Array<{ phase: string; fn: string; args: Record<string, unknown> }> = [];
   const push = (phase: string, step: StepDefinition): void => {
     if (step.kind === "activity") out.push({ phase, fn: step.fn, args: step.args ?? {} });
-    else if (step.kind === "gate") out.push({ phase, fn: `gate:${step.signalName}`, args: {} });
+    else if (step.kind === "gate") out.push({ phase, fn: `gate:${gateName(step)}`, args: {} });
     else {
       out.push({ phase, fn: `effect:${step.receipt.name}`, args: {} });
       for (const nested of step.steps) push(phase, nested);

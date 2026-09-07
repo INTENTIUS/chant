@@ -103,7 +103,7 @@ const DEMO_OP: OpConfig = {
     {
       name: "apply",
       steps: [
-        { kind: "gate", signalName: "deploy", description: "Ship it?" },
+        { kind: "gate", gate: "deploy", description: "Ship it?" },
         { kind: "activity", fn: "terraformApply", args: { root: "prod" } },
       ],
     },

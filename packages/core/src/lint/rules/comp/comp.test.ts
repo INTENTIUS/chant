@@ -267,6 +267,32 @@ describe("COMP004: gate-needs-durable-runtime", () => {
     const hits = diagnostics.filter((d) => d.checkId === "COMP004" && d.component === "neo4j-cluster");
     expect(hits).toHaveLength(1);
   });
+
+  // #2202: the message names the gate whichever key carries the name, so the
+  // "chant approve <component> <gate>" line it prints stays copy-pasteable.
+  it("names a gate still using the deprecated `signalName` key", () => {
+    const [comp004] = checks.filter((c) => c.id === "COMP004");
+    const ctx = {
+      rollbackPolicies: FIXTURE_ROLLBACK_POLICIES,
+      components: new Map([
+        [
+          "svc",
+          {
+            component: {
+              name: "svc",
+              dependsOn: [],
+              deploy: [{ phase: "Approve", steps: [{ kind: "gate", signalName: "release-approval" }] }],
+            },
+            filePath: "svc.component.ts",
+          },
+        ],
+      ]),
+    };
+    const diagnostics = comp004.check(ctx as never);
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0].message).toContain('gate "release-approval"');
+    expect(diagnostics[0].message).toContain("chant approve svc release-approval");
+  });
 });
 
 describe("COMP005: capability-kind-is-noun", () => {
