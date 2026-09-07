@@ -111,6 +111,29 @@ export interface K8sChantConfig {
     /** Kustomization directories to render into the build. */
     roots?: string[];
   };
+
+  /**
+   * Effect receipt settings (#2074, epic #1703).
+   *
+   * `namespace` is where this project's receipt ConfigMaps live. The name is
+   * derived from the ownership fields (`chant-receipt.<stack>.<env>.<effect>`,
+   * see `./effect-receipt-row.ts`); the namespace is the one part of the
+   * address the ownership block cannot answer, so it is declared here. Unset,
+   * receipts land in `default`, the same namespace every other namespace-less
+   * k8s read and write in this lexicon falls through to. It is never derived
+   * from the stack or the environment: a guessed namespace is one chant would
+   * have to create, and the receipt row creates nothing but the receipt.
+   *
+   * ```ts
+   * k8s: {
+   *   receipts: { namespace: "chant-system" },
+   * } satisfies K8sChantConfig
+   * ```
+   */
+  receipts?: {
+    /** Namespace the receipt ConfigMaps live in. Defaults to `default`. */
+    namespace?: string;
+  };
 }
 
 declare module "@intentius/chant/config" {

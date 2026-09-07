@@ -28,6 +28,11 @@ export const k8sConfigSchema = z.strictObject({
       roots: z.array(z.string()).optional(),
     })
     .optional(),
+  receipts: z
+    .strictObject({
+      namespace: z.string().optional(),
+    })
+    .optional(),
 });
 
 declare module "@intentius/chant/config" {

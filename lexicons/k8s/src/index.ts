@@ -27,6 +27,28 @@ export { DEFAULT_LABELS_MARKER, DEFAULT_ANNOTATIONS_MARKER } from "./default-lab
 // Variables / label constants
 export { K8sLabels, K8sAnnotations } from "./variables";
 
+// Effect receipts (#2074, epic #1703): the k8s materialization row, meaning the
+// factory a project declares (core's shape under the k8s lexicon, carrying
+// the marker) and the name/label constants. The ConfigMap-backed store itself
+// lives at the `/receipt-store` subpath, off the build path (#1074).
+export {
+  EffectReceipt,
+  receiptConfigMapName,
+  receiptConfigMapRef,
+  receiptNamespaceFrom,
+  isEffectReceiptObject,
+  K8S_EFFECT_RECEIPT_ENTITY_TYPE,
+  EFFECT_RECEIPTS_COMMENT_MARKER,
+  RECEIPT_NAME_PREFIX,
+  RECEIPT_DATA_KEY,
+  RECEIPT_LABEL_KEY,
+  RECEIPT_DEFAULT_NAMESPACE,
+  RECEIPT_UNRESOLVED_VALUE_NOTE,
+  parseReceiptComment,
+  renderReceiptComment,
+} from "./effect-receipt-row";
+export type { K8sEffectReceiptDeclaration, ReceiptConfigMapRef, RenderedReceiptRow } from "./effect-receipt-row";
+
 // Generated-once secret marker (#1830) — constants only; the store adapter
 // itself lives at the `/secret-store` subpath, off the build path (#1074).
 export { GENERATED_ONCE_LABEL_KEY, GENERATED_ONCE_LABEL_VALUE, isGeneratedOnce } from "./secret-labels";

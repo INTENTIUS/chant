@@ -26,6 +26,13 @@ The generated file includes:
 - `metadata.name` auto-generated from export names (camelCase → kebab-case)
 - Default labels and annotations injected from `defaultLabels()`/`defaultAnnotations()`
 
+The lexicon also materializes [effect receipts](/chant/concepts/effect-receipts/) as
+ConfigMaps named `chant-receipt.<stack>.<env>.<effect>` in `k8s.receipts.namespace`
+(`default` when unset), holding the expectation under `data.expectation`. A receipt is
+never a document in the manifest stream: the rows ride a trailing
+`# chant:effect-receipts` comment, which `kubectl apply` ignores, because the
+`effect()` step is a receipt's sole writer.
+
 ## Key conversions
 
 | Chant (TypeScript) | YAML output | Rule |

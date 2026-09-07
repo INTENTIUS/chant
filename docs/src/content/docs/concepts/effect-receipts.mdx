@@ -28,7 +28,16 @@ export const dbMigration = EffectReceipt("dbMigration", {
 
 Two flavors. **Existence** — the receipt's presence is the witness; "will be created" means "will fire." **Hash** — the witness is a digest of the inputs, so changed inputs re-propose the effect: bump `version` and the next plan shows the migration firing again.
 
-The declaration is core, but the storage is per lexicon. A materialization row turns the declaration into a real resource in the estate — the aws row materializes an `AWS::SSM::Parameter`, plain `String`, at `/chant-receipts/<stack>/<env>/<effect>`. The path derives from the same ownership-block fields that stamp [ownership markers](/chant/configuration/config-file/#ownership), with the environment explicit, so receipt identity and resource identity come from one source. A lexicon that cannot observe its receipt type reports staleness as `unobserved`, loudly — never a wrong answer.
+The declaration is core, but the storage is per lexicon. A materialization row turns the declaration into a real resource in the estate, and two of them exist today.
+
+| Lexicon | Materialized as | Address | Where the value lives |
+|---------|-----------------|---------|-----------------------|
+| aws | `AWS::SSM::Parameter`, plain `String` | `/chant-receipts/<stack>/<env>/<effect>` | the parameter's `Value` |
+| k8s | `K8s::Core::ConfigMap` | `chant-receipt.<stack>.<env>.<effect>`, in `k8s.receipts.namespace` (`default` when unset) | `data.expectation` |
+
+Both addresses derive from the same ownership-block fields that stamp [ownership markers](/chant/configuration/config-file/#ownership), with the environment explicit, so receipt identity and resource identity come from one source. The separator differs only because the substrate's naming does: an SSM path is `/`-separated and a ConfigMap name is a DNS subdomain, and in each case the separator is a character no segment may contain, so two different identities can never render the same address. A lexicon that cannot observe its receipt type reports staleness as `unobserved`, loudly, and never as a wrong answer.
+
+A receipt is never in any apply set, which is exactly the shape a prune deletes. The k8s row therefore carries a `chant.intentius.io/effect-receipt` label beside the ownership marker, and `delete: "owned-only"` reports the receipt `retained` rather than sweeping it, the same treatment a generated-once Secret gets.
 
 Staleness is then an ordinary observation: the live value differs from the expected one, or the receipt is absent. [`lifecycle plan`](/chant/cli/lifecycle/#lifecycle-plan-env) renders that as an `effect` row — "effect will fire: db-migration" — the reviewable signal that an apply is about to run something, not just write something.
 
@@ -72,6 +81,12 @@ A receipt is a readable parameter in your own account, not an entry in a tool's 
 
 ```bash
 aws ssm get-parameter --name /chant-receipts/my-stack/prod/db-migration
+```
+
+Or with the k8s row:
+
+```bash
+kubectl get configmap chant-receipt.my-stack.prod.db-migration -o jsonpath='{.data.expectation}'
 ```
 
 Read-only IAM, no chant binary, no export step. Delete chant tomorrow and every receipt is still there, still legible, still telling you which effects ran against which inputs. The same walk-away-zero property the rest of the lifecycle model holds.

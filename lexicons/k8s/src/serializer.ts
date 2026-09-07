@@ -10,6 +10,21 @@ import type { Declarable } from "@intentius/chant/declarable";
 import { isPropertyDeclarable, isResourceDeclarable } from "@intentius/chant/declarable";
 import type { Serializer, SerializerResult, SerializeContext } from "@intentius/chant/serializer";
 import { ownershipEntries, LABEL_OWNERSHIP_KEYS } from "@intentius/chant/ownership";
+import {
+  isEffectReceipt,
+  receiptExpectation,
+  referenceInputPaths,
+  type EffectReceiptDeclaration,
+} from "@intentius/chant/effect-receipt";
+import {
+  RECEIPT_CONFIGMAP_REF,
+  RECEIPT_DATA_KEY,
+  RECEIPT_UNRESOLVED_VALUE_NOTE,
+  receiptConfigMapRef,
+  receiptNamespaceFrom,
+  renderReceiptComment,
+  type RenderedReceiptRow,
+} from "./effect-receipt-row";
 import type { LexiconOutput } from "@intentius/chant/lexicon-output";
 import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-walker";
 import { emitYAML } from "@intentius/chant/yaml";
@@ -178,6 +193,65 @@ function resolveK8sAttr(entity: Declarable | undefined, logicalName: string, att
     `Cannot reference "${logicalName}.${attr}": the k8s lexicon resolves .name and .namespace at ` +
       `build time, and Kubernetes YAML has no way to express any other attribute reference.`,
   );
+}
+
+/** The rendered expectation: the synthesis-time value when the receipt is
+ * fully static, the placeholder note when reference inputs remain (#1703
+ * decision 5, since synthesis resolves nothing). */
+function receiptRowValue(receipt: EffectReceiptDeclaration): string {
+  if (receipt.flavor === "hash" && referenceInputPaths(receipt).length > 0) {
+    return RECEIPT_UNRESOLVED_VALUE_NOTE;
+  }
+  return receiptExpectation(receipt);
+}
+
+/**
+ * Render the effect receipts (#2074) the build withheld from the apply-bound
+ * entity set (`SerializeContext.receipts`, #1832) as ConfigMap rows: named
+ * `chant-receipt.<stack>.<env>.<effect>` from the ownership marker fields
+ * (epic decision 4), in the project's receipt namespace, with the expectation
+ * under `data.expectation`.
+ *
+ * Visibility only. The rows ride a YAML comment at the end of the manifest
+ * stream (./effect-receipt-row.ts) rather than a document, because a document
+ * is what an applier applies and the `effect()` step is a receipt's sole
+ * writer (#1832, epic #1703 decision 3).
+ *
+ * The env segment is explicit: a receipt with no resolved `ownership.env` is
+ * an error, never a guessed segment.
+ */
+function renderReceiptRows(
+  receipts: ReadonlyMap<string, Declarable>,
+  ownership: { stack: string; env?: string } | undefined,
+  namespace: string,
+): Record<string, RenderedReceiptRow> {
+  const rows: Record<string, RenderedReceiptRow> = {};
+  const names = [...receipts.keys()].join(", ");
+  if (!ownership?.stack) {
+    throw new Error(
+      `k8s receipts (${names}): no ownership marker resolved. The receipt ConfigMap is named ` +
+        `chant-receipt.<stack>.<env>.<effect>, derived from the same ownership fields that ` +
+        `stamp markers (chant #1703, decision 4). Set ownership: { stack } in chant.config.ts.`,
+    );
+  }
+  if (!ownership.env) {
+    throw new Error(
+      `k8s receipts (${names}): ownership resolved no env. The receipt name's <env> segment is ` +
+        `explicit (chant #1703, decision 4). Set ownership: { env } in chant.config.ts, or ` +
+        `build with an env-valued parameter that resolves it.`,
+    );
+  }
+  for (const [name, entity] of receipts) {
+    if (!isEffectReceipt(entity)) continue;
+    const ref = receiptConfigMapRef(ownership.stack, ownership.env, entity.effect, namespace);
+    rows[name] = {
+      kind: RECEIPT_CONFIGMAP_REF.kind,
+      namespace: ref.namespace,
+      name: ref.name,
+      data: { [RECEIPT_DATA_KEY]: receiptRowValue(entity) },
+    };
+  }
+  return rows;
 }
 
 /**
@@ -416,7 +490,24 @@ export const k8sSerializer: Serializer = {
       }
     }
 
-    const primary = [...namespaceDocs, ...otherDocs].join("\n---\n");
+    let primary = [...namespaceDocs, ...otherDocs].join("\n---\n");
+
+    // Effect receipt rows (#2074): visibility only, deliberately NOT a
+    // document: appliers apply documents, and the `effect()` step is a
+    // receipt's sole writer (#1832, epic #1703 decision 3). The comment rides
+    // the same build output the observation leg is handed, which is how it
+    // learns each receipt's ConfigMap address.
+    if (context?.receipts && context.receipts.size > 0) {
+      const rows = renderReceiptRows(
+        context.receipts,
+        context.ownership,
+        receiptNamespaceFrom(context.config),
+      );
+      if (Object.keys(rows).length > 0) {
+        primary = primary.length > 0 ? `${primary}\n${renderReceiptComment(rows)}\n` : `${renderReceiptComment(rows)}\n`;
+      }
+    }
+
     // A bare string when there is nothing extra to write, so the common case
     // stays byte-identical to what every existing consumer already reads.
     if (Object.keys(files).length === 0 && warnings.length === 0) return primary;

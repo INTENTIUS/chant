@@ -118,6 +118,7 @@ import {
 } from "./api/classify";
 import { operationFor } from "./api/operation-surface";
 import { k8sDeepNormalizationHooks } from "./deep-observe-hooks";
+import { observeReceiptRowsDeep, receiptRowsFor } from "./receipt-store";
 
 // Re-exported so a dynamic importer of this module (plugin.ts's
 // `observeResourcesDeep`, a test) can get the reader and its hooks from one
@@ -159,11 +160,23 @@ export async function observeResourcesDeepK8s(
 ): Promise<DeepObservationResult> {
   const { managedFieldsOf, isChantFieldManager } = await import("@intentius/chant-k8s-client");
 
-  const declared = [...options.entities].map(([entityName, entity]) => ({
-    entityName,
-    entityType: entity.entityType,
-    props: entity.props,
-  }));
+  // Effect receipts (#2074) are read by their own leg at the end: they carry
+  // no declared props, so every live path would be an unclaimed field (#2160)
+  // and their staleness is an `effect` row from the plan (#1832), never
+  // property drift. Reading them here keeps the deep read from calling a
+  // declared entity a hole; contributing an empty tree keeps it from calling
+  // one drift.
+  const receiptRows = receiptRowsFor(options.entityNames, options.buildOutput);
+
+  const declared = [...options.entities]
+    .filter(([entityName]) => !receiptRows.has(entityName))
+    .map(([entityName, entity]) => ({
+      entityName,
+      entityType: entity.entityType,
+      props: entity.props,
+    }));
+
+  const everyName = [...declared.map((d) => d.entityName), ...receiptRows.keys()];
 
   let client;
   try {
@@ -173,7 +186,7 @@ export async function observeResourcesDeepK8s(
       return deepObservation(
         {},
         unobservedAll(
-          declared.map((d) => d.entityName),
+          everyName,
           "read-failed",
           MISSING_CLIENT_DETAIL,
           options.entities,
@@ -185,7 +198,7 @@ export async function observeResourcesDeepK8s(
       return deepObservation(
         {},
         unobservedAll(
-          declared.map((d) => d.entityName),
+          everyName,
           outcome.kind === "unobserved" ? outcome.reason : "read-failed",
           outcome.kind === "unobserved" ? outcome.detail : undefined,
           options.entities,
@@ -266,6 +279,12 @@ export async function observeResourcesDeepK8s(
       // non-existence; restating it here would turn one finding into two.
     }
   });
+
+  if (receiptRows.size > 0) {
+    const receiptObs = await observeReceiptRowsDeep(client, receiptRows);
+    Object.assign(resources, receiptObs.resources);
+    Object.assign(unobserved, receiptObs.unobserved);
+  }
 
   return deepObservation(resources, unobserved);
 }
