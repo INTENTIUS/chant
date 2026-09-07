@@ -1,6 +1,23 @@
 import { readFile } from "node:fs/promises";
 
 /**
+ * The message {@link detectLexicons} throws when a scan of the project's
+ * source files turns up no `@intentius/chant-lexicon-*` import at all.
+ *
+ * Named (chant #2222) because one caller has to tell this failure apart from
+ * every other one: `chant lint` reports a lexicon it cannot resolve as an
+ * error diagnostic, but "this directory declares no lexicon and imports none"
+ * is not that. It is a project that lints under the core rules alone, and it
+ * has always been allowed to. See {@link isNoLexiconDetected}.
+ */
+export const NO_LEXICON_DETECTED_MESSAGE = "No lexicon detected in infrastructure files";
+
+/** Whether `error` is the {@link NO_LEXICON_DETECTED_MESSAGE} failure. */
+export function isNoLexiconDetected(error: unknown): boolean {
+  return error instanceof Error && error.message === NO_LEXICON_DETECTED_MESSAGE;
+}
+
+/**
  * Detects which lexicons are being used by analyzing import statements
  * in the provided infrastructure files. Matches any `@intentius/chant-lexicon-*` package.
  *
@@ -32,7 +49,7 @@ export async function detectLexicons(files: string[]): Promise<string[]> {
 
   // Validate results
   if (detectedLexicons.size === 0) {
-    throw new Error("No lexicon detected in infrastructure files");
+    throw new Error(NO_LEXICON_DETECTED_MESSAGE);
   }
 
   return Array.from(detectedLexicons);

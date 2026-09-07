@@ -45,9 +45,17 @@ chant lint --watch
 chant lint --sandbox
 ```
 
+## Unresolved lexicons
+
+A lexicon the project declares in `chant.config.*` but that cannot be resolved is reported as a `LEX001` error against the config file, with the same message [`chant build`](/chant/cli/build/) gives for the same project. The lint exits 1, and the diagnostic appears in `--format json` and `--format sarif` like any other. This covers a lexicon package that is not installed and a `chant.config.ts` that fails to load, so a CI job that lints before it builds cannot report green on a project the build refuses.
+
+`LEX001` is not a rule, so it has no severity setting and no `chant-disable` form. What it reports is that the lint could not assemble the rule set the project asked for.
+
+A project that declares no lexicon and imports none is unaffected. It lints under the core rules alone, as it always has.
+
 ## Exit Codes
 
 | Code | Meaning |
 |------|---------|
 | 0 | No errors found |
-| 1 | Lint errors found |
+| 1 | Lint errors found, including a declared lexicon that could not be resolved |

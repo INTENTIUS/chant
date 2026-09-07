@@ -1,5 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
-import { lintCommand, isLintRule, loadPluginRules, type LintOptions } from "./lint";
+import { lintCommand, isLintRule, loadPluginRules, LEXICON_RESOLUTION_RULE_ID, type LintOptions } from "./lint";
+import { loadPlugins, resolveProjectLexicons } from "../plugins";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
@@ -539,5 +540,149 @@ describe("lintCommand — git-ignored files are not linted", () => {
     );
     const result = await lintCommand({ path: testDir, format: "stylish" });
     expect(result.diagnostics.some((d) => d.file.includes("authored.ts") && d.ruleId === "EVL003")).toBe(true);
+  });
+});
+
+/**
+ * chant #2222 (epic #2215 sub-issue 7) — `chant lint` used to print "No
+ * problems found" and exit 0 on a project whose declared lexicon could not be
+ * resolved, the state `chant build` refuses outright. These pin both halves:
+ * the failure is now reported, and the one case the old `catch` legitimately
+ * covered (a project that declares no lexicon at all) still lints quietly.
+ */
+describe("lintCommand — a declared lexicon that cannot be resolved (#2222)", () => {
+  let testDir: string;
+
+  beforeEach(async () => {
+    testDir = join(tmpdir(), `chant-lint-lexicon-${Date.now()}-${Math.random()}`);
+    await mkdir(join(testDir, "src"), { recursive: true });
+    await writeFile(join(testDir, "src", "clean.ts"), `export const x = 1;\n`);
+    process.env.NO_COLOR = "1";
+  });
+
+  afterEach(async () => {
+    await rm(testDir, { recursive: true, force: true });
+    delete process.env.NO_COLOR;
+  });
+
+  /** The message `chant build` prints after `error: ` for the same project. */
+  async function buildsMessageFor(dir: string): Promise<string> {
+    try {
+      await loadPlugins(await resolveProjectLexicons(dir));
+    } catch (err) {
+      return err instanceof Error ? err.message : String(err);
+    }
+    throw new Error(`expected ${dir} to fail lexicon resolution`);
+  }
+
+  test("a declared lexicon whose package is not installed fails the lint", async () => {
+    await writeFile(
+      join(testDir, "chant.config.ts"),
+      `export default { lexicons: ["not-a-real-lexicon"] };\n`,
+    );
+
+    const result = await lintCommand({ path: testDir, format: "stylish" });
+
+    expect(result.success).toBe(false);
+    expect(result.errorCount).toBe(1);
+    const diag = result.diagnostics.find((d) => d.ruleId === LEXICON_RESOLUTION_RULE_ID);
+    expect(diag).toBeDefined();
+    expect(diag!.severity).toBe("error");
+    expect(diag!.file).toBe(join(testDir, "chant.config.ts"));
+    // Byte-for-byte what `chant build` reports, not a second wording.
+    expect(diag!.message).toBe(await buildsMessageFor(testDir));
+    expect(result.output).not.toContain("No problems found");
+  });
+
+  test("a chant.config that cannot be loaded at all fails the lint with its own error", async () => {
+    // The shape found in the wild: the config imports the lexicon package, so
+    // it throws before `lexicons` is ever read.
+    await writeFile(
+      join(testDir, "chant.config.ts"),
+      `import { thing } from "@intentius/chant-lexicon-not-a-real-lexicon";\n` +
+        `export default { lexicons: ["aws"], thing };\n`,
+    );
+
+    const result = await lintCommand({ path: testDir, format: "stylish" });
+
+    expect(result.success).toBe(false);
+    const diag = result.diagnostics.find((d) => d.ruleId === LEXICON_RESOLUTION_RULE_ID);
+    expect(diag).toBeDefined();
+    expect(diag!.message).toBe(await buildsMessageFor(testDir));
+    expect(diag!.message).toContain("@intentius/chant-lexicon-not-a-real-lexicon");
+  });
+
+  test("the failure reaches --format json", async () => {
+    await writeFile(
+      join(testDir, "chant.config.ts"),
+      `export default { lexicons: ["not-a-real-lexicon"] };\n`,
+    );
+
+    const result = await lintCommand({ path: testDir, format: "json" });
+
+    const parsed = JSON.parse(result.output) as Array<Record<string, unknown>>;
+    const entry = parsed.find((d) => d.ruleId === LEXICON_RESOLUTION_RULE_ID);
+    expect(entry).toBeDefined();
+    expect(entry!.severity).toBe("error");
+    expect(entry!.message).toBe(await buildsMessageFor(testDir));
+  });
+
+  test("the failure reaches --format sarif as an error-level result", async () => {
+    await writeFile(
+      join(testDir, "chant.config.ts"),
+      `export default { lexicons: ["not-a-real-lexicon"] };\n`,
+    );
+
+    const result = await lintCommand({ path: testDir, format: "sarif" });
+
+    const sarif = JSON.parse(result.output) as {
+      runs: Array<{ results: Array<{ ruleId: string; level: string; message: { text: string } }> }>;
+    };
+    const found = sarif.runs[0].results.find((r) => r.ruleId === LEXICON_RESOLUTION_RULE_ID);
+    expect(found).toBeDefined();
+    expect(found!.level).toBe("error");
+    expect(found!.message.text).toBe(await buildsMessageFor(testDir));
+  });
+
+  test("--fix does not drop the diagnostic", async () => {
+    await writeFile(
+      join(testDir, "chant.config.ts"),
+      `export default { lexicons: ["not-a-real-lexicon"] };\n`,
+    );
+
+    const result = await lintCommand({ path: testDir, format: "stylish", fix: true });
+
+    expect(result.success).toBe(false);
+    expect(result.diagnostics.some((d) => d.ruleId === LEXICON_RESOLUTION_RULE_ID)).toBe(true);
+  });
+
+  // The case the swallowed `catch` was written for, and the one that must not
+  // change: no `chant.config.*`, no lexicon import in any source file. The
+  // detection fallback throws "No lexicon detected in infrastructure files",
+  // which is a project that lints under the core rules alone.
+  test("a project with no chant.config at all still lints clean", async () => {
+    const result = await lintCommand({ path: testDir, format: "stylish" });
+
+    expect(result.success).toBe(true);
+    expect(result.diagnostics.some((d) => d.ruleId === LEXICON_RESOLUTION_RULE_ID)).toBe(false);
+    expect(result.output).toContain("No problems found");
+  });
+
+  test("a chant.config that declares no lexicons still lints clean", async () => {
+    await writeFile(join(testDir, "chant.config.ts"), `export default {};\n`);
+
+    const result = await lintCommand({ path: testDir, format: "stylish" });
+
+    expect(result.success).toBe(true);
+    expect(result.diagnostics.some((d) => d.ruleId === LEXICON_RESOLUTION_RULE_ID)).toBe(false);
+  });
+
+  test("a declared lexicon that does resolve lints clean", async () => {
+    await writeFile(join(testDir, "chant.config.ts"), `export default { lexicons: ["aws"] };\n`);
+
+    const result = await lintCommand({ path: testDir, format: "stylish" });
+
+    expect(result.success).toBe(true);
+    expect(result.diagnostics.some((d) => d.ruleId === LEXICON_RESOLUTION_RULE_ID)).toBe(false);
   });
 });
