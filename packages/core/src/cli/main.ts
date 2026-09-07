@@ -141,6 +141,7 @@ export function parseArgs(args: string[]): ParsedArgs {
     paramsFile: undefined,
     report: undefined,
     local: undefined,
+    profile: undefined,
     json: undefined,
     live: false,
     migrateFrom: undefined,
@@ -192,6 +193,8 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.watch = true;
     } else if (arg === "--verbose" || arg === "-v") {
       result.verbose = true;
+    } else if (arg === "--profile" || arg === "-p") {
+      result.profile = args[++i];
     } else if (arg === "--report") {
       // --report alone is the boolean (used by `run`); --report <path> is
       // the migrate-command file path. Look ahead for a non-flag.
@@ -690,6 +693,9 @@ Options:
                         an opRuntime, or the built-in local runtime when
                         omitted (every run subcommand; #2121)
   --local               Run an Op with the local in-process executor (default)
+  -p, --profile <name>  Named connection profile the hosting runtime targets
+                        (fountain.profiles in chant.config.ts); each runtime's
+                        own default when omitted (#2124)
   --json                Emit the structured run result as JSON (run command)
   --report              With a path arg: SARIF report destination (migrate)
                         OR '--report gitlab-mr': emit the GitLab MR plan-widget

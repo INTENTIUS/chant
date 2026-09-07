@@ -219,7 +219,11 @@ export interface FountainOpRuntimeOptions {
   endpoint?: string;
   /** Explicit token; otherwise the profile's env var, then `FOUNTAIN_TOKEN`. */
   token?: string;
-  /** Named `fountain.profiles` entry (#2124). Falls back to `defaultProfile`. */
+  /**
+   * Named `fountain.profiles` entry (#2124). Falls back to `defaultProfile`.
+   * This is the provider's default; `start` overrides it per run from
+   * `OpRunStartOptions.profile`, which is what `--profile` carries (#2192).
+   */
   profile?: string;
   /** Project root `chant.config.ts` is read from. Default: `process.cwd()`. */
   cwd?: string;
@@ -556,6 +560,21 @@ export function createFountainOpRuntime(opts: FountainOpRuntimeOptions = {}): Op
 
   let connection: Promise<{ endpoint: string; token: string; profile?: FountainProfile }> | undefined;
 
+  /**
+   * Which `fountain.profiles` entry this provider is currently pointed at.
+   * The constructor's is the default; `start` overrides it from
+   * `OpRunStartOptions.profile` (`chant run <op> --on fountain --profile
+   * staging`, #2124/#2192). One CLI invocation is one run, so switching it
+   * only ever drops a connection nothing has used yet.
+   */
+  let activeProfile = opts.profile;
+
+  const selectProfile = (name: string | undefined): void => {
+    if (name === undefined || name === activeProfile) return;
+    activeProfile = name;
+    connection = undefined; // the next `connect` resolves against the new profile
+  };
+
   const connect = (): Promise<{ endpoint: string; token: string; profile?: FountainProfile }> => {
     connection ??= (async () => {
       let config = opts.config;
@@ -574,19 +593,19 @@ export function createFountainOpRuntime(opts: FountainOpRuntimeOptions = {}): Op
       // running against staging because a profile name was misspelt is the one
       // mistake this runtime must not make, so the named entry is checked for
       // existence before the resolver's fallback is accepted.
-      if (opts.profile !== undefined && !config.fountain?.profiles?.[opts.profile]) {
+      if (activeProfile !== undefined && !config.fountain?.profiles?.[activeProfile]) {
         throw new Error(
-          `fountain runtime: no profile "${opts.profile}" under fountain.profiles in chant.config.ts. ` +
+          `fountain runtime: no profile "${activeProfile}" under fountain.profiles in chant.config.ts. ` +
             `Declare it, or drop the profile name to use fountain.defaultProfile.`,
         );
       }
-      const profile = resolveProfile(config, opts.profile);
+      const profile = resolveProfile(config, activeProfile);
       try {
         const resolved = await resolveConnection(
           {
             ...(opts.endpoint !== undefined ? { endpoint: opts.endpoint } : {}),
             ...(opts.token !== undefined ? { token: opts.token } : {}),
-            ...(opts.profile !== undefined ? { profile: opts.profile } : {}),
+            ...(activeProfile !== undefined ? { profile: activeProfile } : {}),
             cwd,
           },
           { config },
@@ -708,6 +727,9 @@ export function createFountainOpRuntime(opts: FountainOpRuntimeOptions = {}): Op
 
     async start(op: OpConfig, startOpts: OpRunStartOptions): Promise<OpRunHandle> {
       known.set(op.name, op);
+      // Before the first `rest()`, so the endpoint and token this run uses are
+      // the named profile's (#2192). Omitted, `defaultProfile` still answers.
+      selectProfile(startOpts.profile);
       const http = await rest();
       const steward = await resolveSteward(op, startOpts.params);
       const agentId = await resolveAgentId(http, steward.agent);
@@ -848,15 +870,22 @@ export function createFountainOpRuntime(opts: FountainOpRuntimeOptions = {}): Op
         // reporting the durable path as taken.
         throw new Error(
           `fountain runtime: --durable-requests needs the request-answer path from BinaryBourbon/fountain#1635, ` +
-            `which has not shipped. Drop the flag to post the approve prompt instead ` +
+            `which has not shipped. Drop the flag to post the op's re-run prompt instead ` +
             `(${await conversationUrl(conversationId)}).`,
         );
       }
 
       // The resolution is already on chant's ledger; this re-runs the op so the
-      // sandbox reads it. `--approver` and `--url` ride along so the re-run
-      // records the same address the local path would have.
-      const parts = [`chant run approve ${op} ${gate}`];
+      // sandbox reads it and walks through the gate. The prompt has to be
+      // `chant run <op>` for that: the ACP parser (`../acp/command-line.ts`)
+      // reads a bare `chant run <name>` as an op run, and reads `chant run
+      // approve <op> <gate>` as the approve verb, which would only write the
+      // same resolution a second time on the sandbox's local runtime and
+      // never re-apply anything (#2192). `--approver` and `--url` ride along
+      // so the thread's own transcript names who resolved the gate and where;
+      // the run itself decides the gate from the ledger (`evaluateGate` in
+      // core's `op/gate.ts`), not from these.
+      const parts = [`chant run ${op}`];
       if (resolution.resolvedBy) parts.push(`--approver ${resolution.resolvedBy}`);
       if (resolution.url) parts.push(`--url ${resolution.url}`);
       const { status, json } = await http("POST", `/api/conversations/${conversationId}/prompts`, {
@@ -865,12 +894,12 @@ export function createFountainOpRuntime(opts: FountainOpRuntimeOptions = {}): Op
 
       if (status === 400 && errorCode(json) === "conversation_busy") {
         throw new Error(
-          `fountain runtime: the steward is running another op, so the approval prompt was not posted ` +
+          `fountain runtime: the steward is running another op, so the re-run prompt was not posted ` +
             `(${await conversationUrl(conversationId)}). Re-run \`chant run approve ${op} ${gate} --on fountain\` when it is idle.`,
         );
       }
       if (status !== 200 && status !== 201 && status !== 202) {
-        throw new Error(`fountain runtime: posting the approve prompt failed (${status})`);
+        throw new Error(`fountain runtime: posting the re-run prompt failed (${status})`);
       }
     },
   };

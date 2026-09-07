@@ -78,7 +78,7 @@ chant approve prod-apply deploy-window --approver alice
 chant run approve prod-apply deploy-window --on fountain
 ```
 
-The first records the resolution. The second posts `chant run approve <op> <gate>` back onto the steward's thread so the sandbox reads it and the op re-runs, carrying `--approver` and `--url` along so the hosted re-run records the same address a local one would have.
+The first records the resolution. The second posts `chant run <op>` back onto the steward's thread, carrying `--approver` and `--url` along so the thread names who resolved the gate. The sandbox re-runs the op and walks through the gate, reading the resolution back off the ledger.
 
 `--durable-requests` would instead answer fountain's own pending permission card. It is refused today by name: the request-answer path it needs is [fountain#1635](https://github.com/BinaryBourbon/fountain/issues/1635), which has not shipped. Drop the flag and use the two commands above.
 

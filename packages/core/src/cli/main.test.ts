@@ -10,6 +10,17 @@ describe("parseArgs", () => {
     expect(parseArgs(["build", "src", "--no-fold"]).fold).toBe(false);
   });
 
+  // #2192 — #2130 deleted `-p/--profile` with the Temporal runtime, on the
+  // belief nothing outside it read the flag. #2124 had already documented it
+  // for fountain, so the flag is back and reaches the runtime seam.
+  test("-p/--profile carries the runtime's connection profile (#2124)", () => {
+    expect(parseArgs(["run", "prod-apply", "--on", "fountain"]).profile).toBeUndefined();
+    expect(parseArgs(["run", "prod-apply", "--on", "fountain", "--profile", "staging"]).profile).toBe("staging");
+    expect(parseArgs(["run", "prod-apply", "--on", "fountain", "-p", "staging"]).profile).toBe("staging");
+    // The joined form `splitJoinedFlags` rewrites into two tokens.
+    expect(parseArgs(["run", "prod-apply", "--profile=staging"]).profile).toBe("staging");
+  });
+
   test("--namespace carries the live read's namespace default (#1629)", () => {
     expect(parseArgs(["graph", "--live", "--env", "prod"]).namespace).toBeUndefined();
     expect(parseArgs(["graph", "--live", "--env", "prod", "--namespace", "app-b"]).namespace).toBe("app-b");

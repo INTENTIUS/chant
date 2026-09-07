@@ -52,7 +52,7 @@ A teammate runs one turn at a time. A prompt sent while another op is running co
 
 Tool calls on the stream become phases, so `--progress-json` and the human renderer show the run's shape as it happens. Fountain closes an idle stream connection after 60 seconds, which is not the end of a turn: the reader reconnects with `Last-Event-ID` and the server replays what arrived meanwhile. Only real silence ends the wait, after 30 minutes, and `FOUNTAIN_STREAM_IDLE_TIMEOUT` (in seconds) widens that for a run that thinks for longer.
 
-`chant run approve <op> <gate> --on fountain` writes the resolution to the gate ledger as always, then posts `chant run approve` to the steward so the sandbox re-runs and reads the fact. `--durable-requests` is reserved for answering fountain's own pending request instead; the endpoint it needs has not shipped, and the flag currently refuses by naming the upstream issue rather than reporting a resolution it did not make.
+`chant run approve <op> <gate> --on fountain` writes the resolution to the gate ledger as always. It then posts `chant run <op>` to the steward, with `--approver` and `--url` on it. The sandbox re-runs the op and walks through the gate, reading the resolution back off the ledger. `--durable-requests` is reserved for answering fountain's own pending request instead; the endpoint it needs has not shipped, and the flag currently refuses by naming the upstream issue rather than reporting a resolution it did not make.
 
 ## Subcommands
 
@@ -186,8 +186,9 @@ The `--no-release-record` flag always wins over config for that one invocation. 
 | `--param <name=value>` | Bind a declared build-time parameter for the component build; repeatable (`run --components`) |
 | `--params-file <path>` | JSON file of build-time parameter values (`run --components`) |
 | `--sandbox` | Execute project source in one isolated child process. Refuses an Op with a `policyGate` step |
-| `--approver <name>` | Who approved a gated change; recorded on the gate-resolution fact (`run approve`) |
-| `--durable-requests` | Resolve the gate on the hosting runtime's own request path instead of by prompt (`run approve --on <lexicon>`); ignored by a runtime that has no such path |
+| `--approver <name>` | Who approved a gated change; recorded on the gate-resolution fact (`approve`, `run approve`) |
+| `-p, --profile <name>` | Named connection profile the hosting runtime targets, such as a `fountain.profiles` entry; each runtime's own default when omitted |
+| `--durable-requests` | Reserved. It would resolve the gate on the hosting runtime's own request path instead of by prompt (`run approve --on <lexicon>`). No runtime implements it: fountain's needs the request-answer path from [BinaryBourbon/fountain#1635](https://github.com/BinaryBourbon/fountain/issues/1635), which has not shipped, and the flag refuses by naming that issue |
 | `-v, --verbose` | List every resolved build parameter, and show stack traces on errors |
 
 ## Exit Codes

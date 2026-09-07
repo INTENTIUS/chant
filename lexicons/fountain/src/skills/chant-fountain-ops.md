@@ -118,8 +118,9 @@ chant approve prod-apply deploy-window --approver alice
 chant run approve prod-apply deploy-window --on fountain
 ```
 
-The second posts `chant run approve <op> <gate>` back onto the steward's thread
-so the sandbox re-runs the op and reads the now-resolved fact.
+The second posts `chant run <op>` back onto the steward's thread, with
+`--approver` and `--url` on it, so the sandbox re-runs the op and reads the
+now-resolved fact.
 
 `--durable-requests` (answering fountain's own permission card instead) is
 refused by name: it needs BinaryBourbon/fountain#1635, which has not shipped.

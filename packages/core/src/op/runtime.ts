@@ -142,6 +142,14 @@ export interface OpRunStartOptions {
   params?: Record<string, unknown>;
   /** Target environment (`--env`). */
   env?: string;
+  /**
+   * `-p, --profile <name>` (#2124, restored in #2192) — the named connection
+   * profile this runtime should target. Only a runtime that has profiles
+   * reads it; the local one ignores it, and a runtime that reads it decides
+   * for itself what an unknown name means (fountain refuses it rather than
+   * falling back to its default).
+   */
+  profile?: string;
   /** Called once per settled step, so `--progress-json` can stream. */
   progress?: (record: StepRecord) => void;
   /** Aborts in-flight work (Ctrl-C). */

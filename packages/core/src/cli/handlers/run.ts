@@ -764,6 +764,7 @@ export async function runOpOnRuntime(ctx: CommandContext): Promise<number> {
   try {
     const handle = await runtime.start(config, {
       env: ctx.args.env,
+      ...(ctx.args.profile !== undefined ? { profile: ctx.args.profile } : {}),
       progress,
       signal: controller.signal,
     });

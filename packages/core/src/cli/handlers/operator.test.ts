@@ -366,6 +366,30 @@ describe("runApprove", () => {
     errSpy.mockRestore();
   });
 
+  // #2192 — every example README teaches `--approver you`; the handler read
+  // only `--actor` and fell through to $GITHUB_ACTOR / $USER, so the ledger
+  // recorded the shell user. Same precedence as `chant run approve`.
+  test("--approver wins over --actor and over the CI/shell identity", async () => {
+    vi.stubEnv("GITHUB_ACTOR", "ci-bot");
+    vi.stubEnv("USER", "alex");
+    appendGateResolutionMock.mockResolvedValue({
+      commit: "sha",
+      record: { version: 1, op: "deploy-gated", gate: "approve-deploy", resolvedBy: "you", timestamp: "2026-01-01T00:00:00.000Z" },
+    });
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const code = await runApprove(ctx({
+      path: "deploy-gated", extraPositional: "approve-deploy", approver: "you", actor: "alex",
+    }));
+
+    expect(code).toBe(0);
+    expect(appendGateResolutionMock).toHaveBeenCalledWith(
+      expect.objectContaining({ op: "deploy-gated", gate: "approve-deploy", resolvedBy: "you" }),
+    );
+    errSpy.mockRestore();
+    vi.unstubAllEnvs();
+  });
+
   // #2028 — the resolution's link is typed, so a reader is not sniffing
   // free-text `note` for something that looks like a URL.
   test("--url is recorded typed, alongside --note's prose", async () => {

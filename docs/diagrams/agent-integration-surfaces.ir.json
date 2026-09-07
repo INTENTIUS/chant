@@ -21,7 +21,7 @@
       "lexicon": "",
       "attrs": {
         "core": "build · lint · import",
-        "ops": "op-run · op-status · op-signal"
+        "ops": "op-run · op-status · op-approve"
       }
     },
     {
@@ -30,7 +30,7 @@
       "lexicon": "",
       "attrs": {
         "are": "*.op.ts workflows",
-        "traits": "durable · observable · gate-able"
+        "traits": "observable · gate-able"
       }
     }
   ],
