@@ -28,6 +28,7 @@
  * not require plugin loading for the paths that run without one.
  */
 
+import { identityAttrShape, type DataSourceShape } from "./data-source-shape";
 import { BUILTIN_CARVE_PROVIDERS } from "./providers";
 import type { StateResource } from "./state";
 
@@ -95,10 +96,20 @@ export interface CarveProvider {
   readonly tiers: Readonly<Record<string, TierInfo>>;
   /**
    * Terraform type → the HCL attribute carrying the physical name. A dotted
-   * entry is a path into nested blocks (`manifest.metadata.name`); the bridge
-   * refuses those, since a data-source body is flat `attr = value`.
+   * entry is a path into nested values (`manifest.metadata.name`), which a
+   * flat `attr = value` body cannot express, so it implies no data-source
+   * shape on its own — see {@link dataSourceShapes}.
    */
   readonly identityAttrs?: Readonly<Record<string, string>>;
+  /**
+   * Terraform type → how `carve bridge` reads it back as a `data` source
+   * (#2034): the data-source type, where each argument comes from in the
+   * carved body, and how a survivor's attribute path translates. Needed when
+   * the data source is not the resource's own type, or when its body is more
+   * than one flat argument. A type with a plain identity attribute and no
+   * entry here gets that attribute's shape ({@link identityAttrShape}).
+   */
+  readonly dataSourceShapes?: Readonly<Record<string, DataSourceShape>>;
   /**
    * Sub-resource Terraform type → parent type, for types Terraform splits out
    * of the resource the native spec keeps them in.
@@ -169,6 +180,7 @@ interface RegistryIndex {
   prefixes: Array<{ prefix: string; provider: CarveProvider }>;
   tiers: Record<string, TierInfo>;
   identityAttrs: Record<string, string>;
+  dataSourceShapes: Record<string, DataSourceShape>;
   foldsInto: Record<string, string>;
   /** Terraform type → the provider that emits it. */
   emitters: Map<string, CarveProvider>;
@@ -182,6 +194,7 @@ function index(): RegistryIndex {
     prefixes: [],
     tiers: {},
     identityAttrs: {},
+    dataSourceShapes: {},
     foldsInto: {},
     emitters: new Map(),
   };
@@ -189,6 +202,7 @@ function index(): RegistryIndex {
     for (const prefix of provider.tfTypePrefixes) built.prefixes.push({ prefix, provider });
     Object.assign(built.tiers, provider.tiers);
     if (provider.identityAttrs) Object.assign(built.identityAttrs, provider.identityAttrs);
+    if (provider.dataSourceShapes) Object.assign(built.dataSourceShapes, provider.dataSourceShapes);
     if (provider.foldsInto) Object.assign(built.foldsInto, provider.foldsInto);
     for (const tfType of provider.emitTypes ?? []) built.emitters.set(tfType, provider);
   }
@@ -234,4 +248,26 @@ export function carveIdentityAttr(tfType: string): string | undefined {
 /** The parent Terraform type this sub-resource folds into, if any. */
 export function carveFoldParent(tfType: string): string | undefined {
   return index().foldsInto[tfType];
+}
+
+/**
+ * How `carve bridge` reads this type back as a `data` source (#2034), or
+ * undefined when it cannot be read back at all — which is what makes
+ * `canBridge` refuse it.
+ *
+ * Resolution order:
+ *  1. a shape the owning provider declared for the type;
+ *  2. otherwise the shape a plain identity attribute implies (same type, one
+ *     required argument) — the path every AWS and google type takes;
+ *  3. otherwise undefined, when the identity attribute is a dotted path into
+ *     nested values and no provider declared a shape for it;
+ *  4. and for a type with no identity attribute at all, the bare data-source
+ *     type: the bridge still emits a block, with a TODO for the body.
+ */
+export function carveDataSourceShape(tfType: string): DataSourceShape | undefined {
+  const declared = index().dataSourceShapes[tfType];
+  if (declared) return declared;
+  const attr = index().identityAttrs[tfType];
+  if (attr === undefined) return { type: tfType };
+  return identityAttrShape(tfType, attr);
 }

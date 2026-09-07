@@ -14,8 +14,8 @@ import { join, basename, relative, resolve } from "path";
 import { cdkNotSupported, isCloudAssembly } from "../../cdk/assembly";
 import { parseTerraformDir, Hcl2JsonNotInstalled } from "../../terraform/parse";
 import { boundaryReport, type CarveReport } from "../../terraform/carve";
-import { generateBridge, type BridgePlan, type CarvedIdentity } from "../../terraform/bridge";
-import { identityAttrOf, canBridge } from "../../terraform/tier-map";
+import { generateBridge, type BridgePlan, type CarvedDataSource } from "../../terraform/bridge";
+import { identityAttrOf, canBridge, dataSourceShapeOf } from "../../terraform/tier-map";
 import { resolveCarveManifest, writeCarveManifest, type CarveManifest } from "../../terraform/manifest";
 import { newFileDiff, unifiedDiff } from "../../terraform/unified-diff";
 
@@ -76,13 +76,13 @@ export async function carveBridge(opts: CarveBridgeOptions): Promise<CarveBridge
     if (!found) return { ok: false, error: `${select} not found in ${opts.from}` };
     report = found;
 
-    // Refuse a carve set whose data source cannot be written as valid HCL: a
-    // dotted identity attribute is a path into nested blocks, and a data body
-    // is flat `attr = value`. `kubernetes_manifest` is the standing case — the
-    // provider has no `kubernetes_manifest` data source either; its generic
-    // read is `kubernetes_resource`, a different shape. Emit adopting the type
-    // (#999) does not lift this: reading a manifest out of state and reading it
-    // back through a data source are separate problems (#2034).
+    // Refuse a carve set no provider says how to read back. A dotted identity
+    // attribute is a path into nested values and a data body is flat
+    // `attr = value`, so such a type bridges only once its provider declares a
+    // data-source shape — the data type, its arguments and where each comes
+    // from in the carved body (#2034). `kubernetes_manifest` declares one now:
+    // `data "kubernetes_resource"`, built from the manifest's apiVersion,
+    // kind and metadata.
     const carvedTypes = report.carveSet.map((m) => m.type).filter((t): t is string => t !== undefined);
     const unbridgeable = [...new Set(carvedTypes.filter((t) => !canBridge(t)))];
     if (unbridgeable.length) {
@@ -91,21 +91,25 @@ export async function carveBridge(opts: CarveBridgeOptions): Promise<CarveBridge
         error:
           `${select} cannot be bridged: ${unbridgeable
             .map((t) => `${t} identifies itself by \`${identityAttrOf(t)}\``)
-            .join(", ")}, a path into nested blocks that a Terraform data source body cannot express. ` +
-          `Bridging these types needs a data-source mapping — see chant issue #2034.`,
+            .join(", ")}, a path into nested values that a flat Terraform data source body cannot express, ` +
+          `and no carve provider declares a data-source shape for it. A provider contributes one through ` +
+          `\`dataSourceShapes\` (see \`kubernetes_manifest\` reading back as \`data "kubernetes_resource"\`, chant issue #2034).`,
       };
     }
 
-    // Physical identities for the carved resources, for the data sources.
-    const identities = new Map<string, CarvedIdentity>();
+    // How each carved resource is read back, and the literals to render the
+    // data-source body from. The shape comes from the provider, the values from
+    // the parsed block (`dataSourceValues`, a superset of the old identity).
+    const readBacks = new Map<string, CarvedDataSource>();
     for (const node of graph.nodes) {
-      if (node.type && node.identity) {
-        identities.set(node.address, { attr: identityAttrOf(node.type), value: node.identity });
-      }
+      if (!node.type) continue;
+      const shape = dataSourceShapeOf(node.type);
+      if (!shape) continue;
+      readBacks.set(node.address, { shape, values: node.dataSourceValues ?? {} });
     }
 
     const files = listTfFiles(opts.from).map((path) => ({ path, content: readFileSync(path, "utf-8") }));
-    plan = generateBridge(report, files, identities);
+    plan = generateBridge(report, files, readBacks);
   } catch (err) {
     if (err instanceof Hcl2JsonNotInstalled) return { ok: false, error: err.message };
     return { ok: false, error: `Failed to build the bridge: ${err instanceof Error ? err.message : String(err)}` };

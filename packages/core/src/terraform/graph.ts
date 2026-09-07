@@ -11,7 +11,8 @@
  * graph building stays unit-testable on hand-written fixtures.
  */
 
-import { identityAttrOf } from "./tier-map";
+import { shapeSourcePaths } from "./data-source-shape";
+import { dataSourceShapeOf, identityAttrOf } from "./tier-map";
 import type { Hcl2JsonTree, TfEdge, TfGraph, TfNode } from "./types";
 
 /**
@@ -142,22 +143,48 @@ function blockHasMeta(block: unknown, key: string): boolean {
 }
 
 /**
- * The resource's physical name, if its identity attribute is a plain literal
- * (not interpolated). A dotted identity attribute walks nested blocks —
+ * The literal string at a dotted path into a block, or undefined when the path
+ * misses or lands on an interpolation. A dotted path walks nested blocks —
  * hcl2json renders a nested block as a one-element array, so arrays step
  * through their first element (`manifest.metadata.name`).
  */
-function literalIdentity(block: unknown, type: string): string | undefined {
-  const attr = identityAttrOf(type);
-  if (!attr || !block || typeof block !== "object") return undefined;
+function literalAt(block: unknown, path: string): string | undefined {
   let value: unknown = block;
-  for (const segment of attr.split(".")) {
+  for (const segment of path.split(".")) {
     if (Array.isArray(value)) value = value[0];
     if (!value || typeof value !== "object") return undefined;
     value = (value as Record<string, unknown>)[segment];
   }
   if (typeof value !== "string" || value.includes("${")) return undefined;
   return value;
+}
+
+/**
+ * The resource's physical name, if its identity attribute is a plain literal
+ * (not interpolated).
+ */
+function literalIdentity(block: unknown, type: string): string | undefined {
+  const attr = identityAttrOf(type);
+  if (!attr || !block || typeof block !== "object") return undefined;
+  return literalAt(block, attr);
+}
+
+/**
+ * The literals the type's data-source shape reads out of the carved block
+ * (#2034), keyed by the shape field's source path. `carve bridge` renders the
+ * data-source body from these; a required field missing here is what makes it
+ * write a TODO instead of a block Terraform would reject.
+ */
+function dataSourceValues(block: unknown, type: string): Record<string, string> | undefined {
+  if (!block || typeof block !== "object") return undefined;
+  const shape = dataSourceShapeOf(type);
+  if (!shape) return undefined;
+  const values: Record<string, string> = {};
+  for (const path of shapeSourcePaths(shape)) {
+    const value = literalAt(block, path);
+    if (value !== undefined) values[path] = value;
+  }
+  return Object.keys(values).length ? values : undefined;
 }
 
 /**
@@ -202,6 +229,7 @@ export function buildGraph(tree: Hcl2JsonTree, exprRefs: ExpressionRefs): TfGrap
         instances: 1,
         hasDynamic: dynamic || touchesData,
         identity: literalIdentity(block, type),
+        dataSourceValues: dataSourceValues(block, type),
       });
     }
   }

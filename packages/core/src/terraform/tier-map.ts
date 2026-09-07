@@ -18,14 +18,17 @@
  */
 
 import {
+  carveDataSourceShape,
   carveFoldParent,
   carveIdentityAttr,
   carveTierMap,
   resolveEmitProvider,
   type TierInfo,
 } from "./carve-provider";
+import type { DataSourceShape } from "./data-source-shape";
 
 export { carveEmitTypes, type TierInfo } from "./carve-provider";
+export type { DataSourceShape } from "./data-source-shape";
 
 /** TF resource type → native tier, over every registered provider. Absent = unsupported (score 0). */
 export function tierMap(): Readonly<Record<string, TierInfo>> {
@@ -66,12 +69,24 @@ export function canCarveEmit(tfType: string): boolean {
 }
 
 /**
- * Can `chant carve bridge` render a Terraform `data` source for this type? A
- * dotted identity attribute is a path into nested blocks, and a data source
- * body is flat `attr = value` — `manifest.metadata.name = "x"` is not valid
- * HCL. An absent entry is fine: the bridge writes a TODO comment instead.
+ * How `chant carve bridge` reads this type back as a `data` source: the
+ * data-source type, where each argument comes from in the carved body, and how
+ * a survivor's attribute path translates (#2034). Undefined when the type
+ * cannot be read back at all.
+ */
+export function dataSourceShapeOf(tfType: string): DataSourceShape | undefined {
+  return carveDataSourceShape(tfType);
+}
+
+/**
+ * Can `chant carve bridge` render a Terraform `data` source for this type?
+ * True whenever its provider contributes a shape — declared, or implied by a
+ * plain identity attribute. False for a dotted identity attribute with no
+ * declared shape: that is a path into nested values, and a flat `attr = value`
+ * body cannot express it (`manifest.metadata.name = "x"` is not valid HCL). A
+ * type with no identity attribute at all still bridges; the bridge writes a
+ * TODO comment for the body.
  */
 export function canBridge(tfType: string): boolean {
-  const attr = carveIdentityAttr(tfType);
-  return attr === undefined || !attr.includes(".");
+  return carveDataSourceShape(tfType) !== undefined;
 }

@@ -18,6 +18,11 @@
  * can only name the family, and `adopt` reads the body to learn the rest —
  * which is also why one rule here covers every CRD.
  *
+ * It has no `kubernetes_manifest` data source either, so it does not read back
+ * as its own type. `MANIFEST_READ_BACK` below is the shape `carve bridge` uses
+ * instead: `data "kubernetes_resource"`, built from the manifest's own
+ * apiVersion/kind/metadata (#2034).
+ *
  * It has no live adoption path. `carve emit --env` filters a live export by a
  * native type, and there is no type to filter by until the body is read; state
  * is where the body is. `liveSelectorType` therefore returns undefined and
@@ -26,6 +31,7 @@
  */
 
 import type { AdoptedSource, CarveProvider, DeferredParam, TierInfo } from "../carve-provider";
+import type { DataSourceShape } from "../data-source-shape";
 import type { StateResource } from "../state";
 
 /** The chant lexicon the emitted source imports from. */
@@ -208,14 +214,54 @@ function adoptManifestFromState(resource: StateResource, params: DeferredParam[]
   };
 }
 
+/**
+ * How `carve bridge` reads a carved `kubernetes_manifest` back (#2034).
+ *
+ * The provider ships no `kubernetes_manifest` data source — checked against
+ * hashicorp/kubernetes v3.2.1, whose 27 data sources include no manifest. The
+ * generic read is `data "kubernetes_resource"`, which asks for the GVK and the
+ * name rather than taking them from a body: `api_version`, `kind`, and a
+ * nested `metadata` block with `name` and an optional `namespace`. All three
+ * come out of the manifest the resource declared.
+ *
+ * Survivors read the object back through `object`, and only through `object`:
+ * the resource exposes both `manifest` (the declared body) and `object` (the
+ * API server's read-back), the data source exposes just the latter. So both
+ * map to `object`, and a reference to `.manifest.data.log_level` lands on
+ * `.object.data.log_level` rather than an attribute that does not exist.
+ *
+ * A namespace-less manifest (a ClusterRole, a CRD) simply omits `namespace`,
+ * which the data source allows. A manifest whose name is interpolated resolves
+ * no literal and falls back to the bridge's TODO body, as an AWS type with an
+ * interpolated bucket name does.
+ */
+const MANIFEST_READ_BACK: DataSourceShape = {
+  type: "kubernetes_resource",
+  args: [
+    { name: "api_version", from: "manifest.apiVersion", required: true },
+    { name: "kind", from: "manifest.kind", required: true },
+  ],
+  blocks: [
+    {
+      name: "metadata",
+      fields: [
+        { name: "name", from: "manifest.metadata.name", required: true },
+        { name: "namespace", from: "manifest.metadata.namespace" },
+      ],
+    },
+  ],
+  readAttrs: { manifest: "object", object: "object" },
+};
+
 export const kubernetesCarveProvider: CarveProvider = {
   name: "kubernetes",
   tfTypePrefixes: ["kubernetes_"],
   lexicon: "k8s",
   tiers: TIERS,
-  // A dotted path into nested blocks: the graph walks it for identity, and
-  // `carve bridge` refuses the type because a data-source body cannot express it.
+  // A dotted path into the manifest body: the graph walks it for identity. It
+  // cannot be a data-source argument on its own, so the read-back is a shape.
   identityAttrs: { kubernetes_manifest: "manifest.metadata.name" },
+  dataSourceShapes: { kubernetes_manifest: MANIFEST_READ_BACK },
   emitTypes: ["kubernetes_manifest"],
   adopt: (resource, params) => adoptManifestFromState(resource, params),
   // State only — the kind is in the body, so a live export has nothing to

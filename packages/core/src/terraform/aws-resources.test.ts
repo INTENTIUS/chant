@@ -1,6 +1,6 @@
 import { describe, test, expect } from "vitest";
 import { AWS_CARVE_TYPES, AWS_FOLD_MAPPERS, awsCarveType, applyAwsMapper, applyAwsFold } from "./aws-resources";
-import { tierMap, foldParentOf, identityAttrOf, canBridge, canCarveEmit, carveEmitTypes } from "./tier-map";
+import { tierMap, foldParentOf, identityAttrOf, canBridge, dataSourceShapeOf, canCarveEmit, carveEmitTypes } from "./tier-map";
 import { canAdoptFromState } from "./adopt-state";
 
 describe("AWS carve-out table", () => {
@@ -27,13 +27,22 @@ describe("AWS carve-out table", () => {
     for (const t of carveEmitTypes()) expect(canAdoptFromState(t)).toBe(true);
   });
 
-  test("canBridge rejects a dotted identity attribute (#2015)", () => {
-    // A data source body is flat `attr = value`; a dotted path is not HCL.
+  test("canBridge follows the data-source shape, not the identity attribute (#2015, #2034)", () => {
+    // A data source body is flat `attr = value`; a dotted path is not HCL. So a
+    // dotted identity attribute bridges only through a declared shape, which is
+    // what `kubernetes_manifest` has: `data "kubernetes_resource"`.
     expect(identityAttrOf("kubernetes_manifest")).toContain(".");
-    expect(canBridge("kubernetes_manifest")).toBe(false);
+    expect(canBridge("kubernetes_manifest")).toBe(true);
+    expect(dataSourceShapeOf("kubernetes_manifest")!.type).toBe("kubernetes_resource");
+    // A plain identity attribute implies its own same-type shape.
     expect(canBridge("aws_s3_bucket")).toBe(true);
+    expect(dataSourceShapeOf("aws_s3_bucket")).toEqual({
+      type: "aws_s3_bucket",
+      args: [{ name: "bucket", from: "bucket", required: true }],
+    });
     // No identity entry at all is fine — the bridge writes a TODO comment.
     expect(canBridge("random_pet")).toBe(true);
+    expect(dataSourceShapeOf("random_pet")).toEqual({ type: "random_pet" });
     for (const t of AWS_CARVE_TYPES) expect(canBridge(t.tfType)).toBe(true);
   });
 

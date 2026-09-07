@@ -302,7 +302,7 @@ manifest, so the build emits the object back unchanged and a kind the lexicon
 ships no generated class for still carves. Build the scaffolded project and the
 YAML is what Terraform was applying.
 
-Four limits on this estate today:
+Three limits on this estate today:
 
 - **Emit adopts `kubernetes_manifest`, not the typed provider resources.**
   `kubernetes_config_map.legacy` ranks tier 2 and is refused by emit on both
@@ -310,17 +310,42 @@ Four limits on this estate today:
   recovering it is a per-type reshaping.
 - **`--env` is refused; `--state` is the path.** A live import filters by
   native type, and there is no type to filter by until the body is read.
-- **`carve bridge` refuses a manifest.** `kubernetes_manifest` identifies
-  itself by `manifest.metadata.name`, a path into nested blocks that a flat
-  data-source body cannot express — and the provider has no manifest data
-  source, only the differently-shaped `kubernetes_resource`
-  ([#2034](https://github.com/intentius/chant/issues/2034)). Carve a manifest
-  nothing else references, or repoint the survivors by hand.
 - **`carve apply --write-source` is refused.** The tag stamp belongs to a
   native constructor call. `carve apply` without the flag graduates normally,
   in the vocabulary of the target: ownership as
   `app.kubernetes.io/managed-by` + `chant.intentius.io/{stack,env}` labels, and
   a `kubectl apply -f` in the runbook instead of a CloudFormation deploy.
+
+### Bridging a manifest
+
+A carved `kubernetes_manifest` reads back as a different type. The kubernetes
+provider ships no `kubernetes_manifest` data source, so `carve bridge` renders
+the provider's generic read, `data "kubernetes_resource"`, from the manifest's
+own `apiVersion`, `kind` and `metadata`:
+
+```hcl
+data "kubernetes_resource" "app_config" {
+  api_version = "v1"
+  kind        = "ConfigMap"
+
+  metadata {
+    name      = "app-config"
+    namespace = "apps"
+  }
+}
+```
+
+Survivor references follow that data source's attribute path.
+`kubernetes_manifest.app_config.object.metadata.name` becomes
+`data.kubernetes_resource.app_config.object.metadata.name`. The resource also
+exposes `manifest`, the body as declared, which the data source does not have,
+so a reference through `manifest` lands on `object` too:
+`kubernetes_manifest.app_config.manifest.data.LOG_LEVEL` becomes
+`data.kubernetes_resource.app_config.object.data.LOG_LEVEL`.
+
+A manifest whose name is interpolated resolves no literal, so the data source
+comes out with a TODO for its body rather than a guessed name. The references
+are repointed either way, leaving one edit between you and a valid plan.
 
 ## Try it on your own estate
 
@@ -353,9 +378,8 @@ expect before you run them.
   reports the supported list.
 
 - **`carve emit` — Kubernetes.** `kubernetes_manifest` emits from state, any
-  kind and any CRD, as shown above. The typed `kubernetes_*` resources are
-  ranked but not emitted, `--env` is refused, and bridge refuses the manifest
-  types ([#2034](https://github.com/intentius/chant/issues/2034)). GCP and
-  Azure are not carved yet.
+  kind and any CRD, as shown above. It bridges too, through
+  `data "kubernetes_resource"`. The typed `kubernetes_*` resources are ranked
+  but not emitted, and `--env` is refused. GCP and Azure are not carved yet.
 
 See the [carve CLI reference](/chant/cli/carve-out/) for every flag.

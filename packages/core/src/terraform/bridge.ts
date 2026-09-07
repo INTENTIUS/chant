@@ -7,6 +7,9 @@
  *  - inbound edge  → the survivor loses its reference to the carved resource.
  *    Bridge: add a `data` source for the (now chant-managed) resource and
  *    rewrite the survivor's `type.name.attr` references to `data.type.name.attr`.
+ *    The provider's data-source shape (`data-source-shape.ts`, #2034) decides
+ *    both halves — the data type and body, and the attribute path survivors
+ *    read through, which need not be the resource's own.
  *    Required immediately, or `terraform plan` errors on the dangling ref.
  *    An `output` block reading the carved resource is such a survivor (#1638):
  *    same data source, same textual rewrite, applied to the output's value.
@@ -22,18 +25,32 @@
  */
 
 import { deferredParamName, type CarveReport } from "./carve";
+import { rewriteReadPath, type DataSourceShape, type ShapeField } from "./data-source-shape";
 import { exciseResourceBlocks, type ExciseTarget } from "./excise";
 
-export interface CarvedIdentity {
-  /** The HCL identity attribute, e.g. `bucket` or `name`. */
-  attr?: string;
-  /** Its literal value, e.g. `myapp-assets-prod`. */
-  value?: string;
+/** How one carved resource is read back, and the literals to render it with. */
+export interface CarvedDataSource {
+  /**
+   * The type's data-source shape (`dataSourceShapeOf`): the `data` type, its
+   * arguments and where each comes from, and the survivor path translation.
+   */
+  shape?: DataSourceShape;
+  /**
+   * Literals resolved from the carved block, keyed by the shape field's source
+   * path — `{ bucket: "myapp-assets-prod" }`, or for a manifest
+   * `{ "manifest.apiVersion": "v1", "manifest.metadata.name": "app-config" }`.
+   */
+  values?: Record<string, string>;
 }
 
 export interface DataSourceBlock {
   /** Carved resource address the data source stands in for. */
   address: string;
+  /**
+   * The `data` type. Usually the carved resource's own type; the shape can
+   * name another, as `kubernetes_manifest` reads back through
+   * `data "kubernetes_resource"` (#2034).
+   */
   type: string;
   name: string;
   hcl: string;
@@ -73,22 +90,64 @@ export interface BridgePlan {
   runbook: string;
 }
 
-/** `aws_s3_bucket.assets` → a regex matching that reference head, not already `data.`-prefixed. */
+/**
+ * `aws_s3_bucket.assets` → a regex matching that reference head plus the
+ * attribute path that follows it, not already `data.`-prefixed. The path is
+ * captured because the data source may expose it under a different attribute:
+ * a survivor reading `kubernetes_manifest.app_config.manifest.data.x` has to
+ * come out as `data.kubernetes_resource.app_config.object.data.x`.
+ */
 function referenceRegex(address: string): RegExp {
   const escaped = address.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   // (?<!data\.) — do not double-prefix an existing data source reference.
-  return new RegExp(`(?<!data\\.)\\b${escaped}\\b`, "g");
+  return new RegExp(`(?<!data\\.)\\b${escaped}\\b((?:\\.[A-Za-z_][A-Za-z0-9_-]*)*)`, "g");
 }
 
-function dataSourceHcl(type: string, name: string, identity: CarvedIdentity): string {
-  // A dotted attr is a path into nested blocks; `a.b.c = v` is not valid HCL,
-  // so it falls back to the TODO. `carve bridge` refuses such a type outright.
-  const flat = identity.attr !== undefined && !identity.attr.includes(".");
-  const body =
-    flat && identity.value !== undefined
-      ? `  ${identity.attr} = ${JSON.stringify(identity.value)}`
-      : `  # TODO: identify the resource (its name/id was interpolated in the source)`;
-  return `data ${JSON.stringify(type)} ${JSON.stringify(name)} {\n${body}\n}`;
+const IDENTIFY_TODO = "  # TODO: identify the resource (its name/id was interpolated in the source)";
+
+/** `terraform fmt` aligns the `=` of consecutive assignments; so do we. */
+function alignedAssignments(pairs: Array<[string, string]>, indent: string): string[] {
+  const width = Math.max(...pairs.map(([key]) => key.length));
+  return pairs.map(([key, value]) => `${indent}${key.padEnd(width)} = ${JSON.stringify(value)}`);
+}
+
+/** Resolved `[name, value]` pairs, or null when a required field has no literal. */
+function resolveFields(fields: readonly ShapeField[], values: Record<string, string>): Array<[string, string]> | null {
+  const pairs: Array<[string, string]> = [];
+  for (const field of fields) {
+    const value = values[field.from];
+    if (value === undefined) {
+      if (field.required) return null;
+      continue;
+    }
+    pairs.push([field.name, value]);
+  }
+  return pairs;
+}
+
+/**
+ * The `data` block standing in for the carved resource. A shape whose required
+ * arguments the carved block did not supply as literals renders the TODO body
+ * instead of a block `terraform validate` would reject.
+ */
+function dataSourceHcl(shape: DataSourceShape, name: string, values: Record<string, string>): string {
+  const body: string[] = [];
+  const args = resolveFields(shape.args ?? [], values);
+  if (args === null) return todoBlock(shape.type, name);
+  if (args.length) body.push(...alignedAssignments(args, "  "));
+  for (const block of shape.blocks ?? []) {
+    const fields = resolveFields(block.fields, values);
+    if (fields === null) return todoBlock(shape.type, name);
+    if (!fields.length) continue;
+    if (body.length) body.push("");
+    body.push(`  ${block.name} {`, ...alignedAssignments(fields, "    "), "  }");
+  }
+  if (!body.length) body.push(IDENTIFY_TODO);
+  return `data ${JSON.stringify(shape.type)} ${JSON.stringify(name)} {\n${body.join("\n")}\n}`;
+}
+
+function todoBlock(type: string, name: string): string {
+  return `data ${JSON.stringify(type)} ${JSON.stringify(name)} {\n${IDENTIFY_TODO}\n}`;
 }
 
 /**
@@ -96,26 +155,26 @@ function dataSourceHcl(type: string, name: string, identity: CarvedIdentity): st
  *
  * @param report    the boundary report (from `boundaryReport`)
  * @param files     every `.tf` file in the estate, as { path, content }
- * @param identities physical identity per carved address, for the data sources
+ * @param readBacks how each carved address is read back as a data source, and
+ *                  the literals to render it with (`dataSourceShapeOf` +
+ *                  the graph node's `dataSourceValues`)
  */
 export function generateBridge(
   report: CarveReport,
   files: Array<{ path: string; content: string }>,
-  identities: Map<string, CarvedIdentity>,
+  readBacks: Map<string, CarvedDataSource>,
 ): BridgePlan {
   // Carved resources that something still depends on need a data source.
-  const carvedWithInbound = new Map<string, { type: string; name: string }>();
+  const carvedWithInbound = new Map<string, { type: string; name: string; readBack: CarvedDataSource }>();
   for (const e of report.inbound) {
     const [type, ...rest] = e.carved.split(".");
-    carvedWithInbound.set(e.carved, { type, name: rest.join(".") });
+    carvedWithInbound.set(e.carved, { type, name: rest.join("."), readBack: readBacks.get(e.carved) ?? {} });
   }
 
-  const dataSources: DataSourceBlock[] = [...carvedWithInbound.entries()].map(([address, { type, name }]) => ({
-    address,
-    type,
-    name,
-    hcl: dataSourceHcl(type, name, identities.get(address) ?? {}),
-  }));
+  const dataSources: DataSourceBlock[] = [...carvedWithInbound.entries()].map(([address, { type, name, readBack }]) => {
+    const shape = readBack.shape ?? { type };
+    return { address, type: shape.type, name, hcl: dataSourceHcl(shape, name, readBack.values ?? {}) };
+  });
 
   // Excise the carve set's own blocks (#998): after `terraform state rm`, a
   // block left behind would re-create the resource on the next apply. Then
@@ -129,8 +188,10 @@ export function generateBridge(
   const rewrites: FileRewrite[] = files.map(({ path, content }) => {
     const excision = exciseResourceBlocks(content, exciseTargets);
     let rewritten = excision.content;
-    for (const address of carvedWithInbound.keys()) {
-      rewritten = rewritten.replace(referenceRegex(address), `data.${address}`);
+    for (const [address, { type, name, readBack }] of carvedWithInbound) {
+      const shape = readBack.shape;
+      const head = `data.${shape?.type ?? type}.${name}`;
+      rewritten = rewritten.replace(referenceRegex(address), (_match, path: string) => head + rewriteReadPath(shape, path));
     }
     return { path, original: content, rewritten, changed: rewritten !== content, excised: excision.excised };
   });

@@ -239,24 +239,31 @@ describe("carve emit — kubernetes_manifest (#999)", () => {
     });
   });
 
-  test("bridge still refuses the carved manifest, so emit writes no half-bridged estate", async () => {
+  test("emit then bridge compose on the same manifest (#2034)", async () => {
     if (!parserAvailable) return;
     await withEstate(async (dir) => {
       const out = join(dir, "carveout");
       const emitted = await carveEmit(
-        { from: dir, select: "kubernetes_manifest.app_config", statePath: join(dir, "terraform.tfstate"), output: out },
+        { from: dir, select: "kubernetes_manifest.web_cert", statePath: join(dir, "terraform.tfstate"), output: out },
         { plugins: [], liveImport: fakeImport() },
       );
       expect(emitted.ok).toBe(true);
 
-      // Emit does not unlock bridge: `manifest.metadata.name` is a path into
-      // nested blocks and a data-source body is flat `attr = value`, so the
-      // survivors' references cannot be repointed yet.
-      const bridged = await carveBridge({ from: dir, select: "kubernetes_manifest.app_config", output: out });
-      expect(bridged.ok).toBe(false);
-      expect(bridged.error).toContain("cannot be bridged");
-      expect(bridged.error).toContain("manifest.metadata.name");
-      expect(existsSync(join(out, "kubernetes_manifest-app_config-runbook.md"))).toBe(false);
+      // Bridge used to refuse here: `manifest.metadata.name` is a path into the
+      // body, and a data-source body is flat `attr = value`. It now reads the
+      // manifest back through the shape the kubernetes provider declares, so
+      // the target the emit manifest recorded bridges without --select.
+      const bridged = await carveBridge({ from: dir, output: out });
+      expect(bridged.ok).toBe(true);
+      expect(bridged.plan!.target).toBe("kubernetes_manifest.web_cert");
+      expect(existsSync(join(out, "kubernetes_manifest-web_cert-runbook.md"))).toBe(true);
+
+      // Nothing reads the Certificate, so there is no data source to write —
+      // but its own block still has to leave the survivor source, or the next
+      // apply re-creates what `terraform state rm` released.
+      expect(bridged.plan!.dataSources).toEqual([]);
+      expect(bridged.plan!.excised).toEqual(["kubernetes_manifest.web_cert"]);
+      expect(readFileSync(join(out, "main.tf"), "utf-8")).not.toContain('resource "kubernetes_manifest" "web_cert"');
     });
   });
 });
