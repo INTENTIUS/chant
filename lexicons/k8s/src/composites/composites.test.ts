@@ -340,6 +340,32 @@ describe("CronWorkload", () => {
     expect((p(result.role).metadata as any).labels["app.kubernetes.io/component"]).toBe("rbac");
     expect((p(result.roleBinding).metadata as any).labels["app.kubernetes.io/component"]).toBe("rbac");
   });
+
+  // ── schedule validation (#2071 item 4) ────────────────────────────
+
+  test("accepts a valid five-field schedule", () => {
+    expect(() =>
+      CronWorkload({ name: "backup", image: "backup:1.0", schedule: "0 2 * * *" }),
+    ).not.toThrow();
+  });
+
+  test("refuses a 6-field (seconds) schedule, naming the field, the value, and the CronJob limit", () => {
+    expect(() =>
+      CronWorkload({ name: "backup", image: "backup:1.0", schedule: "0 0 2 * * *" }),
+    ).toThrow(/schedule "0 0 2 \* \* \*" is 6-field cron.*five fields/s);
+  });
+
+  test("refuses a malformed schedule", () => {
+    expect(() =>
+      CronWorkload({ name: "backup", image: "backup:1.0", schedule: "not a cron" }),
+    ).toThrow(/schedule "not a cron" is not valid cron syntax/);
+  });
+
+  test("refuses a blank schedule", () => {
+    expect(() =>
+      CronWorkload({ name: "backup", image: "backup:1.0", schedule: "" }),
+    ).toThrow(/schedule is required/);
+  });
 });
 
 // ── AutoscaledService ──────────────────────────────────────────────
@@ -4016,7 +4042,39 @@ describe("OperatorStack", () => {
         image: "chant:latest",
         converge: [{ name: "fountain-observe", schedule: "", env: "staging" }],
       }),
-    ).toThrow(/schedule/);
+    ).toThrow(/schedule is required/);
+  });
+
+  // ── schedule validation (#2071 item 4) ────────────────────────────
+
+  test("accepts a valid five-field schedule", () => {
+    expect(() =>
+      OperatorStack({
+        name: "chant-operator",
+        image: "chant:latest",
+        converge: [{ name: "fountain-observe", schedule: "*/10 * * * *", env: "staging" }],
+      }),
+    ).not.toThrow();
+  });
+
+  test("refuses a host with a 6-field (seconds) schedule, naming the field, the value, and the CronJob limit", () => {
+    expect(() =>
+      OperatorStack({
+        name: "chant-operator",
+        image: "chant:latest",
+        converge: [{ name: "fountain-observe", schedule: "0 */10 * * * *", env: "staging" }],
+      }),
+    ).toThrow(/schedule "0 \*\/10 \* \* \* \*" is 6-field cron.*five fields/s);
+  });
+
+  test("refuses a host with a malformed schedule", () => {
+    expect(() =>
+      OperatorStack({
+        name: "chant-operator",
+        image: "chant:latest",
+        converge: [{ name: "fountain-observe", schedule: "not a cron", env: "staging" }],
+      }),
+    ).toThrow(/schedule "not a cron" is not valid cron syntax/);
   });
 
   test("refuses a blank image", () => {

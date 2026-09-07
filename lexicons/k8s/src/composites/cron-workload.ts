@@ -8,13 +8,14 @@
 import { Composite, mergeDefaults } from "@intentius/chant";
 import { CronJob, ServiceAccount, Role, RoleBinding } from "../generated";
 import type { ContainerSecurityContext } from "./security-context";
+import { validateCronJobSchedule } from "./cron-schedule";
 
 export interface CronWorkloadProps {
   /** Workload name — used in metadata and labels. */
   name: string;
   /** Container image. */
   image: string;
-  /** Cron schedule expression (e.g., "0 * * * *"). */
+  /** Cron schedule expression (e.g., "0 * * * *"). Validated at construction: a k8s CronJob takes five fields only, so a 6-field (seconds) form is refused (`./cron-schedule.ts`, #2071). */
   schedule: string;
   /** Command to run in the container. */
   command?: string[];
@@ -91,6 +92,8 @@ export const CronWorkload = Composite((props: CronWorkloadProps) => {
     securityContext,
     defaults: defs,
   } = props;
+
+  validateCronJobSchedule(`CronWorkload "${name}"`, schedule);
 
   const saName = `${name}-sa`;
   const roleName = `${name}-role`;
