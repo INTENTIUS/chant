@@ -224,7 +224,7 @@ The question is not whether a substrate can notify. It is whether its notificati
 | azure | Event Grid system topics, Activity Log | No | The same shape again, and system-topic coverage varies by resource provider |
 | github, gitlab, forgejo | Webhooks | No | Complete for repo and org events, but needs an ingress endpoint reachable from the forge. chant runs no such receiver and should not |
 | fly | The Machines API exposes no change stream | No | |
-| temporal, cedar, fountain | No change feed on the surfaces chant reads | No | |
+| cedar, fountain, render, cpln | No change feed on the surfaces chant reads | No | |
 
 Every cloud substrate fails on the same point. Subscribing means writing infrastructure into the account being observed, which inverts the property that makes a watch safe to point at production. So their absence from the table's second column is a position, not a gap waiting to be filled: on aws, gcp and azure the operator's timer is the detection mechanism, and `--interval` is the latency.
 
