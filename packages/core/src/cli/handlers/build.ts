@@ -63,7 +63,21 @@ async function runGenerateComponents(ctx: CommandContext): Promise<number> {
 
   const yaml = result.yaml ?? "";
   if (args.format === "json") {
-    console.log(JSON.stringify({ stages: result.stages, jobs: result.jobs, yaml }, null, 2));
+    console.log(
+      JSON.stringify(
+        {
+          stages: result.stages,
+          jobs: result.jobs,
+          yaml,
+          // The environment the generated pipeline deploys (#2046), the
+          // generator's own resolution, forwarded rather than left for a
+          // consumer to re-derive by parsing the YAML back (#2060).
+          ...(result.env ? { env: result.env } : {}),
+        },
+        null,
+        2,
+      ),
+    );
   } else if (args.output) {
     const outputPath = resolve(args.output);
     mkdirSync(dirname(outputPath), { recursive: true });
