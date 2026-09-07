@@ -8,7 +8,7 @@ diataxis: reference
     Edit lexicons/fountain/docs/pages/profiles.mdx instead; changes here are overwritten. */}
 
 
-`fountainApply` and `fountainRun` need an endpoint and a token. Pre-#2124 that meant `FOUNTAIN_ENDPOINT` / `FOUNTAIN_TOKEN` in the shell — fine for one instance and one account, wrong for a project that targets a self-hosted instance for staging and the hosted one for prod. The `fountain.profiles` namespace in `chant.config.ts` names one or more endpoint/token pairs so a project can switch between them with `--profile`, the same way `temporal.profiles` names Temporal connections.
+`fountainApply` and `fountainRun` need an endpoint and a token. Pre-#2124 that meant `FOUNTAIN_ENDPOINT` / `FOUNTAIN_TOKEN` in the shell — fine for one instance and one account, wrong for a project that targets a self-hosted instance for staging and the hosted one for prod. The `fountain.profiles` namespace in `chant.config.ts` names one or more endpoint/token pairs so a project can switch between them with `--profile`.
 
 ## Profile shape
 
@@ -44,7 +44,7 @@ export default {
 | `token` | `{ env: string }` | The name of the environment variable that holds the bearer token — never a literal value. FTN001 refuses a literal string here. |
 | `team` | `string` (optional) | The default steward — a `Teammate` name — that `chant run --on fountain` posts to when the op declares no steward of its own. |
 
-An unknown key anywhere in `fountain` — a namespace-level typo, or one inside a profile — fails config load naming the key, the same way `forgejo` and `temporal` do (chant #1344).
+An unknown key anywhere in `fountain` — a namespace-level typo, or one inside a profile — fails config load naming the key, the same way `forgejo` does (chant #1344).
 
 ## Precedence
 
@@ -77,7 +77,7 @@ chant run steward-converge --on fountain
 chant run steward-converge --on fountain --profile prod
 ```
 
-`--profile` is the same flag `chant run` already exposes for `temporal.profiles`; fountain reads it identically.
+`--profile` (`-p`) is core's flag on every `chant run` subcommand; it reaches a lexicon's runtime as `OpRunStartOptions.profile`, and fountain resolves it against `fountain.profiles`. A name that is not declared there is refused by name rather than falling back to `defaultProfile`, so a misspelt profile cannot silently run against the wrong instance.
 
 ## Never a literal token
 

@@ -337,6 +337,50 @@ describe("runOp: --sandbox with a policyGate step (chant #2003)", () => {
     expect(stderr.join("\n")).not.toContain("policyGate");
   });
 
+  // #2192 — `--profile` is core's flag and the runtime's meaning. The handler
+  // only has to hand it over; fountain's own tests cover what it does with it.
+  test("--profile reaches the hosting runtime's start options", async () => {
+    discoverOpsMock.mockResolvedValue({ ops: new Map([makeOp("prod-apply")]), errors: [] });
+    const start = vi.fn(async () => ({
+      op: "prod-apply",
+      runId: "stub-1",
+      result: async () => ({ op: "prod-apply", runId: "stub-1", state: "completed", startedAt: "2026-01-01T00:00:00.000Z" }),
+    }));
+    makeStdoutSpy();
+    makeStderrSpy();
+
+    const exit = await runOp({
+      args: makeArgs({ path: "prod-apply", on: "stub", profile: "staging" }),
+      plugins: [{ name: "stub", opRuntime: { name: "stub", start } } as never], serializers: [],
+    });
+
+    expect(exit).toBe(0);
+    expect(start).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ profile: "staging" }));
+  });
+
+  test("without --profile the runtime is left to its own default", async () => {
+    discoverOpsMock.mockResolvedValue({ ops: new Map([makeOp("prod-apply")]), errors: [] });
+    let seen: Record<string, unknown> | undefined;
+    const start = vi.fn(async (_op: unknown, opts: Record<string, unknown>) => {
+      seen = opts;
+      return {
+        op: "prod-apply",
+        runId: "stub-1",
+        result: async () => ({ op: "prod-apply", runId: "stub-1", state: "completed", startedAt: "2026-01-01T00:00:00.000Z" }),
+      };
+    });
+    makeStdoutSpy();
+    makeStderrSpy();
+
+    await runOp({
+      args: makeArgs({ path: "prod-apply", on: "stub" }),
+      plugins: [{ name: "stub", opRuntime: { name: "stub", start } } as never], serializers: [],
+    });
+
+    expect(seen).toBeDefined();
+    expect(seen).not.toHaveProperty("profile");
+  });
+
   test("--sandbox on an Op with no policyGate step is untouched", async () => {
     discoverOpsMock.mockResolvedValue({
       ops: new Map([localOp("hello", [{ kind: "activity", fn: "shellCmd", args: { cmd: "true" } }])]),

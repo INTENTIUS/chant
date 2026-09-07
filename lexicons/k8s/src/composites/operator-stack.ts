@@ -211,7 +211,8 @@ export function deriveHostVerbClass(hostName: string, dial: OperatorDial, dispat
     if (verbClass === "destructive") {
       throw new Error(
         `OperatorStack host "${hostName}": a dispatchTargets entry classifies as destructive — ConvergeOp v1 refuses a destructive run() target under any dial ` +
-          `(TMP014; the local dispatch executor can't honor its required gate). Remove it from dispatchTargets, or remediate manually via a gated op.`,
+          `(OPS014; a converge tick runs unattended, and a destructive dispatch needs a person's approval before it is attempted, not a gate the tick reads after it has already committed to the run). ` +
+          `Remove it from dispatchTargets, and run the destructive op yourself through its gate.`,
       );
     }
     if (!dialAllowsVerbClass(dial, verbClass)) continue; // dial refuses this dispatch — reported, not run; needs no elevated RBAC

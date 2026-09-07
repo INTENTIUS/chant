@@ -143,10 +143,11 @@ A resolution is a durable, queryable fact rather than an authorization check.
 Anyone who can run `chant approve` locally can write one, the same trust
 boundary a local `git commit` already has, and [issue #1485](https://github.com/INTENTIUS/chant/issues/1485)
 scopes signed resolutions out on purpose. Re-running is also what clears a
-gate; nothing resumes a run in place. That holds on a hosted runtime too — a
+gate; nothing resumes a run in place. That holds on a hosted runtime too. A
 steward's turn ends at the gate rather than sitting on the thread waiting, and
-`chant run approve <op> <gate> --on fountain` posts the re-run once the
-resolution is written.
+`chant run approve <op> <gate> --on fountain` posts `chant run <op>` back onto
+the thread once the resolution is written, so the sandbox re-runs and reads
+the fact.
 </Aside>
 
 ## `chant operator status`

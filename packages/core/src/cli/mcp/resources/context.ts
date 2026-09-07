@@ -69,12 +69,11 @@ All Op tools accept an optional \`runtime\` parameter: a lexicon name whose \`op
 
 | URI | Description |
 |---|---|
-| \`chant://ops\` | JSON array of all Op definitions (name, overview, phases, taskQueue, depends) |
-| \`chant://ops/{name}/runs\` | Workflow run history for a named Op |
+| \`chant://ops\` | JSON array of all Op definitions (name, overview, phase count, labels, depends) |
+| \`chant://ops/{name}/runs\` | Run ledger history for a named Op, newest first |
 | \`chant://ops/{name}/runs/latest\` | Latest run state for a named Op |
 
-### Workflow IDs
-Ops use deterministic workflow IDs: \`chant-op-<opName>\` (e.g. \`chant-op-alb-deploy\`).
+Both run resources read the built-in local runtime, the one an MCP client can address without naming a lexicon.
 
 ## Best Practices
 

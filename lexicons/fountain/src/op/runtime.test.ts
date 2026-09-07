@@ -301,6 +301,48 @@ describe("start", () => {
     await expect(runtime.start(OP, {})).rejects.toThrow(/no profile "prod" under fountain.profiles/);
   });
 
+  // #2192 — `chant run <op> --on fountain --profile prod` reaches here as
+  // `OpRunStartOptions.profile`, and picks that profile's endpoint, token and
+  // team instead of `defaultProfile`'s.
+  it("--profile on the run selects that profile's endpoint, token and team", async () => {
+    vi.stubEnv("FOUNTAIN_PROD_TOKEN", "prod-token");
+    const config = {
+      lexicons: ["fountain"],
+      fountain: {
+        profiles: {
+          staging: { endpoint: "https://staging.example.com", token: { env: "FOUNTAIN_TEST_TOKEN" }, team: "staging-steward" },
+          prod: { endpoint: "https://prod.example.com", token: { env: "FOUNTAIN_PROD_TOKEN" }, team: "prod-steward" },
+        },
+        defaultProfile: "staging",
+      },
+    } as ChantConfig;
+
+    const { http, calls } = fakeHttp({
+      "GET /api/agents?search=prod-steward": {
+        status: 200,
+        json: { data: [{ id: "agent-9", name: "prod-steward" }] },
+      },
+      "POST /api/team/agent-9/messages": { status: 202, json: { data: { conversation_id: "conv-9" } } },
+    });
+    const { sse } = fakeSse([[sseEvent("1", { stream: "stage", stage: "turn", state: "done" })]]);
+    const runtime = createFountainOpRuntime({ config, http, sse, now: fakeClock() });
+
+    const handle = await runtime.start(OP, { profile: "prod" });
+    await handle.result();
+
+    // The prod profile's team, not the default profile's.
+    expect(calls.some((c) => c.path === "/api/team/agent-9/messages")).toBe(true);
+    expect(calls.some((c) => c.path.includes("staging-steward"))).toBe(false);
+    vi.unstubAllEnvs();
+  });
+
+  it("--profile naming an undeclared entry is refused on the run, not silently defaulted", async () => {
+    const runtime = createFountainOpRuntime({ config: CONFIG, http: fakeHttp({}).http });
+    await expect(runtime.start(OP, { profile: "prod" })).rejects.toThrow(
+      /no profile "prod" under fountain.profiles/,
+    );
+  });
+
   it("prefers a declared Steward over the profile's team", async () => {
     __resetStewardsForTests();
     Steward({
@@ -812,7 +854,11 @@ describe("resolveGate", () => {
     url: "https://github.com/o/r/pull/1",
   };
 
-  it("posts the approve prompt with the approver and the url", async () => {
+  // #2192 — the prompt is the op's own re-run, not the approve verb again.
+  // `chant run approve <op> <gate>` parsed as a verb in the sandbox and wrote
+  // the same resolution a second time on the local runtime; only `chant run
+  // <op>` re-applies and walks through the now-resolved gate.
+  it("posts the op's re-run prompt with the approver and the url", async () => {
     const { http, calls } = fakeHttp(stewardRoutes(routes));
     const runtime = createFountainOpRuntime({
       config: CONFIG, endpoint: "https://fountain.example.com", token: "t", http, now: fakeClock(),
@@ -822,8 +868,30 @@ describe("resolveGate", () => {
 
     const post = calls.find((c) => c.path === "/api/conversations/conv-1/prompts");
     expect(post?.body).toEqual({
-      prompt: "chant run approve alb-deploy release --approver alex --url https://github.com/o/r/pull/1",
+      prompt: "chant run alb-deploy --approver alex --url https://github.com/o/r/pull/1",
     });
+  });
+
+  // The posted string has to parse as an op run in the sandbox, or the
+  // re-application never happens. This is the ACP parser core's own
+  // `parseArgs`/`resolveCommand` back it, on the exact prompt above.
+  it("the posted prompt parses as an op run, not as a verb", async () => {
+    const { http, calls } = fakeHttp(stewardRoutes(routes));
+    const runtime = createFountainOpRuntime({
+      config: CONFIG, endpoint: "https://fountain.example.com", token: "t", http, now: fakeClock(),
+    });
+
+    await runtime.resolveGate!("alb-deploy", "release", resolution);
+    const post = calls.find((c) => c.path === "/api/conversations/conv-1/prompts");
+
+    const { parseChantCommandLine } = await import("../acp/command-line");
+    const parsed = await parseChantCommandLine((post?.body as { prompt: string }).prompt);
+
+    expect(parsed.ok).toBe(true);
+    expect(parsed.ok && parsed.command.kind).toBe("op-run");
+    expect(parsed.ok && parsed.command.kind === "op-run" && parsed.command.op).toBe("alb-deploy");
+    expect(parsed.ok && parsed.command.args.approver).toBe("alex");
+    expect(parsed.ok && parsed.command.args.url).toBe("https://github.com/o/r/pull/1");
   });
 
   it("reports conversation_busy rather than retrying the prompt", async () => {

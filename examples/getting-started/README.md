@@ -225,9 +225,16 @@ export const { agent, teammate, schedules } = Steward({
 ```bash
 chant run observe --on fountain           # a turn on the steward's thread
 chant run deploy-gated --on fountain      # reaches the gate, ends the turn
-chant approve deploy-gated approve-deploy --approver you
-chant run approve deploy-gated approve-deploy --on fountain
+chant run approve deploy-gated approve-deploy --on fountain --approver you
+chant run status deploy-gated --on fountain
 ```
+
+`chant run approve ... --on fountain` does both halves itself: it writes the
+resolution to the gate ledger, the same fact a local `chant approve` writes,
+and then posts `chant run deploy-gated` back onto the steward's thread. The
+sandbox re-runs the op, reads the resolution off the ledger, walks through the
+gate and applies the manifests. `chant run status` reads that turn back as
+`completed`.
 
 The gate behaves exactly as it did on your laptop, which is the point of
 gate-as-fact: the run ends its turn with the approve line, and nothing — no

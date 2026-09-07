@@ -98,7 +98,7 @@ import type { ChantConfig } from "@intentius/chant";
 // floci-az with no ambient export; ownership is what the serializer stamps as
 // chant-* tags — the estate must not read chant's own signature back as drift.
 export default {
-  lexicons: ["azure", "temporal"],
+  lexicons: ["azure"],
   sourceDir: "src",
   environments: [{ name: "${ENV_NAME}", endpoint: "${ENDPOINT}" }],
   ownership: { stack: "azure-drift-e2e", env: "${ENV_NAME}" },
@@ -148,7 +148,6 @@ import { azApply } from "@intentius/chant-lexicon-azure";
 export default Op({
   name: "deploy",
   overview: "azure drift acceptance: direct ARM apply to floci-az",
-  taskQueue: "azure-drift-e2e",
   phases: [
     phase("Apply", [
       azApply("dist/azure.json", {

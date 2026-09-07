@@ -29,6 +29,15 @@ export interface ParsedArgs {
    * the run started on.
    */
   on?: string;
+  /**
+   * `-p, --profile <name>` (#2124, restored in #2192) — which named connection
+   * profile the hosting runtime targets, handed to it as
+   * {@link OpRunStartOptions.profile}. Only a runtime that declares profiles
+   * reads it: fountain resolves it through `fountain.profiles` in
+   * `chant.config.ts` and refuses a name it does not find. Omitted, each
+   * runtime keeps its own default (fountain's `defaultProfile`).
+   */
+  profile?: string;
   /** `chant run` — emit the structured OpRunResult as JSON on stdout. */
   json?: boolean;
   /**
@@ -255,9 +264,9 @@ export interface ParsedArgs {
   runId?: string;
   /** `chant components release record --actor <name>` (#568) — who/what triggered the deploy. */
   actor?: string;
-  /** `--approver <name>` (#1035) — who approved a gated change. Supplied to `chant run signal` (rides the gate signal payload into workflow history) and to `chant components release` (recorded on the release ledger). Optional; absent for ungated changes. */
+  /** `--approver <name>` (#1035) — who approved a gated change. Read by `chant approve` and `chant run approve` (recorded as `resolvedBy` on the gate-resolution fact, taking precedence over `--actor`) and by `chant components release` (recorded on the release ledger). Optional; absent for ungated changes. */
   approver?: string;
-  /** `chant run approve <op> <gate> --on <lexicon> --durable-requests` (#2126) — resolve the gate by answering the hosting runtime's own pending request instead of posting a follow-up prompt. Only a runtime that offers a durable request path reads it; every other runtime ignores it. */
+  /** `chant run approve <op> <gate> --on <lexicon> --durable-requests` (#2126) — reserved. It would resolve the gate by answering the hosting runtime's own pending request instead of posting a follow-up prompt. No runtime implements it: fountain's needs the request-answer path from BinaryBourbon/fountain#1635, which has not shipped, and refuses by name rather than reporting a resolution it did not make. */
   durableRequests?: boolean;
   /** `chant components status <env> --compare-to <env>` (#568) — a second environment to cross-check the same component's recorded digest against. */
   compareTo?: string;

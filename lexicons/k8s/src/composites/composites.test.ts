@@ -3979,6 +3979,17 @@ describe("OperatorStack", () => {
     expect(() => deriveHostVerbClass("x", "observe", [DESTRUCTIVE_OP])).toThrow(/destructive/);
   });
 
+  // #2192 — the refusal cites the rule that actually owns it (OPS014), and
+  // gives OPS014's own reason. The old message argued from the local
+  // executor's inability to honour a gate, which #2119 retired: a gated op
+  // now ends the run `gated` rather than being refused, so the refusal stands
+  // on the unattended-approval ground instead.
+  test("deriveHostVerbClass: the destructive refusal names OPS014 and the unattended-approval reason", () => {
+    expect(() => deriveHostVerbClass("x", "apply", [DESTRUCTIVE_OP])).toThrow(/OPS014/);
+    expect(() => deriveHostVerbClass("x", "apply", [DESTRUCTIVE_OP])).toThrow(/unattended/);
+    expect(() => deriveHostVerbClass("x", "apply", [DESTRUCTIVE_OP])).not.toThrow(/TMP014/);
+  });
+
   // ── Build-time refusals ──────────────────────────────────────────────
 
   test("refuses an empty converge array", () => {

@@ -549,8 +549,12 @@ export async function runApprove(ctx: CommandContext): Promise<number> {
     return 0;
   }
 
+  // `--approver` wins over `--actor`, the same precedence `chant run approve`
+  // has applied since #2126 (`../handlers/run.ts`'s `runOpApprove`). Reading
+  // only `--actor` here meant every README that teaches `--approver you`
+  // recorded the shell user instead (#2192).
   const outcome = await recordGateApproval(opName, gate, {
-    actor: ctx.args.actor,
+    actor: ctx.args.approver ?? ctx.args.actor,
     note: ctx.args.note,
     url: ctx.args.url,
   });
