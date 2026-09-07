@@ -30,6 +30,12 @@ jobs:
     # headroom rather than a licence to grow.
     timeout-minutes: 20
     steps:
+      # Recorded first so the timeout-report step below (#2076) can compute
+      # how long the job actually ran before a job-level timeout cancelled it.
+      - name: Record job start time
+        id: start-time
+        run: echo "epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
+
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
@@ -133,6 +139,22 @@ jobs:
         with:
           sarif_file: results.sarif
 
+      # #2076, a job-level timeout-minutes cancels the job rather than
+      # failing it (GitHub Actions docs, "expressions": cancelled() is true
+      # once the job is cancelled, and a step guarded by cancelled() still
+      # runs even though the rest of the job was skipped). Without this the
+      # job still ends red, and a reviewer cannot tell a timeout from a real
+      # failure without opening the run.
+      - name: Report a timeout, distinct from a failure
+        if: cancelled()
+        run: |
+          elapsed=$(( ($(date +%s) - ${{ steps.start-time.outputs.epoch }}) / 60 ))
+          message="check job timed out after ~${elapsed}m against its 20 minute ceiling. This is a CI timeout, not a check failure."
+          echo "::error::${message}"
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+            echo "${message}" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   test:
     runs-on: ubuntu-latest
     # The suite lands at 9m46s-9m56s, so a 10 minute ceiling cancelled runs on
@@ -140,6 +162,12 @@ jobs:
     # other jobs in this workflow.
     timeout-minutes: 20
     steps:
+      # Recorded first so the timeout-report step below (#2076) can compute
+      # how long the job actually ran before a job-level timeout cancelled it.
+      - name: Record job start time
+        id: start-time
+        run: echo "epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
+
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
@@ -198,6 +226,22 @@ jobs:
       # per-source report.
       - name: Run tests
         run: npx vitest run
+
+      # #2076, a job-level timeout-minutes cancels the job rather than
+      # failing it (GitHub Actions docs, "expressions": cancelled() is true
+      # once the job is cancelled, and a step guarded by cancelled() still
+      # runs even though the rest of the job was skipped). Without this the
+      # job still ends red, and a reviewer cannot tell a timeout from a real
+      # test failure without opening the run (#1993's second acceptance item).
+      - name: Report a timeout, distinct from a test failure
+        if: cancelled()
+        run: |
+          elapsed=$(( ($(date +%s) - ${{ steps.start-time.outputs.epoch }}) / 60 ))
+          message="test job timed out after ~${elapsed}m against its 20 minute ceiling. This is a CI timeout, not a test failure."
+          echo "::error::${message}"
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+            echo "${message}" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
   validate:
     runs-on: ubuntu-latest
