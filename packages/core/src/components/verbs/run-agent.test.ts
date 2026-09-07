@@ -287,6 +287,25 @@ describe("run() — failed turn: non-zero exit surfaces as status \"failed\", ne
   });
 });
 
+describe("RunAgentTurn[\"status\"] is exactly the two states run() produces (#2072)", () => {
+  it("has no third member: a switch handling only \"completed\" and \"failed\" compiles with no default needed", () => {
+    // Compile-time exhaustiveness check, not a runtime assertion: if a third
+    // member were ever added back to the union (e.g. "interrupted"), this
+    // switch would stop being exhaustive and `tsc` would reject the missing
+    // case, since `identity`'s return type has no branch left to satisfy it.
+    const identity = (status: RunAgentOutput["turn"]["status"]): "completed" | "failed" => {
+      switch (status) {
+        case "completed":
+          return "completed";
+        case "failed":
+          return "failed";
+      }
+    };
+    expect(identity("completed")).toBe("completed");
+    expect(identity("failed")).toBe("failed");
+  });
+});
+
 describe("collectArtifacts — only a \"not found\" read means \"no artifact\"; a genuine infra failure propagates (#1942 review finding 2)", () => {
   it("branch A: readFile rejecting with the sprite-fs \"not found\" shape resolves to empty artifacts.files, not a run() rejection", async () => {
     const { sprites } = makeFakeSprites(succeed); // never writes /work/output — readFile hits the fake's "not found" branch
