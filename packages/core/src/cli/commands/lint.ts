@@ -4,7 +4,7 @@ import { readFileSync, writeFileSync, readdirSync, statSync } from "fs";
 import { execFileSync } from "child_process";
 import { runLint, parseDisableComments } from "../../lint/engine";
 import type { LintRule, LintDiagnostic, LintFix } from "../../lint/rule";
-import type { IntrinsicDef } from "../../lexicon";
+import type { IntrinsicDef, LexiconPlugin } from "../../lexicon";
 import { loadPlugins, resolveProjectLexicons } from "../plugins";
 import { formatStylish, formatJson, formatSarif } from "../reporters/stylish";
 import { loadLocalRules } from "../../lint/rule-loader";
@@ -20,10 +20,12 @@ import { rule } from "../../lint/declarative";
 import { watchDirectory, formatTimestamp, formatChangedFiles } from "../watch";
 import { formatError, formatInfo } from "../format";
 import { GENERATED_MARKER } from "../../discovery/files";
+import { isNoLexiconDetected } from "../../detectLexicon";
 
 // Import config loader
 import { loadConfig, resolveRulesForFile, resolveConfiguredSeverity, findProjectRoot } from "../../lint/config";
 import { loadChantConfig, resolveKnowledgeDir } from "../../config";
+import { findProjectConfig } from "../../project-root";
 import type { LintProjectConfig } from "../../lint/rule";
 import { loadOkfBundle, type OkfBundle } from "../../okf-read";
 
@@ -92,6 +94,40 @@ export async function loadPluginRules(
 }
 
 /**
+ * The diagnostic id `chant lint` reports a lexicon it could not resolve under
+ * (chant #2222).
+ *
+ * Deliberately outside the COR/EVL/COMP/OPS families: those are *rules*, each
+ * with a `check()` the engine runs per file, a documented page, a configurable
+ * severity and a `chant-disable` escape hatch. This is none of those. It is
+ * the lint run reporting that it could not assemble the rule set the project
+ * asked for, so it is not silenceable through `rules: { ... : "off" }` or a
+ * disable comment. Silencing it would put back the exact "green on a broken
+ * project" this id exists to prevent.
+ */
+export const LEXICON_RESOLUTION_RULE_ID = "LEX001";
+
+/**
+ * Turn a lexicon-resolution failure into the error diagnostic `chant lint`
+ * reports it as. The message is the underlying error's own, unwrapped, so it
+ * is character-for-character what `chant build` prints after `error: ` for the
+ * same project (`loadPluginsOrExit`, ../main.ts): one failure, one wording.
+ *
+ * Attributed to the project's `chant.config.*` where there is one, since that
+ * is the file that names the lexicon; to the project root otherwise.
+ */
+function lexiconResolutionDiagnostic(projectRoot: string, error: Error): LintDiagnostic {
+  return {
+    file: findProjectConfig(projectRoot).configPath ?? projectRoot,
+    line: 1,
+    column: 1,
+    ruleId: LEXICON_RESOLUTION_RULE_ID,
+    severity: "error",
+    message: error.message,
+  };
+}
+
+/**
  * Load all lint rules: core COR/EVL rules, then lexicon plugin rules.
  *
  * Also returns the active lexicons' registered intrinsics (chant #1106) —
@@ -103,7 +139,7 @@ export async function loadPluginRules(
  */
 async function loadAllPluginRules(
   projectPath: string,
-): Promise<{ rules: Map<string, LintRule>; intrinsics: IntrinsicDef[] }> {
+): Promise<{ rules: Map<string, LintRule>; intrinsics: IntrinsicDef[]; lexiconError?: Error }> {
   const rules = new Map<string, LintRule>();
 
   // Load core COR/EVL rules directly
@@ -111,16 +147,47 @@ async function loadAllPluginRules(
     rules.set(r.id, r);
   }
 
-  // Resolve project lexicons (e.g. ["aws"]) from config or detection
+  // Resolve project lexicons (e.g. ["aws"]) from config or detection, then
+  // load their plugins.
+  //
+  // chant #2222: a failure in either step is handed back to `lintCommand`
+  // (which reports it as {@link LEXICON_RESOLUTION_RULE_ID}) rather than
+  // swallowed or thrown. Both steps fail on the same project state: a
+  // `chant.config.ts` that names a lexicon whose package is not installed
+  // throws out of `loadPlugins`, and one that *imports* that package throws
+  // out of `resolveProjectLexicons` before the names are ever read. Before
+  // this, the first case crashed `chant lint` with a stack trace and the
+  // second was caught here and discarded, so `chant lint` printed "No
+  // problems found" and exited 0 on a project `chant build` refuses to
+  // build. A CI job that lints before it builds reported green on a project
+  // whose lexicon was missing.
+  //
+  // The one failure that stays quiet is the one the original `catch` was
+  // written for and named in its comment: a project that declares no
+  // `lexicons` and imports none from its source files, where the detection
+  // fallback throws `NO_LEXICON_DETECTED_MESSAGE`. That project lints under
+  // the core rules alone and always has. It is told apart by the exported
+  // sentinel rather than by a string literal copied to this file, so the two
+  // cannot drift apart.
   let lexiconNames: string[] = [];
+  let lexiconError: Error | undefined;
   try {
     lexiconNames = await resolveProjectLexicons(projectPath);
-  } catch {
-    // No lexicons detected — core rules only
+  } catch (err) {
+    if (!isNoLexiconDetected(err)) {
+      lexiconError = err instanceof Error ? err : new Error(String(err));
+    }
   }
 
   // Load only project lexicon plugins (no "chant" injection)
-  const plugins = await loadPlugins(lexiconNames);
+  let plugins: LexiconPlugin[] = [];
+  if (!lexiconError) {
+    try {
+      plugins = await loadPlugins(lexiconNames);
+    } catch (err) {
+      lexiconError = err instanceof Error ? err : new Error(String(err));
+    }
+  }
 
   // chant #1106 — the same plugins' registered intrinsics (`Ref`, `GetAtt`,
   // ...), so EVL001 can answer "does this call fold?" exactly like fold()
@@ -150,7 +217,7 @@ async function loadAllPluginRules(
     rules.set(r.id, r);
   }
 
-  return { rules, intrinsics };
+  return { rules, intrinsics, ...(lexiconError ? { lexiconError } : {}) };
 }
 
 /**
@@ -693,6 +760,14 @@ export async function lintCommand(options: LintOptions): Promise<LintResult> {
     const postOpResult = await runOpCheckDiagnostics(infraPath, files);
     diagnostics.push(...postOpResult.diagnostics);
     suppressed.push(...postOpResult.suppressed);
+  }
+
+  // chant #2222: a lexicon the project declared but this run could not
+  // resolve. Appended here, after the `--fix` re-lint block above has finished
+  // reassigning `diagnostics`, so it survives every path; it is a property of
+  // the run, not of any file a fix could touch.
+  if (loaded.lexiconError) {
+    diagnostics.push(lexiconResolutionDiagnostic(projectRoot, loaded.lexiconError));
   }
 
   // Count errors and warnings
