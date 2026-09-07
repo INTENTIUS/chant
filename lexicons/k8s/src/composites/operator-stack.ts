@@ -76,6 +76,7 @@ import { Composite, mergeDefaults } from "@intentius/chant";
 import { classifyOpVerbClass } from "@intentius/chant/op";
 import type { OpConfig, OpVerbClass } from "@intentius/chant/op";
 import { Namespace, CronJob, ServiceAccount, Role, RoleBinding } from "../generated";
+import { validateCronJobSchedule } from "./cron-schedule";
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -96,7 +97,7 @@ export interface OperatorRbacResourceRule {
 export interface OperatorStackConvergeHost {
   /** ConvergeOp's own name (`ConvergeOpConfig.name`) — the CronJob, ServiceAccount, Role, and RoleBinding name stem for this host. */
   name: string;
-  /** Cron expression driving the tick — the same string passed to `ConvergeOp`'s own `schedule`. */
+  /** Cron expression driving the tick — the same string passed to `ConvergeOp`'s own `schedule`. Validated at construction: a 6-field (seconds) form, which `ConvergeOp` accepts, is refused here since a k8s CronJob takes five fields only (`./cron-schedule.ts`, #2071). */
   schedule: string;
   /** Environment this ConvergeOp converges (`ConvergeOpConfig.env`) — carried onto the container as `CHANT_CONVERGE_ENV`, for log/estate readability only (`chant run <name>` needs no `--env`: the target op already carries it). */
   env: string;
@@ -268,9 +269,7 @@ export const OperatorStack = Composite((props: OperatorStackConfig) => {
       throw new Error(`OperatorStack "${name}": duplicate hosted ConvergeOp name "${host.name}" — CronJob/ServiceAccount names would collide.`);
     }
     seen.add(host.name);
-    if (!host.schedule || host.schedule.trim().length === 0) {
-      throw new Error(`OperatorStack "${name}", host "${host.name}": schedule is required — an operator CronJob with no schedule never ticks.`);
-    }
+    validateCronJobSchedule(`OperatorStack "${name}", host "${host.name}"`, host.schedule);
   }
   if (!image || image.trim().length === 0) {
     throw new Error(`OperatorStack "${name}": image is required — the CronJob has nothing to run.`);
