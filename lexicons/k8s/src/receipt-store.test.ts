@@ -1,8 +1,8 @@
 /**
  * The k8s ConfigMap receipt row, end to end (#2074, epic #1703).
  *
- * Every leg runs against ./api/fake-cluster.ts — a real
- * `@intentius/chant-k8s-client` with only the HTTP send replaced — so no
+ * Every leg runs against ./api/fake-cluster.ts, a real
+ * `@intentius/chant-k8s-client` with only the HTTP send replaced, so no
  * ambient kubeconfig is read and no cluster is contacted. The three legs the
  * row has to close:
  *
@@ -94,7 +94,7 @@ const store = (cluster: { connector: unknown }, namespace = "default") =>
 
 // ── Leg 1: the effect step materializes the receipt ─────────────────────────
 
-describe("k8sReceiptStore — the effect() step's sole write", () => {
+describe("k8sReceiptStore: the effect() step's sole write", () => {
   test("read answers undefined for a receipt that is not there", async () => {
     const cluster = fakeCluster();
     expect(await store(cluster).read({ name: "seeded", effect: "db-seed", flavor: "hash", inputs: {} })).toBeUndefined();
@@ -130,7 +130,7 @@ describe("k8sReceiptStore — the effect() step's sole write", () => {
     expect(patch?.path).toBe(`/api/v1/namespaces/chant-system/configmaps/${REF.name}`);
   });
 
-  test("read gets back exactly what write stored — the round trip the effect step compares on", async () => {
+  test("read gets back exactly what write stored, the round trip the effect step compares on", async () => {
     const cluster = fakeCluster({
       objects: { [objectKey("v1", "ConfigMap", REF.name, "default")]: liveReceipt(EXPECTED) },
     });

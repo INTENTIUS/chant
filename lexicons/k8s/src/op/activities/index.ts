@@ -64,7 +64,7 @@ export type {
 export { resolveClusterTarget, ClusterBindingMismatchError } from "@intentius/chant/kubectl-context";
 export type { ResolvedClusterTarget, K8sClusterProfile, K8sConfigShape } from "@intentius/chant/kubectl-context";
 
-// Effect-receipt activities (#2074) — core's receipt seam (#1834) bound to
+// Effect-receipt activities (#2074): core's receipt seam (#1834) bound to
 // this lexicon's ConfigMap-backed store (../../receipt-store.ts), the same
 // way the aws lexicon binds its SSM store (#1835). Re-exported individually:
 // `receiptRead`/`receiptWrite` serve the `effect()` step's

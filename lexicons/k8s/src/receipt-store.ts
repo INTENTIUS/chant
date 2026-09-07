@@ -1,5 +1,5 @@
 /**
- * The k8s `ReceiptStore` (#2074, epic #1703) — core's injectable receipt seam
+ * The k8s `ReceiptStore` (#2074, epic #1703): core's injectable receipt seam
  * (#1834, `@intentius/chant/op/receipt-store`) implemented over a core
  * `ConfigMap`, at the address ./effect-receipt-row.ts derives from the
  * ownership marker fields, plus the plan-side live read of the same rows.
@@ -10,7 +10,7 @@
  * every other k8s mutation. No `kubectl` binary is involved.
  *
  * Write discipline (epic decision 3): `write` exists for the `effect()` step
- * alone — the step's read-compare-run-write is the only path that reaches it,
+ * alone, because the step's read-compare-run-write is the only path that reaches it,
  * on success, last. It is a server-side apply as `chant:<stack>`, stamping the
  * ownership marker labels and {@link RECEIPT_LABEL_KEY}, so a later write
  * updates the value in place and the owned-only prune retains rather than
@@ -24,7 +24,7 @@
  * that stamp markers (epic decision 4). Nothing resolving is an error, never a
  * guessed segment.
  *
- * Not exported from the package entry point — like ./secret-store.ts and
+ * Not exported from the package entry point. Like ./secret-store.ts and
  * ./teardown.ts, this module names the API client, which must stay off the
  * build path (chant #1074, examples/k8s-client-boundary.test.ts). Consumers
  * reach it by subpath: `@intentius/chant-lexicon-k8s/receipt-store`.
@@ -99,7 +99,7 @@ async function resolveIdentity(options: K8sReceiptStoreOptions): Promise<Receipt
     if (config) {
       stack = stack ?? resolveOwnershipStack(config);
       // Only a literal env can answer here: a `{ param }` reference resolves
-      // per build, and an op run has no build parameters — `--env` does.
+      // per build, and an op run has no build parameters, and `--env` does.
       const configEnv = config.ownership?.env;
       env = env ?? (typeof configEnv === "string" ? configEnv : undefined);
       namespace = namespace ?? receiptNamespaceFrom(config as unknown as Record<string, unknown>);
@@ -132,7 +132,7 @@ export function receiptValueOf(object: K8sObject | undefined): string | undefine
 
 /**
  * The `ReceiptStore` over ConfigMaps. Bind it once in the op activities barrel
- * — `receiptActivities(k8sReceiptStore())` — and the registry resolves
+ * as `receiptActivities(k8sReceiptStore())`, and the registry resolves
  * `receiptRead`/`receiptWrite`/`receiptStaleness` by name, exactly like
  * `ensureSecret` (#1830). Identity and cluster resolve lazily at first use, so
  * module load never reads the project or connects to anything.
@@ -209,12 +209,12 @@ export function receiptRowsFor(
  * ./describe-resources.ts has neither a `metadata.name` to query by nor an
  * honest verdict to give. The serializer rendered each receipt's derived
  * ConfigMap address into the build output's receipt comment, so this leg reads
- * the addresses back from there — one derivation, decision 4 — and asks the
+ * the addresses back from there, one derivation, decision 4, and asks the
  * cluster for each.
  *
  * Present maps the stored value onto `attributes.value` (core's
  * `RECEIPT_VALUE_ATTRIBUTE`); a genuine 404 is a real absence and stays one; a
- * failed read is an `unobserved` hole, never a wrong answer — a receipt nobody
+ * failed read is an `unobserved` hole, never a wrong answer: a receipt nobody
  * could read must not arrive downstream as "the effect never ran".
  */
 export async function observeReceiptRows(
@@ -232,14 +232,14 @@ export async function observeReceiptRows(
       out.resources[entityName] = {
         type: K8S_EFFECT_RECEIPT_ENTITY_TYPE,
         physicalId: live.metadata?.uid,
-        // Live outside anything the applier wrote, by design — the same word
+        // Live outside anything the applier wrote, by design. The same word
         // the aws row's observation uses for a receipt parameter (#1835).
         status: "EXTERNAL",
         ownership: classifyOwnership(live.metadata?.labels, LABEL_OWNERSHIP_KEYS),
         marker: readOwnership(live.metadata?.labels, LABEL_OWNERSHIP_KEYS),
         attributes: {
           namespace: row.namespace,
-          // Core's RECEIPT_VALUE_ATTRIBUTE — what `readReceiptValue` reads.
+          // Core's RECEIPT_VALUE_ATTRIBUTE, which is what `readReceiptValue` reads.
           value: receiptValueOf(live) ?? "",
         },
       };
@@ -263,13 +263,13 @@ export async function observeReceiptRows(
 /**
  * The deep read's answer for the receipt rows.
  *
- * A receipt is read back here for the same reason the thin path reads it — a
+ * A receipt is read back here for the same reason the thin path reads it: a
  * declared entity nobody looked at is a hole, and a hole in the deep read is
  * noise on every `lifecycle diff --live --deep` a project with receipts runs.
  * What it deliberately contributes is an EMPTY property tree: the declaration
  * has no `props`, so every live path would land outside the claimed-field set
  * (`@intentius/chant/claimed-fields`) and be reported unclaimed, and the
- * receipt's stored value is not drift on any reading — a stale receipt is an
+ * receipt's stored value is not drift on any reading, because a stale receipt is an
  * `effect` row from `planReceipts` (#1832), never an update. Presence and the
  * uid are the whole of what the deep read has to say about a receipt.
  */

@@ -1,5 +1,5 @@
 /**
- * The k8s effect-receipt materialization row (#2074, epic #1703) — the
+ * The k8s effect-receipt materialization row (#2074, epic #1703): the
  * declaration, the ConfigMap address derivation, what the serializer renders,
  * and the #1833 guards over the row.
  *
@@ -133,7 +133,7 @@ describe("k8sSerializer receipt rows", () => {
     expect(receiptRows(output).seeded.namespace).toBe("chant-system");
   });
 
-  it("keeps the receipt out of the documents — the only thing an applier applies", () => {
+  it("keeps the receipt out of the documents, the only thing an applier applies", () => {
     const seeded = EffectReceipt("seeded", { effect: "db-seed", flavor: "existence" });
     const output = serializeReceipts(new Map([["seeded", seeded]]), ownership);
     const documents = loadAll(output).filter((d) => d && typeof d === "object");
@@ -179,7 +179,7 @@ describe("k8sSerializer receipt rows", () => {
     expect(() => serializeReceipts(new Map([["seeded", r]]))).toThrow(/ownership/);
   });
 
-  it("errors when ownership resolves no env — the segment is explicit, never guessed", () => {
+  it("errors when ownership resolves no env, because the segment is explicit and never guessed", () => {
     const r = EffectReceipt("seeded", { effect: "db-seed", flavor: "existence" });
     expect(() => serializeReceipts(new Map([["seeded", r]]), { stack: "demo" })).toThrow(/env/);
   });
@@ -225,7 +225,7 @@ describe("#1833's plain-store guard over the k8s row", () => {
     return check.check(ctx);
   }
 
-  it("passes the factory's row — a plain ConfigMap", () => {
+  it("passes the factory's row, a plain ConfigMap", () => {
     const r = EffectReceipt("seeded", { effect: "db-seed", flavor: "existence" });
     expect(runCheck(new Map([["seeded", r]]))).toEqual([]);
   });

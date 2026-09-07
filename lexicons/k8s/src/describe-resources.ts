@@ -524,7 +524,7 @@ export async function describeResources(
   await addRuntimeChildren(client, resources, unobserved, options.owned, declared);
 
   // The receipt leg last, so its answers are the ones that stand for the
-  // receipt entities — nothing above ever looked at one.
+  // receipt entities, because nothing above ever looked at one.
   if (receiptRows.size > 0) {
     const receiptObs = await observeReceiptRows(client, receiptRows);
     Object.assign(resources, receiptObs.resources);

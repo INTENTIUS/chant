@@ -496,25 +496,25 @@ async function pruneOrphans(
     // #1365 decision 5): its bytes are the only copy of material chant never
     // held, so no sweep may destroy them. Kept, and said loudly — deletion is
     // an explicit act (`kubectl delete`, or a future gated op).
+    if (target.kind === "Secret" && isGeneratedOnce(item.metadata?.labels)) {
+      retained.push(ref);
+      console.log(
+        `${ref.apiVersion} ${ref.kind}/${ref.name} retained (generated-once — owned and no longer declared, ` +
+          `but never pruned; delete it explicitly if you mean to)`,
+      );
+      continue;
+    }
     // An effect receipt never enters the prunable set either (#2074, epic
-    // #1703 decision 3). It is chant-owned and is never in ANY apply set —
-    // the `effect()` step is its sole writer — which is exactly the shape
+    // #1703 decision 3). It is chant-owned and is never in ANY apply set,
+    // the `effect()` step being its sole writer, which is exactly the shape
     // this sweep deletes. Pruning one would tell the next plan that an effect
     // never ran and re-fire it, or worse, be re-stamped by nothing and leave
     // the estate re-running a migration on every apply.
     if (target.kind === "ConfigMap" && isEffectReceiptObject(item.metadata?.labels)) {
       retained.push(ref);
       console.log(
-        `${ref.apiVersion} ${ref.kind}/${ref.name} retained (effect receipt — owned and never declared ` +
+        `${ref.apiVersion} ${ref.kind}/${ref.name} retained (effect receipt: owned and never declared ` +
           `in an apply set, but never pruned; the effect() step is its sole writer)`,
-      );
-      continue;
-    }
-    if (target.kind === "Secret" && isGeneratedOnce(item.metadata?.labels)) {
-      retained.push(ref);
-      console.log(
-        `${ref.apiVersion} ${ref.kind}/${ref.name} retained (generated-once — owned and no longer declared, ` +
-          `but never pruned; delete it explicitly if you mean to)`,
       );
       continue;
     }

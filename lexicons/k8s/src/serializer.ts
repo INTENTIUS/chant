@@ -197,7 +197,7 @@ function resolveK8sAttr(entity: Declarable | undefined, logicalName: string, att
 
 /** The rendered expectation: the synthesis-time value when the receipt is
  * fully static, the placeholder note when reference inputs remain (#1703
- * decision 5 — synthesis resolves nothing). */
+ * decision 5, since synthesis resolves nothing). */
 function receiptRowValue(receipt: EffectReceiptDeclaration): string {
   if (receipt.flavor === "hash" && referenceInputPaths(receipt).length > 0) {
     return RECEIPT_UNRESOLVED_VALUE_NOTE;
@@ -492,7 +492,7 @@ export const k8sSerializer: Serializer = {
 
     let primary = [...namespaceDocs, ...otherDocs].join("\n---\n");
 
-    // Effect receipt rows (#2074) — visibility only, deliberately NOT a
+    // Effect receipt rows (#2074): visibility only, deliberately NOT a
     // document: appliers apply documents, and the `effect()` step is a
     // receipt's sole writer (#1832, epic #1703 decision 3). The comment rides
     // the same build output the observation leg is handed, which is how it

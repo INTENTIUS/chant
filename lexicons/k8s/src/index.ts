@@ -27,7 +27,7 @@ export { DEFAULT_LABELS_MARKER, DEFAULT_ANNOTATIONS_MARKER } from "./default-lab
 // Variables / label constants
 export { K8sLabels, K8sAnnotations } from "./variables";
 
-// Effect receipts (#2074, epic #1703): the k8s materialization row — the
+// Effect receipts (#2074, epic #1703): the k8s materialization row, meaning the
 // factory a project declares (core's shape under the k8s lexicon, carrying
 // the marker) and the name/label constants. The ConfigMap-backed store itself
 // lives at the `/receipt-store` subpath, off the build path (#1074).
