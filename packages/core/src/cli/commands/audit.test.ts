@@ -470,6 +470,8 @@ describe("auditCommand", () => {
     expect(valid).toBe(true);
   });
 
+  // The scope is the discovered root module's own directory (`infra`), which
+  // is what the terraform plugin names an audited scope after since #2217.
   describe("TF001's missing-resource shape renders in all three reporters (chant #2113)", () => {
     const dir = join(tmpdir(), `chant-audit-tf-missing-${process.pid}`);
 
@@ -484,7 +486,7 @@ describe("auditCommand", () => {
     test("stylish names the missing kind and scope instead of falling back to entity", async () => {
       setup();
       const result = await auditCommand({ path: dir, format: "stylish" });
-      expect(result.output).toContain("(missing backend in audit-root)");
+      expect(result.output).toContain("(missing backend in infra)");
       teardown();
     });
 
@@ -493,7 +495,7 @@ describe("auditCommand", () => {
       const result = await auditCommand({ path: dir, format: "json" });
       const doc = JSON.parse(result.output) as { findings: Array<{ checkId: string; missing?: { kind: string; scope: string } }> };
       const tf001 = doc.findings.find((f) => f.checkId === "TF001");
-      expect(tf001?.missing).toEqual({ kind: "backend", scope: "audit-root" });
+      expect(tf001?.missing).toEqual({ kind: "backend", scope: "infra" });
       teardown();
     });
 
@@ -504,7 +506,7 @@ describe("auditCommand", () => {
         runs: Array<{ results: Array<{ ruleId: string; properties?: { missing?: { kind: string; scope: string } } }> }>;
       };
       const tf001 = doc.runs[0].results.find((r) => r.ruleId === "TF001");
-      expect(tf001?.properties?.missing).toEqual({ kind: "backend", scope: "audit-root" });
+      expect(tf001?.properties?.missing).toEqual({ kind: "backend", scope: "infra" });
 
       const ajv = new Ajv({ strict: false, allErrors: true });
       const validate = ajv.compile(loadSarifSchema() as object);

@@ -1,4 +1,4 @@
-import type { LexiconPlugin } from "@intentius/chant/lexicon";
+import type { AuditEntitiesInput, LexiconPlugin } from "@intentius/chant/lexicon";
 import type { CompletionContext, HoverContext } from "@intentius/chant/lsp/types";
 import type { Declarable } from "@intentius/chant/declarable";
 import { createSkillsLoader } from "@intentius/chant/lexicon-plugin-helpers";
@@ -11,7 +11,8 @@ import { completions } from "./lsp/completions";
 import { hover } from "./lsp/hover";
 import { terraformConfigSchema, type TerraformConfig } from "./config";
 import { renderTerraformRoots } from "./hcl/roots";
-import { parseTerraformRootContent, RESOURCE_TYPE } from "./hcl/parse";
+import { auditRootName, parseTerraformRootContent, RESOURCE_TYPE } from "./hcl/parse";
+import { descendModules } from "./hcl/descend";
 import { TERRAFORM_STATE_OWNERSHIP_KEYS } from "./state-ownership";
 
 const loadSkills = createSkillsLoader(import.meta.url, [
@@ -166,29 +167,51 @@ export const terraformPlugin: LexiconPlugin = {
   },
 
   /**
-   * Parse-to-graph for `chant audit` (#1567, #2085). `content` is the
+   * Parse-to-graph for `chant audit` (#1567, #2085, #2217). `content` is the
    * `# file: <name>`-joined bundle discovery builds for one discovered root
-   * module (`classifyTerraform`, `packages/core/src/audit/core.ts`); the root
-   * name itself isn't threaded through this hook's single-argument contract,
-   * so a fixed placeholder ("audit-root") stands in for it. TF001 only uses
-   * the root name to group and de-duplicate diagnostics within one parse, so
-   * this is enough for the same graph-reading check that fires on `chant
-   * build` to fire here too. Never throws: malformed HCL yields an empty map.
+   * module (`classifyTerraform`, `packages/core/src/audit/discover.ts`), and
+   * `input` says where that bundle came from.
    *
-   * Module descent (#2112) reaches this path through the same
-   * `blocksToEntities`, but finds nothing to descend into: this hook is
-   * handed one directory's joined text and no directory to read a local
-   * module's files from, and audit discovery has already classified every
-   * nested `.tf` directory as an audit input of its own (`classifyTerraform`,
-   * `packages/core/src/audit/discover.ts`). So a child module IS audited on
-   * this path, as its own root rather than as a child scope, which means the
-   * two rules that ask "is this block inside a child module?" (TF014, TF015)
-   * report on `chant build` and not in `chant audit`, and TF020 answers per
-   * directory either way. The rule pages say so.
+   * The scope is named after the input's path (`auditRootName`), so two roots
+   * in one repository are two roots here as well: they no longer collide in
+   * the merged entity map the all-files pass reads, which is what used to
+   * produce a finding keyed `<root>/<address>#2` against the file
+   * `(cross-file)` that neither directory deserved.
+   *
+   * When the audit walked a local filesystem, `input.dir` is the root
+   * module's directory and the parse descends its local `module` calls
+   * exactly as `buildRoots()` does, through the same `descendModules`
+   * (`../hcl/descend.ts`): a child module's entities are keyed
+   * `<root>/module.<name>/<address>` and carry the caller chain, so TF014 and
+   * TF015 fire here with the same `Callers:` line they print on a build, and
+   * the root-only rules (TF001 to TF003) still see only the root's own
+   * blocks. `input.baseDir` is the audited directory, which bounds the
+   * descent the way the project root bounds it on a build. Discovery drops a
+   * directory another one calls as a local module, so no module is audited
+   * twice.
+   *
+   * With no `input.dir` (a fetched repository; a caller parsing a bare
+   * string) the bundle is parsed alone, and the two child-module rules have
+   * no child to report on, since nothing named one.
+   *
+   * The descent's own refusals (a registry source, a source outside the
+   * audited tree, a cycle) are warnings on a build; this hook returns
+   * entities only, so on the audit path they are dropped rather than printed.
+   *
+   * Never throws: malformed HCL yields an empty map.
    */
-  async auditEntities(content: string): Promise<Map<string, Declarable>> {
+  async auditEntities(content: string, input?: AuditEntitiesInput): Promise<Map<string, Declarable>> {
     try {
-      return await parseTerraformRootContent(content, "audit-root");
+      const root = auditRootName(input?.path);
+      const entities = await parseTerraformRootContent(content, root);
+      if (input?.dir === undefined) return entities;
+      const { entities: children } = await descendModules(entities, {
+        dir: input.dir,
+        root,
+        projectRoot: input.baseDir ?? input.dir,
+      });
+      for (const [key, entity] of children) entities.set(key, entity);
+      return entities;
     } catch {
       return new Map();
     }

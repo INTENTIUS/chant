@@ -1224,11 +1224,16 @@ that resolves outside the project root is not read, and a source already on the
 current call chain is a cycle and stops there. Both are build warnings naming
 the call site.
 
-`chant audit` sees the same rules but not the same scopes: audit discovery
-already treats every directory of `.tf` files as a root module of its own, and
-the audit hook is handed one directory's text with no filesystem beneath it. So
-a child module is audited, as a root rather than as a child, and the two rules
-that ask "is this inside a called module?" report on `chant build` only.
+`chant audit` walks the same scopes. Discovery reads each directory of `.tf`
+files, drops the ones another directory calls with a relative `source` (they
+are child modules, not roots), and hands the audit the directory each root was
+read from. The parse then follows the same local `module` calls a build
+follows, so TF014 and TF015 report under `chant audit` with the same `Callers:`
+line, and the root-only rules still see only a root's own blocks. A scope is
+named after its directory there (`envs/prod` reads as `envs.prod` in a
+finding), since an audit has no `terraform.roots` to take names from. The two
+refusals above still apply, but an audit has no warning list to print them on,
+so there they are silent.
 
 ## Suppressing a finding
 
