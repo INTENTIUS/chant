@@ -20,6 +20,10 @@
  *
  * Gating copied from `lexicons/k3s/src/serializer.acceptance.test.ts`, which
  * skips the same way when Docker is absent.
+ *
+ * `../__fixtures__/ACCEPTANCE.md` records what both blocks in this file have
+ * last passed against, with the binary version and the date (#2220). Update
+ * it in the same change as a run.
  */
 
 import { execSync } from "node:child_process";

@@ -220,6 +220,19 @@ export const terraformAuditLineage: Record<string, Lineage[]> = {
     { tool: "tfsec", rule: "general-secrets-sensitive-in-variable", url: `${TFSEC_V061}/sensitive-in-variable.md`, relation: "equivalent" },
     { tool: "tfsec", rule: "general-secrets-sensitive-in-local", url: `${TFSEC_V061}/sensitive-in-local.md`, relation: "equivalent" },
   ],
+  // #2107's rule table credits TF008 with Snyk `SNYK-CC-TF-74` ("Credentials
+  // are configured via provider attributes") alongside these three. That
+  // credit is deliberately absent here, and the absence is the epic's own
+  // decision rather than an oversight: Snyk IaC is a product, not a rule
+  // source, which is why it sits in this file's "deliberately excluded" list
+  // above and has no `PRIOR_ART` entry to cite. The rules have no open
+  // repository behind them, and the public index (security.snyk.io/rules/
+  // cloud) does not even enumerate the legacy `SNYK-CC-TF-*` ids, so a
+  // credit here could not be swept the way every other one in this file is
+  // (scripts/prior-art-sweep.ts). The condition loses nothing by it:
+  // `SNYK-CC-TF-74`, checkov's `CKV_AWS_41` and semgrep's
+  // `aws-provider-static-credentials` are the same check three times over,
+  // and the other two are credited below (#2220).
   TF008: [
     { tool: "checkov", rule: "CKV_AWS_41", url: "https://www.checkov.io/5.Policy%20Index/terraform.html", relation: "overlaps" },
     { tool: "kics", rule: "d7b9d850-3e06-4a75-852f-c46c2e92240b", url: "https://docs.kics.io/latest/queries/terraform-queries/aws/d7b9d850-3e06-4a75-852f-c46c2e92240b/", relation: "overlaps" },
@@ -259,6 +272,18 @@ export const terraformAuditLineage: Record<string, Lineage[]> = {
   TF013: [
     { tool: "tflint-ruleset-redeploy", rule: "terraform_ignore_changes_all", url: `${REDEPLOY_RULES}/terraform_ignore_changes_all.md`, relation: "equivalent" },
   ],
+  // The two vendor documents below (and the one on TF015, and the HashiCorp
+  // style guide on TF021) are `Lineage` entries, not `RuleMeta.authority`
+  // ones, though #2107's table calls them "authority". `authority` is not a
+  // free-standing "this document says so" field: an authority citation forces
+  // `category: "security"` (`packages/core/src/audit/catalog.ts`), and
+  // `catalog.test.ts` binds the two together in both directions, "an
+  // authority citation always means security" and "authority citations only
+  // attach to merge-worthy entries". A provider block in a child module is a
+  // structural rule, not a security finding, so citing these guides as
+  // authority would have relabelled three rules as security to get a citation
+  // rendered. Lineage carries the same URLs and never touches tier or
+  // category, so that is where they live (#2112, recorded here by #2220).
   TF014: [
     {
       tool: "tflint-ruleset-avm",
@@ -286,7 +311,9 @@ export const terraformAuditLineage: Record<string, Lineage[]> = {
   // provider block TF014 credits. What states the rule is Google Cloud's
   // reusable-modules guide, so that document is the single credit here, and
   // the page section says plainly that the credit is a document rather than
-  // a tool (#2112).
+  // a tool (#2112). It is lineage rather than `authority` for the reason on
+  // TF014 above: an authority citation would force `category: "security"` on
+  // a rule about where state configuration belongs.
   TF015: [
     {
       tool: "gcp-terraform-best-practices",
@@ -327,7 +354,10 @@ export const terraformAuditLineage: Record<string, Lineage[]> = {
     // the ones that build an identity out of `count.index`, which is a
     // strict subset, hence `overlaps` on both credits rather than
     // `equivalent`. choudoufu's own rule is the survey's deepest reading of
-    // the identity-bearing question (#2112).
+    // the identity-bearing question (#2112). The HashiCorp style guide entry
+    // is lineage rather than `authority` for the reason recorded on TF014: an
+    // authority citation forces `category: "security"`, and `count` versus
+    // `for_each` is not a security finding.
     {
       tool: "tflint-ruleset-redeploy",
       rule: "terraform_prefer_for_each",

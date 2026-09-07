@@ -25,6 +25,43 @@ const loadSkills = createSkillsLoader(import.meta.url, [
 ]);
 
 /**
+ * The only top-level names Terraform's JSON syntax admits
+ * (developer.hashicorp.com/terraform/language/syntax/json). Used as a
+ * whole-document test in `detectTemplate`: a `.tf.json` file has these keys
+ * and nothing else.
+ */
+const TF_JSON_BLOCK_TYPES = new Set([
+  "terraform",
+  "provider",
+  "variable",
+  "output",
+  "locals",
+  "module",
+  "resource",
+  "data",
+  "moved",
+  "import",
+  "check",
+  "removed",
+]);
+
+/**
+ * Whether raw text is HCL a Terraform root or module is written in. One
+ * top-level block header is enough, and every one of these headers is
+ * Terraform's own: `terraform {`, and the labelled `resource`/`data`
+ * (two labels), `provider`/`module`/`variable`/`output` (one label). `locals`
+ * is left out on purpose, since it is the one block a non-Terraform HCL
+ * dialect is also likely to carry.
+ */
+function looksLikeHcl(text: string): boolean {
+  return (
+    /^[ \t]*terraform[ \t]*\{/m.test(text) ||
+    /^[ \t]*(resource|data)[ \t]+"[^"]+"[ \t]+"[^"]+"[ \t]*\{/m.test(text) ||
+    /^[ \t]*(provider|module|variable|output)[ \t]+"[^"]+"[ \t]*\{/m.test(text)
+  );
+}
+
+/**
  * terraform lexicon plugin.
  *
  * There is no upstream schema to pin here: Terraform's resource surface lives
@@ -217,18 +254,49 @@ export const terraformPlugin: LexiconPlugin = {
     }
   },
 
+  /**
+   * No `mcpTools()` and no `mcpResources()`, deliberately (#2220). Both were
+   * declared returning `[]` behind a TODO, which passed the two tier-2
+   * "registers <method>" checks on a member that contributed nothing. Neither
+   * of the two shapes every other lexicon uses has anything to serve here:
+   * `createDiffTool` diffs one build's serializer output against the last,
+   * and this serializer writes nothing (`src/serializer.ts` is a deliberate
+   * no-op, the `.tf` files are the artifact); `createCatalogResource` serves
+   * the generated resource registry, and this lexicon generates none
+   * (`src/codegen/generate.ts` writes `{}` on purpose). So the members are
+   * removed rather than faked, and `chant dev check-lexicon` reports two
+   * tier-2 gaps that are real.
+   */
   skills: loadSkills,
 
-  mcpTools() {
-    return []; // TODO: Implement MCP tools
-  },
-
-  mcpResources() {
-    return []; // TODO: Implement MCP resources
-  },
-
-  detectTemplate(_data: unknown) {
-    return false; // TODO: Detect if a template belongs to this lexicon
+  /**
+   * `.tf` (and Terraform's own JSON syntax, `.tf.json`) recognised by content
+   * rather than by which directory a file sits in (#2220).
+   *
+   * Two input shapes, because the two callers hand over different things.
+   * `chant import` (`packages/core/src/cli/commands/import.ts`) `JSON.parse`s
+   * the file first, so it arrives as an object; the audit's content detection
+   * (`packages/core/src/audit/discover.ts`) hands azure its raw string, and a
+   * `.tf` file is not JSON at all, so the raw string form is the one that
+   * matters for HCL. Anything else reads as false.
+   *
+   * The object form is exact rather than heuristic: Terraform's JSON syntax
+   * admits only the top-level names in {@link TF_JSON_BLOCK_TYPES}, so a
+   * document is `.tf.json` when every key is one of them and at least one is
+   * present. That refuses a Kubernetes manifest, a CloudFormation template and
+   * a Compose file without having to name any of them.
+   *
+   * Discovery still classifies Terraform by the directory bundle
+   * (`classifyTerraform`), because a root module is a directory of files that
+   * has to be parsed together and one `.tf` on its own is not an audit input.
+   * This makes the per-file question answerable for the callers that ask it
+   * one file at a time.
+   */
+  detectTemplate(data: unknown) {
+    if (typeof data === "string") return looksLikeHcl(data);
+    if (typeof data !== "object" || data === null || Array.isArray(data)) return false;
+    const keys = Object.keys(data as Record<string, unknown>);
+    return keys.length > 0 && keys.every((k) => TF_JSON_BLOCK_TYPES.has(k));
   },
 
   completionProvider(ctx: CompletionContext) {
