@@ -1,10 +1,14 @@
+# Terraform Cloud / HCP holds the state, so there is no terraform.tfstate on
+# the machine that runs the plan. `cloud {}` counts as remote for TF001.
 terraform {
   required_version = ">= 1.5.0"
 
-  backend "s3" {
-    bucket = "tfstate"
-    key    = "app/terraform.tfstate"
-    region = "us-east-1"
+  cloud {
+    organization = "acme"
+
+    workspaces {
+      name = "app"
+    }
   }
 
   required_providers {
@@ -20,11 +24,5 @@ provider "null" {}
 resource "null_resource" "first" {
   triggers = {
     name = "first"
-  }
-}
-
-resource "null_resource" "second" {
-  triggers = {
-    name = "second"
   }
 }

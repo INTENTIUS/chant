@@ -51,17 +51,39 @@ and the credit behind each entry.
 
 ## TF001: root module declares no remote backend
 
-A `terraform` block with no `backend "<type>"` and no `cloud {}`.
+A `terraform` block with no `backend "<type>"` and no `cloud {}`, or one whose
+only backend is `backend "local"`.
 
 **Why it matters.** No backend falls back to the local one, which puts
 `terraform.tfstate` in the working directory. That file holds every attribute
 of every managed resource, secrets included, and it is unshared, unlocked and
 unversioned. The first apply from a second machine or a CI runner starts from
-an empty state and proposes to create the whole estate again.
+an empty state and proposes to create the whole estate again. `backend
+"local"` asks for the same file by name and gets the same three problems, so
+the check reads the backend block's type label rather than its presence
+(#2218) and reports both, naming which one it found. `cloud {}` counts as
+remote: the state is held by Terraform Cloud or HCP, not by the machine that
+plans.
 
-**The fix.** Add a `backend "<type>"` block (`s3`, `gcs`, `azurerm`, `http`) or
-a `cloud {}` block to the root module's `terraform` block, then run
-`terraform init -migrate-state`.
+**The fix.** Add a `backend "<type>"` block naming a remote type (`s3`, `gcs`,
+`azurerm`, `http`) or a `cloud {}` block to the root module's `terraform`
+block, then run `terraform init -migrate-state`.
+
+A root that keeps local state on purpose says so instead of switching. Put a
+`# chant-ignore-block: TF001` on the line above its `terraform` block, with
+the reason on the line above that, the way the shipped examples do:
+
+```hcl
+# The state stays on local disk on purpose: this example is run by hand from a
+# checkout, and a remote backend would make a first apply need credentials and
+# a bucket nobody has.
+# chant-ignore-block: TF001
+terraform {
+  backend "local" {
+    path = "terraform.tfstate"
+  }
+}
+```
 
 **Prior art.** No tool in the survey covers this; see `audit-lineage.ts`'s
 header comment for where it looked. Checkov's `CKV_TF_*` family has no rule
@@ -96,6 +118,26 @@ resource "null_resource" "first" {
 resource "null_resource" "second" {
   triggers = {
     name = "second"
+  }
+}
+```
+
+The second positive, the root that names the local backend instead of falling
+back into it:
+
+```hcl
+terraform {
+  required_version = ">= 1.5.0"
+
+  backend "local" {
+    path = "terraform.tfstate"
+  }
+
+  required_providers {
+    null = {
+      source  = "hashicorp/null"
+      version = "~> 3.2"
+    }
   }
 }
 ```
@@ -546,8 +588,8 @@ resource "aws_s3_bucket" "assets" {
 ## TF015: a child module declares a backend or cloud block
 
 A `terraform` block inside a called module carrying a `backend "<type>"` or a
-`cloud {}` block. This is TF001's mirror image: TF001 wants a root to declare
-one, and this rule wants a child module to declare neither.
+`cloud {}` block. This is TF001's mirror image: TF001 wants a root to declare a
+remote one, and this rule wants a child module to declare neither.
 
 **Why it matters.** State belongs to the root module, one state for the whole
 tree however many modules it calls, and Terraform says so: a backend block may
@@ -561,6 +603,11 @@ someone factored it out into a module.
 its `terraform` block is welcome to stay: `required_version` and
 `required_providers` are meaningful in a child module and are not reported
 here.
+
+Unlike TF001, this rule does not read the backend's type label, and the fixture
+below declares `backend "local"` on purpose. What a child module may not do is
+name a backend at all; Terraform's own refusal ("A backend block can only
+appear in the root module") does not read the label either.
 
 **Prior art.** No tool in the survey checks this. tflint's official ruleset has
 nothing about backends at all, Redeploy's community ruleset has nothing either,

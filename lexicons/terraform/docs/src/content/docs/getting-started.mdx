@@ -76,12 +76,13 @@ of truth, and `terraform apply` keeps working exactly as before.
 ## What the checks tell you
 
 `TF001` fires once per root whose `terraform` block declares neither a
-`backend "<type>"` nor a `cloud {}`. Such a root keeps its state in a local
-`terraform.tfstate`: unshared, unlocked, and holding every resource attribute
-in plaintext. The first apply from a second machine starts from an empty state
-and proposes to create the estate again.
+`backend "<type>"` nor a `cloud {}`, and once per root whose only backend is
+`backend "local"`. Such a root keeps its state in a local `terraform.tfstate`:
+unshared, unlocked, and holding every resource attribute in plaintext. The
+first apply from a second machine starts from an empty state and proposes to
+create the estate again.
 
-Add a backend to clear it:
+Add a remote backend to clear it:
 
 ```hcl
 terraform {

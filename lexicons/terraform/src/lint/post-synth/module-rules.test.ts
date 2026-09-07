@@ -72,7 +72,7 @@ describe("TF001 still fires only on roots (#2112)", () => {
 
   it("still reports a root that has none, descent or no descent", async () => {
     const ctx = await loadTreeFixture("TF020", "scoped", "app");
-    expect(tf001.check(ctx)).toEqual([]); // this root has a local backend block
+    expect(tf001.check(ctx)).toEqual([]); // this root has a remote backend block
 
     const bare = await loadFixture("TF001", "positive", "app");
     expect(tf001.check(bare)).toHaveLength(1);

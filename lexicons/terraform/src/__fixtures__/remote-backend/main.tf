@@ -1,3 +1,7 @@
+# The `with-backend` root next door keeps its state local on purpose, so
+# TF001 reports it (#2218). This one is the same configuration with a remote
+# backend, and is what a root TF001 says nothing about looks like. Nothing
+# ever runs `terraform init` here, so the bucket need not exist.
 terraform {
   required_version = ">= 1.5.0"
 
