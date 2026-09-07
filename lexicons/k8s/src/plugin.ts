@@ -739,7 +739,7 @@ const { deployment, service, serviceMonitor, prometheusRule } = MonitoredService
   },
 
   /**
-   * The change signal (#1981) — a Watch on every declared kind, reported as a
+   * The change signal (#1981). A Watch on every declared kind, reported as a
    * bare `onChange()` that wakes an operator tick early. Nothing a frame
    * carries reaches the tick: the seam has no payload, and the tick that runs
    * is the tick the timer would have run. Kubernetes is the one substrate

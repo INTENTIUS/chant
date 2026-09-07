@@ -77,7 +77,7 @@ function watchingCluster(streams: Map<string, ReturnType<typeof fakeWatchStream>
   return { cluster, watches };
 }
 
-describe("watchTargets — the scope a declared estate implies", () => {
+describe("watchTargets: the scope a declared estate implies", () => {
   test("one target per (kind, namespace), deduplicated and ordered", () => {
     const { targets, unaddressable } = watchTargets(
       makeEntities([
@@ -316,7 +316,7 @@ describe("subscribeChanges", () => {
 /**
  * The two halves joined: the real k8s subscription, bound the way `chant
  * operator` binds it, driving the operator's real wake gate. Everything below
- * `client.watch` is faked and nothing else is — no cluster, no k3d, and no
+ * `client.watch` is faked and nothing else is: no cluster, no k3d, and no
  * stand-in for the seam under test.
  */
 describe("the wake path end to end, against the fake cluster", () => {

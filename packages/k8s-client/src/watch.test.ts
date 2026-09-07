@@ -1,6 +1,6 @@
 /**
  * The watch (chant #1981): frame decoding on its own, then the whole watch
- * driven against the fake cluster — the same request layer every other client
+ * driven against the fake cluster, on the same request layer every other client
  * test uses, so kubeconfig parsing, discovery, auth and URL construction all
  * run for real and only the socket is fake. No cluster, no k3d, no timer past
  * a few milliseconds.
@@ -154,7 +154,7 @@ describe("streamLines", () => {
   });
 });
 
-describe("K8sClient.watch — against the fake cluster", () => {
+describe("K8sClient.watch, against the fake cluster", () => {
   test("LISTs first for a resourceVersion, then opens the watch from it", async () => {
     const stream = fakeWatchStream();
     const { layer, state } = watchableCluster([stream]);
@@ -337,7 +337,7 @@ describe("K8sClient.watch — against the fake cluster", () => {
   });
 
   test("a transport with no streaming seam falls back to the complete body", async () => {
-    // What a fixture returning a canned NDJSON document looks like — no
+    // What a fixture returning a canned NDJSON document looks like: no
     // `stream`, just text. The watch reads it as frames and then ends the
     // stream, exactly as a server closing the connection would.
     const ndjson =

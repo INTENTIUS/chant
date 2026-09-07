@@ -229,7 +229,7 @@ export interface ReadLogOptions {
  * Options for {@link K8sClient.watch} (chant #1981).
  *
  * A watch is a trigger channel, so the interesting options are the ones that
- * bound it — a namespace, a label selector — rather than anything about what
+ * bound it (a namespace, a label selector) rather than anything about what
  * comes back.
  */
 export interface WatchOptions {
@@ -312,8 +312,8 @@ export interface K8sClient {
    * #1981).
    *
    * The `resourceVersion` comes from a LIST issued first, which is the only
-   * way to start a watch without a gap. A `410 Gone` — the server saying that
-   * version has aged out of its change history — re-LISTs and resumes from the
+   * way to start a watch without a gap. A `410 Gone`, the server saying that
+   * version has aged out of its change history, re-LISTs and resumes from the
    * new version rather than retrying the stale one; a stream the server closes
    * cleanly is reopened from the last version seen. Anything else ends the
    * watch through `options.onError`.
@@ -803,7 +803,7 @@ export async function createK8sClient(options: K8sClientOptions = {}): Promise<K
       throw noted(K8sApiError.fromResponse(response.httpStatusCode, await response.body.text(), target));
     }
 
-    // A transport with no streaming seam answered the whole body at once —
+    // A transport with no streaming seam answered the whole body at once,
     // which a fake NDJSON fixture does, and a live watch never can.
     const raw = response.body.stream?.();
     if (raw === undefined || raw === null) {
@@ -832,7 +832,7 @@ export async function createK8sClient(options: K8sClientOptions = {}): Promise<K
     const listQuery: Record<string, string> = {};
     if (opts.labelSelector) listQuery.labelSelector = opts.labelSelector;
 
-    /** The list's own `resourceVersion` — where a watch with no gap starts. */
+    /** The list's own `resourceVersion`, where a watch with no gap starts. */
     async function listResourceVersion(): Promise<string | undefined> {
       const page = await sendJson<{ metadata?: { resourceVersion?: string } }>(listPath, "GET", {
         signal: controller.signal,
@@ -887,7 +887,7 @@ export async function createK8sClient(options: K8sClientOptions = {}): Promise<K
             for (const frame of frames) {
               if (isExpiredFrame(frame)) {
                 // The one failure a watch is expected to hit. Re-list, never
-                // retry the stale version — see ./watch.ts.
+                // retry the stale version. See ./watch.ts.
                 expired = true;
                 break;
               }

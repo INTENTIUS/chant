@@ -1,12 +1,12 @@
 /**
- * The k8s change signal — `LexiconPlugin.subscribeChanges` (chant #1981).
+ * The k8s change signal, `LexiconPlugin.subscribeChanges` (chant #1981).
  *
  * Kubernetes is the one substrate chant reaches where a change stream is
  * complete, trustworthy, and needs nothing deployed into the cluster being
  * observed: the Watch API is served for every kind the API server serves, is
  * `resourceVersion`-based so a reconnect has a defined resume point, and is
  * authorized by the same read credentials `describeResources` already uses.
- * Every cloud substrate fails on that last point — subscribing to EventBridge,
+ * Every cloud substrate fails on that last point. Subscribing to EventBridge,
  * Cloud Asset Inventory or Event Grid means writing infrastructure into the
  * account being watched, which inverts the property that makes a read-only
  * watch safe to point at production. The verdict table in the operator guide
@@ -15,7 +15,7 @@
  * ## What this is allowed to conclude: nothing
  *
  * A watch event never becomes an observation. The frames are read, and then
- * discarded — the only thing that leaves this module is a no-argument
+ * discarded. The only thing that leaves this module is a no-argument
  * `onChange()`, which wakes an operator tick that re-observes the estate from
  * scratch through the ordinary read path. There is no code here that could
  * turn a `DELETED` frame into a proposed `create`, because there is no channel
@@ -78,7 +78,7 @@ export function watchTargets(
   for (const [, entity] of entities) {
     const operation = operationFor(entity.entityType);
     if (!operation) {
-      // chant knows no API address for this type — the same hole
+      // chant knows no API address for this type, the same hole
       // `describeResources` reports as `unsupported-kind`. Nothing to watch,
       // and never a reason to widen to something else.
       unaddressable.add(entity.entityType);
@@ -116,7 +116,7 @@ function targetText(target: WatchTarget): string {
  * Open one watch per declared (kind, namespace) and report every event as a
  * bare `onChange()`.
  *
- * Throws only for a failure that makes the whole subscription impossible — no
+ * Throws only for a failure that makes the whole subscription impossible: no
  * entities in scope, a cluster binding that will not resolve, a scope past the
  * ceiling. The operator turns that into one logged line and keeps polling.
  * Once the subscription is live, nothing throws: a watch that dies reports
@@ -129,7 +129,7 @@ export async function subscribeChanges(
   const entities = options.entities;
   if (!entities || entities.size === 0) {
     throw new Error(
-      "no declared k8s entities in scope — a change signal watches what the project declares, and there is nothing to watch",
+      "no declared k8s entities in scope. A change signal watches what the project declares, and there is nothing to watch",
     );
   }
 
@@ -145,7 +145,7 @@ export async function subscribeChanges(
     // A hole in the signal, reported the way a hole in an observation is:
     // named, not swallowed. The timer still covers these kinds.
     options.onError?.(
-      `no API address for ${unaddressable.join(", ")} — changes to those kinds are found on the timer alone`,
+      `no API address for ${unaddressable.join(", ")}, so changes to those kinds are found on the timer alone`,
     );
   }
   if (targets.length === 0) {
@@ -153,7 +153,7 @@ export async function subscribeChanges(
   }
   if (targets.length > MAX_WATCHES) {
     throw new Error(
-      `the declared estate needs ${targets.length} watch connections, past the ${MAX_WATCHES} ceiling — ` +
+      `the declared estate needs ${targets.length} watch connections, past the ${MAX_WATCHES} ceiling, so it is ` +
         "running on the operator's timer rather than opening a partial watch that would go quiet for the rest",
     );
   }

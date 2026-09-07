@@ -6,7 +6,7 @@
  * "something moved". This module is everything the loop does with that: it
  * shortens the current sleep, at most once per floor. It is deliberately the
  * only place a signal touches, so the rule that a signal is a trigger and
- * never a fact is a property of the code rather than a convention — nothing
+ * never a fact is a property of the code rather than a convention. Nothing
  * here has a parameter, a return value or a field that could carry what
  * changed.
  *
@@ -23,14 +23,14 @@
  * ChangeSignalGateOptions.floorMs} after the last round *started*. A storm of
  * a thousand signals inside one floor window costs exactly one early wake, and
  * a substrate that never stops sending settles into ticking on the floor
- * rather than on the interval — which is the fastest the loop is ever allowed
+ * rather than on the interval, which is the fastest the loop is ever allowed
  * to run.
  *
  * The floor is measured from the start of the last round, not from the last
  * signal, so a steady stream can never push the wake further out (that would
  * be a debounce, and a debounce starves: the busier the cluster, the later the
- * tick). Measuring from the round start makes the guarantee a rate limit —
- * never more than one signal-driven tick per floor — which is the property the
+ * tick). Measuring from the round start makes the guarantee a rate limit,
+ * never more than one signal-driven tick per floor, which is the property the
  * loop actually needs.
  */
 
@@ -48,7 +48,7 @@ export const DEFAULT_SIGNAL_FLOOR_MS = 5_000;
 
 /** Why {@link ChangeSignalGate.wait} returned. */
 export type WakeReason =
-  /** The full interval elapsed — an ordinary timer-driven round. */
+  /** The full interval elapsed. An ordinary timer-driven round. */
   | "timer"
   /** A substrate signalled and the floor had passed. An early round. */
   | "signal"
@@ -70,7 +70,7 @@ export interface ChangeSignalGateOptions {
 export interface ChangeSignalGate {
   /**
    * A substrate said something moved. Takes nothing and returns nothing, and
-   * that is the enforcement of "a trigger, never a fact" — there is no
+   * that is the enforcement of "a trigger, never a fact": there is no
    * argument for a watch event to ride in on.
    *
    * Safe to call at any time, including while no `wait` is in flight (the flag

@@ -35,7 +35,7 @@ export interface FakeClusterOptions {
   serves?: readonly string[];
   /**
    * Full control: return a response for a request, or undefined to fall
-   * through. A `stream` on the response is what a watch reads (chant #1981) —
+   * through. A `stream` on the response is what a watch reads (chant #1981);
    * see `fakeWatchStream` in the client's testing harness.
    */
   respond?: (request: RecordedRequest) => FakeResponse | undefined;

@@ -3,7 +3,7 @@
  * (chant #1981).
  *
  * A watch is `GET <list path>?watch=1&resourceVersion=<rv>` answered with an
- * open connection that emits one JSON document per line — NDJSON, forever,
+ * open connection that emits one JSON document per line. NDJSON, forever,
  * until somebody hangs up. Everything here is the frame side of that: parsing
  * lines out of a byte stream, reading a frame's `resourceVersion`, and
  * recognising the one failure a watch is expected to hit.
@@ -14,7 +14,7 @@
  * `resourceVersion` older than that window cannot be told what it missed, and
  * says so: an `ERROR` frame carrying a `Status` with `code: 410` / `reason:
  * Expired`. There is exactly one correct response, and it is not to retry with
- * the same `resourceVersion` — it is to LIST again, take the list's own
+ * the same `resourceVersion`. It is to LIST again, take the list's own
  * `resourceVersion`, and watch from there. Anything else silently drops
  * whatever happened during the gap.
  *
@@ -86,7 +86,7 @@ export function parseWatchFrames(
 
 /**
  * Whether this frame is the API server saying the watch's `resourceVersion` has
- * aged out of its history — the `410 Gone` that means re-list, not retry.
+ * aged out of its history: the `410 Gone` that means re-list, not retry.
  *
  * Matched on `code` first and `reason` second, because both are set on the
  * `Status` the server sends and a cluster that sets only one of them is still
@@ -112,7 +112,7 @@ export function resourceVersionOf(frame: WatchFrame): string | undefined {
  * `undici`'s `fetch` gives client-node's HTTP library, and so what a live
  * cluster produces), a Node `Readable` or any other async iterable (what a
  * hand-rolled transport gives), and `undefined` for a transport with no
- * streaming seam at all — a fake that answered the whole body at once, which
+ * streaming seam at all, which is a fake that answered the whole body at once and
  * is handled by the caller reading `text()` instead.
  */
 export async function* streamLines(source: unknown): AsyncGenerator<string> {

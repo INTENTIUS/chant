@@ -1151,7 +1151,7 @@ export interface LexiconPlugin {
    * operator tick can run when something moved instead of only when the timer
    * came round. Optional, and consumed by exactly one caller: `chant
    * operator`'s loop (`./op/operator.ts`). A lexicon that does not implement
-   * it behaves exactly as it did — the loop keeps its timer and never asks.
+   * it behaves exactly as it did: the loop keeps its timer and never asks.
    *
    * Three rules make the seam honest, and the types are shaped to enforce the
    * first one rather than describe it.
@@ -1610,12 +1610,12 @@ export interface DependencyObservation {
  * event through would have nowhere to put it.
  */
 export interface SubscribeChangesOptions {
-  /** chant environment being watched — resolves the same binding a read does. */
+  /** chant environment being watched. Resolves the same binding a read does. */
   environment: string;
   /** Directory whose `chant.config.ts` carries the binding. Defaults to cwd. */
   cwd?: string;
   /**
-   * Declared entities for this lexicon, keyed by chant entity name — the same
+   * Declared entities for this lexicon, keyed by chant entity name. The same
    * map {@link LexiconPlugin.describeResources} receives, and the bound on
    * what a subscription may watch. An implementation scopes its streams to the
    * kinds and namespaces these entities name; it must never subscribe to the
@@ -1626,7 +1626,7 @@ export interface SubscribeChangesOptions {
   entities?: Map<string, { entityType: string; props: Record<string, unknown> }>;
   /**
    * Something moved. No arguments, deliberately (see {@link
-   * LexiconPlugin.subscribeChanges}) — the caller re-observes from scratch and
+   * LexiconPlugin.subscribeChanges}). The caller re-observes from scratch and
    * nothing about the notification reaches what it reports.
    */
   onChange(): void;

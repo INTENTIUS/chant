@@ -1,5 +1,5 @@
 /**
- * The wake gate (#1981) — coalescing, the floor, and abort.
+ * The wake gate (#1981): coalescing, the floor, and abort.
  *
  * Real timers with small floors rather than fake ones: the gate is nothing but
  * two `setTimeout`s racing, and a fake-timer test of that asserts the mock
@@ -55,7 +55,7 @@ describe("createChangeSignalGate", () => {
     gate.roundStarted();
     const started = Date.now();
     const waiting = gate.wait(5_000);
-    // A signal every 10ms — a debounce would push the deadline out forever.
+    // A signal every 10ms. A debounce would push the deadline out forever.
     const drip = setInterval(() => gate.signal(), 10);
     const reason = await waiting;
     clearInterval(drip);
@@ -102,7 +102,7 @@ describe("createChangeSignalGate", () => {
     expect(gate.wakeCount).toBe(0);
   });
 
-  test("signal() carries no payload — the type has no argument and the call ignores one", () => {
+  test("signal() carries no payload: the type has no argument and the call ignores one", () => {
     const gate = createChangeSignalGate();
     expect(gate.signal.length).toBe(0);
     // A caller that fabricates an event has nowhere to put it: the extra

@@ -216,7 +216,7 @@ function sleepAbortable(ms: number, signal?: AbortSignal): Promise<void> {
 /**
  * One lexicon's change-signal seam, already bound to an environment (#1981).
  *
- * The loop never sees a `LexiconPlugin` — core's operator does not import
+ * The loop never sees a `LexiconPlugin`: core's operator does not import
  * plugins, and binding happens where plugins are already loaded
  * (`collectChangeSubscribers` in `../cli/plugins.ts`), the same extract-then-
  * thread shape `collectBuildRootContributors` uses for build roots.
@@ -252,11 +252,11 @@ export function formatSignalLine(event: OperatorSignalEvent): string {
     case "subscribed":
       return `operator: ${event.lexicon} change signal subscribed (the timer still runs)`;
     case "subscribe-failed":
-      return `operator: ${event.lexicon} change signal unavailable — polling on the timer (${event.error})`;
+      return `operator: ${event.lexicon} change signal unavailable, polling on the timer (${event.error})`;
     case "subscription-lost":
-      return `operator: ${event.lexicon} change signal lost — polling on the timer until the next round re-subscribes (${event.error})`;
+      return `operator: ${event.lexicon} change signal lost, polling on the timer until the next round re-subscribes (${event.error})`;
     case "woken":
-      return `operator: woken by a change signal after ${event.afterMs}ms — running an ordinary round`;
+      return `operator: woken by a change signal after ${event.afterMs}ms, running an ordinary round`;
   }
 }
 
@@ -270,9 +270,9 @@ export interface OperatorLoopOptions extends OperatorRoundOptions {
    * Omitted, or empty, and the loop is exactly what it was: a timer.
    */
   subscribers?: readonly ChangeSubscriber[];
-  /** @default DEFAULT_SIGNAL_FLOOR_MS — the shortest gap a signal may force between two rounds. */
+  /** @default DEFAULT_SIGNAL_FLOOR_MS. The shortest gap a signal may force between two rounds. */
   signalFloorMs?: number;
-  /** Called for every subscription and wake event — the CLI logs one line each. */
+  /** Called for every subscription and wake event. The CLI logs one line each. */
   onSignalEvent?: (event: OperatorSignalEvent) => void;
 }
 
@@ -313,7 +313,7 @@ export async function runOperatorForever(opts: OperatorLoopOptions): Promise<voi
 
   const gate = createChangeSignalGate({ floorMs: opts.signalFloorMs ?? DEFAULT_SIGNAL_FLOOR_MS });
   // The subscriptions the loop currently holds, by lexicon. A lexicon absent
-  // from this map is one to (re-)subscribe on the next round — which is how a
+  // from this map is one to (re-)subscribe on the next round, which is how a
   // killed watch comes back without a special retry path.
   const live = new Map<string, ChangeSubscription>();
   // Stops every subscription at once when the loop ends, whatever ends it.

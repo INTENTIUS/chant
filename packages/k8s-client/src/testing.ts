@@ -34,7 +34,7 @@ export interface FakeResponse {
   headers?: Record<string, string>;
   /**
    * A streaming body, for a watch (chant #1981). Anything async-iterable will
-   * do — {@link fakeWatchStream} is the usual source. Set it and the response
+   * do, and {@link fakeWatchStream} is the usual source. Set it and the response
    * exposes `body.stream()`, which is what the client reads instead of
    * `text()` for a request it never expects to complete.
    */
@@ -218,7 +218,7 @@ export interface FakeWatchStream extends AsyncIterable<string> {
  * The client reads it exactly as it reads a live watch: one frame per line,
  * for as long as the connection stays open. So a test can push an ADDED, an
  * expired-`410` ERROR, or nothing at all, and assert on what the client does
- * about it — without a cluster, a socket, or a timer.
+ * about it, without a cluster, a socket, or a timer.
  */
 export function fakeWatchStream(): FakeWatchStream {
   const queued: string[] = [];

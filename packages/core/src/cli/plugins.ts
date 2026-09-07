@@ -117,7 +117,7 @@ export function collectBuildRootContributors(
 /**
  * Bind each loaded plugin's `subscribeChanges` seam (#1981) to one environment
  * and its declared entities, producing the `ChangeSubscriber` list `chant
- * operator`'s loop takes — the same extract-then-thread shape
+ * operator`'s loop takes, in the same extract-then-thread shape
  * {@link collectBuildRootContributors} uses, and for the same reason: core's
  * operator must not import plugins.
  *

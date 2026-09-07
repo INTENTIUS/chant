@@ -518,7 +518,7 @@ describe("formatRoundLine", () => {
   });
 });
 
-describe("runOperatorForever — a substrate change signal wakes a tick (#1981)", () => {
+describe("runOperatorForever: a substrate change signal wakes a tick (#1981)", () => {
   async function waitFor(predicate: () => boolean, maxWaitMs = 5_000): Promise<void> {
     const deadline = Date.now() + maxWaitMs;
     while (!predicate() && Date.now() < deadline) {
@@ -529,8 +529,8 @@ describe("runOperatorForever — a substrate change signal wakes a tick (#1981)"
   /**
    * A stub `subscribeChanges` seam. Hands the loop's `onChange`/`onError` back
    * to the test so it can fabricate signals and kill the subscription, with no
-   * substrate anywhere near it — the whole point of the seam being a plain
-   * callback pair.
+   * substrate anywhere near it, which is the whole point of the seam being a
+   * plain callback pair.
    */
   function stubSubscriber(lexicon = "stub") {
     const handle = {
@@ -600,7 +600,7 @@ describe("runOperatorForever — a substrate change signal wakes a tick (#1981)"
     });
   }, 15_000);
 
-  test("a fabricated signal cannot change what the tick reports — it only changes when it runs", async () => {
+  test("a fabricated signal cannot change what the tick reports, only when it runs", async () => {
     await withTestDir(async (dir) => {
       await initRepo(dir);
       writeFixtureConvergeOp(dir, "staging-converge", "staging");
@@ -725,7 +725,7 @@ describe("runOperatorForever — a substrate change signal wakes a tick (#1981)"
 
       await waitFor(() => handle.onError !== undefined);
       const subscribesBefore = handle.subscribes;
-      // The watch dies. Twice — a dead subscription reports once.
+      // The watch dies. Twice, because a dead subscription reports once.
       handle.onError!("connection reset by peer");
       handle.onError!("connection reset by peer");
 

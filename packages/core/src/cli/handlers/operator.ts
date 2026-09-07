@@ -56,13 +56,13 @@ async function loadOperatorActivities() {
  * Three gates, in cost order, so a project that gains nothing from this pays
  * nothing for it:
  *
- * 1. No configured lexicon implements `subscribeChanges` — return immediately,
+ * 1. No configured lexicon implements `subscribeChanges`. Return immediately,
  *    without loading config or building anything. This is every project today.
- * 2. No `--env` — a subscription resolves the same cluster binding a read
+ * 2. No `--env`. A subscription resolves the same cluster binding a read
  *    does, and there is no binding to resolve without an environment. Said out
  *    loud rather than silently skipped, because "why did it not wake" is
  *    otherwise unanswerable.
- * 3. The build that supplies the declared entities failed — warn and fall back
+ * 3. The build that supplies the declared entities failed. Warn and fall back
  *    to the timer. A subscription is an optimization; a build error here must
  *    not stop the operator, which has its own per-tick build inside the tick.
  */
@@ -74,7 +74,7 @@ async function collectOperatorSubscribers(
 
   if (!env) {
     console.error(formatWarning({
-      message: "a change signal needs an environment to resolve its binding — running on the timer alone",
+      message: "a change signal needs an environment to resolve its binding, so this runs on the timer alone",
       hint: "pass --env <env> to let a lexicon's subscribeChanges wake a tick early",
     }));
     return [];
@@ -91,12 +91,12 @@ async function collectOperatorSubscribers(
     const buildResult = await build(config.sourceDir ?? ".", ctx.serializers, undefined, { buildRoots });
     if (buildResult.errors.length > 0) {
       console.error(formatWarning({
-        message: "build failed while scoping the change signal — running on the timer alone",
+        message: "build failed while scoping the change signal, so this runs on the timer alone",
       }));
       return [];
     }
 
-    // The declared estate, sliced per lexicon — the same slice
+    // The declared estate, sliced per lexicon: the same slice
     // `takeSnapshot` hands `describeResources`, and the bound on what any
     // subscription may watch.
     const entities = new Map<string, Map<string, { entityType: string; props: Record<string, unknown> }>>();
@@ -113,7 +113,7 @@ async function collectOperatorSubscribers(
     return collectChangeSubscribers(ctx.plugins, { environment: env, cwd, entities });
   } catch (err) {
     console.error(formatWarning({
-      message: `could not scope the change signal — running on the timer alone (${err instanceof Error ? err.message : String(err)})`,
+      message: `could not scope the change signal, so this runs on the timer alone (${err instanceof Error ? err.message : String(err)})`,
     }));
     return [];
   }

@@ -195,7 +195,7 @@ export interface ResponseContextLike {
      * `ReadableStream`), so the seam widens rather than being invented.
      *
      * Typed `unknown` for the same reason the rest of this file avoids the
-     * library's classes — the decoder (`./watch.ts`'s `streamLines`) accepts a
+     * library's classes: the decoder (`./watch.ts`'s `streamLines`) accepts a
      * web `ReadableStream`, a Node `Readable`, or any async iterable. Optional
      * because a transport without it is still a valid transport: the watch
      * falls back to `text()`, which is exactly what a fake returning a
