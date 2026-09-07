@@ -51,3 +51,12 @@ just docs
 - `src/lint/rules/`, source-level lint rules
 - `src/lint/post-synth/`, checks over the parsed roots (TF001 and up)
 - `src/lsp/`, LSP completions and hover
+
+## Acceptance evidence
+
+Four `describe` blocks run this lexicon against a real `terraform`, `tofu` or
+`choudoufu` binary, and each of them skips rather than fails when its
+dependency is absent. `src/__fixtures__/ACCEPTANCE.md` records, per block,
+what it proves, what gates it, the command that runs it, and the last binary
+and emulator it passed against with the date. Two of the four have never
+passed against anything, and that file says so.

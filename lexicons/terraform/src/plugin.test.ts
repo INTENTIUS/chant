@@ -337,3 +337,41 @@ describe("parseTerraformRootContent", () => {
     expect([...entities.keys()]).toEqual(["app/locals", "app/locals~2"]);
   });
 });
+
+describe("detectTemplate", () => {
+  const detect = (data: unknown) => terraformPlugin.detectTemplate?.(data) ?? false;
+
+  it("recognises .tf text by its top-level block headers", () => {
+    expect(detect('terraform {\n  required_version = ">= 1.5.0"\n}')).toBe(true);
+    expect(detect('resource "null_resource" "first" {}')).toBe(true);
+    expect(detect('data "aws_ami" "ubuntu" {\n  most_recent = true\n}')).toBe(true);
+    expect(detect('provider "aws" {\n  region = "us-east-1"\n}')).toBe(true);
+    expect(detect('module "vpc" {\n  source = "./modules/vpc"\n}')).toBe(true);
+    expect(detect('variable "region" {\n  type = string\n}')).toBe(true);
+    expect(detect('output "id" {\n  value = null_resource.first.id\n}')).toBe(true);
+  });
+
+  it("recognises the .tf.json syntax by its whole key set", () => {
+    expect(detect({ resource: { null_resource: { first: {} } } })).toBe(true);
+    expect(detect({ terraform: { required_version: ">= 1.5.0" }, provider: { aws: {} } })).toBe(true);
+  });
+
+  it("refuses another lexicon's document, and anything with no block at all", () => {
+    // k8s / fountain / gcp, which share the apiVersion+kind shape.
+    expect(detect({ apiVersion: "v1", kind: "ConfigMap", data: {} })).toBe(false);
+    // CloudFormation, whose `Resources` is not one of Terraform's block names.
+    expect(detect({ AWSTemplateFormatVersion: "2010-09-09", Resources: {} })).toBe(false);
+    // Compose.
+    expect(detect({ services: { web: { image: "nginx" } } })).toBe(false);
+    expect(detect("# just a comment\n")).toBe(false);
+    expect(detect("")).toBe(false);
+    expect(detect({})).toBe(false);
+    expect(detect(null)).toBe(false);
+    expect(detect([{ resource: {} }])).toBe(false);
+    expect(detect(42)).toBe(false);
+  });
+
+  it("does not match a block header that is only mentioned mid-line", () => {
+    expect(detect('# see resource "null_resource" "first" {} in main.tf')).toBe(false);
+  });
+});

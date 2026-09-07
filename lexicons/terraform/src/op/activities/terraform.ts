@@ -618,7 +618,7 @@ export function isOlderVersion(version: string, min: string): boolean {
 
 /**
  * Extract the release version from `choudoufu version`'s human-readable
- * output: `"choudoufu v0.12.0 (based on OpenTofu v1.13.0)\non darwin_arm64"`.
+ * output: `"choudoufu v0.13.0 (based on OpenTofu v1.13.0)\non darwin_arm64"`.
  * `choudoufu version -json`'s `terraform_version` field is the wrong number
  * here: it names the upstream OpenTofu base this build forked from, not the
  * choudoufu release itself (`internal/command/views/version.go`), so this

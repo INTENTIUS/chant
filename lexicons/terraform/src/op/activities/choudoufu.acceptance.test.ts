@@ -38,6 +38,9 @@
  * (`onPath`), which in turn copies `lexicons/k3s/src/serializer.acceptance.
  * test.ts`'s pattern of skipping with the reason named in the describe title
  * rather than failing when the real dependency is absent.
+ *
+ * `../../__fixtures__/ACCEPTANCE.md` records what this block has last passed
+ * against, which for the `live-plan` half is nothing at all (#2220).
  */
 
 import { execSync } from "node:child_process";
