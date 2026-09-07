@@ -156,18 +156,19 @@ describe.skipIf(skipReason !== "")(
  * `../op/activities/choudoufu.acceptance.test.ts` is, plus a version floor:
  *
  *   - no `choudoufu` on PATH,
- *   - a `choudoufu` older than {@link MIN_CHOUDOUFU_VERSION}, which is the
- *     release that shipped the approval artifact
+ *   - a `choudoufu` older than {@link MIN_CHOUDOUFU_VERSION}: v0.13.0 shipped
+ *     the approval artifact
  *     ([choudoufu #878](https://github.com/INTENTIUS/choudoufu/issues/878),
- *     PR 889): before it, `plan -out` was refused under a live block and this
- *     Op could not be built the way it is built now,
+ *     PR 889), before which `plan -out` was refused under a live block and
+ *     this Op could not be built the way it is built now, and v0.14.0 moved
+ *     the floor again for the document the other two Ops read
+ *     ([choudoufu #894](https://github.com/INTENTIUS/choudoufu/issues/894)),
  *   - `CHOUDOUFU_EMULATOR_ENDPOINT` unset (bring up choudoufu's `just smoke`
  *     docker compose stack and export `http://localhost:<mapped port>`).
  *
- * The #894 clause the first version of this suite carried is gone. That issue
- * is still open, but it is about `live-plan -json`, which the apply Op no
- * longer runs: the plan half is the stock `plan -out` path. `TerraformWatchOp`
- * and `TerraformAdoptOp` still need the document and still wait on it.
+ * The #894 clause the first version of this suite carried is gone, and stayed
+ * gone: that issue was about `live-plan -json`, which the apply Op does not
+ * run at all, since the plan half is the stock `plan -out` path.
  *
  * The first test is the happy path end to end through `runOpLocally`. The
  * second is the refusal, and it runs the activities directly rather than
@@ -217,7 +218,7 @@ const liveSkipReason: string = !onPath("choudoufu")
   : choudoufuVersion === undefined
     ? "the choudoufu on PATH reports no release version (a dev build), so the approval artifact cannot be assumed"
     : isOlderVersion(choudoufuVersion, MIN_CHOUDOUFU_VERSION)
-      ? `choudoufu ${choudoufuVersion} is older than v${MIN_CHOUDOUFU_VERSION}, which shipped the approval artifact (choudoufu #878)`
+      ? `choudoufu ${choudoufuVersion} is older than v${MIN_CHOUDOUFU_VERSION}, the lexicon's floor (choudoufu #878's approval artifact in v0.13.0, #894's -json document in v0.14.0)`
       : !emulatorEndpoint
         ? "CHOUDOUFU_EMULATOR_ENDPOINT is not set (bring up choudoufu's `just smoke` emulator stack and export it)"
         : "";

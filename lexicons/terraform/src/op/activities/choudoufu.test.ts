@@ -164,6 +164,18 @@ describe("choudoufuLivePlanCommand (#2103)", () => {
     );
   });
 
+  // choudoufu refuses `-estate` beside a `live` block or an `estate.chdf.hcl`
+  // sidecar, and since v0.14.0 it does not need one there (choudoufu #894, PR
+  // 915). Omitting the option is how a declared root is run.
+  test("no estate emits no -estate, for a root that names its own (choudoufu #894)", () => {
+    expect(choudoufuLivePlanCommand({ binary: "choudoufu", json: true })).toBe(
+      "choudoufu live-plan -detailed-exitcode -json",
+    );
+    expect(choudoufuLivePlanCommand({ binary: "choudoufu", json: false, noColor: true })).toBe(
+      "choudoufu live-plan -detailed-exitcode -no-color",
+    );
+  });
+
   test("-adoption-only and -no-color ride the human form (#2105)", () => {
     expect(
       choudoufuLivePlanCommand({ binary: "choudoufu", estate: "prod", json: false, adoptionOnly: true, noColor: true }),
@@ -265,10 +277,10 @@ describe("isOlderVersion / parseChoudoufuVersion (#2103)", () => {
 // ── The version check, wired into every activity via resolveRoot ───────────
 
 describe("choudoufu version check (#2103)", () => {
-  test("refuses a binary older than the floor, which the approval artifact moved to v0.13.0", async () => {
+  test("refuses a binary older than the floor, which the -json document moved to v0.14.0", async () => {
     const dir = liveProject();
-    replies.push({ match: "version", reply: { stdout: "choudoufu v0.12.0 (based on OpenTofu v1.13.0)\n", stderr: "" } });
-    await expect(choudoufuLiveCheck({ root: "estate", cwd: dir })).rejects.toThrow(/older than.*v0\.13\.0/);
+    replies.push({ match: "version", reply: { stdout: "choudoufu v0.13.0 (based on OpenTofu v1.13.0)\n", stderr: "" } });
+    await expect(choudoufuLiveCheck({ root: "estate", cwd: dir })).rejects.toThrow(/older than.*v0\.14\.0/);
   });
 
   test("passes at exactly the minimum version", async () => {
@@ -398,7 +410,7 @@ describe("choudoufuLivePlan (#2103)", () => {
   test("exit 0: no drift, the document is captured and written, the human plan comes from a second call", async () => {
     const dir = liveProject();
     replies.push({ match: "live-plan -detailed-exitcode -json", reply: { stdout: DOC, stderr: "" } });
-    replies.push({ match: "live-plan -detailed-exitcode -no-color -estate", reply: { stdout: "No changes.\n", stderr: "" } });
+    replies.push({ match: "live-plan -detailed-exitcode -no-color", reply: { stdout: "No changes.\n", stderr: "" } });
 
     const result = await choudoufuLivePlan({ root: "estate", cwd: dir });
     expect(result.drift).toBe(false);
@@ -415,9 +427,12 @@ describe("choudoufuLivePlan (#2103)", () => {
     const written = readFileSync(join(result.dir, DEFAULT_LIVE_PLAN_DOCUMENT_FILE), "utf-8");
     expect(JSON.parse(written)).toEqual(JSON.parse(DOC));
 
+    // The root names its own estate, so neither call carries `-estate`:
+    // choudoufu refuses the flag beside a declaration, and since v0.14.0 it
+    // reads the declared name itself (choudoufu #894, PR 915).
     expect(commandsRun()).toEqual([
-      "choudoufu live-plan -detailed-exitcode -json -estate=prod-networking",
-      "choudoufu live-plan -detailed-exitcode -no-color -estate=prod-networking",
+      "choudoufu live-plan -detailed-exitcode -json",
+      "choudoufu live-plan -detailed-exitcode -no-color",
     ]);
   });
 
@@ -425,7 +440,7 @@ describe("choudoufuLivePlan (#2103)", () => {
     const dir = liveProject();
     replies.push({ match: "live-plan -detailed-exitcode -json", reply: execError(2, "", DOC) });
     replies.push({
-      match: "live-plan -detailed-exitcode -no-color -estate",
+      match: "live-plan -detailed-exitcode -no-color",
       reply: { stdout: "Plan: 2 to add, 0 to change, 1 to destroy.\n", stderr: "" },
     });
 
@@ -448,12 +463,23 @@ describe("choudoufuLivePlan (#2103)", () => {
     );
   });
 
-  test("an explicit estate overrides auto-detection", async () => {
-    const dir = liveProject();
+  test("a root declaring no estate carries the caller's as -estate", async () => {
+    const dir = liveProject({ withLiveBlock: false });
     replies.push({ match: "live-plan -detailed-exitcode -json", reply: { stdout: DOC, stderr: "" } });
-    replies.push({ match: "live-plan -detailed-exitcode -no-color -estate", reply: { stdout: "", stderr: "" } });
+    replies.push({ match: "live-plan -detailed-exitcode -no-color", reply: { stdout: "", stderr: "" } });
     await choudoufuLivePlan({ root: "estate", cwd: dir, estate: "other-estate" });
     expect(commandsRun()[0]).toContain("-estate=other-estate");
+  });
+
+  // The declaration wins on the wire whatever the caller passes, because
+  // choudoufu refuses `-estate` beside one. The result still reports the
+  // estate the document names.
+  test("a root that declares its own estate emits no -estate, even when one is passed", async () => {
+    const dir = liveProject();
+    replies.push({ match: "live-plan -detailed-exitcode -json", reply: { stdout: DOC, stderr: "" } });
+    replies.push({ match: "live-plan -detailed-exitcode -no-color", reply: { stdout: "", stderr: "" } });
+    await choudoufuLivePlan({ root: "estate", cwd: dir, estate: "other-estate" });
+    expect(commandsRun().every((c) => !c.includes("-estate"))).toBe(true);
   });
 
   test("no estate anywhere: refused, and the plan itself never runs", async () => {
@@ -494,7 +520,7 @@ describe("choudoufuLivePlan adoption ledger (#2105)", () => {
     const dir = liveProject();
     replies.push({ match: "live-plan -detailed-exitcode -json", reply: { stdout: ADOPTABLE, stderr: "" } });
     replies.push({
-      match: "live-plan -detailed-exitcode -no-color -estate",
+      match: "live-plan -detailed-exitcode -no-color",
       reply: { stdout: "Plan: 1 to add.\n", stderr: "" },
     });
 
@@ -511,7 +537,7 @@ describe("choudoufuLivePlan adoption ledger (#2105)", () => {
     const dir = liveProject();
     replies.push({ match: "live-plan -detailed-exitcode -json", reply: { stdout: ADOPTABLE, stderr: "" } });
     replies.push({
-      match: "live-plan -detailed-exitcode -no-color -estate",
+      match: "live-plan -detailed-exitcode -no-color",
       reply: { stdout: "Plan: 1 to add.\n", stderr: "" },
     });
 
@@ -531,8 +557,8 @@ describe("choudoufuLivePlan adoption ledger (#2105)", () => {
 
     const result = await choudoufuLivePlan({ root: "estate", cwd: dir, adoptionOnly: true });
     expect(commandsRun()).toEqual([
-      "choudoufu live-plan -detailed-exitcode -json -estate=prod-networking",
-      "choudoufu live-plan -detailed-exitcode -adoption-only -no-color -estate=prod-networking",
+      "choudoufu live-plan -detailed-exitcode -json",
+      "choudoufu live-plan -detailed-exitcode -adoption-only -no-color",
     ]);
     expect(result.adoptions[0].command).toBe(
       "aws ec2 create-tags --resources 'vpc-0abc' --tags 'Key=tofu-estate,Value=prod-networking'",
@@ -542,7 +568,7 @@ describe("choudoufuLivePlan adoption ledger (#2105)", () => {
   test("without adoptionOnly a candidate carries the marker values and no command", async () => {
     const dir = liveProject();
     replies.push({ match: "live-plan -detailed-exitcode -json", reply: { stdout: ADOPTABLE, stderr: "" } });
-    replies.push({ match: "live-plan -detailed-exitcode -no-color -estate", reply: { stdout: "", stderr: "" } });
+    replies.push({ match: "live-plan -detailed-exitcode -no-color", reply: { stdout: "", stderr: "" } });
 
     const result = await choudoufuLivePlan({ root: "estate", cwd: dir });
     expect(result.adoptions[0].command).toBeUndefined();
@@ -676,8 +702,14 @@ describe("choudoufuLiveCheck (#2103)", () => {
   });
 });
 
-describe("liveDocumentFrom (choudoufu #894)", () => {
-  test("skips refresh progress lines that precede the document", async () => {
+// Defensive, and no longer describing a live defect: choudoufu v0.14.0 keeps
+// `-json` stdout to the document, so the slice is the identity on every
+// supported binary. These cases pin the behaviour that makes keeping it cheap:
+// a stray writer ahead of the document costs a slice rather than a parse
+// failure, and a stdout with no document at all still reaches `JSON.parse`
+// with its real text.
+describe("liveDocumentFrom (defensive, choudoufu #894 fixed in v0.14.0)", () => {
+  test("skips any line that precedes the document, if a writer ever puts one there", async () => {
     const { liveDocumentFrom } = await import("./terraform");
     const stdout = 'aws_vpc.main: Refreshing state... [id=vpc-1]\naws_subnet.a: Refreshing state...\n{\n  "bound": []\n}\n';
     expect(JSON.parse(liveDocumentFrom(stdout))).toEqual({ bound: [] });

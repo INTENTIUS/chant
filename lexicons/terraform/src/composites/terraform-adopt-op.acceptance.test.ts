@@ -20,20 +20,36 @@
  * hand-off, which is the part a real binary can falsify. `choudoufu.acceptance.test.ts` takes the same approach for the same
  * reason.
  *
- * ## Why this skips today
+ * ## Why this still skips on choudoufu v0.14.0
  *
- * choudoufu#894: `live-plan -json` is reachable only through the `-estate`
- * form, and that form is refused on a configuration that names its own estate
- * ("Estate named by both the live block and -estate"), while the same root
- * without `-estate` refuses with "Machine-readable output is not available
- * under live resource markers yet". The one configuration shape choudoufu's
- * own docs lead with is the one shape the #788 document cannot be produced
- * for, so `choudoufuLivePlan` throws on any real live root until that lands.
- * Found by chant #2104 against a source build at HEAD.
+ * Not #894 any more. v0.14.0 (choudoufu PR 915) made `live-plan -json`
+ * reachable on a configuration that names its own estate, and this suite was
+ * run against it on 2026-09-07 for the first time. It got as far as the
+ * document and stopped there: `ledger.adoptions` came back empty, because the
+ * #788 document carries no adoptable-by-content section at all.
  *
- * The gate below names it, alongside the ordinary two: no binary, and no
- * emulator. When #894 ships, drop `CHOUDOUFU_894_OPEN` and this suite runs as
- * written.
+ * The document's `unowned[]` is the resources found at an identity the
+ * configuration itself declares. A `aws_cloudwatch_log_group` has one (its
+ * name is in the block), so an unmarked live one comes back in `unowned[]`
+ * with `adopt_tofu_estate`/`adopt_tofu_address` on it, which is exactly what
+ * `../__fixtures__/live-plan.json` recorded and what `readAdoptionLedger`
+ * reads. An `aws_vpc` has none: EC2 assigns the id, so the document reports
+ * `omissions[].reason = "NEEDS_DISCOVERY"` and leaves `unowned[]` empty. The
+ * VPC is matched instead by choudoufu's content matcher during the
+ * estate-wide unclaimed sweep, and that match is printed only in the human
+ * render's "Adoptable" section. `views.LivePlanDocument` has no field for it,
+ * `-adoption-only` is refused alongside `-json` ("-adoption-only and -json
+ * cannot be combined"), and `TOFU_LIVE_COLLECT_UNCLAIMED=1` on the `-json`
+ * run makes no difference: the text render then prints "Adoptable: 1 live
+ * resource matches a declared resource" and the document beside it still says
+ * `"unowned": []`.
+ *
+ * So `choudoufuLivePlan` cannot produce a ledger for a provider-assigned
+ * identity on any binary that exists today, and this suite is what would
+ * prove it can. The measurements are on chant #2168.
+ *
+ * The gate below names that, alongside the three ordinary dependencies: a
+ * `choudoufu`, an `aws` CLI, and the emulator's endpoint.
  *
  * Gating copied from `./terraform-apply-op.acceptance.test.ts` (`onPath`),
  * which in turn copies `lexicons/k3s/src/serializer.acceptance.test.ts`'s
@@ -41,8 +57,7 @@
  * failing when the real dependency is absent.
  *
  * `../__fixtures__/ACCEPTANCE.md` records what this block has last passed
- * against, which is nothing: it has been gated on #894 since it was written
- * (#2220).
+ * against, which is still nothing, and why the reason changed.
  */
 
 import { execSync } from "node:child_process";
@@ -62,11 +77,14 @@ function onPath(cmd: string): boolean {
 }
 
 /**
- * https://github.com/INTENTIUS/choudoufu/issues/894. Flip to `false` when the
- * `-json` document becomes reachable on a root that declares its own estate.
- * chant #2168 tracks this and the other four reversals that unblock together.
+ * `true` while `live-plan -json`'s document carries no adoptable-by-content
+ * section, so a provider-assigned identity like an `aws_vpc` never reaches
+ * `readAdoptionLedger`. Measured against the v0.14.0 release binary on
+ * 2026-09-07 and written up on chant #2168; flip to `false` when a choudoufu
+ * release puts the content matcher's "Adoptable" rows in the document.
+ * choudoufu #894, which gated this block before, is fixed and gone.
  */
-const CHOUDOUFU_894_OPEN = true;
+const CHOUDOUFU_ADOPTABLE_NOT_IN_DOCUMENT = true;
 
 const emulatorEndpoint = process.env.CHOUDOUFU_EMULATOR_ENDPOINT;
 
@@ -76,9 +94,9 @@ const skipReason = !onPath("choudoufu")
     ? "no aws CLI on PATH (the unmarked resource is created with it, and adopted through it)"
     : !emulatorEndpoint
       ? "CHOUDOUFU_EMULATOR_ENDPOINT is not set (bring up choudoufu's `just smoke` emulator stack and export it)"
-      : CHOUDOUFU_894_OPEN
-        ? "choudoufu#894: live-plan -json is refused on a configuration that declares its own estate, " +
-          "so there is no adoption ledger to act on yet"
+      : CHOUDOUFU_ADOPTABLE_NOT_IN_DOCUMENT
+        ? "live-plan -json's document carries no adoptable-by-content section, so the fixture's unmarked " +
+          "aws_vpc reaches omissions[NEEDS_DISCOVERY] and never unowned[]; measured on choudoufu v0.14.0, chant #2168"
         : "";
 
 const FIXTURE = join(import.meta.dirname, "..", "__fixtures__", "live-adopt");

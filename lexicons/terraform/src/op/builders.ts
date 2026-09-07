@@ -84,11 +84,13 @@ export const terraformApply = (
 };
 
 /**
- * `choudoufu live-plan -detailed-exitcode -json -estate=<estate>` in the
- * named root, plus the human render. The fully typed twin of the
- * `choudoufuLivePlan` activity (#2103). `opts` is {@link ChoudoufuLivePlanArgs}
- * itself, minus the positional `root`; `estate` is optional, auto-detected
- * from the root's `live` block or `estate.chdf.hcl` sidecar when omitted.
+ * `choudoufu live-plan -detailed-exitcode -json` in the named root, plus the
+ * human render. The fully typed twin of the `choudoufuLivePlan` activity
+ * (#2103). `opts` is {@link ChoudoufuLivePlanArgs} itself, minus the
+ * positional `root`; `estate` is optional, auto-detected from the root's
+ * `live` block or `estate.chdf.hcl` sidecar when omitted, and a root that
+ * declares one is run with no `-estate` at all, which is the only form
+ * choudoufu admits there (choudoufu #894, fixed in v0.14.0).
  * Defaults to the `longInfra` profile: like `terraformPlan`, this reads the
  * live system in full (the estate-wide sweep).
  *

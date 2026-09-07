@@ -77,10 +77,15 @@ export const DEFAULT_LIVE_PLAN_DOCUMENT_FILE = "chant.live-plan.json";
  * ([choudoufu #878](https://github.com/INTENTIUS/choudoufu/issues/878), PR
  * 889): under a live block `plan -out=FILE` is accepted and `apply FILE`
  * re-plans the live system and refuses on a mismatch with exit status 3.
- * {@link terraformApply} depends on that refusal existing, so the floor is
- * the release that shipped it rather than the one before.
+ * v0.14.0 brought the `-json` document on a configuration that names its own
+ * estate ([choudoufu #894](https://github.com/INTENTIUS/choudoufu/issues/894),
+ * PR 915), which is the shape every chant live root has: before it,
+ * {@link choudoufuLivePlan} could not produce the document for a real root at
+ * all. {@link terraformApply} depends on the exit-3 refusal and
+ * `describeResources()` and both document-reading Ops depend on the document,
+ * so the floor is the release that shipped the later of the two.
  */
-export const MIN_CHOUDOUFU_VERSION = "0.13.0";
+export const MIN_CHOUDOUFU_VERSION = "0.14.0";
 
 /**
  * choudoufu's own refusal summary for `-out` on the `live-plan -estate`
@@ -480,9 +485,17 @@ export function terraformApplyCommand(opts: { binary: string; planFile: string }
 }
 
 /**
- * `live-plan -detailed-exitcode -json -estate=<estate>`. `-json` is what
+ * `live-plan -detailed-exitcode [-json] [-estate=<estate>]`. `-json` is what
  * prints GitHub issue #788's document instead of the plan; the human render
  * needs a second invocation without it (see {@link choudoufuLivePlan}).
+ *
+ * `estate` is omitted exactly when the configuration names its own estate.
+ * choudoufu refuses `-estate` beside a `live` block or an `estate.chdf.hcl`
+ * sidecar ("Estate named by both the live block and -estate"), and since
+ * v0.14.0 it does not need one: the run reads the declared name itself and
+ * prints the same document ([choudoufu #894](https://github.com/INTENTIUS/choudoufu/issues/894),
+ * PR 915). The flag is still how a root that declares nothing names an
+ * estate for the run.
  *
  * `adoptionOnly` makes that second invocation print the adoption ledger and
  * nothing else (GitHub issue #587). It is refused here alongside `json`
@@ -492,7 +505,7 @@ export function terraformApplyCommand(opts: { binary: string; planFile: string }
  */
 export function choudoufuLivePlanCommand(opts: {
   binary: string;
-  estate: string;
+  estate?: string;
   json: boolean;
   adoptionOnly?: boolean;
   noColor?: boolean;
@@ -508,7 +521,7 @@ export function choudoufuLivePlanCommand(opts: {
   if (opts.json) parts.push("-json");
   if (opts.adoptionOnly) parts.push("-adoption-only");
   if (opts.noColor) parts.push("-no-color");
-  parts.push(`-estate=${quoteArg(opts.estate)}`);
+  if (opts.estate !== undefined) parts.push(`-estate=${quoteArg(opts.estate)}`);
   return parts.join(" ");
 }
 
@@ -961,11 +974,19 @@ function resolveEstate(args: { estate?: string }, resolved: ResolvedRoot, activi
  */
 /**
  * The JSON document within a `live-plan -json` stdout: everything from the
- * first line that is a bare `{` to the end. Stock keeps stdout to the
- * document; choudoufu's `-estate` path precedes it with refresh progress
- * lines (choudoufu #894). Returns the input unchanged when no such line
- * exists, so a clean stdout parses as before and a broken one fails in
- * `JSON.parse` with the real text in the error.
+ * first line that is a bare `{` to the end. Returns the input unchanged when
+ * no such line exists.
+ *
+ * Defensive, and kept deliberately. choudoufu v0.14.0 keeps `-json` stdout to
+ * the document on every form of live root, so on a supported binary this
+ * returns its input unchanged and the slice never fires: it was written for
+ * the `-estate` path's refresh progress lines
+ * ([choudoufu #894](https://github.com/INTENTIUS/choudoufu/issues/894), fixed
+ * in PR 915, which routes every human-prose renderer of a `-json` run through
+ * `views.View.StdoutOnStderr()`). What it buys is that a future writer put
+ * back on stdout ahead of the document costs a stale slice rather than a
+ * `JSON.parse` failure, and a stdout carrying no document at all still fails
+ * in `JSON.parse` with the real text in the error.
  */
 export function liveDocumentFrom(stdout: string): string {
   const lines = stdout.split("\n");
@@ -982,10 +1003,14 @@ export async function choudoufuLivePlan(
   const estate = resolveEstate(args, resolved, "choudoufuLivePlan");
   const env = terraformEnvironment(resolved.root);
   const documentPath = args.documentPath ?? DEFAULT_LIVE_PLAN_DOCUMENT_FILE;
+  // A root that declares its own estate is run without `-estate`: choudoufu
+  // refuses the flag beside a declaration and, since v0.14.0, settles the name
+  // from the declaration itself. See {@link choudoufuLivePlanCommand}.
+  const estateFlag: { estate?: string } = resolved.estate === undefined ? { estate } : {};
 
   let drift: boolean;
   let jsonStdout: string;
-  const planCmd = choudoufuLivePlanCommand({ binary, estate, json: true });
+  const planCmd = choudoufuLivePlanCommand({ binary, ...estateFlag, json: true });
   try {
     const { stdout, stderr } = await run(planCmd, dir, env, signal);
     report(stdout, stderr);
@@ -1005,8 +1030,8 @@ export async function choudoufuLivePlan(
     jsonStdout = failure.stdout ?? "";
   }
 
-  // On the `-estate` path choudoufu prints refresh progress to stdout ahead of
-  // the document (choudoufu #894), so parse from the first line that opens it.
+  // Belt and braces: v0.14.0 keeps `-json` stdout to the document, so this is
+  // the identity on a supported binary. See {@link liveDocumentFrom}.
   const document = liveDocumentFrom(jsonStdout);
   const json: unknown = JSON.parse(document);
   // #788's document carries no render of the human plan itself
@@ -1015,19 +1040,32 @@ export async function choudoufuLivePlan(
   // (#2105) changes which report that second read prints, never whether there
   // is one: choudoufu refuses the flag alongside `-json`, so the two reports
   // were always going to be two runs.
-  const textRun = await run(
-    choudoufuLivePlanCommand({
-      binary,
-      estate,
-      json: false,
-      noColor: true,
-      ...(args.adoptionOnly ? { adoptionOnly: true } : {}),
-    }),
-    dir,
-    env,
-    signal,
-  );
-  const text = textRun.stdout;
+  const textCmd = choudoufuLivePlanCommand({
+    binary,
+    ...estateFlag,
+    json: false,
+    noColor: true,
+    ...(args.adoptionOnly ? { adoptionOnly: true } : {}),
+  });
+  // The human render carries `-detailed-exitcode` too, so a plan with changes
+  // comes back as exit 2 on this call exactly as it does on the `-json` one.
+  // Both are success, and the drift answer is already settled above, so exit 2
+  // here yields its stdout rather than throwing; anything else is a failure
+  // with choudoufu's own output attached.
+  let text: string;
+  try {
+    text = (await run(textCmd, dir, env, signal)).stdout;
+  } catch (err) {
+    const failure = err as ExecFailure;
+    if (failure.code !== 2) {
+      const detail = (failure.stderr ?? "").trim() || (failure.stdout ?? "").trim();
+      throw new Error(
+        `${binary} live-plan (human render) failed in ${dir} (exit ${String(failure.code)})` +
+          `${detail ? `\n${detail}` : ""}`,
+      );
+    }
+    text = failure.stdout ?? "";
+  }
 
   writeFileSync(join(dir, documentPath), document);
 
@@ -1050,7 +1088,7 @@ export async function choudoufuLivePlan(
     documentPath,
     estate,
     ...countLivePlanUnowned(json),
-    ...parseChoudoufuPlanSummary(textRun.stdout),
+    ...parseChoudoufuPlanSummary(text),
   };
 }
 
