@@ -14,11 +14,14 @@
  * chant #2084) rather than on the Op, the same way a cron would if this were
  * a nightly watch.
  *
- * `findingMode: "issue"` opens a GitHub issue whose body is the plan.
- * chant has no activity that comments on the triggering pull request today:
- * `reconcilePr`'s three modes are `report`, `issue` and `pull-request`, and
- * the last one regenerates chant TypeScript through `chant import`, which is
- * not what a terraform plan wants to say. See the README.
+ * `findingMode: "comment"` posts the plan as one comment on the pull request
+ * that triggered the run and edits that same comment on the next push, found
+ * by the hidden marker the `reconcilePr` activity writes as its first line
+ * (chant #2231). It reads the pull request out of the run's own event
+ * payload, so it needs the `pull_request` trigger above: the github generator
+ * refuses the mode by name on any other one, and a run that somehow reaches
+ * the Report step without a pull request fails there rather than posting the
+ * plan somewhere nobody asked for it.
  */
 
 import { TerraformWatchOp } from "@intentius/chant-lexicon-terraform";
@@ -26,7 +29,7 @@ import { TerraformWatchOp } from "@intentius/chant-lexicon-terraform";
 const { op } = TerraformWatchOp({
   name: "app-plan",
   root: "app",
-  findingMode: "issue",
+  findingMode: "comment",
   title: 'Terraform plan for root "app"',
 });
 

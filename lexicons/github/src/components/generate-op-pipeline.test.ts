@@ -6,7 +6,7 @@
  *     (parses back via `../yaml.ts`'s `parseYAML`) with a `schedule` +
  *     `workflow_dispatch` trigger and one job.
  *  2. `permissions:` is least-privilege per finding-mode — read-only for
- *     `report`, scoped write for `issue`/`pull-request`.
+ *     `report`, scoped write for `issue`/`comment`/`pull-request`.
  *  3. A cross-cutting generator change (extraScript/beforeScript/runCommand)
  *     is a single edit reflected in every generated file.
  */
@@ -100,6 +100,23 @@ describe("generateGithubOpPipeline: least-privilege permissions per finding-mode
     expect(doc.permissions).toEqual({ contents: "write", "pull-requests": "write" });
   });
 
+  test("comment mode is exactly contents: read + pull-requests: write (#2231)", () => {
+    // The least-privilege set a plan-on-PR job wants, and the one no mode
+    // could produce before this one existed: `issue` adds `issues: write`,
+    // `pull-request` widens `contents` to write, `report` gets no forge write
+    // scope at all. `toEqual` is what makes this an exact set rather than a
+    // containment check.
+    const result = generateGithubOpPipeline([
+      { name: "app-plan", trigger: { kind: "pull_request", branches: ["main"] }, findingMode: "comment" },
+    ]);
+    const doc = parseFile(result.files[0].yaml);
+    expect(doc.permissions).toEqual({ contents: "read", "pull-requests": "write" });
+
+    // The activity shells to `gh`, so the CLI's own token variable rides too.
+    const runStep = doc.jobs!["app-plan"].steps.find((s) => typeof s.run === "string")!;
+    expect(runStep.env).toEqual({ GITHUB_TOKEN: "${{ github.token }}", GH_TOKEN: "${{ github.token }}" });
+  });
+
   test("defaults to report (read-only) when findingMode is omitted", () => {
     const result = generateGithubOpPipeline([{ name: "actions-audit", schedule: "0 6 * * *" }]);
     expect(result.jobs[0].findingMode).toBe("report");
@@ -150,6 +167,24 @@ describe("generateGithubOpPipeline: trigger kinds (#2084)", () => {
     const result = generateGithubOpPipeline([{ name: "tf-plan", trigger: { kind: "pull_request" } }]);
     const doc = parseFile(result.files[0].yaml);
     expect(doc.permissions).toEqual({ contents: "read" });
+  });
+
+  test("comment mode is refused by name on a cron trigger (#2231)", () => {
+    const specs: ScheduledOpSpec[] = [
+      { name: "app-plan", schedule: "0 6 * * *", findingMode: "comment" },
+    ];
+    expect(() => generateGithubOpPipeline(specs)).toThrow(
+      /findingMode "comment".*trigger is "cron".*no pull request/s,
+    );
+  });
+
+  test("comment mode is refused by name on a push trigger (#2231)", () => {
+    const specs: ScheduledOpSpec[] = [
+      { name: "app-apply", trigger: { kind: "push", branches: ["main"] }, findingMode: "comment" },
+    ];
+    expect(() => generateGithubOpPipeline(specs)).toThrow(
+      /Scheduled Op "app-apply".*findingMode "comment".*trigger is "push"/s,
+    );
   });
 
   test("push trigger: filters to branches", () => {

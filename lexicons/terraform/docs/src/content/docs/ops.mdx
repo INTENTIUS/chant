@@ -155,7 +155,7 @@ export const { op } = TerraformWatchOp({
 
 A stock plan answers one question, so a stock watch reports one thing: whether the root drifted. A live plan reads the live system against the markers, so it answers three, and the Plan step publishes all three off that single read: `Drift` from the `-detailed-exitcode` exit, `Unowned` for live resources sitting at a declared identity with no marker, and `Adoptable` for the subset an exact content match makes claimable. `planFile` is refused with `live: true` (`live-plan` writes no saved plan, and `-out` is still refused on its own `-estate` surface) and `estate` is refused without it.
 
-In `issue` and `pull-request` mode the body is the `-no-color` plan text followed by the adoption ledger: one line per adoptable match with its address, its live identity and the two tag values that claim it, then any address more than one live resource sits at, listed and not offered. Only that text reaches the body. The `-json` document stays in the Op, the same rule the stock mode holds for `terraform show -json` and for the same reason: it carries live identities and attribute values for everything the run touched.
+In `issue`, `comment` and `pull-request` mode the body is the `-no-color` plan text followed by the adoption ledger: one line per adoptable match with its address, its live identity and the two tag values that claim it, then any address more than one live resource sits at, listed and not offered. Only that text reaches the body. The `-json` document stays in the Op, the same rule the stock mode holds for `terraform show -json` and for the same reason: it carries live identities and attribute values for everything the run touched.
 
 ## Plan on the pull request, apply on the push
 
@@ -166,7 +166,7 @@ import { generateOpsPipeline } from "@intentius/chant/op";
 
 const { files } = await generateOpsPipeline(
   [
-    { name: "app-plan", trigger: { kind: "pull_request", branches: ["main"] }, findingMode: "issue" },
+    { name: "app-plan", trigger: { kind: "pull_request", branches: ["main"] }, findingMode: "comment" },
     { name: "app-apply", trigger: { kind: "push", branches: ["main"] } },
   ],
   "github",
@@ -204,11 +204,13 @@ jobs:
 
 The runner has no terraform on it, so the install is a `beforeScript` line pinned to a release rather than taken from a package repo: the version that plans is then the version the file names, which matters for a root with a `required_version` floor. `beforeScript` lines are emitted as plain `run:` steps ahead of the invocation, so the Op's first step is never a missing binary.
 
-Permissions are per workflow, from the trigger and the finding mode. The apply half is `contents: read` and nothing else, since it talks to the provider and the state backend rather than to the forge. The plan half gets `pull-requests: write` from the `pull_request` trigger itself, plus whatever its finding mode spends: `findingMode: "issue"` adds `issues: write`, and nothing anywhere adds `contents: write`.
+Permissions are per workflow, from the trigger and the finding mode. The apply half is `contents: read` and nothing else, since it talks to the provider and the state backend rather than to the forge. The plan half is `contents: read` and `pull-requests: write`, which is the whole cost of a comment on the triggering pull request: `findingMode: "comment"` opens no issue, so no `issues: write`, and pushes no branch, so no `contents: write`. The other modes are wider on this trigger, since the trigger adds `pull-requests: write` to any of them: `"issue"` also carries `issues: write`, and `"pull-request"` widens `contents` to write.
 
 **Only the human plan is posted, on either half.** `terraform show -json` over a plan carries every resource attribute value the plan touched, provider credentials among them, so the Report step's body is one reference to the Plan step's `-no-color` render and the JSON one stays inside the Op ([#2081](https://github.com/INTENTIUS/chant/issues/2081)). There is no option to post the other, and `examples.test.ts` asserts no reference to it reaches the finding step.
 
-**The plan lands as an issue, not as a comment on the pull request.** `reconcilePr`, which is the one place chant shells to `gh`, has three modes: `report` posts nothing, `issue` opens an issue, and `pull-request` regenerates chant TypeScript through `chant import` and opens a PR from it, which is not what a terraform plan wants to say. So the `pull-requests: write` the trigger grants for a comment on the triggering PR goes unspent today. The github lexicon's `PrPlanReport` composite has the sticky-comment mechanism, on the separate `chant lifecycle plan` path rather than on this one.
+**The plan lands as a comment on the pull request that triggered the run.** That is `findingMode: "comment"` ([#2231](https://github.com/INTENTIUS/chant/issues/2231)), the fourth mode on `reconcilePr` and the one this shape was missing. It writes a hidden marker as the comment's first line and finds the comment again by that marker on the next run, so a pull request pushed to five times carries one comment holding the current plan rather than five stale ones. The pull request comes out of the run's own event payload (`GITHUB_EVENT_PATH`, falling back to `GITHUB_REF`), which is why the mode constrains the trigger rather than only the permission set: the github generator refuses it by name on a cron or push trigger, and a run reaching the Report step with no pull request fails there instead of posting the plan somewhere else.
+
+Off GitHub the mode is refused rather than approximated. The activity shells to `gh` against the GitHub API and reads the GitHub Actions event payload, and chant carries no GitLab or Forgejo client that would post the equivalent note, so the gitlab and forgejo Op generators refuse `comment` by name at build time and point at `"issue"` (or, on GitLab, `"merge-request"`).
 
 The push run stops at the apply's gate. It reaches the gate, finds no resolution on the ledger, records the pending fact and ends with status `gated` and exit 3, so the workflow run ends there instead of holding a runner open. `chant approve app-apply approve-app-apply --approver you` records the answer and re-running the workflow applies. A root whose merges should apply unattended sets `gate: "never"`.
 

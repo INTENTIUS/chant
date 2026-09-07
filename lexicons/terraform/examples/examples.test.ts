@@ -16,6 +16,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { build } from "@intentius/chant/build";
+import { parseYAML } from "@intentius/chant/yaml";
 import { generateOpsPipeline, type ActivityStep, type OpConfig } from "@intentius/chant/op";
 import type { ScheduledOpSpec } from "@intentius/chant/lexicon";
 import { terraformSerializer } from "../src/serializer";
@@ -153,7 +154,7 @@ const planOnPrDir = join(examplesDir, "plan-on-pr");
 const PLAN_SPEC: ScheduledOpSpec = {
   name: "app-plan",
   trigger: { kind: "pull_request", branches: ["main"] },
-  findingMode: "issue",
+  findingMode: "comment",
 };
 
 const APPLY_SPEC: ScheduledOpSpec = {
@@ -186,7 +187,7 @@ describe("plan-on-pr generates the pull_request plan and push apply pair (#2221)
         jobName: "app-plan",
         op: "app-plan",
         trigger: { kind: "pull_request", branches: ["main"] },
-        findingMode: "issue",
+        findingMode: "comment",
       },
       {
         jobName: "app-apply",
@@ -217,19 +218,44 @@ describe("plan-on-pr generates the pull_request plan and push apply pair (#2221)
     expect(apply).not.toContain("schedule:");
   });
 
-  it("gives the PR job pull-requests: write and no write scope on the repository", async () => {
+  it("gives the PR job exactly contents: read and pull-requests: write (#2231)", async () => {
     const { plan } = await planOnPrWorkflows();
-    // `pull-requests: write` comes from the `pull_request` trigger itself
-    // (#2084): the trigger grants the scope a comment on the triggering PR
-    // needs. `issues: write` is what the finding mode actually spends, since
-    // `reconcilePr` has no comment mode and the plan lands as an issue — see
-    // the example's README. Neither is `contents: write`, which is what a
-    // job that pushed a branch would need and this one never does.
-    expect(plan).toContain("pull-requests: write");
-    expect(plan).toContain("issues: write");
-    expect(plan).toContain("contents: read");
-    expect(plan).not.toContain("contents: write");
+    // The least-privilege set a plan-on-PR job wants, and the set the
+    // `comment` finding mode spends in full: it posts on the pull request the
+    // run was triggered by and changes nothing in the repository. No `issues:
+    // write`, because nothing opens an issue; no `contents: write`, because
+    // nothing pushes a branch. Parsed rather than string-matched, so this is
+    // an exact set and not a containment check.
+    const parsed = parseYAML(plan) as { permissions?: Record<string, string> };
+    expect(parsed.permissions).toEqual({ contents: "read", "pull-requests": "write" });
     expect(plan).not.toContain("write-all");
+  });
+
+  it("posts the plan as a comment on the triggering pull request, not as an issue (#2231)", async () => {
+    const result = await build(join(planOnPrDir, "src"), [terraformSerializer]);
+    expect(result.errors).toEqual([]);
+    const planOp = result.entities.get("app-plan") as unknown as { props: OpConfig };
+    const report = planOp.props.phases.find((p) => p.name === "Report");
+    const step = report?.steps[0] as ActivityStep;
+    expect(step.fn).toBe("reconcilePr");
+    expect(step.args?.mode).toBe("comment");
+    // The comment's URL is what the run ledger records for this Op.
+    expect(step.outcomeAttribute).toEqual({ name: "Comment", from: "commentUrl" });
+  });
+
+  it("refuses the comment mode on the apply half's push trigger (#2231)", async () => {
+    // The mode is tied to the trigger, not merely scoped by it: an Op that
+    // posts on the pull request that triggered it has nothing to post on when
+    // a push triggered it, and the generator says so by name rather than
+    // emitting a job that fails at its Report step.
+    await expect(
+      generateOpsPipeline(
+        [{ ...APPLY_SPEC, findingMode: "comment" }],
+        "github",
+        {},
+        planOnPrDir,
+      ),
+    ).rejects.toThrow(/findingMode "comment".*trigger is "push"/s);
   });
 
   it("gives the apply job contents: read and nothing else", async () => {
@@ -258,6 +284,8 @@ describe("plan-on-pr generates the pull_request plan and push apply pair (#2221)
   it("runs each Op through `chant run`, with a token only where a finding is posted", async () => {
     const { plan, apply } = await planOnPrWorkflows();
     expect(plan).toContain("chant run app-plan");
+    // The comment mode shells to `gh`, so it needs the CLI's own token
+    // variable and not just the API one.
     expect(plan).toContain("GH_TOKEN:");
     expect(apply).toContain("chant run app-apply");
     // `report` mode posts nothing, so the `gh` CLI's own token variable is
@@ -284,7 +312,7 @@ describe("plan-on-pr generates the pull_request plan and push apply pair (#2221)
     const report = planOp.props.phases.find((p) => p.name === "Report");
     const step = report?.steps[0] as ActivityStep;
     expect(step.fn).toBe("reconcilePr");
-    expect(step.args?.mode).toBe("issue");
+    expect(step.args?.mode).toBe("comment");
     expect(step.args?.body).toMatchObject({ kind: "step-output-ref", step: "plan", path: "text" });
     expect(JSON.stringify(step.args)).not.toContain("json");
   });

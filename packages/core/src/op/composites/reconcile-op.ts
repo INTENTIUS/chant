@@ -60,15 +60,18 @@ export function ReconcileOp(config: ReconcileOpConfig): ReconcileOpResources {
   const onDrift = config.onDrift ?? "pull-request";
   const owned = config.scope?.owned ?? false;
 
-  // The reconcile's headline output is the opened PR (or issue) URL. Expose it as
-  // an outcome attribute so it prints in `chant run` and lands on the ledger.
-  // `report` mode opens nothing, so it has no URL outcome.
+  // The reconcile's headline output is the opened PR (or issue, or the comment
+  // it posted on the triggering pull request) URL. Expose it as an outcome
+  // attribute so it prints in `chant run` and lands on the ledger. `report`
+  // mode opens nothing, so it has no URL outcome.
   const reconcileOutcome =
     onDrift === "pull-request"
       ? { name: "PR", from: "prUrl" }
       : onDrift === "issue"
         ? { name: "Issue", from: "issueUrl" }
-        : undefined;
+        : onDrift === "comment"
+          ? { name: "Comment", from: "commentUrl" }
+          : undefined;
 
   const op = Op({
     name: config.name,

@@ -102,3 +102,27 @@ describe("generateForgejoOpPipeline: non-cron trigger survives the dialect trans
     expect(fj.files[0].yaml).not.toMatch(/^permissions:/m);
   });
 });
+
+describe("generateForgejoOpPipeline: no comment finding mode (#2231)", () => {
+  test("findingMode comment is refused by name, on the pull_request trigger it would otherwise fit", () => {
+    // Forgejo Actions runs the same workflow shape and Forgejo's API is
+    // GitHub-compatible, but the activity behind the mode shells to `gh`
+    // against github.com and reads the GitHub Actions event payload. Nothing
+    // in chant points either at a Forgejo instance, so the mode is refused
+    // here rather than generating a job that fails at its Report step.
+    const specs: ScheduledOpSpec[] = [
+      { name: "app-plan", trigger: { kind: "pull_request", branches: ["main"] }, findingMode: "comment" },
+    ];
+    expect(() => generateForgejoOpPipeline(specs)).toThrow(
+      /Scheduled Op "app-plan".*findingMode "comment".*no Forgejo API client/s,
+    );
+  });
+
+  test("github generates the same spec, so the refusal is forgejo's and not the shared builder's", () => {
+    const specs: ScheduledOpSpec[] = [
+      { name: "app-plan", trigger: { kind: "pull_request", branches: ["main"] }, findingMode: "comment" },
+    ];
+    const gh = parseFile(generateGithubOpPipeline(specs).files[0].yaml);
+    expect(gh.permissions).toEqual({ contents: "read", "pull-requests": "write" });
+  });
+});

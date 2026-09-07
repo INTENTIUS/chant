@@ -82,6 +82,24 @@ describe("generateGitlabOpPipeline: no pull_request/push event model (#2084)", (
   });
 });
 
+describe("generateGitlabOpPipeline: no comment finding mode (#2231)", () => {
+  test("findingMode comment is refused by name, even on a cron trigger GitLab does support", () => {
+    const specs: ScheduledOpSpec[] = [
+      { name: "app-plan", schedule: "0 6 * * *", findingMode: "comment" },
+    ];
+    expect(() => generateGitlabOpPipeline(specs)).toThrow(
+      /Scheduled Op "app-plan".*findingMode "comment".*GitLab has no pull_request event/s,
+    );
+  });
+
+  test("the refusal names the modes GitLab does have", () => {
+    const specs: ScheduledOpSpec[] = [{ name: "app-plan", schedule: "0 6 * * *", findingMode: "comment" }];
+    expect(() => generateGitlabOpPipeline(specs)).toThrow(
+      /findingMode "issue" or "merge-request"/,
+    );
+  });
+});
+
 describe("generateGitlabOpPipeline: a cross-cutting change is one generator edit, not per-job", () => {
   test("runCommand/beforeScript/extraScript apply uniformly across every job", () => {
     const specs: ScheduledOpSpec[] = [

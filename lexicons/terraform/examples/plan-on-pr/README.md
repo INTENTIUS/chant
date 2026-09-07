@@ -22,7 +22,7 @@ import { generateOpsPipeline } from "@intentius/chant/op";
 
 const { files } = await generateOpsPipeline(
   [
-    { name: "app-plan", trigger: { kind: "pull_request", branches: ["main"] }, findingMode: "issue" },
+    { name: "app-plan", trigger: { kind: "pull_request", branches: ["main"] }, findingMode: "comment" },
     { name: "app-apply", trigger: { kind: "push", branches: ["main"] } },
   ],
   "github",
@@ -37,16 +37,29 @@ manual escape hatch. `app-apply.yml` carries `on: push` filtered to the same
 branch. Both carry a per-Op concurrency group, which is also the thing that
 stops two applies racing for the same state lock.
 
+`findingMode: "comment"` is what posts the plan (chant #2231). The
+`reconcilePr` activity writes a hidden marker as the comment's first line,
+looks the comment up by that marker on the next run, and edits it in place, so
+a pull request pushed to five times carries one comment holding the current
+plan rather than five stale ones. The mode reads the pull request out of the
+run's own event payload (`GITHUB_EVENT_PATH`, falling back to `GITHUB_REF`),
+which is why it is tied to the trigger: the github generator refuses it by
+name on a cron or push trigger, and a run that reaches the Report step with no
+pull request fails there instead of posting the plan elsewhere.
+
 Permissions are what each finding mode needs and nothing else.
 `app-apply.yml` is `contents: read`: the apply talks to the provider and the
-state backend, not to the forge. `app-plan.yml` is `contents: read`,
-`issues: write` for the issue the plan is posted as, and `pull-requests:
-write`, which the `pull_request` trigger grants for a comment on the
-triggering PR. chant posts no such comment today: `reconcilePr`'s modes are
-`report`, `issue` and `pull-request`, and the last regenerates chant
-TypeScript through `chant import`, which is not what a terraform plan wants
-to say. So the plan lands as an issue and that one grant goes unused, which
-is chant #2221's own note on the trigger pair.
+state backend, not to the forge. `app-plan.yml` is `contents: read` and
+`pull-requests: write`, which is the whole scope a comment on the triggering
+pull request costs. No `issues: write`, because nothing opens an issue, and no
+`contents: write`, because nothing pushes a branch. That set was unreachable
+from any finding mode before this one existed, which is chant #2221's own note
+on the trigger pair.
+
+Off GitHub the mode is refused rather than approximated: `reconcilePr` shells
+to `gh` against the GitHub API and reads the GitHub Actions event payload, and
+chant carries no GitLab or Forgejo client that would post the equivalent note.
+The gitlab and forgejo Op generators say so by name at build time.
 
 Only the human plan is ever posted, on either half. `terraform show -json`
 over a plan file carries resource attribute values, provider secrets among

@@ -81,7 +81,9 @@ There is no server to start and no worker to build. Once this works end-to-end, 
 
 Each `phase()` has a name and an ordered list of steps. All steps in a phase run sequentially by default. Set `parallel: true` to run them concurrently via `Promise.all`.
 
-A reconcile activity is also available via `activity("reconcilePr", args)`: given the change-set entries that triggered it, it regenerates TypeScript with `chant import --from <env>` and opens a reviewable PR (modes: `pull-request`, `issue`, `report`). It never commits to the main branch. It is the building block for the reconcile workflow (cloud -> code).
+A reconcile activity is also available via `activity("reconcilePr", args)`: given the change-set entries that triggered it, it regenerates TypeScript with `chant import --from <env>` and opens a reviewable PR (modes: `pull-request`, `issue`, `comment`, `report`). It never commits to the main branch. It is the building block for the reconcile workflow (cloud -> code).
+
+`comment` mode is the one that constrains its trigger. The body lands as a single comment on the pull request that triggered the run. Every re-run edits that same comment instead of adding another; the activity finds it again by a hidden marker written as the comment's first line. A branch pushed to five times then carries one current body instead of five stale ones. The pull request itself comes out of the run's own event payload (`GITHUB_EVENT_PATH`, with `GITHUB_REF` as the fallback). So the mode requires a `pull_request` trigger and fails by name on a run without one. Its generated workflow gets exactly `contents: read` and `pull-requests: write`.
 
 ## Gate steps
 
@@ -157,7 +159,7 @@ const { op } = ReconcileOp({
   env: "prod",
   schedule: "0 * * * *",       // hourly
   scope: { owned: true },
-  onDrift: "pull-request",      // or "issue" | "report"
+  onDrift: "pull-request",      // or "issue" | "comment" | "report"
 });
 
 export default op;        // discovered by `chant run prod-reconcile`
@@ -240,7 +242,18 @@ export const { op: scheduledOp } = WorkflowAuditOp({
 
 `schedule` above is data on the Op: `{ cron, overlap: "skip" }`, and nothing about it names a runtime. Three readers render it.
 
-`generateOpsPipeline` (`@intentius/chant/op`) validates that every named Op exists, then delegates to the target lexicon's `generateOpPipeline` (gitlab, github, forgejo), which synthesizes one cron-triggered CI file per Op — `chant run <name>` in the job, with only the token/permission scope its finding-mode needs (read-only for `report`; scoped write for `issue`/`pull-request`/`merge-request`). This is the Op counterpart to [generate mode](/chant/components/orchestration/#generate-mode)'s component pipeline.
+`generateOpsPipeline` (`@intentius/chant/op`) validates that every named Op exists, then delegates to the target lexicon's `generateOpPipeline` (gitlab, github, forgejo), which synthesizes one cron-triggered CI file per Op — `chant run <name>` in the job, with only the token/permission scope its finding-mode needs (read-only for `report`; scoped write for `issue`/`comment`/`pull-request`/`merge-request`). This is the Op counterpart to [generate mode](/chant/components/orchestration/#generate-mode)'s component pipeline.
+
+Finding-modes and the scopes they cost on GitHub:
+
+| Mode | Trigger it needs | `permissions:` |
+|---|---|---|
+| `report` | any | `contents: read` |
+| `issue` | any | `contents: read`, `issues: write` |
+| `comment` | `pull_request` | `contents: read`, `pull-requests: write` |
+| `pull-request` / `merge-request` | any | `contents: write`, `pull-requests: write` |
+
+Any non-`report` mode on a `pull_request` trigger also gets `pull-requests: write`, which is why `comment` costs nothing beyond what that trigger already grants. `comment` is the one mode that constrains the trigger as well as the scope: the github generator refuses it by name on a cron or push trigger, and the gitlab and forgejo generators refuse it outright, since the activity behind it shells to `gh` against the GitHub API and chant carries no client for the other two forges.
 
 [`chant operator`](/chant/guide/operator/) is the second. A timer and a ref lease around the local executor, ticking every discovered `ConvergeOp` from your own machine or from a CronJob.
 

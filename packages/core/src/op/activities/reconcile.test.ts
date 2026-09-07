@@ -1,5 +1,12 @@
-import { describe, test, expect } from "vitest";
-import { reconcilePr, reconcileSummary, reconcileBranchName, entriesFromPlan } from "./reconcile";
+import { describe, test, expect, vi } from "vitest";
+import {
+  reconcilePr,
+  reconcileSummary,
+  reconcileBranchName,
+  entriesFromPlan,
+  commentMarker,
+  pullRequestContextFrom,
+} from "./reconcile";
 
 const entries = [
   { name: "bucket", action: "adopt", type: "AWS::S3::Bucket" },
@@ -77,5 +84,78 @@ describe("reconcilePr pre-built body (#2087)", () => {
     const result = await reconcilePr({ env: "prod", mode: "report", entries, body: "drift" });
     expect(result.summary).toBe("drift");
     expect(result.entries).toEqual(entries);
+  });
+});
+
+describe("reconcilePr comment mode: the marker (#2231)", () => {
+  test("the marker is deterministic per env, so a re-run finds its own comment", () => {
+    expect(commentMarker("app")).toBe("<!-- chant-reconcile:app -->");
+    expect(commentMarker("app")).toBe(commentMarker("app"));
+    expect(commentMarker("app")).not.toBe(commentMarker("db"));
+  });
+
+  test("the marker slugifies the env, so nothing it is interpolated next to can be escaped out of", () => {
+    // The marker is interpolated into a jq `startswith("…")` string and into a
+    // shell word. A quote or a backslash surviving into it would break both.
+    const marker = commentMarker('us-east/1" or true; #');
+    expect(marker).toBe("<!-- chant-reconcile:us-east-1-or-true- -->");
+    expect(marker).not.toMatch(/["'\\]/);
+  });
+});
+
+describe("pullRequestContextFrom (#2231)", () => {
+  const repo = "INTENTIUS/chant";
+
+  test("reads the number off a pull_request event payload", () => {
+    expect(pullRequestContextFrom({ GITHUB_REPOSITORY: repo }, { number: 2231 })).toEqual({
+      repo,
+      number: 2231,
+    });
+  });
+
+  test("accepts the nested pull_request.number the same payload also carries", () => {
+    expect(
+      pullRequestContextFrom({ GITHUB_REPOSITORY: repo }, { pull_request: { number: 7 } }),
+    ).toEqual({ repo, number: 7 });
+  });
+
+  test("falls back to GITHUB_REF when the payload is unreadable", () => {
+    expect(
+      pullRequestContextFrom({ GITHUB_REPOSITORY: repo, GITHUB_REF: "refs/pull/42/merge" }),
+    ).toEqual({ repo, number: 42 });
+  });
+
+  test("a push run has no pull request", () => {
+    expect(
+      pullRequestContextFrom(
+        { GITHUB_REPOSITORY: repo, GITHUB_REF: "refs/heads/main" },
+        { ref: "refs/heads/main", after: "abc" },
+      ),
+    ).toBeUndefined();
+  });
+
+  test("a cron run off any forge has neither variable", () => {
+    expect(pullRequestContextFrom({})).toBeUndefined();
+    expect(pullRequestContextFrom({ GITHUB_REF: "refs/pull/1/merge" })).toBeUndefined();
+  });
+});
+
+describe("reconcilePr comment mode refuses a run with no pull request (#2231)", () => {
+  test("the message names the mode and every variable it looked for", async () => {
+    vi.stubEnv("GITHUB_REPOSITORY", "");
+    vi.stubEnv("GITHUB_REF", "");
+    vi.stubEnv("GITHUB_EVENT_PATH", "");
+    try {
+      // No `gh` is ever reached: the context check runs first, so a failure
+      // here is the refusal rather than a missing binary.
+      await expect(reconcilePr({ env: "app", mode: "comment", body: "plan" })).rejects.toThrow(
+        /mode "comment".*GITHUB_REPOSITORY.*GITHUB_EVENT_PATH.*GITHUB_REF/s,
+      );
+      await expect(reconcilePr({ env: "app", mode: "comment", body: "plan" })).rejects.toThrow(
+        /findingMode "issue" or "report"/,
+      );
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });
