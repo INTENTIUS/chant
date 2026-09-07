@@ -127,6 +127,7 @@ best-known readers.
 | `referenceCatalog` | `ReferenceCatalog` | How observed resources reference each other, so `chant graph --live` can rebuild edges from a bag of nodes |
 | `enrichLiveAttrs()` | `Record<string, Record<string, unknown>>` | Extra node attributes when `describeResources` metadata is too thin to carry references |
 | `exportResources()` | `ExportedTemplate` | Full-fidelity config read from a live API — see [Implementing Live Export](/chant/lexicon-authoring/live-export/) |
+| `subscribeChanges()` | `ChangeSubscription` | Subscribe to the substrate's own change stream so `chant operator` can wake a tick early. `onChange` takes no arguments, so a notification can never become an observation; only implement it where the stream needs nothing deployed into the observed account — see the verdict table in the [operator guide](/chant/guide/operator/) |
 
 **Project surface**
 

@@ -193,6 +193,41 @@ The bracketed value is the tick's own id, so an outcome can be traced back to th
 
 This exists so a reader never has to reach past the CLI. `git show chant/lifecycle:<env>/converge.jsonl` works, and pins whoever does it to the orphan branch's name, the `<env>/converge.jsonl` and `_gates/<op>.jsonl` path conventions, and the record's on-disk encoding — none of which are promised contracts.
 
+## Change signals: a second wake source, never a second source of truth
+
+The loop above is time-triggered, so detection latency is bounded by `--interval`. A lexicon can shorten that by telling the operator when something moved, through the optional `subscribeChanges` seam on its plugin ([#1981](https://github.com/INTENTIUS/chant/issues/1981)). Today one lexicon implements it: [k8s](/chant/lexicons/k8s/), over the Kubernetes Watch API.
+
+Three rules keep it honest.
+
+**The signal is a trigger, and never a fact.** `onChange()` takes no arguments. There is no channel through which a watch event could reach a change set, a snapshot row or a diff line, because there is nowhere to put one. The round a signal wakes is the round the timer would have run: it re-observes and re-derives everything from the ordinary read path. Waking early changes *when* a tick runs, and nothing about what it concludes. A test in `packages/core/src/op/operator.test.ts` runs the same round on a timer and on a fabricated signal and asserts the two verdicts are identical.
+
+**A dropped subscription degrades to the timer and says so.** A watch that dies is reported as one line, and so is one that never opened. The loop keeps ticking on `--interval` either way, and the next round re-subscribes. Losing the stream slows detection back down. It never stops the loop, and it never reads as a clean estate.
+
+**The timer stays.** A signal shortens the sleep, it does not replace it, so a substrate that silently stops sending still converges on `--interval`.
+
+Signals are coalesced behind a floor of **5 seconds** (`DEFAULT_SIGNAL_FLOOR_MS`). A rollout or a controller resync produces hundreds of truthful "something moved" events in a second, and a tick per event would turn a convergence loop into a load generator pointed at the cluster it is watching. So a pending signal wakes the sleep no earlier than 5 seconds after the *last round started*: a storm inside one window costs exactly one early round, and a substrate that never stops sending settles into ticking on the floor rather than on the interval. Measured from the round rather than from the last signal on purpose, which makes it a rate limit instead of a debounce: a debounce starves, and the busier the cluster the later the tick would land.
+
+Subscriptions need an environment, since they resolve the same binding a live read does, so `chant operator --env <env>` is what turns them on. Every subscription is closed and its abort signal fired when the operator stops.
+
+### Which substrates have a change stream worth using
+
+The question is not whether a substrate can notify. It is whether its notification primitive is complete and trustworthy enough to *shorten* a scheduled watch without anything being deployed into the estate being observed. One family passes.
+
+| Lexicon | Native primitive | Usable as a signal | Cost |
+|---|---|---|---|
+| k8s | Watch API on any resource, `resourceVersion`-based, bookmarks | Yes, for every declared kind | One long-lived connection per watched kind and namespace. Re-list on `410 Gone` |
+| k3d, k3s | The same API server | Yes, through k8s | Same |
+| helm | None of its own. A release is a Secret in the cluster | Indirectly, through the k8s watch | Same |
+| docker | `docker events` on the local daemon | Yes, for the local daemon. Not implemented | A child process holding a stream |
+| aws | EventBridge, CloudTrail, Config configuration items | No | Requires a rule, a target and a delivery path deployed into the observed account, plus a receiver. A read-only watch stops being read-only. CloudTrail coverage is per-service and delivery is minutes-delayed |
+| gcp | Cloud Asset Inventory feeds to Pub/Sub | No | The same shape, a feed and a topic in the observed project, plus a subscriber |
+| azure | Event Grid system topics, Activity Log | No | The same shape again, and system-topic coverage varies by resource provider |
+| github, gitlab, forgejo | Webhooks | No | Complete for repo and org events, but needs an ingress endpoint reachable from the forge. chant runs no such receiver and should not |
+| fly | The Machines API exposes no change stream | No | |
+| temporal, cedar, fountain | No change feed on the surfaces chant reads | No | |
+
+Every cloud substrate fails on the same point. Subscribing means writing infrastructure into the account being observed, which inverts the property that makes a watch safe to point at production. So their absence from the table's second column is a position, not a gap waiting to be filled: on aws, gcp and azure the operator's timer is the detection mechanism, and `--interval` is the latency.
+
 ## Local-only durability
 
 `chant operator`'s daemon lives entirely on your machine and your project's git remote — there is no server component and no new database. Hosting the same cadence on a machine that is not yours is what a [fountain steward](/chant/lexicons/fountain/steward/) is for, and OperatorStack (the in-cluster estate runtime, tracked separately) is deliberately out of scope here. If your project has no configured remote, say so loudly to yourself: the lease and the ledger are then local-only, and a second machine running `chant operator` against the "same" environment has no way to see the first one's lease at all.
@@ -202,4 +237,5 @@ This exists so a reader never has to reach past the CLI. `git show chant/lifecyc
 - [Converging Lifecycle](/chant/guide/converging-lifecycle/) — defining a `ConvergeOp`'s rule table
 - [Ops as teammates](/chant/concepts/durable-workflows/) — the general shape this page sharpens for the converge case
 - [`chant operator` CLI reference](/chant/cli/operator/) — flags and subcommands
+- [Lexicon authoring overview](/chant/lexicon-authoring/overview/), where `subscribeChanges` sits among the optional plugin members
 - [Reconciling Lifecycle](/chant/guide/reconciling-lifecycle/) — the PR-as-gate pattern `chant approve` mirrors
