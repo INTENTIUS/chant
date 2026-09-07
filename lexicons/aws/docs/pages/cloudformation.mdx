@@ -38,6 +38,33 @@ Common resources get fixed short names for stability. When two services define t
 
 **Discovering available resources:** Your editor's autocomplete is the best tool — every resource is a named export from the lexicon. You can also run `chant list` to see all resource types, or browse the generated TypeScript types.
 
+## Allowed values in generated types
+
+Where the CloudFormation Registry schema declares `AllowedValues` for a property, the generated declaration is a union of literals rather than a bare `string` or `number`:
+
+```ts
+new LogGroup({ RetentionInDays: 45 });
+// Type '45' is not assignable to type '1 | 1096 | 120 | 14 | 150 | 180 | 1827 | ... | 90'
+```
+
+The value of that is the error text. It lists the whole valid set, so the compiler answers the question instead of sending you to the console.
+
+The Registry schema is silent on many properties that people write constantly, and it is inconsistent about which: `AWS::SageMaker::NotebookInstance.InstanceType` carried a union while `AWS::EC2::Instance.InstanceType` was a bare `string`. Two sources close that gap at generation time, both of them applied before anything is parsed, and neither of them reachable from `chant build`:
+
+1. **cfn-lint patches.** `src/codegen/patches.ts` fetches the cfn-lint patch set and applies `manual.json`, `smithy.json` and `format.json` to each raw schema. Most of the unions you see beyond the bare Registry come from here.
+2. **A curated enum overlay.** `src/codegen/enum-overlay.json` is a checked-in list of `(CloudFormation type, JSON pointer, values)` entries, applied by `src/codegen/enum-overlay.ts`. The first set covers the properties written most often across this repo's examples, docs and composites: Lambda `Runtime`, EC2 `InstanceType`, `Tenancy` and `VolumeType`, ELBv2 `Protocol`, `TargetType` and `Scheme`, SNS `Protocol`, the five DynamoDB table enums, RDS `Engine`, and Application Auto Scaling `ServiceNamespace` and `ScalableDimension`.
+
+An overlay entry mints a named type beside the narrowed property, the same way a `$ref` to an enum definition in the Registry schema does. `AWS::Lambda::Function.Runtime` becomes `Runtime?: Function_Runtime`, and `Function_Runtime` is exported from the lexicon's `types` entry point, so a composite can name the union instead of restating its values.
+
+Two rules govern the overlay:
+
+- The spec wins. An entry whose property already declares `enum`, from the Registry or from a cfn-lint patch, leaves the spec alone and reports itself as redundant so it can be retired. Upstream is refreshed on every `generate` and is the source that keeps tracking AWS.
+- An entry that matches nothing is an error. A renamed or removed property fails the generate rather than silently applying curated values to a property that no longer exists.
+
+Each entry records where its values came from, either a botocore service model or an AWS documentation page, and the date they were read. `just refresh-enum-overlay` diffs the botocore-sourced entries against botocore's current `develop` and prints the documentation-sourced ones for a human to re-read. It reaches the network, so it is a manual command and no build step calls it.
+
+Narrowing a property is a breaking change for anyone passing a value the union omits, even though every such value was already rejected at deploy. Overlay changes therefore ship with a release of the lexicon, and the release notes name what newly fails to compile.
+
 ## Imports and cross-file references
 
 Chant projects use standard TypeScript imports. Lexicon types come from the lexicon package, and cross-file references are standard imports:
