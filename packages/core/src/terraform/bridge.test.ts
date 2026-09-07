@@ -1,7 +1,8 @@
 import { describe, test, expect } from "vitest";
 import { buildFixtureGraph } from "./__fixtures__/build-graph";
 import { boundaryReport } from "./carve";
-import { generateBridge, type CarvedIdentity } from "./bridge";
+import { generateBridge, type CarvedDataSource } from "./bridge";
+import { dataSourceShapeOf } from "./tier-map";
 import type { Hcl2JsonTree } from "./types";
 
 const workedExample: Hcl2JsonTree = {
@@ -35,8 +36,10 @@ const API_TF = `resource "aws_lambda_function" "api" {
 }
 `;
 
-const identities = new Map<string, CarvedIdentity>([
-  ["aws_s3_bucket.assets", { attr: "bucket", value: "myapp-assets-prod" }],
+// The read-back for the bucket: the shape its identity attribute implies, plus
+// the literal the graph resolved out of the block.
+const identities = new Map<string, CarvedDataSource>([
+  ["aws_s3_bucket.assets", { shape: dataSourceShapeOf("aws_s3_bucket"), values: { bucket: "myapp-assets-prod" } }],
 ]);
 
 describe("generateBridge — inbound (data-source rewrite)", () => {
@@ -51,15 +54,25 @@ describe("generateBridge — inbound (data-source rewrite)", () => {
     );
   });
 
-  test("never renders a dotted identity attribute into the data body (#2015)", () => {
+  test("a type with no shape gets a TODO body, never a dotted attr assignment (#2015)", () => {
     const report = boundaryReport(buildFixtureGraph(workedExample), "aws_s3_bucket.assets")!;
-    const dotted = new Map<string, CarvedIdentity>([
-      ["aws_s3_bucket.assets", { attr: "manifest.metadata.name", value: "demo-config" }],
-    ]);
-    const plan = generateBridge(report, [{ path: "api.tf", content: API_TF }], dotted);
+    // A dotted identity attribute implies no shape at all — `canBridge` refuses
+    // such a type before the bridge runs — but an empty read-back still has to
+    // produce a block Terraform can parse, not `manifest.metadata.name = "x"`.
+    const noShape = new Map<string, CarvedDataSource>([["aws_s3_bucket.assets", {}]]);
+    const plan = generateBridge(report, [{ path: "api.tf", content: API_TF }], noShape);
 
-    // `manifest.metadata.name = "demo-config"` is not valid HCL.
     expect(plan.dataSources[0].hcl).not.toContain("manifest.metadata.name =");
+    expect(plan.dataSources[0].hcl).toContain("# TODO: identify the resource");
+  });
+
+  test("a shape whose required argument has no literal falls back to the TODO (#2034)", () => {
+    const report = boundaryReport(buildFixtureGraph(workedExample), "aws_s3_bucket.assets")!;
+    const unresolved = new Map<string, CarvedDataSource>([
+      ["aws_s3_bucket.assets", { shape: dataSourceShapeOf("aws_s3_bucket"), values: {} }],
+    ]);
+    const plan = generateBridge(report, [{ path: "api.tf", content: API_TF }], unresolved);
+    // A `data "aws_s3_bucket" "assets" {}` with no `bucket` would not plan.
     expect(plan.dataSources[0].hcl).toContain("# TODO: identify the resource");
   });
 

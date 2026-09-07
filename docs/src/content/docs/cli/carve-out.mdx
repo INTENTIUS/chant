@@ -47,6 +47,22 @@ Generates the edits to the Terraform you leave behind so its plan stays valid on
 chant carve bridge --from ./infra --select aws_s3_bucket.assets
 ```
 
+The data source is usually the carved resource's own type with its identity attribute in the body. A carve provider can declare a different **shape** when the provider's read-back differs: the data-source type, where each argument comes from in the carved body, and the attribute path survivors read through. `kubernetes_manifest` is the case that needs it, since the kubernetes provider ships no manifest data source:
+
+```hcl
+data "kubernetes_resource" "app_config" {
+  api_version = "v1"
+  kind        = "ConfigMap"
+
+  metadata {
+    name      = "app-config"
+    namespace = "apps"
+  }
+}
+```
+
+Rewrites follow the shape, so `kubernetes_manifest.app_config.object.metadata.name` becomes `data.kubernetes_resource.app_config.object.metadata.name`, and a reference through the resource-only `manifest` attribute lands on `object`. A type with a dotted identity attribute and no shape is refused, with the message naming what is missing.
+
 Safe by default: it writes the proposed data sources, rewritten survivor files, and a runbook to an output directory for review. `--apply-rewrites` edits the survivor `.tf` in place. The rewrite is idempotent, and it excises the carved resource's own declaration (and any folded sub-resources) from the survivor source — without that, the next `terraform apply` would re-create what `terraform state rm` released.
 
 ### 3. `carve apply` — graduate
@@ -96,7 +112,7 @@ At every step before 5, rollback is `terraform import aws_s3_bucket.assets <id>`
 
 ## Scope
 
-These are the emit, boundary-bridging, and apply-graduation phases of the strangler-fig design (#197), built on the read-only advisor (#214). Emit targets a Declarable (a single native resource); a whole service with a deploy pipeline is a Component, not a leaf carve. Removing the carved resource's own block from the `.tf` is part of the bridge patch, not a manual runbook step. Emit adopts the AWS types the carve table lists plus `kubernetes_manifest`, whose kind is read out of the manifest body in state so one rule covers every CRD. The typed `kubernetes_*` resources and the google types the advisor ranks are refused by emit, and every kubernetes type is refused by bridge until it has a data-source mapping (#2034).
+These are the emit, boundary-bridging, and apply-graduation phases of the strangler-fig design (#197), built on the read-only advisor (#214). Emit targets a Declarable (a single native resource); a whole service with a deploy pipeline is a Component, not a leaf carve. Removing the carved resource's own block from the `.tf` is part of the bridge patch, not a manual runbook step. Emit adopts the AWS types the carve table lists plus `kubernetes_manifest`, whose kind is read out of the manifest body in state so one rule covers every CRD. The typed `kubernetes_*` resources and the google types the advisor ranks are refused by emit. Bridge refuses only a type whose identity attribute is a path into nested values and whose carve provider declares no data-source shape; `kubernetes_manifest` declares one (#2034), so it bridges.
 
 :::caution
 `carve bridge --apply-rewrites` edits your Terraform in place, and `terraform state rm` / `terraform apply` change what Terraform manages. Review the generated proposals and the runbook before running them. The carve is reversible via `terraform import` up until apply graduation.

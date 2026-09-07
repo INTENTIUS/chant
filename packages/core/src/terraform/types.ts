@@ -34,6 +34,14 @@ export interface TfNode {
    * emit. Undefined when the identity attribute is absent or interpolated.
    */
   identity?: string;
+  /**
+   * The literals the type's data-source shape reads out of the block (#2034),
+   * keyed by the shape field's source path (`manifest.metadata.name`). This is
+   * what `carve bridge` renders the `data` body from — a superset of
+   * `identity`, since a shape can need more than one value (`api_version`,
+   * `kind` and `metadata.name` for a `kubernetes_manifest`).
+   */
+  dataSourceValues?: Record<string, string>;
 }
 
 /**
