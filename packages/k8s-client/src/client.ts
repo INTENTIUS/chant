@@ -48,6 +48,7 @@ import { asFieldManagerConflict } from "./conflict";
 import { assertValidFieldManager, CHANT_FIELD_MANAGER } from "./field-manager";
 import { DEFAULT_CONCURRENCY, mapConcurrent } from "./concurrency";
 import { loadKubeConfig } from "./kubeconfig";
+import { isExpiredFrame, parseWatchFrames, resourceVersionOf, streamLines, type WatchFrame } from "./watch";
 import type {
   ApiResourceInfo,
   ClientProvenance,
@@ -224,6 +225,57 @@ export interface ReadLogOptions {
   signal?: AbortSignal;
 }
 
+/**
+ * Options for {@link K8sClient.watch} (chant #1981).
+ *
+ * A watch is a trigger channel, so the interesting options are the ones that
+ * bound it — a namespace, a label selector — rather than anything about what
+ * comes back.
+ */
+export interface WatchOptions {
+  /** Restrict to one namespace. Omitted watches across all of them. */
+  namespace?: string;
+  /** A label selector, e.g. `app.kubernetes.io/managed-by=chant`. */
+  labelSelector?: string;
+  /**
+   * Called once per event frame, with the frame the server sent.
+   *
+   * The frame is passed through verbatim rather than interpreted, because this
+   * package has no opinion about what a change means. Chant's own consumer
+   * (the k8s lexicon's `subscribeChanges`) ignores it entirely and calls a
+   * no-argument `onChange`, which is the rule that keeps a watch event from
+   * ever becoming an observation.
+   */
+  onEvent?(frame: WatchFrame): void;
+  /**
+   * The watch ended for a reason that is not "you closed it". Called at most
+   * once, and the watch is over when it is: re-establishing is the caller's
+   * decision, made with the caller's own backoff.
+   */
+  onError?(message: string): void;
+  /** Aborts the watch, exactly as {@link WatchHandle.close} does. */
+  signal?: AbortSignal;
+  /**
+   * How long to wait before reopening a stream the server closed cleanly.
+   * The API server ends a watch connection every few minutes by design, which
+   * is a reconnect rather than a failure. @default 1000
+   */
+  reopenDelayMs?: number;
+}
+
+/** A live watch. Returned by {@link K8sClient.watch}. */
+export interface WatchHandle {
+  /**
+   * Stop the watch and release its connection. Idempotent, and safe to call
+   * after the watch has already ended on its own. Resolves once the reader
+   * has actually unwound, so a caller that closes and then asserts on request
+   * counts is not racing the stream.
+   */
+  close(): Promise<void>;
+  /** Resolves when the watch is over, however it ended. Never rejects. */
+  readonly done: Promise<void>;
+}
+
 /** The client surface the k8s lexicon consumes. */
 export interface K8sClient {
   /** Where this client is pointed and what authorized it. */
@@ -254,6 +306,19 @@ export interface K8sClient {
   readIfPresent(ref: ObjectRef, options?: ReadOptions): Promise<K8sObject | undefined>;
   /** LIST a kind, optionally namespaced and label-filtered. Follows `continue` tokens. */
   list(selector: ResourceSelector, options?: ListOptions): Promise<K8sObject[]>;
+  /**
+   * WATCH a kind: a long-lived `GET ...?watch=1&resourceVersion=<rv>` whose
+   * NDJSON frames arrive at `options.onEvent` until somebody closes it (chant
+   * #1981).
+   *
+   * The `resourceVersion` comes from a LIST issued first, which is the only
+   * way to start a watch without a gap. A `410 Gone` — the server saying that
+   * version has aged out of its change history — re-LISTs and resumes from the
+   * new version rather than retrying the stale one; a stream the server closes
+   * cleanly is reopened from the last version seen. Anything else ends the
+   * watch through `options.onError`.
+   */
+  watch(selector: ResourceSelector, options?: WatchOptions): Promise<WatchHandle>;
   /**
    * GET a Pod's `/log` subresource — plain text, not JSON, which is why this
    * is its own method rather than a `read` variant. A snapshot only: the
@@ -706,6 +771,172 @@ export async function createK8sClient(options: K8sClientOptions = {}): Promise<K
     return items;
   }
 
+  /**
+   * Open the watch stream itself: the same request-building, auth and
+   * transport path every other call takes, stopping short of reading the body
+   * to completion. `send` cannot be reused because its last act is
+   * `body.text()`, which for a watch is a promise that resolves when the
+   * cluster hangs up.
+   */
+  async function openStream(
+    path: string,
+    query: Record<string, string>,
+    signal: AbortSignal,
+    target: string,
+  ): Promise<{ status: number; lines: AsyncIterable<string> }> {
+    const ctx = configuration.baseServer.makeRequestContext(path, "GET" as k8s.HttpMethod);
+    ctx.setHeaderParam("Accept", "application/json");
+    for (const [key, value] of Object.entries(query)) ctx.setQueryParam(key, value);
+    ctx.setSignal(signal);
+    await kc.applySecurityAuthentication(ctx);
+
+    let response: ResponseContextLike;
+    try {
+      response = (await configuration.httpApi.send(ctx).toPromise()) as unknown as ResponseContextLike;
+    } catch (err) {
+      throw noted(
+        new K8sTransportError(err instanceof Error ? err.message : String(err), target, { cause: err }),
+      );
+    }
+
+    if (response.httpStatusCode < 200 || response.httpStatusCode > 299) {
+      throw noted(K8sApiError.fromResponse(response.httpStatusCode, await response.body.text(), target));
+    }
+
+    // A transport with no streaming seam answered the whole body at once —
+    // which a fake NDJSON fixture does, and a live watch never can.
+    const raw = response.body.stream?.();
+    if (raw === undefined || raw === null) {
+      const text = await response.body.text();
+      return { status: response.httpStatusCode, lines: (async function* () { yield* text.split("\n"); })() };
+    }
+    return { status: response.httpStatusCode, lines: streamLines(raw) };
+  }
+
+  async function watch(selector: ResourceSelector, opts: WatchOptions = {}): Promise<WatchHandle> {
+    const info = await resolveOrThrow(selector, opts.signal);
+    const target = `watch ${selectorText(selector)}`;
+    const reopenDelayMs = opts.reopenDelayMs ?? 1_000;
+    // Own controller so `close()` works whether or not the caller passed a
+    // signal, and so aborting the watch never touches the caller's.
+    const controller = new AbortController();
+    const stopOnCallerAbort = () => controller.abort();
+    if (opts.signal) {
+      if (opts.signal.aborted) controller.abort();
+      else opts.signal.addEventListener("abort", stopOnCallerAbort, { once: true });
+    }
+
+    const listPath = opts.namespace
+      ? objectPath(info, undefined, opts.namespace)
+      : `${apiVersionPath(info.apiVersion)}/${info.name}`;
+    const listQuery: Record<string, string> = {};
+    if (opts.labelSelector) listQuery.labelSelector = opts.labelSelector;
+
+    /** The list's own `resourceVersion` — where a watch with no gap starts. */
+    async function listResourceVersion(): Promise<string | undefined> {
+      const page = await sendJson<{ metadata?: { resourceVersion?: string } }>(listPath, "GET", {
+        signal: controller.signal,
+        // `limit=1` because nothing here wants the objects: the list exists
+        // for the `resourceVersion` in its metadata, which every page carries.
+        query: { ...listQuery, limit: "1" },
+        target: `${target} (initial list)`,
+      });
+      return page.metadata?.resourceVersion;
+    }
+
+    let ended = false;
+    const end = (message?: string) => {
+      if (ended) return;
+      ended = true;
+      if (message !== undefined) opts.onError?.(message);
+    };
+
+    const done = (async () => {
+      try {
+        let resourceVersion = await listResourceVersion();
+        while (!controller.signal.aborted) {
+          const query: Record<string, string> = {
+            ...listQuery,
+            watch: "1",
+            // Bookmarks are how a quiet watch keeps its resourceVersion fresh
+            // without any object changing, which is what keeps a reconnect
+            // from re-listing. A cluster that does not support them ignores it.
+            allowWatchBookmarks: "true",
+          };
+          if (resourceVersion) query.resourceVersion = resourceVersion;
+
+          const { lines } = await openStream(listPath, query, controller.signal, target);
+          let expired = false;
+          // Read the stream one line at a time, racing each read against the
+          // abort. `for await` would not do: a watch that is quiet is parked
+          // inside `next()` with nothing to wake it, so a `close()` that
+          // waited for the loop to notice would wait for the next event on a
+          // cluster that may never send one.
+          const iterator = lines[Symbol.asyncIterator]();
+          const stopped = new Promise<{ done: true; value: undefined }>((resolve) => {
+            const finish = () => resolve({ done: true, value: undefined });
+            if (controller.signal.aborted) finish();
+            else controller.signal.addEventListener("abort", finish, { once: true });
+          });
+          for (;;) {
+            const next = await Promise.race([iterator.next(), stopped]);
+            if (next.done || controller.signal.aborted) break;
+            // `lines` already yields whole lines, so every call here consumes
+            // its input completely and the carry comes back empty.
+            const { frames } = parseWatchFrames(`${next.value}\n`);
+            for (const frame of frames) {
+              if (isExpiredFrame(frame)) {
+                // The one failure a watch is expected to hit. Re-list, never
+                // retry the stale version — see ./watch.ts.
+                expired = true;
+                break;
+              }
+              const rv = resourceVersionOf(frame);
+              if (rv) resourceVersion = rv;
+              if (frame.type !== "ERROR") opts.onEvent?.(frame);
+            }
+            if (expired) break;
+          }
+          // Not awaited: a generator parked on a read that will never complete
+          // would make this the very wait the race above exists to avoid. The
+          // underlying connection is closed by the abort, not by this.
+          void iterator.return?.(undefined)?.catch?.(() => {});
+          if (controller.signal.aborted) break;
+
+          if (expired) {
+            resourceVersion = await listResourceVersion();
+            continue;
+          }
+          // The server closed the stream cleanly, which it does every few
+          // minutes by design. Reopen from where we left off, after a real
+          // timer even at zero delay: a server that closes instantly would
+          // otherwise spin this loop through microtasks alone and starve
+          // every timer in the process, the abort's included.
+          await new Promise((resolve) => {
+            const timer = setTimeout(resolve, reopenDelayMs);
+            controller.signal.addEventListener("abort", () => { clearTimeout(timer); resolve(undefined); }, { once: true });
+          });
+        }
+        end();
+      } catch (err) {
+        // An aborted watch is a closed watch, never a failure to report.
+        if (controller.signal.aborted) return end();
+        end(err instanceof Error ? err.message : String(err));
+      } finally {
+        opts.signal?.removeEventListener("abort", stopOnCallerAbort);
+      }
+    })();
+
+    return {
+      done,
+      async close() {
+        controller.abort();
+        ended = true;
+        await done;
+      },
+    };
+  }
+
   async function apply(object: K8sObject, opts: ApplyOptions = {}): Promise<K8sObject> {
     const apiVersion = object.apiVersion;
     const kind = object.kind;
@@ -837,6 +1068,7 @@ export async function createK8sClient(options: K8sClientOptions = {}): Promise<K
     readIfPresent,
     list,
     readLog,
+    watch,
     apply,
     delete: remove,
     concurrently: (items, fn) => mapConcurrent(items, fn, concurrency),

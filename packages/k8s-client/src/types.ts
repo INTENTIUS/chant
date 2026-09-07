@@ -182,5 +182,25 @@ export interface RequestContextLike {
 export interface ResponseContextLike {
   httpStatusCode: number;
   headers: Record<string, string>;
-  body: { text(): Promise<string> };
+  body: {
+    text(): Promise<string>;
+    /**
+     * The body as it arrives, rather than once it is complete (chant #1981).
+     *
+     * `text()` reads a response to completion, which is the right shape for
+     * every request this client makes except one: a watch never completes, so
+     * a watch read through `text()` is a promise that resolves when the
+     * cluster hangs up and never before. client-node's own HTTP library
+     * already exposes `stream()` (its `undici` `fetch` response's web
+     * `ReadableStream`), so the seam widens rather than being invented.
+     *
+     * Typed `unknown` for the same reason the rest of this file avoids the
+     * library's classes — the decoder (`./watch.ts`'s `streamLines`) accepts a
+     * web `ReadableStream`, a Node `Readable`, or any async iterable. Optional
+     * because a transport without it is still a valid transport: the watch
+     * falls back to `text()`, which is exactly what a fake returning a
+     * complete NDJSON body wants.
+     */
+    stream?(): unknown;
+  };
 }
