@@ -433,6 +433,13 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     why: "The aws spec fetch follows redirects itself rather than going through the shared cache helper; run by `chant dev generate`, never by a build.",
   },
   {
+    file: "lexicons/aws/scripts/refresh-enum-overlay.ts",
+    primitives: ["fetch"],
+    phase: "codegen",
+    destination: "`raw.githubusercontent.com`, for the botocore service models the overlay's own entries name",
+    why: "Diffs the curated enum overlay (chant #1497) against the botocore shapes its values were read from, and with `--write` restamps them. A maintainer command, reached only by hand or by `just refresh-enum-overlay`; generate, bundle, validate, build and the test suite all read the committed `src/codegen/enum-overlay.json` and reach nothing.",
+  },
+  {
     file: "lexicons/cpln/src/spec/snapshot-cli.ts",
     primitives: ["fetch"],
     phase: "codegen",
