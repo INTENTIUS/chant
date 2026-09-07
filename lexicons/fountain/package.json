@@ -1,8 +1,8 @@
 {
   "name": "@intentius/chant-lexicon-fountain",
-  "version": "0.57.0",
+  "version": "0.58.0",
   "type": "module",
-  "description": "Fountain lexicon for chant \u2014 sandboxed agent environments, vaults, and agents as typed estate",
+  "description": "Fountain lexicon for chant — sandboxed agent environments, vaults, and agents as typed estate",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -50,7 +50,7 @@
     "bundle": "tsx src/package-cli.ts"
   },
   "peerDependencies": {
-    "@intentius/chant": "^0.57.0",
+    "@intentius/chant": "^0.58.0",
     "typescript": "^5.9.3",
     "zod": "^4.3.6"
   },
