@@ -46,7 +46,9 @@
  *
  * So `choudoufuLivePlan` cannot produce a ledger for a provider-assigned
  * identity on any binary that exists today, and this suite is what would
- * prove it can. The measurements are on chant #2168.
+ * prove it can. Filed upstream as
+ * [choudoufu #962](https://github.com/INTENTIUS/choudoufu/issues/962); the
+ * measurements are there and on chant #2168.
  *
  * The gate below names that, alongside the three ordinary dependencies: a
  * `choudoufu`, an `aws` CLI, and the emulator's endpoint.
@@ -79,9 +81,11 @@ function onPath(cmd: string): boolean {
 /**
  * `true` while `live-plan -json`'s document carries no adoptable-by-content
  * section, so a provider-assigned identity like an `aws_vpc` never reaches
- * `readAdoptionLedger`. Measured against the v0.14.0 release binary on
- * 2026-09-07 and written up on chant #2168; flip to `false` when a choudoufu
- * release puts the content matcher's "Adoptable" rows in the document.
+ * `readAdoptionLedger`. Filed upstream as
+ * [choudoufu #962](https://github.com/INTENTIUS/choudoufu/issues/962), with
+ * the measurements against the v0.14.0 release binary on 2026-09-07; flip to
+ * `false` when a choudoufu release puts the content matcher's "Adoptable"
+ * rows in the document, either in `unowned[]` or in a sibling array.
  * choudoufu #894, which gated this block before, is fixed and gone.
  */
 const CHOUDOUFU_ADOPTABLE_NOT_IN_DOCUMENT = true;
@@ -95,8 +99,9 @@ const skipReason = !onPath("choudoufu")
     : !emulatorEndpoint
       ? "CHOUDOUFU_EMULATOR_ENDPOINT is not set (bring up choudoufu's `just smoke` emulator stack and export it)"
       : CHOUDOUFU_ADOPTABLE_NOT_IN_DOCUMENT
-        ? "live-plan -json's document carries no adoptable-by-content section, so the fixture's unmarked " +
-          "aws_vpc reaches omissions[NEEDS_DISCOVERY] and never unowned[]; measured on choudoufu v0.14.0, chant #2168"
+        ? "choudoufu#962: live-plan -json's document carries no adoptable-by-content section, so the " +
+          "fixture's unmarked aws_vpc reaches omissions[NEEDS_DISCOVERY] and never unowned[]; " +
+          "measured on choudoufu v0.14.0"
         : "";
 
 const FIXTURE = join(import.meta.dirname, "..", "__fixtures__", "live-adopt");

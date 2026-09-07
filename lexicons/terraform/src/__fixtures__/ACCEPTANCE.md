@@ -121,7 +121,8 @@ estate to own the same VPC with nothing left adoptable.
 Gated on a `choudoufu` on PATH, on an `aws` CLI on PATH (the unmarked
 resource is created and adopted through it), on
 `CHOUDOUFU_EMULATOR_ENDPOINT`, and then on
-`CHOUDOUFU_ADOPTABLE_NOT_IN_DOCUMENT`, which replaced the #894 gate.
+`CHOUDOUFU_ADOPTABLE_NOT_IN_DOCUMENT`, which replaced the #894 gate and names
+choudoufu #962.
 
 ```
 npx vitest run lexicons/terraform/src/composites/terraform-adopt-op.acceptance.test.ts
@@ -149,7 +150,9 @@ human render's "Adoptable" section, for which `views.LivePlanDocument` has no
 field. `-adoption-only` is refused alongside `-json`, and
 `TOFU_LIVE_COLLECT_UNCLAIMED=1` on the `-json` run leaves `"unowned": []`
 while the text run beside it prints `Adoptable: 1 live resource matches a
-declared resource`. The full measurement is on chant #2168.
+declared resource`. Filed upstream as choudoufu #962
+(https://github.com/INTENTIUS/choudoufu/issues/962), which carries the full
+measurement; chant #2168 has the same.
 
 The fixture was deliberately left as an `aws_vpc`. A log group would make the
 block pass and would stop it proving the content-matcher path, which is the
