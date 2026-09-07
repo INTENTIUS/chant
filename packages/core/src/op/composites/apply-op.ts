@@ -70,8 +70,8 @@ export interface ApplyOpConfig {
   /**
    * Approval gate before the apply. Implied when `delete: "gated"`; may also be
    * set explicitly. Omit `signalName` to default to `approve-<name>`. The gate
-   * is resolved by `chant approve` on the ledger (#2119), not by a signal to a
-   * running workflow.
+   * is resolved by `chant approve` on the ledger (#2119), which the next run
+   * reads; nothing waits in the meantime.
    */
   gate?: { signalName?: string; timeout?: string; description?: string };
   /**
@@ -104,7 +104,7 @@ export interface ApplyOpConfig {
 }
 
 export interface ApplyOpResources {
-  /** Op resource — generates the build→plan→[approve]→apply workflow. */
+  /** Op resource — the build→plan→[approve]→apply Op. */
   op: InstanceType<typeof OpResource>;
 }
 

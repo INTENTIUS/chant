@@ -14,7 +14,6 @@ import {
   compareCapabilityProfile,
   probeClusterCapabilities,
 } from "./cluster-probe";
-import { safeHeartbeat } from "@intentius/chant/op";
 import {
   maybeRecordAutoRelease,
   type AutoReleaseResult,
@@ -431,17 +430,9 @@ export async function helmInstall(
   if (args.values) parts.push("-f", args.values);
   for (const [k, v] of Object.entries(args.set ?? {})) parts.push("--set", `${k}=${v}`);
 
-  const heartbeatInterval = setInterval(() => {
-    safeHeartbeat({ step: "helm install", release: args.name });
-  }, 15_000);
-
-  try {
-    const { stdout, stderr } = await execAsync(parts.join(" "), { signal });
-    if (stdout) console.log(stdout);
-    if (stderr) console.error(stderr);
-  } finally {
-    clearInterval(heartbeatInterval);
-  }
+  const { stdout, stderr } = await execAsync(parts.join(" "), { signal });
+  if (stdout) console.log(stdout);
+  if (stderr) console.error(stderr);
 
   const profileOverride =
     profileAssertion && !profileAssertion.matched ? profileAssertion.divergences.join("; ") : undefined;
@@ -562,9 +553,6 @@ async function pinnedHelmInstall(
   }
 
   const wrapperDir = mkdtempSync(join(tmpdir(), "chant-helm-pinned-"));
-  const heartbeatInterval = setInterval(() => {
-    safeHeartbeat({ step: "helm install (pinned)", release: args.name });
-  }, 15_000);
   try {
     materializeWrapperChart(routed, wrapperDir);
     const parts = ["helm", "upgrade", "--install", "--wait", args.name, wrapperDir];
@@ -573,7 +561,6 @@ async function pinnedHelmInstall(
     if (stdout) console.log(stdout);
     if (stderr) console.error(stderr);
   } finally {
-    clearInterval(heartbeatInterval);
     rmSync(wrapperDir, { recursive: true, force: true });
   }
 

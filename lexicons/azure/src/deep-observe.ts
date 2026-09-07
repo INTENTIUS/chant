@@ -339,8 +339,7 @@ export interface AzureDeepObserveOptions {
  * show`. One call per entity, same as the thin path — ARM has no bulk
  * "describe everything in this group" call with per-resource depth the way
  * CloudFormation's `describe-stack-resources` does, so there is no cheap
- * list-then-describe split to make here the way AWS's or temporal's readers
- * do.
+ * list-then-describe split to make here the way AWS's own reader does.
  */
 export async function observeResourcesDeepAzure(
   options: AzureDeepObserveOptions,

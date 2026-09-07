@@ -4,9 +4,8 @@
  *
  * Shaped after `lexicons/k3s/src/op/activities/k3s.ts`: `promisify(exec)` with
  * the caller's `AbortSignal` forwarded so a local timeout or Ctrl-C kills the
- * child, `safeHeartbeat` on an interval around the long calls, and every
- * command and environment string produced by a pure exported function so a
- * test can assert on it without running terraform.
+ * child, and every command and environment string produced by a pure exported
+ * function so a test can assert on it without running terraform.
  *
  * Two invariants hold for every call:
  *
@@ -44,7 +43,6 @@ import { exec } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { promisify } from "node:util";
 import { resolve, dirname, join } from "node:path";
-import { safeHeartbeat } from "@intentius/chant/op";
 import { loadChantConfigUpward } from "@intentius/chant/config";
 import type { TerraformConfig, TerraformRootConfig } from "../../config";
 import { detectLiveEstate } from "./live-detect";
@@ -63,9 +61,6 @@ const execAsync = promisify(exec);
  * rather than a clear error.
  */
 const MAX_BUFFER = 64 * 1024 * 1024;
-
-/** Heartbeat cadence for the long calls, matching k3s's installer loop. */
-const HEARTBEAT_MS = 15_000;
 
 /** Plan file written into the root directory when a step names none. */
 export const DEFAULT_PLAN_FILE = "chant.tfplan";
@@ -375,7 +370,7 @@ export interface ChoudoufuAdoptResult {
   mechanism: "tag-write";
   /** The declared addresses whose live resources now carry this estate's markers. */
   adopted: string[];
-  /** `adopted.length`, as a scalar a search attribute can carry. */
+  /** `adopted.length`, as a scalar an outcome attribute can carry. */
   adoptedCount: number;
   /** Every candidate this run declined, contested addresses included, with the reason. */
   refused: AdoptionRefusal[];
@@ -733,16 +728,6 @@ async function run(
   return execAsync(cmd, { cwd: dir, env: { ...process.env, ...env }, signal, maxBuffer: MAX_BUFFER });
 }
 
-/** Run `body` with a heartbeat ticking, so a long terraform call is not read as a hung one. */
-async function withHeartbeat<T>(details: Record<string, unknown>, body: () => Promise<T>): Promise<T> {
-  const timer = setInterval(() => safeHeartbeat(details), HEARTBEAT_MS);
-  try {
-    return await body();
-  } finally {
-    clearInterval(timer);
-  }
-}
-
 function report(stdout: string, stderr: string): void {
   if (stdout) console.log(stdout);
   if (stderr) console.error(stderr);
@@ -767,9 +752,7 @@ export async function terraformInit(
     ...(args.reconfigure ? { reconfigure: true } : {}),
   });
 
-  const { stdout, stderr } = await withHeartbeat({ step: "terraform init", root: args.root, dir }, () =>
-    run(cmd, dir, terraformEnvironment(root), signal),
-  );
+  const { stdout, stderr } = await run(cmd, dir, terraformEnvironment(root), signal);
   report(stdout, stderr);
 
   return { dir, ...(root.workspace ? { workspace: root.workspace } : {}) };
@@ -802,26 +785,25 @@ export async function terraformPlan(
     ...(args.destroy ? { destroy: true } : {}),
   });
 
-  const changed = await withHeartbeat({ step: "terraform plan", root: args.root, dir }, async () => {
-    try {
-      const { stdout, stderr } = await run(cmd, dir, env, signal);
-      report(stdout, stderr);
-      return false;
-    } catch (err) {
-      // An abort or a spawn failure carries no numeric exit code. That is not
-      // terraform answering, so it propagates untouched.
-      const failure = err as ExecFailure;
-      if (typeof failure.code !== "number") throw err;
-      if (failure.code !== 2) {
-        const detail = (failure.stderr ?? "").trim() || (failure.stdout ?? "").trim();
-        throw new Error(
-          `${binary} plan failed in ${dir} (exit ${failure.code})${detail ? `\n${detail}` : ""}`,
-        );
-      }
-      report(failure.stdout ?? "", failure.stderr ?? "");
-      return true;
+  let changed: boolean;
+  try {
+    const { stdout, stderr } = await run(cmd, dir, env, signal);
+    report(stdout, stderr);
+    changed = false;
+  } catch (err) {
+    // An abort or a spawn failure carries no numeric exit code. That is not
+    // terraform answering, so it propagates untouched.
+    const failure = err as ExecFailure;
+    if (typeof failure.code !== "number") throw err;
+    if (failure.code !== 2) {
+      const detail = (failure.stderr ?? "").trim() || (failure.stdout ?? "").trim();
+      throw new Error(
+        `${binary} plan failed in ${dir} (exit ${failure.code})${detail ? `\n${detail}` : ""}`,
+      );
     }
-  });
+    report(failure.stdout ?? "", failure.stderr ?? "");
+    changed = true;
+  }
 
   const jsonRun = await run(terraformShowCommand({ binary, json: true, planFile }), dir, env, signal);
   const textRun = await run(terraformShowCommand({ binary, json: false, planFile }), dir, env, signal);
@@ -881,10 +863,7 @@ export async function terraformApply(
   const cmd = terraformApplyCommand({ binary, planFile });
 
   try {
-    const { stdout, stderr } = await withHeartbeat(
-      { step: "terraform apply", root: args.root, dir, planFile },
-      () => run(cmd, dir, terraformEnvironment(root), signal),
-    );
+    const { stdout, stderr } = await run(cmd, dir, terraformEnvironment(root), signal);
     report(stdout, stderr);
     return { planFile, dir, applied: true };
   } catch (err) {
@@ -1004,28 +983,27 @@ export async function choudoufuLivePlan(
   const env = terraformEnvironment(resolved.root);
   const documentPath = args.documentPath ?? DEFAULT_LIVE_PLAN_DOCUMENT_FILE;
 
-  const { drift, stdout: jsonStdout } = await withHeartbeat(
-    { step: "choudoufu live-plan", root: args.root, dir, estate },
-    async () => {
-      const cmd = choudoufuLivePlanCommand({ binary, estate, json: true });
-      try {
-        const { stdout, stderr } = await run(cmd, dir, env, signal);
-        report(stdout, stderr);
-        return { drift: false, stdout };
-      } catch (err) {
-        const failure = err as ExecFailure;
-        if (typeof failure.code !== "number") throw err;
-        if (failure.code !== 2) {
-          const detail = (failure.stderr ?? "").trim() || (failure.stdout ?? "").trim();
-          throw new Error(
-            `${binary} live-plan failed in ${dir} (exit ${failure.code})${detail ? `\n${detail}` : ""}`,
-          );
-        }
-        report(failure.stdout ?? "", failure.stderr ?? "");
-        return { drift: true, stdout: failure.stdout ?? "" };
-      }
-    },
-  );
+  let drift: boolean;
+  let jsonStdout: string;
+  const planCmd = choudoufuLivePlanCommand({ binary, estate, json: true });
+  try {
+    const { stdout, stderr } = await run(planCmd, dir, env, signal);
+    report(stdout, stderr);
+    drift = false;
+    jsonStdout = stdout;
+  } catch (err) {
+    const failure = err as ExecFailure;
+    if (typeof failure.code !== "number") throw err;
+    if (failure.code !== 2) {
+      const detail = (failure.stderr ?? "").trim() || (failure.stdout ?? "").trim();
+      throw new Error(
+        `${binary} live-plan failed in ${dir} (exit ${failure.code})${detail ? `\n${detail}` : ""}`,
+      );
+    }
+    report(failure.stdout ?? "", failure.stderr ?? "");
+    drift = true;
+    jsonStdout = failure.stdout ?? "";
+  }
 
   // On the `-estate` path choudoufu prints refresh progress to stdout ahead of
   // the document (choudoufu #894), so parse from the first line that opens it.
@@ -1094,9 +1072,7 @@ export async function choudoufuLiveLs(
   const env = terraformEnvironment(resolved.root);
 
   const cmd = choudoufuLiveLsCommand({ binary, estate, ...(args.consistent ? { consistent: true } : {}) });
-  const { stdout, stderr } = await withHeartbeat({ step: "choudoufu live-ls", root: args.root, dir, estate }, () =>
-    run(cmd, dir, env, signal),
-  );
+  const { stdout, stderr } = await run(cmd, dir, env, signal);
   report(stdout, stderr);
 
   return { json: JSON.parse(stdout), dir, estate };
@@ -1179,24 +1155,22 @@ export async function choudoufuAdopt(
     });
   }
 
-  await withHeartbeat({ step: "choudoufu adopt", root: args.root, dir }, async () => {
-    for (const candidate of adoptions) {
-      if (!candidate.command) {
-        refused.push({
-          addr: candidate.addr,
-          identity: candidate.identity,
-          reason:
-            `${candidate.type} is tagged through its own service call, which choudoufu does not print a ` +
-            `command for. Write tofu-estate=${candidate.markerEstate} ` +
-            `tofu-address=${candidate.markerAddress} onto it with that call.`,
-        });
-        continue;
-      }
-      const { stdout, stderr } = await run(candidate.command, dir, env, signal);
-      report(stdout, stderr);
-      adopted.push(candidate.addr);
+  for (const candidate of adoptions) {
+    if (!candidate.command) {
+      refused.push({
+        addr: candidate.addr,
+        identity: candidate.identity,
+        reason:
+          `${candidate.type} is tagged through its own service call, which choudoufu does not print a ` +
+          `command for. Write tofu-estate=${candidate.markerEstate} ` +
+          `tofu-address=${candidate.markerAddress} onto it with that call.`,
+      });
+      continue;
     }
-  });
+    const { stdout, stderr } = await run(candidate.command, dir, env, signal);
+    report(stdout, stderr);
+    adopted.push(candidate.addr);
+  }
 
   return {
     mechanism: "tag-write",
@@ -1228,24 +1202,22 @@ export async function choudoufuLiveCheck(
   const env = terraformEnvironment(root);
   const cmd = choudoufuLiveCheckCommand({ binary });
 
-  return withHeartbeat({ step: "choudoufu live-check", root: args.root, dir }, async () => {
-    const parseOrUndefined = (text: string): unknown => {
-      try {
-        return JSON.parse(text);
-      } catch {
-        return undefined;
-      }
-    };
+  const parseOrUndefined = (text: string): unknown => {
     try {
-      const { stdout, stderr } = await run(cmd, dir, env, signal);
-      report(stdout, stderr);
-      return { refused: false, json: parseOrUndefined(stdout), text: stdout, dir };
-    } catch (err) {
-      const failure = err as ExecFailure;
-      if (typeof failure.code !== "number") throw err;
-      const stdout = failure.stdout ?? "";
-      report(stdout, failure.stderr ?? "");
-      return { refused: true, json: parseOrUndefined(stdout), text: stdout, dir };
+      return JSON.parse(text);
+    } catch {
+      return undefined;
     }
-  });
+  };
+  try {
+    const { stdout, stderr } = await run(cmd, dir, env, signal);
+    report(stdout, stderr);
+    return { refused: false, json: parseOrUndefined(stdout), text: stdout, dir };
+  } catch (err) {
+    const failure = err as ExecFailure;
+    if (typeof failure.code !== "number") throw err;
+    const stdout = failure.stdout ?? "";
+    report(stdout, failure.stderr ?? "");
+    return { refused: true, json: parseOrUndefined(stdout), text: stdout, dir };
+  }
 }

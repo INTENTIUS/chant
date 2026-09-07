@@ -763,12 +763,12 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
       }
     }
 
-    // Op worker artifacts (`ops/<name>/{workflow,worker,activities}.ts`) always
-    // go to `<project>/dist/ops/` — the fixed location a hosting lexicon's
-    // worker is read from — independent of `--output`, which routes the primary
-    // resource manifest. Without this, a bare `chant build` only printed them to
-    // stderr and `--output foo.yaml` scattered them next to `foo.yaml`, so the
-    // worker was never where its runtime looks.
+    // Anything a serializer emits under `ops/` always goes to
+    // `<project>/dist/ops/` — the fixed place an Op's build output is read
+    // from, alongside the `op.json` core writes below — independent of
+    // `--output`, which routes the primary resource manifest. Without this, a
+    // bare `chant build` only printed them to stderr and `--output foo.yaml`
+    // scattered them next to `foo.yaml`.
     const projectDist = resolve(options.path ?? ".", "dist");
     let opsWritten = 0;
     for (const [filename, entry] of [...additionalFiles]) {
@@ -782,13 +782,13 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
       } catch (err) {
         errors.push(
           formatError({
-            message: `Failed to write Op worker file ${filename}: ${err instanceof Error ? err.message : String(err)}`,
+            message: `Failed to write Op output file ${filename}: ${err instanceof Error ? err.message : String(err)}`,
           }),
         );
       }
     }
     if (opsWritten > 0) {
-      console.error(formatInfo(`Wrote ${opsWritten} Op worker file(s) under ${join(options.path ?? ".", "dist", "ops")}/`));
+      console.error(formatInfo(`Wrote ${opsWritten} Op output file(s) under ${join(options.path ?? ".", "dist", "ops")}/`));
     }
 
     // `dist/ops/<name>/op.json` — the Op IR (#1289), written here by core

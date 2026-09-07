@@ -410,7 +410,7 @@ describe("PolicyReplayOp", () => {
     expect(report.steps[0].fn).toBe("dogwoodReplayReport");
   });
 
-  test("the divergence count rides out as a search attribute", () => {
+  test("the divergence count rides out as a run outcome", () => {
     const { op } = PolicyReplayOp({ name: "policy-replay", tracePath: "trace/t.log" });
     expect(phasesOf(op)[1].steps[0].outcomeAttribute).toEqual({ name: "Divergences", from: "findings" });
   });

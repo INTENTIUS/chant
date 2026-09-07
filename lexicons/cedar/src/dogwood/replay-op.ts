@@ -209,8 +209,9 @@ export function PolicyReplayOp(config: PolicyReplayOpConfig): PolicyReplayOpReso
           ...(config.binary ? { binary: config.binary } : {}),
           reportPath,
         }),
-        // The divergence count as a workflow search attribute, so "show me the
-        // replays that found something" is one filter rather than a log read.
+        // The divergence count as the run's `Divergences` outcome on the run
+        // ledger, so the replays that found something are readable from the
+        // ledger rather than out of a log.
         outcomeAttribute: { name: "Divergences", from: "findings" },
       },
     ]),

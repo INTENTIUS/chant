@@ -431,8 +431,7 @@ export interface RunComponentsResult {
  * local in-process executor — the CLI entrypoint the driver never had (#585,
  * follow-up to #556). Discovers the full component set first, then either:
  *  - `selector === "all"`: resolves the whole set's dependency order/waves
- *    and dispatches every component through `runInterpretDriver`, matching
- *    what the generated orchestrator Op will eventually do — the same
+ *    and dispatches every component through `runInterpretDriver`, in the same
  *    order `chant graph --components` reports.
  *  - a single name: dispatches just that component via `runComponentDeploy`,
  *    without requiring the rest of its `dependsOn` graph to be present in

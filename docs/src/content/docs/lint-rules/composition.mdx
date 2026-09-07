@@ -137,7 +137,12 @@ The capability interface and `component.schema.json` are out of scope for this r
 
 ---
 
-## COMP004: Gate Needs Durable Runtime
+## COMP004: Gate Ends The Run Pending Approval
+
+The rule id stays `COMP004`, and so does its file name
+(`comp004-gate-needs-durable-runtime.ts`). Renaming either would churn every
+`chant-disable` comment and every import for no gain, so the heading above is
+the rule's own description and the file name underneath it is historical.
 
 Flags a `gate` step anywhere in a component's composition. A gate ends the run pending `chant approve <component> <gate>`: the driver decides it against the gate ledger, and one nobody has approved stops the run there, with no later phase running. Which runtime hosts the run is chosen per run via `chant run --on <lexicon>`, never declared in the component itself.
 

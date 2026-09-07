@@ -19,7 +19,7 @@
  * `-json` are refused together (`internal/command/live_plan.go`: "this run
  * cannot produce both reports at once"), and an Op that reports adoptables
  * needs the machine-readable document anyway — for the counts it publishes as
- * search attributes, and for the addresses an adoption step acts on. So the
+ * outcome attributes, and for the addresses an adoption step acts on. So the
  * ledger below is rendered from the document that run already has, in the row
  * form `-adoption-only` prints, rather than paying for a third live read.
  *

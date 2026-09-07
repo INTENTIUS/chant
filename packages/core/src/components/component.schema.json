@@ -170,7 +170,7 @@
         "signalName": {
           "type": "string",
           "minLength": 1,
-          "description": "Signal name the generated workflow waits for before continuing."
+          "description": "The gate's name — what `chant approve <component> <gate>` resolves."
         },
         "timeout": {
           "type": "string",

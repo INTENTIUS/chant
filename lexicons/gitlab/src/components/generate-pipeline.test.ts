@@ -186,7 +186,7 @@ describe("generateGitlabPipeline: a cross-cutting change is one generator edit, 
   test("changing the trigger command (runCommand) updates every job's script uniformly", () => {
     const components = pilotComponents();
     const result = generateGitlabPipeline(components, {
-      runCommand: ["chant", "run", "--components", "{name}", "--env", "staging", "--temporal"],
+      runCommand: ["chant", "run", "--components", "{name}", "--env", "staging", "--verbose"],
     });
     const parsed = parseYAML(result.yaml);
 
@@ -194,7 +194,7 @@ describe("generateGitlabPipeline: a cross-cutting change is one generator edit, 
       const script = (parsed[job.jobName] as Record<string, unknown>).script as string[];
       // The runCommand prefix reflects in every job; output-threading flags
       // (--seed-outputs/--dump-outputs) may be appended per the dependency graph.
-      expect(script[0].startsWith(`chant run --components ${job.component} --env staging --temporal`)).toBe(true);
+      expect(script[0].startsWith(`chant run --components ${job.component} --env staging --verbose`)).toBe(true);
     }
   });
 

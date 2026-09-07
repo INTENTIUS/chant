@@ -71,8 +71,8 @@ import { CONVERGE_SYMPTOM_FIELDS } from "../../lifecycle/symptoms";
  * | verb class  | observe     | reconcile                          | apply                              |
  * |-------------|-------------|-------------------------------------|--------------------------------------|
  * | read-only   | free-run    | free-run                            | free-run                             |
- * | mutating    | report only | **refused at build (TMP014)**       | run                                   |
- * | destructive | refused     | refused                              | **refused at build (TMP014), v1**   |
+ * | mutating    | report only | **refused at build (OPS014)**       | run                                   |
+ * | destructive | refused     | refused                              | **refused at build (OPS014), v1**   |
  *
  * - **`reconcile` × mutating is "open PR" in the issue's table — not yet
  *   implemented.** Building that channel (reusing `ReconcileOp`'s
@@ -80,7 +80,7 @@ import { CONVERGE_SYMPTOM_FIELDS } from "../../lifecycle/symptoms";
  *   `../converge-rule.ts`'s `ReportAction` doc and epic #1487's
  *   onDrift-channel open question. Until it exists, a rule that would
  *   dispatch a mutating op under `reconcile` is refused at build
- *   (`TMP014`), not silently escalated to "run directly" the way `apply`
+ *   (`OPS014`), not silently escalated to "run directly" the way `apply`
  *   would. A runtime backstop in `convergeTick`
  *   (`../activities/converge.ts`) re-checks the same thing at dispatch
  *   time, for a rule table that reached the tick without going through that
@@ -97,7 +97,7 @@ import { CONVERGE_SYMPTOM_FIELDS } from "../../lifecycle/symptoms";
 export type ConvergeDial = "observe" | "reconcile" | "apply";
 
 export interface ConvergeOpConfig {
-  /** Op name (kebab-case). Also the generated workflow function name, camelCased. */
+  /** Op name (kebab-case). Names the Op's output directory and is what `chant run` takes. */
   name: string;
   /** Environment to converge (e.g. "staging"). */
   env: string;
@@ -119,7 +119,7 @@ export interface ConvergeOpConfig {
 }
 
 export interface ConvergeOpResources {
-  /** Op resource — generates the observe->converge workflow. */
+  /** Op resource — the observe-then-converge Op. */
   op: InstanceType<typeof OpResource>;
 }
 
@@ -173,9 +173,9 @@ export function ConvergeOp(config: ConvergeOpConfig): ConvergeOpResources {
   // predicates, a discriminated action union) for a hand-mirrored zod
   // contract to earn its keep, the same "deliberately partial" call
   // activity-contracts.ts already makes for kubectlApply/helmInstall's
-  // multi-field args. TMP012 skips an uncontracted `fn`, not flags it — see
+  // multi-field args. OPS012 skips an uncontracted `fn`, not flags it — see
   // that module's doc. The `preflightDrift` step-output reference below is
-  // still fully validated: TMP013's producer-side checks only need
+  // still fully validated: OPS013's producer-side checks only need
   // `lifecycleDiff`'s own contract, which is registered.
   const tickStep = activity(
     "convergeTick",

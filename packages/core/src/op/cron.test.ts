@@ -11,7 +11,7 @@ function at(y: number, m: number, d: number, h: number, min: number): Date {
   return new Date(y, m - 1, d, h, min, 0, 0);
 }
 
-describe("isValidCronExpression — TMP010's parser", () => {
+describe("isValidCronExpression — the shared parser", () => {
   test("accepts 5- and 6-field expressions", () => {
     expect(isValidCronExpression("*/10 * * * *")).toBe(true);
     expect(isValidCronExpression("0 6 * * 1")).toBe(true);
@@ -32,7 +32,7 @@ describe("isValidCronExpression — TMP010's parser", () => {
     expect(isValidCronExpression("  0   6 * * *  ")).toBe(true);
   });
 
-  test("the message names the expression, so the Op refusal and TMP010 read alike", () => {
+  test("the message names the expression, so the Op refusal and a lexicon's cron check read alike", () => {
     expect(cronSyntaxMessage("nope")).toBe(
       'cron expression "nope" does not look like valid 5- or 6-field cron syntax',
     );

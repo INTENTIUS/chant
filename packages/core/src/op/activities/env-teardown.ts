@@ -46,11 +46,11 @@ export interface EnvTeardownArgs {
    * the Op instead.
    */
   confirmProd?: boolean;
-  /** Path to the chant project (where chant.config.ts lives). Default: the worker's cwd. */
+  /** Path to the chant project (where chant.config.ts lives). Default: the chant process's cwd. */
   path?: string;
 }
 
-/** What a completed (fully successful) teardown reports back to the workflow. */
+/** What a completed (fully successful) teardown reports back to the run. */
 export interface EnvTeardownResult {
   environment: string;
   /** The ownership stack everything was selected on. */
@@ -150,8 +150,8 @@ export async function envTeardown(
   );
 
   // Failures that survived core's bounded retry pass fail the activity —
-  // silence is never success, and the workflow decides what a failed
-  // teardown means for the run.
+  // silence is never success. A failed step is what the executor aborts the
+  // phase on and what the Op's `onFailure` compensation runs for.
   if (failed.length > 0) {
     const names = failed.map((o) => `${o.lexicon}/${o.name}${o.detail ? ` (${o.detail})` : ""}`).join(", ");
     throw new Error(

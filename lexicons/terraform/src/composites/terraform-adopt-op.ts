@@ -183,7 +183,7 @@ export function TerraformAdoptOp(config: TerraformAdoptOpConfig): TerraformAdopt
             `Approve adopting live resources into the "${config.root}" estate. The Ledger phase's ` +
               `adoption ledger is what is being approved: every resource it lists as adoptable gets this ` +
               `estate's tofu-estate and tofu-address tags written onto it. The Adoptable and Ambiguous ` +
-              `search attributes on that phase are its counts; an ambiguous address is never adopted.`,
+              `run outcomes from that phase are its counts; an ambiguous address is never adopted.`,
         }),
       ]),
       phase("Adopt", [adopt]),

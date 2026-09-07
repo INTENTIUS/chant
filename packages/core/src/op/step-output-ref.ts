@@ -11,8 +11,10 @@
  * value instead.
  *
  * Deliberately a reference, not an expression: `diff.out.driftedStacks` is
- * a value placeholder the build resolves and the serializer compiles into a
- * real local variable in the generated workflow — never `diff.out.count >
+ * a value placeholder that stays inert in the Op's data until the executor
+ * substitutes the producing step's recorded result for it, just before the
+ * consuming activity is called (`../op/local-executor.ts`'s
+ * `resolveStepOutputRefs` over `resultsById`) — never `diff.out.count >
  * 0` or a `.map()` over a reference. That property (an Op is data you can
  * read and know what it does, not a program) is exactly what makes it safe
  * to add this without Ops becoming programs; see the issue's "line not to

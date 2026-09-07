@@ -241,7 +241,7 @@ describe("OPS014: converge-rule-refusals", () => {
     expect(ops014.check(ctx)).toHaveLength(0);
   });
 
-  test("ignores an Op with no Converge search attribute", () => {
+  test("ignores an Op with no Converge label", () => {
     const ctx = makeCtxFromEntities(new Map([["op", readOnlyOpEntity("op")]]));
     expect(ops014.check(ctx)).toHaveLength(0);
   });

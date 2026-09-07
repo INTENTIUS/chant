@@ -7,7 +7,7 @@
  * the plan found. `terraform plan -detailed-exitcode` is the whole mechanism.
  * Exit 0 is "the world matches the configuration", exit 2 is drift, and
  * `terraformPlan` turns that into the boolean `changed`, which rides out of
- * the Op as the `Drift` search attribute.
+ * the Op as the run's `Drift` outcome.
  *
  * Phases: Init, Plan, and (for a finding mode that opens something) Report.
  *
@@ -40,7 +40,7 @@
  * `-detailed-exitcode` exit, `Drift` as before), how many live resources sit
  * at a declared identity carrying no marker (`Unowned`), and how many of those
  * an exact content match makes claimable (`Adoptable`). All three come off a
- * single live read, published as three search attributes from the one step.
+ * single live read, published as three run outcomes from the one step.
  *
  * The finding modes then carry the adoption ledger under the plan text: one
  * line per adoptable match with its address, its live identity and the
@@ -126,7 +126,7 @@ export interface TerraformWatchOpConfig {
   schedule?: string;
   /**
    * What to do when the plan proposes changes. Default: `"report"`, which
-   * opens nothing. The `Drift` search attribute and the run's own log are
+   * opens nothing. The `Drift` run outcome and the run's own log are
    * the report.
    */
   findingMode?: TerraformFindingMode;

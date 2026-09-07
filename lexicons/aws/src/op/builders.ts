@@ -1,10 +1,10 @@
 /**
  * Typed step-builder wrappers for this lexicon's activities (chant #1288
  * Stage 2). See `lexicons/k8s/src/op/builders.ts`'s module doc for why these
- * live beside their `*Args` interfaces rather than in core or the temporal
- * barrel: core cannot import a lexicon's types (lexicons depend on core, not
- * the reverse), and wiring them into the cloud-agnostic temporal barrel
- * would make it depend on every cloud lexicon at runtime. `opts`'s type in
+ * live beside their `*Args` interfaces rather than in core: core cannot
+ * import a lexicon's types (lexicons depend on core, not the reverse), so a
+ * wrapper whose `opts` IS the activity's own `*Args` interface can only sit
+ * in the lexicon that declares that interface. `opts`'s type in
  * each wrapper below IS the activity's own `*Args` interface (via
  * `Omit`/`WithStepRefs`) — never restated. `core`'s own
  * `awsApply`/`awsDelete`/`flociUp`/`flociDown` are unchanged and produce

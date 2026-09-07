@@ -28,7 +28,7 @@ Post-synth checks validate the serialized output after the build pipeline comple
 | `FTN015` | Secret-shaped MCP env keys must be $\{VAR\} references, not literals |
 | `FTN016` | Agent runtime must be a known runtime and model canonical provider/model_id |
 | `FTN017` | Two declarations of the same kind must not resolve to the same fountain name |
-| `FTN020` | Schedule cron must be five-field UTC cron (or a supported @nickname) |
+| `FTN020` | Schedule cron must be five- or six-field UTC cron (no @nickname shorthands) |
 | `FTN021` | A Teammate's agent and a Schedule's teammate must resolve within the build |
 | `FTN022` | Webhook url must be https and must not be a loopback or private address |
 | `FTN023` | FTN023 |

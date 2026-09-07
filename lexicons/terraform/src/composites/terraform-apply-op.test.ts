@@ -100,7 +100,7 @@ describe("TerraformApplyOp gate (#2086)", () => {
   test("the Gate phase reports the plan's destroy count before it waits", () => {
     // GateStep has no condition field, so "on-destroy" cannot branch at build
     // time. The approver is told instead: a `show` of the saved plan runs
-    // first and surfaces `destroys` as a search attribute.
+    // first and surfaces `destroys` as a run outcome.
     const op = props({ name: "prod-apply", root: "app" });
     const steps = op.phases.find((p) => p.name === "Gate")!.steps;
     const show = steps[0] as ActivityStep;

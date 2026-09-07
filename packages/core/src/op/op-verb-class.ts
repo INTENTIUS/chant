@@ -115,7 +115,7 @@ export function classifyOpVerbClass(config: Pick<OpConfig, "phases" | "onFailure
  * A declaration-time question, not a run-time one: a gate is a fact the
  * executor decides against the ledger when it reaches one (#2119,
  * `./gate.ts`), so this says "this op can stop for a human", never "this op
- * will stop". `TMP014`'s dispatch refusals are the caller that needs it.
+ * will stop". `OPS014`'s dispatch refusals are the caller that needs it.
  */
 export function isGated(config: Pick<OpConfig, "phases" | "onFailure">): boolean {
   const isGate = (s: StepDefinition): s is GateStep => s.kind === "gate";

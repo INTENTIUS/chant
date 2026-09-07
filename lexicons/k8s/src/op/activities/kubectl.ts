@@ -34,7 +34,6 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { loadAll } from "js-yaml";
-import { safeHeartbeat } from "@intentius/chant/op";
 import { loadChantConfig, resolveOwnershipStack } from "@intentius/chant/config";
 import {
   hasOwnershipMarker,
@@ -310,69 +309,56 @@ export async function applyManifest(
 ): Promise<ApplyManifestResult> {
   const documents = args.documents ?? readManifestDocuments(args.manifest);
   const { fieldManager, stack } = await resolveApplyIdentity(args);
-  const heartbeatInterval = setInterval(() => {
-    safeHeartbeat({ step: "kubectl apply", manifest: args.manifest });
-  }, 15_000);
+  const { client } = await connect({
+    ...(args.environment !== undefined ? { environment: args.environment } : {}),
+    ...(args.context !== undefined ? { context: args.context } : {}),
+    ...(args.cwd !== undefined ? { cwd: args.cwd } : {}),
+  });
 
-  try {
-    const { client } = await connect({
-      ...(args.environment !== undefined ? { environment: args.environment } : {}),
-      ...(args.context !== undefined ? { context: args.context } : {}),
-      ...(args.cwd !== undefined ? { cwd: args.cwd } : {}),
-    });
+  const applied: AppliedRef[] = [];
+  for (const document of documents) {
+    const stamped = stampOwnership(document as K8sObject, stack);
+    let result: K8sObject;
+    try {
+      result = await client.apply(stamped, {
+        fieldManager,
+        force: args.force ?? false,
+        dryRun: args.dryRun,
+        signal,
+      });
+    } catch (err) {
+      // "chant never forces a conflict on its own" is about taking fields
+      // from ANOTHER tool. A conflict where every contested field is owned
+      // by another `chant:*` manager is chant contesting itself — the
+      // ownership-stack → unit-stack label migration, or a renamed deploy
+      // unit — and refusing that forever would strand every estate applied
+      // before the rename with no non-force path back. Retake those fields
+      // deliberately, once, and only when no foreign manager is involved.
+      if (!isChantSelfConflict(err)) throw err;
+      result = await client.apply(stamped, { fieldManager, force: true, dryRun: args.dryRun, signal });
+    }
+    const ref: AppliedRef = {
+      apiVersion: String(result.apiVersion ?? document.apiVersion ?? ""),
+      kind: String(result.kind ?? document.kind ?? ""),
+      name: String(result.metadata?.name ?? ""),
+      ...(result.metadata?.namespace !== undefined
+        ? { namespace: String(result.metadata.namespace) }
+        : {}),
+    };
+    applied.push(ref);
+    console.log(`${ref.apiVersion} ${ref.kind}/${ref.name} applied${args.dryRun ? " (dry run — nothing persisted)" : ""}`);
+  }
 
-    const applied: AppliedRef[] = [];
-    for (const document of documents) {
-      const stamped = stampOwnership(document as K8sObject, stack);
-      let result: K8sObject;
-      try {
-        result = await client.apply(stamped, {
-          fieldManager,
-          force: args.force ?? false,
-          dryRun: args.dryRun,
+  const deleteMode = args.deleteMode ?? "never";
+  const { pruned, retained } =
+    deleteMode === "never" || args.dryRun
+      ? { pruned: [], retained: [] }
+      : await pruneOrphans(client, applied, {
+          ...(stack !== undefined ? { stack } : {}),
           signal,
         });
-      } catch (err) {
-        // "chant never forces a conflict on its own" is about taking fields
-        // from ANOTHER tool. A conflict where every contested field is owned
-        // by another `chant:*` manager is chant contesting itself — the
-        // ownership-stack → unit-stack label migration, or a renamed deploy
-        // unit — and refusing that forever would strand every estate applied
-        // before the rename with no non-force path back. Retake those fields
-        // deliberately, once, and only when no foreign manager is involved.
-        if (!isChantSelfConflict(err)) throw err;
-        result = await client.apply(stamped, { fieldManager, force: true, dryRun: args.dryRun, signal });
-      }
-      const ref: AppliedRef = {
-        apiVersion: String(result.apiVersion ?? document.apiVersion ?? ""),
-        kind: String(result.kind ?? document.kind ?? ""),
-        name: String(result.metadata?.name ?? ""),
-        ...(result.metadata?.namespace !== undefined
-          ? { namespace: String(result.metadata.namespace) }
-          : {}),
-      };
-      applied.push(ref);
-      safeHeartbeat({
-        step: "kubectl apply",
-        manifest: args.manifest,
-        applied: `${ref.kind}/${ref.name}`,
-      });
-      console.log(`${ref.apiVersion} ${ref.kind}/${ref.name} applied${args.dryRun ? " (dry run — nothing persisted)" : ""}`);
-    }
 
-    const deleteMode = args.deleteMode ?? "never";
-    const { pruned, retained } =
-      deleteMode === "never" || args.dryRun
-        ? { pruned: [], retained: [] }
-        : await pruneOrphans(client, applied, {
-            ...(stack !== undefined ? { stack } : {}),
-            signal,
-          });
-
-    return { fieldManager, applied, pruned, retained };
-  } finally {
-    clearInterval(heartbeatInterval);
-  }
+  return { fieldManager, applied, pruned, retained };
 }
 
 /**
@@ -524,7 +510,6 @@ async function pruneOrphans(
   for (const ref of candidates) {
     await client.delete(ref, { ...(options.signal ? { signal: options.signal } : {}) });
     pruned.push(ref);
-    safeHeartbeat({ step: "prune", pruned: `${ref.kind}/${ref.name}` });
     console.log(`${ref.apiVersion} ${ref.kind}/${ref.name} pruned (chant-owned, no longer declared)`);
   }
   return { pruned, retained };

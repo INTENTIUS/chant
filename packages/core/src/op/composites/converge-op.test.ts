@@ -83,7 +83,7 @@ describe("ConvergeOp composite (#1484)", () => {
     expect(props(op).schedule?.overlap).toBe("skip");
   });
 
-  test("an invalid cron is refused at construction, with TMP010's wording (#2120)", () => {
+  test("an invalid cron is refused at construction, with cronSyntaxMessage's wording (#2120)", () => {
     expect(() =>
       ConvergeOp({ name: "staging-converge", env: "staging", rules: [driftRule], schedule: "every ten minutes" }),
     ).toThrow(/does not look like valid 5- or 6-field cron syntax/);

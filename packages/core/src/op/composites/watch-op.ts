@@ -2,8 +2,8 @@
  * WatchOp composite — periodic state observation as an Op.
  *
  * Composes existing pieces:
- *   - The Op codegen (#7) emits a workflow that runs phases sequentially
- *   - The auto-emit search-attribute behavior (#28) tags each phase
+ *   - The local executor (`../local-executor.ts`) runs the phases in order and
+ *     files each step's record under the phase it belongs to
  *   - The pre-built lifecycleSnapshot + lifecycleDiff activities
  *   - `schedule` puts the cadence on the Op itself (#2120)
  *
@@ -29,7 +29,7 @@ import type { OpResource } from "../resource";
 import type { EffectReceiptDeclaration } from "../../effect-receipt";
 
 export interface WatchOpConfig {
-  /** Op name (kebab-case). Also the generated workflow function name, camelCased. */
+  /** Op name (kebab-case). Names the Op's output directory and is what `chant run` takes. */
   name: string;
   /** Environment to snapshot + diff (e.g. "prod"). */
   env: string;
@@ -58,7 +58,7 @@ export interface WatchOpConfig {
 }
 
 export interface WatchOpResources {
-  /** Op resource — generates the snapshot+diff workflow on `chant build`. */
+  /** Op resource — the snapshot+diff Op, emitted on `chant build`. */
   op: InstanceType<typeof OpResource>;
 }
 
@@ -76,9 +76,9 @@ export function WatchOp(config: WatchOpConfig): WatchOpResources {
     phases: [
       phase("Snapshot", [activity("lifecycleSnapshot", { env: config.env })]),
       phase("Diff", [
-        // outcomeAttribute surfaces lifecycleDiff's `drifted` boolean as a
-        // workflow-level Drift search attribute, making 'show me runs that
-        // detected drift' a one-filter UI query.
+        // outcomeAttribute surfaces lifecycleDiff's `drifted` boolean as the
+        // run's `Drift` outcome on the run ledger, so a reader of the ledger
+        // can pick out the runs that detected drift.
         {
           kind: "activity",
           fn: "lifecycleDiff",
@@ -87,8 +87,8 @@ export function WatchOp(config: WatchOpConfig): WatchOpResources {
         },
       ]),
       // Receipt staleness (#1834): read-only over the receipt store — absent
-      // or differing receipts surface as findings (and a StaleReceipts search
-      // attribute); nothing runs and nothing is written.
+      // or differing receipts surface as findings (and a StaleReceipts run
+      // outcome); nothing runs and nothing is written.
       ...(config.receipts && config.receipts.length > 0
         ? [
             phase("Receipts", [

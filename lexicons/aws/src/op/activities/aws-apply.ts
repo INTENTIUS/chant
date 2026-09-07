@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { safeHeartbeat, sleep } from "@intentius/chant/op";
+import { sleep } from "@intentius/chant/op";
 import { awsDeployCapabilitiesForBody } from "../../components/cloud-executor.js";
 import { resolveEndpointOverride } from "../../api/read-client.js";
 import { ownershipStackTagsForBody } from "../../ownership.js";
@@ -128,7 +128,6 @@ export async function waitForStackSettled(
   const deadline = Date.now() + opts.timeoutMs;
   while (Date.now() < deadline) {
     if (signal?.aborted) throw new Error("awsApply aborted");
-    safeHeartbeat({ step: "awsApply", stack: stackName });
     const res = await http(url, cfnForm("DescribeStacks", { StackName: stackName }), signal);
     const status = stackStatus(res.text);
     if (status && isTerminalStatus(status)) return status;
@@ -231,7 +230,6 @@ export async function awsDelete(
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (signal?.aborted) throw new Error("awsDelete aborted");
-    safeHeartbeat({ step: "awsDelete", stack: args.stackName });
     const d = await http(url, cfnForm("DescribeStacks", { StackName: args.stackName }), signal);
     if (d.status >= 300 && isStackMissing(d.text)) return { stackName: args.stackName, deleted: true };
     const status = stackStatus(d.text);

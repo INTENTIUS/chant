@@ -30,25 +30,26 @@
  *
  * `ConvergeOp` adds no authority an environment did not already grant
  * (#1484's Autonomy table). `OperatorStack` re-derives the same bound at the
- * k8s RBAC layer, independently of the temporal lexicon (this module has no
- * dependency on it — see the layering note below): for each hosted
+ * k8s RBAC layer, from the Op configs alone (see the Layering note below for
+ * what this module imports and what it restates): for each hosted
  * ConvergeOp, walk its `dispatchTargets` (the OpConfigs its rule table's
  * `run()` actions may name) through `classifyOpVerbClass`
  * (`packages/core/src/op/op-verb-class.ts`, #1954), then keep only the
  * highest verb class this host's `dial` could ever actually free-run —
  * exactly `convergeTick`'s own `verbClassAllowedToDispatch` gate and
- * `TMP014`'s build-time refusal, restated as an RBAC ceiling:
+ * `OPS014`'s build-time refusal, restated as an RBAC ceiling:
  *
  * - `dial: "observe"` never dispatches (report-only) → read-only RBAC,
  *   regardless of what the rule table's targets could otherwise do.
- * - `dial: "reconcile"` only free-runs a read-only target (TMP014 refuses a
+ * - `dial: "reconcile"` only free-runs a read-only target (OPS014 refuses a
  *   mutating dispatch under reconcile in v1) → read-only RBAC.
  * - `dial: "apply"` free-runs read-only and mutating targets → RBAC gains
  *   create/update/patch, never delete.
  * - A `dispatchTargets` entry that itself classifies `destructive` is
- *   refused outright, at construction — TMP014 already refuses a
- *   destructive `run()` target under any dial in v1 (the local dispatch
- *   executor can't honor its required gate), so a `destructive` target
+ *   refused outright, at construction — OPS014 already refuses a
+ *   destructive `run()` target under any dial in v1 (a converge tick runs
+ *   unattended, and a destructive dispatch needs a person's approval before
+ *   it is attempted, not a gate read after the fact), so a `destructive` target
  *   reaching this composite is either a config bypassing that build check
  *   or a target `OperatorStack` should never grant permission toward.
  *   `never delete`, unconditionally, in v1 — no verb class here ever grants
@@ -104,7 +105,7 @@ export interface OperatorStackConvergeHost {
   /**
    * OpConfigs for every op this ConvergeOp's rule table may `run()` — the
    * sibling `*.op.ts` declarations its `run()` actions name. Used to derive
-   * least-privilege RBAC the same way `TMP014` derives its build-time
+   * least-privilege RBAC the same way `OPS014` derives its build-time
    * refusals. Omit or leave empty when every rule only `report()`s; the
    * host still gets read-only RBAC for its own observation.
    */
@@ -198,7 +199,7 @@ function dialAllowsVerbClass(dial: OperatorDial, verbClass: OpVerbClass): boolea
  * Derive the highest verb class a host's ServiceAccount actually needs:
  * the max, across `dispatchTargets`, of each target's own class — but only
  * counting a target `dial` could ever actually dispatch (one it can't just
- * gets reported, per `TMP014`/`convergeTick`, and needs no elevated grant).
+ * gets reported, per `OPS014`/`convergeTick`, and needs no elevated grant).
  * A `dispatchTargets` entry that classifies `destructive` is refused
  * outright rather than silently ignored — see this module's RBAC
  * derivation doc on why a destructive target reaching this composite is

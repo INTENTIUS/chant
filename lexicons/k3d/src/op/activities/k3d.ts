@@ -1,6 +1,5 @@
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
-import { safeHeartbeat } from "@intentius/chant/op";
 
 const execAsync = promisify(exec);
 
@@ -158,17 +157,9 @@ export async function k3dUp(args: K3dUpArgs, signal?: AbortSignal): Promise<K3dU
     // `cluster list` errors when the cluster is absent — fall through to create.
   }
 
-  const heartbeatInterval = setInterval(() => {
-    safeHeartbeat({ step: "k3d cluster create", cluster: args.name });
-  }, 15_000);
-
-  try {
-    const { stdout, stderr } = await execAsync(k3dUpCommand(args), { signal });
-    if (stdout) console.log(stdout);
-    if (stderr) console.error(stderr);
-  } finally {
-    clearInterval(heartbeatInterval);
-  }
+  const { stdout, stderr } = await execAsync(k3dUpCommand(args), { signal });
+  if (stdout) console.log(stdout);
+  if (stderr) console.error(stderr);
 
   return resolveConnection(args, signal);
 }

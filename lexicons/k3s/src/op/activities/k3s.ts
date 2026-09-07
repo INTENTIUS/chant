@@ -1,6 +1,5 @@
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
-import { safeHeartbeat } from "@intentius/chant/op";
 import { K3S_VERSION } from "../../spec/fetch";
 
 const execAsync = promisify(exec);
@@ -139,20 +138,12 @@ export async function k3sInstall(
     // `k3s --version` errors when k3s is absent — fall through to install.
   }
 
-  const heartbeatInterval = setInterval(() => {
-    safeHeartbeat({ step: "k3s install", role: args.role, version: target });
-  }, 15_000);
-
-  try {
-    const { stdout, stderr } = await execAsync(k3sInstallCommand(args), {
-      signal,
-      env: { ...process.env, ...k3sInstallEnv(args) },
-    });
-    if (stdout) console.log(stdout);
-    if (stderr) console.error(stderr);
-  } finally {
-    clearInterval(heartbeatInterval);
-  }
+  const { stdout, stderr } = await execAsync(k3sInstallCommand(args), {
+    signal,
+    env: { ...process.env, ...k3sInstallEnv(args) },
+  });
+  if (stdout) console.log(stdout);
+  if (stderr) console.error(stderr);
 
   return { version: target, installed: true };
 }

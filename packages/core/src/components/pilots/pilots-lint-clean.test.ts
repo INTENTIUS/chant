@@ -58,11 +58,12 @@ describe("Real pilots lint clean under COMP* (#562 acceptance criteria)", () => 
     // gate-as-fact, #2119) — a run reaching it stops there pending `chant
     // approve`, which is exactly the standing human wait COMP004 exists to
     // surface, so COMP004 firing here is the *correct*, expected signal, not
-    // a defect. A real project would
-    // acknowledge it with `// chant-disable-next-line COMP004 -- <reason>`
-    // once authored as an actual `*.component.ts` file (see
-    // ../../lint/rules/comp/comp004-gate-needs-durable-runtime.ts and the
-    // comp004/pass fixture demonstrating that opt-out end to end).
+    // a defect. A real project would acknowledge it with a file-level
+    // `// chant-disable COMP004 -- <reason>` once authored as an actual
+    // `*.component.ts` file — a COMP* diagnostic is reported for the whole
+    // component and carries no line, so `-line`/`-next-line` do not suppress
+    // one (see ../../lint/rules/comp/comp004-gate-needs-durable-runtime.ts
+    // and the comp004/pass fixture demonstrating that opt-out end to end).
     const ctx = contextFor([neo4jCluster]);
     const diagnostics = runAll(ctx);
     expect(diagnostics.every((d) => d.checkId === "COMP004")).toBe(true);

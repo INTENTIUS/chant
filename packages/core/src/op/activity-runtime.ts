@@ -6,23 +6,6 @@
  */
 
 /**
- * No-op.
- *
- * @deprecated Heartbeating was a liveness protocol between a worker and the
- * server that scheduled it. chant's ops run in-process on a machine that keeps
- * state and leaves a record (chant #2114), so nothing is listening for a
- * heartbeat and nothing acts on a missed one. An activity that wants to report
- * progress should write a line — the executor streams an activity's output with
- * the step record it belongs to.
- *
- * Kept as a call-compatible no-op so the lexicons that call it keep compiling;
- * it goes away once none of them do.
- */
-export function safeHeartbeat(_details?: unknown): void {
-  // Intentionally empty.
-}
-
-/**
  * Sleep for `ms`, rejecting early if `signal` aborts. Polling activities use
  * this between attempts so a local-executor timeout or Ctrl-C interrupts the
  * wait instead of running it to completion.

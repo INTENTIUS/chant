@@ -10,7 +10,7 @@ export { Op, phase, activity, gate, effect, build, kubectlApply, helmInstall, he
          spriteTaskCreate, spriteTaskRefresh, spriteTaskRelease,
          spritesUp, spritesDown } from "./builders";
 export { OpResource } from "./resource";
-export { safeHeartbeat, sleep } from "./activity-runtime";
+export { sleep } from "./activity-runtime";
 export { emulatorLifecycle, emulatorsOf, endpointEnvVars } from "./emulator-lifecycle";
 export type { EmulatorSpec, EmulatorCapability, EmulatorDeclaration, EmulatorUpArgs, EmulatorLifecycle } from "./emulator-lifecycle";
 export { checkFreshness, compare, formatResult, latestRelease, parseVersion, unpinned } from "./emulator-freshness";

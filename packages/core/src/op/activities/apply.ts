@@ -91,9 +91,9 @@ export interface NativeApplyArgs {
  * core's `NormalizedApply` (#1446, collapsed here in #1449). The per-target
  * shapes this used to carry (`fieldManager`, `stackName`/`status`/`action`,
  * a separate `notPrunable`) belong to the appliers and stay in their lexicons;
- * this activity's result is what a workflow can gate on regardless of target,
- * and the target-specific detail still reaches the operator on the activity
- * log.
+ * this activity's result is the shape every Op reads back regardless of
+ * target, and the target-specific detail still reaches the operator on the
+ * activity log.
  */
 export interface NativeApplyResult {
   /** Resources the provider was called for and which converged — created,
@@ -448,7 +448,7 @@ function collapseEnvelope(envelope: ApplyResult, label: string): NativeApplyResu
   );
   // #1447: a resource the applier made no call for is reported, not dropped —
   // otherwise a partial apply reads as a full one. The per-resource reasons
-  // ride the envelope; the count is what the workflow can gate on.
+  // ride the envelope; the count is what a later step reads.
   if (n.notAttempted.length > 0) {
     console.warn(`[${label}] NOT attempted: ${n.notAttempted.length} resource(s)`);
     for (const skip of n.notAttempted) {

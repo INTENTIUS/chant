@@ -61,13 +61,13 @@ function detectDrift(output: string): boolean {
 
 /**
  * Run `chant lifecycle diff <env>` and return the output + structured drift
- * flag. Read-only; intended for use inside watch/observation workflows.
+ * flag. Read-only; intended for use inside watch/observation Ops.
  * Uses fastIdempotent profile.
  *
  * The `drifted` field is computed by scanning the output for any of the
  * MISSING / ORPHAN / DRIFTED / DISAPPEARED section headers documented in
  * cli/state.mdx. Pair with `outcomeAttribute: { name: "Drift", from: "drifted" }`
- * on a WatchOp activity step to surface drift as a workflow search attribute.
+ * on a WatchOp activity step to surface drift as the run's `Drift` outcome.
  */
 export async function lifecycleDiff(args: LifecycleDiffArgs, signal?: AbortSignal): Promise<LifecycleDiffResult> {
   const liveFlag = args.live ? " --live" : "";

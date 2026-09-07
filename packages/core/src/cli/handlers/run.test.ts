@@ -79,7 +79,7 @@ function makeArgs(overrides: Partial<ParsedArgs> = {}): ParsedArgs {
   };
 }
 
-function makeOp(name: string, depends: string[] = []): [string, { config: { name: string; phases: unknown[]; taskQueue?: string; depends?: string[]; overview: string } }] {
+function makeOp(name: string, depends: string[] = []): [string, { config: { name: string; phases: unknown[]; depends?: string[]; overview: string } }] {
   return [name, { config: { name, phases: [], depends, overview: `${name} overview` } }];
 }
 
