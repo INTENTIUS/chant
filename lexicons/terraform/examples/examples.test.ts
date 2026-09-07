@@ -1,13 +1,14 @@
 /**
- * Every shipped terraform example builds, and the scheduled-watch one
- * generates the CI it documents (#2087).
+ * Every shipped terraform example builds, and the two that carry CI generate
+ * the workflows they document: `scheduled-watch`'s cron (#2087) and
+ * `plan-on-pr`'s `pull_request` plan / `push` apply pair (#2084, #2221).
  *
  * `chant dev check-lexicon` already gates "builds". What it does not cover is
- * the second half of `examples/scheduled-watch`: the Op there exists to be put
- * on a cron by something, and the something this example ships is
- * `generateOpsPipeline` against the github lexicon. So the emitted workflow is
- * asserted here, field by field, against the real generator and the real Op
- * discovery, rather than described in a README nothing checks.
+ * the second half of those examples: the Ops there exist to be triggered by
+ * something, and the something they ship is `generateOpsPipeline` against the
+ * github lexicon. So the emitted workflows are asserted here, field by field,
+ * against the real generator and the real Op discovery, rather than described
+ * in a README nothing checks.
  */
 
 import { existsSync, readdirSync } from "node:fs";
@@ -15,7 +16,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { build } from "@intentius/chant/build";
-import { generateOpsPipeline } from "@intentius/chant/op";
+import { generateOpsPipeline, type ActivityStep, type OpConfig } from "@intentius/chant/op";
 import type { ScheduledOpSpec } from "@intentius/chant/lexicon";
 import { terraformSerializer } from "../src/serializer";
 
@@ -138,5 +139,166 @@ describe("scheduled-watch generates its GitHub Actions cron (#2087)", () => {
     const yaml = await watchWorkflow();
     expect(yaml).toContain("chant run app-watch");
     expect(yaml).toContain("GH_TOKEN:");
+  });
+});
+
+/**
+ * `plan-on-pr` generates the other CI shape the lexicon ships (#2221): the
+ * #2084 trigger pair, one `pull_request` workflow that plans and one `push`
+ * workflow that applies, over the same root. Two `ScheduledOpSpec`s, two
+ * files, because a GitHub trigger is workflow-scoped rather than job-scoped.
+ */
+const planOnPrDir = join(examplesDir, "plan-on-pr");
+
+const PLAN_SPEC: ScheduledOpSpec = {
+  name: "app-plan",
+  trigger: { kind: "pull_request", branches: ["main"] },
+  findingMode: "issue",
+};
+
+const APPLY_SPEC: ScheduledOpSpec = {
+  name: "app-apply",
+  trigger: { kind: "push", branches: ["main"] },
+};
+
+async function planOnPrWorkflows(): Promise<{ plan: string; apply: string }> {
+  const result = await generateOpsPipeline(
+    [PLAN_SPEC, APPLY_SPEC],
+    "github",
+    { beforeScript: [INSTALL_TERRAFORM] },
+    planOnPrDir,
+  );
+  expect(result.error).toBeUndefined();
+  expect(result.success).toBe(true);
+  const plan = result.files?.find((f) => f.name === "app-plan.yml");
+  const apply = result.files?.find((f) => f.name === "app-apply.yml");
+  expect(plan, "one workflow file per Op").toBeDefined();
+  expect(apply, "one workflow file per Op").toBeDefined();
+  return { plan: plan!.yaml, apply: apply!.yaml };
+}
+
+describe("plan-on-pr generates the pull_request plan and push apply pair (#2221)", () => {
+  it("discovers the example's own two Ops, and carries each one's trigger", async () => {
+    const result = await generateOpsPipeline([PLAN_SPEC, APPLY_SPEC], "github", {}, planOnPrDir);
+    expect(result.success).toBe(true);
+    expect(result.jobs).toEqual([
+      {
+        jobName: "app-plan",
+        op: "app-plan",
+        trigger: { kind: "pull_request", branches: ["main"] },
+        findingMode: "issue",
+      },
+      {
+        jobName: "app-apply",
+        op: "app-apply",
+        trigger: { kind: "push", branches: ["main"] },
+        findingMode: "report",
+      },
+    ]);
+  });
+
+  it("plans on pull_request, filtered to the default branch, with no manual dispatch", async () => {
+    const { plan } = await planOnPrWorkflows();
+    expect(plan).toContain("pull_request:");
+    expect(plan).toContain("branches:");
+    expect(plan).toContain("- main");
+    // A PR event needs no manual escape hatch, and no cron reaches this half.
+    expect(plan).not.toContain("workflow_dispatch");
+    expect(plan).not.toContain("schedule:");
+    expect(plan).not.toContain("push:");
+  });
+
+  it("applies on push to the default branch, and on nothing else", async () => {
+    const { apply } = await planOnPrWorkflows();
+    expect(apply).toContain("push:");
+    expect(apply).toContain("- main");
+    expect(apply).not.toContain("pull_request");
+    expect(apply).not.toContain("workflow_dispatch");
+    expect(apply).not.toContain("schedule:");
+  });
+
+  it("gives the PR job pull-requests: write and no write scope on the repository", async () => {
+    const { plan } = await planOnPrWorkflows();
+    // `pull-requests: write` comes from the `pull_request` trigger itself
+    // (#2084): the trigger grants the scope a comment on the triggering PR
+    // needs. `issues: write` is what the finding mode actually spends, since
+    // `reconcilePr` has no comment mode and the plan lands as an issue — see
+    // the example's README. Neither is `contents: write`, which is what a
+    // job that pushed a branch would need and this one never does.
+    expect(plan).toContain("pull-requests: write");
+    expect(plan).toContain("issues: write");
+    expect(plan).toContain("contents: read");
+    expect(plan).not.toContain("contents: write");
+    expect(plan).not.toContain("write-all");
+  });
+
+  it("gives the apply job contents: read and nothing else", async () => {
+    const { apply } = await planOnPrWorkflows();
+    // The apply talks to the provider and the state backend, never to the
+    // forge, so a push run needs no forge write scope at all.
+    expect(apply).toContain("contents: read");
+    expect(apply).not.toContain("contents: write");
+    expect(apply).not.toContain("issues: write");
+    expect(apply).not.toContain("pull-requests: write");
+    expect(apply).not.toContain("write-all");
+  });
+
+  it("installs the pinned terraform before running either Op", async () => {
+    const { plan, apply } = await planOnPrWorkflows();
+    for (const [yaml, op] of [
+      [plan, "app-plan"],
+      [apply, "app-apply"],
+    ] as const) {
+      expect(yaml).toContain(`releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/`);
+      expect(yaml).toContain("unzip -q -o /tmp/terraform.zip -d /usr/local/bin");
+      expect(yaml.indexOf("/tmp/terraform.zip")).toBeLessThan(yaml.indexOf(`chant run ${op}`));
+    }
+  });
+
+  it("runs each Op through `chant run`, with a token only where a finding is posted", async () => {
+    const { plan, apply } = await planOnPrWorkflows();
+    expect(plan).toContain("chant run app-plan");
+    expect(plan).toContain("GH_TOKEN:");
+    expect(apply).toContain("chant run app-apply");
+    // `report` mode posts nothing, so the `gh` CLI's own token variable is
+    // not wired into the apply job.
+    expect(apply).not.toContain("GH_TOKEN:");
+  });
+
+  it("keeps one run at a time per Op, which is also the state lock", async () => {
+    const { plan, apply } = await planOnPrWorkflows();
+    expect(plan).toContain("group: app-plan");
+    expect(apply).toContain("group: app-apply");
+    for (const yaml of [plan, apply]) expect(yaml).toContain("cancel-in-progress: false");
+  });
+
+  it("posts the -no-color plan and never the JSON one", async () => {
+    // The sensitive-output rule from #2081, asserted where the example
+    // declares it rather than only in the composite's own suite: the Report
+    // step's body is one reference to the Plan step's `text`, and nothing in
+    // its args mentions the `-json` render, which carries every attribute
+    // value the plan touched.
+    const result = await build(join(planOnPrDir, "src"), [terraformSerializer]);
+    expect(result.errors).toEqual([]);
+    const planOp = result.entities.get("app-plan") as unknown as { props: OpConfig };
+    const report = planOp.props.phases.find((p) => p.name === "Report");
+    const step = report?.steps[0] as ActivityStep;
+    expect(step.fn).toBe("reconcilePr");
+    expect(step.args?.mode).toBe("issue");
+    expect(step.args?.body).toMatchObject({ kind: "step-output-ref", step: "plan", path: "text" });
+    expect(JSON.stringify(step.args)).not.toContain("json");
+  });
+
+  it("applies only the plan its own Plan step saved", async () => {
+    const result = await build(join(planOnPrDir, "src"), [terraformSerializer]);
+    const applyOp = result.entities.get("app-apply") as unknown as { props: OpConfig };
+    const names = applyOp.props.phases.map((p) => p.name);
+    expect(names).toEqual(["Init", "Plan", "Gate", "Apply"]);
+    const applyStep = applyOp.props.phases[3].steps[0] as ActivityStep;
+    expect(applyStep.args?.planFile).toMatchObject({
+      kind: "step-output-ref",
+      step: "plan",
+      path: "planFile",
+    });
   });
 });
