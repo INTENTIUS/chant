@@ -151,5 +151,9 @@ describe("forgejoSerializer — inherits PrPlanReport from github (#1983)", () =
     // The sticky-comment mechanism is a raw script, nothing to remap or drop.
     expect(result.primary).toContain("Post or update PR comment");
     expect(result.primary).toContain("gh api");
+    // Including the `-F` that reads the body from plan.md — forgejo renders
+    // the same script, so the #2236 regression would show up here as well.
+    expect(result.primary).toContain("-F body=@plan.md");
+    expect(result.primary).not.toContain("-f body=@");
   });
 });
