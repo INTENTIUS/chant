@@ -49,17 +49,22 @@ export interface PrPlanReportProps {
  * Sticky-comment script (#1223's mechanism, reused as-is): find the comment
  * whose body starts with `$MARKER`, PATCH it if found, POST otherwise. No
  * marketplace action, nothing extra to pin — `gh` ships on GitHub's hosted
- * runners. `-f body=@plan.md` reads the comment body from the file the plan
- * step wrote, so a large or multi-line plan never has to survive shell
- * quoting.
+ * runners. The flag is `-F`, not `-f`: `gh api`'s `-F/--field` is the typed
+ * form that reads the value from a file when it starts with `@`, while
+ * `-f/--raw-field` adds the parameter as a literal string, so the `-f` form
+ * posted the eight characters `@plan.md` (#2236). Reading the body from the
+ * file the plan step wrote means a large or multi-line plan never has to
+ * survive shell quoting. `-F`'s type coercion of `true`/`false`/`null`/
+ * integers does not reach the body: gh resolves the leading `@` first and
+ * hands back the file's bytes as a string.
  */
 const stickyCommentScript = [
   'comment_id=$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" --paginate ' +
     '--jq "map(select(.body | startswith(\\"$MARKER\\"))) | .[0].id // empty")',
   'if [ -n "$comment_id" ]; then',
-  '  gh api -X PATCH "repos/$REPO/issues/comments/$comment_id" -f body=@plan.md > /dev/null',
+  '  gh api -X PATCH "repos/$REPO/issues/comments/$comment_id" -F body=@plan.md > /dev/null',
   "else",
-  '  gh api -X POST "repos/$REPO/issues/$PR_NUMBER/comments" -f body=@plan.md > /dev/null',
+  '  gh api -X POST "repos/$REPO/issues/$PR_NUMBER/comments" -F body=@plan.md > /dev/null',
   "fi",
 ].join("\n");
 

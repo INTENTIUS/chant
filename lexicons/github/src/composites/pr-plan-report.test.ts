@@ -79,6 +79,28 @@ describe("PrPlanReport composite (#1983)", () => {
     expect(Math.max(...credIndexes)).toBeLessThan(planIndex);
   });
 
+  // #2236 — `gh api`'s `-F/--field` is the flag that expands a leading `@`
+  // into the file's contents; `-f/--raw-field` adds the parameter as a literal
+  // string, so the `-f` form this composite shipped with posted a comment
+  // whose body was the eight characters `@plan.md`. Nothing asserted the flag,
+  // which is how it survived, so both the emitted script and the serialized
+  // workflow are pinned here.
+  test("the sticky-comment script reads the body with -F, never -f (#2236)", () => {
+    const { job } = PrPlanReport({ environment: "prod" });
+    const postStep = steps(job).find((s) => s.props.name === "Post or update PR comment")!;
+    const run = postStep.props.run!;
+    expect(run).toContain('gh api -X PATCH "repos/$REPO/issues/comments/$comment_id" -F body=@plan.md');
+    expect(run).toContain('gh api -X POST "repos/$REPO/issues/$PR_NUMBER/comments" -F body=@plan.md');
+    expect(run).not.toContain("-f body=@");
+    // The plan step writes the marker as plan.md's first line, so the body the
+    // -F read now starts with `$MARKER` and the jq `startswith` search finds
+    // the comment on the next push. Under `-f` it never could: the body was
+    // `@plan.md`, so every run posted a new comment instead of patching.
+    const planStep = steps(job).find((s) => s.props.name === "Plan prod")!;
+    expect(planStep.props.run).toContain('{ printf \'%s\\n\\n\' "$MARKER";');
+    expect(planStep.props.run).toContain("> plan.md");
+  });
+
   test("the emitted workflow passes the github lexicon's own lint — no errors, pinned actions included", () => {
     const { job } = PrPlanReport({ environment: "prod", before: ["aws sts get-caller-identity"] });
     const workflow = new Workflow({
@@ -90,6 +112,10 @@ describe("PrPlanReport composite (#1983)", () => {
     ) as SerializerResult;
     const yaml = typeof result === "string" ? result : result.primary!;
     expect(yaml).toContain("Post or update PR comment");
+    // The flag survives serialization too, not just the composite's script
+    // string (#2236).
+    expect(yaml).toContain("-F body=@plan.md");
+    expect(yaml).not.toContain("-f body=@");
 
     const ctx: PostSynthContext = {
       outputs: new Map([["github", yaml]]),
