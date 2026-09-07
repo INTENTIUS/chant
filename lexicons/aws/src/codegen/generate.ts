@@ -18,6 +18,15 @@ import { assertPinnedSpec } from "../spec/pin";
 import { parseCFNSchema, cfnShortName, type SchemaParseResult } from "../spec/parse";
 import { fetchCfnLintPatches, applyPatches } from "./patches";
 import { fetchCfnLintExtensions, loadExtensionSchemas, type ExtensionConstraint } from "./extensions";
+import {
+  applyEnumOverlay,
+  assertOverlayCoverage,
+  enumOverlayByType,
+  enumOverlayEntries,
+  redundantOverlayWarnings,
+  type EnumOverlayApplication,
+  type EnumOverlayEntry,
+} from "./enum-overlay";
 import { samResources } from "./sam";
 import { fallbackResources } from "./fallback";
 import { NamingStrategy, publishedNames, propertyTypeName, extractDefName } from "./naming";
@@ -35,6 +44,18 @@ export type { GenerateOptions, GenerateResult };
 let awsConstraints = new Map<string, ExtensionConstraint[]>();
 /** chant #1459 — spec type → already-published TS name, reset per `generate()` call. */
 let awsReservedNames: Record<string, string> = {};
+/**
+ * Curated enum overlay state (chant #1497), reset per `generate()` call.
+ *
+ * The overlay runs in `parseSchema` rather than `augmentSchemas` on purpose:
+ * `augmentSchemas` is skipped for a caller-supplied schema set because it
+ * fetches, and the overlay fetches nothing. Running it per schema keeps a
+ * fixture-driven run and a real run on the same code path.
+ */
+let awsOverlay: Map<string, EnumOverlayEntry[]> = new Map();
+let awsOverlayApplications: EnumOverlayApplication[] = [];
+let awsOverlaySeenTypes = new Set<string>();
+let awsOverlayStrict = false;
 
 const awsPipelineConfig: GeneratePipelineConfig<SchemaParseResult> = {
   fetchSchemas: async (opts) => {
@@ -46,8 +67,12 @@ const awsPipelineConfig: GeneratePipelineConfig<SchemaParseResult> = {
     return schemas;
   },
 
-  parseSchema: (_typeName, data) => {
-    const result = parseCFNSchema(data);
+  parseSchema: (typeName, data) => {
+    awsOverlaySeenTypes.add(typeName);
+    const entries = awsOverlay.get(typeName) ?? [];
+    const overlaid = applyEnumOverlay(typeName, data, entries, { strict: awsOverlayStrict });
+    awsOverlayApplications.push(...overlaid.applications);
+    const result = parseCFNSchema(overlaid.data);
     if (!result.resource.typeName) return null;
     return result;
   },
@@ -110,6 +135,13 @@ const awsPipelineConfig: GeneratePipelineConfig<SchemaParseResult> = {
     // Re-filter extension constraints now that we have the full type set
     // (augmentSchemas loaded them before parsing, so we already have them)
 
+    // A curated enum that reached nothing is a stale entry (chant #1497), and
+    // the only place it can be noticed is here, once every schema has been seen.
+    assertOverlayCoverage(enumOverlayEntries(), awsOverlaySeenTypes, awsOverlayStrict);
+    const applied = awsOverlayApplications.filter((a) => a.outcome === "applied").length;
+    log(`Applied ${applied} curated enum overlay entries`);
+    warnings.push(...redundantOverlayWarnings(awsOverlayApplications));
+
     log(`Total: ${results.length} resource schemas`);
     return { results, warnings };
   },
@@ -139,6 +171,12 @@ const awsPipelineConfig: GeneratePipelineConfig<SchemaParseResult> = {
 export async function generate(opts: GenerateOptions = {}): Promise<GenerateResult> {
   // Reset shared state
   awsConstraints = new Map();
+  awsOverlay = enumOverlayByType();
+  awsOverlayApplications = [];
+  awsOverlaySeenTypes = new Set();
+  // A fixture set is a trimmed subset, so an entry it never reaches is
+  // expected; a run over the real zip has no such excuse.
+  awsOverlayStrict = !opts.schemaSource;
   // chant #1459 — names already published keep pointing at the types that
   // published them. Skipped for a caller-supplied schema set, exactly as
   // `augmentSchemas` is (see the pipeline's `opts.schemaSource` guard): a

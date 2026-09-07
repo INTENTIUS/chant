@@ -102,6 +102,7 @@ An in-process guard says nothing about a child process, so the offline phases' s
 |---|---|---|---|
 | `packages/core/src/codegen/fetch.ts` | `fetch` | the upstream schema URL a caller passes | `fetchWithCache`/`fetchWithRetry` — the single transport under every lexicon's `spec/fetch.ts`, the k8s CRD loader, `chant vendor` and `chant dev pinned-upgrade`. Caches to disk, bounds each attempt, and falls back to the committed snapshot when the endpoint is unreachable. |
 | `lexicons/aws/src/spec/fetch.ts` | `fetch` | the CloudFormation resource specification and Cloud Control schema endpoints | The aws spec fetch follows redirects itself rather than going through the shared cache helper; run by `chant dev generate`, never by a build. |
+| `lexicons/aws/scripts/refresh-enum-overlay.ts` | `fetch` | `raw.githubusercontent.com`, for the botocore service models the overlay's own entries name | Diffs the curated enum overlay (chant #1497) against the botocore shapes its values were read from, and with `--write` restamps them. A maintainer command, reached only by hand or by `just refresh-enum-overlay`; generate, bundle, validate, build and the test suite all read the committed `src/codegen/enum-overlay.json` and reach nothing. |
 | `lexicons/cpln/src/spec/snapshot-cli.ts` | `fetch` | the Control Plane OpenAPI document | `just snapshot` refreshes the committed offline spec snapshot; run on a networked machine on purpose, and the snapshot is what everything else reads. |
 | `lexicons/azure/scripts/fetch-quickstart-templates.ts` | `fetch` | the Azure quickstart-templates repository | Builds the ARM fixture corpus the azure serializer is tested against; a maintainer script, not part of the lexicon's published surface. |
 
@@ -123,7 +124,7 @@ Freshness checks that run in this repository's own CI, against `api.github.com`.
 | `scripts/dogwood-freshness.ts` | `fetch` | `api.github.com` commit and tree metadata | Compares the committed dogwood pin against upstream for `scripts/check-dogwood-freshness.ts`. The transport is injectable, which is why the comparison half is unit-tested without a network. |
 | `scripts/prior-art-sweep.ts` | `fetch` | the rule indexes of the tools the audit rules credit: `raw.githubusercontent.com`, `api.github.com` directory listings, and a few tools' own docs sites (checkov.io, PSRule for Azure, the Bicep linter page) | Diffs each credited tool's published rule list against `scripts/prior-art/snapshot.json` so a rule that appears or disappears upstream, or a credit whose upstream id no longer resolves, is reported. Run by the monthly `prior-art-sweep` workflow and by hand; never by a CLI command or a test. |
 
-**31 modules** across `packages/`, `lexicons/`, `scripts/`, `ops/` call a network primitive directly. Every other module that reaches the network does so through one of them.
+**32 modules** across `packages/`, `lexicons/`, `scripts/`, `ops/` call a network primitive directly. Every other module that reaches the network does so through one of them.
 
 {/* GENERATED:egress-catalogue:end */}
 
