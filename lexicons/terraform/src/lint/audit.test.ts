@@ -42,8 +42,22 @@ describe("chant audit against a discovered terraform root module", () => {
     expect(tf001[0]!.lexicon).toBe("terraform");
   });
 
-  test("reports nothing for the with-backend root", async () => {
+  // #2218: `backend "local"` is the local backend named rather than fallen
+  // back into, so it is the same finding as no backend at all. The audit path
+  // gets its own case because it parses joined file content rather than a
+  // directory, and the label has to survive that parse too.
+  test('reports TF001 for a root whose only backend is `backend "local"`', async () => {
     const inputs = discoverByDetection(join(fixtures, "with-backend"), [terraformDetectPlugin]);
+    expect(inputs).toHaveLength(1);
+
+    const findings = await auditFiles(inputs, { checksProvider, entitiesProvider });
+    const tf001 = findings.filter((f) => f.checkId === "TF001");
+    expect(tf001).toHaveLength(1);
+    expect(tf001[0]!.message).toContain('the backend it declares is `backend "local"`');
+  });
+
+  test("reports nothing for the remote-backend root", async () => {
+    const inputs = discoverByDetection(join(fixtures, "remote-backend"), [terraformDetectPlugin]);
     expect(inputs).toHaveLength(1);
 
     const findings = await auditFiles(inputs, { checksProvider, entitiesProvider });

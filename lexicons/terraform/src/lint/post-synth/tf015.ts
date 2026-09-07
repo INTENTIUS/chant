@@ -2,8 +2,9 @@
  * TF015: a `backend` or `cloud` block inside a child module.
  *
  * Scope: child modules only. This is TF001's mirror image. TF001 wants a root
- * module to declare a backend, because a root without one keeps its state on
- * local disk. A child module must declare neither: state belongs to the root,
+ * module to declare a REMOTE backend, because a root without one keeps its
+ * state on local disk. A child module must declare neither: state belongs to
+ * the root,
  * one state per root however many modules it calls, and Terraform says so
  * directly, "A backend block can only appear in the root module" and the
  * same for `cloud`. Depending on the version, the block is ignored with a
@@ -15,6 +16,14 @@
  * along. The rest of that block is fine to keep: `required_version` and
  * `required_providers` are meaningful in a child module and are not reported
  * here.
+ *
+ * Label-blind on purpose (#2218). TF001 had to start reading the backend
+ * block's type label, since `local` is the state placement it warns about
+ * rather than a cure for it. Nothing of the sort applies here: what a child
+ * module may not do is name a backend at all, `local` included, and
+ * Terraform's own refusal ("A backend block can only appear in the root
+ * module") does not read the label either. `hasBlock` is the right test, and
+ * the `positive` fixture's child declares `backend "local"` for that reason.
  */
 
 import type {
