@@ -149,12 +149,6 @@
  *    snapshot folded into a `BuildArchiveManifest` entry (./build-archive.ts)
  *    remains an open question, as does `artifacts.diff`, which `run()` never
  *    populates (the real Sprites API has no built-in diff endpoint).
- *  - Interrupted turns — `turn.status: "interrupted"` stays in the type but
- *    is unreachable from this implementation: any `sprites.exec` rejection
- *    (including one caused by an aborted signal) propagates as a genuine
- *    `run()` failure rather than being classified as an interrupted turn.
- *    Distinguishing "deadline hit mid-run" from "the sprite backend errored"
- *    well enough to surface `"interrupted"` safely is left for #1944.
  *
  * **#1943 (this revision) resolved the transcript-hash basis and
  * sign/verify-gate interop, closing #1941's open "transcript hash basis"
@@ -285,7 +279,7 @@ export interface RunAgentInput {
 
 /** Mirrors fountain's `Turn` shape (`status`/`exit_code`/`started_at`/`ended_at`), even though the turn itself runs on a chant-owned sprite rather than a fountain-managed `Sandbox`. */
 export interface RunAgentTurn {
-  status: "completed" | "failed" | "interrupted";
+  status: "completed" | "failed";
   exitCode: number | null;
   startedAt: string;
   endedAt: string | null;
