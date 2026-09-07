@@ -26,5 +26,9 @@ docs-build:
 import-samples *args:
     bash scripts/import-aws-samples.sh {{args}}
 
+# Diff the curated enum overlay against its recorded sources (network; never part of a build)
+refresh-enum-overlay *args:
+    npx tsx scripts/refresh-enum-overlay.ts {{args}}
+
 # Package the lexicon (generate + validate)
 package: generate validate
