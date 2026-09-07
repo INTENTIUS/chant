@@ -494,6 +494,44 @@ describe("the ownership-scoped prune (chant #1075)", () => {
     expect(deletes).toEqual(["/api/v1/namespaces/prod/secrets/stale-config"]);
   });
 
+  test("an effect receipt ConfigMap is excluded from the prunable set and reported retained (#2074)", async () => {
+    const cluster = fakeCluster({
+      respond: echoApplies,
+      objects: {
+        [objectKey("apps/v1", "Deployment", "web", "prod")]: ownedObject("apps/v1", "Deployment", "web", "prod"),
+        [objectKey("v1", "ConfigMap", "chant-receipt.demo.prod.db-seed", "prod")]: ownedObject(
+          "v1",
+          "ConfigMap",
+          "chant-receipt.demo.prod.db-seed",
+          "prod",
+          {
+            metadata: {
+              labels: {
+                "app.kubernetes.io/managed-by": "chant",
+                "chant.intentius.io/effect-receipt": "db-seed",
+              },
+            },
+          },
+        ),
+        [objectKey("v1", "ConfigMap", "stale-config", "prod")]: ownedObject("v1", "ConfigMap", "stale-config", "prod"),
+      },
+    });
+    const result = await applyManifest(
+      { manifest: manifest(), deleteMode: "owned-only" },
+      undefined,
+      cluster.connector,
+    );
+
+    expect(result.retained).toEqual([
+      { apiVersion: "v1", kind: "ConfigMap", name: "chant-receipt.demo.prod.db-seed", namespace: "prod" },
+    ]);
+    expect(result.pruned).toEqual([
+      { apiVersion: "v1", kind: "ConfigMap", name: "stale-config", namespace: "prod" },
+    ]);
+    const deletes = cluster.layer.requests.filter((r) => r.method === "DELETE").map((r) => r.path);
+    expect(deletes).toEqual(["/api/v1/namespaces/prod/configmaps/stale-config"]);
+  });
+
   test("an object without chant's marker is never a candidate", async () => {
     const cluster = clusterWithOrphans();
     await applyManifest({ manifest: manifest(), deleteMode: "owned-only" }, undefined, cluster.connector);

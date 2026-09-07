@@ -68,6 +68,7 @@ import {
 import { operationFor } from "./api/operation-surface";
 import { resolveK8sOwnerChain } from "./api/owner-chain";
 import { gvkToTypeName } from "./spec/parse";
+import { observeReceiptRows, receiptRowsFor } from "./receipt-store";
 
 function pruneUndefined<T extends Record<string, unknown>>(obj: T): Record<string, unknown> {
   const out: Record<string, unknown> = {};
@@ -357,11 +358,26 @@ export async function describeResources(
   // looked for where it lives".
   const queried: Record<string, string> = {};
 
-  const declared: Declared[] = [...options.entities].map(([entityName, entity]) => ({
-    entityName,
-    entityType: entity.entityType,
-    props: entity.props,
-  }));
+  // Effect receipt rows (#2074) are read by their own leg below: the applier
+  // never wrote them (#1832), and their declaration carries no props, so the
+  // generic sweep has no `metadata.name` to query by and would report a hole
+  // where the receipt leg has a real answer. Their addresses come from the
+  // build output's receipt comment, which is the serializer's one rendering of
+  // the derivation (./effect-receipt-row.ts).
+  const receiptRows = receiptRowsFor(options.entityNames, options.buildOutput);
+
+  const declared: Declared[] = [...options.entities]
+    .filter(([entityName]) => !receiptRows.has(entityName))
+    .map(([entityName, entity]) => ({
+      entityName,
+      entityType: entity.entityType,
+      props: entity.props,
+    }));
+
+  // A whole-lexicon failure below is a hole for the receipts too: nobody
+  // looked at those either, and a connect that never happened proves nothing
+  // about a receipt's presence.
+  const everyName = [...declared.map((d) => d.entityName), ...receiptRows.keys()];
 
   // Connect first. The binding check lives here, so a bound-but-mismatched
   // context throws before any resource is read — core turns that into
@@ -374,7 +390,7 @@ export async function describeResources(
       return observation(
         {},
         unobservedAll(
-          declared.map((d) => d.entityName),
+          everyName,
           "read-failed",
           MISSING_CLIENT_DETAIL,
           options.entities,
@@ -386,7 +402,7 @@ export async function describeResources(
       return observation(
         {},
         unobservedAll(
-          declared.map((d) => d.entityName),
+          everyName,
           outcome.kind === "unobserved" ? outcome.reason : "read-failed",
           outcome.kind === "unobserved" ? outcome.detail : undefined,
           options.entities,
@@ -506,6 +522,14 @@ export async function describeResources(
   });
 
   await addRuntimeChildren(client, resources, unobserved, options.owned, declared);
+
+  // The receipt leg last, so its answers are the ones that stand for the
+  // receipt entities — nothing above ever looked at one.
+  if (receiptRows.size > 0) {
+    const receiptObs = await observeReceiptRows(client, receiptRows);
+    Object.assign(resources, receiptObs.resources);
+    Object.assign(unobserved, receiptObs.unobserved);
+  }
 
   return observation(resources, unobserved, queried);
 }

@@ -63,3 +63,17 @@ export type {
 // truth — see `lexicons/k8s/src/config.ts` for the config shape.
 export { resolveClusterTarget, ClusterBindingMismatchError } from "@intentius/chant/kubectl-context";
 export type { ResolvedClusterTarget, K8sClusterProfile, K8sConfigShape } from "@intentius/chant/kubectl-context";
+
+// Effect-receipt activities (#2074) — core's receipt seam (#1834) bound to
+// this lexicon's ConfigMap-backed store (../../receipt-store.ts), the same
+// way the aws lexicon binds its SSM store (#1835). Re-exported individually:
+// `receiptRead`/`receiptWrite` serve the `effect()` step's
+// read-compare-run-write, `receiptStaleness` serves WatchOp's read-only
+// staleness reporting.
+import { receiptActivities } from "@intentius/chant/op/receipt-store";
+import { k8sReceiptStore } from "../../receipt-store";
+
+const boundReceiptActivities = receiptActivities(k8sReceiptStore());
+export const receiptRead = boundReceiptActivities.receiptRead;
+export const receiptWrite = boundReceiptActivities.receiptWrite;
+export const receiptStaleness = boundReceiptActivities.receiptStaleness;
