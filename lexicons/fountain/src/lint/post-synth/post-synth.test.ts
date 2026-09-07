@@ -167,14 +167,19 @@ describe("FTN020 schedule-cron-syntax", () => {
     expect(scheduleCronSyntaxCheck.check(ctx({ s: { entityType: SCHEDULE, cron: "0 3 * *" } }))).toHaveLength(1);
   });
 
-  it("accepts five fields, six fields, and the documented nicknames", () => {
-    for (const cron of ["0 3 * * *", "0 9 * * 1-5", "*/30 0 3 * * *", "@daily"]) {
+  it("accepts five and six fields", () => {
+    for (const cron of ["0 3 * * *", "0 9 * * 1-5", "*/30 0 3 * * *"]) {
       expect(scheduleCronSyntaxCheck.check(ctx({ s: { entityType: SCHEDULE, cron } })), cron).toHaveLength(0);
     }
   });
 
-  it("rejects @reboot, which fountain documents as unsupported", () => {
-    expect(scheduleCronSyntaxCheck.check(ctx({ s: { entityType: SCHEDULE, cron: "@reboot" } }))).toHaveLength(1);
+  // #2195: the rule is core's `isValidCronExpression`, which takes no
+  // nickname. `cronMatches` cannot evaluate one either, so a cadence written
+  // that way is one chant never fires.
+  it("rejects the @nickname shorthands, including @daily and @reboot", () => {
+    for (const cron of ["@daily", "@hourly", "@midnight", "@yearly", "@reboot"]) {
+      expect(scheduleCronSyntaxCheck.check(ctx({ s: { entityType: SCHEDULE, cron } })), cron).toHaveLength(1);
+    }
   });
 });
 

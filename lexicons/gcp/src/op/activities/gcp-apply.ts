@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { parseYAML } from "@intentius/chant/yaml";
-import { safeHeartbeat, sleep } from "@intentius/chant/op";
+import { sleep } from "@intentius/chant/op";
 import { hasOwnershipMarker, OWNERSHIP_MANAGED_BY_VALUE } from "@intentius/chant/ownership";
 import { GCP_RESOURCE_OWNERSHIP_KEYS } from "../../ownership";
 import {
@@ -552,7 +552,6 @@ export async function waitForOperation(
   while (Date.now() < deadline) {
     if (signal?.aborted) throw new Error("waitForOperation aborted");
     attempt++;
-    safeHeartbeat({ step: "waitForOperation", attempt });
     const res = await http("GET", pollUrl, undefined, signal);
     const body = res.status < 300 ? parseJson(res.text) : undefined;
     if (body) {
@@ -723,7 +722,6 @@ export async function pruneOrphans(
     }
     for (const item of mapper.list.items(parseJson(res.text))) {
       if (!isChantOwned(item.labels) || keep.has(item.name)) continue;
-      safeHeartbeat({ step: "prune", kind, name: item.name });
       const result = await deleteResource(mapper, { kind, metadata: { name: item.name } }, ctx, http, signal);
       console.log(`pruned: ${kind}/${item.name} (${ctx.base})`);
       pruned.push(result);
@@ -775,7 +773,6 @@ export async function gcpApply(
       continue;
     }
     const ctx = resolve(mapper, r);
-    safeHeartbeat({ step: "gcpApply", kind: mapper.kind, name: r.metadata?.name });
     const result = await applyResource(mapper, r, ctx, http, signal);
     const verb = result.created ? "created" : result.updated ? "updated" : "unchanged";
     console.log(`${verb}: ${result.kind}/${result.name} (${ctx.base})`);
@@ -850,7 +847,6 @@ export async function gcpDelete(
     }
     const base = (resolveGcpEndpoint(args) ?? mapper.defaultHost).replace(/\/$/, "");
     const project = args.project ?? resolveGcpProject(r);
-    safeHeartbeat({ step: "gcpDelete", kind: mapper.kind, name: r.metadata?.name });
     const result = await deleteResource(mapper, r, { base, project }, http, signal);
     console.log(`${result.deleted ? "deleted" : "absent"}: ${result.kind}/${result.name} (${base})`);
     deleted.push(result);

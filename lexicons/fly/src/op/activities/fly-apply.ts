@@ -23,7 +23,7 @@
  */
 
 import { readFileSync } from "node:fs";
-import { safeHeartbeat, sleep } from "@intentius/chant/op";
+import { sleep } from "@intentius/chant/op";
 import { hasOwnershipMarker } from "@intentius/chant/ownership";
 import { FLY_METADATA_OWNERSHIP_KEYS } from "../../ownership";
 import {
@@ -396,7 +396,6 @@ export async function waitForMachine(
   while (Date.now() < deadline) {
     if (signal?.aborted) throw new Error("waitForMachine aborted");
     attempt++;
-    safeHeartbeat({ step: "waitForMachine", app, id, attempt });
     const res = await http("GET", url, undefined, undefined, signal);
     if (res.status === 200 && (parseJson(res.text) as { ok?: boolean })?.ok === true) {
       return;
@@ -537,7 +536,6 @@ export async function pruneMachines(
   for (const m of await listMachines(ctx, app, http, signal)) {
     if (!isChantOwned(m.config?.metadata) || keep.has(m.name)) continue;
     if (m.state === "destroyed" || m.state === "destroying") continue;
-    safeHeartbeat({ step: "pruneMachine", app, name: m.name });
     await destroyMachine(ctx, app, m.id, http, signal, opts);
     console.log(`pruned: ${app}/${m.name} (${ctx.base})`);
     pruned.push({ app, name: m.name, id: m.id });
@@ -935,7 +933,6 @@ export async function flyApply(
   // Apps first.
   const apps: Array<{ app: string; created: boolean }> = [];
   for (const req of appReqs) {
-    safeHeartbeat({ step: "flyApply", kind: "app", name: appNameFromRequest(req) });
     const result = await applyApp(ctx, req, http, signal);
     console.log(`${result.created ? "created" : "unchanged"}: app/${result.app} (${ctx.base})`);
     apps.push(result);
@@ -967,7 +964,6 @@ export async function flyApply(
   const volumes: Array<{ app: string; name: string; action: "created" | "noop" }> = [];
   for (const [entityName, req] of volumeReqs) {
     const app = resolveApp(resourceAppSegment(req.endpoint), soleApp);
-    safeHeartbeat({ step: "flyApply", kind: "volume", name: entityName });
     const result = await applyVolume(ctx, app, entityName, req, http, signal);
     track(keepVolumes, app, result.name);
     console.log(`${result.action}: volume/${app}/${result.name} (${ctx.base})`);
@@ -979,7 +975,6 @@ export async function flyApply(
     const app = resolveApp(machineAppSegment(req.endpoint), soleApp);
     const name = typeof req.body.name === "string" && req.body.name ? req.body.name : entityName;
     track(keepMachines, app, name);
-    safeHeartbeat({ step: "flyApply", kind: "machine", name });
     const result = await applyMachine(ctx, app, entityName, req, http, signal, opts);
     console.log(`${result.action}: machine/${app}/${result.name} (${ctx.base})`);
     machines.push({ app, name: result.name, action: result.action });
@@ -989,7 +984,6 @@ export async function flyApply(
   const ips: Array<{ app: string; type: string; action: "created" | "noop" }> = [];
   for (const [entityName, req] of ipReqs) {
     const app = resolveApp(resourceAppSegment(req.endpoint), soleApp);
-    safeHeartbeat({ step: "flyApply", kind: "ip", name: entityName });
     const result = await applyIp(ctx, app, req, http, signal);
     track(keepIps, app, result.type);
     console.log(`${result.action}: ip/${app}/${result.type} (${ctx.base})`);
@@ -999,7 +993,6 @@ export async function flyApply(
   const certs: Array<{ app: string; hostname: string; action: "created" | "noop" }> = [];
   for (const [, req] of certReqs) {
     const app = resolveApp(resourceAppSegment(req.endpoint), soleApp);
-    safeHeartbeat({ step: "flyApply", kind: "certificate", name: String(req.body.hostname ?? "") });
     const result = await applyCert(ctx, app, req, http, signal);
     track(keepCerts, app, result.hostname);
     console.log(`${result.action}: certificate/${app}/${result.hostname} (${ctx.base})`);
@@ -1012,7 +1005,6 @@ export async function flyApply(
     const app = resolveApp(resourceAppSegment(req.endpoint), soleApp);
     const name = secretNameSegment(req.endpoint);
     track(keepSecrets, app, name);
-    safeHeartbeat({ step: "flyApply", kind: "secret", name });
     const result = await applySecret(ctx, app, name, req, http, signal);
     console.log(`set: secret/${app}/${result.name} (${ctx.base})`);
     secrets.push({ app, name: result.name });
@@ -1072,7 +1064,6 @@ export async function flyDelete(
     const name = typeof req.body.name === "string" && req.body.name ? req.body.name : entityName;
     const live = (await listMachines(ctx, app, http, signal)).find((m) => m.name === name);
     if (!live) continue;
-    safeHeartbeat({ step: "flyDelete", kind: "machine", name });
     await destroyMachine(ctx, app, live.id, http, signal, opts);
     machines.push({ app, name });
   }

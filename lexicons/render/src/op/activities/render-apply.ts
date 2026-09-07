@@ -30,7 +30,7 @@
  */
 
 import { readFileSync } from "node:fs";
-import { safeHeartbeat, sleep } from "@intentius/chant/op";
+import { sleep } from "@intentius/chant/op";
 import { hasOwnershipMarker, readOwnership, type OwnershipMarker } from "@intentius/chant/ownership";
 import {
   applyResult,
@@ -745,7 +745,6 @@ export async function waitForDeploy(
       id = d.id;
       status = d.status;
     }
-    safeHeartbeat({ step: "renderApply", kind: "deploy", service: serviceId, deploy: id, status });
     if (DEPLOY_LIVE.has(status)) return status;
     if (DEPLOY_FAILED.has(status)) {
       throw new Error(`render: deploy ${id} of service ${serviceId} ended ${status}`);
@@ -828,7 +827,6 @@ export async function renderApplyDetailed(
 
   for (const [entityName, req] of ordered) {
     const entry = catalogEntry(req.entityType);
-    safeHeartbeat({ step: "renderApply", kind: entry.kind, name: req.name });
 
     // Resolve markers now that every dependency is live.
     const body = (await resolveMarkers(ctx, req.body, lives, http, infoCache, owner, signal)) as Record<string, unknown>;
@@ -1024,7 +1022,6 @@ export async function renderDelete(
 
   for (const [entityName, req] of ordered) {
     const entry = catalogEntry(req.entityType);
-    safeHeartbeat({ step: "renderDelete", kind: entry.kind, name: req.name });
     const endpoint = await resolveEndpointFor(req);
     const id = endpoint ? await findId(entityName) : undefined;
     if (!id) {

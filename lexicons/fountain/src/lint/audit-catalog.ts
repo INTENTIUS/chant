@@ -120,8 +120,10 @@ export const fountainAuditCatalog: Record<string, RuleMeta> = {
     "FTN020",
     "merge-worthy",
     "correctness",
-    "Schedule cron is not five-field UTC cron syntax",
-    "Fix the expression. fountain stores an unparseable cron and then never fires it.",
+    "Schedule cron is not five- or six-field UTC cron syntax",
+    "Fix the expression. fountain stores an unparseable cron and then never fires it. " +
+      "The @daily-style shorthands are refused too (#2195): chant validates and matches one cron " +
+      "notion, the five- or six-field one, so write the fields out.",
   ),
   FTN021: rule(
     "FTN021",

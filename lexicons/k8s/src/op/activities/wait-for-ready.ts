@@ -1,4 +1,4 @@
-import { safeHeartbeat, sleep } from "@intentius/chant/op";
+import { sleep } from "@intentius/chant/op";
 import { defaultK8sConnector, type K8sConnector } from "../../api/connect";
 
 /**
@@ -356,7 +356,6 @@ export async function waitForReady(
     attempt++;
 
     const obj = await fetcher(args, signal);
-    safeHeartbeat({ step: "waitForReady", kind: args.kind, name: args.name, attempt });
 
     const term = firstTerminal(obj, spec);
     if (term) {

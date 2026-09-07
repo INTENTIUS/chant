@@ -89,7 +89,7 @@ describe("generateGitlabOpPipeline: a cross-cutting change is one generator edit
       { name: "prod-reconcile", schedule: "0 * * * *" },
     ];
     const result = generateGitlabOpPipeline(specs, {
-      runCommand: ["chant", "run", "{name}", "--temporal"],
+      runCommand: ["chant", "run", "{name}", "--json"],
       beforeScript: ["npm ci"],
       extraScript: ["echo done"],
     });
@@ -99,7 +99,7 @@ describe("generateGitlabOpPipeline: a cross-cutting change is one generator edit
       const job = parsed[spec.name] as Record<string, unknown>;
       const script = job.script as string[];
       expect(script[0]).toBe("npm ci");
-      expect(script[1]).toContain("--temporal");
+      expect(script[1]).toContain("--json");
       expect(script[2]).toBe("echo done");
     }
   });

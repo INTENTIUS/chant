@@ -1,6 +1,5 @@
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { safeHeartbeat } from "@intentius/chant/op";
 import { hasOwnershipMarker, OWNERSHIP_MANAGED_BY_VALUE } from "@intentius/chant/ownership";
 import { AZURE_TAG_OWNERSHIP_KEYS } from "../../ownership";
 import { lookupApiVersion } from "../../serializer";
@@ -337,7 +336,6 @@ export async function azApply(
   const applied: Array<{ type: string; name: string }> = [];
   for (const resource of orderArmResources(resources)) {
     const name = String(await evalArmString(resource.name, ctx));
-    safeHeartbeat({ step: "azApply", type: resource.type, name });
     // Stamp chant ownership so a later prune can tell chant-managed resources
     // apart from foreign ones in the same group.
     const body = await armResourceBody(resource, ctx);
@@ -646,7 +644,6 @@ export async function pruneArmOrphans(
       notPrunable.push({ type: item.type, name: item.name, reason: "no-api-version" });
       continue;
     }
-    safeHeartbeat({ step: "azPrune", type: item.type, name: item.name });
     const result = await deleteArmResource(item.type, item.name, apiVersion, ctx, http, signal);
     console.log(`pruned: ${item.type}/${item.name} (${ctx.base})`);
     pruned.push(result);
@@ -680,7 +677,6 @@ export async function azDelete(
   const deleted: Array<{ type: string; name: string; deleted: boolean }> = [];
   for (const resource of orderArmResources(template.resources ?? []).reverse()) {
     const name = String(await evalArmString(resource.name, ctx));
-    safeHeartbeat({ step: "azDelete", type: resource.type, name });
     const result = await deleteArmResource(resource.type, name, resource.apiVersion, ctx, http, signal);
     console.log(`${result.deleted ? "deleted" : "absent"}: ${resource.type}/${name} (${base})`);
     deleted.push(result);

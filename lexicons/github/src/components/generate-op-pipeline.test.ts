@@ -201,7 +201,7 @@ describe("generateGithubOpPipeline: a cross-cutting change is one generator edit
       { name: "prod-reconcile", schedule: "0 * * * *" },
     ];
     const result = generateGithubOpPipeline(specs, {
-      runCommand: ["chant", "run", "{name}", "--temporal"],
+      runCommand: ["chant", "run", "{name}", "--json"],
       beforeScript: ["npm ci"],
       extraScript: ["echo done"],
     });
@@ -211,7 +211,7 @@ describe("generateGithubOpPipeline: a cross-cutting change is one generator edit
       const jobName = Object.keys(doc.jobs!)[0];
       const runLines = doc.jobs![jobName].steps.filter((s) => typeof s.run === "string").map((s) => s.run as string);
       expect(runLines[0]).toBe("npm ci");
-      expect(runLines[1]).toContain("--temporal");
+      expect(runLines[1]).toContain("--json");
       expect(runLines[2]).toBe("echo done");
     }
   });

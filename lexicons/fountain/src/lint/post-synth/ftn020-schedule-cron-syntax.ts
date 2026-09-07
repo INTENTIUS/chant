@@ -1,4 +1,5 @@
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
+import { isValidCronExpression } from "@intentius/chant/op";
 import { propsOf } from "../../entity-props";
 
 /**
@@ -9,34 +10,25 @@ import { propsOf } from "../../entity-props";
  * failure mode nobody notices until the thing the schedule was watching has
  * already gone wrong.
  *
- * Upstream documents five fields in UTC plus the `@daily`-style shorthands,
- * with `@reboot` refused (there is no boot to hang it on). The field check is
- * deliberately permissive — a pre-submission guard, not a second scheduler.
- * Six fields pass too: a seconds column is the common variant, and rejecting
- * it here would be chant inventing a stricter rule than the server enforces.
+ * The field check is core's own `isValidCronExpression` (`@intentius/chant/op`,
+ * #2120) rather than a copy of it: deliberately permissive about what a field
+ * contains, a pre-submission guard rather than a second scheduler. Six fields
+ * pass too — a seconds column is the common variant, and rejecting it here
+ * would be chant inventing a stricter rule than the server enforces.
  *
- * #2120: switch to @intentius/chant/op/cron once it lands. The five-or-six
- * field check below is inlined from the temporal lexicon's TMP010 until then,
- * so both lexicons agree on what a cron string is.
+ * The `@daily`-style nicknames are refused (#2195). This rule used to accept
+ * them and core's validator never has. chant has one idea of what a cron
+ * string is: the expression an Op's `schedule` carries, the one `chant
+ * operator` matches a tick against, and the one this rule checks. `cronMatches`
+ * cannot evaluate a nickname, so a cadence written that way is a cadence chant
+ * itself will not fire, even where fountain upstream would take it. Write the
+ * five fields out (`@daily` is `0 0 * * *`). `@reboot` was already refused,
+ * since there is no boot to hang it on.
  */
-
-/** Very permissive cron field pattern — catches obvious syntax errors. */
-const CRON_FIELD = /^[0-9*,/\-?LW#]+$/;
-
-/** The nicknames fountain accepts; `@reboot` is documented as refused. */
-const CRON_NICKNAMES = new Set(["@yearly", "@annually", "@monthly", "@weekly", "@daily", "@midnight", "@hourly"]);
-
-function isValidCronExpression(expr: string): boolean {
-  const trimmed = expr.trim();
-  if (trimmed.startsWith("@")) return CRON_NICKNAMES.has(trimmed.toLowerCase());
-  const fields = trimmed.split(/\s+/);
-  if (fields.length < 5 || fields.length > 6) return false;
-  return fields.every((f) => CRON_FIELD.test(f));
-}
 
 export const scheduleCronSyntaxCheck: PostSynthCheck = {
   id: "FTN020",
-  description: "Schedule cron must be five-field UTC cron (or a supported @nickname)",
+  description: "Schedule cron must be five- or six-field UTC cron (no @nickname shorthands)",
 
   check(ctx: PostSynthContext): PostSynthDiagnostic[] {
     const diagnostics: PostSynthDiagnostic[] = [];
@@ -51,8 +43,9 @@ export const scheduleCronSyntaxCheck: PostSynthCheck = {
           checkId: "FTN020",
           severity: "error",
           message:
-            `Schedule "${name}" cron "${cron}" is not five-field cron syntax — ` +
-            `fountain would store it and never fire it`,
+            `Schedule "${name}" cron "${cron}" is not five- or six-field cron syntax — ` +
+            `fountain would store it and never fire it. The @daily-style shorthands are ` +
+            `not accepted either; write the fields out.`,
           entity: name,
           lexicon: "fountain",
         });

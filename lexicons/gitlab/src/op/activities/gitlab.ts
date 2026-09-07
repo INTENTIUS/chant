@@ -1,6 +1,6 @@
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
-import { safeHeartbeat, sleep } from "@intentius/chant/op";
+import { sleep } from "@intentius/chant/op";
 
 const execAsync = promisify(exec);
 
@@ -34,7 +34,6 @@ export async function gitlabPipeline(args: GitlabPipelineArgs, signal?: AbortSig
   while (true) {
     if (signal?.aborted) throw new Error("gitlabPipeline aborted");
     attempt++;
-    safeHeartbeat({ step: "gitlabPipeline", project: args.name, attempt });
 
     const { stdout } = await execAsync(
       `glab ci status --project ${args.name} --format json`,

@@ -56,8 +56,10 @@ reference at build rather than partway through an apply.
 
 ## Schedule
 
-A cron prompt sent to a Teammate. `cron` is five fields in UTC, and FTN020
-rejects an expression fountain would store and then never fire. `one_off:
+A cron prompt sent to a Teammate. `cron` is five or six fields in UTC, and
+FTN020 rejects an expression fountain would store and then never fire. The
+`@daily`-style shorthands are refused with it: chant validates and matches one
+cron notion, the five- or six-field one, so write the fields out. `one_off:
 false` sends the prompt into the teammate's own thread, where a busy teammate
 means the run is skipped rather than queued; `one_off: true` opens a fresh
 conversation on each fire.

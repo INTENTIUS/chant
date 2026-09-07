@@ -1,6 +1,6 @@
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
-import { safeHeartbeat, sleep } from "./activity-runtime";
+import { sleep } from "./activity-runtime";
 
 const execAsync = promisify(exec);
 
@@ -158,7 +158,6 @@ export function emulatorLifecycle(spec: EmulatorSpec): EmulatorLifecycle {
     let ok = false;
     while (Date.now() < deadline) {
       if (signal?.aborted) throw new Error(`emulator "${name}" wait aborted`);
-      safeHeartbeat({ step: "emulatorUp", container: name });
       try {
         const res = await fetch(url, { signal });
         if (res.ok && ready(await res.text())) {
