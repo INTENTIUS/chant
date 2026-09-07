@@ -76,6 +76,9 @@ const raw = (repo: string, path: string, ref = "main"): string => `https://raw.g
  * deliberately absent: its W/F rule ids live inside each Ruby rule file, not in
  * any index. So is the AWS Guard Rules Registry, whose rules are files nested
  * one directory per service with no flat listing. Both are re-checked by hand.
+ * The Terraform family's remaining absentees (the two vendor guides, the
+ * HashiCorp style guide, choudoufu and semgrep) each carry their reason in the
+ * registry table in lexicons/terraform/src/lint/audit-lineage.ts (#2219).
  */
 const SOURCES: Partial<Record<PriorArtTool, Source[]>> = {
   zizmor: [{ url: raw("zizmorcore/zizmor", "docs/audits.md"), extract: headings("##") }],
@@ -109,6 +112,27 @@ const SOURCES: Partial<Record<PriorArtTool, Source[]>> = {
   "detect-secrets": [{ url: raw("Yelp/detect-secrets", "README.md", "master"), extract: regexIds(/\b([A-Z][A-Za-z0-9]+(?:Detector|HighEntropyString))\b/g) }],
   gixy: [{ url: gh("yandex/gixy", "gixy/plugins", "master"), stripSuffix: ".py" }],
   "gixy-ng": [{ url: gh("dvershinin/gixy", "gixy/plugins", "master"), stripSuffix: ".py" }],
+  // The tflint rulesets publish their index as a markdown table whose first
+  // cell links each rule's own page, so the id is the link text, not a heading.
+  // AVM is the exception twice over: its table lives at the repository root as
+  // RULES.md, and its docs/ directory holds pages for only two of its rules.
+  "tflint-ruleset-terraform": [{ url: raw("terraform-linters/tflint-ruleset-terraform", "docs/rules/README.md"), extract: regexIds(/^\|\s*\[([a-z][a-z0-9_]+)\]\(/gm) }],
+  "tflint-ruleset-redeploy": [{ url: raw("RedeployAB/tflint-ruleset-redeploy", "docs/rules/README.md"), extract: regexIds(/^\|\s*\[([a-z][a-z0-9_]+)\]\(/gm) }],
+  "tflint-ruleset-avm": [{ url: raw("Azure/tflint-ruleset-avm", "RULES.md"), extract: regexIds(/^\|\s*(avm_[a-z0-9_]+)\s*\|/gm) }],
+  // tfsec's per-check docs nest a directory per provider, per service and per
+  // check, which the directory extractor cannot walk; the frozen `master`
+  // branch keeps a flat rules.md table of every check id instead, including the
+  // three `general/secrets` ids chant credits (two of which v1 consolidated
+  // away, so they exist in this index and nowhere newer).
+  tfsec: [{ url: raw("aquasecurity/tfsec", "rules.md", "master"), extract: regexIds(/^\|\s*([a-z][a-z0-9-]+)\s*\|/gm) }],
+  // The Sentinel policy set has no index, but each cloud directory is a flat
+  // list of `.sentinel` files whose names are the policy ids credits cite; the
+  // `only` filter keeps the mocks, tests and helper directories out.
+  "terraform-sentinel-policies": ["cloud-agnostic", "aws", "azure", "gcp", "vmware"].map((cloud) => ({
+    url: gh("hashicorp/terraform-sentinel-policies", cloud),
+    only: /\.sentinel$/,
+    stripSuffix: ".sentinel",
+  })),
 };
 
 interface ToolSnapshot { source: string[]; ids: string[] }

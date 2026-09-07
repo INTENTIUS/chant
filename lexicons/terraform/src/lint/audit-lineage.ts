@@ -42,26 +42,37 @@
  * TF021) added `gcp-terraform-best-practices`, the last row of the table below
  * that no shipped rule had cited yet.
  *
+ * Each row's Sweep note says whether `scripts/prior-art-sweep.ts` can index the
+ * source and, when it cannot, why (#2219). Five of these are indexed as of
+ * 2026-09-07: the three tflint rulesets, tfsec and the Sentinel policy set,
+ * 311 upstream rule ids in `scripts/prior-art/snapshot.json`. The rest are
+ * prose or code, so the tools they credit are re-read by hand when their
+ * documents change.
+ *
  * | Key | Name | URL | Licence | Kind | Note |
  * |---|---|---|---|---|---|
- * | `tflint` | tflint | https://github.com/terraform-linters/tflint | MPL-2.0 (its `terraform` package is BUSL-1.1; binaries are bound by both) | scanner | The plugin host; ships no language rules of its own. |
- * | `tflint-ruleset-terraform` | tflint-ruleset-terraform | https://github.com/terraform-linters/tflint-ruleset-terraform | MPL-2.0 | scanner | The official language-level ruleset, bundled into tflint. |
- * | `tflint-ruleset-redeploy` | tflint-ruleset-redeploy | https://github.com/RedeployAB/tflint-ruleset-redeploy | 0BSD | scanner | Community ruleset; richest source of language-level rules outside the official set. |
- * | `tflint-ruleset-avm` | tflint-ruleset-avm | https://github.com/Azure/tflint-ruleset-avm | MIT | scanner | Azure Verified Modules conformance; two of its 33 rules are provider-agnostic. |
- * | `tfsec` | tfsec | https://github.com/aquasecurity/tfsec | MIT | scanner | Historical: not archived but effectively frozen (no release since 2025-05); its docs site 404s above v0.61.x, so cite pinned repository paths (`github.com/aquasecurity/tfsec/blob/master/docs/checks/...`), not the docs site. |
- * | `trivy-checks` | trivy-checks | https://github.com/aquasecurity/trivy-checks | MIT (not the trivy scanner's own Apache-2.0; cite the checks repo's licence, not the engine's) | scanner | Where tfsec's rules live today (tfsec -> defsec -> trivy + trivy-checks). Cite rules by `long_id` (stable, human-readable); `AVD-*` ids are aliases now. |
- * | `terraform-sentinel-policies` | HashiCorp reference Sentinel policies | https://github.com/hashicorp/terraform-sentinel-policies | MPL-2.0 | specification | HashiCorp's own example policy set; ships zero rules baked into HCP Terraform itself, so treat a cited policy as a documented pattern (`specification`) unless a future entry runs it as a real check (`scanner`); the `kind` union allows either. |
- * | `choudoufu` | choudoufu | https://github.com/INTENTIUS/choudoufu | MPL-2.0 | scanner | Its `internal/live/lint` package; experimental, AWS-only. |
- * | `hashicorp-style-guide` | HashiCorp Terraform style guide | https://developer.hashicorp.com/terraform/language/style | n/a | specification | |
- * | `gcp-terraform-best-practices` | Google Cloud Terraform best-practices series | https://docs.cloud.google.com/docs/terraform/best-practices/general-style-structure | n/a | specification | A multi-page series; cite the specific page's fragment. |
- * | `aws-terraform-prescriptive-guidance` | AWS prescriptive guidance for Terraform | https://docs.aws.amazon.com/prescriptive-guidance/latest/terraform-aws-provider-best-practices/ | n/a | specification | |
+ * | `tflint` | tflint | https://github.com/terraform-linters/tflint | MPL-2.0 (its `terraform` package is BUSL-1.1; binaries are bound by both) | scanner | The plugin host; ships no language rules of its own. Sweep: not registered in `PRIOR_ART` (no rule cites it), so it is not swept. |
+ * | `tflint-ruleset-terraform` | tflint-ruleset-terraform | https://github.com/terraform-linters/tflint-ruleset-terraform | MPL-2.0 | scanner | The official language-level ruleset, bundled into tflint. Sweep: indexed from `docs/rules/README.md`, whose table links each rule's page (20 rules). |
+ * | `tflint-ruleset-redeploy` | tflint-ruleset-redeploy | https://github.com/RedeployAB/tflint-ruleset-redeploy | 0BSD | scanner | Community ruleset; richest source of language-level rules outside the official set. Sweep: indexed from `docs/rules/README.md`, same table shape (33 rules). |
+ * | `tflint-ruleset-avm` | tflint-ruleset-avm | https://github.com/Azure/tflint-ruleset-avm | MIT | scanner | Azure Verified Modules conformance; two of its 33 rules are provider-agnostic. Sweep: indexed from the repository-root `RULES.md`, since `docs/` holds pages for only two rules (33 rules). |
+ * | `tfsec` | tfsec | https://github.com/aquasecurity/tfsec | MIT | scanner | Historical: not archived but effectively frozen (no release since 2025-05); its docs site 404s above v0.61.x, so cite pinned repository paths (`github.com/aquasecurity/tfsec/blob/master/docs/checks/...`), not the docs site. Sweep: indexed from the root `rules.md` on `master`, a flat table of all 152 check ids, because `docs/checks` nests a directory per provider, service and check. |
+ * | `trivy-checks` | trivy-checks | https://github.com/aquasecurity/trivy-checks | MIT (not the trivy scanner's own Apache-2.0; cite the checks repo's licence, not the engine's) | scanner | Where tfsec's rules live today (tfsec -> defsec -> trivy + trivy-checks). Cite rules by `long_id` (stable, human-readable); `AVD-*` ids are aliases now. Sweep: not registered in `PRIOR_ART` (no rule cites it yet) and its `long_id`s live in Rego metadata under `checks/<kind>/<provider>/<service>/`, with no flat index. |
+ * | `terraform-sentinel-policies` | HashiCorp reference Sentinel policies | https://github.com/hashicorp/terraform-sentinel-policies | MPL-2.0 | specification | HashiCorp's own example policy set; ships zero rules baked into HCP Terraform itself, so treat a cited policy as a documented pattern (`specification`) unless a future entry runs it as a real check (`scanner`); the `kind` union allows either. Sweep: indexed by listing the five per-cloud directories, whose `.sentinel` filenames are the policy ids credits cite (73 policies); the repository publishes no index page. |
+ * | `choudoufu` | choudoufu | https://github.com/INTENTIUS/choudoufu | MPL-2.0 | scanner | Its `internal/live/lint` package; experimental, AWS-only. Sweep: unsweepable, its rule ids are Go constants in `internal/live/lint/issue.go` and it publishes no rule index. |
+ * | `hashicorp-style-guide` | HashiCorp Terraform style guide | https://developer.hashicorp.com/terraform/language/style | n/a | specification | Sweep: unsweepable, one prose page of recommendations with no rule ids; a credit quotes the sentence and links its fragment. |
+ * | `gcp-terraform-best-practices` | Google Cloud Terraform best-practices series | https://docs.cloud.google.com/docs/terraform/best-practices/general-style-structure | n/a | specification | A multi-page series; cite the specific page's fragment. Sweep: unsweepable, prose across several pages with no rule ids. |
+ * | `aws-terraform-prescriptive-guidance` | AWS prescriptive guidance for Terraform | https://docs.aws.amazon.com/prescriptive-guidance/latest/terraform-aws-provider-best-practices/ | n/a | specification | Sweep: unsweepable, a prose guide whose sections carry headings rather than rule ids. |
  *
  * Deliberately excluded, per the survey: Terrascan and regula (both archived,
  * do not build on dead projects); Snyk IaC (a product, not a rule source);
  * semgrep (no SPDX id: its engine is LGPL-2.1 but its rules ship under the
  * proprietary Semgrep Rules License v1.0, which forbids redistribution; cite
  * it by name in prose if a rule's idea comes from it, never register it in
- * `PRIOR_ART` with an SPDX licence).
+ * `PRIOR_ART` with an SPDX licence). TF008 credits semgrep by name under that
+ * rule, so `PRIOR_ART` does carry the entry, with the licence spelled out
+ * rather than as an SPDX id. Sweep: unsweepable, the registry publishes no
+ * index and a rule id is the path of its YAML file under
+ * `terraform/<provider>/<category>/`, which no single directory listing covers.
  *
  * TF024 (#2103, live root declares a backend/cloud block) credits choudoufu's
  * own `RuleStateBackend`, `internal/live/lint/issue.go` of
