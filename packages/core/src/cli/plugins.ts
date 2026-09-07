@@ -115,6 +115,45 @@ export function collectBuildRootContributors(
 }
 
 /**
+ * Bind each loaded plugin's `subscribeChanges` seam (#1981) to one environment
+ * and its declared entities, producing the `ChangeSubscriber` list `chant
+ * operator`'s loop takes, in the same extract-then-thread shape
+ * {@link collectBuildRootContributors} uses, and for the same reason: core's
+ * operator must not import plugins.
+ *
+ * Plugins without the seam contribute nothing, so a project whose lexicons all
+ * lack it gets a loop that is exactly the timer it always was. `entities` is
+ * the per-lexicon slice of a build's declared entities, which is the bound on
+ * what a subscription may watch; a lexicon with no declared entities is
+ * skipped rather than handed an empty scope to widen.
+ */
+export function collectChangeSubscribers(
+  plugins: readonly LexiconPlugin[] | undefined,
+  options: {
+    environment: string;
+    cwd?: string;
+    /** Declared entities per lexicon name, from a build. */
+    entities: Map<string, Map<string, { entityType: string; props: Record<string, unknown> }>>;
+  },
+): Array<import("../op/operator").ChangeSubscriber> {
+  return (plugins ?? [])
+    .filter((plugin) => typeof plugin.subscribeChanges === "function")
+    .filter((plugin) => (options.entities.get(plugin.name)?.size ?? 0) > 0)
+    .map((plugin) => ({
+      lexicon: plugin.name,
+      subscribe: (ctx) =>
+        plugin.subscribeChanges!({
+          environment: options.environment,
+          ...(options.cwd ? { cwd: options.cwd } : {}),
+          entities: options.entities.get(plugin.name),
+          onChange: ctx.onChange,
+          onError: ctx.onError,
+          signal: ctx.signal,
+        }),
+    }));
+}
+
+/**
  * Load plugins for all detected lexicon names.
  * Calls `init()` on each plugin if present.
  */

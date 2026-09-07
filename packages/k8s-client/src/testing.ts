@@ -32,6 +32,13 @@ export interface FakeResponse {
   status?: number;
   body?: unknown;
   headers?: Record<string, string>;
+  /**
+   * A streaming body, for a watch (chant #1981). Anything async-iterable will
+   * do, and {@link fakeWatchStream} is the usual source. Set it and the response
+   * exposes `body.stream()`, which is what the client reads instead of
+   * `text()` for a request it never expects to complete.
+   */
+  stream?: AsyncIterable<string | Uint8Array>;
 }
 
 export type FakeRequestHandler = (request: RecordedRequest) => FakeResponse | Promise<FakeResponse>;
@@ -74,7 +81,10 @@ export function fakeRequestLayer(handler: FakeRequestHandler): FakeRequestLayer 
       return {
         httpStatusCode: status,
         headers: { "content-type": "application/json", ...(result.headers ?? {}) },
-        body: { text: async () => body },
+        body: {
+          text: async () => body,
+          ...(result.stream ? { stream: () => result.stream } : {}),
+        },
       };
     },
   };
@@ -185,4 +195,78 @@ export function apiResourceList(
       ...(r.shortNames ? { shortNames: r.shortNames } : {}),
     })),
   };
+}
+
+/** A watch stream a test drives by hand. */
+export interface FakeWatchStream extends AsyncIterable<string> {
+  /**
+   * Send one NDJSON frame down the stream. Objects are stringified; a string
+   * is sent verbatim, which is how a test produces a malformed or half-written
+   * frame. A newline is appended unless the string already ends in one.
+   */
+  push(frame: unknown): void;
+  /** End the stream, as a server closing the connection does. */
+  close(): void;
+  /** How many frames have been consumed by the reader. */
+  readonly delivered: number;
+}
+
+/**
+ * A controllable NDJSON stream for driving {@link import("./client").K8sClient.watch}
+ * against the fake cluster (chant #1981).
+ *
+ * The client reads it exactly as it reads a live watch: one frame per line,
+ * for as long as the connection stays open. So a test can push an ADDED, an
+ * expired-`410` ERROR, or nothing at all, and assert on what the client does
+ * about it, without a cluster, a socket, or a timer.
+ */
+export function fakeWatchStream(): FakeWatchStream {
+  const queued: string[] = [];
+  let waiting: (() => void) | undefined;
+  let closed = false;
+  let delivered = 0;
+
+  const wake = () => {
+    const resume = waiting;
+    waiting = undefined;
+    resume?.();
+  };
+
+  return {
+    get delivered() {
+      return delivered;
+    },
+    push(frame: unknown) {
+      if (closed) return;
+      const text = typeof frame === "string" ? frame : JSON.stringify(frame);
+      queued.push(text.endsWith("\n") ? text : `${text}\n`);
+      wake();
+    },
+    close() {
+      closed = true;
+      wake();
+    },
+    async *[Symbol.asyncIterator]() {
+      for (;;) {
+        while (queued.length > 0) {
+          delivered++;
+          yield queued.shift()!;
+        }
+        if (closed) return;
+        await new Promise<void>((resolve) => {
+          waiting = resolve;
+        });
+      }
+    },
+  };
+}
+
+/** A watch event frame, the shape the API server sends. */
+export function watchFrame(type: string, object: Record<string, unknown>): Record<string, unknown> {
+  return { type, object };
+}
+
+/** The `410 Gone` frame a watch gets when its resourceVersion has aged out. */
+export function expiredWatchFrame(message = "too old resource version: 1 (5000)"): Record<string, unknown> {
+  return watchFrame("ERROR", statusBody(410, "Expired", message));
 }

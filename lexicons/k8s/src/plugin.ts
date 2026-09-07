@@ -738,6 +738,21 @@ const { deployment, service, serviceMonitor, prometheusRule } = MonitoredService
     return exportResources(options);
   },
 
+  /**
+   * The change signal (#1981). A Watch on every declared kind, reported as a
+   * bare `onChange()` that wakes an operator tick early. Nothing a frame
+   * carries reaches the tick: the seam has no payload, and the tick that runs
+   * is the tick the timer would have run. Kubernetes is the one substrate
+   * chant reaches whose change stream needs nothing deployed into the observed
+   * cluster; see the verdict table in the operator guide. Implementation in
+   * ./subscribe-changes.ts, dynamically imported for the same reason
+   * describeResources is.
+   */
+  async subscribeChanges(options) {
+    const { subscribeChanges } = await import("./subscribe-changes");
+    return subscribeChanges(options);
+  },
+
   // Property-level live drift via SSA managed-fields (#1076, epic #1073).
   // The reader lives in ./deep-observe.ts, loaded only through this dynamic
   // import — same reason describeResources/exportResources are — so the API

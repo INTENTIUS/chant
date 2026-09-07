@@ -1147,6 +1147,39 @@ export interface LexiconPlugin {
   }): Promise<Record<string, ResourceMetadata>>;
 
   /**
+   * Subscribe to this substrate's own change notifications (#1981), so an
+   * operator tick can run when something moved instead of only when the timer
+   * came round. Optional, and consumed by exactly one caller: `chant
+   * operator`'s loop (`./op/operator.ts`). A lexicon that does not implement
+   * it behaves exactly as it did: the loop keeps its timer and never asks.
+   *
+   * Three rules make the seam honest, and the types are shaped to enforce the
+   * first one rather than describe it.
+   *
+   * - **The signal is a trigger, never a fact.** {@link
+   *   SubscribeChangesOptions.onChange} takes no arguments and returns
+   *   nothing, so there is no channel through which a watch event could reach
+   *   a change set, a snapshot row or a diff line. The tick that follows an
+   *   early wake re-observes and re-derives from scratch, exactly as a
+   *   timer-driven tick does; waking early changes *when* a tick runs and
+   *   nothing about what it concludes.
+   * - **A dropped subscription degrades to the timer and says so.** Report it
+   *   through {@link SubscribeChangesOptions.onError} and stop; the operator
+   *   logs one line and re-subscribes on its next round. Losing the stream
+   *   slows detection back to the interval. It must never stop the loop, and
+   *   must never read as a clean estate.
+   * - **The timer stays.** A signal shortens the sleep, it does not replace
+   *   it, so a substrate that silently stops sending still converges on the
+   *   interval.
+   *
+   * Only implement it where the substrate has a change stream that needs
+   * nothing deployed into the account being observed. See the per-lexicon
+   * verdict table in the operator guide for where that holds and where it does
+   * not.
+   */
+  subscribeChanges?(options: SubscribeChangesOptions): Promise<ChangeSubscription>;
+
+  /**
    * Read the full live *property tree* for each declared entity (#1014). Opt-in,
    * and strictly deeper than {@link describeResources}, which reports existence
    * plus a handful of scrubbed outputs. A lexicon that implements neither, or
@@ -1566,6 +1599,56 @@ export interface DependencyObservation {
    * point here is expressing a hop the catalog does not model.
    */
   edges?: IREdge[];
+}
+
+/**
+ * What {@link LexiconPlugin.subscribeChanges} is handed (#1981).
+ *
+ * `onChange` is the whole payload channel, and it has no payload. That is the
+ * point: a substrate's change notification is a reason to look again, never
+ * evidence of what is there. An implementation that wanted to pass the watch
+ * event through would have nowhere to put it.
+ */
+export interface SubscribeChangesOptions {
+  /** chant environment being watched. Resolves the same binding a read does. */
+  environment: string;
+  /** Directory whose `chant.config.ts` carries the binding. Defaults to cwd. */
+  cwd?: string;
+  /**
+   * Declared entities for this lexicon, keyed by chant entity name. The same
+   * map {@link LexiconPlugin.describeResources} receives, and the bound on
+   * what a subscription may watch. An implementation scopes its streams to the
+   * kinds and namespaces these entities name; it must never subscribe to the
+   * whole substrate. Absent, or empty, means there is nothing in scope to
+   * watch and the implementation should say so through {@link onError} rather
+   * than widening.
+   */
+  entities?: Map<string, { entityType: string; props: Record<string, unknown> }>;
+  /**
+   * Something moved. No arguments, deliberately (see {@link
+   * LexiconPlugin.subscribeChanges}). The caller re-observes from scratch and
+   * nothing about the notification reaches what it reports.
+   */
+  onChange(): void;
+  /**
+   * The subscription died, or could not be established for part of its scope.
+   * Reported once per occurrence; the caller logs it and falls back to its
+   * timer. Never a throw once the subscription is live: a stream that ends is
+   * a degradation, not a crash.
+   */
+  onError?(message: string): void;
+  /** Aborts the subscription. Closing on abort is the implementation's job. */
+  signal: AbortSignal;
+}
+
+/**
+ * A live subscription handed back by {@link LexiconPlugin.subscribeChanges}
+ * (#1981). `close()` releases every stream the subscription holds and resolves
+ * once they are gone; it must be safe to call twice, and safe to call after
+ * the subscription has already died on its own.
+ */
+export interface ChangeSubscription {
+  close(): Promise<void>;
 }
 
 export interface ResourceMetadata {

@@ -23,7 +23,16 @@ export {
   selectorText,
   refText,
 } from "./client";
-export type { K8sClient, ReadOptions, ApplyOptions, DeleteOptions, ListOptions, ReadLogOptions, SelfSubjectInfo } from "./client";
+export type {
+  K8sClient, ReadOptions, ApplyOptions, DeleteOptions, ListOptions, ReadLogOptions,
+  SelfSubjectInfo, WatchOptions, WatchHandle,
+} from "./client";
+
+// The watch (chant #1981): frame decoding, the `410 Gone` rule, and the
+// stream-to-lines adapter. The client owns the connection; these are the
+// pieces a consumer or a test may need to name.
+export { parseWatchFrames, isExpiredFrame, resourceVersionOf, streamLines } from "./watch";
+export type { WatchFrame, WatchEventType } from "./watch";
 
 export {
   K8sApiError,

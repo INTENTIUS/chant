@@ -15,7 +15,7 @@
 
 import type { K8sObject } from "@intentius/chant-k8s-client";
 import { apiResourceList, fakeKubeconfig, fakeRequestLayer, statusBody } from "@intentius/chant-k8s-client/testing";
-import type { FakeRequestLayer, RecordedRequest } from "@intentius/chant-k8s-client/testing";
+import type { FakeRequestLayer, FakeResponse, RecordedRequest } from "@intentius/chant-k8s-client/testing";
 import { createK8sClient } from "@intentius/chant-k8s-client";
 import type { ConnectedClient, ConnectOptions, K8sConnector } from "./connect";
 import { operationTable } from "./operation-surface";
@@ -33,8 +33,12 @@ export interface FakeClusterOptions {
    * CRD resolvable in a test without registering anything.
    */
   serves?: readonly string[];
-  /** Full control: return a response for a request, or undefined to fall through. */
-  respond?: (request: RecordedRequest) => { status?: number; body?: unknown } | undefined;
+  /**
+   * Full control: return a response for a request, or undefined to fall
+   * through. A `stream` on the response is what a watch reads (chant #1981);
+   * see `fakeWatchStream` in the client's testing harness.
+   */
+  respond?: (request: RecordedRequest) => FakeResponse | undefined;
   /** Kubeconfig to hand the client. Defaults to a single-context one. */
   kubeconfig?: string;
 }
@@ -177,7 +181,16 @@ export function fakeCluster(options: FakeClusterOptions = {}): FakeCluster {
     if (object) return { body: object };
 
     if (isListPath(request.path, resources)) {
-      return { body: { kind: "List", items: listPaths.get(request.path) ?? [], metadata: {} } };
+      // A `resourceVersion` on every list: it is what a watch resumes from
+      // (chant #1981), and a list without one is not a shape any API server
+      // produces.
+      return {
+        body: {
+          kind: "List",
+          items: listPaths.get(request.path) ?? [],
+          metadata: { resourceVersion: "1" },
+        },
+      };
     }
 
     return { status: 404, body: statusBody(404, "NotFound", `${request.path} not found`) };
