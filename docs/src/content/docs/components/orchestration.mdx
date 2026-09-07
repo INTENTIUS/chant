@@ -46,7 +46,7 @@ The saga mechanism — reverse-order unwind, calling each executed step's `rollb
 ## What chant adds over hand-driving it
 
 - **Semantic lint on the composition.** Publishes-but-never-applies, an `imageRef` to a phase that does not exist, a mutating capability with no rollback and no opt-out, an unacknowledged gate, a capability named after a component. These are the long-term entropy guards a plain JSON contract cannot enforce — see the [Composition lint rules](/chant/lint-rules/composition/) (COMP001–COMP007).
-- **The graph and the generated driver.** `chant graph` / `describe` over components; `chant build` emits the durable orchestrator.
+- **The graph and the generated driver.** `chant graph` / `describe` over components; `chant build` emits the orchestrator Op.
 
 ## Read next
 

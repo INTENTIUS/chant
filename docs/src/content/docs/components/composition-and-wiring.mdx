@@ -6,7 +6,7 @@ diataxis: reference
 
 import Diagram from '../../../components/Diagram.astro';
 
-A component's `deploy` is a composition over [capabilities](/chant/components/capabilities/), expressed in the same grammar as [Ops](/chant/guide/ops/): phases run in order, steps in a phase run sequentially unless `parallel`, `gate` pauses for a signal, and `onFailure` compensates. Steps wire output to input so [lint](/chant/components/orchestration/) can check the graph before anything runs.
+A component's `deploy` is a composition over [capabilities](/chant/components/capabilities/), expressed in the same grammar as [Ops](/chant/guide/ops/): phases run in order, steps in a phase run sequentially unless `parallel`, `gate` stops the run `gated` until the ledger carries its resolution, and `onFailure` compensates. Steps wire output to input so [lint](/chant/components/orchestration/) can check the graph before anything runs.
 
 ```ts
 deploy: [

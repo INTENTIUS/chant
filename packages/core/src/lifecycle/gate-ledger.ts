@@ -102,7 +102,7 @@ export interface GateResolutionRecord {
   op: string;
   /** The gate's signal name (matches `ConvergeRuleOutcome.gateName`). */
   gate: string;
-  /** Who resolved it — an actor name, the same convention `components release --actor` and `run signal --approver` use. */
+  /** Who resolved it — an actor name, the same convention `components release --actor` and `run approve --approver` use. */
   resolvedBy: string;
   /** ISO-8601 timestamp, caller-supplied (library code never calls `Date.now()` internally). */
   timestamp: string;

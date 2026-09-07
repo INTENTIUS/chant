@@ -3,7 +3,7 @@ title: chant
 description: Typed infrastructure, end to end
 template: splash
 hero:
-  tagline: Typed infrastructure, end to end. A deterministic core — typed TypeScript in, spec-native artifacts out, validated by semantic lint rules — and the lifecycle you choose on top, durable when you need it.
+  tagline: Typed infrastructure, end to end. A deterministic core — typed TypeScript in, spec-native artifacts out, validated by semantic lint rules — and the lifecycle you choose on top, hosted when you need it.
   actions:
     - text: Get Started
       link: /chant/getting-started/introduction/
@@ -32,7 +32,7 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
 		Each operational area is a lexicon. Sixteen ship today — [AWS](/chant/lexicons/aws/) (1500+ resources, full type coverage), Azure, GCP, Kubernetes, Helm, k3d, k3s, Docker, GitHub Actions, GitLab CI, Forgejo, Fly Machines, Fountain, Render, Control Plane, and Cedar. Build your own for any operational area.
 	</Card>
 	<Card title="Bring Your Own Lifecycle" icon="setting">
-		Pluggable lexicons in, pluggable lifecycles out, deterministic synthesis in the middle. The compiler is the foundation; the lifecycle is yours to choose — observe drift, reconcile (`cloud → code` PRs), or apply (`code → cloud`), per environment, with no authoritative state file. Lexicons are a shipped plugin contract; lifecycles today are durable rails you compose from Ops, with a foreign-backend plug as stated direction. [Lifecycle Models](/chant/concepts/lifecycle-models/).
+		Pluggable lexicons in, pluggable lifecycles out, deterministic synthesis in the middle. The compiler is the foundation; the lifecycle is yours to choose — observe drift, reconcile (`cloud → code` PRs), or apply (`code → cloud`), per environment, with no authoritative state file. Lexicons are a shipped plugin contract; lifecycles today are rails you compose from Ops and run with `chant run`, with a foreign-backend plug as stated direction. [Lifecycle Models](/chant/concepts/lifecycle-models/).
 	</Card>
 	<Card title="Deployment Ops & Drift" icon="approve-check-circle">
 		Declare deployment phases in `*.op.ts`. `chant run` executes them in-process, with gate steps and parallel phases and automatic rollback; `chant run --on fountain` hands the same Op to a steward when it needs a machine of its own. `chant lifecycle diff --live` catches out-of-band drift across fourteen lexicons; `WatchOp` runs the same check on a cron.

@@ -50,8 +50,8 @@ import { isGeneratedOnce } from "../../secret-labels";
 /**
  * How the apply treats chant-owned objects that are no longer declared. The
  * same three values `nativeApply` has always taken; `gated` differs from
- * `owned-only` only in that the workflow pauses for approval first, which is
- * the composite's business, not this activity's.
+ * `owned-only` only in that an approval gate runs before this activity does,
+ * which is the composite's business, not this activity's.
  */
 export type ApplyDeleteMode = "never" | "owned-only" | "gated";
 

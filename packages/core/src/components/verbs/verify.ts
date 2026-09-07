@@ -6,8 +6,8 @@
  * configured identity policy and **throws** on any failure, so composing it
  * before an apply phase fails the deploy the same way a thrown capability
  * error already halts `driver.ts`'s step execution — no new failure
- * mechanism, no gate-signal/human-approval semantics (that is `Gate`,
- * ../component.ts, a different, durable-runtime-only concept). `verify` is a
+ * mechanism, no human-approval semantics (that is `Gate`, ../component.ts, a
+ * different concept: a fact on the gate ledger). `verify` is a
  * synchronous, local-executor-safe capability, exactly like `health-gate`
  * (./wait-verify.ts).
  *

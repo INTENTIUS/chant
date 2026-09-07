@@ -7,7 +7,7 @@ diataxis: explanation
 import { Aside } from '@astrojs/starlight/components';
 import Diagram from '../../../components/Diagram.astro';
 
-Every infrastructure tool takes a position on the lifecycle — how infrastructure is created, changed, reconciled, and retired — usually implicitly, and usually welded to the compiler so you can't take one without the other. chant declines that bet: **pluggable lexicons in, pluggable lifecycles out, pure synthesis in the middle.** Bring your own lifecycle, and chant makes it durable.
+Every infrastructure tool takes a position on the lifecycle — how infrastructure is created, changed, reconciled, and retired — usually implicitly, and usually welded to the compiler so you can't take one without the other. chant declines that bet: **pluggable lexicons in, pluggable lifecycles out, pure synthesis in the middle.** Bring your own lifecycle, and chant runs it.
 
 <Aside type="note" title='What "lifecycle" means here'>
 Three things wear this name; this page is careful about which:
@@ -16,7 +16,7 @@ Three things wear this name; this page is careful about which:
 - **the `chant lifecycle` commands** — `diff` / `plan` / `snapshot`: the read-only CLI surface for observing it ([CLI reference](/chant/cli/lifecycle/)).
 - **a lifecycle you bring** — orchestration you compose from [Ops](/chant/guide/ops/).
 
-The two "pluggable" axes are **not symmetric**. Lexicons are a shipped plugin contract — a registry with many implementations. Lifecycles today are durable rails you compose from Ops ([Contributing a Lifecycle](/chant/contributing/lifecycles/), Door 1); dropping a foreign lifecycle backend in (Door 2) is stated direction, not a shipped feature.
+The two "pluggable" axes are **not symmetric**. Lexicons are a shipped plugin contract — a registry with many implementations. Lifecycles today are rails you compose from Ops ([Contributing a Lifecycle](/chant/contributing/lifecycles/), Door 1); dropping a foreign lifecycle backend in (Door 2) is stated direction, not a shipped feature.
 </Aside>
 
 This page makes the axes explicit so the rest of the docs can point here instead of re-deriving the argument. For the cost side of the trade — what an authoritative state file actually buys and charges — see [State and Governance](/chant/concepts/governance/).

@@ -144,7 +144,7 @@ An ARM delete needs an `apiVersion`, and the resource-group listing does not ret
 
 ## Effects
 
-The `effect(receipt, steps)` builder wraps its steps in read-compare-run-write over an effect receipt. On each run the workflow reads the receipt through the receipt store (provided by the receipt row's lexicon), compares it against the expectation, and skips the wrapped steps on a match. On a mismatch the steps run in authored order, and the receipt is written only when every one of them succeeded — the effect step is the sole writer of a receipt, and the write is always last. A failed step leaves the receipt untouched (stale), so the next run proposes the effect again. A `gate(...)` authored inside the wrapped steps pauses only when the effect will actually fire.
+The `effect(receipt, steps)` builder wraps its steps in read-compare-run-write over an effect receipt. On each run the workflow reads the receipt through the receipt store (provided by the receipt row's lexicon), compares it against the expectation, and skips the wrapped steps on a match. On a mismatch the steps run in authored order, and the receipt is written only when every one of them succeeded — the effect step is the sole writer of a receipt, and the write is always last. A failed step leaves the receipt untouched (stale), so the next run proposes the effect again. A `gate(...)` authored inside the wrapped steps is reached only when the effect will actually fire.
 
 | Config | What it does |
 |--------|-------------|

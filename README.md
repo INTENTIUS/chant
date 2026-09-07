@@ -6,8 +6,8 @@ A type system for operations.
 
 ```text
 Install a chant lexicon for this project's target platform (aws, azure, gcp,
-k8s, helm, docker, github, gitlab, forgejo, or temporal) — this also installs
-the chant CLI:
+k8s, helm, docker, github, gitlab, forgejo, fly, terraform, or fountain) —
+this also installs the chant CLI:
 
   npm install --save-dev @intentius/chant-lexicon-<name>
 
@@ -22,7 +22,7 @@ TypeScript exports, then validate with `npx chant build` and
 instead of reading a raw synthesized dump.
 ```
 
-Synthesis is pure and local. There is no authoritative state file — chant computes a precise change set against the live system using cloud-side ownership markers, so you get a plan without hosting state. When an apply needs durability — approval gates, rollback, crash-resume — chant compiles your orchestration to [durable workflows](https://intentius.io/chant/concepts/durable-workflows/): Temporal-native when you want durability, zero-dependency when you don't.
+Synthesis is pure and local. There is no authoritative state file — chant computes a precise change set against the live system using cloud-side ownership markers, so you get a plan without hosting state. When an apply needs approval gates or rollback, you declare the orchestration in an `*.op.ts` file. `chant run <op>` executes those phases in this process; a gate is a fact on the gate ledger, so a run that reaches an unapproved one records the pending fact and exits 3, `chant approve <op> <gate>` writes the resolution, and the next run walks through. `chant run <op> --on fountain` hands the same declaration to a steward when it needs a machine of its own. See [Ops as teammates](https://intentius.io/chant/concepts/durable-workflows/).
 
 **[Read the docs →](https://intentius.io/chant/getting-started/introduction/)**
 

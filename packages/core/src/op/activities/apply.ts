@@ -54,8 +54,9 @@ export type ApplyTarget = "cloudformation" | "kubectl" | "arm" | "kustomize" | "
  *   app-scoped under a managed app (via the fly lexicon's `flyApply`), and
  *   `cloudformation` is bounded by the stack — which holds, because a
  *   resource CFN did not create is not in the stack.
- * - `gated` — same delete scope as `owned-only`, but the workflow pauses for
- *   approval before the destructive apply (the gate lives in the composite).
+ * - `gated` — same delete scope as `owned-only`, but an approval gate precedes
+ *   the destructive apply, so an unapproved run ends `gated` before deleting
+ *   anything (the gate lives in the composite).
  */
 export type DeleteMode = "never" | "owned-only" | "gated";
 

@@ -161,7 +161,7 @@ export interface EffectStep {
   expectation?: string;
   /**
    * Steps run when the live receipt does not match, in authored order. A gate
-   * authored here pauses only when the effect will fire. Effect steps do not
+   * authored here is reached only when the effect will fire. Effect steps do not
    * nest.
    */
   steps: Array<ActivityStep | GateStep>;

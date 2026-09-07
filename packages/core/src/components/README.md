@@ -50,8 +50,9 @@ adopting chant.
   be a nested `Phase`, which is how fan-out (e.g. a Neo4j cluster seeding one
   node then rolling through the rest) is expressed as composition rather than
   orchestrator knowledge.
-- **Gates** — a distinct step shape (`kind: "gate"`, `signalName`) for a
-  durable, human-approval wait.
+- **Gates** — a distinct step shape (`kind: "gate"`, `signalName`) for a human
+  approval, decided against the gate ledger: a run that reaches one with no
+  resolution stops there with status `gated` and the pending fact recorded.
 - **Wiring reference forms**, all resolved by the graph, never by orchestrator
   code:
   - `$env.<path>` — environment config (e.g. `$env.registry`).
