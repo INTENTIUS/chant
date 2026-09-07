@@ -7,6 +7,9 @@
  * `loadProfiles` from the project's configured lexicons).
  */
 import { loadChantConfig } from "../../config";
+import { build } from "../../build";
+import { isResourceDeclarable } from "../../declarable";
+import { collectBuildRootContributors, collectChangeSubscribers } from "../plugins";
 import { discoverOps } from "../../op/discover";
 import { loadActivities, loadProfiles } from "../../op/activity-registry";
 import { parseDuration } from "../../op/local-executor";
@@ -15,7 +18,10 @@ import {
   runOperatorRound,
   runOperatorForever,
   formatRoundLine,
+  formatSignalLine,
   DEFAULT_OPERATOR_INTERVAL_MS,
+  type ChangeSubscriber,
+  type OperatorSignalEvent,
   type OperatorTickEvent,
 } from "../../op/operator";
 import { readLease, DEFAULT_LEASE_TTL_MS } from "../../lifecycle/lease";
@@ -41,6 +47,76 @@ async function loadOperatorActivities() {
     // No/invalid chant.config — fall back to base activities only.
   }
   return Promise.all([loadActivities(lexicons), loadProfiles()]);
+}
+
+/**
+ * Bind the change-signal seams (#1981) the daemon will keep subscribed, or an
+ * empty list.
+ *
+ * Three gates, in cost order, so a project that gains nothing from this pays
+ * nothing for it:
+ *
+ * 1. No configured lexicon implements `subscribeChanges` — return immediately,
+ *    without loading config or building anything. This is every project today.
+ * 2. No `--env` — a subscription resolves the same cluster binding a read
+ *    does, and there is no binding to resolve without an environment. Said out
+ *    loud rather than silently skipped, because "why did it not wake" is
+ *    otherwise unanswerable.
+ * 3. The build that supplies the declared entities failed — warn and fall back
+ *    to the timer. A subscription is an optimization; a build error here must
+ *    not stop the operator, which has its own per-tick build inside the tick.
+ */
+async function collectOperatorSubscribers(
+  ctx: CommandContext,
+  env: string | undefined,
+): Promise<ChangeSubscriber[]> {
+  if (!ctx.plugins.some((p) => typeof p.subscribeChanges === "function")) return [];
+
+  if (!env) {
+    console.error(formatWarning({
+      message: "a change signal needs an environment to resolve its binding — running on the timer alone",
+      hint: "pass --env <env> to let a lexicon's subscribeChanges wake a tick early",
+    }));
+    return [];
+  }
+
+  const cwd = process.cwd();
+  try {
+    const { config } = await loadChantConfig(cwd);
+    const buildRoots = collectBuildRootContributors(
+      ctx.plugins,
+      config as unknown as Record<string, unknown>,
+      cwd,
+    );
+    const buildResult = await build(config.sourceDir ?? ".", ctx.serializers, undefined, { buildRoots });
+    if (buildResult.errors.length > 0) {
+      console.error(formatWarning({
+        message: "build failed while scoping the change signal — running on the timer alone",
+      }));
+      return [];
+    }
+
+    // The declared estate, sliced per lexicon — the same slice
+    // `takeSnapshot` hands `describeResources`, and the bound on what any
+    // subscription may watch.
+    const entities = new Map<string, Map<string, { entityType: string; props: Record<string, unknown> }>>();
+    for (const [name, entity] of buildResult.entities) {
+      if (!isResourceDeclarable(entity)) continue;
+      let perLexicon = entities.get(entity.lexicon);
+      if (!perLexicon) entities.set(entity.lexicon, (perLexicon = new Map()));
+      perLexicon.set(name, {
+        entityType: entity.entityType,
+        props: (entity.props != null ? entity.props : {}) as Record<string, unknown>,
+      });
+    }
+
+    return collectChangeSubscribers(ctx.plugins, { environment: env, cwd, entities });
+  } catch (err) {
+    console.error(formatWarning({
+      message: `could not scope the change signal — running on the timer alone (${err instanceof Error ? err.message : String(err)})`,
+    }));
+    return [];
+  }
 }
 
 // ── chant operator ──────────────────────────────────────────────────────────
@@ -98,6 +174,9 @@ export async function runOperator(ctx: CommandContext): Promise<number> {
     console.error(formatInfo(
       `chant operator: watching ${ops.length} ConvergeOp(s) every ${intervalMs}ms (Ctrl-C to stop)`,
     ));
+    // A change signal (#1981) only ever shortens the sleep above. Every round
+    // it wakes is the round the timer would have run.
+    const subscribers = await collectOperatorSubscribers(ctx, ctx.args.env);
     await runOperatorForever({
       env: ctx.args.env,
       intervalMs,
@@ -106,6 +185,8 @@ export async function runOperator(ctx: CommandContext): Promise<number> {
       profiles,
       signal: controller.signal,
       onRound: printRound,
+      subscribers,
+      onSignalEvent: (event: OperatorSignalEvent) => console.error(formatInfo(formatSignalLine(event))),
     });
     return 0;
   } finally {

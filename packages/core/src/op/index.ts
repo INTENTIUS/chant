@@ -85,9 +85,14 @@ export type {
 } from "./converge-rule";
 export {
   discoverConvergeOps, runOperatorRound, runOperatorForever, formatRoundLine,
-  DEFAULT_OPERATOR_INTERVAL_MS,
+  formatSignalLine, DEFAULT_OPERATOR_INTERVAL_MS,
 } from "./operator";
-export type { OperatorTickEvent, OperatorRoundOptions, OperatorLoopOptions } from "./operator";
+export type {
+  OperatorTickEvent, OperatorRoundOptions, OperatorLoopOptions,
+  ChangeSubscriber, OperatorSignalEvent,
+} from "./operator";
+export { createChangeSignalGate, DEFAULT_SIGNAL_FLOOR_MS } from "./change-signal";
+export type { ChangeSignalGate, ChangeSignalGateOptions, WakeReason } from "./change-signal";
 export { classifyOpVerbClass, isGated } from "./op-verb-class";
 export type { OpVerbClass } from "./op-verb-class";
 export { takeProfileAndId } from "./builders";

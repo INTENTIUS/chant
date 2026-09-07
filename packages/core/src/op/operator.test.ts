@@ -9,7 +9,11 @@ import {
   runOperatorRound,
   runOperatorForever,
   formatRoundLine,
+  formatSignalLine,
   DEFAULT_OPERATOR_INTERVAL_MS,
+  type ChangeSubscriber,
+  type OperatorSignalEvent,
+  type OperatorTickEvent,
 } from "./operator";
 import { readLease } from "../lifecycle/lease";
 import { appendConvergeRecord, readConvergeLedger } from "../lifecycle/converge-ledger";
@@ -511,5 +515,369 @@ describe("formatRoundLine", () => {
       .toContain("stale lock at .../x.lock");
     expect(formatRoundLine({ kind: "skipped-not-due", op: "x", env: "staging", cron: "*/10 * * * *" }))
       .toContain("not-due:*/10 * * * *");
+  });
+});
+
+describe("runOperatorForever — a substrate change signal wakes a tick (#1981)", () => {
+  async function waitFor(predicate: () => boolean, maxWaitMs = 5_000): Promise<void> {
+    const deadline = Date.now() + maxWaitMs;
+    while (!predicate() && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 5));
+    }
+  }
+
+  /**
+   * A stub `subscribeChanges` seam. Hands the loop's `onChange`/`onError` back
+   * to the test so it can fabricate signals and kill the subscription, with no
+   * substrate anywhere near it — the whole point of the seam being a plain
+   * callback pair.
+   */
+  function stubSubscriber(lexicon = "stub") {
+    const handle = {
+      lexicon,
+      subscribes: 0,
+      closes: 0,
+      onChange: undefined as undefined | (() => void),
+      onError: undefined as undefined | ((message: string) => void),
+      signal: undefined as undefined | AbortSignal,
+      failNextSubscribe: undefined as undefined | string,
+    };
+    const subscriber: ChangeSubscriber = {
+      lexicon,
+      async subscribe(ctx) {
+        handle.subscribes++;
+        if (handle.failNextSubscribe) {
+          const message = handle.failNextSubscribe;
+          handle.failNextSubscribe = undefined;
+          throw new Error(message);
+        }
+        handle.onChange = ctx.onChange;
+        handle.onError = ctx.onError;
+        handle.signal = ctx.signal;
+        return {
+          async close() {
+            handle.closes++;
+          },
+        };
+      },
+    };
+    return { handle, subscriber };
+  }
+
+  test("a signal wakes the next round early, well inside the interval", async () => {
+    await withTestDir(async (dir) => {
+      await initRepo(dir);
+      writeFixtureConvergeOp(dir, "staging-converge", "staging");
+      const activities = fakeTickActivities(dir, "staging", "staging-converge");
+      const { handle, subscriber } = stubSubscriber("k8s");
+
+      const controller = new AbortController();
+      const rounds: number[] = [];
+      const signalEvents: OperatorSignalEvent[] = [];
+      const loop = runOperatorForever({
+        cwd: dir,
+        holder: "op-a",
+        intervalMs: 60_000, // a full minute: nothing but a signal can produce a second round
+        signalFloorMs: 0,
+        activities,
+        profiles: PROFILES,
+        signal: controller.signal,
+        subscribers: [subscriber],
+        onRound: () => rounds.push(Date.now()),
+        onSignalEvent: (e) => signalEvents.push(e),
+      });
+
+      await waitFor(() => handle.onChange !== undefined);
+      expect(rounds.length).toBe(1);
+      handle.onChange!();
+      await waitFor(() => rounds.length >= 2);
+      expect(rounds.length).toBeGreaterThanOrEqual(2);
+
+      controller.abort();
+      await loop;
+      expect(signalEvents.some((e) => e.kind === "subscribed" && e.lexicon === "k8s")).toBe(true);
+      expect(signalEvents.some((e) => e.kind === "woken")).toBe(true);
+    });
+  }, 15_000);
+
+  test("a fabricated signal cannot change what the tick reports — it only changes when it runs", async () => {
+    await withTestDir(async (dir) => {
+      await initRepo(dir);
+      writeFixtureConvergeOp(dir, "staging-converge", "staging");
+
+      /** One round's events, run to completion on a timer alone. */
+      async function roundsWithoutSignal(): Promise<string> {
+        const controller = new AbortController();
+        const seen: OperatorTickEvent[][] = [];
+        const loop = runOperatorForever({
+          cwd: dir,
+          holder: "op-a",
+          intervalMs: 60_000,
+          activities: fakeTickActivities(dir, "staging", "staging-converge"),
+          profiles: PROFILES,
+          signal: controller.signal,
+          onRound: (events) => {
+            seen.push(events);
+            controller.abort();
+          },
+        });
+        await loop;
+        return JSON.stringify(seen[0].map((e) => ({ kind: e.kind, op: e.op, env: e.env })));
+      }
+
+      /** The same, woken by a signal carrying a fabricated payload. */
+      async function roundsWithFabricatedSignal(): Promise<string> {
+        const { handle, subscriber } = stubSubscriber("liar");
+        const controller = new AbortController();
+        const seen: OperatorTickEvent[][] = [];
+        const loop = runOperatorForever({
+          cwd: dir,
+          holder: "op-a",
+          intervalMs: 60_000,
+          signalFloorMs: 0,
+          activities: fakeTickActivities(dir, "staging", "staging-converge"),
+          profiles: PROFILES,
+          signal: controller.signal,
+          subscribers: [subscriber],
+          onRound: (events) => {
+            seen.push(events);
+            if (seen.length >= 2) controller.abort();
+          },
+        });
+        await waitFor(() => handle.onChange !== undefined);
+        // `onChange` takes no arguments; a caller that fabricates a resource
+        // has nowhere to put it, and the extra arguments go nowhere.
+        (handle.onChange as unknown as (...args: unknown[]) => void)(
+          { kind: "Deployment", name: "ghost", status: "Drifted" },
+          "fabricated",
+        );
+        await waitFor(() => seen.length >= 2);
+        controller.abort();
+        await loop;
+        return JSON.stringify(seen[1].map((e) => ({ kind: e.kind, op: e.op, env: e.env })));
+      }
+
+      const timerOnly = await roundsWithoutSignal();
+      const signalled = await roundsWithFabricatedSignal();
+      // Byte for byte the same verdict: the signal moved the clock, nothing else.
+      expect(signalled).toBe(timerOnly);
+      // And the seam itself carries no payload channel to begin with.
+      const { handle } = stubSubscriber();
+      expect(handle.onChange?.length ?? 0).toBe(0);
+    });
+  }, 20_000);
+
+  test("a storm of signals wakes at most one round per floor", async () => {
+    await withTestDir(async (dir) => {
+      await initRepo(dir);
+      writeFixtureConvergeOp(dir, "staging-converge", "staging");
+      const { handle, subscriber } = stubSubscriber();
+
+      const controller = new AbortController();
+      const rounds: number[] = [];
+      const loop = runOperatorForever({
+        cwd: dir,
+        holder: "op-a",
+        intervalMs: 60_000,
+        signalFloorMs: 400,
+        activities: fakeTickActivities(dir, "staging", "staging-converge"),
+        profiles: PROFILES,
+        signal: controller.signal,
+        subscribers: [subscriber],
+        onRound: () => rounds.push(Date.now()),
+      });
+
+      await waitFor(() => handle.onChange !== undefined);
+      const before = rounds.length;
+      for (let i = 0; i < 300; i++) handle.onChange!();
+      // Well past a floor, but nowhere near the 60s interval: at most one
+      // extra round may have happened, and a per-signal wake would have
+      // produced hundreds.
+      await waitFor(() => rounds.length > before, 2_000);
+      expect(rounds.length - before).toBeLessThanOrEqual(1);
+
+      controller.abort();
+      await loop;
+    });
+  }, 15_000);
+
+  test("a killed subscription is reported once, the loop keeps ticking, and the next round re-subscribes", async () => {
+    await withTestDir(async (dir) => {
+      await initRepo(dir);
+      writeFixtureConvergeOp(dir, "staging-converge", "staging");
+      const { handle, subscriber } = stubSubscriber("k8s");
+
+      const controller = new AbortController();
+      const rounds: number[] = [];
+      const signalEvents: OperatorSignalEvent[] = [];
+      const loop = runOperatorForever({
+        cwd: dir,
+        holder: "op-a",
+        intervalMs: 60,
+        signalFloorMs: 0,
+        activities: fakeTickActivities(dir, "staging", "staging-converge"),
+        profiles: PROFILES,
+        signal: controller.signal,
+        subscribers: [subscriber],
+        onRound: () => rounds.push(Date.now()),
+        onSignalEvent: (e) => signalEvents.push(e),
+      });
+
+      await waitFor(() => handle.onError !== undefined);
+      const subscribesBefore = handle.subscribes;
+      // The watch dies. Twice — a dead subscription reports once.
+      handle.onError!("connection reset by peer");
+      handle.onError!("connection reset by peer");
+
+      await waitFor(() => handle.subscribes > subscribesBefore);
+      const roundsAtDeath = rounds.length;
+      await waitFor(() => rounds.length > roundsAtDeath + 1);
+
+      controller.abort();
+      await loop;
+
+      const lost = signalEvents.filter((e) => e.kind === "subscription-lost");
+      expect(lost).toHaveLength(1);
+      expect(formatSignalLine(lost[0])).toContain("polling on the timer");
+      // The loop kept ticking on the timer, and re-subscribed.
+      expect(rounds.length).toBeGreaterThan(roundsAtDeath + 1);
+      expect(handle.subscribes).toBeGreaterThan(subscribesBefore);
+    });
+  }, 15_000);
+
+  test("a subscription that cannot be established degrades to polling with one line, never a crash", async () => {
+    await withTestDir(async (dir) => {
+      await initRepo(dir);
+      writeFixtureConvergeOp(dir, "staging-converge", "staging");
+      const failing: ChangeSubscriber = {
+        lexicon: "k8s",
+        async subscribe() {
+          throw new Error("no cluster binding for env staging");
+        },
+      };
+
+      const controller = new AbortController();
+      const rounds: number[] = [];
+      const signalEvents: OperatorSignalEvent[] = [];
+      const loop = runOperatorForever({
+        cwd: dir,
+        holder: "op-a",
+        intervalMs: 40,
+        activities: fakeTickActivities(dir, "staging", "staging-converge"),
+        profiles: PROFILES,
+        signal: controller.signal,
+        subscribers: [failing],
+        onRound: () => rounds.push(Date.now()),
+        onSignalEvent: (e) => signalEvents.push(e),
+      });
+
+      await waitFor(() => rounds.length >= 3);
+      controller.abort();
+      await loop; // resolves: a failing subscription never rejects the loop
+
+      const failed = signalEvents.filter((e) => e.kind === "subscribe-failed");
+      expect(failed.length).toBeGreaterThanOrEqual(1);
+      expect(formatSignalLine(failed[0])).toContain("no cluster binding for env staging");
+      expect(rounds.length).toBeGreaterThanOrEqual(3);
+    });
+  }, 15_000);
+
+  test("stopping the operator closes every subscription and aborts its signal", async () => {
+    await withTestDir(async (dir) => {
+      await initRepo(dir);
+      writeFixtureConvergeOp(dir, "staging-converge", "staging");
+      const a = stubSubscriber("k8s");
+      const b = stubSubscriber("docker");
+
+      const controller = new AbortController();
+      const loop = runOperatorForever({
+        cwd: dir,
+        holder: "op-a",
+        intervalMs: 60_000,
+        activities: fakeTickActivities(dir, "staging", "staging-converge"),
+        profiles: PROFILES,
+        signal: controller.signal,
+        subscribers: [a.subscriber, b.subscriber],
+      });
+
+      await waitFor(() => a.handle.onChange !== undefined && b.handle.onChange !== undefined);
+      expect(a.handle.signal!.aborted).toBe(false);
+
+      controller.abort();
+      await loop;
+
+      expect(a.handle.closes).toBe(1);
+      expect(b.handle.closes).toBe(1);
+      expect(a.handle.signal!.aborted).toBe(true);
+      expect(b.handle.signal!.aborted).toBe(true);
+    });
+  }, 15_000);
+
+  test("a close() that throws still unwinds the loop cleanly", async () => {
+    await withTestDir(async (dir) => {
+      await initRepo(dir);
+      writeFixtureConvergeOp(dir, "staging-converge", "staging");
+      let subscribed = false;
+      const hostile: ChangeSubscriber = {
+        lexicon: "k8s",
+        async subscribe() {
+          subscribed = true;
+          return { close: async () => { throw new Error("close blew up"); } };
+        },
+      };
+
+      const controller = new AbortController();
+      const loop = runOperatorForever({
+        cwd: dir,
+        holder: "op-a",
+        intervalMs: 60_000,
+        activities: fakeTickActivities(dir, "staging", "staging-converge"),
+        profiles: PROFILES,
+        signal: controller.signal,
+        subscribers: [hostile],
+      });
+
+      await waitFor(() => subscribed);
+      controller.abort();
+      await expect(loop).resolves.toBeUndefined();
+    });
+  }, 15_000);
+
+  test("no subscribers: the loop is exactly the timer it always was", async () => {
+    await withTestDir(async (dir) => {
+      await initRepo(dir);
+      writeFixtureConvergeOp(dir, "staging-converge", "staging");
+      const controller = new AbortController();
+      const rounds: number[] = [];
+      const signalEvents: OperatorSignalEvent[] = [];
+      const loop = runOperatorForever({
+        cwd: dir,
+        holder: "op-a",
+        intervalMs: 40,
+        activities: fakeTickActivities(dir, "staging", "staging-converge"),
+        profiles: PROFILES,
+        signal: controller.signal,
+        subscribers: [], // a project whose lexicons implement no signal seam
+        onRound: () => rounds.push(Date.now()),
+        onSignalEvent: (e) => signalEvents.push(e),
+      });
+
+      await waitFor(() => rounds.length >= 3);
+      controller.abort();
+      await loop;
+      expect(rounds.length).toBeGreaterThanOrEqual(3);
+      expect(signalEvents).toEqual([]);
+    });
+  }, 15_000);
+});
+
+describe("formatSignalLine", () => {
+  test("renders each signal event kind as one line, none of them an observation", () => {
+    expect(formatSignalLine({ kind: "subscribed", lexicon: "k8s" })).toContain("the timer still runs");
+    expect(formatSignalLine({ kind: "subscribe-failed", lexicon: "k8s", error: "no binding" }))
+      .toContain("polling on the timer");
+    expect(formatSignalLine({ kind: "subscription-lost", lexicon: "k8s", error: "410 Gone" }))
+      .toContain("re-subscribes");
+    expect(formatSignalLine({ kind: "woken", afterMs: 120 })).toContain("running an ordinary round");
   });
 });

@@ -41,6 +41,8 @@ import { runOpLocally, OpRunFailure, type OpRunResult } from "./local-executor";
 import { acquireLease, stillHoldsLease, currentHolderId, DEFAULT_LEASE_TTL_MS, type LeaseRecord, type AcquireLeaseResult } from "../lifecycle/lease";
 import { StaleLockError } from "../lifecycle/git";
 import { cronMatches, cronDueBetween } from "./cron";
+import { createChangeSignalGate, DEFAULT_SIGNAL_FLOOR_MS, type WakeReason } from "./change-signal";
+import type { ChangeSubscription } from "../lexicon";
 
 /**
  * Poll interval between rounds — the operator's own cadence, and the fallback
@@ -211,11 +213,67 @@ function sleepAbortable(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
+/**
+ * One lexicon's change-signal seam, already bound to an environment (#1981).
+ *
+ * The loop never sees a `LexiconPlugin` — core's operator does not import
+ * plugins, and binding happens where plugins are already loaded
+ * (`collectChangeSubscribers` in `../cli/plugins.ts`), the same extract-then-
+ * thread shape `collectBuildRootContributors` uses for build roots.
+ */
+export interface ChangeSubscriber {
+  /** Which lexicon supplies the signal. Log lines only; never a fact. */
+  lexicon: string;
+  subscribe(ctx: {
+    onChange: () => void;
+    onError: (message: string) => void;
+    signal: AbortSignal;
+  }): Promise<ChangeSubscription>;
+}
+
+/**
+ * What the loop's change-signal machinery reports, alongside the per-op tick
+ * events. Separate from {@link OperatorTickEvent} on purpose: none of this is
+ * about an Op, and none of it is an observation.
+ */
+export type OperatorSignalEvent =
+  /** A lexicon's subscription is live and the loop may now wake early. */
+  | { kind: "subscribed"; lexicon: string }
+  /** Establishing it failed. The loop keeps its timer and retries next round. */
+  | { kind: "subscribe-failed"; lexicon: string; error: string }
+  /** A live subscription died. Reported once; the next round re-subscribes. */
+  | { kind: "subscription-lost"; lexicon: string; error: string }
+  /** A signal shortened the sleep. The round that follows is an ordinary round. */
+  | { kind: "woken"; afterMs: number };
+
+/** Render one signal event as `chant operator`'s log line shape. */
+export function formatSignalLine(event: OperatorSignalEvent): string {
+  switch (event.kind) {
+    case "subscribed":
+      return `operator: ${event.lexicon} change signal subscribed (the timer still runs)`;
+    case "subscribe-failed":
+      return `operator: ${event.lexicon} change signal unavailable — polling on the timer (${event.error})`;
+    case "subscription-lost":
+      return `operator: ${event.lexicon} change signal lost — polling on the timer until the next round re-subscribes (${event.error})`;
+    case "woken":
+      return `operator: woken by a change signal after ${event.afterMs}ms — running an ordinary round`;
+  }
+}
+
 export interface OperatorLoopOptions extends OperatorRoundOptions {
   /** @default DEFAULT_OPERATOR_INTERVAL_MS */
   intervalMs?: number;
   /** Called after every round completes — the CLI's one-line-per-tick log lives here, not inside the loop itself, so a test can drive rounds without capturing stdout. */
   onRound?: (events: OperatorTickEvent[]) => void;
+  /**
+   * Change-signal seams to keep subscribed for the life of the loop (#1981).
+   * Omitted, or empty, and the loop is exactly what it was: a timer.
+   */
+  subscribers?: readonly ChangeSubscriber[];
+  /** @default DEFAULT_SIGNAL_FLOOR_MS — the shortest gap a signal may force between two rounds. */
+  signalFloorMs?: number;
+  /** Called for every subscription and wake event — the CLI logs one line each. */
+  onSignalEvent?: (event: OperatorSignalEvent) => void;
 }
 
 /**
@@ -224,6 +282,12 @@ export interface OperatorLoopOptions extends OperatorRoundOptions {
  * (issue: "if it dies, nothing breaks and nothing is lost") — this function
  * is exactly `while (!aborted) { round(); sleep(); }`, nothing durable lives
  * in its own memory that a restart would need to recover.
+ *
+ * With `subscribers` (#1981) the sleep gains a second wake source, and only a
+ * wake source. A signal aborts the current sleep; the round that follows is
+ * the same round the timer would have run, deriving everything from a fresh
+ * observation. Nothing a subscription reports reaches a tick, because the
+ * seam has nowhere to put it: `onChange` takes no arguments.
  */
 export async function runOperatorForever(opts: OperatorLoopOptions): Promise<void> {
   const holder = opts.holder ?? currentHolderId();
@@ -232,11 +296,83 @@ export async function runOperatorForever(opts: OperatorLoopOptions): Promise<voi
   // lands on a firing minute — a fresh operator owes no catch-up for the ticks
   // it was not running for.
   const scheduleState = opts.scheduleState ?? new Map<string, Date>();
-  while (!opts.signal?.aborted) {
-    const events = await runOperatorRound({ ...opts, holder, scheduleState });
-    opts.onRound?.(events);
-    if (opts.signal?.aborted) break;
-    await sleepAbortable(opts.intervalMs ?? DEFAULT_OPERATOR_INTERVAL_MS, opts.signal);
+  const intervalMs = opts.intervalMs ?? DEFAULT_OPERATOR_INTERVAL_MS;
+  const subscribers = opts.subscribers ?? [];
+
+  // Nothing to subscribe to: the loop below is byte for byte the loop that
+  // shipped before #1981, and takes none of the machinery's cost.
+  if (subscribers.length === 0) {
+    while (!opts.signal?.aborted) {
+      const events = await runOperatorRound({ ...opts, holder, scheduleState });
+      opts.onRound?.(events);
+      if (opts.signal?.aborted) break;
+      await sleepAbortable(intervalMs, opts.signal);
+    }
+    return;
+  }
+
+  const gate = createChangeSignalGate({ floorMs: opts.signalFloorMs ?? DEFAULT_SIGNAL_FLOOR_MS });
+  // The subscriptions the loop currently holds, by lexicon. A lexicon absent
+  // from this map is one to (re-)subscribe on the next round — which is how a
+  // killed watch comes back without a special retry path.
+  const live = new Map<string, ChangeSubscription>();
+  // Stops every subscription at once when the loop ends, whatever ends it.
+  const subscriptionsAbort = new AbortController();
+
+  const closeAll = async (): Promise<void> => {
+    subscriptionsAbort.abort();
+    const open = [...live.values()];
+    live.clear();
+    // A close that throws must not mask why the loop is unwinding.
+    await Promise.allSettled(open.map((s) => s.close()));
+  };
+
+  const ensureSubscribed = async (): Promise<void> => {
+    for (const subscriber of subscribers) {
+      if (live.has(subscriber.lexicon) || subscriptionsAbort.signal.aborted) continue;
+      try {
+        const subscription = await subscriber.subscribe({
+          onChange: () => gate.signal(),
+          onError: (error) => {
+            // Reported once, then forgotten: dropping it from `live` is what
+            // makes the next round re-subscribe. The loop itself is untouched.
+            if (!live.delete(subscriber.lexicon)) return;
+            opts.onSignalEvent?.({ kind: "subscription-lost", lexicon: subscriber.lexicon, error });
+          },
+          signal: subscriptionsAbort.signal,
+        });
+        live.set(subscriber.lexicon, subscription);
+        opts.onSignalEvent?.({ kind: "subscribed", lexicon: subscriber.lexicon });
+      } catch (err) {
+        // A subscription that cannot be established is a slower loop, never a
+        // stopped one: report it and fall through to the timer.
+        opts.onSignalEvent?.({
+          kind: "subscribe-failed",
+          lexicon: subscriber.lexicon,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+  };
+
+  try {
+    while (!opts.signal?.aborted) {
+      gate.roundStarted();
+      const startedAt = Date.now();
+      const events = await runOperatorRound({ ...opts, holder, scheduleState });
+      opts.onRound?.(events);
+      if (opts.signal?.aborted) break;
+
+      await ensureSubscribed();
+      if (opts.signal?.aborted) break;
+
+      const reason: WakeReason = await gate.wait(intervalMs, opts.signal);
+      if (reason === "signal") {
+        opts.onSignalEvent?.({ kind: "woken", afterMs: Date.now() - startedAt });
+      }
+    }
+  } finally {
+    await closeAll();
   }
 }
 
