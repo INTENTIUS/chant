@@ -83,6 +83,22 @@
  * activities/kubectl.ts`'s `ApplyDeleteMode`, `packages/core/src/op/
  * activities/apply.ts`'s `DeleteMode`), applied here to a tool that does not
  * itself carry the concept. Ship with no lineage rather than invent a credit.
+ *
+ * TF027 (#2216, a live root's `policy` block setting `undeclared_untagged =
+ * "delete"`) does have one: choudoufu's `RulePolicyScope`
+ * (`internal/live/lint/policy.go`) refuses the same assignment, and issue #67
+ * there makes it a lint refusal rather than a default. The relation is
+ * `extends`, because choudoufu refuses it only when no `scope` block narrows
+ * the purge, while chant refuses it either way: a `scope` block bounds an
+ * account-wide sweep to a service, type or region, and every resource inside
+ * that boundary is still one this estate never marked. "Bounded" is not
+ * "owned", and owning it is the condition chant applies.
+ *
+ * TF028 (#2216, a live root watched by a `TerraformWatchOp` built without
+ * `live: true`) has no entry. It reads a chant Op's own configuration against
+ * a root's mode, and no surveyed tool has an Op model to read: choudoufu lints
+ * HCL, and every tflint ruleset, tfsec/trivy-checks and the Sentinel policies
+ * do the same. There is nothing upstream to credit.
  */
 import type { Lineage } from "@intentius/chant/audit/catalog";
 
@@ -93,6 +109,14 @@ const TFLINT_RULES = "https://github.com/terraform-linters/tflint-ruleset-terraf
 const REDEPLOY_RULES = "https://github.com/RedeployAB/tflint-ruleset-redeploy/blob/main/docs/rules";
 
 export const terraformAuditLineage: Record<string, Lineage[]> = {
+  TF027: [
+    {
+      tool: "choudoufu",
+      rule: "RulePolicyScope",
+      url: "https://github.com/INTENTIUS/choudoufu/blob/main/internal/live/lint/policy.go",
+      relation: "extends",
+    },
+  ],
   TF024: [
     {
       tool: "choudoufu",

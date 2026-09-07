@@ -4,8 +4,8 @@
  * Every post-synth check needs an entry or it contributes nothing to
  * `chant audit`, silently, and `packages/core/src/audit/catalog.test.ts` fails.
  *
- * TF001, TF024, TF025 and TF026 all read the chant model (`ctx.entities`),
- * never emitted output, so `yamlBased` is false for all four. Prior-art
+ * TF001 and TF024 through TF028 all read the chant model (`ctx.entities`),
+ * never emitted output, so `yamlBased` is false for all of them. Prior-art
  * lineage lives in ./audit-lineage.ts.
  */
 import type { Authority, RuleMeta } from "@intentius/chant/audit/catalog";
@@ -67,6 +67,30 @@ export const terraformAuditCatalog: Record<string, RuleMeta> = {
       'Add undeclared_tagged = "keep" (or "untag" or "report") to the live root\'s policy block, or ' +
       'change terraform.roots.<name>.delete to "owned-only" or "gated" if an owned orphan should be ' +
       "deleted after all.",
+    yamlBased: false,
+  },
+  TF027: {
+    id: "TF027",
+    tier: "merge-worthy",
+    fixKind: "guidance",
+    category: "correctness",
+    title: 'Live root\'s policy block sets undeclared_untagged = "delete"',
+    remediation:
+      'Remove undeclared_untagged = "delete" from the live root\'s policy block. chant never proposes ' +
+      "deleting a resource it does not own; narrow the estate's own ownership answer " +
+      "(undeclared_tagged) instead of the account's.",
+    yamlBased: false,
+  },
+  TF028: {
+    id: "TF028",
+    tier: "merge-worthy",
+    fixKind: "guidance",
+    category: "correctness",
+    title: "Live root is watched by a TerraformWatchOp built without live: true",
+    remediation:
+      "Set live: true on the TerraformWatchOp that names this root, so the Plan phase runs " +
+      "choudoufuLivePlan and reports the unowned and adoptable counts as well as drift. Drop the root's " +
+      "estate instead if it is not a live root.",
     yamlBased: false,
   },
   TF002: {

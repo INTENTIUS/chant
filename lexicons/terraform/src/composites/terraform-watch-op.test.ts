@@ -4,7 +4,10 @@
  * only the `-no-color` plan text can reach an issue or PR body.
  */
 
-import { describe, test, expect } from "vitest";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, test, expect } from "vitest";
 import {
   isStepOutputRef,
   collectStepOutputRefs,
@@ -239,5 +242,75 @@ describe("TerraformWatchOp schedule (#2087, #2120)", () => {
       cron: "0 6 * * *",
       overlap: "skip",
     });
+  });
+});
+
+/**
+ * The `live` flag against the root it names (#2216). Best-effort: the mode
+ * resolves from a `chant.config.json` only, so these projects are written in
+ * that format. TF028 (`../lint/post-synth/tf028.ts`) is what reports the same
+ * mismatch on a `chant.config.ts` project, where the mode does not resolve
+ * here at all.
+ */
+describe("TerraformWatchOp cross-checks live against the root's mode (#2216)", () => {
+  const dirs: string[] = [];
+
+  afterEach(() => {
+    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  const LIVE_ROOT = [
+    "terraform {",
+    "  live {",
+    '    estate = "prod-estate"',
+    "  }",
+    "}",
+    "",
+  ].join("\n");
+
+  /** A project on a `chant.config.json` whose root `estate` is `mainTf`, run on `binary`. */
+  function project(binary: string, mainTf: string): string {
+    const dir = mkdtempSync(join(tmpdir(), "chant-tf-watch-mode-"));
+    dirs.push(dir);
+    mkdirSync(join(dir, "estate"), { recursive: true });
+    writeFileSync(join(dir, "estate", "main.tf"), mainTf);
+    writeFileSync(
+      join(dir, "chant.config.json"),
+      JSON.stringify({ terraform: { binary, roots: { estate: { dir: "./estate" } } } }),
+    );
+    return dir;
+  }
+
+  test("refuses a live root watched in stock mode, naming the Op and the root", () => {
+    const cwd = project("choudoufu", LIVE_ROOT);
+    expect(() => TerraformWatchOp({ name: "estate-watch", root: "estate", cwd })).toThrow(
+      /TerraformWatchOp "estate-watch": root "estate" runs choudoufu with a declared estate/,
+    );
+  });
+
+  test("accepts the same root with live: true", () => {
+    const cwd = project("choudoufu", LIVE_ROOT);
+    expect(() => TerraformWatchOp({ name: "estate-watch", root: "estate", live: true, cwd })).not.toThrow();
+  });
+
+  test("refuses live: true on a root that declares no estate", () => {
+    const cwd = project("choudoufu", 'resource "null_resource" "first" {}\n');
+    expect(() => TerraformWatchOp({ name: "app-watch", root: "estate", live: true, cwd })).toThrow(
+      /declares no estate/,
+    );
+  });
+
+  test("refuses live: true when the binary is not choudoufu, whatever the root declares", () => {
+    const cwd = project("terraform", LIVE_ROOT);
+    expect(() => TerraformWatchOp({ name: "app-watch", root: "estate", live: true, cwd })).toThrow(
+      /declares no estate/,
+    );
+  });
+
+  test("says nothing when the mode does not resolve: no config to read", () => {
+    const dir = mkdtempSync(join(tmpdir(), "chant-tf-watch-mode-"));
+    dirs.push(dir);
+    expect(() => TerraformWatchOp({ name: "app-watch", root: "estate", cwd: dir })).not.toThrow();
+    expect(() => TerraformWatchOp({ name: "app-watch", root: "estate", live: true, cwd: dir })).not.toThrow();
   });
 });

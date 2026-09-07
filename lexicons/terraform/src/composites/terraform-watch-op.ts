@@ -99,6 +99,7 @@
  */
 
 import { Op, phase, OpResource, type ActivityStep } from "@intentius/chant/op";
+import { resolveRootModeSync } from "../op/resolve-root-mode";
 import { CHOUDOUFU_LIVE_PLAN_OUT_REFUSAL, DEFAULT_PLAN_FILE } from "../op/activities/terraform";
 import {
   terraformInit as initStep,
@@ -138,8 +139,14 @@ export interface TerraformWatchOpConfig {
    * Declared here rather than detected, because a composite is built by
    * `chant build` without reading a root module's `.tf` files. The activities
    * detect the estate at run time (`op/activities/live-detect.ts`), but by then
-   * the phases are already serialized. Setting this on a stock root fails at
-   * the first step, with choudoufu's own reason.
+   * the phases are already serialized.
+   *
+   * Two things check the answer against the root's real mode, since a wrong
+   * one is otherwise silent (#2216). This function refuses a mismatch outright
+   * when it can resolve the mode synchronously, which is a
+   * `chant.config.json` project (`op/resolve-root-mode.ts`); TF028
+   * (`lint/post-synth/tf028.ts`) reports the same mismatch off the parsed HCL
+   * for every project, `chant.config.ts` included.
    */
   live?: boolean;
   /**
@@ -190,6 +197,29 @@ export function TerraformWatchOp(config: TerraformWatchOpConfig): TerraformWatch
     throw new Error(
       `TerraformWatchOp "${config.name}": estate names the estate a live plan looks for markers of, and ` +
         "this Op is not on a live root. Set live: true, or drop estate.",
+    );
+  }
+
+  // The `live` flag against the root it names. Best-effort and synchronous:
+  // `resolveRootModeSync` reads a `chant.config.json` only and returns
+  // undefined for anything else, so a `chant.config.ts` project reaches
+  // neither branch and TF028 is what reports the mismatch there. Where the
+  // mode does resolve, refusing at build time names the Op, which a
+  // post-synth diagnostic does too but a run-time failure at the first step
+  // does not.
+  const resolvedMode = resolveRootModeSync(config.root, config.cwd)?.mode;
+  if (resolvedMode === "live" && !config.live) {
+    throw new Error(
+      `TerraformWatchOp "${config.name}": root "${config.root}" runs choudoufu with a declared estate, ` +
+        "but this Op watches it in stock mode. A stock plan reports drift alone and stays quiet about " +
+        "every unowned and adoptable resource in the estate. Set live: true.",
+    );
+  }
+  if (resolvedMode === "state" && config.live) {
+    throw new Error(
+      `TerraformWatchOp "${config.name}": live: true, but root "${config.root}" declares no estate (or ` +
+        "terraform.binary is not \"choudoufu\"), so there is no live system to plan against. Drop " +
+        "live, or declare the root's estate.",
     );
   }
 

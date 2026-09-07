@@ -2947,6 +2947,22 @@ Remove `workspace` from the root's terraform.roots config, and remove any `terra
 
 Add undeclared_tagged = "keep" (or "untag" or "report") to the live root's policy block, or change terraform.roots.\<name>.delete to "owned-only" or "gated" if an owned orphan should be deleted after all.
 
+### TF027
+
+**Live root's policy block sets undeclared_untagged = "delete"** — merge-worthy · guidance
+
+Remove undeclared_untagged = "delete" from the live root's policy block. chant never proposes deleting a resource it does not own; narrow the estate's own ownership answer (undeclared_tagged) instead of the account's.
+
+| | |
+|---|---|
+| Prior art | [choudoufu `RulePolicyScope`](https://github.com/INTENTIUS/choudoufu/blob/main/internal/live/lint/policy.go) (extends) |
+
+### TF028
+
+**Live root is watched by a TerraformWatchOp built without live: true** — merge-worthy · guidance
+
+Set live: true on the TerraformWatchOp that names this root, so the Plan phase runs choudoufuLivePlan and reports the unowned and adoptable counts as well as drift. Drop the root's estate instead if it is not a live root.
+
 ## Secrets & credentials (SEC)
 
 Lexicon-independent — scans the raw text of every scanned file for likely credentials, regardless of which audit lexicons are installed. Matched values are always redacted; see [suppressing false positives](/chant/cli/audit/#suppressing-a-secrets-finding).
@@ -3302,6 +3318,7 @@ This is credit rather than authority, and it never changes a rule's tier or cate
 | [Datree](https://hub.datree.io/built-in-rules) | scanner | Apache-2.0 | 4 |
 | [HashiCorp Terraform style guide](https://developer.hashicorp.com/terraform/language/style) | specification | n/a | 4 |
 | [helm lint](https://helm.sh/docs/helm/helm_lint/) | vendor-validator | Apache-2.0 | 4 |
+| [choudoufu](https://github.com/INTENTIUS/choudoufu) | scanner | MPL-2.0 | 3 |
 | [Flux Kustomization API reference](https://fluxcd.io/flux/components/kustomize/kustomizations/) | specification | n/a | 3 |
 | [hadolint](https://github.com/hadolint/hadolint) | scanner | GPL-3.0 | 3 |
 | [HashiCorp reference Sentinel policies](https://github.com/hashicorp/terraform-sentinel-policies) | specification | MPL-2.0 | 3 |
@@ -3310,7 +3327,6 @@ This is credit rather than authority, and it never changes a rule's tier or cate
 | [ARM Template Toolkit (arm-ttk)](https://github.com/Azure/arm-ttk) | scanner | MIT | 2 |
 | [AWS prescriptive guidance for Terraform](https://docs.aws.amazon.com/prescriptive-guidance/latest/terraform-aws-provider-best-practices/) | specification | n/a | 2 |
 | [Bicep linter](https://learn.microsoft.com/en-us/azure/azure-resource-manager/bicep/linter) | scanner | MIT | 2 |
-| [choudoufu](https://github.com/INTENTIUS/choudoufu) | scanner | MPL-2.0 | 2 |
 | [Dockle](https://github.com/goodwithtech/dockle) | scanner | Apache-2.0 | 2 |
 | [Google Cloud Terraform best-practices series](https://docs.cloud.google.com/docs/terraform/best-practices/general-style-structure) | specification | n/a | 2 |
 | [mcp-audit (APIsec)](https://github.com/apisec-inc/mcp-audit) | scanner | MIT | 2 |
