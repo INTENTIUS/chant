@@ -15,7 +15,9 @@
  * invocations, so "no Kustomization in THIS build sets spec.decryption" can
  * mean "wired up in the other build" as easily as "forgotten" — the design
  * doc's §4 explains why no path-to-build-target join exists to tell those
- * apart. Promote to error if that join ever becomes available.
+ * apart. Single-build-root scoped, tracked by chant #1939 as a candidate for
+ * an opt-in project-level mode; promote to error if that join ever becomes
+ * available.
  *
  * Fires only on claims that actually resolved (`problems.length === 0`, via
  * `resolveEncryptedSecretClaims`), not on every raw declaration. An
@@ -39,7 +41,7 @@ function fluxKustomizations(manifests: K8sManifest[]): K8sManifest[] {
 export const wk8505: PostSynthCheck = {
   id: "WK8505",
   description:
-    "committed-encrypted secret with no Flux decryption wiring — add decryption: 'sops' to the FluxAppFor reconciling the path that carries it",
+    "committed-encrypted secret with no Flux decryption wiring — add decryption: 'sops' to the FluxAppFor reconciling the path that carries it. Sees one build root at a time, so it goes silent when that Kustomization lives in a different build root (chant #1939).",
 
   check(ctx: PostSynthContext): PostSynthDiagnostic[] {
     const kustomizations = fluxKustomizations(allManifests(ctx));

@@ -1298,7 +1298,7 @@ Point `file` at the committed ciphertext, make its metadata.name match the decla
 
 **committed-encrypted secret with no Flux decryption wiring** — report-only · guidance
 
-Add decryption: "sops" to the FluxAppFor reconciling the path that carries the ciphertext sidecar, or ignore if that Kustomization is declared in a different build.
+Add decryption: "sops" to the FluxAppFor reconciling the path that carries the ciphertext sidecar, or ignore if that Kustomization is declared in a different build. This check sees one build root at a time, so it goes silent once the secret and the Kustomization live in different build roots (chant #1939).
 
 | | |
 |---|---|

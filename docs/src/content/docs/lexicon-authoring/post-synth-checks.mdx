@@ -325,6 +325,14 @@ Keep helpers in a `*-helpers.ts` file — the barrel generator skips them (they 
 
 This join is the pattern behind conformance checks generally — a custom resource against the schema that defines it, a composition against the kinds it references. Any check that needs to know about *other* resources in the output is a post-synth check, and this is its shape.
 
+### One build root at a time (chant #1939)
+
+A bundle-join check only sees the build root of the *current* `chant build` invocation, since `ctx.outputs`, `ctx.docs` and `ctx.entities` are all scoped to that one invocation. Split the two halves of a join across separate build roots and the check goes silent rather than wrong, because a `PostSynthContext` has no way to tell "wired up in the other build" apart from "forgotten entirely."
+
+The k8s lexicon's `WK8505` (`lint/post-synth/wk8505.ts`) shows why this matters. It warns when a committed-encrypted secret has no Flux `Kustomization` setting `spec.decryption`, and that join needs the secret and the Kustomization declared in the same build root. A project that splits workload and Flux wiring into separate roots, a common shape as a project grows, gets no warning even when the decryption wiring is genuinely missing.
+
+Chant #1939 tracks whether checks like this should get an opt-in project-level mode that runs across every build root. Until that lands, a check that joins across resources stays single-build-root-scoped by construction, and an author has two options today: keep the resources a check joins across in the same build root, or accept that the check will not fire once those resources live apart.
+
 ## Universal Check Patterns
 
 These patterns apply to most IaC formats:
