@@ -8,9 +8,11 @@
  */
 
 import { describe, test, expect } from "vitest";
-import type { SubscribeChangesOptions } from "@intentius/chant/lexicon";
+import type { LexiconPlugin, SubscribeChangesOptions } from "@intentius/chant/lexicon";
 import { fakeWatchStream, watchFrame, expiredWatchFrame, statusBody } from "@intentius/chant-k8s-client/testing";
 import type { RecordedRequest } from "@intentius/chant-k8s-client/testing";
+import { collectChangeSubscribers } from "@intentius/chant/cli/plugins";
+import { createChangeSignalGate } from "@intentius/chant/op";
 import { fakeCluster, objectKey, ownedObject } from "./api/fake-cluster";
 import { subscribeChanges, watchTargets, MAX_WATCHES } from "./subscribe-changes";
 
@@ -308,5 +310,59 @@ describe("subscribeChanges", () => {
       throw new Error('the kubeconfig has no context named "prod-eks"');
     };
     await expect(subscribeChanges(options, refusing as never)).rejects.toThrow(/no context named "prod-eks"/);
+  });
+});
+
+/**
+ * The two halves joined: the real k8s subscription, bound the way `chant
+ * operator` binds it, driving the operator's real wake gate. Everything below
+ * `client.watch` is faked and nothing else is — no cluster, no k3d, and no
+ * stand-in for the seam under test.
+ */
+describe("the wake path end to end, against the fake cluster", () => {
+  test("a change to a declared resource wakes the gate well inside a second", async () => {
+    const path = "/apis/apps/v1/namespaces/prod/deployments";
+    const stream = fakeWatchStream();
+    const { cluster, watches } = watchingCluster(new Map([[path, stream]]));
+
+    // Bound exactly as the CLI binds it: a plugin with the seam, one
+    // environment, this lexicon's own declared entities.
+    const plugin = {
+      name: "k8s",
+      serializer: { name: "k8s", serialize: () => "" },
+      generate: async () => {},
+      validate: async () => {},
+      coverage: async () => {},
+      package: async () => {},
+      subscribeChanges: (options: SubscribeChangesOptions) => subscribeChanges(options, cluster.connector),
+    } as unknown as LexiconPlugin;
+
+    const subscribers = collectChangeSubscribers([plugin], {
+      environment: "prod",
+      entities: new Map([["k8s", makeEntities([webDeployment])]]),
+    });
+    expect(subscribers).toHaveLength(1);
+
+    const gate = createChangeSignalGate({ floorMs: 0 });
+    const controller = new AbortController();
+    const errors: string[] = [];
+    const subscription = await subscribers[0].subscribe({
+      onChange: () => gate.signal(),
+      onError: (message) => errors.push(message),
+      signal: controller.signal,
+    });
+    await waitFor(() => watches.length >= 1);
+
+    gate.roundStarted();
+    const sleeping = gate.wait(60_000, controller.signal); // a full minute of timer
+    const startedAt = Date.now();
+    stream.push(watchFrame("MODIFIED", { metadata: { name: "web", namespace: "prod", resourceVersion: "8" } }));
+
+    expect(await sleeping).toBe("signal");
+    expect(Date.now() - startedAt).toBeLessThan(1_000);
+    expect(errors).toEqual([]);
+
+    controller.abort();
+    await subscription.close();
   });
 });
