@@ -42,10 +42,11 @@ describe("terraform examples", () => {
 });
 
 /**
- * The terraform install the runner needs. `beforeScript` lines are emitted as
- * plain `run:` steps (`lexicons/github/src/components/generate-op-pipeline.ts`),
- * so this is a shell line rather than a `uses: hashicorp/setup-terraform`,
- * which would need a `uses:`-shaped option that does not exist today.
+ * The terraform install the runner needs, as a `beforeScript` line: a plain
+ * `run:` step (`lexicons/github/src/components/generate-op-pipeline.ts`)
+ * rather than a `uses: hashicorp/setup-terraform`. A spec's `setup` list
+ * could carry the action since #2242, but a curl-and-unzip needs no action to
+ * express and the shell line is what the two examples already share.
  *
  * A pinned release unzip, not the apt repo: the version the Op plans with is
  * then the version this file names, which matters for an estate whose state
@@ -151,15 +152,43 @@ describe("scheduled-watch generates its GitHub Actions cron (#2087)", () => {
  */
 const planOnPrDir = join(examplesDir, "plan-on-pr");
 
+/**
+ * The AWS auth both halves use, as the OIDC form #2242 made expressible: a
+ * `uses:` setup step that exchanges the run's own OIDC token for short-lived
+ * credentials, plus the `id-token: write` no finding-mode grants. Pinned to
+ * the action's current major tag, the same way this repository pins its own
+ * workflows; the role ARN is a repository variable, so the example carries no
+ * account number and a fork of it needs one variable rather than a secret.
+ *
+ * Two roles, not one, which is the reason `setup` is a per-Op option rather
+ * than a generator-wide one: the pull-request half only reads, and the push
+ * half is the only thing that should hold a role that can write.
+ */
+const AWS_CREDENTIALS_ACTION = "aws-actions/configure-aws-credentials@v6";
+const AWS_REGION = "eu-west-1";
+
+function assumeRole(roleVariable: string): ScheduledOpSpec["setup"] {
+  return [
+    {
+      uses: AWS_CREDENTIALS_ACTION,
+      with: { "role-to-assume": `\${{ vars.${roleVariable} }}`, "aws-region": AWS_REGION },
+    },
+  ];
+}
+
 const PLAN_SPEC: ScheduledOpSpec = {
   name: "app-plan",
   trigger: { kind: "pull_request", branches: ["main"] },
   findingMode: "comment",
+  setup: assumeRole("AWS_PLAN_ROLE_ARN"),
+  permissions: { "id-token": "write" },
 };
 
 const APPLY_SPEC: ScheduledOpSpec = {
   name: "app-apply",
   trigger: { kind: "push", branches: ["main"] },
+  setup: assumeRole("AWS_APPLY_ROLE_ARN"),
+  permissions: { "id-token": "write" },
 };
 
 async function planOnPrWorkflows(): Promise<{ plan: string; apply: string }> {
@@ -218,16 +247,22 @@ describe("plan-on-pr generates the pull_request plan and push apply pair (#2221)
     expect(apply).not.toContain("schedule:");
   });
 
-  it("gives the PR job exactly contents: read and pull-requests: write (#2231)", async () => {
+  it("gives the PR job exactly contents: read, pull-requests: write and id-token: write (#2231, #2242)", async () => {
     const { plan } = await planOnPrWorkflows();
     // The least-privilege set a plan-on-PR job wants, and the set the
     // `comment` finding mode spends in full: it posts on the pull request the
     // run was triggered by and changes nothing in the repository. No `issues:
     // write`, because nothing opens an issue; no `contents: write`, because
-    // nothing pushes a branch. Parsed rather than string-matched, so this is
+    // nothing pushes a branch. `id-token: write` is the one scope the mode
+    // did not compute, added by the spec so the run can mint an OIDC token
+    // for the role it assumes. Parsed rather than string-matched, so this is
     // an exact set and not a containment check.
     const parsed = parseYAML(plan) as { permissions?: Record<string, string> };
-    expect(parsed.permissions).toEqual({ contents: "read", "pull-requests": "write" });
+    expect(parsed.permissions).toEqual({
+      contents: "read",
+      "pull-requests": "write",
+      "id-token": "write",
+    });
     expect(plan).not.toContain("write-all");
   });
 
@@ -258,15 +293,47 @@ describe("plan-on-pr generates the pull_request plan and push apply pair (#2221)
     ).rejects.toThrow(/findingMode "comment".*trigger is "push"/s);
   });
 
-  it("gives the apply job contents: read and nothing else", async () => {
+  it("gives the apply job contents: read plus the OIDC token, and no forge write scope", async () => {
     const { apply } = await planOnPrWorkflows();
     // The apply talks to the provider and the state backend, never to the
-    // forge, so a push run needs no forge write scope at all.
-    expect(apply).toContain("contents: read");
-    expect(apply).not.toContain("contents: write");
+    // forge, so a push run needs no forge write scope at all. What it does
+    // need is the OIDC token it exchanges for the apply role (#2242), which
+    // is additive over the `report` mode's read-only set rather than a
+    // replacement for it.
+    const parsed = parseYAML(apply) as { permissions?: Record<string, string> };
+    expect(parsed.permissions).toEqual({ contents: "read", "id-token": "write" });
     expect(apply).not.toContain("issues: write");
     expect(apply).not.toContain("pull-requests: write");
     expect(apply).not.toContain("write-all");
+  });
+
+  it("assumes the AWS role by OIDC, after the checkout and before terraform (#2242)", async () => {
+    const { plan, apply } = await planOnPrWorkflows();
+    for (const [yaml, op, roleVariable] of [
+      [plan, "app-plan", "AWS_PLAN_ROLE_ARN"],
+      [apply, "app-apply", "AWS_APPLY_ROLE_ARN"],
+    ] as const) {
+      const doc = parseYAML(yaml) as {
+        jobs: Record<string, { steps: Array<{ uses?: string; run?: string; with?: Record<string, string> }> }>;
+      };
+      const steps = doc.jobs[op].steps;
+      // The whole order the shape depends on: check out the root, mint
+      // credentials for it, install the CLI that will use them, run the Op.
+      expect(steps.map((step) => step.uses ?? step.run?.slice(0, 5))).toEqual([
+        "actions/checkout@v4",
+        AWS_CREDENTIALS_ACTION,
+        "curl ",
+        "chant",
+      ]);
+      expect(steps[1].with).toEqual({
+        "role-to-assume": `\${{ vars.${roleVariable} }}`,
+        "aws-region": AWS_REGION,
+      });
+      // No static key anywhere: the credentials are the ones the action
+      // exchanged the run's OIDC token for.
+      expect(yaml).not.toContain("AWS_ACCESS_KEY_ID");
+      expect(yaml).not.toContain("AWS_SECRET_ACCESS_KEY");
+    }
   });
 
   it("installs the pinned terraform before running either Op", async () => {

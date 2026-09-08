@@ -126,3 +126,51 @@ describe("generateForgejoOpPipeline: no comment finding mode (#2231)", () => {
     expect(gh.permissions).toEqual({ contents: "read", "pull-requests": "write" });
   });
 });
+
+/**
+ * #2242 crosses the dialect asymmetrically: Forgejo runs `uses:` steps, so a
+ * spec's `setup` list is emitted; it ignores `permissions:`, so an additive
+ * scope is dropped with the rest of the section rather than emitted as a
+ * control the runner never reads.
+ */
+describe("generateForgejoOpPipeline: setup steps and additive permissions (#2242)", () => {
+  const OIDC_SPEC: ScheduledOpSpec = {
+    name: "app-apply",
+    trigger: { kind: "push", branches: ["main"] },
+    setup: [
+      {
+        uses: "aws-actions/configure-aws-credentials@v6",
+        with: { "role-to-assume": "${{ vars.AWS_ROLE_ARN }}", "aws-region": "eu-west-1" },
+      },
+    ],
+    permissions: { "id-token": "write" },
+  };
+
+  test("emits the setup step after the checkout, with its `with:` intact", () => {
+    const doc = parseFile(generateForgejoOpPipeline([OIDC_SPEC]).files[0].yaml);
+    const steps = doc.jobs!["app-apply"].steps;
+    // The checkout is rewritten to the Forgejo mirror; an action with no
+    // mapping in ../actions.ts passes through verbatim.
+    expect(steps[0].uses).toContain("actions/checkout@v4");
+    expect(steps[1].uses).toBe("aws-actions/configure-aws-credentials@v6");
+    expect((steps[1] as { with?: Record<string, string> }).with).toEqual({
+      "role-to-assume": "${{ vars.AWS_ROLE_ARN }}",
+      "aws-region": "eu-west-1",
+    });
+  });
+
+  test("drops the additive permission along with the mode's own scopes", () => {
+    const yaml = generateForgejoOpPipeline([OIDC_SPEC]).files[0].yaml;
+    expect(yaml).not.toContain("permissions:");
+    expect(yaml).not.toContain("id-token");
+    // The same spec on github does carry it — this is a dialect drop, not a
+    // generator that never computed the scope.
+    expect(generateGithubOpPipeline([OIDC_SPEC]).files[0].yaml).toContain("id-token: write");
+  });
+
+  test("refuses an unpinned action ref on the same terms as github", () => {
+    expect(() =>
+      generateForgejoOpPipeline([{ ...OIDC_SPEC, setup: [{ uses: "aws-actions/configure-aws-credentials@main" }] }]),
+    ).toThrow(/the action repository's own default branch/);
+  });
+});

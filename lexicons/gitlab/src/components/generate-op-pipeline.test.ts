@@ -122,3 +122,50 @@ describe("generateGitlabOpPipeline: a cross-cutting change is one generator edit
     }
   });
 });
+
+/**
+ * #2242's two per-Op options against a provider that has neither concept.
+ * Both degrade by name at build time rather than being dropped into a job
+ * that would run without the thing the option asked for.
+ */
+describe("generateGitlabOpPipeline: setup steps and additive permissions (#2242)", () => {
+  test("refuses a `uses` setup step by name, and names the action", () => {
+    expect(() =>
+      generateGitlabOpPipeline([
+        {
+          name: "actions-audit",
+          schedule: "0 6 * * *",
+          setup: [{ uses: "aws-actions/configure-aws-credentials@v6" }],
+        },
+      ]),
+    ).toThrow(/setup step 1 is `uses: "aws-actions\/configure-aws-credentials@v6"`.*GitLab CI jobs run/s);
+  });
+
+  test("emits a `run` setup entry ahead of the beforeScript lines", () => {
+    const result = generateGitlabOpPipeline(
+      [
+        {
+          name: "actions-audit",
+          schedule: "0 6 * * *",
+          setup: [{ run: "aws sts get-caller-identity" }],
+        },
+      ],
+      { beforeScript: ["npm ci"], extraScript: ["echo done"] },
+    );
+    const job = parseYAML(result.files[0].yaml)["actions-audit"] as { script: string[] };
+    expect(job.script).toEqual([
+      "aws sts get-caller-identity",
+      "npm ci",
+      "chant run actions-audit",
+      "echo done",
+    ]);
+  });
+
+  test("refuses additive permissions by name, and points at GitLab's own OIDC surface", () => {
+    expect(() =>
+      generateGitlabOpPipeline([
+        { name: "actions-audit", schedule: "0 6 * * *", permissions: { "id-token": "write" } },
+      ]),
+    ).toThrow(/adds permissions \{ id-token: write \}.*id_tokens:/s);
+  });
+});

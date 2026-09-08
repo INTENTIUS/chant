@@ -17,6 +17,17 @@
  * built by github's generator); actual write access on Forgejo is a property
  * of the runner/token configuration, not the workflow YAML.
  *
+ * That covers a spec's additive `permissions` too (#2242): an `id-token:
+ * write` added for OIDC is dropped here along with the mode's own scopes,
+ * because the Forgejo runner reads none of them and issues no OIDC token off
+ * a workflow permission. A Forgejo job authenticates to a cloud provider
+ * through whatever the runner already holds. A spec's `setup` steps do cross
+ * over unchanged: Forgejo runs `uses:` steps, so they are emitted in the
+ * position github puts them (after the checkout, ahead of the `beforeScript`
+ * lines) with the dialect's own action-ref rewrite applied — an action with
+ * no mapping in ../actions.ts passes through verbatim and resolves only if
+ * the runner can fetch it.
+ *
  * One finding-mode does not cross over: `comment` (#2231) posts onto the
  * triggering pull request by shelling to `gh` against the GitHub API and
  * reading the GitHub Actions event payload. Forgejo's API is
@@ -44,8 +55,10 @@ function forgejoize(value: Record<string, unknown>, dialect: ForgejoDialectOptio
 
 /**
  * Synthesize one `.forgejo/workflows/*.yml` per scheduled Op. Reuses github's
- * trigger/job structure ({@link buildGithubOpPipelineDocs}), then applies the
- * Forgejo dialect and drops `permissions:` (ignored by the Forgejo runner).
+ * trigger/job structure ({@link buildGithubOpPipelineDocs}) — its `setup`-step
+ * and additive-permission validation included, so an unpinned action ref is
+ * refused here on the same terms — then applies the Forgejo dialect and drops
+ * `permissions:` (ignored by the Forgejo runner).
  * Wired into core's Op generate mode via the forgejo lexicon plugin's
  * `generateOpPipeline` (../plugin.ts).
  */
