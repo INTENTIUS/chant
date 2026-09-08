@@ -1,7 +1,8 @@
 import { NamespaceEnv } from "@intentius/chant-lexicon-k8s";
+import { SYSTEM_NS } from "../config";
 
 export const { namespace, resourceQuota, limitRange } = NamespaceEnv({
-  name: "system",
+  name: SYSTEM_NS,
   cpuQuota: "32",
   memoryQuota: "64Gi",
   defaultCpuRequest: "100m",

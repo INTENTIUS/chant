@@ -1,6 +1,6 @@
 import { Deployment, Service, NetworkPolicy, Ingress } from "@intentius/chant-lexicon-k8s";
 import { createResource } from "@intentius/chant/runtime";
-import { cells, shared } from "../config";
+import { cells, shared, SYSTEM_NS } from "../config";
 
 import { routingRulesConfigMap } from "./routing-rules";
 
@@ -17,7 +17,7 @@ const labels = {
 // session token, routable token, and path rules in priority order, then proxies
 // to the winning cell's internal K8s service URL.
 export const cellRouterDeployment = new Deployment({
-  metadata: { name: "cell-router", namespace: "system", labels },
+  metadata: { name: "cell-router", namespace: SYSTEM_NS, labels },
   spec: {
     replicas: 2,
     selector: { matchLabels: { "app.kubernetes.io/name": "cell-router" } },
@@ -29,7 +29,7 @@ export const cellRouterDeployment = new Deployment({
           // OpenResty (nginx + LuaJIT) reads routing-rules.json, cell-registry.json,
           // and router-config.json from the ConfigMap and routes requests by:
           //   1. _gitlab_session cookie cell prefix (stateless)
-          //   2. glrt-cell_<id>_ routable token prefix (stateless)
+          //   2. glrt-t<id>_ routable token prefix (stateless)
           //   3. Topology Service org-slug lookup (path fallback)
           image: shared.cellRouterImage,
           // IfNotPresent prevents repeated pulls of `:latest` tag on pod restarts.
@@ -50,7 +50,7 @@ export const cellRouterDeployment = new Deployment({
 });
 
 export const cellRouterHpa = new HorizontalPodAutoscaler({
-  metadata: { name: "cell-router", namespace: "system" },
+  metadata: { name: "cell-router", namespace: SYSTEM_NS },
   spec: {
     scaleTargetRef: { apiVersion: "apps/v1", kind: "Deployment", name: "cell-router" },
     minReplicas: 1,
@@ -63,7 +63,7 @@ export const cellRouterHpa = new HorizontalPodAutoscaler({
 });
 
 export const cellRouterService = new Service({
-  metadata: { name: "cell-router", namespace: "system", labels },
+  metadata: { name: "cell-router", namespace: SYSTEM_NS, labels },
   spec: {
     selector: { "app.kubernetes.io/name": "cell-router" },
     ports: [{ name: "http", port: 8080, targetPort: "http" }],
@@ -91,7 +91,7 @@ const perCellWildcardRules = cells.map(cell => ({
 export const cellRouterIngress = new Ingress({
   metadata: {
     name: "cell-router",
-    namespace: "system",
+    namespace: SYSTEM_NS,
     annotations: {
       "kubernetes.io/ingress.class": "nginx",
       "nginx.ingress.kubernetes.io/proxy-read-timeout": "3600",
@@ -120,7 +120,7 @@ export const cellRouterIngress = new Ingress({
 
 // Allow ingress from NGINX ingress controller to cell-router pods
 export const cellRouterAllowNginxIngress = new NetworkPolicy({
-  metadata: { name: "cell-router-allow-nginx", namespace: "system" },
+  metadata: { name: "cell-router-allow-nginx", namespace: SYSTEM_NS },
   spec: {
     podSelector: { matchLabels: { "app.kubernetes.io/name": "cell-router" } },
     ingress: [{
@@ -140,7 +140,7 @@ const cellEgressRules = cells.map(cell => ({
 
 // Allow egress from cell-router to topology service + all cell namespaces
 export const cellRouterAllowEgress = new NetworkPolicy({
-  metadata: { name: "cell-router-allow-egress", namespace: "system" },
+  metadata: { name: "cell-router-allow-egress", namespace: SYSTEM_NS },
   spec: {
     podSelector: { matchLabels: { "app.kubernetes.io/name": "cell-router" } },
     egress: [

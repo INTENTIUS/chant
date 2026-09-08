@@ -10,7 +10,7 @@
 #
 # What it tests:
 #   1. Session cookie  _gitlab_session=cell1_*  → routes to cell-alpha
-#   2. Routable token  glrt-cell_2_*            → routes to cell-beta
+#   2. Routable token  glrt-t2_*                → routes to cell-beta
 #   3. Path fallback   /some-org/project        → topology service → alpha (default)
 #   4. Health endpoint /healthz                 → 200 ok
 set -euo pipefail

@@ -14,6 +14,16 @@ const cellEnvs = [
 ];
 
 function makeCellValues(cell: typeof cells[0], env: typeof cellEnvs[0]) {
+  // Built before the constructor: a resource constructor property must be
+  // statically evaluable, and an arrow function passed to `.map()` is not
+  // (EVL001).
+  const sidekiqPods = cell.sidekiqQueues.map(q => ({
+    name: q.name,
+    queues: q.queues,
+    replicas: q.replicas,
+    resources: { requests: { cpu: q.cpuRequest, memory: q.memoryRequest } },
+  }));
+
   return new ValuesOverride({
     filename: `values-${cell.name}`,
     values: {
@@ -53,14 +63,7 @@ function makeCellValues(cell: typeof cells[0], env: typeof cellEnvs[0]) {
       },
       gitlab: {
         webservice: { minReplicas: cell.webserviceReplicas, maxReplicas: cell.webserviceReplicas },
-        sidekiq: {
-          pods: cell.sidekiqQueues.map(q => ({
-            name: q.name,
-            queues: q.queues,
-            replicas: q.replicas,
-            resources: { requests: { cpu: q.cpuRequest, memory: q.memoryRequest } },
-          })),
-        },
+        sidekiq: { pods: sidekiqPods },
         gitaly: {
           persistence: {
             enabled: true,

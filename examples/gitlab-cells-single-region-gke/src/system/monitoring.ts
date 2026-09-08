@@ -1,15 +1,21 @@
 import { Deployment, Service, ConfigMap, PersistentVolumeClaim, ServiceAccount, ClusterRole, ClusterRoleBinding } from "@intentius/chant-lexicon-k8s";
 import { createResource } from "@intentius/chant/runtime";
-import { cells, shared } from "../config";
+import { cells, shared, SYSTEM_NS } from "../config";
 
 const PrometheusRule = createResource("K8s::Monitoring::PrometheusRule", "k8s", {});
+
+// The cell namespaces Prometheus scrapes, rendered as a YAML flow sequence.
+// Built here rather than inline in the ConfigMap below: a resource constructor
+// property must be statically evaluable, and an arrow function passed to
+// `.map()` is not (EVL001).
+const cellNamespaceList = cells.map(c => `"cell-${c.name}"`).join(", ");
 
 const remoteWriteConfig = shared.prometheusRemoteWriteUrl
   ? `remote_write:\n  - url: "${shared.prometheusRemoteWriteUrl}"\n`
   : "";
 
 export const prometheusConfig = new ConfigMap({
-  metadata: { name: "prometheus-config", namespace: "system", labels: { "app.kubernetes.io/part-of": "system" } },
+  metadata: { name: "prometheus-config", namespace: SYSTEM_NS, labels: { "app.kubernetes.io/part-of": "system" } },
   data: {
     "prometheus.yml": `
 global:
@@ -25,7 +31,7 @@ scrape_configs:
     kubernetes_sd_configs:
       - role: pod
         namespaces:
-          names: [${cells.map(c => `"cell-${c.name}"`).join(", ")}]
+          names: [${cellNamespaceList}]
     relabel_configs:
       - source_labels: [__meta_kubernetes_namespace]
         regex: "cell-(.*)"
@@ -41,7 +47,7 @@ scrape_configs:
 
 // RBAC for Prometheus — needs cluster-wide pod/endpoint/service read to scrape
 export const prometheusServiceAccount = new ServiceAccount({
-  metadata: { name: "prometheus", namespace: "system", labels: { "app.kubernetes.io/part-of": "system" } },
+  metadata: { name: "prometheus", namespace: SYSTEM_NS, labels: { "app.kubernetes.io/part-of": "system" } },
 });
 
 export const prometheusClusterRole = new ClusterRole({
@@ -56,7 +62,7 @@ export const prometheusClusterRole = new ClusterRole({
 export const prometheusClusterRoleBinding = new ClusterRoleBinding({
   metadata: { name: "prometheus", labels: { "app.kubernetes.io/part-of": "system" } },
   roleRef: { apiGroup: "rbac.authorization.k8s.io", kind: "ClusterRole", name: "prometheus" },
-  subjects: [{ kind: "ServiceAccount", name: "prometheus", namespace: "system" }],
+  subjects: [{ kind: "ServiceAccount", name: "prometheus", namespace: SYSTEM_NS }],
 });
 
 // PVC for Prometheus TSDB — 50Gi SSD so 15-day retention survives pod eviction.
@@ -65,7 +71,7 @@ export const prometheusClusterRoleBinding = new ClusterRoleBinding({
 export const prometheusPvc = new PersistentVolumeClaim({
   metadata: {
     name: "prometheus-data",
-    namespace: "system",
+    namespace: SYSTEM_NS,
     labels: { "app.kubernetes.io/name": "prometheus", "app.kubernetes.io/part-of": "system" },
   },
   spec: {
@@ -78,7 +84,7 @@ export const prometheusPvc = new PersistentVolumeClaim({
 export const prometheusDeployment = new Deployment({
   metadata: {
     name: "prometheus",
-    namespace: "system",
+    namespace: SYSTEM_NS,
     labels: { "app.kubernetes.io/name": "prometheus", "app.kubernetes.io/part-of": "system" },
   },
   spec: {
@@ -121,7 +127,7 @@ export const prometheusDeployment = new Deployment({
 });
 
 export const prometheusService = new Service({
-  metadata: { name: "prometheus", namespace: "system", labels: { "app.kubernetes.io/part-of": "system" } },
+  metadata: { name: "prometheus", namespace: SYSTEM_NS, labels: { "app.kubernetes.io/part-of": "system" } },
   spec: {
     selector: { "app.kubernetes.io/name": "prometheus" },
     ports: [{ name: "http", port: 9090, targetPort: "http" }],
@@ -135,7 +141,7 @@ export const prometheusService = new Service({
 export const alertmanagerConfig = new ConfigMap({
   metadata: {
     name: "alertmanager-config",
-    namespace: "system",
+    namespace: SYSTEM_NS,
     labels: { "app.kubernetes.io/name": "alertmanager", "app.kubernetes.io/part-of": "system" },
   },
   data: {
@@ -167,7 +173,7 @@ receivers:
 export const alertmanagerDeployment = new Deployment({
   metadata: {
     name: "alertmanager",
-    namespace: "system",
+    namespace: SYSTEM_NS,
     labels: { "app.kubernetes.io/name": "alertmanager", "app.kubernetes.io/part-of": "system" },
   },
   spec: {
@@ -193,7 +199,7 @@ export const alertmanagerDeployment = new Deployment({
 export const alertmanagerService = new Service({
   metadata: {
     name: "alertmanager",
-    namespace: "system",
+    namespace: SYSTEM_NS,
     labels: { "app.kubernetes.io/part-of": "system" },
   },
   spec: {
@@ -209,7 +215,7 @@ export const alertmanagerService = new Service({
 export const grafanaDatasourceConfig = new ConfigMap({
   metadata: {
     name: "grafana-datasources",
-    namespace: "system",
+    namespace: SYSTEM_NS,
     labels: { "app.kubernetes.io/name": "grafana", "app.kubernetes.io/part-of": "system" },
   },
   data: {
@@ -228,7 +234,7 @@ datasources:
 export const grafanaDeployment = new Deployment({
   metadata: {
     name: "grafana",
-    namespace: "system",
+    namespace: SYSTEM_NS,
     labels: { "app.kubernetes.io/name": "grafana", "app.kubernetes.io/part-of": "system" },
   },
   spec: {
@@ -258,7 +264,7 @@ export const grafanaDeployment = new Deployment({
 });
 
 export const grafanaService = new Service({
-  metadata: { name: "grafana", namespace: "system", labels: { "app.kubernetes.io/part-of": "system" } },
+  metadata: { name: "grafana", namespace: SYSTEM_NS, labels: { "app.kubernetes.io/part-of": "system" } },
   spec: {
     selector: { "app.kubernetes.io/name": "grafana" },
     ports: [{ name: "http", port: 3000, targetPort: "http" }],
@@ -271,7 +277,7 @@ export const grafanaService = new Service({
 export const cellHealthRules = cells.map(cell => new PrometheusRule({
   metadata: {
     name: `cell-${cell.name}-health`,
-    namespace: "system",
+    namespace: SYSTEM_NS,
     labels: {
       "app.kubernetes.io/name": `cell-${cell.name}-health`,
       "app.kubernetes.io/part-of": "system",

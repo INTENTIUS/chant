@@ -7,7 +7,7 @@ set -a; source .env; set +a
 
 CELLS="${CELLS:-$(npx tsx --eval "import { cells } from './src/config.ts'; process.stdout.write(cells.map(c => c.name).join(' '))")}"
 
-# cellId is the numeric routing prefix embedded in runner tokens (glrt-cell_<ID>_).
+# cellId is the numeric routing prefix embedded in runner tokens (glrt-t<ID>_).
 # Read from config.ts — no hardcoded mapping.
 get_cell_id() {
   npx tsx --eval "import { cells } from './src/config.ts'; process.stdout.write(String(cells.find(c => c.name === '$1')?.cellId ?? 0))"
