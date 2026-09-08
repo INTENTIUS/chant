@@ -292,3 +292,146 @@ describe("generateGithubOpPipeline: the Op's own schedule (#2120)", () => {
     );
   });
 });
+
+/**
+ * The two per-Op options from #2242: `setup` steps between the checkout and
+ * the `beforeScript` lines, and `permissions` merged additively over the
+ * finding-mode's own set. Together they are what makes an OIDC job
+ * expressible — `aws-actions/configure-aws-credentials` is a `uses:` step,
+ * and no finding-mode grants `id-token: write`.
+ */
+describe("generateGithubOpPipeline: setup steps and additive permissions (#2242)", () => {
+  const OIDC_SPEC: ScheduledOpSpec = {
+    name: "app-apply",
+    trigger: { kind: "push", branches: ["main"] },
+    setup: [
+      {
+        uses: "aws-actions/configure-aws-credentials@v6",
+        with: { "role-to-assume": "${{ vars.AWS_ROLE_ARN }}", "aws-region": "eu-west-1" },
+      },
+    ],
+    permissions: { "id-token": "write" },
+  };
+
+  test("emits the action between the checkout and the beforeScript install", () => {
+    const result = generateGithubOpPipeline([OIDC_SPEC], { beforeScript: ["install terraform"] });
+    const doc = parseFile(result.files[0].yaml);
+    const steps = doc.jobs!["app-apply"].steps;
+
+    expect(steps.map((s) => s.uses ?? s.run)).toEqual([
+      "actions/checkout@v4",
+      "aws-actions/configure-aws-credentials@v6",
+      "install terraform",
+      "chant run app-apply",
+    ]);
+    expect((steps[1] as { with?: Record<string, string> }).with).toEqual({
+      "role-to-assume": "${{ vars.AWS_ROLE_ARN }}",
+      "aws-region": "eu-west-1",
+    });
+  });
+
+  test("adds id-token: write to the mode's own set without replacing it", () => {
+    const doc = parseFile(generateGithubOpPipeline([OIDC_SPEC]).files[0].yaml);
+    expect(doc.permissions).toEqual({ contents: "read", "id-token": "write" });
+  });
+
+  test("carries a setup step's own `env` and emits a `run` entry as a plain step", () => {
+    const specs: ScheduledOpSpec[] = [
+      {
+        name: "app-apply",
+        schedule: "0 6 * * *",
+        setup: [{ run: "aws sts get-caller-identity", env: { AWS_REGION: "eu-west-1" } }],
+      },
+    ];
+    const steps = parseFile(generateGithubOpPipeline(specs).files[0].yaml).jobs!["app-apply"].steps;
+    expect(steps[1]).toEqual({ run: "aws sts get-caller-identity", env: { AWS_REGION: "eu-west-1" } });
+  });
+
+  test("refuses an action pinned to its own default branch", () => {
+    expect(() =>
+      generateGithubOpPipeline([{ ...OIDC_SPEC, setup: [{ uses: "aws-actions/configure-aws-credentials@main" }] }]),
+    ).toThrow(/setup step 1 pins .* to "main", the action repository's own default branch/s);
+  });
+
+  test("refuses an action with no ref at all", () => {
+    expect(() =>
+      generateGithubOpPipeline([{ ...OIDC_SPEC, setup: [{ uses: "aws-actions/configure-aws-credentials" }] }]),
+    ).toThrow(/is not a pinned action reference/);
+  });
+
+  test("accepts a subpath ref and a commit sha", () => {
+    const specs: ScheduledOpSpec[] = [
+      {
+        name: "app-apply",
+        schedule: "0 6 * * *",
+        setup: [
+          { uses: "github/codeql-action/upload-sarif@v4" },
+          { uses: "aws-actions/configure-aws-credentials@0e613a0980cbf65ed5b322eb7a1e075d28913a83" },
+        ],
+      },
+    ];
+    const steps = parseFile(generateGithubOpPipeline(specs).files[0].yaml).jobs!["app-apply"].steps;
+    expect(steps.map((s) => s.uses).filter(Boolean)).toEqual([
+      "actions/checkout@v4",
+      "github/codeql-action/upload-sarif@v4",
+      "aws-actions/configure-aws-credentials@0e613a0980cbf65ed5b322eb7a1e075d28913a83",
+    ]);
+  });
+
+  test("refuses a blanket write-all", () => {
+    expect(() =>
+      generateGithubOpPipeline([{ ...OIDC_SPEC, permissions: { "write-all": "write" } }]),
+    ).toThrow(/a blanket grant/);
+  });
+
+  test("refuses widening a scope the finding-mode already grants", () => {
+    expect(() =>
+      generateGithubOpPipeline([
+        { name: "prod-reconcile", schedule: "0 * * * *", findingMode: "issue", permissions: { issues: "write" } },
+      ]),
+    ).toThrow(/its finding-mode already grants "issues: write"/);
+  });
+
+  test("refuses downgrading a scope the finding-mode already grants", () => {
+    expect(() =>
+      generateGithubOpPipeline([
+        {
+          name: "prod-reconcile",
+          schedule: "0 * * * *",
+          findingMode: "pull-request",
+          permissions: { contents: "read" },
+        },
+      ]),
+    ).toThrow(/its finding-mode already grants "contents: write"/);
+  });
+
+  test("refuses a scope name GitHub does not define, which it would silently ignore", () => {
+    expect(() => generateGithubOpPipeline([{ ...OIDC_SPEC, permissions: { id_token: "write" } }])).toThrow(
+      /not a GITHUB_TOKEN permission scope/,
+    );
+  });
+
+  test("refuses pull-requests: write on a trigger that has no pull request", () => {
+    expect(() =>
+      generateGithubOpPipeline([{ ...OIDC_SPEC, permissions: { "pull-requests": "write" } }]),
+    ).toThrow(/trigger is "push", which carries no pull request/);
+  });
+
+  test("allows id-token: write beside the comment mode's own pull-request scope", () => {
+    const doc = parseFile(
+      generateGithubOpPipeline([
+        {
+          name: "app-plan",
+          trigger: { kind: "pull_request", branches: ["main"] },
+          findingMode: "comment",
+          permissions: { "id-token": "write" },
+        },
+      ]).files[0].yaml,
+    );
+    expect(doc.permissions).toEqual({
+      contents: "read",
+      "pull-requests": "write",
+      "id-token": "write",
+    });
+  });
+});

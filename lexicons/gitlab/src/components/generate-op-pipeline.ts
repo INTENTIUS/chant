@@ -28,6 +28,19 @@
  * `GITLAB_TOKEN`/CI-CD-variable configuration the project already has —
  * this generator documents the requirement rather than fabricating a
  * variable nothing reads.
+ *
+ * Neither of #2242's two per-Op options survives the crossing, and both are
+ * refused by name rather than dropped. A `setup` entry spelled `{ uses }` is
+ * a GitHub Actions marketplace action; GitLab CI has `script` and nothing
+ * else, so there is no shape to translate it into and no way to approximate
+ * `aws-actions/configure-aws-credentials` in a shell line. A `{ run }` entry
+ * translates exactly, and is emitted ahead of the `beforeScript` lines, the
+ * same position the github generator gives it. An additive `permissions` map
+ * is refused for the same reason `permissions:` is absent here at all: GitLab
+ * has no per-job token-scope mapping, and its OIDC surface is a different
+ * declaration (`id_tokens:` with an `aud`, exchanged for cloud credentials by
+ * the job itself) that chant does not generate. Ignoring the map would emit a
+ * job that reads as having OIDC and runs with no credentials.
  */
 
 import { emitYAML } from "@intentius/chant/yaml";
@@ -39,6 +52,37 @@ import type {
   OpPipelineResult as GenerateGitlabOpResult,
   ScheduledOpSpec,
 } from "@intentius/chant/lexicon";
+
+/**
+ * Refuse the two #2242 options GitLab cannot honour, by name and before any
+ * YAML exists, and return the `run` setup lines that do translate. See the
+ * module doc for why each one is a refusal rather than a silent drop.
+ */
+function gitlabSetupScript(spec: ScheduledOpSpec): string[] {
+  if (spec.permissions && Object.keys(spec.permissions).length > 0) {
+    const scopes = Object.entries(spec.permissions)
+      .map(([scope, value]) => `${scope}: ${value}`)
+      .join(", ");
+    throw new Error(
+      `Scheduled Op "${spec.name}" adds permissions { ${scopes} }, but GitLab CI has no per-job token-scope ` +
+        `mapping — there is no \`permissions:\` key to add them to (#2242). Its OIDC surface is a separate ` +
+        `\`id_tokens:\` declaration the job exchanges for cloud credentials itself, which chant does not ` +
+        `generate. Drop the option here, or generate this Op for github.`,
+    );
+  }
+  const lines: string[] = [];
+  (spec.setup ?? []).forEach((step, index) => {
+    if ("uses" in step) {
+      throw new Error(
+        `Scheduled Op "${spec.name}" setup step ${index + 1} is \`uses: "${step.uses}"\`, a GitHub Actions ` +
+          `marketplace action. GitLab CI jobs run \`script\` lines only, so there is nothing to translate it ` +
+          `into (#2242). Express the setup as a \`{ run }\` entry, or generate this Op for github/forgejo.`,
+      );
+    }
+    lines.push(step.run);
+  });
+  return lines;
+}
 
 export type { GenerateGitlabOpOptions, GenerateGitlabOpResult };
 
@@ -87,6 +131,7 @@ export function generateGitlabOpPipeline(
   ];
 
   for (const spec of ops) {
+    const setupScript = gitlabSetupScript(spec);
     const findingMode = spec.findingMode ?? "report";
     if (findingMode === "comment") {
       // The mode posts onto the pull request that triggered the run (#2231),
@@ -114,7 +159,7 @@ export function generateGitlabOpPipeline(
     headerLines.push(setupLine(spec, trigger.schedule, jobName, findingMode));
 
     const runParts = runCommand.map((part) => part.replace("{name}", spec.name));
-    const script = [...beforeScript, runParts.join(" "), ...extraScript];
+    const script = [...setupScript, ...beforeScript, runParts.join(" "), ...extraScript];
 
     doc[jobName] = {
       stage: STAGE,

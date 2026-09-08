@@ -221,7 +221,15 @@ so core can report what it generated without re-parsing it. All three types are
 in `packages/core/src/lexicon.ts:441`.
 
 `generateOpPipeline` is the cron-triggered sibling for scheduled Ops (chant
-#927), with the same "CI providers only" rule.
+#927), with the same "CI providers only" rule. It receives `ScheduledOpSpec[]`
+rather than components, and each spec can carry two things the options block
+cannot, because they are per Op: `setup`, an ordered list of `{ uses, with?,
+env? }` / `{ run, env? }` steps emitted ahead of the `beforeScript` lines, and
+`permissions`, a map your generator merges additively over whatever the
+finding mode already grants (chant #2242). A provider with no equivalent
+degrades by name at build time rather than dropping the option: gitlab refuses
+a `uses` entry and an additive `permissions` map, forgejo emits the steps and
+drops the permissions the way it already drops the mode's own.
 
 Each job is a **thin trigger**: it runs the component's deploy command. The
 deploy logic stays in the component, not in the generated YAML — the whole point

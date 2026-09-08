@@ -514,6 +514,43 @@ export type OpTrigger =
   | { kind: "pull_request"; branches?: string[] }
   | { kind: "push"; branches?: string[] };
 
+/**
+ * One step a generated Op job runs between the checkout and the
+ * `beforeScript` lines (#2242). Two shapes, matching what a GitHub Actions
+ * step can be: a marketplace action (`uses`, with its `with:` inputs and
+ * `env:`), or a shell line (`run`). The `uses` shape is the reason this
+ * exists at all: `beforeScript` covers everything a shell line can install,
+ * but an action like `aws-actions/configure-aws-credentials` is not a shell
+ * line, and OIDC has no shell equivalent.
+ *
+ * A CI provider with no action concept degrades by name rather than
+ * silently: the gitlab generator refuses a `uses` entry at build time and
+ * emits a `run` entry as an ordinary script line.
+ */
+export type OpSetupStep = OpSetupUsesStep | OpSetupRunStep;
+
+/** A marketplace-action setup step (`uses:` with its inputs). */
+export interface OpSetupUsesStep {
+  /**
+   * `owner/repo[/subpath]@ref`. The ref is required and must not be the
+   * action repository's own default branch — see the github generator's
+   * `assertSetupSteps`, which refuses both at build time.
+   */
+  uses: string;
+  /** The action's inputs, emitted as the step's `with:` mapping. */
+  with?: Record<string, string | number | boolean>;
+  /** Environment for this step alone, emitted as the step's `env:` mapping. */
+  env?: Record<string, string>;
+}
+
+/** A shell setup step, the same shape a `beforeScript` line emits as. */
+export interface OpSetupRunStep {
+  /** The shell line, emitted as the step's `run:`. */
+  run: string;
+  /** Environment for this step alone, emitted as the step's `env:` mapping. */
+  env?: Record<string, string>;
+}
+
 /** One scheduled Op to generate CI for — the cron-triggered counterpart to a component (generate mode). */
 export interface ScheduledOpSpec {
   /** Op name (`*.op.ts`'s `Op({ name })`) — what `chant run <name>` targets. */
@@ -540,6 +577,23 @@ export interface ScheduledOpSpec {
   opSchedule?: OpSchedule;
   /** This Op's finding-mode, for permission/token wiring only (see {@link OpFindingMode}). Default: "report" — no elevated permissions. */
   findingMode?: OpFindingMode;
+  /**
+   * Steps this Op's generated job runs between the checkout and the
+   * `beforeScript` lines (#2242), in the order given. Per-Op rather than a
+   * `ComponentPipelineOptions` knob because the setup an Op needs is a
+   * property of that Op: a plan job assumes a read-only role, an apply job
+   * assumes the one that can write.
+   */
+  setup?: OpSetupStep[];
+  /**
+   * Scopes added to the ones this Op's finding-mode already grants (#2242).
+   * Strictly additive: the generator refuses a scope the mode's own set
+   * already names, at any value, so this can neither downgrade nor restate
+   * least privilege, and it refuses `write-all`/`read-all` outright. The
+   * motivating value is `{ "id-token": "write" }`, which no finding-mode
+   * grants and OIDC cannot work without.
+   */
+  permissions?: Record<string, "read" | "write">;
 }
 
 /**

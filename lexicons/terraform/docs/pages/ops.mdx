@@ -158,10 +158,28 @@ The Terraform CI shape is two Ops over one root, each with its own CI-native tri
 ```typescript
 import { generateOpsPipeline } from "@intentius/chant/op";
 
+const assumeRole = (roleVariable: string) => [
+  {
+    uses: "aws-actions/configure-aws-credentials@v6",
+    with: { "role-to-assume": `\${{ vars.${roleVariable} }}`, "aws-region": "eu-west-1" },
+  },
+];
+
 const { files } = await generateOpsPipeline(
   [
-    { name: "app-plan", trigger: { kind: "pull_request", branches: ["main"] }, findingMode: "comment" },
-    { name: "app-apply", trigger: { kind: "push", branches: ["main"] } },
+    {
+      name: "app-plan",
+      trigger: { kind: "pull_request", branches: ["main"] },
+      findingMode: "comment",
+      setup: assumeRole("AWS_PLAN_ROLE_ARN"),
+      permissions: { "id-token": "write" },
+    },
+    {
+      name: "app-apply",
+      trigger: { kind: "push", branches: ["main"] },
+      setup: assumeRole("AWS_APPLY_ROLE_ARN"),
+      permissions: { "id-token": "write" },
+    },
   ],
   "github",
   { beforeScript: [installTerraform] },
@@ -183,6 +201,7 @@ concurrency:
 
 permissions:
   contents: read
+  id-token: write
 
 jobs:
   app-apply:
@@ -190,15 +209,25 @@ jobs:
     container: node:22-slim
     steps:
       - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: '${{ vars.AWS_APPLY_ROLE_ARN }}'
+          aws-region: eu-west-1
       - run: curl -fsSL https://releases.hashicorp.com/terraform/1.13.3/terraform_1.13.3_linux_amd64.zip -o /tmp/terraform.zip && unzip -q -o /tmp/terraform.zip -d /usr/local/bin && terraform version
       - run: chant run app-apply
         env:
           GITHUB_TOKEN: '${{ github.token }}'
 ```
 
-The runner has no terraform on it, so the install is a `beforeScript` line pinned to a release rather than taken from a package repo: the version that plans is then the version the file names, which matters for a root with a `required_version` floor. `beforeScript` lines are emitted as plain `run:` steps ahead of the invocation, so the Op's first step is never a missing binary.
+The runner has no terraform on it, so the install is a `beforeScript` line pinned to a release rather than taken from a package repo: the version that plans is then the version the file names, which matters for a root with a `required_version` floor. `beforeScript` lines are emitted as plain `run:` steps ahead of the invocation, so the Op's first step is never a missing binary. A `setup` entry could carry `hashicorp/setup-terraform` instead; a curl and an unzip need no action to express.
 
-Permissions are per workflow, from the trigger and the finding mode. The apply half is `contents: read` and nothing else, since it talks to the provider and the state backend rather than to the forge. The plan half is `contents: read` and `pull-requests: write`, which is the whole cost of a comment on the triggering pull request: `findingMode: "comment"` opens no issue, so no `issues: write`, and pushes no branch, so no `contents: write`. The other modes are wider on this trigger, since the trigger adds `pull-requests: write` to any of them: `"issue"` also carries `issues: write`, and `"pull-request"` widens `contents` to write.
+Permissions are per workflow, from the trigger and the finding mode, plus whatever the spec adds by name. The apply half is `contents: read` and nothing else from the mode, since it talks to the provider and the state backend rather than to the forge. The plan half is `contents: read` and `pull-requests: write`, which is the whole cost of a comment on the triggering pull request: `findingMode: "comment"` opens no issue, so no `issues: write`, and pushes no branch, so no `contents: write`. The other modes are wider on this trigger, since the trigger adds `pull-requests: write` to any of them: `"issue"` also carries `issues: write`, and `"pull-request"` widens `contents` to write.
+
+**AWS auth is OIDC, and the two options above are what make it expressible** ([#2242](https://github.com/INTENTIUS/chant/issues/2242)). `aws-actions/configure-aws-credentials` is a `uses:` step, so it rides the spec's `setup` list, emitted between the checkout and the `beforeScript` install; it needs `id-token: write`, which no finding mode grants, so it rides the spec's additive `permissions`. The run mints an OIDC token, the action exchanges it for credentials that expire with the job, and the repository stores no long-lived key. `role-to-assume` reads a repository variable because a role ARN is an account number and a role name rather than a secret. The two halves name two variables on purpose: the plan role can be read-only, and the push half is the only thing that should hold a role that can write, which is why `setup` is per Op rather than per generate call.
+
+Static credentials still work, as `variables` on the generate call, which becomes the workflow's top-level `env:` (`AWS_ACCESS_KEY_ID: "${{ secrets.AWS_ACCESS_KEY_ID }}"`). Reach for that when the runner cannot reach GitHub's OIDC provider or the account has no OIDC federation to GitHub. Otherwise OIDC is the better trade: nothing durable is stored, a leaked credential expires within the hour, and the role's trust policy names the repository and ref allowed to assume it.
+
+The additive `permissions` map can only add. A scope the mode already granted is refused by name at build time, at any value, so this never downgrades or restates least privilege; so are `write-all`, a scope name GitHub does not define, and `pull-requests: write` on a trigger with no pull request. `setup` refuses an action reference that is unpinned or pinned to the action repository's own default branch, since a generated workflow is committed once and re-run unattended over a cloud role.
 
 **Only the human plan is posted, on either half.** `terraform show -json` over a plan carries every resource attribute value the plan touched, provider credentials among them, so the Report step's body is one reference to the Plan step's `-no-color` render and the JSON one stays inside the Op ([#2081](https://github.com/INTENTIUS/chant/issues/2081)). There is no option to post the other, and `examples.test.ts` asserts no reference to it reaches the finding step.
 
