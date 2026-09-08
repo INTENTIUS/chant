@@ -118,6 +118,69 @@ export default {
     ).toBe(true);
   });
 
+  // #2251 — `chant lint` imports every `*.op.ts` file to read the Op it
+  // declares, and an Op that takes a step argument from `params.<name>`
+  // (`@intentius/chant/params`) evaluates that read at module load. Before
+  // this, nothing populated the shared parameters object first, so every such
+  // argument was `undefined` and OPS012 reported the activity contract
+  // violated on source that builds and runs. The fixture imports the real
+  // params module by absolute path — `@intentius/chant/params` maps to the
+  // same file (packages/core/package.json's `exports`), so it is the one
+  // module record `lintCommand` mutates.
+  describe("build parameters reach an Op's step arguments (#2251)", () => {
+    const paramsModule = resolve(import.meta.dirname, "../../params.ts");
+
+    async function writeParamReadingOp(): Promise<void> {
+      await writeFile(
+        join(testDir, "mini.op.ts"),
+        `
+import { params } from ${JSON.stringify(paramsModule)};
+
+export default {
+  [Symbol.for("chant.declarable")]: true,
+  entityType: "Chant::Op",
+  lexicon: "chant",
+  kind: "resource",
+  props: {
+    name: "mini",
+    overview: "test",
+    phases: [
+      { name: "Greet", steps: [
+        { kind: "activity", fn: "shellCmd", args: { cmd: params.greeting } },
+      ] },
+    ],
+  },
+};
+        `,
+      );
+    }
+
+    test("OPS012 does not fire when the invocation's parameters are supplied", async () => {
+      await writeParamReadingOp();
+
+      const result = await lintCommand({
+        path: testDir,
+        format: "stylish",
+        buildParams: [{ name: "greeting", value: "echo hi", source: "default" }],
+      });
+
+      expect(result.diagnostics.filter((d) => d.ruleId === "OPS012")).toEqual([]);
+      expect(result.success).toBe(true);
+    });
+
+    test("OPS012 fires on the same source when no parameters are supplied", async () => {
+      await writeParamReadingOp();
+
+      const result = await lintCommand({ path: testDir, format: "stylish" });
+
+      expect(
+        result.diagnostics.some(
+          (d) => d.ruleId === "OPS012" && d.message.includes("args.cmd"),
+        ),
+      ).toBe(true);
+    });
+  });
+
   test("formats output as JSON", async () => {
     await writeFile(
       join(testDir, "nested.ts"),

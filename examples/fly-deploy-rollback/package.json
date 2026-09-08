@@ -6,7 +6,7 @@
   "scripts": {
     "build:fly": "chant build src --lexicon fly -o dist/fly.json",
     "build": "npm run build:fly",
-    "lint": "chant lint src"
+    "lint": "chant lint"
   },
   "dependencies": {
     "@intentius/chant": "*",

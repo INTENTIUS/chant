@@ -1,7 +1,8 @@
 // AWS infrastructure: EKS add-ons for VPC CNI and EBS CSI driver.
 
 import { Addon } from "@intentius/chant-lexicon-aws";
-import { cluster, nodegroup, ebsCsiRole } from "./cluster";
+import { cluster, nodegroup } from "./cluster";
+import { ebsCsiRole } from "./irsa";
 
 // VPC CNI — pod networking
 export const vpcCni = new Addon(

@@ -120,7 +120,11 @@ jobs:
 
       - name: Run Op in local mode (regression guard)
         working-directory: examples/local-op-quickstart
+        # The lint runs first: this step executed the example without anything
+        # checking its Op source against the evaluability rules, which is how
+        # an EVL003 in `hello.op.ts` went unnoticed (#2251).
         run: |
+          npx tsx ../../packages/core/src/cli/main.ts lint
           npx tsx ../../packages/core/src/cli/main.ts run hello --local --json > result.json
           node -e "process.exit(JSON.parse(require('fs').readFileSync('result.json','utf8')).status === 'ok' ? 0 : 1)"
 

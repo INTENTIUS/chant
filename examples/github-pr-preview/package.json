@@ -7,7 +7,7 @@
     "build": "npm run build:app && npm run build:ci",
     "build:app": "chant build src/app --lexicon k8s -o dist/manifests.yaml",
     "build:ci": "chant build src/ci --lexicon github -o .github/workflows/preview.yml",
-    "lint": "chant lint src",
+    "lint": "chant lint",
     "deploy": "chant run preview-apply",
     "teardown": "chant lifecycle teardown local --yes"
   },

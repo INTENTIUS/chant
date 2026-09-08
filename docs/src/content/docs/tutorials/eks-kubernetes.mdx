@@ -55,22 +55,29 @@ See [`examples/k8s-eks-microservice/`](https://github.com/intentius/chant/tree/m
 Each workload gets its own IAM role with a trust policy that restricts `AssumeRoleWithWebIdentity` to a specific K8s service account:
 
 ```typescript
-// src/infra/cluster.ts — the IAM role for the app workload
-export const appRole = new IAMRole({
-  AssumeRolePolicyDocument: {
-    Statement: [{
-      Action: "sts:AssumeRoleWithWebIdentity",
-      Principal: { Federated: Ref(oidcProviderArn) },
-      Condition: {
-        StringEquals: {
-          [`${oidcIssuer}:sub`]: "system:serviceaccount:microservice:app-sa",
-          [`${oidcIssuer}:aud`]: "sts.amazonaws.com",
-        },
-      },
-    }],
-  },
+// src/infra/irsa.ts — the IAM role for the app workload
+//
+// Both condition keys carry the OIDC issuer, and CloudFormation substitutes
+// into a string, so the trust policy is one Fn::Sub over the whole JSON
+// document. It is written as string literals rather than built by a call, so
+// the file stays statically evaluable.
+const appTrustPolicy = {
+  "Fn::Sub": [
+    trustPolicyHead + "microservice:microservice-app-sa" + trustPolicyTail,
+    { OidcArn: oidcProvider.Arn, OidcIssuer: oidcIssuer },
+  ],
+};
+
+export const appRole = new Role({
+  RoleName: "eks-microservice-app-role",
+  AssumeRolePolicyDocument: appTrustPolicy,
+  ManagedPolicyArns: ["arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess"],
 });
 ```
+
+`trustPolicyHead` ends at `"system:serviceaccount:` and `trustPolicyTail` picks
+up after the namespace and service account name, so each role differs by one
+literal.
 
 The K8s side just needs the annotation:
 

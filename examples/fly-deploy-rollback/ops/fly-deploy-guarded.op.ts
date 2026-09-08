@@ -15,9 +15,12 @@ import {
 // After the rollback, read the marker back so its value lands in the step
 // record's `outcome` — the visible proof that the sandbox is at `known-good`
 // again (the typed `spriteExec` builder does not expose `outcomeAttribute`, so
-// spread the step and add it).
+// spread the step and add it). The step is bound to its own `const` first: a
+// spread has to name a const or a literal, never a call (EVL004).
+const readMarker = spriteExec({ id: "deploy-sandbox", cmd: "cat /work/state" });
+
 const proveRewound = {
-  ...spriteExec({ id: "deploy-sandbox", cmd: "cat /work/state" }),
+  ...readMarker,
   outcomeAttribute: { name: "state", from: "stdout" },
 };
 
