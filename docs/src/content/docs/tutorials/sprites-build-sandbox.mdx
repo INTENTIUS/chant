@@ -60,19 +60,27 @@ export default Op({
 
 ## Run it
 
-Boot the `spritzer` emulator, point at it, and run the Op — no Sprites account,
-no key:
+[`chant emulator up`](/chant/cli/emulator/) starts the local Sprites emulator
+(`spritzer`) in a container and prints its endpoint, `http://localhost:4290`.
+Export that as `SPRITES_BASE_URL` and the sprite activities talk to the emulator
+instead of the real Sprites API, so this needs Docker but no Sprites account and
+no key. The image tag is pinned in
+`lexicons/fly/src/op/activities/emulator-images.ts`. The fly lexicon ships two
+emulators, so `up` also starts `mudflaps` (the Machines API fake), which this Op
+does not use.
 
 ```bash
-docker run -d --rm -p 4290:4290 --name spritzer ghcr.io/intentius/spritzer:0.4.1
-
 cd examples/sprites-build-sandbox
 npm install
+
+chant emulator up
+# ✓ fly: chant-mudflaps up on http://localhost:4280
+# ✓ fly: chant-spritzer up on http://localhost:4290
 export SPRITES_BASE_URL=http://localhost:4290
 
 chant run build-sandbox
 
-docker rm -f spritzer   # stop the emulator when done
+chant emulator down   # stop both containers when done
 ```
 
 <Aside type="note">

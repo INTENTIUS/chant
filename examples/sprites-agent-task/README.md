@@ -39,13 +39,13 @@ comment; pass an explicit `checkpoint` version id instead to target one exactly.
 
 ## Run it
 
-`chant emulator up` boots the `spritzer` container, the local Sprites emulator,
-on `http://localhost:4290` and prints that endpoint. Export it as
+`chant emulator up` starts the local Sprites emulator (`spritzer`) in a container
+and prints its endpoint, `http://localhost:4290`. Export that as
 `SPRITES_BASE_URL` and the sprite activities talk to the emulator instead of the
 real Sprites API, so this needs Docker but no Sprites account and no token. The
-image tag is pinned in `lexicons/fly/src/op/activities/emulator-images.ts`; fly
-ships two emulators, so `up` also starts `mudflaps` (the Machines API fake),
-which these Ops do not use.
+image tag is pinned in `lexicons/fly/src/op/activities/emulator-images.ts`. The
+fly lexicon ships two emulators, so `up` also starts `mudflaps` (the Machines API
+fake), which these Ops do not use.
 
 ```bash
 npm install
