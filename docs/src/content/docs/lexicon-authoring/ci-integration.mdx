@@ -222,14 +222,25 @@ in `packages/core/src/lexicon.ts:441`.
 
 `generateOpPipeline` is the cron-triggered sibling for scheduled Ops (chant
 #927), with the same "CI providers only" rule. It receives `ScheduledOpSpec[]`
-rather than components, and each spec can carry two things the options block
+rather than components, and each spec can carry three things the options block
 cannot, because they are per Op: `setup`, an ordered list of `{ uses, with?,
-env? }` / `{ run, env? }` steps emitted ahead of the `beforeScript` lines, and
+env? }` / `{ run, env? }` steps emitted ahead of the `beforeScript` lines,
 `permissions`, a map your generator merges additively over whatever the
-finding mode already grants (chant #2242). A provider with no equivalent
-degrades by name at build time rather than dropping the option: gitlab refuses
-a `uses` entry and an additive `permissions` map, forgejo emits the steps and
-drops the permissions the way it already drops the mode's own.
+finding mode already grants (chant #2242), and `environment`, a `{ name, url?
+}` naming the forge deployment environment the job runs in (chant #2257). A
+provider with no equivalent degrades by name at build time rather than
+dropping the option: gitlab refuses a `uses` entry and an additive
+`permissions` map, forgejo emits the steps and drops the permissions the way
+it already drops the mode's own.
+
+`environment` is the one of the three where a silent drop would be worst,
+because the option exists so a human can hold a job. A provider without
+environments therefore both drops the key and says so in the file it
+generates; forgejo writes a header comment naming the environment and stating
+that nothing on the forge enforces it. GitLab does have environments, and maps
+the option onto its own `environment:` key. If your provider has the concept,
+emit it and let the protection rules stay where they live, in the provider's
+own configuration. If it does not, be loud.
 
 Each job is a **thin trigger**: it runs the component's deploy command. The
 deploy logic stays in the component, not in the generated YAML — the whole point

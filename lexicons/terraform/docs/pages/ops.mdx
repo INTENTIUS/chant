@@ -179,6 +179,7 @@ const { files } = await generateOpsPipeline(
       trigger: { kind: "push", branches: ["main"] },
       setup: assumeRole("AWS_APPLY_ROLE_ARN"),
       permissions: { "id-token": "write" },
+      environment: { name: "production" },
     },
   ],
   "github",
@@ -207,6 +208,8 @@ jobs:
   app-apply:
     runs-on: ubuntu-latest
     container: node:22-slim
+    environment:
+      name: production
     outputs:
       gated: '${{ steps.chant-run.outputs.gated }}'
       op: '${{ steps.chant-run.outputs.op }}'
@@ -270,6 +273,10 @@ The push run stops at the apply's gate. It reaches the gate, finds no resolution
 The pending state also leaves the Actions log. The `app-apply-gate-notice` job above `needs:` the apply and runs when its `gated` output is set. A push event carries no pull request, so it asks `repos/{repo}/commits/{sha}/pulls` for the one the pushed commit belongs to — the commit's own associated-pull-request endpoint, exact rather than a search index — and posts there through the same hidden-marker recipe `findingMode: "comment"` uses, editing one comment rather than stacking one per merge. A commit with no pull request, such as a direct push to the branch, gets an issue instead, which is why the job carries `issues: write` alongside `pull-requests: write`. Those permissions are the job's own and replace the workflow's for it alone, so the apply beside it stays `contents: read`.
 
 Forgejo takes the mapping and the step summary and drops the notice job: it shells to `gh`, which no Forgejo runner points at its own instance, the same reason `comment` mode is refused there. GitLab takes neither, since its Op generator refuses a `push` trigger outright.
+
+**The apply also runs in a GitHub environment, which is a second gate in front of the first** ([#2257](https://github.com/INTENTIUS/chant/issues/2257)). `environment: { name: "production" }` on the apply spec emits `environment: production` on that job, and a `production` environment configured in the repository with required reviewers then holds the job before its first step. The two gates stop different things. The reviewer stops the job from starting at all, so nothing is checked out and no role is assumed until somebody releases it; chant's gate stops the apply inside a run that already started, on a plan that already exists, and is cleared by a `chant approve` commit rather than by a button. Wanting both is the common case, and neither is required by the other: the reviewer alone pairs with `gate: "never"` on the root, and chant's gate alone is what a Forgejo estate gets, since Forgejo Actions has no environments and its generator drops the key with a header comment saying so. The plan half names no environment, because it deploys nothing and a reviewer prompt on every pull request is the fastest way to teach people to click through one.
+
+The environment costs no permission. Protection rules live on the environment object in repository settings, not on `GITHUB_TOKEN`, so the apply job's `permissions:` are the same `contents: read` and `id-token: write` they were without it. The `app-apply-gate-notice` job stays outside the environment on purpose: it exists to say a chant gate is pending, and behind the same reviewer it would only be readable after somebody had already acted.
 
 `examples/plan-on-pr/` is the worked version of this shape, and `examples/scheduled-watch/` is the cron one.
 

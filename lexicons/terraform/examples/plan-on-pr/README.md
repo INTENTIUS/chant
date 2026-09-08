@@ -41,6 +41,7 @@ const { files } = await generateOpsPipeline(
       trigger: { kind: "push", branches: ["main"] },
       setup: assumeRole("AWS_APPLY_ROLE_ARN"),
       permissions: { "id-token": "write" },
+      environment: { name: "production" },
     },
   ],
   "github",
@@ -167,3 +168,46 @@ that lookup answers with nothing — a direct push to the branch — it opens an
 issue instead, which is why it carries `issues: write` beside
 `pull-requests: write`. Those permissions sit on that job, so the apply next to
 it stays `contents: read`.
+
+## The environment reviewer, and the gate inside the run
+
+The apply spec also names a GitHub environment, `production`, which the github
+generator emits as `environment: production` on that job:
+
+```yaml
+jobs:
+  app-apply:
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+```
+
+That is the forge-native half of a pair of gates, and the two stop different
+things at different moments. Configure `production` in the repository's
+Settings > Environments with a required reviewer, and the job never starts:
+nothing is checked out, the apply role is never assumed, and the run sits
+showing "waiting for review" until somebody with access releases it. chant's
+own gate runs later and inside the job. The Op inits, plans, reaches its Gate
+phase, finds no resolution on the ledger and records the pending fact, so the
+approver is reading a plan that already exists rather than approving the idea
+of one, and `chant approve app-apply approve-app-apply --approver you` is a
+commit rather than a button.
+
+Wanting both is the usual arrangement on a production root, and neither needs
+the other. The reviewer alone pairs with `gate: "never"`, which is the
+forge-native shape a team already knows. chant's gate alone needs no forge
+feature at all, which is what a Forgejo estate gets: Forgejo Actions has no
+environments, so its Op generator drops the key and writes a header comment
+into the generated file saying the environment was asked for and that nothing
+on the forge enforces it. The choice is per environment, so a `staging` root
+with no protection and `gate: "never"` sits happily beside this one.
+
+The plan half names no environment. It deploys nothing, and a reviewer prompt
+on every pull request is the fastest way to teach people to click through one.
+
+None of this costs a permission. Protection rules live on the environment
+object in repository settings rather than on `GITHUB_TOKEN`, so the apply job's
+scopes are the same `contents: read` and `id-token: write` they were before the
+environment was named. `app-apply-gate-notice` stays outside the environment
+too: it exists to say the chant gate is pending, and behind the same reviewer
+it would only be readable once somebody had already acted.
