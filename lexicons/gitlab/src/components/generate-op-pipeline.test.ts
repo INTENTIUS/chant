@@ -372,13 +372,27 @@ describe("generateGitlabOpPipeline: setup steps and additive permissions (#2242)
 describe("generateGitlabOpPipeline: a deployment environment (#2257)", () => {
   const AUDIT: ScheduledOpSpec = { name: "actions-audit", schedule: "0 6 * * *", findingMode: "issue" };
 
-  /** The document a spec with no `environment` emitted before the option existed. */
+  /**
+   * The document a cron spec with no `environment` emits. #2257 pinned this to
+   * prove its option is additive; #2256 moved two lines of it and it is
+   * re-pinned rather than loosened, so it still proves the same thing.
+   *
+   * What moved: the header's opening paragraph, because a merge_request_event
+   * or push job needs no Pipeline Schedule and the cron instructions are now
+   * printed only for the Ops that do; and `resource_group`, which every job
+   * gains as GitLab's stand-in for github's per-Op concurrency group. The
+   * cron job's own rule, script and stage are byte-for-byte what they were.
+   */
   const YAML_BEFORE_2257 =
     [
-      "# Scheduled Ops (chant #927) — GitLab has no in-file cron. Create one",
-      "# Pipeline Schedule per Op below (Settings > CI/CD > Schedules): set its",
-      "# cron to the value noted here and its CHANT_SCHEDULED_OP CI/CD variable to",
-      "# the Op's name, so only that job runs on that schedule.",
+      "# chant Ops (#927, #2084) — one job per Op, each selected by its own",
+      "# rules:. A merge_request_event or push job needs no setup; its rule",
+      "# fires on the event itself.",
+      "#",
+      "# GitLab has no in-file cron. Create one Pipeline Schedule per cron Op",
+      "# below (Settings > CI/CD > Schedules): set its cron to the value noted",
+      "# here and its CHANT_SCHEDULED_OP CI/CD variable to the Op's name, so only",
+      "# that job runs on that schedule.",
       "#",
       '#   actions-audit: cron "0 6 * * *", CHANT_SCHEDULED_OP="actions-audit", finding-mode issue' +
         " — needs a GITLAB_TOKEN CI/CD variable (masked, scope: api)",
@@ -389,6 +403,7 @@ describe("generateGitlabOpPipeline: a deployment environment (#2257)", () => {
       "actions-audit:",
       "  stage: scheduled-ops",
       "  image: node:22-slim",
+      "  resource_group: actions-audit",
       "  rules:",
       `    - if: '$CI_PIPELINE_SOURCE == "schedule" && $CHANT_SCHEDULED_OP == "actions-audit"'`,
       "  script:",
