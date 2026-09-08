@@ -82,7 +82,6 @@ export default defineConfig({
 						{ label: 'Per-PR Preview Environments', slug: 'tutorials/github-pr-preview' },
 						{ label: 'CockroachDB Multi-Region', slug: 'tutorials/cockroachdb-multi-region' },
 						{ label: 'GitLab Cells on GKE', slug: 'tutorials/gitlab-cells' },
-						{ label: 'Fargate + Lucene/Solr + EFS', slug: 'tutorials/fargate-lucene-efs-solr' },
 						{ label: 'Ray + KubeRay on GKE', slug: 'tutorials/ray-kuberay-gke' },
 						{ label: 'Argo CD on GKE', slug: 'tutorials/argo-cd-gke' },
 						{ label: 'Argo CD Composites', link: '/lexicons/k8s/argo-composites/' },

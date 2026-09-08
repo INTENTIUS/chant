@@ -1,11 +1,6 @@
 {
   "note": "Files that fail tsconfig.typecheck.json today (#1388). Only ever remove lines from this list \u2014 scripts/typecheck.ts fails on a file that is not here, and on a file here that now passes.",
   "files": [
-    "examples/fargate-lucene-efs/docker/e2e.test.ts",
-    "examples/fargate-lucene-efs/docker/relay-dynamo.ts",
-    "examples/fargate-lucene-efs/docker/relay-minio.ts",
-    "examples/fargate-lucene-efs/infra/src/efs.ts",
-    "examples/fargate-lucene-efs/solr/src/solr.ts",
     "examples/gitlab-cells-single-region-gke/src/gcp/cluster.ts",
     "examples/k8s-aks-microservice/src/k8s/app.ts",
     "examples/k8s-eks-microservice/src/k8s/app.ts",
