@@ -14,6 +14,7 @@ import type { ScheduledOpSpec } from "@intentius/chant/lexicon";
 
 interface ParsedJob {
   "runs-on"?: string;
+  environment?: Record<string, string>;
   outputs?: Record<string, string>;
   steps: Array<{ id?: string; uses?: string; run?: string }>;
 }
@@ -196,5 +197,83 @@ describe("generateForgejoOpPipeline: the gated apply on push (#2243)", () => {
     // forgejo's rather than the shared builder's.
     expect(Object.keys(fj.jobs ?? {})).toEqual(["app-apply"]);
     expect(gh.jobs).toHaveProperty("app-apply-gate-notice");
+  });
+});
+
+/**
+ * chant #2257 — the option Forgejo has no concept for at all. Unlike
+ * `permissions:`, which the runner reads and ignores, an environment is an
+ * object that does not exist on a Forgejo instance: no protection rules, no
+ * required reviewers, no wait timers. Emitting the key would read as a
+ * deployment gate and hold nothing back, so it is dropped — and, because the
+ * whole point of the option is a human holding an apply, the drop is said out
+ * loud in the file rather than only in a build warning.
+ */
+describe("generateForgejoOpPipeline: a dropped deployment environment (#2257)", () => {
+  const APPLY: ScheduledOpSpec = { name: "app-apply", trigger: { kind: "push", branches: ["main"] } };
+  const GATED: ScheduledOpSpec = { ...APPLY, environment: { name: "production" } };
+
+  /** The document a spec with no `environment` emitted before the option existed. */
+  const AUDIT_YAML_BEFORE_2257 =
+    [
+      "on:",
+      "  schedule:",
+      "    - cron: '0 6 * * *'",
+      "  workflow_dispatch: {}",
+      "",
+      "concurrency:",
+      "  group: actions-audit",
+      "  cancel-in-progress: false",
+      "",
+      "jobs:",
+      "  actions-audit:",
+      "    runs-on: docker",
+      "    container: node:22-slim",
+      "    steps:",
+      "      - uses: https://code.forgejo.org/actions/checkout@v4",
+      "      - run: chant run actions-audit",
+      "        env:",
+      "          GITHUB_TOKEN: '${{ github.token }}'",
+      "          GH_TOKEN: '${{ github.token }}'",
+    ].join("\n") + "\n";
+
+  test("a spec with no environment emits the bytes it emitted before the option existed", () => {
+    const yaml = generateForgejoOpPipeline([
+      { name: "actions-audit", schedule: "0 6 * * *", findingMode: "issue" },
+    ]).files[0].yaml;
+    expect(yaml).toBe(AUDIT_YAML_BEFORE_2257);
+  });
+
+  test("drops the key, and github with the same spec keeps it", () => {
+    const fj = parseFile(generateForgejoOpPipeline([GATED]).files[0].yaml);
+    expect(fj.jobs!["app-apply"].environment).toBeUndefined();
+    // A dialect drop, not a builder that never computed it.
+    expect(generateGithubOpPipeline([GATED]).files[0].yaml).toContain("environment:");
+  });
+
+  test("says in the generated header which environment did not survive, and what still gates", () => {
+    const yaml = generateForgejoOpPipeline([GATED]).files[0].yaml;
+    expect(yaml.startsWith("# chant dropped `environment: production`")).toBe(true);
+    expect(yaml).toContain("Forgejo Actions has no");
+    expect(yaml).toContain("not held back by anything on the forge");
+    // The gate that does survive is chant's own, which needs nothing from the forge.
+    expect(yaml).toContain("chant/lifecycle");
+    expect(yaml).toContain("approve <op> <gate>");
+  });
+
+  test("the header only appears for the Op that asked for an environment", () => {
+    const files = generateForgejoOpPipeline([
+      { ...GATED, name: "app-apply" },
+      { name: "app-watch", schedule: "0 6 * * *" },
+    ]).files;
+    expect(files[0].yaml).toContain("# chant dropped `environment: production`");
+    expect(files[1].yaml).not.toContain("# chant dropped");
+    expect(files[1].yaml.startsWith("on:")).toBe(true);
+  });
+
+  test("refuses the same malformed environment github refuses, through the shared builder", () => {
+    expect(() =>
+      generateForgejoOpPipeline([{ ...APPLY, environment: { name: "production", url: "/deploys" } }]),
+    ).toThrow(/neither an absolute http\(s\) URL nor a/);
   });
 });

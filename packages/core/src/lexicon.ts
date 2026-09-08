@@ -551,6 +551,38 @@ export interface OpSetupRunStep {
   env?: Record<string, string>;
 }
 
+/**
+ * The deployment environment a generated Op job runs in (#2257) — a forge
+ * object rather than a chant one. On GitHub Actions an environment carries
+ * its own protection rules (required reviewers, a wait timer, a branch
+ * restriction) and its own secrets and variables, so naming one on a job is
+ * how a generated apply is put behind a human before the job starts. GitLab
+ * has the same key with the same two fields and its own protected-environment
+ * approvals behind it. Forgejo Actions has no environments at all, so its
+ * dialect drops the key and says so in the generated file's header.
+ *
+ * This is not a chant gate and does not replace one. The environment reviewer
+ * stops the job before any step runs; chant's own gate (#2119) stops the apply
+ * inside a run that already started, on a fact recorded on the
+ * `chant/lifecycle` branch, and is cleared by `chant approve`. A project may
+ * have either, both, or neither per environment.
+ */
+export interface OpEnvironment {
+  /**
+   * The environment's name, exactly as the forge spells it. Nothing creates
+   * it: an environment is repository configuration, and a job naming one that
+   * does not exist yet gets an unprotected environment created on first run
+   * rather than an error, which is precisely why the name is not guessed here.
+   */
+  name: string;
+  /**
+   * The URL shown against the resulting deployment. Absolute, or an
+   * expression the forge resolves (`${{ ... }}`) — a relative path renders as
+   * a dead link on the deployments page rather than failing anywhere.
+   */
+  url?: string;
+}
+
 /** One scheduled Op to generate CI for — the cron-triggered counterpart to a component (generate mode). */
 export interface ScheduledOpSpec {
   /** Op name (`*.op.ts`'s `Op({ name })`) — what `chant run <name>` targets. */
@@ -594,6 +626,15 @@ export interface ScheduledOpSpec {
    * grants and OIDC cannot work without.
    */
   permissions?: Record<string, "read" | "write">;
+  /**
+   * The forge deployment environment this Op's generated job runs in
+   * (#2257). Per Op, beside `setup` and `permissions`, and for the same
+   * reason: which environment a job deploys to is a property of that job — a
+   * pull-request plan touches none, and only the push apply belongs behind
+   * the reviewer. See {@link OpEnvironment} for how it composes with chant's
+   * own gate.
+   */
+  environment?: OpEnvironment;
 }
 
 /**
