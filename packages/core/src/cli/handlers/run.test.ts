@@ -1,4 +1,7 @@
-import { describe, test, expect, vi, beforeEach } from "vitest";
+import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { ParsedArgs } from "../registry";
 
 const discoverOpsMock = vi.fn();
@@ -263,6 +266,132 @@ describe("runOp dispatcher", () => {
     expect(parsed.status).toBe("ok");
     expect(parsed.phases[0].steps[0]).toMatchObject({ fn: "shellCmd", status: "ok" });
     vi.restoreAllMocks();
+  });
+});
+
+/**
+ * chant #2243 — a gated run's exit code is the one thing `--gated-exit`
+ * remaps, and the gate is reported where CI can see it without opening a log.
+ *
+ * The motivating shape is a push-to-main terraform apply: GitHub Actions has
+ * no neutral conclusion for a `run:` step, so exit 3 paints the branch red on
+ * every merge until someone approves. `--gated-exit 0` says a pending
+ * approval is not a broken build; nothing else about the run changes, and a
+ * failure is still a failure.
+ */
+describe("runOp: --gated-exit (#2243)", () => {
+  const gateStep = { kind: "gate", gate: "approve-prod" };
+
+  function summaryFile(): string {
+    return join(mkdtempSync(join(tmpdir(), "chant-gated-exit-")), "summary.md");
+  }
+
+  beforeEach(() => {
+    discoverOpsMock.mockReset();
+    loadChantConfigMock.mockReset().mockResolvedValue({ config: {} });
+    loadPluginsMock.mockReset().mockResolvedValue([]);
+    gateLedger = memoryGateLedgerPort();
+    delete process.env.GITHUB_STEP_SUMMARY;
+  });
+
+  afterEach(() => {
+    delete process.env.GITHUB_STEP_SUMMARY;
+    vi.restoreAllMocks();
+  });
+
+  test("unmapped: without the flag a gated run still exits 3", async () => {
+    discoverOpsMock.mockResolvedValue({ ops: new Map([localOp("gated", [gateStep])]), errors: [] });
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const exit = await runOp({ args: makeArgs({ path: "gated" }), plugins: [], serializers: [] });
+    expect(exit).toBe(3);
+  });
+
+  test("mapped: --gated-exit 0 exits 0 and writes the gate to GITHUB_STEP_SUMMARY", async () => {
+    const file = summaryFile();
+    process.env.GITHUB_STEP_SUMMARY = file;
+    discoverOpsMock.mockResolvedValue({ ops: new Map([localOp("gated", [gateStep])]), errors: [] });
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const stderr = makeStderrSpy();
+
+    const exit = await runOp({
+      args: makeArgs({ path: "gated", gatedExit: 0 }),
+      plugins: [], serializers: [],
+    });
+
+    expect(exit).toBe(0);
+    // The run genuinely stopped: the pending fact is on the ledger, and
+    // nothing after the gate ran.
+    expect(gateLedger.appended).toHaveLength(1);
+    const summary = readFileSync(file, "utf8");
+    expect(summary).toContain("approve-prod");
+    expect(summary).toContain("chant approve gated approve-prod");
+    expect(summary).toContain("_gates/gated.jsonl");
+    // A green run that applied nothing says so on stderr too.
+    expect(stderr.join("\n")).toContain("exiting 0");
+  });
+
+  test("mapped: the --json payload still reports the gate, not a success", async () => {
+    const file = summaryFile();
+    process.env.GITHUB_STEP_SUMMARY = file;
+    discoverOpsMock.mockResolvedValue({ ops: new Map([localOp("gated", [gateStep])]), errors: [] });
+    const stdoutWrite = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    makeStderrSpy();
+
+    const exit = await runOp({
+      args: makeArgs({ path: "gated", gatedExit: 0, json: true }),
+      plugins: [], serializers: [],
+    });
+
+    expect(exit).toBe(0);
+    const parsed = JSON.parse(stdoutWrite.mock.calls.map((c) => String(c[0])).join("").trim());
+    expect(parsed.status).toBe("gated");
+    expect(parsed.gate).toMatchObject({ name: "approve-prod" });
+    expect(parsed.approve).toBe("chant approve gated approve-prod");
+    // The summary is written whether or not stdout is machine-readable.
+    expect(readFileSync(file, "utf8")).toContain("chant approve gated approve-prod");
+  });
+
+  test("a run that fails for any other reason is still red under the flag", async () => {
+    discoverOpsMock.mockResolvedValue({
+      ops: new Map([localOp("broken", [{ kind: "activity", fn: "shellCmd", args: { cmd: "exit 7" } }])]),
+      errors: [],
+    });
+    const file = summaryFile();
+    process.env.GITHUB_STEP_SUMMARY = file;
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    const exit = await runOp({
+      args: makeArgs({ path: "broken", gatedExit: 0 }),
+      plugins: [], serializers: [],
+    });
+
+    expect(exit).toBe(1);
+    // Nothing is pending, so nothing is reported as pending.
+    expect(existsSync(file)).toBe(false);
+  });
+
+  test("a value that is not an exit status is refused before the Op runs", async () => {
+    discoverOpsMock.mockResolvedValue({ ops: new Map([localOp("gated", [gateStep])]), errors: [] });
+    const stderr = makeStderrSpy();
+    const exit = await runOp({
+      args: makeArgs({ path: "gated", gatedExit: 300 }),
+      plugins: [], serializers: [],
+    });
+    expect(exit).toBe(1);
+    expect(stderr.join("\n")).toContain("--gated-exit expects a whole number from 0 to 255");
+    expect(discoverOpsMock).not.toHaveBeenCalled();
+  });
+
+  test("no GITHUB_STEP_SUMMARY, no file: the variable is the whole forge coupling", async () => {
+    discoverOpsMock.mockResolvedValue({ ops: new Map([localOp("gated", [gateStep])]), errors: [] });
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const exit = await runOp({
+      args: makeArgs({ path: "gated", gatedExit: 0 }),
+      plugins: [], serializers: [],
+    });
+    expect(exit).toBe(0);
+    expect(process.env.GITHUB_STEP_SUMMARY).toBeUndefined();
   });
 });
 

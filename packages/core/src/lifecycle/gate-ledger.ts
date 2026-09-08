@@ -173,6 +173,17 @@ function filename(op: string): string {
   return `${op}.jsonl`;
 }
 
+/**
+ * Where an Op's gate ledger lives, as a path a human can go and read:
+ * `_gates/<op>.jsonl` on the `chant/lifecycle` orphan branch. Exported so a
+ * renderer that tells someone a gate is pending can name the file the pending
+ * fact was appended to (#2243) rather than describing it in prose that drifts
+ * from `DIR`.
+ */
+export function gateLedgerPath(op: string): string {
+  return `${DIR}/${filename(op)}`;
+}
+
 /** Append one immutable gate-resolution record. Does not push to the remote — call `pushLifecycle` (./git.ts) afterward, same two-step shape every other ledger write here uses. Retries on `RefCASConflictError` the same way `appendConvergeRecord` does (./converge-ledger.ts) — a concurrent writer to a different op's/env's file on the same orphan branch is the ordinary case, not an edge case. The baseline read must be `readPathSha` + `readBlobBySha` rather than `readBlobFromPath`, so the exact sha `existing` came from can be passed as `expectPriorPathSha` — see `writeBlobToPath` (./git.ts) for the race that closes. */
 export async function appendGateResolution(
   input: GateResolutionInput,
