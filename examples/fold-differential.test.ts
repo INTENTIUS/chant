@@ -240,6 +240,19 @@ const report: ReportRow[] = [];
  * sole fallback reason for exactly these four files, and the only other files
  * it disqualifies corpus-wide are three `chant.config.ts` fixtures whose
  * entries fall back for unrelated reasons anyway.
+ *
+ * chant #2251 adds `examples/k8s-eks-microservice`, the one member of the k8s
+ * trio that had never folded. Nothing in the fold path changed for it; the
+ * example moved. Its IRSA trust policy was built by a local function that
+ * called `JSON.stringify`, and its stack outputs and the OIDC issuer
+ * `Select(1, Split(...))` read attributes off resources declared in the same
+ * file, which a folded intrinsic or authoring helper cannot resolve. The trust
+ * policy is now literal strings, the IRSA roles moved to `infra/irsa.ts` and
+ * every output to `infra/outputs.ts`, so each of those reads is a cross-file
+ * import the resolver answers with the real instance — the shape
+ * `lexicons/aws/examples/stack-outputs` already teaches. The rendered
+ * CloudFormation template and Kubernetes manifests are byte-identical to what
+ * the run path produced before the move.
  */
 const EXPECTED_FOLD: readonly string[] = [
   "examples/adopt-alb-services",
@@ -255,6 +268,7 @@ const EXPECTED_FOLD: readonly string[] = [
   "examples/gitlab-aws-alb-infra",
   "examples/gitlab-aws-alb-ui",
   "examples/k8s-aks-microservice",
+  "examples/k8s-eks-microservice",
   "examples/k8s-gke-microservice",
   "examples/local-cloud-trio",
   "examples/local-fly",
