@@ -20,6 +20,8 @@ import { rule } from "../../lint/declarative";
 import { watchDirectory, formatTimestamp, formatChangedFiles } from "../watch";
 import { formatError, formatInfo } from "../format";
 import { GENERATED_MARKER } from "../../discovery/files";
+import { buildParamValues } from "../../build-params";
+import { setBuildParams } from "../../params";
 import { isNoLexiconDetected } from "../../detectLexicon";
 
 // Import config loader
@@ -535,10 +537,20 @@ async function runComponentCheckDiagnostics(
 async function runOpCheckDiagnostics(
   infraPath: string,
   files: string[],
+  buildParams?: BuildParamProvenance[],
 ): Promise<{ diagnostics: LintDiagnostic[]; suppressed: Array<LintDiagnostic & { reason?: string }> }> {
   const config = loadConfig(findProjectRoot(infraPath));
   const opFiles = files.filter((f) => f.endsWith(".op.ts"));
   if (opFiles.length === 0) return { diagnostics: [], suppressed: [] };
+
+  // chant #2251 — the same step `discover()` runs before it imports or folds a
+  // project file (../../discovery/index.ts): populate the shared build-time
+  // parameters object BEFORE the imports below, so an Op that takes a step
+  // argument from `params.<name>` reads the value this invocation resolved
+  // rather than `undefined`. Unconditional, so a stale value from a prior
+  // lint in the same process (a test, `--watch`) never leaks into one that
+  // resolved none.
+  setBuildParams(buildParamValues(buildParams ?? []));
 
   const entities = new Map<string, unknown>();
   const fileByOpName = new Map<string, string>();
@@ -703,7 +715,7 @@ export async function lintCommand(options: LintOptions): Promise<LintResult> {
   // Run the OPS* Op-model post-synth checks (#2122) over every `*.op.ts`
   // file under the lint target — see runOpCheckDiagnostics's doc for why
   // this needs no lexicon or build to fire.
-  const opResult = await runOpCheckDiagnostics(infraPath, files);
+  const opResult = await runOpCheckDiagnostics(infraPath, files, options.buildParams);
   diagnostics.push(...opResult.diagnostics);
   suppressed.push(...opResult.suppressed);
 
@@ -757,7 +769,7 @@ export async function lintCommand(options: LintOptions): Promise<LintResult> {
 
     // OPS* checks have no `.fix` either; re-run for the same consistency
     // reason as the COMP* re-run just above.
-    const postOpResult = await runOpCheckDiagnostics(infraPath, files);
+    const postOpResult = await runOpCheckDiagnostics(infraPath, files, options.buildParams);
     diagnostics.push(...postOpResult.diagnostics);
     suppressed.push(...postOpResult.suppressed);
   }
