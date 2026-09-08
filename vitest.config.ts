@@ -82,6 +82,12 @@ export default defineConfig({
       // differentials above (no Docker, no cluster).
       "examples/k8s-client-boundary.test.ts",
       "examples/readme-counts.test.ts",
+      // chant #2249 (epic #2248) — the root-examples build-and-lint gate.
+      // One test per `examples/*` directory holding a `chant.config.*`,
+      // running that example's own package.json build/lint scripts through
+      // the CLI command modules. No Docker, no network; the same reason
+      // examples.test.ts is named here rather than globbed.
+      "examples/root-examples-gate.test.ts",
       // chant #1224 — the testing-harness worked example and its survival
       // fixture. Both are gated (CHANT_HARNESS_E2E; the fixture on the env
       // vars the outer suite sets) and skip cleanly in a plain run — Docker

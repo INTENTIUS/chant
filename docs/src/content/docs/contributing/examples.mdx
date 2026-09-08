@@ -14,7 +14,7 @@ chant's examples do three different jobs. This page names the three tiers, says 
 | **Feature examples** | One concept, in isolation, exhaustively, CI-tested | `lexicons/*/examples/` | reference lookup for a single feature |
 | **Reference deployments** | Real-world, substrate-specific, production-shaped stacks | `examples/` | a starting point to adapt for production |
 
-The tiers are distinguished by job and by where they live, not by being different kinds of file. All three run under the same `describeAllExamples` CI harness, so every tier is type-checked and built on every change.
+The tiers are distinguished by job and by where they live, not by being different kinds of file. Every tier is type-checked and built on every change: the feature tier by `chant dev check-lexicon`, the two `examples/` tiers by the root-examples gate described below.
 
 There is no fourth directory. `examples/` stays the single home for top-level examples. The golden teaching example is two labeled directories within it — `getting-started` (L1–L4) and `alert-triage` (L5) — not a parallel tree.
 
@@ -45,8 +45,30 @@ These are the large, deployable, substrate-specific stacks. Most are paired with
 | `examples/k8s-eks-microservice` | Reference deployment |
 | `examples/k8s-gke-microservice` | Reference deployment |
 | `examples/ray-kuberay-gke` | Reference deployment |
+| `examples/bedrock-agentcore-agent` | Reference deployment (a Bedrock AgentCore agent, its container image and its execution role) |
+| `examples/cc-aws-canonical` | Reference deployment (the estate the config-controller AWS lane runs its acceptance against) |
+| `examples/cc-azure-canonical` | Reference deployment (the estate the config-controller Azure lane runs its acceptance against) |
+| `examples/cc-gcp-canonical` | Reference deployment (the estate the config-controller GCP lane runs its acceptance against) |
+| `examples/components-aws-e2e` | Reference deployment (the whole chant story in one example: AWS synthesis, components, and the pipeline they generate) |
+| `examples/fly-deploy-rollback` | Reference deployment (a transactional rollback wrapped around a Fly Machines deploy) |
+| `examples/fly-durable-deploy` | Reference deployment (a Fly Machines deploy that keeps running with nobody minding it) |
+| `examples/fly-reconcile` | Reference deployment (one Fly app, a volume and two machines, reconciled from the declarations) |
+| `examples/github-pr-preview` | Reference deployment (per-PR preview environments on GitHub Actions) |
+| `examples/local-cloud-trio` | Reference deployment (one object store deployed to AWS, Azure and GCP against local emulators) |
+| `examples/local-fly` | Reference deployment (one Fly app and machine, end to end on a local emulator) |
+| `examples/sprites-agent-task` | Reference deployment (two Ops driving a Sprite, one of them behind a gate) |
+| `examples/sprites-build-sandbox` | Reference deployment (a disposable build sandbox on a Sprite) |
+| `examples/sprites-managed-agent-worker` | Reference deployment (a Claude Managed Agents worker running on a Sprite) |
+| `examples/supply-chain` | Reference deployment (component-only: the SBOM and config-BOM a component graph produces) |
+| `examples/terraform-carve-out` | Practice estate (carve a resource out of Terraform into native chant; `demo.sh`, no chant project of its own) |
+| `examples/testing-harness-aws` | Reference deployment (the worked example for `@intentius/chant/testing`) |
 
 Everything under `lexicons/*/examples/` is the feature tier and is not listed individually here.
+
+This table is a gate, not a courtesy: `examples/root-examples-gate.test.ts` fails when a directory
+under `examples/` holding a `chant.config.*` is missing from it, or when a name here has no
+directory. The same file builds and lints every one of those examples the way its own
+`package.json` scripts do, with an allowlist that carries a reason per entry.
 
 ## The golden teaching example
 
