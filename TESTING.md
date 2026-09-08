@@ -424,8 +424,7 @@ Builds all root examples in Docker and extracts artifacts to `test/example-build
 | Example | Artifacts |
 |---------|-----------|
 | `gitlab-aws-alb-infra` | `templates/template.json`, `.gitlab-ci.yml` |
-| `gitlab-aws-alb-api` | `templates/template.json`, `.gitlab-ci.yml` |
-| `gitlab-aws-alb-ui` | `templates/template.json`, `.gitlab-ci.yml` |
+| `gitlab-aws-alb-services` | `templates/template.json`, `.gitlab-ci.yml` |
 | `k8s-eks-microservice` | `templates/infra.json`, `k8s.yaml` |
 
 Each example directory also gets `README.md`, `package.json`, and any deploy scripts (`scripts/`, `setup.sh`, `sql/`, `.env.example`) copied to `/output` for agent-driven deployment from outside the container. Skills come from the installed lexicon packages, not from the examples themselves.

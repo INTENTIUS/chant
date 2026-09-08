@@ -1,37 +1,37 @@
 ---
 title: "GitLab CI + AWS ALB"
-description: "Three lexicons (AWS, GitLab), three stacks, one ALB — deploy a multi-service Fargate application from TypeScript sources via GitLab CI."
+description: "Two lexicons (AWS, GitLab), two stacks, one ALB — deploy a multi-service Fargate application from TypeScript sources via GitLab CI."
 diataxis: tutorial
 ---
 
 import { Aside } from '@astrojs/starlight/components';
 
-Three TypeScript source directories produce three CloudFormation stacks and three GitLab CI pipelines. One shared ALB fans out to two Fargate services based on path rules. The source split is intentional: AWS CF resources live in `lexicons/aws/examples/`; GitLab pipeline sources live in `examples/gitlab-aws-alb-*/`.
+Two TypeScript source directories produce two CloudFormation stacks and two GitLab CI pipelines. One shared ALB fans out to two Fargate services based on path rules. The split is by deploy unit: the infrastructure everything else depends on is its own stack, and the two services that ride on it are declared together in one project because they deploy together.
 
 ## What you'll build
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  shared-alb stack (gitlab-aws-alb-infra pipeline)               │
+│  shared-alb stack (gitlab-aws-alb-infra)                        │
 │  VPC + ALB + ECS cluster + ECR repos                            │
 └──────────────────────────────┬──────────────────────────────────┘
                                │ ClusterArn, ListenerArn, ECR URIs
-              ┌────────────────┴────────────────┐
-              ▼                                  ▼
-┌─────────────────────────┐    ┌─────────────────────────┐
-│  shared-alb-api stack   │    │  shared-alb-ui stack     │
-│  Fargate at /api/*      │    │  Fargate at /* (default) │
-│  (gitlab-aws-alb-api)   │    │  (gitlab-aws-alb-ui)     │
-└─────────────────────────┘    └─────────────────────────┘
+                               ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  shared-alb-services stack (gitlab-aws-alb-services)            │
+│  Fargate at /api/* (priority 100)                               │
+│  Fargate at /*     (priority 200, catch-all)                    │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-**Source split:**
+**The two projects:**
 
-| Example | AWS source | GitLab pipeline source |
+| Project | Stack | What it declares |
 |---|---|---|
-| Infra | `lexicons/aws/examples/shared-alb/` | `examples/gitlab-aws-alb-infra/` |
-| API service | `lexicons/aws/examples/shared-alb-api/` | `examples/gitlab-aws-alb-api/` |
-| UI service | `lexicons/aws/examples/shared-alb-ui/` | `examples/gitlab-aws-alb-ui/` |
+| `examples/gitlab-aws-alb-infra/` | `shared-alb` | VPC, ALB, ECS cluster, ECR repos, the stack outputs the services consume, the deploy pipeline, and the `alb-deploy` Op in `ops/` |
+| `examples/gitlab-aws-alb-services/` | `shared-alb-services` | Both `FargateService` composites, their image parameters, and the pipeline that builds both images and deploys the stack |
+
+`lexicons/aws/examples/shared-alb/`, `shared-alb-api/` and `shared-alb-ui/` hold the AWS-only halves of the same declarations, without the GitLab pipeline; `lexicons/aws/examples/multi-service-alb/` puts all of it in one stack.
 
 <Aside type="caution">
 NAT gateway (~$32/mo) + ALB (~$16/mo) = ~$48/mo for shared infra alone (us-east-1 list price, checked 2026-08 against chant 0.46.0; AWS list prices change and vary by region — re-price before relying on this number). Teardown after testing.
@@ -40,43 +40,45 @@ NAT gateway (~$32/mo) + ALB (~$16/mo) = ~$48/mo for shared infra alone (us-east-
 ## What you'll learn
 
 - How `FargateService` composite wires a Fargate task to an ALB listener rule — path pattern, priority, health check path, and security group all in one call
-- Why infra must deploy before services: the ECR repos live in the infra stack; service pipelines push images to them
+- Why infra must deploy before services: the ECR repos live in the infra stack; the service pipeline pushes images to them
+- How two services share one stack: two composite calls in one `src/`, two image parameters, one `aws cloudformation deploy`
 - Two pitfalls already solved in the examples: `amazon/aws-cli` entrypoint override and `$CI_COMMIT_REF_SLUG` in jq expressions
 
 ## Get started
 
 ```
-Build the CloudFormation templates for the shared-alb, shared-alb-api, and shared-alb-ui
-examples. Then build the GitLab CI pipelines for all three gitlab-aws-alb examples.
+Build the CloudFormation templates and the GitLab CI pipelines for the
+gitlab-aws-alb-infra and gitlab-aws-alb-services examples.
 My AWS credentials are in ~/.aws/credentials, region is us-east-1,
 account ID is 123456789012.
 ```
 
 See the example READMEs for full instructions:
 - [`examples/gitlab-aws-alb-infra/`](https://github.com/intentius/chant/tree/main/examples/gitlab-aws-alb-infra)
-- [`examples/gitlab-aws-alb-api/`](https://github.com/intentius/chant/tree/main/examples/gitlab-aws-alb-api)
-- [`examples/gitlab-aws-alb-ui/`](https://github.com/intentius/chant/tree/main/examples/gitlab-aws-alb-ui)
+- [`examples/gitlab-aws-alb-services/`](https://github.com/intentius/chant/tree/main/examples/gitlab-aws-alb-services)
 
 ## Key patterns
 
-### FargateService: one composite, one CF stack
+### FargateService: one composite, seven resources
 
-Each service is a single composite call. It expands to a Fargate task definition, ECS service, ALB listener rule, security group, and CloudWatch log group:
+Each service is a single composite call. It expands to seven CloudFormation resources: a Fargate task definition, ECS service, ALB listener rule, target group, task role, security group, and CloudWatch log group. Two calls in one `src/` is why the merged stack has 14:
 
 ```typescript
-// lexicons/aws/examples/shared-alb-api/src/service.ts
+// examples/gitlab-aws-alb-services/src/services.ts
 export const api = FargateService({
   clusterArn: Ref(clusterArn),        // from infra stack parameter
   listenerArn: Ref(listenerArn),      // from infra stack parameter
-  image: Ref(image),                  // injected by CI: ECR_URI:$CI_COMMIT_REF_SLUG
+  image: Ref(apiImage),               // injected by CI: ECR_URI:$CI_COMMIT_REF_SLUG
   containerPort: 8080,
   pathPatterns: ["/api", "/api/*"],
   healthCheckPath: "/api/get",
-  listenerRulePriority: 100,          // UI is 200 (lower priority, catch-all)
+  priority: 100,                      // UI is 200 (evaluated later, catch-all)
 });
 ```
 
-The services receive infra stack outputs as CloudFormation parameters — `clusterArn`, `listenerArn`, `vpcId`, subnet IDs, execution role ARN. The pipeline fetches them with `aws cloudformation describe-stacks` and passes them as `--parameter-overrides`.
+Both services sit in one `src/`, so one `chant build` produces one template with both. They share the ALB parameters and differ only where they must: the path pattern and priority that route traffic to them, and which image parameter each one reads (`apiImage` or `uiImage`).
+
+The stack receives infra stack outputs as CloudFormation parameters — `clusterArn`, `listenerArn`, `vpcId`, subnet IDs, execution role ARN. The pipeline fetches them with `aws cloudformation describe-stacks` and passes them as `--parameter-overrides`.
 
 ### amazon/aws-cli entrypoint override
 
@@ -103,11 +105,13 @@ IMAGE_URI=$(echo "$OUTPUTS" | jq -r '.Stacks[0].Outputs[] | select(.OutputKey=="
 
 ```
 1. Push infra repo → infra pipeline → shared-alb stack created (ECR repos exist)
-2. Push api + ui repos (can be parallel now)
-   → service pipelines → docker build → ECR push → CF deploy
+2. Push services repo → services pipeline → two parallel docker builds → ECR push
+   → one CF deploy of shared-alb-services
 ```
 
-If service pipelines run before infra, `docker push` fails with "repository does not exist."
+If the services pipeline runs before infra, `docker push` fails with "repository does not exist."
+
+`examples/gitlab-aws-alb-infra/ops/alb-deploy.op.ts` declares that order as a single named workflow: a parallel Build phase over both projects, a sequential Deploy phase that applies `shared-alb` and then `shared-alb-services`, and a Verify phase that snapshots. `chant run alb-deploy` from the infra directory runs it without GitLab at all.
 
 ## Further reading
 

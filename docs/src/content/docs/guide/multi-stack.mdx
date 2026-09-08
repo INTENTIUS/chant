@@ -16,7 +16,7 @@ That is the point. Someone opening `alb-infra/src/alb.ts` reads an ALB and can p
 
 ## The shape
 
-The `gitlab-aws-alb-*` examples are three siblings — shared infrastructure, plus two services on it:
+The `gitlab-aws-alb-*` examples are two siblings — shared infrastructure, plus the services that ride on it:
 
 ```
 examples/
@@ -27,19 +27,16 @@ examples/
 │       ├── alb.ts
 │       ├── ecr.ts
 │       └── outputs.ts        ← what this stack publishes
-├── gitlab-aws-alb-api/       ← API service on that ALB
-│   ├── chant.config.ts
-│   └── src/
-│       ├── params.ts         ← what this stack consumes
-│       └── service.ts
-└── gitlab-aws-alb-ui/        ← UI service on that ALB
+└── gitlab-aws-alb-services/  ← both services on that ALB
     ├── chant.config.ts
     └── src/
-        ├── params.ts
-        └── service.ts
+        ├── params.ts         ← what this stack consumes
+        └── services.ts       ← two FargateService calls
 ```
 
 Every `src/` is flat. Every project builds with the same plain command it would use alone.
+
+The API and UI services are one project rather than two because they are one deploy unit: they share every ALB parameter, they are always deployed together, and neither is useful without the listener the other one also hangs off. A stack per service would have bought two independent deploy cadences the example never used, at the cost of a second copy of the same seven parameters. Split by what deploys together, not by what is conceptually separate.
 
 ## Referencing another stack
 
@@ -60,7 +57,7 @@ export const vpcId = output(network.vpc.VpcId, "VpcId");
 The consumer declares matching parameters:
 
 ```typescript
-// gitlab-aws-alb-api/src/params.ts
+// gitlab-aws-alb-services/src/params.ts
 import { Parameter } from "@intentius/chant-lexicon-aws";
 
 // Shared ALB stack outputs — passed via --parameter-overrides at deploy time

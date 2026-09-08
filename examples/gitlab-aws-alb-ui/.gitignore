@@ -1,6 +1,0 @@
-dist/
-node_modules/
-.chant/
-# Generated outputs — ignored in monorepo, use `git add -f` for standalone deploy
-templates/
-.gitlab-ci.yml

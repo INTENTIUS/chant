@@ -9,8 +9,8 @@
  * `ecs-update-service` → `wait-steady-state` + `health-gate`.
  *
  * This is the direct component-native replacement for the hand-rolled GitLab
- * pipeline in `examples/gitlab-aws-alb-api/src/pipeline.ts`: the
- * `describe-stacks`/`jq` glue in that pipeline's `deployService` job is
+ * pipeline in `examples/gitlab-aws-alb-services/src/pipeline.ts`: the
+ * `describe-stacks`/`jq` glue in that pipeline's `deployServices` job is
  * exactly the cross-stack `stackOutput()` wiring below, and its
  * `docker build`/`docker push` steps are the `docker-build` + `publish-image`
  * capabilities. `service` archetype: build → publish → apply → verify, the

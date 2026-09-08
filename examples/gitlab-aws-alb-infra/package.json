@@ -7,7 +7,8 @@
     "build": "chant build src --lexicon aws -o templates/template.json && chant build src --lexicon gitlab -o .gitlab-ci.yml",
     "build:aws": "chant build src --lexicon aws",
     "build:gitlab": "chant build src --lexicon gitlab",
-    "lint": "chant lint src",
+    "build:ops": "chant build ops",
+    "lint": "chant lint src && chant lint ops",
     "dev": "chant build src --watch"
   },
   "dependencies": {

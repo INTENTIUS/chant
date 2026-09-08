@@ -135,7 +135,7 @@ Caveats worth knowing:
 
 ## AWS ALB Deployment
 
-A cross-lexicon example showing how to deploy AWS CloudFormation stacks from GitLab CI. Three separate pipelines mirror the separate-project AWS ALB pattern:
+A cross-lexicon example showing how to deploy AWS CloudFormation stacks from GitLab CI. Two pipelines mirror the separate-project AWS ALB pattern: one for the shared infrastructure, one for the two Fargate services on it.
 
 ### Infra pipeline
 
@@ -158,17 +158,17 @@ export const deployInfra = new Job({
 });
 ```
 
-### Service pipeline (API)
+### Service pipeline
 
-Builds a Docker image, pushes to ECR, and deploys the API service stack with cross-stack parameter passing. The full source lives in the cross-lexicon example `examples/gitlab-aws-alb-api/`:
+Builds one Docker image per service, pushes both to ECR, and deploys the stack holding both services with cross-stack parameter passing. The full source lives in the cross-lexicon example `examples/gitlab-aws-alb-services/`:
 
-{{file:../../../examples/gitlab-aws-alb-api/src/pipeline.ts}}
+{{file:../../../examples/gitlab-aws-alb-services/src/pipeline.ts}}
 
 **Key patterns:**
 
 1. **ECR login** — uses `aws ecr get-login-password` instead of GitLab registry credentials
 2. **Cross-stack parameter passing** — `describe-stacks` fetches outputs from the infra stack, `jq` maps them to `--parameter-overrides`
-3. **Job naming** — `buildImage` serializes to `build-image` in YAML; `Need` references must use kebab-case
+3. **Job naming** — `buildApiImage` serializes to `build-api-image` in YAML; `Need` references must use kebab-case
 4. **Docker-in-Docker** — `docker:27-cli` image with `docker:27-dind` service for container builds
 
-The full examples live in `examples/gitlab-aws-alb-infra/`, `examples/gitlab-aws-alb-api/`, and `examples/gitlab-aws-alb-ui/`.
+The full examples live in `examples/gitlab-aws-alb-infra/` and `examples/gitlab-aws-alb-services/`.

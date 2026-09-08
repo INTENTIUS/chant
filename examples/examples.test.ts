@@ -114,14 +114,10 @@ describeExample("gitlab-aws-alb-infra", {
   examplesDir: import.meta.dirname,
 });
 
-describeExample("gitlab-aws-alb-api", {
-  lexicon: "gitlab-aws-alb",
-  serializer: [awsSerializer, gitlabSerializer],
-  outputKey: ["aws", "gitlab"],
-  examplesDir: import.meta.dirname,
-});
-
-describeExample("gitlab-aws-alb-ui", {
+// Both Fargate services live in one project since #2254: one `chant.config`,
+// two `FargateService` calls, one pipeline that builds both images and deploys
+// the single stack holding both.
+describeExample("gitlab-aws-alb-services", {
   lexicon: "gitlab-aws-alb",
   serializer: [awsSerializer, gitlabSerializer],
   outputKey: ["aws", "gitlab"],

@@ -31,8 +31,7 @@ Dockerfile.smoke-e2e                         Agent + skill
 | `k8s-aks-microservice` | Azure + K8s | `chant-k8s` | AKS cluster, K8s workloads, AGIC, Azure DNS |
 | `k8s-gke-microservice` | GCP + K8s | `chant-k8s` | GKE cluster, K8s workloads, GCE Ingress, Cloud DNS |
 | `gitlab-aws-alb-infra` | AWS + GitLab | `chant-gitlab-aws-alb-infra` | Shared ALB + VPC + ECS cluster via CloudFormation |
-| `gitlab-aws-alb-api` | AWS + GitLab | `chant-gitlab-aws-alb-api` | Fargate API service behind ALB |
-| `gitlab-aws-alb-ui` | AWS + GitLab | `chant-gitlab-aws-alb-ui` | Fargate UI service behind ALB |
+| `gitlab-aws-alb-services` | AWS + GitLab | `chant-gitlab-aws-alb-services` | Fargate API and UI services behind that ALB, one stack |
 
 ## Running an E2E test
 
