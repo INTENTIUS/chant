@@ -979,12 +979,6 @@
   "claude/colon-reveal": 3,
   "discourse/punchy-fragments": 1
  },
- "docs/src/content/docs/tutorials/fargate-lucene-efs-solr.mdx": {
-  "formatting/em-dash-density": 15,
-  "claude/colon-reveal": 2,
-  "discourse/punchy-fragments": 1,
-  "formatting/bold-first-bullet": 1
- },
  "docs/src/content/docs/tutorials/flux-apps.mdx": {
   "formatting/em-dash-density": 21,
   "claude/colon-reveal": 4,
