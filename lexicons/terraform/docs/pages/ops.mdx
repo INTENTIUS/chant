@@ -207,6 +207,11 @@ jobs:
   app-apply:
     runs-on: ubuntu-latest
     container: node:22-slim
+    outputs:
+      gated: '${{ steps.chant-run.outputs.gated }}'
+      op: '${{ steps.chant-run.outputs.op }}'
+      gate: '${{ steps.chant-run.outputs.gate }}'
+      approve: '${{ steps.chant-run.outputs.approve }}'
     steps:
       - uses: actions/checkout@v4
       - uses: aws-actions/configure-aws-credentials@v6
@@ -214,9 +219,32 @@ jobs:
           role-to-assume: '${{ vars.AWS_APPLY_ROLE_ARN }}'
           aws-region: eu-west-1
       - run: curl -fsSL https://releases.hashicorp.com/terraform/1.13.3/terraform_1.13.3_linux_amd64.zip -o /tmp/terraform.zip && unzip -q -o /tmp/terraform.zip -d /usr/local/bin && terraform version
-      - run: chant run app-apply
+      - id: chant-run
+        run: |
+          set -o pipefail
+          json="${RUNNER_TEMP:-/tmp}/chant-run-app-apply.json"
+          chant run app-apply --gated-exit 0 --json | tee "$json"
+          node -e '...set gated/op/gate/approve on $GITHUB_OUTPUT when the record says gated...' "$json"
         env:
           GITHUB_TOKEN: '${{ github.token }}'
+  app-apply-gate-notice:
+    needs: app-apply
+    if: needs.app-apply.outputs.gated == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Report the pending gate
+        env:
+          GH_TOKEN: '${{ github.token }}'
+          GH_REPO: '${{ github.repository }}'
+          CHANT_OP: '${{ needs.app-apply.outputs.op }}'
+          CHANT_GATE: '${{ needs.app-apply.outputs.gate }}'
+          CHANT_APPROVE: '${{ needs.app-apply.outputs.approve }}'
+        run: |
+          ...find the merged PR for $GITHUB_SHA, post or edit the marker comment, or open an issue...
 ```
 
 The runner has no terraform on it, so the install is a `beforeScript` line pinned to a release rather than taken from a package repo: the version that plans is then the version the file names, which matters for a root with a `required_version` floor. `beforeScript` lines are emitted as plain `run:` steps ahead of the invocation, so the Op's first step is never a missing binary. A `setup` entry could carry `hashicorp/setup-terraform` instead; a curl and an unzip need no action to express.
@@ -235,7 +263,13 @@ The additive `permissions` map can only add. A scope the mode already granted is
 
 Off GitHub the mode is refused rather than approximated. The activity shells to `gh` against the GitHub API and reads the GitHub Actions event payload, and chant carries no GitLab or Forgejo client that would post the equivalent note, so the gitlab and forgejo Op generators refuse `comment` by name at build time and point at `"issue"` (or, on GitLab, `"merge-request"`).
 
-The push run stops at the apply's gate. It reaches the gate, finds no resolution on the ledger, records the pending fact and ends with status `gated` and exit 3, so the workflow run ends there instead of holding a runner open. `chant approve app-apply approve-app-apply --approver you` records the answer and re-running the workflow applies. A root whose merges should apply unattended sets `gate: "never"`.
+The push run stops at the apply's gate. It reaches the gate, finds no resolution on the ledger, records the pending fact and ends there instead of holding a runner open. `chant approve app-apply approve-app-apply --approver you` records the answer and re-running the workflow applies. A root whose merges should apply unattended sets `gate: "never"`.
+
+**A gated merge is a green run with a visible pending state** ([#2243](https://github.com/INTENTIUS/chant/issues/2243)). Actions has no neutral conclusion for a `run:` step, so exit 3 used to mark main as broken on every merge until someone approved. The push job now runs `chant run app-apply --gated-exit 0 --json`: `chant run` maps that one outcome, so a run that fails for any other reason still exits 1 and the job is still red. The gate, the `chant approve` line and the `_gates/app-apply.jsonl` ledger path go to `GITHUB_STEP_SUMMARY`, which is where the run page shows them.
+
+The pending state also leaves the Actions log. The `app-apply-gate-notice` job above `needs:` the apply and runs when its `gated` output is set. A push event carries no pull request, so it asks `repos/{repo}/commits/{sha}/pulls` for the one the pushed commit belongs to — the commit's own associated-pull-request endpoint, exact rather than a search index — and posts there through the same hidden-marker recipe `findingMode: "comment"` uses, editing one comment rather than stacking one per merge. A commit with no pull request, such as a direct push to the branch, gets an issue instead, which is why the job carries `issues: write` alongside `pull-requests: write`. Those permissions are the job's own and replace the workflow's for it alone, so the apply beside it stays `contents: read`.
+
+Forgejo takes the mapping and the step summary and drops the notice job: it shells to `gh`, which no Forgejo runner points at its own instance, the same reason `comment` mode is refused there. GitLab takes neither, since its Op generator refuses a `push` trigger outright.
 
 `examples/plan-on-pr/` is the worked version of this shape, and `examples/scheduled-watch/` is the cron one.
 

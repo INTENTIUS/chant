@@ -41,6 +41,17 @@
  * declaration (`id_tokens:` with an `aud`, exchanged for cloud credentials by
  * the job itself) that chant does not generate. Ignoring the map would emit a
  * job that reads as having OIDC and runs with no credentials.
+ *
+ * The gated-apply mapping (#2243) has nothing to attach to here. It exists
+ * because a push-to-main apply that stops at its gate exits 3 and paints the
+ * branch red on every merge; this generator has no push pipeline at all,
+ * refusing a `push` trigger by name (#2084) because a GitLab schedule is a
+ * project-level cron object rather than an event. GitLab does have its own
+ * equivalent of the mapping should one ever be wanted — `allow_failure:
+ * { exit_codes: [3] }` turns one exit code into a warning rather than a
+ * failure, without a flag on the invocation — so the day this generator
+ * grows a push trigger, that is the shape to reach for rather than
+ * `--gated-exit`.
  */
 
 import { emitYAML } from "@intentius/chant/yaml";

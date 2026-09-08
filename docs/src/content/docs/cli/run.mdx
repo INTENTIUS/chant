@@ -68,6 +68,20 @@ chant run alb-deploy --on fountain
 
 A `gate` in the Op stops the run pending a resolution on the gate ledger. The run prints the gate's description and the `chant approve` line, and exits **3** — deliberately not 1, so a CI job can report "waiting on approval" rather than a failure. No phase after the gate runs, and no `onFailure` phase runs either: nothing failed, so there is nothing to compensate for. See [Gate-as-fact](/chant/guide/operator/#gate-as-fact).
 
+#### A gated run in CI: `--gated-exit`
+
+GitHub Actions has no neutral conclusion for a `run:` step, so a push-to-main apply that stops at its gate is a failed workflow run until someone approves. `--gated-exit <code>` maps that one outcome to a code of your choosing:
+
+```bash
+chant run prod-apply --gated-exit 0    # a pending approval is not a broken build
+```
+
+Only the gated outcome is remapped. A run that fails still exits 1 and a run that completes still exits 0, so the flag can never hide a broken apply. The `--json` payload is untouched by it: the record still says `"status": "gated"` and still carries the gate and the exact `chant approve` line, so a job that maps the code to success can still tell the two apart and report the pending gate. The value must be a process exit status (0-255); anything else is refused before the Op runs.
+
+Whenever a run is gated, `chant run` also appends a short markdown block to the file named by `GITHUB_STEP_SUMMARY`, when that variable is set. The block names the Op and the gate, gives the exact `chant approve` command, and points at the `_gates/<op>.jsonl` ledger the pending fact was written to. GitHub Actions, Forgejo Actions and Gitea all set it, and any other CI that does gets the same block. Nothing is written when the variable is absent, and a write that fails never changes the run's outcome.
+
+The [github Op generator](/chant/guide/ops/#scheduling-an-op) passes `--gated-exit 0` on `push`-triggered jobs and adds a follow-up job that posts the pending gate on the merged pull request, so a gated apply is a green run with a visible pending state rather than a red one.
+
 Every run appends one record to the run ledger on the `chant/lifecycle` branch, at `<env>/runs__<name>.jsonl` beside the converge ledger. The record carries the run id, the start and end instants, the status (`ok`, `fail`), the Op's `labels`, every `outcomeAttribute` the run captured, and each phase's per-step status. `--json` prints that same record, so what you read on stdout and what `chant operator log` reads back later are one document. `<env>` is the Op's own `labels.Env`, or `local` when it declares none.
 
 ### `run list`
@@ -179,6 +193,7 @@ The `--no-release-record` flag always wins over config for that one invocation. 
 | `--no-release-record` | Skip auto-emitting a release-ledger record after a successful `run --components` deploy — default is ON (`run --components`) |
 | `--env <name>` | Target [environment](/chant/configuration/config-file/#environments), threaded into every capability's context (`run --components`); defaults to `local` |
 | `--json` | Emit the run's ledger record as JSON on stdout (`run <name>`); the structured run result for `run --components` |
+| `--gated-exit <code>` | Exit code for a run that stopped at an unapproved gate, instead of the default 3. Only that outcome is remapped; a failure is still 1 |
 | `--force` | Required for `run cancel` |
 | `--progress-json` | Stream one NDJSON progress record per line to stdout while the run executes |
 | `--dump-outputs <file>` | After the run, write the accumulated cross-component outputs as JSON to `file` (`run --components`) |
@@ -198,6 +213,7 @@ The `--no-release-record` flag always wins over config for that one invocation. 
 | 0 | Success (the run completed, or the command succeeded) |
 | 1 | Error (the run failed, the Op was not found, the runtime was unreachable) |
 | 3 | Gated: the run stopped at an unapproved gate and recorded the pending fact |
+| `--gated-exit <code>` | The gated outcome only, remapped to `<code>`. 0 and 1 keep their meanings above for every other outcome |
 
 ## See Also
 

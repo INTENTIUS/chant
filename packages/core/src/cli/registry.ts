@@ -41,6 +41,20 @@ export interface ParsedArgs {
   /** `chant run` — emit the structured OpRunResult as JSON on stdout. */
   json?: boolean;
   /**
+   * `chant run <op> --gated-exit <code>` (#2243) — the process exit code a
+   * run that stopped at an unapproved gate returns, instead of the default 3.
+   *
+   * Only the gated outcome is remapped. A run that fails still returns 1 and a
+   * run that completes still returns 0, so `--gated-exit 0` on a CI job means
+   * "a pending approval is not a broken build" and nothing more. The `--json`
+   * payload is untouched by it: the record still says `status: "gated"` and
+   * still carries the gate and the `chant approve` line, so a job that maps the
+   * code to success can still tell the two apart.
+   *
+   * Accepts 0-255 (a POSIX exit status). Anything else is refused by name.
+   */
+  gatedExit?: number;
+  /**
    * `chant run --components <name|all> --progress-json` (local executor) —
    * stream one NDJSON `RunProgressEvent` (../../components/run-progress.ts)
    * per line to stdout while the run executes, so a consumer can render live

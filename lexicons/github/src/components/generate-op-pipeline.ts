@@ -31,7 +31,10 @@
  *  - runs exactly one invocation, `chant run <name>` by default — never
  *    inlined audit/reconcile logic. The finding-mode itself is already baked
  *    into the Op's own activity args at build time by the composite that
- *    created it; this workflow only supplies the token the mode needs to act.
+ *    created it; this workflow only supplies the token the mode needs to act;
+ *  - on a `push` trigger only, runs that invocation with `--gated-exit 0`
+ *    and adds a follow-up job that says where the approval is pending
+ *    (#2243). See {@link GATED_EXIT_FLAG} and {@link gateNoticeJob}.
  *
  * Two per-Op options widen that shape without loosening it (#2242). A spec's
  * `setup` list emits steps between the checkout and the `beforeScript` lines,
@@ -85,6 +88,15 @@ export interface GithubOpPipelineDoc {
   permissions: Record<string, unknown>;
   /** The `jobs:` mapping — one entry, this Op's trigger job. */
   jobsDoc: Record<string, unknown>;
+  /**
+   * The gated-apply notice job (#2243), when this Op's trigger is `push`.
+   * Kept out of {@link jobsDoc} so a dialect that cannot run it drops it by
+   * simply not copying it: the job shells to `gh` against the GitHub API and
+   * needs `gh` on the runner, which is the same reason the `comment` finding
+   * mode is refused on forgejo and gitlab (#2231). {@link emitOpPipelineYAML}
+   * merges it into `jobs:` for the forges that can.
+   */
+  gatedNoticeDoc?: Record<string, unknown>;
 }
 
 /** One generated file: a suggested name plus its pipeline document, pre-emission. */
@@ -158,6 +170,144 @@ function permissionsFor(mode: OpFindingMode, trigger: OpTrigger): Record<string,
     return { ...base, "pull-requests": "write" };
   }
   return base;
+}
+
+// ── The gated apply (#2243) ─────────────────────────────────────────────────
+
+/**
+ * `chant run` returns 3 when a run stops at an unapproved gate. GitHub Actions
+ * has no neutral conclusion for a `run:` step, so a push-to-main apply that
+ * gates paints the branch red on every merge until someone approves. This maps
+ * that one outcome to success, in chant rather than in a shell wrapper
+ * (#2243); a failed run still returns 1 and is still red.
+ *
+ * `push` only. A cron watch and a `pull_request` plan are never gated in a way
+ * that should be hidden: nobody is waiting on a merge for either, and a gated
+ * one there is a signal, not noise.
+ */
+const GATED_EXIT_FLAG = ["--gated-exit", "0"];
+
+/** The id of the `chant run` step on a `push` job, so the job can publish its outputs. */
+const RUN_STEP_ID = "chant-run";
+
+/**
+ * Turn the run's `--json` record into step outputs, so the notice job below
+ * has a condition to test and a gate to name. Runs in node, which is already
+ * on any machine `chant` runs on — unlike `jq`, which the Op's own container
+ * image need not carry.
+ *
+ * Nothing is written for a run that completed, so `gated` is either the string
+ * `true` or absent, and the notice job's `if:` is a plain equality.
+ */
+const GATE_OUTPUT_SCRIPT =
+  'const fs=require("fs");' +
+  'const r=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));' +
+  'if(r.status!=="gated"||!process.env.GITHUB_OUTPUT)process.exit(0);' +
+  "fs.appendFileSync(process.env.GITHUB_OUTPUT," +
+  '`gated=true\\nop=${r.op}\\ngate=${(r.gate&&r.gate.name)||""}\\napprove=${r.approve||""}\\n`)';
+
+/**
+ * The `push` job's run step: the invocation with {@link GATED_EXIT_FLAG} and
+ * `--json`, tee'd so the record is both in the log and on disk, then read for
+ * the job's outputs.
+ *
+ * `set -o pipefail` is not decoration. GitHub's default shell is `bash -e`,
+ * which does not set it, so a failing `chant run` piped into `tee` would come
+ * back as `tee`'s zero and turn a broken apply green — the exact thing this
+ * whole change must not do.
+ */
+function gatedRunScript(op: string, invocation: string): string {
+  return [
+    "set -o pipefail",
+    'json="${RUNNER_TEMP:-/tmp}/chant-run-' + op + '.json"',
+    `${invocation} | tee "$json"`,
+    `node -e '${GATE_OUTPUT_SCRIPT}' "$json"`,
+  ].join("\n");
+}
+
+/**
+ * The notice body's `printf` format. Kept out of {@link gateNoticeScript} so
+ * the shell quoting stays readable: it is single-quoted in the emitted script
+ * because it carries markdown backticks, which a double-quoted shell string
+ * would run as command substitution.
+ */
+const NOTICE_BODY_FORMAT =
+  "%s\\n\\nThe `%s` apply for %s stopped at gate `%s` and is waiting for an approval. Nothing was applied." +
+  "\\n\\n```\\n%s --approver <you>\\n```\\n\\nThe pending fact is on `_gates/%s.jsonl` on the " +
+  "`chant/lifecycle` branch. Approving is a commit: push it and this workflow runs again and applies.\\n";
+
+/**
+ * What the notice job posts. The sticky-comment recipe `reconcilePr`'s
+ * `comment` mode already uses (#2231), spelled in shell because this job runs
+ * no Op: a hidden marker as the body's first line, found again with
+ * `startswith` on the next run, PATCHed when it is there and POSTed when it is
+ * not. So a branch that merges three times before anyone approves carries one
+ * comment saying what is pending, not three.
+ *
+ * A GitHub `push` event carries no pull request, so the target is looked up:
+ * `repos/{repo}/commits/{sha}/pulls` is the commit's own associated-pull-request
+ * endpoint, exact rather than a search index, and on a merge commit it answers
+ * with the pull request that just merged. When it answers with nothing — a
+ * direct push to the branch, a merge whose commit the API does not associate —
+ * the notice becomes an issue instead, which is the `issue` finding mode's own
+ * recipe and the reason this job carries `issues: write`.
+ */
+function gateNoticeScript(): string {
+  return [
+    'marker="<!-- chant-gate:$CHANT_OP -->"',
+    "body=$(printf '" + NOTICE_BODY_FORMAT + "' " +
+      '"$marker" "$CHANT_OP" "$GITHUB_SHA" "$CHANT_GATE" "$CHANT_APPROVE" "$CHANT_OP")',
+    'pr=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq ".[0].number // empty")',
+    'if [ -z "$pr" ]; then',
+    '  gh issue create --title "$CHANT_OP is waiting on gate $CHANT_GATE" --body "$body"',
+    "  exit 0",
+    "fi",
+    'id=$(gh api "repos/$GITHUB_REPOSITORY/issues/$pr/comments" --paginate ' +
+      '--jq "map(select(.body | startswith(\\"$marker\\"))) | .[0].id // empty" ' +
+      '| grep -m1 -E "^[0-9]+$" || true)',
+    'if [ -n "$id" ]; then',
+    '  gh api --method PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -f "body=$body" --jq .html_url',
+    "else",
+    '  gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$pr/comments" -f "body=$body" --jq .html_url',
+    "fi",
+  ].join("\n");
+}
+
+/**
+ * The follow-up job: `needs:` the apply, runs only when the apply reported
+ * gated, and puts the pending state somewhere other than the Actions log.
+ *
+ * No `container:`. It needs `gh`, which GitHub-hosted runner images carry and
+ * an Op's own image (`node:22-slim` by default) does not; it reads nothing out
+ * of the repository, so it also needs no checkout.
+ *
+ * Its `permissions:` are its own, replacing the workflow-level set for this
+ * job alone: `contents: read` for the commit-to-pull-request lookup,
+ * `pull-requests: write` for the sticky comment, `issues: write` for the
+ * fallback when the push has no pull request. Nothing wider — it opens no
+ * branch and merges nothing.
+ */
+function gateNoticeJob(applyJobName: string): Record<string, unknown> {
+  const output = (name: string) => "${{ needs." + applyJobName + ".outputs." + name + ' }}';
+  return {
+    needs: applyJobName,
+    if: `needs.${applyJobName}.outputs.gated == 'true'`,
+    "runs-on": "ubuntu-latest",
+    permissions: { contents: "read", issues: "write", "pull-requests": "write" },
+    steps: [
+      {
+        name: "Report the pending gate",
+        env: {
+          GH_TOKEN: "${{ github.token }}",
+          GH_REPO: "${{ github.repository }}",
+          CHANT_OP: output("op"),
+          CHANT_GATE: output("gate"),
+          CHANT_APPROVE: output("approve"),
+        },
+        run: gateNoticeScript(),
+      },
+    ],
+  };
 }
 
 /**
@@ -378,10 +528,23 @@ export function buildGithubOpPipelineDocs(
     const setup = spec.setup ?? [];
     assertSetupSteps(spec.name, setup);
 
+    // A `push` job is the one that has to survive a gate (#2243): the apply
+    // runs with `--gated-exit 0` so a pending approval is a green run, and
+    // publishes what it stopped on as job outputs for the notice job below.
+    // Every other trigger keeps the plain one-line invocation it always had.
+    const gated = trigger.kind === "push";
+    const invocation = gated
+      ? [...runParts, ...GATED_EXIT_FLAG, "--json"].join(" ")
+      : runParts.join(" ");
+
     const steps: Array<Record<string, unknown>> = [{ uses: "actions/checkout@v4" }];
     for (const step of setup) steps.push(setupStepDoc(step));
     for (const line of beforeScript) steps.push({ run: line });
-    steps.push({ run: runParts.join(" "), env: stepEnv });
+    steps.push(
+      gated
+        ? { id: RUN_STEP_ID, run: gatedRunScript(spec.name, invocation), env: stepEnv }
+        : { run: invocation, env: stepEnv },
+    );
     for (const line of extraScript) steps.push({ run: line });
 
     const doc: GithubOpPipelineDoc = {
@@ -400,9 +563,20 @@ export function buildGithubOpPipelineDocs(
         [jobName]: {
           "runs-on": "ubuntu-latest",
           container: image,
+          ...(gated
+            ? {
+                outputs: Object.fromEntries(
+                  ["gated", "op", "gate", "approve"].map((name) => [
+                    name,
+                    `\${{ steps.${RUN_STEP_ID}.outputs.${name} }}`,
+                  ]),
+                ),
+              }
+            : {}),
           steps,
         },
       },
+      ...(gated ? { gatedNoticeDoc: { [`${jobName}-gate-notice`]: gateNoticeJob(jobName) } } : {}),
     };
 
     files.push({ name: `${spec.name}.yml`, doc });
@@ -422,7 +596,10 @@ export function emitOpPipelineYAML(doc: GithubOpPipelineDoc): string {
   if (doc.env && Object.keys(doc.env).length > 0) sections.push("env:" + emitYAML(doc.env, 1));
   sections.push("concurrency:" + emitYAML(doc.concurrency, 1));
   if (Object.keys(doc.permissions).length > 0) sections.push("permissions:" + emitYAML(doc.permissions, 1));
-  sections.push("jobs:" + emitYAML(doc.jobsDoc, 1));
+  // The gated-apply notice job rides in `jobs:` beside the Op's own job, but
+  // is carried separately on the doc so a dialect that cannot run it (forgejo,
+  // whose runner has no `gh` pointed at its own instance) drops it by omission.
+  sections.push("jobs:" + emitYAML({ ...doc.jobsDoc, ...(doc.gatedNoticeDoc ?? {}) }, 1));
   return sections.join("\n\n") + "\n";
 }
 

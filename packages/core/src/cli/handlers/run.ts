@@ -6,6 +6,7 @@ import type { OpConfig } from "../../op/types";
 import { loadActivities, loadProfiles } from "../../op/activity-registry";
 import { runOpLocally, findPolicyGateStep, OpRunFailure, type StepRecord } from "../../op/local-executor";
 import { approveCommand } from "../../op/gate";
+import { writeGatedRunSummary, type GatedRunSummary } from "../../op/gate-summary";
 import { createLocalOpRuntime } from "../../op/runtimes/local";
 import type { OpRuntimeProvider, OpRunStatus } from "../../op/runtime";
 import { renderHuman, renderJson } from "../../op/local-output";
@@ -27,6 +28,54 @@ import type { DriverComponentResult } from "../../components/driver";
  * made yet.
  */
 export const GATED_EXIT_CODE = 3;
+
+/**
+ * The exit code this invocation gives a gated run — {@link GATED_EXIT_CODE}
+ * unless `--gated-exit <code>` asked for another one (#2243).
+ *
+ * The mapping lives here rather than in a shell wrapper in every generated
+ * pipeline, so one rule covers every forge: GitHub Actions has no neutral
+ * conclusion for a `run:` step, so a push-to-main apply that stops at its gate
+ * paints the branch red on every merge until someone approves. `--gated-exit
+ * 0` is how the job that knows a pending approval is not a failure says so.
+ *
+ * Only the gated outcome is remapped. A failed run still returns 1, so the
+ * flag can never hide a broken apply. Returns `undefined` after printing the
+ * refusal when the value is not a process exit status.
+ */
+function resolveGatedExitCode(ctx: CommandContext): number | undefined {
+  const raw = ctx.args.gatedExit;
+  if (raw === undefined) return GATED_EXIT_CODE;
+  if (!Number.isInteger(raw) || raw < 0 || raw > 255) {
+    console.error(formatError({
+      message: "--gated-exit expects a whole number from 0 to 255",
+      hint: `Got ${Number.isNaN(raw) ? "a non-numeric value" : String(raw)}. ` +
+        `Pass --gated-exit 0 to make a run that stopped at a gate a success for CI; ` +
+        `omit the flag for the default ${GATED_EXIT_CODE}.`,
+    }));
+    return undefined;
+  }
+  return raw;
+}
+
+/**
+ * What a gated run leaves behind for CI, beyond the stderr block the renderers
+ * already print (#2243): the same gate, approve command and ledger path
+ * appended to whatever file `GITHUB_STEP_SUMMARY` names, so the run page says
+ * what is pending without anyone opening the log.
+ *
+ * Also says on stderr that the exit code was remapped, when it was. A job that
+ * passes `--gated-exit 0` reports success, and the one line that explains why
+ * a zero-exit run applied nothing belongs next to the gate itself.
+ */
+function reportGatedRun(summary: GatedRunSummary, exitCode: number): void {
+  writeGatedRunSummary(summary);
+  if (exitCode !== GATED_EXIT_CODE) {
+    console.error(formatInfo(
+      `gated: exiting ${exitCode} because --gated-exit asked for it. Nothing after the gate ran.`,
+    ));
+  }
+}
 
 /**
  * `run list/status/log/cancel --components` reported a component's *durable*
@@ -613,6 +662,9 @@ export async function runOpComponents(ctx: CommandContext): Promise<number> {
     return 1;
   }
 
+  const gatedExit = resolveGatedExitCode(ctx);
+  if (gatedExit === undefined) return 1;
+
   const projectPath = resolve(".");
   const { config } = await loadChantConfig(projectPath).catch(() => ({ config: {} as ChantConfig }));
   const paramsResolution = resolveCliBuildParams(config.buildParams, {
@@ -692,7 +744,17 @@ export async function runOpComponents(ctx: CommandContext): Promise<number> {
     console.error(formatInfo(`approve : ${approveCommand(gate.op, gate.gate)}`));
     if (gate.url) console.error(formatInfo(`approve at: ${gate.url}`));
     console.error(formatInfo(`expires : ${gate.expiresAt}`));
-    return GATED_EXIT_CODE;
+    reportGatedRun(
+      {
+        op: gate.op,
+        gate: gate.gate,
+        ...(gate.description ? { description: gate.description } : {}),
+        expiresAt: gate.expiresAt,
+        ...(gate.url ? { url: gate.url } : {}),
+      },
+      gatedExit,
+    );
+    return gatedExit;
   }
 
   if (result.success && result.run) {
@@ -724,6 +786,9 @@ export async function runOpOnRuntime(ctx: CommandContext): Promise<number> {
     }));
     return 1;
   }
+
+  const gatedExit = resolveGatedExitCode(ctx);
+  if (gatedExit === undefined) return 1;
 
   const { ops, errors } = await discoverOps();
   for (const err of errors) console.error(formatWarning({ message: err }));
@@ -786,8 +851,27 @@ export async function runOpOnRuntime(ctx: CommandContext): Promise<number> {
 
     // Exit 3 for a gated run (#2119) — a distinct code so CI can tell
     // "waiting on a human" from a broken op, and retry the one but not the
-    // other.
-    if (status.state === "gated") return GATED_EXIT_CODE;
+    // other. `--gated-exit <code>` remaps that one outcome and nothing else
+    // (#2243).
+    if (status.state === "gated") {
+      // The local runtime carries the whole pending fact on its result; a
+      // runtime that reports only a state carries the gate's name alone.
+      const pending = status.result?.gate;
+      const gate = pending?.gate ?? status.gate?.name;
+      if (gate) {
+        reportGatedRun(
+          {
+            op: opName,
+            gate,
+            ...(pending?.description ? { description: pending.description } : {}),
+            ...(pending?.expiresAt ? { expiresAt: pending.expiresAt } : {}),
+            ...(pending?.url ? { url: pending.url } : {}),
+          },
+          gatedExit,
+        );
+      }
+      return gatedExit;
+    }
     return status.state === "completed" ? 0 : 1;
   } catch (err) {
     if (err instanceof OpRunFailure) {

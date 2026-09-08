@@ -34,6 +34,17 @@
  * GitHub-compatible in shape, but chant has no Forgejo client and no host
  * configuration to point `gh` at a Forgejo instance, so this refuses the mode
  * by name rather than generating a job whose finding step fails on every run.
+ *
+ * The gated-apply notice job (#2243) does not cross over either, for the same
+ * reason and by the same mechanism as `permissions:`: it shells to `gh`, which
+ * a Forgejo `act_runner` neither ships nor can point at its own instance, and
+ * it runs outside the Op's container image, where a hosted GitHub runner's
+ * preinstalled tools would be. So the doc rebuilt below simply does not carry
+ * `gatedNoticeDoc`, and the job is dropped. What does cross over is the half
+ * that needs no forge API: a `push` job still runs with `--gated-exit 0`, so a
+ * Forgejo apply that stops at its gate is a green run rather than a red one,
+ * and `chant run` still writes the gate and the approve command to
+ * `GITHUB_STEP_SUMMARY`, which Forgejo Actions sets like GitHub does.
  */
 
 import {

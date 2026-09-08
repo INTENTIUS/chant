@@ -267,6 +267,16 @@ The two options land differently per provider. GitHub emits both. Forgejo emits 
 
 A `ScheduledOpSpec` isn't limited to cron. Its `trigger` also takes `{ kind: "pull_request", branches? }` and `{ kind: "push", branches? }`, for an Op whose CI trigger is a PR or a push rather than a clock (a Terraform `plan` on `pull_request`, posted as a PR comment, paired with `apply` on `push` to the default branch, is the motivating case). GitHub and Forgejo support all three trigger kinds; GitLab, which has no `pull_request`/`push` event model, throws a clear error if given anything but cron.
 
+### The push-to-main apply, and its gate
+
+A `push` job is the one that has to survive a gate. GitHub Actions has no neutral conclusion for a `run:` step, so the apply that stops at its gate exits 3 and the merge shows as a failed workflow run until the approve commit lands. The github generator handles that in three pieces ([#2243](https://github.com/INTENTIUS/chant/issues/2243)):
+
+- the invocation on a `push` trigger is `chant run <name> --gated-exit 0 --json`, so a pending approval is a green run. Only the gated outcome is mapped: a run that fails for any other reason still exits 1 and the job is still red. A cron watch and a `pull_request` plan keep the plain one-line invocation, since nobody is waiting on a merge for either;
+- `chant run` writes the gate, the `chant approve` line and the `_gates/<op>.jsonl` ledger path to `GITHUB_STEP_SUMMARY`, so the run page says what is pending. That is an environment variable and nothing more, so Forgejo Actions and any other CI that sets it gets the same block;
+- one follow-up job `needs:` the apply and runs when its `gated` output is set. A push event carries no pull request, so the job asks `repos/{repo}/commits/{sha}/pulls` for the one the commit belongs to and posts a sticky comment there through the same hidden-marker recipe `comment` mode uses, editing that one comment on every re-merge. A commit with no pull request, such as a direct push to the branch, gets an issue instead. Its `permissions:` are `contents: read`, `pull-requests: write` and `issues: write`, set on the job so the apply beside it keeps its own read-only set.
+
+Forgejo takes the first two and drops the third: the notice job shells to `gh`, which a Forgejo runner neither ships nor can point at its own instance, the same reason `comment` mode is refused there. GitLab takes none of it, because its Op generator has no push pipeline to attach them to.
+
 ## Replay (policy drift)
 
 `PolicyReplayOp` is the same shape applied to authorization policy. A [dogwood](/chant/lexicons/cedar/) `.dw` policy set carries time-window clauses — `formerly within 1h …` — so what a policy decides depends on a history the build cannot see. Replaying the declared set against a recorded event trace is how that gets checked, and the answer moves as the history does.

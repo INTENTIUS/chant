@@ -307,6 +307,11 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.json = true;
     } else if (arg === "--progress-json") {
       result.progressJson = true;
+    } else if (arg === "--gated-exit") {
+      // `chant run <op> --gated-exit <code>` (#2243) — remap only the gated
+      // outcome's exit code. Parsed as a number here and range-checked in the
+      // handler, where the refusal can name the flag alongside the run.
+      result.gatedExit = Number(args[++i]);
     } else if (arg === "--durable-requests") {
       // `chant run approve ... --on <lexicon> --durable-requests` (#2126) —
       // resolve the gate on the hosting runtime's own request path rather
