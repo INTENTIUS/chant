@@ -13,7 +13,8 @@ import type { UnobservedEntity } from "./observation";
  * resolved infrastructure graph. Painters (mermaid, graphviz, custom SVG) and
  * the agentic diagrammer consume this; it is a pure function of lint-clean
  * source. Every node traces to the file that declared it; every edge is a real
- * cross-resource reference (AttrRef).
+ * cross-resource reference, either an `AttrRef` this module resolves itself or
+ * an {@link EntityReference} the producing lexicon resolved (#2265).
  *
  * Emitted by `chant graph --format ir`. See issue #493 / epic #492.
  */
@@ -90,6 +91,88 @@ export interface IREdge {
   toAttr?: string;
 }
 
+/**
+ * One reference an entity declares in a vocabulary this module cannot read
+ * (#2265), already resolved to the entity key it points at.
+ *
+ * `collectEdges` below finds references two ways: an {@link AttrRef} object a
+ * typed lexicon puts in its props, and a `Ref`-shaped intrinsic. Both are
+ * objects with a resolvable target, which is what makes them findable by a
+ * walk that knows no lexicon. A lexicon that PARSES someone else's source has
+ * neither: the terraform lexicon's entities keep their block body verbatim
+ * from hcl2json, where a reference to another block is the string
+ * `"${aws_vpc.main.id}"` and nothing else. The walk finds nothing, correctly,
+ * and a 247-node estate graphs with zero edges.
+ *
+ * The reference is not missing, it is just in the producer's vocabulary, and
+ * resolving it needs an HCL expression parser and the lexicon's own key shape.
+ * So the lexicon resolves it and says so here, on the entity, in the one
+ * vocabulary this module does understand: an entity key, plus the two
+ * attribute names {@link IREdge} already carries.
+ *
+ * The hook is a plain duck-typed optional field any entity MAY carry beside
+ * its `props`, read through {@link entityReferences}. That is the same shape
+ * (and the same reasoning) as `suppressions`, ../lint/suppressions.ts: a
+ * reference is a fact ABOUT one entity, `Declarable` already lets each lexicon
+ * carry its own fields beside `props`, and nothing that constructs or merges
+ * an entity map had to change for it. A lexicon that wants edges adopts the
+ * convention on its own entities; every other lexicon keeps the AttrRef walk
+ * it already had, and the two sources of edges merge in one place.
+ *
+ * An entry whose `to` is not a node in this graph is dropped rather than kept
+ * as a dangling endpoint, the same rule {@link buildLiveGraphIr} applies to an
+ * observed edge.
+ */
+export interface EntityReference {
+  /** The referenced entity's key, in the same space as the IR's node ids. */
+  to: string;
+  /** The consumer-side attribute the reference flows through (`IREdge.viaAttr`). */
+  viaAttr?: string;
+  /** The producer-side attribute referenced (`IREdge.toAttr`), when the reference named exactly one. */
+  toAttr?: string;
+}
+
+/** True when `value` has the {@link EntityReference} shape. */
+function isEntityReference(value: unknown): value is EntityReference {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { to?: unknown }).to === "string"
+  );
+}
+
+/**
+ * The references an entity declared for itself (#2265), or an empty list.
+ * Duck-typed on purpose, see {@link EntityReference}.
+ */
+export function entityReferences(entity: Declarable): readonly EntityReference[] {
+  const declared = (entity as unknown as { references?: unknown }).references;
+  if (!Array.isArray(declared)) return [];
+  return declared.filter(isEntityReference);
+}
+
+/**
+ * The deployable unit an entity says it belongs to (#2266), or undefined.
+ *
+ * Same duck-typed channel as {@link entityReferences}, for the other half of
+ * the same problem. `groups.byStack` keys by lexicon partition when nothing
+ * says otherwise, on the reasoning that one lexicon serialises to one
+ * deployable stack. That reasoning is exactly wrong for a lexicon reading an
+ * estate that already has several: a terraform project declaring five
+ * `terraform.roots` has five things `terraform apply` runs against, and each
+ * one is a stack in every sense `byStack` means, so five roots landed in one
+ * bucket named `terraform`.
+ *
+ * The root is not inferable here and should not be: it is the producer's own
+ * name for its own unit. A consumer could recover it from the node id prefix
+ * the terraform lexicon mints, but an id convention is not a promise, and
+ * `byStack` is the field whose whole job is saying which box a node goes in.
+ */
+export function entityStack(entity: Declarable): string | undefined {
+  const stack = (entity as unknown as { stack?: unknown }).stack;
+  return typeof stack === "string" && stack.length > 0 ? stack : undefined;
+}
+
 /** Grouping metadata for cluster/subgraph rendering. Maps group name -> node ids. */
 export interface IRGroups {
   byLexicon?: Record<string, string[]>;
@@ -99,11 +182,15 @@ export interface IRGroups {
    * boundary boxes) read this rather than inferring stacks — which is the point,
    * so it should never require one.
    *
-   * Two sources, depending on how the project is shaped:
+   * Three sources, depending on how the project is shaped:
    *
    *  - **side-by-side stacks**, declared in config and composed by
    *    `buildDeclaredPerStack` — keys are the declared stack names. Nothing is
    *    inferred; the project stated both the names and the membership.
+   *  - **entities that name their own unit** ({@link entityStack}, #2266) —
+   *    keys are those names, one entry per unit. A terraform root is the case
+   *    this exists for: five `terraform.roots` are five `terraform apply`s and
+   *    five boundary boxes, not one bucket called `terraform`.
    *  - **one source tree** — keys are lexicon partitions, since each lexicon
    *    serialises to one deployable stack.
    *
@@ -315,7 +402,12 @@ function project(value: unknown, seen: Set<unknown>, reverse: Map<object, string
   return out;
 }
 
-const SKIP_KEYS = new Set(["lexicon", "entityType", "kind", "attributes", "Ref"]);
+// `references` and `stack` are the two duck-typed channels above
+// ({@link entityReferences}, {@link entityStack}). They are metadata about the
+// entity's place in the graph, not declared configuration, and both are read
+// directly, so projecting them into `attrs` would only restate an edge and a
+// group key the IR already carries.
+const SKIP_KEYS = new Set(["lexicon", "entityType", "kind", "attributes", "Ref", "references", "stack"]);
 
 /** The config bag of a node, paired with each key. Lexicon entities keep their
  * declared props in a (usually non-enumerable) `props` object; simpler entities
@@ -349,7 +441,17 @@ function projectConfig(
   return out;
 }
 
-/** Collect ref edges from one node, labelling each with its consumer property. */
+/**
+ * Collect ref edges from one node, labelling each with its consumer property.
+ *
+ * Two sources, merged here. First the references the entity resolved for
+ * itself ({@link EntityReference}), which is how a lexicon that parses HCL,
+ * YAML or any other foreign source says what its strings point at. Then the
+ * walk over the config bag for {@link AttrRef} objects and `Ref` intrinsics,
+ * which is how a typed lexicon's props carry the same fact. A lexicon uses one
+ * or the other; nothing stops it using both, and the dedup in `buildGraphIr`
+ * collapses an edge two sources agree on.
+ */
 function collectEdges(
   entity: Declarable,
   from: string,
@@ -357,6 +459,16 @@ function collectEdges(
   reverse: Map<object, string>,
 ): IREdge[] {
   const edges: IREdge[] = [];
+  for (const ref of entityReferences(entity)) {
+    if (ref.to === from || !nodeIds.has(ref.to)) continue;
+    edges.push({
+      from,
+      to: ref.to,
+      kind: "ref",
+      ...(ref.viaAttr ? { viaAttr: ref.viaAttr } : {}),
+      ...(ref.toAttr ? { toAttr: ref.toAttr } : {}),
+    });
+  }
   const seen = new Set<unknown>();
   const visit = (value: unknown, viaAttr: string): void => {
     if (value === null || typeof value !== "object") return;
@@ -440,9 +552,14 @@ export function buildGraphIr(
     nodes.push(node);
 
     (byLexicon[entity.lexicon] ??= []).push(name);
-    // Within ONE source tree a stack is a lexicon partition — each lexicon
-    // serialises to one deployable stack (a CloudFormation template, a CI
-    // config) — so that is what `byStack` reports here. It stays a distinct axis
+    // An entity that names its own deployable unit is taken at its word
+    // (#2266): a terraform root is one `terraform apply`, and a project
+    // declaring five of them has five stacks whatever the lexicon count says.
+    // See {@link entityStack}.
+    //
+    // Otherwise, within ONE source tree a stack is a lexicon partition — each
+    // lexicon serialises to one deployable stack (a CloudFormation template, a
+    // CI config) — so that is what `byStack` reports. It stays a distinct axis
     // from `byLexicon` (which is for provenance/colouring), emitted separately
     // even where the two coincide.
     //
@@ -455,7 +572,7 @@ export function buildGraphIr(
     // child-project". #513 is closed, that phase was never filed, and directory
     // partitioning is the exception rather than the rule — so the promise is
     // withdrawn rather than left pointing at a closed issue.
-    (byStack[entity.lexicon] ??= []).push(name);
+    (byStack[entityStack(entity) ?? entity.lexicon] ??= []).push(name);
     if (prov?.composite) (byComposite[prov.composite] ??= []).push(name);
   }
 

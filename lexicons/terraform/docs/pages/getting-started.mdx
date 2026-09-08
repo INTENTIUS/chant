@@ -69,6 +69,44 @@ parser), `props.file` and `props.root`.
 The build emits no Terraform of its own. Your `.tf` files stay the only source
 of truth, and `terraform apply` keeps working exactly as before.
 
+## Graph the estate
+
+```bash
+chant graph --format ir
+```
+
+Every parsed block is a node, and every reference between two blocks is an
+edge. Five reference forms become edges: `resource`, `data`, `module`, `var`
+and `local`. `depends_on` is one too, with no attribute on it, because that is
+what it is.
+
+Each edge names the attribute it flows through on both sides, the way
+[`chant graph`](/chant/cli/graph/) labels any other reference. A
+`subnet_id = aws_subnet.private.id` gives `viaAttr: "subnet_id"` and
+`toAttr: "id"`; an edge whose reference named two producer attributes carries
+no `toAttr` rather than an arbitrary one.
+
+A `count` or `for_each` block stays one node. chant's entity is the block, not
+the instance, so `count = 3` draws one card and one edge per target, and the
+block records which meta-argument expanded it on `props.expansion`. The
+instance count is a plan-time answer and this is a read of the declaration.
+
+References resolve inside their own module scope, which is Terraform's own
+namespace: a `var.region` inside `module.cdn` is the child module's variable
+and never the root's. Nothing ever resolves across roots, which is correct.
+Separate roots read each other by name through a data source, not by
+reference.
+
+`groups.byStack` is keyed by root name, one entry per root you named in
+`terraform.roots`. That is the grouping a boundary-box renderer draws, and a
+root is what one `terraform apply` runs against. `groups.byLexicon` keeps
+saying `terraform`.
+
+A `provider = aws.replica` meta-argument is not an edge. It names a provider
+block by type and alias together, and the entity key for one is
+`provider.<type>` with the alias inside the body, so two aliased providers of
+the same type cannot be told apart from the reference.
+
 ## What the checks tell you
 
 `TF001` fires once per root whose `terraform` block declares neither a

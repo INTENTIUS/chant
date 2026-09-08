@@ -224,3 +224,66 @@ describe("buildGraphIr", () => {
     expect(JSON.stringify(buildGraphIr(reordered))).toEqual(JSON.stringify(ir));
   });
 });
+
+/**
+ * The two duck-typed channels an entity may carry beside its `props` (#2265,
+ * #2266), for a lexicon whose references are strings in someone else's syntax
+ * rather than `AttrRef` objects. Asserted here with a made-up lexicon rather
+ * than terraform's, because what is being checked is that this module reads
+ * the channels without knowing anything about who filled them.
+ */
+describe("entity-declared references and stacks", () => {
+  test("turns a declared reference into an edge, with both attribute names", () => {
+    const vpc = decl({ lexicon: "hcl", entityType: "Vpc" });
+    const subnet = decl({
+      lexicon: "hcl",
+      entityType: "Subnet",
+      props: { vpc_id: "${aws_vpc.main.id}" },
+      references: [{ to: "vpc", viaAttr: "vpc_id", toAttr: "id" }],
+    });
+    const entities = new Map<string, Declarable>([
+      ["vpc", vpc],
+      ["subnet", subnet],
+    ]);
+    resolveAttrRefs(entities);
+
+    const ir = buildGraphIr(entities);
+    expect(ir.edges).toEqual([{ from: "subnet", to: "vpc", kind: "ref", viaAttr: "vpc_id", toAttr: "id" }]);
+    // The reference channel is metadata about the graph, not declared config,
+    // so it never lands in attrs; the string it was resolved from still does.
+    expect(ir.nodes.find((n) => n.id === "subnet")!.attrs).toEqual({ vpc_id: "${aws_vpc.main.id}" });
+  });
+
+  test("drops a declared reference to a self or to something that is not a node", () => {
+    const a = decl({
+      lexicon: "hcl",
+      entityType: "Vpc",
+      references: [
+        { to: "a", viaAttr: "self" },
+        { to: "nowhere", viaAttr: "gone" },
+      ],
+    });
+    const entities = new Map<string, Declarable>([["a", a]]);
+    resolveAttrRefs(entities);
+    expect(buildGraphIr(entities).edges).toEqual([]);
+  });
+
+  test("keys byStack by the unit an entity names, and leaves byLexicon alone", () => {
+    const app = decl({ lexicon: "hcl", entityType: "Vpc", stack: "app" });
+    const net = decl({ lexicon: "hcl", entityType: "Vpc", stack: "network" });
+    // An entity that names no unit still falls back to the lexicon partition,
+    // which is every other lexicon's behaviour and stays unchanged.
+    const plain = decl({ lexicon: "gcp", entityType: "Vpc" });
+    const entities = new Map<string, Declarable>([
+      ["app/vpc", app],
+      ["network/vpc", net],
+      ["plain", plain],
+    ]);
+    resolveAttrRefs(entities);
+
+    const ir = buildGraphIr(entities);
+    expect(ir.groups.byStack).toEqual({ app: ["app/vpc"], gcp: ["plain"], network: ["network/vpc"] });
+    expect(ir.groups.byLexicon).toEqual({ gcp: ["plain"], hcl: ["app/vpc", "network/vpc"] });
+    expect(ir.nodes.find((n) => n.id === "app/vpc")!.attrs).not.toHaveProperty("stack");
+  });
+});

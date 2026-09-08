@@ -22,12 +22,25 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadHcl2json, type Hcl2Json } from "@intentius/chant/terraform/parse";
 import { DECLARABLE_MARKER, type Declarable } from "@intentius/chant/declarable";
+import type { EntityReference } from "@intentius/chant/graph-ir";
 import type { SuppressionDirective } from "@intentius/chant/lint/suppressions";
 import type { TerraformDeleteMode } from "../config";
 import { scanSuppressions, directivesFor, type FileScan } from "./suppressions";
 
 /** A parsed HCL block body, as `@cdktf/hcl2json` encodes it. */
 export type BlockBody = Record<string, unknown>;
+
+/**
+ * The meta-argument that expands a block into instances, when it carries one
+ * (chant #2265). Recorded because chant's entity is the BLOCK, one node
+ * whatever `count` evaluates to, so an edge out of an expanded block is
+ * block-to-block and says nothing about how many instances reference how many
+ * others. That is the honest shape for a read of the declaration alone, since
+ * the instance count is a plan-time answer and often a state-time one, but it
+ * is a shape a reader should be told rather than left to infer from a node
+ * count that never grows.
+ */
+export type TerraformExpansion = "count" | "for_each";
 
 /** Whether a root runs under choudoufu with a declared estate (#2103). */
 export type TerraformRootMode = "live" | "state";
@@ -99,7 +112,37 @@ export interface TerraformEntity extends Declarable {
      * quotes still exist. Empty when a caller built the entity by hand.
      */
     readonly source: string;
+    /**
+     * `count` or `for_each` when the block carries one (chant #2265). See
+     * {@link TerraformExpansion} for why one node still stands for the whole
+     * expansion.
+     */
+    readonly expansion?: TerraformExpansion;
   };
+  /**
+   * The deployable unit this entity belongs to: the root name, which is what
+   * one `terraform apply` runs against (chant #2266).
+   *
+   * Duplicates `props.root`, deliberately. `props` is what this lexicon's own
+   * checks and serializer read; `stack` is the lexicon-neutral field core's
+   * `buildGraphIr` reads to key `groups.byStack`, so a five-root project draws
+   * as five boundary boxes instead of one bucket named `terraform`. Core has
+   * no business reaching into a lexicon's `props` to find out, and this
+   * lexicon has no business knowing how the grouping is built, so the fact is
+   * said once in each vocabulary. A child module's blocks carry the calling
+   * ROOT's name, not the module's: the module is not separately applied.
+   */
+  readonly stack: string;
+  /**
+   * Every reference in this block, resolved to the entity keys it points at
+   * (chant #2265), in core's lexicon-neutral {@link EntityReference} shape.
+   *
+   * Absent until `./edges.ts` resolves it, which needs the whole root's entity
+   * set and so cannot happen inside the per-file parse below. An entity that
+   * never went through that pass carries none, which reads as "no references
+   * were resolved", never as "this block references nothing".
+   */
+  readonly references?: readonly EntityReference[];
   /**
    * `# chant-ignore`/`chant-ignore-file`/`chant-ignore-block` directives that
    * apply to this entity (chant #2111): the ones anchored to its own block,
@@ -126,6 +169,13 @@ export const LIVE_TYPE = "Terraform::Live";
 /** The sidecar filename choudoufu reads an estate declaration from when no in-block `live { }` is used. */
 export const LIVE_SIDECAR_FILENAME = "estate.chdf.hcl";
 
+/** The expansion meta-argument a block body carries, if any. `count` wins if both are present (Terraform rejects that combination anyway). */
+function expansionOf(body: BlockBody): TerraformExpansion | undefined {
+  if ("count" in body) return "count";
+  if ("for_each" in body) return "for_each";
+  return undefined;
+}
+
 /**
  * Build one entity. Written out rather than run through `createResource`
  * from `@intentius/chant/runtime`: that factory is for generated resource
@@ -145,11 +195,13 @@ export function terraformEntity(
   line?: number,
   suppressions?: readonly SuppressionDirective[],
 ): TerraformEntity {
+  const expansion = expansionOf(body);
   return {
     [DECLARABLE_MARKER]: true,
     lexicon: "terraform",
     entityType,
     kind: "resource",
+    stack: root,
     props: {
       address,
       body,
@@ -157,6 +209,7 @@ export function terraformEntity(
       root,
       source,
       line,
+      ...(expansion ? { expansion } : {}),
       ...(extra?.mode !== undefined ? { mode: extra.mode } : {}),
       ...(extra?.estate !== undefined ? { estate: extra.estate } : {}),
       ...(extra?.workspace !== undefined ? { workspace: extra.workspace } : {}),
