@@ -33,8 +33,8 @@ export interface BuildParamDef {
   /**
    * Allowed values — a resolved value outside this list is a build error
    * naming the parameter (never a thrown error from user source). Replaces
-   * the hand-written `if (!VALID.includes(raw)) throw ...` pattern loomster's
-   * `params.ts` files used before migrating to this mechanism.
+   * the hand-written `if (!VALID.includes(raw)) throw ...` pattern a project's
+   * own `params.ts` writes before migrating to this mechanism.
    */
   enum?: readonly BuildParamValue[];
   /**

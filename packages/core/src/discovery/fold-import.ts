@@ -1697,9 +1697,9 @@ async function resolveCallArguments(
 //  4. **Its body is a single expression, or a block of `const` declarations
 //     followed by one `return`** — and nothing else. No `if`, no `throw`, no
 //     loop, no `let`/`var`, no nested function declaration, no bare expression
-//     statement. This is the line loomster's `composites/*.ts` fall outside
-//     (module-level `buildXxx()` helpers with `if`/`throw` and `.map()`), and
-//     they are meant to: they keep invoking, exactly as before.
+//     statement. This is the line a project's hand-rolled composite modules
+//     fall outside (module-level `buildXxx()` helpers with `if`/`throw` and
+//     `.map()`), and they are meant to: they keep invoking, exactly as before.
 //  5. **Every expression in it is inside the fold subset, extended with the
 //     two things a factory body exists to do**: `new Type(...)` in ANY value
 //     position (a member, a nested property object, an array element), and a

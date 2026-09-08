@@ -42,10 +42,10 @@ describe("rollback-previous (#557)", () => {
   });
 
   it("rolls an ECS service back via the executor for the {service, cluster} shape (#990)", async () => {
-    // The ecs-fargate preset / ALB-ECS pilot (and loomster's loom-frontend)
-    // compose rollback-previous with an ECS service, NOT a snapshot id. This
-    // used to reach the snapshot path and throw "Cannot read properties of
-    // undefined (reading 'includes')" on the absent snapshotId.
+    // The ecs-fargate preset / ALB-ECS pilot compose rollback-previous with an
+    // ECS service, NOT a snapshot id. This used to reach the snapshot path and
+    // throw "Cannot read properties of undefined (reading 'includes')" on the
+    // absent snapshotId.
     const mock = createMockCloudExecutor();
     const out = await createRollbackPreviousCapability(mock.executor).run(ctx, {
       service: "loom-frontend-svc",

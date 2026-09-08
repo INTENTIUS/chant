@@ -6,7 +6,7 @@
  * is a deploy-time CloudFormation parameter: it emits a `Parameters:` block and
  * resolves when the STACK deploys. A build-time parameter resolves before the
  * template is even synthesized — its value can change WHICH resources are
- * produced at all (loomster's `LOOM_TIER` selecting `light` vs `production` vs
+ * produced at all (a `tier` parameter selecting `light` vs `production` vs
  * `production-ha`), which a deploy-time `Parameter` structurally cannot do.
  *
  * Project source never reads `process.env` directly to vary a build — that

@@ -26,11 +26,11 @@
  * translation happens. The wire values are exported as well, for a caller that
  * has one in hand from a live read.
  *
- * ### The showcase seam (loomster#171)
+ * ### The showcase seam
  *
- * loomster#171 wants a staged policy rollout it can demonstrate end to end:
- * ship the policy log-only, watch what it would have denied, promote it. This
- * module is that seam. The whole rollout is one argument —
+ * A staged policy rollout has to be demonstrable end to end: ship the policy
+ * log-only, watch what it would have denied, promote it. This module is that
+ * seam. The whole rollout is one argument —
  * `agentCoreStagedPolicy(name, policy, stage)` — so the promotion is a
  * one-token diff a reviewer can see, rather than a hand-edited string in a
  * CloudFormation resource. Anything more elaborate (which environments are

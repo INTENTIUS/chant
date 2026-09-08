@@ -12,8 +12,8 @@ import { dirname, join, resolve } from "path";
  * `src/<stack>` layout — `chant build src/<stack>` two or more levels below
  * the project root — silently never found the root config: `buildParams`'
  * declared `env:` mappings went inert, `ownership`/`lint.policies`/etc quietly
- * fell back to defaults, and nothing warned (loomster#162: `LOOM_TIER`/
- * `LOOM_ENV` inert under every `npm run synth:*` for two releases).
+ * fell back to defaults, and nothing warned. That failure ran under every
+ * `npm run synth:*` of one project for two releases before anyone noticed it.
  *
  * `findProjectConfig` is the one walk every config-discovery call site now
  * shares. It stops at the first of:

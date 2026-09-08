@@ -204,8 +204,8 @@ describe("observeResources", () => {
         const stack = (opts as { stack?: string }).stack;
         calls.push(stack);
         // Different resources per stack — the multi-stack, per-component case
-        // (#57 loomster). Bare-string stacks keep BARE ids (no `src` scope), so
-        // the union is `db-a`+`db-b`, not stack-qualified: per-component ids are
+        // (#57). Bare-string stacks keep BARE ids (no `src` scope), so the
+        // union is `db-a`+`db-b`, not stack-qualified: per-component ids are
         // already unique and behold reads them bare. Qualification is a scoped
         // (`src`) feature — see the per-stack src test below.
         const resources: Record<string, ResourceMetadata> =

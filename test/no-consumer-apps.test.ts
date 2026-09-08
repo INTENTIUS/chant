@@ -2,9 +2,9 @@
  * Consumer applications never live in this repo.
  *
  * The wardens are consumer applications of chant — the same category as
- * loomster or fountain-ops. They live in their own repos and publish (if
- * at all) from their own repos. They were internalized into this monorepo
- * twice and reverted twice; this test is the durable form of that ruling
+ * fountain-ops. They live in their own repos and publish (if at all) from
+ * their own repos. They were internalized into this monorepo twice and
+ * reverted twice; this test is the durable form of that ruling
  * (see CLAUDE.md, "Hard boundary"). If it fails, remove the
  * internalization. Do not remove the test.
  */

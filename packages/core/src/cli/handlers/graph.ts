@@ -253,17 +253,17 @@ async function runGraphLive(
     return 1;
   }
 
-  // Multi-stack, per-component projects (loomster/Floci, #57): AWS's
-  // single-stack convention (`describeResources` defaults to a stack named
-  // after the environment, lexicons/aws/src/plugin.ts) never matches a
-  // per-component layout (e.g. `loom-local-a-<component>`), so the plain
-  // single call always observes zero nodes. Resolve every discovered
-  // component's `cfn-deploy` stack(s) — the same walk `chant components
-  // status --live` uses (`cfnDeployStacks`, ./components.ts) — and hand them
-  // to `observeResources`, which queries `describeResources` once per stack
-  // and unions the results. A project with no components (or whose discovery
-  // errors) yields no stacks, so `observeResources` falls back to its
-  // original single-stack call — unchanged.
+  // Multi-stack, per-component projects (#57): AWS's single-stack convention
+  // (`describeResources` defaults to a stack named after the environment,
+  // lexicons/aws/src/plugin.ts) never matches a per-component layout (e.g.
+  // `loom-local-a-<component>`), so the plain single call always observes zero
+  // nodes. Resolve every discovered component's `cfn-deploy` stack(s) — the
+  // same walk `chant components status --live` uses (`cfnDeployStacks`,
+  // ./components.ts) — and hand them to `observeResources`, which queries
+  // `describeResources` once per stack and unions the results. A project with
+  // no components (or whose discovery errors) yields no stacks, so
+  // `observeResources` falls back to its original single-stack call —
+  // unchanged.
   const componentsDiscovery = await discoverComponents(resolve(args.src ?? config.sourceDir ?? "."), {
     sandbox: args.sandbox,
   });
