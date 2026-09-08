@@ -18,6 +18,12 @@
  * local source is followed into its directory and parsed as a child scope of
  * the root (#2112). `./descend.ts` owns that walk and every refusal in it; the
  * refusals surface here as this render's warnings.
+ *
+ * One pass runs after every root has parsed: `./edges.ts` resolves each
+ * block's `${...}` references into the entity keys they name, so the graph IR
+ * has edges to draw (#2265). It runs here rather than inside the per-file
+ * parse because an edge's target may be a block in a file, or a child module,
+ * that has not been read yet.
  */
 
 import { existsSync } from "node:fs";
@@ -27,6 +33,7 @@ import type { Hcl2Json } from "@intentius/chant/terraform/parse";
 import type { TerraformRootConfig } from "../config";
 import { LIVE_TYPE, parseTerraformRootDir } from "./parse";
 import { descendModules, resolveCallModuleType, type CallModuleType } from "./descend";
+import { resolveEntityReferences } from "./edges";
 
 export interface TerraformRootsResult {
   entities: Map<string, Declarable>;
@@ -116,6 +123,13 @@ export async function renderTerraformRoots(
       warnings.push(`terraform.roots.${name}: could not parse ${dir}, ${message}`);
     }
   }
+
+  // Every root and every descended child module is parsed by now, which is
+  // what reference resolution needs: an edge points at an entity key, and the
+  // keys only all exist once the last descent has run (#2265). One pass over
+  // the whole map, one expression cache, resolution still bounded to each
+  // block's own module scope.
+  await resolveEntityReferences(entities, opts.hcl2json);
 
   return { entities, warnings };
 }

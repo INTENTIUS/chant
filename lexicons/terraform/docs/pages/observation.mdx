@@ -112,6 +112,46 @@ as a teardown hole rather than leaving it out. A resource type with no `tags`
 argument never carried a marker, so its absence from a tag listing says
 nothing about whether it is there.
 
+## Which of the two reads answered is on the wire
+
+`terraform show -json` and `choudoufu live-plan -json` do not answer the same
+question. The first says what the last apply recorded. The second says what
+the account holds now. A tool that renders an observation as drift and cannot
+tell them apart will paint a state read green, which reads as "the account
+matches" when all it supports is "the apply finished".
+
+So the `ObservationResult` carries a `sources` map, keyed by chant entity name,
+with one of two values:
+
+```json
+{
+  "observation": "v1",
+  "resources": { "app/null_resource.first": { "...": "..." } },
+  "sources": {
+    "app/null_resource.first": "state",
+    "estate/aws_eip.pool": "live"
+  }
+}
+```
+
+`"state"` means that entity's root was read with `terraform show -json`.
+`"live"` means it was read with `choudoufu live-plan -json`.
+
+Three things hold, and a consumer may rely on all three.
+
+Every entity that belongs to a root has an entry, whatever verdict came back:
+present, absent and not-observed alike. Which read was attempted is a fact
+independent of what it found, and an absent entity has no other row to carry
+it. An entity with no root gets no entry, for the same reason it gets no read.
+
+The value equals the declared entity's own `props.mode`. One fact decides both
+(`terraform.binary` is `"choudoufu"` and the root declares an estate), so a
+consumer holding the declared graph and no observation at all can label from
+`mode` and get the same answer.
+
+A project with both kinds of root gets both values in one document, which is
+why this is a map rather than one field on the result.
+
 ## What has no answer at all
 
 Only `resource` and `data` blocks have rows in state. A `terraform`,

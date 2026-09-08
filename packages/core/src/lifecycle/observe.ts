@@ -55,6 +55,8 @@ function qualifyObservation(obs: NormalizedObservation, stackName: string): Norm
     resources: q(obs.resources),
     unobserved: q(obs.unobserved),
     queried: q(obs.queried),
+    // Which read answered (#2267) is per entity, so it re-keys with them.
+    sources: q(obs.sources),
     notes: obs.notes,
     // Exports are already keyed by stack (#1279); nothing to qualify.
     ...(obs.stackExports ? { stackExports: obs.stackExports } : {}),
@@ -283,6 +285,7 @@ export async function observeResources(
           resources: {},
           unobserved: unobservedAll(entityNames, "read-failed", message, entities),
           queried: {},
+          sources: {},
           notes: [],
         },
         environment,

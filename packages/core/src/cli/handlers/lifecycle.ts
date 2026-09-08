@@ -782,6 +782,7 @@ async function observeLexicon(
       resources: {},
       unobserved: unobservedAll(entityNames, "read-failed", message, opts.entities),
       queried: {},
+      sources: {},
       notes: [],
     };
   }

@@ -29,7 +29,7 @@ const meta = (over: Partial<ResourceMetadata> = {}): ResourceMetadata => ({
 
 describe("normalizeObservation", () => {
   test("a bare map means 'I looked at everything'", () => {
-    expect(normalizeObservation({ a: meta() })).toEqual({ resources: { a: meta() }, unobserved: {}, queried: {}, notes: [] });
+    expect(normalizeObservation({ a: meta() })).toEqual({ resources: { a: meta() }, unobserved: {}, queried: {}, sources: {}, notes: [] });
   });
 
   test("the envelope carries both halves", () => {
@@ -38,6 +38,7 @@ describe("normalizeObservation", () => {
       resources: { a: meta() },
       unobserved: { b: { reason: "read-failed" } },
       queried: {},
+      sources: {},
       notes: [],
     });
   });
@@ -50,7 +51,7 @@ describe("normalizeObservation", () => {
   });
 
   test("undefined normalizes to empty maps", () => {
-    expect(normalizeObservation(undefined)).toEqual({ resources: {}, unobserved: {}, queried: {}, notes: [] });
+    expect(normalizeObservation(undefined)).toEqual({ resources: {}, unobserved: {}, queried: {}, sources: {}, notes: [] });
   });
 
   test("the envelope carries the queried addresses through normalization (#1620)", () => {
@@ -92,8 +93,8 @@ describe("unobservedAll", () => {
 describe("mergeObservations (multi-stack)", () => {
   test("present beats not-observed beats absent", () => {
     const merged = mergeObservations([
-      { resources: {}, unobserved: { a: { reason: "read-failed" }, b: { reason: "no-binding" } }, queried: {}, notes: [] },
-      { resources: { a: meta() }, unobserved: {}, queried: {}, notes: [] },
+      { resources: {}, unobserved: { a: { reason: "read-failed" }, b: { reason: "no-binding" } }, queried: {}, sources: {}, notes: [] },
+      { resources: { a: meta() }, unobserved: {}, queried: {}, sources: {}, notes: [] },
     ]);
     expect(Object.keys(merged.resources)).toEqual(["a"]);
     expect(Object.keys(merged.unobserved)).toEqual(["b"]);
@@ -102,25 +103,36 @@ describe("mergeObservations (multi-stack)", () => {
   test("the same note from four stacks is one note (#1265)", () => {
     const note = "ownership filter unavailable";
     const merged = mergeObservations(
-      ["a", "b", "c", "d"].map((k) => ({ resources: { [k]: meta() }, unobserved: {}, queried: {}, notes: [note] })),
+      ["a", "b", "c", "d"].map((k) => ({ resources: { [k]: meta() }, unobserved: {}, queried: {}, sources: {}, notes: [note] })),
     );
     expect(merged.notes).toEqual([note]);
   });
 
   test("an entity nobody looked for in any stack stays absent", () => {
     const merged = mergeObservations([
-      { resources: { a: meta() }, unobserved: {}, queried: {}, notes: [] },
-      { resources: { b: meta() }, unobserved: {}, queried: {}, notes: [] },
+      { resources: { a: meta() }, unobserved: {}, queried: {}, sources: {}, notes: [] },
+      { resources: { b: meta() }, unobserved: {}, queried: {}, sources: {}, notes: [] },
     ]);
     expect(merged.unobserved).toEqual({});
   });
 
   test("queried addresses union across stacks (#1620)", () => {
     const merged = mergeObservations([
-      { resources: {}, unobserved: {}, queried: { a: "stack-1/a" }, notes: [] },
-      { resources: { b: meta() }, unobserved: {}, queried: { b: "stack-2/b" }, notes: [] },
+      { resources: {}, unobserved: {}, queried: { a: "stack-1/a" }, sources: {}, notes: [] },
+      { resources: { b: meta() }, unobserved: {}, queried: { b: "stack-2/b" }, sources: {}, notes: [] },
     ]);
     expect(merged.queried).toEqual({ a: "stack-1/a", b: "stack-2/b" });
+  });
+
+  test("which read answered unions across parts (#2267)", () => {
+    // Parts read disjoint entity sets (one per stack, or per terraform root),
+    // so the union is the whole answer and there is nothing to reconcile. A
+    // project mixing a stock root and a live one gets both values here.
+    const merged = mergeObservations([
+      { resources: { a: meta() }, unobserved: {}, queried: {}, sources: { a: "state" }, notes: [] },
+      { resources: { b: meta() }, unobserved: {}, queried: {}, sources: { b: "live" }, notes: [] },
+    ]);
+    expect(merged.sources).toEqual({ a: "state", b: "live" });
   });
 });
 

@@ -103,6 +103,20 @@ chant graph ./infra --format layout    # node positions (dagre by default — no
 | `dot` | Graphviz DOT text, with lexicon clusters and labelled edges. Render directly with `dot -Tsvg`, or feed to a layout engine. | nothing to produce; `dot` to render |
 | `layout` | Node positions for a custom painter that does its own drawing: `{ width, height, nodes: [{id, x, y, w, h}] }` (y-up, origin bottom-left). | nothing (dagre); `dot` only with `--layout-engine graphviz` |
 
+### Groups: the boxes a renderer draws
+
+`groups` carries the memberships a renderer turns into boundary boxes, keyed by group name to node ids.
+
+`byLexicon` records which lexicon declared each node, which is what a renderer colours by.
+
+`byStack` is the deployable unit, and it has three sources. A project declaring side-by-side stacks in config gets those declared names. A lexicon whose entities name their own unit gets those names, one entry per unit: the terraform lexicon does this, so a project naming five `terraform.roots` graphs as five boxes rather than one, since a root is what one `terraform apply` runs against. Anything else falls back to the lexicon partition, on the reasoning that one lexicon serialises to one deployable stack.
+
+`byComposite` groups the nodes one composite instance expanded into, and `byContainer` (live graphs only) carries observed containment, a VPC's subnets and their instances, nested flatly so a renderer can recurse it.
+
+### Edges from a lexicon that parses foreign source
+
+Most edges come from resolving an `AttrRef` in a lexicon's typed props. A lexicon that reads an estate someone else wrote has no such object: the terraform lexicon keeps each HCL block verbatim, where a reference is the string `"${aws_vpc.main.id}"`. Those lexicons resolve their own references against their own key space and publish the result, and the IR turns each one into an ordinary edge. An edge is an edge whichever way it was found, and a consumer does not have to know.
+
 ### `--format layout`: size-aware positions
 
 The layout step exists for **custom painters** (the [pinhole](https://github.com/INTENTIUS/pinhole) diagrammer is one): chant computes positions, the painter draws. By default it uses **dagre** — a pure-JS engine, so `--format layout` needs **no native dependency**.

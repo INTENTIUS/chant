@@ -121,6 +121,7 @@ export async function assertLiveEntity(opts: AssertLiveEntityOptions): Promise<R
       resources: {},
       unobserved: unobservedAll([name], "read-failed", detail, { [name]: entityType }),
       queried: {},
+      sources: {},
       notes: [],
     };
   }

@@ -13,6 +13,34 @@
  * and the marker on the resource is the ownership answer. The two halves are
  * two adapters over the same `observeEntities` harness, picked per root.
  *
+ * ## Which of the two answered is on the wire (#2267)
+ *
+ * They are different claims. `terraform show -json` says what the last apply
+ * recorded; `choudoufu live-plan -json` says what the account holds now. A
+ * renderer that paints an observation as drift and cannot tell them apart
+ * paints a state read green, which reads as "the account matches" when all it
+ * says is "the apply finished". For an estate that has decided state is never
+ * the system of record, a state-backed observation is not a weaker answer, it
+ * is a different one.
+ *
+ * So the returned `ObservationResult` carries `sources`, keyed by chant entity
+ * name, with one of exactly two values:
+ *
+ * - `"state"` — this entity's root was read with `terraform show -json`.
+ * - `"live"` — this entity's root was read with `choudoufu live-plan -json`.
+ *
+ * Three guarantees a consumer may rely on. Every entity `describeResources`
+ * was asked about that belongs to a root has an entry, whatever verdict it
+ * came back with: present, absent and not-observed alike, because which read
+ * was attempted is a fact independent of what it found. The value equals the
+ * declared entity's own `props.mode` (`./hcl/parse.ts`), since one fact
+ * decides both, so `props.mode` is also a valid join key for a consumer
+ * holding the declared graph and no observation. And a project mixing stock
+ * and live roots gets both values in one document, which is why this is a map
+ * and not a field on the result as a whole.
+ *
+ * An entity with no root gets no entry, for the same reason it gets no read.
+ *
  * ## The state file is the ownership answer, on a stock root
  *
  * Every other lexicon in chant stamps a tag or a label at synthesis and reads
@@ -1091,12 +1119,20 @@ export async function describeResources(
 
   const parts = [];
   const notes: string[] = [];
+  // Which of the two reads answered, per entity (#2267). Filled for every
+  // entity of the root before the read runs, so the answer is on the wire
+  // whatever the verdict came back as: present, absent, or not-observed. A
+  // renderer joins observations to nodes, and painting `terraform show -json`
+  // over state the same green as a live read of the account is the drift lie
+  // an overlay exists to prevent.
+  const sources: Record<string, string> = {};
   for (const [root, declared] of byRoot) {
     // One fact decides the whole read, and the parse already recorded it on
     // every entity of the root (#2103). A root is live when its binary is
     // choudoufu AND it declares an estate, so a single entity carrying
     // `mode: "live"` settles it for the root.
     const live = declared.some((entity) => entity.mode === "live");
+    for (const entity of declared) sources[entity.name] = live ? "live" : "state";
     if (live) {
       notes.push(
         `terraform.roots.${root} is a live root: ownership came from choudoufu's tofu-estate/tofu-address markers via \`live-plan -json\`, not from a state file`,
@@ -1136,5 +1172,5 @@ export async function describeResources(
     }
   }
 
-  return observation(resources, unobserved, merged.queried, merged.notes);
+  return observation(resources, unobserved, merged.queried, merged.notes, undefined, sources);
 }
