@@ -264,6 +264,41 @@ describe("terraform describeResources (#2087)", () => {
   });
 });
 
+describe("which read answered, on a stock root (#2267)", () => {
+  it("says `state` for every declared entity of the root, whatever the verdict was", async () => {
+    const opts = await options();
+    const observed = normalizeObservation(await describeResources(opts, deps()));
+    // Present, absent and unsupported-kind all appear in this fixture, and the
+    // claim is about the read that was attempted, not about what it found.
+    expect(Object.keys(observed.sources).sort()).toEqual([...opts.entityNames].sort());
+    for (const value of Object.values(observed.sources)) expect(value).toBe("state");
+    // `null_resource.third` is declared and not in state, so it is OBSERVED-ABSENT:
+    // in neither map, and this is the only place it can say how it was read.
+    expect(observed.resources["app/null_resource.third"]).toBeUndefined();
+    expect(observed.unobserved["app/null_resource.third"]).toBeUndefined();
+    expect(observed.sources["app/null_resource.third"]).toBe("state");
+  });
+
+  it("still says `state` when the read failed, since a failure is a state read that failed", async () => {
+    const opts = await options();
+    const observed = normalizeObservation(
+      await describeResources(opts, deps({ show: failing("Error acquiring the state lock") })),
+    );
+    expect(Object.keys(observed.sources).sort()).toEqual([...opts.entityNames].sort());
+    for (const value of Object.values(observed.sources)) expect(value).toBe("state");
+  });
+
+  it("is the same value the declared entity already carries on props.mode", async () => {
+    // The documented join key (#2267): one fact decides both, so a consumer
+    // holding the declared graph and no observation can label from `mode`.
+    const opts = await options();
+    const { sources } = normalizeObservation(await describeResources(opts, deps()));
+    for (const [name, entity] of opts.entities) {
+      expect(sources[name]).toBe((entity.props as { mode?: string }).mode);
+    }
+  });
+});
+
 describe("terraform describeResources failed reads (#2087)", () => {
   it("a failed show reports every declared entity of that root read-failed, naming the root", async () => {
     const opts = await options();

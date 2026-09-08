@@ -310,6 +310,42 @@ describe("terraform describeResources on a live root (#2104)", () => {
   });
 });
 
+describe("which read answered, on a live root (#2267)", () => {
+  it("says `live` for every declared entity of the root, whatever the verdict was", async () => {
+    // The sibling assertion on a stock root is in `./describe-resources.test.ts`.
+    // Together they are the whole of the claim: a renderer joining observations
+    // to nodes can tell a read of the account from a read of a state file, and
+    // so never paints the second one as drift.
+    const opts = await options();
+    const observed = normalizeObservation(await describeResources(opts, deps()));
+    expect(Object.keys(observed.sources).sort()).toEqual([...opts.entityNames].sort());
+    for (const value of Object.values(observed.sources)) expect(value).toBe("live");
+  });
+
+  it("still says `live` when live-plan failed", async () => {
+    const opts = await options();
+    const observed = normalizeObservation(
+      await describeResources(
+        opts,
+        deps({
+          livePlan: (async () => {
+            throw new Error("no valid credential sources found");
+          }) as TerraformReadDeps["livePlan"],
+        }),
+      ),
+    );
+    for (const value of Object.values(observed.sources)) expect(value).toBe("live");
+  });
+
+  it("is the same value the declared entity already carries on props.mode", async () => {
+    const opts = await options();
+    const { sources } = normalizeObservation(await describeResources(opts, deps()));
+    for (const [name, entity] of opts.entities) {
+      expect(sources[name]).toBe((entity.props as { mode?: string }).mode);
+    }
+  });
+});
+
 describe("terraform describeResources live-root failures (#2104)", () => {
   it("reports every declared entity of the root not-observed, never absent", async () => {
     const opts = await options();

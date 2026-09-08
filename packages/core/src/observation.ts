@@ -113,6 +113,24 @@ export interface ObservationResult {
    */
   queried?: Record<string, string>;
   /**
+   * Which read answered for each declared entity (#2267), keyed by chant
+   * entity name. The value is a short token the lexicon defines and documents;
+   * core carries it and never interprets it, so nothing here switches on one.
+   *
+   * Additive metadata over the tri-state, exactly like {@link queried}, and
+   * present for every verdict including OBSERVED-ABSENT and NOT-OBSERVED,
+   * since which read was attempted is a fact whatever the read came back with.
+   *
+   * A lexicon with one read path has nothing to say here and omits it. This is
+   * for a lexicon with two, where the two answer different questions: a stock
+   * Terraform root is read with `terraform show -json` over its state, which
+   * says what the last apply recorded, and a live root is read with
+   * `choudoufu live-plan -json`, which says what the account holds. A renderer
+   * that paints an overlay as drift must not paint the first one green, and
+   * before this field an observation gave it no way to tell them apart.
+   */
+  sources?: Record<string, string>;
+  /**
    * Notices about the read as a whole, not about any one entity (#1265) —
    * "the ownership filter could not be applied on this surface" is the
    * canonical one. A note is a property of the environment or the read path,
@@ -144,6 +162,8 @@ export interface NormalizedObservation {
   unobserved: Record<string, UnobservedEntity>;
   /** Resolved query address per entity name (#1620). Empty when the lexicon reported none. */
   queried: Record<string, string>;
+  /** Which read answered, per entity name (#2267). Empty when the lexicon reported none. */
+  sources: Record<string, string>;
   /** Run-level notices (#1265), distinct. Empty when the lexicon reported none. */
   notes: string[];
   /** Per-stack exports (#1279), keyed by stack name. Absent when the lexicon reported none. */
@@ -169,12 +189,14 @@ export function observation(
   queried?: Record<string, string>,
   notes?: string[],
   stackExports?: Record<string, Record<string, unknown>>,
+  sources?: Record<string, string>,
 ): ObservationResult {
   return {
     observation: "v1",
     resources,
     ...(unobserved && Object.keys(unobserved).length > 0 ? { unobserved } : {}),
     ...(queried && Object.keys(queried).length > 0 ? { queried } : {}),
+    ...(sources && Object.keys(sources).length > 0 ? { sources } : {}),
     ...(notes && notes.length > 0 ? { notes } : {}),
     ...(stackExports && Object.keys(stackExports).length > 0 ? { stackExports } : {}),
   };
@@ -187,17 +209,18 @@ export function observation(
  * {@link unobservedAll} rather than returning nothing.
  */
 export function normalizeObservation(value: DescribeResourcesResult | undefined): NormalizedObservation {
-  if (!value) return { resources: {}, unobserved: {}, queried: {}, notes: [] };
+  if (!value) return { resources: {}, unobserved: {}, queried: {}, sources: {}, notes: [] };
   if (isObservationResult(value)) {
     return {
       resources: value.resources ?? {},
       unobserved: value.unobserved ?? {},
       queried: value.queried ?? {},
+      sources: value.sources ?? {},
       notes: [...new Set(value.notes ?? [])],
       ...(value.stackExports && Object.keys(value.stackExports).length > 0 ? { stackExports: value.stackExports } : {}),
     };
   }
-  return { resources: value, unobserved: {}, queried: {}, notes: [] };
+  return { resources: value, unobserved: {}, queried: {}, sources: {}, notes: [] };
 }
 
 /**
@@ -237,6 +260,10 @@ export function mergeObservations(parts: Iterable<NormalizedObservation>): Norma
   const resources: Record<string, ResourceMetadata> = {};
   const unobserved: Record<string, UnobservedEntity> = {};
   const queried: Record<string, string> = {};
+  // Which read answered (#2267) merges the same way `queried` does: it is a
+  // fact about one entity's read, and the parts being merged are reads of
+  // disjoint entity sets (one per stack, or per terraform root).
+  const sources: Record<string, string> = {};
   // A note is about the read, not a stack; four stacks saying the same thing
   // is one note (#1265).
   const notes = new Set<string>();
@@ -245,6 +272,7 @@ export function mergeObservations(parts: Iterable<NormalizedObservation>): Norma
     Object.assign(resources, part.resources);
     Object.assign(unobserved, part.unobserved);
     Object.assign(queried, part.queried);
+    Object.assign(sources, part.sources);
     for (const n of part.notes) notes.add(n);
     Object.assign(stackExports, part.stackExports ?? {});
   }
@@ -255,6 +283,7 @@ export function mergeObservations(parts: Iterable<NormalizedObservation>): Norma
     resources,
     unobserved,
     queried,
+    sources,
     notes: [...notes],
     ...(Object.keys(stackExports).length > 0 ? { stackExports } : {}),
   };
