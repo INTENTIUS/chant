@@ -42,6 +42,19 @@
  * the job itself) that chant does not generate. Ignoring the map would emit a
  * job that reads as having OIDC and runs with no credentials.
  *
+ * A spec's `environment` (#2257) does cross, because GitLab has the concept
+ * under the same key and with the same two fields: `environment: { name, url
+ * }` on the job, an environment object in the project, and — on a protected
+ * environment — an approval rule that holds the deployment job until an
+ * approver releases it. So the reviewer gate the option exists for is
+ * expressible here, unlike the two #2242 options above, and it is emitted
+ * rather than refused. What GitLab does not have is any way for this file to
+ * declare the protection: an environment's approval rules are project
+ * settings (Settings > CI/CD > Protected environments), exactly as GitHub's
+ * required reviewers are repository settings, so the generated header names
+ * the environment to protect the way it already names the schedule to create.
+ * chant's own gate (#2119) runs inside the job either way.
+ *
  * The gated-apply mapping (#2243) has nothing to attach to here. It exists
  * because a push-to-main apply that stops at its gate exits 3 and paints the
  * branch red on every merge; this generator has no push pipeline at all,
@@ -58,11 +71,45 @@ import { emitYAML } from "@intentius/chant/yaml";
 import { resolveOpTrigger } from "@intentius/chant/lexicon";
 import type {
   ComponentPipelineOptions as GenerateGitlabOpOptions,
+  OpEnvironment,
   OpFindingMode,
   OpPipelineJob,
   OpPipelineResult as GenerateGitlabOpResult,
   ScheduledOpSpec,
 } from "@intentius/chant/lexicon";
+
+/**
+ * Validate a spec's `environment` (#2257) on GitLab's own terms. A GitLab job
+ * naming an environment that does not exist creates an unprotected one on
+ * first deploy rather than failing, so — as on github — the only shapes worth
+ * refusing at build time are the ones that could never bind: a blank name,
+ * and a `url` that is neither absolute nor a variable expression GitLab
+ * expands, which would render as a dead "View deployment" link.
+ */
+function assertGitlabEnvironment(name: string, environment: OpEnvironment): void {
+  const where = `Scheduled Op "${name}" environment`;
+  if (environment.name.trim() === "") {
+    throw new Error(
+      `${where} has an empty \`name\`. A GitLab environment is a project object, and its approval ` +
+        `rules live on that object rather than in this file, so a blank name resolves to nothing. ` +
+        `Give it the environment's name, or drop the option.`,
+    );
+  }
+  if (environment.url === undefined) return;
+  const url = environment.url.trim();
+  if (url === "") {
+    throw new Error(
+      `${where} "${environment.name}" has an empty \`url\`. Omit the field rather than setting it to "".`,
+    );
+  }
+  if (!/^https?:\/\//.test(url) && !url.includes("$")) {
+    throw new Error(
+      `${where} "${environment.name}" has \`url: "${environment.url}"\`, which is neither an absolute ` +
+        `http(s) URL nor a variable expression GitLab expands. It becomes the environment's own link, ` +
+        `so a relative path is a dead link on the environment page rather than an error anywhere.`,
+    );
+  }
+}
 
 /**
  * Refuse the two #2242 options GitLab cannot honour, by name and before any
@@ -112,6 +159,19 @@ const SELECTOR_VAR = "CHANT_SCHEDULED_OP";
 function setupLine(spec: ScheduledOpSpec, cron: string, jobName: string, mode: OpFindingMode): string {
   const tokenNote = mode === "report" ? "" : " — needs a GITLAB_TOKEN CI/CD variable (masked, scope: api)";
   return `#   ${jobName}: cron "${cron}", ${SELECTOR_VAR}="${spec.name}", finding-mode ${mode}${tokenNote}`;
+}
+
+/**
+ * The follow-up line an Op with an `environment` adds under its setup line
+ * (#2257). The `environment:` key below binds the job to the environment; it
+ * cannot declare the approval rule, which is a project setting, so the header
+ * says where that is set the same way it says where the schedule is created.
+ */
+function environmentLine(environment: OpEnvironment): string {
+  return (
+    `#     deploys to environment "${environment.name}" — protect it under Settings > CI/CD >` +
+    " Protected environments to require an approval before the job runs"
+  );
 }
 
 /**
@@ -168,6 +228,10 @@ export function generateGitlabOpPipeline(
     const jobName = toJobName(spec.name);
     jobs.push({ jobName, op: spec.name, trigger, findingMode });
     headerLines.push(setupLine(spec, trigger.schedule, jobName, findingMode));
+    if (spec.environment) {
+      assertGitlabEnvironment(spec.name, spec.environment);
+      headerLines.push(environmentLine(spec.environment));
+    }
 
     const runParts = runCommand.map((part) => part.replace("{name}", spec.name));
     const script = [...setupScript, ...beforeScript, runParts.join(" "), ...extraScript];
@@ -175,6 +239,14 @@ export function generateGitlabOpPipeline(
     doc[jobName] = {
       stage: STAGE,
       image,
+      ...(spec.environment
+        ? {
+            environment: {
+              name: spec.environment.name,
+              ...(spec.environment.url === undefined ? {} : { url: spec.environment.url }),
+            },
+          }
+        : {}),
       rules: [{ if: `$CI_PIPELINE_SOURCE == "schedule" && $${SELECTOR_VAR} == "${spec.name}"` }],
       script,
     };

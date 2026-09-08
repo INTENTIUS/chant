@@ -35,6 +35,17 @@
  * configuration to point `gh` at a Forgejo instance, so this refuses the mode
  * by name rather than generating a job whose finding step fails on every run.
  *
+ * A spec's `environment` (#2257) is dropped on the same terms as
+ * `permissions:`, and for a stronger reason: Forgejo Actions has no
+ * environments at all — no protection rules, no required reviewers, no
+ * per-environment secrets — so the key names an object that does not exist on
+ * the instance. Dropping it silently would be the worst outcome available,
+ * because the whole point of the option is a human holding an apply, so this
+ * also writes a comment into the generated file's header saying which
+ * environment was asked for and that nothing on Forgejo enforces it. What
+ * still holds the apply here is chant's own gate (#2119), which is a fact on
+ * the `chant/lifecycle` branch and needs nothing from the forge.
+ *
  * The gated-apply notice job (#2243) does not cross over either, for the same
  * reason and by the same mechanism as `permissions:`: it shells to `gh`, which
  * a Forgejo `act_runner` neither ships nor can point at its own instance, and
@@ -65,6 +76,34 @@ function forgejoize(value: Record<string, unknown>, dialect: ForgejoDialectOptio
 }
 
 /**
+ * Strip the job-level `environment:` github emitted (#2257). Forgejo Actions
+ * has no environments, so the key would read as a deployment gate and hold
+ * nothing back. Dropped from the rebuilt doc rather than from the dialect's
+ * own `DROPPED_KEYS`, so this touches the Op generator alone and leaves every
+ * other document the dialect transforms exactly as it emits today.
+ */
+function withoutEnvironment(jobsDoc: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(jobsDoc).map(([jobName, job]) => {
+      if (typeof job !== "object" || job === null || !("environment" in job)) return [jobName, job];
+      const { environment: _dropped, ...rest } = job as Record<string, unknown>;
+      return [jobName, rest];
+    }),
+  );
+}
+
+/** Say in the generated file which environment gate did not survive the crossing. */
+function droppedEnvironmentHeader(environmentName: string): string[] {
+  return [
+    `# chant dropped \`environment: ${environmentName}\` from this workflow: Forgejo Actions has no`,
+    "# environments, so there is no protection rule, required reviewer or wait timer for the key to",
+    "# name. This job is not held back by anything on the forge. What still stops the apply is chant's",
+    "# own gate: the run records a pending fact on the chant/lifecycle branch and ends, and `chant",
+    "# approve <op> <gate>` is what lets the next run through.",
+  ];
+}
+
+/**
  * Synthesize one `.forgejo/workflows/*.yml` per scheduled Op. Reuses github's
  * trigger/job structure ({@link buildGithubOpPipelineDocs}) — its `setup`-step
  * and additive-permission validation included, so an unpinned action ref is
@@ -92,13 +131,17 @@ export function generateForgejoOpPipeline(
   const { files, jobs } = buildGithubOpPipelineDocs(ops, options);
 
   return {
-    files: files.map(({ name, doc }) => {
+    // One file per spec, in spec order, which is what lets the header below
+    // read its Op's own `environment` off the input by position.
+    files: files.map(({ name, doc }, index) => {
+      const environment = ops[index].environment;
       const forgejoDoc: GithubOpPipelineDoc = {
+        ...(environment ? { header: droppedEnvironmentHeader(environment.name) } : {}),
         on: forgejoize(doc.on, dialectOptions),
         ...(doc.env ? { env: forgejoize(doc.env, dialectOptions) } : {}),
         concurrency: forgejoize(doc.concurrency, dialectOptions),
         permissions: {},
-        jobsDoc: forgejoize(doc.jobsDoc, dialectOptions),
+        jobsDoc: forgejoize(withoutEnvironment(doc.jobsDoc), dialectOptions),
       };
       return { name, yaml: emitOpPipelineYAML(forgejoDoc) };
     }),

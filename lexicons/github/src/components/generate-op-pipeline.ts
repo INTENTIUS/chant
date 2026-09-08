@@ -46,12 +46,24 @@
  * reason) and never touching one it does; {@link mergePermissions} refuses a
  * blanket grant, an overlap with the mode's own set, an unknown scope name,
  * and pull-request write on a trigger that has no pull request.
+ *
+ * A third widens it the other way (#2257): a spec's `environment` emits
+ * `environment:` on the Op's own job, which is how a GitHub environment's
+ * protection rules — required reviewers above all — come to hold a generated
+ * apply. That is a second gate beside chant's own, not a replacement for it:
+ * the reviewer stops the job before any step runs, chant's gate ledger
+ * (#2119) stops the apply inside a run that already started, and the two
+ * compose in either combination. It costs {@link permissionsFor} nothing —
+ * environment protection is repository configuration, not a token scope — and
+ * {@link assertEnvironment} refuses only what would emit as configured and
+ * bind nothing.
  */
 
 import { emitYAML } from "@intentius/chant/yaml";
 import { resolveOpTrigger } from "@intentius/chant/lexicon";
 import type {
   ComponentPipelineOptions as GenerateGithubOpOptions,
+  OpEnvironment,
   OpFindingMode,
   OpPipelineJob,
   OpPipelineResult as GenerateGithubOpResult,
@@ -70,6 +82,15 @@ export type { GenerateGithubOpOptions, GenerateGithubOpResult };
  * `./generate-pipeline.ts`'s `GithubPipelineDoc` split.
  */
 export interface GithubOpPipelineDoc {
+  /**
+   * Comment lines emitted above the document, `#` prefix included, when a
+   * dialect has something to say about what it could not carry across
+   * (#2257). Empty on github, which drops nothing; the forgejo dialect uses
+   * it to name the `environment:` its runner has no concept of, so the fact
+   * that a reviewer gate did not survive is readable in the generated file
+   * rather than only in a build warning.
+   */
+  header?: string[];
   /**
    * The `on:` trigger mapping, per {@link ScheduledOpSpec}'s trigger kind
    * (#2084): `{ schedule, workflow_dispatch }` for cron, `{ pull_request }`
@@ -409,6 +430,43 @@ export function assertSetupSteps(name: string, setup: OpSetupStep[]): void {
 }
 
 /**
+ * Validate a spec's `environment` (#2257). GitHub creates an environment it
+ * has never seen on first use rather than failing the run, and an environment
+ * created that way carries no protection rules at all — so a job can name one
+ * and read as gated while being gated by nothing. Neither this generator nor
+ * GitHub can tell those apart at build time (the environment and its
+ * reviewers are repository configuration, not workflow content), which is why
+ * what is refused here is only the shape that could never bind: a name that
+ * is blank, and a `url` that is neither absolute nor an expression the forge
+ * resolves. The rest is the README's job to say out loud.
+ */
+export function assertEnvironment(name: string, environment: OpEnvironment): void {
+  const where = `Scheduled Op "${name}" environment`;
+  if (environment.name.trim() === "") {
+    throw new Error(
+      `${where} has an empty \`name\`. An environment is named repository configuration — the ` +
+        `protection rules and reviewers live on the environment, not in this workflow — so there is ` +
+        `nothing for a blank name to resolve to. Give it the environment's name, or drop the option.`,
+    );
+  }
+  if (environment.url === undefined) return;
+  const url = environment.url.trim();
+  if (url === "") {
+    throw new Error(
+      `${where} "${environment.name}" has an empty \`url\`. Omit the field rather than setting it to "".`,
+    );
+  }
+  if (!/^https?:\/\//.test(url) && !url.includes("${{")) {
+    throw new Error(
+      `${where} "${environment.name}" has \`url: "${environment.url}"\`, which is neither an absolute ` +
+        `http(s) URL nor a \${{ }} expression. GitHub renders this value as the deployment's own link, ` +
+        `so a relative path becomes a dead link on the environment page rather than an error anywhere. ` +
+        `Write the full URL, or an expression the run resolves to one.`,
+    );
+  }
+}
+
+/**
  * Merge a spec's additive `permissions` over the finding-mode's own set
  * (#2242), refusing by name anything that is not strictly additive:
  *
@@ -472,6 +530,18 @@ export function mergePermissions(
   return merged;
 }
 
+/**
+ * Emit a spec's environment as the job's `environment:` mapping. Always the
+ * mapping form, never the `environment: name` string shorthand, so adding a
+ * `url` later is a new key rather than a reshaped value.
+ */
+function environmentDoc(environment: OpEnvironment): Record<string, unknown> {
+  return {
+    name: environment.name,
+    ...(environment.url === undefined ? {} : { url: environment.url }),
+  };
+}
+
 /** Emit one setup entry as a GitHub Actions step. */
 function setupStepDoc(step: OpSetupStep): Record<string, unknown> {
   if ("uses" in step) {
@@ -527,6 +597,7 @@ export function buildGithubOpPipelineDocs(
 
     const setup = spec.setup ?? [];
     assertSetupSteps(spec.name, setup);
+    if (spec.environment) assertEnvironment(spec.name, spec.environment);
 
     // A `push` job is the one that has to survive a gate (#2243): the apply
     // runs with `--gated-exit 0` so a pending approval is a green run, and
@@ -563,6 +634,11 @@ export function buildGithubOpPipelineDocs(
         [jobName]: {
           "runs-on": "ubuntu-latest",
           container: image,
+          // On this Op's own job and never on the notice job beside it: the
+          // notice exists to say a chant gate is pending, and putting it
+          // behind the same reviewer would hold the message back until
+          // somebody had already acted.
+          ...(spec.environment ? { environment: environmentDoc(spec.environment) } : {}),
           ...(gated
             ? {
                 outputs: Object.fromEntries(
@@ -592,6 +668,10 @@ export function buildGithubOpPipelineDocs(
  */
 export function emitOpPipelineYAML(doc: GithubOpPipelineDoc): string {
   const sections: string[] = [];
+  // A dialect's note about what it could not carry (#2257), when there is
+  // one. Absent on github, so an unannotated document is emitted exactly as
+  // it was before the field existed.
+  if (doc.header && doc.header.length > 0) sections.push(doc.header.join("\n"));
   sections.push("on:" + emitYAML(doc.on, 1));
   if (doc.env && Object.keys(doc.env).length > 0) sections.push("env:" + emitYAML(doc.env, 1));
   sections.push("concurrency:" + emitYAML(doc.concurrency, 1));
