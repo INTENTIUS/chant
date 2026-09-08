@@ -8,9 +8,14 @@
  * markdown scratchpad through `GITHUB_STEP_SUMMARY`, rendered at the top of
  * the run page; anything else that sets the variable gets the same block.
  *
- * That is the whole forge coupling: one environment variable, appended to
- * when it is set, and nothing at all when it is not. No API call, no token,
- * no flag to turn it on.
+ * GitLab CI sets no such variable and has no step summary at all: a job's
+ * surfaces are its log and its artifacts (#2256). So `CHANT_GATE_SUMMARY`
+ * names a second path, which the generated GitLab job sets to a file it also
+ * declares under `artifacts:`. Same block, same rule, one more variable.
+ *
+ * That is the whole forge coupling: two environment variables, appended to
+ * whichever is set, and nothing at all when neither is. No API call, no
+ * token, no flag to turn it on.
  */
 
 import { appendFileSync } from "node:fs";
@@ -63,7 +68,14 @@ export function gatedRunSummaryMarkdown(summary: GatedRunSummary): string {
 
 /**
  * Append {@link gatedRunSummaryMarkdown} to the file `GITHUB_STEP_SUMMARY`
- * names, when the variable is set and the file can be written.
+ * names, or, where the forge sets no such variable, the one
+ * `CHANT_GATE_SUMMARY` names (#2256) — when it is set and the file can be
+ * written.
+ *
+ * The forge's own variable wins where both are set: a step summary is
+ * rendered on the run page, an artifact has to be downloaded, and writing
+ * both would put the same block in two places on a forge that already shows
+ * one of them.
  *
  * Returns the path written, or `undefined` when there was nothing to write to.
  * A write that fails is swallowed: a run that already decided its outcome must
@@ -73,7 +85,7 @@ export function writeGatedRunSummary(
   summary: GatedRunSummary,
   env: NodeJS.ProcessEnv = process.env,
 ): string | undefined {
-  const path = env.GITHUB_STEP_SUMMARY;
+  const path = env.GITHUB_STEP_SUMMARY || env.CHANT_GATE_SUMMARY;
   if (!path) return undefined;
   try {
     appendFileSync(path, gatedRunSummaryMarkdown(summary));

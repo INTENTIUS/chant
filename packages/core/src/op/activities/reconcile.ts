@@ -12,6 +12,13 @@ const execAsync = promisify(exec);
  * re-run (chant #2231). It therefore needs a pull-request trigger, and
  * {@link resolvePullRequestContext} fails the step by name when the run has
  * none.
+ *
+ * On GitLab the same mode writes a merge-request note (chant #2256): the same
+ * marker, the same edit-in-place, a different API. Which forge a run is on is
+ * read off the run's own CI variables rather than configured — a
+ * `merge_request_event` pipeline sets `CI_MERGE_REQUEST_IID`, a GitHub
+ * `pull_request` event sets `GITHUB_REPOSITORY`, and no run sets both. See
+ * {@link mergeRequestContextFrom}.
  */
 export type ReconcileMode = "pull-request" | "issue" | "report" | "comment";
 
@@ -78,10 +85,12 @@ export interface ReconcileResult {
   prUrl?: string;
   /** Opened issue URL (issue mode). */
   issueUrl?: string;
-  /** The posted or updated PR comment's URL (comment mode). */
+  /** The posted or updated PR comment / MR note URL (comment mode). */
   commentUrl?: string;
-  /** The pull request the comment landed on, `owner/repo#number` (comment mode). */
+  /** The pull request the comment landed on, `owner/repo#number` (comment mode, GitHub). */
   pullRequest?: string;
+  /** The merge request the note landed on, `group/project!iid` (comment mode, GitLab — #2256). */
+  mergeRequest?: string;
   /** The markdown summary used as the PR/issue body. */
   summary: string;
   /** The entries that triggered the reconcile. */
@@ -142,14 +151,17 @@ export function commentMarker(env: string): string {
   return `<!-- chant-reconcile:${env.replace(/[^a-zA-Z0-9._-]+/g, "-")} -->`;
 }
 
-/** What a `comment`-mode step says when the run it is in has no pull request. */
+/** What a `comment`-mode step says when the run it is in has no pull request and no merge request. */
 export function noPullRequestContextMessage(): string {
   return (
-    'reconcilePr mode "comment" posts the finding on the pull request that triggered the run, and this run ' +
-    "has none. It needs GITHUB_REPOSITORY plus a pull request number, read from the event payload at " +
-    "GITHUB_EVENT_PATH (`.number` / `.pull_request.number`) or from GITHUB_REF (`refs/pull/<n>/merge`). " +
-    "GitHub Actions sets those on a pull_request event and on nothing else. Trigger this Op from a " +
-    'pull_request workflow, or give it findingMode "issue" or "report".'
+    'reconcilePr mode "comment" posts the finding on the pull request or merge request that triggered the ' +
+    "run, and this run has none. On GitHub Actions it needs GITHUB_REPOSITORY plus a pull request number, " +
+    "read from the event payload at GITHUB_EVENT_PATH (`.number` / `.pull_request.number`) or from " +
+    "GITHUB_REF (`refs/pull/<n>/merge`), which a pull_request event sets and nothing else does. On GitLab " +
+    "CI it needs CI_MERGE_REQUEST_IID plus the project (CI_MERGE_REQUEST_PROJECT_ID or CI_PROJECT_ID) and " +
+    "the API base (CI_API_V4_URL, or CI_SERVER_URL to derive it), which a merge_request_event pipeline " +
+    "sets and nothing else does. Trigger this Op from a pull_request or merge_request pipeline, or give " +
+    'it findingMode "issue" or "report".'
   );
 }
 
@@ -252,6 +264,226 @@ async function postOrUpdateComment(
   return stdout.trim();
 }
 
+// ── The GitLab merge-request note (#2256) ───────────────────────────────────
+
+/**
+ * The merge request a `comment`-mode run posts its note onto (#2256), as a
+ * GitLab CI job knows it. The GitLab counterpart of {@link
+ * PullRequestContext}.
+ */
+export interface MergeRequestContext {
+  /** REST v4 base, from `CI_API_V4_URL` or derived from `CI_SERVER_URL`. */
+  api: string;
+  /** The project holding the merge request — its numeric id, or a `group/project` path. */
+  project: string;
+  /** The merge request's `iid` (its per-project number, which is what the API path takes). */
+  iid: number;
+  /** `group/project`, for the human-readable `group/project!iid` on the result. */
+  path?: string;
+  /** The project's web URL, used to build the note's own URL. */
+  webUrl?: string;
+}
+
+/**
+ * Derive the triggering merge request from a GitLab job's CI variables. Pure
+ * — exported for testing, and the whole forge detection: nothing but a
+ * `merge_request_event` pipeline sets `CI_MERGE_REQUEST_IID`, so a run that
+ * has it is on GitLab and has a merge request, and a run that does not is
+ * neither.
+ *
+ * The project is the merge request's own (`CI_MERGE_REQUEST_PROJECT_ID`) in
+ * preference to the pipeline's (`CI_PROJECT_ID`): a merge request opened from
+ * a fork runs its pipeline in the fork, and the note belongs on the target
+ * project's merge request rather than on an iid that means something else in
+ * the fork.
+ *
+ * Returns undefined rather than throwing, so the caller owns the message.
+ */
+export function mergeRequestContextFrom(
+  env: Record<string, string | undefined>,
+): MergeRequestContext | undefined {
+  const rawIid = env.CI_MERGE_REQUEST_IID?.trim();
+  if (!rawIid) return undefined;
+  const iid = Number(rawIid);
+  if (!Number.isInteger(iid) || iid <= 0) return undefined;
+
+  const server = env.CI_SERVER_URL?.trim().replace(/\/+$/, "");
+  const api = env.CI_API_V4_URL?.trim().replace(/\/+$/, "") || (server ? `${server}/api/v4` : "");
+  if (!api) return undefined;
+
+  const project =
+    env.CI_MERGE_REQUEST_PROJECT_ID?.trim() ||
+    env.CI_PROJECT_ID?.trim() ||
+    env.CI_MERGE_REQUEST_PROJECT_PATH?.trim() ||
+    env.CI_PROJECT_PATH?.trim() ||
+    "";
+  if (!project) return undefined;
+
+  const path = env.CI_MERGE_REQUEST_PROJECT_PATH?.trim() || env.CI_PROJECT_PATH?.trim();
+  const webUrl = env.CI_MERGE_REQUEST_PROJECT_URL?.trim() || env.CI_PROJECT_URL?.trim();
+  return {
+    api,
+    project,
+    iid,
+    ...(path ? { path } : {}),
+    ...(webUrl ? { webUrl } : {}),
+  };
+}
+
+/** The credential a merge-request note is written with, and the header GitLab reads it from. */
+export interface GitlabNoteToken {
+  /** `PRIVATE-TOKEN` for a personal/project/group access token, `JOB-TOKEN` for `CI_JOB_TOKEN`. */
+  header: "PRIVATE-TOKEN" | "JOB-TOKEN";
+  value: string;
+  /** The variable it came from, so a refusal or a log line can name it. */
+  source: string;
+}
+
+/**
+ * Resolve the token a merge-request note is written with, most specific
+ * first. Pure — exported for testing.
+ *
+ * Two headers, not one, because GitLab reads two different credentials from
+ * two different headers: an access token goes in `PRIVATE-TOKEN`, and the
+ * pipeline's own ephemeral `CI_JOB_TOKEN` goes in `JOB-TOKEN`. Sending one in
+ * the other's header is a 401, not a fallback.
+ *
+ * The access token is preferred because it is the one that reliably works:
+ * `CI_JOB_TOKEN` reaches only the endpoints GitLab's job-token allowlist
+ * names, and the notes API is not among them on current GitLab, so a project
+ * that has not widened that allowlist needs a token with `api` scope. It is
+ * still accepted last rather than refused, so a project on an instance whose
+ * allowlist does cover notes needs no long-lived credential at all.
+ */
+export function gitlabNoteTokenFrom(
+  env: Record<string, string | undefined>,
+): GitlabNoteToken | undefined {
+  for (const source of ["CHANT_GITLAB_TOKEN", "GITLAB_TOKEN"]) {
+    const value = env[source]?.trim();
+    if (value) return { header: "PRIVATE-TOKEN", value, source };
+  }
+  const jobToken = env.CI_JOB_TOKEN?.trim();
+  if (jobToken) return { header: "JOB-TOKEN", value: jobToken, source: "CI_JOB_TOKEN" };
+  return undefined;
+}
+
+/** What a `comment`-mode step says on a merge request it has no credential for. */
+export function noGitlabNoteTokenMessage(iid: number): string {
+  return (
+    `reconcilePr mode "comment" has merge request !${iid} to post its finding on and no token to post it ` +
+    "with. Set a GITLAB_TOKEN CI/CD variable (masked, scope: api) on the project — a project access token " +
+    "is enough — or, on an instance whose job-token allowlist covers the notes API, make CI_JOB_TOKEN " +
+    "available to the job. CHANT_GITLAB_TOKEN is read first where the two must differ."
+  );
+}
+
+/** One page of merge-request notes, as much of each as this activity reads. */
+interface GitlabNote {
+  id: number;
+  body?: string;
+  /** GitLab's own generated notes ("changed the description"), never ours. */
+  system?: boolean;
+}
+
+/** GitLab's REST paths take a URL-encoded project id or `group%2Fproject` path. */
+function notesEndpoint(ctx: MergeRequestContext): string {
+  return `${ctx.api}/projects/${encodeURIComponent(ctx.project)}/merge_requests/${ctx.iid}/notes`;
+}
+
+/** One GitLab REST call, with the failure spelled out rather than swallowed into a parse error. */
+async function gitlabRequest(
+  url: string,
+  token: GitlabNoteToken,
+  init: RequestInit,
+  signal?: AbortSignal,
+): Promise<Response> {
+  const res = await fetch(url, {
+    ...init,
+    ...(signal ? { signal } : {}),
+    headers: { [token.header]: token.value, "content-type": "application/json" },
+  });
+  if (!res.ok) {
+    const detail = (await res.text().catch(() => "")).slice(0, 500);
+    throw new Error(
+      `GitLab API ${init.method ?? "GET"} ${url} answered ${res.status}${detail ? `: ${detail}` : ""} ` +
+        `(token from ${token.source}, sent as ${token.header}).`,
+    );
+  }
+  return res;
+}
+
+/**
+ * Find the note this Op already owns on `ctx`'s merge request, by the same
+ * hidden marker `postOrUpdateComment` looks a GitHub comment up by: the
+ * marker is the body's first line and the match is a prefix.
+ *
+ * Pages the way GitLab pages, following the `x-next-page` response header
+ * rather than guessing a page count — an active merge request runs past one
+ * page of notes routinely, and a lookup that read page one alone would post
+ * a second comment instead of editing the first.
+ *
+ * GitLab's own system notes are skipped: they are the activity feed
+ * ("changed the description"), they are never ours, and they are the bulk of
+ * what fills those pages.
+ */
+async function findOwnedNote(
+  ctx: MergeRequestContext,
+  token: GitlabNoteToken,
+  marker: string,
+  signal?: AbortSignal,
+): Promise<number | undefined> {
+  const endpoint = notesEndpoint(ctx);
+  // A merge request with more notes than this has something other than a
+  // stale plan comment wrong with it; the bound is what stops a broken
+  // `x-next-page` header from looping forever.
+  const MAX_PAGES = 50;
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    const res = await gitlabRequest(`${endpoint}?per_page=100&page=${page}`, token, { method: "GET" }, signal);
+    const notes = (await res.json()) as GitlabNote[];
+    const owned = notes.find((note) => !note.system && (note.body ?? "").startsWith(marker));
+    if (owned) return owned.id;
+    const next = res.headers.get("x-next-page")?.trim();
+    if (!next) return undefined;
+  }
+  return undefined;
+}
+
+/**
+ * Post `body` as one note on `ctx`'s merge request, or edit the note this Op
+ * already owns there — {@link postOrUpdateComment}'s GitLab half, and the
+ * same recipe: find by marker, PUT when there is one, POST when there is not,
+ * so a merge request pushed to five times carries one note holding the
+ * current finding rather than five stale ones.
+ *
+ * Over `fetch` rather than a CLI. `gh` is on GitHub's hosted runners and is
+ * already this activity's dependency for the issue and pull-request modes;
+ * `glab` is on no GitLab runner by default, and a job whose finding step
+ * depended on it would fail on the ordinary `node:22-slim` image the
+ * generator emits.
+ */
+async function postOrUpdateNote(
+  ctx: MergeRequestContext,
+  token: GitlabNoteToken,
+  marker: string,
+  body: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  const endpoint = notesEndpoint(ctx);
+  const existing = await findOwnedNote(ctx, token, marker, signal);
+  const payload = JSON.stringify({ body: `${marker}\n\n${body}` });
+  const res = existing
+    ? await gitlabRequest(`${endpoint}/${existing}`, token, { method: "PUT", body: payload }, signal)
+    : await gitlabRequest(endpoint, token, { method: "POST", body: payload }, signal);
+  const note = (await res.json()) as GitlabNote;
+  // GitLab's note payload carries no web URL, unlike GitHub's comment. The
+  // anchor is how the UI itself addresses a note, so it is built rather than
+  // read; with no project web URL to build it from, the API path is at least
+  // a resolvable address for the thing that was written.
+  return ctx.webUrl
+    ? `${ctx.webUrl}/-/merge_requests/${ctx.iid}#note_${note.id}`
+    : `${endpoint}/${note.id}`;
+}
+
 /**
  * Map a `chant lifecycle plan --json` ChangeSet to reconcile entries, dropping
  * `noop` entries (nothing to reconcile). Pure — exported for testing.
@@ -286,10 +518,13 @@ async function derivePlanEntries(
  * - `issue` — open a GitHub issue describing the drift (no code change).
  * - `comment` — post the body as one comment on the pull request that
  *   triggered the run, editing that same comment on every re-run rather than
- *   stacking a new one (#2231). Needs a pull-request-triggered run; fails by
- *   name when there is none. No code change, and the `pull-requests: write`
- *   the generated workflow already grants on that trigger is the whole scope
- *   it spends.
+ *   stacking a new one (#2231), or, on a GitLab `merge_request_event`
+ *   pipeline, as one note on that merge request by the same recipe (#2256).
+ *   Needs a pull-request- or merge-request-triggered run; fails by name when
+ *   there is none. No code change, and the `pull-requests: write` the
+ *   generated workflow already grants on that trigger is the whole scope it
+ *   spends on GitHub; on GitLab the scope is whatever the token it is given
+ *   carries.
  * - `pull-request` — create a branch, regenerate source via
  *   `chant import --from <env>`, commit, push, and open a PR whose diff is the
  *   regenerated TypeScript. Never commits to the main branch.
@@ -325,8 +560,27 @@ export async function reconcilePr(args: ReconcilePrArgs, signal?: AbortSignal): 
     // The trigger context is read here rather than passed in: a step's args
     // are serialized at build time, and the pull request is not known until
     // the run. Missing context is fatal — see `noPullRequestContextMessage`.
-    const ctx = await resolvePullRequestContext();
     const marker = args.marker ?? commentMarker(args.env);
+
+    // GitLab first, because its check is the narrow one: only a
+    // `merge_request_event` pipeline sets `CI_MERGE_REQUEST_IID` (#2256), so
+    // a run that has it is unambiguously the GitLab case, and a GitHub run
+    // never reaches this branch.
+    const mr = mergeRequestContextFrom(process.env);
+    if (mr) {
+      const token = gitlabNoteTokenFrom(process.env);
+      if (!token) throw new Error(noGitlabNoteTokenMessage(mr.iid));
+      const commentUrl = await postOrUpdateNote(mr, token, marker, summary, signal);
+      return {
+        mode,
+        summary,
+        entries,
+        commentUrl,
+        mergeRequest: `${mr.path ?? mr.project}!${mr.iid}`,
+      };
+    }
+
+    const ctx = await resolvePullRequestContext();
     const commentUrl = await postOrUpdateComment(ctx, marker, summary, signal);
     return { mode, summary, entries, commentUrl, pullRequest: `${ctx.repo}#${ctx.number}` };
   }
