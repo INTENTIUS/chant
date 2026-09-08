@@ -83,6 +83,11 @@ export interface CellConfig {
 // Supply with --param, --params-file, or the env vars named there (.env.example).
 const projectId = params.projectId as string;
 
+// The namespace every shared platform component lands in. Named once here so
+// src/system/*.ts and k3d/ reference the identifier instead of repeating the
+// string literal in 40-odd `metadata.namespace` fields (k8s WK8001).
+export const SYSTEM_NS = "system";
+
 export const shared = {
   projectId,
   region: params.region as string,
@@ -93,7 +98,10 @@ export const shared = {
   minNodeCount: params.minNodeCount as number,
   maxNodeCount: params.maxNodeCount as number,
   nodeDiskSizeGb: params.nodeDiskSizeGb as number,
-  releaseChannel: "REGULAR",
+  // `as const` keeps the literal type: GkeCluster's releaseChannel is the
+  // closed union "RAPID" | "REGULAR" | "STABLE", and a widened `string` does
+  // not assign to it.
+  releaseChannel: "REGULAR" as const,
   nodeSubnetCidr: "10.0.0.0/20",
   podSubnetCidr: "10.4.0.0/14",
   serviceSubnetCidr: "10.8.0.0/20",
@@ -184,13 +192,13 @@ export const cells: CellConfig[] = [
 // ── Safety assertions ─────────────────────────────────────
 // These run at every `npm run build` to catch foot-guns before they reach GCP.
 
-// cellId uniqueness — used as routing token prefix (glrt-cell_<id>_)
+// cellId uniqueness — used as routing token prefix (glrt-t<id>_)
 const _cellIds = cells.map(c => c.cellId);
 const _cellIdSet = new Set(_cellIds);
 if (_cellIdSet.size !== _cellIds.length)
   throw Error(
     `Duplicate cellId detected: [${_cellIds.join(", ")}]. ` +
-    `cellId is embedded in runner tokens (glrt-cell_<id>_) and must be unique per cell. ` +
+    `cellId is embedded in runner tokens (glrt-t<id>_) and must be unique per cell. ` +
     `See "Managing Cells" in README.md.`
   );
 

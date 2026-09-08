@@ -60,7 +60,7 @@ This implementation mirrors GitLab's official architecture blueprint:
 | Cell-local PostgreSQL | Cloud SQL HA instance per cell |
 | Cell-local Redis | Memorystore Redis ×2 per cell (persistent queues + ephemeral cache) |
 | Cell-local object storage | GCS bucket per cell |
-| Phased deployment | 9-stage canary-first pipeline |
+| Phased deployment | 10-stage canary-first pipeline |
 
 ## What you'll learn
 
@@ -68,7 +68,7 @@ This implementation mirrors GitLab's official architecture blueprint:
 - The three-tier request routing logic: session cookie -> routable token -> topology lookup
 - How routable runner tokens pin CI jobs to the correct cell — and the bootstrapping trick that makes it work
 - Why the Topology Service needs a fallback, and how health-aware routing works
-- The 9-stage canary-first pipeline and why each stage exists
+- The 10-stage canary-first pipeline and why each stage exists
 - Two non-obvious gotchas: port 8181 vs 8080 for git operations, and Nginx wildcard depth
 
 ## Cost
@@ -133,11 +133,14 @@ export function createCell(cell: CellConfig) {
 export const allCells = cells.map(createCell);
 ```
 
-`npm run build` discovers all four lexicons and writes four output files:
+`npm run build` writes the four production outputs from `src/`:
 - `config.yaml` — all GCP Config Connector resources (Cloud SQL, Redis, GCS, DNS, KMS, IAM)
 - `k8s.yaml` — all K8s resources (system namespace, cell namespaces, NetworkPolicies, ExternalSecrets)
 - `gitlab-cell/` — Helm wrapper chart with `gitlab/gitlab` as a dependency
-- `.gitlab-ci.yml` — 9-stage pipeline
+- `.gitlab-ci.yml` — 10-stage pipeline
+
+It then builds `k3d/` for the local smoke test below: `k3d.yaml` (K8s) and
+`k3d-cluster.yaml`, from the k3d lexicon, the fifth this example declares.
 
 **Adding a cell** is one config entry + `npm run build` + apply. Config Connector provisions Cloud SQL and Redis; the pipeline Helm-installs GitLab and registers the runner.
 
@@ -212,23 +215,24 @@ Phase 2: register-runners pipeline job  →  POST /api/v4/runners with routable 
 Phase 3: runner reads token Secret, registers, starts polling
 ```
 
-The `register-runners` pipeline job runs **after all cells are deployed** — it's stage 6 of 9. The routable token format (`glrt-t{cellId}_{random}`) encodes the cell ID, so the Cell Router can route CI job requests to the right cell's Workhorse without a topology lookup.
+The `register-runners` pipeline job runs **after all cells are deployed** — it's stage 7 of 10. The routable token format (`glrt-t{cellId}_{random}`) encodes the cell ID, so the Cell Router can route CI job requests to the right cell's Workhorse without a topology lookup.
 
-### The 9-stage canary-first pipeline
+### The 10-stage canary-first pipeline
 
 ```
-1. infra          →  kubectl apply config.yaml  (Cloud SQL, Redis, GCS)
-2. system         →  kubectl apply k8s.yaml     (NGINX, cell-router, cert-manager, ESO)
-3. validate       →  helm diff per cell         (dry-run preview, fails fast)
-4. deploy-canary  →  helm install cell-alpha    (wait for rollout)
-5. deploy-remaining → helm install cell-beta, cell-gamma, ...  (parallel, depends on canary)
-6. register-runners → GitLab API per cell, store token Secret, restart runner
-7. smoke-test     →  scripts/e2e-test.sh        (real HTTP requests, routing assertions)
-8. backup         →  backup-utility per cell    (scheduled job: GCS snapshots)
-9. migrate-org    →  manual trigger only        (topology-cli, see below)
+1. infra              →  kubectl apply config.yaml  (Cloud SQL, Redis, GCS)
+2. system             →  kubectl apply k8s.yaml     (NGINX, cell-router, cert-manager, ESO)
+3. build-helm-values  →  npm run build:helm         (values-<cell>.yaml, kept as artifacts)
+4. validate           →  helm diff per cell         (dry-run preview)
+5. deploy-canary      →  helm install cell-alpha    (wait for rollout)
+6. deploy-remaining   →  helm install cell-beta, cell-gamma, ...  (parallel, depends on canary)
+7. register-runners   →  GitLab API per cell, store token Secret, restart runner
+8. smoke-test         →  scripts/e2e-test.sh        (real HTTP requests, routing assertions)
+9. backup             →  backup-utility per cell    (scheduled job: GCS snapshots)
+10. migrate-org       →  manual trigger only        (topology-cli, see below)
 ```
 
-Stages 4 and 5 enforce the canary pattern: if cell-alpha's Helm install fails or the pod health check fails, the pipeline stops before deploying to any other cells. Stage 3's `helm diff` means you see exactly what's changing before anything touches production.
+Stages 5 and 6 enforce the canary pattern: if cell-alpha's Helm install fails or the pod health check fails, the pipeline stops before deploying to any other cells. Stage 4's `helm diff` means you see exactly what's changing before anything touches production.
 
 ### Non-obvious gotchas
 
@@ -240,7 +244,7 @@ Stages 4 and 5 enforce the canary pattern: if cell-alpha's Helm install fails or
 
 The Topology Service's org -> cell mapping can be updated at any time — no downtime, no data movement required.
 
-**Via the pipeline** — stage 9 is a manual `migrate-org` job. Trigger it from the GitLab UI with `ORG_ID` and `TARGET_CELL` as pipeline variables.
+**Via the pipeline** — stage 10 is a manual `migrate-org` job. Trigger it from the GitLab UI with `ORG_ID` and `TARGET_CELL` as pipeline variables.
 
 **Via the CLI:**
 

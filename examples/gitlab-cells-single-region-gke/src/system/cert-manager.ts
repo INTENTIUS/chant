@@ -1,5 +1,5 @@
 import { createResource } from "@intentius/chant/runtime";
-import { cells, shared } from "../config";
+import { cells, shared, SYSTEM_NS } from "../config";
 
 const ClusterIssuer = createResource("K8s::CertManager::ClusterIssuer", "k8s", {});
 const Certificate = createResource("K8s::CertManager::Certificate", "k8s", {});
@@ -31,7 +31,7 @@ export const letsEncryptIssuer = new ClusterIssuer({
 // SAN list: base wildcard + per-cell wildcard (for chart-generated names like gitlab.alpha.*)
 const perCellDnsNames = cells.map(c => `*.${c.name}.${shared.domain}`);
 export const gitlabWildcardCert = new Certificate({
-  metadata: { name: "gitlab-tls", namespace: "system", labels: systemLabels },
+  metadata: { name: "gitlab-tls", namespace: SYSTEM_NS, labels: systemLabels },
   spec: {
     secretName: "gitlab-tls",
     issuerRef: { name: "letsencrypt-prod", kind: "ClusterIssuer" },

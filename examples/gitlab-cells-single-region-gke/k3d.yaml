@@ -60,7 +60,7 @@ metadata:
 spec:
   ingressClassName: nginx
   rules:
-    - host: '*.gitlab.intentius.io'
+    - host: '*.gitlab.example.com'
       http:
         paths:
           - path: /
@@ -70,7 +70,7 @@ spec:
                 name: cell-router
                 port:
                   number: 8080
-    - host: '*.alpha.gitlab.intentius.io'
+    - host: '*.alpha.gitlab.example.com'
       http:
         paths:
           - path: /
@@ -80,7 +80,7 @@ spec:
                 name: cell-router
                 port:
                   number: 8080
-    - host: '*.beta.gitlab.intentius.io'
+    - host: '*.beta.gitlab.example.com'
       http:
         paths:
           - path: /
@@ -382,7 +382,7 @@ data:
       },
       {
         "type": "routable_token",
-        "tokenPattern": "^glrt-cell_(\\d+)_",
+        "tokenPattern": "^glrt-t(\\d+)_",
         "cellIdMap": {
           "1": "alpha",
           "2": "beta"

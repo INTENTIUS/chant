@@ -2,7 +2,7 @@ import {
   Deployment, Service, ConfigMap, PodDisruptionBudget, HorizontalPodAutoscaler,
   ServiceAccount, ClusterRole, ClusterRoleBinding, Role, RoleBinding, IngressClass,
 } from "@intentius/chant-lexicon-k8s";
-import { shared } from "../config";
+import { shared, SYSTEM_NS } from "../config";
 
 const labels = {
   "app.kubernetes.io/name": "ingress-nginx-controller",
@@ -11,7 +11,7 @@ const labels = {
 
 // ServiceAccount the controller runs as
 export const ingressServiceAccount = new ServiceAccount({
-  metadata: { name: "ingress-nginx", namespace: "system", labels },
+  metadata: { name: "ingress-nginx", namespace: SYSTEM_NS, labels },
 });
 
 // ClusterRole: read-only access to cluster-wide resources the controller watches
@@ -33,12 +33,12 @@ export const ingressClusterRole = new ClusterRole({
 export const ingressClusterRoleBinding = new ClusterRoleBinding({
   metadata: { name: "ingress-nginx", labels },
   roleRef: { apiGroup: "rbac.authorization.k8s.io", kind: "ClusterRole", name: "ingress-nginx" },
-  subjects: [{ kind: "ServiceAccount", name: "ingress-nginx", namespace: "system" }],
+  subjects: [{ kind: "ServiceAccount", name: "ingress-nginx", namespace: SYSTEM_NS }],
 });
 
 // Role: namespace-scoped permissions for leader election and configmap updates
 export const ingressRole = new Role({
-  metadata: { name: "ingress-nginx", namespace: "system", labels },
+  metadata: { name: "ingress-nginx", namespace: SYSTEM_NS, labels },
   rules: [
     { apiGroups: [""], resources: ["namespaces"], verbs: ["get"] },
     { apiGroups: [""], resources: ["configmaps", "pods", "secrets", "endpoints"], verbs: ["get", "list", "watch"] },
@@ -55,9 +55,9 @@ export const ingressRole = new Role({
 });
 
 export const ingressRoleBinding = new RoleBinding({
-  metadata: { name: "ingress-nginx", namespace: "system", labels },
+  metadata: { name: "ingress-nginx", namespace: SYSTEM_NS, labels },
   roleRef: { apiGroup: "rbac.authorization.k8s.io", kind: "Role", name: "ingress-nginx" },
-  subjects: [{ kind: "ServiceAccount", name: "ingress-nginx", namespace: "system" }],
+  subjects: [{ kind: "ServiceAccount", name: "ingress-nginx", namespace: SYSTEM_NS }],
 });
 
 // IngressClass so the controller is recognized as the default ingress provider
@@ -71,7 +71,7 @@ export const nginxIngressClass = new IngressClass({
 });
 
 export const ingressConfig = new ConfigMap({
-  metadata: { name: "ingress-nginx-controller", namespace: "system", labels },
+  metadata: { name: "ingress-nginx-controller", namespace: SYSTEM_NS, labels },
   data: {
     "use-forwarded-headers": "true",
     "ssl-redirect": "true",
@@ -80,7 +80,7 @@ export const ingressConfig = new ConfigMap({
 });
 
 export const ingressController = new Deployment({
-  metadata: { name: "ingress-nginx-controller", namespace: "system", labels },
+  metadata: { name: "ingress-nginx-controller", namespace: SYSTEM_NS, labels },
   spec: {
     replicas: shared.ingressReplicas,
     selector: { matchLabels: { "app.kubernetes.io/name": "ingress-nginx-controller" } },
@@ -124,7 +124,7 @@ export const ingressController = new Deployment({
 });
 
 export const ingressService = new Service({
-  metadata: { name: "ingress-nginx-controller", namespace: "system", labels },
+  metadata: { name: "ingress-nginx-controller", namespace: SYSTEM_NS, labels },
   spec: {
     type: "LoadBalancer",
     selector: { "app.kubernetes.io/name": "ingress-nginx-controller" },
@@ -136,7 +136,7 @@ export const ingressService = new Service({
 });
 
 export const ingressPdb = new PodDisruptionBudget({
-  metadata: { name: "ingress-nginx-controller", namespace: "system" },
+  metadata: { name: "ingress-nginx-controller", namespace: SYSTEM_NS },
   spec: {
     minAvailable: 1,
     selector: { matchLabels: { "app.kubernetes.io/name": "ingress-nginx-controller" } },
@@ -145,7 +145,7 @@ export const ingressPdb = new PodDisruptionBudget({
 
 export const ingressHpa = shared.ingressHpaEnabled
   ? new HorizontalPodAutoscaler({
-      metadata: { name: "ingress-nginx-controller", namespace: "system" },
+      metadata: { name: "ingress-nginx-controller", namespace: SYSTEM_NS },
       spec: {
         scaleTargetRef: {
           apiVersion: "apps/v1",

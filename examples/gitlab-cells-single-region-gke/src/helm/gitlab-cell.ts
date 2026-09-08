@@ -18,22 +18,55 @@ export const gitlabDep = new HelmDependency({
   repository: "https://charts.gitlab.io",
 });
 
+// Deploy-time slots, one named const each.
+//
+// `runtimeSlot()` is a plain function call, and a resource constructor property
+// must be statically evaluable (EVL001) — so the calls live here and the
+// constructor below references the names. Nothing about the emitted chart
+// changes: every slot still renders as '' in values.yaml and as a described
+// entry in values-runtime-slots.yaml. Naming them also lets the three
+// persistent-Redis fields and the two cache fields share one slot instead of
+// repeating the description.
+const cellDomainSlot = runtimeSlot("cell domain, e.g. alpha.gitlab.example.com");
+const cellIdSlot = runtimeSlot("cell ID integer");
+const sequenceOffsetSlot = runtimeSlot("Integer ID space base for this cell (e.g. 0, 1000000, 2000000). Each cell must be spaced >= 1M apart to avoid ID collisions.");
+const psqlHostSlot = runtimeSlot("Cloud SQL private IP (kubectl get sqlinstances ... -o jsonpath='.status.privateIpAddress')");
+const pgbouncerEnabledSlot = runtimeSlot("whether PgBouncer is enabled");
+const redisPersistentHostSlot = runtimeSlot("Memorystore persistent host");
+const redisCacheHostSlot = runtimeSlot("Memorystore cache host");
+const kasEnabledSlot = runtimeSlot("true to enable GitLab Agent Server; requires kas.externalUrl");
+const kasExternalUrlSlot = runtimeSlot("WebSocket URL for KAS, e.g. wss://kas.gitlab.example.com");
+const pagesHostSlot = runtimeSlot("Pages subdomain, e.g. pages.gitlab.example.com");
+const googleProjectSlot = runtimeSlot("GCP project ID");
+const artifactsBucketSlot = runtimeSlot("GCS bucket for CI artifacts");
+const uploadsBucketSlot = runtimeSlot("GCS bucket for user uploads");
+const lfsBucketSlot = runtimeSlot("GCS bucket for LFS objects");
+const packagesBucketSlot = runtimeSlot("GCS bucket for package registry");
+const registryBucketSlot = runtimeSlot("GCS bucket for container registry images");
+const smtpAddressSlot = runtimeSlot("SMTP server address");
+const smtpPortSlot = runtimeSlot("SMTP port");
+const smtpUserSlot = runtimeSlot("SMTP username");
+const smtpDomainSlot = runtimeSlot("SMTP domain");
+const webserviceReplicasSlot = runtimeSlot("webservice replica count");
+const sidekiqPodsSlot = runtimeSlot("sidekiq pods array");
+const gitalyDiskSizeSlot = runtimeSlot("Gitaly PVC size, e.g. 100Gi");
+
 export const cellValues = new Values({
   // Global config (runtime slots are filled via values-<cell>.yaml at deploy time)
   global: {
     hosts: {
-      domain: runtimeSlot("cell domain, e.g. alpha.gitlab.example.com"),
+      domain: cellDomainSlot,
       https: true,
     },
 
     // Cells identity (REQUIRED for multi-cell GitLab)
     cells: {
       enabled: true,
-      id: runtimeSlot("cell ID integer"),
+      id: cellIdSlot,
       topology_service: {
         address: "topology-service.system.svc:8080",
       },
-      sequence_offset: runtimeSlot("Integer ID space base for this cell (e.g. 0, 1000000, 2000000). Each cell must be spaced >= 1M apart to avoid ID collisions."),
+      sequence_offset: sequenceOffsetSlot,
     },
 
     // TLS (static — shared across all cells)
@@ -45,31 +78,31 @@ export const cellValues = new Values({
 
     // External PostgreSQL + PgBouncer
     psql: {
-      host: runtimeSlot("Cloud SQL private IP (kubectl get sqlinstances ... -o jsonpath='.status.privateIpAddress')"),
+      host: psqlHostSlot,
       port: 5432,
       database: "gitlabhq_production",
       password: { secret: "gitlab-db-password", key: "password" },
-      pgbouncer: runtimeSlot("whether PgBouncer is enabled"),
+      pgbouncer: pgbouncerEnabledSlot,
     },
 
     // External Redis (split persistent + cache)
     redis: {
-      host: runtimeSlot("Memorystore persistent host"),
+      host: redisPersistentHostSlot,
       auth: { enabled: true, secret: "gitlab-redis-password", key: "password" },
       cache: {
-        host: runtimeSlot("Memorystore cache host"),
+        host: redisCacheHostSlot,
         password: { enabled: true, secret: "gitlab-redis-cache-password", key: "password" },
       },
       sharedState: {
-        host: runtimeSlot("Memorystore persistent host"),
+        host: redisPersistentHostSlot,
         password: { enabled: true, secret: "gitlab-redis-password", key: "password" },
       },
       queues: {
-        host: runtimeSlot("Memorystore persistent host"),
+        host: redisPersistentHostSlot,
         password: { enabled: true, secret: "gitlab-redis-password", key: "password" },
       },
       actioncable: {
-        host: runtimeSlot("Memorystore cache host"),
+        host: redisCacheHostSlot,
         password: { enabled: true, secret: "gitlab-redis-cache-password", key: "password" },
       },
     },
@@ -80,14 +113,14 @@ export const cellValues = new Values({
 
     // GitLab Agent Server (KAS) — required for cluster integrations (GitOps, CI tunnels)
     kas: {
-      enabled: runtimeSlot("true to enable GitLab Agent Server; requires kas.externalUrl"),
-      externalUrl: runtimeSlot("WebSocket URL for KAS, e.g. wss://kas.gitlab.example.com"),
+      enabled: kasEnabledSlot,
+      externalUrl: kasExternalUrlSlot,
     },
 
     // GitLab Pages — opt-in; not required for Cells 1.0
     pages: {
       enabled: false,
-      host: runtimeSlot("Pages subdomain, e.g. pages.gitlab.example.com"),
+      host: pagesHostSlot,
     },
 
     // Object storage (GCS via Workload Identity)
@@ -97,15 +130,15 @@ export const cellValues = new Values({
         enabled: true,
         connection: {
           provider: "Google",
-          google_project: runtimeSlot("GCP project ID"),
+          google_project: googleProjectSlot,
           google_application_default: true,
         },
       },
-      artifacts: { bucket: runtimeSlot("GCS bucket for CI artifacts") },
-      uploads: { bucket: runtimeSlot("GCS bucket for user uploads") },
-      lfs: { bucket: runtimeSlot("GCS bucket for LFS objects") },
-      packages: { bucket: runtimeSlot("GCS bucket for package registry") },
-      registry: { bucket: runtimeSlot("GCS bucket for container registry images") },
+      artifacts: { bucket: artifactsBucketSlot },
+      uploads: { bucket: uploadsBucketSlot },
+      lfs: { bucket: lfsBucketSlot },
+      packages: { bucket: packagesBucketSlot },
+      registry: { bucket: registryBucketSlot },
 
       // OIDC / SSO — opt-in; not required for Cells 1.0
       // providers must be an array (not a string) or the GitLab chart template will error on range.
@@ -118,10 +151,10 @@ export const cellValues = new Values({
     // SMTP
     smtp: {
       enabled: true,
-      address: runtimeSlot("SMTP server address"),
-      port: runtimeSlot("SMTP port"),
-      user_name: runtimeSlot("SMTP username"),
-      domain: runtimeSlot("SMTP domain"),
+      address: smtpAddressSlot,
+      port: smtpPortSlot,
+      user_name: smtpUserSlot,
+      domain: smtpDomainSlot,
       authentication: "plain",
       starttls_auto: true,
       password: { secret: "gitlab-smtp-password", key: "password" },
@@ -134,10 +167,10 @@ export const cellValues = new Values({
   // GitLab component config
   gitlab: {
     webservice: {
-      replicas: runtimeSlot("webservice replica count"),
+      replicas: webserviceReplicasSlot,
     },
     sidekiq: {
-      pods: runtimeSlot("sidekiq pods array"),
+      pods: sidekiqPodsSlot,
     },
     pgbouncer: {
       default_pool_size: 20,
@@ -147,7 +180,7 @@ export const cellValues = new Values({
     gitaly: {
       persistence: {
         enabled: true,
-        size: runtimeSlot("Gitaly PVC size, e.g. 100Gi"),
+        size: gitalyDiskSizeSlot,
         storageClass: "pd-ssd",
       },
     },

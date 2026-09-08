@@ -10,6 +10,12 @@ const onlyMain = [new Rule({ if: "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH" })];
 const canaryCells = cells.filter(c => c.canary);
 const remainingCells = cells.filter(c => !c.canary);
 
+// `parallel: matrix:` axes. Built here rather than inline in the Parallel
+// constructors below: a resource constructor property must be statically
+// evaluable, and an arrow function passed to `.map()` is not (EVL001).
+const allCellsMatrix = cells.map(c => ({ CELL_NAME: c.name }));
+const remainingCellsMatrix = remainingCells.map(c => ({ CELL_NAME: c.name }));
+
 // Stage 1: infra (Config Connector resources)
 export const deployInfra = new Job({ stage: "infra", image: kubectlImage, script: [
   "kubectl apply -f config.yaml",
@@ -61,7 +67,7 @@ export const deployCanary = new Job({ stage: "deploy-canary", image: helmImage, 
 
 // Stage 5: deploy-remaining (parallel matrix for non-canary cells)
 export const deployRemaining = new Job({ stage: "deploy-remaining", image: helmImage,
-  parallel: new Parallel({ matrix: remainingCells.map(c => ({ CELL_NAME: c.name })) }),
+  parallel: new Parallel({ matrix: remainingCellsMatrix }),
   script: [
     "helm dependency update ./gitlab-cell/",
     "helm upgrade --install gitlab-cell-$CELL_NAME ./gitlab-cell/ -n cell-$CELL_NAME -f gitlab-cell/values-base.yaml -f gitlab-cell/values-$CELL_NAME.yaml --wait --timeout=900s",
@@ -75,7 +81,7 @@ export const deployRemaining = new Job({ stage: "deploy-remaining", image: helmI
 // GitLab 17.7+ auto-generates the routable token prefix glrt-t${cellId}_ based on
 // global.cells.id — token_prefix is not a model attribute and must not be passed.
 export const registerRunners = new Job({ stage: "register-runners", image: gcloudImage,
-  parallel: new Parallel({ matrix: cells.map(c => ({ CELL_NAME: c.name })) }),
+  parallel: new Parallel({ matrix: allCellsMatrix }),
   script: [
     "RUNNER_TOKEN=$(kubectl -n cell-$CELL_NAME exec deploy/gitlab-cell-$CELL_NAME-toolbox -- gitlab-rails runner 'puts Ci::Runner.create!(runner_type: :instance_type, registration_type: :authenticated_user).token')",
     "kubectl -n cell-$CELL_NAME create secret generic $CELL_NAME-runner-token --from-literal=token=$RUNNER_TOKEN --dry-run=client -o yaml | kubectl apply -f -",
@@ -94,7 +100,7 @@ export const smokeTest = new Job({ stage: "smoke-test", image: gcloudImage, scri
 // using Workload Identity. It backs up repos (via Gitaly), uploads, LFS, and packages.
 // Cloud SQL is backed up independently by GCP's automated backup schedule.
 export const backupGitaly = new Job({ stage: "backup", image: gcloudImage,
-  parallel: new Parallel({ matrix: cells.map(c => ({ CELL_NAME: c.name })) }),
+  parallel: new Parallel({ matrix: allCellsMatrix }),
   script: [
     "kubectl -n cell-$CELL_NAME exec deploy/gitlab-cell-$CELL_NAME-toolbox -- backup-utility --skip-registry",
   ],

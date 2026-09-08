@@ -202,6 +202,12 @@ concurrent = ${cell.runnerConcurrency}
             name: "runner",
             image: shared.runnerImage,
             command: ["gitlab-runner", "run"],
+            // The manager process only polls the coordinator and spawns job pods;
+            // the jobs themselves run in their own pods under this cell's quota.
+            resources: {
+              requests: { cpu: "100m", memory: "128Mi" },
+              limits: { cpu: "500m", memory: "512Mi" },
+            },
             volumeMounts: [
               { name: "config", mountPath: "/etc/gitlab-runner" },
               { name: "runner-token", mountPath: "/secrets/auth_token", subPath: "token" },

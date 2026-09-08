@@ -1,7 +1,7 @@
 import { params } from "@intentius/chant/params";
 import { Deployment, Service, ConfigMap } from "@intentius/chant-lexicon-k8s";
 import { createResource } from "@intentius/chant/runtime";
-import { shared } from "../config";
+import { shared, SYSTEM_NS } from "../config";
 
 const ExternalSecret = createResource("K8s::ExternalSecrets::ExternalSecret", "k8s", {});
 
@@ -13,7 +13,7 @@ const labels = {
 };
 
 export const topologyConfig = new ConfigMap({
-  metadata: { name: "topology-service", namespace: "system", labels },
+  metadata: { name: "topology-service", namespace: SYSTEM_NS, labels },
   data: {
     "config.yaml": `
 database:
@@ -36,7 +36,7 @@ prometheus:
 });
 
 export const topologyDeployment = new Deployment({
-  metadata: { name: "topology-service", namespace: "system", labels },
+  metadata: { name: "topology-service", namespace: SYSTEM_NS, labels },
   spec: {
     // 2 replicas: topology service is in the critical path for path-based routing;
     // a single replica is a SPOF. HPA not added here since topology lookups are
@@ -72,7 +72,7 @@ export const topologyDeployment = new Deployment({
 });
 
 export const topologyService = new Service({
-  metadata: { name: "topology-service", namespace: "system", labels },
+  metadata: { name: "topology-service", namespace: SYSTEM_NS, labels },
   spec: {
     selector: { "app.kubernetes.io/name": "topology-service" },
     ports: [{ name: "http", port: 8080, targetPort: "http" }],
@@ -82,7 +82,7 @@ export const topologyService = new Service({
 // ExternalSecret: syncs gitlab-topology-db-password from GCP Secret Manager
 // into the system namespace so the topology-service Deployment can mount it.
 export const topologyDbPasswordSecret = new ExternalSecret({
-  metadata: { name: "topology-db-password", namespace: "system", labels: { "app.kubernetes.io/part-of": "system" } },
+  metadata: { name: "topology-db-password", namespace: SYSTEM_NS, labels: { "app.kubernetes.io/part-of": "system" } },
   spec: {
     refreshInterval: "1h",
     secretStoreRef: { name: "gcp-secret-manager", kind: "ClusterSecretStore" },
@@ -97,7 +97,7 @@ export const topologyDbPasswordSecret = new ExternalSecret({
 export const topologyServiceMonitor = new ServiceMonitor({
   metadata: {
     name: "topology-service",
-    namespace: "system",
+    namespace: SYSTEM_NS,
     labels: { ...labels, prometheus: "system" },
   },
   spec: {

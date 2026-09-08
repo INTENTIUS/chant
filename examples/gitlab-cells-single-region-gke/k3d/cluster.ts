@@ -5,7 +5,7 @@
 //
 // What the smoke test validates (no GCP, no real GitLab):
 //   1. Session cookie _gitlab_session cell1_* → routed to cell-alpha
-//   2. Routable token glrt-cell_2_*          → routed to cell-beta
+//   2. Routable token glrt-t2_*              → routed to cell-beta
 //   3. Path /org-slug/ → topology service fallback → alpha (default)
 //   4. Health endpoint /healthz              → 200 ok
 
@@ -34,9 +34,10 @@ export const NODE_PORT = 30080;
 export const NGINX_HOST_PORT = 8081;
 export const NGINX_NODE_PORT = 30081;
 
-export const SYSTEM_NS = "system";
-
-import { cells } from "../src/config";
+import { cells, SYSTEM_NS } from "../src/config";
+// Re-exported so the k3d files import one namespace constant, the same one
+// src/system/*.ts uses.
+export { SYSTEM_NS };
 export const CELL_NAMESPACES = cells.map(c => `cell-${c.name}`);
 
 // Image tags for locally-built images loaded into k3d via `k3d image import`.

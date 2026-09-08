@@ -10,6 +10,7 @@
 //   - mock cells: nginx stubs on port 8181, named to match cell-registry.json
 //   - cell-router Service: NodePort 30080 → accessible at localhost:8080
 
+import { declareSecret } from "@intentius/chant";
 import { Deployment, Service, ConfigMap, Ingress } from "@intentius/chant-lexicon-k8s";
 import { cells, shared } from "../src/config";
 import { routingRulesConfigMap } from "../src/system/routing-rules";
@@ -40,6 +41,19 @@ server:
   port: 8080
 `,
   },
+});
+
+// The smoke DB password is created out of band, by scripts/k3d-smoke.sh, with
+// `kubectl -n system create secret generic topology-smoke-db-secret` before it
+// applies k3d.yaml. Nothing in this build produces it, so its provenance is
+// declared: `referenced` is the typed waiver that turns a consumed-but-
+// unproduced Secret from a build error into a recorded dependency. The
+// declaration carries the name and where to find it, never a value — no
+// serializer emits it, so k3d.yaml is unchanged.
+export const topologySmokeDbSecret = declareSecret({
+  name: "topology-smoke-db-secret",
+  provenance: "referenced",
+  scope: "namespace system, created by scripts/k3d-smoke.sh before kubectl apply",
 });
 
 // DB_PASSWORD sourced from a K8s secret even in k3d — the secret contains a
@@ -159,6 +173,24 @@ const cellRouterBackend = {
   }],
 };
 
+// Per-cell wildcard rules: catches gitlab.<cell>.gitlab.example.com (two levels).
+// Required because nginx wildcard rules only match a single subdomain level —
+// without these rules, cell URLs like gitlab.alpha.gitlab.example.com get 404.
+//
+// Built here rather than spread inline below: a spread must reference a const
+// (EVL004), and an arrow function passed to `.map()` is not statically
+// evaluable inside a resource constructor (EVL001).
+const perCellRouterRules = cells.map(cell => ({
+  host: `*.${cell.name}.${shared.domain}`,
+  http: cellRouterBackend,
+}));
+
+const cellRouterIngressRules = [
+  // Top-level wildcard: catches *.gitlab.example.com (one subdomain level)
+  { host: `*.${shared.domain}`, http: cellRouterBackend },
+  ...perCellRouterRules,
+];
+
 export const k3dCellRouterIngress = new Ingress({
   metadata: {
     name: "cell-router",
@@ -169,17 +201,7 @@ export const k3dCellRouterIngress = new Ingress({
   },
   spec: {
     ingressClassName: "nginx",
-    rules: [
-      // Top-level wildcard: catches *.gitlab.example.com (one subdomain level)
-      { host: `*.${shared.domain}`, http: cellRouterBackend },
-      // Per-cell wildcard: catches gitlab.<cell>.gitlab.example.com (two levels).
-      // Required because nginx wildcard rules only match a single subdomain level —
-      // without these rules, cell URLs like gitlab.alpha.gitlab.example.com get 404.
-      ...cells.map(cell => ({
-        host: `*.${cell.name}.${shared.domain}`,
-        http: cellRouterBackend,
-      })),
-    ],
+    rules: cellRouterIngressRules,
   },
 });
 
