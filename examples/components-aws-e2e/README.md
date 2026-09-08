@@ -57,12 +57,15 @@ npm run teardown
 ```
 
 The S3 bucket name folds in the account id (S3 names are globally unique); the
-stack is two free-tier resources with no IAM.
+stack is a bucket, its TLS-only policy and a queue, all free-tier and with no
+IAM.
 
 ## What this demonstrates
 
 - **Semantic lint on the IaC.** The AWS lexicon blocks the build until the bucket
-  blocks public access and the queue is encrypted — coherence, not just schema.
+  blocks public access, a bucket policy denies plaintext requests
+  (`aws:SecureTransport = false`), and the queue is encrypted — coherence, not
+  just schema.
 - **One artifact, two roles.** The template `cfn-deploy` applies is the exact one
   `chant build` synthesized. The release ships what synthesis produced.
 - **Bring-your-own endpoint.** The component is identical against Floci and real

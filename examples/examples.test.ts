@@ -1817,7 +1817,7 @@ describe("cockroachdb-multi-region-gke (#1704)", () => {
 // ── Testing harness — testing-harness-aws (#1224) ────────────────────
 // Build-validated here (the live deploy/destroy runs against Floci via
 // `just testing-harness-e2e`, which Docker-gates itself). The build asserts
-// the two resources and the per-env naming the harness's isolation rides on:
+// the three resources and the per-env naming the harness's isolation rides on:
 // every physical name folds in the stack name, which the harness sets to the
 // per-run `test-<suite>-<nonce>` environment.
 
@@ -1835,10 +1835,19 @@ describeExample(
         Resources: Record<string, { Type: string; Properties: Record<string, unknown> }>;
       };
       const resources = Object.values(template.Resources);
-      expect(resources.map((r) => r.Type).sort()).toEqual(["AWS::S3::Bucket", "AWS::SQS::Queue"]);
+      expect(resources.map((r) => r.Type).sort()).toEqual([
+        "AWS::S3::Bucket",
+        "AWS::S3::BucketPolicy",
+        "AWS::SQS::Queue",
+      ]);
       // Stack-name-folded physical names — two parallel suites never collide.
       expect(JSON.stringify(template.Resources.dataBucket.Properties.BucketName)).toContain("AWS::StackName");
       expect(JSON.stringify(template.Resources.taskQueue.Properties.QueueName)).toContain("AWS::StackName");
+      // The README's claim that `deployStack` deploys what `chant build` would:
+      // the deny-non-TLS policy the audit requires is in the same template.
+      expect(JSON.stringify(template.Resources.dataBucketPolicy.Properties.PolicyDocument)).toContain(
+        '"aws:SecureTransport":"false"',
+      );
     },
   },
 );
@@ -2000,3 +2009,113 @@ describe("supply-chain component-only project (#2252)", () => {
     }
   });
 });
+
+// ── Adopted ALB services — adopt-alb-services (#2250) ────────────────
+// The README's "after": two services behind one shared ALB, released by three
+// `build.json` component declarations instead of a bespoke CI job per service.
+// `npm run build` synthesizes the three stacks from their own directories; the
+// whole src tree builds as one template here, which carries the same shape.
+
+describeExample(
+  "adopt-alb-services",
+  {
+    lexicon: "aws",
+    serializer: awsSerializer,
+    outputKey: "aws",
+    examplesDir: import.meta.dirname,
+  },
+  {
+    checks: (output) => {
+      const template = JSON.parse(output) as {
+        Resources: Record<string, { Type: string; Properties: Record<string, unknown> }>;
+        Outputs: Record<string, unknown>;
+      };
+      const types = Object.values(template.Resources).map((r) => r.Type);
+      // "Two services behind one shared ALB" — the README's opening line.
+      expect(types.filter((t) => t === "AWS::ECS::Service")).toHaveLength(2);
+      expect(types.filter((t) => t === "AWS::ElasticLoadBalancingV2::LoadBalancer")).toHaveLength(1);
+      // One ECR repo per service, tags immutable so a pushed tag cannot be
+      // repointed at other image content later (WAW054).
+      expect(template.Resources.apiRepo.Properties.ImageTagMutability).toBe("IMMUTABLE");
+      expect(template.Resources.uiRepo.Properties.ImageTagMutability).toBe("IMMUTABLE");
+      // The outputs the api/ui components read with stackOutput(), replacing
+      // the README's `describe-stacks | jq` block.
+      expect(Object.keys(template.Outputs)).toEqual(
+        expect.arrayContaining(["ApiRepoUri", "UiRepoUri", "ClusterArn", "ListenerArn"]),
+      );
+    },
+  },
+);
+
+// ── Component release end-to-end — components-aws-e2e (#2250) ────────
+// The offline half of `just components-aws-e2e`: the template `cfn-deploy`
+// applies is the one `chant build` synthesized. Lint is skipped because the
+// example carries pre-existing COR001/COR004/WAW006 warnings that predate this
+// entry; the build runs the same post-synth audit the README describes.
+
+describeExample(
+  "components-aws-e2e",
+  {
+    lexicon: "aws",
+    serializer: awsSerializer,
+    outputKey: "aws",
+    examplesDir: import.meta.dirname,
+  },
+  {
+    skipLint: true,
+    checks: (output) => {
+      const template = JSON.parse(output) as {
+        Resources: Record<string, { Type: string; Properties: Record<string, unknown> }>;
+      };
+      expect(Object.values(template.Resources).map((r) => r.Type).sort()).toEqual([
+        "AWS::S3::Bucket",
+        "AWS::S3::BucketPolicy",
+        "AWS::SQS::Queue",
+      ]);
+      // The README's "Semantic lint on the IaC": the three things the AWS
+      // lexicon blocks the build until it sees.
+      expect(template.Resources.dataBucket.Properties.PublicAccessBlockConfiguration).toMatchObject({
+        BlockPublicAcls: true,
+        BlockPublicPolicy: true,
+        IgnorePublicAcls: true,
+        RestrictPublicBuckets: true,
+      });
+      expect(JSON.stringify(template.Resources.dataBucketPolicy.Properties.PolicyDocument)).toContain(
+        '"aws:SecureTransport":"false"',
+      );
+      expect(template.Resources.taskQueue.Properties.SqsManagedSseEnabled).toBe(true);
+    },
+  },
+);
+
+// ── One shape, three clouds — local-cloud-trio (#2250) ───────────────
+// The offline half of `chant run aws|azure|gcp`: each cloud's object store
+// synthesizes to that cloud's native format, all from one src tree. Lint is
+// skipped because the example carries pre-existing AZR001/WGC001/COR001/COR004
+// warnings that predate this entry.
+
+describeExample(
+  "local-cloud-trio",
+  {
+    lexicon: "aws+azure+gcp",
+    serializer: [awsSerializer, azureSerializer, gcpSerializer],
+    outputKey: ["aws", "azure", "gcp"],
+    examplesDir: import.meta.dirname,
+  },
+  {
+    skipLint: true,
+    checks: (output) => {
+      // The README's table: AWS synthesizes to CloudFormation, and the bucket
+      // is the name `chant run aws` verifies at localhost:4566.
+      const template = JSON.parse(output) as {
+        AWSTemplateFormatVersion: string;
+        Resources: Record<string, { Type: string; Properties: Record<string, unknown> }>;
+      };
+      expect(template.AWSTemplateFormatVersion).toBe("2010-09-09");
+      const bucket = Object.values(template.Resources).find((r) => r.Type === "AWS::S3::Bucket")!;
+      expect(bucket.Properties.BucketName).toBe("chant-trio-bucket");
+      const policy = Object.values(template.Resources).find((r) => r.Type === "AWS::S3::BucketPolicy")!;
+      expect(JSON.stringify(policy.Properties.PolicyDocument)).toContain('"aws:SecureTransport":"false"');
+    },
+  },
+);
