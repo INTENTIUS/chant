@@ -43,8 +43,9 @@ import crdbDeployOp from "./cockroachdb-multi-region-gke/ops/deploy.op";
 import crdbPublishUiOp from "./cockroachdb-multi-region-gke/ops/publish-ui.op";
 import crdbUiConvergeOp from "./cockroachdb-multi-region-gke/ops/publish-ui-converge.op";
 import crdbTeardownOp from "./cockroachdb-multi-region-gke/ops/teardown.op";
+import { discoverComponents, listComponents, runComponents } from "@intentius/chant/components";
 import { resolve } from "path";
-import { readFileSync } from "fs";
+import { existsSync, readFileSync, rmSync } from "fs";
 
 /** Read an Op default export's name. */
 function opName(op: unknown): string {
@@ -1911,4 +1912,91 @@ describeExample("fountain-steward", {
     // The build parameter reached the manifest as a literal, not a reference.
     expect(output).toContain("https://github.com/INTENTIUS/chant");
   },
+});
+
+// ── supply-chain, a component-only project (#2252) ────────────────────
+// There is no `src/` here and nothing exports a Declarable, so `chant build`
+// exits 1 with "produced no output" and the entry point is `chant run
+// --components`. CI guards the run with a shell step (.github/workflows/
+// chant.yml, "Run supply-chain example component (regression guard, #630)");
+// these cases make the same assertions in-process, and add the component shape
+// that step never looks at.
+
+describe("supply-chain component-only project (#2252)", () => {
+  const dir = resolve(import.meta.dirname, "supply-chain");
+
+  test("no src/ to build — the two components are the whole project", async () => {
+    expect(existsSync(resolve(dir, "src"))).toBe(false);
+    const listed = await listComponents(dir);
+    expect(listed.errors).toEqual([]);
+    expect(listed.components.map((c) => c.name)).toEqual([
+      "supply-chain-demo",
+      "supply-chain-demo-signed",
+    ]);
+    // Producer libraries with no build phase and no dependencies: nothing here
+    // waits on a stack, which is why a single-component run is the whole story.
+    expect(listed.components.map((c) => c.archetype)).toEqual([
+      "producer-library",
+      "producer-library",
+    ]);
+    expect(listed.components.map((c) => [c.hasBuild, c.dependsOn])).toEqual([
+      [false, []],
+      [false, []],
+    ]);
+    // The hermetic component stops at the two BOM phases; the tool-gated one
+    // layers cosign and grype work on top of the same two.
+    expect(listed.components[0].phases).toEqual(["Sbom", "ConfigBom"]);
+    expect(listed.components[1].phases).toEqual([
+      "Sbom",
+      "ConfigBom",
+      "Sign",
+      "Attest",
+      "Verify",
+      "VulnGate",
+    ]);
+  });
+
+  test("the hermetic component needs no tool-gated verb", async () => {
+    const discovered = await discoverComponents(dir);
+    const kinds = (name: string) =>
+      discovered.components
+        .get(name)!
+        .component.deploy.flatMap((p) => p.steps.map((s) => (s as { kind: string }).kind));
+    expect(kinds("supply-chain-demo")).toEqual(["generate-sbom", "extract-config-bom"]);
+    expect(kinds("supply-chain-demo-signed")).toEqual([
+      "generate-sbom",
+      "extract-config-bom",
+      "sign",
+      "attest-provenance",
+      "verify",
+      "vuln-gate",
+    ]);
+  });
+
+  test("`chant run --components supply-chain-demo --env local` is green in-process", async () => {
+    // `generate-sbom` scans `path: "."`, so the run has to see the example
+    // directory as its cwd — what `working-directory:` does for the CI step.
+    // The pool is forks and one file owns a process, so no other test sees it.
+    const previous = process.cwd();
+    process.chdir(dir);
+    try {
+      const result = await runComponents(dir, "supply-chain-demo", { env: "local" });
+      expect(result.error).toBeUndefined();
+      expect(result.run?.status).toBe("ok");
+      // The exact fact the CI step reads out of `--json`: results[0].ok.
+      expect(result.run?.results[0]).toMatchObject({ component: "supply-chain-demo", ok: true });
+      // And the two documents it then checks are non-empty, parsed rather than
+      // sized: both are real SPDX 2.3, one from the lockfile, one from the
+      // synthesized template.
+      const sbom = JSON.parse(readFileSync(resolve(dir, "sbom.spdx.json"), "utf8"));
+      const configBom = JSON.parse(readFileSync(resolve(dir, "config-bom.spdx.json"), "utf8"));
+      expect(sbom.spdxVersion).toBe("SPDX-2.3");
+      expect(configBom.spdxVersion).toBe("SPDX-2.3");
+      expect(configBom.name).toBe("supply-chain-demo.template.json");
+    } finally {
+      process.chdir(previous);
+      rmSync(resolve(dir, "sbom.spdx.json"), { force: true });
+      rmSync(resolve(dir, "config-bom.spdx.json"), { force: true });
+    }
+  });
 });

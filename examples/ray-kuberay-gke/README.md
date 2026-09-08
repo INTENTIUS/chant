@@ -99,6 +99,8 @@ npm run build:gcp
 
 Runs `chant build src --lexicon gcp`, producing `config.yaml` — Config Connector resources for the GKE cluster, GPU node pool, Filestore BASIC_HDD instance, GCS spillover bucket, Artifact Registry, and IAM bindings.
 
+The GPU pool comes from the gcp lexicon's `GpuNodePool` composite (`src/infra/cluster.ts`), promoted out of this example in [#1923](https://github.com/INTENTIUS/chant/issues/1923). Its defaults are the pool's original hand-wired config: `n1-standard-8`, one `nvidia-tesla-t4`, a 200 GB `pd-ssd` boot disk, autoscaling from 0 to 4 nodes, and the `nvidia.com/gpu=present:NO_SCHEDULE` taint. The call here passes only `name`, `clusterRef` and `location`; override `acceleratorType`, `maxNodeCount` or `taint` to change the shape.
+
 ### Phase 2 — Apply GCP infrastructure
 
 ```bash
@@ -229,4 +231,4 @@ just teardown
 
 - [Full tutorial](../../docs/src/content/docs/tutorials/ray-kuberay-gke.mdx) — architecture diagrams, key patterns (NetworkPolicy strategy, GCS spillover, preStop hooks, pre-built images), and deploy order explained
 - [K8s lexicon RayCluster/RayJob/RayService](/chant/lexicons/k8s/) — use `/chant-k8s-ray` skill for composite reference
-- [GCP lexicon](/chant/lexicons/gcp/) — `GkeCluster`, `FilestoreInstance`, `GcsBucket`, `ArtifactRegistryRepository`, IAM composites
+- [GCP lexicon](/chant/lexicons/gcp/) — `GkeCluster`, `GpuNodePool`, `FilestoreInstance`, `GcsBucket`, `ArtifactRegistryRepository`, IAM composites

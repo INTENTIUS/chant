@@ -34,7 +34,7 @@ Shared AWS infrastructure for the ALB service trilogy: VPC, Application Load Bal
 └──────────────────────────┘   └──────────────────────────┘
 ```
 
-**Source split:** The AWS CF resources live in `lexicons/aws/examples/shared-alb/` (in the monorepo). This directory (`examples/gitlab-aws-alb-infra/`) contains only the GitLab CI pipeline source (`src/pipeline.ts`). The pipeline builds and deploys the CF template from the lexicon example.
+**Where the AWS resources come from:** `src/alb.ts`, `src/network.ts`, `src/outputs.ts` and `src/tags.ts` are byte-identical copies of `lexicons/aws/examples/shared-alb/src/`. This directory synthesizes the 24-resource template itself; it does not import the lexicon example. What it adds on top of the copy is `src/pipeline.ts`, the single-stage GitLab CI deploy job, and `src/chant.config.json`, which turns COR004 off under the strict lint preset. The copy has already drifted from its source in two places: `src/ecr.ts` here omits the `ImageTagMutability: "IMMUTABLE"` the lexicon copy sets on both repositories, and the lexicon's `src/params.ts` has no counterpart here. Sync is by hand.
 
 ## Skills
 
