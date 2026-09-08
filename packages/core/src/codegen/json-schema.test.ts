@@ -110,6 +110,91 @@ describe("resolvePropertyType", () => {
     };
     expect(resolvePropertyType({ $ref: "#/definitions/Foo" }, schema, null)).toBe("any");
   });
+
+  // chant #2205 — a branch list beside a real `type` relaxes that type.
+  test("reads the sibling type through a oneOf", () => {
+    const prop: JsonSchemaProperty = {
+      type: "string",
+      oneOf: [{ pattern: "^a" }, { pattern: "^b" }],
+    };
+    expect(resolvePropertyType(prop, emptySchema, defName)).toBe("string");
+  });
+
+  test("reads the sibling $ref through an anyOf", () => {
+    const schema: JsonSchemaDocument = {
+      definitions: { Foo: { properties: { bar: { type: "string" } } } },
+    };
+    const prop: JsonSchemaProperty = {
+      $ref: "#/definitions/Foo",
+      anyOf: [{ required: ["bar"] }],
+    };
+    expect(resolvePropertyType(prop, schema, defName)).toBe("Test_Foo");
+  });
+
+  test("an anyOf branch carrying an enum narrows a string property to that union", () => {
+    // AWS::AmazonMQ::Broker.EngineType: the enum branch beside case-insensitive
+    // patterns for the same two values.
+    const prop: JsonSchemaProperty = {
+      type: "string",
+      anyOf: [
+        { type: "string", enum: ["ACTIVEMQ", "RABBITMQ"] },
+        { pattern: "^[Aa][Cc][Tt][Ii][Vv][Ee][Mm][Qq]$" },
+        { pattern: "^[Rr][Aa][Bb][Bb][Ii][Tt][Mm][Qq]$" },
+      ],
+    };
+    expect(resolvePropertyType(prop, emptySchema, defName)).toBe('"ACTIVEMQ" | "RABBITMQ"');
+  });
+
+  test("a non-string enum branch is left alone", () => {
+    const prop: JsonSchemaProperty = {
+      type: "object",
+      anyOf: [{ enum: ["a", "b"] }],
+    };
+    expect(resolvePropertyType(prop, emptySchema, defName)).toBe("Record<string, any>");
+  });
+
+  test("a branch list with nothing beside it stays 'any'", () => {
+    const prop: JsonSchemaProperty = {
+      oneOf: [
+        { type: "object", properties: { Fixed: { type: "string" } } },
+        { type: "object", properties: { Below: { type: "string" } } },
+      ],
+    };
+    expect(resolvePropertyType(prop, emptySchema, defName)).toBe("any");
+  });
+
+  // chant #2205 — allOf of one $ref and an annotation types as that $ref.
+  test("resolves an allOf of a single $ref plus an annotation", () => {
+    const schema: JsonSchemaDocument = {
+      definitions: { ProtocolType: { type: "string", enum: ["MCP"] } },
+    };
+    const prop: JsonSchemaProperty = {
+      allOf: [{ $ref: "#/definitions/ProtocolType" }, { default: "MCP" }],
+    };
+    expect(resolvePropertyType(prop, schema, defName)).toBe("Test_ProtocolType");
+  });
+
+  test("leaves an allOf that intersects two real shapes as 'any'", () => {
+    const schema: JsonSchemaDocument = {
+      definitions: {
+        A: { properties: { a: { type: "string" } } },
+        B: { properties: { b: { type: "string" } } },
+      },
+    };
+    const prop: JsonSchemaProperty = {
+      allOf: [{ $ref: "#/definitions/A" }, { $ref: "#/definitions/B" }],
+    };
+    expect(resolvePropertyType(prop, schema, defName)).toBe("any");
+  });
+
+  // chant #2205 — `[]` binds tighter than `|`.
+  test("parenthesizes a union inside an array", () => {
+    const prop: JsonSchemaProperty = {
+      type: "array",
+      items: { type: "string", enum: ["arm64", "x86_64"] },
+    };
+    expect(resolvePropertyType(prop, emptySchema, defName)).toBe('("arm64" | "x86_64")[]');
+  });
 });
 
 describe("resolveRef", () => {
@@ -128,6 +213,80 @@ describe("resolveRef", () => {
       definitions: { Count: { type: "integer" } },
     };
     expect(resolveRef("#/definitions/Count", schema, defName)).toBe("number");
+  });
+
+  // chant #2205 — CloudFormation names its list shapes, and a `$ref` to one
+  // used to fall through to "any".
+  test("resolves an array definition through its items", () => {
+    const schema: JsonSchemaDocument = {
+      definitions: {
+        TagList: { type: "array", items: { $ref: "#/definitions/Tag" } },
+        Tag: { properties: { Key: { type: "string" }, Value: { type: "string" } } },
+      },
+    };
+    expect(resolveRef("#/definitions/TagList", schema, defName)).toBe("Test_Tag[]");
+  });
+
+  test("resolves an array definition of scalars", () => {
+    const schema: JsonSchemaDocument = {
+      definitions: { Names: { type: "array", items: { type: "string" } } },
+    };
+    expect(resolveRef("#/definitions/Names", schema, defName)).toBe("string[]");
+  });
+
+  test("resolves an array definition with no items to 'any[]'", () => {
+    const schema: JsonSchemaDocument = {
+      definitions: { Loose: { type: "array" } },
+    };
+    expect(resolveRef("#/definitions/Loose", schema, defName)).toBe("any[]");
+  });
+
+  test("parenthesizes a union inside an array definition", () => {
+    const schema: JsonSchemaDocument = {
+      definitions: { Modes: { type: "array", items: { type: "string", enum: ["b", "a"] } } },
+    };
+    expect(resolveRef("#/definitions/Modes", schema, defName)).toBe('("a" | "b")[]');
+  });
+
+  test("a list definition that reaches itself terminates", () => {
+    const schema: JsonSchemaDocument = {
+      definitions: { Tree: { type: "array", items: { $ref: "#/definitions/Tree" } } },
+    };
+    expect(resolveRef("#/definitions/Tree", schema, defName)).toBe("any[]");
+  });
+
+  test("a definition that is an allOf of one $ref resolves as that $ref", () => {
+    const schema: JsonSchemaDocument = {
+      definitions: {
+        Wrapped: { allOf: [{ $ref: "#/definitions/Inner" }, { default: "x" }] },
+        Inner: { properties: { a: { type: "string" } } },
+      },
+    };
+    expect(resolveRef("#/definitions/Wrapped", schema, defName)).toBe("Test_Inner");
+  });
+
+  test("a definition that is a sum of object branches stays 'any'", () => {
+    const schema: JsonSchemaDocument = {
+      definitions: {
+        FieldPosition: {
+          oneOf: [
+            { type: "object", properties: { Fixed: { type: "string" } } },
+            { type: "object", properties: { Below: { type: "string" } } },
+          ],
+        },
+      },
+    };
+    expect(resolveRef("#/definitions/FieldPosition", schema, defName)).toBe("any");
+  });
+
+  test("a nested list definition resolves through both hops", () => {
+    const schema: JsonSchemaDocument = {
+      definitions: {
+        Matrix: { type: "array", items: { $ref: "#/definitions/Row" } },
+        Row: { type: "array", items: { type: "number" } },
+      },
+    };
+    expect(resolveRef("#/definitions/Matrix", schema, defName)).toBe("number[][]");
   });
 });
 
