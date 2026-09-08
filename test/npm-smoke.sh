@@ -431,11 +431,7 @@ if [ -d /examples ]; then
     /tarballs/lexicon-aws.tgz aws \
     /tarballs/lexicon-gitlab.tgz gitlab
 
-  test_example "gitlab-aws-alb-api" \
-    /tarballs/lexicon-aws.tgz aws \
-    /tarballs/lexicon-gitlab.tgz gitlab
-
-  test_example "gitlab-aws-alb-ui" \
+  test_example "gitlab-aws-alb-services" \
     /tarballs/lexicon-aws.tgz aws \
     /tarballs/lexicon-gitlab.tgz gitlab
 

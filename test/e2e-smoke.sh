@@ -5,7 +5,7 @@ set -euo pipefail
 # Delegates to each example's own npm scripts (run/deploy/teardown/build).
 #
 # Usage: e2e-smoke.sh [aws|eks|gke|aks|all]
-#   aws — gitlab-aws-alb-{infra,api,ui} (needs AWS + GitLab)
+#   aws — gitlab-aws-alb-{infra,services} (needs AWS + GitLab)
 #   eks — k8s-eks-microservice (needs AWS + domain)
 #   gke — k8s-gke-microservice, ray-kuberay-gke (needs GCP project)
 #   aks — k8s-aks-microservice (needs Azure subscription)
@@ -112,7 +112,7 @@ setup_example() {
 
   # Copy example source and supporting files
   cp -r "/examples/$name/src" src/
-  for item in sql Dockerfile scripts setup.sh; do
+  for item in sql Dockerfile Dockerfile.api Dockerfile.ui scripts setup.sh; do
     if [ -e "/examples/$name/$item" ]; then
       cp -r "/examples/$name/$item" "$item"
     fi
@@ -276,10 +276,8 @@ run_aws_group() {
   test_gitlab_example "gitlab-aws-alb-infra" "chant-e2e-shared-alb" "shared-alb" \
     /tarballs/lexicon-aws.tgz /tarballs/lexicon-gitlab.tgz
 
-  test_gitlab_example "gitlab-aws-alb-api" "chant-e2e-shared-alb-api" "shared-alb-api" \
-    /tarballs/lexicon-aws.tgz /tarballs/lexicon-gitlab.tgz
-
-  test_gitlab_example "gitlab-aws-alb-ui" "chant-e2e-shared-alb-ui" "shared-alb-ui" \
+  # One project, both Fargate services, one stack (#2254)
+  test_gitlab_example "gitlab-aws-alb-services" "chant-e2e-shared-alb-services" "shared-alb-services" \
     /tarballs/lexicon-aws.tgz /tarballs/lexicon-gitlab.tgz
 }
 

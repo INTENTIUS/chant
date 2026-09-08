@@ -16,16 +16,16 @@ generic `runInterpretDriver` (#556, [`../driver.ts`](./driver.ts)), unchanged.
 ## Before / after: the ALB/ECS pipeline glue this replaces
 
 The component model's whole reason for existing is visible in one concrete
-diff. [`examples/gitlab-aws-alb-api/src/pipeline.ts`](../../../../examples/gitlab-aws-alb-api/src/pipeline.ts)
-hand-rolls a `deployService` job that shells out to CloudFormation and greps
+diff. [`examples/gitlab-aws-alb-services/src/pipeline.ts`](../../../../examples/gitlab-aws-alb-services/src/pipeline.ts)
+hand-rolls a `deployServices` job that shells out to CloudFormation and greps
 its own infra stack's outputs before it can deploy:
 
 ```ts
-// before — examples/gitlab-aws-alb-api/src/pipeline.ts (deployService job)
+// before — examples/gitlab-aws-alb-services/src/pipeline.ts (deployServices job)
 `OUTPUTS=$(aws cloudformation describe-stacks --stack-name ${INFRA_STACK} --query 'Stacks[0].Outputs' --output json)`,
 `PARAMS=$(echo "$OUTPUTS" | jq -r '[(.[] | select(.OutputKey == "ClusterArn") | "clusterArn=" + .OutputValue), (.[] | select(.OutputKey == "ListenerArn") | "listenerArn=" + .OutputValue), ...] | join(" ")')`,
-`IMAGE_URI=$(echo "$OUTPUTS" | jq -r '.[] | select(.OutputKey == "ApiRepoUri") | .OutputValue'):${CI_COMMIT_REF_SLUG}`,
-`aws cloudformation deploy --template-file templates/template.json --stack-name ${STACK_NAME} ... --parameter-overrides $PARAMS image=$IMAGE_URI`,
+`API_IMAGE_URI=$(echo "$OUTPUTS" | jq -r '.[] | select(.OutputKey == "ApiRepoUri") | .OutputValue'):${CI_COMMIT_REF_SLUG}`,
+`aws cloudformation deploy --template-file templates/template.json --stack-name ${STACK_NAME} ... --parameter-overrides $PARAMS apiImage=$API_IMAGE_URI uiImage=$UI_IMAGE_URI`,
 ```
 
 That `describe-stacks | jq` line is bespoke per pipeline: every component that

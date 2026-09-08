@@ -260,7 +260,7 @@ Follow the **Deploy to AWS** section above. This deploys real cloud infrastructu
 
 ## Related examples
 
-- [gitlab-aws-alb-api](../gitlab-aws-alb-api/) — AWS + GitLab cross-lexicon
+- [gitlab-aws-alb-services](../gitlab-aws-alb-services/) — AWS + GitLab cross-lexicon
 
 ## Standalone Usage
 

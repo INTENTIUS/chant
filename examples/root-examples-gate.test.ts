@@ -65,12 +65,6 @@ interface AllowEntry {
 
 const ALLOWLIST: Record<string, AllowEntry> = {
   // ── No chant project in the directory ──
-  "gitlab-aws-alb-op": {
-    kind: "no-config",
-    reason:
-      "An `ops/` directory on its own, with no chant.config of its own to build or lint against. " +
-      "Folded into gitlab-aws-alb-infra by #2254.",
-  },
   "terraform-carve-out": {
     kind: "no-config",
     reason:

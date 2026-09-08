@@ -2,7 +2,7 @@
 
 > **New to chant?** Start with the [golden teaching example](../getting-started/) — synthesis → lint → Ops → the lifecycle dial over one set of declarations — then come back here for a production-shaped deployment.
 
-Shared AWS infrastructure for the ALB service trilogy: VPC, Application Load Balancer, ECS cluster, and ECR repositories — deployed via a GitLab CI pipeline.
+Shared AWS infrastructure for the ALB service pair: VPC, Application Load Balancer, ECS cluster, and ECR repositories — deployed via a GitLab CI pipeline. `ops/alb-deploy.op.ts` is this example's deploy verb: it builds and applies this stack and the two services on it in one run.
 
 ## Architecture
 
@@ -27,14 +27,14 @@ Shared AWS infrastructure for the ALB service trilogy: VPC, Application Load Bal
 │                                                                  │
 │  outputs.ts → 10 stack outputs (ClusterArn, ListenerArn, ...)    │
 └─────────────────────────────────────────────────────────────────┘
-         ↓ consumed as parameters by service stacks
-┌──────────────────────────┐   ┌──────────────────────────┐
-│  shared-alb-api stack    │   │  shared-alb-ui stack      │
-│  Fargate at /api/*       │   │  Fargate at /*            │
-└──────────────────────────┘   └──────────────────────────┘
+         ↓ consumed as parameters by the service stack
+┌──────────────────────────────────────────────────────────┐
+│  shared-alb-services stack                               │
+│  Fargate at /api/* + Fargate at /* (both services)       │
+└──────────────────────────────────────────────────────────┘
 ```
 
-**Where the AWS resources come from:** `src/alb.ts`, `src/network.ts`, `src/outputs.ts` and `src/tags.ts` are byte-identical copies of `lexicons/aws/examples/shared-alb/src/`. This directory synthesizes the 24-resource template itself; it does not import the lexicon example. What it adds on top of the copy is `src/pipeline.ts`, the single-stage GitLab CI deploy job, and `src/chant.config.json`, which turns COR004 off under the strict lint preset. The copy has already drifted from its source in two places: `src/ecr.ts` here omits the `ImageTagMutability: "IMMUTABLE"` the lexicon copy sets on both repositories, and the lexicon's `src/params.ts` has no counterpart here. Sync is by hand.
+**Where the AWS resources come from:** `src/alb.ts`, `src/ecr.ts`, `src/network.ts`, `src/outputs.ts` and `src/tags.ts` are byte-identical copies of `lexicons/aws/examples/shared-alb/src/`. This directory synthesizes the 24-resource template itself; it does not import the lexicon example. What it adds on top of the copy is `src/pipeline.ts`, the single-stage GitLab CI deploy job, `src/chant.config.json`, which turns COR004 off under the strict lint preset, and `ops/alb-deploy.op.ts`. One file still differs: the lexicon's `src/params.ts` has no counterpart here. Sync is by hand.
 
 ## Skills
 
@@ -66,10 +66,11 @@ The lexicon packages ship skills for agent-guided deployment. After `chant init 
 | `src/outputs.ts` | AWS | CloudFormation stack outputs for service stacks |
 | `src/tags.ts` | AWS | Default resource tags |
 | `src/pipeline.ts` | GitLab | Deploy job using `aws cloudformation deploy` |
+| `ops/alb-deploy.op.ts` | — | `alb-deploy` Op: build both projects, apply both stacks in order, snapshot |
 
 ## Stack outputs
 
-The infra stack exports these values for the api and ui service stacks:
+The infra stack exports these values for the service stack:
 
 | Output | Description |
 |--------|-------------|
@@ -83,6 +84,18 @@ The infra stack exports these values for the api and ui service stacks:
 | `PrivateSubnet2` | Second private subnet |
 | `ApiRepoUri` | ECR repo URI for API service |
 | `UiRepoUri` | ECR repo URI for UI service |
+
+## The `alb-deploy` Op
+
+`ops/alb-deploy.op.ts` declares the whole deployment as one named, phased workflow:
+
+| Phase | Steps |
+|-------|-------|
+| Build (parallel) | `npm run build` here and in `../gitlab-aws-alb-services` |
+| Deploy | `awsApply` the `shared-alb` stack, then the `shared-alb-services` stack |
+| Verify | `chant lifecycle snapshot staging` |
+
+Deploy is sequential because the services stack takes this stack's listener, cluster and subnet outputs as parameters. Run it with `chant run alb-deploy` from this directory; `npm run build:ops` synthesizes it to `ops/dist/ops/alb-deploy/op.json`, and `npm run lint` lints `ops/` alongside `src/`.
 
 ## Prerequisites
 
@@ -136,14 +149,12 @@ aws cloudformation describe-stacks --stack-name shared-alb --query 'Stacks[0].Ou
 
 ## Teardown
 
-Delete service stacks first, then infra — order matters:
+Delete the service stack first, then infra — order matters:
 
 ```bash
-# Delete api and ui stacks first (if deployed)
-aws cloudformation delete-stack --stack-name shared-alb-api
-aws cloudformation delete-stack --stack-name shared-alb-ui
-aws cloudformation wait stack-delete-complete --stack-name shared-alb-api
-aws cloudformation wait stack-delete-complete --stack-name shared-alb-ui
+# Delete the services stack first (if deployed)
+aws cloudformation delete-stack --stack-name shared-alb-services
+aws cloudformation wait stack-delete-complete --stack-name shared-alb-services
 
 # Empty ECR repos (CloudFormation cannot delete repos containing images)
 aws ecr delete-repository --repository-name alb-api --force
@@ -186,8 +197,7 @@ aws cloudformation wait stack-delete-complete --stack-name shared-alb
 
 ## Related examples
 
-- [gitlab-aws-alb-api](../gitlab-aws-alb-api/) — API Fargate service (depends on this stack)
-- [gitlab-aws-alb-ui](../gitlab-aws-alb-ui/) — UI Fargate service (depends on this stack)
+- [gitlab-aws-alb-services](../gitlab-aws-alb-services/) — the API and UI Fargate services (depend on this stack)
 - [k8s-eks-microservice](../k8s-eks-microservice/) — Production-grade AWS EKS + K8s
 
 ## Standalone Usage
