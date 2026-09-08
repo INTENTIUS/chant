@@ -5,9 +5,10 @@ deploys a real instance of its stack once, asserts against the live resources,
 and tears it down — against a local AWS emulator (Floci), for $0 and no
 account.
 
-- `src/infra.ts` — the stack under test: an S3 bucket + an SQS queue. Every
-  physical name folds in the CloudFormation stack name, which the harness sets
-  to the per-run environment, so parallel suites never collide.
+- `src/infra.ts`, `src/bucket-policy.ts` — the stack under test: an S3 bucket
+  with a policy denying non-TLS requests, and an SQS queue. Every physical name
+  folds in the CloudFormation stack name, which the harness sets to the per-run
+  environment, so parallel suites never collide.
 - `chant.config.ts` — what the harness needs from a project: `ownership.stack`
   (destroy is marker-scoped) and a `"test-*"` environments pattern entry that
   legalizes the derived `test-<suite>-<nonce>` names and carries the default
