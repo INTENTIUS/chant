@@ -207,6 +207,39 @@ async function planOnPrWorkflows(): Promise<{ plan: string; apply: string }> {
   return { plan: plan!.yaml, apply: apply!.yaml };
 }
 
+/** The shape of the emitted push workflow this suite reads back, field by field. */
+interface WorkflowStep {
+  id?: string;
+  uses?: string;
+  run?: string;
+  env?: Record<string, string>;
+}
+interface WorkflowJob {
+  needs?: string;
+  if?: string;
+  "runs-on"?: string;
+  container?: string;
+  permissions?: Record<string, string>;
+  outputs?: Record<string, string>;
+  steps: WorkflowStep[];
+}
+interface PushWorkflow {
+  permissions?: Record<string, string>;
+  jobs: Record<string, WorkflowJob>;
+}
+
+/** The emitted push workflow, read back. Cast through `unknown` in one place, since `parseYAML` answers `Record<string, unknown>`. */
+function parsePush(yaml: string): PushWorkflow {
+  return parseYAML(yaml) as unknown as PushWorkflow;
+}
+
+/** The apply job's `chant run` step — the last step that invokes the CLI. */
+function runStep(workflow: PushWorkflow): WorkflowStep {
+  const step = workflow.jobs["app-apply"].steps.find((s) => s.run?.includes("chant run app-apply"));
+  expect(step, "the apply job runs the Op").toBeDefined();
+  return step!;
+}
+
 describe("plan-on-pr generates the pull_request plan and push apply pair (#2221)", () => {
   it("discovers the example's own two Ops, and carries each one's trigger", async () => {
     const result = await generateOpsPipeline([PLAN_SPEC, APPLY_SPEC], "github", {}, planOnPrDir);
@@ -300,10 +333,15 @@ describe("plan-on-pr generates the pull_request plan and push apply pair (#2221)
     // need is the OIDC token it exchanges for the apply role (#2242), which
     // is additive over the `report` mode's read-only set rather than a
     // replacement for it.
-    const parsed = parseYAML(apply) as { permissions?: Record<string, string> };
+    //
+    // The workflow-level set is the apply job's: the notice job (#2243)
+    // carries its own, which replaces this one for itself alone, so the two
+    // forge write scopes in this file belong to that job and never to the
+    // apply.
+    const parsed = parsePush(apply);
     expect(parsed.permissions).toEqual({ contents: "read", "id-token": "write" });
-    expect(apply).not.toContain("issues: write");
-    expect(apply).not.toContain("pull-requests: write");
+    expect(parsed.jobs["app-apply"].permissions).toBeUndefined();
+    expect(parsed.jobs["app-apply-gate-notice"].permissions).not.toHaveProperty("id-token");
     expect(apply).not.toContain("write-all");
   });
 
@@ -319,12 +357,16 @@ describe("plan-on-pr generates the pull_request plan and push apply pair (#2221)
       const steps = doc.jobs[op].steps;
       // The whole order the shape depends on: check out the root, mint
       // credentials for it, install the CLI that will use them, run the Op.
-      expect(steps.map((step) => step.uses ?? step.run?.slice(0, 5))).toEqual([
+      // The last step's shape differs by trigger — the push apply's is the
+      // gated-apply script (#2243) rather than a bare line — so it is matched
+      // on the invocation it carries rather than on its first five characters.
+      expect(steps.slice(0, 3).map((step) => step.uses ?? step.run?.slice(0, 5))).toEqual([
         "actions/checkout@v4",
         AWS_CREDENTIALS_ACTION,
         "curl ",
-        "chant",
       ]);
+      expect(steps).toHaveLength(4);
+      expect(steps[3].run).toContain(`chant run ${op}`);
       expect(steps[1].with).toEqual({
         "role-to-assume": `\${{ vars.${roleVariable} }}`,
         "aws-region": AWS_REGION,
@@ -355,9 +397,12 @@ describe("plan-on-pr generates the pull_request plan and push apply pair (#2221)
     // variable and not just the API one.
     expect(plan).toContain("GH_TOKEN:");
     expect(apply).toContain("chant run app-apply");
-    // `report` mode posts nothing, so the `gh` CLI's own token variable is
-    // not wired into the apply job.
-    expect(apply).not.toContain("GH_TOKEN:");
+    // `report` mode posts nothing, so the `gh` CLI's own token variable is not
+    // wired into the apply job itself. The notice job beside it has one,
+    // because that job is the thing that talks to the forge.
+    const applyStep = runStep(parsePush(apply));
+    expect(applyStep.env?.GH_TOKEN).toBeUndefined();
+    expect(applyStep.env?.GITHUB_TOKEN).toBe("${{ github.token }}");
   });
 
   it("keeps one run at a time per Op, which is also the state lock", async () => {
@@ -382,6 +427,85 @@ describe("plan-on-pr generates the pull_request plan and push apply pair (#2221)
     expect(step.args?.mode).toBe("comment");
     expect(step.args?.body).toMatchObject({ kind: "step-output-ref", step: "plan", path: "text" });
     expect(JSON.stringify(step.args)).not.toContain("json");
+  });
+
+  // ── The gated apply is a green run with a visible pending state (#2243) ──
+
+  it("maps the gate's exit code on the push job and on nothing else", async () => {
+    const { plan, apply } = await planOnPrWorkflows();
+    // The push apply is the job a gate would otherwise paint red on every
+    // merge, so it is the job that asks for the mapping.
+    expect(runStep(parsePush(apply)).run).toContain("chant run app-apply --gated-exit 0 --json");
+    // The pull-request plan is not: nobody is waiting on a merge for it, and a
+    // gated plan there is a signal rather than noise.
+    expect(plan).not.toContain("--gated-exit");
+    expect(plan).toContain("chant run app-plan\n");
+  });
+
+  it("publishes what the apply stopped on as job outputs", async () => {
+    const { apply } = await planOnPrWorkflows();
+    const parsed = parsePush(apply);
+    const step = runStep(parsed);
+    expect(step.id).toBe("chant-run");
+    expect(parsed.jobs["app-apply"].outputs).toEqual({
+      gated: "${{ steps.chant-run.outputs.gated }}",
+      op: "${{ steps.chant-run.outputs.op }}",
+      gate: "${{ steps.chant-run.outputs.gate }}",
+      approve: "${{ steps.chant-run.outputs.approve }}",
+    });
+    // A failing run piped into `tee` would come back as `tee`'s zero, so the
+    // one line that keeps a broken apply red is asserted rather than assumed.
+    expect(step.run).toContain("set -o pipefail");
+  });
+
+  it("adds one follow-up job that needs the apply and runs only when it gated", async () => {
+    const { apply } = await planOnPrWorkflows();
+    const parsed = parsePush(apply);
+    const notice = parsed.jobs["app-apply-gate-notice"];
+    expect(notice, "the push workflow carries the notice job").toBeDefined();
+    expect(notice.needs).toBe("app-apply");
+    expect(notice.if).toBe("needs.app-apply.outputs.gated == 'true'");
+    // It needs `gh`, which a hosted runner image carries and `node:22-slim`
+    // does not, so it runs outside the Op's container.
+    expect(notice.container).toBeUndefined();
+    expect(notice["runs-on"]).toBe("ubuntu-latest");
+    expect(parsed.jobs["app-apply-gate-notice"].steps).toHaveLength(1);
+  });
+
+  it("gives the follow-up job the scopes its two posting paths need and nothing wider", async () => {
+    const { apply } = await planOnPrWorkflows();
+    const notice = (parsePush(apply)).jobs["app-apply-gate-notice"];
+    // `contents: read` for the commit-to-pull-request lookup, `pull-requests:
+    // write` for the sticky comment on the merged PR, `issues: write` for the
+    // fallback when the push has no pull request. No `contents: write`: the
+    // job pushes no branch, and it is a job-level set, so the apply beside it
+    // keeps its own `contents: read`.
+    expect(notice.permissions).toEqual({
+      contents: "read",
+      issues: "write",
+      "pull-requests": "write",
+    });
+  });
+
+  it("finds the merged pull request from the pushed commit, and opens an issue when there is none", async () => {
+    const { apply } = await planOnPrWorkflows();
+    const script = (parsePush(apply)).jobs["app-apply-gate-notice"].steps[0].run ?? "";
+    // The commit's own associated-pull-request endpoint, not a search: a push
+    // event carries no pull request, and the merge commit's is exact.
+    expect(script).toContain('gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls"');
+    // The `comment` mode's marker recipe (#2231): find by marker, PATCH when
+    // it is there, POST when it is not, so re-merges edit one comment.
+    expect(script).toContain('marker="<!-- chant-gate:$CHANT_OP -->"');
+    expect(script).toContain("startswith");
+    expect(script).toContain("--method PATCH");
+    expect(script).toContain("--method POST");
+    // No pull request, so the finding goes where a finding without one goes.
+    expect(script).toContain("gh issue create");
+    // The body carries the exact command that clears the gate, which the
+    // apply job handed over as an output rather than the notice reassembling
+    // it from the op and gate names.
+    expect(script).toContain("%s --approver <you>");
+    expect(script).toContain('"$CHANT_APPROVE"');
   });
 
   it("applies only the plan its own Plan step saved", async () => {

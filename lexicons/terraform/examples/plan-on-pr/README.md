@@ -145,8 +145,25 @@ pins both emitted documents, install line included, and is the copyable form
 of the call above.
 
 The apply half stops at its gate. A push run reaches it, finds no resolution
-on the gate ledger, records the pending fact and exits 3, so the workflow run
-ends there instead of holding a runner open. `chant approve app-apply
-approve-app-apply --approver you` records the answer, and re-running the
-workflow applies the plan. Drop the stop with `gate: "never"` on a root whose
-merges should apply unattended.
+on the gate ledger, records the pending fact and ends there instead of holding
+a runner open. `chant approve app-apply approve-app-apply --approver you`
+records the answer, and re-running the workflow applies the plan. Drop the stop
+with `gate: "never"` on a root whose merges should apply unattended.
+
+That stop used to mark main as broken on every merge, since a gated run exits 3
+and GitHub Actions has no neutral conclusion for a `run:` step. The push job now
+runs `chant run app-apply --gated-exit 0 --json`, which maps that one outcome
+and nothing else: a run that fails for any other reason still exits 1 and the
+job is still red. The gate, the `chant approve` command and the
+`_gates/app-apply.jsonl` ledger path go to `GITHUB_STEP_SUMMARY`, which is what
+the run page shows.
+
+The pending state also leaves the log. `app-apply-gate-notice` `needs:` the
+apply and runs when its `gated` output is set. A push event carries no pull
+request, so the job asks `repos/{repo}/commits/{sha}/pulls` for the one the
+pushed commit belongs to and posts there through the same marker recipe the
+plan half uses, editing one comment rather than stacking one per merge. When
+that lookup answers with nothing — a direct push to the branch — it opens an
+issue instead, which is why it carries `issues: write` beside
+`pull-requests: write`. Those permissions sit on that job, so the apply next to
+it stays `contents: read`.

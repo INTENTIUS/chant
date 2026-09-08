@@ -18,6 +18,7 @@ import type { ScheduledOpSpec } from "@intentius/chant/lexicon";
 
 interface ParsedStep {
   name?: string;
+  id?: string;
   uses?: string;
   run?: string;
   env?: Record<string, string>;
@@ -26,6 +27,10 @@ interface ParsedStep {
 interface ParsedJob {
   "runs-on"?: string;
   container?: string;
+  needs?: string;
+  if?: string;
+  permissions?: Record<string, string>;
+  outputs?: Record<string, string>;
   steps: ParsedStep[];
 }
 
@@ -318,12 +323,17 @@ describe("generateGithubOpPipeline: setup steps and additive permissions (#2242)
     const doc = parseFile(result.files[0].yaml);
     const steps = doc.jobs!["app-apply"].steps;
 
-    expect(steps.map((s) => s.uses ?? s.run)).toEqual([
+    expect(steps.slice(0, 3).map((s) => s.uses ?? s.run)).toEqual([
       "actions/checkout@v4",
       "aws-actions/configure-aws-credentials@v6",
       "install terraform",
-      "chant run app-apply",
     ]);
+    // The last step is the invocation. This spec's trigger is `push`, so it
+    // is the gated-apply script rather than a bare line (#2243); what this
+    // test owns is that the setup action lands between the checkout and the
+    // `beforeScript` install, whatever shape the invocation takes.
+    expect(steps).toHaveLength(4);
+    expect(steps[3].run).toContain("chant run app-apply");
     expect((steps[1] as { with?: Record<string, string> }).with).toEqual({
       "role-to-assume": "${{ vars.AWS_ROLE_ARN }}",
       "aws-region": "eu-west-1",
@@ -433,5 +443,75 @@ describe("generateGithubOpPipeline: setup steps and additive permissions (#2242)
       "pull-requests": "write",
       "id-token": "write",
     });
+  });
+});
+
+/**
+ * chant #2243 — a `push` job whose Op gates would otherwise be a red workflow
+ * run on every merge until someone approves. The mapping is `chant run`'s own
+ * (`--gated-exit 0`); what the generator adds is asking for it on the one
+ * trigger that needs it, and a job that says where the approval is pending.
+ */
+describe("generateGithubOpPipeline: the gated apply on push (#2243)", () => {
+  const pushSpec: ScheduledOpSpec = { name: "app-apply", trigger: { kind: "push", branches: ["main"] } };
+
+  function pushDoc(): ParsedDoc {
+    return parseFile(generateGithubOpPipeline([pushSpec]).files[0].yaml);
+  }
+
+  test("a push job runs with --gated-exit 0 and publishes what it stopped on", () => {
+    const doc = pushDoc();
+    const job = doc.jobs!["app-apply"];
+    const step = job.steps.find((s) => s.id === "chant-run");
+    expect(step?.run).toContain("chant run app-apply --gated-exit 0 --json");
+    expect(job.outputs).toEqual({
+      gated: "${{ steps.chant-run.outputs.gated }}",
+      op: "${{ steps.chant-run.outputs.op }}",
+      gate: "${{ steps.chant-run.outputs.gate }}",
+      approve: "${{ steps.chant-run.outputs.approve }}",
+    });
+  });
+
+  test("a cron watch and a pull_request plan keep the plain one-line invocation", () => {
+    for (const spec of [
+      { name: "app-watch", schedule: "0 6 * * *" },
+      { name: "app-plan", trigger: { kind: "pull_request" as const } },
+    ] satisfies ScheduledOpSpec[]) {
+      const doc = parseFile(generateGithubOpPipeline([spec]).files[0].yaml);
+      const job = doc.jobs![spec.name];
+      expect(job.steps.some((s) => s.run?.includes("--gated-exit"))).toBe(false);
+      expect(job.outputs).toBeUndefined();
+      expect(doc.jobs![`${spec.name}-gate-notice`]).toBeUndefined();
+    }
+  });
+
+  test("the notice job needs the apply, runs only on gated, and posts outside the log", () => {
+    const notice = pushDoc().jobs!["app-apply-gate-notice"];
+    expect(notice.needs).toBe("app-apply");
+    expect(notice.if).toBe("needs.app-apply.outputs.gated == 'true'");
+    // It shells to `gh`, which a hosted runner carries and the Op's own
+    // container image does not.
+    expect(notice.container).toBeUndefined();
+    const script = notice.steps[0].run ?? "";
+    expect(script).toContain('gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls"');
+    expect(script).toContain('marker="<!-- chant-gate:$CHANT_OP -->"');
+    expect(script).toContain("gh issue create");
+  });
+
+  test("the notice job's permissions are its two posting paths and the lookup", () => {
+    const notice = pushDoc().jobs!["app-apply-gate-notice"];
+    expect(notice.permissions).toEqual({
+      contents: "read",
+      issues: "write",
+      "pull-requests": "write",
+    });
+    // Job-level, so the apply beside it keeps the workflow's own read-only set.
+    expect(pushDoc().permissions).toEqual({ contents: "read" });
+    expect(pushDoc().jobs!["app-apply"].permissions).toBeUndefined();
+  });
+
+  test("a failing run stays a failing job: the pipe cannot swallow its exit code", () => {
+    const step = pushDoc().jobs!["app-apply"].steps.find((s) => s.id === "chant-run");
+    expect(step?.run).toContain("set -o pipefail");
   });
 });

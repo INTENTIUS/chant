@@ -14,7 +14,8 @@ import type { ScheduledOpSpec } from "@intentius/chant/lexicon";
 
 interface ParsedJob {
   "runs-on"?: string;
-  steps: Array<{ uses?: string; run?: string }>;
+  outputs?: Record<string, string>;
+  steps: Array<{ id?: string; uses?: string; run?: string }>;
 }
 interface ParsedDoc {
   on?: Record<string, unknown>;
@@ -172,5 +173,28 @@ describe("generateForgejoOpPipeline: setup steps and additive permissions (#2242
     expect(() =>
       generateForgejoOpPipeline([{ ...OIDC_SPEC, setup: [{ uses: "aws-actions/configure-aws-credentials@main" }] }]),
     ).toThrow(/the action repository's own default branch/);
+  });
+});
+
+describe("generateForgejoOpPipeline: the gated apply on push (#2243)", () => {
+  const pushSpec: ScheduledOpSpec = { name: "app-apply", trigger: { kind: "push", branches: ["main"] } };
+
+  test("the exit mapping crosses over: a gated apply is a green Forgejo run too", () => {
+    // `--gated-exit 0` is `chant run`'s own, so it needs nothing from the
+    // runner. `GITHUB_STEP_SUMMARY`, which the gate block goes to, is set by
+    // Forgejo's act_runner the same way GitHub sets it.
+    const doc = parseFile(generateForgejoOpPipeline([pushSpec]).files[0].yaml);
+    const step = doc.jobs!["app-apply"].steps.find((s) => s.id === "chant-run");
+    expect(step?.run).toContain("chant run app-apply --gated-exit 0 --json");
+  });
+
+  test("the notice job does not: it shells to `gh`, which no Forgejo runner points at its own instance", () => {
+    const fj = parseFile(generateForgejoOpPipeline([pushSpec]).files[0].yaml);
+    const gh = parseFile(generateGithubOpPipeline([pushSpec]).files[0].yaml);
+    // Dropped the same way `permissions:` is dropped — by not being carried
+    // onto the rebuilt doc — and github still has it, so the omission is
+    // forgejo's rather than the shared builder's.
+    expect(Object.keys(fj.jobs ?? {})).toEqual(["app-apply"]);
+    expect(gh.jobs).toHaveProperty("app-apply-gate-notice");
   });
 });
