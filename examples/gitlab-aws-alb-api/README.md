@@ -15,7 +15,7 @@ ALB (shared-alb stack)
               └── ECR image: alb-api (built and pushed by this pipeline)
 ```
 
-**Source split:** The `FargateService` composite's AWS CF resources are defined in `lexicons/aws/examples/shared-alb-api/`. This directory (`examples/gitlab-aws-alb-api/`) contains only the GitLab CI pipeline source (`src/pipeline.ts`) that builds the Docker image and deploys the CF stack.
+**Where the AWS resources come from:** `src/params.ts`, `src/service.ts` and `src/tags.ts` are byte-identical copies of `lexicons/aws/examples/shared-alb-api/src/` (`diff -r` between the two `src/` directories reports no differing file). This directory synthesizes the `FargateService` template itself; it does not import the lexicon example. What it adds on top of the copy is `src/pipeline.ts`, the GitLab CI pipeline that builds the Docker image and deploys the stack, and `src/chant.config.json`, which turns COR004 off under the strict lint preset. The two copies are kept in sync by hand.
 
 ## Skills
 

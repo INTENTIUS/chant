@@ -49,10 +49,20 @@ npm run list
 hand it to any pipeline — there is nothing chant-specific in the output. That is
 the whole of L1: deterministic, spec-true synthesis.
 
-`chant build` also prints post-synth **advisories** (for example, suggesting an
-explicit `imagePullPolicy` or a read-only root filesystem). Those are guidance,
-not failures — `chant lint` is the gate. Hardening the workload against them is a
-good exercise.
+`chant build` also prints post-synth **advisories**, and this example leaves two
+of them standing on purpose:
+
+- `WK8105`: the `web` container sets no explicit `imagePullPolicy`.
+- `WK8203`: the `web` container does not set `readOnlyRootFilesystem: true`.
+
+Both are guidance, and `chant lint` is the gate, so the build stays green. They
+are left open because fixing them here would cost more than it teaches:
+`nginx-unprivileged` writes to `/tmp` and `/var/cache/nginx`, so a read-only root
+needs two `emptyDir` mounts as well as the flag, and `imagePullPolicy` is not a
+`WebApp` prop at all, so pinning it means reaching through
+`defaults.deployment`. Closing either one in `src/web.ts` and watching its line
+disappear from the build output is a good exercise: `readOnlyRootFilesystem:
+true` goes in the `securityContext` block already there.
 
 ## L2 — deploy it locally
 

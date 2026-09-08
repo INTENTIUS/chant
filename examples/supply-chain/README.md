@@ -19,6 +19,19 @@ for the full capability reference this example is the runnable counterpart to.
 | `supply-chain-demo.component.ts` | the component: `generate-sbom` (dir scan) → `extract-config-bom`, plus a second, tool-gated component with `sign`/`attest-provenance`/`verify`/`vuln-gate` |
 | `chant.config.ts` | project-wide `sbom`/`signing`/`vulnPolicy` defaults, read by `chant run --components` since [#629](https://github.com/INTENTIUS/chant/issues/629) |
 
+## `chant build` does not apply here
+
+This project is a component and nothing else. There is no `src/` directory, and
+neither of the two `.ts` files here exports a Declarable, so `chant build` exits
+1 with `Discovered 2 source file(s) but produced no output`.
+That is the right answer for a component-only project, and the reason the root
+example gate allowlists this directory. The entry point is `chant run
+--components`, which discovers
+`supply-chain-demo.component.ts` and dispatches its phases through the interpret
+driver. `examples/examples.test.ts` asserts that shape (two components, their
+phases, and the step kinds in each) so the CI regression guard in
+`.github/workflows/chant.yml` is not its only cover.
+
 ## Run it (hermetic — no tools needed)
 
 ```bash

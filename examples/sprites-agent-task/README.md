@@ -39,27 +39,37 @@ comment; pass an explicit `checkpoint` version id instead to target one exactly.
 
 ## Run it
 
+`chant emulator up` boots the `spritzer` container, the local Sprites emulator,
+on `http://localhost:4290` and prints that endpoint. Export it as
+`SPRITES_BASE_URL` and the sprite activities talk to the emulator instead of the
+real Sprites API, so this needs Docker but no Sprites account and no token. The
+image tag is pinned in `lexicons/fly/src/op/activities/emulator-images.ts`; fly
+ships two emulators, so `up` also starts `mudflaps` (the Machines API fake),
+which these Ops do not use.
+
 ```bash
 npm install
 
+chant emulator up
+# ✓ fly: chant-mudflaps up on http://localhost:4280
+# ✓ fly: chant-spritzer up on http://localhost:4290
+export SPRITES_BASE_URL=http://localhost:4290
+
 chant run agent-task
 chant run guarded-task
+
+chant emulator down   # stop both containers when done
 ```
 
 `guarded-task` exits non-zero: the `Run` phase fails on purpose, the `onFailure`
 `Restore` phase runs, and the sprite is back at the `pre-run` checkpoint.
 
-## Targeting the fake or real Sprites
+## Targeting the emulator or real Sprites
 
-The same Ops target the in-process emulator or real Sprites with no code change
-(S3). The activities resolve their endpoint as: an explicit `endpoint` arg, then
-`SPRITES_BASE_URL`, then the real Sprites API.
-
-```bash
-# Point at a self-hosted or in-process emulator.
-export SPRITES_BASE_URL=http://127.0.0.1:9000
-chant run agent-task
-```
+The same Ops target the emulator or real Sprites with no code change (S3). The
+activities resolve their endpoint as: an explicit `endpoint` arg, then
+`SPRITES_BASE_URL`, then the real Sprites API. Dropping the override is the
+whole difference.
 
 ```bash
 # Real Sprites: drop the override and set a token.
