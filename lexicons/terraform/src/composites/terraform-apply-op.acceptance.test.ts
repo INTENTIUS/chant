@@ -160,9 +160,11 @@ describe.skipIf(skipReason !== "")(
  *     the approval artifact
  *     ([choudoufu #878](https://github.com/INTENTIUS/choudoufu/issues/878),
  *     PR 889), before which `plan -out` was refused under a live block and
- *     this Op could not be built the way it is built now, and v0.14.0 moved
+ *     this Op could not be built the way it is built now; v0.14.0 moved
  *     the floor again for the document the other two Ops read
  *     ([choudoufu #894](https://github.com/INTENTIUS/choudoufu/issues/894)),
+ *     and v0.15.0 moved it once more for that document's adoptable section
+ *     ([choudoufu #962](https://github.com/INTENTIUS/choudoufu/issues/962)),
  *   - `CHOUDOUFU_EMULATOR_ENDPOINT` unset (bring up choudoufu's `just smoke`
  *     docker compose stack and export `http://localhost:<mapped port>`).
  *
@@ -218,7 +220,7 @@ const liveSkipReason: string = !onPath("choudoufu")
   : choudoufuVersion === undefined
     ? "the choudoufu on PATH reports no release version (a dev build), so the approval artifact cannot be assumed"
     : isOlderVersion(choudoufuVersion, MIN_CHOUDOUFU_VERSION)
-      ? `choudoufu ${choudoufuVersion} is older than v${MIN_CHOUDOUFU_VERSION}, the lexicon's floor (choudoufu #878's approval artifact in v0.13.0, #894's -json document in v0.14.0)`
+      ? `choudoufu ${choudoufuVersion} is older than v${MIN_CHOUDOUFU_VERSION}, the lexicon's floor (choudoufu #878's approval artifact in v0.13.0, #894's -json document in v0.14.0, #962's adoptable section in v0.15.0)`
       : !emulatorEndpoint
         ? "CHOUDOUFU_EMULATOR_ENDPOINT is not set (bring up choudoufu's `just smoke` emulator stack and export it)"
         : "";

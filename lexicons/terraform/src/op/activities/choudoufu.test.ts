@@ -277,10 +277,10 @@ describe("isOlderVersion / parseChoudoufuVersion (#2103)", () => {
 // ── The version check, wired into every activity via resolveRoot ───────────
 
 describe("choudoufu version check (#2103)", () => {
-  test("refuses a binary older than the floor, which the -json document moved to v0.14.0", async () => {
+  test("refuses a binary older than the floor, which the adoptable section moved to v0.15.0", async () => {
     const dir = liveProject();
-    replies.push({ match: "version", reply: { stdout: "choudoufu v0.13.0 (based on OpenTofu v1.13.0)\n", stderr: "" } });
-    await expect(choudoufuLiveCheck({ root: "estate", cwd: dir })).rejects.toThrow(/older than.*v0\.14\.0/);
+    replies.push({ match: "version", reply: { stdout: "choudoufu v0.14.0 (based on OpenTofu v1.13.0)\n", stderr: "" } });
+    await expect(choudoufuLiveCheck({ root: "estate", cwd: dir })).rejects.toThrow(/older than.*v0\.15\.0/);
   });
 
   test("passes at exactly the minimum version", async () => {

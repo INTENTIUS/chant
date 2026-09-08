@@ -1,14 +1,22 @@
 /**
- * The adoption ledger (#2105): reading `live-plan -json`'s `unowned` section,
- * pairing it with the commands `-adoption-only` printed, and rendering it.
+ * The adoption ledger (#2105, #2241): reading `live-plan -json`'s `unowned`
+ * and `adoptable` sections, pairing the first with the commands
+ * `-adoption-only` printed, and rendering both.
  *
  * The document fragments below are the shape choudoufu actually emits, taken
- * from `views.StatelessUnowned`'s json tags (`internal/command/live_plan.go`)
- * and checked against the recorded document #2104 captured off the emulator:
- * an adoptable row carries `adopt_tofu_estate`/`adopt_tofu_address`, and a row
- * held by somebody else carries `tofu_estate` and neither of the other two.
+ * from `views.StatelessUnowned` and `views.LivePlanAdoptable`'s json tags
+ * (`internal/command/live_plan.go`) and checked against the recorded document
+ * next door: an adoptable row carries
+ * `adopt_tofu_estate`/`adopt_tofu_address`, and a row held by somebody else
+ * carries `tofu_estate` and neither of the other two.
+ *
+ * The last block reads `../__fixtures__/live-plan.json` itself, so the
+ * `adoptable` half is proved against a real v0.15.0 document rather than
+ * against a literal a test author typed.
  */
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, test, expect } from "vitest";
 import { parseAdoptionCommands, readAdoptionLedger, renderAdoptionLedger } from "./adoption";
 
@@ -79,10 +87,110 @@ describe("readAdoptionLedger (#2105)", () => {
     expect(ledger.adoptions.find((c) => c.addr === "aws_subnet.app")?.command).toBeUndefined();
   });
 
-  test("a document with no unowned section, or none at all, is an empty ledger", () => {
-    expect(readAdoptionLedger({ bound: [] })).toEqual({ adoptions: [], contested: [], ambiguous: 0 });
-    expect(readAdoptionLedger(undefined)).toEqual({ adoptions: [], contested: [], ambiguous: 0 });
-    expect(readAdoptionLedger({ unowned: "not a list" })).toEqual({ adoptions: [], contested: [], ambiguous: 0 });
+  test("a document with neither section, or none at all, is an empty ledger", () => {
+    const empty = { adoptions: [], contested: [], ambiguous: 0, swept: [] };
+    expect(readAdoptionLedger({ bound: [] })).toEqual(empty);
+    expect(readAdoptionLedger(undefined)).toEqual(empty);
+    expect(readAdoptionLedger({ unowned: "not a list", adoptable: 7, swept: "aws_vpc" })).toEqual(empty);
+  });
+});
+
+describe("readAdoptionLedger over the adoptable section (choudoufu #962, #2241)", () => {
+  const matched = (addr: string, identity: string) => ({
+    addr,
+    type: "aws_vpc",
+    identity,
+    matched: [{ attribute: "cidr_block", value: "10.77.0.0/16" }],
+    adopt_tofu_estate: "prod-networking",
+    adopt_tofu_address: addr,
+    adopt_command: `aws ec2 create-tags --resources '${identity}'`,
+  });
+
+  test("a content match is a candidate carrying its own command and what it matched on", () => {
+    const ledger = readAdoptionLedger({ unowned: [], adoptable: [matched("aws_vpc.main", "vpc-0abc")] });
+    expect(ledger.adoptions).toEqual([
+      {
+        addr: "aws_vpc.main",
+        type: "aws_vpc",
+        identity: "vpc-0abc",
+        markerEstate: "prod-networking",
+        markerAddress: "aws_vpc.main",
+        command: "aws ec2 create-tags --resources 'vpc-0abc'",
+        matched: [{ attribute: "cidr_block", value: "10.77.0.0/16" }],
+      },
+    ]);
+  });
+
+  test("the document's own command wins: no render is parsed for this half", () => {
+    const ledger = readAdoptionLedger(
+      { adoptable: [matched("aws_vpc.main", "vpc-0abc")] },
+      new Map([["aws_vpc.main", "a command scraped off the render"]]),
+    );
+    expect(ledger.adoptions[0].command).toBe("aws ec2 create-tags --resources 'vpc-0abc'");
+  });
+
+  test("both sections feed one ledger, and one address in both is contested", () => {
+    const ledger = readAdoptionLedger({
+      unowned: [adoptable("aws_cloudwatch_log_group.app", "/estate/app", "aws_cloudwatch_log_group")],
+      adoptable: [matched("aws_vpc.main", "vpc-0abc"), matched("aws_cloudwatch_log_group.app", "/estate/app")],
+    });
+    expect(ledger.adoptions.map((c) => c.addr)).toEqual(["aws_vpc.main"]);
+    expect(ledger.contested.map((c) => c.addr)).toEqual([
+      "aws_cloudwatch_log_group.app",
+      "aws_cloudwatch_log_group.app",
+    ]);
+    expect(ledger.ambiguous).toBe(1);
+  });
+
+  test("swept comes back so an empty ledger can say which empty it is", () => {
+    expect(readAdoptionLedger({ swept: ["aws_vpc", 7, "aws_subnet"] }).swept).toEqual(["aws_vpc", "aws_subnet"]);
+    expect(readAdoptionLedger({ unowned: [] }).swept).toEqual([]);
+  });
+});
+
+describe("readAdoptionLedger over the recorded v0.15.0 document (#2241)", () => {
+  const document: unknown = JSON.parse(
+    readFileSync(join(import.meta.dirname, "..", "__fixtures__", "live-plan.json"), "utf-8"),
+  );
+  const ledger = readAdoptionLedger(document);
+
+  test("both halves of the real document reach the ledger", () => {
+    // The log group's identity is the name in its own block, so choudoufu read
+    // it and put it in `unowned[]`. The VPC's is assigned by EC2, so the sweep
+    // content-matched it and put it in `adoptable[]`. One ledger, both rows.
+    expect(ledger.adoptions.map((c) => c.addr).sort()).toEqual([
+      "aws_cloudwatch_log_group.adoptable",
+      "aws_vpc.adoptable",
+    ]);
+    expect(ledger.contested).toEqual([]);
+  });
+
+  test("the content match carries the cidr it rested on and choudoufu's own tagging command", () => {
+    const vpc = ledger.adoptions.find((c) => c.addr === "aws_vpc.adoptable")!;
+    expect(vpc.type).toBe("aws_vpc");
+    expect(vpc.identity).toMatch(/^vpc-/);
+    expect(vpc.markerEstate).toBe("stateless-e2e-block");
+    expect(vpc.markerAddress).toBe("aws_vpc.adoptable");
+    expect(vpc.matched).toEqual([{ attribute: "cidr_block", value: "10.88.0.0/16" }]);
+    expect(vpc.command).toContain("aws ec2 create-tags");
+  });
+
+  test("the declared-identity row carries no match and no command of its own", () => {
+    // `views.StatelessUnowned` has no command field, which is why
+    // `parseAdoptionCommands` still exists for this half alone.
+    const log = ledger.adoptions.find((c) => c.addr === "aws_cloudwatch_log_group.adoptable")!;
+    expect(log.matched).toBeUndefined();
+    expect(log.command).toBeUndefined();
+  });
+
+  test("the sweep's type list rides along, so nothing here is silence", () => {
+    expect(ledger.swept).toContain("aws_vpc");
+  });
+
+  test("the rendering names the match under its row", () => {
+    const text = renderAdoptionLedger(ledger, "stateless-e2e-block");
+    expect(text).toContain("Adoptable now: 2 live resources");
+    expect(text).toContain("      matched on: cidr_block=10.88.0.0/16");
   });
 });
 
@@ -139,6 +247,16 @@ describe("renderAdoptionLedger (#2105)", () => {
     expect(text).toContain("Adoptable now: nothing");
   });
 
+  test("an empty ledger off a run that swept nothing says it did not look", () => {
+    // The difference choudoufu's own view draws, and the reason `swept` is
+    // carried at all: no sweep means no answer, which is not the same answer
+    // as "nothing to adopt".
+    expect(renderAdoptionLedger(readAdoptionLedger({ unowned: [] }))).toContain("No estate-wide sweep ran");
+    expect(renderAdoptionLedger(readAdoptionLedger({ unowned: [], swept: ["aws_vpc"] }))).toContain(
+      "across 1 swept resource type (aws_vpc)",
+    );
+  });
+
   test("contested addresses are listed under their own heading with no marker values offered", () => {
     const text = renderAdoptionLedger(
       readAdoptionLedger({ unowned: [adoptable("aws_vpc.main", "vpc-0abc"), adoptable("aws_vpc.main", "vpc-0def")] }),
@@ -152,7 +270,7 @@ describe("renderAdoptionLedger (#2105)", () => {
     expect(contestedBlock).not.toContain("write: tofu-estate=");
   });
 
-  test("nothing outside the unowned section reaches the rendering", () => {
+  test("nothing outside the two adoption sections reaches the rendering", () => {
     // The document carries every declared instance the plan bound and every
     // one it could not read, with identities and reasons. The ledger is a
     // projection of `unowned` alone, and this is what says so.
