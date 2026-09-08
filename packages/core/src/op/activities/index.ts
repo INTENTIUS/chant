@@ -43,7 +43,14 @@ export type { EnvTeardownArgs, EnvTeardownResult, EnvTeardownDeps } from "./env-
 // the registry imports this module statically, so a project that installs
 // nothing but chant still resolves every step below.
 
-export { reconcilePr, commentMarker, pullRequestContextFrom, resolvePullRequestContext } from "./reconcile";
+export {
+  reconcilePr,
+  commentMarker,
+  pullRequestContextFrom,
+  resolvePullRequestContext,
+  mergeRequestContextFrom,
+  gitlabNoteTokenFrom,
+} from "./reconcile";
 export type { ReconcilePrArgs, ReconcileResult, ReconcileMode, ReconcileEntry, PullRequestContext } from "./reconcile";
 
 export { nativeApply, compensateApply, hasNativeRollback } from "./apply";

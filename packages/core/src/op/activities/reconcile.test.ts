@@ -6,6 +6,8 @@ import {
   entriesFromPlan,
   commentMarker,
   pullRequestContextFrom,
+  mergeRequestContextFrom,
+  gitlabNoteTokenFrom,
 } from "./reconcile";
 
 const entries = [
@@ -153,6 +155,242 @@ describe("reconcilePr comment mode refuses a run with no pull request (#2231)", 
       );
       await expect(reconcilePr({ env: "app", mode: "comment", body: "plan" })).rejects.toThrow(
         /findingMode "issue" or "report"/,
+      );
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+});
+
+// ── The GitLab merge-request note (#2256) ───────────────────────────────────
+
+describe("mergeRequestContextFrom (#2256)", () => {
+  const gitlabEnv = {
+    CI_API_V4_URL: "https://gitlab.com/api/v4",
+    CI_PROJECT_ID: "42",
+    CI_PROJECT_PATH: "acme/infra",
+    CI_PROJECT_URL: "https://gitlab.com/acme/infra",
+    CI_MERGE_REQUEST_IID: "7",
+  };
+
+  test("reads the merge request off a merge_request_event pipeline", () => {
+    expect(mergeRequestContextFrom(gitlabEnv)).toEqual({
+      api: "https://gitlab.com/api/v4",
+      project: "42",
+      iid: 7,
+      path: "acme/infra",
+      webUrl: "https://gitlab.com/acme/infra",
+    });
+  });
+
+  test("prefers the merge request's own project over the pipeline's", () => {
+    // A merge request from a fork runs its pipeline in the fork's project,
+    // and the note belongs on the target project's merge request.
+    expect(
+      mergeRequestContextFrom({ ...gitlabEnv, CI_MERGE_REQUEST_PROJECT_ID: "9" })?.project,
+    ).toBe("9");
+  });
+
+  test("derives the API base from CI_SERVER_URL when CI_API_V4_URL is unset", () => {
+    const { CI_API_V4_URL: _drop, ...rest } = gitlabEnv;
+    expect(mergeRequestContextFrom({ ...rest, CI_SERVER_URL: "https://gl.example.com" })?.api).toBe(
+      "https://gl.example.com/api/v4",
+    );
+  });
+
+  test("a push or scheduled GitLab pipeline has no merge request", () => {
+    const { CI_MERGE_REQUEST_IID: _drop, ...rest } = gitlabEnv;
+    expect(mergeRequestContextFrom(rest)).toBeUndefined();
+    expect(mergeRequestContextFrom({ ...rest, CI_MERGE_REQUEST_IID: "" })).toBeUndefined();
+    expect(mergeRequestContextFrom({ ...rest, CI_MERGE_REQUEST_IID: "not-a-number" })).toBeUndefined();
+  });
+
+  test("a GitHub Actions run is not mistaken for a GitLab one", () => {
+    expect(mergeRequestContextFrom({ GITHUB_REPOSITORY: "INTENTIUS/chant", GITHUB_REF: "refs/pull/1/merge" })).toBeUndefined();
+  });
+});
+
+describe("gitlabNoteTokenFrom (#2256)", () => {
+  test("a project or personal access token is sent as PRIVATE-TOKEN", () => {
+    expect(gitlabNoteTokenFrom({ GITLAB_TOKEN: "glpat-x" })).toEqual({
+      header: "PRIVATE-TOKEN",
+      value: "glpat-x",
+      source: "GITLAB_TOKEN",
+    });
+  });
+
+  test("CHANT_GITLAB_TOKEN wins over GITLAB_TOKEN, which wins over the job token", () => {
+    expect(
+      gitlabNoteTokenFrom({ CHANT_GITLAB_TOKEN: "a", GITLAB_TOKEN: "b", CI_JOB_TOKEN: "c" })?.source,
+    ).toBe("CHANT_GITLAB_TOKEN");
+    expect(gitlabNoteTokenFrom({ GITLAB_TOKEN: "b", CI_JOB_TOKEN: "c" })?.source).toBe("GITLAB_TOKEN");
+  });
+
+  test("the job token is sent as JOB-TOKEN, which is a different header", () => {
+    expect(gitlabNoteTokenFrom({ CI_JOB_TOKEN: "c" })).toEqual({
+      header: "JOB-TOKEN",
+      value: "c",
+      source: "CI_JOB_TOKEN",
+    });
+  });
+
+  test("no token at all is undefined rather than an empty header", () => {
+    expect(gitlabNoteTokenFrom({})).toBeUndefined();
+    expect(gitlabNoteTokenFrom({ GITLAB_TOKEN: "", CI_JOB_TOKEN: "" })).toBeUndefined();
+  });
+});
+
+/** One stubbed GitLab REST response. */
+function gitlabResponse(body: unknown, headers: Record<string, string> = {}): Response {
+  return {
+    ok: true,
+    status: 200,
+    headers: { get: (name: string) => headers[name.toLowerCase()] ?? null },
+    json: async () => body,
+    text: async () => JSON.stringify(body),
+  } as unknown as Response;
+}
+
+describe("reconcilePr comment mode on GitLab posts one merge-request note (#2256)", () => {
+  const gitlabEnv: Record<string, string> = {
+    CI_API_V4_URL: "https://gitlab.com/api/v4",
+    CI_PROJECT_ID: "42",
+    CI_PROJECT_PATH: "acme/infra",
+    CI_PROJECT_URL: "https://gitlab.com/acme/infra",
+    CI_MERGE_REQUEST_IID: "7",
+    GITLAB_TOKEN: "glpat-x",
+  };
+
+  function stubGitlabEnv(): void {
+    for (const [k, v] of Object.entries(gitlabEnv)) vi.stubEnv(k, v);
+    // A GitLab job carries none of GitHub's variables; make that explicit so
+    // the GitHub path can never be the one under test here.
+    for (const k of ["GITHUB_REPOSITORY", "GITHUB_REF", "GITHUB_EVENT_PATH"]) vi.stubEnv(k, "");
+  }
+
+  test("POSTs a new note carrying the marker as its first line", async () => {
+    stubGitlabEnv();
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      if (!init?.method || init.method === "GET") return gitlabResponse([]);
+      return gitlabResponse({ id: 555 });
+    });
+    try {
+      const result = await reconcilePr({ env: "app", mode: "comment", body: "the plan" });
+      expect(result.commentUrl).toBe("https://gitlab.com/acme/infra/-/merge_requests/7#note_555");
+      expect(result.mergeRequest).toBe("acme/infra!7");
+      const post = calls[calls.length - 1];
+      expect(post.url).toBe("https://gitlab.com/api/v4/projects/42/merge_requests/7/notes");
+      expect(post.init?.method).toBe("POST");
+      expect((post.init?.headers as Record<string, string>)["PRIVATE-TOKEN"]).toBe("glpat-x");
+      expect(JSON.parse(String(post.init?.body)).body).toBe(
+        "<!-- chant-reconcile:app -->\n\nthe plan",
+      );
+    } finally {
+      vi.unstubAllEnvs();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  test("PUTs the note it already owns instead of stacking a second one", async () => {
+    stubGitlabEnv();
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      if (!init?.method || init.method === "GET") {
+        return gitlabResponse([
+          { id: 1, system: true, body: "changed the description" },
+          { id: 2, system: false, body: "unrelated human note" },
+          { id: 3, system: false, body: "<!-- chant-reconcile:app -->\n\nan older plan" },
+        ]);
+      }
+      return gitlabResponse({ id: 3 });
+    });
+    try {
+      const result = await reconcilePr({ env: "app", mode: "comment", body: "a newer plan" });
+      const write = calls[calls.length - 1];
+      expect(write.init?.method).toBe("PUT");
+      expect(write.url).toBe("https://gitlab.com/api/v4/projects/42/merge_requests/7/notes/3");
+      expect(result.commentUrl).toBe("https://gitlab.com/acme/infra/-/merge_requests/7#note_3");
+    } finally {
+      vi.unstubAllEnvs();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  test("follows GitLab's own pagination rather than reading page one alone", async () => {
+    stubGitlabEnv();
+    const seen: string[] = [];
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      if (!init?.method || init.method === "GET") {
+        seen.push(url);
+        if (url.endsWith("page=1")) return gitlabResponse([{ id: 1, body: "nope" }], { "x-next-page": "2" });
+        return gitlabResponse([{ id: 9, body: "<!-- chant-reconcile:app -->\n\nold" }], { "x-next-page": "" });
+      }
+      return gitlabResponse({ id: 9 });
+    });
+    try {
+      await reconcilePr({ env: "app", mode: "comment", body: "new" });
+      expect(seen).toHaveLength(2);
+      expect(seen[1]).toContain("page=2");
+    } finally {
+      vi.unstubAllEnvs();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  test("a rejected write fails the step by name, carrying GitLab's own status", async () => {
+    stubGitlabEnv();
+    vi.stubGlobal("fetch", async (_url: string, init?: RequestInit) => {
+      if (!init?.method || init.method === "GET") return gitlabResponse([]);
+      return {
+        ok: false,
+        status: 403,
+        headers: { get: () => null },
+        json: async () => ({}),
+        text: async () => '{"message":"403 Forbidden"}',
+      } as unknown as Response;
+    });
+    try {
+      await expect(reconcilePr({ env: "app", mode: "comment", body: "plan" })).rejects.toThrow(
+        /merge_requests\/7\/notes.*403.*403 Forbidden/s,
+      );
+    } finally {
+      vi.unstubAllEnvs();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  test("a merge-request pipeline with no token says which variable to set", async () => {
+    for (const [k, v] of Object.entries(gitlabEnv)) vi.stubEnv(k, k === "GITLAB_TOKEN" ? "" : v);
+    vi.stubEnv("CI_JOB_TOKEN", "");
+    vi.stubEnv("CHANT_GITLAB_TOKEN", "");
+    try {
+      await expect(reconcilePr({ env: "app", mode: "comment", body: "plan" })).rejects.toThrow(
+        /GITLAB_TOKEN.*CI_JOB_TOKEN/s,
+      );
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+});
+
+describe("the no-context refusal names both forges' variables (#2256)", () => {
+  test("a run on neither forge is told what GitLab would have set too", async () => {
+    for (const k of [
+      "GITHUB_REPOSITORY",
+      "GITHUB_REF",
+      "GITHUB_EVENT_PATH",
+      "CI_MERGE_REQUEST_IID",
+      "CI_PROJECT_ID",
+      "CI_API_V4_URL",
+    ]) {
+      vi.stubEnv(k, "");
+    }
+    try {
+      await expect(reconcilePr({ env: "app", mode: "comment", body: "plan" })).rejects.toThrow(
+        /CI_MERGE_REQUEST_IID/,
       );
     } finally {
       vi.unstubAllEnvs();

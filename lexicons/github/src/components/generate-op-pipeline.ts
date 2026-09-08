@@ -114,8 +114,10 @@ export interface GithubOpPipelineDoc {
    * Kept out of {@link jobsDoc} so a dialect that cannot run it drops it by
    * simply not copying it: the job shells to `gh` against the GitHub API and
    * needs `gh` on the runner, which is the same reason the `comment` finding
-   * mode is refused on forgejo and gitlab (#2231). {@link emitOpPipelineYAML}
-   * merges it into `jobs:` for the forges that can.
+   * mode is refused on forgejo (#2231). {@link emitOpPipelineYAML} merges it
+   * into `jobs:` for the forges that can. GitLab reaches the same outcome
+   * without this job at all: its push job writes the pending block to an
+   * artifact instead (#2256).
    */
   gatedNoticeDoc?: Record<string, unknown>;
 }

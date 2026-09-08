@@ -476,7 +476,7 @@
  "docs/src/content/docs/contributing/examples.mdx": {
   "formatting/em-dash-density": 14,
   "claude/colon-reveal": 2,
-  "anaphora/repeated-opening": 2,
+  "anaphora/repeated-opening": 1,
   "claude/figurative-suffixes": 1,
   "tricolon/density": 1
  },
@@ -1046,7 +1046,7 @@
   "tricolon/comma-series": 4
  },
  "docs/src/content/docs/tutorials/sprites-build-sandbox.mdx": {
-  "formatting/em-dash-density": 15,
+  "formatting/em-dash-density": 14,
   "claude/colon-reveal": 2,
   "tricolon/comma-series": 2,
   "repetition/near-duplicate": 1
@@ -1054,16 +1054,14 @@
  "docs/src/content/docs/tutorials/sprites-managed-agent-worker.mdx": {
   "formatting/em-dash-density": 17,
   "claude/colon-reveal": 3,
-  "anaphora/repeated-opening": 2,
+  "anaphora/repeated-opening": 1,
   "repetition/near-duplicate": 2,
   "tricolon/comma-series": 1
  },
  "docs/src/content/docs/tutorials/terraform-carve-out.mdx": {
-  "formatting/em-dash-density": 20,
+  "formatting/em-dash-density": 19,
   "claude/colon-reveal": 4,
   "claude-technical-vocabulary": 1,
-  "anaphora/repeated-opening": 1,
-  "claude/figurative-suffixes": 1,
   "tricolon/comma-series": 1
  },
  "docs/src/content/docs/whats-new.mdx": {

@@ -70,33 +70,190 @@ describe("generateGitlabOpPipeline: one file, one job per scheduled Op", () => {
   });
 });
 
-describe("generateGitlabOpPipeline: no pull_request/push event model (#2084)", () => {
-  test("a pull_request trigger throws a clear error instead of silently ignoring it", () => {
-    const specs: ScheduledOpSpec[] = [{ name: "tf-plan", trigger: { kind: "pull_request" } }];
-    expect(() => generateGitlabOpPipeline(specs)).toThrow(/pull_request.*GitLab has no pull_request\/push event model/s);
+/**
+ * #2084's trigger pair, now that GitLab has both events after all (#2256).
+ *
+ * The two refusals this replaces ("GitLab has no pull_request/push event
+ * model" on either trigger) were wrong about GitLab rather than about chant:
+ * `$CI_PIPELINE_SOURCE` distinguishes `merge_request_event` from `push` on
+ * every pipeline, and `rules:` selects a job on either. What is genuinely
+ * absent is in-file cron, which is why the cron path still runs off a
+ * project-level Pipeline Schedule and is unchanged below.
+ */
+describe("generateGitlabOpPipeline: the merge_request and push triggers (#2084, #2256)", () => {
+  test("a pull_request trigger becomes a merge_request_event rule filtered to the target branch", () => {
+    const result = generateGitlabOpPipeline([
+      { name: "tf-plan", trigger: { kind: "pull_request", branches: ["main"] } },
+    ]);
+    const job = parseYAML(result.files[0].yaml)["tf-plan"] as Record<string, unknown>;
+    expect(job.rules).toEqual([
+      {
+        if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main"',
+      },
+    ]);
   });
 
-  test("a push trigger throws a clear error instead of silently ignoring it", () => {
-    const specs: ScheduledOpSpec[] = [{ name: "tf-apply", trigger: { kind: "push" } }];
-    expect(() => generateGitlabOpPipeline(specs)).toThrow(/push.*GitLab has no pull_request\/push event model/s);
+  test("an unfiltered pull_request trigger fires on every merge request", () => {
+    const result = generateGitlabOpPipeline([{ name: "tf-plan", trigger: { kind: "pull_request" } }]);
+    const job = parseYAML(result.files[0].yaml)["tf-plan"] as Record<string, unknown>;
+    expect(job.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "merge_request_event"' }]);
+  });
+
+  test("two target branches are two rules, which is how GitLab spells an OR", () => {
+    const result = generateGitlabOpPipeline([
+      { name: "tf-plan", trigger: { kind: "pull_request", branches: ["main", "release"] } },
+    ]);
+    const job = parseYAML(result.files[0].yaml)["tf-plan"] as { rules: Array<{ if: string }> };
+    expect(job.rules.map((r) => r.if)).toEqual([
+      '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main"',
+      '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "release"',
+    ]);
+  });
+
+  test("a push trigger becomes a push rule on the named branch", () => {
+    const result = generateGitlabOpPipeline([
+      { name: "tf-apply", trigger: { kind: "push", branches: ["release"] } },
+    ]);
+    const job = parseYAML(result.files[0].yaml)["tf-apply"] as Record<string, unknown>;
+    expect(job.rules).toEqual([
+      { if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "release"' },
+    ]);
+  });
+
+  test("an unfiltered push trigger defaults to main, the same branch github's generator assumes", () => {
+    const result = generateGitlabOpPipeline([{ name: "tf-apply", trigger: { kind: "push" } }]);
+    const job = parseYAML(result.files[0].yaml)["tf-apply"] as { rules: Array<{ if: string }> };
+    expect(job.rules[0].if).toBe('$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"');
+  });
+
+  test("every job carries a resource_group, GitLab's own per-Op concurrency", () => {
+    // github's `concurrency: { group, cancel-in-progress: false }` queues a
+    // second run rather than cancelling the first, which is exactly what a
+    // resource_group does — and on an apply job it is also the thing that
+    // stops two runs racing for the same state lock.
+    const result = generateGitlabOpPipeline([
+      { name: "tf-plan", trigger: { kind: "pull_request" } },
+      { name: "tf-apply", trigger: { kind: "push" } },
+      { name: "nightly", schedule: "0 6 * * *" },
+    ]);
+    const parsed = parseYAML(result.files[0].yaml);
+    for (const name of ["tf-plan", "tf-apply", "nightly"]) {
+      expect((parsed[name] as Record<string, unknown>).resource_group).toBe(name);
+    }
+  });
+
+  test("mixed triggers still land in one file, because a GitLab trigger is job-scoped", () => {
+    const result = generateGitlabOpPipeline([
+      { name: "tf-plan", trigger: { kind: "pull_request", branches: ["main"] } },
+      { name: "tf-apply", trigger: { kind: "push", branches: ["main"] } },
+      { name: "nightly", schedule: "0 6 * * *" },
+    ]);
+    expect(result.files).toHaveLength(1);
+    expect(result.jobs.map((j) => j.trigger.kind)).toEqual(["pull_request", "push", "cron"]);
+  });
+
+  test("the header sets up a Pipeline Schedule only for the Ops that need one", () => {
+    const yaml = generateGitlabOpPipeline([
+      { name: "tf-plan", trigger: { kind: "pull_request", branches: ["main"] } },
+      { name: "tf-apply", trigger: { kind: "push", branches: ["main"] } },
+    ]).files[0].yaml;
+    // No cron Op here, so nothing has to be created in Settings > CI/CD.
+    expect(yaml).not.toContain("Pipeline Schedule");
+    expect(yaml).toContain("merge_request_event onto main");
+    expect(yaml).toContain("push to main");
+  });
+
+  test("a branch name that would break out of the rule expression is refused by name", () => {
+    // A `rules:` if-expression is a string GitLab parses; a quote in a branch
+    // name would end it early and silently change which pipelines match.
+    expect(() =>
+      generateGitlabOpPipeline([
+        { name: "tf-plan", trigger: { kind: "pull_request", branches: ['main" || $CI_PIPELINE_SOURCE == "push'] } },
+      ]),
+    ).toThrow(/branch/i);
   });
 });
 
-describe("generateGitlabOpPipeline: no comment finding mode (#2231)", () => {
-  test("findingMode comment is refused by name, even on a cron trigger GitLab does support", () => {
-    const specs: ScheduledOpSpec[] = [
-      { name: "app-plan", schedule: "0 6 * * *", findingMode: "comment" },
-    ];
-    expect(() => generateGitlabOpPipeline(specs)).toThrow(
-      /Scheduled Op "app-plan".*findingMode "comment".*GitLab has no pull_request event/s,
-    );
+/**
+ * #2231's finding mode, now that there is a GitLab merge-request note
+ * activity to spend it (#2256). The blanket refusal this replaces was about
+ * chant having no way to post the note; what remains is the same constraint
+ * github already has — the mode posts onto the merge request that triggered
+ * the run, so it needs a trigger that has one.
+ */
+describe("generateGitlabOpPipeline: the comment finding mode on a merge request (#2231, #2256)", () => {
+  test("findingMode comment is accepted on a pull_request trigger", () => {
+    const result = generateGitlabOpPipeline([
+      { name: "app-plan", trigger: { kind: "pull_request", branches: ["main"] }, findingMode: "comment" },
+    ]);
+    expect(result.jobs[0].findingMode).toBe("comment");
+    const job = parseYAML(result.files[0].yaml)["app-plan"] as { rules: Array<{ if: string }> };
+    expect(job.rules[0].if).toContain("merge_request_event");
   });
 
-  test("the refusal names the modes GitLab does have", () => {
-    const specs: ScheduledOpSpec[] = [{ name: "app-plan", schedule: "0 6 * * *", findingMode: "comment" }];
-    expect(() => generateGitlabOpPipeline(specs)).toThrow(
-      /findingMode "issue" or "merge-request"/,
+  test("the header names the token the note is written with", () => {
+    const yaml = generateGitlabOpPipeline([
+      { name: "app-plan", trigger: { kind: "pull_request" }, findingMode: "comment" },
+    ]).files[0].yaml;
+    expect(yaml).toContain("GITLAB_TOKEN");
+  });
+
+  test("findingMode comment on a cron trigger is refused, because a schedule has no merge request", () => {
+    expect(() =>
+      generateGitlabOpPipeline([{ name: "app-plan", schedule: "0 6 * * *", findingMode: "comment" }]),
+    ).toThrow(/findingMode "comment".*trigger is "cron"/s);
+  });
+
+  test("findingMode comment on a push trigger is refused, naming the trigger", () => {
+    expect(() =>
+      generateGitlabOpPipeline([
+        { name: "app-plan", trigger: { kind: "push" }, findingMode: "comment" },
+      ]),
+    ).toThrow(/findingMode "comment".*trigger is "push"/s);
+  });
+});
+
+/**
+ * #2243's green-gated apply, in the two surfaces GitLab has: the job's own
+ * log, and an artifact. There is no step summary to write to and no
+ * cross-job output to publish, so there is also no follow-up job.
+ */
+describe("generateGitlabOpPipeline: a gated apply is a green run (#2243, #2256)", () => {
+  function applyJob(): Record<string, unknown> {
+    const result = generateGitlabOpPipeline([
+      { name: "app-apply", trigger: { kind: "push", branches: ["main"] } },
+    ]);
+    return parseYAML(result.files[0].yaml)["app-apply"] as Record<string, unknown>;
+  }
+
+  test("the push job maps the gated exit code and nothing else", () => {
+    expect((applyJob().script as string[]).at(-1)).toBe("chant run app-apply --gated-exit 0");
+  });
+
+  test("the pending gate is written to a path the job also publishes as an artifact", () => {
+    const job = applyJob();
+    expect((job.variables as Record<string, string>).CHANT_GATE_SUMMARY).toBe(
+      "chant-gate-app-apply.md",
     );
+    expect(job.artifacts).toEqual({
+      when: "always",
+      paths: ["chant-gate-app-apply.md"],
+      expire_in: "30 days",
+    });
+  });
+
+  test("no other trigger is gated: a plan or a watch that stops is a signal, not noise", () => {
+    const result = generateGitlabOpPipeline([
+      { name: "app-plan", trigger: { kind: "pull_request" } },
+      { name: "nightly", schedule: "0 6 * * *" },
+    ]);
+    const parsed = parseYAML(result.files[0].yaml);
+    for (const name of ["app-plan", "nightly"]) {
+      const job = parsed[name] as Record<string, unknown>;
+      expect((job.script as string[]).at(-1)).toBe(`chant run ${name}`);
+      expect(job.artifacts).toBeUndefined();
+      expect(job.variables).toBeUndefined();
+    }
   });
 });
 
@@ -161,12 +318,45 @@ describe("generateGitlabOpPipeline: setup steps and additive permissions (#2242)
     ]);
   });
 
-  test("refuses additive permissions by name, and points at GitLab's own OIDC surface", () => {
+  /**
+   * `id-token: write` is the one additive scope that has a GitLab meaning
+   * (#2256): the refusal it replaces already named `id_tokens:` as the shape
+   * to reach for, and this reaches for it rather than describing it. Every
+   * other scope is still refused, because GitLab has no per-job token-scope
+   * mapping to put it in.
+   */
+  test("id-token: write becomes an id_tokens declaration, GitLab's own OIDC surface", () => {
+    const result = generateGitlabOpPipeline([
+      {
+        name: "app-apply",
+        trigger: { kind: "push", branches: ["main"] },
+        permissions: { "id-token": "write" },
+      },
+    ]);
+    const job = parseYAML(result.files[0].yaml)["app-apply"] as Record<string, unknown>;
+    expect(job.id_tokens).toEqual({ CHANT_ID_TOKEN: { aud: "$CI_SERVER_URL" } });
+  });
+
+  test("an Op that adds no permissions declares no id_tokens", () => {
+    const result = generateGitlabOpPipeline([{ name: "actions-audit", schedule: "0 6 * * *" }]);
+    const job = parseYAML(result.files[0].yaml)["actions-audit"] as Record<string, unknown>;
+    expect(job.id_tokens).toBeUndefined();
+  });
+
+  test("id-token: read is refused: GitLab either mints the token or does not", () => {
     expect(() =>
       generateGitlabOpPipeline([
-        { name: "actions-audit", schedule: "0 6 * * *", permissions: { "id-token": "write" } },
+        { name: "actions-audit", schedule: "0 6 * * *", permissions: { "id-token": "read" } },
       ]),
-    ).toThrow(/adds permissions \{ id-token: write \}.*id_tokens:/s);
+    ).toThrow(/id-token: read/);
+  });
+
+  test("any other additive scope is still refused by name", () => {
+    expect(() =>
+      generateGitlabOpPipeline([
+        { name: "actions-audit", schedule: "0 6 * * *", permissions: { "pull-requests": "write" } },
+      ]),
+    ).toThrow(/adds permission "pull-requests: write".*no per-job token-scope/s);
   });
 });
 
@@ -182,13 +372,27 @@ describe("generateGitlabOpPipeline: setup steps and additive permissions (#2242)
 describe("generateGitlabOpPipeline: a deployment environment (#2257)", () => {
   const AUDIT: ScheduledOpSpec = { name: "actions-audit", schedule: "0 6 * * *", findingMode: "issue" };
 
-  /** The document a spec with no `environment` emitted before the option existed. */
+  /**
+   * The document a cron spec with no `environment` emits. #2257 pinned this to
+   * prove its option is additive; #2256 moved two lines of it and it is
+   * re-pinned rather than loosened, so it still proves the same thing.
+   *
+   * What moved: the header's opening paragraph, because a merge_request_event
+   * or push job needs no Pipeline Schedule and the cron instructions are now
+   * printed only for the Ops that do; and `resource_group`, which every job
+   * gains as GitLab's stand-in for github's per-Op concurrency group. The
+   * cron job's own rule, script and stage are byte-for-byte what they were.
+   */
   const YAML_BEFORE_2257 =
     [
-      "# Scheduled Ops (chant #927) — GitLab has no in-file cron. Create one",
-      "# Pipeline Schedule per Op below (Settings > CI/CD > Schedules): set its",
-      "# cron to the value noted here and its CHANT_SCHEDULED_OP CI/CD variable to",
-      "# the Op's name, so only that job runs on that schedule.",
+      "# chant Ops (#927, #2084) — one job per Op, each selected by its own",
+      "# rules:. A merge_request_event or push job needs no setup; its rule",
+      "# fires on the event itself.",
+      "#",
+      "# GitLab has no in-file cron. Create one Pipeline Schedule per cron Op",
+      "# below (Settings > CI/CD > Schedules): set its cron to the value noted",
+      "# here and its CHANT_SCHEDULED_OP CI/CD variable to the Op's name, so only",
+      "# that job runs on that schedule.",
       "#",
       '#   actions-audit: cron "0 6 * * *", CHANT_SCHEDULED_OP="actions-audit", finding-mode issue' +
         " — needs a GITLAB_TOKEN CI/CD variable (masked, scope: api)",
@@ -199,6 +403,7 @@ describe("generateGitlabOpPipeline: a deployment environment (#2257)", () => {
       "actions-audit:",
       "  stage: scheduled-ops",
       "  image: node:22-slim",
+      "  resource_group: actions-audit",
       "  rules:",
       `    - if: '$CI_PIPELINE_SOURCE == "schedule" && $CHANT_SCHEDULED_OP == "actions-audit"'`,
       "  script:",

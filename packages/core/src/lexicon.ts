@@ -494,10 +494,11 @@ export interface ComponentPipelineResult {
  * the generated job needs to act on a finding — elevated write access for
  * `issue`/`comment`/`pull-request`/`merge-request`, none for `report`.
  *
- * `comment` posts the finding on the pull request that triggered the run
- * (#2231), so unlike every other mode it constrains the trigger: the github
- * generator refuses it by name on anything but `pull_request`, and the gitlab
- * and forgejo generators refuse it outright.
+ * `comment` posts the finding on the pull request — or, on GitLab, the merge
+ * request (#2256) — that triggered the run, so unlike every other mode it
+ * constrains the trigger: the github and gitlab generators both refuse it by
+ * name on anything but `pull_request`. The forgejo generator refuses it
+ * outright, having no forge client to post the equivalent comment with.
  */
 export type OpFindingMode = "report" | "issue" | "comment" | "pull-request" | "merge-request";
 
@@ -525,7 +526,9 @@ export type OpTrigger =
  *
  * A CI provider with no action concept degrades by name rather than
  * silently: the gitlab generator refuses a `uses` entry at build time and
- * emits a `run` entry as an ordinary script line.
+ * emits a `run` entry as an ordinary script line. The additive `permissions`
+ * map degrades the same way there, with one exception: `id-token: write`
+ * becomes GitLab's own `id_tokens:` declaration (#2256).
  */
 export type OpSetupStep = OpSetupUsesStep | OpSetupRunStep;
 

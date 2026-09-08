@@ -30,7 +30,8 @@ export const gitlabPlugin: LexiconPlugin = {
   auditCatalog: () => gitlabAuditCatalog,
   // Generate mode (#688): synthesize a .gitlab-ci.yml from the component graph.
   generateComponentPipeline: (components, options) => generateGitlabPipeline(components, options),
-  // Generate mode, Op counterpart (#927): scheduled Op → GitLab CI job.
+  // Generate mode, Op counterpart (#927): an Op → one GitLab CI job, on a
+  // Pipeline Schedule, a merge request or a push (#2084, #2256).
   generateOpPipeline: (ops, options) => generateGitlabOpPipeline(ops, options),
   // Self-upgrade: where the pinned GitLab schema version lives + its upstream (#685).
   upstreamPin: {
