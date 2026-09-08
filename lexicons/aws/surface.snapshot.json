@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-08-05T22:04:40.815Z",
+  "generatedAt": "2026-09-08T22:47:35.273Z",
   "entries": {
     "ACL": {
       "kind": "resource",
@@ -57,13 +57,33 @@
       "kind": "property",
       "resourceType": "AWS::ACMPCA::Certificate.ApiPassthrough"
     },
+    "ACMPCACertificate_CustomAttribute": {
+      "kind": "property",
+      "resourceType": "AWS::ACMPCA::Certificate.CustomAttribute"
+    },
+    "ACMPCACertificate_CustomExtension": {
+      "kind": "property",
+      "resourceType": "AWS::ACMPCA::Certificate.CustomExtension"
+    },
+    "ACMPCACertificate_ExtendedKeyUsage": {
+      "kind": "property",
+      "resourceType": "AWS::ACMPCA::Certificate.ExtendedKeyUsage"
+    },
     "ACMPCACertificate_Extensions": {
       "kind": "property",
       "resourceType": "AWS::ACMPCA::Certificate.Extensions"
     },
+    "ACMPCACertificate_GeneralName": {
+      "kind": "property",
+      "resourceType": "AWS::ACMPCA::Certificate.GeneralName"
+    },
     "ACMPCACertificate_KeyUsage": {
       "kind": "property",
       "resourceType": "AWS::ACMPCA::Certificate.KeyUsage"
+    },
+    "ACMPCACertificate_PolicyInformation": {
+      "kind": "property",
+      "resourceType": "AWS::ACMPCA::Certificate.PolicyInformation"
     },
     "ACMPCACertificate_Subject": {
       "kind": "property",
@@ -795,6 +815,14 @@
       "kind": "property",
       "resourceType": "AWS::CloudFront::ResponseHeadersPolicy.AccessControlAllowOrigins"
     },
+    "AccessControlAttribute": {
+      "kind": "property",
+      "resourceType": "AWS::SSO::InstanceAccessControlAttributeConfiguration.AccessControlAttribute"
+    },
+    "AccessControlAttributeValue": {
+      "kind": "property",
+      "resourceType": "AWS::SSO::InstanceAccessControlAttributeConfiguration.AccessControlAttributeValue"
+    },
     "AccessControlConfiguration": {
       "kind": "property",
       "resourceType": "AWS::QuickSight::KnowledgeBase.AccessControlConfiguration"
@@ -806,6 +834,10 @@
     "AccessControlListConfiguration": {
       "kind": "property",
       "resourceType": "AWS::Kendra::DataSource.AccessControlListConfiguration"
+    },
+    "AccessDescription": {
+      "kind": "property",
+      "resourceType": "AWS::ACMPCA::CertificateAuthority.AccessDescription"
     },
     "AccessEntry": {
       "kind": "resource",
@@ -983,6 +1015,10 @@
     "AccessLoggingPolicy": {
       "kind": "property",
       "resourceType": "AWS::ElasticLoadBalancing::LoadBalancer.AccessLoggingPolicy"
+    },
+    "AccessMethod": {
+      "kind": "property",
+      "resourceType": "AWS::ACMPCA::CertificateAuthority.AccessMethod"
     },
     "AccessPointPolicy": {
       "kind": "resource",
@@ -1589,6 +1625,10 @@
       "kind": "property",
       "resourceType": "AWS::EC2::NetworkInsightsAnalysis.AdditionalDetail"
     },
+    "AdditionalInferenceSpecificationDefinition": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::ModelPackage.AdditionalInferenceSpecificationDefinition"
+    },
     "AdditionalInformation": {
       "kind": "property",
       "resourceType": "AWS::SageMaker::ModelCard.AdditionalInformation"
@@ -1919,6 +1959,10 @@
       ],
       "taggable": true
     },
+    "AlarmAction": {
+      "kind": "property",
+      "resourceType": "AWS::IoTEvents::AlarmModel.AlarmAction"
+    },
     "AlarmCapabilities": {
       "kind": "property",
       "resourceType": "AWS::IoTEvents::AlarmModel.AlarmCapabilities"
@@ -1955,6 +1999,10 @@
       "kind": "property",
       "resourceType": "AWS::IoTEvents::AlarmModel.AcknowledgeFlow"
     },
+    "AlarmModel_AlarmAction": {
+      "kind": "property",
+      "resourceType": "AWS::IoTEvents::AlarmModel.AlarmAction"
+    },
     "AlarmModel_AlarmCapabilities": {
       "kind": "property",
       "resourceType": "AWS::IoTEvents::AlarmModel.AlarmCapabilities"
@@ -1967,13 +2015,49 @@
       "kind": "property",
       "resourceType": "AWS::IoTEvents::AlarmModel.AlarmRule"
     },
+    "AlarmModel_DynamoDB": {
+      "kind": "property",
+      "resourceType": "AWS::IoTEvents::AlarmModel.DynamoDB"
+    },
+    "AlarmModel_DynamoDBv2": {
+      "kind": "property",
+      "resourceType": "AWS::IoTEvents::AlarmModel.DynamoDBv2"
+    },
+    "AlarmModel_Firehose": {
+      "kind": "property",
+      "resourceType": "AWS::IoTEvents::AlarmModel.Firehose"
+    },
     "AlarmModel_InitializationConfiguration": {
       "kind": "property",
       "resourceType": "AWS::IoTEvents::AlarmModel.InitializationConfiguration"
     },
+    "AlarmModel_IotEvents": {
+      "kind": "property",
+      "resourceType": "AWS::IoTEvents::AlarmModel.IotEvents"
+    },
+    "AlarmModel_IotSiteWise": {
+      "kind": "property",
+      "resourceType": "AWS::IoTEvents::AlarmModel.IotSiteWise"
+    },
+    "AlarmModel_IotTopicPublish": {
+      "kind": "property",
+      "resourceType": "AWS::IoTEvents::AlarmModel.IotTopicPublish"
+    },
+    "AlarmModel_Lambda": {
+      "kind": "property",
+      "resourceType": "AWS::IoTEvents::AlarmModel.Lambda"
+    },
     "AlarmModel_SimpleRule": {
       "kind": "property",
       "resourceType": "AWS::IoTEvents::AlarmModel.SimpleRule"
+    },
+    "AlarmModel_Sns": {
+      "kind": "property",
+      "resourceType": "AWS::IoTEvents::AlarmModel.Sns"
+    },
+    "AlarmModel_Sqs": {
+      "kind": "property",
+      "resourceType": "AWS::IoTEvents::AlarmModel.Sqs"
     },
     "AlarmModel_Tag": {
       "kind": "property",
@@ -2976,6 +3060,14 @@
     "AnycastIpList_AnycastIpList": {
       "kind": "property",
       "resourceType": "AWS::CloudFront::AnycastIpList.AnycastIpList"
+    },
+    "AnycastIpList_IpamCidrConfig": {
+      "kind": "property",
+      "resourceType": "AWS::CloudFront::AnycastIpList.IpamCidrConfig"
+    },
+    "AnycastIpList_IpamCidrConfigResult": {
+      "kind": "property",
+      "resourceType": "AWS::CloudFront::AnycastIpList.IpamCidrConfigResult"
     },
     "AnycastIpList_Tag": {
       "kind": "property",
@@ -4319,6 +4411,10 @@
       "kind": "property",
       "resourceType": "AWS::RUM::AppMonitor.ResourcePolicy"
     },
+    "AppMonitor_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::RUM::AppMonitor.Tag"
+    },
     "AppRunnerService": {
       "kind": "resource",
       "resourceType": "AWS::AppRunner::Service",
@@ -4642,6 +4738,18 @@
         "ApiId"
       ]
     },
+    "AppSyncApi_AuthMode": {
+      "kind": "property",
+      "resourceType": "AWS::AppSync::Api.AuthMode"
+    },
+    "AppSyncApi_AuthProvider": {
+      "kind": "property",
+      "resourceType": "AWS::AppSync::Api.AuthProvider"
+    },
+    "AppSyncApi_CognitoConfig": {
+      "kind": "property",
+      "resourceType": "AWS::AppSync::Api.CognitoConfig"
+    },
     "AppSyncApi_DnsMap": {
       "kind": "property",
       "resourceType": "AWS::AppSync::Api.DnsMap"
@@ -4653,6 +4761,18 @@
     "AppSyncApi_EventLogConfig": {
       "kind": "property",
       "resourceType": "AWS::AppSync::Api.EventLogConfig"
+    },
+    "AppSyncApi_LambdaAuthorizerConfig": {
+      "kind": "property",
+      "resourceType": "AWS::AppSync::Api.LambdaAuthorizerConfig"
+    },
+    "AppSyncApi_OpenIDConnectConfig": {
+      "kind": "property",
+      "resourceType": "AWS::AppSync::Api.OpenIDConnectConfig"
+    },
+    "AppSyncApi_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::AppSync::Api.Tag"
     },
     "AppSyncDataSource": {
       "kind": "resource",
@@ -4747,6 +4867,10 @@
         "DomainName"
       ],
       "taggable": true
+    },
+    "AppSyncDomainName_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::AppSync::DomainName.Tag"
     },
     "AppSyncGraphQLApi": {
       "kind": "resource",
@@ -4880,6 +5004,10 @@
         "PrincipalId",
         "PrincipalType"
       ]
+    },
+    "ApplicationAttribute": {
+      "kind": "property",
+      "resourceType": "AWS::WAFv2::WebACL.ApplicationAttribute"
     },
     "ApplicationAutoScalingScalingPolicy": {
       "kind": "resource",
@@ -5175,6 +5303,10 @@
       "kind": "property",
       "resourceType": "AWS::Panorama::ApplicationInstance.ManifestPayload"
     },
+    "ApplicationInstance_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::Panorama::ApplicationInstance.Tag"
+    },
     "ApplicationLayerAutomaticResponseConfiguration": {
       "kind": "property",
       "resourceType": "AWS::Shield::Protection.ApplicationLayerAutomaticResponseConfiguration"
@@ -5318,6 +5450,10 @@
     "ApprovalTeam_Policy": {
       "kind": "property",
       "resourceType": "AWS::MPA::ApprovalTeam.Policy"
+    },
+    "ApprovalTeam_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::MPA::ApprovalTeam.Tag"
     },
     "ApprovalThresholdPolicy": {
       "kind": "property",
@@ -5638,9 +5774,17 @@
       "kind": "property",
       "resourceType": "AWS::IoTSiteWise::Asset.AssetProperty"
     },
+    "AssetType": {
+      "kind": "property",
+      "resourceType": "AWS::Cognito::ManagedLoginBranding.AssetType"
+    },
     "Assets": {
       "kind": "property",
       "resourceType": "AWS::SecurityAgent::Pentest.Assets"
+    },
+    "AssignSlaAction": {
+      "kind": "property",
+      "resourceType": "AWS::Connect::Rule.AssignSlaAction"
     },
     "Assignment": {
       "kind": "resource",
@@ -5782,6 +5926,10 @@
       ],
       "taggable": true
     },
+    "AthenaCapacityReservation_CapacityAssignment": {
+      "kind": "property",
+      "resourceType": "AWS::Athena::CapacityReservation.CapacityAssignment"
+    },
     "AthenaCapacityReservation_CapacityAssignmentConfiguration": {
       "kind": "property",
       "resourceType": "AWS::Athena::CapacityReservation.CapacityAssignmentConfiguration"
@@ -5857,6 +6005,10 @@
         "AttributeGroup"
       ]
     },
+    "AttributeItem": {
+      "kind": "property",
+      "resourceType": "AWS::CustomerProfiles::CalculatedAttributeDefinition.AttributeItem"
+    },
     "AttributeMapping": {
       "kind": "property",
       "resourceType": "AWS::RolesAnywhere::Profile.AttributeMapping"
@@ -5896,6 +6048,10 @@
     "AudioLanguageConfiguration": {
       "kind": "property",
       "resourceType": "AWS::Bedrock::DataAutomationProject.AudioLanguageConfiguration"
+    },
+    "AudioLogDestination": {
+      "kind": "property",
+      "resourceType": "AWS::Lex::BotAlias.AudioLogDestination"
     },
     "AudioMonitoringSetting": {
       "kind": "property",
@@ -5992,6 +6148,10 @@
         "ResourceIdentifier"
       ]
     },
+    "AuthProvider": {
+      "kind": "property",
+      "resourceType": "AWS::AppSync::Api.AuthProvider"
+    },
     "Authentication": {
       "kind": "property",
       "resourceType": "AWS::SecurityAgent::Pentest.Authentication"
@@ -6047,6 +6207,10 @@
     "AutoParticipantRecordingConfiguration": {
       "kind": "property",
       "resourceType": "AWS::IVS::Stage.AutoParticipantRecordingConfiguration"
+    },
+    "AutoPatchConfig": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::Cluster.AutoPatchConfig"
     },
     "AutoRepairConfiguration": {
       "kind": "property",
@@ -6421,9 +6585,33 @@
       ],
       "taggable": true
     },
+    "AutomatedReasoningPolicyVersion_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::Bedrock::AutomatedReasoningPolicyVersion.Tag"
+    },
     "AutomatedReasoningPolicy_PolicyDefinition": {
       "kind": "property",
       "resourceType": "AWS::Bedrock::AutomatedReasoningPolicy.PolicyDefinition"
+    },
+    "AutomatedReasoningPolicy_PolicyDefinitionRule": {
+      "kind": "property",
+      "resourceType": "AWS::Bedrock::AutomatedReasoningPolicy.PolicyDefinitionRule"
+    },
+    "AutomatedReasoningPolicy_PolicyDefinitionType": {
+      "kind": "property",
+      "resourceType": "AWS::Bedrock::AutomatedReasoningPolicy.PolicyDefinitionType"
+    },
+    "AutomatedReasoningPolicy_PolicyDefinitionTypeValue": {
+      "kind": "property",
+      "resourceType": "AWS::Bedrock::AutomatedReasoningPolicy.PolicyDefinitionTypeValue"
+    },
+    "AutomatedReasoningPolicy_PolicyDefinitionVariable": {
+      "kind": "property",
+      "resourceType": "AWS::Bedrock::AutomatedReasoningPolicy.PolicyDefinitionVariable"
+    },
+    "AutomatedReasoningPolicy_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::Bedrock::AutomatedReasoningPolicy.Tag"
     },
     "AutomatedSnapshotPauseOptions": {
       "kind": "property",
@@ -7566,6 +7754,10 @@
       "kind": "property",
       "resourceType": "AWS::Bedrock::Flow.FlowNodeOutput"
     },
+    "BedrockFlow_FlowValidation": {
+      "kind": "property",
+      "resourceType": "AWS::Bedrock::Flow.FlowValidation"
+    },
     "BedrockFlow_S3Location": {
       "kind": "property",
       "resourceType": "AWS::Bedrock::Flow.S3Location"
@@ -7753,6 +7945,10 @@
       ],
       "taggable": true
     },
+    "BedrockPrompt_PromptMetadataEntry": {
+      "kind": "property",
+      "resourceType": "AWS::Bedrock::Prompt.PromptMetadataEntry"
+    },
     "BedrockPrompt_PromptVariant": {
       "kind": "property",
       "resourceType": "AWS::Bedrock::Prompt.PromptVariant"
@@ -7900,6 +8096,14 @@
       "kind": "property",
       "resourceType": "AWS::Billing::BillingView.Tag"
     },
+    "BitbucketCapabilitiesResource": {
+      "kind": "property",
+      "resourceType": "AWS::SecurityAgent::AgentSpace.BitbucketCapabilitiesResource"
+    },
+    "BitbucketRepositoryResource": {
+      "kind": "property",
+      "resourceType": "AWS::SecurityAgent::AgentSpace.BitbucketRepositoryResource"
+    },
     "BlackFrames": {
       "kind": "property",
       "resourceType": "AWS::MediaConnect::Flow.BlackFrames"
@@ -8017,6 +8221,26 @@
       ],
       "taggable": true
     },
+    "BotAlias_AudioLogDestination": {
+      "kind": "property",
+      "resourceType": "AWS::Lex::BotAlias.AudioLogDestination"
+    },
+    "BotAlias_AudioLogSetting": {
+      "kind": "property",
+      "resourceType": "AWS::Lex::BotAlias.AudioLogSetting"
+    },
+    "BotAlias_BotAliasLocaleSettings": {
+      "kind": "property",
+      "resourceType": "AWS::Lex::BotAlias.BotAliasLocaleSettings"
+    },
+    "BotAlias_BotAliasLocaleSettingsItem": {
+      "kind": "property",
+      "resourceType": "AWS::Lex::BotAlias.BotAliasLocaleSettingsItem"
+    },
+    "BotAlias_CodeHookSpecification": {
+      "kind": "property",
+      "resourceType": "AWS::Lex::BotAlias.CodeHookSpecification"
+    },
     "BotAlias_ConversationLogSettings": {
       "kind": "property",
       "resourceType": "AWS::Lex::BotAlias.ConversationLogSettings"
@@ -8024,6 +8248,14 @@
     "BotAlias_Tag": {
       "kind": "property",
       "resourceType": "AWS::Lex::BotAlias.Tag"
+    },
+    "BotAlias_TextLogDestination": {
+      "kind": "property",
+      "resourceType": "AWS::Lex::BotAlias.TextLogDestination"
+    },
+    "BotAlias_TextLogSetting": {
+      "kind": "property",
+      "resourceType": "AWS::Lex::BotAlias.TextLogSetting"
     },
     "BotLocale": {
       "kind": "property",
@@ -8049,13 +8281,41 @@
         "BotId"
       ]
     },
+    "BotVersionLocaleDetails": {
+      "kind": "property",
+      "resourceType": "AWS::Lex::BotVersion.BotVersionLocaleDetails"
+    },
+    "BotVersionLocaleSpecification": {
+      "kind": "property",
+      "resourceType": "AWS::Lex::BotVersion.BotVersionLocaleSpecification"
+    },
+    "BotVersion_BotVersionLocaleDetails": {
+      "kind": "property",
+      "resourceType": "AWS::Lex::BotVersion.BotVersionLocaleDetails"
+    },
+    "BotVersion_BotVersionLocaleSpecification": {
+      "kind": "property",
+      "resourceType": "AWS::Lex::BotVersion.BotVersionLocaleSpecification"
+    },
     "Bot_AudioFillerSettings": {
       "kind": "property",
       "resourceType": "AWS::Lex::Bot.AudioFillerSettings"
     },
+    "Bot_AudioLogSetting": {
+      "kind": "property",
+      "resourceType": "AWS::Lex::Bot.AudioLogSetting"
+    },
     "Bot_BedrockAgentIntentConfiguration": {
       "kind": "property",
       "resourceType": "AWS::Lex::Bot.BedrockAgentIntentConfiguration"
+    },
+    "Bot_BotAliasLocaleSettings": {
+      "kind": "property",
+      "resourceType": "AWS::Lex::Bot.BotAliasLocaleSettings"
+    },
+    "Bot_BotAliasLocaleSettingsItem": {
+      "kind": "property",
+      "resourceType": "AWS::Lex::Bot.BotAliasLocaleSettingsItem"
     },
     "Bot_BotLocale": {
       "kind": "property",
@@ -8077,6 +8337,10 @@
       "kind": "property",
       "resourceType": "AWS::Lex::Bot.CustomVocabulary"
     },
+    "Bot_CustomVocabularyItem": {
+      "kind": "property",
+      "resourceType": "AWS::Lex::Bot.CustomVocabularyItem"
+    },
     "Bot_DialogCodeHookSetting": {
       "kind": "property",
       "resourceType": "AWS::Lex::Bot.DialogCodeHookSetting"
@@ -8097,6 +8361,10 @@
       "kind": "property",
       "resourceType": "AWS::Lex::Bot.InitialResponseSetting"
     },
+    "Bot_InputContext": {
+      "kind": "property",
+      "resourceType": "AWS::Lex::Bot.InputContext"
+    },
     "Bot_Intent": {
       "kind": "property",
       "resourceType": "AWS::Lex::Bot.Intent"
@@ -8112,6 +8380,10 @@
     "Bot_KendraConfiguration": {
       "kind": "property",
       "resourceType": "AWS::Lex::Bot.KendraConfiguration"
+    },
+    "Bot_OutputContext": {
+      "kind": "property",
+      "resourceType": "AWS::Lex::Bot.OutputContext"
     },
     "Bot_QInConnectIntentConfiguration": {
       "kind": "property",
@@ -8129,13 +8401,25 @@
       "kind": "property",
       "resourceType": "AWS::Lex::Bot.S3Location"
     },
+    "Bot_SampleUtterance": {
+      "kind": "property",
+      "resourceType": "AWS::Lex::Bot.SampleUtterance"
+    },
     "Bot_Slot": {
       "kind": "property",
       "resourceType": "AWS::Lex::Bot.Slot"
     },
+    "Bot_SlotPriority": {
+      "kind": "property",
+      "resourceType": "AWS::Lex::Bot.SlotPriority"
+    },
     "Bot_SlotType": {
       "kind": "property",
       "resourceType": "AWS::Lex::Bot.SlotType"
+    },
+    "Bot_SlotTypeValue": {
+      "kind": "property",
+      "resourceType": "AWS::Lex::Bot.SlotTypeValue"
     },
     "Bot_SlotValueSelectionSetting": {
       "kind": "property",
@@ -8156,6 +8440,10 @@
     "Bot_TestBotAliasSettings": {
       "kind": "property",
       "resourceType": "AWS::Lex::Bot.TestBotAliasSettings"
+    },
+    "Bot_TextLogSetting": {
+      "kind": "property",
+      "resourceType": "AWS::Lex::Bot.TextLogSetting"
     },
     "Bot_UnifiedSpeechSettings": {
       "kind": "property",
@@ -8479,6 +8767,10 @@
       ],
       "taggable": true
     },
+    "BrowserCustom_BrowserEnterprisePolicy": {
+      "kind": "property",
+      "resourceType": "AWS::BedrockAgentCore::BrowserCustom.BrowserEnterprisePolicy"
+    },
     "BrowserCustom_BrowserNetworkConfiguration": {
       "kind": "property",
       "resourceType": "AWS::BedrockAgentCore::BrowserCustom.BrowserNetworkConfiguration"
@@ -8486,6 +8778,14 @@
     "BrowserCustom_BrowserSigning": {
       "kind": "property",
       "resourceType": "AWS::BedrockAgentCore::BrowserCustom.BrowserSigning"
+    },
+    "BrowserCustom_Certificate": {
+      "kind": "property",
+      "resourceType": "AWS::BedrockAgentCore::BrowserCustom.Certificate"
+    },
+    "BrowserCustom_CertificateLocation": {
+      "kind": "property",
+      "resourceType": "AWS::BedrockAgentCore::BrowserCustom.CertificateLocation"
     },
     "BrowserCustom_RecordingConfig": {
       "kind": "property",
@@ -8498,6 +8798,10 @@
     "BrowserCustom_VpcConfig": {
       "kind": "property",
       "resourceType": "AWS::BedrockAgentCore::BrowserCustom.VpcConfig"
+    },
+    "BrowserEnterprisePolicy": {
+      "kind": "property",
+      "resourceType": "AWS::BedrockAgentCore::BrowserCustom.BrowserEnterprisePolicy"
     },
     "BrowserExtensionConfiguration": {
       "kind": "property",
@@ -9047,6 +9351,10 @@
       "kind": "property",
       "resourceType": "AWS::MediaTailor::PlaybackConfiguration.Bumper"
     },
+    "BurnRateConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::ApplicationSignals::ServiceLevelObjective.BurnRateConfiguration"
+    },
     "BusinessDetails": {
       "kind": "property",
       "resourceType": "AWS::SageMaker::ModelCard.BusinessDetails"
@@ -9342,6 +9650,10 @@
       "kind": "property",
       "resourceType": "AWS::CustomerProfiles::CalculatedAttributeDefinition.AttributeDetails"
     },
+    "CalculatedAttributeDefinition_AttributeItem": {
+      "kind": "property",
+      "resourceType": "AWS::CustomerProfiles::CalculatedAttributeDefinition.AttributeItem"
+    },
     "CalculatedAttributeDefinition_Conditions": {
       "kind": "property",
       "resourceType": "AWS::CustomerProfiles::CalculatedAttributeDefinition.Conditions"
@@ -9353,6 +9665,10 @@
     "CalculatedAttributeDefinition_Readiness": {
       "kind": "property",
       "resourceType": "AWS::CustomerProfiles::CalculatedAttributeDefinition.Readiness"
+    },
+    "CalculatedAttributeDefinition_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::CustomerProfiles::CalculatedAttributeDefinition.Tag"
     },
     "CalculatedAttributeDefinition_Threshold": {
       "kind": "property",
@@ -9505,6 +9821,10 @@
       "kind": "property",
       "resourceType": "AWS::EC2::CapacityReservation.CapacityAllocation"
     },
+    "CapacityAssignment": {
+      "kind": "property",
+      "resourceType": "AWS::Athena::CapacityReservation.CapacityAssignment"
+    },
     "CapacityAssignmentConfiguration": {
       "kind": "property",
       "resourceType": "AWS::Athena::CapacityReservation.CapacityAssignmentConfiguration"
@@ -9512,6 +9832,10 @@
     "CapacityAutoScalingSettings": {
       "kind": "property",
       "resourceType": "AWS::DynamoDB::GlobalTable.CapacityAutoScalingSettings"
+    },
+    "CapacityLimit": {
+      "kind": "property",
+      "resourceType": "AWS::Batch::ServiceEnvironment.CapacityLimit"
     },
     "CapacityLimits": {
       "kind": "property",
@@ -9558,6 +9882,10 @@
     "CapacityProviderScalingConfig": {
       "kind": "property",
       "resourceType": "AWS::Lambda::CapacityProvider.CapacityProviderScalingConfig"
+    },
+    "CapacityProviderStrategy": {
+      "kind": "property",
+      "resourceType": "AWS::ECS::ClusterCapacityProviderAssociations.CapacityProviderStrategy"
     },
     "CapacityProviderTelemetryConfig": {
       "kind": "property",
@@ -9662,6 +9990,10 @@
         "VpcId"
       ],
       "taggable": true
+    },
+    "CarrierGateway_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::EC2::CarrierGateway.Tag"
     },
     "CaseRule": {
       "kind": "resource",
@@ -10035,6 +10367,14 @@
         "CertificateAuthorityArn"
       ]
     },
+    "CertificateAuthority_AccessDescription": {
+      "kind": "property",
+      "resourceType": "AWS::ACMPCA::CertificateAuthority.AccessDescription"
+    },
+    "CertificateAuthority_AccessMethod": {
+      "kind": "property",
+      "resourceType": "AWS::ACMPCA::CertificateAuthority.AccessMethod"
+    },
     "CertificateAuthority_CrlConfiguration": {
       "kind": "property",
       "resourceType": "AWS::ACMPCA::CertificateAuthority.CrlConfiguration"
@@ -10046,6 +10386,14 @@
     "CertificateAuthority_CsrExtensions": {
       "kind": "property",
       "resourceType": "AWS::ACMPCA::CertificateAuthority.CsrExtensions"
+    },
+    "CertificateAuthority_CustomAttribute": {
+      "kind": "property",
+      "resourceType": "AWS::ACMPCA::CertificateAuthority.CustomAttribute"
+    },
+    "CertificateAuthority_GeneralName": {
+      "kind": "property",
+      "resourceType": "AWS::ACMPCA::CertificateAuthority.GeneralName"
     },
     "CertificateAuthority_KeyUsage": {
       "kind": "property",
@@ -10324,6 +10672,10 @@
       "kind": "property",
       "resourceType": "AWS::CloudFront::TrustStore.Tag"
     },
+    "CfnStackParameter": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::Project.CfnStackParameter"
+    },
     "CfnTemplateProviderDetail": {
       "kind": "property",
       "resourceType": "AWS::SageMaker::Project.CfnTemplateProviderDetail"
@@ -10479,6 +10831,10 @@
       ],
       "taggable": true
     },
+    "ChannelNamespace_AuthMode": {
+      "kind": "property",
+      "resourceType": "AWS::AppSync::ChannelNamespace.AuthMode"
+    },
     "ChannelNamespace_HandlerConfig": {
       "kind": "property",
       "resourceType": "AWS::AppSync::ChannelNamespace.HandlerConfig"
@@ -10490,6 +10846,10 @@
     "ChannelNamespace_Integration": {
       "kind": "property",
       "resourceType": "AWS::AppSync::ChannelNamespace.Integration"
+    },
+    "ChannelNamespace_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::AppSync::ChannelNamespace.Tag"
     },
     "ChannelPlacementGroup": {
       "kind": "resource",
@@ -11556,6 +11916,10 @@
       "kind": "property",
       "resourceType": "AWS::CodeBuild::Project.CloudWatchLogsConfig"
     },
+    "CloudWatchLogsConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::Cognito::LogDeliveryConfiguration.CloudWatchLogsConfiguration"
+    },
     "CloudWatchLogsDestination": {
       "kind": "property",
       "resourceType": "AWS::SMSVOICE::ConfigurationSet.CloudWatchLogsDestination"
@@ -11624,6 +11988,14 @@
         "Cluster"
       ]
     },
+    "ClusterCapacityProviderAssociations_CapacityProviderStrategy": {
+      "kind": "property",
+      "resourceType": "AWS::ECS::ClusterCapacityProviderAssociations.CapacityProviderStrategy"
+    },
+    "ClusterCapacityRequirements": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::Cluster.ClusterCapacityRequirements"
+    },
     "ClusterConfiguration": {
       "kind": "property",
       "resourceType": "AWS::ECS::Cluster.ClusterConfiguration"
@@ -11632,9 +12004,29 @@
       "kind": "property",
       "resourceType": "AWS::Route53RecoveryControl::Cluster.ClusterEndpoint"
     },
+    "ClusterInstanceGroup": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::Cluster.ClusterInstanceGroup"
+    },
+    "ClusterKubernetesConfig": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::Cluster.ClusterKubernetesConfig"
+    },
+    "ClusterKubernetesTaint": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::Cluster.ClusterKubernetesTaint"
+    },
+    "ClusterLifeCycleConfig": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::Cluster.ClusterLifeCycleConfig"
+    },
     "ClusterLogging": {
       "kind": "property",
       "resourceType": "AWS::EKS::Cluster.ClusterLogging"
+    },
+    "ClusterNetworkInterface": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::Cluster.ClusterNetworkInterface"
     },
     "ClusterNetworkSettings": {
       "kind": "property",
@@ -11680,6 +12072,10 @@
         "ClusterArn"
       ]
     },
+    "ClusterRestrictedInstanceGroup": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::Cluster.ClusterRestrictedInstanceGroup"
+    },
     "ClusterSecurityGroup": {
       "kind": "resource",
       "resourceType": "AWS::Redshift::ClusterSecurityGroup",
@@ -11722,6 +12118,10 @@
     "ClusterSettings": {
       "kind": "property",
       "resourceType": "AWS::ECS::Cluster.ClusterSettings"
+    },
+    "ClusterSlurmConfig": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::Cluster.ClusterSlurmConfig"
     },
     "ClusterSubnetGroup": {
       "kind": "resource",
@@ -12097,6 +12497,10 @@
       "kind": "property",
       "resourceType": "AWS::SageMaker::AppImageConfig.CodeEditorAppImageConfig"
     },
+    "CodeHookSpecification": {
+      "kind": "property",
+      "resourceType": "AWS::Lex::BotAlias.CodeHookSpecification"
+    },
     "CodeInterpreterCustom": {
       "kind": "resource",
       "resourceType": "AWS::BedrockAgentCore::CodeInterpreterCustom",
@@ -12130,6 +12534,14 @@
         "NetworkConfiguration"
       ],
       "taggable": true
+    },
+    "CodeInterpreterCustom_Certificate": {
+      "kind": "property",
+      "resourceType": "AWS::BedrockAgentCore::CodeInterpreterCustom.Certificate"
+    },
+    "CodeInterpreterCustom_CertificateLocation": {
+      "kind": "property",
+      "resourceType": "AWS::BedrockAgentCore::CodeInterpreterCustom.CertificateLocation"
     },
     "CodeInterpreterCustom_CodeInterpreterNetworkConfiguration": {
       "kind": "property",
@@ -12432,6 +12844,10 @@
       "kind": "property",
       "resourceType": "AWS::CodeStarConnections::Connection.Tag"
     },
+    "CognitoConfig": {
+      "kind": "property",
+      "resourceType": "AWS::AppSync::Api.CognitoConfig"
+    },
     "CognitoIdentityProvider": {
       "kind": "property",
       "resourceType": "AWS::Cognito::IdentityPool.CognitoIdentityProvider"
@@ -12643,6 +13059,22 @@
       ],
       "taggable": true
     },
+    "CommandParameter": {
+      "kind": "property",
+      "resourceType": "AWS::IoT::Command.CommandParameter"
+    },
+    "CommandParameterValue": {
+      "kind": "property",
+      "resourceType": "AWS::IoT::Command.CommandParameterValue"
+    },
+    "CommandParameterValueComparisonOperand": {
+      "kind": "property",
+      "resourceType": "AWS::IoT::Command.CommandParameterValueComparisonOperand"
+    },
+    "CommandParameterValueCondition": {
+      "kind": "property",
+      "resourceType": "AWS::IoT::Command.CommandParameterValueCondition"
+    },
     "CommandPayload": {
       "kind": "property",
       "resourceType": "AWS::IoT::Command.CommandPayload"
@@ -12655,6 +13087,22 @@
       "kind": "property",
       "resourceType": "AWS::IoT::Command.AwsJsonSubstitutionCommandPreprocessorConfig"
     },
+    "Command_CommandParameter": {
+      "kind": "property",
+      "resourceType": "AWS::IoT::Command.CommandParameter"
+    },
+    "Command_CommandParameterValue": {
+      "kind": "property",
+      "resourceType": "AWS::IoT::Command.CommandParameterValue"
+    },
+    "Command_CommandParameterValueComparisonOperand": {
+      "kind": "property",
+      "resourceType": "AWS::IoT::Command.CommandParameterValueComparisonOperand"
+    },
+    "Command_CommandParameterValueCondition": {
+      "kind": "property",
+      "resourceType": "AWS::IoT::Command.CommandParameterValueCondition"
+    },
     "Command_CommandPayload": {
       "kind": "property",
       "resourceType": "AWS::IoT::Command.CommandPayload"
@@ -12666,6 +13114,10 @@
     "Command_Tag": {
       "kind": "property",
       "resourceType": "AWS::IoT::Command.Tag"
+    },
+    "CommunicationLimit": {
+      "kind": "property",
+      "resourceType": "AWS::ConnectCampaignsV2::Campaign.CommunicationLimit"
     },
     "CommunicationLimits": {
       "kind": "property",
@@ -13051,13 +13503,29 @@
       "kind": "property",
       "resourceType": "AWS::ComputeOptimizer::AutomationRule.Criteria"
     },
+    "ComputeOptimizerAutomationRule_DoubleCriteriaCondition": {
+      "kind": "property",
+      "resourceType": "AWS::ComputeOptimizer::AutomationRule.DoubleCriteriaCondition"
+    },
+    "ComputeOptimizerAutomationRule_IntegerCriteriaCondition": {
+      "kind": "property",
+      "resourceType": "AWS::ComputeOptimizer::AutomationRule.IntegerCriteriaCondition"
+    },
     "ComputeOptimizerAutomationRule_OrganizationConfiguration": {
       "kind": "property",
       "resourceType": "AWS::ComputeOptimizer::AutomationRule.OrganizationConfiguration"
     },
+    "ComputeOptimizerAutomationRule_ResourceTagsCriteriaCondition": {
+      "kind": "property",
+      "resourceType": "AWS::ComputeOptimizer::AutomationRule.ResourceTagsCriteriaCondition"
+    },
     "ComputeOptimizerAutomationRule_Schedule": {
       "kind": "property",
       "resourceType": "AWS::ComputeOptimizer::AutomationRule.Schedule"
+    },
+    "ComputeOptimizerAutomationRule_StringCriteriaCondition": {
+      "kind": "property",
+      "resourceType": "AWS::ComputeOptimizer::AutomationRule.StringCriteriaCondition"
     },
     "ComputeOptimizerAutomationRule_Tag": {
       "kind": "property",
@@ -13358,6 +13826,10 @@
       "kind": "property",
       "resourceType": "AWS::MSK::Cluster.ConfigurationInfo"
     },
+    "ConfigurationItem": {
+      "kind": "property",
+      "resourceType": "AWS::ResourceGroups::Group.ConfigurationItem"
+    },
     "ConfigurationManager": {
       "kind": "resource",
       "resourceType": "AWS::SSMQuickSetup::ConfigurationManager",
@@ -13392,6 +13864,10 @@
       "kind": "property",
       "resourceType": "AWS::SSMQuickSetup::ConfigurationManager.StatusSummary"
     },
+    "ConfigurationObject": {
+      "kind": "property",
+      "resourceType": "AWS::EMRServerless::Application.ConfigurationObject"
+    },
     "ConfigurationOptionSetting": {
       "kind": "property",
       "resourceType": "AWS::ElasticBeanstalk::ConfigurationTemplate.ConfigurationOptionSetting"
@@ -13399,6 +13875,10 @@
     "ConfigurationOverrides": {
       "kind": "property",
       "resourceType": "AWS::EMRContainers::Endpoint.ConfigurationOverrides"
+    },
+    "ConfigurationParameter": {
+      "kind": "property",
+      "resourceType": "AWS::ResourceGroups::Group.ConfigurationParameter"
     },
     "ConfigurationPolicy": {
       "kind": "resource",
@@ -13735,6 +14215,10 @@
       "kind": "property",
       "resourceType": "AWS::Kendra::DataSource.ConfluenceBlogConfiguration"
     },
+    "ConfluenceCapabilitiesResource": {
+      "kind": "property",
+      "resourceType": "AWS::SecurityAgent::AgentSpace.ConfluenceCapabilitiesResource"
+    },
     "ConfluenceConfiguration": {
       "kind": "property",
       "resourceType": "AWS::Kendra::DataSource.ConfluenceConfiguration"
@@ -13746,6 +14230,10 @@
     "ConfluenceDataSourceConfiguration": {
       "kind": "property",
       "resourceType": "AWS::Bedrock::DataSource.ConfluenceDataSourceConfiguration"
+    },
+    "ConfluenceDocumentResource": {
+      "kind": "property",
+      "resourceType": "AWS::SecurityAgent::AgentSpace.ConfluenceDocumentResource"
     },
     "ConfluencePageConfiguration": {
       "kind": "property",
@@ -13935,6 +14423,10 @@
     "ConnectCampaignsV2Campaign_ChannelSubtypeConfig": {
       "kind": "property",
       "resourceType": "AWS::ConnectCampaignsV2::Campaign.ChannelSubtypeConfig"
+    },
+    "ConnectCampaignsV2Campaign_CommunicationLimit": {
+      "kind": "property",
+      "resourceType": "AWS::ConnectCampaignsV2::Campaign.CommunicationLimit"
     },
     "ConnectCampaignsV2Campaign_CommunicationLimits": {
       "kind": "property",
@@ -14247,13 +14739,49 @@
       "kind": "property",
       "resourceType": "AWS::Connect::Rule.Actions"
     },
+    "ConnectRule_AssignSlaAction": {
+      "kind": "property",
+      "resourceType": "AWS::Connect::Rule.AssignSlaAction"
+    },
+    "ConnectRule_CreateCaseAction": {
+      "kind": "property",
+      "resourceType": "AWS::Connect::Rule.CreateCaseAction"
+    },
+    "ConnectRule_EventBridgeAction": {
+      "kind": "property",
+      "resourceType": "AWS::Connect::Rule.EventBridgeAction"
+    },
+    "ConnectRule_Field": {
+      "kind": "property",
+      "resourceType": "AWS::Connect::Rule.Field"
+    },
+    "ConnectRule_NotificationRecipientType": {
+      "kind": "property",
+      "resourceType": "AWS::Connect::Rule.NotificationRecipientType"
+    },
     "ConnectRule_RuleTriggerEventSource": {
       "kind": "property",
       "resourceType": "AWS::Connect::Rule.RuleTriggerEventSource"
     },
+    "ConnectRule_SendNotificationAction": {
+      "kind": "property",
+      "resourceType": "AWS::Connect::Rule.SendNotificationAction"
+    },
+    "ConnectRule_SubmitAutoEvaluationAction": {
+      "kind": "property",
+      "resourceType": "AWS::Connect::Rule.SubmitAutoEvaluationAction"
+    },
     "ConnectRule_Tag": {
       "kind": "property",
       "resourceType": "AWS::Connect::Rule.Tag"
+    },
+    "ConnectRule_TaskAction": {
+      "kind": "property",
+      "resourceType": "AWS::Connect::Rule.TaskAction"
+    },
+    "ConnectRule_UpdateCaseAction": {
+      "kind": "property",
+      "resourceType": "AWS::Connect::Rule.UpdateCaseAction"
     },
     "ConnectSecurityProfile": {
       "kind": "resource",
@@ -15884,6 +16412,10 @@
       "kind": "property",
       "resourceType": "AWS::Glue::Crawler.Targets"
     },
+    "CreateCaseAction": {
+      "kind": "property",
+      "resourceType": "AWS::Connect::Rule.CreateCaseAction"
+    },
     "CreateDetails": {
       "kind": "property",
       "resourceType": "AWS::InspectorV2::CodeSecurityIntegration.CreateDetails"
@@ -16102,9 +16634,17 @@
       "kind": "property",
       "resourceType": "AWS::Chatbot::CustomAction.Tag"
     },
+    "CustomArtifactConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::KinesisAnalyticsV2::Application.CustomArtifactConfiguration"
+    },
     "CustomComponent": {
       "kind": "property",
       "resourceType": "AWS::ApplicationInsights::Application.CustomComponent"
+    },
+    "CustomConfigurationInput": {
+      "kind": "property",
+      "resourceType": "AWS::BedrockAgentCore::Memory.CustomConfigurationInput"
     },
     "CustomConnectorDestinationProperties": {
       "kind": "property",
@@ -16228,6 +16768,14 @@
       "kind": "property",
       "resourceType": "AWS::RUM::AppMonitor.CustomEvents"
     },
+    "CustomExtension": {
+      "kind": "property",
+      "resourceType": "AWS::ACMPCA::Certificate.CustomExtension"
+    },
+    "CustomFileSystem": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::Space.CustomFileSystem"
+    },
     "CustomHeadersConfig": {
       "kind": "property",
       "resourceType": "AWS::CloudFront::ResponseHeadersPolicy.CustomHeadersConfig"
@@ -16307,6 +16855,10 @@
       "kind": "property",
       "resourceType": "AWS::BillingConductor::CustomLineItem.CustomLineItemPercentageChargeDetails"
     },
+    "CustomLineItem_LineItemFilter": {
+      "kind": "property",
+      "resourceType": "AWS::BillingConductor::CustomLineItem.LineItemFilter"
+    },
     "CustomLineItem_Tag": {
       "kind": "property",
       "resourceType": "AWS::BillingConductor::CustomLineItem.Tag"
@@ -16314,6 +16866,10 @@
     "CustomLogSource": {
       "kind": "property",
       "resourceType": "AWS::SecurityLake::Subscriber.CustomLogSource"
+    },
+    "CustomMemoryStrategy": {
+      "kind": "property",
+      "resourceType": "AWS::BedrockAgentCore::Memory.CustomMemoryStrategy"
     },
     "CustomMetric": {
       "kind": "resource",
@@ -16514,6 +17070,10 @@
     "CustomVocabulary": {
       "kind": "property",
       "resourceType": "AWS::Lex::Bot.CustomVocabulary"
+    },
+    "CustomVocabularyItem": {
+      "kind": "property",
+      "resourceType": "AWS::Lex::Bot.CustomVocabularyItem"
     },
     "CustomerContact": {
       "kind": "property",
@@ -18296,6 +18856,10 @@
       "kind": "property",
       "resourceType": "AWS::DataBrew::Job.DataCatalogOutput"
     },
+    "DataCatalog_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::Athena::DataCatalog.Tag"
+    },
     "DataCellsFilter": {
       "kind": "resource",
       "resourceType": "AWS::LakeFormation::DataCellsFilter",
@@ -18593,6 +19157,10 @@
     "DataPrepConfiguration": {
       "kind": "property",
       "resourceType": "AWS::QuickSight::DataSet.DataPrepConfiguration"
+    },
+    "DataProtect": {
+      "kind": "property",
+      "resourceType": "AWS::WAFv2::WebACL.DataProtect"
     },
     "DataProtectionConfig": {
       "kind": "property",
@@ -19106,6 +19674,10 @@
     "DataSourceParameters": {
       "kind": "property",
       "resourceType": "AWS::QuickSight::DataSource.DataSourceParameters"
+    },
+    "DataSourceToIndexFieldMapping": {
+      "kind": "property",
+      "resourceType": "AWS::Kendra::DataSource.DataSourceToIndexFieldMapping"
     },
     "DataSourceType": {
       "kind": "property",
@@ -20777,6 +21349,10 @@
       "kind": "property",
       "resourceType": "AWS::KinesisFirehose::DeliveryStream.DeliveryStreamEncryptionConfigurationInput"
     },
+    "DeliveryStream_DestinationTableConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::KinesisFirehose::DeliveryStream.DestinationTableConfiguration"
+    },
     "DeliveryStream_DirectPutSourceConfiguration": {
       "kind": "property",
       "resourceType": "AWS::KinesisFirehose::DeliveryStream.DirectPutSourceConfiguration"
@@ -21271,6 +21847,10 @@
       "kind": "property",
       "resourceType": "AWS::MSK::Channel.DestinationTable"
     },
+    "DestinationTableConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::KinesisFirehose::DeliveryStream.DestinationTableConfiguration"
+    },
     "DetailedStatusCodesMetrics": {
       "kind": "property",
       "resourceType": "AWS::S3::StorageLens.DetailedStatusCodesMetrics"
@@ -21669,10 +22249,6 @@
         "Type"
       ],
       "taggable": true
-    },
-    "DimensionMapping": {
-      "kind": "property",
-      "resourceType": "AWS::Pipes::Pipe.DimensionMapping"
     },
     "Dimension_Tag": {
       "kind": "property",
@@ -22539,10 +23115,6 @@
       "kind": "property",
       "resourceType": "AWS::QBusiness::Index.DocumentAttributeConfiguration"
     },
-    "DocumentAttributeTarget": {
-      "kind": "property",
-      "resourceType": "AWS::QBusiness::DataSource.DocumentAttributeTarget"
-    },
     "DocumentClassificationConfig": {
       "kind": "property",
       "resourceType": "AWS::Comprehend::Flywheel.DocumentClassificationConfig"
@@ -22637,6 +23209,10 @@
     "DocumentInfo": {
       "kind": "property",
       "resourceType": "AWS::SecurityAgent::Pentest.DocumentInfo"
+    },
+    "DocumentMetadataConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::Kendra::Index.DocumentMetadataConfiguration"
     },
     "DocumentOutputFormat": {
       "kind": "property",
@@ -22881,6 +23457,10 @@
       ],
       "taggable": true
     },
+    "DomainObjectType_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::CustomerProfiles::DomainObjectType.Tag"
+    },
     "DomainResult": {
       "kind": "property",
       "resourceType": "AWS::CloudFront::DistributionTenant.DomainResult"
@@ -22955,6 +23535,10 @@
       "kind": "property",
       "resourceType": "AWS::VpcLattice::DomainVerification.Tag"
     },
+    "DoubleCriteriaCondition": {
+      "kind": "property",
+      "resourceType": "AWS::ComputeOptimizer::AutomationRule.DoubleCriteriaCondition"
+    },
     "DownlinkAwsGroundStationAgentEndpoint": {
       "kind": "property",
       "resourceType": "AWS::GroundStation::DataflowEndpointGroupV2.DownlinkAwsGroundStationAgentEndpoint"
@@ -23003,6 +23587,10 @@
       "kind": "property",
       "resourceType": "AWS::SSMIncidents::ResponsePlan.DynamicSsmParameter"
     },
+    "DynamoDB": {
+      "kind": "property",
+      "resourceType": "AWS::IoTEvents::AlarmModel.DynamoDB"
+    },
     "DynamoDBAction": {
       "kind": "property",
       "resourceType": "AWS::IoT::TopicRule.DynamoDBAction"
@@ -23014,6 +23602,10 @@
     "DynamoDBTarget": {
       "kind": "property",
       "resourceType": "AWS::Glue::Crawler.DynamoDBTarget"
+    },
+    "DynamoDBv2": {
+      "kind": "property",
+      "resourceType": "AWS::IoTEvents::AlarmModel.DynamoDBv2"
     },
     "DynamoDBv2Action": {
       "kind": "property",
@@ -23813,6 +24405,10 @@
       "kind": "property",
       "resourceType": "AWS::EKS::Cluster.Logging"
     },
+    "EKSCluster_LoggingTypeConfig": {
+      "kind": "property",
+      "resourceType": "AWS::EKS::Cluster.LoggingTypeConfig"
+    },
     "EKSCluster_OutpostConfig": {
       "kind": "property",
       "resourceType": "AWS::EKS::Cluster.OutpostConfig"
@@ -23824,6 +24420,14 @@
     "EKSCluster_RemoteNetworkConfig": {
       "kind": "property",
       "resourceType": "AWS::EKS::Cluster.RemoteNetworkConfig"
+    },
+    "EKSCluster_RemoteNodeNetwork": {
+      "kind": "property",
+      "resourceType": "AWS::EKS::Cluster.RemoteNodeNetwork"
+    },
+    "EKSCluster_RemotePodNetwork": {
+      "kind": "property",
+      "resourceType": "AWS::EKS::Cluster.RemotePodNetwork"
     },
     "EKSCluster_ResourcesVpcConfig": {
       "kind": "property",
@@ -24217,6 +24821,10 @@
       "kind": "property",
       "resourceType": "AWS::EMRServerless::Application.CloudWatchLoggingConfiguration"
     },
+    "EMRServerlessApplication_ConfigurationObject": {
+      "kind": "property",
+      "resourceType": "AWS::EMRServerless::Application.ConfigurationObject"
+    },
     "EMRServerlessApplication_IdentityCenterConfiguration": {
       "kind": "property",
       "resourceType": "AWS::EMRServerless::Application.IdentityCenterConfiguration"
@@ -24224,6 +24832,14 @@
     "EMRServerlessApplication_ImageConfigurationInput": {
       "kind": "property",
       "resourceType": "AWS::EMRServerless::Application.ImageConfigurationInput"
+    },
+    "EMRServerlessApplication_InitialCapacityConfig": {
+      "kind": "property",
+      "resourceType": "AWS::EMRServerless::Application.InitialCapacityConfig"
+    },
+    "EMRServerlessApplication_InitialCapacityConfigKeyValuePair": {
+      "kind": "property",
+      "resourceType": "AWS::EMRServerless::Application.InitialCapacityConfigKeyValuePair"
     },
     "EMRServerlessApplication_InteractiveConfiguration": {
       "kind": "property",
@@ -24264,6 +24880,10 @@
     "EMRServerlessApplication_Tag": {
       "kind": "property",
       "resourceType": "AWS::EMRServerless::Application.Tag"
+    },
+    "EMRServerlessApplication_WorkerConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::EMRServerless::Application.WorkerConfiguration"
     },
     "EVSEnvironment": {
       "kind": "resource",
@@ -24693,6 +25313,10 @@
     "EffectivePolicyValues": {
       "kind": "property",
       "resourceType": "AWS::ResilienceHubV2::Service.EffectivePolicyValues"
+    },
+    "EfsAccessPointConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::BedrockAgentCore::Runtime.EfsAccessPointConfiguration"
     },
     "Egress": {
       "kind": "property",
@@ -25159,6 +25783,10 @@
     "EmailContact_EmailContact": {
       "kind": "property",
       "resourceType": "AWS::NotificationsContacts::EmailContact.EmailContact"
+    },
+    "EmailContact_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::NotificationsContacts::EmailContact.Tag"
     },
     "EmailIdentity": {
       "kind": "resource",
@@ -25627,6 +26255,10 @@
       "kind": "property",
       "resourceType": "AWS::SageMaker::EndpointConfig.VpcConfig"
     },
+    "EndpointEventBus": {
+      "kind": "property",
+      "resourceType": "AWS::Events::Endpoint.EndpointEventBus"
+    },
     "EndpointGroup": {
       "kind": "resource",
       "resourceType": "AWS::GlobalAccelerator::EndpointGroup",
@@ -25931,6 +26563,10 @@
       "kind": "property",
       "resourceType": "AWS::DataZone::EnvironmentBlueprintConfiguration.RegionalParameter"
     },
+    "EnvironmentConfig": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::Cluster.EnvironmentConfig"
+    },
     "EnvironmentConfiguration": {
       "kind": "property",
       "resourceType": "AWS::DataZone::ProjectProfile.EnvironmentConfiguration"
@@ -26055,6 +26691,14 @@
       "kind": "property",
       "resourceType": "AWS::Proton::EnvironmentTemplate.Tag"
     },
+    "EpisodicMemoryStrategy": {
+      "kind": "property",
+      "resourceType": "AWS::BedrockAgentCore::Memory.EpisodicMemoryStrategy"
+    },
+    "EpisodicReflectionConfigurationInput": {
+      "kind": "property",
+      "resourceType": "AWS::BedrockAgentCore::Memory.EpisodicReflectionConfigurationInput"
+    },
     "ErrorMessageConfiguration": {
       "kind": "property",
       "resourceType": "AWS::CleanRooms::AnalysisTemplate.ErrorMessageConfiguration"
@@ -26074,6 +26718,10 @@
     "EvaluationCriteria": {
       "kind": "property",
       "resourceType": "AWS::CloudWatch::Alarm.EvaluationCriteria"
+    },
+    "EvaluationDetail": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::ModelCard.EvaluationDetail"
     },
     "EvaluationForm": {
       "kind": "resource",
@@ -26260,6 +26908,10 @@
     "EventBatchingCondition": {
       "kind": "property",
       "resourceType": "AWS::Glue::Trigger.EventBatchingCondition"
+    },
+    "EventBridgeAction": {
+      "kind": "property",
+      "resourceType": "AWS::Connect::Rule.EventBridgeAction"
     },
     "EventBridgeConfig": {
       "kind": "property",
@@ -26849,13 +27501,41 @@
       ],
       "taggable": true
     },
+    "EventTriggerCondition": {
+      "kind": "property",
+      "resourceType": "AWS::CustomerProfiles::EventTrigger.EventTriggerCondition"
+    },
+    "EventTriggerDimension": {
+      "kind": "property",
+      "resourceType": "AWS::CustomerProfiles::EventTrigger.EventTriggerDimension"
+    },
     "EventTriggerLimits": {
       "kind": "property",
       "resourceType": "AWS::CustomerProfiles::EventTrigger.EventTriggerLimits"
     },
+    "EventTrigger_EventTriggerCondition": {
+      "kind": "property",
+      "resourceType": "AWS::CustomerProfiles::EventTrigger.EventTriggerCondition"
+    },
+    "EventTrigger_EventTriggerDimension": {
+      "kind": "property",
+      "resourceType": "AWS::CustomerProfiles::EventTrigger.EventTriggerDimension"
+    },
     "EventTrigger_EventTriggerLimits": {
       "kind": "property",
       "resourceType": "AWS::CustomerProfiles::EventTrigger.EventTriggerLimits"
+    },
+    "EventTrigger_ObjectAttribute": {
+      "kind": "property",
+      "resourceType": "AWS::CustomerProfiles::EventTrigger.ObjectAttribute"
+    },
+    "EventTrigger_Period": {
+      "kind": "property",
+      "resourceType": "AWS::CustomerProfiles::EventTrigger.Period"
+    },
+    "EventTrigger_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::CustomerProfiles::EventTrigger.Tag"
     },
     "EventType": {
       "kind": "resource",
@@ -26997,6 +27677,10 @@
         "Name"
       ]
     },
+    "EventsEndpoint_EndpointEventBus": {
+      "kind": "property",
+      "resourceType": "AWS::Events::Endpoint.EndpointEventBus"
+    },
     "EventsEndpoint_FailoverConfig": {
       "kind": "property",
       "resourceType": "AWS::Events::Endpoint.FailoverConfig"
@@ -27132,6 +27816,10 @@
       "kind": "property",
       "resourceType": "AWS::ImageBuilder::LifecyclePolicy.ExclusionRules"
     },
+    "ExclusionWindow": {
+      "kind": "property",
+      "resourceType": "AWS::ApplicationSignals::ServiceLevelObjective.ExclusionWindow"
+    },
     "Exclusions": {
       "kind": "property",
       "resourceType": "AWS::DLM::LifecyclePolicy.Exclusions"
@@ -27168,6 +27856,10 @@
     "ExecutionPlan_CapacityUnitsConfiguration": {
       "kind": "property",
       "resourceType": "AWS::KendraRanking::ExecutionPlan.CapacityUnitsConfiguration"
+    },
+    "ExecutionPlan_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::KendraRanking::ExecutionPlan.Tag"
     },
     "ExecutionProperty": {
       "kind": "property",
@@ -27224,6 +27916,10 @@
       "kind": "property",
       "resourceType": "AWS::FIS::ExperimentTemplate.ExperimentTemplateLogConfiguration"
     },
+    "ExperimentTemplateStopCondition": {
+      "kind": "property",
+      "resourceType": "AWS::FIS::ExperimentTemplate.ExperimentTemplateStopCondition"
+    },
     "ExperimentTemplate_ExperimentTemplateExperimentOptions": {
       "kind": "property",
       "resourceType": "AWS::FIS::ExperimentTemplate.ExperimentTemplateExperimentOptions"
@@ -27235,6 +27931,10 @@
     "ExperimentTemplate_ExperimentTemplateLogConfiguration": {
       "kind": "property",
       "resourceType": "AWS::FIS::ExperimentTemplate.ExperimentTemplateLogConfiguration"
+    },
+    "ExperimentTemplate_ExperimentTemplateStopCondition": {
+      "kind": "property",
+      "resourceType": "AWS::FIS::ExperimentTemplate.ExperimentTemplateStopCondition"
     },
     "ExperimentTrialComponent": {
       "kind": "resource",
@@ -27454,6 +28154,10 @@
     "ExpressionDimensionValues": {
       "kind": "property",
       "resourceType": "AWS::Budgets::Budget.ExpressionDimensionValues"
+    },
+    "ExtendedKeyUsage": {
+      "kind": "property",
+      "resourceType": "AWS::ACMPCA::Certificate.ExtendedKeyUsage"
     },
     "ExtendedS3DestinationConfiguration": {
       "kind": "property",
@@ -27792,6 +28496,10 @@
       "kind": "property",
       "resourceType": "AWS::SageMaker::Cluster.FSxLustreConfig"
     },
+    "FSxLustreFileSystem": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::Space.FSxLustreFileSystem"
+    },
     "FSxSnapshot": {
       "kind": "resource",
       "resourceType": "AWS::FSx::Snapshot",
@@ -27950,6 +28658,10 @@
     "Faq_S3Path": {
       "kind": "property",
       "resourceType": "AWS::Kendra::Faq.S3Path"
+    },
+    "Faq_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::Kendra::Faq.Tag"
     },
     "FargateProfile": {
       "kind": "resource",
@@ -28204,9 +28916,17 @@
       "kind": "property",
       "resourceType": "AWS::CustomerProfiles::ObjectType.FieldMap"
     },
+    "FieldToProtect": {
+      "kind": "property",
+      "resourceType": "AWS::WAFv2::WebACL.FieldToProtect"
+    },
     "Field_FieldAttributes": {
       "kind": "property",
       "resourceType": "AWS::Cases::Field.FieldAttributes"
+    },
+    "Field_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::Cases::Field.Tag"
     },
     "Field_TextAttributes": {
       "kind": "property",
@@ -28246,10 +28966,6 @@
     "FilesLimit": {
       "kind": "property",
       "resourceType": "AWS::DataBrew::Dataset.FilesLimit"
-    },
-    "FilesystemConfiguration": {
-      "kind": "property",
-      "resourceType": "AWS::BedrockAgentCore::Harness.FilesystemConfiguration"
     },
     "FilterExpression": {
       "kind": "property",
@@ -28365,6 +29081,10 @@
     "FirehoseAction": {
       "kind": "property",
       "resourceType": "AWS::IoT::TopicRule.FirehoseAction"
+    },
+    "FirehoseConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::Cognito::LogDeliveryConfiguration.FirehoseConfiguration"
     },
     "FirehoseDestinationConfiguration": {
       "kind": "property",
@@ -28977,6 +29697,10 @@
     "FlowTemplate_DefinitionDocument": {
       "kind": "property",
       "resourceType": "AWS::IoTThingsGraph::FlowTemplate.DefinitionDocument"
+    },
+    "FlowValidation": {
+      "kind": "property",
+      "resourceType": "AWS::Bedrock::Flow.FlowValidation"
     },
     "FlowVersion": {
       "kind": "resource",
@@ -29939,9 +30663,17 @@
       "kind": "property",
       "resourceType": "AWS::GameLift::GameServerGroup.AutoScalingPolicy"
     },
+    "GameServerGroup_InstanceDefinition": {
+      "kind": "property",
+      "resourceType": "AWS::GameLift::GameServerGroup.InstanceDefinition"
+    },
     "GameServerGroup_LaunchTemplate": {
       "kind": "property",
       "resourceType": "AWS::GameLift::GameServerGroup.LaunchTemplate"
+    },
+    "GameServerGroup_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::GameLift::GameServerGroup.Tag"
     },
     "GameServerGroup_TargetTrackingConfiguration": {
       "kind": "property",
@@ -30290,6 +31022,10 @@
       "kind": "property",
       "resourceType": "AWS::CodePipeline::Pipeline.GitConfiguration"
     },
+    "GitHubCapabilitiesResource": {
+      "kind": "property",
+      "resourceType": "AWS::SecurityAgent::AgentSpace.GitHubCapabilitiesResource"
+    },
     "GitHubLocation": {
       "kind": "property",
       "resourceType": "AWS::CodeDeploy::DeploymentGroup.GitHubLocation"
@@ -30312,6 +31048,10 @@
         "RepositoryOwner:true"
       ]
     },
+    "GitHubRepositoryResource": {
+      "kind": "property",
+      "resourceType": "AWS::SecurityAgent::AgentSpace.GitHubRepositoryResource"
+    },
     "GitHubRepository_Code": {
       "kind": "property",
       "resourceType": "AWS::CodeStar::GitHubRepository.Code"
@@ -30319,6 +31059,14 @@
     "GitHubRepository_S3": {
       "kind": "property",
       "resourceType": "AWS::CodeStar::GitHubRepository.S3"
+    },
+    "GitLabCapabilitiesResource": {
+      "kind": "property",
+      "resourceType": "AWS::SecurityAgent::AgentSpace.GitLabCapabilitiesResource"
+    },
+    "GitLabRepositoryResource": {
+      "kind": "property",
+      "resourceType": "AWS::SecurityAgent::AgentSpace.GitLabRepositoryResource"
     },
     "GitPullRequestFilter": {
       "kind": "property",
@@ -31350,6 +32098,10 @@
         "SubscriptionDefinitionVersionArn"
       ]
     },
+    "GroupingAttributeDefinition": {
+      "kind": "property",
+      "resourceType": "AWS::ApplicationSignals::GroupingConfiguration.GroupingAttributeDefinition"
+    },
     "GroupingConfiguration": {
       "kind": "resource",
       "resourceType": "AWS::ApplicationSignals::GroupingConfiguration",
@@ -31362,6 +32114,10 @@
         "GroupingAttributeDefinitions:true",
         "UpdatedAt:false"
       ]
+    },
+    "GroupingConfiguration_GroupingAttributeDefinition": {
+      "kind": "property",
+      "resourceType": "AWS::ApplicationSignals::GroupingConfiguration.GroupingAttributeDefinition"
     },
     "Groups": {
       "kind": "property",
@@ -32438,6 +33194,10 @@
       "kind": "property",
       "resourceType": "AWS::Connect::HoursOfOperation.HoursOfOperationOverride"
     },
+    "HoursOfOperationOverrideConfig": {
+      "kind": "property",
+      "resourceType": "AWS::Connect::HoursOfOperation.HoursOfOperationOverrideConfig"
+    },
     "HoursOfOperationTimeSlice": {
       "kind": "property",
       "resourceType": "AWS::Connect::HoursOfOperation.HoursOfOperationTimeSlice"
@@ -32450,6 +33210,10 @@
       "kind": "property",
       "resourceType": "AWS::Connect::HoursOfOperation.HoursOfOperationOverride"
     },
+    "HoursOfOperation_HoursOfOperationOverrideConfig": {
+      "kind": "property",
+      "resourceType": "AWS::Connect::HoursOfOperation.HoursOfOperationOverrideConfig"
+    },
     "HoursOfOperation_HoursOfOperationTimeSlice": {
       "kind": "property",
       "resourceType": "AWS::Connect::HoursOfOperation.HoursOfOperationTimeSlice"
@@ -32457,6 +33221,10 @@
     "HoursOfOperation_HoursOfOperationsIdentifier": {
       "kind": "property",
       "resourceType": "AWS::Connect::HoursOfOperation.HoursOfOperationsIdentifier"
+    },
+    "HoursOfOperation_OverrideTimeSlice": {
+      "kind": "property",
+      "resourceType": "AWS::Connect::HoursOfOperation.OverrideTimeSlice"
     },
     "HoursOfOperation_RecurrenceConfig": {
       "kind": "property",
@@ -33267,6 +34035,10 @@
       "kind": "property",
       "resourceType": "AWS::S3Tables::Table.IcebergMetadata"
     },
+    "IcebergPartitionField": {
+      "kind": "property",
+      "resourceType": "AWS::S3Tables::Table.IcebergPartitionField"
+    },
     "IcebergPartitionSpec": {
       "kind": "property",
       "resourceType": "AWS::S3Tables::Table.IcebergPartitionSpec"
@@ -33282,6 +34054,10 @@
     "IcebergSchemaV2": {
       "kind": "property",
       "resourceType": "AWS::S3Tables::Table.IcebergSchemaV2"
+    },
+    "IcebergSortField": {
+      "kind": "property",
+      "resourceType": "AWS::S3Tables::Table.IcebergSortField"
     },
     "IcebergSortOrder": {
       "kind": "property",
@@ -34380,6 +35156,10 @@
       "kind": "property",
       "resourceType": "AWS::RTBFabric::InboundExternalLink.ResponderErrorMaskingForHttpCode"
     },
+    "InboundExternalLink_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::RTBFabric::InboundExternalLink.Tag"
+    },
     "IncidentTemplate": {
       "kind": "property",
       "resourceType": "AWS::SSMIncidents::ResponsePlan.IncidentTemplate"
@@ -34419,6 +35199,10 @@
     "IndexStatistics": {
       "kind": "property",
       "resourceType": "AWS::QBusiness::Index.IndexStatistics"
+    },
+    "IndexedKey": {
+      "kind": "property",
+      "resourceType": "AWS::BedrockAgentCore::Memory.IndexedKey"
     },
     "InferenceAccelerator": {
       "kind": "property",
@@ -34529,6 +35313,10 @@
     "InferenceComponent_InferenceComponentStartupParameters": {
       "kind": "property",
       "resourceType": "AWS::SageMaker::InferenceComponent.InferenceComponentStartupParameters"
+    },
+    "InferenceComponent_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::InferenceComponent.Tag"
     },
     "InferenceConfiguration": {
       "kind": "property",
@@ -34895,6 +35683,14 @@
       "kind": "property",
       "resourceType": "AWS::AppRunner::VpcIngressConnection.IngressVpcConfiguration"
     },
+    "InitialCapacityConfig": {
+      "kind": "property",
+      "resourceType": "AWS::EMRServerless::Application.InitialCapacityConfig"
+    },
+    "InitialCapacityConfigKeyValuePair": {
+      "kind": "property",
+      "resourceType": "AWS::EMRServerless::Application.InitialCapacityConfigKeyValuePair"
+    },
     "InitialResponseSetting": {
       "kind": "property",
       "resourceType": "AWS::Lex::Bot.InitialResponseSetting"
@@ -34902,6 +35698,10 @@
     "InitializationConfiguration": {
       "kind": "property",
       "resourceType": "AWS::IoTEvents::AlarmModel.InitializationConfiguration"
+    },
+    "InlineCustomDocumentEnrichmentConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::Kendra::DataSource.InlineCustomDocumentEnrichmentConfiguration"
     },
     "InlineDocumentEnrichmentConfiguration": {
       "kind": "property",
@@ -34930,6 +35730,10 @@
     "InputConfiguration": {
       "kind": "property",
       "resourceType": "AWS::MediaConnect::Flow.InputConfiguration"
+    },
+    "InputContext": {
+      "kind": "property",
+      "resourceType": "AWS::Lex::Bot.InputContext"
     },
     "InputConversion": {
       "kind": "property",
@@ -35140,9 +35944,33 @@
       ],
       "taggable": true
     },
+    "InspectorV2Filter_DateFilter": {
+      "kind": "property",
+      "resourceType": "AWS::InspectorV2::Filter.DateFilter"
+    },
     "InspectorV2Filter_FilterCriteria": {
       "kind": "property",
       "resourceType": "AWS::InspectorV2::Filter.FilterCriteria"
+    },
+    "InspectorV2Filter_MapFilter": {
+      "kind": "property",
+      "resourceType": "AWS::InspectorV2::Filter.MapFilter"
+    },
+    "InspectorV2Filter_NumberFilter": {
+      "kind": "property",
+      "resourceType": "AWS::InspectorV2::Filter.NumberFilter"
+    },
+    "InspectorV2Filter_PackageFilter": {
+      "kind": "property",
+      "resourceType": "AWS::InspectorV2::Filter.PackageFilter"
+    },
+    "InspectorV2Filter_PortRangeFilter": {
+      "kind": "property",
+      "resourceType": "AWS::InspectorV2::Filter.PortRangeFilter"
+    },
+    "InspectorV2Filter_StringFilter": {
+      "kind": "property",
+      "resourceType": "AWS::InspectorV2::Filter.StringFilter"
     },
     "Instance": {
       "kind": "resource",
@@ -35240,6 +36068,14 @@
         "InstanceArn"
       ]
     },
+    "InstanceAccessControlAttributeConfiguration_AccessControlAttribute": {
+      "kind": "property",
+      "resourceType": "AWS::SSO::InstanceAccessControlAttributeConfiguration.AccessControlAttribute"
+    },
+    "InstanceAccessControlAttributeConfiguration_AccessControlAttributeValue": {
+      "kind": "property",
+      "resourceType": "AWS::SSO::InstanceAccessControlAttributeConfiguration.AccessControlAttributeValue"
+    },
     "InstanceAssociationOutputLocation": {
       "kind": "property",
       "resourceType": "AWS::SSM::Association.InstanceAssociationOutputLocation"
@@ -35309,6 +36145,10 @@
     "InstanceConnectEndpoint_Tag": {
       "kind": "property",
       "resourceType": "AWS::EC2::InstanceConnectEndpoint.Tag"
+    },
+    "InstanceDefinition": {
+      "kind": "property",
+      "resourceType": "AWS::GameLift::GameServerGroup.InstanceDefinition"
     },
     "InstanceFleetConfig": {
       "kind": "resource",
@@ -35670,6 +36510,10 @@
       "kind": "property",
       "resourceType": "AWS::AutoScaling::AutoScalingGroup.InstancesDistribution"
     },
+    "IntegerCriteriaCondition": {
+      "kind": "property",
+      "resourceType": "AWS::ComputeOptimizer::AutomationRule.IntegerCriteriaCondition"
+    },
     "IntegerDatasetParameter": {
       "kind": "property",
       "resourceType": "AWS::QuickSight::DataSet.IntegerDatasetParameter"
@@ -35681,6 +36525,10 @@
     "IntegratedRepository": {
       "kind": "property",
       "resourceType": "AWS::SecurityAgent::Pentest.IntegratedRepository"
+    },
+    "IntegratedResource": {
+      "kind": "property",
+      "resourceType": "AWS::SecurityAgent::AgentSpace.IntegratedResource"
     },
     "IntegrationAssociation": {
       "kind": "resource",
@@ -36110,6 +36958,10 @@
         "Name"
       ],
       "taggable": true
+    },
+    "InvoiceUnit_ResourceTag": {
+      "kind": "property",
+      "resourceType": "AWS::Invoicing::InvoiceUnit.ResourceTag"
     },
     "InvoiceUnit_Rule": {
       "kind": "property",
@@ -37064,6 +37916,10 @@
       "kind": "property",
       "resourceType": "AWS::IoT::TopicRule.IotAnalyticsAction"
     },
+    "IotEvents": {
+      "kind": "property",
+      "resourceType": "AWS::IoTEvents::AlarmModel.IotEvents"
+    },
     "IotEventsAction": {
       "kind": "property",
       "resourceType": "AWS::IoT::TopicRule.IotEventsAction"
@@ -37072,6 +37928,10 @@
       "kind": "property",
       "resourceType": "AWS::IoTAnalytics::Dataset.IotEventsDestinationConfiguration"
     },
+    "IotSiteWise": {
+      "kind": "property",
+      "resourceType": "AWS::IoTEvents::AlarmModel.IotSiteWise"
+    },
     "IotSiteWiseAction": {
       "kind": "property",
       "resourceType": "AWS::IoT::TopicRule.IotSiteWiseAction"
@@ -37079,6 +37939,10 @@
     "IotSiteWiseMultiLayerStorage": {
       "kind": "property",
       "resourceType": "AWS::IoTAnalytics::Datastore.IotSiteWiseMultiLayerStorage"
+    },
+    "IotTopicPublish": {
+      "kind": "property",
+      "resourceType": "AWS::IoTEvents::AlarmModel.IotTopicPublish"
     },
     "IpAccessSettings": {
       "kind": "resource",
@@ -37144,6 +38008,14 @@
     "IpRuleItem": {
       "kind": "property",
       "resourceType": "AWS::WorkSpaces::WorkspaceIpGroup.IpRuleItem"
+    },
+    "IpamCidrConfig": {
+      "kind": "property",
+      "resourceType": "AWS::CloudFront::AnycastIpList.IpamCidrConfig"
+    },
+    "IpamCidrConfigResult": {
+      "kind": "property",
+      "resourceType": "AWS::CloudFront::AnycastIpList.IpamCidrConfigResult"
     },
     "IpamOrganizationalUnitExclusion": {
       "kind": "property",
@@ -37462,9 +38334,17 @@
       "kind": "property",
       "resourceType": "AWS::DataBrew::Dataset.JsonOptions"
     },
+    "JsonTokenTypeConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::Kendra::Index.JsonTokenTypeConfiguration"
+    },
     "JupyterLabAppImageConfig": {
       "kind": "property",
       "resourceType": "AWS::SageMaker::AppImageConfig.JupyterLabAppImageConfig"
+    },
+    "JwtTokenTypeConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::Kendra::Index.JwtTokenTypeConfiguration"
     },
     "KMSAlias": {
       "kind": "resource",
@@ -37694,6 +38574,10 @@
       "kind": "property",
       "resourceType": "AWS::Kendra::DataSource.DataSourceConfiguration"
     },
+    "KendraDataSource_DataSourceToIndexFieldMapping": {
+      "kind": "property",
+      "resourceType": "AWS::Kendra::DataSource.DataSourceToIndexFieldMapping"
+    },
     "KendraDataSource_DataSourceVpcConfiguration": {
       "kind": "property",
       "resourceType": "AWS::Kendra::DataSource.DataSourceVpcConfiguration"
@@ -37706,6 +38590,10 @@
       "kind": "property",
       "resourceType": "AWS::Kendra::DataSource.DocumentAttributeCondition"
     },
+    "KendraDataSource_DocumentAttributeTarget": {
+      "kind": "property",
+      "resourceType": "AWS::Kendra::DataSource.DocumentAttributeTarget"
+    },
     "KendraDataSource_DocumentsMetadataConfiguration": {
       "kind": "property",
       "resourceType": "AWS::Kendra::DataSource.DocumentsMetadataConfiguration"
@@ -37717,6 +38605,10 @@
     "KendraDataSource_HookConfiguration": {
       "kind": "property",
       "resourceType": "AWS::Kendra::DataSource.HookConfiguration"
+    },
+    "KendraDataSource_InlineCustomDocumentEnrichmentConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::Kendra::DataSource.InlineCustomDocumentEnrichmentConfiguration"
     },
     "KendraDataSource_OneDriveConfiguration": {
       "kind": "property",
@@ -37754,6 +38646,10 @@
       "kind": "property",
       "resourceType": "AWS::Kendra::DataSource.SalesforceStandardObjectAttachmentConfiguration"
     },
+    "KendraDataSource_SalesforceStandardObjectConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::Kendra::DataSource.SalesforceStandardObjectConfiguration"
+    },
     "KendraDataSource_ServiceNowConfiguration": {
       "kind": "property",
       "resourceType": "AWS::Kendra::DataSource.ServiceNowConfiguration"
@@ -37773,6 +38669,10 @@
     "KendraDataSource_SqlConfiguration": {
       "kind": "property",
       "resourceType": "AWS::Kendra::DataSource.SqlConfiguration"
+    },
+    "KendraDataSource_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::Kendra::DataSource.Tag"
     },
     "KendraDataSource_TemplateConfiguration": {
       "kind": "property",
@@ -37825,9 +38725,41 @@
       "kind": "property",
       "resourceType": "AWS::Kendra::Index.CapacityUnitsConfiguration"
     },
+    "KendraIndex_DocumentMetadataConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::Kendra::Index.DocumentMetadataConfiguration"
+    },
+    "KendraIndex_JsonTokenTypeConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::Kendra::Index.JsonTokenTypeConfiguration"
+    },
+    "KendraIndex_JwtTokenTypeConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::Kendra::Index.JwtTokenTypeConfiguration"
+    },
+    "KendraIndex_Relevance": {
+      "kind": "property",
+      "resourceType": "AWS::Kendra::Index.Relevance"
+    },
+    "KendraIndex_Search": {
+      "kind": "property",
+      "resourceType": "AWS::Kendra::Index.Search"
+    },
     "KendraIndex_ServerSideEncryptionConfiguration": {
       "kind": "property",
       "resourceType": "AWS::Kendra::Index.ServerSideEncryptionConfiguration"
+    },
+    "KendraIndex_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::Kendra::Index.Tag"
+    },
+    "KendraIndex_UserTokenConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::Kendra::Index.UserTokenConfiguration"
+    },
+    "KendraIndex_ValueImportanceItem": {
+      "kind": "property",
+      "resourceType": "AWS::Kendra::Index.ValueImportanceItem"
     },
     "KendraKnowledgeBaseConfiguration": {
       "kind": "property",
@@ -38287,6 +39219,10 @@
       "kind": "property",
       "resourceType": "AWS::KinesisAnalyticsV2::Application.CodeContent"
     },
+    "KinesisAnalyticsV2Application_CustomArtifactConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::KinesisAnalyticsV2::Application.CustomArtifactConfiguration"
+    },
     "KinesisAnalyticsV2Application_DeployAsApplicationConfiguration": {
       "kind": "property",
       "resourceType": "AWS::KinesisAnalyticsV2::Application.DeployAsApplicationConfiguration"
@@ -38330,6 +39266,10 @@
     "KinesisAnalyticsV2Application_Tag": {
       "kind": "property",
       "resourceType": "AWS::KinesisAnalyticsV2::Application.Tag"
+    },
+    "KinesisAnalyticsV2Application_VpcConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::KinesisAnalyticsV2::Application.VpcConfiguration"
     },
     "KinesisAnalyticsV2Application_ZeppelinApplicationConfiguration": {
       "kind": "property",
@@ -38512,9 +39452,17 @@
       "kind": "property",
       "resourceType": "AWS::ElasticLoadBalancing::LoadBalancer.LBCookieStickinessPolicy"
     },
+    "LFTag": {
+      "kind": "property",
+      "resourceType": "AWS::LakeFormation::PrincipalPermissions.LFTag"
+    },
     "LFTagKeyResource": {
       "kind": "property",
       "resourceType": "AWS::LakeFormation::PrincipalPermissions.LFTagKeyResource"
+    },
+    "LFTagPair": {
+      "kind": "property",
+      "resourceType": "AWS::LakeFormation::TagAssociation.LFTagPair"
     },
     "LFTagPolicyResource": {
       "kind": "property",
@@ -38599,10 +39547,6 @@
         "ResourceArn"
       ]
     },
-    "Lambda": {
-      "kind": "property",
-      "resourceType": "AWS::IoTAnalytics::Pipeline.Lambda"
-    },
     "LambdaAlias": {
       "kind": "resource",
       "resourceType": "AWS::Lambda::Alias",
@@ -38634,10 +39578,6 @@
     "LambdaAlias_VersionWeight": {
       "kind": "property",
       "resourceType": "AWS::Lambda::Alias.VersionWeight"
-    },
-    "LambdaAuthorizerConfig": {
-      "kind": "property",
-      "resourceType": "AWS::AppSync::GraphQLApi.LambdaAuthorizerConfig"
     },
     "LambdaCapacityProvider": {
       "kind": "resource",
@@ -39298,6 +40238,10 @@
     "LayoutConfiguration": {
       "kind": "property",
       "resourceType": "AWS::Cases::Template.LayoutConfiguration"
+    },
+    "Layout_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::Cases::Layout.Tag"
     },
     "LdapServerMetadata": {
       "kind": "property",
@@ -40027,6 +40971,10 @@
       "kind": "property",
       "resourceType": "AWS::APS::Workspace.LimitsPerLabelSetEntry"
     },
+    "LineItemFilter": {
+      "kind": "property",
+      "resourceType": "AWS::BillingConductor::CustomLineItem.LineItemFilter"
+    },
     "LinearConfiguration": {
       "kind": "property",
       "resourceType": "AWS::ECS::Service.LinearConfiguration"
@@ -40084,6 +41032,10 @@
     "LinkRoutingRule_RuleCondition": {
       "kind": "property",
       "resourceType": "AWS::RTBFabric::LinkRoutingRule.RuleCondition"
+    },
+    "LinkRoutingRule_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::RTBFabric::LinkRoutingRule.Tag"
     },
     "LinkSharingConfiguration": {
       "kind": "property",
@@ -40256,6 +41208,10 @@
     "ListenerRule_RedirectConfig": {
       "kind": "property",
       "resourceType": "AWS::ElasticLoadBalancingV2::ListenerRule.RedirectConfig"
+    },
+    "ListenerRule_RewriteConfig": {
+      "kind": "property",
+      "resourceType": "AWS::ElasticLoadBalancingV2::ListenerRule.RewriteConfig"
     },
     "ListenerRule_RewriteConfigObject": {
       "kind": "property",
@@ -40582,6 +41538,10 @@
       ],
       "taggable": true
     },
+    "LocalGatewayRouteTableVPCAssociation_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::EC2::LocalGatewayRouteTableVPCAssociation.Tag"
+    },
     "LocalGatewayRouteTableVirtualInterfaceGroupAssociation": {
       "kind": "resource",
       "resourceType": "AWS::EC2::LocalGatewayRouteTableVirtualInterfaceGroupAssociation",
@@ -40607,6 +41567,14 @@
         "LocalGatewayVirtualInterfaceGroupId"
       ],
       "taggable": true
+    },
+    "LocalGatewayRouteTableVirtualInterfaceGroupAssociation_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::EC2::LocalGatewayRouteTableVirtualInterfaceGroupAssociation.Tag"
+    },
+    "LocalGatewayRouteTable_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::EC2::LocalGatewayRouteTable.Tag"
     },
     "LocalGatewayVirtualInterface": {
       "kind": "resource",
@@ -41280,6 +42248,22 @@
         "UserPoolId"
       ]
     },
+    "LogDeliveryConfiguration_CloudWatchLogsConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::Cognito::LogDeliveryConfiguration.CloudWatchLogsConfiguration"
+    },
+    "LogDeliveryConfiguration_FirehoseConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::Cognito::LogDeliveryConfiguration.FirehoseConfiguration"
+    },
+    "LogDeliveryConfiguration_LogConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::Cognito::LogDeliveryConfiguration.LogConfiguration"
+    },
+    "LogDeliveryConfiguration_S3Configuration": {
+      "kind": "property",
+      "resourceType": "AWS::Cognito::LogDeliveryConfiguration.S3Configuration"
+    },
     "LogDestination": {
       "kind": "property",
       "resourceType": "AWS::StepFunctions::StateMachine.LogDestination"
@@ -41428,6 +42412,10 @@
     "LoggingProperties": {
       "kind": "property",
       "resourceType": "AWS::Redshift::Cluster.LoggingProperties"
+    },
+    "LoggingTypeConfig": {
+      "kind": "property",
+      "resourceType": "AWS::EKS::Cluster.LoggingTypeConfig"
     },
     "Logging_EventConfiguration": {
       "kind": "property",
@@ -41821,6 +42809,10 @@
     "MPAIdentitySource_IdentitySourceParameters": {
       "kind": "property",
       "resourceType": "AWS::MPA::IdentitySource.IdentitySourceParameters"
+    },
+    "MPAIdentitySource_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::MPA::IdentitySource.Tag"
     },
     "MSKCluster": {
       "kind": "resource",
@@ -42692,6 +43684,10 @@
         "ClientId",
         "UserPoolId"
       ]
+    },
+    "ManagedLoginBranding_AssetType": {
+      "kind": "property",
+      "resourceType": "AWS::Cognito::ManagedLoginBranding.AssetType"
     },
     "ManagedNotificationAccountContactAssociation": {
       "kind": "resource",
@@ -44624,9 +45620,49 @@
       "kind": "property",
       "resourceType": "AWS::EC2::LaunchTemplate.MemoryMiB"
     },
+    "MemoryRecordSchema": {
+      "kind": "property",
+      "resourceType": "AWS::BedrockAgentCore::Memory.MemoryRecordSchema"
+    },
+    "MemoryStrategy": {
+      "kind": "property",
+      "resourceType": "AWS::BedrockAgentCore::Memory.MemoryStrategy"
+    },
+    "Memory_CustomConfigurationInput": {
+      "kind": "property",
+      "resourceType": "AWS::BedrockAgentCore::Memory.CustomConfigurationInput"
+    },
+    "Memory_CustomMemoryStrategy": {
+      "kind": "property",
+      "resourceType": "AWS::BedrockAgentCore::Memory.CustomMemoryStrategy"
+    },
+    "Memory_EpisodicMemoryStrategy": {
+      "kind": "property",
+      "resourceType": "AWS::BedrockAgentCore::Memory.EpisodicMemoryStrategy"
+    },
+    "Memory_EpisodicReflectionConfigurationInput": {
+      "kind": "property",
+      "resourceType": "AWS::BedrockAgentCore::Memory.EpisodicReflectionConfigurationInput"
+    },
+    "Memory_IndexedKey": {
+      "kind": "property",
+      "resourceType": "AWS::BedrockAgentCore::Memory.IndexedKey"
+    },
     "Memory_KinesisResource": {
       "kind": "property",
       "resourceType": "AWS::BedrockAgentCore::Memory.KinesisResource"
+    },
+    "Memory_MemoryRecordSchema": {
+      "kind": "property",
+      "resourceType": "AWS::BedrockAgentCore::Memory.MemoryRecordSchema"
+    },
+    "Memory_MemoryStrategy": {
+      "kind": "property",
+      "resourceType": "AWS::BedrockAgentCore::Memory.MemoryStrategy"
+    },
+    "Memory_SemanticMemoryStrategy": {
+      "kind": "property",
+      "resourceType": "AWS::BedrockAgentCore::Memory.SemanticMemoryStrategy"
     },
     "Memory_StreamDeliveryResource": {
       "kind": "property",
@@ -44635,6 +45671,14 @@
     "Memory_StreamDeliveryResources": {
       "kind": "property",
       "resourceType": "AWS::BedrockAgentCore::Memory.StreamDeliveryResources"
+    },
+    "Memory_SummaryMemoryStrategy": {
+      "kind": "property",
+      "resourceType": "AWS::BedrockAgentCore::Memory.SummaryMemoryStrategy"
+    },
+    "Memory_UserPreferenceMemoryStrategy": {
+      "kind": "property",
+      "resourceType": "AWS::BedrockAgentCore::Memory.UserPreferenceMemoryStrategy"
     },
     "Mesh": {
       "kind": "resource",
@@ -44929,6 +45973,10 @@
     "MetricGoalObject": {
       "kind": "property",
       "resourceType": "AWS::Evidently::Experiment.MetricGoalObject"
+    },
+    "MetricGroup": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::ModelCard.MetricGroup"
     },
     "MetricMathAnomalyDetector": {
       "kind": "property",
@@ -45326,6 +46374,10 @@
       "kind": "property",
       "resourceType": "AWS::AutoScaling::AutoScalingGroup.MixedInstancesPolicy"
     },
+    "MixedMeasureMapping": {
+      "kind": "property",
+      "resourceType": "AWS::Timestream::ScheduledQuery.MixedMeasureMapping"
+    },
     "MlflowApp": {
       "kind": "resource",
       "resourceType": "AWS::SageMaker::MlflowApp",
@@ -45560,6 +46612,10 @@
       "kind": "property",
       "resourceType": "AWS::SageMaker::ModelCard.Content"
     },
+    "ModelCard_EvaluationDetail": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::ModelCard.EvaluationDetail"
+    },
     "ModelCard_InferenceSpecification": {
       "kind": "property",
       "resourceType": "AWS::SageMaker::ModelCard.InferenceSpecification"
@@ -45567,6 +46623,10 @@
     "ModelCard_IntendedUses": {
       "kind": "property",
       "resourceType": "AWS::SageMaker::ModelCard.IntendedUses"
+    },
+    "ModelCard_MetricGroup": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::ModelCard.MetricGroup"
     },
     "ModelCard_ModelOverview": {
       "kind": "property",
@@ -45587,6 +46647,10 @@
     "ModelCard_SecurityConfig": {
       "kind": "property",
       "resourceType": "AWS::SageMaker::ModelCard.SecurityConfig"
+    },
+    "ModelCard_SourceAlgorithm": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::ModelCard.SourceAlgorithm"
     },
     "ModelCard_Tag": {
       "kind": "property",
@@ -45870,6 +46934,10 @@
       "kind": "property",
       "resourceType": "AWS::SageMaker::ModelPackage.ModelPackageStatusItem"
     },
+    "ModelPackage_AdditionalInferenceSpecificationDefinition": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::ModelPackage.AdditionalInferenceSpecificationDefinition"
+    },
     "ModelPackage_Bias": {
       "kind": "property",
       "resourceType": "AWS::SageMaker::ModelPackage.Bias"
@@ -46103,6 +47171,10 @@
       "kind": "property",
       "resourceType": "AWS::SageMaker::InferenceExperiment.ModelVariantConfig"
     },
+    "ModuleConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::RTBFabric::Link.ModuleConfiguration"
+    },
     "ModuleDefaultVersion": {
       "kind": "resource",
       "resourceType": "AWS::CloudFormation::ModuleDefaultVersion",
@@ -46204,6 +47276,10 @@
       "kind": "property",
       "resourceType": "AWS::SageMaker::MonitoringSchedule.MonitoringExecutionSummary"
     },
+    "MonitoringInput": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::MonitoringSchedule.MonitoringInput"
+    },
     "MonitoringJobDefinition": {
       "kind": "property",
       "resourceType": "AWS::SageMaker::MonitoringSchedule.MonitoringJobDefinition"
@@ -46247,6 +47323,10 @@
     "MonitoringSchedule_MonitoringExecutionSummary": {
       "kind": "property",
       "resourceType": "AWS::SageMaker::MonitoringSchedule.MonitoringExecutionSummary"
+    },
+    "MonitoringSchedule_MonitoringInput": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::MonitoringSchedule.MonitoringInput"
     },
     "MonitoringSchedule_MonitoringJobDefinition": {
       "kind": "property",
@@ -46447,6 +47527,10 @@
     "MultiRegionEndpoint_Details": {
       "kind": "property",
       "resourceType": "AWS::SES::MultiRegionEndpoint.Details"
+    },
+    "MultiRegionEndpoint_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::SES::MultiRegionEndpoint.Tag"
     },
     "MultiRegionTargets": {
       "kind": "property",
@@ -48074,6 +49158,10 @@
       ],
       "taggable": true
     },
+    "NotificationConfiguration_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::Notifications::NotificationConfiguration.Tag"
+    },
     "NotificationContent": {
       "kind": "property",
       "resourceType": "AWS::Connect::Notification.NotificationContent"
@@ -48109,6 +49197,10 @@
     "NotificationHub_NotificationHubStatusSummary": {
       "kind": "property",
       "resourceType": "AWS::Notifications::NotificationHub.NotificationHubStatusSummary"
+    },
+    "NotificationRecipientType": {
+      "kind": "property",
+      "resourceType": "AWS::Connect::Rule.NotificationRecipientType"
     },
     "NotificationRule": {
       "kind": "resource",
@@ -48507,6 +49599,10 @@
     "Oauth2ProviderConfigOutput": {
       "kind": "property",
       "resourceType": "AWS::BedrockAgentCore::OAuth2CredentialProvider.Oauth2ProviderConfigOutput"
+    },
+    "ObjectAttribute": {
+      "kind": "property",
+      "resourceType": "AWS::CustomerProfiles::EventTrigger.ObjectAttribute"
     },
     "ObjectLambdaConfiguration": {
       "kind": "property",
@@ -49017,10 +50113,6 @@
     "OpenHours": {
       "kind": "property",
       "resourceType": "AWS::ConnectCampaignsV2::Campaign.OpenHours"
-    },
-    "OpenIDConnectConfig": {
-      "kind": "property",
-      "resourceType": "AWS::AppSync::GraphQLApi.OpenIDConnectConfig"
     },
     "OpenIdConfiguration": {
       "kind": "property",
@@ -50016,6 +51108,10 @@
       "kind": "property",
       "resourceType": "AWS::RTBFabric::OutboundExternalLink.ResponderErrorMaskingForHttpCode"
     },
+    "OutboundExternalLink_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::RTBFabric::OutboundExternalLink.Tag"
+    },
     "Outcome": {
       "kind": "resource",
       "resourceType": "AWS::FraudDetector::Outcome",
@@ -50136,6 +51232,10 @@
       "kind": "property",
       "resourceType": "AWS::BedrockAgentCore::OnlineEvaluationConfig.OutputConfig"
     },
+    "OutputContext": {
+      "kind": "property",
+      "resourceType": "AWS::Lex::Bot.OutputContext"
+    },
     "OutputConversion": {
       "kind": "property",
       "resourceType": "AWS::B2BI::Transformer.OutputConversion"
@@ -50191,6 +51291,10 @@
     "OverrideConfiguration": {
       "kind": "property",
       "resourceType": "AWS::Bedrock::DataAutomationProject.OverrideConfiguration"
+    },
+    "OverrideTimeSlice": {
+      "kind": "property",
+      "resourceType": "AWS::Connect::HoursOfOperation.OverrideTimeSlice"
     },
     "Overrides": {
       "kind": "property",
@@ -50375,6 +51479,10 @@
     "PCSQueue_ErrorInfo": {
       "kind": "property",
       "resourceType": "AWS::PCS::Queue.ErrorInfo"
+    },
+    "PackageFilter": {
+      "kind": "property",
+      "resourceType": "AWS::InspectorV2::Filter.PackageFilter"
     },
     "PackageGroup": {
       "kind": "resource",
@@ -50601,6 +51709,10 @@
     "PanoramaPackage_StorageLocation": {
       "kind": "property",
       "resourceType": "AWS::Panorama::Package.StorageLocation"
+    },
+    "PanoramaPackage_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::Panorama::Package.Tag"
     },
     "ParallelismConfiguration": {
       "kind": "property",
@@ -50939,6 +52051,10 @@
       "kind": "property",
       "resourceType": "AWS::SSM::PatchBaseline.PatchFilterGroup"
     },
+    "PatchSchedule": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::Cluster.PatchSchedule"
+    },
     "PatchSource": {
       "kind": "property",
       "resourceType": "AWS::SSM::PatchBaseline.PatchSource"
@@ -51232,6 +52348,10 @@
     "PerformanceTarget": {
       "kind": "property",
       "resourceType": "AWS::RedshiftServerless::Workgroup.PerformanceTarget"
+    },
+    "Period": {
+      "kind": "property",
+      "resourceType": "AWS::CustomerProfiles::EventTrigger.Period"
     },
     "PeriodicScanConfiguration": {
       "kind": "property",
@@ -52424,6 +53544,10 @@
       "kind": "property",
       "resourceType": "AWS::EKS::PodIdentityAssociation.Tag"
     },
+    "Point": {
+      "kind": "property",
+      "resourceType": "AWS::Rekognition::StreamProcessor.Point"
+    },
     "Policy": {
       "kind": "resource",
       "resourceType": "AWS::IAM::Policy",
@@ -52463,6 +53587,22 @@
         "TargetId",
         "TargetType"
       ]
+    },
+    "PolicyDefinitionRule": {
+      "kind": "property",
+      "resourceType": "AWS::Bedrock::AutomatedReasoningPolicy.PolicyDefinitionRule"
+    },
+    "PolicyDefinitionType": {
+      "kind": "property",
+      "resourceType": "AWS::Bedrock::AutomatedReasoningPolicy.PolicyDefinitionType"
+    },
+    "PolicyDefinitionTypeValue": {
+      "kind": "property",
+      "resourceType": "AWS::Bedrock::AutomatedReasoningPolicy.PolicyDefinitionTypeValue"
+    },
+    "PolicyDefinitionVariable": {
+      "kind": "property",
+      "resourceType": "AWS::Bedrock::AutomatedReasoningPolicy.PolicyDefinitionVariable"
     },
     "PolicyDetail": {
       "kind": "property",
@@ -52532,6 +53672,10 @@
         "PolicyType",
         "Principal"
       ]
+    },
+    "PolicyInformation": {
+      "kind": "property",
+      "resourceType": "AWS::ACMPCA::Certificate.PolicyInformation"
     },
     "PolicyItem": {
       "kind": "property",
@@ -52704,6 +53848,10 @@
     "PortOverride": {
       "kind": "property",
       "resourceType": "AWS::GlobalAccelerator::EndpointGroup.PortOverride"
+    },
+    "PortRangeFilter": {
+      "kind": "property",
+      "resourceType": "AWS::InspectorV2::Filter.PortRangeFilter"
     },
     "Portal": {
       "kind": "property",
@@ -53056,6 +54204,10 @@
     "PrincipalPermissions_DatabaseResource": {
       "kind": "property",
       "resourceType": "AWS::LakeFormation::PrincipalPermissions.DatabaseResource"
+    },
+    "PrincipalPermissions_LFTag": {
+      "kind": "property",
+      "resourceType": "AWS::LakeFormation::PrincipalPermissions.LFTag"
     },
     "PrincipalPermissions_LFTagKeyResource": {
       "kind": "property",
@@ -53728,6 +54880,10 @@
       ],
       "taggable": true
     },
+    "PromptVersion_PromptMetadataEntry": {
+      "kind": "property",
+      "resourceType": "AWS::Bedrock::PromptVersion.PromptMetadataEntry"
+    },
     "PromptVersion_PromptVariant": {
       "kind": "property",
       "resourceType": "AWS::Bedrock::PromptVersion.PromptVariant"
@@ -53841,6 +54997,10 @@
     "ProtocolDetails": {
       "kind": "property",
       "resourceType": "AWS::Transfer::Server.ProtocolDetails"
+    },
+    "ProviderResource": {
+      "kind": "property",
+      "resourceType": "AWS::SecurityAgent::AgentSpace.ProviderResource"
     },
     "ProvisionalConfiguration": {
       "kind": "property",
@@ -56087,9 +57247,17 @@
       "kind": "property",
       "resourceType": "AWS::RTBFabric::Link.LinkLogSettings"
     },
+    "RTBFabricLink_ModuleConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::RTBFabric::Link.ModuleConfiguration"
+    },
     "RTBFabricLink_ResponderErrorMaskingForHttpCode": {
       "kind": "property",
       "resourceType": "AWS::RTBFabric::Link.ResponderErrorMaskingForHttpCode"
+    },
+    "RTBFabricLink_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::RTBFabric::Link.Tag"
     },
     "RackPhysicalProperties": {
       "kind": "property",
@@ -56661,6 +57829,10 @@
     "RecurrencePattern": {
       "kind": "property",
       "resourceType": "AWS::Connect::HoursOfOperation.RecurrencePattern"
+    },
+    "RecurrenceRule": {
+      "kind": "property",
+      "resourceType": "AWS::ApplicationSignals::ServiceLevelObjective.RecurrenceRule"
     },
     "RecurrenceSettings": {
       "kind": "property",
@@ -57247,6 +58419,10 @@
       "kind": "property",
       "resourceType": "AWS::Bedrock::Guardrail.RegexConfig"
     },
+    "RegionConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::SSMIncidents::ReplicationSet.RegionConfiguration"
+    },
     "RegionalConfiguration": {
       "kind": "property",
       "resourceType": "AWS::ElastiCache::GlobalReplicationGroup.RegionalConfiguration"
@@ -57307,6 +58483,14 @@
         "ScanType:true"
       ]
     },
+    "RegistryScanningConfiguration_RepositoryFilter": {
+      "kind": "property",
+      "resourceType": "AWS::ECR::RegistryScanningConfiguration.RepositoryFilter"
+    },
+    "RegistryScanningConfiguration_ScanningRule": {
+      "kind": "property",
+      "resourceType": "AWS::ECR::RegistryScanningConfiguration.ScanningRule"
+    },
     "RekognitionCollection": {
       "kind": "resource",
       "resourceType": "AWS::Rekognition::Collection",
@@ -57359,6 +58543,10 @@
       "kind": "property",
       "resourceType": "AWS::Lightsail::Database.RelationalDatabaseParameter"
     },
+    "Relevance": {
+      "kind": "property",
+      "resourceType": "AWS::Kendra::Index.Relevance"
+    },
     "RemediationConfiguration": {
       "kind": "resource",
       "resourceType": "AWS::Config::RemediationConfiguration",
@@ -57397,6 +58585,14 @@
     "RemoteNetworkConfig": {
       "kind": "property",
       "resourceType": "AWS::EKS::Cluster.RemoteNetworkConfig"
+    },
+    "RemoteNodeNetwork": {
+      "kind": "property",
+      "resourceType": "AWS::EKS::Cluster.RemoteNodeNetwork"
+    },
+    "RemotePodNetwork": {
+      "kind": "property",
+      "resourceType": "AWS::EKS::Cluster.RemotePodNetwork"
     },
     "RemoveAttributes": {
       "kind": "property",
@@ -57695,6 +58891,10 @@
       "kind": "property",
       "resourceType": "AWS::DMS::ReplicationInstance.Tag"
     },
+    "ReplicationRegion": {
+      "kind": "property",
+      "resourceType": "AWS::SSMIncidents::ReplicationSet.ReplicationRegion"
+    },
     "ReplicationRuleFilter": {
       "kind": "property",
       "resourceType": "AWS::S3::Bucket.ReplicationRuleFilter"
@@ -57712,6 +58912,14 @@
         "Tags:false"
       ],
       "taggable": true
+    },
+    "ReplicationSet_RegionConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::SSMIncidents::ReplicationSet.RegionConfiguration"
+    },
+    "ReplicationSet_ReplicationRegion": {
+      "kind": "property",
+      "resourceType": "AWS::SSMIncidents::ReplicationSet.ReplicationRegion"
     },
     "ReplicationSet_Tag": {
       "kind": "property",
@@ -58169,6 +59377,10 @@
         "VpcId:true"
       ],
       "taggable": true
+    },
+    "RequesterGateway_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::RTBFabric::RequesterGateway.Tag"
     },
     "RequiredClaim": {
       "kind": "property",
@@ -58690,6 +59902,10 @@
       "kind": "property",
       "resourceType": "AWS::DevOpsGuru::ResourceCollection.ResourceCollectionFilter"
     },
+    "ResourceCollection_TagCollection": {
+      "kind": "property",
+      "resourceType": "AWS::DevOpsGuru::ResourceCollection.TagCollection"
+    },
     "ResourceConfiguration": {
       "kind": "resource",
       "resourceType": "AWS::VpcLattice::ResourceConfiguration",
@@ -58976,6 +60192,14 @@
       ],
       "taggable": true
     },
+    "ResourceGroupsGroup_ConfigurationItem": {
+      "kind": "property",
+      "resourceType": "AWS::ResourceGroups::Group.ConfigurationItem"
+    },
+    "ResourceGroupsGroup_ConfigurationParameter": {
+      "kind": "property",
+      "resourceType": "AWS::ResourceGroups::Group.ConfigurationParameter"
+    },
     "ResourceGroupsGroup_Query": {
       "kind": "property",
       "resourceType": "AWS::ResourceGroups::Group.Query"
@@ -59080,6 +60304,10 @@
     "ResourceTagParameter": {
       "kind": "property",
       "resourceType": "AWS::DataZone::ProjectProfile.ResourceTagParameter"
+    },
+    "ResourceTagsCriteriaCondition": {
+      "kind": "property",
+      "resourceType": "AWS::ComputeOptimizer::AutomationRule.ResourceTagsCriteriaCondition"
     },
     "ResourceUpdateConstraint": {
       "kind": "resource",
@@ -59187,6 +60415,10 @@
     "ResponderGateway_ListenerConfig": {
       "kind": "property",
       "resourceType": "AWS::RTBFabric::ResponderGateway.ListenerConfig"
+    },
+    "ResponderGateway_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::RTBFabric::ResponderGateway.Tag"
     },
     "ResponderGateway_TrustStoreConfiguration": {
       "kind": "property",
@@ -59561,6 +60793,10 @@
     "RevocationContent": {
       "kind": "property",
       "resourceType": "AWS::ElasticLoadBalancingV2::TrustStoreRevocation.RevocationContent"
+    },
+    "RewriteConfig": {
+      "kind": "property",
+      "resourceType": "AWS::ElasticLoadBalancingV2::ListenerRule.RewriteConfig"
     },
     "RewriteConfigObject": {
       "kind": "property",
@@ -60405,6 +61641,10 @@
       "kind": "property",
       "resourceType": "AWS::MediaLive::Input.RouterSettings"
     },
+    "RoutingConfigurationVersion": {
+      "kind": "property",
+      "resourceType": "AWS::StepFunctions::StateMachineAlias.RoutingConfigurationVersion"
+    },
     "RoutingControl": {
       "kind": "resource",
       "resourceType": "AWS::Route53RecoveryControl::RoutingControl",
@@ -60642,6 +61882,10 @@
       "kind": "property",
       "resourceType": "AWS::DataBrew::Ruleset.Rule"
     },
+    "Ruleset_SubstitutionValue": {
+      "kind": "property",
+      "resourceType": "AWS::DataBrew::Ruleset.SubstitutionValue"
+    },
     "Ruleset_Tag": {
       "kind": "property",
       "resourceType": "AWS::DataBrew::Ruleset.Tag"
@@ -60811,9 +62055,21 @@
       "kind": "property",
       "resourceType": "AWS::BedrockAgentCore::Runtime.ContainerConfiguration"
     },
+    "Runtime_CustomClaimValidationType": {
+      "kind": "property",
+      "resourceType": "AWS::BedrockAgentCore::Runtime.CustomClaimValidationType"
+    },
     "Runtime_CustomJWTAuthorizerConfiguration": {
       "kind": "property",
       "resourceType": "AWS::BedrockAgentCore::Runtime.CustomJWTAuthorizerConfiguration"
+    },
+    "Runtime_EfsAccessPointConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::BedrockAgentCore::Runtime.EfsAccessPointConfiguration"
+    },
+    "Runtime_FilesystemConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::BedrockAgentCore::Runtime.FilesystemConfiguration"
     },
     "Runtime_LifecycleConfiguration": {
       "kind": "property",
@@ -60823,9 +62079,21 @@
       "kind": "property",
       "resourceType": "AWS::BedrockAgentCore::Runtime.NetworkConfiguration"
     },
+    "Runtime_PrivateEndpointOverride": {
+      "kind": "property",
+      "resourceType": "AWS::BedrockAgentCore::Runtime.PrivateEndpointOverride"
+    },
     "Runtime_RequestHeaderConfiguration": {
       "kind": "property",
       "resourceType": "AWS::BedrockAgentCore::Runtime.RequestHeaderConfiguration"
+    },
+    "Runtime_S3FilesAccessPointConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::BedrockAgentCore::Runtime.S3FilesAccessPointConfiguration"
+    },
+    "Runtime_SessionStorageConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::BedrockAgentCore::Runtime.SessionStorageConfiguration"
     },
     "Runtime_VpcConfig": {
       "kind": "property",
@@ -61032,6 +62300,10 @@
         "Bucket"
       ]
     },
+    "S3FileSystem": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::Space.S3FileSystem"
+    },
     "S3FilesAccessPoint": {
       "kind": "resource",
       "resourceType": "AWS::S3Files::AccessPoint",
@@ -61067,6 +62339,10 @@
         "RootDirectory/Path"
       ],
       "taggable": true
+    },
+    "S3FilesAccessPointConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::BedrockAgentCore::Runtime.S3FilesAccessPointConfiguration"
     },
     "S3FilesAccessPoint_AccessPointTag": {
       "kind": "property",
@@ -61505,6 +62781,10 @@
       "kind": "property",
       "resourceType": "AWS::S3Tables::Table.IcebergMetadata"
     },
+    "S3TablesTable_IcebergPartitionField": {
+      "kind": "property",
+      "resourceType": "AWS::S3Tables::Table.IcebergPartitionField"
+    },
     "S3TablesTable_IcebergPartitionSpec": {
       "kind": "property",
       "resourceType": "AWS::S3Tables::Table.IcebergPartitionSpec"
@@ -61517,9 +62797,21 @@
       "kind": "property",
       "resourceType": "AWS::S3Tables::Table.IcebergSchemaV2"
     },
+    "S3TablesTable_IcebergSortField": {
+      "kind": "property",
+      "resourceType": "AWS::S3Tables::Table.IcebergSortField"
+    },
     "S3TablesTable_IcebergSortOrder": {
       "kind": "property",
       "resourceType": "AWS::S3Tables::Table.IcebergSortOrder"
+    },
+    "S3TablesTable_SchemaField": {
+      "kind": "property",
+      "resourceType": "AWS::S3Tables::Table.SchemaField"
+    },
+    "S3TablesTable_SchemaV2Field": {
+      "kind": "property",
+      "resourceType": "AWS::S3Tables::Table.SchemaV2Field"
     },
     "S3TablesTable_SnapshotManagement": {
       "kind": "property",
@@ -62231,17 +63523,73 @@
       ],
       "taggable": true
     },
+    "SageMakerCluster_AutoPatchConfig": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::Cluster.AutoPatchConfig"
+    },
     "SageMakerCluster_ClusterAutoScalingConfig": {
       "kind": "property",
       "resourceType": "AWS::SageMaker::Cluster.ClusterAutoScalingConfig"
+    },
+    "SageMakerCluster_ClusterCapacityRequirements": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::Cluster.ClusterCapacityRequirements"
+    },
+    "SageMakerCluster_ClusterInstanceGroup": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::Cluster.ClusterInstanceGroup"
+    },
+    "SageMakerCluster_ClusterKubernetesConfig": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::Cluster.ClusterKubernetesConfig"
+    },
+    "SageMakerCluster_ClusterKubernetesTaint": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::Cluster.ClusterKubernetesTaint"
+    },
+    "SageMakerCluster_ClusterLifeCycleConfig": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::Cluster.ClusterLifeCycleConfig"
+    },
+    "SageMakerCluster_ClusterNetworkInterface": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::Cluster.ClusterNetworkInterface"
+    },
+    "SageMakerCluster_ClusterRestrictedInstanceGroup": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::Cluster.ClusterRestrictedInstanceGroup"
+    },
+    "SageMakerCluster_ClusterSlurmConfig": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::Cluster.ClusterSlurmConfig"
+    },
+    "SageMakerCluster_DeploymentConfig": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::Cluster.DeploymentConfig"
+    },
+    "SageMakerCluster_EnvironmentConfig": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::Cluster.EnvironmentConfig"
     },
     "SageMakerCluster_FSxLustreConfig": {
       "kind": "property",
       "resourceType": "AWS::SageMaker::Cluster.FSxLustreConfig"
     },
+    "SageMakerCluster_InstanceRequirements": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::Cluster.InstanceRequirements"
+    },
+    "SageMakerCluster_PatchSchedule": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::Cluster.PatchSchedule"
+    },
     "SageMakerCluster_RestrictedInstanceGroupsConfig": {
       "kind": "property",
       "resourceType": "AWS::SageMaker::Cluster.RestrictedInstanceGroupsConfig"
+    },
+    "SageMakerCluster_ScheduledUpdateConfig": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::Cluster.ScheduledUpdateConfig"
     },
     "SageMakerCluster_SharedEnvironmentConfig": {
       "kind": "property",
@@ -62682,6 +64030,10 @@
       ],
       "taggable": true
     },
+    "SageMakerProject_CfnStackParameter": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::Project.CfnStackParameter"
+    },
     "SageMakerProject_CfnTemplateProviderDetail": {
       "kind": "property",
       "resourceType": "AWS::SageMaker::Project.CfnTemplateProviderDetail"
@@ -62855,6 +64207,10 @@
       "kind": "property",
       "resourceType": "AWS::Kendra::DataSource.SalesforceStandardObjectAttachmentConfiguration"
     },
+    "SalesforceStandardObjectConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::Kendra::DataSource.SalesforceStandardObjectConfiguration"
+    },
     "SamlConfigOptions": {
       "kind": "property",
       "resourceType": "AWS::OpenSearchServerless::SecurityConfig.SamlConfigOptions"
@@ -62874,6 +64230,10 @@
     "SampleDocuments": {
       "kind": "property",
       "resourceType": "AWS::B2BI::Transformer.SampleDocuments"
+    },
+    "SampleUtterance": {
+      "kind": "property",
+      "resourceType": "AWS::Lex::Bot.SampleUtterance"
     },
     "SamplingConfig": {
       "kind": "property",
@@ -62925,6 +64285,10 @@
     "SamplingRule_SamplingRuleUpdate": {
       "kind": "property",
       "resourceType": "AWS::XRay::SamplingRule.SamplingRuleUpdate"
+    },
+    "SamplingRule_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::XRay::SamplingRule.Tag"
     },
     "Sbom": {
       "kind": "property",
@@ -63069,6 +64433,10 @@
       "kind": "property",
       "resourceType": "AWS::Backup::BackupPlan.ScanSettingResourceType"
     },
+    "ScanningRule": {
+      "kind": "property",
+      "resourceType": "AWS::ECR::RegistryScanningConfiguration.ScanningRule"
+    },
     "Scene": {
       "kind": "resource",
       "resourceType": "AWS::IoTTwinMaker::Scene",
@@ -63158,6 +64526,10 @@
     "ScheduledTriggerProperties": {
       "kind": "property",
       "resourceType": "AWS::AppFlow::Flow.ScheduledTriggerProperties"
+    },
+    "ScheduledUpdateConfig": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::Cluster.ScheduledUpdateConfig"
     },
     "SchedulerConfiguration": {
       "kind": "property",
@@ -63297,6 +64669,14 @@
       "kind": "property",
       "resourceType": "AWS::KinesisFirehose::DeliveryStream.SchemaEvolutionConfiguration"
     },
+    "SchemaField": {
+      "kind": "property",
+      "resourceType": "AWS::S3Tables::Table.SchemaField"
+    },
+    "SchemaInputAttribute": {
+      "kind": "property",
+      "resourceType": "AWS::EntityResolution::SchemaMapping.SchemaInputAttribute"
+    },
     "SchemaMapping": {
       "kind": "resource",
       "resourceType": "AWS::EntityResolution::SchemaMapping",
@@ -63321,6 +64701,10 @@
       ],
       "taggable": true
     },
+    "SchemaMapping_SchemaInputAttribute": {
+      "kind": "property",
+      "resourceType": "AWS::EntityResolution::SchemaMapping.SchemaInputAttribute"
+    },
     "SchemaMapping_Tag": {
       "kind": "property",
       "resourceType": "AWS::EntityResolution::SchemaMapping.Tag"
@@ -63332,6 +64716,10 @@
     "SchemaRegistryConfig": {
       "kind": "property",
       "resourceType": "AWS::Lambda::EventSourceMapping.SchemaRegistryConfig"
+    },
+    "SchemaV2Field": {
+      "kind": "property",
+      "resourceType": "AWS::S3Tables::Table.SchemaV2Field"
     },
     "SchemaValidationConfig": {
       "kind": "property",
@@ -63554,6 +64942,10 @@
       "kind": "property",
       "resourceType": "AWS::MediaLive::SdiSource.Tags"
     },
+    "Search": {
+      "kind": "property",
+      "resourceType": "AWS::Kendra::Index.Search"
+    },
     "SearchFilter": {
       "kind": "property",
       "resourceType": "AWS::ResourceExplorer2::View.SearchFilter"
@@ -63660,9 +65052,49 @@
       "kind": "property",
       "resourceType": "AWS::SecurityAgent::AgentSpace.AWSResources"
     },
+    "SecurityAgentAgentSpace_BitbucketCapabilitiesResource": {
+      "kind": "property",
+      "resourceType": "AWS::SecurityAgent::AgentSpace.BitbucketCapabilitiesResource"
+    },
+    "SecurityAgentAgentSpace_BitbucketRepositoryResource": {
+      "kind": "property",
+      "resourceType": "AWS::SecurityAgent::AgentSpace.BitbucketRepositoryResource"
+    },
     "SecurityAgentAgentSpace_CodeReviewSettings": {
       "kind": "property",
       "resourceType": "AWS::SecurityAgent::AgentSpace.CodeReviewSettings"
+    },
+    "SecurityAgentAgentSpace_ConfluenceCapabilitiesResource": {
+      "kind": "property",
+      "resourceType": "AWS::SecurityAgent::AgentSpace.ConfluenceCapabilitiesResource"
+    },
+    "SecurityAgentAgentSpace_ConfluenceDocumentResource": {
+      "kind": "property",
+      "resourceType": "AWS::SecurityAgent::AgentSpace.ConfluenceDocumentResource"
+    },
+    "SecurityAgentAgentSpace_GitHubCapabilitiesResource": {
+      "kind": "property",
+      "resourceType": "AWS::SecurityAgent::AgentSpace.GitHubCapabilitiesResource"
+    },
+    "SecurityAgentAgentSpace_GitHubRepositoryResource": {
+      "kind": "property",
+      "resourceType": "AWS::SecurityAgent::AgentSpace.GitHubRepositoryResource"
+    },
+    "SecurityAgentAgentSpace_GitLabCapabilitiesResource": {
+      "kind": "property",
+      "resourceType": "AWS::SecurityAgent::AgentSpace.GitLabCapabilitiesResource"
+    },
+    "SecurityAgentAgentSpace_GitLabRepositoryResource": {
+      "kind": "property",
+      "resourceType": "AWS::SecurityAgent::AgentSpace.GitLabRepositoryResource"
+    },
+    "SecurityAgentAgentSpace_IntegratedResource": {
+      "kind": "property",
+      "resourceType": "AWS::SecurityAgent::AgentSpace.IntegratedResource"
+    },
+    "SecurityAgentAgentSpace_ProviderResource": {
+      "kind": "property",
+      "resourceType": "AWS::SecurityAgent::AgentSpace.ProviderResource"
     },
     "SecurityAgentAgentSpace_Tag": {
       "kind": "property",
@@ -64186,6 +65618,10 @@
       "kind": "property",
       "resourceType": "AWS::QuickSight::Topic.SemanticEntityType"
     },
+    "SemanticMemoryStrategy": {
+      "kind": "property",
+      "resourceType": "AWS::BedrockAgentCore::Memory.SemanticMemoryStrategy"
+    },
     "SemanticModelConfiguration": {
       "kind": "property",
       "resourceType": "AWS::QuickSight::DataSet.SemanticModelConfiguration"
@@ -64193,6 +65629,10 @@
     "SemanticType": {
       "kind": "property",
       "resourceType": "AWS::QuickSight::Topic.SemanticType"
+    },
+    "SendNotificationAction": {
+      "kind": "property",
+      "resourceType": "AWS::Connect::Rule.SendNotificationAction"
     },
     "SenderId": {
       "kind": "resource",
@@ -64892,6 +66332,10 @@
       "kind": "property",
       "resourceType": "AWS::Batch::JobQueue.ServiceEnvironmentOrder"
     },
+    "ServiceEnvironment_CapacityLimit": {
+      "kind": "property",
+      "resourceType": "AWS::Batch::ServiceEnvironment.CapacityLimit"
+    },
     "ServiceFunction": {
       "kind": "resource",
       "resourceType": "AWS::ResilienceHubV2::ServiceFunction",
@@ -64945,6 +66389,10 @@
       ],
       "taggable": true
     },
+    "ServiceLevelObjective_BurnRateConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::ApplicationSignals::ServiceLevelObjective.BurnRateConfiguration"
+    },
     "ServiceLevelObjective_CalendarInterval": {
       "kind": "property",
       "resourceType": "AWS::ApplicationSignals::ServiceLevelObjective.CalendarInterval"
@@ -64957,6 +66405,10 @@
       "kind": "property",
       "resourceType": "AWS::ApplicationSignals::ServiceLevelObjective.DependencyConfig"
     },
+    "ServiceLevelObjective_ExclusionWindow": {
+      "kind": "property",
+      "resourceType": "AWS::ApplicationSignals::ServiceLevelObjective.ExclusionWindow"
+    },
     "ServiceLevelObjective_Goal": {
       "kind": "property",
       "resourceType": "AWS::ApplicationSignals::ServiceLevelObjective.Goal"
@@ -64965,6 +66417,10 @@
       "kind": "property",
       "resourceType": "AWS::ApplicationSignals::ServiceLevelObjective.Interval"
     },
+    "ServiceLevelObjective_MetricDataQuery": {
+      "kind": "property",
+      "resourceType": "AWS::ApplicationSignals::ServiceLevelObjective.MetricDataQuery"
+    },
     "ServiceLevelObjective_MetricSource": {
       "kind": "property",
       "resourceType": "AWS::ApplicationSignals::ServiceLevelObjective.MetricSource"
@@ -64972,6 +66428,10 @@
     "ServiceLevelObjective_MonitoredRequestCountMetric": {
       "kind": "property",
       "resourceType": "AWS::ApplicationSignals::ServiceLevelObjective.MonitoredRequestCountMetric"
+    },
+    "ServiceLevelObjective_RecurrenceRule": {
+      "kind": "property",
+      "resourceType": "AWS::ApplicationSignals::ServiceLevelObjective.RecurrenceRule"
     },
     "ServiceLevelObjective_RequestBasedSli": {
       "kind": "property",
@@ -64992,6 +66452,14 @@
     "ServiceLevelObjective_SliMetric": {
       "kind": "property",
       "resourceType": "AWS::ApplicationSignals::ServiceLevelObjective.SliMetric"
+    },
+    "ServiceLevelObjective_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::ApplicationSignals::ServiceLevelObjective.Tag"
+    },
+    "ServiceLevelObjective_Window": {
+      "kind": "property",
+      "resourceType": "AWS::ApplicationSignals::ServiceLevelObjective.Window"
     },
     "ServiceLinkedRole": {
       "kind": "resource",
@@ -65357,6 +66825,10 @@
     "SessionLogger_Tag": {
       "kind": "property",
       "resourceType": "AWS::WorkSpacesWeb::SessionLogger.Tag"
+    },
+    "SessionStorageConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::BedrockAgentCore::Runtime.SessionStorageConfiguration"
     },
     "SessionSummaryConfiguration": {
       "kind": "property",
@@ -65963,9 +67435,17 @@
       "kind": "property",
       "resourceType": "AWS::Lex::Bot.Slot"
     },
+    "SlotPriority": {
+      "kind": "property",
+      "resourceType": "AWS::Lex::Bot.SlotPriority"
+    },
     "SlotType": {
       "kind": "property",
       "resourceType": "AWS::Lex::Bot.SlotType"
+    },
+    "SlotTypeValue": {
+      "kind": "property",
+      "resourceType": "AWS::Lex::Bot.SlotTypeValue"
     },
     "SlotValueSelectionSetting": {
       "kind": "property",
@@ -66143,6 +67623,10 @@
       "kind": "property",
       "resourceType": "AWS::KinesisFirehose::DeliveryStream.SnowflakeVpcConfiguration"
     },
+    "Sns": {
+      "kind": "property",
+      "resourceType": "AWS::IoTEvents::AlarmModel.Sns"
+    },
     "SnsAction": {
       "kind": "property",
       "resourceType": "AWS::IoT::TopicRule.SnsAction"
@@ -66270,10 +67754,6 @@
     "SourceAccessConfiguration": {
       "kind": "property",
       "resourceType": "AWS::Lambda::EventSourceMapping.SourceAccessConfiguration"
-    },
-    "SourceAlgorithm": {
-      "kind": "property",
-      "resourceType": "AWS::SageMaker::ModelPackage.SourceAlgorithm"
     },
     "SourceAlgorithmSpecification": {
       "kind": "property",
@@ -66504,13 +67984,25 @@
       "kind": "property",
       "resourceType": "AWS::SageMaker::Space.CodeRepository"
     },
+    "Space_CustomFileSystem": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::Space.CustomFileSystem"
+    },
     "Space_CustomImage": {
       "kind": "property",
       "resourceType": "AWS::SageMaker::Space.CustomImage"
     },
+    "Space_EFSFileSystem": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::Space.EFSFileSystem"
+    },
     "Space_EbsStorageSettings": {
       "kind": "property",
       "resourceType": "AWS::SageMaker::Space.EbsStorageSettings"
+    },
+    "Space_FSxLustreFileSystem": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::Space.FSxLustreFileSystem"
     },
     "Space_JupyterServerAppSettings": {
       "kind": "property",
@@ -66527,6 +68019,10 @@
     "Space_ResourceSpec": {
       "kind": "property",
       "resourceType": "AWS::SageMaker::Space.ResourceSpec"
+    },
+    "Space_S3FileSystem": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::Space.S3FileSystem"
     },
     "Space_SpaceAppLifecycleManagement": {
       "kind": "property",
@@ -66811,6 +68307,10 @@
     "SqlServerParameters": {
       "kind": "property",
       "resourceType": "AWS::QuickSight::DataSource.SqlServerParameters"
+    },
+    "Sqs": {
+      "kind": "property",
+      "resourceType": "AWS::IoTEvents::AlarmModel.Sqs"
     },
     "SqsAction": {
       "kind": "property",
@@ -67161,6 +68661,10 @@
     "StateMachineAlias_DeploymentPreference": {
       "kind": "property",
       "resourceType": "AWS::StepFunctions::StateMachineAlias.DeploymentPreference"
+    },
+    "StateMachineAlias_RoutingConfigurationVersion": {
+      "kind": "property",
+      "resourceType": "AWS::StepFunctions::StateMachineAlias.RoutingConfigurationVersion"
     },
     "StateMachineVersion": {
       "kind": "resource",
@@ -67767,6 +69271,10 @@
       "kind": "property",
       "resourceType": "AWS::Rekognition::StreamProcessor.NotificationChannel"
     },
+    "StreamProcessor_Point": {
+      "kind": "property",
+      "resourceType": "AWS::Rekognition::StreamProcessor.Point"
+    },
     "StreamProcessor_S3Destination": {
       "kind": "property",
       "resourceType": "AWS::Rekognition::StreamProcessor.S3Destination"
@@ -67832,6 +69340,10 @@
     "StringAttributeConstraints": {
       "kind": "property",
       "resourceType": "AWS::Cognito::UserPool.StringAttributeConstraints"
+    },
+    "StringCriteriaCondition": {
+      "kind": "property",
+      "resourceType": "AWS::ComputeOptimizer::AutomationRule.StringCriteriaCondition"
     },
     "StringDatasetParameter": {
       "kind": "property",
@@ -67933,6 +69445,10 @@
         "StudioId"
       ]
     },
+    "Studio_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::EMR::Studio.Tag"
+    },
     "SubComponentTypeConfiguration": {
       "kind": "property",
       "resourceType": "AWS::ApplicationInsights::Application.SubComponentTypeConfiguration"
@@ -67940,6 +69456,10 @@
     "SubDomainSetting": {
       "kind": "property",
       "resourceType": "AWS::Amplify::Domain.SubDomainSetting"
+    },
+    "SubmitAutoEvaluationAction": {
+      "kind": "property",
+      "resourceType": "AWS::Connect::Rule.SubmitAutoEvaluationAction"
     },
     "Subnet": {
       "kind": "resource",
@@ -68254,6 +69774,10 @@
       "kind": "property",
       "resourceType": "AWS::DataZone::SubscriptionTarget.SubscriptionTargetForm"
     },
+    "SubstitutionValue": {
+      "kind": "property",
+      "resourceType": "AWS::DataBrew::Ruleset.SubstitutionValue"
+    },
     "SuccessConditions": {
       "kind": "property",
       "resourceType": "AWS::CodePipeline::Pipeline.SuccessConditions"
@@ -68282,6 +69806,10 @@
     "SuiteDefinition_Tag": {
       "kind": "property",
       "resourceType": "AWS::IoTCoreDeviceAdvisor::SuiteDefinition.Tag"
+    },
+    "SummaryMemoryStrategy": {
+      "kind": "property",
+      "resourceType": "AWS::BedrockAgentCore::Memory.SummaryMemoryStrategy"
     },
     "SuperuserParameters": {
       "kind": "property",
@@ -68841,6 +70369,10 @@
       "kind": "property",
       "resourceType": "AWS::LakeFormation::TagAssociation.DatabaseResource"
     },
+    "TagAssociation_LFTagPair": {
+      "kind": "property",
+      "resourceType": "AWS::LakeFormation::TagAssociation.LFTagPair"
+    },
     "TagAssociation_Resource": {
       "kind": "property",
       "resourceType": "AWS::LakeFormation::TagAssociation.Resource"
@@ -68852,6 +70384,10 @@
     "TagAssociation_TableWithColumnsResource": {
       "kind": "property",
       "resourceType": "AWS::LakeFormation::TagAssociation.TableWithColumnsResource"
+    },
+    "TagCollection": {
+      "kind": "property",
+      "resourceType": "AWS::DevOpsGuru::ResourceCollection.TagCollection"
     },
     "TagFieldSpecification": {
       "kind": "property",
@@ -69156,6 +70692,10 @@
         "TaskMode"
       ],
       "taggable": true
+    },
+    "TaskAction": {
+      "kind": "property",
+      "resourceType": "AWS::Connect::Rule.TaskAction"
     },
     "TaskConfig": {
       "kind": "property",
@@ -69780,6 +71320,10 @@
       "kind": "property",
       "resourceType": "AWS::QBusiness::Index.TextDocumentStatistics"
     },
+    "TextLogDestination": {
+      "kind": "property",
+      "resourceType": "AWS::Lex::BotAlias.TextLogDestination"
+    },
     "ThemeConfiguration": {
       "kind": "property",
       "resourceType": "AWS::QuickSight::Theme.ThemeConfiguration"
@@ -70130,9 +71674,17 @@
       ],
       "taggable": true
     },
+    "TimestreamScheduledQuery_DimensionMapping": {
+      "kind": "property",
+      "resourceType": "AWS::Timestream::ScheduledQuery.DimensionMapping"
+    },
     "TimestreamScheduledQuery_ErrorReportConfiguration": {
       "kind": "property",
       "resourceType": "AWS::Timestream::ScheduledQuery.ErrorReportConfiguration"
+    },
+    "TimestreamScheduledQuery_MixedMeasureMapping": {
+      "kind": "property",
+      "resourceType": "AWS::Timestream::ScheduledQuery.MixedMeasureMapping"
     },
     "TimestreamScheduledQuery_MultiMeasureMappings": {
       "kind": "property",
@@ -70153,6 +71705,10 @@
     "TimestreamScheduledQuery_SnsConfiguration": {
       "kind": "property",
       "resourceType": "AWS::Timestream::ScheduledQuery.SnsConfiguration"
+    },
+    "TimestreamScheduledQuery_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::Timestream::ScheduledQuery.Tag"
     },
     "TimestreamScheduledQuery_TargetConfiguration": {
       "kind": "property",
@@ -72047,6 +73603,10 @@
       "kind": "property",
       "resourceType": "AWS::IoT::MitigationAction.UpdateCACertificateParams"
     },
+    "UpdateCaseAction": {
+      "kind": "property",
+      "resourceType": "AWS::Connect::Rule.UpdateCaseAction"
+    },
     "UpdateConfig": {
       "kind": "property",
       "resourceType": "AWS::EKS::Nodegroup.UpdateConfig"
@@ -72834,6 +74394,10 @@
       "kind": "property",
       "resourceType": "AWS::Cognito::UserPool.VerificationMessageTemplate"
     },
+    "UserPreferenceMemoryStrategy": {
+      "kind": "property",
+      "resourceType": "AWS::BedrockAgentCore::Memory.UserPreferenceMemoryStrategy"
+    },
     "UserProficiency": {
       "kind": "property",
       "resourceType": "AWS::Connect::User.UserProficiency"
@@ -72912,6 +74476,10 @@
         "Id:false",
         "Users:true"
       ]
+    },
+    "UserTokenConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::Kendra::Index.UserTokenConfiguration"
     },
     "UsernameConfiguration": {
       "kind": "property",
@@ -73462,6 +75030,10 @@
     "ValidityDateFormat": {
       "kind": "property",
       "resourceType": "AWS::LicenseManager::License.ValidityDateFormat"
+    },
+    "ValueImportanceItem": {
+      "kind": "property",
+      "resourceType": "AWS::Kendra::Index.ValueImportanceItem"
     },
     "ValueRange": {
       "kind": "property",
@@ -75713,6 +77285,10 @@
       "kind": "property",
       "resourceType": "AWS::WAFv2::RuleGroup.OrStatement"
     },
+    "WAFv2RuleGroup_PaymentNetwork": {
+      "kind": "property",
+      "resourceType": "AWS::WAFv2::RuleGroup.PaymentNetwork"
+    },
     "WAFv2RuleGroup_RateBasedStatement": {
       "kind": "property",
       "resourceType": "AWS::WAFv2::RuleGroup.RateBasedStatement"
@@ -75814,6 +77390,10 @@
       "kind": "property",
       "resourceType": "AWS::WAFv2::WebACL.AndStatement"
     },
+    "WAFv2WebACL_ApplicationAttribute": {
+      "kind": "property",
+      "resourceType": "AWS::WAFv2::WebACL.ApplicationAttribute"
+    },
     "WAFv2WebACL_ApplicationConfig": {
       "kind": "property",
       "resourceType": "AWS::WAFv2::WebACL.ApplicationConfig"
@@ -75866,6 +77446,10 @@
       "kind": "property",
       "resourceType": "AWS::WAFv2::WebACL.CustomResponse"
     },
+    "WAFv2WebACL_DataProtect": {
+      "kind": "property",
+      "resourceType": "AWS::WAFv2::WebACL.DataProtect"
+    },
     "WAFv2WebACL_DataProtectionConfig": {
       "kind": "property",
       "resourceType": "AWS::WAFv2::WebACL.DataProtectionConfig"
@@ -75873,6 +77457,10 @@
     "WAFv2WebACL_DefaultAction": {
       "kind": "property",
       "resourceType": "AWS::WAFv2::WebACL.DefaultAction"
+    },
+    "WAFv2WebACL_FieldToProtect": {
+      "kind": "property",
+      "resourceType": "AWS::WAFv2::WebACL.FieldToProtect"
     },
     "WAFv2WebACL_GeoMatchStatement": {
       "kind": "property",
@@ -75921,6 +77509,10 @@
     "WAFv2WebACL_OverrideAction": {
       "kind": "property",
       "resourceType": "AWS::WAFv2::WebACL.OverrideAction"
+    },
+    "WAFv2WebACL_PaymentNetwork": {
+      "kind": "property",
+      "resourceType": "AWS::WAFv2::WebACL.PaymentNetwork"
     },
     "WAFv2WebACL_RateBasedStatement": {
       "kind": "property",
@@ -76276,6 +77868,10 @@
       "kind": "property",
       "resourceType": "AWS::BCM::Dashboard.WidgetConfig"
     },
+    "Window": {
+      "kind": "property",
+      "resourceType": "AWS::ApplicationSignals::ServiceLevelObjective.Window"
+    },
     "WindowStartTime": {
       "kind": "property",
       "resourceType": "AWS::OpenSearchService::Domain.WindowStartTime"
@@ -76558,6 +78154,10 @@
     "WorkGroup_S3LoggingConfiguration": {
       "kind": "property",
       "resourceType": "AWS::Athena::WorkGroup.S3LoggingConfiguration"
+    },
+    "WorkGroup_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::Athena::WorkGroup.Tag"
     },
     "WorkGroup_WorkGroupConfiguration": {
       "kind": "property",
@@ -77229,6 +78829,10 @@
     "XRayGroup_InsightsConfiguration": {
       "kind": "property",
       "resourceType": "AWS::XRay::Group.InsightsConfiguration"
+    },
+    "XRayGroup_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::XRay::Group.Tag"
     },
     "XRayResourcePolicy": {
       "kind": "resource",
