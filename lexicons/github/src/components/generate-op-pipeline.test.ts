@@ -27,6 +27,7 @@ interface ParsedStep {
 interface ParsedJob {
   "runs-on"?: string;
   container?: string;
+  environment?: Record<string, string>;
   needs?: string;
   if?: string;
   permissions?: Record<string, string>;
@@ -513,5 +514,131 @@ describe("generateGithubOpPipeline: the gated apply on push (#2243)", () => {
   test("a failing run stays a failing job: the pipe cannot swallow its exit code", () => {
     const step = pushDoc().jobs!["app-apply"].steps.find((s) => s.id === "chant-run");
     expect(step?.run).toContain("set -o pipefail");
+  });
+});
+
+/**
+ * chant #2257 — the second gate. A GitHub environment carries its own
+ * protection rules (required reviewers above all), and until this existed no
+ * generated job named one, so a `production` environment declared in a
+ * repository bound nothing chant generated. What is asserted here is the key
+ * on the right job, the key's absence everywhere else, and that adding it
+ * changes nothing else in the document.
+ */
+describe("generateGithubOpPipeline: a deployment environment on the Op's job (#2257)", () => {
+  const APPLY: ScheduledOpSpec = { name: "app-apply", trigger: { kind: "push", branches: ["main"] } };
+  const GATED: ScheduledOpSpec = { ...APPLY, environment: { name: "production" } };
+
+  /**
+   * The exact document a spec with no `environment` emitted before the option
+   * existed, produced by the generator at the commit this change branched
+   * from. The claim the option makes is that it is additive; this is what
+   * makes that claim falsifiable rather than a sentence in a PR body.
+   */
+  const AUDIT_YAML_BEFORE_2257 =
+    [
+      "on:",
+      "  schedule:",
+      "    - cron: '0 6 * * *'",
+      "  workflow_dispatch: {}",
+      "",
+      "concurrency:",
+      "  group: actions-audit",
+      "  cancel-in-progress: false",
+      "",
+      "permissions:",
+      "  contents: read",
+      "  issues: write",
+      "",
+      "jobs:",
+      "  actions-audit:",
+      "    runs-on: ubuntu-latest",
+      "    container: node:22-slim",
+      "    steps:",
+      "      - uses: actions/checkout@v4",
+      "      - run: chant run actions-audit",
+      "        env:",
+      "          GITHUB_TOKEN: '${{ github.token }}'",
+      "          GH_TOKEN: '${{ github.token }}'",
+    ].join("\n") + "\n";
+
+  test("a spec with no environment emits the bytes it emitted before the option existed", () => {
+    const yaml = generateGithubOpPipeline([
+      { name: "actions-audit", schedule: "0 6 * * *", findingMode: "issue" },
+    ]).files[0].yaml;
+    expect(yaml).toBe(AUDIT_YAML_BEFORE_2257);
+  });
+
+  test("emits environment: on the Op's job, as a mapping rather than the string shorthand", () => {
+    const job = parseFile(generateGithubOpPipeline([GATED]).files[0].yaml).jobs!["app-apply"];
+    expect(job.environment).toEqual({ name: "production" });
+  });
+
+  test("carries the url when the spec sets one", () => {
+    const spec: ScheduledOpSpec = {
+      ...APPLY,
+      environment: { name: "production", url: "https://app.example.com" },
+    };
+    const job = parseFile(generateGithubOpPipeline([spec]).files[0].yaml).jobs!["app-apply"];
+    expect(job.environment).toEqual({
+      name: "production",
+      url: "https://app.example.com",
+    });
+  });
+
+  test("adding the environment changes exactly the environment block and nothing else", () => {
+    const before = generateGithubOpPipeline([APPLY]).files[0].yaml;
+    const after = generateGithubOpPipeline([GATED]).files[0].yaml;
+    expect(after).toContain("    environment:\n      name: production\n");
+    expect(after.replace("    environment:\n      name: production\n", "")).toBe(before);
+  });
+
+  test("the gate-notice job is not held behind the same reviewer", () => {
+    // It exists to say a chant gate is pending. Behind the environment it
+    // would only be readable after somebody had already released the job it
+    // is reporting on, which is after the message stops being useful.
+    const notice = parseFile(generateGithubOpPipeline([GATED]).files[0].yaml).jobs![
+      "app-apply-gate-notice"
+    ];
+    expect(notice.environment).toBeUndefined();
+  });
+
+  test("costs no token scope: environment protection is repository configuration", () => {
+    // `permissionsFor` gains nothing from the option — the reviewer lives on
+    // the environment object, not on GITHUB_TOKEN — so the workflow-level set
+    // is identical with and without it.
+    const withEnv = parseFile(generateGithubOpPipeline([GATED]).files[0].yaml);
+    const withoutEnv = parseFile(generateGithubOpPipeline([APPLY]).files[0].yaml);
+    expect(withEnv.permissions).toEqual(withoutEnv.permissions);
+    expect(withEnv.permissions).toEqual({ contents: "read" });
+  });
+
+  test("applies to any trigger, so a pull_request plan can name a review environment too", () => {
+    const spec: ScheduledOpSpec = {
+      name: "app-plan",
+      trigger: { kind: "pull_request", branches: ["main"] },
+      findingMode: "comment",
+      environment: { name: "review", url: "${{ steps.deploy.outputs.url }}" },
+    };
+    const job = parseFile(generateGithubOpPipeline([spec]).files[0].yaml).jobs!["app-plan"];
+    expect(job.environment?.name).toBe("review");
+  });
+
+  test("refuses a blank environment name, which resolves to nothing", () => {
+    expect(() =>
+      generateGithubOpPipeline([{ ...APPLY, environment: { name: "   " } }]),
+    ).toThrow(/environment has an empty `name`/);
+  });
+
+  test("refuses a url that is neither absolute nor an expression, which renders as a dead link", () => {
+    expect(() =>
+      generateGithubOpPipeline([{ ...APPLY, environment: { name: "production", url: "/deploys" } }]),
+    ).toThrow(/neither an absolute http\(s\) URL nor a/);
+  });
+
+  test("refuses an empty url rather than emitting one", () => {
+    expect(() =>
+      generateGithubOpPipeline([{ ...APPLY, environment: { name: "production", url: "" } }]),
+    ).toThrow(/has an empty `url`/);
   });
 });

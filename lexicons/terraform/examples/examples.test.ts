@@ -184,11 +184,23 @@ const PLAN_SPEC: ScheduledOpSpec = {
   permissions: { "id-token": "write" },
 };
 
+/**
+ * The apply half additionally names a GitHub environment (#2257), which is
+ * the forge-native half of the pair of gates this example ships: a required
+ * reviewer on `production` holds the job before any step runs, and chant's
+ * own gate holds the apply inside a run that already started. The plan half
+ * names none — it deploys nothing, and putting a reviewer in front of a plan
+ * on every pull request is the fastest way to teach people to click through
+ * one.
+ */
+const APPLY_ENVIRONMENT = "production";
+
 const APPLY_SPEC: ScheduledOpSpec = {
   name: "app-apply",
   trigger: { kind: "push", branches: ["main"] },
   setup: assumeRole("AWS_APPLY_ROLE_ARN"),
   permissions: { "id-token": "write" },
+  environment: { name: APPLY_ENVIRONMENT },
 };
 
 async function planOnPrWorkflows(): Promise<{ plan: string; apply: string }> {
@@ -219,6 +231,7 @@ interface WorkflowJob {
   if?: string;
   "runs-on"?: string;
   container?: string;
+  environment?: Record<string, string>;
   permissions?: Record<string, string>;
   outputs?: Record<string, string>;
   steps: WorkflowStep[];
@@ -506,6 +519,46 @@ describe("plan-on-pr generates the pull_request plan and push apply pair (#2221)
     // it from the op and gate names.
     expect(script).toContain("%s --approver <you>");
     expect(script).toContain('"$CHANT_APPROVE"');
+  });
+
+  // ── The forge-native gate beside chant's own (#2257) ────────────────────
+
+  it("puts the apply job behind a GitHub environment, and the plan job behind none", async () => {
+    const { plan, apply } = await planOnPrWorkflows();
+    const parsed = parsePush(apply);
+    expect(parsed.jobs["app-apply"].environment).toEqual({ name: APPLY_ENVIRONMENT });
+    // A required reviewer on `production` holds the apply before its first
+    // step. The plan deploys nothing, so it names no environment at all.
+    expect(plan).not.toContain("environment:");
+  });
+
+  it("does not hold the pending-gate notice behind the same reviewer", async () => {
+    // The notice job says a chant gate is waiting. Behind the environment it
+    // would only be readable once somebody had already released the job it
+    // reports on.
+    const { apply } = await planOnPrWorkflows();
+    expect(parsePush(apply).jobs["app-apply-gate-notice"].environment).toBeUndefined();
+  });
+
+  it("buys the environment gate with no extra token scope", async () => {
+    // Environment protection is repository configuration — the reviewer lives
+    // on the environment object, not on GITHUB_TOKEN — so the apply's
+    // permission set is what it was before the environment was named.
+    const { apply } = await planOnPrWorkflows();
+    const parsed = parsePush(apply);
+    expect(parsed.permissions).toEqual({ contents: "read", "id-token": "write" });
+    expect(parsed.permissions).not.toHaveProperty("deployments");
+  });
+
+  it("keeps chant's own gate in the run: the two gates compose, neither replaces the other", async () => {
+    // The environment reviewer stops the job before it starts; the gate below
+    // stops the apply inside a run that already started, on a fact recorded on
+    // the chant/lifecycle branch. Both are present in this example on purpose.
+    const { apply } = await planOnPrWorkflows();
+    expect(runStep(parsePush(apply)).run).toContain("chant run app-apply --gated-exit 0 --json");
+    const result = await build(join(planOnPrDir, "src"), [terraformSerializer]);
+    const applyOp = result.entities.get("app-apply") as unknown as { props: OpConfig };
+    expect(applyOp.props.phases.map((p) => p.name)).toContain("Gate");
   });
 
   it("applies only the plan its own Plan step saved", async () => {

@@ -169,3 +169,85 @@ describe("generateGitlabOpPipeline: setup steps and additive permissions (#2242)
     ).toThrow(/adds permissions \{ id-token: write \}.*id_tokens:/s);
   });
 });
+
+/**
+ * chant #2257 — the one option of the three that GitLab actually has. An
+ * environment is a project object here too, with the same two fields on the
+ * job and a protected-environment approval rule behind it, so the reviewer
+ * gate the option exists for is expressible and is emitted rather than
+ * refused. What is not expressible is the protection itself, which is a
+ * project setting, so the header names it the way it already names the
+ * schedule to create.
+ */
+describe("generateGitlabOpPipeline: a deployment environment (#2257)", () => {
+  const AUDIT: ScheduledOpSpec = { name: "actions-audit", schedule: "0 6 * * *", findingMode: "issue" };
+
+  /** The document a spec with no `environment` emitted before the option existed. */
+  const YAML_BEFORE_2257 =
+    [
+      "# Scheduled Ops (chant #927) — GitLab has no in-file cron. Create one",
+      "# Pipeline Schedule per Op below (Settings > CI/CD > Schedules): set its",
+      "# cron to the value noted here and its CHANT_SCHEDULED_OP CI/CD variable to",
+      "# the Op's name, so only that job runs on that schedule.",
+      "#",
+      '#   actions-audit: cron "0 6 * * *", CHANT_SCHEDULED_OP="actions-audit", finding-mode issue' +
+        " — needs a GITLAB_TOKEN CI/CD variable (masked, scope: api)",
+      "",
+      "stages:",
+      "  - scheduled-ops",
+      "",
+      "actions-audit:",
+      "  stage: scheduled-ops",
+      "  image: node:22-slim",
+      "  rules:",
+      `    - if: '$CI_PIPELINE_SOURCE == "schedule" && $CHANT_SCHEDULED_OP == "actions-audit"'`,
+      "  script:",
+      "    - chant run actions-audit",
+    ].join("\n") + "\n";
+
+  test("a spec with no environment emits the bytes it emitted before the option existed", () => {
+    expect(generateGitlabOpPipeline([AUDIT]).files[0].yaml).toBe(YAML_BEFORE_2257);
+  });
+
+  test("maps it onto GitLab's own environment: key, with the url when there is one", () => {
+    const spec: ScheduledOpSpec = {
+      ...AUDIT,
+      environment: { name: "production", url: "https://app.example.com" },
+    };
+    const job = parseYAML(generateGitlabOpPipeline([spec]).files[0].yaml)["actions-audit"] as {
+      environment?: Record<string, string>;
+    };
+    expect(job.environment).toEqual({ name: "production", url: "https://app.example.com" });
+  });
+
+  test("names the environment to protect in the header, beside the schedule to create", () => {
+    const spec: ScheduledOpSpec = { ...AUDIT, environment: { name: "production" } };
+    const yaml = generateGitlabOpPipeline([spec]).files[0].yaml;
+    expect(yaml).toContain('deploys to environment "production"');
+    expect(yaml).toContain("Settings > CI/CD > Protected environments");
+    // The approval rule is a project setting; this file can only bind the job
+    // to the environment, so the header says where the rule is set.
+    expect(yaml).toContain("require an approval before the job runs");
+  });
+
+  test("adding the environment changes only the header line and the job's own key", () => {
+    const spec: ScheduledOpSpec = { ...AUDIT, environment: { name: "production" } };
+    const after = generateGitlabOpPipeline([spec]).files[0].yaml;
+    const withoutHeaderLine = after
+      .split("\n")
+      .filter((line) => !line.startsWith("#     deploys to environment"))
+      .join("\n");
+    expect(withoutHeaderLine.replace("  environment:\n    name: production\n", "")).toBe(
+      YAML_BEFORE_2257,
+    );
+  });
+
+  test("refuses a blank name and a url that is neither absolute nor a variable expression", () => {
+    expect(() => generateGitlabOpPipeline([{ ...AUDIT, environment: { name: " " } }])).toThrow(
+      /environment has an empty `name`/,
+    );
+    expect(() =>
+      generateGitlabOpPipeline([{ ...AUDIT, environment: { name: "production", url: "/deploys" } }]),
+    ).toThrow(/neither an absolute http\(s\) URL nor a variable expression/);
+  });
+});
