@@ -203,6 +203,89 @@ const APPLY_SPEC: ScheduledOpSpec = {
   environment: { name: APPLY_ENVIRONMENT },
 };
 
+/**
+ * The same pair on GitLab (#2256). Two things differ from the github specs
+ * above, and both are properties of the forge rather than of the example.
+ *
+ * The AWS auth is a shell line rather than a marketplace action, because
+ * GitLab CI jobs run `script` and nothing else. It needs no AWS CLI either:
+ * GitLab's `id_tokens:` puts the OIDC JWT in an environment variable, and the
+ * AWS SDK inside the terraform provider does the `AssumeRoleWithWebIdentity`
+ * exchange itself when it is handed `AWS_ROLE_ARN` and a
+ * `AWS_WEB_IDENTITY_TOKEN_FILE` to read the token out of. Every `script` line
+ * in a GitLab job runs in one shell, so an `export` on one line is still set
+ * on the next — which is exactly what a GitHub Actions `run:` step cannot do,
+ * and why the same setup is an action there.
+ *
+ * The role ARN is a plain `$AWS_PLAN_ROLE_ARN`, because a GitLab CI/CD
+ * variable is already in the job's environment; there is no `${{ vars.X }}`
+ * expression to interpolate at generation time.
+ */
+const GITLAB_TOKEN_FILE = "/tmp/chant-web-identity-token";
+
+function assumeRoleOnGitlab(roleVariable: string): ScheduledOpSpec["setup"] {
+  return [
+    {
+      run:
+        `echo "$CHANT_ID_TOKEN" > ${GITLAB_TOKEN_FILE} && ` +
+        `export AWS_ROLE_ARN="$${roleVariable}" ` +
+        `AWS_WEB_IDENTITY_TOKEN_FILE=${GITLAB_TOKEN_FILE} ` +
+        `AWS_REGION=${AWS_REGION}`,
+    },
+  ];
+}
+
+const GITLAB_PLAN_SPEC: ScheduledOpSpec = {
+  name: "app-plan",
+  trigger: { kind: "pull_request", branches: ["main"] },
+  findingMode: "comment",
+  setup: assumeRoleOnGitlab("AWS_PLAN_ROLE_ARN"),
+  permissions: { "id-token": "write" },
+};
+
+const GITLAB_APPLY_SPEC: ScheduledOpSpec = {
+  name: "app-apply",
+  trigger: { kind: "push", branches: ["main"] },
+  setup: assumeRoleOnGitlab("AWS_APPLY_ROLE_ARN"),
+  permissions: { "id-token": "write" },
+  environment: { name: APPLY_ENVIRONMENT },
+};
+
+/**
+ * The GitLab generation is one document, not two: a GitHub trigger is
+ * workflow-scoped, so each Op needs its own file, while a GitLab trigger is
+ * job-scoped and both jobs live in one `.gitlab-ci.yml`.
+ */
+async function planOnPrGitlabPipeline(): Promise<string> {
+  const result = await generateOpsPipeline(
+    [GITLAB_PLAN_SPEC, GITLAB_APPLY_SPEC],
+    "gitlab",
+    { beforeScript: [INSTALL_TERRAFORM] },
+    planOnPrDir,
+  );
+  expect(result.error).toBeUndefined();
+  expect(result.success).toBe(true);
+  expect(result.files, "one document, both jobs").toHaveLength(1);
+  return result.files![0].yaml;
+}
+
+/** One GitLab job, as much of it as this suite reads back. */
+interface GitlabJob {
+  stage: string;
+  image: string;
+  resource_group: string;
+  rules: Array<{ if: string }>;
+  script: string[];
+  id_tokens?: Record<string, { aud: string }>;
+  variables?: Record<string, string>;
+  environment?: Record<string, string>;
+  artifacts?: { when: string; paths: string[]; expire_in: string };
+}
+
+function gitlabJobs(yaml: string): Record<string, GitlabJob> {
+  return parseYAML(yaml) as unknown as Record<string, GitlabJob>;
+}
+
 async function planOnPrWorkflows(): Promise<{ plan: string; apply: string }> {
   const result = await generateOpsPipeline(
     [PLAN_SPEC, APPLY_SPEC],
@@ -559,6 +642,131 @@ describe("plan-on-pr generates the pull_request plan and push apply pair (#2221)
     const result = await build(join(planOnPrDir, "src"), [terraformSerializer]);
     const applyOp = result.entities.get("app-apply") as unknown as { props: OpConfig };
     expect(applyOp.props.phases.map((p) => p.name)).toContain("Gate");
+  });
+
+  // ── The same pair on GitLab (#2256) ────────────────────────────────────
+
+  it("plans on a merge request and applies on a push, both in one document", async () => {
+    const jobs = gitlabJobs(await planOnPrGitlabPipeline());
+    // The branch filter maps onto the branch the merge request would merge
+    // INTO, which is what github's `on.pull_request.branches` filters on too.
+    expect(jobs["app-plan"].rules).toEqual([
+      {
+        if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main"',
+      },
+    ]);
+    expect(jobs["app-apply"].rules).toEqual([
+      { if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"' },
+    ]);
+    // One run at a time per Op, which on the apply is also the state lock.
+    expect(jobs["app-plan"].resource_group).toBe("app-plan");
+    expect(jobs["app-apply"].resource_group).toBe("app-apply");
+  });
+
+  it("posts the plan as a merge-request note, and refuses the mode where there is no merge request", async () => {
+    const result = await generateOpsPipeline(
+      [GITLAB_PLAN_SPEC, GITLAB_APPLY_SPEC],
+      "gitlab",
+      {},
+      planOnPrDir,
+    );
+    expect(result.jobs?.[0]).toEqual({
+      jobName: "app-plan",
+      op: "app-plan",
+      trigger: { kind: "pull_request", branches: ["main"] },
+      findingMode: "comment",
+    });
+    // The Op is the same one github runs: one `reconcilePr` step in `comment`
+    // mode, which writes a merge-request note when the run is a
+    // merge_request_event pipeline. Nothing about the Op is forge-specific —
+    // the trigger is.
+    const built = await build(join(planOnPrDir, "src"), [terraformSerializer]);
+    const planOp = built.entities.get("app-plan") as unknown as { props: OpConfig };
+    const step = planOp.props.phases.find((p) => p.name === "Report")?.steps[0] as ActivityStep;
+    expect(step.fn).toBe("reconcilePr");
+    expect(step.args?.mode).toBe("comment");
+    // And the mode is still tied to the trigger, on GitLab as on GitHub: a
+    // push pipeline has no merge request to post on.
+    await expect(
+      generateOpsPipeline(
+        [{ ...GITLAB_APPLY_SPEC, findingMode: "comment" }],
+        "gitlab",
+        {},
+        planOnPrDir,
+      ),
+    ).rejects.toThrow(/findingMode "comment".*trigger is "push"/s);
+  });
+
+  it("mints the OIDC token through id_tokens, and stores no static key", async () => {
+    const yaml = await planOnPrGitlabPipeline();
+    const jobs = gitlabJobs(yaml);
+    for (const [op, roleVariable] of [
+      ["app-plan", "AWS_PLAN_ROLE_ARN"],
+      ["app-apply", "AWS_APPLY_ROLE_ARN"],
+    ] as const) {
+      // GitLab's own OIDC surface, which is what the spec's `id-token: write`
+      // becomes here — there is no `permissions:` block to put it in.
+      expect(jobs[op].id_tokens).toEqual({ CHANT_ID_TOKEN: { aud: "$CI_SERVER_URL" } });
+      // Setup first, then the terraform install, then the Op.
+      expect(jobs[op].script[0]).toContain(`AWS_ROLE_ARN="$${roleVariable}"`);
+      expect(jobs[op].script[0]).toContain(GITLAB_TOKEN_FILE);
+      expect(jobs[op].script[1]).toContain("/tmp/terraform.zip");
+      expect(jobs[op].script[2]).toContain(`chant run ${op}`);
+    }
+    // The credentials are the ones the provider's own SDK exchanged the token
+    // for; nothing durable is stored on the project.
+    expect(yaml).not.toContain("AWS_ACCESS_KEY_ID");
+    expect(yaml).not.toContain("AWS_SECRET_ACCESS_KEY");
+  });
+
+  it("has no permissions: block at all, and says where the note's write access comes from", async () => {
+    const yaml = await planOnPrGitlabPipeline();
+    // GitLab has no per-job token-scope mapping, so the whole github
+    // permission surface is absent rather than approximated. What the comment
+    // mode spends is a project CI/CD variable, which the header names.
+    expect(parseYAML(yaml)).not.toHaveProperty("permissions");
+    expect(yaml).not.toContain("pull-requests:");
+    expect(yaml).toContain("GITLAB_TOKEN");
+    // And a scope that has no GitLab meaning is refused rather than dropped.
+    await expect(
+      generateOpsPipeline(
+        [{ ...GITLAB_PLAN_SPEC, permissions: { "id-token": "write", issues: "write" } }],
+        "gitlab",
+        {},
+        planOnPrDir,
+      ),
+    ).rejects.toThrow(/no per-job token-scope mapping/);
+  });
+
+  it("keeps a gated apply green, with the pending gate in the log and in an artifact", async () => {
+    const jobs = gitlabJobs(await planOnPrGitlabPipeline());
+    const apply = jobs["app-apply"];
+    // The same one mapped outcome github's push job gets. No `--json`: the
+    // human render of the gate is the job log, which is one of GitLab's two
+    // surfaces for it.
+    expect(apply.script.at(-1)).toBe("chant run app-apply --gated-exit 0");
+    // The other surface. Core writes the pending block to whatever
+    // CHANT_GATE_SUMMARY names, and the job publishes that path.
+    expect(apply.variables?.CHANT_GATE_SUMMARY).toBe("chant-gate-app-apply.md");
+    expect(apply.artifacts?.paths).toEqual(["chant-gate-app-apply.md"]);
+    expect(apply.artifacts?.when).toBe("always");
+    // The plan half is not gated: nobody is waiting on a merge for it.
+    expect(jobs["app-plan"].script.at(-1)).toBe("chant run app-plan");
+    expect(jobs["app-plan"].artifacts).toBeUndefined();
+  });
+
+  it("puts the apply behind a GitLab environment too, and the plan behind none (#2257)", async () => {
+    const jobs = gitlabJobs(await planOnPrGitlabPipeline());
+    expect(jobs["app-apply"].environment).toEqual({ name: APPLY_ENVIRONMENT });
+    expect(jobs["app-plan"].environment).toBeUndefined();
+  });
+
+  it("refuses the github marketplace action rather than dropping it", async () => {
+    // The github specs' `uses:` setup step has no GitLab shape at all, which
+    // is why this example carries a second setup list rather than one.
+    await expect(
+      generateOpsPipeline([PLAN_SPEC], "gitlab", {}, planOnPrDir),
+    ).rejects.toThrow(/is `uses: "aws-actions\/configure-aws-credentials@v6"`/);
   });
 
   it("applies only the plan its own Plan step saved", async () => {

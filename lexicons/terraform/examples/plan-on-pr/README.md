@@ -127,10 +127,14 @@ strictly better: nothing durable is stored, a leaked log line expires within
 the hour, and the role's trust policy names the repository and ref that may
 assume it, so an unrelated repository holding the same secret gets nothing.
 
-Off GitHub the mode is refused rather than approximated: `reconcilePr` shells
-to `gh` against the GitHub API and reads the GitHub Actions event payload, and
-chant carries no GitLab or Forgejo client that would post the equivalent note.
-The gitlab and forgejo Op generators say so by name at build time.
+On GitLab the same mode writes a merge-request note instead, by the same
+recipe: `reconcilePr` reads the merge request out of `CI_MERGE_REQUEST_IID`
+and the project out of `CI_MERGE_REQUEST_PROJECT_ID`, finds its own note by
+the marker and edits it (chant #2256). See "The same pair on GitLab" below.
+On Forgejo it is still refused rather than approximated: the activity's
+GitHub half shells to `gh`, and chant carries no Forgejo client that would
+post the equivalent comment, so the forgejo Op generator says so by name at
+build time.
 
 Only the human plan is ever posted, on either half. `terraform show -json`
 over a plan file carries resource attribute values, provider secrets among
@@ -211,3 +215,103 @@ scopes are the same `contents: read` and `id-token: write` they were before the
 environment was named. `app-apply-gate-notice` stays outside the environment
 too: it exists to say the chant gate is pending, and behind the same reviewer
 it would only be readable once somebody had already acted.
+
+## The same pair on GitLab
+
+The two specs generate for gitlab too, and into one document rather than two:
+a GitHub trigger is workflow-scoped, so each Op needs its own workflow file,
+while a GitLab trigger is job-scoped and both jobs live in one
+`.gitlab-ci.yml`. `$CI_PIPELINE_SOURCE` is what tells the events apart, and
+`rules:` is what selects a job on either:
+
+```yaml
+app-plan:
+  resource_group: app-plan
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main"'
+
+app-apply:
+  resource_group: app-apply
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"'
+```
+
+`$CI_MERGE_REQUEST_TARGET_BRANCH_NAME` is the branch the merge request would
+merge into, which is the same thing `on.pull_request.branches` filters on.
+`resource_group` is GitLab's per-Op concurrency: one run at a time, the next
+queued rather than cancelled, which on the apply is also the state lock.
+
+Two things about the specs differ, and both are properties of the forge:
+
+```ts
+const assumeRole = (roleVariable: string) => [
+  {
+    run:
+      `echo "$CHANT_ID_TOKEN" > /tmp/chant-web-identity-token && ` +
+      `export AWS_ROLE_ARN="$${roleVariable}" ` +
+      `AWS_WEB_IDENTITY_TOKEN_FILE=/tmp/chant-web-identity-token AWS_REGION=eu-west-1`,
+  },
+];
+```
+
+A GitLab job runs `script` lines and nothing else, so the marketplace action
+is a shell line here — and the generator refuses a `uses:` entry by name
+rather than dropping it, which is why this example carries a second setup list
+instead of sharing one. The line needs no AWS CLI: GitLab's `id_tokens:` puts
+the OIDC JWT in an environment variable, and the AWS SDK inside the terraform
+provider does the `AssumeRoleWithWebIdentity` exchange itself once it has
+`AWS_ROLE_ARN` and a file to read the token from. Every `script` line in a job
+runs in one shell, so an `export` on one line is still set on the next — which
+is exactly what a GitHub Actions `run:` step cannot do, and why the same setup
+is an action there.
+
+`permissions: { "id-token": "write" }` stays on the spec and becomes GitLab's
+own OIDC surface:
+
+```yaml
+id_tokens:
+  CHANT_ID_TOKEN:
+    aud: $CI_SERVER_URL
+```
+
+That is the only additive scope with a GitLab meaning. Every other one is
+refused by name, because there is no per-job token-scope mapping to put it in
+and a silently dropped scope would emit a job that reads as granted and runs
+with nothing. So the generated document has no `permissions:` block at all,
+and what the `comment` mode spends is a `GITLAB_TOKEN` CI/CD variable (masked,
+scope: `api`) that the generated header names. A project access token is
+enough. `CI_JOB_TOKEN` is accepted as a fallback and is enough only on an
+instance whose job-token allowlist reaches the notes API, which is not the
+default.
+
+The gated apply keeps its two halves. The push job runs `chant run app-apply
+--gated-exit 0`, so a pending approval is a green pipeline rather than a red
+one on every merge. GitLab has no step summary, so the pending block lands in
+the two surfaces it does have: the job's own log, which is where the run's
+human render already goes, and an artifact —
+
+```yaml
+variables:
+  CHANT_GATE_SUMMARY: chant-gate-app-apply.md
+artifacts:
+  when: always
+  paths:
+    - chant-gate-app-apply.md
+```
+
+— rather than in a follow-up job. GitHub's `app-apply-gate-notice` posts on
+the merged pull request through the forge API; doing that here would cost a
+token an apply Op that posts nothing should not have to carry.
+
+`environment: { name: "production" }` crosses over unchanged: GitLab has
+environments under the same key with the same two fields, and a protected
+environment's approval rule holds the job the way a required reviewer does.
+Where the rule is configured differs — Settings > CI/CD > Protected
+environments rather than Settings > Environments — and the generated header
+says so.
+
+Only the cron trigger has no in-file form on GitLab. A schedule is a
+project-level Pipeline Schedule that runs the project's existing
+`.gitlab-ci.yml`, so a cron Op becomes a job selected by
+`$CHANT_SCHEDULED_OP`, and the generated header says which schedule to create.
+Neither Op in this example has one.

@@ -1059,11 +1059,9 @@
   "tricolon/comma-series": 1
  },
  "docs/src/content/docs/tutorials/terraform-carve-out.mdx": {
-  "formatting/em-dash-density": 20,
+  "formatting/em-dash-density": 19,
   "claude/colon-reveal": 4,
   "claude-technical-vocabulary": 1,
-  "anaphora/repeated-opening": 1,
-  "claude/figurative-suffixes": 1,
   "tricolon/comma-series": 1
  },
  "docs/src/content/docs/whats-new.mdx": {
