@@ -5,6 +5,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
+import { params, setBuildParams } from "../../params";
 
 describe("lintCommand", () => {
   let testDir: string;
@@ -747,5 +748,92 @@ describe("lintCommand — a declared lexicon that cannot be resolved (#2222)", (
 
     expect(result.success).toBe(true);
     expect(result.diagnostics.some((d) => d.ruleId === LEXICON_RESOLUTION_RULE_ID)).toBe(false);
+  });
+});
+
+/**
+ * chant #2249 — `lintCommand` resolves the project's own declared
+ * `buildParams` when its caller supplied none, so an in-process lint agrees
+ * with `chant lint` on the command line.
+ *
+ * #2251 taught the CLI handler (../handlers/lint.ts) to resolve
+ * `--param`/`--params-file`/declared defaults and pass them down, because
+ * the OPS* checks import every `*.op.ts` file and an Op reading
+ * `params.<name>` evaluates that read at module load. Every other caller of
+ * `lintCommand` has no flags to read and passed nothing, so `params` stayed
+ * empty and OPS012 reported the activity contract violated for source that
+ * lints clean from a shell. That is how the root-examples gate
+ * (examples/root-examples-gate.test.ts) went red on github-pr-preview while
+ * `chant lint .` in the same directory exited 0, and it applied equally to
+ * `handleLint` over MCP and to test-utils' example harness.
+ *
+ * These drive the real `lintCommand` against a temp project holding one
+ * `*.op.ts` file (enough for the OPS* pass to run its parameter binding) and
+ * read the shared `params` object the binding populates.
+ */
+describe("lintCommand build-time parameters (#2249)", () => {
+  let testDir: string;
+
+  beforeEach(async () => {
+    testDir = join(tmpdir(), `chant-lint-params-${Date.now()}-${Math.random()}`);
+    await mkdir(testDir, { recursive: true });
+    // The OPS* pass binds parameters only when there is an Op file to import.
+    // A plain default export is enough: it is skipped as not-an-Op after the
+    // binding has already happened.
+    await writeFile(join(testDir, "noop.op.ts"), `export default { props: {} };\n`);
+  });
+
+  afterEach(async () => {
+    await rm(testDir, { recursive: true, force: true });
+    delete process.env.CHANT_TEST_ENV_2249;
+    setBuildParams({});
+  });
+
+  test("a declared default reaches params with no caller-supplied provenance", async () => {
+    await writeFile(
+      join(testDir, "chant.config.json"),
+      JSON.stringify({ buildParams: { env: { type: "string", default: "local" } } }),
+    );
+
+    await lintCommand({ path: testDir, format: "stylish" });
+
+    expect(params.env).toBe("local");
+  });
+
+  test("a declared env mapping reaches params the same way chant lint resolves it", async () => {
+    await writeFile(
+      join(testDir, "chant.config.json"),
+      JSON.stringify({
+        buildParams: { env: { type: "string", default: "local", env: "CHANT_TEST_ENV_2249" } },
+      }),
+    );
+    process.env.CHANT_TEST_ENV_2249 = "pr-42";
+
+    await lintCommand({ path: testDir, format: "stylish" });
+
+    expect(params.env).toBe("pr-42");
+  });
+
+  test("caller-supplied parameters win over the declared defaults", async () => {
+    await writeFile(
+      join(testDir, "chant.config.json"),
+      JSON.stringify({ buildParams: { env: { type: "string", default: "local" } } }),
+    );
+
+    await lintCommand({
+      path: testDir,
+      format: "stylish",
+      buildParams: [{ name: "env", value: "pr-42", source: "cli" }],
+    });
+
+    expect(params.env).toBe("pr-42");
+  });
+
+  test("a project declaring none binds an empty parameter set", async () => {
+    await writeFile(join(testDir, "chant.config.json"), JSON.stringify({}));
+
+    await lintCommand({ path: testDir, format: "stylish" });
+
+    expect(params).toEqual({});
   });
 });

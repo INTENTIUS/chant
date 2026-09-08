@@ -86,31 +86,6 @@ const ALLOWLIST: Record<string, AllowEntry> = {
       "`chant build .` reports discovering source and producing no output. There is nothing to " +
       "synthesize — `chant run --components` is the entry point.",
   },
-  "adopt-alb-services": {
-    kind: "expected-failure",
-    reason: "#2250 — ECR repositories without `ImageTagMutability: IMMUTABLE` fail the build.",
-  },
-  "components-aws-e2e": {
-    kind: "expected-failure",
-    reason: "#2250 — WAW042: the S3 bucket has no policy denying non-TLS requests.",
-  },
-  "gitlab-aws-alb-infra": {
-    kind: "expected-failure",
-    reason: "#2250 — ECR repositories without `ImageTagMutability: IMMUTABLE` fail the build.",
-  },
-  "local-cloud-trio": {
-    kind: "expected-failure",
-    reason: "#2250 — WAW042: the S3 bucket has no policy denying non-TLS requests.",
-  },
-  "testing-harness-aws": {
-    kind: "expected-failure",
-    reason: "#2250 — WAW042: the S3 bucket has no policy denying non-TLS requests.",
-  },
-  "local-op-quickstart": {
-    kind: "expected-failure",
-    reason:
-      "#2251 — EVL003 in `ops/hello.op.ts`: a computed key that is not a string or numeric literal.",
-  },
 };
 
 // ── Reading an example's own scripts ─────────────────────────────────

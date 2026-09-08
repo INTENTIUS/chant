@@ -20,7 +20,7 @@ import { rule } from "../../lint/declarative";
 import { watchDirectory, formatTimestamp, formatChangedFiles } from "../watch";
 import { formatError, formatInfo } from "../format";
 import { GENERATED_MARKER } from "../../discovery/files";
-import { buildParamValues } from "../../build-params";
+import { buildParamValues, resolveBuildParams } from "../../build-params";
 import { setBuildParams } from "../../params";
 import { isNoLexiconDetected } from "../../detectLexicon";
 
@@ -652,10 +652,31 @@ export async function lintCommand(options: LintOptions): Promise<LintResult> {
   // than a failure — `loadOkfBundle` already treats a missing directory as
   // an empty bundle.
   let knowledgeBundle: OkfBundle | undefined;
+  /**
+   * chant #2249 — this invocation's build-time parameters, falling back to
+   * the project's own declared `buildParams` when the caller passed none.
+   *
+   * `chant lint` resolves them in ./handlers/lint.ts (#2251) because only
+   * the CLI knows about `--param`/`--params-file`, and passes them here. An
+   * in-process caller has no such flags to read, and before this fell
+   * through to the empty parameter object: the OPS* checks import each
+   * `*.op.ts`, an Op taking a step argument from `params.<name>` read
+   * `undefined` at module load, and OPS012 reported the activity contract
+   * violated for source `chant lint` on the command line passes. That made
+   * `lintCommand` disagree with its own CLI (the root-examples gate,
+   * `handleLint` over MCP, test-utils' example harness). Resolving the
+   * declared defaults + `env` mappings here is what the command line
+   * already gets; anything a flag would override still arrives in
+   * `options.buildParams` and wins. Best-effort like `projectConfig`:
+   * `resolveBuildParams` collects failures per parameter without throwing,
+   * and the ones that did resolve are still better than none.
+   */
+  let buildParams = options.buildParams;
   try {
     const chantConfig = (await loadChantConfig(projectRoot)).config;
     projectConfig = chantConfig as LintProjectConfig;
     knowledgeBundle = await loadOkfBundle(resolveKnowledgeDir(chantConfig, projectRoot));
+    buildParams ??= resolveBuildParams(chantConfig.buildParams, { env: process.env }).provenance;
   } catch {
     projectConfig = undefined;
     knowledgeBundle = undefined;
@@ -708,14 +729,14 @@ export async function lintCommand(options: LintOptions): Promise<LintResult> {
   // structurally distinct check family (whole-project, post-discovery,
   // see ../../lint/component-checks.ts) but the same `chant lint` output and
   // the same error-severity gating as every COR/EVL diagnostic.
-  const componentResult = await runComponentCheckDiagnostics(infraPath, options.sandbox, options.buildParams);
+  const componentResult = await runComponentCheckDiagnostics(infraPath, options.sandbox, buildParams);
   diagnostics.push(...componentResult.diagnostics);
   suppressed.push(...componentResult.suppressed);
 
   // Run the OPS* Op-model post-synth checks (#2122) over every `*.op.ts`
   // file under the lint target — see runOpCheckDiagnostics's doc for why
   // this needs no lexicon or build to fire.
-  const opResult = await runOpCheckDiagnostics(infraPath, files, options.buildParams);
+  const opResult = await runOpCheckDiagnostics(infraPath, files, buildParams);
   diagnostics.push(...opResult.diagnostics);
   suppressed.push(...opResult.suppressed);
 
@@ -763,13 +784,13 @@ export async function lintCommand(options: LintOptions): Promise<LintResult> {
     // `*.component.ts` file on their behalf), but a fix applied to another
     // rule could still be in the same file a component was discovered from —
     // re-run for consistency with the AST re-lint above.
-    const postComponentResult = await runComponentCheckDiagnostics(infraPath, options.sandbox, options.buildParams);
+    const postComponentResult = await runComponentCheckDiagnostics(infraPath, options.sandbox, buildParams);
     diagnostics.push(...postComponentResult.diagnostics);
     suppressed.push(...postComponentResult.suppressed);
 
     // OPS* checks have no `.fix` either; re-run for the same consistency
     // reason as the COMP* re-run just above.
-    const postOpResult = await runOpCheckDiagnostics(infraPath, files, options.buildParams);
+    const postOpResult = await runOpCheckDiagnostics(infraPath, files, buildParams);
     diagnostics.push(...postOpResult.diagnostics);
     suppressed.push(...postOpResult.suppressed);
   }
