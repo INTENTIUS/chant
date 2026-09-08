@@ -20,6 +20,7 @@ export interface JsonSchemaProperty {
   items?: JsonSchemaProperty;
   oneOf?: JsonSchemaProperty[];
   anyOf?: JsonSchemaProperty[];
+  allOf?: JsonSchemaProperty[];
   properties?: Record<string, JsonSchemaProperty>;
   required?: string[];
   enum?: string[];
@@ -54,6 +55,9 @@ export interface PropertyConstraints {
 
 // --- Functions ---
 
+/** Shared empty cycle guard, so the common call allocates nothing. */
+const EMPTY_SEEN: ReadonlySet<string> = new Set<string>();
+
 /**
  * Get the primary type from a type field that can be string or string[].
  * Returns first non-"null" type, or "any" if empty.
@@ -67,6 +71,66 @@ export function primaryType(type: string | string[] | undefined): string {
   return type.length > 0 ? type[0] : "any";
 }
 
+/** The branch list a property carries under `oneOf` or `anyOf`, or undefined. */
+function branchesOf(prop: JsonSchemaProperty): JsonSchemaProperty[] | undefined {
+  if (prop.oneOf && prop.oneOf.length > 0) return prop.oneOf;
+  if (prop.anyOf && prop.anyOf.length > 0) return prop.anyOf;
+  return undefined;
+}
+
+/** A union of string literals, sorted, from a list of enum values. */
+function enumUnion(values: string[]): string {
+  return [...values].sort().map((v) => JSON.stringify(v)).join(" | ");
+}
+
+/**
+ * `T[]`, parenthesized when `T` is a union.
+ *
+ * `[]` binds tighter than `|`, so an unparenthesized `"a" | "b"[]` reads as
+ * `"a" | ("b"[])`: it accepts the bare string `"a"` and rejects `["a"]`.
+ */
+function arrayOf(itemType: string): string {
+  return itemType.includes(" | ") ? `(${itemType})[]` : `${itemType}[]`;
+}
+
+/**
+ * The branch of a `oneOf`/`anyOf` that narrows a string property to an enum.
+ *
+ * CloudFormation writes several string properties as a `type: "string"` beside
+ * a branch list whose first branch is the real enum and whose other branches
+ * are case-insensitive `pattern`s for the same values (`AWS::AmazonMQ::Broker`'s
+ * `EngineType`). The branch list relaxes the enum rather than summing shapes, so
+ * the enum is the useful type. Only strings qualify: anything else is a real sum.
+ */
+function relaxedEnumBranch(
+  prop: JsonSchemaProperty,
+  branches: JsonSchemaProperty[],
+): string[] | undefined {
+  if (prop.type !== undefined && primaryType(prop.type) !== "string") return undefined;
+  for (const b of branches) {
+    if (!b.enum || b.enum.length === 0) continue;
+    if (b.type !== undefined && primaryType(b.type) !== "string") return undefined;
+    if (!b.enum.every((v) => typeof v === "string")) return undefined;
+    return b.enum;
+  }
+  return undefined;
+}
+
+/**
+ * The single content-bearing branch of an `allOf`, when that is the whole shape.
+ *
+ * Every `allOf` in the CloudFormation Registry is one `$ref` beside an
+ * annotation object (`{ "default": "MCP" }`), which types exactly as the `$ref`
+ * alone. An `allOf` that intersects two real shapes has no single answer and is
+ * left to the caller.
+ */
+function soleTypedBranch(branches: JsonSchemaProperty[]): JsonSchemaProperty | undefined {
+  const typed = branches.filter(
+    (b) => b.$ref || b.type || b.properties || b.items || (b.enum && b.enum.length > 0) || branchesOf(b),
+  );
+  return typed.length === 1 ? typed[0] : undefined;
+}
+
 /**
  * Resolve a schema property to its TypeScript type string.
  *
@@ -75,28 +139,43 @@ export function primaryType(type: string | string[] | undefined): string {
  * @param resolveDefName - Callback to produce a TypeScript name from a definition.
  *   Receives (defName: string) and should return the TS type name for that definition.
  *   When null, $ref to object definitions resolves to "any".
+ * @param seen - Definition names already on the current resolution path, so a
+ *   list definition that reaches itself terminates instead of recursing forever.
  */
 export function resolvePropertyType(
   prop: JsonSchemaProperty | undefined,
   schema: JsonSchemaDocument,
   resolveDefName: ((defName: string) => string) | null,
+  seen: ReadonlySet<string> = EMPTY_SEEN,
 ): string {
   if (!prop) return "any";
 
-  // Handle oneOf/anyOf → any
-  if ((prop.oneOf && prop.oneOf.length > 0) || (prop.anyOf && prop.anyOf.length > 0)) {
-    return "any";
+  // `allOf` of one real branch and some annotations types as that branch.
+  if (prop.allOf && prop.allOf.length > 0 && !prop.$ref && !prop.type && !prop.enum) {
+    const sole = soleTypedBranch(prop.allOf);
+    if (sole) return resolvePropertyType(sole, schema, resolveDefName, seen);
+  }
+
+  const branches = branchesOf(prop);
+  if (branches) {
+    // A branch list beside a `type` relaxes that type; the enum branch, when
+    // there is one, is the narrowest reading of it.
+    const relaxed = relaxedEnumBranch(prop, branches);
+    if (relaxed) return enumUnion(relaxed);
+    // With nothing beside it the branch list is a sum of shapes, which this
+    // emitter does not express yet (chant #2278).
+    if (!prop.$ref && !prop.type && !(prop.enum && prop.enum.length > 0)) return "any";
+    // Otherwise fall through and read the sibling keywords.
   }
 
   // Handle $ref
   if (prop.$ref) {
-    return resolveRef(prop.$ref, schema, resolveDefName);
+    return resolveRef(prop.$ref, schema, resolveDefName, seen);
   }
 
   // Inline enum → union of string literals
   if (prop.enum && prop.enum.length > 0) {
-    const sorted = [...prop.enum].sort();
-    return sorted.map((v) => JSON.stringify(v)).join(" | ");
+    return enumUnion(prop.enum);
   }
 
   const pt = primaryType(prop.type);
@@ -111,8 +190,7 @@ export function resolvePropertyType(
       return "boolean";
     case "array":
       if (prop.items) {
-        const itemType = resolvePropertyType(prop.items, schema, resolveDefName);
-        return `${itemType}[]`;
+        return arrayOf(resolvePropertyType(prop.items, schema, resolveDefName, seen));
       }
       return "any[]";
     case "object":
@@ -134,6 +212,7 @@ export function resolveRef(
   ref: string,
   schema: JsonSchemaDocument,
   resolveDefName: ((defName: string) => string) | null,
+  seen: ReadonlySet<string> = EMPTY_SEEN,
 ): string {
   const prefix = "#/definitions/";
   if (!ref.startsWith(prefix)) return "any";
@@ -141,6 +220,8 @@ export function resolveRef(
   const defName = ref.slice(prefix.length);
   const def = schema.definitions?.[defName];
   if (!def) return "any";
+  // A list definition whose items reach it again would recurse without end.
+  if (seen.has(defName)) return "any";
 
   // String enum → named type (via resolveDefName) or string
   if (isEnumDefinition(def)) {
@@ -161,7 +242,24 @@ export function resolveRef(
       case "number": return "number";
       case "boolean": return "boolean";
       case "object": return "Record<string, any>";
+      // CloudFormation names its list shapes: `Tags` is a `$ref` to a `TagList`
+      // definition whose items are the `Tag` definition one hop away. Resolve
+      // through `items` the way the inline `array` case does. (chant #2205)
+      case "array": {
+        if (!def.items) return "any[]";
+        const nested = new Set(seen);
+        nested.add(defName);
+        return arrayOf(resolvePropertyType(def.items, schema, resolveDefName, nested));
+      }
     }
+  }
+
+  // An `allOf`/`oneOf`/`anyOf` definition types as its property form would.
+  if (def.allOf || def.oneOf || def.anyOf) {
+    const nested = new Set(seen);
+    nested.add(defName);
+    const viaBranches = resolvePropertyType(def, schema, resolveDefName, nested);
+    if (viaBranches !== "any") return viaBranches;
   }
 
   return "any";
