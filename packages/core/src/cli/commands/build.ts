@@ -174,8 +174,8 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
   // Resolve opt-in ownership marking from project config. chant #1117 — walks
   // up from the infra dir to the project root (`loadChantConfigUpward`), not
   // just the infra dir's immediate parent: a project whose stacks live two or
-  // more levels below `chant.config.ts` (loomster's `src/<stack>` layout)
-  // otherwise never finds the root config at all, and every declared
+  // more levels below `chant.config.ts` (a `src/<stack>` layout) otherwise
+  // never finds the root config at all, and every declared
   // `buildParams`/`ownership`/`lint.policies` setting silently falls back to
   // its default.
   const loaded = await loadChantConfigUpward(infraPath);
@@ -233,10 +233,10 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
   // BEFORE calling build() — a resolution failure (an unknown name, a
   // missing required value, a type/enum mismatch) is reported as a chant
   // build error naming the parameter, never a thrown error from inside user
-  // source (which is what loomster's hand-rolled `tierFromEnv()`-style
-  // validators did before migrating to this mechanism). Also logs a one-line
-  // count on success, or every resolved value (`[param] name = value
-  // (source)`) under --verbose (#1424).
+  // source (which is what a hand-rolled `tierFromEnv()`-style validator in a
+  // project's own `params.ts` does before migrating to this mechanism). Also
+  // logs a one-line count on success, or every resolved value (`[param] name =
+  // value (source)`) under --verbose (#1424).
   const paramsResolution = resolveCliBuildParams(config.buildParams, {
     cli: options.params,
     paramsFile: options.paramsFile,
@@ -248,8 +248,8 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
   }
 
   // chant #1117 — a project that declares buildParams but resolves NONE of
-  // them for this build is the exact shape that let loomster#162 live for two
-  // releases: the discovered config wasn't the one the project author
+  // them for this build is the exact shape that let a silent misresolution run
+  // for two releases: the discovered config wasn't the one the project author
   // expected (a stale --path, a workspace boundary that stopped the walk
   // short), or every declared parameter's `env:` var went unset, and either
   // way every `params.<name>` read silently falls back to `undefined` — with

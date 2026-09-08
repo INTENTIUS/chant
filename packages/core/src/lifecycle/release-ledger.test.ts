@@ -256,10 +256,10 @@ describe("release-ledger", () => {
     test("a Forgejo instance resolves through the same env contract to its own host", () => {
       const env = {
         GITHUB_RUN_ID: "42",
-        GITHUB_REPOSITORY: "intentius/loomster",
+        GITHUB_REPOSITORY: "acme/widgets",
         GITHUB_SERVER_URL: "https://forge.example.dev",
       };
-      expect(resolveRunId(undefined, env).runOrigin!.url).toBe("https://forge.example.dev/intentius/loomster/actions/runs/42");
+      expect(resolveRunId(undefined, env).runOrigin!.url).toBe("https://forge.example.dev/acme/widgets/actions/runs/42");
     });
 
     test("GitLab CI env records the project path and takes CI_PIPELINE_URL verbatim", () => {

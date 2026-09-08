@@ -307,11 +307,11 @@ export function agentCorePolicyDefinition(
 /**
  * A policy and its rollout stage, ready to spread into the generated class.
  *
- * The staged-rollout pattern in one call, which is the point (#1660, and the
- * loomster#171 showcase seam): shipping log-only and promoting to enforcing is
- * a one-token diff, not a hand-edited `EnforcementMode` string somewhere else
- * in the template. See ./enforcement.ts for why observe-before-enforce is the
- * default reading of a temporal policy rather than an optional nicety.
+ * The staged-rollout pattern in one call, which is the point (#1660): shipping
+ * log-only and promoting to enforcing is a one-token diff, not a hand-edited
+ * `EnforcementMode` string somewhere else in the template. See
+ * ./enforcement.ts for why observe-before-enforce is the default reading of a
+ * temporal policy rather than an optional nicety.
  */
 export function agentCoreStagedPolicy(
   name: string,

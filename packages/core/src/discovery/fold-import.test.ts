@@ -1009,7 +1009,7 @@ describe("tryFoldFile — build-time parameters (chant #1064)", () => {
     expect((entity as unknown as { props: { name: unknown } }).props.name).toBe("staging");
   });
 
-  test("a nullish-coalesced default still folds to a literal (loomster's `params.x ?? \"default\"` pattern)", async () => {
+  test("a nullish-coalesced default still folds to a literal (the `params.x ?? \"default\"` pattern)", async () => {
     const file = join(testDir, "main.ts");
     await writeFile(
       file,

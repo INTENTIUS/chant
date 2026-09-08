@@ -481,10 +481,10 @@ export async function loadChantConfig(dir: string): Promise<ResolvedConfig> {
  * lives at the project root, one or more levels up. Before this, callers
  * either read `startDir` alone or bolted on a single `dirname()` fallback —
  * fine for a one-level-deep stack, silently blind to anything deeper
- * (loomster's `src/<stack>` layout is exactly one level too deep: `buildParams`'
- * declared `env:` mappings never resolved, so `LOOM_TIER`/`LOOM_ENV` were inert
- * under every `npm run synth:*` for two releases — loomster#162). Uses the
- * same walk `chant lint`/`chant graph` already used ({@link findProjectConfig},
+ * (a `src/<stack>` layout is exactly one level too deep: `buildParams`' declared
+ * `env:` mappings never resolved, so the env vars they named were inert under
+ * every `npm run synth:*` for two releases). Uses the same walk `chant
+ * lint`/`chant graph` already used ({@link findProjectConfig},
  * shared with `./lint/config.ts`'s `findProjectRoot`) — one config-discovery
  * contract for the whole CLI.
  *

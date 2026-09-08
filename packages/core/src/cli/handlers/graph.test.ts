@@ -710,10 +710,10 @@ describe("runGraph", () => {
       });
     });
 
-    // The bug this branch fixes (#57): a multi-stack, per-component project
-    // (loomster/Floci) has no stack literally named after the environment, so
-    // the live graph must resolve each component's own `cfn-deploy` stack(s)
-    // and pass them through to `observeResources` for the per-stack union.
+    // The bug this branch fixes (#57): a multi-stack, per-component project has
+    // no stack literally named after the environment, so the live graph must
+    // resolve each component's own `cfn-deploy` stack(s) and pass them through
+    // to `observeResources` for the per-stack union.
     test("multi-stack component project: resolves each component's cfn-deploy stack(s) and passes them to observeResources", async () => {
       resolveLexMock.mockResolvedValue(["aws"]);
       loadPluginsMock.mockResolvedValue([

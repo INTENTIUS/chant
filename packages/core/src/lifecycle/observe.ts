@@ -71,10 +71,10 @@ function qualifyObservation(obs: NormalizedObservation, stackName: string): Norm
  * (`read-failed`, #1089) rather than dropped, so a failed read is visibly a
  * hole instead of a silent absence.
  *
- * `stacks` (#57) is for a multi-stack, per-component project (e.g. loomster)
- * where there is no single stack named after the environment — AWS's
- * single-stack convention (`lexicons/aws/src/plugin.ts`'s `describeResources`,
- * absent an explicit `stack`) queries a stack that simply doesn't exist there,
+ * `stacks` (#57) is for a multi-stack, per-component project, where there is no
+ * single stack named after the environment — AWS's single-stack convention
+ * (`lexicons/aws/src/plugin.ts`'s `describeResources`, absent an explicit
+ * `stack`) queries a stack that simply doesn't exist there,
  * so the single-call path always observes zero nodes. When `stacks` is
  * present and non-empty, each observing plugin's `describeResources` is
  * called once per stack and the returned observations are merged. A stack entry
@@ -197,10 +197,10 @@ export async function observeResources(
           // Qualify ids by stack ONLY for a scoped (`src`) stack (#1162): that
           // is the multi-region case where the SAME bare LogicalResourceId
           // (e.g. `vpc`) exists in every stack, so a bare union would collide.
-          // A bare-string stack (#57 loomster) has unique per-component ids and
-          // is asked the whole-project entity set, so it keeps the bare-id
-          // tri-state merge (present > not-observed > absent) that behold and
-          // other consumers read.
+          // A bare-string stack (#57) has unique per-component ids and is asked
+          // the whole-project entity set, so it keeps the bare-id tri-state
+          // merge (present > not-observed > absent) that behold and other
+          // consumers read.
           parts.push(stack.src ? qualifyObservation(norm, stack.name) : norm);
         }
         observed = mergeObservations(parts);

@@ -54,8 +54,8 @@ export interface RollbackPreviousSnapshotInput {
 }
 
 /** Roll an ECS service back to its previously recorded task definition — the
- * shape the `ecs-fargate` preset and the ALB/ECS pilot compose (e.g. loomster's
- * `loom-frontend`). */
+ * shape the `ecs-fargate` preset and the ALB/ECS pilot compose for an
+ * ALB-fronted frontend service. */
 export interface RollbackPreviousEcsInput {
   /** ECS service name. */
   service: string;
