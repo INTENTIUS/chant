@@ -244,7 +244,7 @@ export const { op: scheduledOp } = WorkflowAuditOp({
 
 `schedule` above is data on the Op: `{ cron, overlap: "skip" }`, and nothing about it names a runtime. Three readers render it.
 
-`generateOpsPipeline` (`@intentius/chant/op`) validates that every named Op exists, then delegates to the target lexicon's `generateOpPipeline` (gitlab, github, forgejo), which synthesizes one cron-triggered CI file per Op — `chant run <name>` in the job, with only the token/permission scope its finding-mode needs (read-only for `report`; scoped write for `issue`/`comment`/`pull-request`/`merge-request`). This is the Op counterpart to [generate mode](/chant/components/orchestration/#generate-mode)'s component pipeline.
+`generateOpsPipeline` (`@intentius/chant/op`) validates that every named Op exists, then delegates to the target lexicon's `generateOpPipeline` (gitlab, github, forgejo), which synthesizes one CI file per Op (on gitlab, one document holding a job apiece, since a trigger there is job-scoped) — `chant run <name>` in the job, with only the token/permission scope its finding-mode needs (read-only for `report`; scoped write for `issue`/`comment`/`pull-request`/`merge-request`). This is the Op counterpart to [generate mode](/chant/components/orchestration/#generate-mode)'s component pipeline.
 
 Finding-modes and the scopes they cost on GitHub:
 
@@ -255,7 +255,7 @@ Finding-modes and the scopes they cost on GitHub:
 | `comment` | `pull_request` | `contents: read`, `pull-requests: write` |
 | `pull-request` / `merge-request` | any | `contents: write`, `pull-requests: write` |
 
-Any non-`report` mode on a `pull_request` trigger also gets `pull-requests: write`, which is why `comment` costs nothing beyond what that trigger already grants. `comment` is the one mode that constrains the trigger as well as the scope: the github generator refuses it by name on a cron or push trigger, and the gitlab and forgejo generators refuse it outright, since the activity behind it shells to `gh` against the GitHub API and chant carries no client for the other two forges.
+Any non-`report` mode on a `pull_request` trigger also gets `pull-requests: write`, which is why `comment` costs nothing beyond what that trigger already grants. `comment` is the one mode that constrains the trigger as well as the scope: the github and gitlab generators both refuse it by name on a cron or push trigger, since a run triggered by neither a pull request nor a merge request has nothing to post on. On GitLab the finding is a merge-request note written through the REST API with a `GITLAB_TOKEN`, read out of the pipeline's own `CI_MERGE_REQUEST_IID` ([#2256](https://github.com/INTENTIUS/chant/issues/2256)); GitLab has no `permissions:` block at all, so the table's scopes are a GitHub column. The forgejo generator still refuses the mode outright, since the GitHub half of the activity shells to `gh` and chant carries no Forgejo client.
 
 [`chant operator`](/chant/guide/operator/) is the second. A timer and a ref lease around the local executor, ticking every discovered `ConvergeOp` from your own machine or from a CronJob.
 

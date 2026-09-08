@@ -229,9 +229,10 @@ env? }` / `{ run, env? }` steps emitted ahead of the `beforeScript` lines,
 finding mode already grants (chant #2242), and `environment`, a `{ name, url?
 }` naming the forge deployment environment the job runs in (chant #2257). A
 provider with no equivalent degrades by name at build time rather than
-dropping the option: gitlab refuses a `uses` entry and an additive
-`permissions` map, forgejo emits the steps and drops the permissions the way
-it already drops the mode's own.
+dropping the option: gitlab refuses a `uses` entry outright, and refuses every
+additive scope except `id-token: write`, which it maps onto GitLab's own
+`id_tokens:` declaration (chant #2256); forgejo emits the steps and drops the
+permissions the way it already drops the mode's own.
 
 `environment` is the one of the three where a silent drop would be worst,
 because the option exists so a human can hold a job. A provider without
