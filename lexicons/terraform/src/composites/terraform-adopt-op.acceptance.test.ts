@@ -5,11 +5,12 @@
  * `terraform-adopt-op.test.ts` next door proves the shape chant emits.
  * `choudoufu.test.ts` proves the activities' contract against a stubbed child
  * process. This proves the shape does the thing: create an unmarked VPC
- * directly against choudoufu's pinned emulator, so it is a live resource this
- * estate does not own at an identity this root's configuration declares; run
- * the Ledger step and expect exactly one adoptable match with the two marker
- * values on it; run the Adopt step and let it write them; re-plan and expect
- * the estate to own the same VPC, with nothing left adoptable.
+ * directly against choudoufu's pinned emulator at the cidr this root declares,
+ * so it is a live resource this estate does not own and the sweep can match to
+ * a declaration by content; run the Ledger step and expect exactly one
+ * adoptable match with the two marker values on it; run the Adopt step and let
+ * it write them; re-plan and expect the estate to own the same VPC, with
+ * nothing left adoptable.
  *
  * The Op's phases are not run through `runOpLocally` here, deliberately.
  * `TerraformAdoptOp` always emits a gate — adoption moves the estate's
@@ -20,38 +21,39 @@
  * hand-off, which is the part a real binary can falsify. `choudoufu.acceptance.test.ts` takes the same approach for the same
  * reason.
  *
- * ## Why this still skips on choudoufu v0.14.0
+ * ## What this suite needed, and when it arrived
  *
- * Not #894 any more. v0.14.0 (choudoufu PR 915) made `live-plan -json`
- * reachable on a configuration that names its own estate, and this suite was
- * run against it on 2026-09-07 for the first time. It got as far as the
- * document and stopped there: `ledger.adoptions` came back empty, because the
- * #788 document carries no adoptable-by-content section at all.
+ * It had never passed on any binary until choudoufu v0.15.0.
  *
  * The document's `unowned[]` is the resources found at an identity the
- * configuration itself declares. A `aws_cloudwatch_log_group` has one (its
- * name is in the block), so an unmarked live one comes back in `unowned[]`
- * with `adopt_tofu_estate`/`adopt_tofu_address` on it, which is exactly what
- * `../__fixtures__/live-plan.json` recorded and what `readAdoptionLedger`
- * reads. An `aws_vpc` has none: EC2 assigns the id, so the document reports
- * `omissions[].reason = "NEEDS_DISCOVERY"` and leaves `unowned[]` empty. The
- * VPC is matched instead by choudoufu's content matcher during the
- * estate-wide unclaimed sweep, and that match is printed only in the human
- * render's "Adoptable" section. `views.LivePlanDocument` has no field for it,
- * `-adoption-only` is refused alongside `-json` ("-adoption-only and -json
- * cannot be combined"), and `TOFU_LIVE_COLLECT_UNCLAIMED=1` on the `-json`
- * run makes no difference: the text render then prints "Adoptable: 1 live
- * resource matches a declared resource" and the document beside it still says
- * `"unowned": []`.
+ * configuration itself declares. An `aws_cloudwatch_log_group` has one (its
+ * name is in the block), so an unmarked live one comes back there with
+ * `adopt_tofu_estate`/`adopt_tofu_address` on it. An `aws_vpc` has none: EC2
+ * assigns the id, so the document reports `omissions[].reason =
+ * "NEEDS_DISCOVERY"` and `unowned[]` stays empty. The live VPC is matched
+ * instead by choudoufu's content matcher during the estate-wide sweep, and
+ * until v0.15.0 that match was printed only in the human `-adoption-only`
+ * render, which choudoufu refuses alongside `-json`. chant #2168 ran this
+ * block against v0.14.0 on 2026-09-07, reached the document and stopped, with
+ * `ledger.adoptions` empty, and filed
+ * [choudoufu #962](https://github.com/INTENTIUS/choudoufu/issues/962).
  *
- * So `choudoufuLivePlan` cannot produce a ledger for a provider-assigned
- * identity on any binary that exists today, and this suite is what would
- * prove it can. Filed upstream as
- * [choudoufu #962](https://github.com/INTENTIUS/choudoufu/issues/962); the
- * measurements are there and on chant #2168.
+ * choudoufu PR 963 answered it: the document now carries the match as an
+ * `adoptable[]` section, with `swept[]` beside it, and each row carries the
+ * two marker values, the arguments the match rested on, and the tagging
+ * command. `choudoufuLivePlan` puts `TOFU_LIVE_COLLECT_UNCLAIMED=1` on the
+ * `-json` run under `adoptionOnly` so the section is populated at all
+ * (choudoufu's `-json` run asks no sweep of its own), and
+ * `readAdoptionLedger` reads both sections. Which is what this suite exists
+ * to falsify, so the gate that named #962 is gone and only the three ordinary
+ * dependencies remain.
  *
- * The gate below names that, alongside the three ordinary dependencies: a
- * `choudoufu`, an `aws` CLI, and the emulator's endpoint.
+ * The fixture stays an `aws_vpc` deliberately. A log group would make the
+ * block pass off `unowned[]` alone and would stop it proving the
+ * content-matcher path, which is the only thing it exists to prove.
+ *
+ * The gate below is those three: a `choudoufu`, an `aws` CLI, and the
+ * emulator's endpoint.
  *
  * Gating copied from `./terraform-apply-op.acceptance.test.ts` (`onPath`),
  * which in turn copies `lexicons/k3s/src/serializer.acceptance.test.ts`'s
@@ -59,7 +61,7 @@
  * failing when the real dependency is absent.
  *
  * `../__fixtures__/ACCEPTANCE.md` records what this block has last passed
- * against, which is still nothing, and why the reason changed.
+ * against, and the whole history of why it could not before.
  */
 
 import { execSync } from "node:child_process";
@@ -78,18 +80,6 @@ function onPath(cmd: string): boolean {
   }
 }
 
-/**
- * `true` while `live-plan -json`'s document carries no adoptable-by-content
- * section, so a provider-assigned identity like an `aws_vpc` never reaches
- * `readAdoptionLedger`. Filed upstream as
- * [choudoufu #962](https://github.com/INTENTIUS/choudoufu/issues/962), with
- * the measurements against the v0.14.0 release binary on 2026-09-07; flip to
- * `false` when a choudoufu release puts the content matcher's "Adoptable"
- * rows in the document, either in `unowned[]` or in a sibling array.
- * choudoufu #894, which gated this block before, is fixed and gone.
- */
-const CHOUDOUFU_ADOPTABLE_NOT_IN_DOCUMENT = true;
-
 const emulatorEndpoint = process.env.CHOUDOUFU_EMULATOR_ENDPOINT;
 
 const skipReason = !onPath("choudoufu")
@@ -98,11 +88,7 @@ const skipReason = !onPath("choudoufu")
     ? "no aws CLI on PATH (the unmarked resource is created with it, and adopted through it)"
     : !emulatorEndpoint
       ? "CHOUDOUFU_EMULATOR_ENDPOINT is not set (bring up choudoufu's `just smoke` emulator stack and export it)"
-      : CHOUDOUFU_ADOPTABLE_NOT_IN_DOCUMENT
-        ? "choudoufu#962: live-plan -json's document carries no adoptable-by-content section, so the " +
-          "fixture's unmarked aws_vpc reaches omissions[NEEDS_DISCOVERY] and never unowned[]; " +
-          "measured on choudoufu v0.14.0"
-        : "";
+      : "";
 
 const FIXTURE = join(import.meta.dirname, "..", "__fixtures__", "live-adopt");
 const ESTATE = "chant-adopt-fixture";

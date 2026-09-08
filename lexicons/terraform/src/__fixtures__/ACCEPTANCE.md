@@ -16,12 +16,14 @@ and stays where it is.
 
 ## The binary and the emulator these rows name
 
-`choudoufu v0.14.0` below means the published release binary, not a source
-build: `gh release download v0.14.0 -R INTENTIUS/choudoufu -p
-'choudoufu_v0.14.0_darwin_arm64.tar.gz' -p SHA256SUMS`, verified against
-`SHA256SUMS` (`41c705d9b5fec47100c4f2fb9ab0694f0160b31a4e0661e877b4d9821bc464e3`),
-extracted and put first on PATH. `choudoufu version` prints `choudoufu v0.14.0
-(based on OpenTofu v1.13.0-dev)`.
+`choudoufu v0.15.0` below means the published release binary, not a source
+build: `gh release download v0.15.0 -R INTENTIUS/choudoufu -p
+'choudoufu_v0.15.0_darwin_arm64.tar.gz' -p SHA256SUMS`, verified against
+`SHA256SUMS` (`db29573cb7d8dfa7205eeaecc0e4bcf154e941b8bb8179fb93ad53ac5c959409`),
+extracted and put first on PATH. `choudoufu version` prints `choudoufu v0.15.0
+(based on OpenTofu v1.13.0-dev)`. A row that still names `v0.14.0` means the
+same recipe one tag back
+(`41c705d9b5fec47100c4f2fb9ab0694f0160b31a4e0661e877b4d9821bc464e3`).
 
 `the pinned floci emulator` means choudoufu's own smoke stack image,
 `ghcr.io/lex00/floci@sha256:a39185cc3971d0188663d61043cb038dff1260d8a975b1aa72c4e2bb1feac3cb`
@@ -47,10 +49,11 @@ resolvable).
 npx vitest run lexicons/terraform/src/composites/terraform-apply-op.acceptance.test.ts
 ```
 
-Last passed: 2026-09-07, `Terraform v1.15.8` on `darwin_arm64`, with
+Last passed: 2026-09-08, `Terraform v1.15.8` on `darwin_arm64`, with
 `hashicorp/null` resolved from the public registry for the fixture's `~> 3.2`
-constraint. No emulator is involved. Re-run by chant #2168 alongside the two
-live blocks in the same file, so the file's three rows all come from one run.
+constraint. No emulator is involved. Re-run by chant #2241 alongside every
+other block in this file, so all four rows come from one run; #2168 had run it
+on 2026-09-07 the same way.
 
 ### 2. `TerraformApplyOp applies a live root against choudoufu's emulator`
 
@@ -63,21 +66,22 @@ carrying choudoufu's own message rather than as thrown errors, then applies
 the same file once the world is restored.
 
 Gated on a `choudoufu` on PATH, on it reporting a release version at or above
-`MIN_CHOUDOUFU_VERSION` (0.14.0), and on `CHOUDOUFU_EMULATOR_ENDPOINT`. Not
-gated on choudoufu #894 and never was: the plan half here is the stock `plan
--out` path and reads no JSON document.
+`MIN_CHOUDOUFU_VERSION` (0.15.0 since chant #2241), and on
+`CHOUDOUFU_EMULATOR_ENDPOINT`. Not gated on choudoufu #894 and never was: the
+plan half here is the stock `plan -out` path and reads no JSON document.
 
 ```
 npx vitest run lexicons/terraform/src/composites/terraform-apply-op.acceptance.test.ts
 ```
 
-Last passed: 2026-09-07, choudoufu v0.14.0 with the pinned floci emulator up,
-recorded by chant #2168. That run is reproducible from this file: the binary
-is a release asset and the emulator is a pinned digest. Before it, the only
-record was PR #2157's prose ("the acceptance suite 3 passed against v0.13.0
-with the emulator up", merged at `81200b5d97c15920619de4b109c4393ec3223720`),
-which #2220 could not reproduce because no binary existed on the machine that
-wrote this file.
+Last passed: 2026-09-08, choudoufu v0.15.0 with the pinned floci emulator up,
+recorded by chant #2241; before that 2026-09-07 on v0.14.0, recorded by chant
+#2168. Both runs are reproducible from this file: the binary is a release
+asset and the emulator is a pinned digest. Before them, the only record was PR
+#2157's prose ("the acceptance suite 3 passed against v0.13.0 with the
+emulator up", merged at `81200b5d97c15920619de4b109c4393ec3223720`), which
+#2220 could not reproduce because no binary existed on the machine that wrote
+this file.
 
 ### 3. `choudoufu live-check and live-plan against the fixture`
 
@@ -94,12 +98,12 @@ PATH is gone.
 npx vitest run lexicons/terraform/src/op/activities/choudoufu.acceptance.test.ts
 ```
 
-Last passed: 2026-09-07, choudoufu v0.14.0 with the pinned floci emulator up,
-recorded by chant #2168. That is the first pass this block has ever had as a
-suite, and the first the `live-plan` test has ever had at all. It had been
-gated shut on choudoufu #894 since commit `65821d76` (2026-09-06 12:45Z);
-before that gate, PR #2135's body records a hand verification of the
-`live-check` half only.
+Last passed: 2026-09-08, choudoufu v0.15.0 with the pinned floci emulator up,
+recorded by chant #2241; before that 2026-09-07 on v0.14.0, recorded by chant
+#2168, which was the first pass this block ever had as a suite and the first
+the `live-plan` test ever had at all. It had been gated shut on choudoufu #894
+since commit `65821d76` (2026-09-06 12:45Z); before that gate, PR #2135's body
+records a hand verification of the `live-check` half only.
 
 Two chant-side changes in #2168 were what the pass needed, both consequences
 of what choudoufu PR 915 shipped. `-estate` is still refused beside a declared
@@ -112,51 +116,59 @@ first real run of this block found.
 ### 4. `TerraformAdoptOp adopts an unmarked live resource`
 
 `composites/terraform-adopt-op.acceptance.test.ts`. One test: create an
-unmarked VPC directly against the emulator so it is a live resource this
-estate does not own at an identity the `live-adopt/` root declares, run the
-Ledger step and expect exactly one adoptable match carrying the two marker
-values, run the Adopt step and let it write them, then re-plan and expect the
-estate to own the same VPC with nothing left adoptable.
+unmarked VPC directly against the emulator at the cidr the `live-adopt/` root
+declares, so it is a live resource this estate does not own and the sweep can
+match to a declaration by content, run the Ledger step and expect exactly one
+adoptable match carrying the two marker values, run the Adopt step and let it
+write them, then re-plan and expect the estate to own the same VPC with
+nothing left adoptable.
 
 Gated on a `choudoufu` on PATH, on an `aws` CLI on PATH (the unmarked
-resource is created and adopted through it), on
-`CHOUDOUFU_EMULATOR_ENDPOINT`, and then on
-`CHOUDOUFU_ADOPTABLE_NOT_IN_DOCUMENT`, which replaced the #894 gate and names
-choudoufu #962.
+resource is created and adopted through it), and on
+`CHOUDOUFU_EMULATOR_ENDPOINT`. Those three and nothing else since chant
+#2241: the `CHOUDOUFU_ADOPTABLE_NOT_IN_DOCUMENT` constant that named choudoufu
+#962, and the #894 gate before it, are both gone.
 
 ```
 npx vitest run lexicons/terraform/src/composites/terraform-adopt-op.acceptance.test.ts
 ```
 
-Last passed: never, and the reason changed on 2026-09-07 rather than going
-away. chant #2168 dropped the #894 gate and ran the block against choudoufu
-v0.14.0 and the pinned floci emulator. It reached the document and stopped
-there, with `ledger.adoptions` empty:
+Last passed: 2026-09-08, choudoufu v0.15.0 with the pinned floci emulator up,
+recorded by chant #2241. **That is the first time this block has ever passed,
+on any binary.**
+
+```
+ ✓ TerraformAdoptOp adopts an unmarked live resource > ledgers one adoptable
+   VPC, writes its two markers, and re-plans with it owned 18614ms
+```
+
+What it needed was choudoufu PR 963, released in v0.15.0. `live-plan -json`'s
+document now carries the estate-wide sweep's content matches as an
+`adoptable[]` section, with `swept[]` beside it, and each row carries the two
+marker values, the arguments the match rested on, and the tagging command that
+writes them. Before that the match existed only in the human `-adoption-only`
+render, which choudoufu refuses alongside `-json`, so an `aws_vpc` (EC2
+assigns the id, so no argument in the block determines it) reached
+`omissions[].reason = "NEEDS_DISCOVERY"` and never `unowned[]`, and
+`ledger.adoptions` came back empty:
 
 ```
 AssertionError: expected [] to have a length of 1 but got +0
  ❯ terraform-adopt-op.acceptance.test.ts:116:34
 ```
 
-The document's `unowned[]` is the resources found at an identity the
-configuration itself declares, and it works: an unmarked
-`aws_cloudwatch_log_group` in the same fixture shape comes back on the same
-binary with `adopt_tofu_estate` and `adopt_tofu_address` on it, which is the
-shape `../live-plan.json` recorded. An `aws_vpc` has no such identity, so the
-document reports `omissions[].reason = "NEEDS_DISCOVERY"` and leaves
-`unowned[]` empty. The VPC is matched by choudoufu's content matcher during
-the estate-wide unclaimed sweep instead, and that match is printed only in the
-human render's "Adoptable" section, for which `views.LivePlanDocument` has no
-field. `-adoption-only` is refused alongside `-json`, and
-`TOFU_LIVE_COLLECT_UNCLAIMED=1` on the `-json` run leaves `"unowned": []`
-while the text run beside it prints `Adoptable: 1 live resource matches a
-declared resource`. Filed upstream as choudoufu #962
-(https://github.com/INTENTIUS/choudoufu/issues/962), which carries the full
-measurement; chant #2168 has the same.
+That was chant #2168's measurement on 2026-09-07 against v0.14.0, filed
+upstream as choudoufu #962
+(https://github.com/INTENTIUS/choudoufu/issues/962), which carries the whole
+of it. Two chant-side changes in #2241 were what the pass needed on top of the
+release: `choudoufuLivePlan` puts `TOFU_LIVE_COLLECT_UNCLAIMED=1` on the
+`-json` run under `adoptionOnly`, because a `-json` run asks no estate-wide
+sweep of its own and the section is empty without one; and
+`readAdoptionLedger` reads both `unowned[]` and `adoptable[]` into one ledger.
 
 The fixture was deliberately left as an `aws_vpc`. A log group would make the
-block pass and would stop it proving the content-matcher path, which is the
-only thing it exists to prove.
+block pass off `unowned[]` alone and would stop it proving the content-matcher
+path, which is the only thing it exists to prove.
 
 ## Running everything that can run on a machine with no choudoufu
 
@@ -169,9 +181,31 @@ npx vitest run \
 
 With `terraform` on PATH and the registry reachable, that is 1 passed and 5
 skipped, and each skip names its own reason in the block title. With
-choudoufu v0.14.0, the `aws` CLI and the emulator all present, it is 5 passed
-and 1 skipped: block 4 is the skip. On 2026-09-07 that is exactly what it
-printed.
+choudoufu v0.15.0, the `aws` CLI and the emulator all present, it is 6 passed
+and 0 skipped: no block in this file skips any more. On 2026-09-08 that is
+exactly what it printed.
+
+```
+ Test Files  3 passed (3)
+      Tests  6 passed (6)
+```
+
+Bring the emulator up on a fixed port from choudoufu's own compose file rather
+than through `just smoke`, which runs one scenario and tears the stack down
+again:
+
+```
+cd <choudoufu checkout>
+FLOCI_IMAGE="$(cat live/floci-image)" FLOCI_PORT=4660 \
+OPENTOFU_IMAGE=unused SMOKE_WORK=/tmp \
+  docker compose -p chant-acceptance -f live/smoke/docker-compose.yml up -d floci
+export CHOUDOUFU_EMULATOR_ENDPOINT=http://localhost:4660
+```
+
+Each run wants a fresh emulator: the adopt block creates an unmarked VPC at a
+fixed cidr, and a second one left over from an earlier run is a contested
+address rather than an adoptable match, which is a real refusal and not a
+flake. `docker compose -p chant-acceptance ... down -v` between runs.
 
 ## Keeping this file honest
 

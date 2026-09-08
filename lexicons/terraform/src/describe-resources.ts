@@ -82,6 +82,7 @@
  * | `bound[]`, any other source | present, `owned` by derivation, record, or cache; noted as such, and no marker is surfaced because none was read |
  * | `unowned[]` with `adopt_*` | present, `unknown`; an adoptable match, carrying the exact two tag values #2105 would write |
  * | `unowned[]` without | present, `foreign`; a live resource is in the way at a declared identity and the plan will not touch it |
+ * | `adoptable[]` | present, `unknown`; the same adoptable verdict, for a live resource the sweep content-matched to a declaration that carries no identity of its own (choudoufu #962, chant #2241) |
  * | `omissions[]` | not-observed, `ABSENT` excepted (see below) |
  *
  * The ownership channel this declares is `./live-ownership.ts`'s
@@ -310,6 +311,27 @@ export interface LivePlanUnownedRow {
   adoptAddress?: string;
 }
 
+/**
+ * One `adoptable[]` entry: a live resource the estate-wide sweep matched to a
+ * declared instance by content rather than by reading a declared identity
+ * (choudoufu #962). The declaration names no identity at all, so this is the
+ * only row the document has for it and the paired omission says
+ * `NEEDS_DISCOVERY`.
+ *
+ * Same fields as {@link LivePlanUnownedRow} minus `heldBy`, which cannot
+ * apply: a row here carries no marker for any estate, or the sweep would have
+ * called it foreign instead of unclaimed.
+ */
+export interface LivePlanAdoptableRow {
+  addr: string;
+  type?: string;
+  identity?: string;
+  adoptEstate?: string;
+  adoptAddress?: string;
+  /** `matched[]`: the arguments the declaration and the live resource agreed on exactly. */
+  matched?: Array<{ attribute: string; value: string }>;
+}
+
 /** A `live-plan -json` document, indexed by declared instance address. */
 export interface LivePlanIndex {
   /** `estate`: the estate every section was computed against. */
@@ -317,6 +339,13 @@ export interface LivePlanIndex {
   bound: Map<string, LivePlanBoundRow>;
   omissions: Map<string, LivePlanOmissionRow>;
   unowned: Map<string, LivePlanUnownedRow>;
+  adoptable: Map<string, LivePlanAdoptableRow>;
+  /**
+   * `swept[]`: the resource types the estate-wide sweep listed in full. Empty
+   * on every observation read, which asks for no sweep, so an empty
+   * `adoptable` beside it says nothing was asked rather than nothing found.
+   */
+  swept: string[];
   /** Every address any section named, so a block can find its own instances. */
   addresses: string[];
   /** `diagnostics[]` summaries, for the observation's run-level notes. */
@@ -335,6 +364,8 @@ export function indexLivePlan(document: unknown): LivePlanIndex {
     bound: new Map(),
     omissions: new Map(),
     unowned: new Map(),
+    adoptable: new Map(),
+    swept: asArray(doc.swept).filter((t): t is string => typeof t === "string"),
     addresses: [],
     diagnostics: [],
   };
@@ -376,6 +407,24 @@ export function indexLivePlan(document: unknown): LivePlanIndex {
     });
   }
 
+  for (const entry of asArray(doc.adoptable)) {
+    const row = asRecord(entry);
+    const addr = asString(row.addr);
+    if (!addr) continue;
+    const matched = asArray(row.matched)
+      .map((m) => asRecord(m))
+      .filter((m) => asString(m.attribute))
+      .map((m) => ({ attribute: asString(m.attribute)!, value: asString(m.value) ?? "" }));
+    index.adoptable.set(addr, {
+      addr,
+      ...(asString(row.type) ? { type: asString(row.type) } : {}),
+      ...(asString(row.identity) ? { identity: asString(row.identity) } : {}),
+      ...(asString(row.adopt_tofu_estate) ? { adoptEstate: asString(row.adopt_tofu_estate) } : {}),
+      ...(asString(row.adopt_tofu_address) ? { adoptAddress: asString(row.adopt_tofu_address) } : {}),
+      ...(matched.length > 0 ? { matched } : {}),
+    });
+  }
+
   for (const entry of asArray(doc.diagnostics)) {
     const row = asRecord(entry);
     const summary = asString(row.summary);
@@ -383,7 +432,12 @@ export function indexLivePlan(document: unknown): LivePlanIndex {
   }
 
   index.addresses = [
-    ...new Set([...index.bound.keys(), ...index.omissions.keys(), ...index.unowned.keys()]),
+    ...new Set([
+      ...index.bound.keys(),
+      ...index.omissions.keys(),
+      ...index.unowned.keys(),
+      ...index.adoptable.keys(),
+    ]),
   ].sort();
   return index;
 }
@@ -447,7 +501,7 @@ function liveModuleMembers(address: string, index: LivePlanIndex): string[] {
 /** One instance's verdict, before a block aggregates its instances. */
 type InstanceVerdict =
   | { kind: "owned"; row: LivePlanBoundRow }
-  | { kind: "adoptable"; row: LivePlanUnownedRow }
+  | { kind: "adoptable"; row: LivePlanAdoptableRow }
   | { kind: "foreign"; row: LivePlanUnownedRow }
   | { kind: "absent" }
   | { kind: "unobserved"; reason: UnobservedReason; detail: string };
@@ -456,6 +510,11 @@ type InstanceVerdict =
  * Classify one instance address against the document, `unowned[]` first: a
  * declared instance that also carries a `UNOWNED` omission is answered by the
  * section that has the verdict, not by the one that has the apology.
+ * `adoptable[]` sits under `bound[]` for the same reason, one rung further
+ * down: a content match is the answer for an instance nothing else could
+ * answer for, and its paired omission is always `NEEDS_DISCOVERY`, which on
+ * its own would read as unsupported-kind and hide a real, actionable verdict
+ * (choudoufu #962, chant #2241).
  */
 function classifyLiveInstance(address: string, index: LivePlanIndex): InstanceVerdict {
   const unowned = index.unowned.get(address);
@@ -467,6 +526,11 @@ function classifyLiveInstance(address: string, index: LivePlanIndex): InstanceVe
 
   const bound = index.bound.get(address);
   if (bound) return { kind: "owned", row: bound };
+
+  const matched = index.adoptable.get(address);
+  if (matched && (matched.adoptEstate || matched.adoptAddress)) {
+    return { kind: "adoptable", row: matched };
+  }
 
   const omission = index.omissions.get(address);
   if (omission) {
@@ -544,6 +608,13 @@ function readLiveResource(
           ...(adoptable.row.type ? { resourceType: adoptable.row.type } : {}),
           ...(adoptable.row.adoptEstate ? { adoptTofuEstate: adoptable.row.adoptEstate } : {}),
           ...(adoptable.row.adoptAddress ? { adoptTofuAddress: adoptable.row.adoptAddress } : {}),
+          // Present only on a content match: the arguments the sweep compared,
+          // which is the whole evidence for a match nobody read an identity
+          // for, and the thing an operator checks before letting a tag write
+          // claim the resource.
+          ...(adoptable.row.matched?.length
+            ? { matchedOn: adoptable.row.matched.map((m) => `${m.attribute}=${m.value}`) }
+            : {}),
         },
       },
       queried,

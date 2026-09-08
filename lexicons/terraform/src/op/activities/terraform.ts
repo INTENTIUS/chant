@@ -81,11 +81,20 @@ export const DEFAULT_LIVE_PLAN_DOCUMENT_FILE = "chant.live-plan.json";
  * estate ([choudoufu #894](https://github.com/INTENTIUS/choudoufu/issues/894),
  * PR 915), which is the shape every chant live root has: before it,
  * {@link choudoufuLivePlan} could not produce the document for a real root at
- * all. {@link terraformApply} depends on the exit-3 refusal and
- * `describeResources()` and both document-reading Ops depend on the document,
- * so the floor is the release that shipped the later of the two.
+ * all. v0.15.0 brought the document's `adoptable` section and the `swept`
+ * list beside it
+ * ([choudoufu #962](https://github.com/INTENTIUS/choudoufu/issues/962), PR
+ * 963), which is the only place a content match reaches a machine: before it,
+ * a declared resource whose identity the provider assigns could never be
+ * adopted through the document at all, and `TerraformAdoptOp`'s own
+ * acceptance suite had never passed on any binary (#2241).
+ *
+ * {@link terraformApply} depends on the exit-3 refusal, `describeResources()`
+ * and both document-reading Ops depend on the document, and the adopt path
+ * depends on the `adoptable` section, so the floor is the release that
+ * shipped the last of the three.
  */
-export const MIN_CHOUDOUFU_VERSION = "0.14.0";
+export const MIN_CHOUDOUFU_VERSION = "0.15.0";
 
 /**
  * choudoufu's own refusal summary for `-out` on the `live-plan -estate`
@@ -185,6 +194,12 @@ export interface ChoudoufuLivePlanArgs extends TerraformRootArgs {
    * cost is that the second read asks the estate-wide sweep the account-bounded
    * question ("which live resources carry no ownership marker at all"), so it
    * is slower than the ordinary render, not faster.
+   *
+   * Since #2241 the flag also puts `TOFU_LIVE_COLLECT_UNCLAIMED=1` on the
+   * `-json` run, so the document carries the same sweep's answer as its
+   * `adoptable` and `swept` sections rather than only the render carrying it.
+   * That is what an adoption reads: the render's rows are prose, and the
+   * document's are addresses, marker values and a tagging command.
    */
   adoptionOnly?: boolean;
 }
@@ -276,11 +291,22 @@ export interface TerraformApplyResult {
   refusal?: string;
 }
 
-/** Counts projected out of `live-plan -json`'s `unowned` section. */
+/** Counts projected out of `live-plan -json`'s `unowned` and `adoptable` sections. */
 export interface LivePlanUnownedCounts {
-  /** Live resources at a declared identity carrying no ownership marker for this estate. */
+  /**
+   * `unowned[]`'s length: live resources sitting at an identity this
+   * configuration declares, carrying no ownership marker for this estate.
+   */
   unowned: number;
-  /** Of those, how many an exact content match makes adoptable. */
+  /**
+   * Every live resource this run could claim with a tag write, from both
+   * sections: the `unowned[]` rows choudoufu offered marker values for, plus
+   * the `adoptable[]` rows the estate-wide sweep content-matched to a
+   * declaration that carries no identity of its own (choudoufu #962). Those
+   * two sections are disjoint, so this is a sum and never a double count.
+   * `adoptable[]` is populated only on an adoption run (#2241), so an
+   * observation read's document contributes nothing to it.
+   */
   adoptable: number;
 }
 
@@ -306,7 +332,10 @@ export interface LivePlanUnownedCounts {
 export interface ChoudoufuLivePlanResult extends LivePlanUnownedCounts, PlanChangeCounts {
   /** `true` when `-detailed-exitcode` reported exit 2: the live plan proposes changes. */
   drift: boolean;
-  /** GitHub issue #788's JSON document (`bound`, `omissions`, `unowned`), captured whole. */
+  /**
+   * GitHub issue #788's JSON document (`bound`, `omissions`, `unowned`, and
+   * since choudoufu v0.15.0 `adoptable` and `swept`), captured whole.
+   */
   json: unknown;
   /**
    * The human-readable plan, from a second `live-plan` run without `-json`
@@ -334,6 +363,13 @@ export interface ChoudoufuLivePlanResult extends LivePlanUnownedCounts, PlanChan
   contested: AdoptionCandidate[];
   /** How many declared addresses are contested — the count `contested` above spells out. */
   ambiguous: number;
+  /**
+   * `swept[]`: the resource types the estate-wide sweep listed in full on this
+   * run. Empty on any run that did not ask for the sweep, which is every run
+   * without {@link ChoudoufuLivePlanArgs.adoptionOnly}, so an empty
+   * `adoptions` beside an empty `swept` means the question was never put.
+   */
+  swept: string[];
   /** Absolute path of the root module directory. */
   dir: string;
   /** Where the JSON document was written, relative to `dir`; {@link DEFAULT_LIVE_PLAN_DOCUMENT_FILE} unless overridden. */
@@ -549,14 +585,14 @@ export function choudoufuLiveCheckCommand(opts: { binary: string }): string {
  * (`adopt_tofu_estate`/`adopt_tofu_address` present).
  */
 export function countLivePlanUnowned(document: unknown): LivePlanUnownedCounts {
-  const unowned = (document as { unowned?: unknown } | null | undefined)?.unowned;
-  if (!Array.isArray(unowned)) return { unowned: 0, adoptable: 0 };
-  let adoptable = 0;
-  for (const entry of unowned) {
+  const doc = (document ?? {}) as { unowned?: unknown; adoptable?: unknown };
+  const unowned = Array.isArray(doc.unowned) ? doc.unowned : [];
+  const claimable = (entry: unknown): boolean => {
     const e = entry as { adopt_tofu_estate?: unknown; adopt_tofu_address?: unknown } | null | undefined;
-    if (e?.adopt_tofu_estate || e?.adopt_tofu_address) adoptable++;
-  }
-  return { unowned: unowned.length, adoptable };
+    return Boolean(e?.adopt_tofu_estate || e?.adopt_tofu_address);
+  };
+  const matched = Array.isArray(doc.adoptable) ? doc.adoptable.filter(claimable).length : 0;
+  return { unowned: unowned.length, adoptable: unowned.filter(claimable).length + matched };
 }
 
 /**
@@ -665,8 +701,8 @@ async function ensureChoudoufuVersion(binary: string, signal?: AbortSignal): Pro
     if (isOlderVersion(version, MIN_CHOUDOUFU_VERSION)) {
       throw new Error(
         `choudoufu ${version} is older than the minimum supported version v${MIN_CHOUDOUFU_VERSION} ` +
-          "(needed for live-plan -json, live-ls, live-check -json, and the approval artifact `plan -out` / " +
-          "`apply <planfile>` pair). Upgrade choudoufu.",
+          "(needed for live-plan -json, live-ls, live-check -json, the approval artifact `plan -out` / " +
+          "`apply <planfile>` pair, and the document's adoptable section). Upgrade choudoufu.",
       );
     }
   })();
@@ -1011,8 +1047,17 @@ export async function choudoufuLivePlan(
   let drift: boolean;
   let jsonStdout: string;
   const planCmd = choudoufuLivePlanCommand({ binary, ...estateFlag, json: true });
+  // The document's `adoptable` and `swept` sections are populated only on a
+  // run that asked the estate-wide sweep the account-bounded question, which
+  // `-adoption-only` implies and a `-json` run does not
+  // (`internal/command/live_collect_unclaimed.go`). `-adoption-only` cannot
+  // ride the `-json` invocation, so the env var is how a document-producing
+  // run asks for the same thing. Set only under `adoptionOnly`: the sweep is
+  // an account-wide list per admitted type, and an observation read has no use
+  // for it.
+  const planEnv = args.adoptionOnly ? { ...env, TOFU_LIVE_COLLECT_UNCLAIMED: "1" } : env;
   try {
-    const { stdout, stderr } = await run(planCmd, dir, env, signal);
+    const { stdout, stderr } = await run(planCmd, dir, planEnv, signal);
     report(stdout, stderr);
     drift = false;
     jsonStdout = stdout;
@@ -1069,9 +1114,12 @@ export async function choudoufuLivePlan(
 
   writeFileSync(join(dir, documentPath), document);
 
-  // The adoption commands only exist in the `-adoption-only` render, so a
-  // candidate off an ordinary run carries the two marker values and no
-  // command — which is the whole ownership contract either way.
+  // An `adoptable[]` row carries its own tagging command in the document
+  // (choudoufu #962). An `unowned[]` row does not, and the render is the only
+  // place one is printed for it, so the parse still runs on an adoption run
+  // and the map still feeds that half. A candidate off an ordinary run carries
+  // the two marker values and no command, which is the whole ownership
+  // contract either way.
   const ledger = readAdoptionLedger(json, args.adoptionOnly ? parseAdoptionCommands(text) : undefined);
   const ledgerText = renderAdoptionLedger(ledger, estate);
 
@@ -1084,6 +1132,7 @@ export async function choudoufuLivePlan(
     adoptions: ledger.adoptions,
     contested: ledger.contested,
     ambiguous: ledger.ambiguous,
+    swept: ledger.swept,
     dir,
     documentPath,
     estate,

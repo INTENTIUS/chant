@@ -66,6 +66,7 @@ export {
   renderAdoptionLedger,
   type AdoptionCandidate,
   type AdoptionLedger,
+  type AdoptionMatch,
 } from "./op/adoption";
 
 // The Init/Plan/Gate/Apply composite (#2086).

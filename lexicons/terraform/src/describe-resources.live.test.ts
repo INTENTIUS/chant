@@ -8,9 +8,10 @@
  *
  * The live side is real too. `src/__fixtures__/live-plan.json` and
  * `src/__fixtures__/live-ls.json` were recorded from that same configuration
- * by a choudoufu built from source, running against choudoufu's own pinned
- * floci emulator; `src/__fixtures__/live-estate/README.md` is the recording
- * log, including the two ways the recording could not be a chant live root.
+ * by the choudoufu v0.15.0 release binary, running against choudoufu's own
+ * pinned floci emulator; `src/__fixtures__/live-estate/README.md` is the
+ * recording log, including what the recording still cannot do as a chant live
+ * root would and what the v0.15.0 re-recording (#2241) changed.
  *
  * Nothing here runs choudoufu: the activities are injected, and the stock
  * `show` activity throws if the reader ever reaches for it.
@@ -102,6 +103,10 @@ function deps(overrides?: Partial<TerraformReadDeps>): TerraformReadDeps {
       adoptions: [],
       contested: [],
       ambiguous: 0,
+      // The sweep's type list (#2241), likewise a projection this reader never
+      // touches: `describeResources` asks for no sweep, so a real document off
+      // this path carries an empty one too.
+      swept: [],
       // Plan change counts (#2106), likewise unread here.
       adds: 0,
       changes: 0,
@@ -153,6 +158,20 @@ describe("the live fixture root is what buildRoots() calls live (#2103)", () => 
 
 describe("indexLivePlan (#2104)", () => {
   const index = indexLivePlan(PLAN);
+
+  it("indexes the adoptable section and the sweep's type list", () => {
+    expect([...index.adoptable.keys()]).toEqual(["aws_vpc.adoptable"]);
+    expect(index.adoptable.get("aws_vpc.adoptable")).toMatchObject({
+      type: "aws_vpc",
+      adoptEstate: ESTATE,
+      adoptAddress: "aws_vpc.adoptable",
+      matched: [{ attribute: "cidr_block", value: "10.88.0.0/16" }],
+    });
+    // The types the sweep listed in full. An empty `adoptable` is read against
+    // this: nothing found, or nothing asked.
+    expect(index.swept).toContain("aws_vpc");
+    expect(indexLivePlan({}).swept).toEqual([]);
+  });
 
   it("indexes every section of the recorded document by address", () => {
     expect(index.estate).toBe(ESTATE);
@@ -215,7 +234,7 @@ describe("terraform describeResources on a live root (#2104)", () => {
     const { resources } = normalizeObservation(await describeResources(await options(), deps()));
     expect(resources["estate/aws_vpc.main"]).toMatchObject({
       type: "Terraform::Resource",
-      physicalId: "vpc-c1733cf7",
+      physicalId: "vpc-dc8685c5",
       status: "bound",
       ownership: "owned",
       marker: { stack: ESTATE },
@@ -258,6 +277,23 @@ describe("terraform describeResources on a live root (#2104)", () => {
       adoptTofuAddress: "aws_cloudwatch_log_group.adoptable",
     });
     expect(adoptable.marker).toBeUndefined();
+  });
+
+  it("reports a content-matched VPC adoptable, with the cidr the sweep matched on", async () => {
+    // The declaration carries no identity at all (EC2 assigns a VPC id), so
+    // the document's omission for it says NEEDS_DISCOVERY, which on its own
+    // reads as unsupported-kind. The `adoptable[]` section is what turns that
+    // into a real verdict (choudoufu #962, chant #2241).
+    const { resources } = normalizeObservation(await describeResources(await options(), deps()));
+    const vpc = resources["estate/aws_vpc.adoptable"];
+    expect(vpc).toMatchObject({ status: "adoptable", ownership: "unknown" });
+    expect(vpc.physicalId).toMatch(/^vpc-/);
+    expect(vpc.attributes).toMatchObject({
+      adoptTofuEstate: ESTATE,
+      adoptTofuAddress: "aws_vpc.adoptable",
+      matchedOn: ["cidr_block=10.88.0.0/16"],
+    });
+    expect(vpc.marker).toBeUndefined();
   });
 
   it("reports an unowned resource at a declared identity foreign, naming who holds it", async () => {
