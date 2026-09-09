@@ -32,13 +32,21 @@ const execAsync = promisify(exec);
  *
  * `issue` needs no merge/pull request — its whole point is a cron trigger
  * that has none — so its forge split reads off a wider signal: any GitLab CI
- * job sets `CI_PROJECT_ID`, not only a merge-request one. See {@link
- * gitlabProjectContextFrom}. On GitHub and Forgejo alike it shells to `gh
- * issue create`, unchanged and — unlike both marker-based paths — not sticky:
- * every run opens a new issue. `gh issue create` was not exercised against a
- * real Forgejo instance (only the comments endpoints were, chant #2291), so
- * this mode's Forgejo behavior remains unverified; it is not build-time
- * refused, the same as it is not on GitHub, but nothing here changes it.
+ * job sets `CI_PROJECT_ID`, not only a merge-request one (see {@link
+ * gitlabProjectContextFrom}), and any GitHub Actions or Forgejo Actions job
+ * sets `GITHUB_REPOSITORY`. Both are sticky now (chant #2292, #2297): each
+ * finds and edits the OPEN issue it already owns by a hidden marker, the same
+ * recipe `comment` mode's note uses, and opens a new one only when it finds
+ * none. See {@link postOrUpdateGithubIssue} for the GitHub/GHES/Forgejo half
+ * — including why it does not use GitHub's Search API, and the decision that
+ * this mode never closes the issue itself. Only a run outside any known CI
+ * job — no `CI_PROJECT_ID`, no `GITHUB_REPOSITORY` — falls back to `gh issue
+ * create`'s own ambient repo detection, still marker-prefixed so a later CI
+ * run of the same Op finds and edits it instead of opening a second one. `gh
+ * api` was not exercised against a real Forgejo instance for this mode (only
+ * the `comment` mode's endpoints were, chant #2291) — the request shape
+ * mirrors that mode's exactly, but the search behavior itself is the one
+ * part a mock cannot vouch for.
  */
 export type ReconcileMode = "pull-request" | "issue" | "report" | "comment";
 
@@ -72,11 +80,12 @@ export interface ReconcilePrArgs {
   /** PR / issue title. Default derived from env. */
   title?: string;
   /**
-   * Hidden marker identifying this Op's comment on the pull request (comment
-   * mode). The activity writes it as the comment's first line and finds the
-   * comment again by it on the next run, so a re-run edits one comment instead
-   * of stacking a new one. Default: {@link commentMarker} keyed on `env`, so
-   * two Ops over two roots get two comments and each updates in place.
+   * Hidden marker identifying this Op's own comment or issue. The activity
+   * writes it as the first line and finds it again by it on the next run, so
+   * a re-run edits one comment/issue instead of stacking a new one. Default:
+   * {@link commentMarker} for `comment` mode, {@link issueMarker} for `issue`
+   * mode, both keyed on `env`, so two Ops over two roots get two comments (or
+   * two issues) and each updates in place.
    */
   marker?: string;
   /**
@@ -103,7 +112,7 @@ export interface ReconcileResult {
   branch?: string;
   /** Opened PR URL (pull-request mode). */
   prUrl?: string;
-  /** Opened issue URL (issue mode). */
+  /** Opened or edited issue URL (issue mode; sticky on every forge — #2292, #2297). */
   issueUrl?: string;
   /** The posted or updated PR comment / MR note URL (comment mode). */
   commentUrl?: string;
@@ -376,6 +385,121 @@ async function postOrUpdateComment(
   const { stdout } = await execAsync(
     `gh api --method POST ${shellQuote(listUrl)} -f ${shellQuote(field)} --jq .html_url`,
     { signal, env },
+  );
+  return stdout.trim();
+}
+
+// ── The GitHub/GHES/Forgejo sticky issue (#2297) ────────────────────────────
+
+/**
+ * Minimal `gh` invocation shape {@link postOrUpdateGithubIssue} threads its
+ * calls through. `reconcilePr` wraps `execAsync` (carrying its own `signal`)
+ * to this shape; `lexiconUpgrade` passes its injectable `GhRunner` straight
+ * through, since the two already share the same `(cmd) => Promise<{ stdout,
+ * stderr }>` signature. One function, not two copies, because the recipe
+ * below — search, then PATCH or POST — is identical for both callers; only
+ * the issue's title/body and the marker that owns it differ.
+ */
+export type GhExec = (cmd: string) => Promise<{ stdout: string; stderr: string }>;
+
+/**
+ * Open `title`/`body` as one GitHub-shaped issue in `repo`, or edit the issue
+ * this caller already owns there (#2297) — `postOrUpdateComment`'s issue
+ * counterpart, and the GitHub/GHES/Forgejo sibling of GitLab's
+ * `postOrUpdateIssue` (#2292): find by marker, PATCH when found, POST when
+ * not, so a nightly finding carries one issue holding the current state
+ * instead of stacking a new one every run. Shared by `reconcilePr`'s own
+ * `issue` mode and `lexiconUpgrade`'s per-lexicon upgrade-status issue.
+ *
+ * Every call targets a full URL built from {@link githubApiBaseFrom}, the
+ * same as `postOrUpdateComment` (#2291) — so this reaches GitHub Enterprise
+ * Server the same way it reaches github.com.
+ *
+ * ## Why plain pagination instead of GitHub's Search API
+ *
+ * GitHub offers real server-side full-text search — `gh issue list --search`
+ * and `GET /search/issues?q=...` both use it, and chant #2297 (the issue that
+ * asked for this) names both as candidates. Neither is used here, for three
+ * reasons found while building this:
+ *
+ * 1. **Consistency.** GitHub's search index is documented as eventually
+ *    consistent: an issue this function just wrote is not guaranteed to be
+ *    findable by search immediately afterward. That is exactly the
+ *    read-after-write the sticky recipe depends on — a false "not found"
+ *    means a duplicate issue, which is the bug this activity exists to fix.
+ * 2. **The marker itself.** The hidden marker is deliberately punctuation-
+ *    heavy (`<!-- chant-reconcile-issue:app -->`) so it renders invisibly.
+ *    GitHub's search tokenizer is not documented to preserve that shape
+ *    through `in:body` matching, and a wrong query would either miss the
+ *    marker (a duplicate, the same failure mode as above) or over-match and
+ *    still need the same client-side `startswith` check this function
+ *    already does — at which point the search bought nothing but risk.
+ * 3. **Forgejo.** `gh issue list --search` and `/search/issues` are both
+ *    absent from Forgejo's API — checked against a live Forgejo instance's
+ *    own OpenAPI spec while building this: no `/search/issues`, no
+ *    `/repos/issues/search` path anywhere in it (Forgejo's own issues-list
+ *    endpoint does carry a real `q` search parameter, but that is a
+ *    different endpoint shape than GitHub's, which would mean forking this
+ *    function by forge — exactly what the `comment` path (#2291)
+ *    deliberately does not do).
+ *
+ * So this reuses the recipe `postOrUpdateComment` already proved for PR
+ * comments: list, `--paginate`, filter with `--jq` by an exact `startswith`
+ * prefix match, which is correct no matter how many pages it takes. The cost
+ * is real — a repository with many thousands of issues pays for every page
+ * on every run — and is the accepted trade-off here; narrowing further with
+ * GitHub's `creator` filter was considered and left alone, because the
+ * identity a `GH_TOKEN` posts as cannot be assumed reliably across a
+ * generated workflow and a hand-run one, and a wrong `creator` is a false
+ * negative — a duplicate — not just a slower search.
+ *
+ * ## The close decision (#2297)
+ *
+ * This never closes the issue, in either branch, matching both GitLab paths
+ * (#2256, #2292) — neither of which closes anything either. The search is
+ * scoped to `state=open` rather than `state=all`, which makes that decision
+ * concrete rather than implicit: a human closing the issue by hand, once the
+ * drift it named is actually fixed, is what tells the *next* run to open a
+ * fresh issue for a fresh finding instead of silently rewriting the closed
+ * one back open-in-substance-but-not-in-state. The alternative — searching
+ * `state=all` and reopening on write — would need this activity to guess
+ * when a finding is "resolved" with no reliable signal for that (an empty
+ * change set this run says nothing about whether the *last* finding was
+ * fixed or just not evaluated), and would turn a deliberate human "done" into
+ * something the bot silently reverses on its next run.
+ *
+ * `.pull_request == null` is filtered out of the search because GitHub's
+ * issues-list endpoint also returns pull requests, which this function must
+ * never mistake for an issue it owns.
+ */
+export async function postOrUpdateGithubIssue(
+  repo: string,
+  marker: string,
+  title: string,
+  body: string,
+  exec: GhExec,
+): Promise<string> {
+  const base = githubApiBaseFrom(process.env);
+  const listUrl = `${base}/repos/${repo}/issues?state=open`;
+  const jq =
+    'map(select((.pull_request == null) and ((.body // "") | startswith(' +
+    `"${marker}"))))` +
+    " | .[0].number // empty";
+  const { stdout: found } = await exec(`gh api ${shellQuote(listUrl)} --paginate --jq ${shellQuote(jq)}`);
+  // `--paginate` prints one `--jq` result per page, same as postOrUpdateComment.
+  const existing = found.split("\n").map((l) => l.trim()).find((l) => /^\d+$/.test(l));
+  const titleField = shellQuote(`title=${title}`);
+  const bodyField = shellQuote(`body=${marker}\n\n${body}`);
+
+  if (existing) {
+    const { stdout } = await exec(
+      `gh api --method PATCH ${shellQuote(`${base}/repos/${repo}/issues/${existing}`)} ` +
+        `-f ${titleField} -f ${bodyField} --jq .html_url`,
+    );
+    return stdout.trim();
+  }
+  const { stdout } = await exec(
+    `gh api --method POST ${shellQuote(`${base}/repos/${repo}/issues`)} -f ${titleField} -f ${bodyField} --jq .html_url`,
   );
   return stdout.trim();
 }
@@ -776,10 +900,14 @@ async function derivePlanEntries(
  * Reconcile activity: turn regenerated TypeScript into a reviewable artifact.
  *
  * - `report` — return the summary only; no git, no network.
- * - `issue` — open a GitHub issue describing the drift (no code change), or,
- *   on a GitLab CI job (any trigger — the point of this mode is a cron run
- *   that has no merge request), open or update one GitLab issue by the
- *   marker/edit-in-place recipe `comment` uses for a note (#2292).
+ * - `issue` — open or edit one issue describing the drift (no code change).
+ *   On a GitHub Actions or Forgejo Actions job, or GitHub Enterprise Server,
+ *   the OPEN issue already carrying this Op's hidden marker is edited in
+ *   place and a new one opened only when there is none (#2297). On a GitLab
+ *   CI job (any trigger — the point of this mode is a cron run that has no
+ *   merge request), the same recipe against one GitLab issue (#2292). Neither
+ *   branch ever closes the issue itself — see {@link postOrUpdateGithubIssue}
+ *   for that decision and why.
  * - `comment` — post the body as one comment on the pull request that
  *   triggered the run, editing that same comment on every re-run rather than
  *   stacking a new one (#2231) — on GitHub and on Forgejo alike (#2291), the
@@ -814,20 +942,38 @@ export async function reconcilePr(args: ReconcilePrArgs, signal?: AbortSignal): 
   }
 
   if (mode === "issue") {
+    const marker = args.marker ?? issueMarker(args.env);
+
     // GitLab first, because its check is the narrow one: `CI_PROJECT_ID` is
     // set on every GitLab CI job, and nothing outside GitLab CI sets it
     // (#2292) — see `gitlabProjectContextFrom`.
     const project = gitlabProjectContextFrom(process.env);
     if (project) {
-      const marker = args.marker ?? issueMarker(args.env);
       const token = gitlabNoteTokenFrom(process.env);
       if (!token) throw new Error(noGitlabIssueTokenMessage(project.project));
       const issueUrl = await postOrUpdateIssue(project, token, marker, title, summary, signal);
       return { mode, summary, entries, issueUrl };
     }
 
+    // GitHub, GHES, or Forgejo next: any job that ran under GitHub Actions or
+    // Forgejo Actions carries GITHUB_REPOSITORY (#2297) — see
+    // postOrUpdateGithubIssue's own doc comment for the search mechanism and
+    // the close decision.
+    const repo = process.env.GITHUB_REPOSITORY;
+    if (repo) {
+      const issueUrl = await postOrUpdateGithubIssue(repo, marker, title, summary, (cmd) =>
+        execAsync(cmd, { signal }),
+      );
+      return { mode, summary, entries, issueUrl };
+    }
+
+    // Outside any known CI job (a local or manual invocation): fall back to
+    // gh's own ambient repo detection, unchanged from before #2297. The
+    // marker is still written here — it costs nothing, and means a later CI
+    // run of the same Op finds and edits this issue instead of opening a
+    // second one.
     const { stdout } = await execAsync(
-      `gh issue create --title ${shellQuote(title)} --body ${shellQuote(summary)}`,
+      `gh issue create --title ${shellQuote(title)} --body ${shellQuote(`${marker}\n\n${summary}`)}`,
       { signal },
     );
     return { mode, summary, entries, issueUrl: stdout.trim() };

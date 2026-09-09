@@ -28,6 +28,7 @@ import { join } from "node:path";
 import type { UpgradeCheckResult, LexiconId } from "../../codegen/pinned-upgrade";
 import type { RollingUpgradeResult, RollingLexicon } from "../../codegen/rolling-upgrade";
 import { bumpForSeverity, bumpPackageJsonVersion } from "../../codegen/version-bump";
+import { postOrUpdateGithubIssue } from "./reconcile";
 
 export { bumpPackageJsonVersion };
 
@@ -94,7 +95,7 @@ export interface LexiconUpgradeResult {
   semverLabel: SemverLabel | null;
   /** URL of the opened/updated PR (pull-request mode). */
   prUrl?: string;
-  /** URL of the opened issue (issue mode). */
+  /** URL of the opened or edited issue (issue mode; sticky per lexicon, #2297). */
   issueUrl?: string;
   /** Full markdown summary, used as PR/issue body or printed in report mode. */
   summary: string;
@@ -284,6 +285,49 @@ function shellQuote(s: string): string {
 
 const defaultGh: GhRunner = async (cmd) => execAsync(cmd);
 
+/**
+ * The hidden marker that makes this lexicon's upgrade-status issue findable
+ * across re-runs (#2297): written as the issue body's first line, matched by
+ * `startswith` — the same recipe reconcile.ts's `issueMarker` names for a
+ * reconcile finding, kept as its own function because the two activities own
+ * different issues. Keyed on `lexicon`, not on the validation outcome: a
+ * lexicon has one upgrade-status issue that flips between "validation
+ * failed" and "upgrade ready" as reality changes, rather than a second issue
+ * for the other outcome. `lexicon` is a closed set of known identifiers
+ * (see `SupportedLexicon`), so unlike `issueMarker` this needs no slugifying.
+ */
+export function lexiconUpgradeIssueMarker(lexicon: SupportedLexicon): string {
+  return `<!-- chant-lexicon-upgrade:${lexicon} -->`;
+}
+
+/**
+ * Open or update this lexicon's upgrade-status issue (#2297). On a GitHub
+ * Actions or Forgejo Actions job (`GITHUB_REPOSITORY` set) this is
+ * `postOrUpdateGithubIssue`'s sticky recipe from reconcile.ts: find the OPEN
+ * issue already carrying this lexicon's marker, edit it, open one only when
+ * there is none — see that function's own doc comment for the search
+ * mechanism and the close decision (never closed here either). Outside any
+ * known CI job, falls back to `gh`'s own ambient `gh issue create`, still
+ * marker-prefixed so a later CI run finds and edits it instead of opening a
+ * second one.
+ */
+async function postLexiconIssue(
+  lexicon: SupportedLexicon,
+  title: string,
+  body: string,
+  gh: GhRunner,
+): Promise<string> {
+  const marker = lexiconUpgradeIssueMarker(lexicon);
+  const repo = process.env.GITHUB_REPOSITORY;
+  if (repo) {
+    return postOrUpdateGithubIssue(repo, marker, title, body, gh);
+  }
+  const { stdout } = await gh(
+    `gh issue create --title ${shellQuote(title)} --body ${shellQuote(`${marker}\n\n${body}`)}`,
+  );
+  return stdout.trim();
+}
+
 // ── PR idempotency helpers ────────────────────────────────────────────
 
 /**
@@ -383,6 +427,12 @@ async function getRealApplyBump(): Promise<ApplyBumpFn> {
  *   - Idempotent: if the open PR body matches the new summary, skip re-push.
  *   - Semver label: "minor" (additive) or "breaking" (changed/removed).
  *   - Validation failure falls back to issue mode.
+ *
+ * In issue mode (#2297): one OPEN issue per lexicon, found by a hidden
+ * marker and edited in place on every re-run — the same sticky recipe
+ * reconcile.ts's `issue` mode uses, via the shared `postOrUpdateGithubIssue`.
+ * Never closed by this activity; see that function's doc comment for the
+ * close decision, which applies here unchanged.
  *
  * Never auto-merges or auto-publishes.
  */
@@ -493,16 +543,14 @@ export async function lexiconUpgrade(args: LexiconUpgradeArgs): Promise<LexiconU
     const effectiveMode: LexiconUpgradeMode = mode === "pull-request" ? "issue" : mode;
     if (effectiveMode === "issue") {
       const title = `chore(${lexicon}): spec upgrade validation failed`;
-      const { stdout } = await gh(
-        `gh issue create --title ${shellQuote(title)} --body ${shellQuote(summary)}`,
-      );
+      const issueUrl = await postLexiconIssue(lexicon, title, summary, gh);
       return {
         lexicon,
         mode,
         hasUpgrade: true,
         deltaText,
         semverLabel,
-        issueUrl: stdout.trim(),
+        issueUrl,
         summary,
         validationOk: false,
       };
@@ -543,16 +591,14 @@ export async function lexiconUpgrade(args: LexiconUpgradeArgs): Promise<LexiconU
   }
 
   if (effectiveMode === "issue") {
-    const { stdout } = await gh(
-      `gh issue create --title ${shellQuote(title)} --body ${shellQuote(summary)}`,
-    );
+    const issueUrl = await postLexiconIssue(lexicon, title, summary, gh);
     return {
       lexicon,
       mode: effectiveMode,
       hasUpgrade: true,
       deltaText,
       semverLabel,
-      issueUrl: stdout.trim(),
+      issueUrl,
       summary,
       validationOk: true,
     };

@@ -13,6 +13,7 @@ import {
   githubApiBaseFrom,
   commentTokenFrom,
   noCommentTokenMessage,
+  postOrUpdateGithubIssue,
 } from "./reconcile";
 
 // ── The `gh` stub (chant #2291) ──────────────────────────────────────────────
@@ -762,6 +763,161 @@ describe("reconcilePr issue mode on GitLab opens/updates one issue (#2292)", () 
       await expect(reconcilePr({ env: "app", mode: "issue", body: "plan" })).rejects.toThrow(
         /mode "issue".*project 42.*GITLAB_TOKEN.*CI_JOB_TOKEN/s,
       );
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+});
+
+// ── The GitHub/GHES/Forgejo sticky issue (#2297) ────────────────────────────
+
+describe("reconcilePr issue mode on GitHub/GHES/Forgejo opens/updates one issue (#2297)", () => {
+  const repo = "acme/infra";
+
+  function stubGithubIssueEnv(apiUrl: string): void {
+    vi.stubEnv("GITHUB_REPOSITORY", repo);
+    vi.stubEnv("GITHUB_API_URL", apiUrl);
+    // Never the GitLab path or the comment/PR path.
+    vi.stubEnv("CI_PROJECT_ID", "");
+    vi.stubEnv("CI_MERGE_REQUEST_IID", "");
+    vi.stubEnv("GITHUB_REF", "");
+    vi.stubEnv("GITHUB_EVENT_PATH", "");
+  }
+
+  test("POSTs a new issue carrying the marker as the body's first line, at a full URL", async () => {
+    stubGithubIssueEnv("http://forgejo.example/api/v1");
+    ghReplies = [
+      { match: "--paginate", stdout: "" }, // no owned issue yet
+      { match: "--method POST", stdout: "http://forgejo.example/acme/infra/issues/9\n" },
+    ];
+    try {
+      const result = await reconcilePr({ env: "app", mode: "issue", body: "the plan" });
+      expect(result.issueUrl).toBe("http://forgejo.example/acme/infra/issues/9");
+
+      const [list, post] = ghCalls;
+      expect(list.cmd).toContain("http://forgejo.example/api/v1/repos/acme/infra/issues?state=open");
+      expect(list.cmd).toContain("--paginate");
+      expect(post.cmd).toContain("--method POST");
+      expect(post.cmd).toContain("http://forgejo.example/api/v1/repos/acme/infra/issues");
+      expect(post.cmd).toContain(`title=Reconcile app`);
+      expect(post.cmd).toContain("<!-- chant-reconcile-issue:app -->\n\nthe plan");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  test("a re-run PATCHes the issue it already owns instead of opening a second one", async () => {
+    stubGithubIssueEnv("http://forgejo.example/api/v1");
+    ghReplies = [
+      { match: "--paginate", stdout: "57\n" }, // the marker search found issue 57
+      { match: "--method PATCH", stdout: "http://forgejo.example/acme/infra/issues/57\n" },
+    ];
+    try {
+      const result = await reconcilePr({ env: "app", mode: "issue", body: "a newer plan" });
+      expect(result.issueUrl).toBe("http://forgejo.example/acme/infra/issues/57");
+
+      const patchCall = ghCalls.find((c) => c.cmd.includes("--method PATCH"));
+      const postCall = ghCalls.find((c) => c.cmd.includes("--method POST"));
+      expect(patchCall?.cmd).toContain("http://forgejo.example/api/v1/repos/acme/infra/issues/57");
+      expect(postCall).toBeUndefined();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  test("searches only OPEN issues, and never mistakes a pull request for one it owns", async () => {
+    stubGithubIssueEnv("");
+    ghReplies = [
+      { match: "--paginate", stdout: "" },
+      { match: "--method POST", stdout: "https://github.com/acme/infra/issues/1\n" },
+    ];
+    try {
+      await reconcilePr({ env: "app", mode: "issue", body: "plan" });
+      const [list] = ghCalls;
+      expect(list.cmd).toContain("state=open");
+      expect(list.cmd).toContain(".pull_request == null");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  test("defaults to github.com's API base when GITHUB_API_URL is unset", async () => {
+    stubGithubIssueEnv("");
+    ghReplies = [
+      { match: "--paginate", stdout: "" },
+      { match: "--method POST", stdout: "https://github.com/acme/infra/issues/1\n" },
+    ];
+    try {
+      await reconcilePr({ env: "app", mode: "issue", body: "plan" });
+      expect(ghCalls[0].cmd).toContain("https://api.github.com/repos/acme/infra/issues?state=open");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  test("falls back to gh issue create, still marker-prefixed, outside any known CI job", async () => {
+    // Neither GITHUB_REPOSITORY nor CI_PROJECT_ID: a local or manual run.
+    vi.stubEnv("GITHUB_REPOSITORY", "");
+    vi.stubEnv("CI_PROJECT_ID", "");
+    vi.stubEnv("CI_MERGE_REQUEST_IID", "");
+    vi.stubEnv("GITHUB_REF", "");
+    vi.stubEnv("GITHUB_EVENT_PATH", "");
+    ghReplies = [{ match: "gh issue create", stdout: "https://github.com/acme/infra/issues/3\n" }];
+    try {
+      const result = await reconcilePr({ env: "app", mode: "issue", body: "plan" });
+      expect(result.issueUrl).toBe("https://github.com/acme/infra/issues/3");
+      expect(ghCalls).toHaveLength(1);
+      expect(ghCalls[0].cmd).toContain("gh issue create");
+      expect(ghCalls[0].cmd).toContain("<!-- chant-reconcile-issue:app -->\n\nplan");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  test("GitLab takes priority when both a GitLab and a GitHub signal are somehow present", async () => {
+    stubGithubIssueEnv("");
+    vi.stubEnv("CI_PROJECT_ID", "42");
+    vi.stubEnv("CI_API_V4_URL", "https://gitlab.com/api/v4");
+    vi.stubEnv("GITLAB_TOKEN", "glpat-x");
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      if (!init?.method || init.method === "GET") return gitlabResponse([]);
+      return gitlabResponse({ iid: 5 });
+    });
+    try {
+      const result = await reconcilePr({ env: "app", mode: "issue", body: "plan" });
+      expect(result.issueUrl).toBe("https://gitlab.com/api/v4/projects/42/issues/5");
+      expect(ghCalls).toHaveLength(0);
+    } finally {
+      vi.unstubAllEnvs();
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
+describe("postOrUpdateGithubIssue directly (#2297)", () => {
+  test("PATCHes with both title and body fields so the headline stays current", async () => {
+    const calls: string[] = [];
+    const exec = async (cmd: string) => {
+      calls.push(cmd);
+      if (cmd.includes("--paginate")) return { stdout: "12\n", stderr: "" };
+      return { stdout: "https://github.example/acme/infra/issues/12\n", stderr: "" };
+    };
+    vi.stubEnv("GITHUB_API_URL", "");
+    try {
+      const url = await postOrUpdateGithubIssue(
+        "acme/infra",
+        "<!-- chant-reconcile-issue:app -->",
+        "Reconcile app: 3 change(s) from live",
+        "the body",
+        exec,
+      );
+      expect(url).toBe("https://github.example/acme/infra/issues/12");
+      const patch = calls.find((c) => c.includes("--method PATCH"));
+      expect(patch).toContain("title=Reconcile app: 3 change(s) from live");
+      expect(patch).toContain("<!-- chant-reconcile-issue:app -->\n\nthe body");
+      expect(patch).toContain("/repos/acme/infra/issues/12");
     } finally {
       vi.unstubAllEnvs();
     }
