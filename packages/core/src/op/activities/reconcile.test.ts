@@ -5,9 +5,11 @@ import {
   reconcileBranchName,
   entriesFromPlan,
   commentMarker,
+  issueMarker,
   pullRequestContextFrom,
   mergeRequestContextFrom,
   gitlabNoteTokenFrom,
+  gitlabProjectContextFrom,
 } from "./reconcile";
 
 const entries = [
@@ -391,6 +393,186 @@ describe("the no-context refusal names both forges' variables (#2256)", () => {
     try {
       await expect(reconcilePr({ env: "app", mode: "comment", body: "plan" })).rejects.toThrow(
         /CI_MERGE_REQUEST_IID/,
+      );
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+});
+
+// ── The GitLab issue (#2292) ─────────────────────────────────────────────
+
+describe("issueMarker (#2292)", () => {
+  test("deterministic per env, and distinct from the comment-mode marker for the same env", () => {
+    expect(issueMarker("app")).toBe("<!-- chant-reconcile-issue:app -->");
+    expect(issueMarker("app")).toBe(issueMarker("app"));
+    expect(issueMarker("app")).not.toBe(commentMarker("app"));
+  });
+
+  test("slugifies the env the same way commentMarker does", () => {
+    const marker = issueMarker('us-east/1" or true; #');
+    expect(marker).toBe("<!-- chant-reconcile-issue:us-east-1-or-true- -->");
+    expect(marker).not.toMatch(/["'\\]/);
+  });
+});
+
+describe("gitlabProjectContextFrom (#2292)", () => {
+  const gitlabEnv = {
+    CI_API_V4_URL: "https://gitlab.com/api/v4",
+    CI_PROJECT_ID: "42",
+    CI_PROJECT_PATH: "acme/infra",
+    CI_PROJECT_URL: "https://gitlab.com/acme/infra",
+  };
+
+  test("reads the project off any GitLab CI job, with no merge request in sight", () => {
+    expect(gitlabProjectContextFrom(gitlabEnv)).toEqual({
+      api: "https://gitlab.com/api/v4",
+      project: "42",
+      path: "acme/infra",
+      webUrl: "https://gitlab.com/acme/infra",
+    });
+  });
+
+  test("derives the API base from CI_SERVER_URL when CI_API_V4_URL is unset", () => {
+    const { CI_API_V4_URL: _drop, ...rest } = gitlabEnv;
+    expect(gitlabProjectContextFrom({ ...rest, CI_SERVER_URL: "https://gl.example.com" })?.api).toBe(
+      "https://gl.example.com/api/v4",
+    );
+  });
+
+  test("a GitHub Actions run is not mistaken for a GitLab one", () => {
+    expect(
+      gitlabProjectContextFrom({ GITHUB_REPOSITORY: "INTENTIUS/chant", GITHUB_REF: "refs/pull/1/merge" }),
+    ).toBeUndefined();
+  });
+
+  test("no CI_PROJECT_ID at all is undefined", () => {
+    expect(gitlabProjectContextFrom({})).toBeUndefined();
+    expect(gitlabProjectContextFrom({ CI_PROJECT_ID: "" })).toBeUndefined();
+  });
+});
+
+describe("reconcilePr issue mode on GitLab opens/updates one issue (#2292)", () => {
+  const gitlabEnv: Record<string, string> = {
+    CI_API_V4_URL: "https://gitlab.com/api/v4",
+    CI_PROJECT_ID: "42",
+    CI_PROJECT_PATH: "acme/infra",
+    CI_PROJECT_URL: "https://gitlab.com/acme/infra",
+    GITLAB_TOKEN: "glpat-x",
+  };
+
+  function stubGitlabEnv(): void {
+    for (const [k, v] of Object.entries(gitlabEnv)) vi.stubEnv(k, v);
+    // Neither GitHub's variables nor a merge-request iid are set on a plain
+    // GitLab CI job (cron or push); make that explicit so the GitHub path and
+    // the note path can never be the ones under test here.
+    for (const k of ["GITHUB_REPOSITORY", "GITHUB_REF", "GITHUB_EVENT_PATH", "CI_MERGE_REQUEST_IID"]) {
+      vi.stubEnv(k, "");
+    }
+  }
+
+  test("POSTs a new issue carrying the marker as the description's first line", async () => {
+    stubGitlabEnv();
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      if (!init?.method || init.method === "GET") return gitlabResponse([]);
+      return gitlabResponse({ iid: 9 });
+    });
+    try {
+      const result = await reconcilePr({ env: "app", mode: "issue", body: "the plan" });
+      expect(result.issueUrl).toBe("https://gitlab.com/acme/infra/-/issues/9");
+      const post = calls[calls.length - 1];
+      expect(post.url).toBe("https://gitlab.com/api/v4/projects/42/issues");
+      expect(post.init?.method).toBe("POST");
+      expect((post.init?.headers as Record<string, string>)["PRIVATE-TOKEN"]).toBe("glpat-x");
+      const sent = JSON.parse(String(post.init?.body));
+      expect(sent.description).toBe("<!-- chant-reconcile-issue:app -->\n\nthe plan");
+      expect(sent.title).toContain("Reconcile app");
+    } finally {
+      vi.unstubAllEnvs();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  test("PUTs the issue it already owns instead of opening a second one", async () => {
+    stubGitlabEnv();
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      if (!init?.method || init.method === "GET") {
+        return gitlabResponse([
+          { iid: 1, description: "unrelated issue" },
+          { iid: 4, description: "<!-- chant-reconcile-issue:app -->\n\nan older finding" },
+        ]);
+      }
+      return gitlabResponse({ iid: 4 });
+    });
+    try {
+      const result = await reconcilePr({ env: "app", mode: "issue", body: "a newer finding" });
+      const write = calls[calls.length - 1];
+      expect(write.init?.method).toBe("PUT");
+      expect(write.url).toBe("https://gitlab.com/api/v4/projects/42/issues/4");
+      expect(result.issueUrl).toBe("https://gitlab.com/acme/infra/-/issues/4");
+    } finally {
+      vi.unstubAllEnvs();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  test("searches narrowly by marker rather than paging every issue the project has", async () => {
+    stubGitlabEnv();
+    const seen: string[] = [];
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      if (!init?.method || init.method === "GET") {
+        seen.push(url);
+        return gitlabResponse([]);
+      }
+      return gitlabResponse({ iid: 9 });
+    });
+    try {
+      await reconcilePr({ env: "app", mode: "issue", body: "new" });
+      expect(seen).toHaveLength(1);
+      expect(seen[0]).toContain(`search=${encodeURIComponent(issueMarker("app"))}`);
+      expect(seen[0]).toContain("in=description");
+    } finally {
+      vi.unstubAllEnvs();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  test("a rejected write fails the step by name, carrying GitLab's own status", async () => {
+    stubGitlabEnv();
+    vi.stubGlobal("fetch", async (_url: string, init?: RequestInit) => {
+      if (!init?.method || init.method === "GET") return gitlabResponse([]);
+      return {
+        ok: false,
+        status: 403,
+        headers: { get: () => null },
+        json: async () => ({}),
+        text: async () => '{"message":"403 Forbidden"}',
+      } as unknown as Response;
+    });
+    try {
+      await expect(reconcilePr({ env: "app", mode: "issue", body: "plan" })).rejects.toThrow(
+        /projects\/42\/issues.*403.*403 Forbidden/s,
+      );
+    } finally {
+      vi.unstubAllEnvs();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  test("a GitLab run with no token names the mode, the project, and every variable it looked for", async () => {
+    for (const [k, v] of Object.entries(gitlabEnv)) vi.stubEnv(k, k === "GITLAB_TOKEN" ? "" : v);
+    vi.stubEnv("CI_JOB_TOKEN", "");
+    vi.stubEnv("CHANT_GITLAB_TOKEN", "");
+    for (const k of ["GITHUB_REPOSITORY", "GITHUB_REF", "GITHUB_EVENT_PATH", "CI_MERGE_REQUEST_IID"]) {
+      vi.stubEnv(k, "");
+    }
+    try {
+      await expect(reconcilePr({ env: "app", mode: "issue", body: "plan" })).rejects.toThrow(
+        /mode "issue".*project 42.*GITLAB_TOKEN.*CI_JOB_TOKEN/s,
       );
     } finally {
       vi.unstubAllEnvs();
