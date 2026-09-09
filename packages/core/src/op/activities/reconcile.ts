@@ -19,6 +19,14 @@ const execAsync = promisify(exec);
  * `merge_request_event` pipeline sets `CI_MERGE_REQUEST_IID`, a GitHub
  * `pull_request` event sets `GITHUB_REPOSITORY`, and no run sets both. See
  * {@link mergeRequestContextFrom}.
+ *
+ * `issue` needs no merge/pull request — its whole point is a cron trigger
+ * that has none — so its forge split reads off a wider signal: any GitLab CI
+ * job sets `CI_PROJECT_ID`, not only a merge-request one. See {@link
+ * gitlabProjectContextFrom}. On GitLab it opens or updates one issue by the
+ * same marker/edit-in-place recipe (chant #2292); on GitHub it shells to `gh
+ * issue create`, unchanged and — unlike both marker-based paths — not sticky:
+ * every run opens a new issue.
  */
 export type ReconcileMode = "pull-request" | "issue" | "report" | "comment";
 
@@ -149,6 +157,20 @@ export interface PullRequestContext {
  */
 export function commentMarker(env: string): string {
   return `<!-- chant-reconcile:${env.replace(/[^a-zA-Z0-9._-]+/g, "-")} -->`;
+}
+
+/**
+ * The hidden marker that makes an `issue`-mode GitLab finding findable across
+ * re-runs (#2292): written as the issue description's first line, matched by
+ * a server-side `search` plus a `startswith` check on the next run — the same
+ * recipe {@link commentMarker} names for the `comment` mode's note, kept as
+ * its own function (rather than reused) because the two modes write to
+ * different resources and a caller may run both against the same `env`.
+ * Slugified the same way, for the same reason: interpolated next to quotes
+ * and URL-encoding it should not need escaping out of.
+ */
+export function issueMarker(env: string): string {
+  return `<!-- chant-reconcile-issue:${env.replace(/[^a-zA-Z0-9._-]+/g, "-")} -->`;
 }
 
 /** What a `comment`-mode step says when the run it is in has no pull request and no merge request. */
@@ -330,6 +352,54 @@ export function mergeRequestContextFrom(
   };
 }
 
+/**
+ * The GitLab project an `issue`-mode run opens or updates its issue on (#2292),
+ * as any GitLab CI job knows it — the counterpart of {@link
+ * mergeRequestContextFrom} for a mode that needs no merge request.
+ */
+export interface GitlabProjectContext {
+  /** REST v4 base, from `CI_API_V4_URL` or derived from `CI_SERVER_URL`. */
+  api: string;
+  /** The project holding the issue — its numeric id, or a `group/project` path. */
+  project: string;
+  /** `group/project`, for a human-readable result. */
+  path?: string;
+  /** The project's web URL, used to build the issue's own URL. */
+  webUrl?: string;
+}
+
+/**
+ * Derive the GitLab project an `issue`-mode run is in, from the job's own CI
+ * variables. Pure — exported for testing, and the whole forge detection:
+ * `CI_PROJECT_ID` is set on every GitLab CI job, merge request or not, and
+ * nothing outside GitLab CI sets it — a GitHub Actions run never reaches this
+ * branch. Unlike {@link mergeRequestContextFrom}, no `CI_MERGE_REQUEST_IID`
+ * is required, since `issue` mode's whole point is a cron trigger that has
+ * none.
+ *
+ * Returns undefined rather than throwing, so the caller owns the fallback:
+ * a run with no GitLab signal falls through to `gh issue create`.
+ */
+export function gitlabProjectContextFrom(
+  env: Record<string, string | undefined>,
+): GitlabProjectContext | undefined {
+  const project = env.CI_PROJECT_ID?.trim();
+  if (!project) return undefined;
+
+  const server = env.CI_SERVER_URL?.trim().replace(/\/+$/, "");
+  const api = env.CI_API_V4_URL?.trim().replace(/\/+$/, "") || (server ? `${server}/api/v4` : "");
+  if (!api) return undefined;
+
+  const path = env.CI_PROJECT_PATH?.trim();
+  const webUrl = env.CI_PROJECT_URL?.trim();
+  return {
+    api,
+    project,
+    ...(path ? { path } : {}),
+    ...(webUrl ? { webUrl } : {}),
+  };
+}
+
 /** The credential a merge-request note is written with, and the header GitLab reads it from. */
 export interface GitlabNoteToken {
   /** `PRIVATE-TOKEN` for a personal/project/group access token, `JOB-TOKEN` for `CI_JOB_TOKEN`. */
@@ -374,6 +444,16 @@ export function noGitlabNoteTokenMessage(iid: number): string {
     "with. Set a GITLAB_TOKEN CI/CD variable (masked, scope: api) on the project — a project access token " +
     "is enough — or, on an instance whose job-token allowlist covers the notes API, make CI_JOB_TOKEN " +
     "available to the job. CHANT_GITLAB_TOKEN is read first where the two must differ."
+  );
+}
+
+/** What an `issue`-mode step says on a GitLab project it has no credential for (#2292). */
+export function noGitlabIssueTokenMessage(project: string): string {
+  return (
+    `reconcilePr mode "issue" wants to open or update an issue on GitLab project ${project} and has no ` +
+    "token to do it with. Set a GITLAB_TOKEN CI/CD variable (masked, scope: api) on the project — a " +
+    "project access token is enough — or, on an instance whose job-token allowlist covers the issues API, " +
+    "make CI_JOB_TOKEN available to the job. CHANT_GITLAB_TOKEN is read first where the two must differ."
   );
 }
 
@@ -484,6 +564,93 @@ async function postOrUpdateNote(
     : `${endpoint}/${note.id}`;
 }
 
+// ── The GitLab issue (#2292) ─────────────────────────────────────────────
+
+/** One GitLab issue, as much of it as this activity reads. */
+interface GitlabIssue {
+  iid: number;
+  description?: string;
+}
+
+/** GitLab's REST path for a project's issues. */
+function issuesEndpoint(ctx: GitlabProjectContext): string {
+  return `${ctx.api}/projects/${encodeURIComponent(ctx.project)}/issues`;
+}
+
+/**
+ * Find the issue this Op already owns in `ctx`'s project, by the same hidden
+ * marker `findOwnedNote` looks a merge-request note up by: the marker is the
+ * description's first line and the match is a prefix.
+ *
+ * `search`/`in=description` narrows the request server-side to issues whose
+ * description contains the marker, rather than paging every issue the
+ * project has ever opened — a long-lived project accumulates issues the way
+ * an active merge request accumulates notes, and the marker is exact text a
+ * full-text search matches reliably. The `startswith` check after the fetch
+ * still decides ownership, the same as the note lookup, since `search` finds
+ * the marker anywhere in the field and only a match at the very start is
+ * this Op's own issue rather than one that happens to quote it.
+ *
+ * Paged the way GitLab pages, following the `x-next-page` response header —
+ * see {@link findOwnedNote} for why a bounded loop rather than a guessed page
+ * count.
+ */
+async function findOwnedIssue(
+  ctx: GitlabProjectContext,
+  token: GitlabNoteToken,
+  marker: string,
+  signal?: AbortSignal,
+): Promise<number | undefined> {
+  const endpoint = issuesEndpoint(ctx);
+  const MAX_PAGES = 50;
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    const res = await gitlabRequest(
+      `${endpoint}?per_page=100&page=${page}&search=${encodeURIComponent(marker)}&in=description`,
+      token,
+      { method: "GET" },
+      signal,
+    );
+    const issues = (await res.json()) as GitlabIssue[];
+    const owned = issues.find((issue) => (issue.description ?? "").startsWith(marker));
+    if (owned) return owned.iid;
+    const next = res.headers.get("x-next-page")?.trim();
+    if (!next) return undefined;
+  }
+  return undefined;
+}
+
+/**
+ * Open `title`/`body` as one issue in `ctx`'s project, or edit the issue this
+ * Op already owns there — {@link postOrUpdateNote}'s issue counterpart, and
+ * the same recipe: find by marker, PUT when there is one, POST when there is
+ * not, so a cron Op that finds drift every night carries one issue holding
+ * the current finding rather than a new one each run (#2292).
+ *
+ * `title` is written on every call, POST or PUT, so the issue's headline
+ * stays current (e.g. an entry count) even though only the description's
+ * marker is what makes the issue findable again.
+ */
+async function postOrUpdateIssue(
+  ctx: GitlabProjectContext,
+  token: GitlabNoteToken,
+  marker: string,
+  title: string,
+  body: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  const endpoint = issuesEndpoint(ctx);
+  const existing = await findOwnedIssue(ctx, token, marker, signal);
+  const payload = JSON.stringify({ title, description: `${marker}\n\n${body}` });
+  const res = existing
+    ? await gitlabRequest(`${endpoint}/${existing}`, token, { method: "PUT", body: payload }, signal)
+    : await gitlabRequest(endpoint, token, { method: "POST", body: payload }, signal);
+  const issue = (await res.json()) as GitlabIssue;
+  // GitLab does return a `web_url` on an issue payload, unlike a note, but
+  // building it from the project's own web URL keeps this symmetric with
+  // `postOrUpdateNote` and needs no extra field pinned in tests.
+  return ctx.webUrl ? `${ctx.webUrl}/-/issues/${issue.iid}` : `${endpoint}/${issue.iid}`;
+}
+
 /**
  * Map a `chant lifecycle plan --json` ChangeSet to reconcile entries, dropping
  * `noop` entries (nothing to reconcile). Pure — exported for testing.
@@ -515,7 +682,10 @@ async function derivePlanEntries(
  * Reconcile activity: turn regenerated TypeScript into a reviewable artifact.
  *
  * - `report` — return the summary only; no git, no network.
- * - `issue` — open a GitHub issue describing the drift (no code change).
+ * - `issue` — open a GitHub issue describing the drift (no code change), or,
+ *   on a GitLab CI job (any trigger — the point of this mode is a cron run
+ *   that has no merge request), open or update one GitLab issue by the
+ *   marker/edit-in-place recipe `comment` uses for a note (#2292).
  * - `comment` — post the body as one comment on the pull request that
  *   triggered the run, editing that same comment on every re-run rather than
  *   stacking a new one (#2231), or, on a GitLab `merge_request_event`
@@ -549,6 +719,18 @@ export async function reconcilePr(args: ReconcilePrArgs, signal?: AbortSignal): 
   }
 
   if (mode === "issue") {
+    // GitLab first, because its check is the narrow one: `CI_PROJECT_ID` is
+    // set on every GitLab CI job, and nothing outside GitLab CI sets it
+    // (#2292) — see `gitlabProjectContextFrom`.
+    const project = gitlabProjectContextFrom(process.env);
+    if (project) {
+      const marker = args.marker ?? issueMarker(args.env);
+      const token = gitlabNoteTokenFrom(process.env);
+      if (!token) throw new Error(noGitlabIssueTokenMessage(project.project));
+      const issueUrl = await postOrUpdateIssue(project, token, marker, title, summary, signal);
+      return { mode, summary, entries, issueUrl };
+    }
+
     const { stdout } = await execAsync(
       `gh issue create --title ${shellQuote(title)} --body ${shellQuote(summary)}`,
       { signal },
