@@ -465,6 +465,25 @@ export interface ComponentPipelineOptions {
   image?: string;
   /** Top-level CI `variables:` block. */
   variables?: Record<string, string>;
+  /**
+   * The stage every generated Op job runs in, and (on GitLab) the default
+   * base of the generated file's own name (#2293). GitLab-only: a GitHub or
+   * Forgejo Op workflow is one file per Op with no shared stage, so this does
+   * nothing there. Default `"ops"` — every trigger kind (cron, merge-request,
+   * push) a project mixes into one Op pipeline lands under the same stage,
+   * unlike the pre-#2293 constant `"scheduled-ops"`, which named only the
+   * cron-only pipeline the generator used to emit. See `opsFileName` for the
+   * file name, which follows this unless overridden separately.
+   */
+  opsStage?: string;
+  /**
+   * The generated Op pipeline file's name — GitLab only (#2293). Defaults to
+   * `` `${opsStage}.gitlab-ci.yml` `` (`ops.gitlab-ci.yml` with no `opsStage`
+   * override), so setting `opsStage` alone renames both the stage GitLab's UI
+   * groups jobs under and the file a consumer's `include:` line names. Set
+   * this too when the file should land under some other name than its stage.
+   */
+  opsFileName?: string;
 }
 
 /** The synthesized CI pipeline for a component graph (generate mode). */
