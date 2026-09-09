@@ -167,12 +167,14 @@ place across pushes, keyed on a hidden HTML marker in the body:
   run: |
     body="$MARKER
     ..."
-    comment_id=$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" --paginate \
+    api_base="${GITHUB_API_URL%/}"
+    api_base="${api_base:-https://api.github.com}"
+    comment_id=$(gh api "$api_base/repos/$REPO/issues/$PR_NUMBER/comments" --paginate \
       --jq "map(select(.body | startswith(\"$MARKER\"))) | .[0].id // empty")
     if [ -n "$comment_id" ]; then
-      gh api -X PATCH "repos/$REPO/issues/comments/$comment_id" -f body="$body" > /dev/null
+      gh api -X PATCH "$api_base/repos/$REPO/issues/comments/$comment_id" -f body="$body" > /dev/null
     else
-      gh api -X POST "repos/$REPO/issues/$PR_NUMBER/comments" -f body="$body" > /dev/null
+      gh api -X POST "$api_base/repos/$REPO/issues/$PR_NUMBER/comments" -f body="$body" > /dev/null
     fi
 ```
 
@@ -182,6 +184,12 @@ the find-and-update is stable across any number of pushes. This is a scripted
 no marketplace action to vet, pin to a SHA, and re-audit on every bump — the
 github lexicon's own pinned-action lints (GHA019 and friends) stay quiet
 because there is nothing unpinned to flag.
+
+Every `gh api` call targets `$api_base`, resolved from `$GITHUB_API_URL`
+rather than a bare relative path: `gh` resolves a bare path against
+`/api/v3`, which only guesses right for github.com and GitHub Enterprise
+Server. `PrPlanReport`'s own sticky-comment script fixed the identical bug
+for the same reason ([#2305](https://github.com/INTENTIUS/chant/issues/2305)).
 
 The job needs `pull-requests: write`, granted at job level, not
 workflow-wide. Note the fork boundary: on `pull_request` from a fork, GitHub
