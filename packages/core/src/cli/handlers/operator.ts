@@ -34,7 +34,7 @@ import {
   latestResolutionSince, latestPendingGate, isPendingGateExpired,
   resolveApprovalUrl, isApprovalUrl,
 } from "../../lifecycle/gate-ledger";
-import { pushLifecycle, requireLifecycleLedgerWritable } from "../../lifecycle/git";
+import { pushLifecycle, requireLifecycleLedger } from "../../lifecycle/git";
 import { formatError, formatWarning, formatSuccess, formatBold, formatInfo } from "../format";
 import type { CommandContext } from "../registry";
 
@@ -598,6 +598,39 @@ export async function runOperatorLog(ctx: CommandContext): Promise<number> {
  * is already expired, which supersedes the standing one on an append-only
  * ledger, so the next run decides the gate from scratch.
  */
+/** The ledger branch, named in the warnings below so a reader can go look at it. */
+const LIFECYCLE_BRANCH = "chant/lifecycle";
+
+/**
+ * Push the ledger and say so when it does not land (#2309 review, refs #2310).
+ *
+ * Both write paths here used `pushLifecycle().catch(() => undefined)` and then
+ * printed unconditional success and exited 0. A rejected push — a stale lease,
+ * no credentials, no network — therefore read as a completed approval, which
+ * is the one thing an approval must never do: the operator walks away
+ * believing the gate is answered for everybody, while the resolution exists
+ * only in their own checkout.
+ *
+ * The append is still a correct *local* fact, so this is a warning and not a
+ * failure; the exit code is unchanged.
+ */
+async function reportedPush(consequence: string): Promise<boolean> {
+  try {
+    const pushed = await pushLifecycle();
+    if (pushed) return true;
+    console.error(formatWarning({
+      message: `No remote is configured, so nothing was pushed. ${consequence}`,
+    }));
+    return false;
+  } catch (err) {
+    console.error(formatWarning({
+      message: `The push to the remote was rejected: ${err instanceof Error ? err.message : String(err)}`,
+      hint: consequence,
+    }));
+    return false;
+  }
+}
+
 export async function runApprove(ctx: CommandContext): Promise<number> {
   const opName = ctx.args.path;
   const gate = ctx.args.extraPositional;
@@ -612,7 +645,7 @@ export async function runApprove(ctx: CommandContext): Promise<number> {
     // branch would both fail to see the fact it is expiring and replace the
     // branch with the expiry alone.
     try {
-      await requireLifecycleLedgerWritable();
+      await requireLifecycleLedger();
     } catch (err) {
       console.error(formatError({
         message: `Cannot expire the gate: ${err instanceof Error ? err.message : String(err)}`,
@@ -634,8 +667,14 @@ export async function runApprove(ctx: CommandContext): Promise<number> {
       expiresAt: now,
       ...(standing.description ? { description: standing.description } : {}),
     });
-    await pushLifecycle().catch(() => undefined);
-    console.error(formatSuccess(`Gate "${gate}" on "${opName}" expired at ${now} — not approved`));
+    const pushed = await reportedPush(
+      `The expiry is recorded locally on ${LIFECYCLE_BRANCH}. Until it reaches the remote, ` +
+        `a run in another checkout still sees the old pending fact.`,
+    );
+    console.error(formatSuccess(
+      `Gate "${gate}" on "${opName}" expired at ${now} — not approved` +
+        (pushed ? "" : " (local only — the push did not land)"),
+    ));
     console.error(formatInfo(
       `The next \`chant run ${opName}\` decides this gate from scratch and records a fresh pending fact.`,
     ));
@@ -700,7 +739,7 @@ export async function recordGateApproval(
   // single commit holding only this resolution — the pending fact it is
   // answering is discarded rather than appended to.
   try {
-    await requireLifecycleLedgerWritable();
+    await requireLifecycleLedger();
   } catch (err) {
     console.error(formatError({
       message: `Cannot record the approval: ${err instanceof Error ? err.message : String(err)}`,
@@ -731,11 +770,15 @@ export async function recordGateApproval(
     ...(opts.note ? { note: opts.note } : {}),
     ...(url ? { url } : {}),
   });
-  await pushLifecycle().catch(() => undefined);
+  const pushed = await reportedPush(
+    `The resolution is recorded locally on ${LIFECYCLE_BRANCH}. Until it reaches the remote, ` +
+      `a run in another checkout will not see it.`,
+  );
 
   console.error(formatSuccess(
     `Gate "${gate}" on "${opName}" resolved by ${record.resolvedBy} at ${record.timestamp}` +
-      (record.url ? ` (${record.url})` : ""),
+      (record.url ? ` (${record.url})` : "") +
+      (pushed ? "" : " (local only — the push did not land)"),
   ));
   return { ok: true, record };
 }

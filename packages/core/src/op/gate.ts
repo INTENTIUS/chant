@@ -36,7 +36,7 @@ import {
   type PendingGateInput,
   type PendingGateRecord,
 } from "../lifecycle/gate-ledger";
-import { pushLifecycle, requireLifecycleLedgerReadable } from "../lifecycle/git";
+import { pushLifecycle, requireLifecycleLedger } from "../lifecycle/git";
 import { parseDuration } from "./duration";
 
 /** The gate ledger, as the two executors need it: read both kinds of line, append a pending fact. */
@@ -61,8 +61,8 @@ export function gitGateLedgerPort(opts?: { cwd?: string }): GateLedgerPort {
       // indistinguishable from "nothing has been approved" and makes a
       // retried job record a second pending fact for a gate that was already
       // approved. Refuses rather than guessing when the fetch cannot settle
-      // it; see `requireLifecycleLedgerReadable`.
-      await requireLifecycleLedgerReadable(opts);
+      // it; see `requireLifecycleLedger`.
+      await requireLifecycleLedger(opts);
       const { resolutions, pending } = await readGateLedger(op, opts);
       return { resolutions, pending };
     },

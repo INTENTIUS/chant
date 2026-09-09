@@ -20,10 +20,10 @@ const STATE_BRANCH = "chant/lifecycle";
  * a run record, a snapshot and a release record all died the same way the
  * moment they ran anywhere but a developer's laptop.
  *
- * This is a *fallback*, applied per-invocation via `git -c` and only when
- * `git var GIT_COMMITTER_IDENT` says the checkout cannot name a committer on
- * its own. A configured identity — a developer's, or a CI job that sets one
- * deliberately — is left exactly as it is and still authors these commits;
+ * This is a *fallback*, applied per-invocation via `git -c` and field by
+ * field: only the half the checkout cannot supply is filled in. A configured
+ * `user.name` or `user.email` — a developer's, or a CI job that sets one
+ * deliberately — is left exactly as it is and still authors these commits, and
  * nothing is written to the repository's config either way. Override the
  * fallback with `CHANT_LIFECYCLE_COMMITTER_NAME` / `_EMAIL` when a project
  * wants its ledger commits attributed to a bot account it controls.
@@ -39,11 +39,23 @@ const LEDGER_COMMITTER_EMAIL = "chant@localhost";
  */
 async function ledgerCommitIdentityArgs(cwd?: string): Promise<string[]> {
   const rt = getRuntime();
-  const probe = await rt.spawn(["git", "var", "GIT_COMMITTER_IDENT"], { cwd });
+  const probe = await rt.spawn(["git", "var", "GIT_COMMITTER_IDENT"], { cwd, env: C_LOCALE_ENV });
   if (probe.exitCode === 0) return [];
-  const name = process.env.CHANT_LIFECYCLE_COMMITTER_NAME?.trim() || LEDGER_COMMITTER_NAME;
-  const email = process.env.CHANT_LIFECYCLE_COMMITTER_EMAIL?.trim() || LEDGER_COMMITTER_EMAIL;
-  return ["-c", `user.name=${name}`, "-c", `user.email=${email}`];
+
+  // Per-field, not all-or-nothing (#2309 review). `git var` fails if *either*
+  // half is missing, so filling in both would overwrite a configured
+  // `user.name` in the checkout that has a name but no email — which is not
+  // what "a configured identity is left exactly as it is" promises.
+  const args: string[] = [];
+  for (const [key, envVar, fallback] of [
+    ["user.name", "CHANT_LIFECYCLE_COMMITTER_NAME", LEDGER_COMMITTER_NAME],
+    ["user.email", "CHANT_LIFECYCLE_COMMITTER_EMAIL", LEDGER_COMMITTER_EMAIL],
+  ] as const) {
+    const configured = await rt.spawn(["git", "config", "--get", key], { cwd, env: C_LOCALE_ENV });
+    if (configured.exitCode === 0 && configured.stdout.trim() !== "") continue;
+    args.push("-c", `${key}=${process.env[envVar]?.trim() || fallback}`);
+  }
+  return args;
 }
 
 /**
@@ -120,6 +132,29 @@ export async function writeBlobToPath(
   // Resolved once, outside the retry loop: whether the checkout can name a
   // committer does not change between attempts (#2301).
   const identityArgs = await ledgerCommitIdentityArgs(cwd);
+
+  // Creating the ledger branch is a different act from extending it, and only
+  // one of them is safe to do blind (#2309 review). With no local
+  // `chant/lifecycle`, everything below builds a tree from an empty read and
+  // commits it with no parent — a brand-new root commit that *replaces* the
+  // branch rather than appending to it, which `updateRefCAS` cannot catch
+  // because "the ref does not exist" is perfectly true locally.
+  //
+  // Until #2301 this was mostly hidden: `commit-tree` died for want of a
+  // committer before it could happen. Supplying an identity turned that loud
+  // failure into a silent branch fabrication on every writer that reaches
+  // here without a ledger — a run record, a snapshot, a release, a build
+  // manifest — and a fabricated branch is precisely the fork the guard above
+  // exists to refuse. So the guard runs here, at the one seam they all pass
+  // through, rather than at each of their call sites.
+  //
+  // Only when the branch is absent: an extend costs no fetch, and the check
+  // that matters is whether the history this is about to discard exists
+  // somewhere. `requireLifecycleLedger` allows `no-remote` and `absent`, so a
+  // genuinely first write still creates the branch.
+  if ((await getStateBranchTip(cwd)) === null) {
+    await requireLifecycleLedger({ ...(cwd ? { cwd } : {}) });
+  }
 
   // 2-5. Read tree, build the commit, and CAS-update the branch ref — retried
   // on a conflict (#1959 finding 1). `writeBlobToPath` had no retry of its
@@ -625,39 +660,105 @@ export type LifecycleFetchStatus =
   | { status: "fetched" }
   | { status: "no-remote" }
   | { status: "absent"; remote: string }
+  | { status: "ahead"; remote: string }
   | { status: "diverged"; remote: string; stderr: string }
   | { status: "unreachable"; remote: string; stderr: string };
 
-/** git's wording when the remote answered and simply does not carry the ref. */
+/**
+ * git's wording when the remote answered and simply does not carry the ref.
+ *
+ * Matched against output forced to `LC_ALL=C` ({@link C_LOCALE_ENV}) — both of
+ * these strings are in git's translation catalogs, so on a distro git built
+ * with NLS and a non-C `LANG` an unpinned locale would fail to match and send
+ * a project's genuine first gate down the `unreachable` path, refusing it.
+ */
 const NO_SUCH_REMOTE_REF_RE = /couldn't find remote ref|no such ref was fetched/i;
-/** git's wording when the refspec would not fast-forward the local branch. */
+/** git's wording when the refspec would not fast-forward the local branch. Same locale caveat. */
 const NON_FAST_FORWARD_RE = /non-fast-forward|rejected/i;
+
+/**
+ * `git` invocations here are parsed by their output, so they are pinned to the
+ * C locale. `LC_ALL` alone is enough — it outranks `LC_MESSAGES` and `LANG` —
+ * but `LANGUAGE` is GNU gettext's own override and outranks all of them, so it
+ * is cleared too.
+ */
+const C_LOCALE_ENV = { LC_ALL: "C", LANGUAGE: "" };
+
+/**
+ * The remote the ledger lives on.
+ *
+ * `origin` when it exists, rather than whichever name sorts first — a repo
+ * with a `backup` remote alongside `origin` would otherwise fetch the ledger
+ * from `backup`. A non-zero exit is *not* read as "no remote": a git that
+ * failed to answer is not evidence that a project is single-machine, and
+ * treating it as one is what lets an unreadable ledger look empty.
+ */
+async function ledgerRemote(cwd?: string): Promise<{ remote: string } | { failed: true; stderr: string } | null> {
+  const rt = getRuntime();
+  const result = await rt.spawn(["git", "remote"], { cwd, env: C_LOCALE_ENV });
+  if (result.exitCode !== 0) return { failed: true, stderr: (result.stderr ?? "").trim() };
+  const names = result.stdout.trim().split("\n").map((n) => n.trim()).filter(Boolean);
+  if (names.length === 0) return null;
+  return { remote: names.includes("origin") ? "origin" : names[0] };
+}
+
+/** A scratch ref this module owns, used to resolve the remote tip without touching the ledger branch. */
+const PROBE_REF = "refs/chant/lifecycle-probe";
 
 /**
  * Fetch `chant/lifecycle` and say what happened, in the terms
  * {@link LifecycleFetchStatus} defines.
  *
  * The refspec is deliberately un-forced (`chant/lifecycle:chant/lifecycle`,
- * no leading `+`), so a local branch holding facts the remote does not have
- * is never rewound by a read; that case surfaces as `diverged` for the caller
- * to refuse on.
+ * no leading `+`), so a local branch holding facts the remote does not have is
+ * never rewound by a read.
+ *
+ * git reports "non-fast-forward" for two states that could not be more
+ * different, which is why the rejection is not taken at face value (#2309
+ * review): a local branch *ahead* of the remote — the ordinary state right
+ * after an append whose push has not landed yet — and a local branch that has
+ * genuinely *forked*. Resolving the remote tip into a scratch ref and asking
+ * whether it is an ancestor of the local tip separates them. Reading a fork as
+ * the ledger is what destroys approvals; refusing an append that is merely
+ * ahead would break the retry that is supposed to repair a failed push.
  */
 export async function fetchLifecycleStatus(opts?: { cwd?: string }): Promise<LifecycleFetchStatus> {
   const rt = getRuntime();
-  const remoteResult = await rt.spawn(["git", "remote"], { cwd: opts?.cwd });
-  if (remoteResult.exitCode !== 0 || !remoteResult.stdout.trim()) return { status: "no-remote" };
+  const cwd = opts?.cwd;
+  const found = await ledgerRemote(cwd);
+  if (found === null) return { status: "no-remote" };
+  if ("failed" in found) {
+    return { status: "unreachable", remote: "(unknown)", stderr: found.stderr };
+  }
+  const { remote } = found;
 
-  const remote = remoteResult.stdout.trim().split("\n")[0];
   const fetchResult = await rt.spawn(
     ["git", "fetch", remote, `${STATE_BRANCH}:${STATE_BRANCH}`],
-    { cwd: opts?.cwd },
+    { cwd, env: C_LOCALE_ENV },
   );
   if (fetchResult.exitCode === 0) return { status: "fetched" };
 
   const stderr = (fetchResult.stderr ?? "").trim();
   if (NO_SUCH_REMOTE_REF_RE.test(stderr)) return { status: "absent", remote };
-  if (NON_FAST_FORWARD_RE.test(stderr)) return { status: "diverged", remote, stderr };
-  return { status: "unreachable", remote, stderr };
+  if (!NON_FAST_FORWARD_RE.test(stderr)) return { status: "unreachable", remote, stderr };
+
+  // Rejected. Resolve the remote tip into our own scratch ref (forced: the ref
+  // is this module's, and nothing reads it but the next two lines) and ask
+  // whether the local branch already contains it.
+  const probe = await rt.spawn(
+    ["git", "fetch", "--force", remote, `${STATE_BRANCH}:${PROBE_REF}`],
+    { cwd, env: C_LOCALE_ENV },
+  );
+  if (probe.exitCode !== 0) {
+    return { status: "unreachable", remote, stderr: (probe.stderr ?? "").trim() || stderr };
+  }
+  const contains = await rt.spawn(
+    ["git", "merge-base", "--is-ancestor", PROBE_REF, `refs/heads/${STATE_BRANCH}`],
+    { cwd, env: C_LOCALE_ENV },
+  );
+  await rt.spawn(["git", "update-ref", "-d", PROBE_REF], { cwd, env: C_LOCALE_ENV });
+  if (contains.exitCode === 0) return { status: "ahead", remote };
+  return { status: "diverged", remote, stderr };
 }
 
 /**
@@ -673,80 +774,75 @@ export class LifecycleLedgerUnreadableError extends Error {
   ) {
     super(
       `the ${STATE_BRANCH} ledger branch ${detail}, so what is on it cannot be read. ` +
-        `Refusing rather than treating an unreadable ledger as an empty one. ` +
-        `Fetch it and retry: git fetch ${remote} ${STATE_BRANCH}:${STATE_BRANCH}` +
-        (stderr ? `\n  git fetch said: ${stderr.split("\n")[0]}` : ""),
+        `Refusing rather than treating an unreadable ledger as an empty one.` +
+        (reason === "diverged"
+          ? `\n  Two histories claim to be the ledger; appending to either one drops the other's facts. ` +
+            `Inspect both before doing anything else:\n` +
+            `    git fetch ${remote} ${STATE_BRANCH}:refs/chant/remote-ledger\n` +
+            `    git log --oneline ${STATE_BRANCH} refs/chant/remote-ledger`
+          : `\n  Fetch it and retry: git fetch ${remote} ${STATE_BRANCH}:${STATE_BRANCH}`) +
+        (stderr ? `\n  git said: ${stderr.split("\n")[0]}` : ""),
     );
     this.name = "LifecycleLedgerUnreadableError";
   }
 }
 
 /**
- * Bring the ledger branch into this checkout before reading it, and refuse if
- * it cannot be (#2303 finding 1).
+ * Bring the ledger branch into this checkout before reading or appending to
+ * it, and refuse when it cannot be (#2303).
  *
  * The gate's read is the one that has to be right: `evaluateGate` decides
  * whether to walk through or to record a *new* pending fact purely from what
- * the ledger says, so a read that reports absent history as an empty ledger
- * makes the second run of an already-approved commit record a second pending
- * fact and gate again. That is what a GitLab CI retry did on
+ * the ledger says, so a read that reports history it cannot see as an empty
+ * ledger makes the second run of an already-approved commit record a second
+ * pending fact and gate again. That is what a GitLab CI retry did on
  * INTENTIUS/choudoufu#1026 — two pending records for one commit, with
  * different expiries — because a GitLab checkout fetches the pipeline's own
  * ref at depth 20 and nothing else. `GIT_DEPTH: 0` does not help: GitLab
  * fetches refspecs, not all branches.
  *
- * A checkout that already has the branch is refreshed best-effort and never
- * refused — it has real history to read, and the append path's CAS already
- * arbitrates a concurrent writer. Only the absent case can be mistaken for an
- * empty ledger, so only the absent case throws.
+ * There was a separate, laxer guard for the read until #2309's review, on the
+ * reasoning that a checkout which already has the branch "has real history to
+ * read". That reasoning is only sound when the local branch *is* the remote's
+ * history, and it let the worst case through: on a fork, the gate read a
+ * ledger missing every remote approval, recorded a fresh pending fact, and
+ * pushed. The push was not protected either — a rejected non-fast-forward
+ * fetch still updates `refs/remotes/<remote>/chant/lifecycle` opportunistically
+ * in a full clone, so `pushLifecycle`'s `--force-with-lease` matched the tip
+ * it had just learned and forced. Verified on git 2.50.1: a remote holding a
+ * pending fact and an approval ended up holding neither.
+ *
+ * So there is one rule now, for readers and writers alike:
+ *
+ * - `diverged` always refuses. A fork is not the ledger, and nothing good
+ *   comes of reading one as if it were.
+ * - `unreachable` refuses only when the checkout has no local history at all,
+ *   which is the case that would otherwise read as an empty ledger. With
+ *   local history and no answer from the remote, the read proceeds and the
+ *   push's lease fails safely on its own — refusing there would strand every
+ *   offline run.
+ * - `fetched`, `no-remote`, `absent` and `ahead` all proceed. `ahead` is the
+ *   ordinary state right after an append whose push has not landed, and is
+ *   exactly what a retry needs to be able to repair.
  */
-export async function requireLifecycleLedgerReadable(opts?: { cwd?: string }): Promise<void> {
+export async function requireLifecycleLedger(opts?: { cwd?: string }): Promise<void> {
   const hadLocal = (await getStateBranchTip(opts?.cwd)) !== null;
   const result = await fetchLifecycleStatus(opts);
-  if (hadLocal) return;
-  refuseUnreadable(result);
-}
 
-/**
- * The same guard for a caller that is about to *append* to the ledger (#2303
- * finding 2) — `chant approve` above all.
- *
- * `writeBlobToPath` builds its commit from `readTree`, and `readTree` on a
- * checkout with no local `chant/lifecycle` returns `{ tip: null, entries: [] }`.
- * The append therefore parents on nothing and writes a tree holding only the
- * line it just produced: a brand-new root commit that replaces the branch
- * instead of extending it. The `update-ref` CAS does not catch it, because
- * the assertion it makes — "the ref does not exist" — is perfectly true
- * locally. That is how an operator cloning, approving and pushing turned a
- * branch holding the pending record into a branch holding only the
- * resolution, on the branch both READMEs call the approval of record.
- *
- * Fetching first is the fix: with real history in the checkout the append
- * parents on it and the pending fact survives. This refuses in the two cases
- * where fetching cannot establish that — including divergence with a local
- * branch present, which the read path tolerates and a write must not, since
- * appending across a fork silently drops one side.
- */
-export async function requireLifecycleLedgerWritable(opts?: { cwd?: string }): Promise<void> {
-  const result = await fetchLifecycleStatus(opts);
-  refuseUnreadable(result);
-}
-
-function refuseUnreadable(result: LifecycleFetchStatus): void {
-  if (result.status === "unreachable") {
-    throw new LifecycleLedgerUnreadableError(
-      "unreachable",
-      result.remote,
-      result.stderr,
-      `is not in this checkout and could not be fetched from "${result.remote}"`,
-    );
-  }
   if (result.status === "diverged") {
     throw new LifecycleLedgerUnreadableError(
       "diverged",
       result.remote,
       result.stderr,
-      `has diverged from the copy on "${result.remote}", which would not fast-forward into it`,
+      `has diverged from the copy on "${result.remote}" — neither contains the other`,
+    );
+  }
+  if (result.status === "unreachable" && !hadLocal) {
+    throw new LifecycleLedgerUnreadableError(
+      "unreachable",
+      result.remote,
+      result.stderr,
+      `is not in this checkout and could not be fetched from "${result.remote}"`,
     );
   }
 }

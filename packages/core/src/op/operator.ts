@@ -180,13 +180,31 @@ export async function runOperatorRound(opts: OperatorRoundOptions): Promise<Oper
     try {
       const result = await runOpLocally(config, opts.activities, opts.profiles, opts.signal, {
         ledger: { cwd: opts.cwd },
+        // #2301: without a sink, `settle` catches a failed ledger append and
+        // drops it. That is the failure this tick can least afford to lose —
+        // the message below points the reader at the ledger record, which is
+        // exactly the artifact a failed append means is not there.
+        onLedgerError: (err) =>
+          events.push({
+            kind: "tick-failed",
+            op: config.name,
+            env,
+            error:
+              `Op "${config.name}" ran, but its record could not be appended to the run ledger: ` +
+              `${err instanceof Error ? err.message : String(err)}`,
+          }),
       });
       const held = await stillHoldsLease(config.name, holder, lease.token, { cwd: opts.cwd });
       events.push(held ? { kind: "ticked", op: config.name, env, result } : { kind: "fenced", op: config.name, env });
     } catch (err) {
+      // #2301: "see its ledger record" was the whole message, and it sent the
+      // reader to an artifact that a failed ledger append means is missing —
+      // while `err.result` was carrying the failing steps all along. Name the
+      // failing steps here, and fall back to `cause` for a failure that
+      // produced no step record at all.
       const message =
         err instanceof OpRunFailure
-          ? `Op "${config.name}" failed — see its ledger record for step-level detail`
+          ? failureDetail(config.name, err)
           : err instanceof Error
             ? err.message
             : String(err);
@@ -195,6 +213,26 @@ export async function runOperatorRound(opts: OperatorRoundOptions): Promise<Oper
   }
 
   return events;
+}
+
+/**
+ * What a failed tick says about itself (#2301).
+ *
+ * `chant operator` renders its own events rather than going through
+ * `renderHuman`, so the executor's step records reached nobody here even after
+ * the executor stopped dropping them. Every failing step's message, in order,
+ * or the underlying error when the run failed without producing one.
+ */
+function failureDetail(op: string, err: OpRunFailure): string {
+  const failed = err.result.records.filter((r) => r.status === "fail" && r.error);
+  if (failed.length > 0) {
+    return `Op "${op}" failed: ${failed.map((r) => `${r.fn}: ${r.error}`).join("; ")}`;
+  }
+  const cause = err.cause;
+  if (cause !== undefined) {
+    return `Op "${op}" failed: ${cause instanceof Error ? cause.message : String(cause)}`;
+  }
+  return `Op "${op}" failed — see its ledger record for step-level detail`;
 }
 
 /** Abortable sleep — resolves early (without throwing) if `signal` fires mid-wait, so the operator loop can stop promptly on Ctrl-C rather than finishing out a long interval. */

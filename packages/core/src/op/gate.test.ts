@@ -18,7 +18,13 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { evaluateGate, gitGateLedgerPort } from "./gate";
 import { appendGateResolution, readGateLedger } from "../lifecycle/gate-ledger";
-import { requireLifecycleLedgerWritable, LifecycleLedgerUnreadableError } from "../lifecycle/git";
+import {
+  requireLifecycleLedger,
+  fetchLifecycleStatus,
+  writeBlobToPath,
+  LifecycleLedgerUnreadableError,
+} from "../lifecycle/git";
+import { appendRunRecord, buildRunRecord } from "../lifecycle/run-ledger";
 
 function git(args: string[], cwd: string): { stdout: string; stderr: string; exitCode: number } {
   const r = spawnSync("git", args, { cwd, encoding: "utf-8" });
@@ -132,6 +138,29 @@ describe("op/gate — a CI checkout with no git identity (#2301)", () => {
     });
   });
 
+  /**
+   * #2309 review, finding 5. `git var GIT_COMMITTER_IDENT` fails if *either*
+   * half is missing, so an all-or-nothing fallback would replace a configured
+   * `user.name` too — which is not what "a configured identity is left exactly
+   * as it is" promises, in this file's own doc comment or in ops.mdx.
+   */
+  test("a half-configured identity keeps the half it has", async () => {
+    const { author } = await clonePair();
+    await withoutAmbientIdentity(async () => {
+      stripIdentity(author);
+      git(["config", "user.name", "Release Bot"], author);
+
+      await evaluateGate(gitGateLedgerPort({ cwd: author }), {
+        op: "live-apply",
+        gate: "approve-live-apply",
+        now: "2026-09-09T05:00:00.000Z",
+      });
+
+      const committer = git(["log", "-1", "--format=%cn <%ce>", "chant/lifecycle"], author);
+      expect(committer.stdout.trim()).toBe("Release Bot <chant@localhost>");
+    });
+  });
+
   test("a configured identity still authors the ledger commit", async () => {
     const { author } = await clonePair();
     await evaluateGate(gitGateLedgerPort({ cwd: author }), {
@@ -174,15 +203,19 @@ describe("op/gate — a CI checkout with no git identity (#2301)", () => {
    * branch — `git hash-object failed: ...` on its own does not.
    */
   test("a ledger write that cannot happen names the branch and the path", async () => {
-    const notARepo = tmp("not-a-repo");
-    await mkdir(notARepo, { recursive: true });
+    const { author } = await clonePair();
+    // Establish the branch first, so this exercises the *write* rather than
+    // the absent-ledger guard that runs ahead of it.
+    await evaluateGate(gitGateLedgerPort({ cwd: author }), {
+      op: "live-apply",
+      gate: "approve-live-apply",
+      now: "2026-09-09T05:00:00.000Z",
+    });
+    // A newline in the entry name is `git mktree`'s one deterministic input
+    // error, so the failure lands mid-write with the branch already present.
     await expect(
-      evaluateGate(gitGateLedgerPort({ cwd: notARepo }), {
-        op: "live-apply",
-        gate: "approve-live-apply",
-        now: "2026-09-09T05:00:00.000Z",
-      }),
-    ).rejects.toThrow(/cannot write _gates\/live-apply\.jsonl on the chant\/lifecycle branch/);
+      writeBlobToPath("_gates", "live\napply.jsonl", "{}", "msg", { cwd: author }),
+    ).rejects.toThrow(/cannot write _gates\/live\napply\.jsonl on the chant\/lifecycle branch: git mktree/);
   });
 });
 
@@ -288,7 +321,7 @@ describe("op/gate — a CI checkout that never fetched the ledger (#2303)", () =
     // commit holding the pending record to one commit holding only the
     // resolution.
     const approver = ciCheckout(remote);
-    await requireLifecycleLedgerWritable({ cwd: approver });
+    await requireLifecycleLedger({ cwd: approver });
     await appendGateResolution(
       {
         op: "live-apply",
@@ -306,6 +339,65 @@ describe("op/gate — a CI checkout that never fetched the ledger (#2303)", () =
     expect(lifecycleCommitCount(approver)).toBe(before + 1);
   });
 
+  /**
+   * Build the state #2309's review found destroys approvals: a remote holding
+   * the real ledger, and a *full* clone whose local `chant/lifecycle` is an
+   * unrelated root commit. The clone must be full, not `--single-branch` —
+   * that is what gives the failed non-fast-forward fetch a default refspec to
+   * opportunistically refresh `refs/remotes/origin/chant/lifecycle` through,
+   * which is what made `pushLifecycle`'s `--force-with-lease` match.
+   */
+  async function forkedCheckout(remote: string): Promise<string> {
+    const dir = tmp("forked");
+    git(["clone", "-q", remote, dir], tmpdir());
+    git(["config", "user.email", "fork@chant.dev"], dir);
+    git(["config", "user.name", "Fork"], dir);
+    git(["branch", "-q", "-D", "chant/lifecycle"], dir);
+    git(["update-ref", "-d", "refs/remotes/origin/chant/lifecycle"], dir);
+    // An orphan commit on the same branch name, built without ever reading
+    // the remote's — the shape a pre-#2303 unfetched append produced, and the
+    // shape a fabricated run-ledger branch still would.
+    const blob = spawnSync("git", ["hash-object", "-w", "--stdin"], { cwd: dir, input: "forked\n", encoding: "utf-8" }).stdout.trim();
+    const tree = spawnSync("git", ["mktree"], { cwd: dir, input: `100644 blob ${blob}\tf\n`, encoding: "utf-8" }).stdout.trim();
+    const commit = git(["commit-tree", "-m", "forked local ledger", tree], dir).stdout.trim();
+    git(["update-ref", "refs/heads/chant/lifecycle", commit], dir);
+    return dir;
+  }
+
+  test("finding 1 (review): the gate refuses a forked local ledger instead of reading it as authoritative", async () => {
+    const { remote, author } = await clonePair();
+    await evaluateGate(gitGateLedgerPort({ cwd: author }), {
+      op: "live-apply",
+      gate: "approve-live-apply",
+      now: "2026-09-09T05:00:00.000Z",
+    });
+    await appendGateResolution(
+      { op: "live-apply", gate: "approve-live-apply", resolvedBy: "e2e-operator", timestamp: "2026-09-09T05:15:45.515Z" },
+      { cwd: author },
+    );
+    git(["push", "-q", "origin", "chant/lifecycle:chant/lifecycle"], author);
+    const remoteTipBefore = git(["rev-parse", "refs/heads/chant/lifecycle"], remote).stdout.trim();
+
+    const forked = await forkedCheckout(remote);
+
+    // The read the gate actually performs. Before the review this returned
+    // normally — the guard's `if (hadLocal) return` swallowed divergence — so
+    // the gate read a ledger with no approval in it, recorded a second
+    // pending fact, and pushed it over the top of the real one.
+    await expect(
+      evaluateGate(gitGateLedgerPort({ cwd: forked }), {
+        op: "live-apply",
+        gate: "approve-live-apply",
+        now: "2026-09-09T05:20:00.000Z",
+      }),
+    ).rejects.toBeInstanceOf(LifecycleLedgerUnreadableError);
+
+    // Nothing was written, and the approval on the remote is untouched.
+    expect(git(["rev-parse", "refs/heads/chant/lifecycle"], remote).stdout.trim()).toBe(remoteTipBefore);
+    const { resolutions } = await readGateLedger("live-apply", { cwd: author });
+    expect(resolutions.map((r) => r.resolvedBy)).toEqual(["e2e-operator"]);
+  });
+
   test("finding 2: a local ledger that diverged from the remote refuses rather than appending across the fork", async () => {
     const { remote, author } = await clonePair();
     await evaluateGate(gitGateLedgerPort({ cwd: author }), {
@@ -315,21 +407,80 @@ describe("op/gate — a CI checkout that never fetched the ledger (#2303)", () =
     });
     git(["push", "-q", "origin", "chant/lifecycle:chant/lifecycle"], author);
 
-    // A second operator builds their own unrelated root commit on the same
-    // branch name — exactly what the pre-#2303 unfetched-approve produced.
-    const other = ciCheckout(remote);
-    await appendGateResolution(
-      { op: "other-op", gate: "g", resolvedBy: "someone", timestamp: "2026-09-09T05:10:00.000Z" },
-      { cwd: other },
-    );
-    expect(lifecycleCommitCount(other)).toBe(1);
+    const forked = await forkedCheckout(remote);
+    expect(lifecycleCommitCount(forked)).toBe(1);
 
-    await expect(requireLifecycleLedgerWritable({ cwd: other })).rejects.toBeInstanceOf(
+    await expect(requireLifecycleLedger({ cwd: forked })).rejects.toBeInstanceOf(
       LifecycleLedgerUnreadableError,
     );
-    await expect(requireLifecycleLedgerWritable({ cwd: other })).rejects.toThrow(
+    await expect(requireLifecycleLedger({ cwd: forked })).rejects.toThrow(
       /has diverged from the copy on "origin"/,
     );
+  });
+
+  test("a local ledger merely ahead of the remote is not a fork, and still appends", async () => {
+    // The other side of the divergence check: git reports "non-fast-forward"
+    // for a local branch that is ahead too — the ordinary state right after an
+    // append whose push has not landed. Refusing there would break the retry
+    // that is meant to repair it.
+    const { author } = await clonePair();
+    await evaluateGate(gitGateLedgerPort({ cwd: author }), {
+      op: "live-apply",
+      gate: "approve-live-apply",
+      now: "2026-09-09T05:00:00.000Z",
+    });
+    git(["push", "-q", "origin", "chant/lifecycle:chant/lifecycle"], author);
+
+    // One more local commit that the remote has not seen.
+    await appendGateResolution(
+      { op: "live-apply", gate: "approve-live-apply", resolvedBy: "e2e-operator", timestamp: "2026-09-09T05:15:45.515Z" },
+      { cwd: author },
+    );
+    expect(lifecycleCommitCount(author)).toBe(2);
+
+    expect(await fetchLifecycleStatus({ cwd: author })).toMatchObject({ status: "ahead" });
+    await expect(requireLifecycleLedger({ cwd: author })).resolves.toBeUndefined();
+  });
+
+  /**
+   * #2309 review, finding 2. Every ledger writer reaches `writeBlobToPath`,
+   * and on a checkout with no local `chant/lifecycle` that function used to
+   * build a root commit unconditionally. Until #2301 the damage was capped by
+   * accident: `commit-tree` died for want of a committer, so no branch was
+   * created. Supplying an identity would have turned that loud failure into a
+   * silent branch fabrication — a run record, on an Op with no gate at all,
+   * creating a `chant/lifecycle` that forks the remote's. Since GitLab
+   * runners reuse `/builds/<project>` across jobs, the next job would then
+   * carry that fork into the gate.
+   */
+  test("a run-ledger append does not fabricate a ledger branch over the remote's", async () => {
+    const { remote, author } = await clonePair();
+    await evaluateGate(gitGateLedgerPort({ cwd: author }), {
+      op: "live-apply",
+      gate: "approve-live-apply",
+      now: "2026-09-09T05:00:00.000Z",
+    });
+    git(["push", "-q", "origin", "chant/lifecycle:chant/lifecycle"], author);
+
+    // A CI checkout with no ledger branch, running an Op that never reaches a
+    // gate — so nothing on its path has fetched anything.
+    const ci = ciCheckout(remote);
+    expect(git(["rev-parse", "--verify", "refs/heads/chant/lifecycle"], ci).exitCode).not.toBe(0);
+
+    await appendRunRecord(
+      buildRunRecord({ name: "live-check" }, [], {
+        started: "2026-09-09T05:30:00.000Z",
+        ended: "2026-09-09T05:30:10.000Z",
+        status: "ok",
+      }),
+      { cwd: ci },
+    );
+
+    // The branch it produced descends from the remote's, rather than replacing
+    // it: the pending fact written above is still readable here.
+    const { pending } = await readGateLedger("live-apply", { cwd: ci });
+    expect(pending.map((p) => p.gate)).toEqual(["approve-live-apply"]);
+    expect(await fetchLifecycleStatus({ cwd: ci })).toMatchObject({ status: "ahead" });
   });
 
   test("a project with no remote is local-only and is never refused", async () => {
@@ -348,6 +499,6 @@ describe("op/gate — a CI checkout that never fetched the ledger (#2303)", () =
       now: "2026-09-09T05:00:00.000Z",
     });
     expect(check.satisfied).toBe(false);
-    await expect(requireLifecycleLedgerWritable({ cwd: dir })).resolves.toBeUndefined();
+    await expect(requireLifecycleLedger({ cwd: dir })).resolves.toBeUndefined();
   });
 });

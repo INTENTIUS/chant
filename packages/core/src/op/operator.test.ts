@@ -293,6 +293,26 @@ describe("runOperatorRound — lease + tick execution over a fixture ConvergeOp 
     });
   });
 
+  /**
+   * #2309 review, finding 3. `chant operator` renders its own events rather
+   * than going through `renderHuman`, so fixing the executor's swallow (#2301)
+   * did nothing for this path: the message was the fixed string "see its
+   * ledger record for step-level detail", which sends the reader to an
+   * artifact that a failed ledger append means is not there.
+   */
+  test("a failing tick names the failing step, not just the ledger record", async () => {
+    await withTestDir(async (dir) => {
+      await initRepo(dir);
+      writeFixtureConvergeOp(dir, "staging-converge", "staging");
+      const activities = fakeTickActivities(dir, "staging", "staging-converge", { throws: true });
+
+      const events = await runOperatorRound({ cwd: dir, holder: "op-a", activities, profiles: PROFILES });
+      const failed = events[0] as Extract<OperatorTickEvent, { kind: "tick-failed" }>;
+      expect(failed.error).not.toMatch(/see its ledger record/);
+      expect(failed.error).toMatch(/^Op "staging-converge" failed: /);
+    });
+  });
+
   test("ticks every discovered ConvergeOp across environments in one round", async () => {
     await withTestDir(async (dir) => {
       await initRepo(dir);
