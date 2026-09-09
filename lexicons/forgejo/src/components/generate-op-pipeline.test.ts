@@ -16,6 +16,7 @@ interface ParsedJob {
   "runs-on"?: string;
   environment?: Record<string, string>;
   outputs?: Record<string, string>;
+  env?: Record<string, string>;
   steps: Array<{ id?: string; uses?: string; run?: string }>;
 }
 interface ParsedDoc {
@@ -275,5 +276,131 @@ describe("generateForgejoOpPipeline: a dropped deployment environment (#2257)", 
     expect(() =>
       generateForgejoOpPipeline([{ ...APPLY, environment: { name: "production", url: "/deploys" } }]),
     ).toThrow(/neither an absolute http\(s\) URL nor a/);
+  });
+});
+
+/**
+ * chant #2290 — per-Op credentials, so a pull-request job need not hold the
+ * apply credential. The consuming project's own shape: `live-check` (no
+ * `variables`) carries no credential while `live-apply` (`variables` set)
+ * carries one, both generated from forge-wide `options.variables` that name
+ * no credential at all.
+ */
+describe("generateForgejoOpPipeline: per-Op variables land on the job, not the workflow (#2290)", () => {
+  const FORGE_WIDE = { CHANT_FORGE: "forgejo", AWS_REGION: "${{ vars.AWS_REGION }}" };
+  const CREDENTIAL = { AWS_ACCESS_KEY_ID: "${{ secrets.AWS_ACCESS_KEY_ID }}" };
+
+  test("a job whose spec declares no variables carries none, even when the forge-wide options do", () => {
+    const doc = parseFile(
+      generateForgejoOpPipeline([{ name: "live-check", trigger: { kind: "pull_request", branches: ["main"] } }], {
+        variables: FORGE_WIDE,
+      }).files[0].yaml,
+    );
+    expect(doc.jobs!["live-check"].env).toBeUndefined();
+  });
+
+  test("a job whose spec declares variables carries them as the job's own env:, beside the workflow env:", () => {
+    const doc = parseFile(
+      generateForgejoOpPipeline(
+        [{ name: "live-apply", trigger: { kind: "push", branches: ["main"] }, variables: CREDENTIAL }],
+        { variables: FORGE_WIDE },
+      ).files[0].yaml,
+    );
+    expect(doc.jobs!["live-apply"].env).toEqual(CREDENTIAL);
+  });
+
+  /**
+   * The proof the issue names: a generated workflow whose `live-check` job
+   * carries no credential while its `live-apply` job does, from one forge-wide
+   * options object that itself names no credential — the property the
+   * consuming project (`examples/ci-pipelines`) needs to be able to state.
+   */
+  test("live-check carries no credential while live-apply does, from the same forge-wide options", () => {
+    const files = generateForgejoOpPipeline(
+      [
+        { name: "live-check", trigger: { kind: "pull_request", branches: ["main"] } },
+        { name: "live-apply", trigger: { kind: "push", branches: ["main"] }, variables: CREDENTIAL },
+      ],
+      { variables: FORGE_WIDE },
+    ).files;
+    const check = parseFile(files.find((f) => f.name === "live-check.yml")!.yaml);
+    const apply = parseFile(files.find((f) => f.name === "live-apply.yml")!.yaml);
+
+    expect(JSON.stringify(check.jobs!["live-check"])).not.toContain("AWS_ACCESS_KEY_ID");
+    expect(apply.jobs!["live-apply"].env).toEqual(CREDENTIAL);
+  });
+
+  test("a per-Op key wins over a same-named forge-wide one — the job is more specific", () => {
+    const doc = parseFile(
+      generateForgejoOpPipeline(
+        [
+          {
+            name: "live-apply",
+            trigger: { kind: "push", branches: ["main"] },
+            variables: { CHANT_FORGE: "overridden" },
+          },
+        ],
+        { variables: FORGE_WIDE },
+      ).files[0].yaml,
+    );
+    expect(doc.jobs!["live-apply"].env).toEqual({ CHANT_FORGE: "overridden" });
+  });
+
+  test("a spec declaring variables changes exactly the job's env: block and nothing else", () => {
+    const spec: ScheduledOpSpec = { name: "live-apply", trigger: { kind: "push", branches: ["main"] } };
+    const before = generateForgejoOpPipeline([spec]).files[0].yaml;
+    const after = generateForgejoOpPipeline([{ ...spec, variables: CREDENTIAL }]).files[0].yaml;
+    expect(after).toContain("    env:\n      AWS_ACCESS_KEY_ID: '${{ secrets.AWS_ACCESS_KEY_ID }}'\n");
+    expect(
+      after.replace("    env:\n      AWS_ACCESS_KEY_ID: '${{ secrets.AWS_ACCESS_KEY_ID }}'\n", ""),
+    ).toBe(before);
+  });
+});
+
+/**
+ * chant #2294 — the gated-apply outputs survive the notice job that consumed
+ * them. Asserted directly against forgejo's own output: no `outputs:` on the
+ * push job, no `node -e` line writing to `$GITHUB_OUTPUT`, while github's
+ * generator (same spec) still carries both because its notice job still reads
+ * them.
+ */
+describe("generateForgejoOpPipeline: no unconsumed outputs (#2294)", () => {
+  const pushSpec: ScheduledOpSpec = { name: "live-apply", trigger: { kind: "push", branches: ["main"] } };
+
+  test("the push job carries no outputs: block", () => {
+    const doc = parseFile(generateForgejoOpPipeline([pushSpec]).files[0].yaml);
+    expect(doc.jobs!["live-apply"].outputs).toBeUndefined();
+  });
+
+  test("the run step carries no node -e line writing to $GITHUB_OUTPUT", () => {
+    const doc = parseFile(generateForgejoOpPipeline([pushSpec]).files[0].yaml);
+    const step = doc.jobs!["live-apply"].steps.find((s) => s.id === "chant-run");
+    expect(step?.run).not.toContain("node -e");
+    expect(step?.run).not.toContain("GITHUB_OUTPUT");
+    // The tee'd invocation survives — it's what puts the run's own record in
+    // the log, gate-notice job or not.
+    expect(step?.run).toContain("| tee");
+    expect(step?.run).toContain("chant run live-apply --gated-exit 0 --json");
+  });
+
+  test("github, generated from the same spec, still carries both — the drop is forgejo's dialect, not the shared builder", () => {
+    const gh = parseFile(generateGithubOpPipeline([pushSpec]).files[0].yaml);
+    const ghStep = gh.jobs!["live-apply"].steps.find((s) => s.id === "chant-run");
+    expect(gh.jobs!["live-apply"].outputs).toEqual({
+      gated: "${{ steps.chant-run.outputs.gated }}",
+      op: "${{ steps.chant-run.outputs.op }}",
+      gate: "${{ steps.chant-run.outputs.gate }}",
+      approve: "${{ steps.chant-run.outputs.approve }}",
+    });
+    expect(ghStep?.run).toContain("node -e");
+  });
+
+  test("a non-push (cron) job carries no outputs and no gate script either way", () => {
+    const doc = parseFile(
+      generateForgejoOpPipeline([{ name: "live-discover", schedule: "0 6 * * *" }]).files[0].yaml,
+    );
+    expect(doc.jobs!["live-discover"].outputs).toBeUndefined();
+    const step = doc.jobs!["live-discover"].steps.find((s) => typeof s.run === "string");
+    expect(step?.run).not.toContain("node -e");
   });
 });
