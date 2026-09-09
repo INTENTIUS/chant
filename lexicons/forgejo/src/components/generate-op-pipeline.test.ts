@@ -14,10 +14,11 @@ import type { ScheduledOpSpec } from "@intentius/chant/lexicon";
 
 interface ParsedJob {
   "runs-on"?: string;
+  container?: string;
   environment?: Record<string, string>;
   outputs?: Record<string, string>;
   env?: Record<string, string>;
-  steps: Array<{ id?: string; uses?: string; run?: string }>;
+  steps: Array<{ id?: string; uses?: string; run?: string; shell?: string }>;
 }
 interface ParsedDoc {
   on?: Record<string, unknown>;
@@ -216,6 +217,24 @@ describe("generateForgejoOpPipeline: the gated apply on push (#2243)", () => {
     // forgejo's rather than the shared builder's.
     expect(Object.keys(fj.jobs ?? {})).toEqual(["app-apply"]);
     expect(gh.jobs).toHaveProperty("app-apply-gate-notice");
+  });
+
+  /**
+   * chant #2299 — Forgejo Actions runs the same act_runner semantics as
+   * GitHub Actions: a job with `container:` (which this generator's Op job
+   * always carries, unconditionally) defaults to `sh`, and `sh` rejects `set
+   * -o pipefail`. This generator reuses github's `buildGithubOpPipelineDocs`
+   * to build the job, then the dialect transform in ../dialect.ts to cross
+   * it, so the fix has to survive both: neither step drops or renames
+   * `shell:`.
+   */
+  test("the pipefail step keeps shell: bash across the Forgejo dialect — its job runs in a container, whose default shell is sh", () => {
+    const doc = parseFile(generateForgejoOpPipeline([pushSpec]).files[0].yaml);
+    const job = doc.jobs!["app-apply"];
+    expect(job.container).toBe("node:22-slim");
+    const step = job.steps.find((s) => s.id === "chant-run");
+    expect(step?.run).toContain("set -o pipefail");
+    expect(step?.shell).toBe("bash");
   });
 });
 
