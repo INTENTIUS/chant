@@ -26,15 +26,37 @@ const isActivity = (s: StepDefinition): s is ActivityStep => s.kind === "activit
 const steps = (op: OpConfig): ActivityStep[] => op.phases.flatMap((p) => p.steps.filter(isActivity));
 const base = { name: "estate-adopt", root: "estate" };
 
-describe("TerraformAdoptOp phases (#2105)", () => {
-  test("Check, Ledger, Gate, Adopt, in that order", () => {
+describe("TerraformAdoptOp phases (#2105, #2302)", () => {
+  test("Init, Check, Ledger, Gate, Adopt, in that order", () => {
     const op = props(base);
-    expect(phaseNames(op)).toEqual(["Check", "Ledger", "Gate", "Adopt"]);
-    expect(steps(op).map((s) => s.fn)).toEqual(["choudoufuLiveCheck", "choudoufuLivePlan", "choudoufuAdopt"]);
+    expect(phaseNames(op)).toEqual(["Init", "Check", "Ledger", "Gate", "Adopt"]);
+    expect(steps(op).map((s) => s.fn)).toEqual([
+      "terraformInit",
+      "choudoufuLiveCheck",
+      "choudoufuLivePlan",
+      "choudoufuAdopt",
+    ]);
   });
 
-  test("Check runs live-check first, and reports whether the root was refused", () => {
-    const check = props(base).phases[0].steps[0] as ActivityStep;
+  // #2302: the Ledger step's `live-plan` needs the provider schema to
+  // discover markers, which a checkout that has never run `init` does not
+  // have — every fresh CI checkout, not a GitLab peculiarity. Without this
+  // phase `live-plan` fails outright: "Error: Provider unavailable for
+  // marker discovery".
+  test("Init runs terraform init first, the same shape TerraformApplyOp and TerraformWatchOp use", () => {
+    const init = props(base).phases[0].steps[0] as ActivityStep;
+    expect(init.fn).toBe("terraformInit");
+    expect(init.args?.root).toBe("estate");
+    expect(init.args && "upgrade" in init.args).toBe(false);
+  });
+
+  test("upgrade rides the Init step only, the same option name as the other two Ops", () => {
+    const init = props({ ...base, upgrade: true }).phases[0].steps[0] as ActivityStep;
+    expect(init.args?.upgrade).toBe(true);
+  });
+
+  test("Check runs live-check second, and reports whether the root was refused", () => {
+    const check = props(base).phases[1].steps[0] as ActivityStep;
     expect(check.fn).toBe("choudoufuLiveCheck");
     expect(check.outcomeAttribute).toEqual({ name: "Refused", from: "refused" });
     // No cloud calls, so this is the cheapest place to learn the root cannot
@@ -43,7 +65,7 @@ describe("TerraformAdoptOp phases (#2105)", () => {
   });
 
   test("Ledger is the -adoption-only live plan, and publishes both counts", () => {
-    const ledger = props(base).phases[1].steps[0] as ActivityStep;
+    const ledger = props(base).phases[2].steps[0] as ActivityStep;
     expect(ledger.fn).toBe("choudoufuLivePlan");
     expect(ledger.id).toBe("ledger");
     expect(ledger.args?.adoptionOnly).toBe(true);
@@ -64,14 +86,14 @@ describe("TerraformAdoptOp phases (#2105)", () => {
 
   test("an explicit estate rides the Ledger step only", () => {
     const op = props({ ...base, estate: "prod-networking" });
-    expect((op.phases[1].steps[0] as ActivityStep).args?.estate).toBe("prod-networking");
-    expect((op.phases[0].steps[0] as ActivityStep).args?.estate).toBeUndefined();
+    expect((op.phases[2].steps[0] as ActivityStep).args?.estate).toBe("prod-networking");
+    expect((op.phases[1].steps[0] as ActivityStep).args?.estate).toBeUndefined();
   });
 });
 
 describe("TerraformAdoptOp gates on the ledger (#2105)", () => {
   const gateOf = (op: OpConfig): GateStep => {
-    const step = op.phases[2].steps[0];
+    const step = op.phases[3].steps[0];
     expect(step.kind).toBe("gate");
     return step as GateStep;
   };
@@ -107,7 +129,7 @@ describe("TerraformAdoptOp gates on the ledger (#2105)", () => {
 });
 
 describe("TerraformAdoptOp adopts the ledger's matches and nothing else (#2105)", () => {
-  const adoptStep = (op: OpConfig): ActivityStep => op.phases[3].steps[0] as ActivityStep;
+  const adoptStep = (op: OpConfig): ActivityStep => op.phases[4].steps[0] as ActivityStep;
 
   test("the Adopt step takes the ledger's adoptable set by reference", () => {
     const adopt = adoptStep(props(base));

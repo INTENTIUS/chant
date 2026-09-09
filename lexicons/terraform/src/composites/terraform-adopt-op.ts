@@ -13,8 +13,18 @@
  * the two values that would claim it. Cloud-to-code here is "claim what the
  * configuration already describes" — a tag write, not a regeneration.
  *
- * Phases: Check, Ledger, Gate, Adopt.
+ * Phases: Init, Check, Ledger, Gate, Adopt.
  *
+ *   - **Init** runs `terraform init`, the same step `TerraformApplyOp` and
+ *     `TerraformWatchOp` open with. The Ledger step's `live-plan` needs the
+ *     provider schema to discover markers on the live resources it reads, and
+ *     a checkout that has never run `init` has no `.terraform` directory to
+ *     read one from — which is every fresh CI checkout, not a GitLab
+ *     peculiarity (#2302). Without this phase `live-plan` fails outright:
+ *     `Error: Provider unavailable for marker discovery`. This composite had
+ *     no Init phase because nothing had ever run `live-adopt` before
+ *     INTENTIUS/choudoufu#1026 did, so the gap survived every guard that only
+ *     read the generated YAML.
  *   - **Check** runs `live-check`, which makes no cloud calls and says whether
  *     this configuration can move under markers at all. It runs first because
  *     a root that `live-check` refuses will produce an adoption ledger that
@@ -83,6 +93,7 @@
 
 import { Op, phase, gate, activity, OpResource } from "@intentius/chant/op";
 import {
+  terraformInit as initStep,
   choudoufuLiveCheck as checkStep,
   choudoufuLivePlan as ledgerStep,
   choudoufuAdopt as adoptStep,
@@ -111,6 +122,12 @@ export interface TerraformAdoptOpConfig {
   /** Override the gate description shown to the approver. */
   gateDescription?: string;
   /**
+   * `-upgrade` on the Init step: re-resolve provider and module versions.
+   * Same field, same meaning, as `TerraformApplyOpConfig.upgrade` and
+   * `TerraformWatchOpConfig.upgrade`.
+   */
+  upgrade?: boolean;
+  /**
    * Directory each step starts the `chant.config.*` search from, which is what
    * `terraform.roots` and the root's relative `dir` resolve against. Default:
    * the running process's cwd.
@@ -130,7 +147,7 @@ export interface TerraformAdoptOpConfig {
 }
 
 export interface TerraformAdoptOpResources {
-  /** Op resource. Generates the Check/Ledger/Gate/Adopt workflow. */
+  /** Op resource. Generates the Init/Check/Ledger/Gate/Adopt workflow. */
   op: InstanceType<typeof OpResource>;
 }
 
@@ -178,6 +195,7 @@ export function TerraformAdoptOp(config: TerraformAdoptOpConfig): TerraformAdopt
       TerraformMode: "live",
     },
     phases: [
+      phase("Init", [initStep(config.root, { ...where, ...(config.upgrade ? { upgrade: true } : {}) })]),
       phase("Check", [check]),
       phase("Ledger", [ledger]),
       phase("Gate", [

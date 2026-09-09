@@ -69,6 +69,8 @@ import { cpSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
+import { loadActivities, loadProfiles, runOpLocally, type OpConfig } from "@intentius/chant/op";
+import { TerraformAdoptOp } from "./terraform-adopt-op";
 import { choudoufuAdopt, choudoufuLivePlan, terraformInit } from "../op/activities/terraform";
 
 function onPath(cmd: string): boolean {
@@ -173,6 +175,69 @@ describe.skipIf(skipReason !== "")(
         // And the estate now says so: the VPC is bound at the declared address.
         const bound = (after.json as { bound?: Array<{ addr?: string; identity?: string }> }).bound ?? [];
         expect(bound.map((b) => b.addr)).toContain("aws_vpc.adoptable");
+      },
+    );
+  },
+);
+
+/**
+ * #2302: `TerraformAdoptOp` built with no Init phase reached its Ledger step
+ * with an empty `.terraform` on every checkout that had never run `init` —
+ * every fresh CI checkout, not a GitLab peculiarity. This drives the built Op
+ * itself through `runOpLocally`, the way `terraform-apply-op.acceptance.test.ts`
+ * does, over a project this test creates fresh and never initializes by hand:
+ * no `terraformInit` call anywhere in this block, unlike the suite above. The
+ * Op's own Init phase is what has to do that work, or the Ledger step fails
+ * the same way it failed in INTENTIUS/choudoufu#1026.
+ *
+ * `TerraformAdoptOp` gates unconditionally (no `gate: "never"`, unlike
+ * `TerraformApplyOp`), so a passing run here ends with `status: "gated"`
+ * right after the Ledger phase — "reaching its gate" is the pass, not a
+ * completed adoption. That is proof enough: the Ledger step needs the
+ * provider schema, and a run that reaches the gate is a run whose Ledger step
+ * already read it.
+ *
+ * Needs only a `choudoufu` on PATH and the emulator, not the `aws` CLI: this
+ * block creates no live resource and never reads `ledger.adoptions`, so a
+ * narrower gate than the suite above is correct instead of borrowed.
+ */
+const gateSkipReason = !onPath("choudoufu")
+  ? "no choudoufu binary on PATH"
+  : !emulatorEndpoint
+    ? "CHOUDOUFU_EMULATOR_ENDPOINT is not set (bring up choudoufu's `just smoke` emulator stack and export it)"
+    : "";
+
+describe.skipIf(gateSkipReason !== "")(
+  `TerraformAdoptOp reaches its gate on a checkout that has never run init${gateSkipReason ? ` (skipped: ${gateSkipReason})` : ""}`,
+  () => {
+    it(
+      "Init downloads the provider the Ledger step needs, and the run reaches its gate",
+      { timeout: 300_000 },
+      async () => {
+        const dir = project();
+
+        process.env.AWS_ENDPOINT_URL ??= emulatorEndpoint;
+        process.env.AWS_ACCESS_KEY_ID ??= "choudoufu-emulator";
+        process.env.AWS_SECRET_ACCESS_KEY ??= "choudoufu-emulator";
+        process.env.AWS_DEFAULT_REGION ??= "us-east-1";
+
+        // No `terraformInit` call here. `dir/root` is a fresh checkout: no
+        // `.terraform`, only the fixture's own `main.tf` and
+        // `estate.chdf.hcl` — exactly what `git clone` leaves behind, since
+        // `.terraform` is what every `.gitignore` in this ecosystem excludes.
+        const { op } = TerraformAdoptOp({ name: "gate-check-adopt", root: "estate", cwd: dir });
+
+        const activities = await loadActivities(["terraform"]);
+        const result = await runOpLocally((op as unknown as { props: OpConfig }).props, activities, await loadProfiles());
+
+        expect(result.status).toBe("gated");
+        expect(result.records.map((r) => `${r.phase}:${r.status}`)).toEqual([
+          "Init:ok",
+          "Check:ok",
+          "Ledger:ok",
+          "Gate:skipped",
+          "Adopt:skipped",
+        ]);
       },
     );
   },
