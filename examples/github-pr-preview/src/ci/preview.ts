@@ -16,6 +16,14 @@
 // GitHub's hosted runners. Untrusted PR fields (title, branch name, body)
 // never appear here — the only event fields used are the PR number and head
 // SHA, both shell-safe by construction and passed through env vars anyway.
+//
+// Every `gh api` call targets `$api_base`, resolved from `$GITHUB_API_URL`
+// rather than a bare relative path (chant #2305) — the same construction
+// `PrPlanReport`'s `stickyCommentScript` uses
+// (`lexicons/github/src/composites/pr-plan-report.ts`). `gh` resolves a bare
+// path against `/api/v3`, which is only right for github.com and GHES; on
+// this repo, github.com-only today, it changes nothing observable, but the
+// copy-paste source for this script should not itself demonstrate the bug.
 
 import { Workflow, Job, Step, Concurrency, Environment, Permissions } from "@intentius/chant-lexicon-github";
 import { checkout, setupNode, install, clusterAccess } from "./setup";
@@ -51,12 +59,14 @@ const stickyCommentScript =
   "| Peek | \\`kubectl -n preview-$CHANT_ENV port-forward svc/web-$CHANT_ENV 8080:8080\\` |\n" +
   "\n" +
   '_Updated for $HEAD_SHA. Torn down when the PR closes._"\n' +
-  'comment_id=$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" --paginate ' +
+  'api_base="${GITHUB_API_URL%/}"\n' +
+  'api_base="${api_base:-https://api.github.com}"\n' +
+  'comment_id=$(gh api "$api_base/repos/$REPO/issues/$PR_NUMBER/comments" --paginate ' +
   '--jq "map(select(.body | startswith(\\"$MARKER\\"))) | .[0].id // empty")\n' +
   'if [ -n "$comment_id" ]; then\n' +
-  '  gh api -X PATCH "repos/$REPO/issues/comments/$comment_id" -f body="$body" > /dev/null\n' +
+  '  gh api -X PATCH "$api_base/repos/$REPO/issues/comments/$comment_id" -f body="$body" > /dev/null\n' +
   "else\n" +
-  '  gh api -X POST "repos/$REPO/issues/$PR_NUMBER/comments" -f body="$body" > /dev/null\n' +
+  '  gh api -X POST "$api_base/repos/$REPO/issues/$PR_NUMBER/comments" -f body="$body" > /dev/null\n' +
   "fi";
 
 export const deploy = new Job({

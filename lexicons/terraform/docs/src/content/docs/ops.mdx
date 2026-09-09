@@ -234,6 +234,7 @@ jobs:
           json="${RUNNER_TEMP:-/tmp}/chant-run-app-apply.json"
           chant run app-apply --gated-exit 0 --json | tee "$json"
           node -e '...set gated/op/gate/approve on $GITHUB_OUTPUT when the record says gated...' "$json"
+        shell: bash
         env:
           GITHUB_TOKEN: '${{ github.token }}'
   app-apply-gate-notice:
@@ -290,7 +291,7 @@ The environment costs no permission. Protection rules live on the environment ob
 
 Cloud-to-code is the position on the lifecycle dial chant [#2089](https://github.com/INTENTIUS/chant/issues/2089) left open for this lexicon, because stock Terraform has no typed path from a live resource back to HCL. On choudoufu the question is different rather than harder. Ownership is two tags, `live-plan` already names every live resource that exactly matches a declared block and carries no marker, and it prints the two values that would claim it. So reconcile here is "claim what the configuration already describes", which is a tag write.
 
-`TerraformAdoptOp` is that, in four phases:
+`TerraformAdoptOp` is that, in five phases:
 
 ```typescript
 import { TerraformAdoptOp } from "@intentius/chant-lexicon-terraform";
@@ -300,6 +301,7 @@ export const { op } = TerraformAdoptOp({ name: "estate-adopt", root: "estate" })
 
 | Phase | Step | What it settles |
 |---|---|---|
+| Init | `terraformInit` | Downloads the provider schema the Ledger step needs. A checkout that has never run `init` has no `.terraform` directory to read one from, which is every fresh CI checkout. |
 | Check | `choudoufuLiveCheck` | Whether this root can move under markers at all. No cloud calls, so it is the cheapest place to find out that the ledger below would not be authoritative. |
 | Ledger | `choudoufuLivePlan` with `adoptionOnly` | The adoption ledger, which is what the gate approves, plus the machine-readable document the Adopt phase acts on. |
 | Gate | always | Adoption writes tags onto resources this estate does not yet own. There is no `gate: "never"` here, so every run stops at the gate until `chant approve <op> <gate>` records the resolution. |
@@ -313,6 +315,7 @@ export const { op } = TerraformAdoptOp({ name: "estate-adopt", root: "estate" })
 | `gateName` | `approve-<name>` | The gate's name. `signalName` is the deprecated spelling, accepted through 0.59.0 and removed in 0.60.0. |
 | `gateTimeout` | core's own (48h) | How long a recorded pending gate stays valid. |
 | `gateDescription` | a generated description naming the ledger | Override text shown to the approver. |
+| `upgrade` | `false` | `-upgrade` on the Init step. |
 | `cwd` | the process's cwd | Directory each step starts its `chant.config.*` search from. |
 | `compensate` | unset | Refused without a command. See below. |
 

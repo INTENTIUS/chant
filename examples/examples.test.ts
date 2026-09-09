@@ -157,6 +157,15 @@ describeExample(
       expect(workflow).toContain("<!-- chant-pr-preview -->");
       expect(workflow).toContain("gh api -X PATCH");
       expect(workflow).toContain("gh api -X POST");
+      // Every gh api call resolves its base from $GITHUB_API_URL rather than
+      // a bare relative path (chant #2305): `gh` resolves a bare path against
+      // `/api/v3`, which only guesses right for github.com and GHES.
+      expect(workflow).toContain('api_base="${GITHUB_API_URL%/}"');
+      expect(workflow).toContain('api_base="${api_base:-https://api.github.com}"');
+      expect(workflow).toContain('gh api "$api_base/repos/$REPO/issues/$PR_NUMBER/comments"');
+      expect(workflow).toContain('gh api -X PATCH "$api_base/repos/$REPO/issues/comments/$comment_id"');
+      expect(workflow).toContain('gh api -X POST "$api_base/repos/$REPO/issues/$PR_NUMBER/comments"');
+      expect(workflow).not.toMatch(/gh api[^\n]*"repos\//);
       // Every uses: is pinned to a full commit SHA (GHA's pinned-action lints).
       const uses = [...workflow.matchAll(/uses:\s*(\S+)/g)].map((m) => m[1]);
       expect(uses.length).toBeGreaterThan(0);
