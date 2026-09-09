@@ -245,10 +245,26 @@ const GATE_OUTPUT_SCRIPT =
  * `--json`, tee'd so the record is both in the log and on disk, then read for
  * the job's outputs.
  *
- * `set -o pipefail` is not decoration. GitHub's default shell is `bash -e`,
- * which does not set it, so a failing `chant run` piped into `tee` would come
- * back as `tee`'s zero and turn a broken apply green — the exact thing this
- * whole change must not do.
+ * `set -o pipefail` is not decoration. Without it, a failing `chant run`
+ * piped into `tee` comes back as `tee`'s own zero and turns a broken apply
+ * green — the exact thing this whole change must not do. But `pipefail` is a
+ * bash-ism: GitHub's (and Forgejo's) default shell for a job with no
+ * `container:` is `bash --noprofile --norc -eo pipefail`, which already sets
+ * it, but the default for a job that *does* carry `container:` — which every
+ * Op job does, this one included (#2299) — is plain `sh`, which rejects `set
+ * -o pipefail` outright (`Illegal option -o pipefail`) and fails the step
+ * before `chant` ever runs. This generator's own Op job always sets
+ * `container:` (see {@link buildGithubOpPipelineDocs}'s `container: image`),
+ * so the failure is not a corner case — it is what every gated apply and
+ * gated adopt does today.
+ *
+ * That is why this function returns the whole step record rather than just
+ * the script text: `shell: "bash"` is bundled into the same return value as
+ * the `pipefail` line, so nothing that calls it can get one without the
+ * other. A future edit that inlines another `pipefail`-bearing script has to
+ * either reuse this function or open a new call site that a reviewer can see
+ * declares no shell — the property that made #2299 possible in the first
+ * place is no longer available by accident.
  *
  * The `node -e` line and the job's own `outputs:` mapping exist for exactly
  * one reader: the gate-notice job beside it, which is `needs:`-only readable
@@ -259,14 +275,20 @@ const GATE_OUTPUT_SCRIPT =
  * exact thing #2294 is about. The tee'd invocation survives either way — it's
  * what puts the run's own JSON record in the log, gate-notice job or not.
  */
-function gatedRunScript(op: string, invocation: string, emitOutputs: boolean): string {
+function gatedRunStep(
+  id: string,
+  op: string,
+  invocation: string,
+  emitOutputs: boolean,
+  env: Record<string, string>,
+): Record<string, unknown> {
   const lines = [
     "set -o pipefail",
     'json="${RUNNER_TEMP:-/tmp}/chant-run-' + op + '.json"',
     `${invocation} | tee "$json"`,
   ];
   if (emitOutputs) lines.push(`node -e '${GATE_OUTPUT_SCRIPT}' "$json"`);
-  return lines.join("\n");
+  return { id, run: lines.join("\n"), shell: "bash", env };
 }
 
 /**
@@ -656,7 +678,7 @@ export function buildGithubOpPipelineDocs(
     for (const line of beforeScript) steps.push({ run: line });
     steps.push(
       gated
-        ? { id: RUN_STEP_ID, run: gatedRunScript(spec.name, invocation, emitGatedOutputs), env: stepEnv }
+        ? gatedRunStep(RUN_STEP_ID, spec.name, invocation, emitGatedOutputs, stepEnv)
         : { run: invocation, env: stepEnv },
     );
     for (const line of extraScript) steps.push({ run: line });

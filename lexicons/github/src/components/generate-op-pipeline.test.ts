@@ -21,6 +21,7 @@ interface ParsedStep {
   id?: string;
   uses?: string;
   run?: string;
+  shell?: string;
   env?: Record<string, string>;
 }
 
@@ -515,6 +516,24 @@ describe("generateGithubOpPipeline: the gated apply on push (#2243)", () => {
   test("a failing run stays a failing job: the pipe cannot swallow its exit code", () => {
     const step = pushDoc().jobs!["app-apply"].steps.find((s) => s.id === "chant-run");
     expect(step?.run).toContain("set -o pipefail");
+  });
+
+  /**
+   * chant #2299 — every Op job carries `container:` (this generator sets one
+   * unconditionally, default `node:22-slim`), and a container job's default
+   * shell on GitHub Actions is `sh`, not bash. `sh` rejects `set -o pipefail`
+   * outright (`Illegal option -o pipefail`) and fails the step before `chant`
+   * is ever reached, which is exactly what happened on a real run (choudoufu
+   * #1026, run 34312967579). The step that emits `pipefail` must declare
+   * `shell: bash` itself.
+   */
+  test("the pipefail step declares shell: bash — its job runs in a container, whose default shell is sh (#2299)", () => {
+    const doc = pushDoc();
+    const job = doc.jobs!["app-apply"];
+    expect(job.container).toBe("node:22-slim");
+    const step = job.steps.find((s) => s.id === "chant-run");
+    expect(step?.run).toContain("set -o pipefail");
+    expect(step?.shell).toBe("bash");
   });
 });
 
