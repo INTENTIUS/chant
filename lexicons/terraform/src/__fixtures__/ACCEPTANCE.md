@@ -1,6 +1,6 @@
 # What the gated acceptance suites have actually run against
 
-Four `describe` blocks across three files run this lexicon against a real
+Five `describe` blocks across three files run this lexicon against a real
 binary rather than a fixture, and every one of them skips rather than fails
 when its dependency is absent. A skip is silent by design, so without this
 file nothing in the tree says which of them has ever passed, against what, or
@@ -170,6 +170,47 @@ The fixture was deliberately left as an `aws_vpc`. A log group would make the
 block pass off `unowned[]` alone and would stop it proving the content-matcher
 path, which is the only thing it exists to prove.
 
+### 5. `TerraformAdoptOp reaches its gate on a checkout that has never run init`
+
+Same file, third block (#2302). One test: build `TerraformAdoptOp` and drive
+it through `runOpLocally`, exactly as the apply Op's own acceptance suite
+does, over a project this test creates fresh and never initializes by hand —
+no `terraformInit` call anywhere in the block. The Op's own Init phase is what
+has to download the provider, or the Ledger step fails the way it failed in
+INTENTIUS/choudoufu#1026. `TerraformAdoptOp` gates unconditionally, so a
+passing run ends `status: "gated"` right after the Ledger phase — reaching the
+gate is the pass, not a completed adoption.
+
+Gated on a `choudoufu` on PATH and `CHOUDOUFU_EMULATOR_ENDPOINT`. No `aws` CLI:
+this block creates no live resource of its own.
+
+```
+npx vitest run lexicons/terraform/src/composites/terraform-adopt-op.acceptance.test.ts
+```
+
+Last passed: 2026-09-09, choudoufu v0.15.0 with the pinned floci emulator up.
+Removing the Init phase this block exists to guard reproduces
+INTENTIUS/choudoufu#1026 verbatim:
+
+```
+choudoufu live-plan failed in <dir> (exit 1)
+Error: Provider unavailable for marker discovery
+
+Finding the live resources of this estate needs provider
+provider["registry.opentofu.org/hashicorp/aws"], which could not be used:
+cannot read the schema of provider registry.opentofu.org/hashicorp/aws:
+failed to instantiate provider "registry.opentofu.org/hashicorp/aws" to
+obtain schema: unavailable provider "registry.opentofu.org/hashicorp/aws".
+```
+
+With the Init phase back, the same run reaches its gate:
+
+```
+ ✓ TerraformAdoptOp reaches its gate on a checkout that has never run init >
+   Init downloads the provider the Ledger step needs, and the run reaches
+   its gate
+```
+
 ## Running everything that can run on a machine with no choudoufu
 
 ```
@@ -179,15 +220,15 @@ npx vitest run \
   lexicons/terraform/src/op/activities/choudoufu.acceptance.test.ts
 ```
 
-With `terraform` on PATH and the registry reachable, that is 1 passed and 5
+With `terraform` on PATH and the registry reachable, that is 1 passed and 6
 skipped, and each skip names its own reason in the block title. With
-choudoufu v0.15.0, the `aws` CLI and the emulator all present, it is 6 passed
-and 0 skipped: no block in this file skips any more. On 2026-09-08 that is
-exactly what it printed.
+choudoufu v0.15.0 and the emulator present (the `aws` CLI besides, for block
+4), it is 7 passed and 0 skipped: no block in this file skips any more. On
+2026-09-09 that is exactly what it printed.
 
 ```
  Test Files  3 passed (3)
-      Tests  6 passed (6)
+      Tests  7 passed (7)
 ```
 
 Bring the emulator up on a fixed port from choudoufu's own compose file rather
