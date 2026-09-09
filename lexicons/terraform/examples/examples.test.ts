@@ -588,7 +588,7 @@ describe("plan-on-pr generates the pull_request plan and push apply pair (#2221)
     const script = (parsePush(apply)).jobs["app-apply-gate-notice"].steps[0].run ?? "";
     // The commit's own associated-pull-request endpoint, not a search: a push
     // event carries no pull request, and the merge commit's is exact.
-    expect(script).toContain('gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls"');
+    expect(script).toContain('gh api "$api_base/repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls"');
     // The `comment` mode's marker recipe (#2231): find by marker, PATCH when
     // it is there, POST when it is not, so re-merges edit one comment.
     expect(script).toContain('marker="<!-- chant-gate:$CHANT_OP -->"');

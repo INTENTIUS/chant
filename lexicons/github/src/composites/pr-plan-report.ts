@@ -46,25 +46,43 @@ export interface PrPlanReportProps {
 }
 
 /**
- * Sticky-comment script (#1223's mechanism, reused as-is): find the comment
- * whose body starts with `$MARKER`, PATCH it if found, POST otherwise. No
- * marketplace action, nothing extra to pin — `gh` ships on GitHub's hosted
- * runners. The flag is `-F`, not `-f`: `gh api`'s `-F/--field` is the typed
- * form that reads the value from a file when it starts with `@`, while
- * `-f/--raw-field` adds the parameter as a literal string, so the `-f` form
- * posted the eight characters `@plan.md` (#2236). Reading the body from the
- * file the plan step wrote means a large or multi-line plan never has to
- * survive shell quoting. `-F`'s type coercion of `true`/`false`/`null`/
- * integers does not reach the body: gh resolves the leading `@` first and
- * hands back the file's bytes as a string.
+ * Sticky-comment script (#1223's mechanism), find the comment whose body
+ * starts with `$MARKER`, PATCH it if found, POST otherwise. No marketplace
+ * action, nothing extra to pin — `gh` ships on GitHub's hosted runners. The
+ * flag is `-F`, not `-f`: `gh api`'s `-F/--field` is the typed form that
+ * reads the value from a file when it starts with `@`, while `-f/--raw-field`
+ * adds the parameter as a literal string, so the `-f` form posted the eight
+ * characters `@plan.md` (#2236). Reading the body from the file the plan step
+ * wrote means a large or multi-line plan never has to survive shell quoting.
+ * `-F`'s type coercion of `true`/`false`/`null`/integers does not reach the
+ * body: gh resolves the leading `@` first and hands back the file's bytes as
+ * a string.
+ *
+ * `$api_base` (chant #2305) is `$GITHUB_API_URL` with any trailing slash
+ * trimmed, falling back to `https://api.github.com` when it is unset —
+ * `$GITHUB_API_URL` is already correct on every GitHub Actions and Forgejo
+ * Actions job (`https://api.github.com` on github.com, `<host>/api/v3` on
+ * GitHub Enterprise Server, `<host>/api/v1` on Forgejo), the same fact
+ * `githubApiBaseFrom` in `packages/core/src/op/activities/reconcile.ts`
+ * builds on for `reconcilePr`'s `postOrUpdateComment` (#2291). This script
+ * cannot import that helper — it is a shell string emitted into YAML, not a
+ * TypeScript call — so the equivalent base-URL construction is inlined here
+ * instead. Without it, every `gh api` call below took a bare relative path,
+ * which `gh` resolves against `/api/v3` for any host but github.com; that
+ * guess is right for GitHub Enterprise Server but wrong for Forgejo, which
+ * does not serve `/api/v3` and answered 404 for GET and POST alike. On
+ * github.com and GHES the resolved URL is byte-identical to `gh`'s own
+ * guess, so this changes nothing there.
  */
 const stickyCommentScript = [
-  'comment_id=$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" --paginate ' +
+  'api_base="${GITHUB_API_URL%/}"',
+  'api_base="${api_base:-https://api.github.com}"',
+  'comment_id=$(gh api "$api_base/repos/$REPO/issues/$PR_NUMBER/comments" --paginate ' +
     '--jq "map(select(.body | startswith(\\"$MARKER\\"))) | .[0].id // empty")',
   'if [ -n "$comment_id" ]; then',
-  '  gh api -X PATCH "repos/$REPO/issues/comments/$comment_id" -F body=@plan.md > /dev/null',
+  '  gh api -X PATCH "$api_base/repos/$REPO/issues/comments/$comment_id" -F body=@plan.md > /dev/null',
   "else",
-  '  gh api -X POST "repos/$REPO/issues/$PR_NUMBER/comments" -F body=@plan.md > /dev/null',
+  '  gh api -X POST "$api_base/repos/$REPO/issues/$PR_NUMBER/comments" -F body=@plan.md > /dev/null',
   "fi",
 ].join("\n");
 
@@ -79,7 +97,9 @@ const stickyCommentScript = [
  * proved (#1223), reused here rather than reinvented. The forgejo lexicon
  * inherits this composite through its github re-export, since Forgejo Actions
  * runs the same workflow shape and the Forgejo API accepts the same `gh api`
- * calls against its GitHub-compatible surface.
+ * calls against its GitHub-compatible surface — once they target a full URL
+ * rather than a bare relative path, which `stickyCommentScript` now does
+ * (#2305, the same fix #2291 made for `reconcilePr`'s `postOrUpdateComment`).
  *
  * Only meaningful on a `pull_request`-triggered workflow — the job guards on
  * `github.event_name` since the comment targets `github.event.number`, which
