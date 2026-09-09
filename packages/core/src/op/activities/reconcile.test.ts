@@ -1,4 +1,4 @@
-import { describe, test, expect, vi } from "vitest";
+import { describe, test, expect, vi, beforeEach } from "vitest";
 import {
   reconcilePr,
   reconcileSummary,
@@ -10,7 +10,47 @@ import {
   mergeRequestContextFrom,
   gitlabNoteTokenFrom,
   gitlabProjectContextFrom,
+  githubApiBaseFrom,
+  commentTokenFrom,
+  noCommentTokenMessage,
 } from "./reconcile";
+
+// ── The `gh` stub (chant #2291) ──────────────────────────────────────────────
+//
+// Same recipe as `lexicons/terraform/src/op/activities/terraform.test.ts` and
+// `lexicons/k3s/src/op/activities/k3s.test.ts`: `node:child_process`'s `exec`
+// carries a `nodejs.util.promisify.custom` implementation, which is what
+// `promisify(exec)` picks up at module load, so every `gh` invocation
+// `postOrUpdateComment` makes lands in `ghCalls` with its exact command
+// string and options — including the `env` it was given, so a test can prove
+// which token actually reached `gh`.
+
+interface GhCall {
+  cmd: string;
+  opts: { signal?: AbortSignal; env?: Record<string, string | undefined> };
+}
+
+const ghCalls: GhCall[] = [];
+/** cmd substring -> stdout to answer with. First match wins. */
+let ghReplies: Array<{ match: string; stdout: string }> = [];
+
+vi.mock("node:child_process", async (importOriginal) => {
+  const custom = Symbol.for("nodejs.util.promisify.custom");
+  const exec = ((_cmd: string, _opts: unknown, cb?: (...a: unknown[]) => void) => {
+    cb?.(new Error("unmocked exec path"));
+  }) as unknown as Record<symbol, unknown>;
+  exec[custom] = async (cmd: string, opts?: GhCall["opts"]) => {
+    ghCalls.push({ cmd, opts: opts ?? {} });
+    const hit = ghReplies.find(({ match }) => cmd.includes(match));
+    return { stdout: hit?.stdout ?? "", stderr: "" };
+  };
+  return { ...(await importOriginal<typeof import("node:child_process")>()), exec };
+});
+
+beforeEach(() => {
+  ghCalls.length = 0;
+  ghReplies = [];
+});
 
 const entries = [
   { name: "bucket", action: "adopt", type: "AWS::S3::Bucket" },
@@ -158,6 +198,154 @@ describe("reconcilePr comment mode refuses a run with no pull request (#2231)", 
       await expect(reconcilePr({ env: "app", mode: "comment", body: "plan" })).rejects.toThrow(
         /findingMode "issue" or "report"/,
       );
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+});
+
+// ── The GitHub/Forgejo comment, via `gh` at a full URL (#2291) ──────────────
+
+describe("githubApiBaseFrom (#2291)", () => {
+  test("defaults to github.com's own API host when GITHUB_API_URL is unset", () => {
+    expect(githubApiBaseFrom({})).toBe("https://api.github.com");
+    expect(githubApiBaseFrom({ GITHUB_API_URL: "" })).toBe("https://api.github.com");
+  });
+
+  test("reads a Forgejo instance's own /api/v1 base, trailing slash stripped", () => {
+    expect(githubApiBaseFrom({ GITHUB_API_URL: "http://forgejo:3000/api/v1/" })).toBe(
+      "http://forgejo:3000/api/v1",
+    );
+  });
+
+  test("reads a GitHub Enterprise Server base unchanged", () => {
+    expect(githubApiBaseFrom({ GITHUB_API_URL: "https://ghe.example.com/api/v3" })).toBe(
+      "https://ghe.example.com/api/v3",
+    );
+  });
+});
+
+describe("commentTokenFrom (#2291)", () => {
+  test("GH_TOKEN — what the generated workflow sets from github.token — resolves out of the box", () => {
+    expect(commentTokenFrom({ GH_TOKEN: "ghs_x" })).toEqual({ value: "ghs_x", source: "GH_TOKEN" });
+  });
+
+  test("falls back to GITHUB_TOKEN when GH_TOKEN is unset", () => {
+    expect(commentTokenFrom({ GITHUB_TOKEN: "ghs_y" })).toEqual({ value: "ghs_y", source: "GITHUB_TOKEN" });
+  });
+
+  test("CHANT_FORGEJO_TOKEN wins over both, for the cross-instance case", () => {
+    expect(
+      commentTokenFrom({ CHANT_FORGEJO_TOKEN: "a", GH_TOKEN: "b", GITHUB_TOKEN: "c" })?.source,
+    ).toBe("CHANT_FORGEJO_TOKEN");
+  });
+
+  test("no token at all is undefined rather than an empty value", () => {
+    expect(commentTokenFrom({})).toBeUndefined();
+    expect(commentTokenFrom({ GH_TOKEN: "", GITHUB_TOKEN: "" })).toBeUndefined();
+  });
+});
+
+describe("reconcilePr comment mode posts a full-URL `gh api` call (#2291)", () => {
+  const repo = "acme/infra";
+
+  function stubPrEnv(apiUrl: string): void {
+    vi.stubEnv("GITHUB_REPOSITORY", repo);
+    vi.stubEnv("GITHUB_REF", "refs/pull/5/merge");
+    vi.stubEnv("GITHUB_EVENT_PATH", "");
+    vi.stubEnv("GITHUB_API_URL", apiUrl);
+    vi.stubEnv("GH_TOKEN", "forgejo-actions-token");
+    vi.stubEnv("GITHUB_TOKEN", "");
+    vi.stubEnv("CHANT_FORGEJO_TOKEN", "");
+    // Never the GitLab path: a GitHub/Forgejo run carries no merge request.
+    vi.stubEnv("CI_MERGE_REQUEST_IID", "");
+  }
+
+  test("POSTs a new comment at the Forgejo instance's own /api/v1 base, not a bare path", async () => {
+    stubPrEnv("http://forgejo.example/api/v1");
+    ghReplies = [
+      { match: "--paginate", stdout: "" }, // no owned comment yet
+      { match: "--method POST", stdout: "http://forgejo.example/acme/infra/issues/5#issuecomment-1\n" },
+    ];
+    try {
+      const result = await reconcilePr({ env: "app", mode: "comment", body: "the plan" });
+      expect(result.commentUrl).toBe("http://forgejo.example/acme/infra/issues/5#issuecomment-1");
+      expect(result.pullRequest).toBe("acme/infra#5");
+
+      const [list, post] = ghCalls;
+      // The bug #2291 fixed: this used to be the bare path
+      // `repos/acme/infra/issues/5/comments`, which `gh` resolves against
+      // `/api/v3` for any non-github.com host — 404 on Forgejo. It is now the
+      // full URL built from GITHUB_API_URL.
+      expect(list.cmd).toContain("http://forgejo.example/api/v1/repos/acme/infra/issues/5/comments");
+      expect(list.cmd).not.toMatch(/gh api 'repos\//);
+      expect(post.cmd).toContain("--method POST");
+      expect(post.cmd).toContain("http://forgejo.example/api/v1/repos/acme/infra/issues/5/comments");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  test("a re-run PATCHes the comment it already owns instead of posting a second", async () => {
+    stubPrEnv("http://forgejo.example/api/v1");
+    ghReplies = [
+      { match: "--paginate", stdout: "42\n" }, // the marker search found comment 42
+      { match: "--method PATCH", stdout: "http://forgejo.example/acme/infra/issues/5#issuecomment-42\n" },
+    ];
+    try {
+      const result = await reconcilePr({ env: "app", mode: "comment", body: "a newer plan" });
+      expect(result.commentUrl).toBe("http://forgejo.example/acme/infra/issues/5#issuecomment-42");
+
+      const patchCall = ghCalls.find((c) => c.cmd.includes("--method PATCH"));
+      const postCall = ghCalls.find((c) => c.cmd.includes("--method POST"));
+      expect(patchCall?.cmd).toContain(
+        "http://forgejo.example/api/v1/repos/acme/infra/issues/comments/42",
+      );
+      expect(postCall).toBeUndefined();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  test("defaults to github.com's API base when GITHUB_API_URL is unset (plain GitHub run)", async () => {
+    stubPrEnv("");
+    ghReplies = [
+      { match: "--paginate", stdout: "" },
+      { match: "--method POST", stdout: "https://github.com/acme/infra/issues/5#issuecomment-1\n" },
+    ];
+    try {
+      await reconcilePr({ env: "app", mode: "comment", body: "the plan" });
+      expect(ghCalls[0].cmd).toContain("https://api.github.com/repos/acme/infra/issues/5/comments");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  test("forwards the resolved token to `gh` as GH_TOKEN, CHANT_FORGEJO_TOKEN taking priority", async () => {
+    stubPrEnv("http://forgejo.example/api/v1");
+    vi.stubEnv("CHANT_FORGEJO_TOKEN", "cross-instance-token");
+    ghReplies = [
+      { match: "--paginate", stdout: "" },
+      { match: "--method POST", stdout: "http://forgejo.example/acme/infra/issues/5#issuecomment-1\n" },
+    ];
+    try {
+      await reconcilePr({ env: "app", mode: "comment", body: "the plan" });
+      for (const call of ghCalls) expect(call.opts.env?.GH_TOKEN).toBe("cross-instance-token");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  test("a pull request with no token at all is refused by name, before any `gh` call", async () => {
+    stubPrEnv("http://forgejo.example/api/v1");
+    vi.stubEnv("GH_TOKEN", "");
+    vi.stubEnv("GITHUB_TOKEN", "");
+    vi.stubEnv("CHANT_FORGEJO_TOKEN", "");
+    try {
+      await expect(reconcilePr({ env: "app", mode: "comment", body: "plan" })).rejects.toThrow(
+        noCommentTokenMessage(repo, 5),
+      );
+      expect(ghCalls).toHaveLength(0);
     } finally {
       vi.unstubAllEnvs();
     }

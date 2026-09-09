@@ -28,12 +28,20 @@
  * no mapping in ../actions.ts passes through verbatim and resolves only if
  * the runner can fetch it.
  *
- * One finding-mode does not cross over: `comment` (#2231) posts onto the
- * triggering pull request by shelling to `gh` against the GitHub API and
- * reading the GitHub Actions event payload. Forgejo's API is
- * GitHub-compatible in shape, but chant has no Forgejo client and no host
- * configuration to point `gh` at a Forgejo instance, so this refuses the mode
- * by name rather than generating a job whose finding step fails on every run.
+ * `comment` (#2231) crosses over too, since chant #2291: it posts onto the
+ * triggering pull request by shelling to `gh` against `${GITHUB_API_URL}`,
+ * and a Forgejo Actions job already sets that (and `github.token`) the same
+ * way a GitHub Actions job does. This generator used to refuse the mode by
+ * name here, on the premise that chant had no way to point `gh` at a Forgejo
+ * instance; that premise was checked against a real Forgejo
+ * 12.0.4+gitea-1.22.0 instance during INTENTIUS/choudoufu#1027 and found
+ * false — the failure was `gh api` resolving a *relative* path against
+ * `/api/v3`, which Forgejo does not serve, not an unreachable forge. See
+ * `reconcilePr`'s `postOrUpdateComment` (`packages/core/src/op/activities/reconcile.ts`)
+ * for the fix. `issue` mode (`gh issue create`) was not part of that
+ * verification — only the comment endpoints were exercised on the real
+ * instance — so it remains un-refused-but-unverified here, exactly as it was
+ * on GitHub before this change.
  *
  * A spec's `environment` (#2257) is dropped on the same terms as
  * `permissions:`, and for a stronger reason: Forgejo Actions has no
@@ -135,16 +143,9 @@ export function generateForgejoOpPipeline(
   options: ComponentPipelineOptions = {},
   dialectOptions: ForgejoDialectOptions = {},
 ): OpPipelineResult {
-  for (const spec of ops) {
-    if (spec.findingMode === "comment") {
-      throw new Error(
-        `Scheduled Op "${spec.name}" has findingMode "comment", which posts its finding on the pull request ` +
-          `that triggered the run. That activity shells to \`gh\` against the GitHub API and reads the ` +
-          `GitHub Actions event payload; chant carries no Forgejo API client to post the equivalent comment ` +
-          `(#2231). Use findingMode "issue" here, or generate this Op for github.`,
-      );
-    }
-  }
+  // `findingMode: "comment"` used to be refused by name here (#2231); lifted
+  // in #2291 once a real Forgejo instance showed the forge itself was never
+  // the obstacle — see the module doc above.
 
   // `emitGatedOutputs: false` (#2294): forgejo never carries a gate-notice job
   // (`gatedNoticeDoc` never crosses the dialect, below), so the job outputs
