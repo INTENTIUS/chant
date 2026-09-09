@@ -40,7 +40,14 @@ export interface RuntimeAdapter {
    * needs to round-trip content through a shell (`sh -c "echo … | cmd"`) just
    * to feed a command that reads from stdin (e.g. `git hash-object --stdin`).
    */
-  spawn(cmd: string[], opts?: { cwd?: string; stdin?: string }): Promise<SpawnResult>;
+  /**
+   * `opts.env` merges over the parent environment rather than replacing it —
+   * a caller pinning `LC_ALL=C` to parse a command's output must not also
+   * have to reconstruct `PATH`, `HOME` and everything else the child needs.
+   * An entry whose value is `""` is passed through as empty, which is how a
+   * gettext override like `LANGUAGE` is neutralised.
+   */
+  spawn(cmd: string[], opts?: { cwd?: string; stdin?: string; env?: Record<string, string> }): Promise<SpawnResult>;
   /** Commands to use when spawning package manager / executor */
   readonly commands: RuntimeCommands;
 }
@@ -64,12 +71,19 @@ class NodeRuntimeAdapter implements RuntimeAdapter {
     return picomatch(pattern)(filePath);
   }
 
-  async spawn(cmd: string[], opts?: { cwd?: string; stdin?: string }): Promise<SpawnResult> {
+  async spawn(
+    cmd: string[],
+    opts?: { cwd?: string; stdin?: string; env?: Record<string, string> },
+  ): Promise<SpawnResult> {
     return new Promise((resolve) => {
       const child = execFile(
         cmd[0],
         cmd.slice(1),
-        { cwd: opts?.cwd, maxBuffer: 10 * 1024 * 1024 },
+        {
+          cwd: opts?.cwd,
+          maxBuffer: 10 * 1024 * 1024,
+          ...(opts?.env ? { env: { ...process.env, ...opts.env } } : {}),
+        },
         (err, stdout, stderr) => {
           resolve({
             stdout: stdout ?? "",

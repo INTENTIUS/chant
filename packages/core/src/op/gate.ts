@@ -36,7 +36,7 @@ import {
   type PendingGateInput,
   type PendingGateRecord,
 } from "../lifecycle/gate-ledger";
-import { pushLifecycle } from "../lifecycle/git";
+import { pushLifecycle, requireLifecycleLedger } from "../lifecycle/git";
 import { parseDuration } from "./duration";
 
 /** The gate ledger, as the two executors need it: read both kinds of line, append a pending fact. */
@@ -55,6 +55,14 @@ export interface GateLedgerPort {
 export function gitGateLedgerPort(opts?: { cwd?: string }): GateLedgerPort {
   return {
     async read(op) {
+      // The ledger branch has to be in the checkout before it is read
+      // (#2303): a CI clone fetches the pipeline's own ref and nothing else,
+      // and an unfetched branch reads as an empty ledger — which is
+      // indistinguishable from "nothing has been approved" and makes a
+      // retried job record a second pending fact for a gate that was already
+      // approved. Refuses rather than guessing when the fetch cannot settle
+      // it; see `requireLifecycleLedger`.
+      await requireLifecycleLedger(opts);
       const { resolutions, pending } = await readGateLedger(op, opts);
       return { resolutions, pending };
     },

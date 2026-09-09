@@ -16,6 +16,7 @@ const readGateResolutionsMock = vi.fn();
 const readGateLedgerMock = vi.fn();
 const readRunLedgerMock = vi.fn();
 const pushLifecycleMock = vi.fn();
+const requireLifecycleLedgerMock = vi.fn();
 
 vi.mock("../../op/operator", async () => {
   const actual = await vi.importActual<typeof import("../../op/operator")>("../../op/operator");
@@ -59,7 +60,13 @@ vi.mock("../../lifecycle/gate-ledger", async () => {
 });
 vi.mock("../../lifecycle/git", async () => {
   const actual = await vi.importActual<typeof import("../../lifecycle/git")>("../../lifecycle/git");
-  return { ...actual, pushLifecycle: (...args: unknown[]) => pushLifecycleMock(...args) };
+  return {
+    ...actual,
+    pushLifecycle: (...args: unknown[]) => pushLifecycleMock(...args),
+    // Mocked, not merely defaulted: the real one shells to `git fetch`, and
+    // these tests run in the chant checkout itself (#2303).
+    requireLifecycleLedger: (...args: unknown[]) => requireLifecycleLedgerMock(...args),
+  };
 });
 
 // Imported after the mocks above are registered.
@@ -80,6 +87,7 @@ beforeEach(() => {
   loadProfilesMock.mockResolvedValue({});
   discoverOpsMock.mockResolvedValue({ ops: new Map([["fountain-apply", {}]]), errors: [] });
   pushLifecycleMock.mockResolvedValue(true);
+  requireLifecycleLedgerMock.mockResolvedValue(undefined);
   readGateResolutionsMock.mockResolvedValue({ records: [], malformed: 0 });
   readGateLedgerMock.mockResolvedValue({ resolutions: [], pending: [], malformed: 0 });
 });
@@ -723,6 +731,99 @@ describe("runOperatorLog", () => {
     discoverConvergeOpsMock.mockResolvedValue({ ops: [], errors: [] });
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     expect(await runOperatorLog(ctx({}))).toBe(0);
+    errSpy.mockRestore();
+  });
+});
+
+/**
+ * #2303 finding 2, at the handler. The mechanism is proved against real git
+ * in `op/gate.test.ts`; what these hold is that `chant approve` actually goes
+ * through the guard, and stops rather than writing when it refuses — the
+ * append must not be reached, because reaching it is what discarded the
+ * pending fact in the first place.
+ */
+describe("runApprove — the ledger branch is read before it is appended to (#2303)", () => {
+  test("reads the branch before recording the resolution", async () => {
+    appendGateResolutionMock.mockResolvedValue({
+      commit: "sha",
+      record: { version: 1, op: "fountain-apply", gate: "rollout-gate", resolvedBy: "alex", timestamp: "2026-01-01T00:00:00.000Z" },
+    });
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(await runApprove(ctx({ path: "fountain-apply", extraPositional: "rollout-gate", actor: "alex" }))).toBe(0);
+
+    expect(requireLifecycleLedgerMock).toHaveBeenCalled();
+    expect(requireLifecycleLedgerMock.mock.invocationCallOrder[0]).toBeLessThan(
+      appendGateResolutionMock.mock.invocationCallOrder[0],
+    );
+    errSpy.mockRestore();
+  });
+
+  test("refuses by name, and writes nothing, when the branch cannot be read", async () => {
+    requireLifecycleLedgerMock.mockRejectedValue(
+      new Error(
+        'the chant/lifecycle ledger branch is not in this checkout and could not be fetched from "origin"',
+      ),
+    );
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const code = await runApprove(ctx({ path: "fountain-apply", extraPositional: "rollout-gate", actor: "alex" }));
+
+    expect(code).toBe(1);
+    expect(appendGateResolutionMock).not.toHaveBeenCalled();
+    expect(pushLifecycleMock).not.toHaveBeenCalled();
+    expect(errSpy.mock.calls.map((c) => String(c[0])).join("\n")).toContain("chant/lifecycle ledger branch");
+    errSpy.mockRestore();
+  });
+
+  test("--expire is guarded the same way", async () => {
+    requireLifecycleLedgerMock.mockRejectedValue(new Error("the chant/lifecycle ledger branch has diverged"));
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const code = await runApprove(ctx({ path: "fountain-apply", extraPositional: "rollout-gate", expire: true }));
+
+    expect(code).toBe(1);
+    expect(appendPendingGateMock).not.toHaveBeenCalled();
+    errSpy.mockRestore();
+  });
+});
+
+/**
+ * #2309 review. `pushLifecycle().catch(() => undefined)` at both write sites
+ * meant a rejected push printed unconditional success and exited 0 — the
+ * operator walks away believing the gate is answered for everybody, while the
+ * resolution exists only in their own checkout.
+ */
+describe("runApprove — a push that does not land is reported (#2309 review)", () => {
+  test("a rejected push warns and marks the success line local-only", async () => {
+    appendGateResolutionMock.mockResolvedValue({
+      commit: "sha",
+      record: { version: 1, op: "fountain-apply", gate: "rollout-gate", resolvedBy: "alex", timestamp: "2026-01-01T00:00:00.000Z" },
+    });
+    pushLifecycleMock.mockRejectedValue(new Error("Another snapshot completed for chant/lifecycle"));
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const code = await runApprove(ctx({ path: "fountain-apply", extraPositional: "rollout-gate", actor: "alex" }));
+
+    const out = errSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(out).toMatch(/push to the remote was rejected/);
+    expect(out).toMatch(/local only . the push did not land/);
+    // Still exit 0: the local append is a correct local fact.
+    expect(code).toBe(0);
+    errSpy.mockRestore();
+  });
+
+  test("a project with no remote says nothing was pushed", async () => {
+    appendGateResolutionMock.mockResolvedValue({
+      commit: "sha",
+      record: { version: 1, op: "fountain-apply", gate: "rollout-gate", resolvedBy: "alex", timestamp: "2026-01-01T00:00:00.000Z" },
+    });
+    pushLifecycleMock.mockResolvedValue(false);
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await runApprove(ctx({ path: "fountain-apply", extraPositional: "rollout-gate", actor: "alex" }));
+
+    expect(errSpy.mock.calls.map((c) => String(c[0])).join("\n")).toMatch(/No remote is configured/);
     errSpy.mockRestore();
   });
 });

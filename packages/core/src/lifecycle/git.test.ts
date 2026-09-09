@@ -420,8 +420,18 @@ describe("lifecycle/git", () => {
     }
   });
 
-  test("concurrent write rejected: second push throws StaleLifecycleBranchError", async () => {
-    // Simulate two concurrent operators by setting up two clones of the same remote.
+  /**
+   * Rewritten for #2309's review. This used to assert that operator B's push
+   * was *rejected*: B had no local `chant/lifecycle`, so its write built an
+   * unrelated root commit, and the lease was the only thing standing between
+   * that fork and A's history on the remote.
+   *
+   * A write that has to be caught by a lease is the bug, not the contract.
+   * `writeBlobToPath` now brings the branch in before it creates one, so B
+   * never forks: it appends to A's history and pushes cleanly, and both
+   * snapshots survive. The genuine stale-lease case is the test below.
+   */
+  test("a second writer with no local ledger appends to the first's history rather than forking", async () => {
     const { clonePath: cloneA, remotePath, cleanup } = await setupClonePair();
     const cloneB = join(tmpdir(), `chant-state-clone-b-${Date.now()}-${Math.random()}`);
     try {
@@ -433,9 +443,43 @@ describe("lifecycle/git", () => {
       await writeSnapshot("prod", "aws", JSON.stringify({ a: 1 }), { cwd: cloneA });
       expect(await pushLifecycle({ cwd: cloneA })).toBe(true);
 
-      // Operator B writes from the same baseline (chant/lifecycle doesn't exist
-      // on cloneB's remote-tracking yet) and tries to push — should fail
-      // with StaleLifecycleBranchError because A's push moved the remote ref.
+      // Operator B has never seen `chant/lifecycle`.
+      expect(git(["rev-parse", "--verify", "refs/heads/chant/lifecycle"], cloneB).exitCode).not.toBe(0);
+      await writeSnapshot("staging", "gcp", JSON.stringify({ b: 2 }), { cwd: cloneB });
+      expect(await pushLifecycle({ cwd: cloneB })).toBe(true);
+
+      // Neither snapshot was lost.
+      expect(await readSnapshot("prod", "aws", { cwd: cloneB })).toBe(JSON.stringify({ a: 1 }));
+      expect(await readSnapshot("staging", "gcp", { cwd: cloneB })).toBe(JSON.stringify({ b: 2 }));
+    } finally {
+      await cleanup();
+      const { rm } = await import("node:fs/promises");
+      await rm(cloneB, { recursive: true, force: true });
+    }
+  });
+
+  test("concurrent write rejected: second push throws StaleLifecycleBranchError", async () => {
+    const { clonePath: cloneA, remotePath, cleanup } = await setupClonePair();
+    const cloneB = join(tmpdir(), `chant-state-clone-b-${Date.now()}-${Math.random()}`);
+    try {
+      git(["clone", "-q", remotePath, cloneB], tmpdir());
+      git(["config", "user.email", "test@chant.dev"], cloneB);
+      git(["config", "user.name", "Test"], cloneB);
+
+      await writeSnapshot("prod", "aws", JSON.stringify({ a: 1 }), { cwd: cloneA });
+      expect(await pushLifecycle({ cwd: cloneA })).toBe(true);
+
+      // B takes a copy of the branch, so it has local history and a
+      // remote-tracking ref pinned to what it saw.
+      git(["fetch", "-q", "origin", "chant/lifecycle:chant/lifecycle"], cloneB);
+
+      // A moves the remote on again, behind B's back.
+      git(["fetch", "-q", "origin", "+refs/heads/chant/lifecycle:refs/remotes/origin/chant/lifecycle"], cloneA);
+      await writeSnapshot("prod", "aws", JSON.stringify({ a: 2 }), { cwd: cloneA });
+      expect(await pushLifecycle({ cwd: cloneA })).toBe(true);
+
+      // B appends to the tip it knows and pushes against a lease that no
+      // longer matches the remote.
       await writeSnapshot("staging", "gcp", JSON.stringify({ b: 2 }), { cwd: cloneB });
       await expect(pushLifecycle({ cwd: cloneB })).rejects.toBeInstanceOf(StaleLifecycleBranchError);
     } finally {

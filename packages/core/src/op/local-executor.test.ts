@@ -7,6 +7,7 @@ import {
   OpRunFailure,
 } from "./local-executor";
 import { memoryGateLedgerPort } from "./gate";
+import { renderHuman } from "./local-output";
 import type { GateResolutionRecord, PendingGateRecord } from "../lifecycle/gate-ledger";
 import { stepOutput } from "./step-output-ref";
 
@@ -495,5 +496,119 @@ describe("runOpLocally — step-output references (#1290)", () => {
     expect(result.status).toBe("ok");
     expect(result.records.every((r) => r.status === "ok")).toBe(true);
     expect(result.records[1].args).toEqual({ stacks: ["stack-a"] });
+  });
+});
+
+/**
+ * #2301 deliverable 2. The reported symptom was a whole apply that printed
+ * `Op "live-apply" failed after 43.8s` and nothing else — no error line, no
+ * failing step — because the gate's ledger write threw a plain `Error` and
+ * the executor's catch only ever unpacked `PhaseFailure` and `GateStop`.
+ * Everything else was built into an `OpRunFailure` and never read again.
+ *
+ * These assert the two halves separately: the gate step now produces a
+ * failing record like any other step, and the outer catch no longer drops an
+ * error it does not recognise. The second is the general one — the gate is
+ * where it was found, not the only place it bites.
+ */
+describe("runOpLocally — a failure inside the run says what it was (#2301)", () => {
+  const NOW = "2026-09-05T12:00:00.000Z";
+  const LEDGER_ERROR =
+    "cannot write _gates/live-apply.jsonl on the chant/lifecycle branch: " +
+    "git commit-tree failed: fatal: unable to auto-detect email address (got 'runner@runner.(none)')";
+
+  /** A gate ledger whose append fails the way a CI checkout with no git identity does. */
+  function unwritablePort(message = LEDGER_ERROR) {
+    return {
+      async read() {
+        return { resolutions: [] as GateResolutionRecord[], pending: [] as PendingGateRecord[] };
+      },
+      async appendPending(): Promise<PendingGateRecord> {
+        throw new Error(message);
+      },
+    };
+  }
+
+  function gateOnly(): OpConfig {
+    return op({
+      phases: [
+        { name: "Plan", steps: [{ kind: "activity", fn: "plan" }] },
+        { name: "Gate", steps: [{ kind: "gate", gate: "approve-live-apply" }] },
+        { name: "Apply", steps: [{ kind: "activity", fn: "apply" }] },
+      ],
+    });
+  }
+
+  const noopActivities = new Map<string, ActivityFn>([
+    ["plan", async () => undefined],
+    ["apply", async () => undefined],
+  ]);
+
+  test("a gate whose ledger write fails is a failing step carrying the cause", async () => {
+    const err = await runOpLocally(gateOnly(), noopActivities, PROFILES, undefined, {
+      gates: unwritablePort(),
+      now: NOW,
+    }).then(() => undefined, (e: unknown) => e);
+
+    expect(err).toBeInstanceOf(OpRunFailure);
+    const { result } = err as OpRunFailure;
+    expect(result.status).toBe("fail");
+
+    const gateRecord = result.records.find((r) => r.fn === "gate:approve-live-apply");
+    expect(gateRecord?.status).toBe("fail");
+    expect(gateRecord?.error).toBe(LEDGER_ERROR);
+
+    // The run stops at the gate, exactly as a failing activity stops its
+    // phase — the Apply phase never starts.
+    expect(result.records.map((r) => [r.fn, r.status])).toEqual([
+      ["plan", "ok"],
+      ["gate:approve-live-apply", "fail"],
+    ]);
+  });
+
+  test("the rendered output names the cause instead of a bare failure line", async () => {
+    const err = await runOpLocally(gateOnly(), noopActivities, PROFILES, undefined, {
+      gates: unwritablePort(),
+      now: NOW,
+    }).then(() => undefined, (e: unknown) => e);
+
+    const lines: string[] = [];
+    renderHuman((err as OpRunFailure).result, (line) => lines.push(line));
+
+    expect(lines).toContain(`    ${LEDGER_ERROR}`);
+    expect(lines.at(-1)).toMatch(/^Op "test-op" failed after /);
+    // The whole point: the failing step is visible, so the last line is no
+    // longer the only line about the failure.
+    expect(lines.some((l) => l.startsWith("  ✗ gate:approve-live-apply"))).toBe(true);
+  });
+
+  test("an error the executor does not recognise is recorded rather than dropped", async () => {
+    // Neither a step's own failure nor a gate: the caller's progress callback
+    // throws, which unwinds the phase loop as a plain `Error`. Before #2301
+    // that produced an `OpRunFailure` whose `records` held nothing marked
+    // failed and nothing carrying a message — a run that failed and said
+    // nothing at all about why. The gate is where this was found, not the
+    // only thing it swallowed.
+    const config = op({ phases: [{ name: "P", steps: [{ kind: "activity", fn: "plan" }] }] });
+
+    const err = await runOpLocally(config, noopActivities, PROFILES, undefined, {
+      onRecord: () => {
+        throw new Error("progress sink exploded");
+      },
+    }).then(() => undefined, (e: unknown) => e);
+
+    expect(err).toBeInstanceOf(OpRunFailure);
+    const failure = err as OpRunFailure;
+    expect(failure.result.records).toHaveLength(1);
+    expect(failure.result.records[0]).toMatchObject({
+      status: "fail",
+      error: expect.stringContaining("progress sink exploded"),
+    });
+    // The original error object is still reachable for a programmatic caller.
+    expect((failure.cause as Error).message).toMatch(/progress sink exploded/);
+
+    const lines: string[] = [];
+    renderHuman(failure.result, (line) => lines.push(line));
+    expect(lines.some((l) => l.includes("progress sink exploded"))).toBe(true);
   });
 });
