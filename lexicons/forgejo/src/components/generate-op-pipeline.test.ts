@@ -106,27 +106,45 @@ describe("generateForgejoOpPipeline: non-cron trigger survives the dialect trans
   });
 });
 
-describe("generateForgejoOpPipeline: no comment finding mode (#2231)", () => {
-  test("findingMode comment is refused by name, on the pull_request trigger it would otherwise fit", () => {
-    // Forgejo Actions runs the same workflow shape and Forgejo's API is
-    // GitHub-compatible, but the activity behind the mode shells to `gh`
-    // against github.com and reads the GitHub Actions event payload. Nothing
-    // in chant points either at a Forgejo instance, so the mode is refused
-    // here rather than generating a job that fails at its Report step.
+describe("generateForgejoOpPipeline: comment finding mode crosses over (#2291)", () => {
+  // Used to be refused by name here (#2231), on the premise that chant had no
+  // way to point `gh` at a Forgejo instance. Checked against a real Forgejo
+  // 12.0.4+gitea-1.22.0 instance during INTENTIUS/choudoufu#1027 and found
+  // false: Forgejo's own `/api/v1` takes the same GET/POST/PATCH calls
+  // `reconcilePr`'s `postOrUpdateComment` makes, once it targets the right
+  // URL. See `packages/core/src/op/activities/reconcile.test.ts` for the
+  // mocked-transport proof of that fix; this file only proves the generator
+  // no longer refuses the mode and produces the same job shape github does.
+  test("findingMode comment generates cleanly on the pull_request trigger it needs", () => {
     const specs: ScheduledOpSpec[] = [
       { name: "app-plan", trigger: { kind: "pull_request", branches: ["main"] }, findingMode: "comment" },
     ];
-    expect(() => generateForgejoOpPipeline(specs)).toThrow(
-      /Scheduled Op "app-plan".*findingMode "comment".*no Forgejo API client/s,
-    );
+    expect(() => generateForgejoOpPipeline(specs)).not.toThrow();
   });
 
-  test("github generates the same spec, so the refusal is forgejo's and not the shared builder's", () => {
+  test("job/trigger/findingMode parity with the github generator (same input, same job list)", () => {
     const specs: ScheduledOpSpec[] = [
       { name: "app-plan", trigger: { kind: "pull_request", branches: ["main"] }, findingMode: "comment" },
     ];
-    const gh = parseFile(generateGithubOpPipeline(specs).files[0].yaml);
-    expect(gh.permissions).toEqual({ contents: "read", "pull-requests": "write" });
+    const fj = generateForgejoOpPipeline(specs);
+    const gh = generateGithubOpPipeline(specs);
+    expect(fj.jobs).toEqual(gh.jobs);
+  });
+
+  test("the run step carries GH_TOKEN/GITHUB_TOKEN, same as github's — permissions: still dropped by the dialect", () => {
+    const specs: ScheduledOpSpec[] = [
+      { name: "app-plan", trigger: { kind: "pull_request", branches: ["main"] }, findingMode: "comment" },
+    ];
+    const fjYaml = generateForgejoOpPipeline(specs).files[0].yaml;
+    const ghDoc = parseFile(generateGithubOpPipeline(specs).files[0].yaml);
+
+    expect(fjYaml).toContain("GH_TOKEN: '${{ github.token }}'");
+    expect(fjYaml).toContain("GITHUB_TOKEN: '${{ github.token }}'");
+    expect(fjYaml).not.toMatch(/^permissions:/m);
+    // github still declares the scope the mode needs — proving the omission
+    // above is the Forgejo dialect dropping `permissions:` wholesale, not a
+    // sign the mode generated with no token.
+    expect(ghDoc.permissions).toEqual({ contents: "read", "pull-requests": "write" });
   });
 });
 

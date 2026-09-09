@@ -128,10 +128,24 @@ describe("forgejoSerializer — multi-workflow output", () => {
 // "@intentius/chant-lexicon-github"`); nothing forgejo-specific is written for
 // it. This is the functional check that inheritance actually holds, not just
 // that the type is importable: the dialect still drops the job's
-// `permissions` and remaps its runner label, while the sticky-comment step —
-// a plain `gh api` script with no `uses:` at all — passes through untouched,
-// since Forgejo's API accepts the same calls against its GitHub-compatible
-// surface.
+// `permissions` and remaps its runner label, and the sticky-comment step — a
+// plain `gh api` script with no `uses:` at all — passes through the dialect
+// transform untouched, because the dialect only ever rewrites job-level
+// `permissions:`/`environment:`/action refs and never looks at step content.
+//
+// That passing-through is a fact about serialization, not about whether the
+// script would work if run: chant #2291 settled, against a real Forgejo
+// 12.0.4+gitea-1.22.0 instance, that Forgejo's `/api/v1` does accept the same
+// GET/POST/PATCH calls this script makes — but only when they target a full
+// URL. This script's `gh api "repos/$REPO/issues/$PR_NUMBER/comments"` is a
+// bare relative path, which `gh` resolves against `/api/v3` on any host but
+// github.com, and Forgejo does not serve `/api/v3`. So the untouched script
+// below is not itself proof this composite posts a working comment on
+// Forgejo — `reconcilePr`'s `postOrUpdateComment` got the URL fix #2291 made
+// (`packages/core/src/op/activities/reconcile.ts`), but `PrPlanReport`'s own
+// script (`lexicons/github/src/composites/pr-plan-report.ts`) did not, and is
+// out of #2291's scope (the Op generator and `reconcilePr`, not this
+// component composite).
 describe("forgejoSerializer — inherits PrPlanReport from github (#1983)", () => {
   test("dialect still applies to a github-lexicon composite's job", () => {
     const workflow = new Workflow({
