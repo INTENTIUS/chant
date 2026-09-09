@@ -56,6 +56,24 @@
  * Forgejo apply that stops at its gate is a green run rather than a red one,
  * and `chant run` still writes the gate and the approve command to
  * `GITHUB_STEP_SUMMARY`, which Forgejo Actions sets like GitHub does.
+ *
+ * The gate-notice job's own reason for being — `outputs: { gated, op, gate,
+ * approve }` on the Op's job, and the `node -e` step that writes them to
+ * `$GITHUB_OUTPUT` — does not survive it either (#2294). Both existed only for
+ * that job to read via `needs.<job>.outputs`; with the job gone, so is every
+ * reader, and `buildGithubOpPipelineDocs` is asked for neither
+ * (`emitGatedOutputs: false` below) rather than emitting them here and
+ * stripping them back out. Should the Forgejo posting work in #2291 grow a
+ * notice job of its own, this is the one flag that brings both back.
+ *
+ * A spec's own `variables` (#2290) crosses over unchanged: forgejo reuses the
+ * same job-level `env:` github's builder emits, and the dialect transform
+ * touches only `permissions:`/`environment:`/action refs, never a job's `env:`
+ * mapping. That is what makes a per-Op credential expressible here at all —
+ * `ComponentPipelineOptions.variables` is workflow-scoped and, on Forgejo,
+ * Actions mints no OIDC token to put in `setup` instead, so a job-level
+ * `variables` entry is the only way one Op's job can hold a credential no
+ * sibling Op's job receives.
  */
 
 import {
@@ -128,7 +146,10 @@ export function generateForgejoOpPipeline(
     }
   }
 
-  const { files, jobs } = buildGithubOpPipelineDocs(ops, options);
+  // `emitGatedOutputs: false` (#2294): forgejo never carries a gate-notice job
+  // (`gatedNoticeDoc` never crosses the dialect, below), so the job outputs
+  // and the `node -e` step that populate them would have no reader.
+  const { files, jobs } = buildGithubOpPipelineDocs(ops, options, { emitGatedOutputs: false });
 
   return {
     // One file per spec, in spec order, which is what lets the header below

@@ -90,6 +90,19 @@
  * job log, since the invocation carries no `--json`. There is no follow-up
  * notice job: it would need a forge API call and a token this generator does
  * not require of a `report`-mode Op.
+ *
+ * A spec's own `variables` (#2290) is the one per-Op option that is cheap
+ * here rather than merely possible: this generator already puts a job-level
+ * `variables:` block on a gated job (`CHANT_GATE_SUMMARY` above), so a spec's
+ * own entries merge into the same mapping instead of asking for a shape
+ * GitLab has no concept of. `options.variables` (forge-wide) is unaffected —
+ * it keeps landing on the file's own top-level `variables:`, read by every
+ * job the way a GitLab CI/CD variable always is — and a spec's own entry wins
+ * the job over a same-named top-level one, the ordinary variable-precedence
+ * GitLab already gives a job over the pipeline. `CHANT_GATE_SUMMARY` itself is
+ * internal and always wins at the job over a same-named spec entry, so a
+ * caller cannot point the gate block somewhere the `artifacts:` declaration
+ * beside it does not also point.
  */
 
 import { emitYAML } from "@intentius/chant/yaml";
@@ -406,6 +419,16 @@ export function generateGitlabOpPipeline(
     const invocation = gated ? [...runParts, ...GATED_EXIT_FLAG] : runParts;
     const gateSummary = gateSummaryPath(jobName);
 
+    // Per-Op credentials (#2290): a spec's own `variables` merge into this
+    // job's `variables:` block, the same block the gated apply's
+    // `CHANT_GATE_SUMMARY` already occupies below — GATE_SUMMARY_VAR is
+    // internal and listed last, so it always wins a name collision rather
+    // than a caller being able to repoint the gate block's own artifact path.
+    const jobVariables: Record<string, string> = {
+      ...(spec.variables ?? {}),
+      ...(gated ? { [GATE_SUMMARY_VAR]: gateSummary } : {}),
+    };
+
     doc[jobName] = {
       stage: STAGE,
       image,
@@ -421,7 +444,7 @@ export function generateGitlabOpPipeline(
             },
           }
         : {}),
-      ...(gated ? { variables: { [GATE_SUMMARY_VAR]: gateSummary } } : {}),
+      ...(Object.keys(jobVariables).length > 0 ? { variables: jobVariables } : {}),
       rules: rulesFor(spec, trigger),
       script: [...setupScript, ...beforeScript, invocation.join(" "), ...extraScript],
       // `when: always` because the run this publishes for is the green one: a

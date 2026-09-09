@@ -32,6 +32,7 @@ interface ParsedJob {
   if?: string;
   permissions?: Record<string, string>;
   outputs?: Record<string, string>;
+  env?: Record<string, string>;
   steps: ParsedStep[];
 }
 
@@ -640,5 +641,69 @@ describe("generateGithubOpPipeline: a deployment environment on the Op's job (#2
     expect(() =>
       generateGithubOpPipeline([{ ...APPLY, environment: { name: "production", url: "" } }]),
     ).toThrow(/has an empty `url`/);
+  });
+});
+
+/**
+ * chant #2290 — per-Op credentials, so a pull-request job need not hold the
+ * apply credential. `variables` lands as the Op's own job-level `env:`, one
+ * level more specific than `options.variables`'s workflow-level `env:`, and
+ * never on the gate-notice job beside it.
+ */
+describe("generateGithubOpPipeline: per-Op variables on the job (#2290)", () => {
+  const CREDENTIAL = { AWS_ACCESS_KEY_ID: "${{ secrets.AWS_ACCESS_KEY_ID }}" };
+
+  test("a spec with no variables emits no job-level env:, even when options.variables is set", () => {
+    const doc = parseFile(
+      generateGithubOpPipeline([{ name: "live-check", trigger: { kind: "pull_request", branches: ["main"] } }], {
+        variables: { CHANT_FORGE: "github" },
+      }).files[0].yaml,
+    );
+    expect(doc.jobs!["live-check"].env).toBeUndefined();
+  });
+
+  test("a spec's own variables land as the job's env:, beside the workflow env:", () => {
+    const doc = parseFile(
+      generateGithubOpPipeline(
+        [{ name: "live-apply", trigger: { kind: "push", branches: ["main"] }, variables: CREDENTIAL }],
+        { variables: { CHANT_FORGE: "github" } },
+      ).files[0].yaml,
+    );
+    expect(doc.jobs!["live-apply"].env).toEqual(CREDENTIAL);
+  });
+
+  test("a per-Op key wins over a same-named forge-wide one", () => {
+    const doc = parseFile(
+      generateGithubOpPipeline(
+        [
+          {
+            name: "live-apply",
+            trigger: { kind: "push", branches: ["main"] },
+            variables: { CHANT_FORGE: "overridden" },
+          },
+        ],
+        { variables: { CHANT_FORGE: "github" } },
+      ).files[0].yaml,
+    );
+    expect(doc.jobs!["live-apply"].env).toEqual({ CHANT_FORGE: "overridden" });
+  });
+
+  test("the gate-notice job never carries the Op's own job-level variables", () => {
+    const doc = parseFile(
+      generateGithubOpPipeline([
+        { name: "live-apply", trigger: { kind: "push", branches: ["main"] }, variables: CREDENTIAL },
+      ]).files[0].yaml,
+    );
+    expect(doc.jobs!["live-apply-gate-notice"].env).toBeUndefined();
+  });
+
+  test("a spec declaring variables changes exactly the job's env: block and nothing else", () => {
+    const spec: ScheduledOpSpec = { name: "actions-audit", schedule: "0 6 * * *" };
+    const before = generateGithubOpPipeline([spec]).files[0].yaml;
+    const after = generateGithubOpPipeline([{ ...spec, variables: CREDENTIAL }]).files[0].yaml;
+    expect(after).toContain("    env:\n      AWS_ACCESS_KEY_ID: '${{ secrets.AWS_ACCESS_KEY_ID }}'\n");
+    expect(
+      after.replace("    env:\n      AWS_ACCESS_KEY_ID: '${{ secrets.AWS_ACCESS_KEY_ID }}'\n", ""),
+    ).toBe(before);
   });
 });

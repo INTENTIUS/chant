@@ -638,6 +638,38 @@ export interface ScheduledOpSpec {
    * own gate.
    */
   environment?: OpEnvironment;
+  /**
+   * Variables and secrets for this Op's generated job alone (#2290). Same
+   * shape as {@link ComponentPipelineOptions.variables} — chant draws no
+   * type-level line between a plain value and a credential, both are strings
+   * a generator drops into the job's environment — but scoped to one Op's job
+   * rather than the whole generated file, for the reason `setup` and
+   * `permissions` are per-Op already: what a job may hold is a property of
+   * that job. A `live-check` plan job that makes no cloud call declares none
+   * of this and inherits none of it.
+   *
+   * **The rule where both are set** (#2290): `ComponentPipelineOptions.variables`
+   * (forge-wide) keeps landing on the workflow/file-level `env:`
+   * (github/forgejo) or top-level `variables:` (gitlab) exactly as it always
+   * has — every caller that declares nothing here sees byte-identical output.
+   * This field lands one level down, on the job itself — github/forgejo emit
+   * it as the job's own `env:` mapping, gitlab merges it into the job's own
+   * `variables:` — and a key present in both wins at the job, the same
+   * last-one-wins precedence GitHub Actions and GitLab CI already give
+   * step/job env over workflow env. Declaring a credential here rather than
+   * in the forge-wide options is therefore how a caller keeps it off every
+   * *other* Op's job: nothing about the forge-wide options changes shape,
+   * only which of a project's own Ops asks for the credential at all.
+   *
+   * Supported everywhere a per-Op `env:`/`variables:` block is expressible:
+   * github and forgejo both emit job-level `env:`; gitlab merges these into
+   * the job's own `variables:` block (already used there for the gated
+   * apply's `CHANT_GATE_SUMMARY`, so the merge is native rather than bolted
+   * on). No generator refuses this option — unlike `setup`'s `uses:` shape or
+   * an additive `permissions` scope, every forge chant targets has some
+   * per-job environment mapping to put a value in.
+   */
+  variables?: Record<string, string>;
 }
 
 /**

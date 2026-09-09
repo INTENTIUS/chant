@@ -456,3 +456,51 @@ describe("generateGitlabOpPipeline: a deployment environment (#2257)", () => {
     ).toThrow(/neither an absolute http\(s\) URL nor a variable expression/);
   });
 });
+
+/**
+ * chant #2290 — per-Op credentials. Cheap here because a gated job already
+ * carries a job-level `variables:` block (`CHANT_GATE_SUMMARY`); a spec's own
+ * `variables` merge into the same block rather than asking for a shape
+ * GitLab has no concept of.
+ */
+describe("generateGitlabOpPipeline: per-Op variables merge into the job's own variables: (#2290)", () => {
+  const CREDENTIAL = { AWS_ACCESS_KEY_ID: "${{ secrets.AWS_ACCESS_KEY_ID }}" };
+
+  test("a spec with no variables emits no job-level variables:, even when top-level variables: is set", () => {
+    const result = generateGitlabOpPipeline(
+      [{ name: "live-check", trigger: { kind: "pull_request", branches: ["main"] } }],
+      { variables: { CHANT_FORGE: "gitlab" } },
+    );
+    const job = parseYAML(result.files[0].yaml)["live-check"] as Record<string, unknown>;
+    expect(job.variables).toBeUndefined();
+  });
+
+  test("a spec's own variables land on the job's variables:, beside the top-level variables:", () => {
+    const result = generateGitlabOpPipeline(
+      [{ name: "live-apply", trigger: { kind: "pull_request" }, variables: CREDENTIAL }],
+      { variables: { CHANT_FORGE: "gitlab" } },
+    );
+    const job = parseYAML(result.files[0].yaml)["live-apply"] as { variables?: Record<string, string> };
+    expect(job.variables).toEqual(CREDENTIAL);
+  });
+
+  test("on a gated push job, a spec's own variables merge alongside CHANT_GATE_SUMMARY rather than replacing it", () => {
+    const result = generateGitlabOpPipeline([
+      { name: "live-apply", trigger: { kind: "push", branches: ["main"] }, variables: CREDENTIAL },
+    ]);
+    const job = parseYAML(result.files[0].yaml)["live-apply"] as { variables?: Record<string, string> };
+    expect(job.variables).toEqual({ ...CREDENTIAL, CHANT_GATE_SUMMARY: "chant-gate-live-apply.md" });
+  });
+
+  test("CHANT_GATE_SUMMARY always wins a name collision — a caller cannot repoint the gate artifact", () => {
+    const result = generateGitlabOpPipeline([
+      {
+        name: "live-apply",
+        trigger: { kind: "push", branches: ["main"] },
+        variables: { CHANT_GATE_SUMMARY: "somewhere-else.md" },
+      },
+    ]);
+    const job = parseYAML(result.files[0].yaml)["live-apply"] as { variables?: Record<string, string> };
+    expect(job.variables?.CHANT_GATE_SUMMARY).toBe("chant-gate-live-apply.md");
+  });
+});

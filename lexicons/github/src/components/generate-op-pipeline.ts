@@ -57,6 +57,17 @@
  * environment protection is repository configuration, not a token scope — and
  * {@link assertEnvironment} refuses only what would emit as configured and
  * bind nothing.
+ *
+ * A fourth is per-Op credentials (#2290): a spec's `variables` emits the Op's
+ * own job-level `env:`, beside (and layered over, on a key collision)
+ * `options.variables`'s workflow-level `env:`. `options.variables` keeps
+ * meaning what it always has — set once, landing on every generated file — so
+ * a caller who declares nothing per-Op sees byte-identical output; a spec's
+ * own `variables` is the way one Op's job can hold a credential no other Op's
+ * job receives, which a workflow-level declaration can never express because
+ * every generated file here has exactly the one Op job (plus, on a `push`
+ * trigger, the gate-notice job beside it — job-level `env:` does not reach
+ * that job either, same as `environment:` above does not).
  */
 
 import { emitYAML } from "@intentius/chant/yaml";
@@ -238,14 +249,24 @@ const GATE_OUTPUT_SCRIPT =
  * which does not set it, so a failing `chant run` piped into `tee` would come
  * back as `tee`'s zero and turn a broken apply green — the exact thing this
  * whole change must not do.
+ *
+ * The `node -e` line and the job's own `outputs:` mapping exist for exactly
+ * one reader: the gate-notice job beside it, which is `needs:`-only readable
+ * through `steps.<id>.outputs`/`needs.<job>.outputs`. `emitOutputs: false`
+ * (forgejo, #2294 — the notice job does not cross the dialect at all) drops
+ * that line: nothing on Forgejo reads `$GITHUB_OUTPUT` for this job, and
+ * keeping the line would be a wired-up mechanism with no reader, which is the
+ * exact thing #2294 is about. The tee'd invocation survives either way — it's
+ * what puts the run's own JSON record in the log, gate-notice job or not.
  */
-function gatedRunScript(op: string, invocation: string): string {
-  return [
+function gatedRunScript(op: string, invocation: string, emitOutputs: boolean): string {
+  const lines = [
     "set -o pipefail",
     'json="${RUNNER_TEMP:-/tmp}/chant-run-' + op + '.json"',
     `${invocation} | tee "$json"`,
-    `node -e '${GATE_OUTPUT_SCRIPT}' "$json"`,
-  ].join("\n");
+  ];
+  if (emitOutputs) lines.push(`node -e '${GATE_OUTPUT_SCRIPT}' "$json"`);
+  return lines.join("\n");
 }
 
 /**
@@ -560,6 +581,24 @@ function setupStepDoc(step: OpSetupStep): Record<string, unknown> {
 }
 
 /**
+ * Internal knobs beside the public {@link GenerateGithubOpOptions} — not part
+ * of that type because they are not something a project author sets, only
+ * something a dialect on top of this builder (forgejo, #2294) needs to
+ * change about the shape this function emits for every spec alike.
+ */
+export interface BuildGithubOpPipelineDocsInternalOptions {
+  /**
+   * Whether a `push` job's outputs (`gated`/`op`/`gate`/`approve`) and the
+   * `node -e` step that writes them to `$GITHUB_OUTPUT` are emitted (#2294).
+   * Default true (github's own behavior, unchanged): the gate-notice job
+   * beside it reads them. The forgejo generator passes `false` — it never
+   * carries a gate-notice job (`gatedNoticeDoc` never crosses the dialect),
+   * so nothing would ever read them there.
+   */
+  emitGatedOutputs?: boolean;
+}
+
+/**
  * Build one `GithubOpPipelineDoc` per scheduled Op: its trigger, its `setup`
  * steps, least-privilege `permissions:` for its finding-mode plus whatever
  * the spec adds, one job that runs `chant run <name>`. Every
@@ -574,7 +613,9 @@ function setupStepDoc(step: OpSetupStep): Record<string, unknown> {
 export function buildGithubOpPipelineDocs(
   ops: ScheduledOpSpec[],
   options: GenerateGithubOpOptions = {},
+  internalOptions: BuildGithubOpPipelineDocsInternalOptions = {},
 ): { files: GithubOpPipelineFile[]; jobs: OpPipelineJob[] } {
+  const emitGatedOutputs = internalOptions.emitGatedOutputs ?? true;
   const image = options.image ?? DEFAULT_IMAGE;
   const runCommand = options.runCommand ?? ["chant", "run", "{name}"];
   const beforeScript = options.beforeScript ?? [];
@@ -615,7 +656,7 @@ export function buildGithubOpPipelineDocs(
     for (const line of beforeScript) steps.push({ run: line });
     steps.push(
       gated
-        ? { id: RUN_STEP_ID, run: gatedRunScript(spec.name, invocation), env: stepEnv }
+        ? { id: RUN_STEP_ID, run: gatedRunScript(spec.name, invocation, emitGatedOutputs), env: stepEnv }
         : { run: invocation, env: stepEnv },
     );
     for (const line of extraScript) steps.push({ run: line });
@@ -636,12 +677,17 @@ export function buildGithubOpPipelineDocs(
         [jobName]: {
           "runs-on": "ubuntu-latest",
           container: image,
+          // Per-Op credentials (#2290): job-level `env:`, one level more
+          // specific than `options.variables`'s workflow-level `env:` above,
+          // and never on the notice job beside it — same reason `environment:`
+          // isn't either, it's this Op's own job alone.
+          ...(spec.variables && Object.keys(spec.variables).length > 0 ? { env: spec.variables } : {}),
           // On this Op's own job and never on the notice job beside it: the
           // notice exists to say a chant gate is pending, and putting it
           // behind the same reviewer would hold the message back until
           // somebody had already acted.
           ...(spec.environment ? { environment: environmentDoc(spec.environment) } : {}),
-          ...(gated
+          ...(gated && emitGatedOutputs
             ? {
                 outputs: Object.fromEntries(
                   ["gated", "op", "gate", "approve"].map((name) => [
