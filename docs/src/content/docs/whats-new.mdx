@@ -19,6 +19,31 @@ What used to need a workflow engine now lives in three places nothing has to hos
 | [#2115](https://github.com/INTENTIUS/chant/issues/2115) | The fountain lexicon as the hosted runtime — `Teammate` / `Schedule` / `Webhook`, `fountain.profiles`, `chant acp`, the `opRuntime` provider, observation, and the `Steward` composite |
 | [#2116](https://github.com/INTENTIUS/chant/issues/2116) | Temporal removed — the lexicon, every reference in core, the examples, the docs, the CI, and the published package deprecated in favour of `@intentius/chant-lexicon-fountain` |
 
+## Op pipelines behave the same on GitHub, Forgejo and GitLab
+
+One chant project generates the Op pipelines for all three forges, and since 0.60.0 each forge has received every job with the same triggers and the same names. What a job could *do* still varied by generator rather than by what the forge actually supports. That gap is now closed, and a first real execution of the generated pipelines closed a second one nobody had seen.
+
+`ScheduledOpSpec` now takes `variables`, so a per-Op secret lands on that Op's own job instead of the whole file. A project with no OIDC no longer puts the apply key on every pull-request job.
+
+Posting now works off github.com too. `gh api` resolves a relative path against `/api/v3` for any host but github.com, and Forgejo serves `/api/v1`, so every sticky-comment call built from a bare path answered 404 there. Calls are now built from `GITHUB_API_URL`, which GitHub Actions and Forgejo Actions both already set correctly. The `issue` finding mode gained a GitLab path and a sticky GitHub one, so a nightly Op edits the issue it owns rather than opening a new one each run.
+
+The generated GitLab file and stage are named `ops` rather than `scheduled-ops`, which is a **breaking rename** of the file a consuming project includes.
+
+Four failures came from running the pipelines rather than reading them. A gated job could not start under `container:`, whose default shell is `sh`, because the generated script opens with `set -o pipefail`. `TerraformAdoptOp` had no Init phase, so its Ledger step found no provider schema on any fresh checkout. A CI clone has no committer identity, so the gate's own commit failed, and the run reported no error at all. A CI clone also fetches only the pipeline ref, so an absent `chant/lifecycle` read as a ledger where nothing had been approved. A retried job then recorded a second pending fact, and `chant approve` force-wrote the branch over the record it should have appended to.
+
+| # | Capability |
+|---|---|
+| [#2290](https://github.com/INTENTIUS/chant/issues/2290) | Per-Op `variables` on the Op's own job, across all three generators |
+| [#2291](https://github.com/INTENTIUS/chant/issues/2291) | `comment` finding mode on Forgejo, over a full-URL `gh api` call |
+| [#2292](https://github.com/INTENTIUS/chant/issues/2292) | A GitLab issues path for `reconcilePr`'s `issue` mode |
+| [#2293](https://github.com/INTENTIUS/chant/issues/2293) | The GitLab stage and file are named `ops` (breaking) |
+| [#2297](https://github.com/INTENTIUS/chant/issues/2297) | The GitHub `issue` path edits the issue it owns instead of opening one per run |
+| [#2299](https://github.com/INTENTIUS/chant/issues/2299) | The gated step declares `shell: bash`, so it starts under `container:` |
+| [#2301](https://github.com/INTENTIUS/chant/issues/2301) | A committer identity for the ledger commit, and an Op failure that names its cause |
+| [#2302](https://github.com/INTENTIUS/chant/issues/2302) | `TerraformAdoptOp` gained the Init phase its Ledger step depends on |
+| [#2303](https://github.com/INTENTIUS/chant/issues/2303) | The ledger branch is fetched before it is read or appended to |
+| [#2305](https://github.com/INTENTIUS/chant/issues/2305) | `PrPlanReport`'s sticky comment targets the resolved API base |
+
 ## Exploitability-aware vulnerability gating
 
 `vuln-gate` can now gate on whether a CVE is actually being exploited, not just how bad it would be: **KEV** catalog membership (CISA's list of vulnerabilities exploited in the wild) and the **EPSS** score (likelihood of exploitation in the next 30 days). Four new `vulnPolicy` fields — `failOnKev`, `failEpssAtOrAbove`, `warnEpssAtOrAbove`, `exploitabilityFixableOnly` — work project-wide from `chant.config.ts` or per-step. All default to off, so upgrading blocks nothing new; the one change every gate sees is that `VulnGateFailedError` now names the rule that fired per finding (`in CISA KEV since 2024-03-11, known ransomware use` instead of a bare CVE list). VEX suppression still outranks everything, KEV included. grype reports the data; trivy (v0.73) reports none of it, in which case the gate behaves exactly as before. See [Exploitability gating](/chant/components/attestation-reference/#exploitability-gating-kev-and-epss).
