@@ -26,10 +26,10 @@ describe("generateGitlabOpPipeline: one file, one job per scheduled Op", () => {
     const result = generateGitlabOpPipeline(specs);
 
     expect(result.files).toHaveLength(1);
-    expect(result.files[0].name).toBe("scheduled-ops.gitlab-ci.yml");
+    expect(result.files[0].name).toBe("ops.gitlab-ci.yml");
 
     const parsed = parseYAML(result.files[0].yaml);
-    expect(parsed.stages).toEqual(["scheduled-ops"]);
+    expect(parsed.stages).toEqual(["ops"]);
     expect(parsed["actions-audit"]).toBeDefined();
     expect(parsed["prod-reconcile"]).toBeDefined();
   });
@@ -39,7 +39,7 @@ describe("generateGitlabOpPipeline: one file, one job per scheduled Op", () => {
     const parsed = parseYAML(result.files[0].yaml);
     const job = parsed["actions-audit"] as Record<string, unknown>;
 
-    expect(job.stage).toBe("scheduled-ops");
+    expect(job.stage).toBe("ops");
     expect(job.rules).toEqual([
       { if: '$CI_PIPELINE_SOURCE == "schedule" && $CHANT_SCHEDULED_OP == "actions-audit"' },
     ]);
@@ -66,7 +66,72 @@ describe("generateGitlabOpPipeline: one file, one job per scheduled Op", () => {
     expect(result.files).toHaveLength(1);
     expect(result.jobs).toEqual([]);
     const parsed = parseYAML(result.files[0].yaml);
-    expect(parsed.stages).toEqual(["scheduled-ops"]);
+    expect(parsed.stages).toEqual(["ops"]);
+  });
+});
+
+/**
+ * #2293 — the stage and file name follow the pipeline's actual contents
+ * instead of the cron-only-era constant "scheduled-ops", and both are
+ * overridable via `ComponentPipelineOptions` the way every other generator
+ * knob is (`image`, `variables`, ...).
+ */
+describe("generateGitlabOpPipeline: the stage and file name (#2293)", () => {
+  test("a mixed-trigger project's stage and file no longer say 'scheduled'", () => {
+    // cron + merge_request + push in one project, exactly the shape that
+    // made "scheduled-ops" wrong: a GitLab UI would show live-check-style
+    // pull-request/push jobs grouped under a stage claiming they run on a
+    // schedule.
+    const result = generateGitlabOpPipeline([
+      { name: "nightly", schedule: "0 6 * * *" },
+      { name: "live-plan", trigger: { kind: "pull_request", branches: ["main"] } },
+      { name: "live-apply", trigger: { kind: "push", branches: ["main"] } },
+    ]);
+
+    expect(result.files[0].name).not.toMatch(/scheduled/);
+    expect(result.files[0].name).toBe("ops.gitlab-ci.yml");
+
+    const parsed = parseYAML(result.files[0].yaml);
+    expect(parsed.stages).toEqual(["ops"]);
+    expect((parsed["live-plan"] as Record<string, unknown>).stage).toBe("ops");
+    expect((parsed["live-apply"] as Record<string, unknown>).stage).toBe("ops");
+    expect((parsed.nightly as Record<string, unknown>).stage).toBe("ops");
+  });
+
+  test("the header names the stage every job runs in", () => {
+    const yaml = generateGitlabOpPipeline([{ name: "actions-audit", schedule: "0 6 * * *" }]).files[0]
+      .yaml;
+    expect(yaml).toContain('one job per Op under stage "ops"');
+  });
+
+  test("opsStage overrides the stage, and the file name follows it by default", () => {
+    const result = generateGitlabOpPipeline([{ name: "actions-audit", schedule: "0 6 * * *" }], {
+      opsStage: "deploy",
+    });
+    expect(result.files[0].name).toBe("deploy.gitlab-ci.yml");
+    const parsed = parseYAML(result.files[0].yaml);
+    expect(parsed.stages).toEqual(["deploy"]);
+    expect((parsed["actions-audit"] as Record<string, unknown>).stage).toBe("deploy");
+    expect(result.files[0].yaml).toContain('one job per Op under stage "deploy"');
+  });
+
+  test("opsFileName overrides the file name independently of opsStage", () => {
+    const result = generateGitlabOpPipeline([{ name: "actions-audit", schedule: "0 6 * * *" }], {
+      opsStage: "deploy",
+      opsFileName: "ci/deploy-ops.yml",
+    });
+    expect(result.files[0].name).toBe("ci/deploy-ops.yml");
+    const parsed = parseYAML(result.files[0].yaml);
+    expect(parsed.stages).toEqual(["deploy"]);
+  });
+
+  test("a blank opsStage or opsFileName is refused by name", () => {
+    expect(() =>
+      generateGitlabOpPipeline([{ name: "actions-audit", schedule: "0 6 * * *" }], { opsStage: "  " }),
+    ).toThrow(/opsStage.*empty/s);
+    expect(() =>
+      generateGitlabOpPipeline([{ name: "actions-audit", schedule: "0 6 * * *" }], { opsFileName: "" }),
+    ).toThrow(/opsFileName.*empty/s);
   });
 });
 
@@ -375,19 +440,23 @@ describe("generateGitlabOpPipeline: a deployment environment (#2257)", () => {
   /**
    * The document a cron spec with no `environment` emits. #2257 pinned this to
    * prove its option is additive; #2256 moved two lines of it and it is
-   * re-pinned rather than loosened, so it still proves the same thing.
+   * re-pinned rather than loosened, so it still proves the same thing. #2293
+   * re-pinned it again: the stage (and the header line naming it) moved from
+   * the constant "scheduled-ops" to the default "ops".
    *
    * What moved: the header's opening paragraph, because a merge_request_event
    * or push job needs no Pipeline Schedule and the cron instructions are now
-   * printed only for the Ops that do; and `resource_group`, which every job
-   * gains as GitLab's stand-in for github's per-Op concurrency group. The
-   * cron job's own rule, script and stage are byte-for-byte what they were.
+   * printed only for the Ops that do, and because the header now names the
+   * stage every job runs in (#2293); `resource_group`, which every job gains
+   * as GitLab's stand-in for github's per-Op concurrency group; and the
+   * `stage:`/`stages:` values themselves (#2293). The cron job's own rule and
+   * script are byte-for-byte what they were.
    */
   const YAML_BEFORE_2257 =
     [
-      "# chant Ops (#927, #2084) — one job per Op, each selected by its own",
-      "# rules:. A merge_request_event or push job needs no setup; its rule",
-      "# fires on the event itself.",
+      '# chant Ops (#927, #2084, #2293) — one job per Op under stage "ops", each',
+      "# selected by its own rules:. A merge_request_event or push job needs no",
+      "# setup; its rule fires on the event itself.",
       "#",
       "# GitLab has no in-file cron. Create one Pipeline Schedule per cron Op",
       "# below (Settings > CI/CD > Schedules): set its cron to the value noted",
@@ -398,10 +467,10 @@ describe("generateGitlabOpPipeline: a deployment environment (#2257)", () => {
         " — needs a GITLAB_TOKEN CI/CD variable (masked, scope: api)",
       "",
       "stages:",
-      "  - scheduled-ops",
+      "  - ops",
       "",
       "actions-audit:",
-      "  stage: scheduled-ops",
+      "  stage: ops",
       "  image: node:22-slim",
       "  resource_group: actions-audit",
       "  rules:",

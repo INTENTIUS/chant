@@ -112,7 +112,22 @@ function toJobName(opName: string): string {
 }
 
 const DEFAULT_IMAGE = "node:22-slim";
-const STAGE = "scheduled-ops";
+
+/**
+ * Default stage every generated job runs in, and the default base of the
+ * generated file's name (#2293). Overridable via `options.opsStage` (and the
+ * file name separately via `options.opsFileName`) — see
+ * {@link GenerateGitlabOpOptions} (`ComponentPipelineOptions` in
+ * `../../../../packages/core/src/lexicon.ts`).
+ *
+ * `"scheduled-ops"` before #2293: a constant from when this generator was
+ * cron-only, left in place through #2084/#2256 even after every
+ * merge-request and push job started sharing it, so a GitLab UI showed
+ * `live-check`/`live-plan`/`live-apply`/`live-adopt` grouped under a stage
+ * called "scheduled" and a consuming project's `include:` named a file that
+ * said the opposite of what it held.
+ */
+const DEFAULT_STAGE = "ops";
 
 /** The CI/CD variable a Pipeline Schedule sets to select which job it runs. */
 const SELECTOR_VAR = "CHANT_SCHEDULED_OP";
@@ -175,6 +190,26 @@ function assertBranchName(specName: string, branch: string): void {
         `cannot put in a GitLab \`rules:\` expression: a quote would end the expression early and a "$" ` +
         `would expand as a CI/CD variable, either of which silently changes which pipelines run the job. ` +
         `Name a branch without \`"\`, \`$\` or \`\\\`.`,
+    );
+  }
+}
+
+/** Refuse a blank `opsStage` (#2293): every job's `stage:` and the top-level `stages:` entry would otherwise be an empty string. */
+function assertOpsStage(stage: string): void {
+  if (stage.trim() === "") {
+    throw new Error(
+      `The gitlab Op generator's \`opsStage\` option is empty. Name the stage every generated job shares, ` +
+        `or drop the option to keep the default "${DEFAULT_STAGE}".`,
+    );
+  }
+}
+
+/** Refuse a blank `opsFileName` (#2293): `main.ts` in a consuming project writes `result.files[].name` straight to disk. */
+function assertOpsFileName(fileName: string): void {
+  if (fileName.trim() === "") {
+    throw new Error(
+      `The gitlab Op generator's \`opsFileName\` option is empty. Name the generated file, or drop the ` +
+        `option to derive it from \`opsStage\`.`,
     );
   }
 }
@@ -375,9 +410,13 @@ export function generateGitlabOpPipeline(
   const runCommand = options.runCommand ?? ["chant", "run", "{name}"];
   const beforeScript = options.beforeScript ?? [];
   const extraScript = options.extraScript ?? [];
+  const stage = options.opsStage ?? DEFAULT_STAGE;
+  assertOpsStage(stage);
+  const fileName = options.opsFileName ?? `${stage}.gitlab-ci.yml`;
+  assertOpsFileName(fileName);
 
   const jobs: OpPipelineJob[] = [];
-  const doc: Record<string, unknown> = { stages: [STAGE] };
+  const doc: Record<string, unknown> = { stages: [stage] };
   if (options.variables && Object.keys(options.variables).length > 0) doc.variables = options.variables;
 
   const opLines: string[] = [];
@@ -407,7 +446,7 @@ export function generateGitlabOpPipeline(
     const gateSummary = gateSummaryPath(jobName);
 
     doc[jobName] = {
-      stage: STAGE,
+      stage,
       image,
       // GitLab's stand-in for github's per-Op concurrency group: queue the
       // next run rather than cancel the current one.
@@ -435,9 +474,9 @@ export function generateGitlabOpPipeline(
   }
 
   const headerLines = [
-    "# chant Ops (#927, #2084) — one job per Op, each selected by its own",
-    "# rules:. A merge_request_event or push job needs no setup; its rule",
-    "# fires on the event itself.",
+    `# chant Ops (#927, #2084, #2293) — one job per Op under stage "${stage}", each`,
+    "# selected by its own rules:. A merge_request_event or push job needs no",
+    "# setup; its rule fires on the event itself.",
   ];
   if (anyCron) {
     headerLines.push(
@@ -459,5 +498,5 @@ export function generateGitlabOpPipeline(
 
   const yaml = headerLines.join("\n") + "\n\n" + sections.join("\n\n") + "\n";
 
-  return { files: [{ name: "scheduled-ops.gitlab-ci.yml", yaml }], jobs };
+  return { files: [{ name: fileName, yaml }], jobs };
 }
