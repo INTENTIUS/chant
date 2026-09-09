@@ -25,7 +25,7 @@ import { resolveActivity, type ActivityFn, type ActivityProfile } from "./activi
 import type { ReceiptReadResult } from "./receipt-store";
 import { isStepOutputRef } from "./step-output-ref";
 import { parseDuration } from "./duration";
-import { evaluateGate, gitGateLedgerPort, type GateLedgerPort } from "./gate";
+import { evaluateGate, gitGateLedgerPort, type GateCheck, type GateLedgerPort } from "./gate";
 import { gateName } from "./gate-name";
 import type { PendingGateRecord } from "../lifecycle/gate-ledger";
 import { appendRunRecord, buildRunRecord } from "../lifecycle/run-ledger";
@@ -87,11 +87,31 @@ export interface OpRunResult {
 
 // ── Errors ────────────────────────────────────────────────────────────────��─
 
-/** Thrown on terminal Op failure; carries the partial run result for rendering. */
+/**
+ * Thrown on terminal Op failure; carries the partial run result for rendering.
+ *
+ * `cause` is what actually went wrong (#2301). Before it, this class was the
+ * end of the line for any error that was not a `PhaseFailure` — the executor
+ * caught it, built an `OpRunFailure` from the records it had, and never
+ * referenced the error again. Anything thrown outside a step's own
+ * error-capturing path therefore reached the operator as `Op "x" failed` and
+ * nothing else: no error line, no failing step, exit 1. That is how a gate
+ * whose ledger write died on a CI checkout with no `user.email` produced no
+ * text naming git, the ledger, or the identity, on INTENTIUS/choudoufu#1026.
+ */
 export class OpRunFailure extends Error {
-  constructor(public readonly result: OpRunResult) {
+  /** The error the run actually died on, when it was not a step's own failure. */
+  public readonly cause?: unknown;
+
+  constructor(
+    public readonly result: OpRunResult,
+    options?: { cause?: unknown },
+  ) {
     super(`Op "${result.op}" failed`);
     this.name = "OpRunFailure";
+    // Assigned rather than passed to `super` — the lib this package compiles
+    // against predates Error's `options` parameter.
+    if (options && "cause" in options) this.cause = options.cause;
   }
 }
 
@@ -118,6 +138,14 @@ class GateStop extends Error {
 // ── Helpers ───────────────────────────────────────────────────────────────��─
 
 const DEFAULT_PROFILE = "fastIdempotent";
+
+/**
+ * The phase a synthetic failure record is filed under when the error did not
+ * come from a step (#2301) — a ledger write, an abort, a malformed phase.
+ * Named rather than blank so a reader of `--json` or of the run ledger can
+ * tell it apart from an authored phase.
+ */
+const UNATTRIBUTED_PHASE = "run";
 const FALLBACK_TIMEOUT_MS = 5 * 60_000;
 
 const isActivity = (s: StepDefinition): s is ActivityStep => s.kind === "activity";
@@ -358,14 +386,36 @@ async function runGateStep(
   gates: GateContext,
 ): Promise<{ record: StepRecord; pending?: PendingGateRecord }> {
   const start = Date.now();
-  const check = await evaluateGate(gates.port, {
-    op: gates.op,
-    gate: gateName(step),
-    ...(step.description ? { description: step.description } : {}),
-    ...(step.timeout ? { timeout: step.timeout } : {}),
-    ...(gates.runId ? { runId: gates.runId } : {}),
-    ...(gates.now ? { now: gates.now } : {}),
-  });
+  let check: GateCheck;
+  try {
+    check = await evaluateGate(gates.port, {
+      op: gates.op,
+      gate: gateName(step),
+      ...(step.description ? { description: step.description } : {}),
+      ...(step.timeout ? { timeout: step.timeout } : {}),
+      ...(gates.runId ? { runId: gates.runId } : {}),
+      ...(gates.now ? { now: gates.now } : {}),
+    });
+  } catch (err) {
+    // Deciding a gate reads and writes the `chant/lifecycle` branch, so it
+    // fails for all the ordinary git reasons — no committer identity, an
+    // unfetched ledger, a rejected ref update. `runStep` has always turned an
+    // activity's throw into a failing `StepRecord` carrying the message
+    // ("Never throws — returns a record"); `runGateStep` did not, which made
+    // the gate the one step kind whose failure produced no record and so no
+    // rendered output at all (#2301). It does now, and the phase treats it
+    // like any other failing step.
+    return {
+      record: {
+        phase: phaseName,
+        fn: gateFn(step),
+        args: {},
+        status: "fail",
+        durationMs: Date.now() - start,
+        error: errMessage(err),
+      },
+    };
+  }
 
   if (check.satisfied) {
     const { resolution } = check;
@@ -462,6 +512,12 @@ async function runEffectStep(
     if (isGate(nested)) {
       const { record, pending } = await runGateStep(nested, phaseName, gates);
       pushRecord(records, gates, record);
+      if (record.status === "fail") {
+        // Receipt left untouched, as for any other failing nested step
+        // (#2301) — the effect is not applied and the next run re-proposes it.
+        skipRest(i + 1);
+        return { records, failed: true };
+      }
       if (pending) {
         // Receipt left untouched — the next run re-proposes the effect and
         // re-evaluates the gate against whatever the ledger says by then.
@@ -523,6 +579,14 @@ async function runPhase(
     for (const step of phase.steps.filter(isGate)) {
       const { record, pending } = await runGateStep(step, phase.name, gates);
       pushRecord(gateRecords, gates, record);
+      if (record.status === "fail") {
+        // The gate could not be decided at all (#2301). Same treatment as a
+        // pending one: nothing fans out, the activities are recorded skipped.
+        for (const skipped of phase.steps.filter(isActivity)) {
+          pushRecord(gateRecords, gates, skippedRecord(phase.name, skipped.fn, skipped.args));
+        }
+        throw new PhaseFailure(gateRecords);
+      }
       if (pending) {
         for (const skipped of phase.steps.filter(isActivity)) {
           pushRecord(gateRecords, gates, skippedRecord(phase.name, skipped.fn, skipped.args));
@@ -560,6 +624,12 @@ async function runPhase(
     if (isGate(step)) {
       const { record, pending } = await runGateStep(step, phase.name, gates);
       pushRecord(records, gates, record);
+      if (record.status === "fail") {
+        // A gate that could not be decided is a failed step, not a pending
+        // one (#2301) — the run failed, and the record says why.
+        skipRemaining(i + 1);
+        throw new PhaseFailure(records);
+      }
       if (pending) {
         skipRemaining(i + 1);
         throw new GateStop(records, pending, phase.name);
@@ -747,7 +817,30 @@ export async function runOpLocally(
       };
     }
 
-    if (err instanceof PhaseFailure) records.push(...err.records);
+    if (err instanceof PhaseFailure) {
+      records.push(...err.records);
+    } else {
+      // Everything else the phase loop can throw (#2301). `PhaseFailure` and
+      // `GateStop` are the two shapes that carry their own records; anything
+      // else — a git failure inside a ledger write, a bad phase definition, a
+      // bug — used to be dropped here without being read, leaving a result
+      // whose `records` hold nothing marked failed and nothing carrying a
+      // message. The renderer prints text only from records, so the operator
+      // got `Op "x" failed after 43.8s` and no cause at all.
+      //
+      // A synthetic record is what makes it visible: it renders as a failing
+      // step like any other, lands in the run ledger, and appears in
+      // `--json`. `cause` on the thrown `OpRunFailure` carries the original
+      // error for a caller that wants the object rather than the text.
+      records.push({
+        phase: UNATTRIBUTED_PHASE,
+        fn: "opFailure",
+        args: {},
+        status: "fail",
+        durationMs: 0,
+        error: errMessage(err),
+      });
+    }
 
     // Compensation: run onFailure phases in reverse order (best-effort). Skipped
     // on abort (Ctrl-C) — the user asked to stop, so don't start new work.
@@ -756,19 +849,35 @@ export async function runOpLocally(
         try {
           records.push(...(await runPhase(phase, activities, profiles, resultsById, gates, signal)));
         } catch (compErr) {
-          if (compErr instanceof PhaseFailure || compErr instanceof GateStop) records.push(...compErr.records);
+          if (compErr instanceof PhaseFailure || compErr instanceof GateStop) {
+            records.push(...compErr.records);
+          } else {
+            // The same swallow, one level down (#2301): a compensation phase
+            // that threw something else left no trace whatsoever.
+            records.push({
+              phase: phase.name,
+              fn: "onFailure",
+              args: {},
+              status: "fail",
+              durationMs: 0,
+              error: errMessage(compErr),
+            });
+          }
         }
       }
     }
 
-    throw new OpRunFailure({
-      op: config.name,
-      records,
-      totalMs: Date.now() - start,
-      status: "fail",
-      startedAt,
-      record: await settle(records, "fail"),
-    });
+    throw new OpRunFailure(
+      {
+        op: config.name,
+        records,
+        totalMs: Date.now() - start,
+        status: "fail",
+        startedAt,
+        record: await settle(records, "fail"),
+      },
+      { cause: err },
+    );
   }
 
   return {

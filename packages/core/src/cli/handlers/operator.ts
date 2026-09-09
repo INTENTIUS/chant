@@ -34,7 +34,7 @@ import {
   latestResolutionSince, latestPendingGate, isPendingGateExpired,
   resolveApprovalUrl, isApprovalUrl,
 } from "../../lifecycle/gate-ledger";
-import { pushLifecycle } from "../../lifecycle/git";
+import { pushLifecycle, requireLifecycleLedgerWritable } from "../../lifecycle/git";
 import { formatError, formatWarning, formatSuccess, formatBold, formatInfo } from "../format";
 import type { CommandContext } from "../registry";
 
@@ -607,6 +607,18 @@ export async function runApprove(ctx: CommandContext): Promise<number> {
   }
 
   if (ctx.args.expire) {
+    // Same guard as the approve path below (#2303): `--expire` reads the
+    // standing fact and appends beside it, so a clone that never fetched the
+    // branch would both fail to see the fact it is expiring and replace the
+    // branch with the expiry alone.
+    try {
+      await requireLifecycleLedgerWritable();
+    } catch (err) {
+      console.error(formatError({
+        message: `Cannot expire the gate: ${err instanceof Error ? err.message : String(err)}`,
+      }));
+      return 1;
+    }
     const now = new Date().toISOString();
     const standing = latestPendingGate((await readGateLedger(opName)).pending, gate);
     if (!standing || isPendingGateExpired(standing, now)) {
@@ -680,6 +692,21 @@ export async function recordGateApproval(
     console.error(formatWarning({
       message: `Op "${opName}" was not found among discovered *.op.ts declarations — recording the resolution anyway`,
     }));
+  }
+
+  // Read the branch before appending to it (#2303 finding 2). Without this,
+  // an approve in a clone that never fetched `chant/lifecycle` builds its
+  // commit from an empty tree with no parent and replaces the branch with a
+  // single commit holding only this resolution — the pending fact it is
+  // answering is discarded rather than appended to.
+  try {
+    await requireLifecycleLedgerWritable();
+  } catch (err) {
+    console.error(formatError({
+      message: `Cannot record the approval: ${err instanceof Error ? err.message : String(err)}`,
+      hint: "The pending fact this answers lives on that branch; appending without it would drop it.",
+    }));
+    return { ok: false };
   }
 
   const resolvedBy = opts.actor ?? process.env.GITHUB_ACTOR ?? process.env.GITLAB_USER_LOGIN ?? process.env.USER ?? "unknown";

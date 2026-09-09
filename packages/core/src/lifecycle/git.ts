@@ -9,6 +9,57 @@ import { getRuntime } from "../runtime-adapter";
 const STATE_BRANCH = "chant/lifecycle";
 
 /**
+ * The identity chant's ledger commits fall back to when the checkout has none
+ * of its own (#2301).
+ *
+ * A CI checkout is the ordinary case here, not an exotic one: GitLab CI,
+ * GitHub Actions and Forgejo Actions all clone without `user.email` or
+ * `user.name`, and `git commit-tree` refuses outright rather than inventing
+ * one — `fatal: unable to auto-detect email address`. Every write in this
+ * module goes through `commit-tree`, so before #2301 a gate's pending fact,
+ * a run record, a snapshot and a release record all died the same way the
+ * moment they ran anywhere but a developer's laptop.
+ *
+ * This is a *fallback*, applied per-invocation via `git -c` and only when
+ * `git var GIT_COMMITTER_IDENT` says the checkout cannot name a committer on
+ * its own. A configured identity — a developer's, or a CI job that sets one
+ * deliberately — is left exactly as it is and still authors these commits;
+ * nothing is written to the repository's config either way. Override the
+ * fallback with `CHANT_LIFECYCLE_COMMITTER_NAME` / `_EMAIL` when a project
+ * wants its ledger commits attributed to a bot account it controls.
+ */
+const LEDGER_COMMITTER_NAME = "chant";
+const LEDGER_COMMITTER_EMAIL = "chant@localhost";
+
+/**
+ * `git -c` arguments that give {@link writeBlobToPath}'s `commit-tree` a
+ * committer when — and only when — the checkout cannot supply one itself.
+ * Empty for any checkout that has an identity, which keeps every existing
+ * caller's commits byte-identical to what they were before #2301.
+ */
+async function ledgerCommitIdentityArgs(cwd?: string): Promise<string[]> {
+  const rt = getRuntime();
+  const probe = await rt.spawn(["git", "var", "GIT_COMMITTER_IDENT"], { cwd });
+  if (probe.exitCode === 0) return [];
+  const name = process.env.CHANT_LIFECYCLE_COMMITTER_NAME?.trim() || LEDGER_COMMITTER_NAME;
+  const email = process.env.CHANT_LIFECYCLE_COMMITTER_EMAIL?.trim() || LEDGER_COMMITTER_EMAIL;
+  return ["-c", `user.name=${name}`, "-c", `user.email=${email}`];
+}
+
+/**
+ * Prefix every failure out of the ledger write path with what was being
+ * written and where (#2301 deliverable 2). `git commit-tree failed: <stderr>`
+ * on its own does not say that the thing that failed was chant recording a
+ * fact on its own branch, and the caller that swallows it is one stack frame
+ * away from printing nothing at all.
+ */
+function ledgerWriteError(stage: string, path: string, stderr: string): Error {
+  return new Error(
+    `cannot write ${path} on the ${STATE_BRANCH} branch: ${stage} failed: ${(stderr ?? "").trim()}`,
+  );
+}
+
+/**
  * Write a blob to an arbitrary `<environment>/<filename>` path on the orphan
  * branch, preserving every other env/file entry already on the branch.
  *
@@ -56,13 +107,19 @@ export async function writeBlobToPath(
   // annotation) and no shell-quoting dance around embedded single quotes.
   // Content-addressed and idempotent, so this stays outside the retry loop
   // below — nothing about a CAS conflict on the ref ever invalidates it.
+  //
+  // `path` is resolved first only so every failure below can name it (#2301).
+  const path = `${environment}/${filename}`;
+
   const blobResult = await rt.spawn(["git", "hash-object", "-w", "--stdin"], { cwd, stdin: content });
   if (blobResult.exitCode !== 0) {
-    throw new Error(`git hash-object failed: ${blobResult.stderr}`);
+    throw ledgerWriteError("git hash-object", path, blobResult.stderr);
   }
   const blobSha = blobResult.stdout.trim();
 
-  const path = `${environment}/${filename}`;
+  // Resolved once, outside the retry loop: whether the checkout can name a
+  // committer does not change between attempts (#2301).
+  const identityArgs = await ledgerCommitIdentityArgs(cwd);
 
   // 2-5. Read tree, build the commit, and CAS-update the branch ref — retried
   // on a conflict (#1959 finding 1). `writeBlobToPath` had no retry of its
@@ -127,7 +184,7 @@ export async function writeBlobToPath(
 
     const envTreeResult = await rt.spawn(["git", "mktree"], { cwd, stdin: `${envEntries}\n` });
     if (envTreeResult.exitCode !== 0) {
-      throw new Error(`git mktree (env) failed: ${envTreeResult.stderr}`);
+      throw ledgerWriteError("git mktree (env)", path, envTreeResult.stderr);
     }
     const envTreeSha = envTreeResult.stdout.trim();
 
@@ -150,7 +207,7 @@ export async function writeBlobToPath(
       stdin: `${rootEntries.join("\n")}\n`,
     });
     if (rootTreeResult.exitCode !== 0) {
-      throw new Error(`git mktree (root) failed: ${rootTreeResult.stderr}`);
+      throw ledgerWriteError("git mktree (root)", path, rootTreeResult.stderr);
     }
     const rootTreeSha = rootTreeResult.stdout.trim();
 
@@ -160,11 +217,11 @@ export async function writeBlobToPath(
     const parentRef = tip;
     const parentArgs = parentRef ? ["-p", parentRef] : [];
     const commitResult = await rt.spawn(
-      ["git", "commit-tree", ...parentArgs, "-m", commitMessage, rootTreeSha],
+      ["git", ...identityArgs, "commit-tree", ...parentArgs, "-m", commitMessage, rootTreeSha],
       { cwd },
     );
     if (commitResult.exitCode !== 0) {
-      throw new Error(`git commit-tree failed: ${commitResult.stderr}`);
+      throw ledgerWriteError("git commit-tree", path, commitResult.stderr);
     }
     const commitSha = commitResult.stdout.trim();
 
@@ -534,16 +591,164 @@ export async function pushLifecycle(opts?: { cwd?: string }): Promise<boolean> {
  * Fetch the state branch from remote.
  */
 export async function fetchLifecycle(opts?: { cwd?: string }): Promise<boolean> {
+  return (await fetchLifecycleStatus(opts)).status === "fetched";
+}
+
+/**
+ * Why a fetch of the ledger branch did or did not produce local history
+ * (#2303).
+ *
+ * `fetchLifecycle`'s boolean cannot answer the question the gate actually
+ * needs answered. "No local `chant/lifecycle`" has two causes that a reader
+ * of an empty ledger cannot tell apart, and they call for opposite
+ * behaviour: on a project whose ledger has never been written, an empty
+ * ledger is the truth; in a CI checkout that fetched only the pipeline's own
+ * ref, an empty ledger is history the checkout simply cannot see. Reading the
+ * second as the first is what makes a second pending fact look correct, so
+ * these are separate outcomes:
+ *
+ * - `fetched` — the branch is now in this checkout (or already was, and is
+ *   up to date). Whatever the ledger says is the whole truth.
+ * - `no-remote` — nothing to fetch from. A single-machine project; local is
+ *   authoritative by construction, the same assumption `chant operator`'s
+ *   lease already documents.
+ * - `absent` — the remote answered and has no `chant/lifecycle`. The ledger
+ *   is genuinely empty; this is a project's first gate.
+ * - `diverged` — both sides have the branch and neither contains the other.
+ *   Appending here would drop one side's facts.
+ * - `unreachable` — a remote is configured and did not answer (no network,
+ *   no credentials, a shallow-clone refspec that cannot resolve). Whether
+ *   anything is on the branch is unknown, which is exactly the state that
+ *   must not be read as "nothing has been approved".
+ */
+export type LifecycleFetchStatus =
+  | { status: "fetched" }
+  | { status: "no-remote" }
+  | { status: "absent"; remote: string }
+  | { status: "diverged"; remote: string; stderr: string }
+  | { status: "unreachable"; remote: string; stderr: string };
+
+/** git's wording when the remote answered and simply does not carry the ref. */
+const NO_SUCH_REMOTE_REF_RE = /couldn't find remote ref|no such ref was fetched/i;
+/** git's wording when the refspec would not fast-forward the local branch. */
+const NON_FAST_FORWARD_RE = /non-fast-forward|rejected/i;
+
+/**
+ * Fetch `chant/lifecycle` and say what happened, in the terms
+ * {@link LifecycleFetchStatus} defines.
+ *
+ * The refspec is deliberately un-forced (`chant/lifecycle:chant/lifecycle`,
+ * no leading `+`), so a local branch holding facts the remote does not have
+ * is never rewound by a read; that case surfaces as `diverged` for the caller
+ * to refuse on.
+ */
+export async function fetchLifecycleStatus(opts?: { cwd?: string }): Promise<LifecycleFetchStatus> {
   const rt = getRuntime();
   const remoteResult = await rt.spawn(["git", "remote"], { cwd: opts?.cwd });
-  if (remoteResult.exitCode !== 0 || !remoteResult.stdout.trim()) return false;
+  if (remoteResult.exitCode !== 0 || !remoteResult.stdout.trim()) return { status: "no-remote" };
 
   const remote = remoteResult.stdout.trim().split("\n")[0];
   const fetchResult = await rt.spawn(
     ["git", "fetch", remote, `${STATE_BRANCH}:${STATE_BRANCH}`],
     { cwd: opts?.cwd },
   );
-  return fetchResult.exitCode === 0;
+  if (fetchResult.exitCode === 0) return { status: "fetched" };
+
+  const stderr = (fetchResult.stderr ?? "").trim();
+  if (NO_SUCH_REMOTE_REF_RE.test(stderr)) return { status: "absent", remote };
+  if (NON_FAST_FORWARD_RE.test(stderr)) return { status: "diverged", remote, stderr };
+  return { status: "unreachable", remote, stderr };
+}
+
+/**
+ * Thrown when the ledger branch cannot be read, rather than being reported as
+ * empty (#2303).
+ */
+export class LifecycleLedgerUnreadableError extends Error {
+  constructor(
+    public readonly reason: "unreachable" | "diverged",
+    public readonly remote: string,
+    public readonly stderr: string,
+    detail: string,
+  ) {
+    super(
+      `the ${STATE_BRANCH} ledger branch ${detail}, so what is on it cannot be read. ` +
+        `Refusing rather than treating an unreadable ledger as an empty one. ` +
+        `Fetch it and retry: git fetch ${remote} ${STATE_BRANCH}:${STATE_BRANCH}` +
+        (stderr ? `\n  git fetch said: ${stderr.split("\n")[0]}` : ""),
+    );
+    this.name = "LifecycleLedgerUnreadableError";
+  }
+}
+
+/**
+ * Bring the ledger branch into this checkout before reading it, and refuse if
+ * it cannot be (#2303 finding 1).
+ *
+ * The gate's read is the one that has to be right: `evaluateGate` decides
+ * whether to walk through or to record a *new* pending fact purely from what
+ * the ledger says, so a read that reports absent history as an empty ledger
+ * makes the second run of an already-approved commit record a second pending
+ * fact and gate again. That is what a GitLab CI retry did on
+ * INTENTIUS/choudoufu#1026 — two pending records for one commit, with
+ * different expiries — because a GitLab checkout fetches the pipeline's own
+ * ref at depth 20 and nothing else. `GIT_DEPTH: 0` does not help: GitLab
+ * fetches refspecs, not all branches.
+ *
+ * A checkout that already has the branch is refreshed best-effort and never
+ * refused — it has real history to read, and the append path's CAS already
+ * arbitrates a concurrent writer. Only the absent case can be mistaken for an
+ * empty ledger, so only the absent case throws.
+ */
+export async function requireLifecycleLedgerReadable(opts?: { cwd?: string }): Promise<void> {
+  const hadLocal = (await getStateBranchTip(opts?.cwd)) !== null;
+  const result = await fetchLifecycleStatus(opts);
+  if (hadLocal) return;
+  refuseUnreadable(result);
+}
+
+/**
+ * The same guard for a caller that is about to *append* to the ledger (#2303
+ * finding 2) — `chant approve` above all.
+ *
+ * `writeBlobToPath` builds its commit from `readTree`, and `readTree` on a
+ * checkout with no local `chant/lifecycle` returns `{ tip: null, entries: [] }`.
+ * The append therefore parents on nothing and writes a tree holding only the
+ * line it just produced: a brand-new root commit that replaces the branch
+ * instead of extending it. The `update-ref` CAS does not catch it, because
+ * the assertion it makes — "the ref does not exist" — is perfectly true
+ * locally. That is how an operator cloning, approving and pushing turned a
+ * branch holding the pending record into a branch holding only the
+ * resolution, on the branch both READMEs call the approval of record.
+ *
+ * Fetching first is the fix: with real history in the checkout the append
+ * parents on it and the pending fact survives. This refuses in the two cases
+ * where fetching cannot establish that — including divergence with a local
+ * branch present, which the read path tolerates and a write must not, since
+ * appending across a fork silently drops one side.
+ */
+export async function requireLifecycleLedgerWritable(opts?: { cwd?: string }): Promise<void> {
+  const result = await fetchLifecycleStatus(opts);
+  refuseUnreadable(result);
+}
+
+function refuseUnreadable(result: LifecycleFetchStatus): void {
+  if (result.status === "unreachable") {
+    throw new LifecycleLedgerUnreadableError(
+      "unreachable",
+      result.remote,
+      result.stderr,
+      `is not in this checkout and could not be fetched from "${result.remote}"`,
+    );
+  }
+  if (result.status === "diverged") {
+    throw new LifecycleLedgerUnreadableError(
+      "diverged",
+      result.remote,
+      result.stderr,
+      `has diverged from the copy on "${result.remote}", which would not fast-forward into it`,
+    );
+  }
 }
 
 // ── Generic ref CAS (#1485) ──────────────────────────────────────────────────

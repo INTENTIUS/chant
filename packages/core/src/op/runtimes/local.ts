@@ -153,6 +153,17 @@ export function createLocalOpRuntime(opts: { projectPath?: string } = {}): OpRun
               // appends it here, at the one seam every local run passes
               // through, rather than in the CLI handler above it.
               ledger: { cwd: projectPath },
+              // #2301: the run-ledger append goes through the same
+              // `chant/lifecycle` write as the gate does, so it dies for the
+              // same reasons — and this runtime declared no sink for it, so
+              // the failure was caught by `settle` and dropped on the floor.
+              // A run whose outcome never reached the ledger says so now;
+              // `chant run status` and `chant run log` will not have it.
+              onLedgerError: (err) =>
+                process.stderr.write(
+                  `warning: run "${runId}" of "${op.name}" finished, but its record could not be ` +
+                    `appended to the run ledger: ${err instanceof Error ? err.message : String(err)}\n`,
+                ),
               ...(startOpts.progress ? { onRecord: startOpts.progress } : {}),
             },
           );
