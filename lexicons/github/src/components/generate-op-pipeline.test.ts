@@ -495,9 +495,29 @@ describe("generateGithubOpPipeline: the gated apply on push (#2243)", () => {
     // container image does not.
     expect(notice.container).toBeUndefined();
     const script = notice.steps[0].run ?? "";
-    expect(script).toContain('gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls"');
+    expect(script).toContain('gh api "$api_base/repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls"');
     expect(script).toContain('marker="<!-- chant-gate:$CHANT_OP -->"');
     expect(script).toContain("gh issue create");
+  });
+
+  // chant #2305 — same anti-pattern `stickyCommentScript`
+  // (`lexicons/github/src/composites/pr-plan-report.ts`) and `reconcilePr`'s
+  // `postOrUpdateComment` (#2291) had: a bare relative path, which `gh`
+  // resolves against `/api/v3` for any host but github.com. This job never
+  // reaches Forgejo today (the forgejo generator never carries
+  // `gatedNoticeDoc` across the dialect, #2294), so the fix changes nothing
+  // observable on github.com or GHES — it only stops a future Forgejo notice
+  // job from inheriting the same bug.
+  test("the notice job's gh api calls resolve their base from $GITHUB_API_URL, not a bare path (#2305)", () => {
+    const script = pushDoc().jobs!["app-apply-gate-notice"].steps[0].run ?? "";
+    expect(script).toContain('api_base="${GITHUB_API_URL%/}"');
+    expect(script).toContain('api_base="${api_base:-https://api.github.com}"');
+    expect(script).toContain('gh api "$api_base/repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls"');
+    expect(script).toContain('gh api "$api_base/repos/$GITHUB_REPOSITORY/issues/$pr/comments"');
+    expect(script).toContain('gh api --method PATCH "$api_base/repos/$GITHUB_REPOSITORY/issues/comments/$id"');
+    expect(script).toContain('gh api --method POST "$api_base/repos/$GITHUB_REPOSITORY/issues/$pr/comments"');
+    // No bare-path call survives.
+    expect(script).not.toMatch(/gh api[^\n]*"repos\//);
   });
 
   test("the notice job's permissions are its two posting paths and the lookup", () => {

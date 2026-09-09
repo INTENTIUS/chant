@@ -295,24 +295,39 @@ const NOTICE_BODY_FORMAT =
  * direct push to the branch, a merge whose commit the API does not associate —
  * the notice becomes an issue instead, which is the `issue` finding mode's own
  * recipe and the reason this job carries `issues: write`.
+ *
+ * `$api_base` (chant #2305), resolved the same way `stickyCommentScript`
+ * (`lexicons/github/src/composites/pr-plan-report.ts`) and `reconcilePr`'s
+ * `githubApiBaseFrom` (`packages/core/src/op/activities/reconcile.ts`)
+ * resolve it: `$GITHUB_API_URL` with a trailing slash trimmed, falling back
+ * to `https://api.github.com`. This job never crosses to Forgejo today — the
+ * forgejo generator's `gatedNoticeDoc` is never carried across the dialect
+ * (#2294) — so github.com and GitHub Enterprise Server are the only hosts
+ * that run this script, and both already resolved correctly under `gh`'s own
+ * bare-path guess. Built from `$api_base` instead, the URL is byte-identical
+ * on those two hosts, and the same anti-pattern that broke Forgejo elsewhere
+ * (#2291, #2305) does not get a second copy here in case a future notice job
+ * does reach Forgejo.
  */
 function gateNoticeScript(): string {
   return [
+    'api_base="${GITHUB_API_URL%/}"',
+    'api_base="${api_base:-https://api.github.com}"',
     'marker="<!-- chant-gate:$CHANT_OP -->"',
     "body=$(printf '" + NOTICE_BODY_FORMAT + "' " +
       '"$marker" "$CHANT_OP" "$GITHUB_SHA" "$CHANT_GATE" "$CHANT_APPROVE" "$CHANT_OP")',
-    'pr=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq ".[0].number // empty")',
+    'pr=$(gh api "$api_base/repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq ".[0].number // empty")',
     'if [ -z "$pr" ]; then',
     '  gh issue create --title "$CHANT_OP is waiting on gate $CHANT_GATE" --body "$body"',
     "  exit 0",
     "fi",
-    'id=$(gh api "repos/$GITHUB_REPOSITORY/issues/$pr/comments" --paginate ' +
+    'id=$(gh api "$api_base/repos/$GITHUB_REPOSITORY/issues/$pr/comments" --paginate ' +
       '--jq "map(select(.body | startswith(\\"$marker\\"))) | .[0].id // empty" ' +
       '| grep -m1 -E "^[0-9]+$" || true)',
     'if [ -n "$id" ]; then',
-    '  gh api --method PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -f "body=$body" --jq .html_url',
+    '  gh api --method PATCH "$api_base/repos/$GITHUB_REPOSITORY/issues/comments/$id" -f "body=$body" --jq .html_url',
     "else",
-    '  gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$pr/comments" -f "body=$body" --jq .html_url',
+    '  gh api --method POST "$api_base/repos/$GITHUB_REPOSITORY/issues/$pr/comments" -f "body=$body" --jq .html_url',
     "fi",
   ].join("\n");
 }

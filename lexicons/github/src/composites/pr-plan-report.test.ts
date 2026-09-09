@@ -89,8 +89,8 @@ describe("PrPlanReport composite (#1983)", () => {
     const { job } = PrPlanReport({ environment: "prod" });
     const postStep = steps(job).find((s) => s.props.name === "Post or update PR comment")!;
     const run = postStep.props.run!;
-    expect(run).toContain('gh api -X PATCH "repos/$REPO/issues/comments/$comment_id" -F body=@plan.md');
-    expect(run).toContain('gh api -X POST "repos/$REPO/issues/$PR_NUMBER/comments" -F body=@plan.md');
+    expect(run).toContain('gh api -X PATCH "$api_base/repos/$REPO/issues/comments/$comment_id" -F body=@plan.md');
+    expect(run).toContain('gh api -X POST "$api_base/repos/$REPO/issues/$PR_NUMBER/comments" -F body=@plan.md');
     expect(run).not.toContain("-f body=@");
     // The plan step writes the marker as plan.md's first line, so the body the
     // -F read now starts with `$MARKER` and the jq `startswith` search finds
@@ -99,6 +99,30 @@ describe("PrPlanReport composite (#1983)", () => {
     const planStep = steps(job).find((s) => s.props.name === "Plan prod")!;
     expect(planStep.props.run).toContain('{ printf \'%s\\n\\n\' "$MARKER";');
     expect(planStep.props.run).toContain("> plan.md");
+  });
+
+  // chant #2305 — this script's three `gh api` calls used to take a bare
+  // relative path (`repos/$REPO/...`), which `gh` resolves against `/api/v3`
+  // for any host but github.com. GitHub Enterprise Server serves that path,
+  // so the bug was invisible there; Forgejo does not, and answers 404 for
+  // GET and POST alike (settled against a real instance in #2291/#2304, the
+  // same fix this composite gets here). Every call now targets `$api_base`,
+  // built from `$GITHUB_API_URL` the same way `githubApiBaseFrom`
+  // (`packages/core/src/op/activities/reconcile.ts`) reads it for
+  // `reconcilePr`, with the github.com fallback inlined since this is a shell
+  // string emitted into YAML rather than a TypeScript call.
+  test("the sticky-comment script resolves its API base from $GITHUB_API_URL, not a bare path (#2305)", () => {
+    const { job } = PrPlanReport({ environment: "prod" });
+    const postStep = steps(job).find((s) => s.props.name === "Post or update PR comment")!;
+    const run = postStep.props.run!;
+    expect(run).toContain('api_base="${GITHUB_API_URL%/}"');
+    expect(run).toContain('api_base="${api_base:-https://api.github.com}"');
+    expect(run).toContain('gh api "$api_base/repos/$REPO/issues/$PR_NUMBER/comments" --paginate');
+    expect(run).toContain('gh api -X PATCH "$api_base/repos/$REPO/issues/comments/$comment_id"');
+    expect(run).toContain('gh api -X POST "$api_base/repos/$REPO/issues/$PR_NUMBER/comments"');
+    // No bare-path call survives: every `gh api` invocation is immediately
+    // followed by `"$api_base/repos/`, never by `"repos/` on its own.
+    expect(run).not.toMatch(/gh api[^\n]*"repos\//);
   });
 
   test("the emitted workflow passes the github lexicon's own lint — no errors, pinned actions included", () => {

@@ -137,15 +137,18 @@ describe("forgejoSerializer — multi-workflow output", () => {
 // script would work if run: chant #2291 settled, against a real Forgejo
 // 12.0.4+gitea-1.22.0 instance, that Forgejo's `/api/v1` does accept the same
 // GET/POST/PATCH calls this script makes — but only when they target a full
-// URL. This script's `gh api "repos/$REPO/issues/$PR_NUMBER/comments"` is a
-// bare relative path, which `gh` resolves against `/api/v3` on any host but
-// github.com, and Forgejo does not serve `/api/v3`. So the untouched script
-// below is not itself proof this composite posts a working comment on
-// Forgejo — `reconcilePr`'s `postOrUpdateComment` got the URL fix #2291 made
-// (`packages/core/src/op/activities/reconcile.ts`), but `PrPlanReport`'s own
-// script (`lexicons/github/src/composites/pr-plan-report.ts`) did not, and is
-// out of #2291's scope (the Op generator and `reconcilePr`, not this
-// component composite).
+// URL. Until chant #2305, this script's `gh api "repos/$REPO/issues/…"` took
+// a bare relative path, which `gh` resolves against `/api/v3` on any host but
+// github.com, and Forgejo does not serve `/api/v3`. `reconcilePr`'s
+// `postOrUpdateComment` got the URL fix #2291 made
+// (`packages/core/src/op/activities/reconcile.ts`), and `PrPlanReport`'s own
+// script (`lexicons/github/src/composites/pr-plan-report.ts`) — out of
+// #2291's scope, being the component composite rather than the Op generator —
+// got the equivalent fix in #2305: every call now targets `$api_base`, built
+// from `$GITHUB_API_URL` inline in the shell script. The dialect still leaves
+// step content untouched, so that base-URL construction crosses over exactly
+// as written, which is what makes the untouched script below a working
+// Forgejo comment rather than just a passed-through one.
 describe("forgejoSerializer — inherits PrPlanReport from github (#1983)", () => {
   test("dialect still applies to a github-lexicon composite's job", () => {
     const workflow = new Workflow({
@@ -168,6 +171,10 @@ describe("forgejoSerializer — inherits PrPlanReport from github (#1983)", () =
     // Including the `-F` that reads the body from plan.md — forgejo renders
     // the same script, so the #2236 regression would show up here as well.
     expect(result.primary).toContain("-F body=@plan.md");
+    // And the #2305 fix: the resolved-base construction and every `gh api`
+    // call built from it cross the dialect untouched too.
+    expect(result.primary).toContain('api_base="${GITHUB_API_URL%/}"');
+    expect(result.primary).not.toMatch(/gh api[^\n]*"repos\//);
     expect(result.primary).not.toContain("-f body=@");
   });
 });
