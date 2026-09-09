@@ -9,6 +9,7 @@ import {
   buildUpgradeSummary,
   computeBumpedVersion,
   bumpPackageJsonVersion,
+  lexiconUpgradeIssueMarker,
   type CheckPinnedFn,
   type CheckRollingFn,
   type BumpPackageVersionFn,
@@ -223,21 +224,93 @@ describe("lexiconUpgrade report mode", () => {
 
 // ── issue mode ────────────────────────────────────────────────────────
 
+describe("lexiconUpgradeIssueMarker (#2297)", () => {
+  test("deterministic per lexicon, and distinct across lexicons", () => {
+    expect(lexiconUpgradeIssueMarker("k8s")).toBe("<!-- chant-lexicon-upgrade:k8s -->");
+    expect(lexiconUpgradeIssueMarker("k8s")).toBe(lexiconUpgradeIssueMarker("k8s"));
+    expect(lexiconUpgradeIssueMarker("k8s")).not.toBe(lexiconUpgradeIssueMarker("aws"));
+  });
+});
+
 describe("lexiconUpgrade issue mode", () => {
-  test("opens an issue for a ready upgrade", async () => {
+  test("outside any known CI job, falls back to gh's own ambient gh issue create, marker-prefixed", async () => {
     const checkPinned: CheckPinnedFn = vi.fn(async () => pinnedResult());
     const { gh, calls } = recordingGh();
 
-    const r = await lexiconUpgrade({
-      lexicon: "gcp",
-      mode: "issue",
-      _checkPinned: checkPinned,
-      _gh: gh,
+    vi.stubEnv("GITHUB_REPOSITORY", "");
+    try {
+      const r = await lexiconUpgrade({
+        lexicon: "gcp",
+        mode: "issue",
+        _checkPinned: checkPinned,
+        _gh: gh,
+      });
+
+      expect(r.issueUrl).toBe("https://gh/issue/1");
+      expect(calls.some((c) => c.includes("gh issue create"))).toBe(true);
+      expect(calls.some((c) => c.includes("gh pr create"))).toBe(false);
+      expect(calls.some((c) => c.includes("<!-- chant-lexicon-upgrade:gcp -->"))).toBe(true);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  test("on a GitHub Actions job (GITHUB_REPOSITORY set), opens the sticky issue via gh api (#2297)", async () => {
+    const checkPinned: CheckPinnedFn = vi.fn(async () => pinnedResult());
+    const calls: string[] = [];
+    const gh = vi.fn(async (cmd: string) => {
+      calls.push(cmd);
+      if (cmd.includes("--paginate")) return { stdout: "", stderr: "" }; // no owned issue yet
+      if (cmd.includes("--method POST")) return { stdout: "https://github.com/acme/infra/issues/11\n", stderr: "" };
+      return { stdout: "", stderr: "" };
     });
 
-    expect(r.issueUrl).toBe("https://gh/issue/1");
-    expect(calls.some((c) => c.includes("gh issue create"))).toBe(true);
-    expect(calls.some((c) => c.includes("gh pr create"))).toBe(false);
+    vi.stubEnv("GITHUB_REPOSITORY", "acme/infra");
+    vi.stubEnv("GITHUB_API_URL", "");
+    try {
+      const r = await lexiconUpgrade({
+        lexicon: "gcp",
+        mode: "issue",
+        _checkPinned: checkPinned,
+        _gh: gh,
+      });
+
+      expect(r.issueUrl).toBe("https://github.com/acme/infra/issues/11");
+      expect(calls.some((c) => c.includes("gh issue create"))).toBe(false);
+      const post = calls.find((c) => c.includes("--method POST"));
+      expect(post).toContain("https://api.github.com/repos/acme/infra/issues");
+      expect(post).toContain("<!-- chant-lexicon-upgrade:gcp -->");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  test("a re-run on a GitHub Actions job PATCHes the issue it already owns (#2297)", async () => {
+    const checkPinned: CheckPinnedFn = vi.fn(async () => pinnedResult());
+    const calls: string[] = [];
+    const gh = vi.fn(async (cmd: string) => {
+      calls.push(cmd);
+      if (cmd.includes("--paginate")) return { stdout: "11\n", stderr: "" }; // marker search found issue 11
+      if (cmd.includes("--method PATCH")) return { stdout: "https://github.com/acme/infra/issues/11\n", stderr: "" };
+      return { stdout: "", stderr: "" };
+    });
+
+    vi.stubEnv("GITHUB_REPOSITORY", "acme/infra");
+    vi.stubEnv("GITHUB_API_URL", "");
+    try {
+      const r = await lexiconUpgrade({
+        lexicon: "gcp",
+        mode: "issue",
+        _checkPinned: checkPinned,
+        _gh: gh,
+      });
+
+      expect(r.issueUrl).toBe("https://github.com/acme/infra/issues/11");
+      expect(calls.some((c) => c.includes("--method POST"))).toBe(false);
+      expect(calls.some((c) => c.includes("gh issue create"))).toBe(false);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });
 
@@ -260,21 +333,26 @@ describe("lexiconUpgrade breakage handling", () => {
     );
     const { gh, calls } = recordingGh();
 
-    const r = await lexiconUpgrade({
-      lexicon: "k8s",
-      mode: "pull-request",
-      _checkPinned: checkPinned,
-      _gh: gh,
-    });
+    vi.stubEnv("GITHUB_REPOSITORY", "");
+    try {
+      const r = await lexiconUpgrade({
+        lexicon: "k8s",
+        mode: "pull-request",
+        _checkPinned: checkPinned,
+        _gh: gh,
+      });
 
-    expect(r.validationOk).toBe(false);
-    expect(r.issueUrl).toBe("https://gh/issue/1");
-    expect(r.prUrl).toBeUndefined();
-    // must NOT open a PR, must NOT push
-    expect(calls.some((c) => c.includes("gh pr create"))).toBe(false);
-    expect(calls.some((c) => c.includes("gh issue create"))).toBe(true);
-    // the issue body carries the failure diff
-    expect(r.summary).toContain("type error");
+      expect(r.validationOk).toBe(false);
+      expect(r.issueUrl).toBe("https://gh/issue/1");
+      expect(r.prUrl).toBeUndefined();
+      // must NOT open a PR, must NOT push
+      expect(calls.some((c) => c.includes("gh pr create"))).toBe(false);
+      expect(calls.some((c) => c.includes("gh issue create"))).toBe(true);
+      // the issue body carries the failure diff
+      expect(r.summary).toContain("type error");
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   test("upstream fetch error surfaces as a non-upgrade report, never a PR", async () => {
@@ -473,20 +551,25 @@ describe("lexiconUpgrade pull-request mode: package.json version bump", () => {
       return { stdout: "", stderr: "" };
     });
 
-    const r = await lexiconUpgrade({
-      lexicon: "aws",
-      mode: "pull-request",
-      _checkRolling: checkRolling,
-      _bumpPackageVersion: bumpFn,
-      _gh: gh,
-    });
+    vi.stubEnv("GITHUB_REPOSITORY", "");
+    try {
+      const r = await lexiconUpgrade({
+        lexicon: "aws",
+        mode: "pull-request",
+        _checkRolling: checkRolling,
+        _bumpPackageVersion: bumpFn,
+        _gh: gh,
+      });
 
-    // Rolling drift → issue, never a baseline-only PR, a branch push, or a bump.
-    expect(r.mode).toBe("issue");
-    expect(r.issueUrl).toBe("https://gh/issue/9");
-    expect(calls.some((c) => c.includes("gh issue create"))).toBe(true);
-    expect(calls.some((c) => c.includes("gh pr create"))).toBe(false);
-    expect(calls.some((c) => c.startsWith("git "))).toBe(false);
-    expect(bumpFn).not.toHaveBeenCalled();
+      // Rolling drift → issue, never a baseline-only PR, a branch push, or a bump.
+      expect(r.mode).toBe("issue");
+      expect(r.issueUrl).toBe("https://gh/issue/9");
+      expect(calls.some((c) => c.includes("gh issue create"))).toBe(true);
+      expect(calls.some((c) => c.includes("gh pr create"))).toBe(false);
+      expect(calls.some((c) => c.startsWith("git "))).toBe(false);
+      expect(bumpFn).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });
