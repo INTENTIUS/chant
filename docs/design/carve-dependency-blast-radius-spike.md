@@ -40,10 +40,17 @@ aws_lambda_function.via_data              75  0   0
 ```
 
 The bucket lands in the top band, "clean leaf — carve now", on a count that is a third of the
-truth. This is not only a scoring error. `carve bridge` generates a `data` source and rewires
-the references it knows about, so after `terraform state rm` the surviving plan still carries
-`local.assets_id` and `data.aws_s3_bucket.lookup` pointing at a resource Terraform no longer
-manages. Preventing exactly that break is the reason bridge exists.
+truth.
+
+*Corrected while fixing this in #2342: the bridge half of this claim was overstated as first
+written, and the correction is worth keeping because it changes what a reproduction looks like.
+On the estate above, `carve bridge` already rewires all three routes. `generateBridge`'s rewrite
+is whole-file, so the single direct reference is enough to put one inbound edge on the bucket,
+and once the rewrite fires it catches the `locals` and `data` routes with it. The genuine break
+needs the direct reference absent: with only indirect routes the bucket has zero inbound edges,
+so no data source is generated, nothing is rewritten, and the bucket's own block is still
+excised — which is the broken plan. The scoring error stands unqualified either way, and it is
+what puts the bucket in the top band.*
 
 The cause is one line of traversal. `collectExpressions` (`:89`) visits `tree.resource`,
 `tree.module` and `tree.output` and nothing else (`:100`), so expressions inside `locals` and
