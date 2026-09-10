@@ -47,7 +47,9 @@ import {
   RESILIENCE_VERDICTS,
   isBehaviourRefusalReport,
   isBehaviourResult,
+  renderBehaviourRefusal,
   type BehaviourResult,
+  type BehaviourUnpredictedReason,
 } from "../../core/src/behaviour";
 
 /** One scenario: run the lexicon's `predictBehaviour` under its own mocks. */
@@ -59,11 +61,20 @@ export interface BehaviourScenario {
   /** Invoke the lexicon's predictBehaviour with its engine mocked. */
   run: () => Promise<BehaviourResult>;
   /**
-   * This scenario runs with no reachable engine, and must therefore refuse. The
+   * This scenario runs with no usable engine, and must therefore refuse. The
    * suite then holds the refusal to the contract: a cause from the closed enum,
-   * a reason naming an environment variable, a remedy, and no figures anywhere.
+   * a reason naming an environment variable, a remedy, a red render, and no
+   * figures anywhere.
    */
   expectRefusal?: boolean;
+  /**
+   * Pin the refusal's cause — `"engine-out-of-credit"`, `"engine-over-quota"`,
+   * `"engine-unreachable"`, `"no-engine"`. Worth pinning wherever an engine can
+   * refuse for more than one reason (#2359): a spent quota reported as
+   * unreachable sends an operator to check networking that is working, and a
+   * suite that only checks "some cause from the enum" cannot see that.
+   */
+  expectRefusalCause?: BehaviourUnpredictedReason;
   /** Entity names this scenario must price. */
   expectPredicted?: string[];
   /**
@@ -134,6 +145,47 @@ export function describeBehaviourConformance(config: BehaviourConformanceConfig)
             expect(Object.prototype.hasOwnProperty.call(result, "entities")).toBe(false);
             expect(Object.prototype.hasOwnProperty.call(result, "meta")).toBe(false);
           });
+
+          it("renders red, naming the cause", async () => {
+            const result = await scenario.run();
+            if (!isBehaviourRefusalReport(result)) throw new Error("expected a refusal");
+            const rendered = renderBehaviourRefusal(result.refusal, { color: true });
+            expect(rendered.startsWith("\x1b[31m"), "a refusal must render red").toBe(true);
+            expect(rendered.endsWith("\x1b[0m")).toBe(true);
+            expect(rendered).toContain(`behaviour: refused (${result.refusal.cause})`);
+            expect(rendered).toContain(result.refusal.remedy);
+            expect(renderBehaviourRefusal(result.refusal, { color: false })).not.toContain("\x1b[");
+          });
+
+          if (scenario.expectRefusalCause) {
+            it(`names the cause the scenario pins (${scenario.expectRefusalCause})`, async () => {
+              const result = await scenario.run();
+              if (!isBehaviourRefusalReport(result)) throw new Error("expected a refusal");
+              expect(result.refusal.cause).toBe(scenario.expectRefusalCause);
+            });
+
+            it("gives the pinned cause its own remedy, not a borrowed one", async () => {
+              // #2359: an engine can refuse for money, for a limit, or for
+              // being down, and the three want three different actions. A
+              // remedy identical to another cause's would be a copy-paste that
+              // sends somebody to the wrong place.
+              const result = await scenario.run();
+              if (!isBehaviourRefusalReport(result)) throw new Error("expected a refusal");
+              const remedy = result.refusal.remedy.toLowerCase();
+              const expected: Partial<Record<BehaviourUnpredictedReason, RegExp>> = {
+                "no-engine": /\bset\b/,
+                "engine-unreachable": /reachable|repoint/,
+                "engine-out-of-credit": /credit|fund|pay|top up/,
+                "engine-over-quota": /quota|limit|window|wait/,
+              };
+              const wanted = expected[scenario.expectRefusalCause!];
+              if (wanted) {
+                expect(remedy, `the remedy does not act on ${scenario.expectRefusalCause}`).toMatch(
+                  wanted,
+                );
+              }
+            });
+          }
 
           return;
         }

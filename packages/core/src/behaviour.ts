@@ -39,12 +39,18 @@
  * ## The engine sees no credential and writes nothing
  *
  * {@link PredictBehaviourOptions} mirrors `observeResourcesDeep`'s options
- * field for field — a caller already driving the deep read drives this one with
- * the same argument object plus `traffic` — and then closes the door on
+ * field for field, plus `traffic` and `edges`, and then closes the door on
  * credentials: every name a caller might reach for is declared `?: never`, so
  * passing one is a compile error, and TypeScript's excess-property check
  * rejects every other name. {@link assertNoCredentialInOptions} is the same
  * refusal for a caller arriving from JavaScript.
+ *
+ * `edges` is the one place the mirror breaks, and the field's own doc says
+ * why: the epic's input is a resource graph, a deep read has no use for
+ * neighbours, and a prediction is nothing but statements about paths through
+ * the estate. It carries `IREdge` (./graph-ir.ts) rather than an edge type of
+ * this contract's own, because that is already the shape both the declared
+ * path and the live path produce.
  *
  * Nothing in the options is a handle. There is no client, no transport, no
  * apply callback, no writer — only strings, a name list and the entity map the
@@ -70,12 +76,29 @@
  *     be missing — see the section above — so an enum that could say it would
  *     be inviting a lexicon to send an operator hunting for a variable this
  *     contract forbids.
- *   - `no-engine` and `engine-unreachable` are **added**, because the epic
- *     wants a missing engine named and neither existing reason names it.
- *     `no-binding` is about the environment resolving to no target; these two
- *     are about the predictor itself, which is a different axis, and telling
- *     "nothing is configured" from "it is configured and did not answer" is the
- *     whole difference between a setup error and an outage.
+ *   - Four reasons about the predictor itself are **added** — `no-engine`,
+ *     `engine-unreachable`, `engine-out-of-credit` and `engine-over-quota` —
+ *     because the epic wants a missing engine named and `no-binding` is about
+ *     the environment resolving to no target, a different axis. They are four
+ *     rather than one because each has a different remedy, and a refusal that
+ *     names the wrong remedy is worse than a slow one: set a variable, check an
+ *     address, pay for the account, or wait for a window. The last two arrive
+ *     from an engine that answered perfectly well (#2359), so folding them into
+ *     `engine-unreachable` would send somebody to debug a network that is fine.
+ *
+ * ## Deltas: the invariant is here, the presentation is not
+ *
+ * The epic wants a declared prediction and a live prediction shown as a delta,
+ * and #2358 posts one on a merge request. This module deliberately ships no
+ * delta type and no differencing function. What it ships is the one thing a
+ * hand-rolled diff silently loses, which is that provenance does not survive
+ * subtraction: {@link compareProvenance} classifies a pair of figures
+ * `comparable`, `mixed-basis` or `mixed-engine`, and the rule this contract
+ * binds its consumers to is that anything but `comparable` must be marked
+ * wherever it is shown. A `modeled` figure minus a `validated` one is not a
+ * change in the estate; part of that difference is the gap between a price
+ * list and an invoice. How the mark looks is #2358's to define. Whether there
+ * is one is not.
  *
  * ## Shape compatibility with the overlay
  *
@@ -88,6 +111,7 @@
  */
 
 import type { UnobservedReason } from "./observation";
+import type { IREdge } from "./graph-ir";
 
 /**
  * Whether a figure came off a price list or off a bill. Closed, and required on
@@ -251,11 +275,26 @@ export interface PredictedBehaviour {
  * - `no-engine` — no variable in the chain named an engine. Nothing is
  *   configured; this is a setup state, not a failure.
  * - `engine-unreachable` — a variable named an engine and it did not answer.
+ * - `engine-out-of-credit` — the engine answered, and refused because the
+ *   account behind it has no balance left (#2359).
+ * - `engine-over-quota` — the engine answered, and refused because a rate or
+ *   volume limit is spent (#2359).
+ *
+ * The last four are one axis split four ways, because each has a different
+ * remedy and a refusal exists to be acted on. `no-engine` wants a variable
+ * set. `engine-unreachable` wants the address checked. `engine-out-of-credit`
+ * wants somebody to pay, and no amount of waiting fixes it.
+ * `engine-over-quota` usually wants nothing but the window to roll over, and
+ * telling somebody to top up an account that is not empty sends them to the
+ * wrong place — as does folding either into `engine-unreachable`, which points
+ * at an address that is answering perfectly well.
  */
 export type BehaviourUnpredictedReason =
   | Exclude<UnobservedReason, "no-credentials">
   | "no-engine"
-  | "engine-unreachable";
+  | "engine-unreachable"
+  | "engine-out-of-credit"
+  | "engine-over-quota";
 
 /** Every legal {@link BehaviourUnpredictedReason}, for validation and conformance checks. */
 export const BEHAVIOUR_UNPREDICTED_REASONS: readonly BehaviourUnpredictedReason[] = [
@@ -265,6 +304,8 @@ export const BEHAVIOUR_UNPREDICTED_REASONS: readonly BehaviourUnpredictedReason[
   "filtered",
   "no-engine",
   "engine-unreachable",
+  "engine-out-of-credit",
+  "engine-over-quota",
 ];
 
 /** True when `value` is a legal {@link BehaviourUnpredictedReason}. */
@@ -398,6 +439,57 @@ export function behaviourRefusal(refusal: BehaviourRefusal): BehaviourRefusalRep
 }
 
 /* -------------------------------------------------------------------------- */
+/* Comparing two results                                                      */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Whether two figures are a delta of like things.
+ *
+ * - `comparable` — same engine, same version, same tolerance, same basis. The
+ *   difference between the two numbers is a difference in the estate.
+ * - `mixed-basis` — same engine and version, one figure `modeled` off list
+ *   prices and the other `validated` against a bill. Subtracting these does
+ *   not measure a change in the estate; part of the difference is the
+ *   difference between a price list and an invoice.
+ * - `mixed-engine` — the engine, its version or its stated tolerance differs.
+ *   Two models are not one scale, and a delta across them is arithmetic on
+ *   numbers that were never on the same axis.
+ */
+export type ProvenanceComparability = "comparable" | "mixed-basis" | "mixed-engine";
+
+/**
+ * Classify a pair of figures for delta purposes.
+ *
+ * This module owns the invariant and not the presentation. #2358 defines what
+ * a predicted-cost delta looks like on a merge request and #2360 defines the
+ * live-versus-declared view, and neither needs this module's opinion on
+ * layout. What both need, and what a hand-rolled diff of two
+ * {@link BehaviourResult}s silently loses, is that provenance does not survive
+ * subtraction: two numbers can be differenced whatever produced them, and the
+ * result carries no trace of having crossed a basis or an engine.
+ *
+ * So the rule this contract binds its consumers to, in one sentence: **a delta
+ * between two figures that do not classify `comparable` must be marked as
+ * such wherever it is shown, and must never be presented as a plain
+ * difference.** How it is marked is #2358's to choose. Whether it must be
+ * marked is not.
+ */
+export function compareProvenance(
+  a: BehaviourProvenance,
+  b: BehaviourProvenance,
+): ProvenanceComparability {
+  if (a.engine !== b.engine || a.version !== b.version || a.tolerance !== b.tolerance) {
+    return "mixed-engine";
+  }
+  return a.basis === b.basis ? "comparable" : "mixed-basis";
+}
+
+/** True when two figures may be shown as a plain difference, with no mixed-provenance mark. */
+export function isComparableProvenance(a: BehaviourProvenance, b: BehaviourProvenance): boolean {
+  return compareProvenance(a, b) === "comparable";
+}
+
+/* -------------------------------------------------------------------------- */
 /* Resolving an engine, and refusing when there is none                       */
 /* -------------------------------------------------------------------------- */
 
@@ -507,6 +599,69 @@ export function unreachableBehaviourEngineRefusal(
   });
 }
 
+/**
+ * What a lexicon says when the engine answered and refused for want of money
+ * (#2359). Distinct from unreachable on purpose: the address is fine, the
+ * request arrived, and telling somebody to check their networking wastes the
+ * one thing a refusal is for.
+ */
+export function outOfCreditBehaviourEngineMessage(
+  lexicon: string,
+  endpoint: BehaviourEngineEndpoint,
+  detail: string,
+): string {
+  return (
+    `The ${lexicon} behaviour engine at ${endpoint.value}, named by ${endpoint.source}, answered and ` +
+    `refused: the account behind it is out of credit (${detail}). The address is reachable and nothing ` +
+    "here is a networking problem. Add credit to the account this engine bills, or point " +
+    `${endpoint.source} at an engine on an account that has some. No overlay is drawn and no figure is ` +
+    "guessed locally."
+  );
+}
+
+/** What a lexicon says when the engine answered and refused for a spent limit (#2359). */
+export function overQuotaBehaviourEngineMessage(
+  lexicon: string,
+  endpoint: BehaviourEngineEndpoint,
+  detail: string,
+): string {
+  return (
+    `The ${lexicon} behaviour engine at ${endpoint.value}, named by ${endpoint.source}, answered and ` +
+    `refused: a rate or volume limit is spent (${detail}). The account has credit and the address is ` +
+    "reachable, so this usually clears when the engine's window rolls over. Wait for it, raise the limit " +
+    `on the account, or point ${endpoint.source} at an engine with its own budget. No overlay is drawn ` +
+    "and no figure is guessed locally."
+  );
+}
+
+/** The refusal for an engine that answered and said the account has no balance (#2359). */
+export function outOfCreditBehaviourEngineRefusal(
+  lexicon: string,
+  endpoint: BehaviourEngineEndpoint,
+  detail: string,
+): BehaviourRefusalReport {
+  return behaviourRefusal({
+    cause: "engine-out-of-credit",
+    reason: outOfCreditBehaviourEngineMessage(lexicon, endpoint, detail),
+    remedy: `Add credit to the account behind ${endpoint.source}, or repoint it at a funded engine.`,
+    source: endpoint.source,
+  });
+}
+
+/** The refusal for an engine that answered and said a limit is spent (#2359). */
+export function overQuotaBehaviourEngineRefusal(
+  lexicon: string,
+  endpoint: BehaviourEngineEndpoint,
+  detail: string,
+): BehaviourRefusalReport {
+  return behaviourRefusal({
+    cause: "engine-over-quota",
+    reason: overQuotaBehaviourEngineMessage(lexicon, endpoint, detail),
+    remedy: `Wait for the engine's window to roll over, or raise the limit on the account behind ${endpoint.source}.`,
+    source: endpoint.source,
+  });
+}
+
 /* -------------------------------------------------------------------------- */
 /* Rendering                                                                  */
 /* -------------------------------------------------------------------------- */
@@ -595,6 +750,44 @@ export interface PredictBehaviourOptions {
    * substitute one it likes better.
    */
   traffic: string;
+  /**
+   * The edges between the entities above (#2355) — the half of "a resource
+   * graph" that a bag of nodes is not.
+   *
+   * This is the one field where the mirror of `observeResourcesDeep`'s options
+   * deliberately breaks, and it breaks because the two reads want different
+   * things. A deep read answers per entity and needs no neighbours: an S3
+   * bucket's live property tree is the same tree whether or not a Lambda reads
+   * from it. A prediction is the opposite. Headroom, an error rate and a
+   * resilience verdict under "one zone lost" are all statements about a path
+   * through the estate, and an engine handed nodes alone can only price each
+   * box in isolation, which is the arithmetic a consumer could already do for
+   * itself.
+   *
+   * `IREdge` (./graph-ir.ts) rather than an edge type of this contract's own,
+   * for one reason that outranks the tidiness of a purpose-built shape: it is
+   * already the engine-neutral edge that BOTH paths produce. `collectEdges`
+   * builds them from declared `AttrRef`s and lexicon-resolved entity
+   * references on the declared path, and `reconstructEdges` (./graph-refs.ts)
+   * rebuilds them from observed physical identifiers on the live path, which
+   * is the path #2360 assembles this request on. A second edge type here would
+   * put a lossy translation hop on each side, and the epic wants the declared
+   * prediction and the live prediction shown as a delta — two shapes that have
+   * each been through a different translation are the worst possible input to
+   * a delta. `DependencyObservation.edges` (./lexicon.ts) already carries
+   * `IREdge` for the same reason.
+   *
+   * `from` and `to` are chant entity names, the keys {@link entityNames} and
+   * {@link entities} use. An edge naming an entity outside `entityNames`
+   * points outside the estate the caller asked about, and an engine may ignore
+   * it.
+   *
+   * Required, and an empty array is a claim rather than a shrug: it says this
+   * estate's entities reference nothing of each other. A caller that has not
+   * computed edges must not pass `[]` and call it a graph, for the same reason
+   * absence and unreadness are separate verdicts everywhere else here.
+   */
+  edges: readonly IREdge[];
 
   /** Not a channel. See {@link CREDENTIAL_OPTION_KEYS}. */
   token?: never;

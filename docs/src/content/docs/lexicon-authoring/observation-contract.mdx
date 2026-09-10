@@ -306,7 +306,9 @@ different conclusions.
 
 The three methods above report what a substrate was asked and what it answered. `predictBehaviour()` reports what no substrate holds, which is how the declared estate would behave at a traffic level the caller names. Per entity it returns cost per hour, headroom on CPU and latency, and an expected error rate. It also returns a resilience verdict under a named failure and an optional right-size hint.
 
-Options mirror `observeResourcesDeep()` field for field, plus `traffic`, so a caller already driving the deep read drives this one with the same object. The engine behind it is handed the resource graph and the traffic level and nothing else. It is given no credential, and every field name for one is declared `?: never` on the options type, so passing a token is a compile error rather than a review comment.
+Options mirror `observeResourcesDeep()` field for field, plus `traffic` and `edges`. The engine behind it is handed the resource graph and the traffic level and nothing else. It is given no credential, and every field name for one is declared `?: never` on the options type, so passing a token is a compile error rather than a review comment.
+
+`edges` is the one place that mirror breaks. A deep read answers per entity and has no use for neighbours, since a bucket's live property tree is the same tree whatever reads from it. A prediction is the opposite: headroom, an error rate and a verdict under "one zone lost" are all statements about a path through the estate, and an engine handed nodes alone can only price each box on its own. The field carries `IREdge` from `graph-ir.ts` rather than an edge type of the behaviour contract's own, because that is already the shape both paths produce. `collectEdges` builds them from declared references and `reconstructEdges` rebuilds them from observed identifiers, so a second type would put a lossy translation hop on each side of the delta the epic asks for. An empty array is a claim that the estate's entities reference nothing of each other, so do not pass one for edges you have not computed.
 
 ### A prediction is never a bill
 
@@ -329,7 +331,9 @@ Behaviour keeps the three-verdict discipline `describeResources()` established, 
 
 The thin read needs a third position for "the provider was asked and said it is not there". A prediction has no equivalent answer, so an entity in neither map means the lexicon lost track of one.
 
-`BehaviourUnpredictedReason` derives from `UnobservedReason` rather than restating it, so the four shared verdicts keep their exact spelling. It differs twice, both deliberately. `no-credentials` is excluded, because a read that is handed no credential has none to be missing, and an enum able to say it would invite a lexicon to send an operator hunting for a variable this contract forbids. `no-engine` and `engine-unreachable` are added, because `no-binding` describes the environment resolving to no target while those two describe the predictor itself, and telling "nothing is configured" from "it is configured and did not answer" is the difference between a setup error and an outage.
+`BehaviourUnpredictedReason` derives from `UnobservedReason` rather than restating it, so the four shared verdicts keep their exact spelling. It differs twice, both deliberately. `no-credentials` is excluded, because a read that is handed no credential has none to be missing, and an enum able to say it would invite a lexicon to send an operator hunting for a variable this contract forbids. Four reasons about the predictor itself are added, because `no-binding` describes the environment resolving to no target and says nothing about the engine.
+
+Those four are one axis split four ways because each has a different remedy, and a refusal exists to be acted on. Set a variable for `no-engine`. Check the address for `engine-unreachable`. On `engine-out-of-credit` somebody has to pay, and no amount of waiting will fix it, while `engine-over-quota` usually clears on its own once the window rolls over. Folding either of the last two into `engine-unreachable` would point an operator at an address that is answering perfectly well.
 
 | Reason | When |
 |---|---|
@@ -339,6 +343,8 @@ The thin read needs a third position for "the provider was asked and said it is 
 | `filtered` | reached but withheld by `owned: true` |
 | `no-engine` | no variable in the chain names an engine |
 | `engine-unreachable` | a variable named an engine and it did not answer |
+| `engine-out-of-credit` | the engine answered and refused: the account has no balance |
+| `engine-over-quota` | the engine answered and refused: a rate or volume limit is spent |
 
 ### A missing engine refuses by name
 
@@ -371,6 +377,22 @@ try {
 ```
 
 Resolve the engine before pricing anything. A lexicon that prices first and checks its engine afterwards has already decided what a zero means.
+
+An engine that answers and still refuses gets its own builders, `outOfCreditBehaviourEngineRefusal` and `overQuotaBehaviourEngineRefusal`. Reach for those rather than `unreachableBehaviourEngineRefusal` whenever the request arrived: the address is fine in both cases, and a remedy that sends somebody to check their networking wastes the one thing a refusal is for.
+
+### Deltas carry provenance, or say they do not
+
+`chant` shows a declared prediction and a live prediction as a delta, and a merge-request finding posts a predicted cost delta. Provenance does not survive subtraction. Two numbers can be differenced whatever produced them, and the answer carries no trace of having crossed a basis or an engine, so a `modeled` figure minus a `validated` one reads as a change in the estate when part of it is the gap between a price list and an invoice.
+
+`compareProvenance(a, b)` classifies a pair before anything subtracts them:
+
+| Verdict | When |
+|---|---|
+| `comparable` | same engine, version, tolerance and basis. The difference is a difference in the estate |
+| `mixed-basis` | same engine and version, one figure modeled and the other validated |
+| `mixed-engine` | the engine, its version or its stated tolerance differs |
+
+The rule this contract binds consumers to is that a delta between figures classifying as anything but `comparable` must be marked wherever it is shown. How it is marked belongs to whatever draws it. Whether it is marked does not.
 
 ### Prove it with the conformance suite
 

@@ -16,6 +16,7 @@
 import { describe, test, expect } from "vitest";
 import { describeBehaviourConformance } from "@intentius/chant-test-utils";
 import type { LexiconPlugin } from "./lexicon";
+import type { IREdge } from "./graph-ir";
 import {
   BEHAVIOUR_BASES,
   BEHAVIOUR_UNPREDICTED_REASONS,
@@ -23,6 +24,10 @@ import {
   behaviourEngineFrom,
   behaviourEngineVariables,
   behaviourReport,
+  compareProvenance,
+  isComparableProvenance,
+  outOfCreditBehaviourEngineRefusal,
+  overQuotaBehaviourEngineRefusal,
   isBehaviourBasis,
   isBehaviourRefusalReport,
   isBehaviourResult,
@@ -61,11 +66,22 @@ const DECLARED = new Map<string, { entityType: string; props: Record<string, unk
   ["queue", { entityType: "AWS::SQS::Queue", props: {} }],
 ]);
 
+/**
+ * The edges between them. `web` reads the queue and writes the database, which
+ * is the whole reason an engine can say anything about a path rather than about
+ * three boxes in isolation.
+ */
+const EDGES: IREdge[] = [
+  { from: "web", to: "db", kind: "ref", viaAttr: "dbEndpoint", toAttr: "endpoint" },
+  { from: "web", to: "queue", kind: "ref", viaAttr: "queueUrl", toAttr: "url" },
+];
+
 const REQUEST: PredictBehaviourOptions = {
   environment: "prod",
   buildOutput: "/tmp/build",
   entityNames: [...DECLARED.keys()],
   entities: DECLARED,
+  edges: EDGES,
   region: "us-east-1",
   traffic: "100 rps, p50",
 };
@@ -82,12 +98,30 @@ function acmeSim(env: Record<string, string | undefined>): LexiconPlugin["predic
 
     const endpoint = behaviourEngineFrom("acme", env);
     if (!endpoint) return noBehaviourEngineRefusal("acme");
-    if (endpoint.value !== "fixture://acme-sim") {
+    // The engine answered in each of these three cases; only the first is a
+    // problem with the address.
+    if (endpoint.value === "fixture://down") {
       return unreachableBehaviourEngineRefusal("acme", endpoint, "connection refused");
+    }
+    if (endpoint.value === "fixture://broke") {
+      return outOfCreditBehaviourEngineRefusal("acme", endpoint, "balance 0.00 USD");
+    }
+    if (endpoint.value === "fixture://throttled") {
+      return overQuotaBehaviourEngineRefusal("acme", endpoint, "5000/5000 predictions this hour");
     }
 
     const entities: Record<string, PredictedBehaviour> = {};
     const unpredicted: Record<string, { type?: string; reason: "unsupported-kind" }> = {};
+
+    // An entity nothing points at and that points at nothing carries no traffic
+    // at the stated level, so its headroom is the engine's baseline. This is the
+    // whole reason `edges` is on the request: without it the engine can only
+    // price boxes.
+    const connected = new Set<string>();
+    for (const edge of options.edges) {
+      connected.add(edge.from);
+      connected.add(edge.to);
+    }
 
     for (const name of options.entityNames) {
       const declared = options.entities.get(name);
@@ -99,11 +133,15 @@ function acmeSim(env: Record<string, string | undefined>): LexiconPlugin["predic
         unpredicted[name] = { type: declared.entityType, reason: "unsupported-kind" };
         continue;
       }
+      const load = connected.has(name) ? 1 : 0;
       entities[name] = {
         at: { traffic: options.traffic },
         cost: predictedRate(modeled.perHour, "USD"),
-        headroom: { cpu: modeled.cpu, latency: modeled.latency },
-        errorRate: 0.001,
+        headroom: {
+          cpu: load ? modeled.cpu : 1,
+          latency: load ? modeled.latency : 1,
+        },
+        errorRate: load ? 0.001 : 0,
         resilience: {
           failure: "one zone lost",
           verdict: name === "db" ? "degrades" : "survives",
@@ -134,7 +172,9 @@ function acmeSim(env: Record<string, string | undefined>): LexiconPlugin["predic
 }
 
 const REACHABLE = { CHANT_BEHAVIOUR_ENGINE: "fixture://acme-sim" };
-const CONFIGURED_BUT_DOWN = { CHANT_BEHAVIOUR_ENGINE: "https://acme-sim.invalid" };
+const CONFIGURED_BUT_DOWN = { CHANT_BEHAVIOUR_ENGINE: "fixture://down" };
+const OUT_OF_CREDIT = { CHANT_BEHAVIOUR_ENGINE: "fixture://broke" };
+const OVER_QUOTA = { CHANT_BEHAVIOUR_ENGINE: "fixture://throttled" };
 const NOTHING_CONFIGURED: Record<string, string | undefined> = {};
 
 describeBehaviourConformance({
@@ -152,12 +192,28 @@ describeBehaviourConformance({
       declared: [...DECLARED.keys()],
       run: () => acmeSim(NOTHING_CONFIGURED)!(REQUEST),
       expectRefusal: true,
+      expectRefusalCause: "no-engine",
     },
     {
       name: "an engine is named and does not answer",
       declared: [...DECLARED.keys()],
       run: () => acmeSim(CONFIGURED_BUT_DOWN)!(REQUEST),
       expectRefusal: true,
+      expectRefusalCause: "engine-unreachable",
+    },
+    {
+      name: "the engine answers and the account is out of credit",
+      declared: [...DECLARED.keys()],
+      run: () => acmeSim(OUT_OF_CREDIT)!(REQUEST),
+      expectRefusal: true,
+      expectRefusalCause: "engine-out-of-credit",
+    },
+    {
+      name: "the engine answers and a limit is spent",
+      declared: [...DECLARED.keys()],
+      run: () => acmeSim(OVER_QUOTA)!(REQUEST),
+      expectRefusal: true,
+      expectRefusalCause: "engine-over-quota",
     },
   ],
 });
@@ -226,7 +282,7 @@ describe("an unreachable engine refuses by name (#2356)", () => {
 
     expect(result.refusal.cause).toBe("engine-unreachable");
     expect(result.refusal.source).toBe("CHANT_BEHAVIOUR_ENGINE");
-    expect(result.refusal.reason).toContain("https://acme-sim.invalid");
+    expect(result.refusal.reason).toContain("fixture://down");
     expect(result.refusal.reason).toContain("connection refused");
   });
 
@@ -254,6 +310,153 @@ describe("an unreachable engine refuses by name (#2356)", () => {
     expect("entities" in result).toBe(false);
     expect("meta" in result).toBe(false);
     expect(isBehaviourResult(result)).toBe(true);
+  });
+});
+
+describe("an engine that answers and still refuses (#2359)", () => {
+  test("an empty account is `engine-out-of-credit`, and the remedy is about money", async () => {
+    const result = await acmeSim(OUT_OF_CREDIT)!(REQUEST);
+    if (!isBehaviourRefusalReport(result)) throw new Error("expected a refusal");
+
+    expect(result.refusal.cause).toBe("engine-out-of-credit");
+    expect(result.refusal.source).toBe("CHANT_BEHAVIOUR_ENGINE");
+    expect(result.refusal.reason).toContain("balance 0.00 USD");
+    expect(result.refusal.reason).toContain("out of credit");
+    expect(result.refusal.remedy).toBe(
+      "Add credit to the account behind CHANT_BEHAVIOUR_ENGINE, or repoint it at a funded engine.",
+    );
+    // The remedy must not send anybody to check a network that is working.
+    expect(result.refusal.remedy).not.toMatch(/reachable/i);
+  });
+
+  test("a spent limit is `engine-over-quota`, and the remedy is about the limit", async () => {
+    const result = await acmeSim(OVER_QUOTA)!(REQUEST);
+    if (!isBehaviourRefusalReport(result)) throw new Error("expected a refusal");
+
+    expect(result.refusal.cause).toBe("engine-over-quota");
+    expect(result.refusal.reason).toContain("5000/5000 predictions this hour");
+    expect(result.refusal.remedy).toBe(
+      "Wait for the engine's window to roll over, or raise the limit on the account behind CHANT_BEHAVIOUR_ENGINE.",
+    );
+    // A spent quota is not an empty account, and telling somebody to pay for
+    // one they have already paid for is the wrong instruction.
+    expect(result.refusal.remedy).not.toMatch(/credit|fund/i);
+  });
+
+  test("the three engine-answered causes are three distinct verdicts", async () => {
+    const causes = await Promise.all(
+      [CONFIGURED_BUT_DOWN, OUT_OF_CREDIT, OVER_QUOTA].map(async (env) => {
+        const result = await acmeSim(env)!(REQUEST);
+        if (!isBehaviourRefusalReport(result)) throw new Error("expected a refusal");
+        return result.refusal.cause;
+      }),
+    );
+    expect(new Set(causes).size).toBe(3);
+    expect(causes).toEqual(["engine-unreachable", "engine-out-of-credit", "engine-over-quota"]);
+  });
+
+  test("both render red, naming their own cause", () => {
+    const endpoint = { value: "fixture://broke", source: "CHANT_BEHAVIOUR_ENGINE" };
+    const broke = renderBehaviourRefusal(
+      outOfCreditBehaviourEngineRefusal("acme", endpoint, "balance 0.00 USD").refusal,
+      { color: true },
+    );
+    const throttled = renderBehaviourRefusal(
+      overQuotaBehaviourEngineRefusal("acme", endpoint, "5000/5000").refusal,
+      { color: true },
+    );
+    for (const rendered of [broke, throttled]) {
+      expect(rendered.startsWith("\x1b[31m")).toBe(true);
+      expect(rendered.endsWith("\x1b[0m")).toBe(true);
+      expect(rendered).toContain("CHANT_BEHAVIOUR_ENGINE");
+    }
+    expect(broke).toContain("behaviour: refused (engine-out-of-credit)");
+    expect(throttled).toContain("behaviour: refused (engine-over-quota)");
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* The request carries edges, not just nodes                                  */
+/* -------------------------------------------------------------------------- */
+
+describe("the request is a graph, not a bag of nodes (#2355)", () => {
+  test("edges are required — a nodes-only request will not compile", () => {
+    // @ts-expect-error the epic's input is "entities ... and the edges between
+    // them", so a request without them is not a resource graph.
+    const nodesOnly: PredictBehaviourOptions = {
+      environment: "prod",
+      buildOutput: "/tmp/build",
+      entityNames: [...DECLARED.keys()],
+      entities: DECLARED,
+      traffic: "100 rps, p50",
+    };
+    expect(nodesOnly).toBeDefined();
+  });
+
+  test("edges reach the engine, and change what it says", async () => {
+    const connected = await acmeSim(REACHABLE)!(REQUEST);
+    const isolated = await acmeSim(REACHABLE)!({ ...REQUEST, edges: [] });
+    if (isBehaviourRefusalReport(connected) || isBehaviourRefusalReport(isolated)) {
+      throw new Error("expected reports");
+    }
+
+    // `web` is on both edges, so it carries load and its headroom is spent
+    // accordingly. With no edges the same entity is an island.
+    expect(connected.entities.web.headroom).toEqual({ cpu: 0.62, latency: 0.41 });
+    expect(isolated.entities.web.headroom).toEqual({ cpu: 1, latency: 1 });
+    expect(connected.entities.web.errorRate).toBe(0.001);
+    expect(isolated.entities.web.errorRate).toBe(0);
+  });
+
+  test("edges are `IREdge`, the type both the declared and live paths already produce", () => {
+    // Not a structural coincidence: this is the assertion that stops a future
+    // change from forking a second edge type for behaviour, which would put a
+    // lossy translation on the live side (#2360) and the declared side both.
+    const fromGraphIr: IREdge = { from: "web", to: "db", kind: "ref", viaAttr: "dbEndpoint" };
+    const request: PredictBehaviourOptions = { ...REQUEST, edges: [fromGraphIr] };
+    expect(request.edges[0].kind).toBe("ref");
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* Deltas: the invariant lives here, the presentation does not                */
+/* -------------------------------------------------------------------------- */
+
+describe("provenance does not survive subtraction (#2358, #2360)", () => {
+  const modeled = { engine: "acme-sim", version: "1.4.2", tolerance: "±15%", basis: "modeled" } as const;
+
+  test("same engine, same basis is a delta of like things", () => {
+    expect(compareProvenance(modeled, { ...modeled })).toBe("comparable");
+    expect(isComparableProvenance(modeled, { ...modeled })).toBe(true);
+  });
+
+  test("a modeled figure against a validated one is `mixed-basis`", () => {
+    const validated = { ...modeled, basis: "validated" } as const;
+    expect(compareProvenance(modeled, validated)).toBe("mixed-basis");
+    expect(isComparableProvenance(modeled, validated)).toBe(false);
+  });
+
+  test("a different engine, version or tolerance is `mixed-engine`", () => {
+    expect(compareProvenance(modeled, { ...modeled, engine: "other-sim" })).toBe("mixed-engine");
+    expect(compareProvenance(modeled, { ...modeled, version: "1.5.0" })).toBe("mixed-engine");
+    expect(compareProvenance(modeled, { ...modeled, tolerance: "±40%" })).toBe("mixed-engine");
+  });
+
+  test("a mismatched engine outranks a mismatched basis", () => {
+    // Both differ. The engine verdict is the one that must survive, because
+    // two models are not one scale whatever their bases say.
+    expect(
+      compareProvenance(modeled, { ...modeled, engine: "other-sim", basis: "validated" }),
+    ).toBe("mixed-engine");
+  });
+
+  test("two entities in one report can be priced by different engines", async () => {
+    // Which is why provenance is per entity, and why a consumer summing across
+    // a report has to ask before it subtracts.
+    const result = await acmeSim(REACHABLE)!(REQUEST);
+    if (isBehaviourRefusalReport(result)) throw new Error("expected a report");
+    const foreign = { ...result.entities.db.provenance, engine: "other-sim" };
+    expect(compareProvenance(result.entities.web.provenance, foreign)).toBe("mixed-engine");
   });
 });
 
@@ -470,8 +673,10 @@ describe("rule 4 — provenance, and a basis from a closed set (#2356)", () => {
 /* -------------------------------------------------------------------------- */
 
 describe("the behaviour tri-state (#2356)", () => {
-  test("the reasons are the observation set minus no-credentials, plus the two engine states", () => {
+  test("the reasons are the observation set minus no-credentials, plus the four engine states", () => {
     expect([...BEHAVIOUR_UNPREDICTED_REASONS].sort()).toEqual([
+      "engine-out-of-credit",
+      "engine-over-quota",
       "engine-unreachable",
       "filtered",
       "no-binding",
@@ -479,6 +684,17 @@ describe("the behaviour tri-state (#2356)", () => {
       "read-failed",
       "unsupported-kind",
     ]);
+  });
+
+  test("each engine state is separately switchable", () => {
+    for (const reason of [
+      "no-engine",
+      "engine-unreachable",
+      "engine-out-of-credit",
+      "engine-over-quota",
+    ]) {
+      expect(isBehaviourUnpredictedReason(reason), `${reason} is not a reason`).toBe(true);
+    }
   });
 
   test("`no-credentials` is not a behaviour reason — the engine is never handed one", () => {
