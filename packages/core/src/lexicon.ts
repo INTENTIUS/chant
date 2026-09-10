@@ -23,6 +23,7 @@ import type { IREdge } from "./graph-ir";
 import type { DescribeResourcesResult, UnobservedReason } from "./observation";
 import type { DescribeIdentityOptions, DescribeIdentityResult } from "./identity";
 import type { DeepNormalizationHooks, DeepObservationResult } from "./deep-observation";
+import type { BehaviourResult, PredictBehaviourOptions } from "./behaviour";
 import type { DisruptionQuery, DisruptionVerdict } from "./lifecycle/disruption";
 import type { OwnerChainVerdict } from "./owner-chain";
 import type { CommandGroup } from "./cli/command-group";
@@ -1412,6 +1413,51 @@ export interface LexiconPlugin {
    * produces a diff made almost entirely of noise.
    */
   deepNormalizationHooks?: DeepNormalizationHooks;
+
+  /**
+   * Predict what the declared estate would *do* at a stated traffic level
+   * (#2356) — cost per hour, headroom, an error-rate expectation, a resilience
+   * verdict under a named failure, and a right-size hint, per entity, every
+   * figure carrying its provenance. Opt-in, and the fourth member of the
+   * observation family beside {@link describeResources}, {@link
+   * observeResourcesDeep} and {@link listArtifacts}.
+   *
+   * It is the odd one out in that family, and the type says so. The other three
+   * report what a substrate was asked and answered. This one reports what an
+   * engine believes would happen at a level nobody has run yet, so it is
+   * `predict`, not `observe`, and its result can never be read as a
+   * measurement or a bill: money exists only as a `PredictedRate` for one
+   * imagined hour, every entity states the `at` its figures answer, and
+   * `provenance.basis` says `modeled` or `validated` on every one of them. See
+   * `../behaviour.ts` for the full argument.
+   *
+   * Options mirror {@link observeResourcesDeep}'s field for field, plus
+   * `traffic` — a caller already driving the deep read drives this with the
+   * same object. What the options deliberately cannot carry is a credential:
+   * every name for one is declared `?: never`, because the engine is handed the
+   * resource graph and nothing else, reaches no account, and writes nothing.
+   *
+   * Three verdicts per entity, on the tri-state discipline #1089 established
+   * and a stricter total: PREDICTED (a key in `entities`),
+   * NOT-PREDICTABLE-FOR-THIS-KIND (`unpredicted` with `unsupported-kind` — an
+   * engine with no model for a kind says so and never returns zero), and
+   * NOT-PREDICTED (`unpredicted` with another reason). Every name the caller
+   * asked about lands in one map or the other; unlike the thin read there is no
+   * third position, because a prediction has no equivalent of "the provider
+   * says it is not there".
+   *
+   * A missing or unreachable engine is a `BehaviourRefusalReport` — the other
+   * arm of the result union, with no `entities` map to be empty and no total to
+   * be zero — carrying a named cause and a message that names the variable it
+   * wanted, in the style of `noGitlabNoteTokenMessage`
+   * (`./op/activities/reconcile.ts`). Build one with
+   * `noBehaviourEngineRefusal` / `unreachableBehaviourEngineRefusal` rather
+   * than by hand.
+   *
+   * Throwing is the whole-lexicon failure, same as the other reads. Prefer the
+   * refusal: it says which variable, and a stack trace does not.
+   */
+  predictBehaviour?(options: PredictBehaviourOptions): Promise<BehaviourResult>;
 
   /**
    * Report the live status of one deploy unit by its deployed name. Opt-in.

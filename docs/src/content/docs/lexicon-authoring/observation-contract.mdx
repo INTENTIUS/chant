@@ -302,6 +302,93 @@ different conclusions.
 
 `lifecycle diff --live` reports four artifact categories per lexicon: **added**, **removed**, **changed**, **unchanged** — comparing now vs. last snapshot, not declared vs. observed. That's all the diff engine can do without a chant entity to anchor each artifact. Don't try to forge an entity-keyed mapping just to fit `describeResources()` — the artifact concept is the right shape for tooling that creates runtime state outside chant.
 
+## predictBehaviour()
+
+The three methods above report what a substrate was asked and what it answered. `predictBehaviour()` reports what no substrate holds, which is how the declared estate would behave at a traffic level the caller names. Per entity it returns cost per hour, headroom on CPU and latency, and an expected error rate. It also returns a resilience verdict under a named failure and an optional right-size hint.
+
+Options mirror `observeResourcesDeep()` field for field, plus `traffic`, so a caller already driving the deep read drives this one with the same object. The engine behind it is handed the resource graph and the traffic level and nothing else. It is given no credential, and every field name for one is declared `?: never` on the options type, so passing a token is a compile error rather than a review comment.
+
+### A prediction is never a bill
+
+The failure this contract exists to prevent is a modeled figure being quoted as money owed. Four things make that a type error:
+
+- Money appears in one shape, `PredictedRate`, carrying a literal `rate: "per-hour"` discriminant. There is no field for an amount, a period, an account or an invoice, so an elapsed charge cannot be expressed at all.
+- No figure exists without `at`, the traffic level it was predicted for.
+- `provenance` is required on every entity, and its `basis` is a closed enum of `modeled` (computed off list prices) or `validated` (reconciled against a real bill).
+- A refusal is a separate arm of the result union with no figures on it, so an unreachable engine and an estate priced at nothing are different objects rather than the same object with zeroes in it.
+
+### The behaviour tri-state
+
+Behaviour keeps the three-verdict discipline `describeResources()` established, on a stricter total. Every entity the caller asked about lands in `entities` or in `unpredicted`, and never in neither.
+
+| Verdict | How you report it | What it means |
+|---|---|---|
+| **Predicted** | a key in `entities` | the engine models this kind and produced figures for it |
+| **Not predictable for this kind** | `unpredicted`, with reason `unsupported-kind` | the engine has no model for the type. The entity is real and may well cost money; this engine cannot say how much, and returns no figure rather than a zero |
+| **Not predicted** | `unpredicted`, with another reason | the run did not get far enough to say |
+
+The thin read needs a third position for "the provider was asked and said it is not there". A prediction has no equivalent answer, so an entity in neither map means the lexicon lost track of one.
+
+`BehaviourUnpredictedReason` derives from `UnobservedReason` rather than restating it, so the four shared verdicts keep their exact spelling. It differs twice, both deliberately. `no-credentials` is excluded, because a read that is handed no credential has none to be missing, and an enum able to say it would invite a lexicon to send an operator hunting for a variable this contract forbids. `no-engine` and `engine-unreachable` are added, because `no-binding` describes the environment resolving to no target while those two describe the predictor itself, and telling "nothing is configured" from "it is configured and did not answer" is the difference between a setup error and an outage.
+
+| Reason | When |
+|---|---|
+| `read-failed` | the engine was reached and the prediction errored |
+| `no-binding` | the environment resolves to no concrete target to predict |
+| `unsupported-kind` | the engine has no model for this entity type |
+| `filtered` | reached but withheld by `owned: true` |
+| `no-engine` | no variable in the chain names an engine |
+| `engine-unreachable` | a variable named an engine and it did not answer |
+
+### A missing engine refuses by name
+
+An unconfigured engine produces a `BehaviourRefusalReport`, and so does a configured engine that does not answer. Neither one produces an empty or zeroed report. The variables are read most specific first, in the style `gitlabNoteTokenFrom` reads GitLab tokens in:
+
+1. `CHANT_BEHAVIOUR_ENGINE_<LEXICON>` for an estate whose lexicons are priced by different engines
+2. `CHANT_BEHAVIOUR_ENGINE`
+3. `BEHAVIOUR_ENGINE`
+
+`behaviourEngineFrom(lexicon, env)` walks that chain and returns the address together with the variable that won, so a log line or a refusal can name it. When nothing answers, `noBehaviourEngineRefusal(lexicon)` builds the refusal, and `renderBehaviourRefusal()` prints it. It prints red rather than the amber a partial answer gets, since every behaviour figure and colour is gone rather than merely delayed.
+
+```typescript
+import {
+  behaviourEngineFrom,
+  behaviourReport,
+  noBehaviourEngineRefusal,
+  unreachableBehaviourEngineRefusal,
+  predictedRate,
+} from "@intentius/chant/behaviour";
+
+const endpoint = behaviourEngineFrom("acme", process.env);
+if (!endpoint) return noBehaviourEngineRefusal("acme");
+
+let answer;
+try {
+  answer = await ask(endpoint.value, graph, options.traffic);
+} catch (err) {
+  return unreachableBehaviourEngineRefusal("acme", endpoint, String(err));
+}
+```
+
+Resolve the engine before pricing anything. A lexicon that prices first and checks its engine afterwards has already decided what a zero means.
+
+### Prove it with the conformance suite
+
+`describeBehaviourConformance` from `@intentius/chant-test-utils` runs the contract's rules against your own mocked engine, the refusal case included. It ships with the contract rather than with the first implementation, because a rule with no runnable check is a comment.
+
+```typescript
+import { describeBehaviourConformance } from "@intentius/chant-test-utils";
+
+describeBehaviourConformance({
+  lexicon: "acme",
+  scenarios: [
+    { name: "the engine is up", declared: ["web", "db"], run: () => predict(upEnv), expectPredicted: ["web"] },
+    { name: "nothing names an engine", declared: ["web", "db"], run: () => predict({}), expectRefusal: true },
+  ],
+});
+```
+
+
 ## Coverage today
 
 The canonical per-lexicon matrix, with the query mechanism and ownership channel

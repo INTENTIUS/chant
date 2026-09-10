@@ -6,6 +6,13 @@ import {
   type DeepNormalizationHooks,
   type DeepResourceObservation,
 } from "../../core/src/deep-observation";
+import {
+  behaviourReport,
+  type BehaviourReportMeta,
+  type BehaviourResult,
+  type PredictedBehaviour,
+  type UnpredictedEntity,
+} from "../../core/src/behaviour";
 import { createMockSerializer } from "./fixtures";
 
 export interface MockPluginOptions {
@@ -15,6 +22,8 @@ export interface MockPluginOptions {
   listArtifacts?: LexiconPlugin["listArtifacts"];
   /** Deep observation (#1014) — the property-level reader. */
   observeResourcesDeep?: LexiconPlugin["observeResourcesDeep"];
+  /** Behaviour prediction (#2356) — cost, headroom and resilience at a stated traffic level. */
+  predictBehaviour?: LexiconPlugin["predictBehaviour"];
   /** #1273 — what the estate references but does not manage. */
   observeDependencies?: LexiconPlugin["observeDependencies"];
   /** #1222 — enumerate the would-delete set for one marker identity (plan only). */
@@ -49,6 +58,7 @@ export function createMockPlugin(options: MockPluginOptions = {}): LexiconPlugin
     ...(options.describeResources && { describeResources: options.describeResources }),
     ...(options.listArtifacts && { listArtifacts: options.listArtifacts }),
     ...(options.observeResourcesDeep && { observeResourcesDeep: options.observeResourcesDeep }),
+    ...(options.predictBehaviour && { predictBehaviour: options.predictBehaviour }),
     ...(options.observeDependencies && { observeDependencies: options.observeDependencies }),
     ...(options.teardownOwned && { teardownOwned: options.teardownOwned }),
     ...(options.executeTeardown && { executeTeardown: options.executeTeardown }),
@@ -92,4 +102,21 @@ export function staticListArtifacts(
   artifacts: Record<string, ArtifactMetadata>,
 ): LexiconPlugin["listArtifacts"] {
   return async () => artifacts;
+}
+
+/**
+ * A `predictBehaviour` that returns a fixed report, ignoring the request. The
+ * behaviour counterpart of {@link staticDeepObservation} — for a test that
+ * needs a lexicon which predicts, not one that exercises an engine.
+ *
+ * There is deliberately no `staticBehaviourRefusal`: a refusal is built with
+ * core's own `noBehaviourEngineRefusal` / `unreachableBehaviourEngineRefusal`,
+ * so a test that fakes one would be testing its own fake.
+ */
+export function staticBehaviour(
+  meta: BehaviourReportMeta,
+  entities: Record<string, PredictedBehaviour>,
+  unpredicted?: Record<string, UnpredictedEntity>,
+): LexiconPlugin["predictBehaviour"] {
+  return async (): Promise<BehaviourResult> => behaviourReport(meta, entities, unpredicted);
 }
