@@ -64,6 +64,16 @@ import { findSubsetViolation } from "./subset";
  * comment): moving it under a `###` heading with a fenced block, the shape
  * every other case here uses, was necessary but not sufficient — the
  * fixture still has to be run through the right function.
+ *
+ * Two more claims are checked against `fold()` the same way — chant #2348.
+ * "typescript-as-data.mdx" said a method call never folds; #1966 made that
+ * false for a method call whose receiver folds to a real value. Both the
+ * corrected supported claim ("Method calls on folded values") and the
+ * corrected unsupported one ("An array method whose callback is a function
+ * value" — right outcome, `list.map(...)` still falls back, but because the
+ * callback is a function used as a value, not because `.map` is a method
+ * call) were previously unfenced prose sentences too, invisible to this file
+ * for the same reason #2306's was.
  */
 
 const repoRoot = fileURLToPath(new URL("../../../../", import.meta.url));
@@ -193,6 +203,17 @@ describe("subset-doc-parity — supported patterns in typescript-as-data.mdx cla
     if (!wrapped) throw new Error("subset-doc-parity: nullish-coalescing fragment failed to parse");
     expect(findSubsetViolation(wrapped)).toBeUndefined();
   });
+
+  test("Method calls on folded values", () => {
+    // chant #1966/#2348 — findSubsetViolation accepts this shape
+    // unconditionally regardless of whether the receiver actually resolves
+    // (module doc, point above the CallExpression case in ./subset.ts):
+    // shape-valid here is necessary but not sufficient. The real
+    // accept/reject decision is fold()'s, checked below in the
+    // fold()-decided describe block.
+    const consts = parseConsts(extractFencedBlock("Method calls on folded values"));
+    expect(findSubsetViolation(resourceArg(consts, "store"))).toBeUndefined();
+  });
 });
 
 describe("subset-doc-parity — unsupported patterns in typescript-as-data.mdx classify as rejected", () => {
@@ -221,6 +242,14 @@ describe("subset-doc-parity — unsupported patterns in typescript-as-data.mdx c
     const consts = parseConsts(extractFencedBlock("Spread from dynamic sources"));
     expect(findSubsetViolation(resourceArg(consts, "store"))).toBeDefined();
   });
+
+  test("An array method whose callback is a function value", () => {
+    // chant #2348 — the callback argument, an ArrowFunction, is what
+    // findSubsetViolation rejects here (falls through to the catch-all
+    // unsupportedExpressionMessage), not the `.map(...)` method call itself.
+    const consts = parseConsts(extractFencedBlock("An array method whose callback is a function value"));
+    expect(findSubsetViolation(resourceArg(consts, "store"))).toBeDefined();
+  });
 });
 
 describe("subset-doc-parity — fold()-decided claim in typescript-as-data.mdx (#2306)", () => {
@@ -240,5 +269,36 @@ describe("subset-doc-parity — fold()-decided claim in typescript-as-data.mdx (
     expect(error).toBeInstanceOf(FoldError);
     expect((error as FoldError).message).toContain("unregistered tagged template intrinsic");
     expect((error as FoldError).message).toContain("unknownTag");
+  });
+});
+
+describe("subset-doc-parity — fold()-decided claims in typescript-as-data.mdx (#2348)", () => {
+  test("Method calls on folded values", () => {
+    // findSubsetViolation only proves the shape is admissible (above); prove
+    // the doc's own example actually folds, and to the value the doc claims,
+    // by running it through fold() with no externals at all — the receiver
+    // (`[prefix, "data"]`) is a plain array literal, so nothing needs to
+    // resolve across a file boundary for this one.
+    const consts = parseConsts(extractFencedBlock("Method calls on folded values"));
+    const arg = resourceArg(consts, "store");
+    expect(fold(arg, consts, [])).toEqual({ name: "acct-data" });
+  });
+
+  test("An array method whose callback is a function value — real reason", () => {
+    // The doc's corrected claim: this falls back because the ARROW FUNCTION
+    // is a value fold refuses, not because `.map` is a method call. Assert
+    // the actual FoldError says so, rather than something naming ".map" or
+    // "method call".
+    const consts = parseConsts(extractFencedBlock("An array method whose callback is a function value"));
+    const arg = resourceArg(consts, "store");
+    let error: unknown;
+    try {
+      fold(arg, consts, []);
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toBeInstanceOf(FoldError);
+    expect((error as FoldError).message).toContain("a function used as a value is not foldable");
+    expect((error as FoldError).message).not.toContain("method call");
   });
 });
