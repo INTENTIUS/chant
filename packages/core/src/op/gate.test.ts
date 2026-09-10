@@ -16,7 +16,7 @@ import { writeFileSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { evaluateGate, gitGateLedgerPort } from "./gate";
+import { evaluateGate, gitGateLedgerPort, type GateLedgerPort } from "./gate";
 import { appendGateResolution, readGateLedger } from "../lifecycle/gate-ledger";
 import {
   requireLifecycleLedger,
@@ -500,5 +500,115 @@ describe("op/gate — a CI checkout that never fetched the ledger (#2303)", () =
     });
     expect(check.satisfied).toBe(false);
     await expect(requireLifecycleLedger({ cwd: dir })).resolves.toBeUndefined();
+    // #2310: no remote to have failed against, but still worth saying —
+    // nothing this run just recorded left the checkout.
+    if (check.satisfied) throw new Error("unreachable");
+    expect(check.recorded).toBe(true);
+    expect(check.pushed).toBe(false);
+    expect(check.pushWarning).toMatch(/no remote/i);
+  });
+});
+
+/**
+ * #2310 — `recordGateApproval`'s push (`../cli/handlers/operator.ts`) was
+ * already reported by #2309's review; `evaluateGate`'s own `appendPending`
+ * push, right below it in the same file, still swallowed the rejection into
+ * `undefined` and let a gated run print as if the pending fact had reached
+ * everyone. It had not: an operator working from a clone of the remote
+ * cannot see a pending fact that never got there, and the run gave no hint
+ * that this was why their `chant approve` found nothing to resolve.
+ *
+ * Before this fix, `gitGateLedgerPort({ cwd }).appendPending(...)`'s
+ * resolved value was the bare `PendingGateRecord` — there was no `pushed`
+ * field to assert on at all, so the rejection above was genuinely invisible
+ * to any caller. That is the "red" state: this suite fails to typecheck
+ * against the old `Promise<PendingGateRecord>` return type, and a rejected
+ * push at `gate.ts:71` produced no failure text anywhere.
+ */
+describe("op/gate — a rejected ledger push is reported, not swallowed (#2310)", () => {
+  test("gitGateLedgerPort's appendPending reports pushed:false and the rejection reason", async () => {
+    const { remote, author } = await clonePair();
+    const other = tmp("other");
+    git(["clone", "-q", remote, other], tmpdir());
+    git(["config", "user.email", "other@chant.dev"], other);
+    git(["config", "user.name", "Other"], other);
+
+    const port = gitGateLedgerPort({ cwd: author });
+
+    // `author` records and pushes the branch's first pending fact — this
+    // both creates `chant/lifecycle` on the remote and pins `author`'s own
+    // remote-tracking ref to the commit it just pushed.
+    const first = await port.appendPending({
+      op: "live-apply",
+      gate: "approve-live-apply",
+      timestamp: "2026-09-09T05:00:00.000Z",
+      expiresAt: "2026-09-10T05:00:00.000Z",
+    });
+    expect(first.pushed).toBe(true);
+    expect(first.pushWarning).toBeUndefined();
+
+    // `other` fetches that commit, appends a second pending fact on top of
+    // it, and pushes — moving the remote on behind `author`'s back. `author`
+    // never re-fetches, so its remote-tracking ref still names the first
+    // commit alone.
+    git(["fetch", "-q", "origin", "chant/lifecycle:chant/lifecycle"], other);
+    const otherPort = gitGateLedgerPort({ cwd: other });
+    const second = await otherPort.appendPending({
+      op: "live-apply",
+      gate: "approve-other-gate",
+      timestamp: "2026-09-09T05:05:00.000Z",
+      expiresAt: "2026-09-10T05:05:00.000Z",
+    });
+    expect(second.pushed).toBe(true);
+
+    // `author` appends its own third fact on the tip it still knows (the
+    // first commit) and pushes against a lease the remote has since moved
+    // past — the same `StaleLifecycleBranchError` `chant approve` could hit
+    // (#2310's issue).
+    const third = await port.appendPending({
+      op: "live-apply",
+      gate: "approve-third-gate",
+      timestamp: "2026-09-09T05:10:00.000Z",
+      expiresAt: "2026-09-10T05:10:00.000Z",
+    });
+    expect(third.pushed).toBe(false);
+    expect(third.pushWarning).toBeTruthy();
+    expect(third.pushWarning).toMatch(/chant\/lifecycle remote branch has moved|stale|rejected|non-fast-forward/i);
+    // The append itself still landed locally — a correct local answer, per
+    // the #2309 author's reasoning; only the report was missing.
+    expect(third.record.gate).toBe("approve-third-gate");
+  });
+
+  test("evaluateGate carries the rejection onto the gate check it returns, recorded but not pushed", async () => {
+    // A minimal port whose read side is inert and whose write side reports
+    // the exact rejection a stale `chant/lifecycle` lease produces — the
+    // shape `evaluateGate` has to propagate regardless of which port
+    // implementation is behind it.
+    const rejectingPort = {
+      async read() {
+        return { resolutions: [], pending: [] };
+      },
+      async appendPending(input: Parameters<GateLedgerPort["appendPending"]>[0]) {
+        return {
+          record: { version: 1 as const, kind: "pending" as const, ...input },
+          pushed: false,
+          pushWarning:
+            "chant/lifecycle remote branch has moved since this run started — another snapshot was pushed concurrently.",
+        };
+      },
+    };
+
+    const check = await evaluateGate(rejectingPort, {
+      op: "live-apply",
+      gate: "approve-live-apply",
+      now: "2026-09-09T05:00:00.000Z",
+    });
+    if (check.satisfied) throw new Error("unreachable — nothing resolved this gate");
+    expect(check.recorded).toBe(true);
+    expect(check.pushed).toBe(false);
+    expect(check.pushWarning).toContain("another snapshot was pushed concurrently");
+    // The pending fact is still the one that was recorded — gating is still
+    // correct, only silent about reaching the remote.
+    expect(check.pending.gate).toBe("approve-live-apply");
   });
 });

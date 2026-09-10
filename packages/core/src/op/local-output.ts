@@ -71,6 +71,17 @@ export function renderHuman(result: OpRunResult, write: Writer = stderr): void {
   write(`  approve : ${approveCommand(gate.op, gate.gate)}`);
   if (gate.url) write(`  approve at: ${gate.url}`);
   write(`  expires : ${gate.expiresAt}`);
+  // #2310: this run's own append reached only the local chant/lifecycle
+  // branch, not the remote. The pending fact is still correct — the gate is
+  // still right to stand — but an operator working from a clone of the
+  // remote cannot see it to approve it, and nothing else here says so.
+  if (result.gatePushed === false) {
+    write(
+      `  warning : the pending fact was not pushed to the remote — ` +
+        (result.gatePushWarning ?? "it exists only in this checkout") +
+        `. An operator elsewhere cannot approve it until it does.`,
+    );
+  }
 }
 
 /**
@@ -86,7 +97,13 @@ export function renderHuman(result: OpRunResult, write: Writer = stderr): void {
  */
 export function renderJson(result: OpRunResult, write: Writer = stdout): void {
   const approve = result.gate ? { approve: approveCommand(result.gate.op, result.gate.gate) } : {};
-  write(JSON.stringify({ ...result.record, ...approve }));
+  // #2310: whether this run's own append reached the remote — not part of
+  // the persisted ledger record (a replay has nothing new to report), but a
+  // live run's JSON consumer needs it exactly where the human render shows it.
+  const push = result.gatePushed === false
+    ? { pushed: false, pushWarning: result.gatePushWarning ?? "the pending fact was recorded locally only" }
+    : {};
+  write(JSON.stringify({ ...result.record, ...approve, ...push }));
 }
 
 export type { OpRunResult, StepRecord };

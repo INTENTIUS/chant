@@ -34,6 +34,15 @@ export interface GatedRunSummary {
   expiresAt?: string;
   /** The approval surface the run resolved, when it knew one. */
   url?: string;
+  /**
+   * False when this run's own append reached only the local chant/lifecycle
+   * branch, not the remote (#2310) — the reason lives in `pushWarning`.
+   * Absent when this run left an already-standing pending fact alone, or when
+   * the push landed.
+   */
+  pushed?: boolean;
+  /** Set when `pushed` is false. */
+  pushWarning?: string;
 }
 
 /**
@@ -62,6 +71,14 @@ export function gatedRunSummaryMarkdown(summary: GatedRunSummary): string {
   );
   if (summary.expiresAt) lines.push(`Expires: ${summary.expiresAt}`);
   if (summary.url) lines.push(`Approve at: ${summary.url}`);
+  if (summary.pushed === false) {
+    lines.push(
+      "",
+      `**This pending fact was not pushed to the remote** (${summary.pushWarning ?? "no reason given"}). ` +
+        "It exists only in this job's checkout. An operator working from a clone of the remote cannot " +
+        "see it to approve it until it reaches \`chant/lifecycle\` there.",
+    );
+  }
   lines.push("");
   return lines.join("\n");
 }

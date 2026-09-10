@@ -51,7 +51,7 @@ export { NonRetryableActivityError, nonRetryableFailure } from "./activity-failu
 export { runOpLocally, parseDuration, OpRunFailure } from "./local-executor";
 export type { StepRecord, OpRunResult, RunOpOptions } from "./local-executor";
 export { evaluateGate, gitGateLedgerPort, memoryGateLedgerPort, approveCommand } from "./gate";
-export type { GateLedgerPort, GateCheck, GateCheckInput } from "./gate";
+export type { GateLedgerPort, GateCheck, GateCheckInput, PendingGatePush } from "./gate";
 export { gateName, usesDeprecatedGateKey, DEPRECATED_GATE_KEY_WARNING } from "./gate-name";
 export type { GateNamed } from "./gate-name";
 export { createLocalOpRuntime } from "./runtimes/local";
