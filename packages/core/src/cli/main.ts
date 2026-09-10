@@ -404,6 +404,8 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.note = args[++i];
     } else if (arg === "--expire") {
       result.expire = true;
+    } else if (arg === "--plan") {
+      result.plan = args[++i];
     } else if (arg === "--url") {
       result.url = args[++i];
     } else if (arg === "--op") {

@@ -56,11 +56,21 @@
  *
  * A gate is a fact on the gate ledger, not a wait (#2119). Reaching one,
  * `chant run` consults the ledger (`packages/core/src/op/gate.ts`): a
- * resolution newer than the gate's newest pending fact lets the run walk
- * through, and anything else records the pending fact and ends the run with
- * status `gated` and exit 3. `chant approve <op> <gate>` writes the
- * resolution, and the next run reads it. `gate: "never"` drops the Gate phase
- * entirely, so a run never stops.
+ * resolution recorded for this run's own plan lets the run walk through, and
+ * anything else records the pending fact and ends the run with status `gated`
+ * and exit 3. `chant approve <op> <gate>` writes the resolution, and the next
+ * run reads it. `gate: "never"` drops the Gate phase entirely, so a run never
+ * stops.
+ *
+ * **The gate binds the plan** (#2300). The Plan step publishes
+ * `planDigest` — its `terraform show -json` change set, hashed — and the Gate
+ * step references it, so the resolution names the plan it approves. That
+ * closes the window the exit-3 refusal above does not: exit 3 compares the
+ * Apply step's fresh plan against the *file* it was handed inside one run,
+ * and this compares a later run's fresh plan against what a human actually
+ * approved. INTENTIUS/choudoufu#1026 measured the gap by approving, renaming
+ * a resource, and re-running: the second run applied without complaint. It
+ * now stops, naming the approved digest and the planned one.
  *
  * @example
  * ```typescript
@@ -226,6 +236,11 @@ export function TerraformApplyOp(config: TerraformApplyOpConfig): TerraformApply
         show,
         gate(config.gateName ?? config.signalName ?? `approve-${config.name}`, {
           ...(config.gateTimeout ? { timeout: config.gateTimeout } : {}),
+          // #2300: the approval is for this plan, not for the next run. The
+          // Plan step's digest rides onto the pending fact, `chant approve`
+          // copies it onto the resolution, and a later run whose fresh plan
+          // digests differently is refused with both digests named.
+          plan: plan.out.planDigest,
           description:
             config.gateDescription ??
             `Approve terraform apply of ${live ? "live " : ""}root "${config.root}" (gate: ${gateMode}). ` +

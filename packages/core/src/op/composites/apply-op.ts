@@ -19,6 +19,12 @@
  * approve <op> <gate>` line to run. Approve, run again, and the same Op
  * converges — no durable workflow engine is involved.
  *
+ * The gate binds the plan (#2300). The Plan phase's `lifecycleDiff` publishes
+ * a digest of its change set, the gate step references it, and a resolution
+ * counts only for that digest. Approve, change the declared source, re-run,
+ * and the run stops again with both digests named rather than applying a
+ * change set the approver never saw.
+ *
  * @example
  * ```typescript
  * // additive, local executor
@@ -38,6 +44,7 @@
  */
 
 import { Op, phase, activity, gate } from "../builders";
+import { stepOutput } from "../step-output-ref";
 import { gateName } from "../gate-name";
 import type { OpResource } from "../resource";
 import { defaultOutput, hasNativeRollback, type ApplyTarget, type DeleteMode } from "../activities/apply";
@@ -129,6 +136,10 @@ export function ApplyOp(config: ApplyOpConfig): ApplyOpResources {
     phase("Plan", [
       {
         kind: "activity" as const,
+        // #2300: the gate below references this step's digest, and a
+        // reference needs an id. `plan` rather than `diff`, because what the
+        // Approve phase binds to is the plan this step produced.
+        id: "plan",
         fn: "lifecycleDiff",
         args: { env: config.env, live: true },
         outcomeAttribute: { name: "Drift", from: "drifted" },
@@ -141,6 +152,11 @@ export function ApplyOp(config: ApplyOpConfig): ApplyOpResources {
       phase("Approve", [
         gate(gateName(config.gate ?? {}) || `approve-${config.name}`, {
           ...(config.gate?.timeout ? { timeout: config.gate.timeout } : {}),
+          // #2300: the approval is for the change set the Plan phase just
+          // produced. Edit the source between approving and re-running and
+          // the gate refuses, naming the approved digest and the planned one,
+          // instead of applying what nobody read.
+          plan: stepOutput("plan", "planDigest"),
           description:
             config.gate?.description ??
             `Approve apply to ${config.env} (delete mode: ${deleteMode}` +

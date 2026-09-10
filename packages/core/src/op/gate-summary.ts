@@ -43,6 +43,13 @@ export interface GatedRunSummary {
   pushed?: boolean;
   /** Set when `pushed` is false. */
   pushWarning?: string;
+  /**
+   * The plan the pending fact was recorded against (#2300), when the gate
+   * binds one. Shown because it is what the `chant approve` line below
+   * approves — and because a reader who comes back to a stale summary needs
+   * to see that the digest has moved on.
+   */
+  planDigest?: string;
 }
 
 /**
@@ -59,6 +66,13 @@ export function gatedRunSummaryMarkdown(summary: GatedRunSummary): string {
   ];
   if (summary.description) {
     lines.push(summary.description, "");
+  }
+  if (summary.planDigest) {
+    lines.push(
+      `This approves one plan, \`${summary.planDigest}\`, and not the next run (#2300). ` +
+        "Change the configuration after approving and the next run refuses rather than applying.",
+      "",
+    );
   }
   lines.push(
     "Approve it, then re-run this workflow:",

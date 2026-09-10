@@ -49,6 +49,8 @@ export interface OpRunStepRecord {
   approval?: { gate: string; resolvedBy: string; timestamp: string; url?: string };
   /** The failure message, for `status: "fail"`. */
   error?: string;
+  /** Why a gate declined a standing approval that was for another plan (#2300) — see {@link StepRecord.refusal}. */
+  refusal?: string;
 }
 
 /** One phase's steps and the verdict they add up to. */

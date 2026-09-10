@@ -105,6 +105,7 @@ export function buildRunRecord(
       ...(record.outcome ? { outcome: record.outcome } : {}),
       ...(record.approval ? { approval: record.approval } : {}),
       ...(record.error !== undefined ? { error: record.error } : {}),
+      ...(record.refusal !== undefined ? { refusal: record.refusal } : {}),
     });
     if (record.outcome) outcomes[record.outcome.name] = record.outcome.value;
   }

@@ -25,7 +25,7 @@ import { resolveActivity, type ActivityFn, type ActivityProfile } from "./activi
 import type { ReceiptReadResult } from "./receipt-store";
 import { isStepOutputRef } from "./step-output-ref";
 import { parseDuration } from "./duration";
-import { evaluateGate, gitGateLedgerPort, type GateCheck, type GateLedgerPort } from "./gate";
+import { describeGateMismatch, evaluateGate, gitGateLedgerPort, type GateCheck, type GateLedgerPort } from "./gate";
 import { gateName } from "./gate-name";
 import type { PendingGateRecord } from "../lifecycle/gate-ledger";
 import { appendRunRecord, buildRunRecord } from "../lifecycle/run-ledger";
@@ -58,6 +58,14 @@ export interface StepRecord {
   error?: string;
   /** Set on a `gate` step that passed (#2119): who resolved it, when, and at what address. */
   approval?: { gate: string; resolvedBy: string; timestamp: string; url?: string };
+  /**
+   * Why a step declined to proceed on something that is not a failure
+   * (#2300): a gate holding a standing approval for a *different* plan. Names
+   * both digests and the `chant approve` line that closes the gap. The step's
+   * status is `skipped` and the run's is `gated` — nothing broke, and nothing
+   * was applied.
+   */
+  refusal?: string;
 }
 
 export interface OpRunResult {
@@ -396,8 +404,16 @@ async function runGateStep(
   step: GateStep,
   phaseName: string,
   gates: GateContext,
+  resultsById: ReadonlyMap<string, unknown> = new Map(),
 ): Promise<{ record: StepRecord; pending?: PendingGateRecord; pushed?: boolean; pushWarning?: string }> {
   const start = Date.now();
+  // #2300: `plan` is authored as a reference into the Plan phase's result
+  // (`plan.out.planDigest`), and is resolved here through the same walk an
+  // activity's args go through. A reference that resolves to anything but a
+  // string leaves the gate unbound — the pre-#2300 rule — rather than failing
+  // a run over a missing digest.
+  const resolvedPlan = resolveStepOutputRefs(step.plan, resultsById);
+  const planDigest = typeof resolvedPlan === "string" && resolvedPlan !== "" ? resolvedPlan : undefined;
   let check: GateCheck;
   try {
     check = await evaluateGate(gates.port, {
@@ -406,6 +422,7 @@ async function runGateStep(
       ...(step.description ? { description: step.description } : {}),
       ...(step.timeout ? { timeout: step.timeout } : {}),
       ...(gates.runId ? { runId: gates.runId } : {}),
+      ...(planDigest !== undefined ? { planDigest } : {}),
       ...(gates.now ? { now: gates.now } : {}),
     });
   } catch (err) {
@@ -448,8 +465,18 @@ async function runGateStep(
     };
   }
 
+  const refusal = check.mismatch
+    ? { refusal: describeGateMismatch(gates.op, gateName(step), check.mismatch) }
+    : {};
   return {
-    record: { phase: phaseName, fn: gateFn(step), args: {}, status: "skipped", durationMs: Date.now() - start },
+    record: {
+      phase: phaseName,
+      fn: gateFn(step),
+      args: {},
+      status: "skipped",
+      durationMs: Date.now() - start,
+      ...refusal,
+    },
     pending: check.pending,
     pushed: check.pushed,
     ...(check.pushWarning ? { pushWarning: check.pushWarning } : {}),
@@ -530,7 +557,7 @@ async function runEffectStep(
   for (let i = 0; i < step.steps.length; i++) {
     const nested = step.steps[i];
     if (isGate(nested)) {
-      const { record, pending, pushed, pushWarning } = await runGateStep(nested, phaseName, gates);
+      const { record, pending, pushed, pushWarning } = await runGateStep(nested, phaseName, gates, resultsById);
       pushRecord(records, gates, record);
       if (record.status === "fail") {
         // Receipt left untouched, as for any other failing nested step
@@ -597,7 +624,7 @@ async function runPhase(
     // gate is about to strand would defeat the point of stopping at it.
     const gateRecords: StepRecord[] = [];
     for (const step of phase.steps.filter(isGate)) {
-      const { record, pending, pushed, pushWarning } = await runGateStep(step, phase.name, gates);
+      const { record, pending, pushed, pushWarning } = await runGateStep(step, phase.name, gates, resultsById);
       pushRecord(gateRecords, gates, record);
       if (record.status === "fail") {
         // The gate could not be decided at all (#2301). Same treatment as a
@@ -642,7 +669,7 @@ async function runPhase(
   for (let i = 0; i < steps.length; i++) {
     const step = steps[i];
     if (isGate(step)) {
-      const { record, pending, pushed, pushWarning } = await runGateStep(step, phase.name, gates);
+      const { record, pending, pushed, pushWarning } = await runGateStep(step, phase.name, gates, resultsById);
       pushRecord(records, gates, record);
       if (record.status === "fail") {
         // A gate that could not be decided is a failed step, not a pending

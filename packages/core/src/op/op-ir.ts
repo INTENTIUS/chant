@@ -137,6 +137,13 @@ export interface OpIRGateStep {
   /** Resolved to its effective value — `GateStep.timeout ?? "48h"`. */
   timeout: string;
   description?: string;
+  /**
+   * The plan this gate approves (#2300) — a digest string, or a
+   * {@link StepOutputRef} placeholder a foreign runtime resolves from the
+   * named step's result the same way it resolves one in an activity's args.
+   * Absent on a gate that binds no plan.
+   */
+  plan?: GateStep["plan"];
 }
 
 export interface OpIREffectStep {
@@ -232,6 +239,7 @@ function irGateStep(step: GateStep): OpIRGateStep {
     gate: gateName(step),
     timeout: step.timeout ?? "48h",
     ...(step.description ? { description: step.description } : {}),
+    ...(step.plan !== undefined ? { plan: step.plan } : {}),
   };
 }
 
@@ -380,6 +388,7 @@ function opStepFromIR(step: OpIRStep): StepDefinition {
       gate: step.gate,
       timeout: step.timeout,
       ...(step.description ? { description: step.description } : {}),
+      ...(step.plan !== undefined ? { plan: step.plan } : {}),
     };
   }
   return {

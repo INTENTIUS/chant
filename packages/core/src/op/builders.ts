@@ -107,16 +107,22 @@ export function activity(
  * that reaches this step with no resolution newer than its pending fact
  * records the pending fact and ends `gated`. `chant approve <op> <gate>`
  * writes the resolution, and the next run walks through carrying the approver.
+ *
+ * Pass `plan` to bind the approval to a specific plan (#2300) — normally the
+ * Plan phase's own digest, `plan.out.planDigest`. Then a resolution counts
+ * only for that plan, and a run whose fresh plan differs is refused by name
+ * instead of applying a change nobody approved. See {@link GateStep.plan}.
  */
 export function gate(
   name: string,
-  opts?: { timeout?: string; description?: string },
+  opts?: { timeout?: string; description?: string; plan?: GateStep["plan"] },
 ): GateStep {
   return {
     kind: "gate",
     gate: name,
     ...(opts?.timeout ? { timeout: opts.timeout } : {}),
     ...(opts?.description ? { description: opts.description } : {}),
+    ...(opts?.plan !== undefined ? { plan: opts.plan } : {}),
   };
 }
 
