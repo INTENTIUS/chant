@@ -306,13 +306,23 @@ different conclusions.
 
 The three methods above report what a substrate was asked and what it answered. `predictBehaviour()` reports what no substrate holds, which is how the declared estate would behave at a traffic level the caller names. Per entity it returns cost per hour, headroom on CPU and latency, and an expected error rate. It also returns a resilience verdict under a named failure and an optional right-size hint.
 
-Options mirror `observeResourcesDeep()` field for field, plus `traffic` and `edges`. The engine behind it is handed the resource graph and the traffic level and nothing else. It is given no credential, and every field name for one is declared `?: never` on the options type, so passing a token is a compile error rather than a review comment.
+Options mirror `observeResourcesDeep()` field for field, plus `traffic`, `edges` and `edgeCoverage`. The engine behind it is handed the resource graph and the traffic level and nothing else.
+
+It is given no credential, and the contract works at that on two levels. The type declares every obvious name `?: never`, which catches the deliberate attempt at compile time. `assertNoCredentialInOptions` then walks the whole request at runtime, reading values as well as key names, which is what catches the accident. The accident is the realistic one, because `entities[*].props` is `Record<string, unknown>` straight out of the build and no type on this contract can see into it. A lexicon surfacing a connection string puts one there without deciding to.
+
+The walk detects three things:
+
+- a key whose name reads as a credential, at any depth, matched case- and separator-insensitively against the same pattern `redactCredentialMaterial` uses
+- a value that reads as one whatever the key is called. That means a PEM block or a JWT or an `Authorization` value, and it means a token carrying the issue prefix of GitHub, GitLab, OpenAI, Stripe, Slack, AWS, Google or npm
+- a password in the userinfo of anything that parses as a URL
+
+What it does not detect is anything outside those forms. The token list is a denylist of formats somebody has added, so an issuer nobody has added still passes, and so does a bare random string. There is no entropy scoring, deliberately: this walks build output full of ids, ARNs and digests, and a heuristic that refused those would refuse real projects rather than protect them.
 
 `edges` is the one place that mirror breaks. A deep read answers per entity and has no use for neighbours, since a bucket's live property tree is the same tree whatever reads from it. A prediction is the opposite: headroom, an error rate and a verdict under "one zone lost" are all statements about a path through the estate, and an engine handed nodes alone can only price each box on its own. The field carries `IREdge` from `graph-ir.ts` rather than an edge type of the behaviour contract's own, because that is already the shape both paths produce. `collectEdges` builds them from declared references and `reconstructEdges` rebuilds them from observed identifiers, so a second type would put a lossy translation hop on each side of the delta the epic asks for. An empty array is a claim that the estate's entities reference nothing of each other, so do not pass one for edges you have not computed.
 
 ### A prediction is never a bill
 
-The failure this contract exists to prevent is a modeled figure being quoted as money owed. Four things make that a type error:
+The failure this contract exists to prevent is a modeled figure being quoted as money owed. Four things work against it:
 
 - Money appears in one shape, `PredictedRate`, carrying a literal `rate: "per-hour"` discriminant. There is no field for an amount, a period, an account or an invoice, so an elapsed charge cannot be expressed at all.
 - No figure exists without `at`, the traffic level it was predicted for.
@@ -384,13 +394,16 @@ An engine that answers and still refuses gets its own builders, `outOfCreditBeha
 
 `chant` shows a declared prediction and a live prediction as a delta, and a merge-request finding posts a predicted cost delta. Provenance does not survive subtraction. Two numbers can be differenced whatever produced them, and the answer carries no trace of having crossed a basis or an engine, so a `modeled` figure minus a `validated` one reads as a change in the estate when part of it is the gap between a price list and an invoice.
 
-`compareProvenance(a, b)` classifies a pair before anything subtracts them:
+`compareFigures(a, b)` classifies a pair before anything subtracts them:
 
 | Verdict | When |
 |---|---|
-| `comparable` | same engine, version, tolerance and basis. The difference is a difference in the estate |
-| `mixed-basis` | same engine and version, one figure modeled and the other validated |
-| `mixed-engine` | the engine, its version or its stated tolerance differs |
+| `comparable` | same engine, version, tolerance, traffic level and basis. The difference is a difference in the estate |
+| `mixed-basis` | same engine and level, one figure modeled and the other validated |
+| `mixed-level` | same engine, different `at`. The same question asked of two different worlds |
+| `mixed-engine` | the engine, its version or its stated tolerance differs. Checked first, since nothing below it matters |
+
+Call `compareFigures` and not `compareProvenance`. The traffic level lives on the block rather than on provenance, so the provenance-only function cannot see it and will call a 100 rps figure and a 1000 rps one comparable. Within a single report the question does not arise: `behaviourReport` refuses a block whose `at` disagrees with `meta.at`, so one run means one level.
 
 The rule this contract binds consumers to is that a delta between figures classifying as anything but `comparable` must be marked wherever it is shown. How it is marked belongs to whatever draws it. Whether it is marked does not.
 

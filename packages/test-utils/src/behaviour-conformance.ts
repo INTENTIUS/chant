@@ -48,6 +48,7 @@ import {
   isBehaviourRefusalReport,
   isBehaviourResult,
   renderBehaviourRefusal,
+  validateBehaviourBlock,
   type BehaviourResult,
   type BehaviourUnpredictedReason,
 } from "../../core/src/behaviour";
@@ -75,6 +76,13 @@ export interface BehaviourScenario {
    * suite that only checks "some cause from the enum" cannot see that.
    */
   expectRefusalCause?: BehaviourUnpredictedReason;
+  /**
+   * The traffic level this scenario's request named. Required on any scenario
+   * that is not a refusal, because "the engine echoed the level it was asked
+   * for" is the one assertion that catches a lexicon ignoring `traffic`
+   * altogether — which every other check here passes with flying colours.
+   */
+  traffic?: string;
   /** Entity names this scenario must price. */
   expectPredicted?: string[];
   /**
@@ -108,8 +116,42 @@ const VARIABLE_PATTERN = /\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b/;
  * });
  * ```
  */
+/**
+ * What is wrong with the *suite configuration* itself, before a single scenario
+ * runs. Exported and pure so it can be tested directly — the checks it makes
+ * are about the shape of the config, and a suite-level `it` that asserts them
+ * cannot itself be proven to fail without registering a failing suite.
+ *
+ * Two gaps, both of which let a lexicon pass by not doing the job:
+ *
+ *  - **Every scenario is a refusal.** Then `predictBehaviour() { return refusal }`
+ *    passes the whole suite, because every per-scenario check is either about
+ *    the refusal arm or skipped on it. A predictor has to predict once.
+ *  - **A predicting scenario does not say what traffic level it asked for.**
+ *    Without it, "the engine echoed the level it was handed" is unassertable,
+ *    and a lexicon that ignores `traffic` entirely passes everything else here.
+ */
+export function behaviourConformanceGaps(config: BehaviourConformanceConfig): string[] {
+  const gaps: string[] = [];
+  if (!config.scenarios.some((s) => !s.expectRefusal)) {
+    gaps.push(
+      "every scenario is a refusal — this suite would pass a lexicon that never predicts anything",
+    );
+  }
+  for (const s of config.scenarios) {
+    if (!s.expectRefusal && !s.traffic) {
+      gaps.push(`scenario "${s.name}" predicts but does not state the traffic level it requested`);
+    }
+  }
+  return gaps;
+}
+
 export function describeBehaviourConformance(config: BehaviourConformanceConfig): void {
   describe(`behaviour contract conformance (#2356) — ${config.lexicon}`, () => {
+    it("is configured to prove anything at all", () => {
+      expect(behaviourConformanceGaps(config)).toEqual([]);
+    });
+
     for (const scenario of config.scenarios) {
       describe(scenario.name, () => {
         it("returns a versioned behaviour envelope", async () => {
@@ -258,16 +300,76 @@ export function describeBehaviourConformance(config: BehaviourConformanceConfig)
           }
         });
 
-        it("leaves an unmodeled headroom axis absent rather than zero", async () => {
+        it("passes every rule behold applies on arrival", async () => {
+          // The set that matters downstream. behold's `validateBehaviourBlock`
+          // (behold/src/behaviour.ts) drops a block failing any of these with a
+          // diagnostic, so a chant-legal block that fails one renders nothing
+          // while looking correct at every step on this side. Running core's
+          // own validator here keeps the two rule sets provably one set.
           const result = await scenario.run();
           if (isBehaviourRefusalReport(result)) throw new Error("expected a report");
           for (const [name, block] of Object.entries(result.entities)) {
+            expect(() => validateBehaviourBlock(name, block)).not.toThrow();
+          }
+        });
+
+        it("leaves an unmodeled headroom axis absent, and carries at least one", async () => {
+          const result = await scenario.run();
+          if (isBehaviourRefusalReport(result)) throw new Error("expected a report");
+          for (const [name, block] of Object.entries(result.entities)) {
+            const h = block.headroom as { cpu?: number; latency?: number };
+            expect(
+              h.cpu !== undefined || h.latency !== undefined,
+              `${name}'s headroom carries neither cpu nor latency — behold drops this block`,
+            ).toBe(true);
             for (const axis of ["cpu", "latency"] as const) {
-              const value = block.headroom[axis];
+              const value = h[axis];
               if (value === undefined) continue;
               expect(value, `${name}'s ${axis} headroom is out of 0..1`).toBeGreaterThanOrEqual(0);
               expect(value, `${name}'s ${axis} headroom is out of 0..1`).toBeLessThanOrEqual(1);
             }
+          }
+        });
+
+        it("keeps errorRate a fraction, and cost a non-negative finite number", async () => {
+          const result = await scenario.run();
+          if (isBehaviourRefusalReport(result)) throw new Error("expected a report");
+          for (const [name, block] of Object.entries(result.entities)) {
+            expect(block.errorRate, `${name}'s errorRate is not a fraction`).toBeGreaterThanOrEqual(0);
+            expect(block.errorRate, `${name}'s errorRate is not a fraction`).toBeLessThanOrEqual(1);
+            expect(Number.isFinite(block.cost.perHour), `${name}'s cost is not finite`).toBe(true);
+            expect(block.cost.perHour, `${name}'s cost is negative`).toBeGreaterThanOrEqual(0);
+          }
+        });
+
+        it("answers the traffic level it was asked for, and one level per run", async () => {
+          // A lexicon that ignores `traffic` and hardcodes its own passes every
+          // other assertion in this suite.
+          const result = await scenario.run();
+          if (isBehaviourRefusalReport(result)) throw new Error("expected a report");
+          if (scenario.traffic !== undefined) {
+            expect(result.meta.at.traffic, "meta.at does not echo the requested level").toBe(
+              scenario.traffic,
+            );
+          }
+          for (const [name, block] of Object.entries(result.entities)) {
+            expect(block.at.traffic, `${name} is priced at a level meta.at does not name`).toBe(
+              result.meta.at.traffic,
+            );
+          }
+        });
+
+        it("states a tolerance that states something", async () => {
+          // behold accepts any non-empty string, so `"n/a"` survives its
+          // validator and defeats its purpose. The epic asks for the engine's
+          // stated tolerance; a word meaning "none" is not one.
+          const result = await scenario.run();
+          if (isBehaviourRefusalReport(result)) throw new Error("expected a report");
+          for (const [name, block] of Object.entries(result.entities)) {
+            expect(
+              block.provenance.tolerance.trim().toLowerCase(),
+              `${name} states no real tolerance`,
+            ).not.toMatch(/^(n\/a|na|none|unknown|-|\?|tbd)\.?$/);
           }
         });
 

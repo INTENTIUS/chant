@@ -118,5 +118,9 @@ export function staticBehaviour(
   entities: Record<string, PredictedBehaviour>,
   unpredicted?: Record<string, UnpredictedEntity>,
 ): LexiconPlugin["predictBehaviour"] {
-  return async (): Promise<BehaviourResult> => behaviourReport(meta, entities, unpredicted);
+  // The asked-for names come from the request rather than the fixture, so even
+  // a static answer is held to the totality rule: a mock that omits an entity
+  // the caller asked about throws here, exactly as a real lexicon would.
+  return async (options): Promise<BehaviourResult> =>
+    behaviourReport(meta, options.entityNames, entities, unpredicted);
 }

@@ -14,7 +14,7 @@
  */
 
 import { describe, test, expect } from "vitest";
-import { describeBehaviourConformance } from "@intentius/chant-test-utils";
+import { describeBehaviourConformance, behaviourConformanceGaps } from "@intentius/chant-test-utils";
 import type { LexiconPlugin } from "./lexicon";
 import type { IREdge } from "./graph-ir";
 import {
@@ -24,10 +24,17 @@ import {
   behaviourEngineFrom,
   behaviourEngineVariables,
   behaviourReport,
+  compareFigures,
   compareProvenance,
+  isComparableFigure,
   isComparableProvenance,
+  isEdgeCoverageVerdict,
   outOfCreditBehaviourEngineRefusal,
   overQuotaBehaviourEngineRefusal,
+  redactEngineAddress,
+  validateBehaviourBlock,
+  EDGE_COVERAGE_VERDICTS,
+  RESILIENCE_VERDICTS,
   isBehaviourBasis,
   isBehaviourRefusalReport,
   isBehaviourResult,
@@ -37,7 +44,9 @@ import {
   predictedRate,
   renderBehaviourRefusal,
   unreachableBehaviourEngineRefusal,
+  type BehaviourHeadroom,
   type BehaviourResult,
+  type BehaviourUnpredictedReason,
   type PredictBehaviourOptions,
   type PredictedRate,
   type PredictedBehaviour,
@@ -82,6 +91,7 @@ const REQUEST: PredictBehaviourOptions = {
   entityNames: [...DECLARED.keys()],
   entities: DECLARED,
   edges: EDGES,
+  edgeCoverage: { verdict: "complete" },
   region: "us-east-1",
   traffic: "100 rps, p50",
 };
@@ -165,6 +175,7 @@ function acmeSim(env: Record<string, string | undefined>): LexiconPlugin["predic
         version: FIXTURE_ENGINE_VERSION,
         at: { traffic: options.traffic },
       },
+      options.entityNames,
       entities,
       unpredicted,
     );
@@ -183,6 +194,7 @@ describeBehaviourConformance({
     {
       name: "the engine is up",
       declared: [...DECLARED.keys()],
+      traffic: "100 rps, p50",
       run: () => acmeSim(REACHABLE)!(REQUEST),
       expectPredicted: ["web", "db"],
       expectUnpredicted: { queue: "unsupported-kind" },
@@ -458,6 +470,408 @@ describe("provenance does not survive subtraction (#2358, #2360)", () => {
     const foreign = { ...result.entities.db.provenance, engine: "other-sim" };
     expect(compareProvenance(result.entities.web.provenance, foreign)).toBe("mixed-engine");
   });
+
+  test("the same estate at two traffic levels is `mixed-level`, not comparable", () => {
+    // The gap that mattered: `at` lives on the block, not on provenance, so a
+    // provenance-only comparison called 100 rps and 1000 rps a like-for-like
+    // delta — and the binding rule is exactly what a consumer follows to draw
+    // that delta unmarked.
+    const busier: PredictedBehaviour = { ...GOOD, at: { traffic: "1000 rps, p99" } };
+    expect(compareFigures(GOOD, busier)).toBe("mixed-level");
+    expect(isComparableFigure(GOOD, busier)).toBe(false);
+
+    // The provenance-only function still says comparable, and says so in its
+    // own doc. This assertion pins that it is the wrong function to call.
+    expect(compareProvenance(GOOD.provenance, busier.provenance)).toBe("comparable");
+  });
+
+  test("same level, same engine, same basis is comparable", () => {
+    expect(compareFigures(GOOD, { ...GOOD })).toBe("comparable");
+    expect(isComparableFigure(GOOD, { ...GOOD })).toBe(true);
+  });
+
+  test("a mismatched engine outranks a mismatched level, which outranks a mismatched basis", () => {
+    const otherEngine: PredictedBehaviour = {
+      ...GOOD,
+      at: { traffic: "1000 rps" },
+      provenance: { ...GOOD.provenance, engine: "other-sim", basis: "validated" },
+    };
+    expect(compareFigures(GOOD, otherEngine)).toBe("mixed-engine");
+
+    const otherLevel: PredictedBehaviour = {
+      ...GOOD,
+      at: { traffic: "1000 rps" },
+      provenance: { ...GOOD.provenance, basis: "validated" },
+    };
+    expect(compareFigures(GOOD, otherLevel)).toBe("mixed-level");
+
+    const otherBasis: PredictedBehaviour = {
+      ...GOOD,
+      provenance: { ...GOOD.provenance, basis: "validated" },
+    };
+    expect(compareFigures(GOOD, otherBasis)).toBe("mixed-basis");
+  });
+
+  test("a report cannot hold entities at different levels in the first place", () => {
+    // The other half: `behaviourReport` refuses a block whose `at` disagrees
+    // with `meta.at`, so a mixed-level pair can only arise across two reports.
+    expect(() =>
+      behaviourReport(META, ["web", "db"], {
+        web: GOOD,
+        db: { ...GOOD, at: { traffic: "1000 rps" } },
+      }),
+    ).toThrow(/One run, one level/);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* Totality, and the 18 rules behold applies on arrival                       */
+/* -------------------------------------------------------------------------- */
+
+const META = { engine: "acme-sim", version: "1.4.2", at: { traffic: "100 rps, p50" } };
+const GOOD: PredictedBehaviour = {
+  at: { traffic: "100 rps, p50" },
+  cost: predictedRate(0.0416, "USD"),
+  headroom: { cpu: 0.62, latency: 0.41 },
+  errorRate: 0.001,
+  resilience: { failure: "one zone lost", verdict: "survives" },
+  provenance: { engine: "acme-sim", version: "1.4.2", tolerance: "±15%", basis: "modeled" },
+};
+
+describe("totality is enforced, not merely claimed (#2356)", () => {
+  test("an entity in neither map is refused, named", () => {
+    expect(() => behaviourReport(META, ["web", "cache"], { web: GOOD })).toThrow(
+      /gave no verdict at all for "cache"/,
+    );
+  });
+
+  test("the empty report for a non-empty request is refused", () => {
+    // The reproduction: `behaviourReport(meta, {}, {})` used to return a
+    // well-formed report claiming nothing, because it never saw entityNames.
+    expect(() => behaviourReport(META, ["web"], {}, {})).toThrow(/gave no verdict at all for "web"/);
+  });
+
+  test("an entity in both maps is refused", () => {
+    expect(() =>
+      behaviourReport(META, ["web"], { web: GOOD }, { web: { reason: "unsupported-kind" } }),
+    ).toThrow(/both priced and unpriced/);
+  });
+
+  test("a figure for something nobody asked about is refused", () => {
+    expect(() => behaviourReport(META, ["web"], { web: GOOD, ghost: GOOD })).toThrow(
+      /returned a figure for "ghost", which was not in entityNames/,
+    );
+  });
+
+  test("an unpredicted entry with a bogus reason is refused", () => {
+    expect(() =>
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      behaviourReport(META, ["web"], {}, { web: { reason: "no-credentials" as any } }),
+    ).toThrow(/is not one of/);
+  });
+
+  test("a whole valid report still builds", () => {
+    const ok = behaviourReport(META, ["web", "queue"], { web: GOOD }, {
+      queue: { reason: "unsupported-kind" },
+    });
+    expect(ok.entities.web).toBe(GOOD);
+    expect(ok.unpredicted?.queue.reason).toBe("unsupported-kind");
+  });
+});
+
+describe("every rule behold applies on arrival is applied here first (#2356)", () => {
+  // behold/src/behaviour.ts drops a block failing any of these, so a block
+  // chant accepts and behold rejects renders nothing while looking legal.
+  const cases: [string, PredictedBehaviour, RegExp][] = [
+    ["2 at.traffic empty", { ...GOOD, at: { traffic: "" } }, /at\.traffic is missing/],
+    ["3 perHour not finite", { ...GOOD, cost: { rate: "per-hour", perHour: NaN, currency: "USD" } }, /not a finite number/],
+    ["4 perHour negative", { ...GOOD, cost: { rate: "per-hour", perHour: -1, currency: "USD" } }, /is negative/],
+    ["5 currency empty", { ...GOOD, cost: { rate: "per-hour", perHour: 1, currency: "" } }, /currency is missing/],
+    ["7 cpu out of range", { ...GOOD, headroom: { cpu: 1.4 } }, /headroom\.cpu is not a fraction/],
+    ["8 latency out of range", { ...GOOD, headroom: { latency: -0.1 } }, /headroom\.latency is not a fraction/],
+    ["9 no axis at all", { ...GOOD, headroom: {} as never }, /neither cpu nor latency/],
+    ["10 errorRate out of range", { ...GOOD, errorRate: 1.2 }, /errorRate is not a fraction/],
+    ["11 failure empty", { ...GOOD, resilience: { failure: "", verdict: "survives" } }, /failure is missing/],
+    ["12 bogus verdict", { ...GOOD, resilience: { failure: "one zone lost", verdict: "melts" as never } }, /not survives\/degrades\/fails/],
+    ["13 rightSize with no suggestion", { ...GOOD, rightSize: { suggestion: "" } }, /rightSize is present without a suggestion/],
+    ["14 engine empty", { ...GOOD, provenance: { ...GOOD.provenance, engine: "" } }, /provenance\.engine is missing/],
+    ["15 version empty", { ...GOOD, provenance: { ...GOOD.provenance, version: "" } }, /provenance\.version is missing/],
+    ["16 tolerance empty", { ...GOOD, provenance: { ...GOOD.provenance, tolerance: "  " } }, /tolerance is missing/],
+    ["17 bogus basis", { ...GOOD, provenance: { ...GOOD.provenance, basis: "estimated" as never } }, /is not modeled\/validated/],
+  ];
+
+  for (const [label, block, expected] of cases) {
+    test(`rejects ${label}`, () => {
+      expect(() => validateBehaviourBlock("web", block)).toThrow(expected);
+      expect(() => behaviourReport(META, ["web"], { web: block })).toThrow(expected);
+    });
+  }
+
+  test("a tolerance that states no tolerance is rejected, where behold would accept it", () => {
+    // behold takes any non-empty string. The epic asks for the engine's STATED
+    // tolerance, and "n/a" passes behold's check while defeating its purpose.
+    for (const word of ["n/a", "N/A", "none", "unknown", "-", "TBD"]) {
+      expect(
+        () => validateBehaviourBlock("web", { ...GOOD, provenance: { ...GOOD.provenance, tolerance: word } }),
+        `${word} was accepted`,
+      ).toThrow(/states no tolerance/);
+    }
+    expect(() =>
+      validateBehaviourBlock("web", { ...GOOD, provenance: { ...GOOD.provenance, tolerance: "±80%" } }),
+    ).not.toThrow();
+  });
+
+  test("a block priced at a level the run did not ask for is refused", () => {
+    expect(() =>
+      behaviourReport(META, ["web"], { web: { ...GOOD, at: { traffic: "1000 rps, p99" } } }),
+    ).toThrow(/One run, one level/);
+  });
+
+  test("report-level fields are checked too", () => {
+    expect(() => behaviourReport({ ...META, engine: "" }, [], {})).toThrow(/meta\.engine is missing/);
+    expect(() => behaviourReport({ ...META, version: "" }, [], {})).toThrow(/meta\.version is missing/);
+    expect(() => behaviourReport({ ...META, at: { traffic: "" } }, [], {})).toThrow(/meta\.at\.traffic is missing/);
+  });
+
+  test("headroom with no axis will not even compile", () => {
+    // @ts-expect-error the union requires cpu or latency. Rule 9 is a type as
+    // well as a runtime check, and the runtime check is the JavaScript backstop.
+    const empty: BehaviourHeadroom = {};
+    expect(empty).toBeDefined();
+  });
+});
+
+describe("the conformance suite refuses to prove nothing (#2356)", () => {
+  const refusalOnly = {
+    lexicon: "never-predicts",
+    scenarios: [
+      { name: "no engine", declared: ["web"], run: () => acmeSim(NOTHING_CONFIGURED)!(REQUEST), expectRefusal: true },
+      { name: "engine down", declared: ["web"], run: () => acmeSim(CONFIGURED_BUT_DOWN)!(REQUEST), expectRefusal: true },
+    ],
+  };
+
+  test("a lexicon that only ever refuses cannot pass by marking everything a refusal", () => {
+    expect(behaviourConformanceGaps(refusalOnly)).toEqual([
+      "every scenario is a refusal — this suite would pass a lexicon that never predicts anything",
+    ]);
+  });
+
+  test("a predicting scenario that hides the traffic level it asked for is a gap", () => {
+    const noLevel = {
+      lexicon: "hides-its-level",
+      scenarios: [{ name: "up", declared: ["web"], run: () => acmeSim(REACHABLE)!(REQUEST) }],
+    };
+    expect(behaviourConformanceGaps(noLevel)).toEqual([
+      'scenario "up" predicts but does not state the traffic level it requested',
+    ]);
+  });
+
+  test("the fixture's own config has no gaps", () => {
+    expect(
+      behaviourConformanceGaps({
+        lexicon: "acme-sim (fixture)",
+        scenarios: [
+          { name: "up", declared: ["web"], traffic: "100 rps, p50", run: () => acmeSim(REACHABLE)!(REQUEST) },
+          { name: "down", declared: ["web"], run: () => acmeSim(CONFIGURED_BUT_DOWN)!(REQUEST), expectRefusal: true },
+        ],
+      }),
+    ).toEqual([]);
+  });
+});
+
+describe("the lazy lexicon the old suite green-lit (#2356)", () => {
+  /**
+   * A lexicon that satisfies every type on this contract and is useless: it
+   * ignores the traffic level it was handed, ignores the edges, prices
+   * everything at zero, reports no headroom axis at all, and states `n/a` for
+   * its tolerance. Every one of those passed the conformance suite before the
+   * behold rule set landed here, and behold would have dropped every block.
+   */
+  const lazyBlock = (): PredictedBehaviour =>
+    ({
+      at: { traffic: "whatever" },
+      cost: predictedRate(0, "USD"),
+      headroom: {},
+      errorRate: 0,
+      resilience: { failure: "one zone lost", verdict: "survives" },
+      provenance: { engine: "lazy", version: "0", tolerance: "n/a", basis: "modeled" },
+    }) as unknown as PredictedBehaviour;
+
+  test("it cannot build a report at all — the validator stops it first", () => {
+    expect(() =>
+      behaviourReport(
+        { engine: "lazy", version: "0", at: { traffic: "whatever" } },
+        ["web"],
+        { web: lazyBlock() },
+      ),
+    ).toThrow(/neither cpu nor latency/);
+  });
+
+  test("each of its sins is caught by name", () => {
+    const withHeadroom = { ...lazyBlock(), headroom: { cpu: 0.5 } };
+    expect(() => validateBehaviourBlock("web", withHeadroom)).toThrow(/states no tolerance/);
+
+    const withTolerance = {
+      ...withHeadroom,
+      provenance: { ...withHeadroom.provenance, tolerance: "±20%" },
+    };
+    // Zero cost is legal on its own — a free tier is a real answer — so the
+    // suite catches an ignored traffic level through `meta.at` instead.
+    expect(() => validateBehaviourBlock("web", withTolerance)).not.toThrow();
+    expect(() =>
+      behaviourReport(
+        { engine: "lazy", version: "0", at: { traffic: "100 rps, p50" } },
+        ["web"],
+        { web: withTolerance },
+      ),
+    ).toThrow(/One run, one level/);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* The envelope guard                                                         */
+/* -------------------------------------------------------------------------- */
+
+describe("isBehaviourResult requires an arm, not just the version (#2356)", () => {
+  test("a bare discriminant is not a result", () => {
+    // It used to pass, then fail isBehaviourRefusalReport, narrow to
+    // BehaviourReport, and hand a consumer `undefined` for `entities`.
+    expect(isBehaviourResult({ behaviour: "v1" })).toBe(false);
+    expect(isBehaviourResult({ behaviour: "v1", entities: {} })).toBe(false);
+    expect(isBehaviourResult({ behaviour: "v1", meta: META })).toBe(false);
+  });
+
+  test("both real arms are results", () => {
+    expect(isBehaviourResult(behaviourReport(META, [], {}))).toBe(true);
+    expect(isBehaviourResult(noBehaviourEngineRefusal("acme"))).toBe(true);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* The runtime witness cannot drift from the type                             */
+/* -------------------------------------------------------------------------- */
+
+describe("the reason list is derived from the type, not written beside it (#2356)", () => {
+  test("every reason the type admits has a runtime witness", () => {
+    // The array is Object.keys of a Record keyed by the union, so this cannot
+    // fail without the module failing to compile — which is the point. Adding a
+    // reason to `UnobservedReason` upstream used to widen this type silently,
+    // leaving the guard rejecting a value the type accepted.
+    const witness: Record<BehaviourUnpredictedReason, true> = {
+      "read-failed": true,
+      "no-binding": true,
+      "unsupported-kind": true,
+      filtered: true,
+      "no-engine": true,
+      "engine-unreachable": true,
+      "engine-out-of-credit": true,
+      "engine-over-quota": true,
+    };
+    expect([...BEHAVIOUR_UNPREDICTED_REASONS].sort()).toEqual(Object.keys(witness).sort());
+    for (const reason of Object.keys(witness)) {
+      expect(isBehaviourUnpredictedReason(reason), `${reason} has no witness`).toBe(true);
+    }
+  });
+
+  test("the same construction guards the other two closed sets", () => {
+    expect([...BEHAVIOUR_BASES].sort()).toEqual(["modeled", "validated"]);
+    expect([...RESILIENCE_VERDICTS].sort()).toEqual(["degrades", "fails", "survives"]);
+    expect([...EDGE_COVERAGE_VERDICTS].sort()).toEqual(["complete", "partial", "unknown"]);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* Edge coverage                                                              */
+/* -------------------------------------------------------------------------- */
+
+describe("an empty edge list can say which kind of empty it is (#2360)", () => {
+  test("coverage is required — `[]` alone is not a statement", () => {
+    // @ts-expect-error `edgeCoverage` is required: `edges: []` cannot say
+    // whether nothing references anything or nothing could be reconstructed.
+    const unstated: PredictBehaviourOptions = { ...REQUEST, edgeCoverage: undefined };
+    expect(unstated).toBeDefined();
+  });
+
+  test("a partial rebuild carries what it knows it lost", () => {
+    const partial: PredictBehaviourOptions = {
+      ...REQUEST,
+      edges: [],
+      edgeCoverage: {
+        verdict: "partial",
+        dangling: ["vpc-0a1b2c3d"],
+        unresolvedKinds: ["AWS::SQS::Queue"],
+        containment: [{ from: "web", to: "subnet-a", kind: "ref" }],
+      },
+    };
+    expect(isEdgeCoverageVerdict(partial.edgeCoverage.verdict)).toBe(true);
+    expect(partial.edgeCoverage.dangling).toEqual(["vpc-0a1b2c3d"]);
+    // Containment is the one an engine needs for "one zone lost" and `edges`
+    // will never carry, because chant draws it as a boundary rather than a line.
+    expect(partial.edgeCoverage.containment).toHaveLength(1);
+  });
+
+  test("`unknown` is available for a builder that cannot say", () => {
+    const opaque: PredictBehaviourOptions = {
+      ...REQUEST,
+      edges: [],
+      edgeCoverage: { verdict: "unknown" },
+    };
+    expect(opaque.edgeCoverage.verdict).toBe("unknown");
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* Nothing in a refusal publishes a credential                                */
+/* -------------------------------------------------------------------------- */
+
+describe("a refusal never prints the engine's credentials (#2358 posts these publicly)", () => {
+  const env = {
+    CHANT_BEHAVIOUR_ENGINE: "https://svc:s3cr3t@engine.internal/predict?key=abc123&sig=zzz",
+  };
+
+  test("userinfo and the query string are gone from the reason and the remedy", () => {
+    const endpoint = behaviourEngineFrom("acme", env)!;
+    const refusal = unreachableBehaviourEngineRefusal("acme", endpoint, "ECONNREFUSED").refusal;
+    for (const text of [refusal.reason, refusal.remedy]) {
+      expect(text, "the password leaked").not.toContain("s3cr3t");
+      expect(text, "the userinfo leaked").not.toContain("svc:");
+      expect(text, "a query token leaked").not.toContain("abc123");
+      expect(text, "a signature leaked").not.toContain("zzz");
+    }
+    // The host survives, because a refusal naming no address cannot be acted on.
+    expect(refusal.reason).toContain("engine.internal");
+  });
+
+  test("the credit and quota refusals redact the same way", () => {
+    const endpoint = behaviourEngineFrom("acme", env)!;
+    for (const refusal of [
+      outOfCreditBehaviourEngineRefusal("acme", endpoint, "balance 0.00").refusal,
+      overQuotaBehaviourEngineRefusal("acme", endpoint, "5000/5000").refusal,
+    ]) {
+      expect(refusal.reason).not.toContain("s3cr3t");
+      expect(refusal.reason).not.toContain("abc123");
+      expect(refusal.remedy).not.toContain("s3cr3t");
+    }
+  });
+
+  test("engine-supplied detail is bounded and scrubbed", () => {
+    const endpoint = behaviourEngineFrom("acme", env)!;
+    const chatty =
+      "quota exceeded; see https://billing.acme.example/accounts/9?token=glpat-abcdef123456 " +
+      "for details ".repeat(60);
+    const reason = overQuotaBehaviourEngineRefusal("acme", endpoint, chatty).refusal.reason;
+    expect(reason).not.toContain("glpat-abcdef123456");
+    expect(reason).not.toContain("/accounts/9");
+    expect(reason.length).toBeLessThan(chatty.length);
+  });
+
+  test("a socket path or a bare command is left readable", () => {
+    const local = behaviourEngineFrom("acme", { CHANT_BEHAVIOUR_ENGINE: "/var/run/acme.sock" })!;
+    expect(unreachableBehaviourEngineRefusal("acme", local, "no such file").refusal.reason).toContain(
+      "/var/run/acme.sock",
+    );
+    expect(redactEngineAddress("acme-sim")).toBe("acme-sim");
+  });
 });
 
 describe("the engine variable chain (#2356)", () => {
@@ -550,6 +964,7 @@ describe("rule 1 — a prediction cannot be shaped like a bill (#2356)", () => {
         accountId: "123456789012",
         periodStart: "2026-08-01",
       },
+      [],
       {},
     );
     expect(asStatement).toBeDefined();
@@ -606,10 +1021,98 @@ describe("rule 3 — no credential can reach the engine (#2356)", () => {
   test("a credential arriving from JavaScript is refused at runtime, naming the field", () => {
     for (const key of ["token", "credentials", "apiKey", "privateKey", "authorization"]) {
       expect(() => assertNoCredentialInOptions({ ...REQUEST, [key]: "x" })).toThrow(
-        new RegExp(`passed "${key}" in its options`),
+        new RegExp(`credential-shaped field name \\("${key}"\\)`),
       );
     }
     expect(() => assertNoCredentialInOptions(REQUEST)).not.toThrow();
+  });
+
+  test("a key nobody listed is caught too — casing, separators and all", () => {
+    // The reproduction that broke the old 14-name list. Every one of these
+    // compiles clean through a widened variable, and every one is a credential.
+    const smuggled: Record<string, unknown> = {
+      xApiKey: "sk-live-DEADBEEF",
+      Authorization: "Bearer abc",
+      pat: "glpat-zzz",
+      "x-api-key": "whatever",
+      clientSecret: "s",
+      refreshToken: "r",
+      awsSecretAccessKey: "a",
+      cookie: "session=1",
+    };
+    for (const [key, value] of Object.entries(smuggled)) {
+      expect(
+        () => assertNoCredentialInOptions({ ...REQUEST, [key]: value }),
+        `${key} was not caught`,
+      ).toThrow(/behaviour engine is never handed a credential/);
+    }
+  });
+
+  test("a credential in `props` is caught — the channel no type can see", () => {
+    // Props come straight out of the build. A lexicon surfacing a connection
+    // string puts one here without deciding to, which is the realistic leak.
+    const leaky = new Map(DECLARED);
+    leaky.set("db", {
+      entityType: "AWS::RDS::DBInstance",
+      props: { awsSecretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY" },
+    });
+    expect(() => assertNoCredentialInOptions({ ...REQUEST, entities: leaky })).toThrow(
+      /credential-shaped field name \("awsSecretAccessKey"\)/,
+    );
+
+    const urlCreds = new Map(DECLARED);
+    urlCreds.set("db", {
+      entityType: "AWS::RDS::DBInstance",
+      props: { connection: "postgres://app:hunter2@db.internal:5432/prod" },
+    });
+    expect(() => assertNoCredentialInOptions({ ...REQUEST, entities: urlCreds })).toThrow(
+      /a password in a URL's userinfo/,
+    );
+  });
+
+  test("a credential on an edge field is caught", () => {
+    expect(() =>
+      assertNoCredentialInOptions({
+        ...REQUEST,
+        edges: [{ from: "web", to: "db", kind: "ref", viaAttr: "token=glpat-abcdef123456" }],
+      }),
+    ).toThrow(/a GitLab personal access token/);
+  });
+
+  test("a credential-shaped value is caught wherever it sits, whatever the key", () => {
+    const shapes: Record<string, string> = {
+      note: "ghp_abcdefghijklmnop",
+      label: "AKIAIOSFODNN7EXAMPLE",
+      hint: "xoxb-1234-5678-abcdefg",
+      blob: "-----BEGIN RSA PRIVATE KEY-----\nMIIE\n-----END RSA PRIVATE KEY-----",
+      jwt: "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abc",
+    };
+    for (const [key, value] of Object.entries(shapes)) {
+      const props = new Map(DECLARED);
+      props.set("web", { entityType: "AWS::EC2::Instance", props: { [key]: value } });
+      expect(
+        () => assertNoCredentialInOptions({ ...REQUEST, entities: props }),
+        `${key} was not caught`,
+      ).toThrow(/behaviour engine is never handed a credential/);
+    }
+  });
+
+  test("ordinary build output is not refused — ids, ARNs and digests pass", () => {
+    // The other half of the bargain. There is no entropy scoring on purpose:
+    // this walks build output, and a heuristic refusing these would refuse real
+    // projects rather than protect them.
+    const ordinary = new Map(DECLARED);
+    ordinary.set("web", {
+      entityType: "AWS::EC2::Instance",
+      props: {
+        arn: "arn:aws:ec2:us-east-1:123456789012:instance/i-0abcd1234ef567890",
+        digest: "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        accountId: "123456789012",
+        subnet: "subnet-0a1b2c3d4e5f6a7b8",
+        url: "https://api.internal.example.com/v1/things?page=2",
+      },
+    });
+    expect(() => assertNoCredentialInOptions({ ...REQUEST, entities: ordinary })).not.toThrow();
   });
 
   test("the lexicon itself refuses a smuggled credential before it resolves an engine", async () => {

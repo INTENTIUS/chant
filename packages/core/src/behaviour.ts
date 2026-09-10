@@ -16,17 +16,18 @@
  * ## A prediction is not a bill
  *
  * The one failure mode that matters here is somebody quoting a modeled figure
- * as money owed. Four things in this module make that a type error rather than
- * a matter of care:
+ * as money owed. Four things in this module work against that, and it is worth
+ * being exact about how much they buy, because an overstated guarantee is how
+ * a consumer ends up trusting one:
  *
  *   1. Money appears in exactly one shape, {@link PredictedRate}, and that
  *      shape carries a literal `rate: "per-hour"` discriminant. There is no
  *      field anywhere for an amount, a period, an account, an invoice or a
- *      due date, so an elapsed charge is not expressible.
+ *      due date, so an elapsed charge is not expressible *in this module's
+ *      types*.
  *   2. A figure cannot exist without {@link PredictedBehaviour.at}, the traffic
  *      level it was predicted for. A bill is for an hour that happened; this is
- *      for an hour the engine was asked to imagine, and the type will not let
- *      the caller forget which.
+ *      for an hour the engine was asked to imagine.
  *   3. {@link BehaviourProvenance} is required on every entity, and its
  *      {@link BehaviourProvenance.basis} is a closed two-value enum: `modeled`
  *      off list prices, or `validated` against a real bill. A figure that will
@@ -34,19 +35,40 @@
  *   4. A refusal is a separate member of the {@link BehaviourResult} union with
  *      no figures on it at all, so "the engine is gone" and "the engine says
  *      zero" are different objects rather than the same object with zeroes in
- *      it.
+ *      it. This one is airtight: there is no `entities` key on the refusal arm
+ *      to be empty and no total to be zero.
+ *
+ * **What this does not do is make a bill a type error.** A consumer holding a
+ * {@link PredictedBehaviour} can write
+ * `const { rate, ...rest } = cost; return { amount: rest.perHour * hours }`
+ * and TypeScript will not object; the discriminant is a field on an object, and
+ * a field can be dropped. behold's own validator rebuilds `cost` as
+ * `{ perHour, currency }` and its estate sum carries no discriminant at all, so
+ * the marker is stripped by the first consumer *by design*. What the shape
+ * genuinely buys is that a bill cannot be constructed **accidentally** — every
+ * route from a prediction to something that reads as money owed has a
+ * deliberate destructure or cast in it, and shows up in review as one. Treat
+ * rules 1 to 3 as a speed bump with a name, and rule 4 as the enforced one.
  *
  * ## The engine sees no credential and writes nothing
  *
  * {@link PredictBehaviourOptions} mirrors `observeResourcesDeep`'s options
- * field for field, plus `traffic` and `edges`, and then closes the door on
- * credentials: every name a caller might reach for is declared `?: never`, so
- * passing one is a compile error, and TypeScript's excess-property check
- * rejects every other name. {@link assertNoCredentialInOptions} is the same
- * refusal for a caller arriving from JavaScript.
+ * field for field, plus `traffic`, `edges` and `edgeCoverage`, and then works
+ * against credentials on two levels. The type declares every obvious name
+ * `?: never`, which catches the deliberate attempt; and
+ * {@link assertNoCredentialInOptions} walks the whole request at runtime,
+ * matching credential-shaped **values** as well as credential-shaped keys,
+ * which is what catches the accident.
  *
- * `edges` is the one place the mirror breaks, and the field's own doc says
- * why: the epic's input is a resource graph, a deep read has no use for
+ * The runtime walk is the load-bearing half, because the type cannot see the
+ * two channels that actually carry a secret in practice:
+ * `entities[*].props` is `Record<string, unknown>` straight out of the build,
+ * and a lexicon surfacing a connection string puts one there without deciding
+ * to. See {@link assertNoCredentialInOptions} for exactly what the walk detects
+ * and, more importantly, what it does not.
+ *
+ * `edges` is the one place the options mirror breaks, and the field's own doc
+ * says why: the epic's input is a resource graph, a deep read has no use for
  * neighbours, and a prediction is nothing but statements about paths through
  * the estate. It carries `IREdge` (./graph-ir.ts) rather than an edge type of
  * this contract's own, because that is already the shape both the declared
@@ -91,14 +113,16 @@
  * The epic wants a declared prediction and a live prediction shown as a delta,
  * and #2358 posts one on a merge request. This module deliberately ships no
  * delta type and no differencing function. What it ships is the one thing a
- * hand-rolled diff silently loses, which is that provenance does not survive
- * subtraction: {@link compareProvenance} classifies a pair of figures
- * `comparable`, `mixed-basis` or `mixed-engine`, and the rule this contract
+ * hand-rolled diff silently loses, which is that a figure's context does not
+ * survive subtraction: {@link compareFigures} classifies a pair `comparable`,
+ * `mixed-basis`, `mixed-level` or `mixed-engine`, and the rule this contract
  * binds its consumers to is that anything but `comparable` must be marked
  * wherever it is shown. A `modeled` figure minus a `validated` one is not a
- * change in the estate; part of that difference is the gap between a price
- * list and an invoice. How the mark looks is #2358's to define. Whether there
- * is one is not.
+ * change in the estate; part of that difference is the gap between a price list
+ * and an invoice. Nor is a 100 rps figure minus a 1000 rps one, which is why
+ * {@link compareProvenance} — which cannot see `at` and never could — is not
+ * the function to reach for. How the mark looks is #2358's to define. Whether
+ * there is one is not.
  *
  * ## Shape compatibility with the overlay
  *
@@ -112,6 +136,13 @@
 
 import type { UnobservedReason } from "./observation";
 import type { IREdge } from "./graph-ir";
+import {
+  CREDENTIAL_ENV_NAME,
+  CREDENTIAL_SHAPES,
+  CREDENTIAL_TOKEN_SHAPES,
+  REDACTED,
+  redactCredentialMaterial,
+} from "./identity";
 
 /**
  * Whether a figure came off a price list or off a bill. Closed, and required on
@@ -123,8 +154,28 @@ import type { IREdge } from "./graph-ir";
  */
 export type BehaviourBasis = "modeled" | "validated";
 
-/** Every legal {@link BehaviourBasis}, for validation and conformance checks. */
-export const BEHAVIOUR_BASES: readonly BehaviourBasis[] = ["modeled", "validated"];
+/**
+ * Every legal {@link BehaviourBasis}, for validation and conformance checks.
+ *
+ * Derived from a total witness rather than typed as `readonly BehaviourBasis[]`
+ * and written out by hand. A hand-written array is only checked for having
+ * legal members, never for having ALL of them, so a value added to the union
+ * leaves the array silently short and every runtime guard built on it starts
+ * rejecting a value the type accepts. Keying a `Record` off the union makes the
+ * omission a compile error at the point of the omission. Same construction for
+ * {@link RESILIENCE_VERDICTS} and {@link BEHAVIOUR_UNPREDICTED_REASONS}, and
+ * the last of those is the one that needed it: it derives from
+ * `UnobservedReason`, so a reason added *upstream* would otherwise widen this
+ * type with nothing here failing.
+ */
+const BEHAVIOUR_BASIS_WITNESS: Record<BehaviourBasis, true> = {
+  modeled: true,
+  validated: true,
+};
+
+export const BEHAVIOUR_BASES: readonly BehaviourBasis[] = Object.keys(
+  BEHAVIOUR_BASIS_WITNESS,
+) as BehaviourBasis[];
 
 /** True when `value` is a legal {@link BehaviourBasis}. */
 export function isBehaviourBasis(value: unknown): value is BehaviourBasis {
@@ -190,18 +241,23 @@ export function predictedRate(perHour: number, currency: string): PredictedRate 
  * model is **absent**, never `0` — zero headroom means saturated, which is the
  * opposite claim.
  */
-export interface BehaviourHeadroom {
-  /** Fraction of CPU capacity still free. */
-  cpu?: number;
-  /** Fraction of the latency budget still unspent. */
-  latency?: number;
-}
+export type BehaviourHeadroom =
+  | { cpu: number; latency?: number }
+  | { cpu?: number; latency: number };
 
 /** What an entity does when the named failure happens. Closed. */
 export type ResilienceVerdict = "survives" | "degrades" | "fails";
 
+const RESILIENCE_VERDICT_WITNESS: Record<ResilienceVerdict, true> = {
+  survives: true,
+  degrades: true,
+  fails: true,
+};
+
 /** Every legal {@link ResilienceVerdict}, for validation and conformance checks. */
-export const RESILIENCE_VERDICTS: readonly ResilienceVerdict[] = ["survives", "degrades", "fails"];
+export const RESILIENCE_VERDICTS: readonly ResilienceVerdict[] = Object.keys(
+  RESILIENCE_VERDICT_WITNESS,
+) as ResilienceVerdict[];
 
 /** True when `value` is a legal {@link ResilienceVerdict}. */
 export function isResilienceVerdict(value: unknown): value is ResilienceVerdict {
@@ -296,17 +352,32 @@ export type BehaviourUnpredictedReason =
   | "engine-out-of-credit"
   | "engine-over-quota";
 
+/**
+ * The total witness. This is the one that earns the construction: the type
+ * above derives from `UnobservedReason`, so adding a reason to THAT union —
+ * in ./observation.ts, for reasons that have nothing to do with prediction —
+ * silently widens this one. With a hand-written array, the widening compiled
+ * clean, every existing test stayed green, and the new reason was assignable to
+ * `BehaviourUnpredictedReason` while {@link isBehaviourUnpredictedReason}
+ * returned `false` for it and the conformance suite rejected it. Keyed off the
+ * union, the same change fails to compile here and somebody has to decide
+ * whether the new reason belongs to behaviour at all.
+ */
+const BEHAVIOUR_UNPREDICTED_REASON_WITNESS: Record<BehaviourUnpredictedReason, true> = {
+  "read-failed": true,
+  "no-binding": true,
+  "unsupported-kind": true,
+  filtered: true,
+  "no-engine": true,
+  "engine-unreachable": true,
+  "engine-out-of-credit": true,
+  "engine-over-quota": true,
+};
+
 /** Every legal {@link BehaviourUnpredictedReason}, for validation and conformance checks. */
-export const BEHAVIOUR_UNPREDICTED_REASONS: readonly BehaviourUnpredictedReason[] = [
-  "read-failed",
-  "no-binding",
-  "unsupported-kind",
-  "filtered",
-  "no-engine",
-  "engine-unreachable",
-  "engine-out-of-credit",
-  "engine-over-quota",
-];
+export const BEHAVIOUR_UNPREDICTED_REASONS: readonly BehaviourUnpredictedReason[] = Object.keys(
+  BEHAVIOUR_UNPREDICTED_REASON_WITNESS,
+) as BehaviourUnpredictedReason[];
 
 /** True when `value` is a legal {@link BehaviourUnpredictedReason}. */
 export function isBehaviourUnpredictedReason(
@@ -410,21 +481,202 @@ export function isBehaviourRefusalReport(
   return typeof value === "object" && value !== null && "refusal" in value;
 }
 
-/** True when `value` is either arm of the versioned {@link BehaviourResult} envelope. */
+/**
+ * True when `value` is either arm of the versioned {@link BehaviourResult}
+ * envelope.
+ *
+ * Both the discriminant AND an arm, because the discriminant alone is not the
+ * type. `{ behaviour: "v1" }` carries the version and is neither arm: it fails
+ * {@link isBehaviourRefusalReport}, so a consumer's `if (refusal) … else …`
+ * narrows it to {@link BehaviourReport}, and `result.entities` is `undefined`
+ * at a site TypeScript has been told cannot be.
+ */
 export function isBehaviourResult(value: unknown): value is BehaviourResult {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as { behaviour?: unknown; refusal?: unknown; entities?: unknown; meta?: unknown };
+  if (v.behaviour !== "v1") return false;
+  if (typeof v.refusal === "object" && v.refusal !== null) return true;
   return (
-    typeof value === "object" &&
-    value !== null &&
-    (value as { behaviour?: unknown }).behaviour === "v1"
+    typeof v.entities === "object" && v.entities !== null && typeof v.meta === "object" && v.meta !== null
   );
 }
 
-/** Build a {@link BehaviourReport}. Lexicons use this rather than writing the discriminant by hand. */
+/** A tolerance that states nothing. Rejected, because "stated tolerance" is the point. */
+const EMPTY_TOLERANCES: readonly string[] = ["n/a", "na", "none", "unknown", "-", "?", "tbd"];
+
+const isFraction = (v: unknown): boolean => typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1;
+const isFilled = (v: unknown): boolean => typeof v === "string" && v.trim() !== "";
+
+/**
+ * Every rule behold's `validateBehaviourBlock` applies, applied here instead —
+ * before the block is built rather than after it has travelled.
+ *
+ * The rule set is deliberately, literally the same set. behold
+ * (`behold/src/behaviour.ts:209`) validates each block on arrival and **drops
+ * the whole block** with a diagnostic when one fails, so a block chant's types
+ * accept and behold's validator rejects renders nothing at all, having looked
+ * perfectly legal every step of the way here. Types cannot carry most of these:
+ * `tolerance: string` accepts `""`, `errorRate: number` accepts `1.2`, and
+ * `cost.perHour: number` accepts `-4`.
+ *
+ * The mapping, by behold's own numbering, so a future change there has a named
+ * place to land here:
+ *
+ *  2 `at.traffic` non-empty · 3 `cost.perHour` finite · 4 not negative ·
+ *  5 `cost.currency` non-empty · 6 `headroom` present · 7/8 each axis a
+ *  fraction · 9 at least one axis · 10 `errorRate` a fraction ·
+ *  11 `resilience.failure` non-empty · 12 verdict in the closed set ·
+ *  13 `rightSize` implies a `suggestion` · 14 `provenance.engine` non-empty ·
+ *  15 `version` non-empty · 16 `tolerance` non-empty · 17 `basis` in the closed
+ *  set.
+ *
+ * Rules 9 and 16 are the two chant is stricter on. Rule 9 is also a type here
+ * ({@link BehaviourHeadroom} is a union requiring one axis), so this is the
+ * backstop for a JavaScript caller. And on 16, behold accepts any non-empty
+ * string while this rejects `n/a`, `none`, `unknown` and friends: the epic asks
+ * for the engine's *stated* tolerance, and a word meaning "I have none to
+ * state" passes behold's check while defeating its purpose.
+ */
+export function validateBehaviourBlock(name: string, block: PredictedBehaviour): void {
+  const bad = (why: string): never => {
+    throw new Error(
+      `predictBehaviour produced an invalid block for "${name}": ${why}. behold's own validator ` +
+        "(behold/src/behaviour.ts) drops a block failing this, so it would render nothing rather than " +
+        "render wrong — which is worse to debug, because everything here looked legal.",
+    );
+  };
+
+  if (!isFilled(block.at?.traffic)) bad("at.traffic is missing — name the traffic level you priced");
+
+  const perHour = block.cost?.perHour;
+  if (typeof perHour !== "number" || !Number.isFinite(perHour)) bad("cost.perHour is not a finite number");
+  if ((perHour as number) < 0) bad("cost.perHour is negative");
+  if (!isFilled(block.cost?.currency)) bad("cost.currency is missing");
+
+  const headroom = block.headroom as { cpu?: unknown; latency?: unknown } | undefined;
+  if (!headroom || typeof headroom !== "object") bad("headroom is missing");
+  const h = headroom as { cpu?: unknown; latency?: unknown };
+  if (h.cpu !== undefined && !isFraction(h.cpu)) bad("headroom.cpu is not a fraction 0..1");
+  if (h.latency !== undefined && !isFraction(h.latency)) bad("headroom.latency is not a fraction 0..1");
+  if (h.cpu === undefined && h.latency === undefined) {
+    bad("headroom carries neither cpu nor latency — an axis you did not model is absent, and a block with no axis at all says nothing");
+  }
+
+  if (!isFraction(block.errorRate)) bad("errorRate is not a fraction 0..1");
+
+  if (!isFilled(block.resilience?.failure)) {
+    bad("resilience.failure is missing — a verdict with no named failure says nothing");
+  }
+  if (!isResilienceVerdict(block.resilience?.verdict)) {
+    bad(`resilience.verdict ${JSON.stringify(block.resilience?.verdict)} is not survives/degrades/fails`);
+  }
+
+  if (block.rightSize !== undefined && !isFilled(block.rightSize.suggestion)) {
+    bad("rightSize is present without a suggestion");
+  }
+
+  const p = block.provenance;
+  if (!p || typeof p !== "object") bad("provenance is missing");
+  if (!isFilled(p?.engine)) bad("provenance.engine is missing");
+  if (!isFilled(p?.version)) bad("provenance.version is missing");
+  if (!isFilled(p?.tolerance)) {
+    bad("provenance.tolerance is missing — a figure without a stated tolerance is not a prediction");
+  }
+  if (EMPTY_TOLERANCES.includes(p.tolerance.trim().toLowerCase().replace(/\.$/, ""))) {
+    bad(
+      `provenance.tolerance ${JSON.stringify(p.tolerance)} states no tolerance. An engine with nothing ` +
+        "to say about its own error bars has no business publishing a figure; say the number, however wide",
+    );
+  }
+  if (!isBehaviourBasis(p?.basis)) {
+    bad(`provenance.basis ${JSON.stringify(p?.basis)} is not modeled/validated`);
+  }
+}
+
+/**
+ * Build a {@link BehaviourReport}, and refuse to build an invalid one.
+ *
+ * `entityNames` is the request's own list, and passing it is what makes the
+ * totality rule enforceable rather than merely stated. Without it this function
+ * had no idea what had been asked about, so `behaviourReport(meta, {}, {})` for
+ * a three-entity request returned a well-formed report claiming nothing, and
+ * the only thing checking totality was a conformance suite measuring against an
+ * author-written list that nothing tied to the request.
+ *
+ * Four refusals, all naming what went wrong:
+ *
+ *  - an entity in neither map — the tri-state's whole point, and the one a
+ *    `continue` in a lexicon's loop produces silently;
+ *  - an entity in both maps — priced and unpriced at once;
+ *  - a figure for something nobody asked about;
+ *  - any block failing {@link validateBehaviourBlock}, plus the report-level
+ *    rule that every entity's `at` matches `meta.at`. One run priced one
+ *    traffic level; a block claiming another is either a bug or an answer to a
+ *    question that was not asked, and a consumer differencing two reports has
+ *    no way to see it.
+ */
 export function behaviourReport(
   meta: BehaviourReportMeta,
+  entityNames: readonly string[],
   entities: Record<string, PredictedBehaviour>,
   unpredicted?: Record<string, UnpredictedEntity>,
 ): BehaviourReport {
+  if (!isFilled(meta?.engine)) throw new Error("predictBehaviour: meta.engine is missing");
+  if (!isFilled(meta?.version)) throw new Error("predictBehaviour: meta.version is missing");
+  if (!isFilled(meta?.at?.traffic)) throw new Error("predictBehaviour: meta.at.traffic is missing");
+  if (meta.total && (!Number.isFinite(meta.total.perHour) || meta.total.perHour < 0)) {
+    throw new Error("predictBehaviour: meta.total.perHour is not a non-negative finite number");
+  }
+
+  const asked = new Set(entityNames);
+  const holes = new Set(Object.keys(unpredicted ?? {}));
+
+  for (const name of Object.keys(entities)) {
+    if (holes.has(name)) {
+      throw new Error(
+        `predictBehaviour reported "${name}" as both priced and unpriced. An entity has one verdict.`,
+      );
+    }
+    if (!asked.has(name)) {
+      throw new Error(
+        `predictBehaviour returned a figure for "${name}", which was not in entityNames. An engine ` +
+          "answering about entities nobody asked about is answering about the wrong estate.",
+      );
+    }
+    validateBehaviourBlock(name, entities[name]);
+    if (entities[name].at.traffic !== meta.at.traffic) {
+      throw new Error(
+        `predictBehaviour priced "${name}" at ${JSON.stringify(entities[name].at.traffic)} in a run ` +
+          `whose meta.at.traffic is ${JSON.stringify(meta.at.traffic)}. One run, one level.`,
+      );
+    }
+  }
+
+  for (const name of holes) {
+    if (!asked.has(name)) {
+      throw new Error(`predictBehaviour reported "${name}" unpredicted, and it was not in entityNames.`);
+    }
+    if (!isBehaviourUnpredictedReason(unpredicted![name]?.reason)) {
+      throw new Error(
+        `predictBehaviour gave "${name}" the reason ` +
+          `${JSON.stringify(unpredicted![name]?.reason)}, which is not one of ` +
+          `${BEHAVIOUR_UNPREDICTED_REASONS.join(", ")}.`,
+      );
+    }
+  }
+
+  const missing = entityNames.filter(
+    (name) => !Object.prototype.hasOwnProperty.call(entities, name) && !holes.has(name),
+  );
+  if (missing.length > 0) {
+    throw new Error(
+      `predictBehaviour gave no verdict at all for ${missing.map((n) => `"${n}"`).join(", ")}. Every ` +
+        "entity asked about lands in `entities` or in `unpredicted` — there is no third position, " +
+        "because a prediction has no equivalent of \"the provider says it is not there\". An entity " +
+        "you could not price is `unsupported-kind`, not an omission.",
+    );
+  }
+
   return {
     behaviour: "v1",
     meta,
@@ -458,21 +710,16 @@ export function behaviourRefusal(refusal: BehaviourRefusal): BehaviourRefusalRep
 export type ProvenanceComparability = "comparable" | "mixed-basis" | "mixed-engine";
 
 /**
- * Classify a pair of figures for delta purposes.
+ * Classify a pair of *provenances*. Almost always the wrong function to call —
+ * see {@link compareFigures}, which is the one consumers want.
  *
- * This module owns the invariant and not the presentation. #2358 defines what
- * a predicted-cost delta looks like on a merge request and #2360 defines the
- * live-versus-declared view, and neither needs this module's opinion on
- * layout. What both need, and what a hand-rolled diff of two
- * {@link BehaviourResult}s silently loses, is that provenance does not survive
- * subtraction: two numbers can be differenced whatever produced them, and the
- * result carries no trace of having crossed a basis or an engine.
- *
- * So the rule this contract binds its consumers to, in one sentence: **a delta
- * between two figures that do not classify `comparable` must be marked as
- * such wherever it is shown, and must never be presented as a plain
- * difference.** How it is marked is #2358's to choose. Whether it must be
- * marked is not.
+ * The limit is structural rather than an oversight: `at` lives on
+ * {@link PredictedBehaviour} and not on {@link BehaviourProvenance}, so this
+ * function cannot see the traffic level and will happily answer `comparable`
+ * for a figure at 100 rps and a figure at 1000 rps. Two predictions of the same
+ * estate by the same engine at different levels are not a delta of like things;
+ * they are answers to different questions. Use this only where the two figures
+ * are already known to share a level.
  */
 export function compareProvenance(
   a: BehaviourProvenance,
@@ -484,7 +731,49 @@ export function compareProvenance(
   return a.basis === b.basis ? "comparable" : "mixed-basis";
 }
 
-/** True when two figures may be shown as a plain difference, with no mixed-provenance mark. */
+/** How comparable two whole figures are — {@link ProvenanceComparability} plus the traffic level. */
+export type FigureComparability = ProvenanceComparability | "mixed-level";
+
+/**
+ * Classify a pair of figures for delta purposes. **This is the one to call.**
+ *
+ * This module owns the invariant and not the presentation. #2358 defines what a
+ * predicted-cost delta looks like on a merge request and #2360 defines the
+ * live-versus-declared view, and neither needs this module's opinion on layout.
+ * What both need, and what a hand-rolled diff of two {@link BehaviourResult}s
+ * silently loses, is that the context of a figure does not survive subtraction:
+ * two numbers difference cleanly whatever produced them, and the answer carries
+ * no trace of having crossed an engine, a basis or a traffic level.
+ *
+ * Verdicts, in the order they are checked, most fundamental first:
+ *
+ *  - `mixed-engine` — the engine, version or tolerance differs. Two models are
+ *    not one scale, so nothing below this matters.
+ *  - `mixed-level` — same engine, different `at`. Same question asked of two
+ *    different worlds; the difference is mostly the difference in the question.
+ *  - `mixed-basis` — same engine, same level, one figure off a price list and
+ *    the other off an invoice. Part of the difference is the gap between those.
+ *  - `comparable` — everything matches, and the difference is a difference in
+ *    the estate.
+ *
+ * The rule this contract binds its consumers to, in one sentence: **a delta
+ * between two figures that do not classify `comparable` must be marked as such
+ * wherever it is shown, and must never be presented as a plain difference.**
+ * How it is marked is #2358's to choose. Whether it must be marked is not.
+ */
+export function compareFigures(a: PredictedBehaviour, b: PredictedBehaviour): FigureComparability {
+  const provenance = compareProvenance(a.provenance, b.provenance);
+  if (provenance === "mixed-engine") return "mixed-engine";
+  if (a.at.traffic !== b.at.traffic) return "mixed-level";
+  return provenance;
+}
+
+/** True when two whole figures may be shown as a plain difference, with no mark. */
+export function isComparableFigure(a: PredictedBehaviour, b: PredictedBehaviour): boolean {
+  return compareFigures(a, b) === "comparable";
+}
+
+/** True when two provenances may be shown as a plain difference. Level-blind — see {@link compareProvenance}. */
 export function isComparableProvenance(a: BehaviourProvenance, b: BehaviourProvenance): boolean {
   return compareProvenance(a, b) === "comparable";
 }
@@ -565,8 +854,8 @@ export function unreachableBehaviourEngineMessage(
   detail: string,
 ): string {
   return (
-    `predictBehaviour reached for the ${lexicon} behaviour engine at ${endpoint.value}, named by ` +
-    `${endpoint.source}, and it did not answer: ${detail}. No overlay is drawn and no figure is ` +
+    `predictBehaviour reached for the ${lexicon} behaviour engine at ${redactEngineAddress(endpoint.value)}, ` +
+    `named by ${endpoint.source}, and it did not answer: ${scrubEngineDetail(detail)}. No overlay is drawn and no figure is ` +
     `guessed locally. Check the engine is up and that ${endpoint.source} names the address this ` +
     "environment can reach."
   );
@@ -594,7 +883,7 @@ export function unreachableBehaviourEngineRefusal(
   return behaviourRefusal({
     cause: "engine-unreachable",
     reason: unreachableBehaviourEngineMessage(lexicon, endpoint, detail),
-    remedy: `Check the engine at ${endpoint.value} is reachable, or repoint ${endpoint.source}.`,
+    remedy: `Check the engine at ${redactEngineAddress(endpoint.value)} is reachable, or repoint ${endpoint.source}.`,
     source: endpoint.source,
   });
 }
@@ -611,8 +900,8 @@ export function outOfCreditBehaviourEngineMessage(
   detail: string,
 ): string {
   return (
-    `The ${lexicon} behaviour engine at ${endpoint.value}, named by ${endpoint.source}, answered and ` +
-    `refused: the account behind it is out of credit (${detail}). The address is reachable and nothing ` +
+    `The ${lexicon} behaviour engine at ${redactEngineAddress(endpoint.value)}, named by ${endpoint.source}, ` +
+    `answered and refused: the account behind it is out of credit (${scrubEngineDetail(detail)}). The address is reachable and nothing ` +
     "here is a networking problem. Add credit to the account this engine bills, or point " +
     `${endpoint.source} at an engine on an account that has some. No overlay is drawn and no figure is ` +
     "guessed locally."
@@ -626,8 +915,8 @@ export function overQuotaBehaviourEngineMessage(
   detail: string,
 ): string {
   return (
-    `The ${lexicon} behaviour engine at ${endpoint.value}, named by ${endpoint.source}, answered and ` +
-    `refused: a rate or volume limit is spent (${detail}). The account has credit and the address is ` +
+    `The ${lexicon} behaviour engine at ${redactEngineAddress(endpoint.value)}, named by ${endpoint.source}, ` +
+    `answered and refused: a rate or volume limit is spent (${scrubEngineDetail(detail)}). The account has credit and the address is ` +
     "reachable, so this usually clears when the engine's window rolls over. Wait for it, raise the limit " +
     `on the account, or point ${endpoint.source} at an engine with its own budget. No overlay is drawn ` +
     "and no figure is guessed locally."
@@ -693,10 +982,15 @@ export function renderBehaviourRefusal(
 /* -------------------------------------------------------------------------- */
 
 /**
- * Names this contract refuses to carry. Every one is declared `?: never` on
- * {@link PredictBehaviourOptions}, so passing one is a compile error rather
- * than a review comment. Exported so the runtime guard and its test agree on
- * the list.
+ * Names this contract refuses to carry, each declared `?: never` on
+ * {@link PredictBehaviourOptions} so the deliberate attempt is a compile error.
+ *
+ * This list is the *narrow* half of the guard and never the whole of it. A
+ * denylist of names cannot enforce "the engine never sees a credential" — the
+ * same argument that made `?: never` better than omission applies to every name
+ * the list omits, and `xApiKey`, `pat` and `Authorization` with a capital A all
+ * sailed past an earlier version of this file. What actually enforces the rule
+ * is {@link assertNoCredentialInOptions}, which walks values.
  */
 export const CREDENTIAL_OPTION_KEYS: readonly string[] = [
   "token",
@@ -714,6 +1008,196 @@ export const CREDENTIAL_OPTION_KEYS: readonly string[] = [
   "bearer",
   "privateKey",
 ];
+
+/**
+ * Key names that are credential-shaped on their own but not as a substring —
+ * the two `CREDENTIAL_ENV_NAME` (./identity.ts) does not cover.
+ */
+const EXTRA_CREDENTIAL_KEYS: readonly string[] = ["pat", "cookie"];
+
+/**
+ * `CREDENTIAL_ENV_NAME` with its underscores removed, derived from the same
+ * source so the two cannot drift.
+ *
+ * That pattern was written for environment variables, where the convention is
+ * `AWS_SECRET_ACCESS_KEY`, so several of its alternatives carry an underscore:
+ * `PRIVATE_KEY`, `ACCESS_KEY`, `SESSION_KEY`. Object keys are written
+ * `privateKey` and `accessKey`, which match none of them. Squashing both sides
+ * makes one rule cover `PRIVATE_KEY`, `privateKey`, `private-key` and
+ * `privatekey`.
+ */
+const CREDENTIAL_ENV_NAME_SQUASHED = new RegExp(CREDENTIAL_ENV_NAME.source.replace(/_/g, ""), "i");
+
+/** True when a URL-shaped string carries a password in its userinfo. */
+function hasUrlPassword(value: string): boolean {
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) return false;
+  try {
+    return new URL(value).password !== "";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * True when a key name is credential-shaped, whatever its casing or separators.
+ *
+ * Reuses `CREDENTIAL_ENV_NAME`, which is a case-insensitive substring match over
+ * `SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIAL|PRIVATE_KEY|APIKEY|API_KEY|ACCESS_KEY|SESSION_KEY|AUTH`.
+ * That one expression covers `Authorization`, `xApiKey`, `clientSecret`,
+ * `refreshToken`, `awsSecretAccessKey` and `x-api-key` — every name an earlier
+ * fixed 14-entry list here missed — because it is chant's existing answer to
+ * the same question and had already been widened by everyone who hit a gap.
+ */
+function isCredentialKey(key: string): boolean {
+  const squashed = key.toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (EXTRA_CREDENTIAL_KEYS.includes(squashed)) return true;
+  return CREDENTIAL_ENV_NAME.test(key) || CREDENTIAL_ENV_NAME_SQUASHED.test(squashed);
+}
+
+/**
+ * What a credential-shaped value is, or `undefined`. Named so a refusal can say
+ * which rule fired rather than "something looked wrong".
+ */
+function credentialValueShape(value: string): string | undefined {
+  for (const re of CREDENTIAL_SHAPES) {
+    re.lastIndex = 0;
+    if (re.test(value)) return "a literal credential shape (PEM key, JWT or Authorization value)";
+  }
+  for (const { name, re } of CREDENTIAL_TOKEN_SHAPES) {
+    re.lastIndex = 0;
+    if (re.test(value)) return name;
+  }
+  if (hasUrlPassword(value)) return "a password in a URL's userinfo";
+  return undefined;
+}
+
+/** A URL-ish string with its userinfo blanked and its query dropped. */
+function stripUrlSecrets(value: string): string {
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) return value;
+  try {
+    const url = new URL(value);
+    const hadUserinfo = url.username !== "" || url.password !== "";
+    const hadQuery = url.search !== "";
+    url.username = "";
+    url.password = "";
+    url.search = "";
+    let out = url.toString();
+    // `URL` keeps a trailing `?` off but can leave a bare `@`; tidy it, and say
+    // where something was removed rather than silently shortening the address.
+    if (hadUserinfo) out = out.replace("://", `://${REDACTED}@`);
+    if (hadQuery) out += `?${REDACTED}`;
+    return out;
+  } catch {
+    return value;
+  }
+}
+
+/**
+ * An engine address, safe to interpolate into a refusal that a merge-request
+ * comment will carry (#2358).
+ *
+ * `CHANT_BEHAVIOUR_ENGINE=https://svc:s3cr3t@engine.internal/predict?key=abc` is
+ * an ordinary way to point at an authenticated endpoint, and it is the shape
+ * this contract's own "resolve auth on your own transport" guidance produces.
+ * Printing it verbatim in a refusal publishes it.
+ *
+ * Three passes, in order. The URL parse blanks `username`/`password` and drops
+ * the query string **whole** rather than by known parameter name, because
+ * `?key=`, `?token=` and `?sig=` are all common and the set is not enumerable.
+ * {@link redactCredentialMaterial} then catches what the parse could not — a
+ * token in the path, an address that is not a URL at all — using chant's own
+ * env-value and token-shape rules. A socket path or a bare command on `PATH`
+ * takes only the second pass, which is what it needs.
+ */
+export function redactEngineAddress(
+  value: string,
+  env: Record<string, string | undefined> = process.env,
+): string {
+  return redactCredentialMaterial(stripUrlSecrets(value), env);
+}
+
+/**
+ * Engine-supplied detail, bounded and scrubbed before it reaches a refusal.
+ *
+ * `detail` on a credit or quota refusal is whatever the engine said, echoed.
+ * An engine is a third party: it can be verbose, and it can quote the request
+ * back at you, which is how a URL or an id ends up in a public comment. So the
+ * text is truncated, anything URL-shaped is reduced to its host, and the result
+ * goes through {@link redactCredentialMaterial}.
+ */
+export function scrubEngineDetail(
+  detail: string,
+  env: Record<string, string | undefined> = process.env,
+): string {
+  const withoutUrls = detail.replace(/\b[a-z][a-z0-9+.-]*:\/\/\S+/gi, (match) => {
+    try {
+      return new URL(match).host || REDACTED;
+    } catch {
+      return REDACTED;
+    }
+  });
+  const scrubbed = redactCredentialMaterial(withoutUrls, env).replace(/\s+/g, " ").trim();
+  return scrubbed.length > MAX_ENGINE_DETAIL ? `${scrubbed.slice(0, MAX_ENGINE_DETAIL)}…` : scrubbed;
+}
+
+/** How much engine-supplied text a refusal will repeat. */
+const MAX_ENGINE_DETAIL = 200;
+
+/**
+ * How complete a request's edge list is (#2360).
+ *
+ * - `complete` — every reference between the named entities is in `edges`.
+ *   Only claim this when the builder knows it: a declared-path build walking
+ *   resolved `AttrRef`s does, a live rebuild over a partial catalog does not.
+ * - `partial` — some references are known to be missing, and `dangling` or
+ *   `unresolvedKinds` says which. An engine may still answer, and should
+ *   discount its own confidence.
+ * - `unknown` — the builder cannot say. Treat like `partial` and trust nothing
+ *   that depends on reachability.
+ */
+export type EdgeCoverageVerdict = "complete" | "partial" | "unknown";
+
+const EDGE_COVERAGE_WITNESS: Record<EdgeCoverageVerdict, true> = {
+  complete: true,
+  partial: true,
+  unknown: true,
+};
+
+/** Every legal {@link EdgeCoverageVerdict}. */
+export const EDGE_COVERAGE_VERDICTS: readonly EdgeCoverageVerdict[] = Object.keys(
+  EDGE_COVERAGE_WITNESS,
+) as EdgeCoverageVerdict[];
+
+/** True when `value` is a legal {@link EdgeCoverageVerdict}. */
+export function isEdgeCoverageVerdict(value: unknown): value is EdgeCoverageVerdict {
+  return typeof value === "string" && (EDGE_COVERAGE_VERDICTS as readonly string[]).includes(value);
+}
+
+/** What a caller knows about the completeness of the graph it is handing over. */
+export interface BehaviourEdgeCoverage {
+  verdict: EdgeCoverageVerdict;
+  /**
+   * References the builder resolved to no entity in this request — the
+   * `dangling` list `reconstructEdges` already returns and currently discards.
+   * Each is an opaque identifier in the substrate's own vocabulary, kept so an
+   * engine can see that a path leaves the estate rather than ending.
+   */
+  dangling?: readonly string[];
+  /**
+   * Entity types the builder has no reference rules for, so nothing was looked
+   * for. This is the quiet one: a kind with no `RefRule` produces no edges and
+   * no complaint.
+   */
+  unresolvedKinds?: readonly string[];
+  /**
+   * Containment, where the builder knows it — a subnet inside a VPC, an
+   * instance inside a zone. Not an edge (`chant graph` draws it as a boundary
+   * rather than a line), and carried separately for the same reason: it is
+   * membership, not a reference. An engine answering a zone-loss question needs
+   * it, and `edges` alone will never have it.
+   */
+  containment?: readonly IREdge[];
+}
 
 /**
  * What core hands a lexicon's `predictBehaviour`.
@@ -785,9 +1269,27 @@ export interface PredictBehaviourOptions {
    * Required, and an empty array is a claim rather than a shrug: it says this
    * estate's entities reference nothing of each other. A caller that has not
    * computed edges must not pass `[]` and call it a graph, for the same reason
-   * absence and unreadness are separate verdicts everywhere else here.
+   * absence and unreadness are separate verdicts everywhere else here — which
+   * is what {@link edgeCoverage} exists to let it say instead.
    */
   edges: readonly IREdge[];
+  /**
+   * How complete {@link edges} is, and what is known to be missing from it.
+   *
+   * `edges: []` cannot distinguish "nothing references anything" from "I could
+   * not work out what references what", and both are ordinary outcomes on the
+   * live path. `reconstructEdges` (./graph-refs.ts) returns `dangling` — the
+   * references it resolved to no observed node — and drops them; a kind with no
+   * `RefRule` in the lexicon's catalog contributes no edges at all and says
+   * nothing about it; and containment (a subnet inside a VPC) is deliberately
+   * not an edge, which means zone membership is absent from `edges` by design.
+   * An engine asked "does this survive one zone lost" over a graph with no zone
+   * membership answers confidently and wrongly.
+   *
+   * So the completeness is stated rather than assumed, and stated *now*, before
+   * five consumers are written against a field that silently means "complete".
+   */
+  edgeCoverage: BehaviourEdgeCoverage;
 
   /** Not a channel. See {@link CREDENTIAL_OPTION_KEYS}. */
   token?: never;
@@ -819,21 +1321,82 @@ export interface PredictBehaviourOptions {
   privateKey?: never;
 }
 
+/** How deep the credential walk goes before it stops descending. */
+const CREDENTIAL_WALK_DEPTH = 12;
+
 /**
- * The same refusal at runtime, for a caller arriving from JavaScript where the
- * `?: never` fields are only a comment. Throws naming the key, because a
- * credential that reached this boundary has already been marshalled once and
- * quietly dropping it teaches the caller nothing.
+ * Refuse a request carrying anything credential-shaped, anywhere in it.
+ *
+ * The `?: never` fields on {@link PredictBehaviourOptions} stop the deliberate
+ * attempt at compile time. This stops the accident, which is the one that
+ * happens: it walks **the whole request** — including `entities[*].props`,
+ * which is `Record<string, unknown>` straight out of the build and which no
+ * type on this contract can see into, and every field of every
+ * {@link import("./graph-ir").IREdge}.
+ *
+ * ## What it detects
+ *
+ * 1. **A credential-shaped key**, at any depth, case- and separator-insensitive.
+ *    The test is chant's own `CREDENTIAL_ENV_NAME` (./identity.ts) plus `pat`
+ *    and `cookie`, so `Authorization`, `xApiKey`, `x-api-key`, `clientSecret`,
+ *    `refreshToken` and `awsSecretAccessKey` all match.
+ * 2. **A credential-shaped value**, whatever the key is called: the PEM / JWT /
+ *    `Bearer` shapes in `CREDENTIAL_SHAPES`, plus the provider-prefixed tokens
+ *    in `CREDENTIAL_TOKEN_SHAPES` (GitHub, GitLab, OpenAI, Stripe, Slack, AWS,
+ *    Google, npm).
+ * 3. **A URL with a password in its userinfo**, on any string that parses as
+ *    one. `postgres://app:hunter2@db/prod` in a prop is the realistic leak.
+ *
+ * ## What it deliberately does not detect
+ *
+ * Layer 2 is **a denylist of known formats, not a proof**. A token from a
+ * provider nobody has added, an internal issuer's format, a bare random string
+ * or a base64 blob passes every rule here. There is no entropy scoring, on
+ * purpose: this walks build output full of ids, ARNs, hashes and digests, and a
+ * heuristic that refuses those would refuse real projects. So the honest
+ * statement of the guarantee is that a credential a human would recognize on
+ * sight will not reach the engine by accident, and that a novel or opaque
+ * secret still can. A lexicon author putting secret material in `props` is
+ * outside what this contract can catch, and the remedy there is not to.
+ *
+ * Throws naming the path and the rule, because a credential that reached this
+ * boundary has been marshalled once already, and dropping it silently teaches
+ * the caller nothing.
  */
 export function assertNoCredentialInOptions(options: object): void {
-  for (const key of CREDENTIAL_OPTION_KEYS) {
-    if (Object.prototype.hasOwnProperty.call(options, key)) {
-      throw new Error(
-        `predictBehaviour was passed "${key}" in its options. The behaviour engine is never handed a ` +
-          "credential: it is given the resource graph and a traffic level, and nothing it receives can " +
-          "reach the account. Remove the field; a lexicon that needs authenticated access to its engine " +
-          "resolves it on its own transport, not through this contract.",
-      );
+  const refuse = (path: string, what: string): never => {
+    throw new Error(
+      `predictBehaviour was passed ${what} at ${path}. The behaviour engine is never handed a ` +
+        "credential: it is given the resource graph and a traffic level, and nothing it receives can " +
+        "reach the account. Remove it — a lexicon that needs authenticated access to its own engine " +
+        "resolves that on its own transport, not through this contract. If this is a false positive, " +
+        "the value still does not belong in a request that leaves the process.",
+    );
+  };
+
+  const walk = (value: unknown, path: string, depth: number): void => {
+    if (depth > CREDENTIAL_WALK_DEPTH) return;
+    if (typeof value === "string") {
+      const shape = credentialValueShape(value);
+      if (shape) refuse(path, shape);
+      return;
     }
-  }
+    if (Array.isArray(value)) {
+      value.forEach((item, i) => walk(item, `${path}[${i}]`, depth + 1));
+      return;
+    }
+    if (value instanceof Map) {
+      for (const [key, item] of value) walk(item, `${path}.get(${String(key)})`, depth + 1);
+      return;
+    }
+    if (value && typeof value === "object") {
+      for (const [key, item] of Object.entries(value)) {
+        const child = `${path}.${key}`;
+        if (isCredentialKey(key)) refuse(child, `a credential-shaped field name ("${key}")`);
+        walk(item, child, depth + 1);
+      }
+    }
+  };
+
+  walk(options, "options", 0);
 }
