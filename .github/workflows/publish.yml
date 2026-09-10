@@ -69,6 +69,7 @@ jobs:
           restore-keys: |
             lexicon-schemas-
 
+      - run: npm run --prefix lexicons/augur prepack
       - run: npm run --prefix lexicons/aws prepack
       - run: npm run --prefix lexicons/azure prepack
       - run: npm run --prefix lexicons/gitlab prepack

@@ -1,0 +1,92 @@
+---
+title: Getting Started
+description: Declare a traffic level, and ask an engine what the estate would do at it
+diataxis: tutorial
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-augur` — DO NOT EDIT.
+    Edit lexicons/augur/docs/pages/getting-started.mdx instead; changes here are overwritten. */}
+
+
+augur adds one thing to a project: the question. The estate is already declared
+in whichever lexicons you use, and augur reads it rather than restating it.
+
+## Install
+
+```bash
+npm install @intentius/chant-lexicon-augur
+```
+
+Add it beside the lexicons you already have:
+
+```ts
+// chant.config.ts
+import type { ChantConfig } from "@intentius/chant";
+export default { lexicons: ["augur", "aws"] } satisfies ChantConfig;
+```
+
+## Declare a level
+
+A `Profile` carries a traffic level, verbatim. chant does not parse it, does not
+convert it, and does not supply one you did not write.
+
+```ts
+// src/profiles.ts
+import { Profile } from "@intentius/chant-lexicon-augur";
+
+export const steady = new Profile({
+  traffic: "100 rps, p50",
+  description: "An ordinary weekday afternoon on the checkout path",
+});
+
+export const peak = new Profile({
+  traffic: "1000 rps, p99",
+  description: "Friday evening, the hour the estate is sized for",
+});
+```
+
+Write the level the way the answer will be read. `"1000"` on its own names no
+unit and no percentile, and AUG001 reports it — partly because an engine can
+only refuse it, and partly because a bare number beside a currency reads as
+money at a glance, which is the one misreading this whole surface exists to
+prevent.
+
+Two profiles at the same level are one request asked twice, and AUG101 reports
+that.
+
+## Build
+
+```bash
+chant build src -o build
+```
+
+`build/augur` is the declared levels as JSON. Nothing has reached a network:
+the build is offline and byte-identical on a re-run, and so is the request
+assembled from it.
+
+## Point at an engine
+
+```bash
+export CHANT_BEHAVIOUR_ENGINE=augur-engine
+```
+
+The address is a URL, a socket path, or a command on PATH — and it is an
+address, not a credential. augur dials a command on PATH by piping the request
+to its stdin and reading the answer from its stdout, with an environment
+holding `PATH` and nothing else. A URL is
+[chant #2359](https://github.com/INTENTIUS/chant/issues/2359)'s first engine
+adapter, and augur refuses one by name until that lands.
+
+With nothing set, augur refuses and names the variable to set. It does not
+report an estate that costs nothing.
+
+## What comes back
+
+Per entity, at the level you named: a cost per hour, headroom on CPU and
+latency, an expected error rate, a resilience verdict under a named failure,
+and sometimes a smaller size that would still do. Every figure names the engine
+that produced it, that engine's version and stated tolerance, and whether it
+was modeled from list prices or validated against a bill.
+
+Entities augur does not send come back named, with the reason. See
+[The coverage table](../coverage/).

@@ -319,6 +319,7 @@ export default defineConfig({
 								{ label: 'Docker', link: '/lexicons/docker/' },
 								{ label: 'Render', link: '/lexicons/render/' },
 								{ label: 'Terraform', link: '/lexicons/terraform/' },
+								{ label: 'augur (behaviour)', link: '/lexicons/augur/' },
 							],
 						},
 						{
