@@ -52,28 +52,39 @@
  * live Forgejo's own OpenAPI spec) returns pull requests interleaved with
  * issues exactly as GitHub's endpoint does, and the `.pull_request == null`
  * filter and the marker `startswith` match both behave identically to
- * GitHub. The *write* half does not: `postOrUpdateGithubIssue`'s POST and
- * PATCH calls carry only `GH_TOKEN` (in fact, on the `issue` path, not even
- * that — `reconcilePr` hands it `execAsync` with no `env` override at all,
+ * GitHub. The *write* half did not: `postOrUpdateGithubIssue`'s POST and
+ * PATCH calls carried only `GH_TOKEN` (in fact, on the `issue` path, not even
+ * that — `reconcilePr` handed it `execAsync` with no `env` override at all,
  * chant #2320), and `gh`'s own documented environment variables (`gh help
  * environment`) scope `GH_TOKEN`/`GITHUB_TOKEN` to "github.com or a subdomain
  * of ghe.com" — never a self-hosted Forgejo. A `GH_DEBUG=api` POST against
  * the live instance, with `GH_TOKEN` and `GITHUB_API_URL` set exactly as the
  * generated workflow sets them, sent no `Authorization` header at all and
  * Forgejo answered `{"message":"token is required"}` (HTTP 401); adding
- * `GH_HOST` alongside `GH_TOKEN` made no difference. Only `GH_ENTERPRISE_TOKEN`
- * paired with a matching `GH_HOST` authenticated the same call. Since neither
- * `postOrUpdateGithubIssue` nor its caller sets either, every write this mode
- * makes on Forgejo fails — not a slow search, a 401 on every run. The same
- * shape (`GH_TOKEN` only, no `GH_HOST`/`GH_ENTERPRISE_TOKEN`) is what
- * `postOrUpdateComment`'s writes carry too, which means #2304's "verified
+ * `GH_HOST` alongside `GH_TOKEN` made no difference. The same shape was what
+ * `postOrUpdateComment`'s writes carried too, which is why #2304's "verified
  * against a real Forgejo instance" could not have gone through the generated
  * workflow's own credential path — either that session had a `gh auth login`
  * already stored for the test instance, which a real Actions job's fresh
- * checkout never has, or a different `gh` build was in play. That is
- * `comment` mode's problem to re-verify, not `issue` mode's, and out of
- * scope for chant #2315; flagged here because finding it is what closes that
- * issue's question of whether to lift or reinstate this refusal.
+ * checkout never has, or a different `gh` build was in play.
+ *
+ * Chant #2333 fixed that credential for both modes: `ghCredentialEnv` now
+ * forwards the resolved token as `GH_ENTERPRISE_TOKEN` beside `GH_TOKEN`,
+ * which is the variable `gh` reads for a host in neither of the two classes
+ * above. #2333's own probe against the same image also narrowed the claim
+ * made here: `GH_ENTERPRISE_TOKEN` authenticated the identical call *without*
+ * a `GH_HOST` beside it, because the full URL #2291 built already names the
+ * host. So the premise this refusal was reinstated on no longer holds, and
+ * both halves of `postOrUpdateGithubIssue` — the paginated read and the
+ * POST/PATCH write — were driven green end to end against a live
+ * 12.0.4+gitea-1.22.0 instance under #2333, from a shell with no stored
+ * `gh auth login`.
+ *
+ * The refusal below is nonetheless left standing here, because lifting it is
+ * a generator behavior change with its own YAML surface to settle and #2333
+ * was scoped to the credential. Lifting it is filed separately; this comment
+ * is corrected rather than acted on so the stated reason does not outlive the
+ * fact it rested on.
  *
  * A spec's `environment` (#2257) is dropped on the same terms as
  * `permissions:`, and for a stronger reason: Forgejo Actions has no
