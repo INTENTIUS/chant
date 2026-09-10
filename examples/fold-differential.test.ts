@@ -8,6 +8,7 @@ import {
   normalizeOutputs,
   outputsEqual,
   normalizeErrors,
+  errorsEqual,
   classifyFoldMode,
   type CorpusEntry,
   type FoldMode,
@@ -409,7 +410,17 @@ async function buildBothWays(
   const run = await runOnce();
   const fold = await foldOnce();
 
-  if (outputsEqual(normalizeOutputs(fold.outputs), normalizeOutputs(run.outputs))) {
+  // chant #2347/#2368 — outputs AND errors. Reading outputs alone was sound
+  // only while no corpus entry held a file that throws on import: such a file
+  // contributes no entities, so the two builds agree on every byte of output
+  // while disagreeing about whether an error was reported at all, and the
+  // retry that exists to rule out exactly this kind of cross-build bleed never
+  // fires. See {@link errorsEqual} for what the second build in a process
+  // loses and why isolating puts both sides back on first-build footing.
+  if (
+    outputsEqual(normalizeOutputs(fold.outputs), normalizeOutputs(run.outputs)) &&
+    errorsEqual(normalizeErrors(fold.errors), normalizeErrors(run.errors))
+  ) {
     return { run, fold, neededIsolation: false };
   }
 

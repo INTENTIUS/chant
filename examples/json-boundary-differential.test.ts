@@ -6,6 +6,7 @@ import {
   normalizeOutputs,
   outputsEqual,
   normalizeErrors,
+  errorsEqual,
   entryBuildParams,
 } from "./differential-corpus";
 
@@ -93,7 +94,16 @@ async function buildBothWays(entry: Awaited<ReturnType<typeof discoverCorpus>>[n
   const runResult = await run();
   const jsonResult = await viaJson();
 
-  if (outputsEqual(normalizeOutputs(jsonResult.outputs), normalizeOutputs(runResult.outputs))) {
+  // chant #2347/#2368 — outputs AND errors, for the reason spelled out on
+  // `fold-differential.test.ts`'s copy of this decision: a file that throws on
+  // import contributes no entities, so two builds can agree on every output
+  // byte and still disagree about whether an error was reported, and only the
+  // FIRST build in a process ever sees that error. Reading outputs alone left
+  // the retry unfired on exactly the entry that needed it.
+  if (
+    outputsEqual(normalizeOutputs(jsonResult.outputs), normalizeOutputs(runResult.outputs)) &&
+    errorsEqual(normalizeErrors(jsonResult.errors), normalizeErrors(runResult.errors))
+  ) {
     return { runResult, jsonResult };
   }
 

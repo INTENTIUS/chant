@@ -65,6 +65,12 @@ export default defineConfig({
       // entries came back as.
       "examples/differential-corpus.test.ts",
       "examples/fold-differential.test.ts",
+      // chant #2347 — the adversarial corpus entry's own test: which of its
+      // files fold, which fall back, and which of those the taint fixpoint
+      // moved. The differential above builds the same entry and compares
+      // bytes; it cannot say which file did what, which for this entry is the
+      // whole claim.
+      "examples/fold-adversarial/*.test.ts",
       // chant #1045 Phase 1 — the JSON entity-boundary differential. Same
       // corpus-walking shape as fold-differential.test.ts above (no Docker).
       "examples/json-boundary-differential.test.ts",
