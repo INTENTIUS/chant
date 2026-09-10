@@ -13,6 +13,9 @@ import {
   githubApiBaseFrom,
   commentTokenFrom,
   noCommentTokenMessage,
+  noIssueIdentityMessage,
+  unsafeMarkerMessage,
+  suppliedMarker,
   postOrUpdateGithubIssue,
 } from "./reconcile";
 
@@ -652,7 +655,7 @@ describe("reconcilePr issue mode refuses a step with no Op identity (#2319)", ()
     }
   });
 
-  test("refuses before the shell-out, so nothing is written on the way to failing", async () => {
+  test("refuses before the shell-out, so nothing runs on the way to failing", async () => {
     stubAnyCi();
     ghReplies = [{ match: "--paginate", stdout: "57\n" }];
     try {
@@ -663,6 +666,90 @@ describe("reconcilePr issue mode refuses a step with no Op identity (#2319)", ()
     }
   });
 
+  // The shape that actually reaches the plan derivation: no `body` and no
+  // `entries`, which is `ReconcileOp`'s own step and the realistic
+  // hand-written one. The refusal used to live inside the `issue` branch,
+  // below `derivePlanEntries`, so this shape ran `chant lifecycle plan` first
+  // and could fail with a plan error instead of the named refusal.
+  test("refuses ahead of `chant lifecycle plan`, not after it", async () => {
+    stubAnyCi();
+    try {
+      await expect(reconcilePr({ env: "app", mode: "issue", owned: true })).rejects.toThrow(
+        /mode "issue".*env "app"/s,
+      );
+      expect(ghCalls).toHaveLength(0);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  // #2319 pre-merge review. `""` is not `undefined`, so it satisfied the
+  // identity check, and `??` kept it — producing `startswith("")`, true of
+  // every issue body in the repository. The step then PATCHed the title and
+  // body of whichever OPEN non-pull-request issue the forge listed first.
+  for (const blank of ["", "   ", "\t\n"]) {
+    test(`a blank marker (${JSON.stringify(blank)}) is no marker, not an identity`, async () => {
+      stubAnyCi();
+      ghReplies = [
+        { match: "--paginate", stdout: "42\n" }, // a human's issue, first in the list
+        { match: "--method PATCH", stdout: "https://github.com/acme/infra/issues/42\n" },
+      ];
+      try {
+        await expect(
+          reconcilePr({ env: "app", marker: blank, mode: "issue", body: "plan" }),
+        ).rejects.toThrow(noIssueIdentityMessage("app"));
+        expect(ghCalls).toHaveLength(0);
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    });
+  }
+
+  test("a blank marker alongside an op falls back to the op's marker, not to matching everything", async () => {
+    stubAnyCi();
+    ghReplies = [
+      { match: "--paginate", stdout: "" },
+      { match: "--method POST", stdout: "https://github.com/acme/infra/issues/1\n" },
+    ];
+    try {
+      await reconcilePr({ env: "app", op: "nightly", marker: "  ", mode: "issue", body: "plan" });
+      expect(ghCalls[0].cmd).toContain('startswith("<!-- chant-reconcile-issue:nightly/app -->")');
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  test("a blank op is no identity either", async () => {
+    stubAnyCi();
+    try {
+      await expect(
+        reconcilePr({ env: "app", op: "   ", mode: "issue", body: "plan" }),
+      ).rejects.toThrow(noIssueIdentityMessage("app"));
+      expect(ghCalls).toHaveLength(0);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  test("comment mode treats a blank marker as absent too, rather than matching every comment", async () => {
+    vi.stubEnv("GITHUB_REPOSITORY", "acme/infra");
+    vi.stubEnv("GITHUB_REF", "refs/pull/7/merge");
+    vi.stubEnv("GITHUB_EVENT_PATH", "");
+    vi.stubEnv("GITHUB_API_URL", "");
+    vi.stubEnv("CI_MERGE_REQUEST_IID", "");
+    vi.stubEnv("GH_TOKEN", "ghs-x");
+    ghReplies = [
+      { match: "--paginate", stdout: "" },
+      { match: "--method POST", stdout: "https://github.com/acme/infra/pull/7#issuecomment-1\n" },
+    ];
+    try {
+      await reconcilePr({ env: "app", marker: "", mode: "comment", body: "plan" });
+      expect(ghCalls[0].cmd).toContain('startswith("<!-- chant-reconcile:app -->")');
+      expect(ghCalls[0].cmd).not.toContain('startswith("")');
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
   test("an explicit marker satisfies the requirement without an op", async () => {
     stubAnyCi();
     ghReplies = [
@@ -706,6 +793,45 @@ describe("reconcilePr issue mode refuses a step with no Op identity (#2319)", ()
       vi.unstubAllEnvs();
     }
   });
+});
+
+// ── A supplied marker has to survive the jq filter (#2319 review) ───────────
+
+describe("suppliedMarker rejects what the search filter cannot carry (#2319)", () => {
+  test("blank is absent, printable text is kept and trimmed", () => {
+    expect(suppliedMarker(undefined)).toBeUndefined();
+    expect(suppliedMarker("")).toBeUndefined();
+    expect(suppliedMarker("  \t\n ")).toBeUndefined();
+    expect(suppliedMarker("  <!-- mine -->  ")).toBe("<!-- mine -->");
+  });
+
+  for (const bad of ['<!-- a" -->', "<!-- a\\b -->", "<!-- a\nb -->"]) {
+    test(`refuses ${JSON.stringify(bad)} by name`, () => {
+      expect(() => suppliedMarker(bad)).toThrow(/cannot use/);
+      expect(() => suppliedMarker(bad)).toThrow(unsafeMarkerMessage(bad.trim()));
+    });
+  }
+
+  test("the refusal is raised through reconcilePr before any shell-out", async () => {
+    vi.stubEnv("GITHUB_REPOSITORY", "acme/infra");
+    vi.stubEnv("GITHUB_API_URL", "");
+    vi.stubEnv("CI_PROJECT_ID", "");
+    vi.stubEnv("CI_MERGE_REQUEST_IID", "");
+    try {
+      await expect(
+        reconcilePr({ env: "app", marker: '<!-- ") | not -->', mode: "issue", body: "plan" }),
+      ).rejects.toThrow(/cannot use/);
+      expect(ghCalls).toHaveLength(0);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  test("what issueMarker itself builds always survives it", () => {
+    const marker = issueMarker('drift" watch\\', 'us-east/1" or true; #');
+    expect(suppliedMarker(marker)).toBe(marker);
+  });
+
 });
 
 describe("gitlabProjectContextFrom (#2292)", () => {
@@ -995,6 +1121,108 @@ describe("reconcilePr issue mode on GitHub/GHES/Forgejo opens/updates one issue 
     } finally {
       vi.unstubAllEnvs();
       vi.unstubAllGlobals();
+    }
+  });
+});
+
+// ── The two-Op proof #2319 asked for ────────────────────────────────────────
+
+describe("two Ops over one env keep two issues, end to end (#2319)", () => {
+  // The stub answers by substring, so it cannot evaluate a jq predicate. This
+  // does it instead, and does it the honest way: both halves are read back out
+  // of the real `gh` commands rather than restated, so the search and the
+  // write are proved to agree rather than assumed to.
+
+  /** The marker a `gh api … --paginate` search is filtering on. */
+  function markerOf(cmd: string): string {
+    const m = /startswith\("(.*?)"\)/.exec(cmd);
+    if (!m) throw new Error(`not a marker search: ${cmd}`);
+    return m[1];
+  }
+
+  /** The body a `-f 'body=…'` write is sending. */
+  function bodyOf(cmd: string): string {
+    const m = /-f 'body=([\s\S]*?)' --jq/.exec(cmd);
+    if (!m) throw new Error(`not a body write: ${cmd}`);
+    return m[1];
+  }
+
+  test("run B does not find run A's issue, and opens its own", async () => {
+    vi.stubEnv("GITHUB_REPOSITORY", "acme/infra");
+    vi.stubEnv("GITHUB_API_URL", "");
+    vi.stubEnv("CI_PROJECT_ID", "");
+    vi.stubEnv("CI_MERGE_REQUEST_IID", "");
+    vi.stubEnv("GITHUB_REF", "");
+    vi.stubEnv("GITHUB_EVENT_PATH", "");
+    try {
+      // ── Run A: the stock drift watch over root "app". Nothing owned yet.
+      ghReplies = [
+        { match: "--paginate", stdout: "" },
+        { match: "--method POST", stdout: "https://github.com/acme/infra/issues/1\n" },
+      ];
+      const a = await reconcilePr({ env: "app", op: "app-drift", mode: "issue", body: "finding from A" });
+      expect(a.issueUrl).toBe("https://github.com/acme/infra/issues/1");
+      const aSearch = ghCalls.find((c) => c.cmd.includes("--paginate"))!.cmd;
+      // What the repository now holds as issue #1.
+      const aBody = bodyOf(ghCalls.find((c) => c.cmd.includes("--method POST"))!.cmd);
+      expect(aBody).toContain("finding from A");
+
+      // ── Run B: the `live: true` watch over the same root. Same `env`, the
+      // pairing #2319 reports. The repository already holds A's issue.
+      ghCalls.length = 0;
+      ghReplies = [
+        { match: "--paginate", stdout: "" }, // justified two assertions down
+        { match: "--method POST", stdout: "https://github.com/acme/infra/issues/2\n" },
+      ];
+      const b = await reconcilePr({
+        env: "app",
+        op: "app-drift-live",
+        mode: "issue",
+        body: "finding from B",
+      });
+      const bSearch = ghCalls.find((c) => c.cmd.includes("--paginate"))!.cmd;
+
+      // The forge's answer to B's search, computed rather than stubbed: B's
+      // own `startswith` predicate, run against the body A actually wrote.
+      // Before #2319 this was true, and B went on to PATCH A's issue.
+      expect(aBody.startsWith(markerOf(bSearch))).toBe(false);
+
+      // So "not found" is the right stub, and B opens its own issue.
+      expect(ghCalls.some((c) => c.cmd.includes("--method PATCH"))).toBe(false);
+      expect(b.issueUrl).toBe("https://github.com/acme/infra/issues/2");
+      const bBody = bodyOf(ghCalls.find((c) => c.cmd.includes("--method POST"))!.cmd);
+      expect(bBody).toContain("finding from B");
+      expect(bBody).not.toContain("finding from A");
+
+      // The converse, so this is stickiness preserved and not just two
+      // strangers: A's own search still matches the issue A wrote.
+      expect(aBody.startsWith(markerOf(aSearch))).toBe(true);
+      expect(markerOf(aSearch)).not.toBe(markerOf(bSearch));
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  test("A's second run still edits A's issue rather than opening another", async () => {
+    vi.stubEnv("GITHUB_REPOSITORY", "acme/infra");
+    vi.stubEnv("GITHUB_API_URL", "");
+    vi.stubEnv("CI_PROJECT_ID", "");
+    vi.stubEnv("CI_MERGE_REQUEST_IID", "");
+    ghReplies = [
+      { match: "--paginate", stdout: "1\n" }, // A's marker found A's issue
+      { match: "--method PATCH", stdout: "https://github.com/acme/infra/issues/1\n" },
+    ];
+    try {
+      const a2 = await reconcilePr({
+        env: "app",
+        op: "app-drift",
+        mode: "issue",
+        body: "finding from A, later",
+      });
+      expect(a2.issueUrl).toBe("https://github.com/acme/infra/issues/1");
+      expect(ghCalls.some((c) => c.cmd.includes("--method POST"))).toBe(false);
+    } finally {
+      vi.unstubAllEnvs();
     }
   });
 });

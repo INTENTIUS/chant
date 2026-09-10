@@ -274,8 +274,10 @@ export function TerraformWatchOp(config: TerraformWatchOpConfig): TerraformWatch
     // alone does not: a stock drift watch and a `live: true` watch over one
     // root is the pairing this composite is built for, and before #2319 both
     // resolved to one env-keyed marker, so each nightly run rewrote the
-    // other's issue title and body. The Op name cannot collide — it names the
-    // Op's output directory.
+    // other's issue title and body. Two Ops in a project do not share a raw
+    // name — it names the Op's output directory — though the marker carries
+    // the slug rather than the raw name, and the slug is not injective; see
+    // `issueMarker` for what that leaves and why it is accepted.
     const report: ActivityStep = {
       kind: "activity",
       fn: "reconcilePr",
