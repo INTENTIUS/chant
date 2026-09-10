@@ -28,7 +28,7 @@
  * no mapping in ../actions.ts passes through verbatim and resolves only if
  * the runner can fetch it.
  *
- * `comment` (#2231) crosses over too, since chant #2291: it posts onto the
+ * `comment` (#2231) crosses over, since chant #2291: it posts onto the
  * triggering pull request by shelling to `gh` against `${GITHUB_API_URL}`,
  * and a Forgejo Actions job already sets that (and `github.token`) the same
  * way a GitHub Actions job does. This generator used to refuse the mode by
@@ -38,10 +38,42 @@
  * false — the failure was `gh api` resolving a *relative* path against
  * `/api/v3`, which Forgejo does not serve, not an unreachable forge. See
  * `reconcilePr`'s `postOrUpdateComment` (`packages/core/src/op/activities/reconcile.ts`)
- * for the fix. `issue` mode (`gh issue create`) was not part of that
- * verification — only the comment endpoints were exercised on the real
- * instance — so it remains un-refused-but-unverified here, exactly as it was
- * on GitHub before this change.
+ * for the fix.
+ *
+ * `issue` (`gh issue create`/`postOrUpdateGithubIssue`) does not cross over,
+ * and chant #2315 is why: it remained un-refused-but-unverified after #2304
+ * lifted `comment`'s refusal, and settling that gap the same way — against a
+ * real instance rather than a mock — found a real failure, so the refusal
+ * below is reinstated rather than lifted. Tested against the same
+ * 12.0.4+gitea-1.22.0 image (`codeberg.org/forgejo/forgejo:12`) with a repo,
+ * an issue, and a pull request created on it: the *read* half of
+ * `postOrUpdateGithubIssue` checks out fine on Forgejo — plain paginated
+ * `GET .../issues?state=open` (no `/search/issues`, confirmed absent from a
+ * live Forgejo's own OpenAPI spec) returns pull requests interleaved with
+ * issues exactly as GitHub's endpoint does, and the `.pull_request == null`
+ * filter and the marker `startswith` match both behave identically to
+ * GitHub. The *write* half does not: `postOrUpdateGithubIssue`'s POST and
+ * PATCH calls carry only `GH_TOKEN` (in fact, on the `issue` path, not even
+ * that — `reconcilePr` hands it `execAsync` with no `env` override at all,
+ * chant #2320), and `gh`'s own documented environment variables (`gh help
+ * environment`) scope `GH_TOKEN`/`GITHUB_TOKEN` to "github.com or a subdomain
+ * of ghe.com" — never a self-hosted Forgejo. A `GH_DEBUG=api` POST against
+ * the live instance, with `GH_TOKEN` and `GITHUB_API_URL` set exactly as the
+ * generated workflow sets them, sent no `Authorization` header at all and
+ * Forgejo answered `{"message":"token is required"}` (HTTP 401); adding
+ * `GH_HOST` alongside `GH_TOKEN` made no difference. Only `GH_ENTERPRISE_TOKEN`
+ * paired with a matching `GH_HOST` authenticated the same call. Since neither
+ * `postOrUpdateGithubIssue` nor its caller sets either, every write this mode
+ * makes on Forgejo fails — not a slow search, a 401 on every run. The same
+ * shape (`GH_TOKEN` only, no `GH_HOST`/`GH_ENTERPRISE_TOKEN`) is what
+ * `postOrUpdateComment`'s writes carry too, which means #2304's "verified
+ * against a real Forgejo instance" could not have gone through the generated
+ * workflow's own credential path — either that session had a `gh auth login`
+ * already stored for the test instance, which a real Actions job's fresh
+ * checkout never has, or a different `gh` build was in play. That is
+ * `comment` mode's problem to re-verify, not `issue` mode's, and out of
+ * scope for chant #2315; flagged here because finding it is what closes that
+ * issue's question of whether to lift or reinstate this refusal.
  *
  * A spec's `environment` (#2257) is dropped on the same terms as
  * `permissions:`, and for a stronger reason: Forgejo Actions has no
@@ -146,6 +178,23 @@ export function generateForgejoOpPipeline(
   // `findingMode: "comment"` used to be refused by name here (#2231); lifted
   // in #2291 once a real Forgejo instance showed the forge itself was never
   // the obstacle — see the module doc above.
+
+  // `findingMode: "issue"` is refused by name here (#2315): unlike `comment`,
+  // a real Forgejo instance did not clear it — see the module doc above for
+  // the reproduction.
+  for (const spec of ops) {
+    if (spec.findingMode === "issue") {
+      throw new Error(
+        `Scheduled Op "${spec.name}" has findingMode "issue", which opens or edits a GitHub-shaped issue by ` +
+          `shelling to \`gh\`. Checked against a real Forgejo 12.0.4+gitea-1.22.0 instance (chant #2315): the ` +
+          `search this mode does works there, but the POST/PATCH it writes with does not — \`gh\`'s own ` +
+          `GH_TOKEN/GITHUB_TOKEN only authenticate a request to github.com or a ghe.com subdomain, never a ` +
+          `self-hosted Forgejo, and neither this mode nor its caller sets GH_HOST or GH_ENTERPRISE_TOKEN, so ` +
+          `every write fails with Forgejo's "token is required" (HTTP 401). Use findingMode "comment" on a ` +
+          `pull_request trigger here, or generate this Op for github.`,
+      );
+    }
+  }
 
   // `emitGatedOutputs: false` (#2294): forgejo never carries a gate-notice job
   // (`gatedNoticeDoc` never crosses the dialect, below), so the job outputs
