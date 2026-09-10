@@ -190,14 +190,25 @@ export interface GateDigestMismatch {
  * The refusal line for a {@link GateDigestMismatch}: which plan was approved,
  * which was planned, and what closes the gap. One function so the executor's
  * step record, the human render and the CI summary say the same thing.
+ *
+ * The two cases get different prose because they are different facts. A
+ * resolution for another plan means something changed between the approval
+ * and this run. A resolution with no plan on it means nothing is known to
+ * have changed — the record simply never said what it approved, which is
+ * every record written before #2300.
  */
 export function describeGateMismatch(op: string, gate: string, mismatch: GateDigestMismatch): string {
+  const why =
+    mismatch.approved === undefined
+      ? "That resolution predates plan-bound gates (#2300) and records no plan at all, so it cannot " +
+        "answer for this one. Approving again binds it:"
+      : "The configuration or the live system changed between that approval and this plan, so it needs " +
+        "a fresh one:";
   return (
     `Gate "${gate}" is approved, but not for this plan. ` +
     `approved: ${describePlanDigest(mismatch.approved)} (by ${mismatch.resolvedBy} at ${mismatch.timestamp}); ` +
     `planned: ${mismatch.planned}. ` +
-    `The configuration or the live system changed since that approval, so it needs a fresh one: ` +
-    `${approveCommand(op, gate)}`
+    `${why} ${approveCommand(op, gate)}`
   );
 }
 

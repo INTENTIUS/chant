@@ -753,6 +753,7 @@ describe("runOpLocally — a gate approves a plan, not the next run (#2300)", ()
     expect(gateRecord?.refusal).toContain(`approved: ${digestOf("aws_s3_bucket.original")}`);
     expect(gateRecord?.refusal).toContain(`planned: ${digestOf("aws_s3_bucket.renamed")}`);
     expect(gateRecord?.refusal).toContain("chant approve live-apply approve-live-apply");
+    expect(gateRecord?.refusal).toContain("changed between that approval and this plan");
     // The Apply step never ran, and says so.
     expect(second.records.find((r) => r.fn === "terraformApply")?.status).toBe("skipped");
 
@@ -803,6 +804,9 @@ describe("runOpLocally — a gate approves a plan, not the next run (#2300)", ()
     const gateRecord = second.records.find((r) => r.fn === "gate:approve-live-apply");
     expect(gateRecord?.refusal).toContain("approved: (none — recorded before plan-bound gates)");
     expect(gateRecord?.refusal).toContain(`planned: ${digestOf("aws_s3_bucket.original")}`);
+    // ...and says why, which is not "something changed": nothing is known to
+    // have changed, the record just never said what it approved.
+    expect(gateRecord?.refusal).toContain("records no plan at all");
   });
 
   /**
