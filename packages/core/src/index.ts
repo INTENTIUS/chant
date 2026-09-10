@@ -39,6 +39,11 @@ export * from "./graph-layout";
 export * from "./graph-lens";
 export * from "./detectLexicon";
 export * from "./fold/fold";
+// The shape classifier is the predicate downstream tooling asks "will this
+// fold?" of without running a fold (subset.ts module doc, point 2c), and the
+// half of the fold subset a conformance adapter needs that `fold()` alone
+// does not expose. INTENTIUS/typescript-as-data#11.
+export { findSubsetViolation, checkObjectMember, type SubsetViolation, type SubsetRuleId } from "./fold/subset";
 export * from "./lint/parser";
 export * from "./lint/rule";
 export * from "./lint/rules";
