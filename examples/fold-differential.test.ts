@@ -254,6 +254,19 @@ const report: ReportRow[] = [];
  * CloudFormation template and Kubernetes manifests are byte-identical to what
  * the run path produced before the move.
  */
+/**
+ * chant #2345 — mixed ("run-fallback") corpus entries whose fold-vs-run
+ * comparison is KNOWN to diverge, with the reason. Populated from the first
+ * run that compared mixed entries at all; each is a finding, not an excuse.
+ * An entry here that stops diverging fails the run, so the list only shrinks.
+ */
+const EXPECTED_MIXED_DIVERGENT: ReadonlyMap<string, string> = new Map<string, string>([
+  // Empty as of the first full run over all 107 entries (95 fold, 12
+  // run-fallback): drift 0. Every mixed entry agrees fold-vs-run. Add an
+  // entry only with a reason and an issue; the gate fails when it stops
+  // diverging.
+]);
+
 const EXPECTED_FOLD: readonly string[] = [
   "examples/adopt-alb-services",
   "examples/alert-triage",
@@ -428,16 +441,36 @@ describe("fold differential — fold output === run output (#1025, epic #1019)",
       const probe = await (await loadBuild())(entry.srcDir, entry.serializers, undefined, { fold: true, intrinsics: entry.intrinsics, lexicons: entry.lexicons, buildParams: await entryBuildParams(entry) });
       const counts = foldExecutionCounts();
       const mode = classifyFoldMode(probe.foldDecisions);
-      if (mode !== "fold") {
-        report.push({ name: entry.name, mode, identical: true, fileCount: probe.foldDecisions.length, neededIsolation: false, ...counts });
+      if (mode === "empty") {
+        report.push({ name: entry.name, mode, identical: true, fileCount: 0, neededIsolation: false, ...counts });
         return;
       }
 
-      // Fully-folded entry: the real fold-correctness gate.
+      // chant #2345 — EVERY non-empty entry is compared fold-vs-run, not only
+      // the fully-folded ones. A "run-fallback" entry (at least one file fell
+      // back) is exactly where planFoldTaint does its work: forward and
+      // backward taint fire only across a fold/run boundary inside one build,
+      // and a fully-folded build has no such boundary. Skipping mixed entries
+      // meant the identity fixpoint was never differentially exercised and the
+      // docs' "byte-identical for every file that folds" was tested only as
+      // "every entry in which every file folds". Known divergences go in
+      // EXPECTED_MIXED_DIVERGENT with a reason, so the list can only shrink.
       const { run: runResult, fold: foldResult, neededIsolation } = await buildBothWays(entry);
+      const knownDivergence = mode === "run-fallback" ? EXPECTED_MIXED_DIVERGENT.get(entry.name) : undefined;
       const runNorm = normalizeOutputs(runResult.outputs);
       const foldNorm = normalizeOutputs(foldResult.outputs);
       report.push({ name: entry.name, mode, identical: outputsEqual(foldNorm, runNorm), fileCount: foldResult.foldDecisions.length, neededIsolation, ...counts });
+
+      if (knownDivergence) {
+        // Recorded, not asserted: a mixed entry whose divergence is known and
+        // named. The gate below fails if the entry stops diverging, so this
+        // list cannot silently grow stale in either direction.
+        const stillDiverges =
+          JSON.stringify(normalizeErrors(foldResult.errors)) !== JSON.stringify(normalizeErrors(runResult.errors)) ||
+          !outputsEqual(foldNorm, runNorm);
+        expect(stillDiverges, `${entry.name} is listed in EXPECTED_MIXED_DIVERGENT but no longer diverges — remove it (${knownDivergence})`).toBe(true);
+        return;
+      }
 
       // Same errors either way (usually none) — the fold path must not
       // silently swallow or invent a discovery/build failure.
