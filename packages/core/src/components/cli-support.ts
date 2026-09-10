@@ -425,7 +425,13 @@ export interface RunComponentsResult {
   selected: string[];
   error?: string;
   /** Set when the run stopped at a `gate` nobody has approved (#2119): the component it stopped at and the pending fact recorded for it. */
-  gated?: { component: string; gate: PendingGateRecord };
+  gated?: {
+    component: string;
+    gate: PendingGateRecord;
+    /** Whether this run's own append reached the remote (#2310); absent when the pending fact was already standing. */
+    pushed?: boolean;
+    pushWarning?: string;
+  };
   /** This run's resolved build-time parameters (chant #1108) — the component-driver counterpart of `../cli/commands/build.ts`'s `BuildResult.buildParams`. Present only once the run actually reached dispatch (mirrors `BuildResult.buildParams`, which is likewise absent on an early-error return). */
   buildParams?: BuildParamProvenance[];
 }
@@ -571,7 +577,14 @@ export async function runComponents(
         selected,
         buildParams: options.buildParams,
         ...(run.status === "gated" && run.gate
-          ? { gated: { component: run.gatedComponent ?? selected[0], gate: run.gate } }
+          ? {
+              gated: {
+                component: run.gatedComponent ?? selected[0],
+                gate: run.gate,
+                ...(run.gatePushed !== undefined ? { pushed: run.gatePushed } : {}),
+                ...(run.gatePushWarning ? { pushWarning: run.gatePushWarning } : {}),
+              },
+            }
           : {}),
       };
     }
@@ -613,7 +626,12 @@ export async function runComponents(
       status: componentResult.status,
       failedComponent: componentResult.status === "fail" ? componentResult.component : undefined,
       ...(componentResult.status === "gated"
-        ? { gatedComponent: componentResult.component, gate: componentResult.gate }
+        ? {
+            gatedComponent: componentResult.component,
+            gate: componentResult.gate,
+            ...(componentResult.gatePushed !== undefined ? { gatePushed: componentResult.gatePushed } : {}),
+            ...(componentResult.gatePushWarning ? { gatePushWarning: componentResult.gatePushWarning } : {}),
+          }
         : {}),
       componentOutputs,
     };
@@ -623,7 +641,14 @@ export async function runComponents(
       selected,
       buildParams: options.buildParams,
       ...(componentResult.status === "gated" && componentResult.gate
-        ? { gated: { component: componentResult.component, gate: componentResult.gate } }
+        ? {
+            gated: {
+              component: componentResult.component,
+              gate: componentResult.gate,
+              ...(componentResult.gatePushed !== undefined ? { pushed: componentResult.gatePushed } : {}),
+              ...(componentResult.gatePushWarning ? { pushWarning: componentResult.gatePushWarning } : {}),
+            },
+          }
         : {}),
     };
   } catch (err) {

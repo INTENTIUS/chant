@@ -33,7 +33,7 @@ describe("generateForgejoOpPipeline: structure (github-shaped)", () => {
   test("one file per scheduled Op, each a valid workflow with one job", () => {
     const specs: ScheduledOpSpec[] = [
       { name: "actions-audit", schedule: "0 6 * * *" },
-      { name: "prod-reconcile", schedule: "0 * * * *", findingMode: "issue" },
+      { name: "prod-reconcile", schedule: "0 * * * *", findingMode: "pull-request" },
     ];
     const result = generateForgejoOpPipeline(specs);
 
@@ -78,7 +78,7 @@ describe("generateForgejoOpPipeline: dialect applied", () => {
 describe("generateForgejoOpPipeline: non-cron trigger survives the dialect transform (#2084)", () => {
   test("a pull_request trigger round-trips through the Forgejo dialect, with permissions: still dropped", () => {
     const specs: ScheduledOpSpec[] = [
-      { name: "tf-plan", trigger: { kind: "pull_request", branches: ["main"] }, findingMode: "issue" },
+      { name: "tf-plan", trigger: { kind: "pull_request", branches: ["main"] }, findingMode: "pull-request" },
     ];
     const fj = generateForgejoOpPipeline(specs);
     const gh = generateGithubOpPipeline(specs);
@@ -146,6 +146,35 @@ describe("generateForgejoOpPipeline: comment finding mode crosses over (#2291)",
     // above is the Forgejo dialect dropping `permissions:` wholesale, not a
     // sign the mode generated with no token.
     expect(ghDoc.permissions).toEqual({ contents: "read", "pull-requests": "write" });
+  });
+});
+
+describe("generateForgejoOpPipeline: issue finding mode is refused by name (#2315)", () => {
+  // `comment` (above) was checked against a real Forgejo instance and cleared
+  // (#2291, #2304). `issue` stayed un-refused-but-unverified after that —
+  // this is the same settling, and it came out the other way: a real
+  // instance showed the write half of `postOrUpdateGithubIssue` cannot
+  // authenticate (`gh`'s GH_TOKEN never reaches a self-hosted Forgejo), so
+  // the refusal this mode used to carry (pre-#2304, for a different reason)
+  // is reinstated rather than left lifted. See the module doc above for the
+  // reproduction.
+  test("findingMode issue is refused, naming the Op and the real-instance failure", () => {
+    const specs: ScheduledOpSpec[] = [{ name: "prod-watch", schedule: "0 6 * * *", findingMode: "issue" }];
+    expect(() => generateForgejoOpPipeline(specs)).toThrow(
+      /Scheduled Op "prod-watch".*findingMode "issue".*token is required/s,
+    );
+  });
+
+  test("github generates the same spec cleanly, so the refusal is forgejo's and not the shared builder's", () => {
+    const specs: ScheduledOpSpec[] = [{ name: "prod-watch", schedule: "0 6 * * *", findingMode: "issue" }];
+    expect(() => generateGithubOpPipeline(specs)).not.toThrow();
+  });
+
+  test("a pull_request-triggered Op is refused the same way — issue mode needs no trigger to fail on", () => {
+    const specs: ScheduledOpSpec[] = [
+      { name: "tf-plan", trigger: { kind: "pull_request", branches: ["main"] }, findingMode: "issue" },
+    ];
+    expect(() => generateForgejoOpPipeline(specs)).toThrow(/findingMode "issue"/);
   });
 });
 
@@ -225,16 +254,34 @@ describe("generateForgejoOpPipeline: the gated apply on push (#2243)", () => {
    * always carries, unconditionally) defaults to `sh`, and `sh` rejects `set
    * -o pipefail`. This generator reuses github's `buildGithubOpPipelineDocs`
    * to build the job, then the dialect transform in ../dialect.ts to cross
-   * it, so the fix has to survive both: neither step drops or renames
-   * `shell:`.
+   * it, so the fix has to survive both: the exit-code capture is plain POSIX
+   * `sh` (chant #2321 — no `shell: bash` to drop or rename in the first
+   * place, unlike before #2321, when an unconditional `shell: bash` broke
+   * any consumer image without bash — see the sibling test below).
    */
-  test("the pipefail step keeps shell: bash across the Forgejo dialect — its job runs in a container, whose default shell is sh", () => {
+  test("the exit-code capture crosses the Forgejo dialect with no shell override — its job runs in a container, whose default shell is sh", () => {
     const doc = parseFile(generateForgejoOpPipeline([pushSpec]).files[0].yaml);
     const job = doc.jobs!["app-apply"];
     expect(job.container).toBe("node:22-slim");
     const step = job.steps.find((s) => s.id === "chant-run");
-    expect(step?.run).toContain("set -o pipefail");
-    expect(step?.shell).toBe("bash");
+    expect(step?.shell).toBeUndefined();
+    expect(step?.run).not.toContain("pipefail");
+    expect(step?.run).toContain('[ "$code" -eq 0 ] || exit "$code"');
+  });
+
+  /**
+   * chant #2321 — same regression as the github generator's, since this one
+   * reuses `buildGithubOpPipelineDocs` to build the job before crossing the
+   * dialect: a consumer's non-bash `options.image` (alpine, distroless, …)
+   * must not get an unconditional `shell: bash` it cannot run.
+   */
+  test("a consumer-set non-bash image's gated job can still start on Forgejo (#2321)", () => {
+    const doc = parseFile(generateForgejoOpPipeline([pushSpec], { image: "alpine:3.20" }).files[0].yaml);
+    const job = doc.jobs!["app-apply"];
+    expect(job.container).toBe("alpine:3.20");
+    const step = job.steps.find((s) => s.id === "chant-run");
+    expect(step?.shell).toBeUndefined();
+    expect(step?.run).not.toContain("pipefail");
   });
 });
 
@@ -277,7 +324,7 @@ describe("generateForgejoOpPipeline: a dropped deployment environment (#2257)", 
 
   test("a spec with no environment emits the bytes it emitted before the option existed", () => {
     const yaml = generateForgejoOpPipeline([
-      { name: "actions-audit", schedule: "0 6 * * *", findingMode: "issue" },
+      { name: "actions-audit", schedule: "0 6 * * *", findingMode: "pull-request" },
     ]).files[0].yaml;
     expect(yaml).toBe(AUDIT_YAML_BEFORE_2257);
   });

@@ -28,6 +28,26 @@ describe("gatedRunSummaryMarkdown (#2243)", () => {
     expect(md).toContain("chant approve app-apply approve-app-apply --approver <you>");
     expect(md).toContain("_gates/app-apply.jsonl");
   });
+
+  // #2310: `recordGateApproval`'s push was already reported (#2309); the
+  // gate's own `appendPending` push was not. The GitHub/Forgejo/Gitea step
+  // summary is exactly the surface an operator working from a different
+  // checkout would open, so it is where the gap mattered most.
+  test("says so when this run's own append never reached the remote", () => {
+    const md = gatedRunSummaryMarkdown({
+      ...summary,
+      pushed: false,
+      pushWarning: "chant/lifecycle remote branch has moved since this run started",
+    });
+    expect(md).toContain("was not pushed to the remote");
+    expect(md).toContain("chant/lifecycle remote branch has moved since this run started");
+    expect(md).toContain("cannot see it to approve it");
+  });
+
+  test("says nothing extra when the push landed or nothing was pushed this run", () => {
+    const md = gatedRunSummaryMarkdown(summary);
+    expect(md).not.toContain("was not pushed");
+  });
 });
 
 describe("writeGatedRunSummary surfaces (#2243, #2256)", () => {

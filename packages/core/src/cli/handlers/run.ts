@@ -744,6 +744,16 @@ export async function runOpComponents(ctx: CommandContext): Promise<number> {
     console.error(formatInfo(`approve : ${approveCommand(gate.op, gate.gate)}`));
     if (gate.url) console.error(formatInfo(`approve at: ${gate.url}`));
     console.error(formatInfo(`expires : ${gate.expiresAt}`));
+    // #2310: this run's own append reached only the local chant/lifecycle
+    // branch. The gate is still right to stand, but an operator elsewhere
+    // cannot see the pending fact to approve it, and nothing else here says
+    // why not.
+    if (result.gated.pushed === false) {
+      console.error(formatWarning({
+        message: `the pending fact was not pushed to the remote: ${result.gated.pushWarning ?? "recorded locally only"}`,
+        hint: "an operator working from a clone of the remote cannot approve it until it does",
+      }));
+    }
     reportGatedRun(
       {
         op: gate.op,
@@ -751,6 +761,7 @@ export async function runOpComponents(ctx: CommandContext): Promise<number> {
         ...(gate.description ? { description: gate.description } : {}),
         expiresAt: gate.expiresAt,
         ...(gate.url ? { url: gate.url } : {}),
+        ...(result.gated.pushed === false ? { pushed: false, pushWarning: result.gated.pushWarning } : {}),
       },
       gatedExit,
     );
@@ -866,6 +877,11 @@ export async function runOpOnRuntime(ctx: CommandContext): Promise<number> {
             ...(pending?.description ? { description: pending.description } : {}),
             ...(pending?.expiresAt ? { expiresAt: pending.expiresAt } : {}),
             ...(pending?.url ? { url: pending.url } : {}),
+            // #2310: the local runtime knows whether this run's own append
+            // reached the remote; a runtime that reports only a state does not.
+            ...(status.result?.gatePushed === false
+              ? { pushed: false, pushWarning: status.result.gatePushWarning }
+              : {}),
           },
           gatedExit,
         );

@@ -77,6 +77,15 @@ export interface OpRunResult {
   /** Present when `status === "gated"`: the pending fact the run ended on. */
   gate?: PendingGateRecord;
   /**
+   * Present when `status === "gated"` and this run's own append tried to push:
+   * whether it reached the remote (#2310). Absent when the run stopped on a
+   * pending fact an earlier run had already recorded — nothing was pushed
+   * this run.
+   */
+  gatePushed?: boolean;
+  /** Set when `gatePushed` is false: why, in one line. */
+  gatePushWarning?: string;
+  /**
    * The run's ledger record (#2118) — always built, whether or not it was
    * appended. `chant run <op> --json` prints exactly this, so what a caller
    * reads on stdout and what a later `readRunLedger` reads back are the same
@@ -129,6 +138,9 @@ class GateStop extends Error {
     public readonly records: StepRecord[],
     public readonly pending: PendingGateRecord,
     public readonly phase: string,
+    /** Whether this run's own append reached the remote — see {@link OpRunResult.gatePushed}. */
+    public readonly pushed?: boolean,
+    public readonly pushWarning?: string,
   ) {
     super(`gate "${pending.gate}" is pending approval`);
     this.name = "GateStop";
@@ -384,7 +396,7 @@ async function runGateStep(
   step: GateStep,
   phaseName: string,
   gates: GateContext,
-): Promise<{ record: StepRecord; pending?: PendingGateRecord }> {
+): Promise<{ record: StepRecord; pending?: PendingGateRecord; pushed?: boolean; pushWarning?: string }> {
   const start = Date.now();
   let check: GateCheck;
   try {
@@ -439,6 +451,8 @@ async function runGateStep(
   return {
     record: { phase: phaseName, fn: gateFn(step), args: {}, status: "skipped", durationMs: Date.now() - start },
     pending: check.pending,
+    pushed: check.pushed,
+    ...(check.pushWarning ? { pushWarning: check.pushWarning } : {}),
   };
 }
 
@@ -463,7 +477,13 @@ async function runEffectStep(
   resultsById: Map<string, unknown>,
   gates: GateContext,
   signal?: AbortSignal,
-): Promise<{ records: StepRecord[]; failed: boolean; pending?: PendingGateRecord }> {
+): Promise<{
+  records: StepRecord[];
+  failed: boolean;
+  pending?: PendingGateRecord;
+  pushed?: boolean;
+  pushWarning?: string;
+}> {
   const records: StepRecord[] = [];
 
   const read = await runStep(receiptReadStep(step), phaseName, activities, profiles, resultsById, signal);
@@ -510,7 +530,7 @@ async function runEffectStep(
   for (let i = 0; i < step.steps.length; i++) {
     const nested = step.steps[i];
     if (isGate(nested)) {
-      const { record, pending } = await runGateStep(nested, phaseName, gates);
+      const { record, pending, pushed, pushWarning } = await runGateStep(nested, phaseName, gates);
       pushRecord(records, gates, record);
       if (record.status === "fail") {
         // Receipt left untouched, as for any other failing nested step
@@ -522,7 +542,7 @@ async function runEffectStep(
         // Receipt left untouched — the next run re-proposes the effect and
         // re-evaluates the gate against whatever the ledger says by then.
         skipRest(i + 1);
-        return { records, failed: false, pending };
+        return { records, failed: false, pending, pushed, ...(pushWarning ? { pushWarning } : {}) };
       }
       continue;
     }
@@ -577,7 +597,7 @@ async function runPhase(
     // gate is about to strand would defeat the point of stopping at it.
     const gateRecords: StepRecord[] = [];
     for (const step of phase.steps.filter(isGate)) {
-      const { record, pending } = await runGateStep(step, phase.name, gates);
+      const { record, pending, pushed, pushWarning } = await runGateStep(step, phase.name, gates);
       pushRecord(gateRecords, gates, record);
       if (record.status === "fail") {
         // The gate could not be decided at all (#2301). Same treatment as a
@@ -591,7 +611,7 @@ async function runPhase(
         for (const skipped of phase.steps.filter(isActivity)) {
           pushRecord(gateRecords, gates, skippedRecord(phase.name, skipped.fn, skipped.args));
         }
-        throw new GateStop(gateRecords, pending, phase.name);
+        throw new GateStop(gateRecords, pending, phase.name, pushed, pushWarning);
       }
     }
     const steps = phase.steps.filter(isActivity);
@@ -622,7 +642,7 @@ async function runPhase(
   for (let i = 0; i < steps.length; i++) {
     const step = steps[i];
     if (isGate(step)) {
-      const { record, pending } = await runGateStep(step, phase.name, gates);
+      const { record, pending, pushed, pushWarning } = await runGateStep(step, phase.name, gates);
       pushRecord(records, gates, record);
       if (record.status === "fail") {
         // A gate that could not be decided is a failed step, not a pending
@@ -632,18 +652,18 @@ async function runPhase(
       }
       if (pending) {
         skipRemaining(i + 1);
-        throw new GateStop(records, pending, phase.name);
+        throw new GateStop(records, pending, phase.name, pushed, pushWarning);
       }
       continue;
     }
     if (isEffect(step)) {
-      const { records: effRecords, failed, pending } = await runEffectStep(
+      const { records: effRecords, failed, pending, pushed, pushWarning } = await runEffectStep(
         step, phase.name, activities, profiles, resultsById, gates, signal,
       );
       records.push(...effRecords); // already emitted by runEffectStep
       if (pending) {
         skipRemaining(i + 1);
-        throw new GateStop(records, pending, phase.name);
+        throw new GateStop(records, pending, phase.name, pushed, pushWarning);
       }
       if (failed) {
         skipRemaining(i + 1);
@@ -813,6 +833,8 @@ export async function runOpLocally(
         status: "gated",
         startedAt,
         gate: err.pending,
+        ...(err.pushed !== undefined ? { gatePushed: err.pushed } : {}),
+        ...(err.pushWarning ? { gatePushWarning: err.pushWarning } : {}),
         record: await settle(records, "gated", err.pending),
       };
     }

@@ -101,6 +101,27 @@ describe("renderHuman — gated (#2119)", () => {
   });
 });
 
+describe("renderHuman — a gated run whose own push never reached the remote (#2310)", () => {
+  test("warns that an operator elsewhere cannot see the pending fact, rather than staying silent", () => {
+    const lines: string[] = [];
+    renderHuman(
+      { ...GATED, gatePushed: false, gatePushWarning: "chant/lifecycle remote branch has moved since this run started" },
+      (l) => lines.push(l),
+    );
+    const out = lines.join("\n");
+    expect(out).toContain('Op "prod-apply" is gated on "rollout-gate"');
+    expect(out).toContain("was not pushed to the remote");
+    expect(out).toContain("chant/lifecycle remote branch has moved since this run started");
+    expect(out).toContain("An operator elsewhere cannot approve it");
+  });
+
+  test("stays as it was when the push landed", () => {
+    const lines: string[] = [];
+    renderHuman({ ...GATED, gatePushed: true }, (l) => lines.push(l));
+    expect(lines.join("\n")).not.toContain("was not pushed");
+  });
+});
+
 describe("renderJson", () => {
   test("prints the run's ledger record, not the raw result (#2118)", () => {
     const lines: string[] = [];
@@ -134,5 +155,22 @@ describe("renderJson", () => {
     expect(parsed.status).toBe("gated");
     expect(parsed.gate).toEqual({ name: "rollout-gate", since: "2026-09-05T12:00:00.000Z" });
     expect(parsed.approve).toBe("chant approve prod-apply rollout-gate");
+  });
+
+  // #2310: a JSON consumer (CI tooling reading `chant run --json`) needs the
+  // same fact the human render shows — not just a silent success.
+  test("a gated record whose push failed carries pushed:false and why", () => {
+    const lines: string[] = [];
+    renderJson({ ...GATED, gatePushed: false, gatePushWarning: "no remote is configured" }, (l) => lines.push(l));
+    const parsed = JSON.parse(lines[0]) as { pushed?: boolean; pushWarning?: string };
+    expect(parsed.pushed).toBe(false);
+    expect(parsed.pushWarning).toBe("no remote is configured");
+  });
+
+  test("a gated record whose push landed carries no pushed field", () => {
+    const lines: string[] = [];
+    renderJson({ ...GATED, gatePushed: true }, (l) => lines.push(l));
+    const parsed = JSON.parse(lines[0]) as { pushed?: boolean };
+    expect(parsed.pushed).toBeUndefined();
   });
 });

@@ -39,30 +39,44 @@ const execAsync = promisify(exec);
  * recipe `comment` mode's note uses, and opens a new one only when it finds
  * none. Which is why that marker has to name the Op (chant #2319) and why
  * this mode refuses a step that supplies neither an `op` nor a `marker` — see
- * {@link issueMarker} and {@link noIssueIdentityMessage}. See {@link
- * postOrUpdateGithubIssue} for the GitHub/GHES/Forgejo half — including why
- * it does not use GitHub's Search API, and the decision that this mode never
- * closes the issue itself. Only a run outside any known CI job — no
- * `CI_PROJECT_ID`, no `GITHUB_REPOSITORY` — falls back to `gh issue create`'s
- * own ambient repo detection, still marker-prefixed so a later CI run of the
- * same Op finds and edits it instead of opening a second one. `gh api` was
- * not exercised against a real Forgejo instance for this mode (only the
- * `comment` mode's endpoints were, chant #2291) — the request shape mirrors
- * that mode's exactly, but the search behavior itself is the one part a mock
- * cannot vouch for.
+ * {@link issueMarker} and {@link noIssueIdentityMessage}.
  *
- * "Mirrors that mode's exactly" was not true when it was written (chant
- * #2320): the URL and the GET/PATCH/POST triple matched, but the credential
- * did not travel. `postOrUpdateComment` resolved a token through {@link
- * commentTokenFrom} and forwarded it as `GH_TOKEN`; the issue path forwarded
- * no environment at all, so `CHANT_FORGEJO_TOKEN` never reached `gh` and the
- * cross-instance Forgejo case that variable exists for 401'd. Both paths now
- * resolve the same way, in the same order, and forward the same variable,
- * with the two refusals differing only in what they name ({@link
- * noCommentTokenMessage}, {@link noIssueTokenMessage}). The one deliberate
- * exception is the `gh issue create` fallback above, which runs outside every
- * CI job and so leaves the credential to `gh auth login` — see the comment on
- * that branch.
+ * none. See {@link postOrUpdateGithubIssue} for the GitHub/GHES/Forgejo half
+ * — including why it does not use GitHub's Search API, and the decision that
+ * this mode never closes the issue itself. Only a run outside any known CI
+ * job — no `CI_PROJECT_ID`, no `GITHUB_REPOSITORY` — falls back to `gh issue
+ * create`'s own ambient repo detection, still marker-prefixed so a later CI
+ * run of the same Op finds and edits it instead of opening a second one.
+ *
+ * The credential did not always travel (chant #2320). The URL and the
+ * GET/PATCH/POST triple matched `postOrUpdateComment`'s, but that function
+ * resolved a token through {@link commentTokenFrom} and forwarded it as
+ * `GH_TOKEN` while the issue path forwarded no environment at all, so
+ * `CHANT_FORGEJO_TOKEN` never reached `gh`. Both paths now resolve the same
+ * way, in the same order, and forward the same variable, with the two
+ * refusals differing only in what they name ({@link noCommentTokenMessage},
+ * {@link noIssueTokenMessage}). The one deliberate exception is the `gh issue
+ * create` fallback above, which runs outside every CI job and so leaves the
+ * credential to `gh auth login` — see the comment on that branch. Parity with
+ * `comment` mode is not a working Forgejo write, as the next paragraph says.
+ *
+ * Settled against a real Forgejo 12.0.4+gitea-1.22.0 instance under chant
+ * #2315, the way `comment` mode's endpoints were under #2291: the *read*
+ * half works — plain paginated listing (no `/search/issues`, confirmed
+ * absent from Forgejo's own OpenAPI spec) and the `.pull_request == null`
+ * filter both behave exactly as they do against github.com. The *write*
+ * half does not, for a reason no mock could have caught: `gh`'s own
+ * `GH_TOKEN`/`GITHUB_TOKEN` only authenticate a request to github.com or a
+ * ghe.com subdomain (`gh help environment`), never a self-hosted Forgejo,
+ * and this function's POST/PATCH calls (like `postOrUpdateComment`'s) carry
+ * only `GH_TOKEN` — no `GH_HOST`, no `GH_ENTERPRISE_TOKEN`. Every write this
+ * mode makes on a real Forgejo instance fails with `{"message":"token is
+ * required"}` (HTTP 401), confirmed with `GH_DEBUG=api` sending no
+ * `Authorization` header at all. The forgejo Op generator refuses
+ * `findingMode: "issue"` by name for this reason (chant #2315); this
+ * activity's own behavior is unchanged; a hand-authored (non-generated)
+ * workflow that calls it directly against a Forgejo host will hit the same
+ * 401 the generator now refuses to produce.
  */
 export type ReconcileMode = "pull-request" | "issue" | "report" | "comment";
 
@@ -624,7 +638,15 @@ export type GhExec = (
  *    endpoint does carry a real `q` search parameter, but that is a
  *    different endpoint shape than GitHub's, which would mean forking this
  *    function by forge — exactly what the `comment` path (#2291)
- *    deliberately does not do).
+ *    deliberately does not do). Chant #2315 confirmed this against a live
+ *    call rather than only the spec: plain paginated `GET .../issues?state=
+ *    open` on a real Forgejo 12.0.4+gitea-1.22.0 instance interleaves pull
+ *    requests with issues exactly as GitHub's endpoint does, and the
+ *    `.pull_request == null` filter below excludes them correctly. The write
+ *    calls this function makes do not clear the same instance — see the
+ *    module doc's `issue` bullet for why, and why the forgejo Op generator
+ *    refuses this mode rather than generating a job that would 401 on every
+ *    run.
  *
  * So this reuses the recipe `postOrUpdateComment` already proved for PR
  * comments: list, `--paginate`, filter with `--jq` by an exact `startswith`
