@@ -18,6 +18,7 @@ import {
   suppliedMarker,
   noIssueTokenMessage,
   postOrUpdateGithubIssue,
+  ghCredentialEnv,
 } from "./reconcile";
 
 // ── The `gh` stub (chant #2291) ──────────────────────────────────────────────
@@ -251,6 +252,32 @@ describe("commentTokenFrom (#2291)", () => {
   });
 });
 
+describe("ghCredentialEnv (#2333)", () => {
+  const token = { value: "resolved-token", source: "CHANT_FORGEJO_TOKEN" };
+
+  test("carries the resolved value under GH_ENTERPRISE_TOKEN, the variable a non-github.com host reads", () => {
+    expect(ghCredentialEnv({}, token).GH_ENTERPRISE_TOKEN).toBe("resolved-token");
+  });
+
+  test("carries it under GH_TOKEN too, so github.com reads the same value it always did", () => {
+    expect(ghCredentialEnv({}, token).GH_TOKEN).toBe("resolved-token");
+  });
+
+  test("the two never disagree — one resolution, whichever class gh puts the host in", () => {
+    const env = ghCredentialEnv({ GH_TOKEN: "stale-ambient" }, token);
+    expect(env.GH_TOKEN).toBe(env.GH_ENTERPRISE_TOKEN);
+  });
+
+  test("sets no GH_HOST: the full URL already names the host, and GH_HOST is the default for calls that do not", () => {
+    expect(ghCredentialEnv({}, token)).not.toHaveProperty("GH_HOST");
+  });
+
+  test("passes the rest of the base environment through untouched", () => {
+    expect(ghCredentialEnv({ PATH: "/usr/bin", GITHUB_API_URL: "http://forgejo.example/api/v1" }, token))
+      .toMatchObject({ PATH: "/usr/bin", GITHUB_API_URL: "http://forgejo.example/api/v1" });
+  });
+});
+
 describe("reconcilePr comment mode posts a full-URL `gh api` call (#2291)", () => {
   const repo = "acme/infra";
 
@@ -336,6 +363,43 @@ describe("reconcilePr comment mode posts a full-URL `gh api` call (#2291)", () =
     try {
       await reconcilePr({ env: "app", mode: "comment", body: "the plan" });
       for (const call of ghCalls) expect(call.opts.env?.GH_TOKEN).toBe("cross-instance-token");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  // #2333: the full URL #2291 built reached Forgejo, but `gh` scopes
+  // GH_TOKEN to github.com and ghe.com subdomains, so the POST/PATCH arrived
+  // with no Authorization header and a real instance answered 401.
+  test("every comment-mode `gh` call carries GH_ENTERPRISE_TOKEN, which is what a Forgejo host reads (#2333)", async () => {
+    stubPrEnv("http://forgejo.example/api/v1");
+    vi.stubEnv("CHANT_FORGEJO_TOKEN", "cross-instance-token");
+    ghReplies = [
+      { match: "--paginate", stdout: "" },
+      { match: "--method POST", stdout: "http://forgejo.example/acme/infra/issues/5#issuecomment-1\n" },
+    ];
+    try {
+      await reconcilePr({ env: "app", mode: "comment", body: "the plan" });
+      expect(ghCalls.length).toBeGreaterThan(0);
+      for (const call of ghCalls) {
+        expect(call.opts.env?.GH_ENTERPRISE_TOKEN).toBe("cross-instance-token");
+      }
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  test("the PATCH branch carries it too, not only the POST (#2333)", async () => {
+    stubPrEnv("http://forgejo.example/api/v1");
+    vi.stubEnv("CHANT_FORGEJO_TOKEN", "cross-instance-token");
+    ghReplies = [
+      { match: "--paginate", stdout: "4242\n" },
+      { match: "--method PATCH", stdout: "http://forgejo.example/acme/infra/issues/5#issuecomment-1\n" },
+    ];
+    try {
+      await reconcilePr({ env: "app", mode: "comment", body: "the plan" });
+      const patch = ghCalls.find((c) => c.cmd.includes("--method PATCH"));
+      expect(patch?.opts.env?.GH_ENTERPRISE_TOKEN).toBe("cross-instance-token");
     } finally {
       vi.unstubAllEnvs();
     }
@@ -1287,6 +1351,26 @@ describe("reconcilePr issue mode sends the token it resolved (#2320)", () => {
       await reconcilePr({ env: "app", op: "nightly", mode: "issue", body: "plan" });
       const patch = ghCalls.find((c) => c.cmd.includes("--method PATCH"));
       expect(patch?.opts.env?.GH_TOKEN).toBe("forgejo-cross-instance");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  // #2333: the same credential hole comment mode had. Issue mode's writes
+  // were already refused by the forgejo generator for exactly this reason.
+  test("every issue-mode `gh` call carries GH_ENTERPRISE_TOKEN as well (#2333)", async () => {
+    stubForgejoIssueEnv();
+    vi.stubEnv("CHANT_FORGEJO_TOKEN", "forgejo-cross-instance");
+    ghReplies = [
+      { match: "--paginate", stdout: "" },
+      { match: "--method POST", stdout: "https://other.forgejo.example/acme/infra/issues/1\n" },
+    ];
+    try {
+      await reconcilePr({ env: "app", op: "nightly", mode: "issue", body: "plan" });
+      expect(ghCalls).toHaveLength(2);
+      for (const call of ghCalls) {
+        expect(call.opts.env?.GH_ENTERPRISE_TOKEN).toBe("forgejo-cross-instance");
+      }
     } finally {
       vi.unstubAllEnvs();
     }

@@ -65,18 +65,22 @@ const execAsync = promisify(exec);
  * half works — plain paginated listing (no `/search/issues`, confirmed
  * absent from Forgejo's own OpenAPI spec) and the `.pull_request == null`
  * filter both behave exactly as they do against github.com. The *write*
- * half does not, for a reason no mock could have caught: `gh`'s own
+ * half did not, for a reason no mock could have caught: `gh`'s own
  * `GH_TOKEN`/`GITHUB_TOKEN` only authenticate a request to github.com or a
  * ghe.com subdomain (`gh help environment`), never a self-hosted Forgejo,
- * and this function's POST/PATCH calls (like `postOrUpdateComment`'s) carry
- * only `GH_TOKEN` — no `GH_HOST`, no `GH_ENTERPRISE_TOKEN`. Every write this
- * mode makes on a real Forgejo instance fails with `{"message":"token is
- * required"}` (HTTP 401), confirmed with `GH_DEBUG=api` sending no
- * `Authorization` header at all. The forgejo Op generator refuses
- * `findingMode: "issue"` by name for this reason (chant #2315); this
- * activity's own behavior is unchanged; a hand-authored (non-generated)
- * workflow that calls it directly against a Forgejo host will hit the same
- * 401 the generator now refuses to produce.
+ * and both this function's POST/PATCH calls and `postOrUpdateComment`'s
+ * carried only `GH_TOKEN`. Every write either made on a real Forgejo
+ * instance failed with `{"message":"token is required"}` (HTTP 401), with
+ * `GH_DEBUG=api` showing no `Authorization` header at all — which is what
+ * shipped in 0.62.0 and 0.63.0, `comment` mode included.
+ *
+ * Both paths now forward that credential as `GH_ENTERPRISE_TOKEN` as well as
+ * `GH_TOKEN`, which is the variable `gh` reads for a host in neither of those
+ * two classes (chant #2333). Re-run against the same live instance from a
+ * shell with no stored `gh auth login`, the identical POST now sends
+ * `Authorization: token …` and returns HTTP 201. See {@link ghCredentialEnv}
+ * for the whole probe, for why `GH_HOST` turned out not to be needed
+ * alongside it, and for why github.com's own behavior is untouched.
  */
 export type ReconcileMode = "pull-request" | "issue" | "report" | "comment";
 
@@ -485,6 +489,69 @@ export function commentTokenFrom(env: Record<string, string | undefined>): Comme
   return undefined;
 }
 
+/**
+ * The environment a `gh api` call carries {@link commentTokenFrom}'s resolved
+ * credential in (chant #2333).
+ *
+ * `GH_TOKEN` alone is not enough, and that is `gh`'s documented behavior
+ * rather than a bug in it. `gh` picks the token per *request host*:
+ * `GH_TOKEN`/`GITHUB_TOKEN` are scoped to github.com and `ghe.com`
+ * subdomains, and every other host — a self-hosted Forgejo, a self-hosted
+ * GitHub Enterprise Server — reads `GH_ENTERPRISE_TOKEN`/
+ * `GITHUB_ENTERPRISE_TOKEN` instead (`gh help environment`). #2291 fixed the
+ * *URL* half of reaching a non-github.com host and left this half untouched,
+ * so 0.62.0 and 0.63.0 both shipped a `comment` mode that posts to Forgejo
+ * with no `Authorization` header at all.
+ *
+ * Confirmed against a real Forgejo 12.0.4+gitea-1.22.0 instance under #2333,
+ * from a shell whose `GH_CONFIG_DIR` held no `gh auth login` — the condition
+ * a fresh Actions checkout starts from, and the one #2304's verification did
+ * not reproduce. Driving this function's own POST with `GH_DEBUG=api`:
+ * `GH_TOKEN` alone sent no `Authorization` header and got HTTP 401
+ * `{"message":"token is required"}`, `GH_TOKEN` with `GITHUB_TOKEN` beside it
+ * got the same 401, and `GH_TOKEN` with `GH_HOST` beside it got the same 401
+ * again. `GH_ENTERPRISE_TOKEN` sent `Authorization: token …` and got HTTP 201.
+ *
+ * So the fix is one variable, set to the same value: whichever class `gh`
+ * decides the host falls into, the credential it finds there is the one
+ * {@link commentTokenFrom} resolved. That is why this does not branch on the
+ * forge, and why it needs no host detection of chant's own — the thing that
+ * broke was `gh`'s host classification, and setting both classes to one value
+ * is what stops chant depending on it.
+ *
+ * ## Why `GH_HOST` is deliberately not set
+ *
+ * #2333 proposed `GH_ENTERPRISE_TOKEN` *plus* a `GH_HOST` derived from
+ * `GITHUB_API_URL`, on the reading that the pair was needed. It is not: the
+ * live instance took `GH_ENTERPRISE_TOKEN` on its own, with no `GH_HOST`
+ * anywhere in the environment, because {@link githubApiBaseFrom} already
+ * hands `gh api` a full URL and `gh` reads the host off that URL rather than
+ * off its default. `GH_HOST` sets the *default* host for calls that name no
+ * host — which is what `gh issue create`'s ambient fallback below relies on —
+ * so setting it would buy nothing here and put a variable into the
+ * environment of calls that do not want one.
+ *
+ * ## Why github.com is unchanged
+ *
+ * Both variables carry the same value, so the question is only which one
+ * `gh` reads, and github.com reads `GH_TOKEN`. Probed against the real
+ * api.github.com the same way: a valid `GH_TOKEN` with a deliberately
+ * garbage `GH_ENTERPRISE_TOKEN` beside it succeeded, and a garbage `GH_TOKEN`
+ * with a valid `GH_ENTERPRISE_TOKEN` beside it failed `Bad credentials`.
+ * `GH_TOKEN` wins on github.com whatever the enterprise variable holds, so
+ * the header a github.com call sends is byte-identical to the one it sent
+ * before this change.
+ *
+ * A *self-hosted* GHES host is in the same class as Forgejo and was equally
+ * broken — same `gh` code path, same missing header — so it is fixed by the
+ * same variable rather than merely preserved. That was inferred from `gh`'s
+ * documented scoping in #2332 and is not exercised here: no GHES instance was
+ * available to test against.
+ */
+export function ghCredentialEnv(base: NodeJS.ProcessEnv, token: CommentToken): NodeJS.ProcessEnv {
+  return { ...base, GH_TOKEN: token.value, GH_ENTERPRISE_TOKEN: token.value };
+}
+
 /** What a `comment`-mode step says on a pull request it has no credential for. */
 export function noCommentTokenMessage(repo: string, number: number): string {
   return (
@@ -518,10 +585,12 @@ export function noIssueTokenMessage(repo: string): string {
  * Every call targets a full URL built from {@link githubApiBaseFrom} rather
  * than the bare relative path this used before #2291 — see that function for
  * why a bare path broke Forgejo specifically. The token is resolved
- * explicitly via {@link commentTokenFrom} and forwarded as `GH_TOKEN`, which
- * is a strict superset of `gh`'s own ambient resolution: same value in the
- * common case, a named refusal instead of `gh`'s opaque 401 when neither is
- * set.
+ * explicitly via {@link commentTokenFrom} and forwarded through {@link
+ * ghCredentialEnv}, which is a strict superset of `gh`'s own ambient
+ * resolution: same value in the common case, a named refusal instead of
+ * `gh`'s opaque 401 when neither is set, and — since chant #2333 — the same
+ * value under `GH_ENTERPRISE_TOKEN` too, without which the full URL #2291
+ * built reached Forgejo carrying no credential.
  */
 async function postOrUpdateComment(
   ctx: PullRequestContext,
@@ -531,7 +600,7 @@ async function postOrUpdateComment(
 ): Promise<string> {
   const token = commentTokenFrom(process.env);
   if (!token) throw new Error(noCommentTokenMessage(ctx.repo, ctx.number));
-  const env = { ...process.env, GH_TOKEN: token.value };
+  const env = ghCredentialEnv(process.env, token);
 
   const base = githubApiBaseFrom(process.env);
   const listUrl = `${base}/repos/${ctx.repo}/issues/${ctx.number}/comments`;
@@ -598,8 +667,8 @@ export type GhExec = (
  * Server the same way it reaches github.com.
  *
  * The credential is resolved and forwarded the same way too (chant #2320),
- * through {@link commentTokenFrom} and out as `GH_TOKEN` on every call. It
- * did not used to be: `reconcilePr` handed this `(cmd) => execAsync(cmd, {
+ * through {@link commentTokenFrom} and out through {@link ghCredentialEnv} on
+ * every call. It did not used to be: `reconcilePr` handed this `(cmd) => execAsync(cmd, {
  * signal })` with no `env` at all, so `CHANT_FORGEJO_TOKEN` never reached
  * `gh` and the one case that variable exists for — posting to a Forgejo
  * instance other than the one the job runs on, where `github.token`'s scope
@@ -643,10 +712,9 @@ export type GhExec = (
  *    open` on a real Forgejo 12.0.4+gitea-1.22.0 instance interleaves pull
  *    requests with issues exactly as GitHub's endpoint does, and the
  *    `.pull_request == null` filter below excludes them correctly. The write
- *    calls this function makes do not clear the same instance — see the
- *    module doc's `issue` bullet for why, and why the forgejo Op generator
- *    refuses this mode rather than generating a job that would 401 on every
- *    run.
+ *    calls this function makes did not clear the same instance until chant
+ *    #2333 gave them a credential `gh` would apply to that host — see the
+ *    module doc's `issue` bullet and {@link ghCredentialEnv}.
  *
  * So this reuses the recipe `postOrUpdateComment` already proved for PR
  * comments: list, `--paginate`, filter with `--jq` by an exact `startswith`
@@ -686,7 +754,7 @@ export async function postOrUpdateGithubIssue(
 ): Promise<string> {
   const token = commentTokenFrom(process.env);
   if (!token) throw new Error(noIssueTokenMessage(repo));
-  const env = { ...process.env, GH_TOKEN: token.value };
+  const env = ghCredentialEnv(process.env, token);
 
   const base = githubApiBaseFrom(process.env);
   const listUrl = `${base}/repos/${repo}/issues?state=open`;
