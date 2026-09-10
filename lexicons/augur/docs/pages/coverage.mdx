@@ -46,18 +46,24 @@ size, the request carries none — a guessed size is a guessed price.
 | `AWS::DynamoDB::Table` | database | aws | `BillingMode` | the request's |
 | `AWS::EC2::Instance` | compute | aws | `InstanceType` | the request's |
 | `AWS::EC2::Volume` | block-store | aws | `Size` | `AvailabilityZone`, else the request's |
+| `AWS::ECS::Service` | compute | aws | — | the request's |
+| `AWS::EKS::Cluster` | control-plane | aws | — | the request's |
+| `AWS::EKS::Nodegroup` | compute | aws | — | the request's |
 | `AWS::ElastiCache::CacheCluster` | cache | aws | `CacheNodeType` | the request's |
 | `AWS::ElasticLoadBalancingV2::LoadBalancer` | load-balancer | aws | `Type` | the request's |
 | `AWS::Lambda::Function` | serverless | aws | `MemorySize` | the request's |
+| `AWS::RDS::DBCluster` | database | aws | `DBClusterInstanceClass` | the request's |
 | `AWS::RDS::DBInstance` | database | aws | `DBInstanceClass` | the request's |
 | `AWS::S3::Bucket` | object-store | aws | — | the request's |
+| `AWS::SNS::Topic` | queue | aws | — | the request's |
 | `AWS::SQS::Queue` | queue | aws | — | the request's |
-| `K8s::Apps::DaemonSet` | compute | kubernetes | `spec.template.spec.containers` | the request's |
-| `K8s::Apps::Deployment` | compute | kubernetes | `spec.template.spec.containers` | the request's |
-| `K8s::Apps::StatefulSet` | compute | kubernetes | `spec.template.spec.containers` | the request's |
-| `K8s::Batch::CronJob` | serverless | kubernetes | `spec.jobTemplate.spec.template.spec.containers` | the request's |
-| `K8s::Batch::Job` | serverless | kubernetes | `spec.template.spec.containers` | the request's |
+| `K8s::Apps::DaemonSet` | compute | kubernetes | — | the request's |
+| `K8s::Apps::Deployment` | compute | kubernetes | — | the request's |
+| `K8s::Apps::StatefulSet` | compute | kubernetes | — | the request's |
+| `K8s::Batch::CronJob` | serverless | kubernetes | — | the request's |
+| `K8s::Batch::Job` | serverless | kubernetes | — | the request's |
 | `K8s::Core::PersistentVolumeClaim` | block-store | kubernetes | `spec.resources.requests.storage` | the request's |
+| `K8s::Core::Pod` | compute | kubernetes | — | the request's |
 | `K8s::Core::Service` | load-balancer | kubernetes | `spec.type` | the request's |
 | `K8s::Networking::Ingress` | load-balancer | kubernetes | — | the request's |
 
@@ -82,7 +88,12 @@ the answer is `unsupported-kind` rather than a figure derived from half of it.
 
 | Entity type | Why it carries no rate |
 |---|---|
-| `Augur::Profile` | the request's own input — the traffic level to predict at — and not part of the estate being predicted. Sending it would ask an engine to price the question |
+| `AWS::BedrockAgentCore::Gateway` | a front door to an agent runtime, billed by what passes through it rather than by existing |
+| `AWS::BedrockAgentCore::GatewayTarget` | one target behind a gateway; the gateway and the runtime are where the meters are |
+| `AWS::BedrockAgentCore::Memory` | agent memory billed by what is stored and retrieved, which the declaration does not state |
+| `AWS::BedrockAgentCore::Runtime` | an agent runtime billed per invocation and per token, neither of which the declaration states; there is no hour of existence to price |
+| `AWS::BedrockAgentCore::WorkloadIdentity` | an identity a runtime acts as; a grant, with no rate and no capacity |
+| `AWS::CloudFormation::Condition` | a template predicate deciding whether something is created; it is never created itself |
 | `AWS::CloudFormation::Parameter` | a template input, not a thing the account holds. It shapes what is created and is never created itself |
 | `AWS::EC2::EIP` | priced only while it is attached to nothing, which is a fact about the running account rather than about the declaration |
 | `AWS::EC2::InternetGateway` | a boundary crossing rather than a resource: no rate of its own and no capacity to saturate |
@@ -94,20 +105,59 @@ the answer is `unsupported-kind` rather than a figure derived from half of it.
 | `AWS::EC2::SubnetRouteTableAssociation` | an association between two boundaries; nothing flows through it that does not already flow through them |
 | `AWS::EC2::VPC` | a network boundary rather than a node: its contribution to a prediction is the zone membership that reaches the engine as containment coverage |
 | `AWS::EC2::VPCGatewayAttachment` | an attachment between two boundaries, and neither end is priced by it |
+| `AWS::ECR::Repository` | priced by the gigabytes stored in it, which the declaration does not state |
+| `AWS::ECS::Cluster` | a namespace for services rather than capacity of its own; the services and their nodes carry the figures |
+| `AWS::ECS::TaskDefinition` | a template a service runs copies of; the service carries the figures, and pricing both would count the estate twice |
+| `AWS::ElasticLoadBalancingV2::Listener` | a port on a load balancer; the load balancer carries the rate |
+| `AWS::ElasticLoadBalancingV2::ListenerRule` | a routing rule on a listener, and a rule is not a thing at either end of an edge |
+| `AWS::ElasticLoadBalancingV2::TargetGroup` | a set of targets behind a load balancer; the load balancer carries the rate |
+| `AWS::Events::Rule` | priced by the events matched, which is a fact about traffic the declaration does not state |
+| `AWS::IAM::InstanceProfile` | a wrapper that hands a role to an instance; the instance carries the figures |
 | `AWS::IAM::ManagedPolicy` | a policy document is a statement about permission; nothing about it saturates or accrues |
 | `AWS::IAM::Policy` | a policy document is a statement about permission; nothing about it saturates or accrues |
 | `AWS::IAM::Role` | a role is a grant, not a resource traffic flows through: no rate, no capacity, no verdict under a lost zone |
+| `AWS::KMS::Key` | priced per key per month plus a per-request meter the declaration does not state, and neither half is an hourly rate |
+| `AWS::Lambda::EventSourceMapping` | the wiring between a queue and a function, both of which are priced where they are declared |
+| `AWS::Lambda::Permission` | a grant letting one service invoke a function; the function carries the figures |
 | `AWS::Logs::LogGroup` | priced by the volume ingested into it, which the declaration does not state and no engine can infer from a graph |
 | `AWS::RDS::DBSubnetGroup` | the set of subnets a database may sit in; the database carries the figures |
+| `AWS::Route53::HostedZone` | priced per zone per month plus a per-query meter the declaration does not state |
 | `AWS::S3::BucketPolicy` | a bucket policy is a grant on the bucket beside it, and the bucket carries the figures |
+| `AWS::SNS::Subscription` | priced by the notifications delivered through it; the topic is what the graph has an edge to |
 | `AWS::SQS::QueuePolicy` | a queue policy is a grant on the queue beside it, and the queue carries the figures |
 | `AWS::WAFv2::WebACL` | priced by the requests inspected through it, which the declaration does not state |
+| `Augur::Profile` | the request's own input — the traffic level to predict at — and not part of the estate being predicted. Sending it would ask an engine to price the question |
+| `Chant::Op` | an Op is a procedure chant runs, not a resource an account holds. What an Op creates is priced where that lands; the Op itself exists only in the build |
+| `K8s::Argo::Application` | a request to Argo CD to reconcile a source; whatever it creates is priced where that lands |
+| `K8s::Autoscaling::HorizontalPodAutoscaler` | an instruction about how many replicas to run; the workload it scales carries the figures, and a prediction is at one stated traffic level rather than across a scaling range |
+| `K8s::Calico::FelixConfiguration` | tuning for the CNI agent on every node; the nodes carry the figures |
+| `K8s::CertManager::Certificate` | a request to an issuer. The certificate costs nothing; the issuer's work and the Secret it writes are elsewhere |
+| `K8s::CertManager::ClusterIssuer` | the issuer a certificate request names; it holds no capacity and serves no traffic |
 | `K8s::Core::ConfigMap` | configuration the workloads read; it has no rate and no saturation axis of its own |
+| `K8s::Core::LimitRange` | a default and a ceiling for workloads in a namespace; the workloads carry the figures |
 | `K8s::Core::Namespace` | a boundary the workloads sit inside, and the workloads carry the figures |
+| `K8s::Core::ResourceQuota` | a ceiling on a namespace's total requests; the workloads under it carry the figures |
 | `K8s::Core::Secret` | configuration the workloads read; it has no rate and no saturation axis of its own |
 | `K8s::Core::ServiceAccount` | an identity, not a workload |
+| `K8s::ExternalSecrets::ClusterSecretStore` | names where secrets are fetched from; it holds no capacity and serves no traffic |
+| `K8s::ExternalSecrets::ExternalSecret` | a request to copy a value from an external store into a Secret; neither end is a rate |
+| `K8s::Flux::GitRepository` | a source Flux polls; the workloads it reconciles carry the figures |
+| `K8s::Flux::Kustomization` | a request to Flux to apply a source; whatever it creates is priced where that lands |
+| `K8s::GKE::BackendConfig` | tuning for a Google load balancer an Ingress creates; augur does not model gcp, so neither end is priced here |
+| `K8s::HorizontalPodAutoscaler` | an instruction about how many replicas to run; the workload it scales carries the figures, and a prediction is at one stated traffic level rather than across a scaling range |
+| `K8s::Monitoring::PrometheusRule` | alerting and recording rules evaluated by Prometheus, which carries the figures |
+| `K8s::Monitoring::ServiceMonitor` | tells Prometheus what to scrape; Prometheus is a workload elsewhere in the graph and carries the figures |
+| `K8s::Networking::IngressClass` | names which controller handles an Ingress; the controller and the load balancer it creates carry the figures |
+| `K8s::Networking::NetworkPolicy` | a filter on edges that already exist, not a thing at either end of one |
+| `K8s::NetworkingGKE::ManagedCertificate` | a certificate Google issues for an Ingress; augur does not model gcp |
+| `K8s::NetworkingGKEBeta::FrontendConfig` | tuning for a Google load balancer an Ingress creates; augur does not model gcp |
+| `K8s::Policy::PodDisruptionBudget` | a constraint on voluntary eviction. It shapes what a lost zone does to a workload and has no rate of its own; expressing that constraint to an engine is a resilience input this contract has no field for |
+| `K8s::Rbac::ClusterRole` | the cluster-scoped twin of an RBAC role, and a grant for the same reason |
+| `K8s::Rbac::ClusterRoleBinding` | the cluster-scoped twin of an RBAC binding, and a grant for the same reason |
 | `K8s::Rbac::Role` | an RBAC role is a grant; the workloads it admits are what cost and saturate |
 | `K8s::Rbac::RoleBinding` | an RBAC binding is a grant; the workloads it admits are what cost and saturate |
+| `K8s::Storage::StorageClass` | the kind of disk a claim may ask for; the PersistentVolumeClaim carries the figures |
+| `K8s::Traefik::IngressRoute` | routing handled by the Traefik workload, which carries the figures |
 
 ## Adding a row
 

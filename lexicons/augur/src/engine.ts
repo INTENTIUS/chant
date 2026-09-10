@@ -41,6 +41,7 @@
  */
 
 import { execFile, type ExecFileException } from "node:child_process";
+import { isBehaviourBasis, isResilienceVerdict } from "@intentius/chant/behaviour";
 import type { BehaviourBasis, BehaviourEngineEndpoint, ResilienceVerdict } from "@intentius/chant/behaviour";
 import type { EngineRequest } from "./request";
 import { renderEngineRequest } from "./request";
@@ -177,6 +178,87 @@ function firstLine(text: string): string {
 }
 
 /**
+ * Everything wrong with one figure, as readable field paths. Empty means the
+ * figure is usable.
+ *
+ * Pure and exported so the shapes an engine can get wrong are testable without
+ * a subprocess. Every check here mirrors one `validateBehaviourBlock` applies
+ * downstream (`packages/core/src/behaviour.ts`) — the difference is *when*:
+ * that one throws, and a throw is the whole-lexicon failure `lexicon.ts`
+ * reserves for a live credential. A third party emitting one bad number is not
+ * that, and reporting it as that is how an operator goes looking for a leak.
+ */
+export function figureProblems(name: string, figure: unknown): string[] {
+  const at = (field: string) => `figures.${name}.${field}`;
+  if (typeof figure !== "object" || figure === null || Array.isArray(figure)) {
+    return [`${at("")} is ${Array.isArray(figure) ? "an array" : typeof figure}, not an object`];
+  }
+  const f = figure as Record<string, unknown>;
+  const out: string[] = [];
+
+  const fraction = (field: string, value: unknown) => {
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1) {
+      out.push(`${at(field)} is not a number in 0..1`);
+    }
+  };
+
+  if (typeof f.perHour !== "number" || !Number.isFinite(f.perHour) || f.perHour < 0) {
+    out.push(`${at("perHour")} is not a non-negative finite number`);
+  }
+  if (typeof f.currency !== "string" || f.currency.trim().length === 0) {
+    out.push(`${at("currency")} is empty`);
+  }
+  fraction("errorRate", f.errorRate);
+
+  const headroom = f.headroom;
+  if (typeof headroom !== "object" || headroom === null || Array.isArray(headroom)) {
+    out.push(`${at("headroom")} is missing`);
+  } else {
+    const h = headroom as Record<string, unknown>;
+    // At least one axis, and an axis the engine did not model must be absent
+    // rather than zero — zero headroom means saturated, the opposite claim.
+    if (h.cpu === undefined && h.latency === undefined) {
+      out.push(`${at("headroom")} carries neither cpu nor latency`);
+    }
+    for (const axis of ["cpu", "latency"] as const) {
+      if (h[axis] !== undefined) fraction(`headroom.${axis}`, h[axis]);
+    }
+  }
+
+  const resilience = f.resilience;
+  if (typeof resilience !== "object" || resilience === null || Array.isArray(resilience)) {
+    out.push(`${at("resilience")} is missing`);
+  } else {
+    const r = resilience as Record<string, unknown>;
+    if (typeof r.failure !== "string" || r.failure.trim().length === 0) {
+      out.push(`${at("resilience.failure")} names no failure`);
+    }
+    if (!isResilienceVerdict(r.verdict)) {
+      out.push(`${at("resilience.verdict")} is not survives/degrades/fails`);
+    }
+    if (r.note !== undefined && typeof r.note !== "string") {
+      out.push(`${at("resilience.note")} is not a string`);
+    }
+  }
+
+  const rightSize = f.rightSize;
+  if (rightSize !== undefined) {
+    if (typeof rightSize !== "object" || rightSize === null || Array.isArray(rightSize)) {
+      out.push(`${at("rightSize")} is not an object`);
+    } else if (typeof (rightSize as Record<string, unknown>).suggestion !== "string") {
+      out.push(`${at("rightSize.suggestion")} is missing`);
+    }
+  }
+
+  return out;
+}
+
+/** One `engine-unreachable` outcome, with the detail the refusal will scrub and print. */
+function malformed(detail: string): EngineOutcome {
+  return { ok: false, failure: { cause: "engine-unreachable", detail } };
+}
+
+/**
  * Parse an engine's stdout into an {@link EngineAnswer}.
  *
  * A malformed answer is `engine-unreachable` and not a report full of holes.
@@ -184,41 +266,99 @@ function firstLine(text: string): string {
  * unpredicted — would turn an engine emitting garbage into an estate that
  * looks partially free, which is the failure the refusal arm exists to
  * prevent, one level down.
+ *
+ * **Every figure is validated here, not only the envelope.** The first version
+ * of this function checked `engine`/`version`/`tolerance`/`basis` and that
+ * `figures` was an object, and then handed each figure's contents straight to
+ * `block()` in `./predict-behaviour.ts`, which dereferenced
+ * `figure.resilience.failure`. Seven malformed shapes were executed against
+ * it and all seven threw: three as bare `TypeError`s with no chant message,
+ * four through `validateBehaviourBlock` after the fact. A throw is the
+ * whole-lexicon failure `lexicon.ts` reserves for a live credential in the
+ * request, so a third-party engine emitting one bad number was indistinguishable
+ * from a leak — and the doc above claimed the opposite was happening.
+ *
+ * The detail names the entity and the field, because "the engine sent
+ * something wrong" is not a thing anybody can act on and "figures.web.headroom
+ * carries neither cpu nor latency" is. It flows into
+ * `unreachableBehaviourEngineRefusal`, which runs it through
+ * `scrubEngineDetail` and bounds it.
  */
 export function parseEngineAnswer(stdout: string): EngineOutcome {
   let parsed: unknown;
   try {
     parsed = JSON.parse(stdout);
   } catch {
-    return {
-      ok: false,
-      failure: {
-        cause: "engine-unreachable",
-        detail: `the engine wrote ${stdout.length} byte(s) that are not JSON`,
-      },
-    };
+    return malformed(`the engine wrote ${stdout.length} byte(s) that are not JSON`);
   }
-  if (typeof parsed !== "object" || parsed === null) {
-    return { ok: false, failure: { cause: "engine-unreachable", detail: "the engine's answer is not an object" } };
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return malformed("the engine's answer is not an object");
   }
   const answer = parsed as Partial<EngineAnswer>;
-  const missing = (["engine", "version", "tolerance", "basis"] as const).filter(
-    (key) => typeof answer[key] !== "string" || (answer[key] as string).length === 0,
+
+  const missing = (["engine", "version", "tolerance"] as const).filter(
+    (key) => typeof answer[key] !== "string" || (answer[key] as string).trim().length === 0,
   );
   if (missing.length > 0) {
-    return {
-      ok: false,
-      failure: {
-        cause: "engine-unreachable",
-        detail:
-          `the engine's answer states no ${missing.join(", ")}. Every figure carries provenance, so ` +
-          "an answer that cannot say who produced it is not a usable answer",
-      },
-    };
+    return malformed(
+      `the engine's answer states no ${missing.join(", ")}. Every figure carries provenance, so an ` +
+        "answer that cannot say who produced it is not a usable answer",
+    );
   }
-  if (typeof answer.figures !== "object" || answer.figures === null) {
-    return { ok: false, failure: { cause: "engine-unreachable", detail: "the engine's answer carries no figures map" } };
+  // A closed enum downstream, so a free-form basis is caught here rather than
+  // by a throw from `validateBehaviourBlock` after the report is half built.
+  if (!isBehaviourBasis(answer.basis)) {
+    return malformed(
+      `the engine's answer states a basis of ${JSON.stringify(answer.basis)}, which is not ` +
+        "modeled or validated",
+    );
   }
+
+  if (typeof answer.figures !== "object" || answer.figures === null || Array.isArray(answer.figures)) {
+    // `Array.isArray` explicitly: `typeof [] === "object"`, so `figures: []`
+    // parsed clean and produced a report in which every node had been lost.
+    return malformed("the engine's answer carries no figures map");
+  }
+
+  if (answer.total !== undefined) {
+    const total = answer.total as Record<string, unknown>;
+    if (
+      typeof total !== "object" ||
+      total === null ||
+      typeof total.perHour !== "number" ||
+      !Number.isFinite(total.perHour) ||
+      total.perHour < 0 ||
+      typeof total.currency !== "string" ||
+      total.currency.trim().length === 0
+    ) {
+      return malformed("the engine's answer states a total that is not a non-negative rate in a named currency");
+    }
+  }
+
+  if (answer.declined !== undefined) {
+    const declined = answer.declined as unknown;
+    if (typeof declined !== "object" || declined === null || Array.isArray(declined)) {
+      return malformed("the engine's answer carries a declined list that is not a map");
+    }
+    for (const [name, reason] of Object.entries(declined as Record<string, unknown>)) {
+      if (typeof reason !== "string") {
+        return malformed(`the engine declined ${name} with a reason that is not a string`);
+      }
+    }
+  }
+
+  const problems: string[] = [];
+  for (const [name, figure] of Object.entries(answer.figures as Record<string, unknown>)) {
+    problems.push(...figureProblems(name, figure));
+    if (problems.length >= 5) break;
+  }
+  if (problems.length > 0) {
+    return malformed(
+      `the engine's answer is malformed: ${problems.slice(0, 5).join("; ")}` +
+        (problems.length >= 5 ? " (and possibly more)" : ""),
+    );
+  }
+
   return { ok: true, answer: answer as EngineAnswer };
 }
 

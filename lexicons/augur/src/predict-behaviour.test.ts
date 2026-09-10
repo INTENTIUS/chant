@@ -36,7 +36,7 @@ import {
 } from "@intentius/chant/behaviour";
 import type { IREdge } from "@intentius/chant/graph-ir";
 import { createAugurPredict } from "./predict-behaviour";
-import { defaultConnect, type EngineConnect } from "./engine";
+import { defaultConnect, parseEngineAnswer, type EngineConnect } from "./engine";
 import { fixtureEngine, FIXTURE_ENGINE_NAME, FIXTURE_ENGINE_VERSION } from "./__fixtures__/fixture-engine";
 import { exampleRequestOptions } from "./__fixtures__/example-request";
 
@@ -359,7 +359,12 @@ describe("the example estate, predicted end to end (#2357)", () => {
     const result: BehaviourResult = await up(options);
     if (isBehaviourRefusalReport(result)) throw new Error("expected a report");
 
-    expect(Object.keys(result.entities).sort()).toEqual(["databaseDb", "orders", "receipts"]);
+    expect(Object.keys(result.entities).sort()).toEqual([
+      "arrivalsQueue",
+      "arrièreQueue",
+      "databaseDb",
+      "receipts",
+    ]);
     const declined = result.unpredicted ?? {};
     expect(declined.networkVpc?.reason).toBe("unsupported-kind");
     expect(declined.networkVpc?.detail).toContain("AWS::EC2::VPC");
@@ -377,5 +382,91 @@ describe("the example estate, predicted end to end (#2357)", () => {
     if (isBehaviourRefusalReport(result)) throw new Error("expected a report");
     expect(result.meta.edgeCoverage.verdict).toBe("partial");
     expect(result.meta.edgeCoverage.unresolvedKinds).toEqual(["AWS::EC2::VPC", "AWS::EC2::Subnet"]);
+  });
+});
+
+describe("an entity named after a prototype member (D5)", () => {
+  // `entities`/`unpredicted` were plain `{}` and `answer.figures` comes from
+  // `JSON.parse`, so `figures["constructor"]` was a function rather than
+  // `undefined` and the guard missed it, while `unpredicted["__proto__"] = …`
+  // set a prototype instead of adding a key and the entry vanished — which
+  // `behaviourReport`'s totality check then reported as a lost entity.
+  const hazards = ["constructor", "toString", "__proto__", "hasOwnProperty"];
+
+  for (const name of hazards) {
+    test(`prices "${name}" without throwing`, async () => {
+      const declared = new Map([[name, { entityType: "AWS::EC2::Instance", props: { InstanceType: "t3.medium" } }]]);
+      const result = await up({
+        ...REQUEST,
+        entityNames: [name],
+        entities: declared,
+        edges: [],
+        edgeCoverage: { verdict: "unknown" },
+      });
+      if (isBehaviourRefusalReport(result)) throw new Error("expected a report");
+      expect(Object.prototype.hasOwnProperty.call(result.entities, name)).toBe(true);
+    });
+
+    test(`declines "${name}" without throwing when its kind has no row`, async () => {
+      const declared = new Map([[name, { entityType: "AWS::IAM::Role", props: {} }]]);
+      const result = await up({
+        ...REQUEST,
+        entityNames: [name],
+        entities: declared,
+        edges: [],
+        edgeCoverage: { verdict: "unknown" },
+      });
+      if (isBehaviourRefusalReport(result)) throw new Error("expected a report");
+      expect(Object.prototype.hasOwnProperty.call(result.unpredicted ?? {}, name)).toBe(true);
+    });
+  }
+});
+
+describe("a substrate augur does not model is a boundary, not a gap (D3)", () => {
+  test("names the substrate rather than telling the reader to add a row", async () => {
+    const declared = new Map([
+      ["bucket", { entityType: "GCP::Storage::Bucket", props: {} }],
+      ["chart", { entityType: "Helm::Chart", props: {} }],
+    ]);
+    const result = await up({
+      ...REQUEST,
+      entityNames: [...declared.keys()],
+      entities: declared,
+      edges: [],
+      edgeCoverage: { verdict: "unknown" },
+    });
+    if (isBehaviourRefusalReport(result)) throw new Error("expected a report");
+    expect(result.unpredicted?.bucket?.detail).toContain("Google Cloud");
+    expect(result.unpredicted?.bucket?.detail).toContain("stated boundary rather than a gap");
+    expect(result.unpredicted?.bucket?.detail).not.toContain("Add a row");
+    expect(result.unpredicted?.chart?.detail).toContain("Helm");
+  });
+});
+
+describe("an engine that answers badly is unreachable, not a stop (D1)", () => {
+  test("refuses a malformed figure rather than throwing the lexicon down", async () => {
+    // The distinction that matters: a throw is what the credential value-arm
+    // uses, and an engine emitting one bad number is not a leak.
+    const predict = createAugurPredict({
+      env: UP,
+      connect: () => ({
+        async predict() {
+          return parseEngineAnswer(
+            JSON.stringify({
+              engine: "e",
+              version: "1",
+              tolerance: "±5%",
+              basis: "modeled",
+              figures: { web: { perHour: 0.1, currency: "USD" } },
+            }),
+          );
+        },
+      }),
+    });
+    const result = await predict(REQUEST);
+    expect(isBehaviourRefusalReport(result)).toBe(true);
+    if (!isBehaviourRefusalReport(result)) return;
+    expect(result.refusal.cause).toBe("engine-unreachable");
+    expect(result.refusal.reason).toContain("figures.web");
   });
 });

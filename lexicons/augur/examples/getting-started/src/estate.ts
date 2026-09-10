@@ -30,10 +30,31 @@ export const database = RdsInstance({
   databaseName: "checkout",
 });
 
-/** A queue on the checkout path. Mapped: `AWS::SQS::Queue` is a `queue`. */
-export const orders = new Queue({
-  QueueName: "checkout-orders",
+/**
+ * Two queues on the checkout path, and the pair is deliberate.
+ *
+ * `arrièreQueue` and `arrivalsQueue` share the prefix `arri` and then differ at
+ * a letter outside ASCII, which makes them the one pair whose order disagrees
+ * between a code-unit sort and a locale-aware one: by code unit `è` (U+00E8)
+ * comes after `v`, and under an English collation it sorts as `e`, which comes
+ * before.
+ *
+ * The request sorts entity names and edge endpoints before rendering, and the
+ * first version of `request.ts` sorted them with `localeCompare` — so the same
+ * estate produced two different byte streams depending on the machine's `LANG`,
+ * in a module whose whole claim is that its bytes are a function of its content.
+ * An all-ASCII fixture cannot catch that, because the orders that disagree are
+ * exactly the ones involving letters outside it. These two are in the golden so
+ * that reintroducing a collation-aware sort moves real committed bytes.
+ */
+export const arrivalsQueue = new Queue({
+  QueueName: "checkout-arrivals",
   VisibilityTimeout: 60,
+});
+
+export const arrièreQueue = new Queue({
+  QueueName: "checkout-arriere-backlog",
+  VisibilityTimeout: 120,
 });
 
 /**

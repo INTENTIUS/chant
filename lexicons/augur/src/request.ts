@@ -32,7 +32,7 @@
 
 import type { IREdge } from "@intentius/chant/graph-ir";
 import type { BehaviourEdgeCoverage, PredictBehaviourOptions } from "@intentius/chant/behaviour";
-import { coverageFor, unmappedDetail, type EngineKind } from "./mapping";
+import { byCodeUnit, coverageFor, unmappedDetail, type EngineKind } from "./mapping";
 
 /** The wire version. Bumped when the shape changes, the way `behaviour: "v1"` is. */
 export const AUGUR_REQUEST_VERSION = "augur/v1" as const;
@@ -70,11 +70,13 @@ export interface WithheldEntity {
   name: string;
   entityType: string;
   /**
-   * `declared-unmapped` when the coverage table has looked at this type and
-   * decided; `unknown-type` when it has not. See `./mapping.ts` for why the
-   * two are not one.
+   * Which of the coverage table's three not-sent verdicts this is:
+   * `declared-unmapped` (looked at, and it carries no rate),
+   * `provider-not-modelled` (a substrate augur states it does not cover), or
+   * `unknown-type` (a modelled provider's type with no row — the only one that
+   * is a defect). See `./mapping.ts` for why they are not one.
    */
-  status: "declared-unmapped" | "unknown-type";
+  status: "declared-unmapped" | "provider-not-modelled" | "unknown-type";
   detail: string;
 }
 
@@ -105,19 +107,30 @@ function readPath(props: Record<string, unknown>, path: string): unknown {
 /**
  * A declared size, as a string, or absent.
  *
- * A string passes through. A finite number renders through `String`, which is
- * what a `MemorySize: 512` or a PVC's `Size: 100` is. Anything else — an
- * object, an unresolved intrinsic, a `NaN` — is **absent** rather than
- * `JSON.stringify`d into the request, because a size an engine cannot read is
- * worse than no size: it will either be ignored silently or matched against a
- * price table it does not appear in.
+ * `sizeType` says which type the row's property holds, and a value of the
+ * other type is **absent** rather than coerced. Without that, a
+ * `DBInstanceClass: 42` — a wrong-typed declaration, or a parameter that
+ * folded to a number — rendered as `"42"` and went to the engine to be matched
+ * against a price table of instance-class names it does not appear in. That is
+ * the outcome the paragraph below is written against, arriving through the
+ * door the paragraph left open.
+ *
+ * Anything else — an object, an array, an unresolved intrinsic, a `NaN` — is
+ * absent too, because a size an engine cannot read is worse than no size: it
+ * will either be ignored silently or matched against nothing.
  */
-export function sizeOf(props: Record<string, unknown>, sizeProp: string | undefined): string | undefined {
+export function sizeOf(
+  props: Record<string, unknown>,
+  sizeProp: string | undefined,
+  sizeType?: "string" | "number",
+): string | undefined {
   if (!sizeProp) return undefined;
   const raw = readPath(props, sizeProp);
-  if (typeof raw === "string") return raw.length > 0 ? raw : undefined;
-  if (typeof raw === "number" && Number.isFinite(raw)) return String(raw);
-  return undefined;
+  if (sizeType === "number") {
+    return typeof raw === "number" && Number.isFinite(raw) ? String(raw) : undefined;
+  }
+  // `string`, and the default for a row naming a property and no type.
+  return typeof raw === "string" && raw.length > 0 ? raw : undefined;
 }
 
 /**
@@ -140,7 +153,7 @@ export function buildEngineRequest(
   const nodes: EngineNode[] = [];
   const withheld: WithheldEntity[] = [];
 
-  for (const name of [...options.entityNames].sort()) {
+  for (const name of [...options.entityNames].sort(byCodeUnit)) {
     const declared = options.entities.get(name);
     if (!declared) {
       withheld.push({
@@ -160,7 +173,7 @@ export function buildEngineRequest(
       withheld.push({
         name,
         entityType: declared.entityType,
-        status: verdict.status === "declared-unmapped" ? "declared-unmapped" : "unknown-type",
+        status: verdict.status,
         detail: unmappedDetail(declared.entityType, verdict),
       });
       continue;
@@ -172,7 +185,7 @@ export function buildEngineRequest(
     const region = typeof declaredRegion === "string" && declaredRegion.length > 0
       ? declaredRegion
       : options.region;
-    const size = sizeOf(declared.props, mapping.sizeProp);
+    const size = sizeOf(declared.props, mapping.sizeProp, mapping.sizeType);
     nodes.push({
       name,
       entityType: declared.entityType,
@@ -190,12 +203,16 @@ export function buildEngineRequest(
       ...(edge.viaAttr ? { via: edge.viaAttr } : {}),
       ...(edge.toAttr ? { toAttr: edge.toAttr } : {}),
     }))
+    // By code unit, like the node order above. `localeCompare` reads the
+    // ambient locale, so two machines with different `LANG` values produced
+    // two different byte streams from one estate — in a module whose whole
+    // claim is that its bytes are a function of its content and nothing else.
     .sort(
       (a, b) =>
-        a.from.localeCompare(b.from) ||
-        a.to.localeCompare(b.to) ||
-        (a.via ?? "").localeCompare(b.via ?? "") ||
-        (a.toAttr ?? "").localeCompare(b.toAttr ?? ""),
+        byCodeUnit(a.from, b.from) ||
+        byCodeUnit(a.to, b.to) ||
+        byCodeUnit(a.via ?? "", b.via ?? "") ||
+        byCodeUnit(a.toAttr ?? "", b.toAttr ?? ""),
     );
 
   return {

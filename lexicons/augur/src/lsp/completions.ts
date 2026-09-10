@@ -20,7 +20,7 @@
  */
 
 import type { CompletionContext, CompletionItem } from "@intentius/chant/lsp/types";
-import { DECLARED_UNMAPPED, ENGINE_KINDS_BY_ENTITY_TYPE } from "../mapping";
+import { byCodeUnit, DECLARED_UNMAPPED, ENGINE_KINDS_BY_ENTITY_TYPE } from "../mapping";
 
 /** The `Profile` properties, with what each one is for. */
 export const PROFILE_KEYS: ReadonlyArray<{ key: string; detail: string }> = [
@@ -89,5 +89,5 @@ function typeCompletions(typed: string): CompletionItem[] {
       documentation: `Not sent to the engine: ${reason}. It is reported as \`unsupported-kind\`, never as zero.`,
     });
   }
-  return items.sort((a, b) => a.label.localeCompare(b.label));
+  return items.sort((a, b) => byCodeUnit(a.label, b.label));
 }

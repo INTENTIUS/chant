@@ -117,8 +117,15 @@ export function createAugurPredict(
     }
 
     const { answer } = outcome;
-    const entities: Record<string, PredictedBehaviour> = {};
-    const unpredicted: Record<string, UnpredictedEntity> = {};
+    // `Object.create(null)`, not `{}`. An entity named `constructor` or
+    // `toString` writes onto `Object.prototype`'s members on a plain literal,
+    // and one named `__proto__` sets the prototype instead of adding a key, so
+    // the entry vanishes and `behaviourReport`'s totality check fires on an
+    // entity this function believed it had reported. `coverageFor` already
+    // guards its own lookups this way (`./mapping.ts`); these are the same
+    // hazard on the writing side.
+    const entities: Record<string, PredictedBehaviour> = Object.create(null) as Record<string, PredictedBehaviour>;
+    const unpredicted: Record<string, UnpredictedEntity> = Object.create(null) as Record<string, UnpredictedEntity>;
 
     for (const held of request.withheld) {
       unpredicted[held.name] = {
@@ -129,7 +136,10 @@ export function createAugurPredict(
     }
 
     for (const node of request.nodes) {
-      const declined = answer.declined?.[node.name];
+      // `hasOwnProperty` for the same reason: `answer.declined` comes from
+      // `JSON.parse`, so `declined["constructor"]` is a function rather than
+      // `undefined` and the `!== undefined` guard below missed it.
+      const declined = has(answer.declined, node.name) ? answer.declined![node.name] : undefined;
       if (declined !== undefined) {
         unpredicted[node.name] = {
           type: node.entityType,
@@ -138,7 +148,7 @@ export function createAugurPredict(
         };
         continue;
       }
-      const figure = answer.figures[node.name];
+      const figure = has(answer.figures, node.name) ? answer.figures[node.name] : undefined;
       if (figure === undefined) {
         unpredicted[node.name] = {
           type: node.entityType,
@@ -168,6 +178,11 @@ export function createAugurPredict(
   };
 }
 
+/** An own key, not a prototype member. See the accumulators above. */
+function has(map: Record<string, unknown> | undefined, key: string): boolean {
+  return map !== undefined && Object.prototype.hasOwnProperty.call(map, key);
+}
+
 /**
  * One engine figure as a contract block.
  *
@@ -189,10 +204,23 @@ function block(
 ): PredictedBehaviour {
   const cpu = figure.headroom?.cpu;
   const latency = figure.headroom?.latency;
+  // Built axis by axis, and the cast the first version used here was a lie:
+  // `EngineFigure.headroom` is optional, so a figure stating none produced
+  // `{ latency: undefined }` — an object satisfying `BehaviourHeadroom`
+  // structurally and carrying no axis at all, which behold drops. The doc
+  // claiming a type error caught this was false. `parseEngineAnswer` now
+  // refuses such a figure before it reaches here; this stays correct anyway,
+  // because a lexicon should not depend on its own validator having run.
   const headroom =
     cpu !== undefined
       ? { cpu, ...(latency !== undefined ? { latency } : {}) }
       : { latency: latency as number };
+  if (cpu === undefined && latency === undefined) {
+    throw new Error(
+      `predictBehaviour: the engine's figure for this entity carries neither a cpu nor a latency ` +
+        "headroom axis, and parseEngineAnswer should have refused it.",
+    );
+  }
   return {
     at: { traffic },
     cost: predictedRate(figure.perHour, figure.currency),

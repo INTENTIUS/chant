@@ -21,6 +21,7 @@
 import type { Declarable } from "@intentius/chant/declarable";
 import { isResourceDeclarable } from "@intentius/chant/declarable";
 import type { Serializer } from "@intentius/chant/serializer";
+import { byCodeUnit } from "./mapping";
 import { PROFILE_TYPE } from "./resources";
 
 /** The wire version of the emitted document. */
@@ -43,7 +44,10 @@ export function collectProfiles(entities: Map<string, Declarable>): SerializedPr
     const description = typeof props.description === "string" ? props.description : undefined;
     profiles.push({ name, traffic, ...(description ? { description } : {}) });
   }
-  return profiles.sort((a, b) => a.name.localeCompare(b.name));
+  // By code unit, not `localeCompare`: this document is part of `chant
+  // build`'s byte-identical-on-re-run claim, and a collation order that
+  // reads the ambient locale makes the bytes a function of the machine.
+  return profiles.sort((a, b) => byCodeUnit(a.name, b.name));
 }
 
 export const augurSerializer: Serializer = {

@@ -170,19 +170,26 @@
   ],
   "nodes": [
     {
+      "entityType": "AWS::SQS::Queue",
+      "kind": "queue",
+      "name": "arrivalsQueue",
+      "provider": "aws",
+      "region": "us-east-1"
+    },
+    {
+      "entityType": "AWS::SQS::Queue",
+      "kind": "queue",
+      "name": "arrièreQueue",
+      "provider": "aws",
+      "region": "us-east-1"
+    },
+    {
       "entityType": "AWS::RDS::DBInstance",
       "kind": "database",
       "name": "databaseDb",
       "provider": "aws",
       "region": "us-east-1",
       "size": "db.t4g.micro"
-    },
-    {
-      "entityType": "AWS::SQS::Queue",
-      "kind": "queue",
-      "name": "orders",
-      "provider": "aws",
-      "region": "us-east-1"
     },
     {
       "entityType": "AWS::S3::Bucket",

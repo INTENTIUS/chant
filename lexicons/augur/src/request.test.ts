@@ -25,6 +25,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildEngineRequest, renderEngineRequest, sizeOf } from "./request";
+import { byCodeUnit, ENGINE_KINDS_BY_ENTITY_TYPE } from "./mapping";
 import {
   DECLARED_EDGE_COVERAGE,
   exampleRequestOptions,
@@ -62,7 +63,8 @@ describe("the golden request (#2357)", () => {
     const request = buildEngineRequest(await exampleRequestOptions());
     const kinds = Object.fromEntries(request.nodes.map((n) => [n.name, n.kind]));
     expect(kinds.databaseDb).toBe("database");
-    expect(kinds.orders).toBe("queue");
+    expect(kinds.arrivalsQueue).toBe("queue");
+    expect(kinds["arrièreQueue"]).toBe("queue");
     expect(kinds.receipts).toBe("object-store");
 
     const withheld = Object.fromEntries(request.withheld.map((w) => [w.name, w]));
@@ -90,26 +92,26 @@ describe("the golden request (#2357)", () => {
 
 describe("what reaches the wire, and what does not", () => {
   it("renders a declared size verbatim, and a number as its digits", () => {
-    expect(sizeOf({ InstanceType: "t3.medium" }, "InstanceType")).toBe("t3.medium");
-    expect(sizeOf({ MemorySize: 512 }, "MemorySize")).toBe("512");
+    expect(sizeOf({ InstanceType: "t3.medium" }, "InstanceType", "string")).toBe("t3.medium");
+    expect(sizeOf({ MemorySize: 512 }, "MemorySize", "number")).toBe("512");
   });
 
   it("leaves a size the engine could not read absent rather than stringifying it", () => {
     // An unresolved intrinsic, a nested object, a NaN. A size an engine cannot
     // match against a price table is worse than no size: it is either ignored
     // in silence or matched against nothing.
-    expect(sizeOf({ InstanceType: { Ref: "InstanceTypeParam" } }, "InstanceType")).toBeUndefined();
-    expect(sizeOf({ MemorySize: Number.NaN }, "MemorySize")).toBeUndefined();
-    expect(sizeOf({ InstanceType: "" }, "InstanceType")).toBeUndefined();
-    expect(sizeOf({}, "InstanceType")).toBeUndefined();
-    expect(sizeOf({ InstanceType: "t3.medium" }, undefined)).toBeUndefined();
+    expect(sizeOf({ InstanceType: { Ref: "InstanceTypeParam" } }, "InstanceType", "string")).toBeUndefined();
+    expect(sizeOf({ MemorySize: Number.NaN }, "MemorySize", "number")).toBeUndefined();
+    expect(sizeOf({ InstanceType: "" }, "InstanceType", "string")).toBeUndefined();
+    expect(sizeOf({}, "InstanceType", "string")).toBeUndefined();
+    expect(sizeOf({ InstanceType: "t3.medium" }, undefined, "string")).toBeUndefined();
   });
 
   it("reads a dotted size path, and misses a broken one without throwing", () => {
     const props = { spec: { resources: { requests: { storage: "20Gi" } } } };
-    expect(sizeOf(props, "spec.resources.requests.storage")).toBe("20Gi");
-    expect(sizeOf(props, "spec.resources.limits.storage")).toBeUndefined();
-    expect(sizeOf(props, "spec.template.spec.containers")).toBeUndefined();
+    expect(sizeOf(props, "spec.resources.requests.storage", "string")).toBe("20Gi");
+    expect(sizeOf(props, "spec.resources.limits.storage", "string")).toBeUndefined();
+    expect(sizeOf(props, "spec.template.spec.containers", "string")).toBeUndefined();
   });
 
   it("sorts keys canonically, so the bytes are a function of the content", () => {
@@ -184,5 +186,60 @@ describe("what reaches the wire, and what does not", () => {
       }),
     );
     expect(other).toBe(one);
+  });
+});
+
+describe("a size of the wrong type is absent, not coerced (D7)", () => {
+  it("renders a number only where the row says the property holds one", () => {
+    // `MemorySize` is a number in CloudFormation and reaches the engine as its
+    // digits; `DBInstanceClass` is a name, and a number there is a wrong-typed
+    // declaration or a parameter that folded. Rendering it as `"42"` sent a
+    // size to be matched against a price table of instance-class names it does
+    // not appear in — the outcome "absent beats unmatched" is written against,
+    // through the door that argument left open.
+    expect(sizeOf({ MemorySize: 512 }, "MemorySize", "number")).toBe("512");
+    expect(sizeOf({ DBInstanceClass: 42 }, "DBInstanceClass", "string")).toBeUndefined();
+    expect(sizeOf({ Size: "100" }, "Size", "number")).toBeUndefined();
+    expect(sizeOf({ InstanceType: "t3.medium" }, "InstanceType", "string")).toBe("t3.medium");
+  });
+
+  it("keeps every mapped row's size type stated where it names a property", () => {
+    for (const [type, mapping] of Object.entries(ENGINE_KINDS_BY_ENTITY_TYPE)) {
+      if (!mapping.sizeProp) continue;
+      expect(["string", "number"], `${type} names a size property and no type`).toContain(mapping.sizeType);
+    }
+  });
+
+  it("names no size property it cannot read", async () => {
+    // A Kubernetes workload's size is its containers' resource requests: an
+    // object, per container, over an array. Five rows named
+    // `spec.template.spec.containers`, which `sizeOf` can never return a value
+    // for, so every Kubernetes workload in the repository reached the engine
+    // unsized while the table's column claimed otherwise.
+    for (const type of [
+      "K8s::Apps::Deployment",
+      "K8s::Apps::StatefulSet",
+      "K8s::Apps::DaemonSet",
+      "K8s::Batch::Job",
+      "K8s::Batch::CronJob",
+    ]) {
+      expect(ENGINE_KINDS_BY_ENTITY_TYPE[type].sizeProp, `${type} advertises a size`).toBeUndefined();
+    }
+  });
+});
+
+describe("the request's order is a function of its content, not its locale (D6)", () => {
+  it("sorts by code unit, which disagrees with every locale on the fixture's own names", () => {
+    const [a, b] = ["arrivalsQueue", "arrièreQueue"];
+    expect([a, b].sort(byCodeUnit)).toEqual([a, b]);
+    for (const locale of ["en-US", "sv-SE", "et-EE"]) {
+      expect([a, b].sort((x, y) => x.localeCompare(y, locale)), locale).toEqual([b, a]);
+    }
+  });
+
+  it("puts the fixture's non-ASCII pair in code-unit order in the golden", async () => {
+    const request = buildEngineRequest(await exampleRequestOptions());
+    const names = request.nodes.map((n) => n.name);
+    expect(names.indexOf("arrivalsQueue")).toBeLessThan(names.indexOf("arrièreQueue"));
   });
 });

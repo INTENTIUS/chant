@@ -48,6 +48,17 @@ function coverageHover(quoted: string): HoverInfo | undefined {
     ];
     return { contents: lines.join("\n") };
   }
+  if (verdict.status === "provider-not-modelled") {
+    return {
+      contents: [
+        `**${quoted}**`,
+        "",
+        `**Not modelled.** This type belongs to ${verdict.substrate}, which the augur coverage`,
+        "table does not cover. It is reported as `unsupported-kind` naming the substrate — a stated",
+        "boundary rather than a gap, so there is nothing to file.",
+      ].join("\n"),
+    };
+  }
   return {
     contents: [
       `**${quoted}**`,

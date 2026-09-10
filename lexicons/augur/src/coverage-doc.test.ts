@@ -17,7 +17,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { mappedMarkdown, unmappedMarkdown } from "./coverage-doc";
-import { DECLARED_UNMAPPED, ENGINE_KINDS_BY_ENTITY_TYPE } from "./mapping";
+import { byCodeUnit, DECLARED_UNMAPPED, ENGINE_KINDS_BY_ENTITY_TYPE } from "./mapping";
 
 const page = readFileSync(
   join(dirname(fileURLToPath(import.meta.url)), "..", "docs", "pages", "coverage.mdx"),
@@ -68,7 +68,7 @@ describe("the rendered tables", () => {
         .map((line) => line.split("|")[1].trim().replace(/`/g, ""));
     for (const table of [mappedMarkdown(), unmappedMarkdown()]) {
       const rows = types(table);
-      expect(rows).toEqual([...rows].sort((a, b) => a.localeCompare(b)));
+      expect(rows).toEqual([...rows].sort(byCodeUnit));
     }
   });
 });

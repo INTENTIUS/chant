@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, writeFileSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { commandEngine, defaultConnect, parseEngineAnswer } from "./engine";
+import { commandEngine, defaultConnect, figureProblems, parseEngineAnswer } from "./engine";
 import type { EngineRequest } from "./request";
 
 const REQUEST: EngineRequest = {
@@ -45,7 +45,7 @@ describe("an engine's answer, parsed", () => {
     const outcome = parseEngineAnswer(JSON.stringify({ figures: {} }));
     expect(outcome.ok).toBe(false);
     if (outcome.ok) return;
-    expect(outcome.failure.detail).toContain("engine, version, tolerance, basis");
+    expect(outcome.failure.detail).toContain("engine, version, tolerance");
   });
 
   it("refuses an answer with no figures map at all", () => {
@@ -89,7 +89,14 @@ describe("a command engine", () => {
         const request = JSON.parse(body);
         process.stdout.write(JSON.stringify({
           engine: "script", version: "0.1", tolerance: "±30%", basis: "modeled",
-          figures: Object.fromEntries(request.nodes.map((n) => [n.name, { seen: n.kind }])),
+          figures: Object.fromEntries(request.nodes.map((n) => [n.name, {
+            perHour: 0.5, currency: "USD",
+            headroom: { cpu: 0.5, latency: 0.5 },
+            errorRate: 0.01,
+            // Echoed so the test can prove the request reached the child's
+            // stdin and was parsed there, not merely that a process ran.
+            resilience: { failure: "one zone lost", verdict: "survives", note: n.kind },
+          }])),
         }));
       });
     `);
@@ -97,7 +104,7 @@ describe("a command engine", () => {
     expect(outcome.ok).toBe(true);
     if (!outcome.ok) return;
     expect(outcome.answer.engine).toBe("script");
-    expect(outcome.answer.figures.web).toEqual({ seen: "compute" });
+    expect(outcome.answer.figures.web.resilience.note).toBe("compute");
   });
 
   it("does not hand the child this process's environment", async () => {
@@ -168,5 +175,106 @@ describe("a command engine", () => {
     expect(outcome.ok).toBe(false);
     if (outcome.ok) return;
     expect(outcome.failure.cause).toBe("engine-unreachable");
+  });
+});
+
+describe("a malformed figure refuses, and never throws (D1)", () => {
+  const envelope = { engine: "e", version: "1", tolerance: "\u00b15%", basis: "modeled" as const };
+  const good = {
+    perHour: 0.1,
+    currency: "USD",
+    headroom: { cpu: 0.5, latency: 0.5 },
+    errorRate: 0.01,
+    resilience: { failure: "one zone lost", verdict: "survives" },
+  };
+
+  /**
+   * The seven shapes an engine can get wrong, each executed against the first
+   * version of this parser and each of which threw: three as bare `TypeError`s
+   * out of `block()` with no chant message, four out of
+   * `validateBehaviourBlock` after the report was half built. A throw is the
+   * whole-lexicon failure `lexicon.ts` reserves for a live credential in the
+   * request, so a third party emitting one bad number looked exactly like a
+   * leak.
+   */
+  const malformed: Array<[string, unknown, RegExp]> = [
+    ["no resilience at all", { ...good, resilience: undefined }, /resilience is missing/],
+    ["a null figure", null, /is object, not an object/],
+    ["a string figure", "cheap", /is string, not an object/],
+    ["an array figure", [1, 2], /is an array, not an object/],
+    ["a stringified rate", { ...good, perHour: "1.0" }, /perHour is not a non-negative finite number/],
+    ["a negative rate", { ...good, perHour: -1 }, /perHour is not a non-negative finite number/],
+    ["no headroom", { ...good, headroom: undefined }, /headroom is missing/],
+    ["an empty headroom", { ...good, headroom: {} }, /headroom carries neither cpu nor latency/],
+    ["a headroom out of 0..1", { ...good, headroom: { cpu: 7 } }, /headroom.cpu is not a number in 0..1/],
+    ["an errorRate out of 0..1", { ...good, errorRate: 12 }, /errorRate is not a number in 0..1/],
+    ["a bogus verdict", { ...good, resilience: { failure: "x", verdict: "explodes" } }, /verdict is not survives/],
+    ["a verdict with no failure", { ...good, resilience: { failure: "", verdict: "fails" } }, /names no failure/],
+    ["no currency", { ...good, currency: "" }, /currency is empty/],
+    ["a rightSize with no suggestion", { ...good, rightSize: {} }, /rightSize.suggestion is missing/],
+  ];
+
+  for (const [label, figure, message] of malformed) {
+    it(`refuses ${label}, naming the entity and the field`, () => {
+      const outcome = parseEngineAnswer(JSON.stringify({ ...envelope, figures: { web: figure } }));
+      expect(outcome.ok, `${label} was accepted`).toBe(false);
+      if (outcome.ok) return;
+      expect(outcome.failure.cause).toBe("engine-unreachable");
+      expect(outcome.failure.detail).toMatch(message);
+      // Named, because "the engine sent something wrong" is not actionable.
+      expect(outcome.failure.detail).toContain("figures.web");
+    });
+  }
+
+  it("refuses a basis outside the closed enum", () => {
+    const outcome = parseEngineAnswer(JSON.stringify({ ...envelope, basis: "vibes", figures: {} }));
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.failure.detail).toMatch(/not\s+modeled or validated/);
+  });
+
+  it("refuses a negative estate total", () => {
+    const outcome = parseEngineAnswer(
+      JSON.stringify({ ...envelope, total: { perHour: -3, currency: "USD" }, figures: {} }),
+    );
+    expect(outcome.ok).toBe(false);
+  });
+
+  it("refuses an array where the figures map should be", () => {
+    // `typeof [] === "object"`, so `figures: []` parsed clean and produced a
+    // report in which every node the request named had been lost.
+    const outcome = parseEngineAnswer(JSON.stringify({ ...envelope, figures: [] }));
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.failure.detail).toContain("no figures map");
+  });
+
+  it("refuses a declined reason that is not a string", () => {
+    const outcome = parseEngineAnswer(
+      JSON.stringify({ ...envelope, figures: {}, declined: { web: 7 } }),
+    );
+    expect(outcome.ok).toBe(false);
+  });
+
+  it("accepts a figure that models one headroom axis and not the other", () => {
+    // An unmodelled axis is absent, never zero. Both one-axis shapes are legal.
+    for (const headroom of [{ cpu: 0.4 }, { latency: 0.9 }]) {
+      expect(parseEngineAnswer(JSON.stringify({ ...envelope, figures: { web: { ...good, headroom } } })).ok).toBe(true);
+    }
+  });
+
+  it("reports several problems at once rather than only the first", () => {
+    const outcome = parseEngineAnswer(
+      JSON.stringify({ ...envelope, figures: { web: { perHour: -1, currency: "", errorRate: 9 } } }),
+    );
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.failure.detail).toContain("perHour");
+    expect(outcome.failure.detail).toContain("currency");
+    expect(outcome.failure.detail).toContain("errorRate");
+  });
+
+  it("figureProblems is empty for a well-formed figure", () => {
+    expect(figureProblems("web", good)).toEqual([]);
   });
 });

@@ -10,6 +10,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  byCodeUnit,
   DECLARED_UNMAPPED,
   ENGINE_KINDS,
   ENGINE_KINDS_BY_ENTITY_TYPE,
@@ -97,7 +98,7 @@ describe("the coverage table", () => {
       Object.keys(ENGINE_KINDS_BY_ENTITY_TYPE).length + Object.keys(DECLARED_UNMAPPED).length,
     );
     const types = rows.map((r) => r.entityType);
-    expect(types).toEqual([...types].sort((a, b) => a.localeCompare(b)));
+    expect(types).toEqual([...types].sort(byCodeUnit));
     expect(rows.filter((r) => r.kind === "—").length).toBe(Object.keys(DECLARED_UNMAPPED).length);
   });
 

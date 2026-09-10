@@ -7,14 +7,17 @@
  * current the first time somebody adds a row and does not open the docs.
  */
 
-import { DECLARED_UNMAPPED, ENGINE_KINDS_BY_ENTITY_TYPE } from "./mapping";
+import { byCodeUnit, DECLARED_UNMAPPED, ENGINE_KINDS_BY_ENTITY_TYPE } from "./mapping";
 
 /** Markdown-safe: a pipe inside a cell would end the column. */
 function cell(text: string): string {
   return text.replace(/\|/g, "\\|");
 }
 
-const byType = (a: [string, unknown], b: [string, unknown]): number => a[0].localeCompare(b[0]);
+// By code unit. The rendered tables are compared against the committed docs
+// page, so a locale-dependent order turns that check into a coin flip on a
+// contributor machine whose `LANG` differs from CI's.
+const byType = (a: [string, unknown], b: [string, unknown]): number => byCodeUnit(a[0], b[0]);
 
 /** The mapped half: which entity types reach the engine, and as what. */
 export function mappedMarkdown(): string {

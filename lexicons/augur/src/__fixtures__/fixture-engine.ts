@@ -33,6 +33,9 @@ export const FIXTURE_ENGINE_TOLERANCE = "±20%";
 const BASELINE: Record<EngineKind, { perHour: number; cpu: number; latency: number }> = {
   compute: { perHour: 0.0416, cpu: 0.62, latency: 0.41 },
   serverless: { perHour: 0.0072, cpu: 0.88, latency: 0.35 },
+  // A managed control plane: a flat fee, and it does not saturate on the
+  // estate's traffic, so both axes stay wide open whatever the level.
+  "control-plane": { perHour: 0.1, cpu: 0.99, latency: 0.99 },
   database: { perHour: 0.272, cpu: 0.35, latency: 0.28 },
   cache: { perHour: 0.068, cpu: 0.71, latency: 0.66 },
   queue: { perHour: 0.004, cpu: 0.93, latency: 0.81 },
@@ -86,7 +89,12 @@ export function fixtureEngine(options: FixtureEngineOptions = {}): BehaviourEngi
       }
 
       const lost = new Set(options.lose ?? []);
-      const figures: Record<string, EngineFigure> = {};
+      // `Object.create(null)`, so a node named `__proto__` becomes an own
+      // key rather than setting a prototype and vanishing. A real engine
+      // reaches the lexicon through `JSON.parse`, which is already safe
+      // here; an in-process fixture is not, and this one is the shape
+      // #2359 copies.
+      const figures: Record<string, EngineFigure> = Object.create(null) as Record<string, EngineFigure>;
       let total = 0;
 
       for (const node of request.nodes) {
