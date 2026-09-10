@@ -120,8 +120,21 @@ export type CheckRollingFn = (opts: {
   verbose?: boolean;
 }) => Promise<RollingUpgradeResult>;
 
-/** Minimal shell-exec interface for gh/git invocations. */
-export type GhRunner = (cmd: string) => Promise<{ stdout: string; stderr: string }>;
+/**
+ * Minimal shell-exec interface for gh/git invocations.
+ *
+ * `opts` carries the environment `postOrUpdateGithubIssue` resolves the issue
+ * credential into (chant #2320) — the same `GhExec` shape reconcile.ts
+ * declares, so the two stay one signature and this can keep being passed
+ * straight through. Every other call site here forwards nothing and passes
+ * nothing. A mock runner is free to ignore the argument; the default one
+ * hands it to `execAsync`, which is what makes CHANT_FORGEJO_TOKEN actually
+ * reach `gh` on a cross-instance Forgejo run.
+ */
+export type GhRunner = (
+  cmd: string,
+  opts?: { env?: NodeJS.ProcessEnv },
+) => Promise<{ stdout: string; stderr: string }>;
 
 /** Applies a pinned version bump permanently (no revert). Async (core loads the lexicon's pin descriptor); a sync mock is also accepted. */
 export type ApplyBumpFn = (
@@ -283,7 +296,7 @@ function shellQuote(s: string): string {
   return `'${s.replace(/'/g, "'\\''")}'`;
 }
 
-const defaultGh: GhRunner = async (cmd) => execAsync(cmd);
+const defaultGh: GhRunner = async (cmd, opts) => execAsync(cmd, { ...opts });
 
 /**
  * The hidden marker that makes this lexicon's upgrade-status issue findable
@@ -320,6 +333,9 @@ async function postLexiconIssue(
   const marker = lexiconUpgradeIssueMarker(lexicon);
   const repo = process.env.GITHUB_REPOSITORY;
   if (repo) {
+    // `postOrUpdateGithubIssue` resolves the token itself and hands it back
+    // through `gh`'s second argument (#2320), so this runner has to forward
+    // what it is given rather than dropping it — see `GhRunner`.
     return postOrUpdateGithubIssue(repo, marker, title, body, gh);
   }
   const { stdout } = await gh(

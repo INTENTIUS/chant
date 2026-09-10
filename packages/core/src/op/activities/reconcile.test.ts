@@ -16,6 +16,7 @@ import {
   noIssueIdentityMessage,
   unsafeMarkerMessage,
   suppliedMarker,
+  noIssueTokenMessage,
   postOrUpdateGithubIssue,
 } from "./reconcile";
 
@@ -642,6 +643,10 @@ describe("reconcilePr issue mode refuses a step with no Op identity (#2319)", ()
     vi.stubEnv("GITHUB_API_URL", "");
     vi.stubEnv("CI_PROJECT_ID", "");
     vi.stubEnv("CI_MERGE_REQUEST_IID", "");
+    // A token, so what these tests prove is the identity refusal (#2319) and
+    // not the token refusal (#2320) standing in front of it.
+    vi.stubEnv("CHANT_FORGEJO_TOKEN", "");
+    vi.stubEnv("GH_TOKEN", "ghs-ambient");
   }
 
   test("names the mode, the env it was given, and both ways to fix the step", async () => {
@@ -1006,6 +1011,10 @@ describe("reconcilePr issue mode on GitHub/GHES/Forgejo opens/updates one issue 
   function stubGithubIssueEnv(apiUrl: string): void {
     vi.stubEnv("GITHUB_REPOSITORY", repo);
     vi.stubEnv("GITHUB_API_URL", apiUrl);
+    // What a GitHub Actions or Forgejo Actions job sets from `github.token`,
+    // and what the issue path now actually forwards (#2320).
+    vi.stubEnv("CHANT_FORGEJO_TOKEN", "");
+    vi.stubEnv("GH_TOKEN", "ghs-ambient");
     // Never the GitLab path or the comment/PR path.
     vi.stubEnv("CI_PROJECT_ID", "");
     vi.stubEnv("CI_MERGE_REQUEST_IID", "");
@@ -1154,6 +1163,9 @@ describe("two Ops over one env keep two issues, end to end (#2319)", () => {
     vi.stubEnv("CI_MERGE_REQUEST_IID", "");
     vi.stubEnv("GITHUB_REF", "");
     vi.stubEnv("GITHUB_EVENT_PATH", "");
+    // What the issue path now forwards to `gh` (#2320).
+    vi.stubEnv("CHANT_FORGEJO_TOKEN", "");
+    vi.stubEnv("GH_TOKEN", "ghs-ambient");
     try {
       // ── Run A: the stock drift watch over root "app". Nothing owned yet.
       ghReplies = [
@@ -1208,6 +1220,8 @@ describe("two Ops over one env keep two issues, end to end (#2319)", () => {
     vi.stubEnv("GITHUB_API_URL", "");
     vi.stubEnv("CI_PROJECT_ID", "");
     vi.stubEnv("CI_MERGE_REQUEST_IID", "");
+    vi.stubEnv("CHANT_FORGEJO_TOKEN", "");
+    vi.stubEnv("GH_TOKEN", "ghs-ambient");
     ghReplies = [
       { match: "--paginate", stdout: "1\n" }, // A's marker found A's issue
       { match: "--method PATCH", stdout: "https://github.com/acme/infra/issues/1\n" },
@@ -1227,6 +1241,145 @@ describe("two Ops over one env keep two issues, end to end (#2319)", () => {
   });
 });
 
+// ── The issue path's credential (#2320) ─────────────────────────────────────
+
+describe("reconcilePr issue mode sends the token it resolved (#2320)", () => {
+  function stubForgejoIssueEnv(): void {
+    vi.stubEnv("GITHUB_REPOSITORY", "acme/infra");
+    vi.stubEnv("GITHUB_API_URL", "https://other.forgejo.example/api/v1");
+    vi.stubEnv("CI_PROJECT_ID", "");
+    vi.stubEnv("CI_MERGE_REQUEST_IID", "");
+    vi.stubEnv("GITHUB_REF", "");
+    vi.stubEnv("GITHUB_EVENT_PATH", "");
+  }
+
+  // The case `noCommentTokenMessage` was written for, on the mode that never
+  // sent it: a run posting to a Forgejo instance other than the one the job
+  // executes on, where the job's own `github.token` stops at its own host.
+  test("CHANT_FORGEJO_TOKEN reaches gh as GH_TOKEN, outranking the ambient one", async () => {
+    stubForgejoIssueEnv();
+    vi.stubEnv("CHANT_FORGEJO_TOKEN", "forgejo-cross-instance");
+    vi.stubEnv("GH_TOKEN", "ghs-this-instance-only");
+    ghReplies = [
+      { match: "--paginate", stdout: "" },
+      { match: "--method POST", stdout: "https://other.forgejo.example/acme/infra/issues/1\n" },
+    ];
+    try {
+      await reconcilePr({ env: "app", op: "nightly", mode: "issue", body: "plan" });
+      expect(ghCalls).toHaveLength(2);
+      for (const call of ghCalls) {
+        expect(call.opts.env?.GH_TOKEN).toBe("forgejo-cross-instance");
+      }
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  test("the PATCH branch forwards it too, not only the search and the POST", async () => {
+    stubForgejoIssueEnv();
+    vi.stubEnv("CHANT_FORGEJO_TOKEN", "forgejo-cross-instance");
+    vi.stubEnv("GH_TOKEN", "");
+    ghReplies = [
+      { match: "--paginate", stdout: "57\n" },
+      { match: "--method PATCH", stdout: "https://other.forgejo.example/acme/infra/issues/57\n" },
+    ];
+    try {
+      await reconcilePr({ env: "app", op: "nightly", mode: "issue", body: "plan" });
+      const patch = ghCalls.find((c) => c.cmd.includes("--method PATCH"));
+      expect(patch?.opts.env?.GH_TOKEN).toBe("forgejo-cross-instance");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  test("falls back to GH_TOKEN then GITHUB_TOKEN, the same order comment mode uses", async () => {
+    stubForgejoIssueEnv();
+    vi.stubEnv("CHANT_FORGEJO_TOKEN", "");
+    vi.stubEnv("GH_TOKEN", "");
+    vi.stubEnv("GITHUB_TOKEN", "ghs-workflow");
+    ghReplies = [
+      { match: "--paginate", stdout: "" },
+      { match: "--method POST", stdout: "https://other.forgejo.example/acme/infra/issues/1\n" },
+    ];
+    try {
+      await reconcilePr({ env: "app", op: "nightly", mode: "issue", body: "plan" });
+      expect(ghCalls[0].opts.env?.GH_TOKEN).toBe("ghs-workflow");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  test("no token at all is chant's named refusal, not gh's opaque one", async () => {
+    stubForgejoIssueEnv();
+    for (const k of ["CHANT_FORGEJO_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"]) vi.stubEnv(k, "");
+    try {
+      await expect(
+        reconcilePr({ env: "app", op: "nightly", mode: "issue", body: "plan" }),
+      ).rejects.toThrow(/mode "issue".*acme\/infra.*CHANT_FORGEJO_TOKEN/s);
+      // Refused before the shell-out, so gh is never asked to guess.
+      expect(ghCalls).toHaveLength(0);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  test("the refusal names the issue mode, not the comment mode's pull request", async () => {
+    stubForgejoIssueEnv();
+    for (const k of ["CHANT_FORGEJO_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"]) vi.stubEnv(k, "");
+    try {
+      const err = await reconcilePr({ env: "app", op: "nightly", mode: "issue", body: "plan" }).catch(
+        (e: Error) => e,
+      );
+      expect((err as Error).message).toBe(noIssueTokenMessage("acme/infra"));
+      expect((err as Error).message).not.toContain("pull request");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  // The one path deliberately left on gh's own ambient credential: outside
+  // every CI job, `gh auth login`'s stored token is the token, and
+  // commentTokenFrom cannot see it.
+  test("the ambient `gh issue create` fallback still runs with no token set", async () => {
+    for (const k of [
+      "GITHUB_REPOSITORY",
+      "CI_PROJECT_ID",
+      "CI_MERGE_REQUEST_IID",
+      "CHANT_FORGEJO_TOKEN",
+      "GH_TOKEN",
+      "GITHUB_TOKEN",
+    ]) {
+      vi.stubEnv(k, "");
+    }
+    ghReplies = [{ match: "gh issue create", stdout: "https://github.com/acme/infra/issues/3\n" }];
+    try {
+      const result = await reconcilePr({ env: "app", op: "nightly", mode: "issue", body: "plan" });
+      expect(result.issueUrl).toBe("https://github.com/acme/infra/issues/3");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  test("GitLab keeps its own credential path, untouched by this", async () => {
+    vi.stubEnv("GITHUB_REPOSITORY", "");
+    vi.stubEnv("CI_PROJECT_ID", "42");
+    vi.stubEnv("CI_API_V4_URL", "https://gitlab.com/api/v4");
+    vi.stubEnv("CI_MERGE_REQUEST_IID", "");
+    vi.stubEnv("GITLAB_TOKEN", "");
+    vi.stubEnv("CI_JOB_TOKEN", "");
+    vi.stubEnv("CHANT_GITLAB_TOKEN", "");
+    // A Forgejo token is not a GitLab credential and must not be read as one.
+    vi.stubEnv("CHANT_FORGEJO_TOKEN", "forgejo-cross-instance");
+    try {
+      await expect(
+        reconcilePr({ env: "app", op: "nightly", mode: "issue", body: "plan" }),
+      ).rejects.toThrow(/GITLAB_TOKEN/);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+});
+
 describe("postOrUpdateGithubIssue directly (#2297)", () => {
   test("PATCHes with both title and body fields so the headline stays current", async () => {
     const calls: string[] = [];
@@ -1236,6 +1389,8 @@ describe("postOrUpdateGithubIssue directly (#2297)", () => {
       return { stdout: "https://github.example/acme/infra/issues/12\n", stderr: "" };
     };
     vi.stubEnv("GITHUB_API_URL", "");
+    vi.stubEnv("CHANT_FORGEJO_TOKEN", "");
+    vi.stubEnv("GH_TOKEN", "ghs-ambient");
     try {
       const url = await postOrUpdateGithubIssue(
         "acme/infra",
