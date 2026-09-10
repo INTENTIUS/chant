@@ -159,6 +159,14 @@ export interface DriverComponentResult {
   records: DriverStepRecord[];
   /** Present when `status === "gated"`: the pending fact this component stopped on. */
   gate?: PendingGateRecord;
+  /**
+   * Present when `status === "gated"` and this run's own append tried to
+   * push: whether it reached the remote (#2310). Absent when the component
+   * stopped on a pending fact an earlier run had already recorded.
+   */
+  gatePushed?: boolean;
+  /** Set when `gatePushed` is false: why, in one line. */
+  gatePushWarning?: string;
 }
 
 export interface DriverRunResult {
@@ -176,6 +184,10 @@ export interface DriverRunResult {
   gatedComponent?: string;
   /** The pending fact the run stopped on, when `status === "gated"`. */
   gate?: PendingGateRecord;
+  /** Present when `status === "gated"`: whether the gated component's own append reached the remote (#2310). */
+  gatePushed?: boolean;
+  /** Set when `gatePushed` is false: why, in one line. */
+  gatePushWarning?: string;
   /**
    * The accumulated cross-component/cross-stack outputs after the run — each
    * component's `publish` output and, for an applied stack, its `cfn-deploy`
@@ -355,6 +367,9 @@ class GateStop extends Error {
     public readonly records: DriverStepRecord[],
     public readonly executed: ExecutedStep[],
     public readonly pending: PendingGateRecord,
+    /** Whether this run's own append reached the remote — see {@link DriverComponentResult.gatePushed} (#2310). */
+    public readonly pushed?: boolean,
+    public readonly pushWarning?: string,
   ) {
     super(`gate "${pending.gate}" is pending approval`);
     this.name = "GateStop";
@@ -462,7 +477,7 @@ async function runPhase(
         for (const skipped of phaseDef.steps.filter((s): s is DriverStep | DriverPhase => !isGateStep(s))) {
           gateRecords.push(skippedRecord(skipped));
         }
-        throw new GateStop(gateRecords, [], check.pending);
+        throw new GateStop(gateRecords, [], check.pending, check.pushed, check.pushWarning);
       }
       gateRecords.push({
         ...base,
@@ -483,7 +498,14 @@ async function runPhase(
 
   const runEntry = async (
     entry: DriverStep | DriverPhase,
-  ): Promise<{ records: DriverStepRecord[]; executed: ExecutedStep[]; failed: boolean; pending?: PendingGateRecord }> => {
+  ): Promise<{
+    records: DriverStepRecord[];
+    executed: ExecutedStep[];
+    failed: boolean;
+    pending?: PendingGateRecord;
+    pushed?: boolean;
+    pushWarning?: string;
+  }> => {
     if (isPhaseStep(entry)) {
       try {
         const nested = await runPhase(entry, ctx, registry, phaseOutputs, componentOutputs, gates, onProgress);
@@ -493,7 +515,14 @@ async function runPhase(
         // A nested fan-out phase's gate stops the whole component, but the
         // records it produced before the gate still belong in the run.
         if (err instanceof GateStop) {
-          return { records: err.records, executed: err.executed, failed: false, pending: err.pending };
+          return {
+            records: err.records,
+            executed: err.executed,
+            failed: false,
+            pending: err.pending,
+            pushed: err.pushed,
+            pushWarning: err.pushWarning,
+          };
         }
         throw err;
       }
@@ -539,8 +568,10 @@ async function runPhase(
       const results = await Promise.all(entries.map(runEntry));
       const records = gateRecords.concat(results.flatMap((r) => r.records));
       const executed = results.flatMap((r) => r.executed);
-      const pending = results.find((r) => r.pending)?.pending;
-      if (pending) throw new GateStop(records, executed, pending);
+      const withPending = results.find((r) => r.pending);
+      if (withPending?.pending) {
+        throw new GateStop(records, executed, withPending.pending, withPending.pushed, withPending.pushWarning);
+      }
       if (results.some((r) => r.failed)) throw new StepFailure(records, executed);
       return { records, executed };
     }
@@ -553,7 +584,7 @@ async function runPhase(
       executed.push(...result.executed);
       if (result.pending) {
         for (const skipped of entries.slice(i + 1)) records.push(skippedRecord(skipped));
-        throw new GateStop(records, executed, result.pending);
+        throw new GateStop(records, executed, result.pending, result.pushed, result.pushWarning);
       }
       if (result.failed) {
         for (const skipped of entries.slice(i + 1)) records.push(skippedRecord(skipped));
@@ -681,7 +712,15 @@ export async function runComponentDeploy(
     // them would make every gated run a no-op with a rollback attached.
     if (err instanceof GateStop) {
       records.push(...err.records);
-      return { component: component.name, ok: false, status: "gated", records, gate: err.pending };
+      return {
+        component: component.name,
+        ok: false,
+        status: "gated",
+        records,
+        gate: err.pending,
+        ...(err.pushed !== undefined ? { gatePushed: err.pushed } : {}),
+        ...(err.pushWarning ? { gatePushWarning: err.pushWarning } : {}),
+      };
     }
 
     if (err instanceof StepFailure) {
@@ -912,7 +951,14 @@ export async function runInterpretDriver(
   onProgress?.({ type: "run-done", status: progressStatus(status) });
   const result: DriverRunResult = {
     order, waves, results, ok, status, failedComponent, componentOutputs,
-    ...(gated ? { gatedComponent: gated.component, gate: gated.gate } : {}),
+    ...(gated
+      ? {
+          gatedComponent: gated.component,
+          gate: gated.gate,
+          ...(gated.gatePushed !== undefined ? { gatePushed: gated.gatePushed } : {}),
+          ...(gated.gatePushWarning ? { gatePushWarning: gated.gatePushWarning } : {}),
+        }
+      : {}),
   };
   if (status === "fail") throw new DriverRunFailure(result);
   return result;

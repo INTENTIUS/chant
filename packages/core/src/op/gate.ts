@@ -39,18 +39,42 @@ import {
 import { pushLifecycle, requireLifecycleLedger } from "../lifecycle/git";
 import { parseDuration } from "./duration";
 
+/**
+ * What appending a pending fact learned about reaching the remote.
+ *
+ * The append to the local `chant/lifecycle` branch always lands — that half
+ * was fixed by #2309's fetch-before-append. This is the other half: whether
+ * the push that follows it did, and why not when it didn't, in one line a
+ * renderer can show directly (#2310).
+ */
+export interface PendingGatePush {
+  record: PendingGateRecord;
+  /**
+   * True when the push reached the remote. False when there was no remote
+   * configured, or the push was rejected — `pushWarning` says which.
+   */
+  pushed: boolean;
+  /** Set when `pushed` is false. */
+  pushWarning?: string;
+}
+
 /** The gate ledger, as the two executors need it: read both kinds of line, append a pending fact. */
 export interface GateLedgerPort {
   read(op: string): Promise<{ resolutions: GateResolutionRecord[]; pending: PendingGateRecord[] }>;
-  appendPending(input: PendingGateInput): Promise<PendingGateRecord>;
+  appendPending(input: PendingGateInput): Promise<PendingGatePush>;
 }
 
 /**
- * The real port: the `chant/lifecycle` orphan branch. Pushes best-effort after
- * appending, the same two-step-collapsed-into-one shape `chant approve` uses
- * (`../cli/handlers/operator.ts` calls `pushLifecycle().catch(...)` right after
- * its append) — a pending fact that only ever reaches the local branch is still
- * a correct local answer, so a missing remote never fails the run.
+ * The real port: the `chant/lifecycle` orphan branch.
+ *
+ * Appending is always local-first and always lands (#2309's fetch-before-
+ * append). The push that follows is reported rather than swallowed (#2310):
+ * a pending fact that never reaches the remote is still a correct local
+ * answer — the run is right to gate, and does — but an operator elsewhere
+ * cannot approve a gate whose pending record they cannot see, so the caller
+ * gets `pushed: false` and a reason instead of silence. Mirrors the shape
+ * `chant approve` reports through (`../cli/handlers/operator.ts`'s
+ * `reportedPush`, #2309 review).
  */
 export function gitGateLedgerPort(opts?: { cwd?: string }): GateLedgerPort {
   return {
@@ -68,8 +92,23 @@ export function gitGateLedgerPort(opts?: { cwd?: string }): GateLedgerPort {
     },
     async appendPending(input) {
       const { record } = await appendPendingGate(input, opts);
-      await pushLifecycle(opts).catch(() => undefined);
-      return record;
+      try {
+        const pushed = await pushLifecycle(opts);
+        return pushed
+          ? { record, pushed }
+          : {
+              record,
+              pushed,
+              pushWarning:
+                "no remote is configured for chant/lifecycle — the pending fact was recorded locally only",
+            };
+      } catch (err) {
+        return {
+          record,
+          pushed: false,
+          pushWarning: err instanceof Error ? err.message : String(err),
+        };
+      }
     },
   };
 }
@@ -90,7 +129,8 @@ export function memoryGateLedgerPort(
       const record: PendingGateRecord = { version: 1, kind: "pending", ...input };
       pending.push(record);
       appended.push(record);
-      return record;
+      // No remote in an in-memory ledger — there is nothing to fail to reach.
+      return { record, pushed: true };
     },
   };
 }
@@ -113,7 +153,20 @@ export interface GateCheckInput {
 /** Either the gate is answered, or it is a standing fact. */
 export type GateCheck =
   | { satisfied: true; resolution: GateResolutionRecord }
-  | { satisfied: false; pending: PendingGateRecord; recorded: boolean };
+  | {
+      satisfied: false;
+      pending: PendingGateRecord;
+      recorded: boolean;
+      /**
+       * Whether this run's own append reached the remote — set only when
+       * `recorded` is true. A gate left standing from an earlier run pushed
+       * (or didn't) on that run; this one wrote nothing, so it has nothing
+       * new to report (#2310).
+       */
+      pushed?: boolean;
+      /** Set when `pushed` is false. */
+      pushWarning?: string;
+    };
 
 /** The beginning of time — the anchor for a gate that has never been recorded pending, so any resolution for it counts. */
 const EPOCH = new Date(0).toISOString();
@@ -143,7 +196,7 @@ export async function evaluateGate(port: GateLedgerPort, input: GateCheckInput):
   }
 
   const url = resolveApprovalUrl();
-  const record = await port.appendPending({
+  const { record, pushed, pushWarning } = await port.appendPending({
     op: input.op,
     gate: input.gate,
     timestamp: now,
@@ -154,7 +207,13 @@ export async function evaluateGate(port: GateLedgerPort, input: GateCheckInput):
     ...(input.runId ? { runId: input.runId } : {}),
     ...(url ? { url } : {}),
   });
-  return { satisfied: false, pending: record, recorded: true };
+  return {
+    satisfied: false,
+    pending: record,
+    recorded: true,
+    pushed,
+    ...(pushWarning ? { pushWarning } : {}),
+  };
 }
 
 /** The line every renderer prints to say how a pending gate is cleared. */
