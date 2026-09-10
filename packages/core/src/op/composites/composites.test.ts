@@ -115,14 +115,14 @@ describe("ReconcileOp: configuration", () => {
     expect(phases.map((p) => p.name)).toEqual(["Snapshot", "Plan", "Reconcile"]);
     const reconcileStep = (phases[2].steps as Array<Record<string, unknown>>)[0];
     expect(reconcileStep.fn).toBe("reconcilePr");
-    expect(reconcileStep.args).toEqual({ env: "prod", mode: "pull-request", owned: false });
+    expect(reconcileStep.args).toEqual({ env: "prod", op: "p", mode: "pull-request", owned: false });
   });
 
   test("scope.owned + onDrift flow into the reconcilePr step", () => {
     const { op } = ReconcileOp({ name: "p", env: "prod", onDrift: "issue", scope: { owned: true } });
     const phases = getProps(op).phases as Array<Record<string, unknown>>;
     const reconcileStep = (phases[2].steps as Array<Record<string, unknown>>)[0];
-    expect(reconcileStep.args).toEqual({ env: "prod", mode: "issue", owned: true });
+    expect(reconcileStep.args).toEqual({ env: "prod", op: "p", mode: "issue", owned: true });
   });
 
   test("labels include Reconcile + Env", () => {

@@ -103,6 +103,20 @@ describe("TerraformWatchOp finding modes (#2087)", () => {
     expect(step.outcomeAttribute).toEqual({ name: "Comment", from: "commentUrl" });
   });
 
+  test("the finding step names its Op, so two watches over one root cannot collide (#2319)", () => {
+    // The pairing #2319 names: a stock drift watch and a `live: true` one over
+    // the same root is what this composite is built for, and both pass the
+    // root as `env`. Before #2319 that was the whole marker, so each nightly
+    // run PATCHed the title and body of the other Op's issue.
+    expect(findingStep("issue").args?.op).toBe("app-watch");
+    const stock = props({ name: "app-drift", root: "app", findingMode: "issue" });
+    const paired = props({ name: "app-drift-nightly", root: "app", findingMode: "issue" });
+    const a = stock.phases[2].steps[0] as ActivityStep;
+    const b = paired.phases[2].steps[0] as ActivityStep;
+    expect(a.args?.env).toBe(b.args?.env);
+    expect(a.args?.op).not.toBe(b.args?.op);
+  });
+
   test("the finding step derives no plan of its own", () => {
     // `entries: []` is what stops reconcilePr shelling to `chant lifecycle
     // plan --json`: the finding is already written by the time it runs.
