@@ -6,7 +6,8 @@ import {
   parseDuration,
   OpRunFailure,
 } from "./local-executor";
-import { memoryGateLedgerPort } from "./gate";
+import { memoryGateLedgerPort, type GateLedgerPort } from "./gate";
+import { computePlanDigest } from "../lifecycle/plan-digest";
 import { renderHuman } from "./local-output";
 import type { GateResolutionRecord, PendingGateRecord, PendingGateInput } from "../lifecycle/gate-ledger";
 import { stepOutput } from "./step-output-ref";
@@ -637,5 +638,196 @@ describe("runOpLocally — a failure inside the run says what it was (#2301)", (
     const lines: string[] = [];
     renderHuman(failure.result, (line) => lines.push(line));
     expect(lines.some((l) => l.includes("progress sink exploded"))).toBe(true);
+  });
+});
+
+/**
+ * #2300, measured on INTENTIUS/choudoufu#1026.
+ *
+ * The exact sequence that issue ran against a floci-backed root: `chant run
+ * live-apply` returns `gated`, `chant approve` writes the resolution, a
+ * resource in the root is renamed, and `chant run live-apply` runs again. It
+ * applied, with no refusal, because the resolution carried the op, the gate,
+ * the approver and a timestamp — and nothing about the plan. The approval had
+ * authorised the next run rather than the plan its approver read.
+ *
+ * These drive the same four steps through the executor, with a Plan phase
+ * whose digest moves when the root does.
+ */
+describe("runOpLocally — a gate approves a plan, not the next run (#2300)", () => {
+  const NOW = "2026-09-09T12:00:00.000Z";
+
+  /**
+   * A gate ledger a test can approve against, which `memoryGateLedgerPort`
+   * cannot: `chant approve` appends a resolution *between* two runs, and the
+   * shared port has to carry it into the second one.
+   */
+  function approvableLedger(): GateLedgerPort & {
+    approve(gate: string, planDigest: string | undefined, at: string): void;
+    pending: PendingGateRecord[];
+  } {
+    const resolutions: GateResolutionRecord[] = [];
+    const pending: PendingGateRecord[] = [];
+    return {
+      pending,
+      approve(gate, planDigest, at) {
+        resolutions.push({
+          version: 1, op: "live-apply", gate, resolvedBy: "alex", timestamp: at,
+          ...(planDigest !== undefined ? { planDigest } : {}),
+        });
+      },
+      async read() {
+        return { resolutions: [...resolutions], pending: [...pending] };
+      },
+      async appendPending(input) {
+        const record: PendingGateRecord = { version: 1, kind: "pending", ...input };
+        pending.push(record);
+        // No remote in an in-memory ledger — nothing to fail to reach (#2310).
+        return { record, pushed: true };
+      },
+    };
+  }
+
+  /**
+   * The root under test, and the Op over it. `terraformPlan` digests whatever
+   * `root.address` currently is, so renaming a resource between runs is one
+   * assignment — the test's stand-in for editing the `.tf` file.
+   */
+  function harness() {
+    const root = { address: "aws_s3_bucket.original" };
+    const applied: string[] = [];
+    const activities = new Map<string, ActivityFn>([
+      ["terraformPlan", async () => ({
+        planFile: "chant.tfplan",
+        planDigest: computePlanDigest("terraform-plan", { resourceChanges: [{ address: root.address }] }),
+      })],
+      ["terraformApply", async (args) => {
+        applied.push(String(args.planFile));
+        return { applied: true };
+      }],
+    ]);
+    const config = op({
+      name: "live-apply",
+      phases: [
+        { name: "Plan", steps: [{ kind: "activity", fn: "terraformPlan", id: "plan", args: { root: "app" } }] },
+        {
+          name: "Gate",
+          steps: [{ kind: "gate", gate: "approve-live-apply", plan: stepOutput("plan", "planDigest") }],
+        },
+        {
+          name: "Apply",
+          steps: [{ kind: "activity", fn: "terraformApply", args: { planFile: stepOutput("plan", "planFile") } }],
+        },
+      ],
+    });
+    const digestOf = (address: string) =>
+      computePlanDigest("terraform-plan", { resourceChanges: [{ address }] });
+    return { root, applied, activities, config, digestOf };
+  }
+
+  test("approve, rename a resource in the root, re-run — the Apply phase refuses, naming both digests", async () => {
+    const { root, applied, activities, config, digestOf } = harness();
+    const gates = approvableLedger();
+
+    // 1. `chant run live-apply` — gated, and the pending fact names the plan.
+    const first = await runOpLocally(config, activities, PROFILES, undefined, { gates, now: NOW });
+    expect(first.status).toBe("gated");
+    expect(first.gate?.planDigest).toBe(digestOf("aws_s3_bucket.original"));
+    expect(applied).toEqual([]);
+
+    // 2. `chant approve live-apply approve-live-apply` — for the plan above.
+    gates.approve("approve-live-apply", digestOf("aws_s3_bucket.original"), "2026-09-09T12:05:00.000Z");
+
+    // 3. A resource in the root is renamed.
+    root.address = "aws_s3_bucket.renamed";
+
+    // 4. `chant run live-apply` again. On the pre-#2300 rule this applied.
+    const second = await runOpLocally(config, activities, PROFILES, undefined, {
+      gates, now: "2026-09-09T12:10:00.000Z",
+    });
+
+    expect(second.status).toBe("gated");
+    expect(applied).toEqual([]);
+
+    const gateRecord = second.records.find((r) => r.fn === "gate:approve-live-apply");
+    expect(gateRecord?.refusal).toContain(`approved: ${digestOf("aws_s3_bucket.original")}`);
+    expect(gateRecord?.refusal).toContain(`planned: ${digestOf("aws_s3_bucket.renamed")}`);
+    expect(gateRecord?.refusal).toContain("chant approve live-apply approve-live-apply");
+    // The Apply step never ran, and says so.
+    expect(second.records.find((r) => r.fn === "terraformApply")?.status).toBe("skipped");
+
+    // The refusal reaches a reader, not just the record.
+    const lines: string[] = [];
+    renderHuman(second, (line) => lines.push(line));
+    expect(lines.some((l) => l.includes("[refused]") && l.includes("not for this plan"))).toBe(true);
+  });
+
+  test("approve, re-run with the root unchanged — it applies", async () => {
+    const { applied, activities, config, digestOf } = harness();
+    const gates = approvableLedger();
+
+    expect((await runOpLocally(config, activities, PROFILES, undefined, { gates, now: NOW })).status).toBe("gated");
+    gates.approve("approve-live-apply", digestOf("aws_s3_bucket.original"), "2026-09-09T12:05:00.000Z");
+
+    const second = await runOpLocally(config, activities, PROFILES, undefined, {
+      gates, now: "2026-09-09T12:10:00.000Z",
+    });
+
+    expect(second.status).toBe("ok");
+    expect(applied).toEqual(["chant.tfplan"]);
+    expect(second.records.find((r) => r.fn === "gate:approve-live-apply")?.approval?.resolvedBy).toBe("alex");
+  });
+
+  /**
+   * The migration (#2300). Every resolution written before this change has no
+   * `planDigest` at all, and the safe reading is that it matches nothing: such
+   * a record proves someone approved something and nothing about what.
+   * Accepting it once — the other candidate reading — would apply exactly the
+   * unreviewed change this check exists to catch, on the estates that have
+   * been running longest.
+   */
+  test("a resolution recorded before plan-bound gates does not pass, and the refusal says so", async () => {
+    const { applied, activities, config, digestOf } = harness();
+    const gates = approvableLedger();
+
+    expect((await runOpLocally(config, activities, PROFILES, undefined, { gates, now: NOW })).status).toBe("gated");
+    // A pre-#2300 resolution: newer than the pending fact, no plan on it.
+    gates.approve("approve-live-apply", undefined, "2026-09-09T12:05:00.000Z");
+
+    const second = await runOpLocally(config, activities, PROFILES, undefined, {
+      gates, now: "2026-09-09T12:10:00.000Z",
+    });
+
+    expect(second.status).toBe("gated");
+    expect(applied).toEqual([]);
+    const gateRecord = second.records.find((r) => r.fn === "gate:approve-live-apply");
+    expect(gateRecord?.refusal).toContain("approved: (none — recorded before plan-bound gates)");
+    expect(gateRecord?.refusal).toContain(`planned: ${digestOf("aws_s3_bucket.original")}`);
+  });
+
+  /**
+   * A gate with no `plan` is every gate that existed before #2300 — a
+   * component gate, an authored `gate()` with nothing to bind. Those decide
+   * exactly as they did: newest resolution since the pending fact wins.
+   */
+  test("a gate that binds no plan is unchanged", async () => {
+    const activities = new Map<string, ActivityFn>([["deploy", async () => ({ ok: true })]]);
+    const config = op({
+      name: "live-apply",
+      phases: [
+        { name: "Gate", steps: [{ kind: "gate", gate: "approve-live-apply" }] },
+        { name: "Deploy", steps: [{ kind: "activity", fn: "deploy" }] },
+      ],
+    });
+    const gates = approvableLedger();
+
+    expect((await runOpLocally(config, activities, PROFILES, undefined, { gates, now: NOW })).status).toBe("gated");
+    expect(gates.pending[0].planDigest).toBeUndefined();
+    gates.approve("approve-live-apply", undefined, "2026-09-09T12:05:00.000Z");
+
+    const second = await runOpLocally(config, activities, PROFILES, undefined, {
+      gates, now: "2026-09-09T12:10:00.000Z",
+    });
+    expect(second.status).toBe("ok");
   });
 });

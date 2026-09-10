@@ -351,3 +351,35 @@ describe("TerraformApplyOp on a live root (#2106 follow-up)", () => {
     expect(fns).toEqual(["terraformInit", "terraformPlan", "terraformApply"]);
   });
 });
+
+/**
+ * #2300 — the gate binds the plan. The Plan step publishes `planDigest` and
+ * the Gate step references it, so the resolution `chant approve` writes names
+ * the plan it approves. Before this, INTENTIUS/choudoufu#1026 approved,
+ * renamed a resource in the root, re-ran, and watched the apply proceed.
+ */
+describe("TerraformApplyOp binds the gate to the plan (#2300)", () => {
+  test("the gate step references the Plan step's own digest", () => {
+    const op = props({ name: "app-apply", root: "app" });
+    const gate = op.phases.find((p) => p.name === "Gate")!.steps.find(isGate)!;
+    expect(isStepOutputRef(gate.plan)).toBe(true);
+    expect(gate.plan).toMatchObject({ step: "plan", path: "planDigest" });
+  });
+
+  test("a run records the plan on the pending fact it leaves behind", async () => {
+    const op = props({ name: "prod-apply", root: "app" });
+    const digest = `sha256:${"c".repeat(64)}`;
+    const activities = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>([
+      ["terraformInit", async () => ({})],
+      ["terraformPlan", async () => ({ planFile: "chant.tfplan", planDigest: digest })],
+      ["terraformShow", async () => ({})],
+      ["terraformApply", async () => ({})],
+    ]);
+    const gates = memoryGateLedgerPort();
+    const result = await runOpLocally(op, activities, {}, undefined, { gates, now: "2026-09-09T12:00:00.000Z" });
+
+    expect(result.status).toBe("gated");
+    expect(result.gate?.planDigest).toBe(digest);
+    expect(gates.appended[0].planDigest).toBe(digest);
+  });
+});

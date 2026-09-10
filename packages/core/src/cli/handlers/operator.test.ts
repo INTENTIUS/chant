@@ -349,6 +349,29 @@ describe("runOperatorStatus", () => {
   });
 });
 
+/**
+ * A digest shaped the way `computePlanDigest` produces them (#2300).
+ */
+const PLAN_A = `sha256:${"a".repeat(64)}`;
+
+/**
+ * The standing pending fact `chant approve` reads the plan off since #2300.
+ * Every approve test seeds one, because a gate with nothing pending has no
+ * plan to approve and the command refuses rather than recording an approval
+ * of whatever runs next — which is its own test below.
+ */
+function seedPending(op: string, gate: string, planDigest: string | undefined): void {
+  readGateLedgerMock.mockResolvedValue({
+    resolutions: [],
+    pending: [{
+      version: 1, kind: "pending", op, gate,
+      timestamp: "2026-01-01T00:00:00.000Z", expiresAt: "2099-01-01T00:00:00.000Z",
+      ...(planDigest !== undefined ? { planDigest } : {}),
+    }],
+    malformed: 0,
+  });
+}
+
 describe("runApprove", () => {
   test("requires both <op> and <gate>", async () => {
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -358,6 +381,7 @@ describe("runApprove", () => {
   });
 
   test("appends a gate-resolution record and pushes, resolving --actor over env fallbacks", async () => {
+    seedPending("fountain-apply", "rollout-gate", PLAN_A);
     appendGateResolutionMock.mockResolvedValue({
       commit: "sha",
       record: { version: 1, op: "fountain-apply", gate: "rollout-gate", resolvedBy: "alex", timestamp: "2026-01-01T00:00:00.000Z" },
@@ -380,6 +404,7 @@ describe("runApprove", () => {
   test("--approver wins over --actor and over the CI/shell identity", async () => {
     vi.stubEnv("GITHUB_ACTOR", "ci-bot");
     vi.stubEnv("USER", "alex");
+    seedPending("deploy-gated", "approve-deploy", PLAN_A);
     appendGateResolutionMock.mockResolvedValue({
       commit: "sha",
       record: { version: 1, op: "deploy-gated", gate: "approve-deploy", resolvedBy: "you", timestamp: "2026-01-01T00:00:00.000Z" },
@@ -404,6 +429,7 @@ describe("runApprove", () => {
     vi.stubEnv("GITHUB_REF_NAME", "");
     vi.stubEnv("GITHUB_REPOSITORY", "");
     vi.stubEnv("CI_MERGE_REQUEST_PROJECT_URL", "");
+    seedPending("fountain-apply", "rollout-gate", PLAN_A);
     appendGateResolutionMock.mockResolvedValue({
       commit: "sha",
       record: { version: 1, op: "fountain-apply", gate: "rollout-gate", resolvedBy: "alex", timestamp: "2026-01-01T00:00:00.000Z", url: "https://github.com/org/repo/pull/9" },
@@ -427,6 +453,7 @@ describe("runApprove", () => {
     vi.stubEnv("GITHUB_SERVER_URL", "https://github.com");
     vi.stubEnv("GITHUB_REPOSITORY", "INTENTIUS/chant");
     vi.stubEnv("GITHUB_REF_NAME", "2028/merge");
+    seedPending("fountain-apply", "g", PLAN_A);
     appendGateResolutionMock.mockResolvedValue({
       commit: "sha",
       record: { version: 1, op: "fountain-apply", gate: "g", resolvedBy: "alex", timestamp: "2026-01-01T00:00:00.000Z" },
@@ -488,6 +515,7 @@ describe("runApprove", () => {
 
   test("warns (but still records) when the op isn't among discovered *.op.ts declarations", async () => {
     discoverOpsMock.mockResolvedValue({ ops: new Map(), errors: [] });
+    seedPending("unknown-op", "g", PLAN_A);
     appendGateResolutionMock.mockResolvedValue({
       commit: "sha",
       record: { version: 1, op: "unknown-op", gate: "g", resolvedBy: "unknown", timestamp: "2026-01-01T00:00:00.000Z" },
@@ -742,8 +770,108 @@ describe("runOperatorLog", () => {
  * append must not be reached, because reaching it is what discarded the
  * pending fact in the first place.
  */
+/**
+ * #2300 — an approval is for a plan. `chant approve` records the plan it
+ * approves, so the resolution says what was reviewed rather than only who
+ * reviewed and when.
+ */
+describe("runApprove — the resolution names the plan it approves (#2300)", () => {
+  test("by default it approves the standing pending fact's plan, so the common path stays one command", async () => {
+    seedPending("fountain-apply", "rollout-gate", PLAN_A);
+    appendGateResolutionMock.mockResolvedValue({
+      commit: "sha",
+      record: { version: 1, op: "fountain-apply", gate: "rollout-gate", resolvedBy: "alex", timestamp: "2026-01-01T00:00:00.000Z", planDigest: PLAN_A },
+    });
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(await runApprove(ctx({ path: "fountain-apply", extraPositional: "rollout-gate", actor: "alex" }))).toBe(0);
+    expect(appendGateResolutionMock).toHaveBeenCalledWith(expect.objectContaining({ planDigest: PLAN_A }));
+    expect(errSpy.mock.calls.map((c) => String(c[0])).join("\n")).toContain(`approves the plan ${PLAN_A}`);
+    errSpy.mockRestore();
+  });
+
+  test("--plan names one explicitly, and wins over the standing fact's", async () => {
+    const other = `sha256:${"b".repeat(64)}`;
+    seedPending("fountain-apply", "rollout-gate", PLAN_A);
+    appendGateResolutionMock.mockResolvedValue({
+      commit: "sha",
+      record: { version: 1, op: "fountain-apply", gate: "rollout-gate", resolvedBy: "alex", timestamp: "2026-01-01T00:00:00.000Z", planDigest: other },
+    });
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(await runApprove(ctx({ path: "fountain-apply", extraPositional: "rollout-gate", actor: "alex", plan: other }))).toBe(0);
+    expect(appendGateResolutionMock).toHaveBeenCalledWith(expect.objectContaining({ planDigest: other }));
+    errSpy.mockRestore();
+  });
+
+  // With nothing pending there is no plan on the ledger to approve, and
+  // recording a resolution anyway is exactly how an approval came to mean
+  // "the next run" (INTENTIUS/choudoufu#1026).
+  test("with no pending record it refuses, writes nothing, and names the fix", async () => {
+    readGateLedgerMock.mockResolvedValue({ resolutions: [], pending: [], malformed: 0 });
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const code = await runApprove(ctx({ path: "fountain-apply", extraPositional: "rollout-gate", actor: "alex" }));
+
+    expect(code).toBe(1);
+    expect(appendGateResolutionMock).not.toHaveBeenCalled();
+    expect(pushLifecycleMock).not.toHaveBeenCalled();
+    const out = errSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(out).toContain("has no pending fact, so there is no plan to approve");
+    expect(out).toContain("chant run fountain-apply");
+    expect(out).toContain("--plan <digest>");
+    errSpy.mockRestore();
+  });
+
+  // ...but `--plan` is the escape hatch, so approving a plan whose digest you
+  // already hold does not need a run to have recorded a pending fact first.
+  test("--plan approves with nothing pending", async () => {
+    readGateLedgerMock.mockResolvedValue({ resolutions: [], pending: [], malformed: 0 });
+    appendGateResolutionMock.mockResolvedValue({
+      commit: "sha",
+      record: { version: 1, op: "fountain-apply", gate: "rollout-gate", resolvedBy: "alex", timestamp: "2026-01-01T00:00:00.000Z", planDigest: PLAN_A },
+    });
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(await runApprove(ctx({ path: "fountain-apply", extraPositional: "rollout-gate", actor: "alex", plan: PLAN_A }))).toBe(0);
+    expect(appendGateResolutionMock).toHaveBeenCalledWith(expect.objectContaining({ planDigest: PLAN_A }));
+    errSpy.mockRestore();
+  });
+
+  test("a --plan that is not a digest is refused before anything is written", async () => {
+    seedPending("fountain-apply", "rollout-gate", PLAN_A);
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const code = await runApprove(ctx({
+      path: "fountain-apply", extraPositional: "rollout-gate", actor: "alex", plan: "chant.tfplan",
+    }));
+
+    expect(code).toBe(1);
+    expect(appendGateResolutionMock).not.toHaveBeenCalled();
+    expect(errSpy.mock.calls.map((c) => String(c[0])).join("\n")).toContain("--plan must be a plan digest");
+    errSpy.mockRestore();
+  });
+
+  // A gate that binds no plan records no digest on its pending fact, so the
+  // resolution carries none either — and nothing refuses, because nothing
+  // ever claimed to bind a plan there.
+  test("a gate that binds no plan approves as it always did", async () => {
+    seedPending("fountain-apply", "rollout-gate", undefined);
+    appendGateResolutionMock.mockResolvedValue({
+      commit: "sha",
+      record: { version: 1, op: "fountain-apply", gate: "rollout-gate", resolvedBy: "alex", timestamp: "2026-01-01T00:00:00.000Z" },
+    });
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(await runApprove(ctx({ path: "fountain-apply", extraPositional: "rollout-gate", actor: "alex" }))).toBe(0);
+    expect(appendGateResolutionMock.mock.calls[0][0]).not.toHaveProperty("planDigest");
+    errSpy.mockRestore();
+  });
+});
+
 describe("runApprove — the ledger branch is read before it is appended to (#2303)", () => {
   test("reads the branch before recording the resolution", async () => {
+    seedPending("fountain-apply", "rollout-gate", PLAN_A);
     appendGateResolutionMock.mockResolvedValue({
       commit: "sha",
       record: { version: 1, op: "fountain-apply", gate: "rollout-gate", resolvedBy: "alex", timestamp: "2026-01-01T00:00:00.000Z" },
@@ -796,6 +924,7 @@ describe("runApprove — the ledger branch is read before it is appended to (#23
  */
 describe("runApprove — a push that does not land is reported (#2309 review)", () => {
   test("a rejected push warns and marks the success line local-only", async () => {
+    seedPending("fountain-apply", "rollout-gate", PLAN_A);
     appendGateResolutionMock.mockResolvedValue({
       commit: "sha",
       record: { version: 1, op: "fountain-apply", gate: "rollout-gate", resolvedBy: "alex", timestamp: "2026-01-01T00:00:00.000Z" },
@@ -814,6 +943,7 @@ describe("runApprove — a push that does not land is reported (#2309 review)", 
   });
 
   test("a project with no remote says nothing was pushed", async () => {
+    seedPending("fountain-apply", "rollout-gate", PLAN_A);
     appendGateResolutionMock.mockResolvedValue({
       commit: "sha",
       record: { version: 1, op: "fountain-apply", gate: "rollout-gate", resolvedBy: "alex", timestamp: "2026-01-01T00:00:00.000Z" },

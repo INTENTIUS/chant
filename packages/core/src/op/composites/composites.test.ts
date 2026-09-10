@@ -12,6 +12,7 @@ import { ReconcileOp } from "./reconcile-op";
 import { ApplyOp } from "./apply-op";
 import { DECLARABLE_MARKER } from "../../declarable";
 import { EffectReceipt, receiptExpectation } from "../../effect-receipt";
+import { isStepOutputRef } from "../step-output-ref";
 
 function getProps(entity: unknown): Record<string, unknown> {
   return (entity as { props: Record<string, unknown> }).props;
@@ -203,6 +204,18 @@ describe("ApplyOp: gating + deletes", () => {
   test("labels include Apply + Env", () => {
     const { op } = ApplyOp({ name: "p", env: "prod" });
     expect(getProps(op).labels).toEqual({ Apply: "true", Env: "prod" });
+  });
+
+  // #2300 — the gate approves the change set the Plan phase produced, not the
+  // next run of the Op. The Plan step carries the id the reference needs.
+  test("the gate binds the Plan phase's own change-set digest", () => {
+    const { op } = ApplyOp({ name: "p", env: "prod", delete: "gated" });
+    const phases = getProps(op).phases as Array<Record<string, unknown>>;
+    const planStep = (phases[1].steps as Array<Record<string, unknown>>)[0];
+    expect(planStep.id).toBe("plan");
+    const gateStep = (phases[2].steps as Array<Record<string, unknown>>)[0];
+    expect(isStepOutputRef(gateStep.plan)).toBe(true);
+    expect(gateStep.plan).toMatchObject({ step: "plan", path: "planDigest" });
   });
 });
 

@@ -763,6 +763,18 @@ export async function recordGateApproval(
     return { ok: false };
   }
 
+  // #2028: the resolution's link is typed. `--url` wins; otherwise, running
+  // inside the PR/MR job that carries the change is itself the address, the
+  // same env fallback `--actor` uses. `--note` stays free-text prose.
+  const url = opts.url ?? resolveApprovalUrl();
+  if (url && !isApprovalUrl(url)) {
+    console.error(formatError({
+      message: `--url must be an absolute http/https URL (got "${url}")`,
+      hint: "Pass the PR/MR link, or omit --url and put prose in --note.",
+    }));
+    return { ok: false };
+  }
+
   // #2300: an approval is for a plan, so this command has to know which one.
   // `--plan` names it outright; otherwise it comes off the gate's standing
   // pending fact — the plan the run that stopped at this gate produced, which
@@ -796,18 +808,6 @@ export async function recordGateApproval(
   }
 
   const resolvedBy = opts.actor ?? process.env.GITHUB_ACTOR ?? process.env.GITLAB_USER_LOGIN ?? process.env.USER ?? "unknown";
-
-  // #2028: the resolution's link is typed. `--url` wins; otherwise, running
-  // inside the PR/MR job that carries the change is itself the address, the
-  // same env fallback `--actor` uses. `--note` stays free-text prose.
-  const url = opts.url ?? resolveApprovalUrl();
-  if (url && !isApprovalUrl(url)) {
-    console.error(formatError({
-      message: `--url must be an absolute http/https URL (got "${url}")`,
-      hint: "Pass the PR/MR link, or omit --url and put prose in --note.",
-    }));
-    return { ok: false };
-  }
 
   const { record } = await appendGateResolution({
     op: opName,

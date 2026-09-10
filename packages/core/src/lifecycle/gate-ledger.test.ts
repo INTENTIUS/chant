@@ -6,7 +6,8 @@ import { join } from "node:path";
 import {
   appendGateResolution, appendPendingGate, readGateResolutions, readGateLedger,
   latestResolutionSince, latestPendingGate, isPendingGateExpired,
-  resolveApprovalUrl, isApprovalUrl, type PendingGateRecord,
+  resolveApprovalUrl, isApprovalUrl, latestResolutionForPlan,
+  type PendingGateRecord, type GateResolutionRecord,
 } from "./gate-ledger";
 import { readBlobFromPath, writeBlobToPath } from "./git";
 
@@ -250,6 +251,137 @@ describe("lifecycle/gate-ledger — pending facts (#2119)", () => {
       expect(malformed).toBe(1);
       expect(pending).toEqual([]);
       expect(resolutions).toEqual([]);
+    });
+  });
+});
+
+/**
+ * #2300. `latestResolutionSince` asks "is there a newer approval", which a run
+ * answers yes to however much has changed since it was written. That is the
+ * rule INTENTIUS/choudoufu#1026 measured applying a renamed resource without
+ * complaint. `latestResolutionForPlan` asks "is there an approval of *this*",
+ * with recency demoted from the criterion to the tiebreak.
+ */
+describe("latestResolutionForPlan (#2300)", () => {
+  const EPOCH = new Date(0).toISOString();
+  const PLAN_A = `sha256:${"a".repeat(64)}`;
+  const PLAN_B = `sha256:${"b".repeat(64)}`;
+
+  const resolution = (over: Partial<GateResolutionRecord>): GateResolutionRecord => ({
+    version: 1, op: "live-apply", gate: "approve-live-apply", resolvedBy: "alex",
+    timestamp: "2026-01-02T00:00:00.000Z", ...over,
+  });
+
+  test("a resolution for this plan answers the gate", () => {
+    const found = latestResolutionForPlan([resolution({ planDigest: PLAN_A })], "approve-live-apply", EPOCH, PLAN_A);
+    expect(found.resolution?.resolvedBy).toBe("alex");
+    expect(found.mismatched).toBeUndefined();
+  });
+
+  test("a resolution for another plan does not, and comes back named", () => {
+    const found = latestResolutionForPlan([resolution({ planDigest: PLAN_B })], "approve-live-apply", EPOCH, PLAN_A);
+    expect(found.resolution).toBeUndefined();
+    expect(found.mismatched?.planDigest).toBe(PLAN_B);
+  });
+
+  // The migration, and the safe reading of it: a record with no digest proves
+  // someone approved something, and nothing about what.
+  test("a resolution written before #2300 never matches a plan-bound gate", () => {
+    const found = latestResolutionForPlan([resolution({})], "approve-live-apply", EPOCH, PLAN_A);
+    expect(found.resolution).toBeUndefined();
+    expect(found.mismatched).toBeDefined();
+    expect(found.mismatched?.planDigest).toBeUndefined();
+  });
+
+  // Recency is the tiebreak, not the criterion: a newer approval of the wrong
+  // plan does not shadow an older approval of the right one.
+  test("an older resolution for this plan beats a newer one for another", () => {
+    const found = latestResolutionForPlan(
+      [
+        resolution({ planDigest: PLAN_A, resolvedBy: "right", timestamp: "2026-01-02T00:00:00.000Z" }),
+        resolution({ planDigest: PLAN_B, resolvedBy: "wrong", timestamp: "2026-01-09T00:00:00.000Z" }),
+      ],
+      "approve-live-apply", EPOCH, PLAN_A,
+    );
+    expect(found.resolution?.resolvedBy).toBe("right");
+  });
+
+  test("among several for this plan, the newest wins", () => {
+    const found = latestResolutionForPlan(
+      [
+        resolution({ planDigest: PLAN_A, resolvedBy: "first", timestamp: "2026-01-02T00:00:00.000Z" }),
+        resolution({ planDigest: PLAN_A, resolvedBy: "second", timestamp: "2026-01-03T00:00:00.000Z" }),
+      ],
+      "approve-live-apply", EPOCH, PLAN_A,
+    );
+    expect(found.resolution?.resolvedBy).toBe("second");
+  });
+
+  test("the staleness rule still applies — a resolution older than the pending fact is no answer to it", () => {
+    const found = latestResolutionForPlan(
+      [resolution({ planDigest: PLAN_A, timestamp: "2026-01-01T00:00:00.000Z" })],
+      "approve-live-apply", "2026-01-05T00:00:00.000Z", PLAN_A,
+    );
+    expect(found.resolution).toBeUndefined();
+    expect(found.mismatched).toBeUndefined();
+  });
+
+  test("a gate that binds no plan decides exactly as latestResolutionSince does", () => {
+    const records = [resolution({}), resolution({ resolvedBy: "newer", timestamp: "2026-01-04T00:00:00.000Z" })];
+    expect(latestResolutionForPlan(records, "approve-live-apply", EPOCH, undefined).resolution?.resolvedBy)
+      .toBe(latestResolutionSince(records, "approve-live-apply", EPOCH)?.resolvedBy);
+  });
+
+  test("another gate's resolutions are not read as this one's", () => {
+    const found = latestResolutionForPlan(
+      [resolution({ gate: "approve-live-adopt", planDigest: PLAN_A })],
+      "approve-live-apply", EPOCH, PLAN_A,
+    );
+    expect(found.resolution).toBeUndefined();
+    expect(found.mismatched).toBeUndefined();
+  });
+});
+
+/**
+ * A `planDigest` that is present but not a string is a malformed line, not a
+ * line with a field to ignore (#2300) — ignoring it would demote a plan-bound
+ * record to a digest-less one, which is the shape a plan-bound gate refuses.
+ */
+describe("readGateLedger — a corrupted planDigest is malformed (#2300)", () => {
+  test("a non-string planDigest is counted, not read as an approval of nothing", async () => {
+    await withTestDir(async (dir) => {
+      await initRepo(dir);
+      await writeBlobToPath(
+        "_gates", "live-apply.jsonl",
+        JSON.stringify({
+          version: 1, op: "live-apply", gate: "g", resolvedBy: "alex",
+          timestamp: "2026-01-01T00:00:00.000Z", planDigest: { sha: "…" },
+        }),
+        "hand-written",
+        { cwd: dir },
+      );
+      const { resolutions, malformed } = await readGateLedger("live-apply", { cwd: dir });
+      expect(malformed).toBe(1);
+      expect(resolutions).toEqual([]);
+    });
+  });
+
+  test("a string planDigest round-trips onto both kinds of record", async () => {
+    await withTestDir(async (dir) => {
+      await initRepo(dir);
+      const digest = `sha256:${"a".repeat(64)}`;
+      await appendPendingGate(
+        { op: "live-apply", gate: "g", timestamp: "2026-01-01T00:00:00.000Z", expiresAt: "2026-01-03T00:00:00.000Z", planDigest: digest },
+        { cwd: dir },
+      );
+      await appendGateResolution(
+        { op: "live-apply", gate: "g", resolvedBy: "alex", timestamp: "2026-01-02T00:00:00.000Z", planDigest: digest },
+        { cwd: dir },
+      );
+      const { resolutions, pending, malformed } = await readGateLedger("live-apply", { cwd: dir });
+      expect(malformed).toBe(0);
+      expect(pending[0].planDigest).toBe(digest);
+      expect(resolutions[0].planDigest).toBe(digest);
     });
   });
 });

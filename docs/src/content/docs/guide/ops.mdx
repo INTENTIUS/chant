@@ -124,6 +124,21 @@ The name lives on the step's `gate` field, which is the same argument `chant app
 
 The second run reads the resolution, walks through the gate carrying the approver onto the step record, and finishes. `chant run approve <op> <gate> --on <lexicon>` does the same write and then tells the hosting runtime, so a runtime that can wake a gated run of its own does it now rather than on its next tick. See [Gate-as-fact](/chant/guide/operator/#gate-as-fact) for the ordering rules.
 
+### A gate approves a plan, not the next run
+
+A gate whose step carries a `plan` binds its approval to one specific plan ([#2300](https://github.com/INTENTIUS/chant/issues/2300)). `TerraformApplyOp` and `ApplyOp` both set it for you, referencing the digest their own Plan phase publishes:
+
+```typescript
+phase("Plan", [terraformPlan("app", { planFile: "chant.tfplan", id: "plan" })]),
+phase("Gate", [gate("approve-app-apply", { plan: plan.out.planDigest })]),
+```
+
+The run records that digest on the pending fact; `chant approve` copies it onto the resolution, so the common path is still `chant run`, read what it planned, `chant approve`. What changes is the run after: a fresh plan that digests differently is not what was approved, so the run stops again and says which digest was approved, which was planned, and that the change between them needs a fresh approval. Nothing is applied.
+
+The digest covers the change set — the addresses, the actions and the values that would be written — and deliberately not the moment the plan was taken, the run that took it, the tool version, or the plan file's bytes. Re-planning an unchanged root produces the same digest, so an approval does not expire on the clock.
+
+`chant approve` refuses when the gate has no pending fact to take a digest from, naming `chant run <op>` as the fix; `--plan <digest>` approves one explicitly. Resolutions recorded before `#2300` carry no digest and do not satisfy a plan-bound gate: they prove somebody approved something and nothing about what. A gate standing open across that upgrade needs one more approval after its next run.
+
 ## Compensation on failure
 
 `onFailure` phases run in order if the run terminates with an unhandled error:
