@@ -62,6 +62,7 @@ export * from "./observation";
 export * from "./identity";
 export * from "./apply";
 export * from "./deep-observation";
+export * from "./behaviour";
 export * from "./claimed-fields";
 export * from "./fold-provenance";
 export * from "./owner-chain";

@@ -161,7 +161,7 @@ export const REDACTED = "[redacted]";
  * name, so a lexicon that echoes one of these into an identity string has the
  * value removed before it is printed or serialized.
  */
-const CREDENTIAL_ENV_NAME =
+export const CREDENTIAL_ENV_NAME =
   /(SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIAL|PRIVATE_KEY|APIKEY|API_KEY|ACCESS_KEY|SESSION_KEY|AUTH)/i;
 
 /** Shortest env value worth redacting. Below this a "secret" is a false positive. */
@@ -171,13 +171,39 @@ const MIN_CREDENTIAL_LENGTH = 8;
  * Literal credential shapes. Each is something a principal string cannot be,
  * so matching one is proof rather than a guess.
  */
-const CREDENTIAL_SHAPES: RegExp[] = [
+export const CREDENTIAL_SHAPES: RegExp[] = [
   // A PEM block of any key type.
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
   // A JWT: three base64url segments, the first starting with the `{"` header.
   /\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]*/g,
   // An `Authorization`-style scheme plus its value.
   /\b(?:Bearer|Basic)\s+[A-Za-z0-9\-._~+/]{16,}={0,2}/g,
+];
+
+/**
+ * Provider-prefixed access tokens, by their issuer's own prefix (#2356).
+ *
+ * Separate from {@link CREDENTIAL_SHAPES} because these are a **denylist of
+ * known formats** rather than proof-by-shape. A prefix nobody has added here —
+ * a new provider, an internal issuer, a bare random string — passes every one
+ * of them, and any caller relying on this must say so rather than claim
+ * coverage. What it does buy is that the tokens people actually paste are
+ * caught wherever they appear, whatever the field is called.
+ *
+ * The suffix bound is deliberately short. The prefix is the signal; a truncated
+ * or example token is still somebody having written a credential down.
+ */
+export const CREDENTIAL_TOKEN_SHAPES: { name: string; re: RegExp }[] = [
+  { name: "a GitHub token", re: /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{6,}\b/g },
+  { name: "a GitHub fine-grained token", re: /\bgithub_pat_[A-Za-z0-9_]{6,}\b/g },
+  { name: "a GitLab personal access token", re: /\bglpat-[A-Za-z0-9_-]{3,}\b/g },
+  { name: "an OpenAI-style secret key", re: /\bsk-(?:live-|proj-|test-)?[A-Za-z0-9]{6,}\b/g },
+  { name: "a Stripe key", re: /\b[rs]k_(?:live|test)_[A-Za-z0-9]{6,}\b/g },
+  { name: "a Slack token", re: /\bxox[abposr]-[A-Za-z0-9-]{6,}\b/g },
+  { name: "an AWS access key id", re: /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g },
+  { name: "a Google API key", re: /\bAIza[0-9A-Za-z_-]{20,}\b/g },
+  { name: "a Google OAuth token", re: /\bya29\.[0-9A-Za-z_-]{10,}/g },
+  { name: "an npm token", re: /\bnpm_[A-Za-z0-9]{10,}\b/g },
 ];
 
 /**
@@ -205,6 +231,9 @@ export function redactCredentialMaterial(
     out = out.split(secret).join(REDACTED);
   }
   for (const shape of CREDENTIAL_SHAPES) out = out.replace(shape, REDACTED);
+  // Provider-prefixed tokens too (#2356): these are the ones people paste, and
+  // the three shapes above match none of them.
+  for (const { re } of CREDENTIAL_TOKEN_SHAPES) out = out.replace(re, REDACTED);
   return out;
 }
 
