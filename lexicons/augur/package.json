@@ -1,6 +1,6 @@
 {
   "name": "@intentius/chant-lexicon-augur",
-  "version": "0.64.0",
+  "version": "0.65.0",
   "type": "module",
   "files": [
     "src/",
@@ -46,7 +46,7 @@
   },
   "peerDependencies": {
     "zod": "^4.3.6",
-    "@intentius/chant": "^0.64.0",
+    "@intentius/chant": "^0.65.0",
     "typescript": "^5.9.3"
   },
   "description": "augur lexicon for chant, serializing a project's resource graph into a behaviour engine's request",
