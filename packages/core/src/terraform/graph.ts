@@ -82,9 +82,31 @@ export function refFromAccessor(accessor: string): RawRef | null {
 }
 
 /**
+ * The referrer key a `local.<name>` accessor names, or null for anything else.
+ *
+ * `refFromAccessor` is right to refuse `local.*`: a local is a substitution,
+ * has no address in the plan graph, and nothing carves one. But the resource a
+ * local ultimately names is a dependency all the same, so the accessor is
+ * carried this far to be resolved through the locals table (#2324) rather than
+ * dropped at the resource-head guard.
+ */
+function localKeyFromAccessor(accessor: string): string | null {
+  const parts = accessorSegments(accessor);
+  const name = parts[1];
+  return parts[0] === "local" && name !== undefined && NAME.test(name) ? `local.${name}` : null;
+}
+
+/**
  * Every string value carrying an interpolation across the tree's resource,
- * module and output blocks — exactly the expressions `parse.ts` must resolve
- * through the AST before `buildGraph` can classify them.
+ * module, output, `locals` and `data` blocks — exactly the expressions
+ * `parse.ts` must resolve through the AST before `buildGraph` can classify
+ * them.
+ *
+ * `locals` and `data` are here because a reference can reach a resource
+ * through them (#2324): a survivor reading `local.assets_id`, or a `data`
+ * source keyed off the carved resource, is a dependency the plan breaks on
+ * just as hard as a direct one. Skipping their bodies meant the AST never saw
+ * those expressions at all.
  */
 export function collectExpressions(tree: Hcl2JsonTree): string[] {
   const exprs = new Set<string>();
@@ -100,6 +122,8 @@ export function collectExpressions(tree: Hcl2JsonTree): string[] {
   for (const named of Object.values(tree.resource ?? {})) for (const blocks of Object.values(named)) visit(blocks);
   for (const blocks of Object.values(tree.module ?? {})) visit(blocks);
   for (const blocks of Object.values(tree.output ?? {})) visit(blocks);
+  visit(tree.locals);
+  for (const named of Object.values(tree.data ?? {})) for (const blocks of Object.values(named)) visit(blocks);
   return [...exprs].sort();
 }
 
@@ -111,7 +135,12 @@ function refsInValue(value: unknown, exprRefs: ExpressionRefs): RawRef[] {
       if (!v.includes("${")) return;
       for (const accessor of exprRefs.get(v) ?? []) {
         const ref = refFromAccessor(accessor);
-        if (ref) refs.push(ref);
+        if (ref) {
+          refs.push(ref);
+          continue;
+        }
+        const localKey = localKeyFromAccessor(accessor);
+        if (localKey) refs.push({ address: localKey });
       }
     } else if (Array.isArray(v)) {
       v.forEach(visit);
@@ -135,6 +164,105 @@ function refsInBlock(block: unknown, exprRefs: ExpressionRefs): RawRef[] {
     for (const ref of refsInValue(value, exprRefs)) refs.push({ ...ref, via: key });
   }
   return refs;
+}
+
+/**
+ * Non-node referrers: `local.<name>` and `data.<type>.<name>` → the references
+ * in the body each one stands for (#2324).
+ *
+ * Neither is a graph node — a local is a substitution, and a data source is
+ * not carvable infrastructure — but both sit on a path between a survivor and
+ * a resource, which is the shape an `output` block already has here. A
+ * `locals` block arrives from hcl2json as an array of its assignments, one
+ * element per `locals` block in the estate.
+ */
+function referrerTable(tree: Hcl2JsonTree, exprRefs: ExpressionRefs): Map<string, RawRef[]> {
+  const table = new Map<string, RawRef[]>();
+  const add = (key: string, refs: RawRef[]): void => {
+    const existing = table.get(key);
+    if (existing) existing.push(...refs);
+    else table.set(key, refs);
+  };
+  const localsBlocks = Array.isArray(tree.locals) ? tree.locals : tree.locals ? [tree.locals] : [];
+  for (const block of localsBlocks) {
+    if (!block || typeof block !== "object") continue;
+    for (const [name, value] of Object.entries(block as Record<string, unknown>)) {
+      add(`local.${name}`, refsInValue(value, exprRefs));
+    }
+  }
+  for (const [type, named] of Object.entries(tree.data ?? {})) {
+    for (const [name, blocks] of Object.entries(named)) {
+      add(`data.${type}.${name}`, refsInBlock(Array.isArray(blocks) ? blocks[0] : blocks, exprRefs));
+    }
+  }
+  return table;
+}
+
+/** Identity of a reference for de-duplication: the address plus the attribute read off it. */
+function refKey(ref: RawRef): string {
+  return `${ref.address}\u0000${ref.attr ?? ""}`;
+}
+
+/**
+ * Resolve every referrer entry to the node references it ultimately names.
+ *
+ * One substitution pass is not enough: a local can read another local, and a
+ * `data` source can read a local that reads another data source. So this
+ * iterates to a fixpoint — each round replaces a referrer key appearing in an
+ * entry with that key's own resolved references, and the loop stops when a
+ * round adds nothing new.
+ *
+ * Growth is monotone and bounded by (referrers x distinct references), so a
+ * self-referential local (`a = local.a`, skipped outright) or a cycle
+ * (`a = local.b`, `b = local.a`) converges instead of recursing. Terraform
+ * rejects both, but the advisor only reads an estate and must not hang on one
+ * it disagrees with.
+ */
+function resolveReferrers(table: ReadonlyMap<string, RawRef[]>): Map<string, RawRef[]> {
+  // Seed each entry with the references that already name something outside
+  // the table; the loop then folds in what the referrer keys resolve to.
+  const resolved = new Map<string, Map<string, RawRef>>();
+  for (const [key, refs] of table) {
+    resolved.set(key, new Map(refs.filter((r) => !table.has(r.address)).map((r) => [refKey(r), r])));
+  }
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const [key, refs] of table) {
+      const into = resolved.get(key)!;
+      for (const ref of refs) {
+        if (ref.address === key) continue; // `a = local.a` — nothing to fold in but itself
+        const from = resolved.get(ref.address);
+        if (!from) continue;
+        for (const [id, inner] of from) {
+          if (into.has(id)) continue;
+          into.set(id, inner);
+          changed = true;
+        }
+      }
+    }
+  }
+  return new Map([...resolved].map(([key, refs]) => [key, [...refs.values()]]));
+}
+
+/**
+ * A block's references as the graph should see them: one that reaches a
+ * `local` or `data` referrer additionally yields the node reference it
+ * resolves to.
+ *
+ * The original reference is kept — a `data.*` address is what marks the
+ * referring node dynamic, and an address that is not a node is dropped at edge
+ * time anyway. The resolved reference keeps the referring block's own `via`
+ * attribute, since that is what a deferred input is named after, and takes the
+ * carried resource attribute from the referrer's body.
+ */
+function throughReferrers(refs: readonly RawRef[], resolved: ReadonlyMap<string, RawRef[]>): RawRef[] {
+  const out: RawRef[] = [];
+  for (const ref of refs) {
+    out.push(ref);
+    for (const inner of resolved.get(ref.address) ?? []) out.push({ ...inner, via: ref.via });
+  }
+  return out;
 }
 
 /** A block carries `count`/`for_each` → dynamic, single instance until state resolves it. */
@@ -201,10 +329,20 @@ function dataSourceValues(block: unknown, type: string): Record<string, string> 
  * exactly like a resource's does. So an output contributes an edge tagged
  * `fromKind: "output"` from the pseudo-address `output.<name>` (#1638),
  * which the scorer weights lower and `carve bridge` patches.
+ *
+ * `locals` and `data` blocks are non-node referrers of a third kind (#2324):
+ * they carry a reference between two nodes rather than terminating it. A
+ * survivor reading `local.assets_id`, or reading a `data` source keyed off the
+ * carved resource, depends on that resource, so the reference is resolved
+ * through the referrer to the resource it ultimately names and the edge is
+ * recorded against the surviving node — the thing a reader can actually carve
+ * or leave behind. The referrer's own body is where `carve bridge` then lands
+ * the rewrite.
  */
 export function buildGraph(tree: Hcl2JsonTree, exprRefs: ExpressionRefs): TfGraph {
   const nodes: TfNode[] = [];
   const dataAddresses = new Set<string>();
+  const referrers = resolveReferrers(referrerTable(tree, exprRefs));
 
   // First pass: register data-source addresses so refs to them can be spotted.
   for (const [type, named] of Object.entries(tree.data ?? {})) {
@@ -218,7 +356,7 @@ export function buildGraph(tree: Hcl2JsonTree, exprRefs: ExpressionRefs): TfGrap
       const address = `${type}.${name}`;
       const block = Array.isArray(blocks) ? blocks[0] : blocks;
       const dynamic = blockHasMeta(block, "count") || blockHasMeta(block, "for_each");
-      const refs = refsInBlock(block, exprRefs);
+      const refs = throughReferrers(refsInBlock(block, exprRefs), referrers);
       const touchesData = refs.some((r) => dataAddresses.has(r.address));
       rawRefsByNode.set(address, refs);
       nodes.push({
@@ -239,7 +377,7 @@ export function buildGraph(tree: Hcl2JsonTree, exprRefs: ExpressionRefs): TfGrap
     const address = `module.${name}`;
     const block = Array.isArray(blocks) ? blocks[0] : blocks;
     const dynamic = blockHasMeta(block, "count") || blockHasMeta(block, "for_each");
-    const refs = refsInBlock(block, exprRefs);
+    const refs = throughReferrers(refsInBlock(block, exprRefs), referrers);
     const touchesData = refs.some((r) => dataAddresses.has(r.address));
     rawRefsByNode.set(address, refs);
     nodes.push({
@@ -256,7 +394,7 @@ export function buildGraph(tree: Hcl2JsonTree, exprRefs: ExpressionRefs): TfGrap
   const outputRefs = new Map<string, RawRef[]>();
   for (const [name, blocks] of Object.entries(tree.output ?? {})) {
     const block = Array.isArray(blocks) ? blocks[0] : blocks;
-    outputRefs.set(`output.${name}`, refsInBlock(block, exprRefs));
+    outputRefs.set(`output.${name}`, throughReferrers(refsInBlock(block, exprRefs), referrers));
   }
 
   // Edges: keep only references that resolve to a known node.

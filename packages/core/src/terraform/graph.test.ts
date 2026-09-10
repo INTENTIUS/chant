@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { inboundEdges, outboundEdges, refFromAccessor } from "./graph";
+import { collectExpressions, inboundEdges, outboundEdges, refFromAccessor } from "./graph";
 import { buildFixtureGraph } from "./__fixtures__/build-graph";
 import type { Hcl2JsonTree } from "./types";
 
@@ -211,6 +211,153 @@ describe("buildGraph", () => {
     const g = buildFixtureGraph(tree);
     expect(g.edges).toEqual([]);
     expect(g.nodes[0].hasDynamic).toBe(false); // var/local alone are not the dynamic markers
+  });
+});
+
+/**
+ * References that reach a resource through a `locals` or `data` block (#2324).
+ * Neither is a node, both are load-bearing for the plan: the estate below is
+ * the one the blast-radius spike measured, where one bucket has three
+ * dependents by three routes and the advisor used to report one.
+ */
+describe("references through locals and data blocks", () => {
+  const threeRoutes: Hcl2JsonTree = {
+    resource: {
+      aws_s3_bucket: { assets: [{ bucket: "app-assets" }] },
+      aws_lambda_function: {
+        via_local: [{ environment: { variables: { B: "${local.assets_id}" } } }],
+        via_data: [{ environment: { variables: { B: "${data.aws_s3_bucket.lookup.arn}" } } }],
+        direct: [{ environment: { variables: { B: "${aws_s3_bucket.assets.arn}" } } }],
+      },
+    },
+    locals: [{ assets_id: "${aws_s3_bucket.assets.id}" }],
+    data: { aws_s3_bucket: { lookup: [{ bucket: "${aws_s3_bucket.assets.bucket}" }] } },
+  };
+
+  test("all three routes to one bucket are inbound edges", () => {
+    const g = buildFixtureGraph(threeRoutes);
+    expect(inboundEdges(g, "aws_s3_bucket.assets")).toEqual([
+      { from: "aws_lambda_function.direct", to: "aws_s3_bucket.assets", attrs: ["arn"], via: ["environment"] },
+      { from: "aws_lambda_function.via_data", to: "aws_s3_bucket.assets", attrs: ["bucket"], via: ["environment"] },
+      { from: "aws_lambda_function.via_local", to: "aws_s3_bucket.assets", attrs: ["id"], via: ["environment"] },
+    ]);
+    // The referrers stay off the node list: nothing carves a local or a data source.
+    expect(g.nodes.map((n) => n.address).filter((a) => a.startsWith("local.") || a.startsWith("data."))).toEqual([]);
+  });
+
+  test("each dependent gets the outbound edge to match", () => {
+    const g = buildFixtureGraph(threeRoutes);
+    for (const from of ["aws_lambda_function.direct", "aws_lambda_function.via_data", "aws_lambda_function.via_local"]) {
+      expect(outboundEdges(g, from).map((e) => e.to)).toEqual(["aws_s3_bucket.assets"]);
+    }
+  });
+
+  test("reading a data source still marks the reader dynamic", () => {
+    const g = buildFixtureGraph(threeRoutes);
+    const byAddress = Object.fromEntries(g.nodes.map((n) => [n.address, n]));
+    expect(byAddress["aws_lambda_function.via_data"].hasDynamic).toBe(true);
+    expect(byAddress["aws_lambda_function.via_local"].hasDynamic).toBe(false);
+  });
+
+  test("a chain of locals resolves to the resource the chain ultimately names", () => {
+    const g = buildFixtureGraph({
+      resource: {
+        aws_s3_bucket: { assets: [{ bucket: "app-assets" }] },
+        aws_lambda_function: { api: [{ environment: { variables: { B: "${local.c}" } } }] },
+      },
+      locals: [{ a: "${aws_s3_bucket.assets.id}" }, { b: "${local.a}", c: "${local.b}" }],
+    });
+    expect(inboundEdges(g, "aws_s3_bucket.assets")).toEqual([
+      { from: "aws_lambda_function.api", to: "aws_s3_bucket.assets", attrs: ["id"], via: ["environment"] },
+    ]);
+  });
+
+  test("a data source reading a local reading a data source resolves through both", () => {
+    const g = buildFixtureGraph({
+      resource: {
+        aws_s3_bucket: { assets: [{ bucket: "app-assets" }] },
+        aws_lambda_function: { api: [{ environment: { variables: { B: "${data.aws_s3_bucket.outer.arn}" } } }] },
+      },
+      locals: [{ inner_name: "${data.aws_s3_bucket.inner.id}" }],
+      data: {
+        aws_s3_bucket: {
+          inner: [{ bucket: "${aws_s3_bucket.assets.bucket}" }],
+          outer: [{ bucket: "${local.inner_name}" }],
+        },
+      },
+    });
+    expect(inboundEdges(g, "aws_s3_bucket.assets").map((e) => e.from)).toEqual(["aws_lambda_function.api"]);
+  });
+
+  test("a self-referential or mutually recursive local resolves without hanging", () => {
+    // Terraform rejects both of these; the advisor only reads an estate, so it
+    // has to reach a fixpoint on one rather than recurse forever.
+    const g = buildFixtureGraph({
+      resource: {
+        aws_s3_bucket: { assets: [{ bucket: "app-assets" }] },
+        aws_lambda_function: {
+          selfish: [{ environment: { variables: { B: "${local.me}" } } }],
+          looper: [{ environment: { variables: { B: "${local.x}" } } }],
+        },
+      },
+      locals: [
+        { me: "${local.me}" },
+        { x: "${local.y}", y: "${local.x}" },
+        { grounded: "${aws_s3_bucket.assets.id}" },
+      ],
+    });
+    expect(g.edges).toEqual([]);
+  });
+
+  test("a cycle that also names a resource still yields the resource edge", () => {
+    const g = buildFixtureGraph({
+      resource: {
+        aws_s3_bucket: { assets: [{ bucket: "app-assets" }] },
+        aws_lambda_function: { api: [{ environment: { variables: { B: "${local.x}" } } }] },
+      },
+      locals: [{ x: ["${local.y}", "${aws_s3_bucket.assets.arn}"], y: "${local.x}" }],
+    });
+    expect(inboundEdges(g, "aws_s3_bucket.assets")).toEqual([
+      { from: "aws_lambda_function.api", to: "aws_s3_bucket.assets", attrs: ["arn"], via: ["environment"] },
+    ]);
+  });
+
+  test("an output reading a local is still an output-tagged edge", () => {
+    const g = buildFixtureGraph({
+      resource: { aws_s3_bucket: { assets: [{ bucket: "app-assets" }] } },
+      locals: [{ assets_id: "${aws_s3_bucket.assets.id}" }],
+      output: { bucket_id: [{ value: "${local.assets_id}" }] },
+    });
+    expect(inboundEdges(g, "aws_s3_bucket.assets")).toEqual([
+      { from: "output.bucket_id", to: "aws_s3_bucket.assets", attrs: ["id"], via: ["value"], fromKind: "output" },
+    ]);
+  });
+
+  test("locals and data bodies reach the expression AST at all", () => {
+    expect(collectExpressions(threeRoutes)).toEqual([
+      "${aws_s3_bucket.assets.arn}",
+      "${aws_s3_bucket.assets.bucket}",
+      "${aws_s3_bucket.assets.id}",
+      "${data.aws_s3_bucket.lookup.arn}",
+      "${local.assets_id}",
+    ]);
+  });
+
+  test("a referrer is never an edge endpoint of its own", () => {
+    // The edge belongs to the surviving node, which is the thing a reader can
+    // carve or leave behind; the referrer is where the rewrite lands, not a
+    // participant. A local that names no resource contributes nothing at all.
+    const g = buildFixtureGraph(threeRoutes);
+    for (const referrer of ["local.assets_id", "data.aws_s3_bucket.lookup"]) {
+      expect([referrer, inboundEdges(g, referrer)]).toEqual([referrer, []]);
+      expect([referrer, outboundEdges(g, referrer)]).toEqual([referrer, []]);
+    }
+    expect(
+      buildFixtureGraph({
+        resource: { aws_lambda_function: { api: [{ environment: { variables: { B: "${local.env}" } } }] } },
+        locals: [{ env: "${var.stage}" }],
+      }).edges,
+    ).toEqual([]);
   });
 });
 
