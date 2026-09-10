@@ -264,11 +264,21 @@ export const store = new StorageType({
 });
 ```
 
+### Unregistered tagged template intrinsics
+
+```typescript
+// Rejected at fold time: unregistered tagged template intrinsic: unknownTag`...`
+export const store = new StorageType({
+  name: unknownTag`${prefix}-data`,
+});
+```
+
+Not an EVL lint error. EVL has no intrinsic registry at lint time, so it treats every tagged template's interior as opaque regardless of registration (see [Intrinsic tagged templates](#intrinsic-tagged-templates)), and this passes lint. It fails only when `chant build` folds the file and resolves the tag against the intrinsics the loaded lexicons actually registered. A plain, untagged template, `` `${prefix}-data` `` with no tag at all, folds like any other value in the subset; see [Supported expressions](/chant/architecture/evaluator/#supported-expressions-fold-subset). The tag is what's unsupported here; template interpolation itself works.
+
 ### Other unsupported patterns
 
 - **`let`/`var` bindings** — only `const` is statically traceable
 - **Class declarations** — `class MyStore extends StorageType {...}`
-- **Template literals without known tags** — only lexicon-registered tags
 - **Computed property names** — `{ [key]: value }`
 - **`require()`** — only `import` statements
 - **Top-level `await`**
