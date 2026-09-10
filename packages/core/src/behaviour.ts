@@ -127,15 +127,25 @@
  * ## Shape compatibility with the overlay
  *
  * {@link PredictedBehaviour} is the object `chant graph --live --overlay` puts
- * on a node as `attrs._behaviour`, and {@link BehaviourReportMeta} /
- * {@link BehaviourRefusal} are what it puts on the graph as
- * `meta._behaviour`. behold reads those keys and does arithmetic on the
- * engine's figures; it never produces one of its own. Fields beyond what behold
- * reads (`cause`, `source` on a refusal) are additive and ignorable.
+ * on a node as `attrs._behaviour`.
+ *
+ * On the graph, `meta._behaviour` takes {@link BehaviourReportMeta} **or the
+ * whole {@link BehaviourRefusalReport}** — not a bare {@link BehaviourRefusal}.
+ * behold reads that key as `{ engine?, version?, at?, total?, refusal? }` and
+ * branches on the presence of `refusal`, so a bare `BehaviourRefusal` has no
+ * `refusal` key, falls through to the engine check, and is dropped as
+ * "meta.engine missing" — a refusal that renders as nothing at all, which is
+ * the one outcome this contract exists to prevent. #2360 implements this
+ * sentence, so it says what behold does.
+ *
+ * behold reads those keys and does arithmetic on the engine's figures; it never
+ * produces one of its own. Fields beyond what it reads (`cause` and `source` on
+ * a refusal, `edgeCoverage` on the meta) are additive and ignorable.
  */
 
 import type { UnobservedReason } from "./observation";
 import type { IREdge } from "./graph-ir";
+import type { DanglingRef } from "./graph-refs";
 import {
   CREDENTIAL_ENV_NAME,
   CREDENTIAL_SHAPES,
@@ -335,6 +345,10 @@ export interface PredictedBehaviour {
  *   account behind it has no balance left (#2359).
  * - `engine-over-quota` — the engine answered, and refused because a rate or
  *   volume limit is spent (#2359).
+ * - `credential-in-request` — the request itself carried something that must
+ *   not leave the process, so nothing was sent. The one refusal chant raises
+ *   about itself rather than about the engine; see
+ *   {@link screenBehaviourRequest}.
  *
  * The last four are one axis split four ways, because each has a different
  * remedy and a refusal exists to be acted on. `no-engine` wants a variable
@@ -350,7 +364,8 @@ export type BehaviourUnpredictedReason =
   | "no-engine"
   | "engine-unreachable"
   | "engine-out-of-credit"
-  | "engine-over-quota";
+  | "engine-over-quota"
+  | "credential-in-request";
 
 /**
  * The total witness. This is the one that earns the construction: the type
@@ -372,6 +387,7 @@ const BEHAVIOUR_UNPREDICTED_REASON_WITNESS: Record<BehaviourUnpredictedReason, t
   "engine-unreachable": true,
   "engine-out-of-credit": true,
   "engine-over-quota": true,
+  "credential-in-request": true,
 };
 
 /** Every legal {@link BehaviourUnpredictedReason}, for validation and conformance checks. */
@@ -416,6 +432,21 @@ export interface BehaviourReportMeta {
    * a consumer that sums does its own arithmetic and labels it as such.
    */
   total?: PredictedRate;
+  /**
+   * The edge coverage the run was given, echoed from the request (#2360).
+   *
+   * Required, and it is the whole reason `edgeCoverage` is worth stating. Held
+   * only on {@link PredictBehaviourOptions} it never reached a reader, so a
+   * consumer holding a report could not tell whether a "survives one zone lost"
+   * verdict was computed over a complete graph or over one whose builder had no
+   * idea what it had missed. Under this contract's own second constraint that
+   * makes the verdict a faked number the shape renders invisible — the failure
+   * the refusal arm exists to prevent, reappearing one level down.
+   *
+   * `behaviourReport` copies it from the request, so a lexicon does not restate
+   * it and cannot restate it differently.
+   */
+  edgeCoverage: BehaviourEdgeCoverage;
 }
 
 /**
@@ -501,8 +532,20 @@ export function isBehaviourResult(value: unknown): value is BehaviourResult {
   );
 }
 
-/** A tolerance that states nothing. Rejected, because "stated tolerance" is the point. */
-const EMPTY_TOLERANCES: readonly string[] = ["n/a", "na", "none", "unknown", "-", "?", "tbd"];
+/**
+ * Words that state nothing. Rejected wherever this contract asks an engine to
+ * *state* something — its tolerance, and the failure a verdict is about.
+ *
+ * `"none"` as a `resilience.failure` was the hole: the module's own doc says a
+ * verdict with no named failure says nothing, and `"none"` names no failure
+ * while sailing through a non-empty-string check.
+ */
+const STATES_NOTHING: readonly string[] = ["n/a", "na", "none", "unknown", "-", "?", "tbd", "null"];
+
+/** True when a stated value is one of the words that state nothing. */
+function statesNothing(value: string): boolean {
+  return STATES_NOTHING.includes(value.trim().toLowerCase().replace(/\.$/, ""));
+}
 
 const isFraction = (v: unknown): boolean => typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1;
 const isFilled = (v: unknown): boolean => typeof v === "string" && v.trim() !== "";
@@ -567,6 +610,13 @@ export function validateBehaviourBlock(name: string, block: PredictedBehaviour):
   if (!isFilled(block.resilience?.failure)) {
     bad("resilience.failure is missing — a verdict with no named failure says nothing");
   }
+  if (statesNothing(block.resilience.failure)) {
+    bad(
+      `resilience.failure ${JSON.stringify(block.resilience.failure)} names no failure. behold takes ` +
+        "any non-empty string here, so this passes its validator and renders a confident verdict about " +
+        'nothing. Name the event: "one zone lost", "primary database failover"',
+    );
+  }
   if (!isResilienceVerdict(block.resilience?.verdict)) {
     bad(`resilience.verdict ${JSON.stringify(block.resilience?.verdict)} is not survives/degrades/fails`);
   }
@@ -582,7 +632,7 @@ export function validateBehaviourBlock(name: string, block: PredictedBehaviour):
   if (!isFilled(p?.tolerance)) {
     bad("provenance.tolerance is missing — a figure without a stated tolerance is not a prediction");
   }
-  if (EMPTY_TOLERANCES.includes(p.tolerance.trim().toLowerCase().replace(/\.$/, ""))) {
+  if (statesNothing(p.tolerance)) {
     bad(
       `provenance.tolerance ${JSON.stringify(p.tolerance)} states no tolerance. An engine with nothing ` +
         "to say about its own error bars has no business publishing a figure; say the number, however wide",
@@ -593,41 +643,64 @@ export function validateBehaviourBlock(name: string, block: PredictedBehaviour):
   }
 }
 
+/** What a lexicon states about the run itself. Everything else in the meta is copied from the request. */
+export interface BehaviourEngineStamp {
+  engine: string;
+  version: string;
+  /** An estate total, when the engine states one of its own. Never chant's sum. */
+  total?: PredictedRate;
+}
+
 /**
  * Build a {@link BehaviourReport}, and refuse to build an invalid one.
  *
- * `entityNames` is the request's own list, and passing it is what makes the
- * totality rule enforceable rather than merely stated. Without it this function
- * had no idea what had been asked about, so `behaviourReport(meta, {}, {})` for
- * a three-entity request returned a well-formed report claiming nothing, and
- * the only thing checking totality was a conformance suite measuring against an
- * author-written list that nothing tied to the request.
+ * Takes the request rather than a hand-assembled meta, and derives `at`,
+ * `edgeCoverage` and the asked-for names from it. A lexicon states only what is
+ * genuinely its own — which engine answered, at what version, and a total if
+ * the engine has one — so the three fields that must agree with the request
+ * cannot be restated differently.
  *
- * Four refusals, all naming what went wrong:
+ * That is a check and not a proof, and the distinction matters enough to say
+ * plainly: {@link BehaviourReport} is a plain interface, {@link isBehaviourResult}
+ * accepts a hand-built one, and a lexicon calling this with
+ * `entityNames: Object.keys(entities)` self-certifies. What passing the request
+ * buys is that the ordinary route is checked and the check names what is wrong;
+ * a consumer that needs the guarantee runs its own
+ * `validateBehaviourResult(result, askedFor)` on arrival, which is #2358's and
+ * #2360's to write.
+ *
+ * Refusals, all naming what went wrong:
  *
  *  - an entity in neither map — the tri-state's whole point, and the one a
  *    `continue` in a lexicon's loop produces silently;
  *  - an entity in both maps — priced and unpriced at once;
  *  - a figure for something nobody asked about;
- *  - any block failing {@link validateBehaviourBlock}, plus the report-level
- *    rule that every entity's `at` matches `meta.at`. One run priced one
- *    traffic level; a block claiming another is either a bug or an answer to a
- *    question that was not asked, and a consumer differencing two reports has
- *    no way to see it.
+ *  - a block priced at a level the run did not ask for;
+ *  - an edge-coverage claim that names no gap ({@link validateEdgeCoverage});
+ *  - any block failing {@link validateBehaviourBlock}.
  */
 export function behaviourReport(
-  meta: BehaviourReportMeta,
-  entityNames: readonly string[],
+  request: Pick<PredictBehaviourOptions, "entityNames" | "traffic" | "edgeCoverage">,
+  stamp: BehaviourEngineStamp,
   entities: Record<string, PredictedBehaviour>,
   unpredicted?: Record<string, UnpredictedEntity>,
 ): BehaviourReport {
-  if (!isFilled(meta?.engine)) throw new Error("predictBehaviour: meta.engine is missing");
-  if (!isFilled(meta?.version)) throw new Error("predictBehaviour: meta.version is missing");
-  if (!isFilled(meta?.at?.traffic)) throw new Error("predictBehaviour: meta.at.traffic is missing");
-  if (meta.total && (!Number.isFinite(meta.total.perHour) || meta.total.perHour < 0)) {
+  if (!isFilled(stamp?.engine)) throw new Error("predictBehaviour: meta.engine is missing");
+  if (!isFilled(stamp?.version)) throw new Error("predictBehaviour: meta.version is missing");
+  if (!isFilled(request?.traffic)) throw new Error("predictBehaviour: meta.at.traffic is missing");
+  if (stamp.total && (!Number.isFinite(stamp.total.perHour) || stamp.total.perHour < 0)) {
     throw new Error("predictBehaviour: meta.total.perHour is not a non-negative finite number");
   }
+  validateEdgeCoverage(request.edgeCoverage);
 
+  const meta: BehaviourReportMeta = {
+    engine: stamp.engine,
+    version: stamp.version,
+    at: { traffic: request.traffic },
+    ...(stamp.total ? { total: stamp.total } : {}),
+    edgeCoverage: request.edgeCoverage,
+  };
+  const entityNames = request.entityNames;
   const asked = new Set(entityNames);
   const holes = new Set(Object.keys(unpredicted ?? {}));
 
@@ -731,46 +804,79 @@ export function compareProvenance(
   return a.basis === b.basis ? "comparable" : "mixed-basis";
 }
 
-/** How comparable two whole figures are — {@link ProvenanceComparability} plus the traffic level. */
-export type FigureComparability = ProvenanceComparability | "mixed-level";
+/** One axis on which two figures fail to be a delta of like things. */
+export type FigureMismatch =
+  | "mixed-engine"
+  | "mixed-level"
+  | "mixed-basis"
+  | "mixed-currency"
+  | "mixed-failure";
+
+/**
+ * Every mismatch, in the order a consumer should show them — most fundamental
+ * first. Order is presentation; membership is the contract.
+ */
+export const FIGURE_MISMATCHES: readonly FigureMismatch[] = [
+  "mixed-engine",
+  "mixed-level",
+  "mixed-currency",
+  "mixed-basis",
+  "mixed-failure",
+];
 
 /**
  * Classify a pair of figures for delta purposes. **This is the one to call.**
  *
- * This module owns the invariant and not the presentation. #2358 defines what a
- * predicted-cost delta looks like on a merge request and #2360 defines the
- * live-versus-declared view, and neither needs this module's opinion on layout.
- * What both need, and what a hand-rolled diff of two {@link BehaviourResult}s
- * silently loses, is that the context of a figure does not survive subtraction:
- * two numbers difference cleanly whatever produced them, and the answer carries
- * no trace of having crossed an engine, a basis or a traffic level.
+ * Returns **every** axis on which the two disagree, not the first. An earlier
+ * version returned one label and stopped at the first mismatch, which meant a
+ * pair differing in level AND basis reported `mixed-level` and dropped the
+ * basis crossing on the floor — a consumer told "different traffic level" would
+ * caption it as such and show a modeled-minus-validated difference underneath
+ * with nothing said. Precedence is a fine way to decide what to show first and
+ * a bad way to decide what to know.
  *
- * Verdicts, in the order they are checked, most fundamental first:
+ * The axes:
  *
- *  - `mixed-engine` — the engine, version or tolerance differs. Two models are
- *    not one scale, so nothing below this matters.
- *  - `mixed-level` — same engine, different `at`. Same question asked of two
- *    different worlds; the difference is mostly the difference in the question.
- *  - `mixed-basis` — same engine, same level, one figure off a price list and
- *    the other off an invoice. Part of the difference is the gap between those.
- *  - `comparable` — everything matches, and the difference is a difference in
- *    the estate.
+ *  - `mixed-engine` — engine, version or tolerance differs. Two models are not
+ *    one scale.
+ *  - `mixed-level` — different `at`. The same question asked of two different
+ *    worlds.
+ *  - `mixed-currency` — different `cost.currency`. chant converts nothing, so
+ *    USD minus EUR is not a number. behold already refuses to *sum* these
+ *    (`behold/src/behaviour.ts`); permitting them to be *differenced* left this
+ *    contract laxer than its own consumer.
+ *  - `mixed-basis` — one figure off a price list, the other off an invoice.
+ *  - `mixed-failure` — different `resilience.failure`. "Survives one zone lost"
+ *    against "survives a region lost" are two verdicts about two events, and
+ *    differencing the costs beside them implies they answer the same question.
  *
  * The rule this contract binds its consumers to, in one sentence: **a delta
- * between two figures that do not classify `comparable` must be marked as such
+ * between two figures whose mismatch set is not empty must be marked as such
  * wherever it is shown, and must never be presented as a plain difference.**
  * How it is marked is #2358's to choose. Whether it must be marked is not.
  */
-export function compareFigures(a: PredictedBehaviour, b: PredictedBehaviour): FigureComparability {
-  const provenance = compareProvenance(a.provenance, b.provenance);
-  if (provenance === "mixed-engine") return "mixed-engine";
-  if (a.at.traffic !== b.at.traffic) return "mixed-level";
-  return provenance;
+export function compareFigures(
+  a: PredictedBehaviour,
+  b: PredictedBehaviour,
+): ReadonlySet<FigureMismatch> {
+  const out = new Set<FigureMismatch>();
+  if (compareProvenance(a.provenance, b.provenance) === "mixed-engine") out.add("mixed-engine");
+  if (a.at.traffic !== b.at.traffic) out.add("mixed-level");
+  if (a.cost.currency !== b.cost.currency) out.add("mixed-currency");
+  if (a.provenance.basis !== b.provenance.basis) out.add("mixed-basis");
+  if (a.resilience.failure !== b.resilience.failure) out.add("mixed-failure");
+  return out;
+}
+
+/** The mismatches, ordered for display. A convenience over {@link compareFigures}. */
+export function figureMismatches(a: PredictedBehaviour, b: PredictedBehaviour): FigureMismatch[] {
+  const found = compareFigures(a, b);
+  return FIGURE_MISMATCHES.filter((m) => found.has(m));
 }
 
 /** True when two whole figures may be shown as a plain difference, with no mark. */
 export function isComparableFigure(a: PredictedBehaviour, b: PredictedBehaviour): boolean {
-  return compareFigures(a, b) === "comparable";
+  return compareFigures(a, b).size === 0;
 }
 
 /** True when two provenances may be shown as a plain difference. Level-blind — see {@link compareProvenance}. */
@@ -1016,6 +1122,75 @@ export const CREDENTIAL_OPTION_KEYS: readonly string[] = [
 const EXTRA_CREDENTIAL_KEYS: readonly string[] = ["pat", "cookie"];
 
 /**
+ * Shortest string worth suspecting. Borrowed from `identity.ts`'s
+ * `MIN_CREDENTIAL_LENGTH`, and for the same reason: below it, a "secret" is a
+ * false positive.
+ */
+const MIN_CREDENTIAL_LENGTH = 8;
+
+/**
+ * Key suffixes that name a **reference to** a credential rather than a
+ * credential, and the handful of whole names that do the same.
+ *
+ * This is the correction that made the guard usable. Run over every distinct
+ * property key in this repo's own generated schemas, a bare substring match on
+ * `SECRET|TOKEN|PASSWORD|AUTH` refused 406 aws keys, 173 azure, 89 gcp and 7
+ * k8s — `imagePullSecrets`, `secretName`, `secretKeyRef` (all three are
+ * references to a Secret *by name*), `ClientToken` (an idempotency nonce on
+ * dozens of AWS resources), `CertificateAuthorityArn`, `authorizedNetworks`,
+ * `passwordPolicy`, `authMode`, `oauthScopes`. A `tags: { author: "…" }` was
+ * refused because `author` contains `auth`.
+ *
+ * None of those hold secret material, and every one of them is ordinary in real
+ * infrastructure, which #2357, #2359 and #2360 all assemble their requests from.
+ */
+const REFERENCE_KEY_SUFFIXES: readonly string[] = [
+  "ref",
+  "refs",
+  "name",
+  "names",
+  "id",
+  "ids",
+  "arn",
+  "arns",
+  "count",
+  "validity",
+  "mode",
+  "modes",
+  "policy",
+  "policies",
+  "scope",
+  "scopes",
+  "network",
+  "networks",
+  "type",
+  "types",
+  "enabled",
+  "required",
+  "version",
+  "uri",
+  "url",
+  "urls",
+  "config",
+  "configs",
+  "settings",
+  "options",
+];
+
+/** Whole key names that are never credential material, whatever they contain. */
+const REFERENCE_KEY_NAMES: readonly string[] = [
+  "imagepullsecrets",
+  "clienttoken",
+  // A Kubernetes boolean: "mount the service account's token into this pod".
+  // It holds no token and never did.
+  "automountserviceaccounttoken",
+  "author",
+  "authors",
+  "authority",
+  "secretsmanager",
+];
+
+/**
  * `CREDENTIAL_ENV_NAME` with its underscores removed, derived from the same
  * source so the two cannot drift.
  *
@@ -1028,14 +1203,24 @@ const EXTRA_CREDENTIAL_KEYS: readonly string[] = ["pat", "cookie"];
  */
 const CREDENTIAL_ENV_NAME_SQUASHED = new RegExp(CREDENTIAL_ENV_NAME.source.replace(/_/g, ""), "i");
 
-/** True when a URL-shaped string carries a password in its userinfo. */
+/**
+ * True when a string carries a password in userinfo — with or without a scheme.
+ *
+ * The scheme-less half matters: a DSN is routinely written
+ * `app:hunter2@db.internal:5432/prod`, with the driver supplying the scheme, and
+ * `new URL()` will not parse that at all.
+ */
 function hasUrlPassword(value: string): boolean {
-  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) return false;
-  try {
-    return new URL(value).password !== "";
-  } catch {
-    return false;
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) {
+    try {
+      if (new URL(value).password !== "") return true;
+    } catch {
+      /* fall through to the scheme-less test */
+    }
   }
+  // `user:pass@host` with no scheme. Both halves non-empty, no whitespace, and
+  // a host that looks like a host, so `mailto`-ish text and prose do not match.
+  return /^[^\s:@/]+:[^\s:@/]+@[A-Za-z0-9._-]+(?::\d+)?(?:[/?#]|$)/.test(value.trim());
 }
 
 /**
@@ -1050,8 +1235,28 @@ function hasUrlPassword(value: string): boolean {
  */
 function isCredentialKey(key: string): boolean {
   const squashed = key.toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (REFERENCE_KEY_NAMES.includes(squashed)) return false;
+  if (REFERENCE_KEY_SUFFIXES.some((s) => squashed.endsWith(s))) return false;
   if (EXTRA_CREDENTIAL_KEYS.includes(squashed)) return true;
   return CREDENTIAL_ENV_NAME.test(key) || CREDENTIAL_ENV_NAME_SQUASHED.test(squashed);
+}
+
+/**
+ * True when a string is evidently a *pointer to* a secret rather than one.
+ *
+ * `AdminPassword` on `AWS::DirectoryService::MicrosoftAD` is a genuine
+ * credential field, and chant source almost always fills it with a
+ * `{{resolve:secretsmanager:…}}` string or an interpolation rather than a
+ * literal. Refusing those would refuse the correct way to write it.
+ */
+function looksLikeSecretReference(value: string): boolean {
+  return (
+    /^\{\{[^}]+\}\}$/.test(value.trim()) ||
+    /^\$\{[^}]+\}$/.test(value.trim()) ||
+    /^!(?:Ref|GetAtt|Sub|ImportValue)\b/.test(value.trim()) ||
+    /^arn:[a-z0-9-]*:secretsmanager:/i.test(value.trim()) ||
+    /^projects\/[^/]+\/secrets\/[^/]+/.test(value.trim())
+  );
 }
 
 /**
@@ -1078,18 +1283,40 @@ function stripUrlSecrets(value: string): string {
     const url = new URL(value);
     const hadUserinfo = url.username !== "" || url.password !== "";
     const hadQuery = url.search !== "";
+    // The fragment too. OAuth's implicit flow puts the access token there
+    // (`#access_token=…`), it never reaches a server, and it was untouched.
+    const hadFragment = url.hash !== "";
     url.username = "";
     url.password = "";
     url.search = "";
+    url.hash = "";
+    // Markers are appended AFTER `toString()` and in wire order — query then
+    // fragment. Appending the query marker to a string that still carried a
+    // fragment used to land it inside the fragment.
     let out = url.toString();
-    // `URL` keeps a trailing `?` off but can leave a bare `@`; tidy it, and say
-    // where something was removed rather than silently shortening the address.
     if (hadUserinfo) out = out.replace("://", `://${REDACTED}@`);
     if (hadQuery) out += `?${REDACTED}`;
+    if (hadFragment) out += `#${REDACTED}`;
     return out;
   } catch {
     return value;
   }
+}
+
+/**
+ * Blank the value of an inline command-line flag: `--token=x`, `-p x`,
+ * `--api-key x`. A behaviour engine may be a command on `PATH`, and a command
+ * carries its credential as an argument rather than in a URL, so the URL parse
+ * has nothing to bite on and `redactCredentialMaterial` — which knows env
+ * values and ten token prefixes — sees an inline flag value as neither.
+ */
+function stripFlagSecrets(value: string): string {
+  return value
+    .replace(
+      /(--?[A-Za-z0-9-]*(?:secret|token|password|passwd|key|credential|auth|pat)[A-Za-z0-9-]*)([=\s])(\S+)/gi,
+      (_m, flag: string, sep: string) => `${flag}${sep}${REDACTED}`,
+    )
+    .replace(/(^|\s)(-[pPkK])(\s+)(\S+)/g, (_m, lead: string, flag: string, sp: string) => `${lead}${flag}${sp}${REDACTED}`);
 }
 
 /**
@@ -1101,19 +1328,30 @@ function stripUrlSecrets(value: string): string {
  * this contract's own "resolve auth on your own transport" guidance produces.
  * Printing it verbatim in a refusal publishes it.
  *
- * Three passes, in order. The URL parse blanks `username`/`password` and drops
- * the query string **whole** rather than by known parameter name, because
- * `?key=`, `?token=` and `?sig=` are all common and the set is not enumerable.
- * {@link redactCredentialMaterial} then catches what the parse could not — a
- * token in the path, an address that is not a URL at all — using chant's own
- * env-value and token-shape rules. A socket path or a bare command on `PATH`
- * takes only the second pass, which is what it needs.
+ * Three passes, in order:
+ *
+ *  1. The URL parse blanks `username`/`password`, and drops the query string and
+ *     the fragment **whole** rather than by known parameter name — `?key=`,
+ *     `?token=`, `?sig=` and `#access_token=` are all common and the set is not
+ *     enumerable. The fragment matters on its own account: OAuth's implicit
+ *     flow puts the access token there.
+ *  2. Inline command-line flag values (`--token=…`, `-p …`), for an engine that
+ *     is a command on `PATH` rather than a URL.
+ *  3. {@link redactCredentialMaterial}, for env-held values and the token
+ *     shapes chant knows.
+ *
+ * **What survives:** a credential written as a bare path segment
+ * (`https://host/predict/<token>/go`) unless it matches a known token shape.
+ * Nothing here can tell that segment from a resource id, and an earlier version
+ * of this doc claimed pass 3 caught it, which was wrong. If an engine
+ * authenticates by path, do not put its address in a variable whose refusal
+ * text is published.
  */
 export function redactEngineAddress(
   value: string,
   env: Record<string, string | undefined> = process.env,
 ): string {
-  return redactCredentialMaterial(stripUrlSecrets(value), env);
+  return redactCredentialMaterial(stripFlagSecrets(stripUrlSecrets(value)), env);
 }
 
 /**
@@ -1173,16 +1411,28 @@ export function isEdgeCoverageVerdict(value: unknown): value is EdgeCoverageVerd
   return typeof value === "string" && (EDGE_COVERAGE_VERDICTS as readonly string[]).includes(value);
 }
 
-/** What a caller knows about the completeness of the graph it is handing over. */
+/**
+ * What a caller knows about the completeness of the graph it is handing over.
+ *
+ * Note on `complete` with a non-empty {@link dangling}: that is **not** a
+ * contradiction and must not be "fixed". A dangling reference points at
+ * something outside the named entity set by definition — a cross-account VPC, a
+ * resource another team owns — so a builder can have found every edge among the
+ * entities it was asked about and still have references leaving the estate.
+ * `complete` is a claim about the edges *between the named entities*.
+ */
 export interface BehaviourEdgeCoverage {
   verdict: EdgeCoverageVerdict;
   /**
-   * References the builder resolved to no entity in this request — the
-   * `dangling` list `reconstructEdges` already returns and currently discards.
-   * Each is an opaque identifier in the substrate's own vocabulary, kept so an
-   * engine can see that a path leaves the estate rather than ending.
+   * References that resolved to no entity in this request — the `dangling` list
+   * `reconstructEdges` (./graph-refs.ts) already returns and used to discard.
+   *
+   * `DanglingRef`, not a flattened string. The record carries `from`, and `from`
+   * is the field that says *which* entity's path leaves the estate; flattening
+   * to the target value alone leaves an engine knowing that something dangles
+   * and not what.
    */
-  dangling?: readonly string[];
+  dangling?: readonly DanglingRef[];
   /**
    * Entity types the builder has no reference rules for, so nothing was looked
    * for. This is the quiet one: a kind with no `RefRule` produces no edges and
@@ -1190,13 +1440,47 @@ export interface BehaviourEdgeCoverage {
    */
   unresolvedKinds?: readonly string[];
   /**
-   * Containment, where the builder knows it — a subnet inside a VPC, an
-   * instance inside a zone. Not an edge (`chant graph` draws it as a boundary
-   * rather than a line), and carried separately for the same reason: it is
-   * membership, not a reference. An engine answering a zone-loss question needs
-   * it, and `edges` alone will never have it.
+   * Containment as traversable edges — populate from
+   * `reconstructEdges().containmentEdges` (./graph-refs.ts), **not** from the
+   * `containment: ContainmentPair[]` field beside it. The two are the same
+   * relationships in two shapes, and only the edge shape belongs here; the
+   * field was called `containment` and pointed #2360 straight at the wrong one.
+   *
+   * Carried separately from {@link PredictBehaviourOptions.edges} because
+   * `chant graph` draws containment as a boundary rather than a line, and
+   * putting it in `edges` would draw a line from every resource to its VPC. An
+   * engine asked whether an estate survives one zone lost needs the membership
+   * and `edges` will never have it.
    */
-  containment?: readonly IREdge[];
+  containmentEdges?: readonly IREdge[];
+}
+
+/**
+ * Refuse an edge-coverage claim that does not say anything.
+ *
+ * `partial` means "some references are known to be missing", and a `partial`
+ * with neither `dangling` nor `unresolvedKinds` names none of them — which is
+ * `unknown` wearing a more confident word. Use `unknown` for "I cannot say";
+ * `partial` is for "I can say, and here it is".
+ */
+export function validateEdgeCoverage(coverage: BehaviourEdgeCoverage): void {
+  if (!isEdgeCoverageVerdict(coverage?.verdict)) {
+    throw new Error(
+      `predictBehaviour: edgeCoverage.verdict ${JSON.stringify(coverage?.verdict)} is not ` +
+        `${EDGE_COVERAGE_VERDICTS.join("/")}.`,
+    );
+  }
+  if (
+    coverage.verdict === "partial" &&
+    (coverage.dangling?.length ?? 0) === 0 &&
+    (coverage.unresolvedKinds?.length ?? 0) === 0
+  ) {
+    throw new Error(
+      'predictBehaviour: edgeCoverage is "partial" and names nothing missing. Populate `dangling` ' +
+        'or `unresolvedKinds`, or say "unknown" — a partial that lists no gap is an unknown with a ' +
+        "more confident word on it.",
+    );
+  }
 }
 
 /**
@@ -1336,67 +1620,186 @@ const CREDENTIAL_WALK_DEPTH = 12;
  *
  * ## What it detects
  *
- * 1. **A credential-shaped key**, at any depth, case- and separator-insensitive.
- *    The test is chant's own `CREDENTIAL_ENV_NAME` (./identity.ts) plus `pat`
- *    and `cookie`, so `Authorization`, `xApiKey`, `x-api-key`, `clientSecret`,
- *    `refreshToken` and `awsSecretAccessKey` all match.
- * 2. **A credential-shaped value**, whatever the key is called: the PEM / JWT /
+ * 1. **A credential-shaped value**, whatever the key is called: the PEM / JWT /
  *    `Bearer` shapes in `CREDENTIAL_SHAPES`, plus the provider-prefixed tokens
  *    in `CREDENTIAL_TOKEN_SHAPES` (GitHub, GitLab, OpenAI, Stripe, Slack, AWS,
  *    Google, npm).
- * 3. **A URL with a password in its userinfo**, on any string that parses as
- *    one. `postgres://app:hunter2@db/prod` in a prop is the realistic leak.
+ * 2. **A password in userinfo**, with or without a scheme — `new URL()` for the
+ *    former and a pattern for `app:hunter2@db.internal:5432/prod`, which is how
+ *    a DSN is usually written and which `URL` will not parse at all.
+ * 3. **A credential-shaped key**, but only when its value is a string of at
+ *    least {@link MIN_CREDENTIAL_LENGTH} characters that is not an evident
+ *    reference, and only when the key is not in the reference family
+ *    ({@link REFERENCE_KEY_SUFFIXES}).
+ *
+ * Rules 1 and 2 throw. Rule 3, and a structure deeper than the walk reads,
+ * produce a refusal instead — see {@link screenBehaviourRequest} for why the
+ * blast radii differ.
+ *
+ * **The name layer is a fast path, not a safety net.** After the gating above
+ * it fires on very little, and a credential under a benign name — `dsn`,
+ * `config`, `note` — is caught by rules 1 and 2 or not at all. That is the
+ * intended division of labour and the reason those two exist; do not read
+ * rule 3 as the guarantee.
  *
  * ## What it deliberately does not detect
  *
- * Layer 2 is **a denylist of known formats, not a proof**. A token from a
+ * Rule 1 is **a denylist of known formats, not a proof**. A token from a
  * provider nobody has added, an internal issuer's format, a bare random string
- * or a base64 blob passes every rule here. There is no entropy scoring, on
- * purpose: this walks build output full of ids, ARNs, hashes and digests, and a
- * heuristic that refuses those would refuse real projects. So the honest
+ * or a base64 blob passes every rule here, as does a secret split across two
+ * fields or encoded. There is no entropy scoring, on purpose: this walks build
+ * output full of ids, ARNs, hashes and digests, and a heuristic that refuses
+ * those would refuse real projects rather than protect them. So the honest
  * statement of the guarantee is that a credential a human would recognize on
  * sight will not reach the engine by accident, and that a novel or opaque
  * secret still can. A lexicon author putting secret material in `props` is
  * outside what this contract can catch, and the remedy there is not to.
- *
- * Throws naming the path and the rule, because a credential that reached this
- * boundary has been marshalled once already, and dropping it silently teaches
- * the caller nothing.
  */
-export function assertNoCredentialInOptions(options: object): void {
-  const refuse = (path: string, what: string): never => {
-    throw new Error(
-      `predictBehaviour was passed ${what} at ${path}. The behaviour engine is never handed a ` +
-        "credential: it is given the resource graph and a traffic level, and nothing it receives can " +
-        "reach the account. Remove it — a lexicon that needs authenticated access to its own engine " +
-        "resolves that on its own transport, not through this contract. If this is a false positive, " +
-        "the value still does not belong in a request that leaves the process.",
-    );
-  };
+export type CredentialRule = "value-shape" | "key-name" | "walk-depth";
+
+/** One thing the walk objected to, and which rule objected. */
+export interface CredentialFinding {
+  /** Where in the request, as a readable path (`options.entities.get(db).props.dsn`). */
+  path: string;
+  rule: CredentialRule;
+  /** What was found, in words, for the message. Never the value itself. */
+  what: string;
+}
+
+/**
+ * Every objection the walk has to a request. Pure, and exported so a caller can
+ * decide what to do rather than take this module's word for it.
+ */
+export function findCredentialsInOptions(options: object): CredentialFinding[] {
+  const findings: CredentialFinding[] = [];
+  const seen = new WeakSet<object>();
 
   const walk = (value: unknown, path: string, depth: number): void => {
-    if (depth > CREDENTIAL_WALK_DEPTH) return;
-    if (typeof value === "string") {
-      const shape = credentialValueShape(value);
-      if (shape) refuse(path, shape);
+    if (depth > CREDENTIAL_WALK_DEPTH) {
+      // Not silence. A request deeper than the walk goes is a request this
+      // guard has not actually checked, and saying nothing about it is the
+      // shape of failure this whole contract exists to refuse.
+      findings.push({
+        path,
+        rule: "walk-depth",
+        what: `a structure deeper than ${CREDENTIAL_WALK_DEPTH} levels, which the credential walk did not read`,
+      });
       return;
     }
+    if (typeof value === "string") {
+      const shape = credentialValueShape(value);
+      if (shape) findings.push({ path, rule: "value-shape", what: shape });
+      return;
+    }
+    if (value === null || typeof value !== "object") return;
+    if (seen.has(value)) return;
+    seen.add(value);
+
     if (Array.isArray(value)) {
       value.forEach((item, i) => walk(item, `${path}[${i}]`, depth + 1));
       return;
     }
     if (value instanceof Map) {
-      for (const [key, item] of value) walk(item, `${path}.get(${String(key)})`, depth + 1);
-      return;
-    }
-    if (value && typeof value === "object") {
-      for (const [key, item] of Object.entries(value)) {
-        const child = `${path}.${key}`;
-        if (isCredentialKey(key)) refuse(child, `a credential-shaped field name ("${key}")`);
+      for (const [key, item] of value) {
+        const label = typeof key === "string" ? key : String(key);
+        const child = `${path}.get(${label})`;
+        // Both halves. A Map's KEY is as likely to be `DB_PASSWORD` as an
+        // object's is — an env block is the obvious case — and walking only
+        // values missed it entirely.
+        if (typeof key === "string") checkKey(key, child, item);
         walk(item, child, depth + 1);
       }
+      return;
+    }
+    if (value instanceof Set) {
+      let i = 0;
+      for (const item of value) walk(item, `${path}.item[${i++}]`, depth + 1);
+      return;
+    }
+    for (const [key, item] of Object.entries(value)) {
+      const child = `${path}.${key}`;
+      checkKey(key, child, item);
+      walk(item, child, depth + 1);
     }
   };
 
+  /**
+   * The name arm. Gated on the value being a string long enough to be a secret,
+   * and not an evident reference to one — see {@link REFERENCE_KEY_SUFFIXES}
+   * for why the ungated version was unusable.
+   */
+  function checkKey(key: string, path: string, item: unknown): void {
+    if (typeof item !== "string") return;
+    if (item.length < MIN_CREDENTIAL_LENGTH) return;
+    if (looksLikeSecretReference(item)) return;
+    if (!isCredentialKey(key)) return;
+    findings.push({ path, rule: "key-name", what: `a credential-shaped field name ("${key}")` });
+  }
+
   walk(options, "options", 0);
+  return findings;
+}
+
+/**
+ * Throw when the request carries something that **is** a credential.
+ *
+ * Only the value-shape rule throws, and throwing is deliberate here: a live
+ * token in a request bound for a third party is not a degradation to report, it
+ * is a stop. Throwing is the whole-lexicon failure per `lexicon.ts`, which is
+ * the right blast radius for this and the wrong one for a suspicious field name
+ * — see {@link screenBehaviourRequest}.
+ */
+export function assertNoCredentialInOptions(options: object): void {
+  const found = findCredentialsInOptions(options).filter((f) => f.rule === "value-shape");
+  if (found.length === 0) return;
+  const [first] = found;
+  throw new Error(
+    `predictBehaviour was passed ${first.what} at ${first.path}. The behaviour engine is never handed ` +
+      "a credential: it is given the resource graph and a traffic level, and nothing it receives can " +
+      "reach the account. Remove it — a lexicon that needs authenticated access to its own engine " +
+      "resolves that on its own transport, not through this contract.",
+  );
+}
+
+/**
+ * Screen a whole request. **This is what a lexicon calls.**
+ *
+ * Two outcomes, because two things are being caught and they deserve different
+ * blast radii:
+ *
+ *  - a value that IS a credential throws, via
+ *    {@link assertNoCredentialInOptions};
+ *  - a merely suspicious field name, or a structure too deep to have been read,
+ *    returns a {@link BehaviourRefusalReport} with cause
+ *    `credential-in-request`. No overlay is drawn and the reason names the
+ *    path, which is the contract's own answer to "no faked numbers" applied to
+ *    its own guard.
+ *
+ * The split exists because the name arm is a heuristic and the old version
+ * threw on it. One `tags: { author: "…" }` anywhere in an estate killed the
+ * entire overlay with a stack trace, which is the exact failure mode constraint
+ * 2 was written against.
+ *
+ * Returns `undefined` when the request is clean, so a lexicon reads
+ * `const refusal = screenBehaviourRequest(name, options); if (refusal) return refusal;`
+ */
+export function screenBehaviourRequest(
+  lexicon: string,
+  options: object,
+): BehaviourRefusalReport | undefined {
+  assertNoCredentialInOptions(options);
+  const findings = findCredentialsInOptions(options);
+  if (findings.length === 0) return undefined;
+  const [first] = findings;
+  const more = findings.length > 1 ? ` (and ${findings.length - 1} more)` : "";
+  return behaviourRefusal({
+    cause: "credential-in-request",
+    reason:
+      `The ${lexicon} behaviour request carries ${first.what} at ${first.path}${more}, so it was not ` +
+      "sent. The engine is a third party and this contract hands it the resource graph and a traffic " +
+      "level only. No overlay is drawn and no figure is guessed locally.",
+    remedy:
+      "Remove the value from the declaration, or hold it in a secret reference the build does not " +
+      "expand. If the field is a false positive, it still leaves the process in this request.",
+  });
 }

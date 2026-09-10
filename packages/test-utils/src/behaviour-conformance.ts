@@ -51,6 +51,7 @@ import {
   validateBehaviourBlock,
   type BehaviourResult,
   type BehaviourUnpredictedReason,
+  type PredictBehaviourOptions,
 } from "../../core/src/behaviour";
 
 /** One scenario: run the lexicon's `predictBehaviour` under its own mocks. */
@@ -91,6 +92,29 @@ export interface BehaviourScenario {
    * that they are unpredicted.
    */
   expectUnpredicted?: string[] | Record<string, string>;
+  /**
+   * The request this scenario's `run()` makes, and the lexicon's method, given
+   * separately so the suite can vary the request and run it again.
+   *
+   * Supply both on at least one scenario. Without them `run()` is an opaque
+   * closure and the suite can only inspect one answer, which is how a lexicon
+   * that never reads `traffic`, `edges` or `edgeCoverage` passed every
+   * assertion here: it echoed the level back and ignored it, and echo is
+   * indistinguishable from use when you only ever ask once.
+   *
+   * With them the suite asks twice, at two traffic levels and with the edges
+   * removed, and requires the answers to differ. That is the property #2357 and
+   * #2359 are actually held to.
+   */
+  request?: PredictBehaviourOptions;
+  /** The lexicon's `predictBehaviour`, callable with a varied {@link request}. */
+  predict?: (options: PredictBehaviourOptions) => Promise<BehaviourResult>;
+  /**
+   * A second traffic level this lexicon should answer differently at. Defaults
+   * to a much busier one; override where the estate's figures genuinely do not
+   * move between levels and a different pair proves more.
+   */
+  otherTraffic?: string;
 }
 
 export interface BehaviourConformanceConfig {
@@ -142,6 +166,13 @@ export function behaviourConformanceGaps(config: BehaviourConformanceConfig): st
     if (!s.expectRefusal && !s.traffic) {
       gaps.push(`scenario "${s.name}" predicts but does not state the traffic level it requested`);
     }
+  }
+  if (!config.scenarios.some((s) => !s.expectRefusal && s.request && s.predict)) {
+    gaps.push(
+      "no scenario supplies `request` and `predict`, so the suite can only ask once — and a lexicon " +
+        "that echoes the traffic level without using it, and never reads `edges`, is indistinguishable " +
+        "from one that does the work",
+    );
   }
   return gaps;
 }
@@ -358,6 +389,66 @@ export function describeBehaviourConformance(config: BehaviourConformanceConfig)
             );
           }
         });
+
+        if (scenario.request && scenario.predict) {
+          const { request, predict } = scenario;
+
+          it("answers a different traffic level differently — echo is not use", async () => {
+            const other = scenario.otherTraffic ?? `${request.traffic} ×10 (conformance probe)`;
+            const a = await predict(request);
+            const b = await predict({ ...request, traffic: other });
+            if (isBehaviourRefusalReport(a) || isBehaviourRefusalReport(b)) {
+              throw new Error("expected reports from both levels");
+            }
+            expect(b.meta.at.traffic, "the second level was not echoed").toBe(other);
+            const figures = (r: typeof a): string =>
+              JSON.stringify(
+                Object.entries(r.entities)
+                  .sort(([x], [y]) => x.localeCompare(y))
+                  .map(([n, blk]) => [n, blk.cost.perHour, blk.headroom, blk.errorRate]),
+              );
+            expect(
+              figures(a),
+              "every figure is identical at both traffic levels — the level is being echoed, not used",
+            ).not.toBe(figures(b));
+          });
+
+          it("reads the edges it was handed", async () => {
+            const withEdges = await predict(request);
+            const withoutEdges = await predict({
+              ...request,
+              edges: [],
+              edgeCoverage: { verdict: "unknown" },
+            });
+            if (isBehaviourRefusalReport(withEdges)) throw new Error("expected a report");
+            // A refusal on a graph with no edges is a legitimate answer — an
+            // engine may decline to predict a graph it cannot see. Silently
+            // returning the same numbers is not.
+            if (isBehaviourRefusalReport(withoutEdges)) return;
+            if (request.edges.length === 0) return;
+            const figures = (r: typeof withEdges): string =>
+              JSON.stringify(
+                Object.entries(r.entities)
+                  .sort(([x], [y]) => x.localeCompare(y))
+                  .map(([n, blk]) => [n, blk.headroom, blk.errorRate, blk.resilience.verdict]),
+              );
+            expect(
+              figures(withEdges),
+              "removing every edge changed nothing — the graph is being priced as a bag of nodes",
+            ).not.toBe(figures(withoutEdges));
+          });
+
+          it("echoes the edge coverage it was given onto the report", async () => {
+            // Otherwise a consumer holding the report cannot tell whether a
+            // resilience verdict was computed over a complete graph or a guess.
+            const unknown = await predict({
+              ...request,
+              edgeCoverage: { verdict: "unknown" },
+            });
+            if (isBehaviourRefusalReport(unknown)) return;
+            expect(unknown.meta.edgeCoverage.verdict).toBe("unknown");
+          });
+        }
 
         it("states a tolerance that states something", async () => {
           // behold accepts any non-empty string, so `"n/a"` survives its

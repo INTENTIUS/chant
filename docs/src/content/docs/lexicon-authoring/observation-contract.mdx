@@ -312,11 +312,17 @@ It is given no credential, and the contract works at that on two levels. The typ
 
 The walk detects three things:
 
-- a key whose name reads as a credential, at any depth, matched case- and separator-insensitively against the same pattern `redactCredentialMaterial` uses
-- a value that reads as one whatever the key is called. That means a PEM block or a JWT or an `Authorization` value, and it means a token carrying the issue prefix of GitHub, GitLab, OpenAI, Stripe, Slack, AWS, Google or npm
-- a password in the userinfo of anything that parses as a URL
+- a value that reads as a credential whatever the key is called. That means a PEM block or a JWT or an `Authorization` value, and it means a token carrying the issue prefix of GitHub, GitLab, OpenAI, Stripe, Slack, AWS, Google or npm
+- a password in userinfo, with or without a scheme, since a DSN is usually written `app:hunter2@db:5432/prod` and `new URL()` will not parse that at all
+- a key whose name reads as a credential, but only when its value is a string of at least eight characters that is not an evident reference, and only when the key is outside the reference family
 
-What it does not detect is anything outside those forms. The token list is a denylist of formats somebody has added, so an issuer nobody has added still passes, and so does a bare random string. There is no entropy scoring, deliberately: this walks build output full of ids, ARNs and digests, and a heuristic that refused those would refuse real projects rather than protect them.
+The first two throw. The third refuses, and the difference is deliberate. Throwing is the whole-lexicon failure, and the name layer is a heuristic: when it threw, one `tags: { author: "…" }` anywhere in an estate killed the entire overlay with a stack trace. A suspicious name now returns a `BehaviourRefusalReport` with cause `credential-in-request`, which is this contract's own answer to "no faked numbers" applied to its own guard.
+
+The gating on that third layer is what makes it usable. An ungated substring match on `SECRET|TOKEN|PASSWORD|AUTH` refused 406 aws keys when it was run over every property key in chant's own generated schemas. It refused 173 azure ones. `imagePullSecrets`, `secretName` and `secretKeyRef` reference a Secret by name. `ClientToken` is an idempotency nonce. Not one of `CertificateAuthorityArn`, `authorizedNetworks` or `passwordPolicy` holds a secret. A test now runs all four lexicons' keys through the guard and requires zero refusals.
+
+Treat the name layer as a fast path rather than a safety net. It fires on very little once gated, and a credential under a benign name such as `dsn` is caught by the value layers or not at all.
+
+What none of it detects is anything outside those forms. The token list is a denylist of formats somebody has added, so an issuer nobody has added still passes, and so does a bare random string or a secret split across two fields. There is no entropy scoring, deliberately: this walks build output full of ids, ARNs and digests, and a heuristic that refused those would refuse real projects rather than protect them.
 
 `edges` is the one place that mirror breaks. A deep read answers per entity and has no use for neighbours, since a bucket's live property tree is the same tree whatever reads from it. A prediction is the opposite: headroom, an error rate and a verdict under "one zone lost" are all statements about a path through the estate, and an engine handed nodes alone can only price each box on its own. The field carries `IREdge` from `graph-ir.ts` rather than an edge type of the behaviour contract's own, because that is already the shape both paths produce. `collectEdges` builds them from declared references and `reconstructEdges` rebuilds them from observed identifiers, so a second type would put a lossy translation hop on each side of the delta the epic asks for. An empty array is a claim that the estate's entities reference nothing of each other, so do not pass one for edges you have not computed.
 
@@ -394,16 +400,19 @@ An engine that answers and still refuses gets its own builders, `outOfCreditBeha
 
 `chant` shows a declared prediction and a live prediction as a delta, and a merge-request finding posts a predicted cost delta. Provenance does not survive subtraction. Two numbers can be differenced whatever produced them, and the answer carries no trace of having crossed a basis or an engine, so a `modeled` figure minus a `validated` one reads as a change in the estate when part of it is the gap between a price list and an invoice.
 
-`compareFigures(a, b)` classifies a pair before anything subtracts them:
+`compareFigures(a, b)` returns the set of axes on which a pair disagrees. Every axis, not the first. Returning one label meant a pair differing in level and basis reported the level and dropped the basis crossing, so a consumer captioned the delta "different traffic level" and showed a modeled-minus-validated difference underneath with nothing said.
 
-| Verdict | When |
+| Axis | When |
 |---|---|
-| `comparable` | same engine, version, tolerance, traffic level and basis. The difference is a difference in the estate |
-| `mixed-basis` | same engine and level, one figure modeled and the other validated |
-| `mixed-level` | same engine, different `at`. The same question asked of two different worlds |
-| `mixed-engine` | the engine, its version or its stated tolerance differs. Checked first, since nothing below it matters |
+| `mixed-engine` | the engine, its version or its stated tolerance differs. Two models are not one scale |
+| `mixed-level` | different `at`. The same question asked of two different worlds |
+| `mixed-currency` | different `cost.currency`. chant converts nothing, so USD minus EUR is not a number |
+| `mixed-basis` | one figure modeled off list prices, the other validated against an invoice |
+| `mixed-failure` | different `resilience.failure`. Two verdicts about two events |
 
-Call `compareFigures` and not `compareProvenance`. The traffic level lives on the block rather than on provenance, so the provenance-only function cannot see it and will call a 100 rps figure and a 1000 rps one comparable. Within a single report the question does not arise: `behaviourReport` refuses a block whose `at` disagrees with `meta.at`, so one run means one level.
+`isComparableFigure` means the set is empty. `FIGURE_MISMATCHES` gives the display order, most fundamental first; membership is the contract and order is presentation.
+
+Call `compareFigures` and not `compareProvenance`. The traffic level lives on the block rather than on provenance, so the provenance-only function cannot see it and will call a 100 rps figure and a 1000 rps one comparable. Within a single report the question does not arise: `behaviourReport` builds `meta.at` from the request and refuses a block that disagrees with it, so one run means one level.
 
 The rule this contract binds consumers to is that a delta between figures classifying as anything but `comparable` must be marked wherever it is shown. How it is marked belongs to whatever draws it. Whether it is marked does not.
 

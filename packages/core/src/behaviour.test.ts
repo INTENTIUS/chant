@@ -14,6 +14,8 @@
  */
 
 import { describe, test, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describeBehaviourConformance, behaviourConformanceGaps } from "@intentius/chant-test-utils";
 import type { LexiconPlugin } from "./lexicon";
 import type { IREdge } from "./graph-ir";
@@ -26,6 +28,11 @@ import {
   behaviourReport,
   compareFigures,
   compareProvenance,
+  figureMismatches,
+  findCredentialsInOptions,
+  screenBehaviourRequest,
+  validateEdgeCoverage,
+  FIGURE_MISMATCHES,
   isComparableFigure,
   isComparableProvenance,
   isEdgeCoverageVerdict,
@@ -67,6 +74,21 @@ const FIXTURE_ENGINE: Record<string, { perHour: number; cpu: number; latency: nu
 };
 
 const FIXTURE_ENGINE_VERSION = "1.4.2";
+
+/** Six significant figures, so a float comparison in a test is stable. */
+const round = (n: number): number => Number(n.toPrecision(6));
+
+/**
+ * How busy the stated level is, relative to the fixture's 100 rps baseline. The
+ * fixture reads the level rather than echoing it; a `×10` suffix (which the
+ * conformance suite appends when probing) multiplies.
+ */
+function trafficIntensity(traffic: string): number {
+  const multiplier = /×\s*(\d+(?:\.\d+)?)/.exec(traffic);
+  const rps = /(\d+(?:\.\d+)?)\s*rps/i.exec(traffic);
+  const base = rps ? Number(rps[1]) / 100 : 1;
+  return base * (multiplier ? Number(multiplier[1]) : 1);
+}
 
 /** The declared estate the lexicon is asked about, in both scenarios. */
 const DECLARED = new Map<string, { entityType: string; props: Record<string, unknown> }>([
@@ -144,14 +166,20 @@ function acmeSim(env: Record<string, string | undefined>): LexiconPlugin["predic
         continue;
       }
       const load = connected.has(name) ? 1 : 0;
+      // Busier traffic spends headroom and costs more. Crude, and the point is
+      // only that the level is *read*: a fixture that echoed `traffic` and
+      // ignored it is exactly what the conformance suite now refuses to pass.
+      const intensity = trafficIntensity(options.traffic);
+      const spend = (free: number): number =>
+        Math.max(0, Math.min(1, 1 - (1 - free) * intensity));
       entities[name] = {
         at: { traffic: options.traffic },
-        cost: predictedRate(modeled.perHour, "USD"),
+        cost: predictedRate(round(modeled.perHour * intensity), "USD"),
         headroom: {
-          cpu: load ? modeled.cpu : 1,
-          latency: load ? modeled.latency : 1,
+          cpu: load ? round(spend(modeled.cpu)) : 1,
+          latency: load ? round(spend(modeled.latency)) : 1,
         },
-        errorRate: load ? 0.001 : 0,
+        errorRate: load ? round(Math.min(1, 0.001 * intensity)) : 0,
         resilience: {
           failure: "one zone lost",
           verdict: name === "db" ? "degrades" : "survives",
@@ -170,12 +198,8 @@ function acmeSim(env: Record<string, string | undefined>): LexiconPlugin["predic
     }
 
     return behaviourReport(
-      {
-        engine: "acme-sim",
-        version: FIXTURE_ENGINE_VERSION,
-        at: { traffic: options.traffic },
-      },
-      options.entityNames,
+      options,
+      { engine: "acme-sim", version: FIXTURE_ENGINE_VERSION },
       entities,
       unpredicted,
     );
@@ -196,6 +220,12 @@ describeBehaviourConformance({
       declared: [...DECLARED.keys()],
       traffic: "100 rps, p50",
       run: () => acmeSim(REACHABLE)!(REQUEST),
+      // The pair the suite varies. Without them it can only ask once, and a
+      // lexicon that echoes the traffic level without reading it, and never
+      // looks at `edges`, is indistinguishable from one that does the work.
+      request: REQUEST,
+      predict: (options) => acmeSim(REACHABLE)!(options),
+      otherTraffic: "1000 rps, p50",
       expectPredicted: ["web", "db"],
       expectUnpredicted: { queue: "unsupported-kind" },
     },
@@ -471,13 +501,24 @@ describe("provenance does not survive subtraction (#2358, #2360)", () => {
     expect(compareProvenance(result.entities.web.provenance, foreign)).toBe("mixed-engine");
   });
 
+  test("two runs of the same estate at different levels are a mixed-level pair", async () => {
+    const quiet = await acmeSim(REACHABLE)!(REQUEST);
+    const busy = await acmeSim(REACHABLE)!({ ...REQUEST, traffic: "1000 rps, p50" });
+    if (isBehaviourRefusalReport(quiet) || isBehaviourRefusalReport(busy)) {
+      throw new Error("expected reports");
+    }
+    expect(figureMismatches(quiet.entities.web, busy.entities.web)).toEqual(["mixed-level"]);
+    // And the figures genuinely moved, so the level was read and not echoed.
+    expect(busy.entities.web.cost.perHour).toBeGreaterThan(quiet.entities.web.cost.perHour);
+  });
+
   test("the same estate at two traffic levels is `mixed-level`, not comparable", () => {
     // The gap that mattered: `at` lives on the block, not on provenance, so a
     // provenance-only comparison called 100 rps and 1000 rps a like-for-like
     // delta — and the binding rule is exactly what a consumer follows to draw
     // that delta unmarked.
     const busier: PredictedBehaviour = { ...GOOD, at: { traffic: "1000 rps, p99" } };
-    expect(compareFigures(GOOD, busier)).toBe("mixed-level");
+    expect(figureMismatches(GOOD, busier)).toEqual(["mixed-level"]);
     expect(isComparableFigure(GOOD, busier)).toBe(false);
 
     // The provenance-only function still says comparable, and says so in its
@@ -486,37 +527,71 @@ describe("provenance does not survive subtraction (#2358, #2360)", () => {
   });
 
   test("same level, same engine, same basis is comparable", () => {
-    expect(compareFigures(GOOD, { ...GOOD })).toBe("comparable");
+    expect(compareFigures(GOOD, { ...GOOD }).size).toBe(0);
     expect(isComparableFigure(GOOD, { ...GOOD })).toBe(true);
   });
 
-  test("a mismatched engine outranks a mismatched level, which outranks a mismatched basis", () => {
-    const otherEngine: PredictedBehaviour = {
+  test("every mismatching axis is reported, not just the first", () => {
+    // The gap: returning one label meant a pair differing in level AND basis
+    // reported `mixed-level` and dropped the basis crossing silently, so a
+    // consumer captioned it "different traffic level" and showed a
+    // modeled-minus-validated difference underneath with nothing said.
+    const both: PredictedBehaviour = {
       ...GOOD,
       at: { traffic: "1000 rps" },
+      provenance: { ...GOOD.provenance, basis: "validated" },
+    };
+    expect(figureMismatches(GOOD, both)).toEqual(["mixed-level", "mixed-basis"]);
+
+    const everything: PredictedBehaviour = {
+      ...GOOD,
+      at: { traffic: "1000 rps" },
+      cost: predictedRate(0.04, "EUR"),
+      resilience: { failure: "region lost", verdict: "fails" },
       provenance: { ...GOOD.provenance, engine: "other-sim", basis: "validated" },
     };
-    expect(compareFigures(GOOD, otherEngine)).toBe("mixed-engine");
+    expect(figureMismatches(GOOD, everything)).toEqual([
+      "mixed-engine",
+      "mixed-level",
+      "mixed-currency",
+      "mixed-basis",
+      "mixed-failure",
+    ]);
+  });
 
-    const otherLevel: PredictedBehaviour = {
-      ...GOOD,
-      at: { traffic: "1000 rps" },
-      provenance: { ...GOOD.provenance, basis: "validated" },
-    };
-    expect(compareFigures(GOOD, otherLevel)).toBe("mixed-level");
+  test("USD minus EUR is not a plain difference", () => {
+    // behold already refuses to SUM mixed currencies; permitting them to be
+    // DIFFERENCED left this contract laxer than its own consumer. chant
+    // converts nothing, so the subtraction is not a number.
+    const inEuros: PredictedBehaviour = { ...GOOD, cost: predictedRate(0.0416, "EUR") };
+    expect(figureMismatches(GOOD, inEuros)).toEqual(["mixed-currency"]);
+    expect(isComparableFigure(GOOD, inEuros)).toBe(false);
+  });
 
-    const otherBasis: PredictedBehaviour = {
+  test("two verdicts about two different failures are not a like-for-like delta", () => {
+    const regionLost: PredictedBehaviour = {
       ...GOOD,
-      provenance: { ...GOOD.provenance, basis: "validated" },
+      resilience: { failure: "region lost", verdict: "fails" },
     };
-    expect(compareFigures(GOOD, otherBasis)).toBe("mixed-basis");
+    expect(figureMismatches(GOOD, regionLost)).toEqual(["mixed-failure"]);
+    expect(isComparableFigure(GOOD, regionLost)).toBe(false);
+  });
+
+  test("the display order is most fundamental first", () => {
+    expect(FIGURE_MISMATCHES).toEqual([
+      "mixed-engine",
+      "mixed-level",
+      "mixed-currency",
+      "mixed-basis",
+      "mixed-failure",
+    ]);
   });
 
   test("a report cannot hold entities at different levels in the first place", () => {
     // The other half: `behaviourReport` refuses a block whose `at` disagrees
     // with `meta.at`, so a mixed-level pair can only arise across two reports.
     expect(() =>
-      behaviourReport(META, ["web", "db"], {
+      behaviourReport(req(["web", "db"]), STAMP, {
         web: GOOD,
         db: { ...GOOD, at: { traffic: "1000 rps" } },
       }),
@@ -528,7 +603,21 @@ describe("provenance does not survive subtraction (#2358, #2360)", () => {
 /* Totality, and the 18 rules behold applies on arrival                       */
 /* -------------------------------------------------------------------------- */
 
-const META = { engine: "acme-sim", version: "1.4.2", at: { traffic: "100 rps, p50" } };
+const STAMP = { engine: "acme-sim", version: "1.4.2" };
+
+/**
+ * The half of a request `behaviourReport` reads. Everything that must agree
+ * between the request and the report now comes from one object, so a test
+ * cannot accidentally construct a disagreement the real path could not.
+ */
+const req = (
+  entityNames: string[],
+  traffic = "100 rps, p50",
+): Pick<PredictBehaviourOptions, "entityNames" | "traffic" | "edgeCoverage"> => ({
+  entityNames,
+  traffic,
+  edgeCoverage: { verdict: "complete" },
+});
 const GOOD: PredictedBehaviour = {
   at: { traffic: "100 rps, p50" },
   cost: predictedRate(0.0416, "USD"),
@@ -540,7 +629,7 @@ const GOOD: PredictedBehaviour = {
 
 describe("totality is enforced, not merely claimed (#2356)", () => {
   test("an entity in neither map is refused, named", () => {
-    expect(() => behaviourReport(META, ["web", "cache"], { web: GOOD })).toThrow(
+    expect(() => behaviourReport(req(["web", "cache"]), STAMP, { web: GOOD })).toThrow(
       /gave no verdict at all for "cache"/,
     );
   });
@@ -548,17 +637,17 @@ describe("totality is enforced, not merely claimed (#2356)", () => {
   test("the empty report for a non-empty request is refused", () => {
     // The reproduction: `behaviourReport(meta, {}, {})` used to return a
     // well-formed report claiming nothing, because it never saw entityNames.
-    expect(() => behaviourReport(META, ["web"], {}, {})).toThrow(/gave no verdict at all for "web"/);
+    expect(() => behaviourReport(req(["web"]), STAMP, {}, {})).toThrow(/gave no verdict at all for "web"/);
   });
 
   test("an entity in both maps is refused", () => {
     expect(() =>
-      behaviourReport(META, ["web"], { web: GOOD }, { web: { reason: "unsupported-kind" } }),
+      behaviourReport(req(["web"]), STAMP, { web: GOOD }, { web: { reason: "unsupported-kind" } }),
     ).toThrow(/both priced and unpriced/);
   });
 
   test("a figure for something nobody asked about is refused", () => {
-    expect(() => behaviourReport(META, ["web"], { web: GOOD, ghost: GOOD })).toThrow(
+    expect(() => behaviourReport(req(["web"]), STAMP, { web: GOOD, ghost: GOOD })).toThrow(
       /returned a figure for "ghost", which was not in entityNames/,
     );
   });
@@ -566,12 +655,24 @@ describe("totality is enforced, not merely claimed (#2356)", () => {
   test("an unpredicted entry with a bogus reason is refused", () => {
     expect(() =>
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      behaviourReport(META, ["web"], {}, { web: { reason: "no-credentials" as any } }),
+      behaviourReport(req(["web"]), STAMP, {}, { web: { reason: "no-credentials" as any } }),
     ).toThrow(/is not one of/);
   });
 
+  test("the check is a check, not a proof — and the doc says so", () => {
+    // `BehaviourReport` is a plain interface. A lexicon that hands its own keys
+    // back as the asked-for list self-certifies, and a hand-built object skips
+    // the constructor entirely. What passing the request buys is that the
+    // ordinary route is checked and the check names what is wrong; a consumer
+    // needing the guarantee validates on arrival, which is #2358's and #2360's.
+    const selfCertified = behaviourReport(req(["web"]), STAMP, { web: GOOD });
+    const handBuilt = { ...selfCertified, entities: {} };
+    expect(isBehaviourResult(handBuilt)).toBe(true);
+    expect(Object.keys(handBuilt.entities)).toEqual([]);
+  });
+
   test("a whole valid report still builds", () => {
-    const ok = behaviourReport(META, ["web", "queue"], { web: GOOD }, {
+    const ok = behaviourReport(req(["web", "queue"]), STAMP, { web: GOOD }, {
       queue: { reason: "unsupported-kind" },
     });
     expect(ok.entities.web).toBe(GOOD);
@@ -603,9 +704,31 @@ describe("every rule behold applies on arrival is applied here first (#2356)", (
   for (const [label, block, expected] of cases) {
     test(`rejects ${label}`, () => {
       expect(() => validateBehaviourBlock("web", block)).toThrow(expected);
-      expect(() => behaviourReport(META, ["web"], { web: block })).toThrow(expected);
+      expect(() => behaviourReport(req(["web"]), STAMP, { web: block })).toThrow(expected);
     });
   }
+
+  test("a failure that names no failure is rejected, where behold would accept it", () => {
+    // `"none"` passes behold's non-empty check and renders a confident verdict
+    // about nothing — and this module's own doc already said a verdict with no
+    // named failure says nothing.
+    for (const word of ["none", "None", "n/a", "unknown", "-", "TBD"]) {
+      expect(
+        () =>
+          validateBehaviourBlock("web", {
+            ...GOOD,
+            resilience: { failure: word, verdict: "survives" },
+          }),
+        `${word} was accepted as a failure`,
+      ).toThrow(/names no failure/);
+    }
+    expect(() =>
+      validateBehaviourBlock("web", {
+        ...GOOD,
+        resilience: { failure: "primary database failover", verdict: "degrades" },
+      }),
+    ).not.toThrow();
+  });
 
   test("a tolerance that states no tolerance is rejected, where behold would accept it", () => {
     // behold takes any non-empty string. The epic asks for the engine's STATED
@@ -623,14 +746,14 @@ describe("every rule behold applies on arrival is applied here first (#2356)", (
 
   test("a block priced at a level the run did not ask for is refused", () => {
     expect(() =>
-      behaviourReport(META, ["web"], { web: { ...GOOD, at: { traffic: "1000 rps, p99" } } }),
+      behaviourReport(req(["web"]), STAMP, { web: { ...GOOD, at: { traffic: "1000 rps, p99" } } }),
     ).toThrow(/One run, one level/);
   });
 
   test("report-level fields are checked too", () => {
-    expect(() => behaviourReport({ ...META, engine: "" }, [], {})).toThrow(/meta\.engine is missing/);
-    expect(() => behaviourReport({ ...META, version: "" }, [], {})).toThrow(/meta\.version is missing/);
-    expect(() => behaviourReport({ ...META, at: { traffic: "" } }, [], {})).toThrow(/meta\.at\.traffic is missing/);
+    expect(() => behaviourReport(req([]), { ...STAMP, engine: "" }, {})).toThrow(/meta\.engine is missing/);
+    expect(() => behaviourReport(req([]), { ...STAMP, version: "" }, {})).toThrow(/meta\.version is missing/);
+    expect(() => behaviourReport(req([], ""), STAMP, {})).toThrow(/meta\.at\.traffic is missing/);
   });
 
   test("headroom with no axis will not even compile", () => {
@@ -651,9 +774,9 @@ describe("the conformance suite refuses to prove nothing (#2356)", () => {
   };
 
   test("a lexicon that only ever refuses cannot pass by marking everything a refusal", () => {
-    expect(behaviourConformanceGaps(refusalOnly)).toEqual([
+    expect(behaviourConformanceGaps(refusalOnly)[0]).toBe(
       "every scenario is a refusal — this suite would pass a lexicon that never predicts anything",
-    ]);
+    );
   });
 
   test("a predicting scenario that hides the traffic level it asked for is a gap", () => {
@@ -661,9 +784,27 @@ describe("the conformance suite refuses to prove nothing (#2356)", () => {
       lexicon: "hides-its-level",
       scenarios: [{ name: "up", declared: ["web"], run: () => acmeSim(REACHABLE)!(REQUEST) }],
     };
-    expect(behaviourConformanceGaps(noLevel)).toEqual([
+    expect(behaviourConformanceGaps(noLevel)).toContain(
       'scenario "up" predicts but does not state the traffic level it requested',
-    ]);
+    );
+  });
+
+  test("a config the suite can only ask once is a gap — echo is not use", () => {
+    // Without `request` and `predict` the suite holds one answer and cannot
+    // tell a lexicon that reads `traffic` and `edges` from one that echoes the
+    // level and ignores the graph.
+    const askOnce = {
+      lexicon: "opaque-closure",
+      scenarios: [
+        {
+          name: "up",
+          declared: ["web"],
+          traffic: "100 rps, p50",
+          run: () => acmeSim(REACHABLE)!(REQUEST),
+        },
+      ],
+    };
+    expect(behaviourConformanceGaps(askOnce).join(" ")).toMatch(/can only ask once/);
   });
 
   test("the fixture's own config has no gaps", () => {
@@ -671,7 +812,14 @@ describe("the conformance suite refuses to prove nothing (#2356)", () => {
       behaviourConformanceGaps({
         lexicon: "acme-sim (fixture)",
         scenarios: [
-          { name: "up", declared: ["web"], traffic: "100 rps, p50", run: () => acmeSim(REACHABLE)!(REQUEST) },
+          {
+            name: "up",
+            declared: ["web"],
+            traffic: "100 rps, p50",
+            run: () => acmeSim(REACHABLE)!(REQUEST),
+            request: REQUEST,
+            predict: (options) => acmeSim(REACHABLE)!(options),
+          },
           { name: "down", declared: ["web"], run: () => acmeSim(CONFIGURED_BUT_DOWN)!(REQUEST), expectRefusal: true },
         ],
       }),
@@ -699,11 +847,9 @@ describe("the lazy lexicon the old suite green-lit (#2356)", () => {
 
   test("it cannot build a report at all — the validator stops it first", () => {
     expect(() =>
-      behaviourReport(
-        { engine: "lazy", version: "0", at: { traffic: "whatever" } },
-        ["web"],
-        { web: lazyBlock() },
-      ),
+      behaviourReport(req(["web"], "whatever"), { engine: "lazy", version: "0" }, {
+        web: lazyBlock(),
+      }),
     ).toThrow(/neither cpu nor latency/);
   });
 
@@ -719,12 +865,107 @@ describe("the lazy lexicon the old suite green-lit (#2356)", () => {
     // suite catches an ignored traffic level through `meta.at` instead.
     expect(() => validateBehaviourBlock("web", withTolerance)).not.toThrow();
     expect(() =>
-      behaviourReport(
-        { engine: "lazy", version: "0", at: { traffic: "100 rps, p50" } },
-        ["web"],
-        { web: withTolerance },
-      ),
+      behaviourReport(req(["web"]), { engine: "lazy", version: "0" }, { web: withTolerance }),
     ).toThrow(/One run, one level/);
+  });
+});
+
+describe("the second lazy lexicon, which passed 28 of 28 (#2356)", () => {
+  /**
+   * Sharper than the first. Every field is well-formed and every figure is
+   * vacuous: nothing costs anything, nothing is under load, nothing ever fails,
+   * the tolerance is a real number that happens to be zero, and the traffic
+   * level is echoed back without being read. `edges` and `edgeCoverage` are
+   * never opened.
+   */
+  const lazy = async (options: PredictBehaviourOptions): Promise<BehaviourResult> => {
+    const entities: Record<string, PredictedBehaviour> = {};
+    for (const name of options.entityNames) {
+      entities[name] = {
+        at: { traffic: options.traffic },
+        cost: predictedRate(0, "USD"),
+        headroom: { cpu: 1 },
+        errorRate: 0,
+        resilience: { failure: "none", verdict: "survives" },
+        provenance: { engine: "lazy", version: "1", tolerance: "±0%", basis: "modeled" },
+      };
+    }
+    return behaviourReport(options, { engine: "lazy", version: "1" }, entities);
+  };
+
+  test("its `resilience.failure: \"none\"` is now refused at construction", () => {
+    expect(lazy(REQUEST)).rejects.toThrow(/names no failure/);
+  });
+
+  test("even with a real failure named, it answers every traffic level identically", async () => {
+    const honest = async (options: PredictBehaviourOptions): Promise<BehaviourResult> => {
+      const entities: Record<string, PredictedBehaviour> = {};
+      for (const name of options.entityNames) {
+        entities[name] = {
+          at: { traffic: options.traffic },
+          cost: predictedRate(0, "USD"),
+          headroom: { cpu: 1 },
+          errorRate: 0,
+          resilience: { failure: "one zone lost", verdict: "survives" },
+          provenance: { engine: "lazy", version: "1", tolerance: "±0%", basis: "modeled" },
+        };
+      }
+      return behaviourReport(options, { engine: "lazy", version: "1" }, entities);
+    };
+
+    const quiet = await honest(REQUEST);
+    const busy = await honest({ ...REQUEST, traffic: "1000000 rps" });
+    if (isBehaviourRefusalReport(quiet) || isBehaviourRefusalReport(busy)) {
+      throw new Error("expected reports");
+    }
+    // The level is echoed and the figures do not move. This is what the
+    // conformance suite's two-level probe exists to catch, and a suite holding
+    // one opaque `run()` closure could not see it at all.
+    expect(busy.meta.at.traffic).toBe("1000000 rps");
+    expect(quiet.entities.web.cost.perHour).toBe(busy.entities.web.cost.perHour);
+    expect(quiet.entities.web.headroom).toEqual(busy.entities.web.headroom);
+  });
+
+  test("removing every edge changes nothing it says", async () => {
+    const honest = async (options: PredictBehaviourOptions): Promise<BehaviourResult> => {
+      const entities: Record<string, PredictedBehaviour> = {};
+      for (const name of options.entityNames) {
+        entities[name] = {
+          at: { traffic: options.traffic },
+          cost: predictedRate(0, "USD"),
+          headroom: { cpu: 1 },
+          errorRate: 0,
+          resilience: { failure: "one zone lost", verdict: "survives" },
+          provenance: { engine: "lazy", version: "1", tolerance: "±0%", basis: "modeled" },
+        };
+      }
+      return behaviourReport(options, { engine: "lazy", version: "1" }, entities);
+    };
+    const withEdges = await honest(REQUEST);
+    const without = await honest({ ...REQUEST, edges: [], edgeCoverage: { verdict: "unknown" } });
+    if (isBehaviourRefusalReport(withEdges) || isBehaviourRefusalReport(without)) {
+      throw new Error("expected reports");
+    }
+    expect(withEdges.entities.web.headroom).toEqual(without.entities.web.headroom);
+  });
+
+  test("the fixture lexicon, by contrast, moves on both axes", async () => {
+    const quiet = await acmeSim(REACHABLE)!(REQUEST);
+    const busy = await acmeSim(REACHABLE)!({ ...REQUEST, traffic: "1000 rps, p50" });
+    const noEdges = await acmeSim(REACHABLE)!({
+      ...REQUEST,
+      edges: [],
+      edgeCoverage: { verdict: "unknown" },
+    });
+    if (
+      isBehaviourRefusalReport(quiet) ||
+      isBehaviourRefusalReport(busy) ||
+      isBehaviourRefusalReport(noEdges)
+    ) {
+      throw new Error("expected reports");
+    }
+    expect(busy.entities.web.cost.perHour).not.toBe(quiet.entities.web.cost.perHour);
+    expect(noEdges.entities.web.headroom).not.toEqual(quiet.entities.web.headroom);
   });
 });
 
@@ -738,11 +979,11 @@ describe("isBehaviourResult requires an arm, not just the version (#2356)", () =
     // BehaviourReport, and hand a consumer `undefined` for `entities`.
     expect(isBehaviourResult({ behaviour: "v1" })).toBe(false);
     expect(isBehaviourResult({ behaviour: "v1", entities: {} })).toBe(false);
-    expect(isBehaviourResult({ behaviour: "v1", meta: META })).toBe(false);
+    expect(isBehaviourResult({ behaviour: "v1", meta: { engine: "x" } })).toBe(false);
   });
 
   test("both real arms are results", () => {
-    expect(isBehaviourResult(behaviourReport(META, [], {}))).toBe(true);
+    expect(isBehaviourResult(behaviourReport(req([]), STAMP, {}))).toBe(true);
     expect(isBehaviourResult(noBehaviourEngineRefusal("acme"))).toBe(true);
   });
 });
@@ -766,6 +1007,7 @@ describe("the reason list is derived from the type, not written beside it (#2356
       "engine-unreachable": true,
       "engine-out-of-credit": true,
       "engine-over-quota": true,
+      "credential-in-request": true,
     };
     expect([...BEHAVIOUR_UNPREDICTED_REASONS].sort()).toEqual(Object.keys(witness).sort());
     for (const reason of Object.keys(witness)) {
@@ -798,16 +1040,72 @@ describe("an empty edge list can say which kind of empty it is (#2360)", () => {
       edges: [],
       edgeCoverage: {
         verdict: "partial",
-        dangling: ["vpc-0a1b2c3d"],
+        dangling: [{ from: "web", path: "vpcId", value: "vpc-0a1b2c3d" }],
         unresolvedKinds: ["AWS::SQS::Queue"],
-        containment: [{ from: "web", to: "subnet-a", kind: "ref" }],
+        containmentEdges: [{ from: "web", to: "subnet-a", kind: "ref" }],
       },
     };
     expect(isEdgeCoverageVerdict(partial.edgeCoverage.verdict)).toBe(true);
-    expect(partial.edgeCoverage.dangling).toEqual(["vpc-0a1b2c3d"]);
+    // `from` is the field a flattened string list drops, and it is the one that
+    // says which entity's path leaves the estate.
+    expect(partial.edgeCoverage.dangling?.[0].from).toBe("web");
+    expect(partial.edgeCoverage.dangling?.[0].value).toBe("vpc-0a1b2c3d");
     // Containment is the one an engine needs for "one zone lost" and `edges`
     // will never carry, because chant draws it as a boundary rather than a line.
-    expect(partial.edgeCoverage.containment).toHaveLength(1);
+    expect(partial.edgeCoverage.containmentEdges).toHaveLength(1);
+  });
+
+  test("the coverage reaches the reader, not just the engine", () => {
+    // Held only on the request it never reached a consumer, so a report's
+    // "survives one zone lost" could have been computed over a complete graph
+    // or over one whose builder had no idea what it had missed — a faked number
+    // the shape rendered invisible, which is the failure the refusal arm exists
+    // to prevent, reappearing one level down.
+    const report = behaviourReport(
+      { ...req(["web"]), edgeCoverage: { verdict: "unknown" } },
+      STAMP,
+      { web: GOOD },
+    );
+    expect(report.meta.edgeCoverage.verdict).toBe("unknown");
+  });
+
+  test("a `partial` that names no gap is refused", () => {
+    // `partial` means "some references are missing"; naming none of them is
+    // `unknown` wearing a more confident word.
+    expect(() => validateEdgeCoverage({ verdict: "partial" })).toThrow(/names nothing missing/);
+    expect(() =>
+      behaviourReport({ ...req(["web"]), edgeCoverage: { verdict: "partial" } }, STAMP, {
+        web: GOOD,
+      }),
+    ).toThrow(/names nothing missing/);
+
+    expect(() =>
+      validateEdgeCoverage({ verdict: "partial", unresolvedKinds: ["AWS::SQS::Queue"] }),
+    ).not.toThrow();
+    expect(() =>
+      validateEdgeCoverage({
+        verdict: "partial",
+        dangling: [{ from: "web", path: "vpcId", value: "vpc-1" }],
+      }),
+    ).not.toThrow();
+  });
+
+  test("`complete` with a dangling reference is legal, and must stay so", () => {
+    // A dangling ref points outside the named set by definition — a
+    // cross-account VPC, another team's resource — so a builder can have found
+    // every edge among the entities it was asked about and still have
+    // references leaving the estate. Nobody should "fix" this.
+    expect(() =>
+      validateEdgeCoverage({
+        verdict: "complete",
+        dangling: [{ from: "web", path: "vpcId", value: "vpc-elsewhere" }],
+      }),
+    ).not.toThrow();
+  });
+
+  test("a bogus verdict is refused", () => {
+    // @ts-expect-error "probably" is not one of the three.
+    expect(() => validateEdgeCoverage({ verdict: "probably" })).toThrow(/is not complete/);
   });
 
   test("`unknown` is available for a builder that cannot say", () => {
@@ -863,6 +1161,51 @@ describe("a refusal never prints the engine's credentials (#2358 posts these pub
     expect(reason).not.toContain("glpat-abcdef123456");
     expect(reason).not.toContain("/accounts/9");
     expect(reason.length).toBeLessThan(chatty.length);
+  });
+
+  test("an OAuth token in the fragment is gone", () => {
+    // The implicit flow puts the access token after the `#`, where it never
+    // reaches a server and where the URL parse was not looking.
+    const redacted = redactEngineAddress(
+      "https://engine.internal/predict#access_token=Zm9vYmFyYmF6cXV4&state=1",
+    );
+    expect(redacted).not.toContain("Zm9vYmFyYmF6cXV4");
+    expect(redacted).not.toContain("access_token");
+    expect(redacted).toContain("engine.internal");
+  });
+
+  test("the query marker lands beside the fragment marker, not inside it", () => {
+    const redacted = redactEngineAddress("https://engine.internal/p?key=abc#access_token=xyz");
+    expect(redacted).not.toContain("abc");
+    expect(redacted).not.toContain("xyz");
+    // Wire order: query then fragment. Appending `?[redacted]` to a string that
+    // still carried a fragment used to bury it inside the fragment.
+    expect(redacted.indexOf("?")).toBeLessThan(redacted.indexOf("#"));
+  });
+
+  test("an inline flag value on a PATH command is blanked", () => {
+    // An engine may be a command rather than a URL, and a command carries its
+    // credential as an argument — which the URL parse cannot see and which
+    // `redactCredentialMaterial` reads as neither an env value nor a known
+    // token prefix.
+    for (const address of [
+      "engine-cmd --token=hunter2plain --at 100rps",
+      "engine-cmd --api-key hunter2plain",
+      "engine-cmd -p hunter2plain",
+      "engine-cmd --client-secret=hunter2plain",
+    ]) {
+      expect(redactEngineAddress(address), address).not.toContain("hunter2plain");
+      expect(redactEngineAddress(address)).toContain("engine-cmd");
+    }
+  });
+
+  test("a path-segment token survives, and the doc says so", () => {
+    // Documented rather than fixed: nothing here can tell a token in a path
+    // segment from a resource id, and an earlier version of the doc claimed
+    // pass 3 caught it. This test pins the honest behaviour so the claim cannot
+    // quietly come back.
+    const opaque = "https://engine.internal/predict/Zm9vYmFyYmF6cXV4/go";
+    expect(redactEngineAddress(opaque)).toContain("Zm9vYmFyYmF6cXV4");
   });
 
   test("a socket path or a bare command is left readable", () => {
@@ -955,16 +1298,15 @@ describe("rule 1 — a prediction cannot be shaped like a bill (#2356)", () => {
 
   test("a report has nowhere to put a billing period or an account", () => {
     const asStatement = behaviourReport(
+      req([]),
       {
         engine: "acme-sim",
         version: "1.4.2",
-        at: { traffic: "100 rps, p50" },
         // @ts-expect-error the envelope models a run, not a statement: there is
         // no account to bill and no period that elapsed.
         accountId: "123456789012",
         periodStart: "2026-08-01",
       },
-      [],
       {},
     );
     expect(asStatement).toBeDefined();
@@ -1018,33 +1360,38 @@ describe("rule 3 — no credential can reach the engine (#2356)", () => {
     expect(smuggled).toBeDefined();
   });
 
-  test("a credential arriving from JavaScript is refused at runtime, naming the field", () => {
+  test("a suspicious field name refuses, and does NOT throw", () => {
+    // The blast radius matters. Throwing is the whole-lexicon failure per
+    // lexicon.ts, and the name arm is a heuristic: one `tags: { author: … }`
+    // anywhere in an estate used to kill the entire overlay with a stack trace,
+    // which is precisely the failure constraint 2 was written against.
     for (const key of ["token", "credentials", "apiKey", "privateKey", "authorization"]) {
-      expect(() => assertNoCredentialInOptions({ ...REQUEST, [key]: "x" })).toThrow(
-        new RegExp(`credential-shaped field name \\("${key}"\\)`),
-      );
+      const options = { ...REQUEST, [key]: "a-value-long-enough-to-suspect" };
+      expect(() => assertNoCredentialInOptions(options), `${key} threw`).not.toThrow();
+      const refusal = screenBehaviourRequest("acme", options);
+      expect(refusal, `${key} was not caught`).toBeDefined();
+      expect(refusal!.refusal.cause).toBe("credential-in-request");
+      expect(refusal!.refusal.reason).toContain(`("${key}")`);
     }
-    expect(() => assertNoCredentialInOptions(REQUEST)).not.toThrow();
+    expect(screenBehaviourRequest("acme", REQUEST)).toBeUndefined();
   });
 
   test("a key nobody listed is caught too — casing, separators and all", () => {
     // The reproduction that broke the old 14-name list. Every one of these
-    // compiles clean through a widened variable, and every one is a credential.
-    const smuggled: Record<string, unknown> = {
+    // compiles clean through a widened variable.
+    const smuggled: Record<string, string> = {
       xApiKey: "sk-live-DEADBEEF",
-      Authorization: "Bearer abc",
-      pat: "glpat-zzz",
-      "x-api-key": "whatever",
-      clientSecret: "s",
-      refreshToken: "r",
-      awsSecretAccessKey: "a",
-      cookie: "session=1",
+      Authorization: "Bearer abcdefghijklmnop",
+      pat: "glpat-zzzzzzzz",
+      "x-api-key": "whatever-value-here",
+      clientSecret: "s3cr3t-value-here",
+      refreshToken: "r3fr3sh-value-here",
+      awsSecretAccessKey: "wJalrXUtnFEMIK7MDENG",
+      cookie: "session=abcdefgh",
     };
     for (const [key, value] of Object.entries(smuggled)) {
-      expect(
-        () => assertNoCredentialInOptions({ ...REQUEST, [key]: value }),
-        `${key} was not caught`,
-      ).toThrow(/behaviour engine is never handed a credential/);
+      const found = findCredentialsInOptions({ ...REQUEST, [key]: value });
+      expect(found.length, `${key} was not caught`).toBeGreaterThan(0);
     }
   });
 
@@ -1054,12 +1401,12 @@ describe("rule 3 — no credential can reach the engine (#2356)", () => {
     const leaky = new Map(DECLARED);
     leaky.set("db", {
       entityType: "AWS::RDS::DBInstance",
-      props: { awsSecretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY" },
+      props: { awsSecretAccessKey: "wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY" },
     });
-    expect(() => assertNoCredentialInOptions({ ...REQUEST, entities: leaky })).toThrow(
-      /credential-shaped field name \("awsSecretAccessKey"\)/,
-    );
+    const named = screenBehaviourRequest("acme", { ...REQUEST, entities: leaky });
+    expect(named?.refusal.reason).toMatch(/credential-shaped field name \("awsSecretAccessKey"\)/);
 
+    // A password in a URL is the value arm, so it throws rather than refusing.
     const urlCreds = new Map(DECLARED);
     urlCreds.set("db", {
       entityType: "AWS::RDS::DBInstance",
@@ -1068,6 +1415,51 @@ describe("rule 3 — no credential can reach the engine (#2356)", () => {
     expect(() => assertNoCredentialInOptions({ ...REQUEST, entities: urlCreds })).toThrow(
       /a password in a URL's userinfo/,
     );
+  });
+
+  test("a scheme-less DSN is caught — `new URL()` will not parse one", () => {
+    const dsn = new Map(DECLARED);
+    dsn.set("db", {
+      entityType: "AWS::RDS::DBInstance",
+      props: { dsn: "app:hunter2@db.internal:5432/prod" },
+    });
+    expect(() => assertNoCredentialInOptions({ ...REQUEST, entities: dsn })).toThrow(
+      /a password in a URL's userinfo/,
+    );
+  });
+
+  test("a Map's keys are read, not just its values", () => {
+    // An env block is a Map as often as an object, and walking only values
+    // missed `DB_PASSWORD` entirely.
+    const env = new Map(DECLARED);
+    env.set("web", {
+      entityType: "AWS::EC2::Instance",
+      props: { env: new Map([["DB_PASSWORD", "hunter2plain"]]) },
+    });
+    const refusal = screenBehaviourRequest("acme", { ...REQUEST, entities: env });
+    expect(refusal?.refusal.reason).toMatch(/DB_PASSWORD/);
+  });
+
+  test("a Set's contents are read — `Object.entries` on a Set is empty", () => {
+    const set = new Map(DECLARED);
+    set.set("web", {
+      entityType: "AWS::EC2::Instance",
+      props: { allowed: new Set(["glpat-abcdef123456"]) },
+    });
+    expect(() => assertNoCredentialInOptions({ ...REQUEST, entities: set })).toThrow(
+      /a GitLab personal access token/,
+    );
+  });
+
+  test("a structure deeper than the walk reads is reported, not passed in silence", () => {
+    let deep: unknown = "leaf";
+    for (let i = 0; i < 20; i++) deep = { nested: deep };
+    const nested = new Map(DECLARED);
+    nested.set("web", { entityType: "AWS::EC2::Instance", props: { deep } });
+    const found = findCredentialsInOptions({ ...REQUEST, entities: nested });
+    expect(found.some((f) => f.rule === "walk-depth")).toBe(true);
+    // And it refuses rather than proceeding as though the request were checked.
+    expect(screenBehaviourRequest("acme", { ...REQUEST, entities: nested })).toBeDefined();
   });
 
   test("a credential on an edge field is caught", () => {
@@ -1095,6 +1487,120 @@ describe("rule 3 — no credential can reach the engine (#2356)", () => {
         `${key} was not caught`,
       ).toThrow(/behaviour engine is never handed a credential/);
     }
+  });
+
+  test("the guard refuses none of this repo's own generated property keys", () => {
+    // THE regression guard for the name arm, and the reason it can be trusted
+    // enough to keep. An earlier version matched `SECRET|TOKEN|PASSWORD|AUTH`
+    // as a bare substring of the key and refused 406 aws keys, 173 azure, 89
+    // gcp and 7 k8s — `imagePullSecrets`, `secretName`, `secretKeyRef`,
+    // `ClientToken`, `CertificateAuthorityArn`, `authorizedNetworks`,
+    // `passwordPolicy`, `authMode`, `oauthScopes` — every one of them ordinary
+    // in real infrastructure, and every one of them fatal, because the guard
+    // threw. #2357, #2359 and #2360 all build requests from these props.
+    //
+    // Read from the generated `.d.ts` rather than the registry JSON: the JSON
+    // yields 81 names for aws and would prove nothing.
+    const counts: Record<string, number> = {};
+    for (const lexicon of ["aws", "azure", "gcp", "k8s"]) {
+      const dts = join(__dirname, "../../../lexicons", lexicon, "src/generated/index.d.ts");
+      const keys = new Set<string>();
+      for (const m of readFileSync(dts, "utf8").matchAll(
+        /^\s+(?:readonly\s+)?([A-Za-z_]\w*)\??\s*:/gm,
+      )) {
+        keys.add(m[1]);
+      }
+      counts[lexicon] = keys.size;
+
+      const props: Record<string, unknown> = {};
+      for (const key of keys) props[key] = "ok";
+      const entities = new Map(DECLARED);
+      entities.set("web", { entityType: "AWS::EC2::Instance", props });
+
+      const refused = findCredentialsInOptions({ ...REQUEST, entities }).map((f) => f.path);
+      expect(refused, `${lexicon} keys refused with a benign value`).toEqual([]);
+    }
+
+    // Pinned so a schema regeneration that adds names is visible rather than
+    // silently shrinking what this test covers.
+    expect(counts.aws).toBeGreaterThan(13000);
+    expect(counts.azure).toBeGreaterThan(4900);
+    expect(counts.gcp).toBeGreaterThan(3300);
+    expect(counts.k8s).toBeGreaterThan(290);
+  });
+
+  test("the reference-by-name family is carved out, by suffix and by name", () => {
+    // Named explicitly so the carve-out list cannot be trimmed without a red.
+    // Every one holds a pointer, an id, a duration or a scope list, never a
+    // secret — and every one is long enough to trip the length gate.
+    const benign = "a-perfectly-ordinary-value";
+    for (const key of [
+      "imagePullSecrets",
+      "secretName",
+      "secretRef",
+      "secretKeyRef",
+      "ClientToken",
+      "AdminPasswordSecretArn",
+      "APIKeyId",
+      "AccessTokenId",
+      "AccessTokenValidity",
+      "ActorTokenScopes",
+      "CertificateAuthorityArn",
+      "authorizedNetworks",
+      "passwordPolicy",
+      "authMode",
+      "oauthScopes",
+      "automountServiceAccountToken",
+    ]) {
+      const entities = new Map(DECLARED);
+      entities.set("web", { entityType: "AWS::EC2::Instance", props: { [key]: benign } });
+      expect(
+        findCredentialsInOptions({ ...REQUEST, entities }),
+        `${key} was refused`,
+      ).toEqual([]);
+    }
+  });
+
+  test("a genuine credential field holding a reference is not refused; holding a token is", () => {
+    // `AdminPassword` on AWS::DirectoryService::MicrosoftAD is a real
+    // credential field. In chant source it holds a resolve-expression or a
+    // `{ $ref }`, and refusing those would refuse the correct way to write it.
+    const ref = new Map(DECLARED);
+    ref.set("web", {
+      entityType: "AWS::EC2::Instance",
+      props: {
+        AdminPassword: "{{resolve:secretsmanager:prod/ad:SecretString:password}}",
+        AccountPassword: { $ref: "vault.adminPassword" },
+        ADDomainJoinPassword: "${secrets.domainJoin}",
+      },
+    });
+    expect(findCredentialsInOptions({ ...REQUEST, entities: ref })).toEqual([]);
+
+    // A live value in the same field is still caught, by the value arm.
+    const live = new Map(DECLARED);
+    live.set("web", {
+      entityType: "AWS::EC2::Instance",
+      props: { AdminPassword: "ghp_abcdefghijklmnop" },
+    });
+    expect(() => assertNoCredentialInOptions({ ...REQUEST, entities: live })).toThrow(
+      /a GitHub token/,
+    );
+  });
+
+  test("a non-string never trips the name arm", () => {
+    // `{ tokenCount: 4096 }`, `{ AccessControlAllowCredentials: true }`, and a
+    // list of config objects whose parent key contains `auth`.
+    const typed = new Map(DECLARED);
+    typed.set("web", {
+      entityType: "AWS::EC2::Instance",
+      props: {
+        tokenCount: 4096,
+        AccessControlAllowCredentials: true,
+        AdditionalAuthenticationProviders: [{ AuthenticationType: "AWS_IAM" }],
+        tags: { author: "alex" },
+      },
+    });
+    expect(findCredentialsInOptions({ ...REQUEST, entities: typed })).toEqual([]);
   });
 
   test("ordinary build output is not refused — ids, ARNs and digests pass", () => {
@@ -1176,8 +1682,9 @@ describe("rule 4 — provenance, and a basis from a closed set (#2356)", () => {
 /* -------------------------------------------------------------------------- */
 
 describe("the behaviour tri-state (#2356)", () => {
-  test("the reasons are the observation set minus no-credentials, plus the four engine states", () => {
+  test("the reasons are the observation set minus no-credentials, plus the engine and request states", () => {
     expect([...BEHAVIOUR_UNPREDICTED_REASONS].sort()).toEqual([
+      "credential-in-request",
       "engine-out-of-credit",
       "engine-over-quota",
       "engine-unreachable",

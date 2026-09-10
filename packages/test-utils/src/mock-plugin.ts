@@ -8,7 +8,7 @@ import {
 } from "../../core/src/deep-observation";
 import {
   behaviourReport,
-  type BehaviourReportMeta,
+  type BehaviourEngineStamp,
   type BehaviourResult,
   type PredictedBehaviour,
   type UnpredictedEntity,
@@ -114,7 +114,7 @@ export function staticListArtifacts(
  * so a test that fakes one would be testing its own fake.
  */
 export function staticBehaviour(
-  meta: BehaviourReportMeta,
+  meta: BehaviourEngineStamp,
   entities: Record<string, PredictedBehaviour>,
   unpredicted?: Record<string, UnpredictedEntity>,
 ): LexiconPlugin["predictBehaviour"] {
@@ -122,5 +122,5 @@ export function staticBehaviour(
   // a static answer is held to the totality rule: a mock that omits an entity
   // the caller asked about throws here, exactly as a real lexicon would.
   return async (options): Promise<BehaviourResult> =>
-    behaviourReport(meta, options.entityNames, entities, unpredicted);
+    behaviourReport(options, meta, entities, unpredicted);
 }
