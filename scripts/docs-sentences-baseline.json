@@ -428,7 +428,7 @@
   "formatting/bold-first-bullet": 1
  },
  "docs/src/content/docs/concepts/typescript-as-data.mdx": {
-  "formatting/em-dash-density": 53,
+  "formatting/em-dash-density": 52,
   "discourse/punchy-fragments": 2,
   "claude/colon-reveal": 7,
   "repetition/near-duplicate": 4,
@@ -936,7 +936,7 @@
   "formatting/bold-first-bullet": 2
  },
  "docs/src/content/docs/troubleshooting/common-errors.mdx": {
-  "formatting/em-dash-density": 5,
+  "formatting/em-dash-density": 2,
   "discourse/punchy-fragments": 1,
   "claude/colon-reveal": 12,
   "anaphora/repeated-opening": 2
