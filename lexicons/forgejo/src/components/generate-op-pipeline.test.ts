@@ -225,16 +225,34 @@ describe("generateForgejoOpPipeline: the gated apply on push (#2243)", () => {
    * always carries, unconditionally) defaults to `sh`, and `sh` rejects `set
    * -o pipefail`. This generator reuses github's `buildGithubOpPipelineDocs`
    * to build the job, then the dialect transform in ../dialect.ts to cross
-   * it, so the fix has to survive both: neither step drops or renames
-   * `shell:`.
+   * it, so the fix has to survive both: the exit-code capture is plain POSIX
+   * `sh` (chant #2321 — no `shell: bash` to drop or rename in the first
+   * place, unlike before #2321, when an unconditional `shell: bash` broke
+   * any consumer image without bash — see the sibling test below).
    */
-  test("the pipefail step keeps shell: bash across the Forgejo dialect — its job runs in a container, whose default shell is sh", () => {
+  test("the exit-code capture crosses the Forgejo dialect with no shell override — its job runs in a container, whose default shell is sh", () => {
     const doc = parseFile(generateForgejoOpPipeline([pushSpec]).files[0].yaml);
     const job = doc.jobs!["app-apply"];
     expect(job.container).toBe("node:22-slim");
     const step = job.steps.find((s) => s.id === "chant-run");
-    expect(step?.run).toContain("set -o pipefail");
-    expect(step?.shell).toBe("bash");
+    expect(step?.shell).toBeUndefined();
+    expect(step?.run).not.toContain("pipefail");
+    expect(step?.run).toContain('[ "$code" -eq 0 ] || exit "$code"');
+  });
+
+  /**
+   * chant #2321 — same regression as the github generator's, since this one
+   * reuses `buildGithubOpPipelineDocs` to build the job before crossing the
+   * dialect: a consumer's non-bash `options.image` (alpine, distroless, …)
+   * must not get an unconditional `shell: bash` it cannot run.
+   */
+  test("a consumer-set non-bash image's gated job can still start on Forgejo (#2321)", () => {
+    const doc = parseFile(generateForgejoOpPipeline([pushSpec], { image: "alpine:3.20" }).files[0].yaml);
+    const job = doc.jobs!["app-apply"];
+    expect(job.container).toBe("alpine:3.20");
+    const step = job.steps.find((s) => s.id === "chant-run");
+    expect(step?.shell).toBeUndefined();
+    expect(step?.run).not.toContain("pipefail");
   });
 });
 

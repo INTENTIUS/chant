@@ -230,11 +230,13 @@ jobs:
       - run: curl -fsSL https://releases.hashicorp.com/terraform/1.13.3/terraform_1.13.3_linux_amd64.zip -o /tmp/terraform.zip && unzip -q -o /tmp/terraform.zip -d /usr/local/bin && terraform version
       - id: chant-run
         run: |
-          set -o pipefail
+          set +e
           json="${RUNNER_TEMP:-/tmp}/chant-run-app-apply.json"
-          chant run app-apply --gated-exit 0 --json | tee "$json"
+          status="${RUNNER_TEMP:-/tmp}/chant-run-app-apply.status"
+          { chant run app-apply --gated-exit 0 --json; echo "$?" >"$status"; } | tee "$json"
+          code=$(cat "$status")
+          [ "$code" -eq 0 ] || exit "$code"
           node -e '...set gated/op/gate/approve on $GITHUB_OUTPUT when the record says gated...' "$json"
-        shell: bash
         env:
           GITHUB_TOKEN: '${{ github.token }}'
   app-apply-gate-notice:

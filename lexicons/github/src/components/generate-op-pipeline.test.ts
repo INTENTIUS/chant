@@ -535,7 +535,11 @@ describe("generateGithubOpPipeline: the gated apply on push (#2243)", () => {
 
   test("a failing run stays a failing job: the pipe cannot swallow its exit code", () => {
     const step = pushDoc().jobs!["app-apply"].steps.find((s) => s.id === "chant-run");
-    expect(step?.run).toContain("set -o pipefail");
+    expect(step?.run).toContain(
+      '{ chant run app-apply --gated-exit 0 --json; echo "$?" >"$status"; } | tee "$json"',
+    );
+    expect(step?.run).toContain('code=$(cat "$status")');
+    expect(step?.run).toContain('[ "$code" -eq 0 ] || exit "$code"');
   });
 
   /**
@@ -544,16 +548,36 @@ describe("generateGithubOpPipeline: the gated apply on push (#2243)", () => {
    * shell on GitHub Actions is `sh`, not bash. `sh` rejects `set -o pipefail`
    * outright (`Illegal option -o pipefail`) and fails the step before `chant`
    * is ever reached, which is exactly what happened on a real run (choudoufu
-   * #1026, run 34312967579). The step that emits `pipefail` must declare
-   * `shell: bash` itself.
+   * #1026, run 34312967579). The exit-code capture above needs neither
+   * `pipefail` nor a `shell:` override to survive that — it is plain POSIX
+   * `sh`, so the default shell a `container:` job gets already runs it.
    */
-  test("the pipefail step declares shell: bash — its job runs in a container, whose default shell is sh (#2299)", () => {
+  test("the run step needs no shell override — its script is POSIX sh, not bash (#2299)", () => {
     const doc = pushDoc();
     const job = doc.jobs!["app-apply"];
     expect(job.container).toBe("node:22-slim");
     const step = job.steps.find((s) => s.id === "chant-run");
-    expect(step?.run).toContain("set -o pipefail");
-    expect(step?.shell).toBe("bash");
+    expect(step?.shell).toBeUndefined();
+    expect(step?.run).not.toContain("pipefail");
+  });
+
+  /**
+   * chant #2321 — #2307 fixed #2299 by pairing the `pipefail` line with an
+   * unconditional `shell: "bash"` on this step, which then broke every
+   * consumer whose `options.image` has no bash on it at all (alpine,
+   * distroless, …): `shell: bash` on such an image fails with `bash: not
+   * found` before `chant` is ever reached, a failure busybox `ash` never had
+   * before #2307 introduced the unconditional `shell: bash`. The fix removes
+   * the bash-ism instead of moving it, so a non-bash image's own default
+   * `sh` runs the step unchanged.
+   */
+  test("a consumer-set non-bash image's gated job can still start (#2321)", () => {
+    const doc = parseFile(generateGithubOpPipeline([pushSpec], { image: "alpine:3.20" }).files[0].yaml);
+    const job = doc.jobs!["app-apply"];
+    expect(job.container).toBe("alpine:3.20");
+    const step = job.steps.find((s) => s.id === "chant-run");
+    expect(step?.shell).toBeUndefined();
+    expect(step?.run).not.toContain("pipefail");
   });
 });
 
