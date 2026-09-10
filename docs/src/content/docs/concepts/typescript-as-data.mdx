@@ -132,7 +132,7 @@ export const store = new StorageType({
 });
 ```
 
-This is the one place a call folds that isn't chant's own [authoring helpers](#registered-authoring-helpers), and it is a closed list, not a rule about what calls look like. Three things must hold: the lexicon registered the intrinsic, the lexicon marked that intrinsic's call form foldable (`foldsAsCall` — off unless written, never inferred), and the name is bound by this file's own `import`. Your own function that happens to be called `Ref` is not the lexicon's, so it does not fold. Neither does a method call (`aws.Ref(...)`), an array `.map(...)`, or an intrinsic whose lexicon has not opted it in.
+This is the one place a call folds that isn't chant's own [authoring helpers](#registered-authoring-helpers), and it is a closed list, not a rule about what calls look like. Three things must hold: the lexicon registered the intrinsic, the lexicon marked that intrinsic's call form foldable (`foldsAsCall` — off unless written, never inferred), and the name is bound by this file's own `import`. Your own function that happens to be called `Ref` is not the lexicon's, so it does not fold. Neither does a method call (`aws.Ref(...)`), an array `.map(...)`, or an intrinsic whose lexicon has not opted it in. None of those is a bare-identifier call, which is all this section is about. `aws.Ref(...)` specifically can't fall through to [the general method-call fold](#method-calls-on-folded-values) either, because `aws` names a lexicon package, and a namespace import of a *package* (unlike one of your own files) is never resolved into a real value. The receiver stays an unresolved identifier, so the whole call is rejected before any method name is even looked at.
 
 Nothing about the value changes: the function that runs is the one your `import` names, called with statically-folded arguments, producing the same intrinsic object the run path would have produced. Your lexicon's intrinsics page has a **Folds?** column saying which of its intrinsics are opted in.
 
@@ -220,6 +220,22 @@ When a body does not fold, the calling file falls back to run, and the reason na
 
 The function is a callable, not a value. `{ resolver: optionalAccountId }` does not fold, because nothing can serialize a function. Only project files produce a callable: a function imported from a package, chant's own modules included, is still a call fold cannot evaluate and is invoked the way [composite factories](#folded-vs-run) are, or falls back.
 
+### Method calls on folded values
+
+Since [#1966](https://github.com/INTENTIUS/chant/issues/1966), a method call folds when its receiver itself folds to a real value, not one of fold's own symbolic placeholders, and the named property on that value is a function. The method name is not checked against any list; calling it is no different from what running the file would do, because the receiver is the same real object either way.
+
+```typescript
+import { StorageType } from "@intentius/chant-lexicon-<name>";
+
+const prefix = "acct";
+
+export const store = new StorageType({
+  name: [prefix, "data"].join("-"),
+});
+```
+
+This covers an array literal's own methods (`[...].join(",")`), a method on a live cross-file reference (`github.actor.toString()`), and a method on the result of another fold (`matrix("os").toString()`) alike. Whatever produced the receiver, `fold()` only asks whether it is now a real value with that property. It does not cover a method through a *package's* namespace import (see [Registered intrinsic calls](#registered-intrinsic-calls)). It also does not make the method's own arguments any more foldable than they'd otherwise be: `list.map((n) => n.toUpperCase())` still refuses, since the arrow-function callback is a value fold rejects on its own, independent of `.map` being a method call.
+
 ## Unsupported Patterns
 
 The following patterns are caught by the evaluability lint rules (EVL). Your editor shows them as lint errors, and `chant lint` reports them in CI. `chant build` does not fail on them — a pattern below makes fold reject that one file, which then falls back to being imported and run, producing whatever JavaScript produces, correct or not. Run lint, or rely on your editor, to keep source inside the supported subset.
@@ -235,7 +251,21 @@ export const store = new StorageType({
 });
 ```
 
-A function from a package, a function used as a value, and a method call (`naming.name(...)`, `list.map(...)`) are never evaluated statically — the value would depend on running code. Three exceptions fold. Two are closed allowlists of names, checked against what your file actually imported: chant's own [registered authoring helpers](#registered-authoring-helpers), and a [lexicon intrinsic whose call form its lexicon opted in](#registered-intrinsic-calls). The third is open but local: a call to a [function from one of your own project files](#project-local-function-calls) whose body is itself in this subset. EVL001 still flags the call above because the lint rule sees one file at a time and cannot know what `getName` does; the fold decides by reading the body.
+A function from a package and a function used as a value are never evaluated statically — the value would depend on running code. Three exceptions fold. Two are closed allowlists of names, checked against what your file actually imported: chant's own [registered authoring helpers](#registered-authoring-helpers), and a [lexicon intrinsic whose call form its lexicon opted in](#registered-intrinsic-calls). The third is open but local: a call to a [function from one of your own project files](#project-local-function-calls) whose body is itself in this subset. EVL001 still flags the call above because the lint rule sees one file at a time and cannot know what `getName` does; the fold decides by reading the body.
+
+A method call (`naming.name(...)`, `list.join(",")`) is not on this list. [It folds on its own terms](#method-calls-on-folded-values) whenever its receiver is a real value and the named property is a function. What EVL001 above still flags is a call whose callee resolves to nothing chant can evaluate, whichever shape it takes.
+
+### An array method whose callback is a function value
+
+```typescript
+const list = ["a", "b"];
+
+export const store = new StorageType({
+  name: list.map((n) => n.toUpperCase()),  // the callback, not the method call, is the problem
+});
+```
+
+`.map` itself is an ordinary method call on a real receiver, which is the shape [Method calls on folded values](#method-calls-on-folded-values) covers. Its callback argument is what fold rejects. An arrow function used as a value is never foldable, whether called or not. `list.join(",")` above folds instead, because its argument is a plain string, not a function.
 
 ### Control flow around resources
 
@@ -320,7 +350,7 @@ Fold covers more than a single leaf resource now:
 - **Project-local function calls** — a call to a function declared in one of your own files (or in the file itself), when its body stays inside the subset, evaluates statically against the defining file's scope (#1373). The defining module is never imported. A body that does not fold names the callee and the reason in the `[fold:run]` line. See [Project-local function calls](#project-local-function-calls).
 - **Lexicon package exports** — the same resolution follows a bare import into a lexicon package, so a lexicon's plain data exports fold as values: Azure's and GCP's pseudo-parameter namespaces (`Azure.ResourceGroupLocation`, `GCP.ProjectId`), AWS's `S3Actions`, GitLab's `CI` (#1063). Only lexicons this build actually loaded are followed, and only the package itself, never a subpath or an unrelated package — the boundary is the lexicon list your project already declares or chant already detected, not `node_modules` at large. The lexicon module is imported the same way the run path imports it, so what fold captures is the same object, not a copy.
 
-What still forces a fallback to run, per file: **a function call used as a value that is neither a registered authoring helper, an opted-in intrinsic, nor a project-local function with a foldable body** — a package's function, an array `.map(...)`, a method call, an intrinsic whose lexicon has not opted it in, a helper of your own whose body reads the environment or does I/O. Also: a composite call nested as a *value* inside something else rather than being the file's own top-level export, a `new ns.Type(...)` through a namespace import (the class has to be reachable through a named import to be constructed), a re-export, `export default`, `let`/`var`, and an exported class declaration.
+What still forces a fallback to run, per file: **a function call used as a value that is neither a registered authoring helper, an opted-in intrinsic, nor a project-local function with a foldable body** — a package's function, an intrinsic whose lexicon has not opted it in, a helper of your own whose body reads the environment or does I/O. [Method calls](#method-calls-on-folded-values) are not automatically among them. Since #1966 a method call folds when its receiver is a real value and the named property is a function, so what actually blocks `list.map((n) => ...)` is its callback being a function used as a value, the same rule that blocks a bare function-as-value anywhere else, and not `.map` being a method call. One still falls back when its *receiver* doesn't resolve to a real value, such as `aws.Ref(...)` through a lexicon's namespace import (see [Registered intrinsic calls](#registered-intrinsic-calls)). Also: a composite call nested as a *value* inside something else rather than being the file's own top-level export, a `new ns.Type(...)` through a namespace import (the class has to be reachable through a named import to be constructed), a re-export, `export default`, `let`/`var`, and an exported class declaration.
 
 A read whose object is `null` or `undefined` forces the same fallback (#2328). Running `cfg.nett.vpcId` where `cfg` has no `nett` key raises `TypeError: Cannot read properties of undefined`. Folding it to `undefined` would drop the property and let the build carry on, so the two paths would disagree about what the file means. Fold refuses it instead and the file runs, which puts the TypeError back on the line that caused it. The exception is optional chaining. `cfg.net?.vpcId` is defined to be `undefined` on a nullish object, and folds that way here too.
 
@@ -342,7 +372,7 @@ A composite you define in your own source is *interpreted* rather than called wh
 2. That file declares it as **`export const Name = Composite(<fn>, "Name")`**, with `Composite` imported from chant. A plain helper function that returns a composite (`export function SecureApi(props) { return LambdaApi({...}); }`) is *not* a registered composite and stays on the invoking path.
 3. `<fn>` takes **at most one parameter**, bound as a plain identifier or a simple object pattern — no default, rest, or nested binding.
 4. Its body is **a single expression, or `const` declarations followed by one `return`**. No `if`, `throw`, loop, `let`/`var`, nested function declaration, or bare expression statement.
-5. Every expression in it is in the ordinary [supported subset](#supported-patterns), extended with the two things a factory body exists for: `new Type(...)` in any value position (a member, a nested property object, an array element), and a call through a bare identifier (a nested composite, a registered helper, an opted-in intrinsic). A method call (`naming.name(...)`, `.map(...)`) is a property-access callee and stays out.
+5. Every expression in it is in the ordinary [supported subset](#supported-patterns), extended with the two things a factory body exists for: `new Type(...)` in any value position (a member, a nested property object, an array element), and a call through a bare identifier (a nested composite, a registered helper, an opted-in intrinsic). A method call (`naming.name(...)`, `.map(...)`) is a property-access callee and stays out. This is narrower than [the top-level fold path](#method-calls-on-folded-values). The admissibility check here (`checkFactoryExpression` in `fold-import.ts`) runs before anything is resolved, so it has no receiver value to test, and it rejects every property-access callee on sight instead of deciding case by case.
 
 A body that references one of the defining module's *module-level resources* also declines: that resource is a singleton the run path shares across every call, and interpretation would not.
 
@@ -373,6 +403,20 @@ These counts are a snapshot, not refreshed by the mechanism above; they'll drift
 ### Isolating the run-fallback path
 
 Folded files execute none of their own code, but a run-fallback file does — in the CLI's own process by default. `chant build --sandbox` (#1045) runs every run-fallback file for a build together, isolated, in one child process with the filesystem, process-spawn, and environment access locked down, instead of trusting the file to behave. It composes with folding: folded files are unaffected (there's nothing to isolate), and the run-fallback remainder is what gets sandboxed — see [Sandboxed Execution](/chant/architecture/sandbox/) for exactly what that does and does not protect against.
+
+### Fold depth bounds
+
+Three counters cap the recursion the fold path can do instead of letting it run away, each an implementation choice the specification's `F-Depth` judgment permits ([INTENTIUS/typescript-as-data#46](https://github.com/INTENTIUS/typescript-as-data/issues/46), J4 in `spec/judgments.md`). An implementation may pick its own bound, provided it states the bound and falls back rather than fails outright.
+
+| Bound | Value | Guards | Where |
+|---|---|---|---|
+| `MAX_FUNCTION_CALL_DEPTH` | 32 | nested [project-local function calls](#project-local-function-calls) | `packages/core/src/fold/fold.ts` |
+| `MAX_INTERPRETATION_DEPTH` | 16 | nested [interpretable composite factory](#interpretable-composite-factories) bodies | `packages/core/src/discovery/fold-import.ts` |
+| `MAX_RESOLUTION_DEPTH` | 200 | the cross-file [resolution stack](#cross-file-resource-references) | `packages/core/src/discovery/fold-import.ts` |
+
+`MAX_FUNCTION_CALL_DEPTH` and `MAX_RESOLUTION_DEPTH` exhaustion both name themselves. A project-local call past 32 deep throws from inside `fold()` with a reason naming the bound (`call depth exceeded — is it recursive?`), forcing the calling file to run, exactly like the `[fold:run]` example under [Project-local function calls](#project-local-function-calls) above. A cross-file resolution past 200 deep is caught at the same stack that also detects an import cycle, with its own pointed reason (`cross-file resolution depth exceeded 200 (...) — this is almost certainly a resolution bug (memoization not taking effect), not a genuinely thousand-file-deep import chain`). This forces the target file to run and, per [Folded vs Run](#folded-vs-run) above, cascades to any file that folded while depending on it.
+
+`MAX_INTERPRETATION_DEPTH` guards a composite whose factory body calls itself, directly or through a member, entirely within one module. That is a shape no cross-file stack can see, so a separate counter exists for it. Past 16 levels, chant stops trying to *interpret* that composite and invokes it for real instead, exactly as it would for any composite whose body sits outside the [interpretable subset](#interpretable-composite-factories); the file still folds, since invoking is the other of the two ways a composite call folds, not a `[fold:run]` fallback. That makes it silent in a way the other two aren't. Nothing today names the bound when it's hit, because the function enforcing it is documented to only ever decline, never fail. A composite genuinely nested this deep is not expected to occur; sixteen is, in the implementation's own words, "deliberately small: real composite nesting is 2-3 deep, and a chain past this is a bug, not a design."
 
 ## Why These Constraints?
 
