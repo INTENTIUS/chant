@@ -16,13 +16,21 @@
 import { describe, test, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describeBehaviourConformance, behaviourConformanceGaps } from "@intentius/chant-test-utils";
+import {
+  describeBehaviourConformance,
+  behaviourConformanceGaps,
+  probeTrafficLevel,
+  probeReadsEdges,
+  probeEdgelessConsistency,
+  probeEchoesCoverage,
+} from "@intentius/chant-test-utils";
 import type { LexiconPlugin } from "./lexicon";
 import type { IREdge } from "./graph-ir";
 import {
   BEHAVIOUR_BASES,
   BEHAVIOUR_UNPREDICTED_REASONS,
   assertNoCredentialInOptions,
+  copyEdgeCoverage,
   behaviourEngineFrom,
   behaviourEngineVariables,
   behaviourReport,
@@ -52,6 +60,7 @@ import {
   renderBehaviourRefusal,
   unreachableBehaviourEngineRefusal,
   type BehaviourHeadroom,
+  type FigureMismatch,
   type BehaviourResult,
   type BehaviourUnpredictedReason,
   type PredictBehaviourOptions,
@@ -126,7 +135,13 @@ const REQUEST: PredictBehaviourOptions = {
  */
 function acmeSim(env: Record<string, string | undefined>): LexiconPlugin["predictBehaviour"] {
   return async (options: PredictBehaviourOptions): Promise<BehaviourResult> => {
-    assertNoCredentialInOptions(options);
+    // The one entry point, and the first thing in the method. Calling
+    // `assertNoCredentialInOptions` here instead applies one rule of three and
+    // drops the other two, so a token past the walk's depth budget and an
+    // `awsSecretAccessKey` in `props` both went out with the request. This
+    // fixture is the shape #2357, #2359 and #2360 copy, so it has to be right.
+    const unsafe = screenBehaviourRequest("acme", options);
+    if (unsafe) return unsafe;
 
     const endpoint = behaviourEngineFrom("acme", env);
     if (!endpoint) return noBehaviourEngineRefusal("acme");
@@ -149,10 +164,14 @@ function acmeSim(env: Record<string, string | undefined>): LexiconPlugin["predic
     // at the stated level, so its headroom is the engine's baseline. This is the
     // whole reason `edges` is on the request: without it the engine can only
     // price boxes.
-    const connected = new Set<string>();
+    // Degree, not a boolean. A node's load is proportional to how many edges
+    // touch it, so removing any one edge moves the figures of both its ends —
+    // which is what the conformance probe requires and what "reads the graph"
+    // actually means.
+    const degree = new Map<string, number>();
     for (const edge of options.edges) {
-      connected.add(edge.from);
-      connected.add(edge.to);
+      degree.set(edge.from, (degree.get(edge.from) ?? 0) + 1);
+      degree.set(edge.to, (degree.get(edge.to) ?? 0) + 1);
     }
 
     for (const name of options.entityNames) {
@@ -165,7 +184,7 @@ function acmeSim(env: Record<string, string | undefined>): LexiconPlugin["predic
         unpredicted[name] = { type: declared.entityType, reason: "unsupported-kind" };
         continue;
       }
-      const load = connected.has(name) ? 1 : 0;
+      const load = degree.get(name) ?? 0;
       // Busier traffic spends headroom and costs more. Crude, and the point is
       // only that the level is *read*: a fixture that echoed `traffic` and
       // ignored it is exactly what the conformance suite now refuses to pass.
@@ -176,10 +195,10 @@ function acmeSim(env: Record<string, string | undefined>): LexiconPlugin["predic
         at: { traffic: options.traffic },
         cost: predictedRate(round(modeled.perHour * intensity), "USD"),
         headroom: {
-          cpu: load ? round(spend(modeled.cpu)) : 1,
-          latency: load ? round(spend(modeled.latency)) : 1,
+          cpu: round(spend(modeled.cpu) ** load),
+          latency: round(spend(modeled.latency) ** load),
         },
-        errorRate: load ? round(Math.min(1, 0.001 * intensity)) : 0,
+        errorRate: round(Math.min(1, 0.001 * intensity * load)),
         resilience: {
           failure: "one zone lost",
           verdict: name === "db" ? "degrades" : "survives",
@@ -268,8 +287,10 @@ describe("a lexicon predicting against the fixture engine (#2356)", () => {
     expect(result.behaviour).toBe("v1");
     expect(result.meta.at.traffic).toBe("100 rps, p50");
     expect(result.entities.web.cost).toEqual({ rate: "per-hour", perHour: 0.0416, currency: "USD" });
-    expect(result.entities.web.headroom).toEqual({ cpu: 0.62, latency: 0.41 });
-    expect(result.entities.web.errorRate).toBe(0.001);
+    // `web` sits on both edges, so its headroom is spent twice over. The
+    // figure moves with the graph, which is the whole point of `edges`.
+    expect(result.entities.web.headroom).toEqual({ cpu: 0.3844, latency: 0.1681 });
+    expect(result.entities.web.errorRate).toBe(0.002);
     expect(result.entities.web.resilience).toEqual({ failure: "one zone lost", verdict: "survives" });
     expect(result.entities.web.rightSize?.suggestion).toBe("t3.small");
     expect(result.entities.db.resilience.verdict).toBe("degrades");
@@ -444,9 +465,9 @@ describe("the request is a graph, not a bag of nodes (#2355)", () => {
 
     // `web` is on both edges, so it carries load and its headroom is spent
     // accordingly. With no edges the same entity is an island.
-    expect(connected.entities.web.headroom).toEqual({ cpu: 0.62, latency: 0.41 });
+    expect(connected.entities.web.headroom).toEqual({ cpu: 0.3844, latency: 0.1681 });
     expect(isolated.entities.web.headroom).toEqual({ cpu: 1, latency: 1 });
-    expect(connected.entities.web.errorRate).toBe(0.001);
+    expect(connected.entities.web.errorRate).toBe(0.002);
     expect(isolated.entities.web.errorRate).toBe(0);
   });
 
@@ -577,7 +598,7 @@ describe("provenance does not survive subtraction (#2358, #2360)", () => {
     expect(isComparableFigure(GOOD, regionLost)).toBe(false);
   });
 
-  test("the display order is most fundamental first", () => {
+  test("the display order is most fundamental first, and derived from a total witness", () => {
     expect(FIGURE_MISMATCHES).toEqual([
       "mixed-engine",
       "mixed-level",
@@ -585,6 +606,35 @@ describe("provenance does not survive subtraction (#2358, #2360)", () => {
       "mixed-basis",
       "mixed-failure",
     ]);
+
+    // The witness is what stops the array drifting from the union. Without it,
+    // a sixth axis added to `FigureMismatch` and to `compareFigures` but not to
+    // the array is reported by the set and silently dropped by
+    // `figureMismatches` — the "a mismatch went unsaid" failure the set return
+    // was added to prevent, reappearing in the display path.
+    const witness: Record<FigureMismatch, true> = {
+      "mixed-engine": true,
+      "mixed-level": true,
+      "mixed-currency": true,
+      "mixed-basis": true,
+      "mixed-failure": true,
+    };
+    expect([...FIGURE_MISMATCHES].sort()).toEqual(Object.keys(witness).sort());
+  });
+
+  test("nothing compareFigures can return is dropped by figureMismatches", () => {
+    // The two must agree on membership. This is the pairing the witness makes
+    // structural; asserting it here keeps the property visible in the suite.
+    const everything: PredictedBehaviour = {
+      ...GOOD,
+      at: { traffic: "1000 rps" },
+      cost: predictedRate(0.04, "EUR"),
+      resilience: { failure: "region lost", verdict: "fails" },
+      provenance: { ...GOOD.provenance, engine: "other-sim", basis: "validated" },
+    };
+    const set = compareFigures(GOOD, everything);
+    expect(figureMismatches(GOOD, everything)).toHaveLength(set.size);
+    for (const axis of set) expect(FIGURE_MISMATCHES).toContain(axis);
   });
 
   test("a report cannot hold entities at different levels in the first place", () => {
@@ -807,6 +857,49 @@ describe("the conformance suite refuses to prove nothing (#2356)", () => {
     expect(behaviourConformanceGaps(askOnce).join(" ")).toMatch(/can only ask once/);
   });
 
+  test("a probe with no second traffic level is a gap — there is no safe default", () => {
+    // The old default was `"<level> ×10 (conformance probe)"`, which is a level
+    // no engine has agreed to understand. The contract says an engine that
+    // cannot understand a level refuses rather than substituting one, so the
+    // default failed a contract-correct lexicon for obeying the contract.
+    const noSecondLevel = {
+      lexicon: "one-level",
+      scenarios: [
+        {
+          name: "up",
+          declared: ["web"],
+          traffic: "100 rps, p50",
+          run: () => acmeSim(REACHABLE)!(REQUEST),
+          request: REQUEST,
+          predict: (o: PredictBehaviourOptions) => acmeSim(REACHABLE)!(o),
+        },
+      ],
+    };
+    expect(behaviourConformanceGaps(noSecondLevel).join(" ")).toMatch(/no safe default/);
+  });
+
+  test("a probe whose request cannot exercise the edge probe is a gap", () => {
+    // The edge probe drops one edge and requires the answer to change, so a
+    // request with fewer than two edges makes it vacuous — and a sibling wiring
+    // up a minimal edgeless request would pass "reads the edges it was handed"
+    // without the probe ever running.
+    const thinGraph = {
+      lexicon: "edgeless",
+      scenarios: [
+        {
+          name: "up",
+          declared: ["web"],
+          traffic: "100 rps, p50",
+          otherTraffic: "1000 rps, p50",
+          run: () => acmeSim(REACHABLE)!(REQUEST),
+          request: { ...REQUEST, edges: [] },
+          predict: (o: PredictBehaviourOptions) => acmeSim(REACHABLE)!(o),
+        },
+      ],
+    };
+    expect(behaviourConformanceGaps(thinGraph).join(" ")).toMatch(/carries 0 edge\(s\)/);
+  });
+
   test("the fixture's own config has no gaps", () => {
     expect(
       behaviourConformanceGaps({
@@ -819,6 +912,7 @@ describe("the conformance suite refuses to prove nothing (#2356)", () => {
             run: () => acmeSim(REACHABLE)!(REQUEST),
             request: REQUEST,
             predict: (options) => acmeSim(REACHABLE)!(options),
+            otherTraffic: "1000 rps, p50",
           },
           { name: "down", declared: ["web"], run: () => acmeSim(CONFIGURED_BUT_DOWN)!(REQUEST), expectRefusal: true },
         ],
@@ -893,8 +987,8 @@ describe("the second lazy lexicon, which passed 28 of 28 (#2356)", () => {
     return behaviourReport(options, { engine: "lazy", version: "1" }, entities);
   };
 
-  test("its `resilience.failure: \"none\"` is now refused at construction", () => {
-    expect(lazy(REQUEST)).rejects.toThrow(/names no failure/);
+  test("its `resilience.failure: \"none\"` is now refused at construction", async () => {
+    await expect(lazy(REQUEST)).rejects.toThrow(/names no failure/);
   });
 
   test("even with a real failure named, it answers every traffic level identically", async () => {
@@ -966,6 +1060,96 @@ describe("the second lazy lexicon, which passed 28 of 28 (#2356)", () => {
     }
     expect(busy.entities.web.cost.perHour).not.toBe(quiet.entities.web.cost.perHour);
     expect(noEdges.entities.web.headroom).not.toEqual(quiet.entities.web.headroom);
+  });
+});
+
+describe("the dodge lexicon, which passed 16 of 16 (#2356)", () => {
+  /**
+   * The sharpest of the three. It never reads an edge and prices the estate off
+   * the **character count of the traffic label** — and it passed every
+   * conformance assertion, including "reads the edges it was handed" and
+   * "echoes the edge coverage", by refusing exactly the two probes that would
+   * have caught it. Both probes accepted a refusal as an answer.
+   */
+  const dodge = async (o: PredictBehaviourOptions): Promise<BehaviourResult> => {
+    if (o.edges.length === 0 || o.edgeCoverage.verdict === "unknown") {
+      return noBehaviourEngineRefusal("dodge");
+    }
+    const entities: Record<string, PredictedBehaviour> = {};
+    for (const name of o.entityNames) {
+      entities[name] = {
+        at: { traffic: o.traffic },
+        // Varies with the traffic *string*, so the level probe is satisfied
+        // while nothing about the level is understood.
+        cost: predictedRate(o.traffic.length / 100, "USD"),
+        headroom: { cpu: 0.5 },
+        errorRate: 0.001,
+        resilience: { failure: "one zone lost", verdict: "survives" },
+        provenance: { engine: "dodge", version: "1", tolerance: "±10%", basis: "modeled" },
+      };
+    }
+    return behaviourReport(o, { engine: "dodge", version: "1" }, entities);
+  };
+
+  // The real probe bodies, run against the dodge. These are the assertions the
+  // conformance suite makes; a weakening of either shows up here as green.
+  test("the coverage probe now complains instead of skipping", async () => {
+    expect(await probeEchoesCoverage(REQUEST, dodge)).toEqual([
+      'refused a request whose graph is intact and whose only change is an "unknown" coverage ' +
+        "verdict (cause: no-engine) — there is nothing here to refuse",
+    ]);
+  });
+
+  test("the edge probe leaves it nothing to refuse, and catches that nothing changed", async () => {
+    // Dropping ONE edge keeps the coverage claim true, so the dodge's refusal
+    // condition (`edges.length === 0`) never fires and it has to answer. Its
+    // answer is identical, because it never looked at the graph.
+    expect(await probeReadsEdges(REQUEST, dodge)).toEqual([
+      "removing an edge changed nothing — the graph is being priced as a bag of nodes",
+    ]);
+  });
+
+  test("it satisfies the traffic probe, which is why the other two must hold", async () => {
+    // Pricing off `traffic.length` moves the figures between two levels, so the
+    // level probe passes. This is the assertion that shows why the edge and
+    // coverage probes carry the weight.
+    expect(await probeTrafficLevel(REQUEST, dodge, "1000 rps, p50")).toEqual([]);
+  });
+
+  test("the fixture passes all four probes", async () => {
+    const predict = (o: PredictBehaviourOptions): Promise<BehaviourResult> =>
+      acmeSim(REACHABLE)!(o);
+    expect(await probeTrafficLevel(REQUEST, predict, "1000 rps, p50")).toEqual([]);
+    expect(await probeReadsEdges(REQUEST, predict)).toEqual([]);
+    expect(await probeEdgelessConsistency(REQUEST, predict)).toEqual([]);
+    expect(await probeEchoesCoverage(REQUEST, predict)).toEqual([]);
+  });
+});
+
+describe("the report's account of its own inputs cannot be edited afterwards (#2360)", () => {
+  test("edgeCoverage is copied, not aliased", () => {
+    // `readonly` is erased at runtime, so assigning the request's object by
+    // reference let a caller mutate `unresolvedKinds` after construction and
+    // change what the report claimed it was computed over.
+    const coverage = {
+      verdict: "partial" as const,
+      unresolvedKinds: ["AWS::SQS::Queue"],
+      dangling: [{ from: "web", path: "vpcId", value: "vpc-1" }],
+    };
+    const report = behaviourReport({ ...req(["web"]), edgeCoverage: coverage }, STAMP, {
+      web: GOOD,
+    });
+    coverage.unresolvedKinds.push("AWS::SNS::Topic");
+    coverage.dangling[0].from = "somewhere-else";
+
+    expect(report.meta.edgeCoverage.unresolvedKinds).toEqual(["AWS::SQS::Queue"]);
+    expect(report.meta.edgeCoverage.dangling?.[0].from).toBe("web");
+  });
+
+  test("the copy is frozen, so a consumer cannot edit it either", () => {
+    const copy = copyEdgeCoverage({ verdict: "partial", unresolvedKinds: ["a"] });
+    expect(Object.isFrozen(copy)).toBe(true);
+    expect(Object.isFrozen(copy.unresolvedKinds)).toBe(true);
   });
 });
 
@@ -1360,6 +1544,57 @@ describe("rule 3 — no credential can reach the engine (#2356)", () => {
     expect(smuggled).toBeDefined();
   });
 
+  test("the fixture lexicon screens with the entry point, not the value-only half", async () => {
+    // F1: `assertNoCredentialInOptions` applies one rule of three. A lexicon
+    // calling it — as this fixture did, and as the docs page told #2357 to —
+    // sends the request anyway on a key-name hit and on a walk-depth hit.
+    const leaky = new Map(DECLARED);
+    leaky.set("db", {
+      entityType: "AWS::RDS::DBInstance",
+      props: { awsSecretAccessKey: "wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY" },
+    });
+    const onName = await acmeSim(REACHABLE)!({ ...REQUEST, entities: leaky });
+    expect(isBehaviourRefusalReport(onName), "a key-name hit reached the engine").toBe(true);
+    if (isBehaviourRefusalReport(onName)) {
+      expect(onName.refusal.cause).toBe("credential-in-request");
+      expect(onName.refusal.reason).toContain("awsSecretAccessKey");
+    }
+
+    // And the depth case, which `assertNoCredentialInOptions` also drops.
+    let deep: unknown = "leaf";
+    for (let i = 0; i < 40; i++) deep = { nested: deep };
+    const nested = new Map(DECLARED);
+    nested.set("web", { entityType: "AWS::EC2::Instance", props: { deep } });
+    const onDepth = await acmeSim(REACHABLE)!({ ...REQUEST, entities: nested });
+    expect(isBehaviourRefusalReport(onDepth), "an unread subtree reached the engine").toBe(true);
+
+    // A live token still throws, because that arm is a stop rather than a
+    // degradation — the split the two functions exist to keep.
+    const token = new Map(DECLARED);
+    token.set("web", {
+      entityType: "AWS::EC2::Instance",
+      props: { note: "ghp_abcdefghijklmnop" },
+    });
+    await expect(acmeSim(REACHABLE)!({ ...REQUEST, entities: token })).rejects.toThrow(
+      /a GitHub token/,
+    );
+  });
+
+  test("the depth budget leaves room for a real property tree", () => {
+    // `options → entities → .get(name) → props` spends three levels before a
+    // declared property is reached, and a k8s workload tree
+    // (`spec.template.spec.containers[].env[].valueFrom.secretKeyRef.key`) runs
+    // to a dozen on its own. Exceeding the budget now refuses, so a budget set
+    // too low refuses real estates rather than protecting them.
+    let tree: unknown = { key: "config-value" };
+    for (const level of ["secretKeyRef", "valueFrom", "env", "containers", "spec", "template", "spec"]) {
+      tree = { [level]: [tree] };
+    }
+    const k8s = new Map(DECLARED);
+    k8s.set("web", { entityType: "AWS::EC2::Instance", props: tree as Record<string, unknown> });
+    expect(findCredentialsInOptions({ ...REQUEST, entities: k8s })).toEqual([]);
+  });
+
   test("a suspicious field name refuses, and does NOT throw", () => {
     // The blast radius matters. Throwing is the whole-lexicon failure per
     // lexicon.ts, and the name arm is a heuristic: one `tags: { author: … }`
@@ -1453,7 +1688,7 @@ describe("rule 3 — no credential can reach the engine (#2356)", () => {
 
   test("a structure deeper than the walk reads is reported, not passed in silence", () => {
     let deep: unknown = "leaf";
-    for (let i = 0; i < 20; i++) deep = { nested: deep };
+    for (let i = 0; i < 40; i++) deep = { nested: deep };
     const nested = new Map(DECLARED);
     nested.set("web", { entityType: "AWS::EC2::Instance", props: { deep } });
     const found = findCredentialsInOptions({ ...REQUEST, entities: nested });
@@ -1521,8 +1756,11 @@ describe("rule 3 — no credential can reach the engine (#2356)", () => {
       expect(refused, `${lexicon} keys refused with a benign value`).toEqual([]);
     }
 
-    // Pinned so a schema regeneration that adds names is visible rather than
-    // silently shrinking what this test covers.
+    // A floor, not a pin: this catches a regeneration that SHRINKS the key set
+    // (or an extractor that quietly stops matching), which is the way this test
+    // goes vacuous. A regeneration that adds names is not caught here and does
+    // not need to be — the zero-refusals assertion above already covers every
+    // name present, however many there are.
     expect(counts.aws).toBeGreaterThan(13000);
     expect(counts.azure).toBeGreaterThan(4900);
     expect(counts.gcp).toBeGreaterThan(3300);

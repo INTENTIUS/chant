@@ -56,16 +56,17 @@
  * field for field, plus `traffic`, `edges` and `edgeCoverage`, and then works
  * against credentials on two levels. The type declares every obvious name
  * `?: never`, which catches the deliberate attempt; and
- * {@link assertNoCredentialInOptions} walks the whole request at runtime,
- * matching credential-shaped **values** as well as credential-shaped keys,
- * which is what catches the accident.
+ * {@link screenBehaviourRequest} walks the whole request at runtime, matching
+ * credential-shaped **values** as well as credential-shaped keys, which is what
+ * catches the accident.
  *
- * The runtime walk is the load-bearing half, because the type cannot see the
- * two channels that actually carry a secret in practice:
- * `entities[*].props` is `Record<string, unknown>` straight out of the build,
- * and a lexicon surfacing a connection string puts one there without deciding
- * to. See {@link assertNoCredentialInOptions} for exactly what the walk detects
- * and, more importantly, what it does not.
+ * `screenBehaviourRequest` is the one entry point — its own doc comment carries
+ * the call sequence, and nothing else here restates it. The runtime walk is the
+ * load-bearing half, because the type cannot see the two channels that actually
+ * carry a secret in practice: `entities[*].props` is `Record<string, unknown>`
+ * straight out of the build, and a lexicon surfacing a connection string puts
+ * one there without deciding to. See {@link assertNoCredentialInOptions} for
+ * exactly what the walk detects and, more importantly, what it does not.
  *
  * `edges` is the one place the options mirror breaks, and the field's own doc
  * says why: the epic's input is a resource graph, a deep read has no use for
@@ -698,7 +699,12 @@ export function behaviourReport(
     version: stamp.version,
     at: { traffic: request.traffic },
     ...(stamp.total ? { total: stamp.total } : {}),
-    edgeCoverage: request.edgeCoverage,
+    // Copied, not aliased. `readonly` is erased at runtime, so assigning the
+    // request's object by reference let a caller mutate
+    // `request.edgeCoverage.unresolvedKinds` after construction and change what
+    // the report claims it was computed over — the one field whose whole job is
+    // to be the report's honest account of its own inputs.
+    edgeCoverage: copyEdgeCoverage(request.edgeCoverage),
   };
   const entityNames = request.entityNames;
   const asked = new Set(entityNames);
@@ -813,16 +819,33 @@ export type FigureMismatch =
   | "mixed-failure";
 
 /**
+ * The total witness, keyed by the union — the same construction the other four
+ * closed sets use, and this one needs it as much as any.
+ *
+ * {@link figureMismatches} filters {@link compareFigures}'s output through the
+ * array below. An axis added to the union and to `compareFigures` but not to
+ * the array would be reported by one and silently dropped by the other, which
+ * is exactly the "a mismatch went unsaid" failure the set return was added to
+ * prevent, reappearing in the display path.
+ *
+ * The value is the display rank rather than `true`, so the order is derived
+ * from the witness too and there is one place to state it.
+ */
+const FIGURE_MISMATCH_WITNESS: Record<FigureMismatch, number> = {
+  "mixed-engine": 0,
+  "mixed-level": 1,
+  "mixed-currency": 2,
+  "mixed-basis": 3,
+  "mixed-failure": 4,
+};
+
+/**
  * Every mismatch, in the order a consumer should show them — most fundamental
  * first. Order is presentation; membership is the contract.
  */
-export const FIGURE_MISMATCHES: readonly FigureMismatch[] = [
-  "mixed-engine",
-  "mixed-level",
-  "mixed-currency",
-  "mixed-basis",
-  "mixed-failure",
-];
+export const FIGURE_MISMATCHES: readonly FigureMismatch[] = (
+  Object.keys(FIGURE_MISMATCH_WITNESS) as FigureMismatch[]
+).sort((a, b) => FIGURE_MISMATCH_WITNESS[a] - FIGURE_MISMATCH_WITNESS[b]);
 
 /**
  * Classify a pair of figures for delta purposes. **This is the one to call.**
@@ -1463,6 +1486,22 @@ export interface BehaviourEdgeCoverage {
  * `unknown` wearing a more confident word. Use `unknown` for "I cannot say";
  * `partial` is for "I can say, and here it is".
  */
+/**
+ * A detached copy, frozen. The report's account of its own inputs must not
+ * change after the report exists, and `readonly` buys nothing at runtime.
+ */
+export function copyEdgeCoverage(coverage: BehaviourEdgeCoverage): BehaviourEdgeCoverage {
+  const copy: BehaviourEdgeCoverage = {
+    verdict: coverage.verdict,
+    ...(coverage.dangling ? { dangling: Object.freeze(coverage.dangling.map((d) => Object.freeze({ ...d }))) } : {}),
+    ...(coverage.unresolvedKinds ? { unresolvedKinds: Object.freeze([...coverage.unresolvedKinds]) } : {}),
+    ...(coverage.containmentEdges
+      ? { containmentEdges: Object.freeze(coverage.containmentEdges.map((e) => Object.freeze({ ...e }))) }
+      : {}),
+  };
+  return Object.freeze(copy);
+}
+
 export function validateEdgeCoverage(coverage: BehaviourEdgeCoverage): void {
   if (!isEdgeCoverageVerdict(coverage?.verdict)) {
     throw new Error(
@@ -1606,7 +1645,18 @@ export interface PredictBehaviourOptions {
 }
 
 /** How deep the credential walk goes before it stops descending. */
-const CREDENTIAL_WALK_DEPTH = 12;
+/**
+ * How deep the credential walk goes before it stops descending and says so.
+ *
+ * Budget the levels honestly: `options → entities → .get(name) → props` spends
+ * three before a single declared property is reached, so the number here is not
+ * the depth a lexicon author is thinking about. A Kubernetes workload tree
+ * (`spec.template.spec.containers[].env[].valueFrom.secretKeyRef.key`) or a
+ * nested CloudFormation `Properties` block runs to a dozen on its own, and
+ * exceeding this is now a *refusal* rather than silence — so a budget set too
+ * low refuses real estates instead of protecting them.
+ */
+const CREDENTIAL_WALK_DEPTH = 32;
 
 /**
  * Refuse a request carrying anything credential-shaped, anywhere in it.
@@ -1743,11 +1793,17 @@ export function findCredentialsInOptions(options: object): CredentialFinding[] {
 /**
  * Throw when the request carries something that **is** a credential.
  *
- * Only the value-shape rule throws, and throwing is deliberate here: a live
- * token in a request bound for a third party is not a degradation to report, it
- * is a stop. Throwing is the whole-lexicon failure per `lexicon.ts`, which is
- * the right blast radius for this and the wrong one for a suspicious field name
- * — see {@link screenBehaviourRequest}.
+ * **Not the entry point.** This applies one of the three rules and discards the
+ * other two, so a `key-name` hit and a `walk-depth` hit both pass it silently.
+ * Call {@link screenBehaviourRequest}, which runs this and then acts on what is
+ * left. This stays exported because "did the request contain an actual token"
+ * is a question worth asking on its own, and because the split is what keeps
+ * the blast radii different.
+ *
+ * Only the value-shape rule throws, and throwing is deliberate: a live token in
+ * a request bound for a third party is not a degradation to report, it is a
+ * stop. Throwing is the whole-lexicon failure per `lexicon.ts`, which is the
+ * right blast radius for this and the wrong one for a suspicious field name.
  */
 export function assertNoCredentialInOptions(options: object): void {
   const found = findCredentialsInOptions(options).filter((f) => f.rule === "value-shape");
@@ -1762,7 +1818,21 @@ export function assertNoCredentialInOptions(options: object): void {
 }
 
 /**
- * Screen a whole request. **This is what a lexicon calls.**
+ * Screen a whole request. **This is the entry point, and the only one.**
+ *
+ * This doc comment is the source of truth for the sequence; the module header
+ * and the authoring page both point here rather than restating it. A lexicon's
+ * `predictBehaviour` opens with exactly this and nothing else:
+ *
+ * ```ts
+ * const refusal = screenBehaviourRequest("acme", options);
+ * if (refusal) return refusal;
+ * ```
+ *
+ * Calling {@link assertNoCredentialInOptions} instead applies one rule of three
+ * and drops the rest, which is how a `ghp_…` token nested past the walk's depth
+ * budget, and an `awsSecretAccessKey` in `props`, both sailed through into a
+ * request that was then sent.
  *
  * Two outcomes, because two things are being caught and they deserve different
  * blast radii:

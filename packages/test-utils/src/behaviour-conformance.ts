@@ -49,6 +49,7 @@ import {
   isBehaviourResult,
   renderBehaviourRefusal,
   validateBehaviourBlock,
+  type BehaviourReport,
   type BehaviourResult,
   type BehaviourUnpredictedReason,
   type PredictBehaviourOptions,
@@ -110,9 +111,13 @@ export interface BehaviourScenario {
   /** The lexicon's `predictBehaviour`, callable with a varied {@link request}. */
   predict?: (options: PredictBehaviourOptions) => Promise<BehaviourResult>;
   /**
-   * A second traffic level this lexicon should answer differently at. Defaults
-   * to a much busier one; override where the estate's figures genuinely do not
-   * move between levels and a different pair proves more.
+   * A second traffic level this lexicon answers differently at. **Required**
+   * wherever {@link request} and {@link predict} are supplied, and deliberately
+   * not defaulted: a synthesized level is one no engine has agreed to
+   * understand, and `behaviour.ts` says an engine that cannot understand the
+   * level it was handed refuses rather than substituting one it likes. A
+   * default therefore failed a contract-correct lexicon for obeying the
+   * contract. `behaviourConformanceGaps` reports its absence.
    */
   otherTraffic?: string;
 }
@@ -125,6 +130,128 @@ export interface BehaviourConformanceConfig {
 
 /** The variable names a refusal message is allowed to be pointing at. */
 const VARIABLE_PATTERN = /\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b/;
+
+/** A lexicon's `predictBehaviour`, callable with a varied request. */
+type Predict = (options: PredictBehaviourOptions) => Promise<BehaviourResult>;
+
+/**
+ * The four probes, as pure functions returning the reasons a lexicon failed
+ * them. Empty means it passed.
+ *
+ * Extracted from the `it()` bodies for the same reason
+ * {@link behaviourConformanceGaps} is: an assertion living only inside a
+ * registered test cannot itself be shown to fail without registering a failing
+ * suite, so nothing could prove that weakening a probe reopens the hole it was
+ * added for. With them out here, the should-fail lexicons in
+ * `behaviour.test.ts` run the real probe code and assert it complains.
+ */
+const graphFigures = (r: BehaviourReport): string =>
+  JSON.stringify(
+    Object.entries(r.entities)
+      .sort(([x], [y]) => x.localeCompare(y))
+      .map(([n, blk]) => [n, blk.headroom, blk.errorRate, blk.resilience.verdict]),
+  );
+
+const levelFigures = (r: BehaviourReport): string =>
+  JSON.stringify(
+    Object.entries(r.entities)
+      .sort(([x], [y]) => x.localeCompare(y))
+      .map(([n, blk]) => [n, blk.cost.perHour, blk.headroom, blk.errorRate]),
+  );
+
+/** Two traffic levels must produce two answers. Echo is not use. */
+export async function probeTrafficLevel(
+  request: PredictBehaviourOptions,
+  predict: Predict,
+  otherTraffic: string,
+): Promise<string[]> {
+  const a = await predict(request);
+  const b = await predict({ ...request, traffic: otherTraffic });
+  if (isBehaviourRefusalReport(a) || isBehaviourRefusalReport(b)) {
+    return ["expected reports from both levels — pick an `otherTraffic` this lexicon accepts"];
+  }
+  const out: string[] = [];
+  if (b.meta.at.traffic !== otherTraffic) out.push("the second level was not echoed");
+  if (levelFigures(a) === levelFigures(b)) {
+    out.push("every figure is identical at both traffic levels — the level is echoed, not used");
+  }
+  return out;
+}
+
+/**
+ * Drop ONE edge, keep the coverage verdict, and require the answer to move.
+ *
+ * Emptying the graph instead hands the lexicon a legitimate reason to refuse —
+ * "I cannot predict what I cannot see" — and accepting that refusal was the
+ * hole: a lexicon that refused the empty-graph probe and priced the real
+ * request off the traffic label's character count passed this and every other
+ * assertion. A graph with one fewer edge is still a graph, its coverage claim
+ * is still true, and there is nothing here to decline.
+ */
+export async function probeReadsEdges(
+  request: PredictBehaviourOptions,
+  predict: Predict,
+): Promise<string[]> {
+  const full = await predict(request);
+  const fewer = await predict({ ...request, edges: request.edges.slice(0, -1) });
+  if (isBehaviourRefusalReport(full)) return ["refused the scenario's own request"];
+  if (isBehaviourRefusalReport(fewer)) {
+    return [
+      "refused a graph with one edge removed, whose coverage claim is unchanged — there is " +
+        "nothing here an engine can legitimately decline",
+    ];
+  }
+  return graphFigures(full) === graphFigures(fewer)
+    ? ["removing an edge changed nothing — the graph is being priced as a bag of nodes"]
+    : [];
+}
+
+/**
+ * Refusing an edgeless graph is a legitimate policy; refusing it only when
+ * probed is a dodge. Whatever the lexicon does, it must do the same thing twice.
+ */
+export async function probeEdgelessConsistency(
+  request: PredictBehaviourOptions,
+  predict: Predict,
+): Promise<string[]> {
+  const empty = { ...request, edges: [], edgeCoverage: { verdict: "unknown" as const } };
+  const first = await predict(empty);
+  const second = await predict(empty);
+  if (isBehaviourRefusalReport(first) !== isBehaviourRefusalReport(second)) {
+    return ["the same request answered two different ways"];
+  }
+  if (isBehaviourRefusalReport(first) && isBehaviourRefusalReport(second)) {
+    return first.refusal.cause === second.refusal.cause
+      ? []
+      : ["the same request refused for two different causes"];
+  }
+  return [];
+}
+
+/**
+ * The coverage the lexicon was given must reach the report.
+ *
+ * No refusal escape: this varies ONLY the verdict and leaves `edges` fully
+ * populated, so "I cannot see the graph" is not available and a refusal is a
+ * failure. The early return that used to sit here is how a lexicon keyed on
+ * `edgeCoverage.verdict === "unknown"` skipped the one assertion that would
+ * have caught it.
+ */
+export async function probeEchoesCoverage(
+  request: PredictBehaviourOptions,
+  predict: Predict,
+): Promise<string[]> {
+  const unknown = await predict({ ...request, edgeCoverage: { verdict: "unknown" } });
+  if (isBehaviourRefusalReport(unknown)) {
+    return [
+      `refused a request whose graph is intact and whose only change is an "unknown" coverage ` +
+        `verdict (cause: ${unknown.refusal.cause}) — there is nothing here to refuse`,
+    ];
+  }
+  return unknown.meta.edgeCoverage.verdict === "unknown"
+    ? []
+    : [`the report claims coverage "${unknown.meta.edgeCoverage.verdict}" for a request that said "unknown"`];
+}
 
 /**
  * Register the conformance suite for one lexicon. Call it from the lexicon's
@@ -167,12 +294,31 @@ export function behaviourConformanceGaps(config: BehaviourConformanceConfig): st
       gaps.push(`scenario "${s.name}" predicts but does not state the traffic level it requested`);
     }
   }
-  if (!config.scenarios.some((s) => !s.expectRefusal && s.request && s.predict)) {
+  const probes = config.scenarios.filter((s) => !s.expectRefusal && s.request && s.predict);
+  if (probes.length === 0) {
     gaps.push(
       "no scenario supplies `request` and `predict`, so the suite can only ask once — and a lexicon " +
         "that echoes the traffic level without using it, and never reads `edges`, is indistinguishable " +
         "from one that does the work",
     );
+  }
+  for (const s of probes) {
+    if (!s.otherTraffic) {
+      gaps.push(
+        `scenario "${s.name}" supplies a probe but no \`otherTraffic\`. There is no safe default: a ` +
+          "synthesized level is one no engine has agreed to understand, and the contract says an " +
+          "engine that cannot understand a level refuses rather than substituting — so the default " +
+          "failed a correct lexicon for being correct. Name a second level this engine accepts",
+      );
+    }
+    if ((s.request?.edges.length ?? 0) < 2) {
+      gaps.push(
+        `scenario "${s.name}" supplies a probe whose request carries ${s.request?.edges.length ?? 0} ` +
+          "edge(s). The edge probe drops one and requires the answer to change, so it needs at least " +
+          "two to be anything but vacuous — an edgeless request passes \"reads the edges it was " +
+          "handed\" without the probe ever running",
+      );
+    }
   }
   return gaps;
 }
@@ -393,60 +539,22 @@ export function describeBehaviourConformance(config: BehaviourConformanceConfig)
         if (scenario.request && scenario.predict) {
           const { request, predict } = scenario;
 
+          const other = scenario.otherTraffic!;
+
           it("answers a different traffic level differently — echo is not use", async () => {
-            const other = scenario.otherTraffic ?? `${request.traffic} ×10 (conformance probe)`;
-            const a = await predict(request);
-            const b = await predict({ ...request, traffic: other });
-            if (isBehaviourRefusalReport(a) || isBehaviourRefusalReport(b)) {
-              throw new Error("expected reports from both levels");
-            }
-            expect(b.meta.at.traffic, "the second level was not echoed").toBe(other);
-            const figures = (r: typeof a): string =>
-              JSON.stringify(
-                Object.entries(r.entities)
-                  .sort(([x], [y]) => x.localeCompare(y))
-                  .map(([n, blk]) => [n, blk.cost.perHour, blk.headroom, blk.errorRate]),
-              );
-            expect(
-              figures(a),
-              "every figure is identical at both traffic levels — the level is being echoed, not used",
-            ).not.toBe(figures(b));
+            expect(await probeTrafficLevel(request, predict, other)).toEqual([]);
           });
 
           it("reads the edges it was handed", async () => {
-            const withEdges = await predict(request);
-            const withoutEdges = await predict({
-              ...request,
-              edges: [],
-              edgeCoverage: { verdict: "unknown" },
-            });
-            if (isBehaviourRefusalReport(withEdges)) throw new Error("expected a report");
-            // A refusal on a graph with no edges is a legitimate answer — an
-            // engine may decline to predict a graph it cannot see. Silently
-            // returning the same numbers is not.
-            if (isBehaviourRefusalReport(withoutEdges)) return;
-            if (request.edges.length === 0) return;
-            const figures = (r: typeof withEdges): string =>
-              JSON.stringify(
-                Object.entries(r.entities)
-                  .sort(([x], [y]) => x.localeCompare(y))
-                  .map(([n, blk]) => [n, blk.headroom, blk.errorRate, blk.resilience.verdict]),
-              );
-            expect(
-              figures(withEdges),
-              "removing every edge changed nothing — the graph is being priced as a bag of nodes",
-            ).not.toBe(figures(withoutEdges));
+            expect(await probeReadsEdges(request, predict)).toEqual([]);
+          });
+
+          it("treats an unseeable graph the same way whether or not it is being probed", async () => {
+            expect(await probeEdgelessConsistency(request, predict)).toEqual([]);
           });
 
           it("echoes the edge coverage it was given onto the report", async () => {
-            // Otherwise a consumer holding the report cannot tell whether a
-            // resilience verdict was computed over a complete graph or a guess.
-            const unknown = await predict({
-              ...request,
-              edgeCoverage: { verdict: "unknown" },
-            });
-            if (isBehaviourRefusalReport(unknown)) return;
-            expect(unknown.meta.edgeCoverage.verdict).toBe("unknown");
+            expect(await probeEchoesCoverage(request, predict)).toEqual([]);
           });
         }
 

@@ -21,7 +21,14 @@ export {
 export { createMockPlugin, staticDescribeResources, staticObservation, staticDeepObservation, staticListArtifacts, staticBehaviour } from "./mock-plugin";
 export type { MockPluginOptions } from "./mock-plugin";
 export { describeObservationConformance } from "./observation-conformance";
-export { describeBehaviourConformance, behaviourConformanceGaps } from "./behaviour-conformance";
+export {
+  describeBehaviourConformance,
+  behaviourConformanceGaps,
+  probeTrafficLevel,
+  probeReadsEdges,
+  probeEdgelessConsistency,
+  probeEchoesCoverage,
+} from "./behaviour-conformance";
 export { describeApplyConformance } from "./apply-conformance";
 export type { ObservationConformanceConfig, ObservationScenario } from "./observation-conformance";
 export type { BehaviourConformanceConfig, BehaviourScenario } from "./behaviour-conformance";

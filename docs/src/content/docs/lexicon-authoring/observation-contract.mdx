@@ -308,7 +308,7 @@ The three methods above report what a substrate was asked and what it answered. 
 
 Options mirror `observeResourcesDeep()` field for field, plus `traffic`, `edges` and `edgeCoverage`. The engine behind it is handed the resource graph and the traffic level and nothing else.
 
-It is given no credential, and the contract works at that on two levels. The type declares every obvious name `?: never`, which catches the deliberate attempt at compile time. `assertNoCredentialInOptions` then walks the whole request at runtime, reading values as well as key names, which is what catches the accident. The accident is the realistic one, because `entities[*].props` is `Record<string, unknown>` straight out of the build and no type on this contract can see into it. A lexicon surfacing a connection string puts one there without deciding to.
+It is given no credential, and the contract works at that on two levels. The type declares every obvious name `?: never`, which catches the deliberate attempt at compile time. `screenBehaviourRequest` then walks the whole request at runtime, reading values as well as key names, which is what catches the accident. The accident is the realistic one, because `entities[*].props` is `Record<string, unknown>` straight out of the build and no type on this contract can see into it. A lexicon surfacing a connection string puts one there without deciding to.
 
 The walk detects three things:
 
@@ -317,6 +317,15 @@ The walk detects three things:
 - a key whose name reads as a credential, but only when its value is a string of at least eight characters that is not an evident reference, and only when the key is outside the reference family
 
 The first two throw. The third refuses, and the difference is deliberate. Throwing is the whole-lexicon failure, and the name layer is a heuristic: when it threw, one `tags: { author: "…" }` anywhere in an estate killed the entire overlay with a stack trace. A suspicious name now returns a `BehaviourRefusalReport` with cause `credential-in-request`, which is this contract's own answer to "no faked numbers" applied to its own guard.
+
+Because the two outcomes differ, there is one entry point and your method opens with it:
+
+```typescript
+const refusal = screenBehaviourRequest("acme", options);
+if (refusal) return refusal;
+```
+
+`assertNoCredentialInOptions` is the value-shape half on its own. Calling it instead applies one rule of three and discards the rest, which is how a token nested past the walk's depth budget, and an `awsSecretAccessKey` sitting in `props`, both travelled with a request that was then sent. The function's own doc comment in `behaviour.ts` is the source of truth for this sequence.
 
 The gating on that third layer is what makes it usable. An ungated substring match on `SECRET|TOKEN|PASSWORD|AUTH` refused 406 aws keys when it was run over every property key in chant's own generated schemas. It refused 173 azure ones. `imagePullSecrets`, `secretName` and `secretKeyRef` reference a Secret by name. `ClientToken` is an idempotency nonce. Not one of `CertificateAuthorityArn`, `authorizedNetworks` or `passwordPolicy` holds a secret. A test now runs all four lexicons' keys through the guard and requires zero refusals.
 
