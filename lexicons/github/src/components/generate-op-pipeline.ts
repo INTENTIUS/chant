@@ -245,26 +245,37 @@ const GATE_OUTPUT_SCRIPT =
  * `--json`, tee'd so the record is both in the log and on disk, then read for
  * the job's outputs.
  *
- * `set -o pipefail` is not decoration. Without it, a failing `chant run`
- * piped into `tee` comes back as `tee`'s own zero and turns a broken apply
- * green — the exact thing this whole change must not do. But `pipefail` is a
- * bash-ism: GitHub's (and Forgejo's) default shell for a job with no
- * `container:` is `bash --noprofile --norc -eo pipefail`, which already sets
- * it, but the default for a job that *does* carry `container:` — which every
- * Op job does, this one included (#2299) — is plain `sh`, which rejects `set
- * -o pipefail` outright (`Illegal option -o pipefail`) and fails the step
- * before `chant` ever runs. This generator's own Op job always sets
- * `container:` (see {@link buildGithubOpPipelineDocs}'s `container: image`),
- * so the failure is not a corner case — it is what every gated apply and
- * gated adopt does today.
+ * The exit-code capture below is not decoration. Piping straight into `tee`
+ * — `chant run ... | tee "$json"` — reports `tee`'s own zero as the step's
+ * result no matter what `chant run` exited with, and turns a broken apply
+ * green, which is the exact thing this step must not do. bash's fix for that
+ * is `set -o pipefail`, but `pipefail` is a bash-ism, and this generator's
+ * own Op job always sets `container:` (see {@link buildGithubOpPipelineDocs}'s
+ * `container: image`) — GitHub's (and Forgejo's) default shell for a
+ * `container:` job is plain `sh`, which rejects `set -o pipefail` outright
+ * (`Illegal option -o pipefail`) and fails the step before `chant` ever runs
+ * (#2299). #2307 first fixed that by pairing the `pipefail` line with an
+ * unconditional `shell: "bash"` on the step — which then broke every
+ * consumer whose `options.image` has no bash on it at all, e.g. an
+ * `alpine:*` or distroless image (#2321): busybox `ash` ran the old
+ * plain-pipe script fine, so pinning `shell: bash` regressed exactly the
+ * images that never needed pipefail's workaround in the first place.
  *
- * That is why this function returns the whole step record rather than just
- * the script text: `shell: "bash"` is bundled into the same return value as
- * the `pipefail` line, so nothing that calls it can get one without the
- * other. A future edit that inlines another `pipefail`-bearing script has to
- * either reuse this function or open a new call site that a reviewer can see
- * declares no shell — the property that made #2299 possible in the first
- * place is no longer available by accident.
+ * So this step needs no shell declaration and runs under whatever `sh` the
+ * consumer's image provides. It gets the same failure-cannot-hide guarantee
+ * `pipefail` gave, without the bash-ism, by capturing the invocation's own
+ * exit code into a file from *inside* the pipeline's first stage — where
+ * `tee` can never see it — and checking that file once the pipe finishes:
+ * `{ invocation; echo "$?" >status; } | tee "$json"` followed by `exit
+ * "$(cat "$status")"` when that is non-zero. `set +e` up front makes this
+ * work under any default shell a container job might get, `-e` included:
+ * GitHub's documented `sh` template is `sh -e {0}`, and without `set +e`
+ * `-e` would abort the brace group at the first failing command — before
+ * `echo "$?"` ever runs — which was verified by running both this script and
+ * that failure mode under bash and dash directly, `-e` on. Everything past
+ * that point (`set +e`, `{ }`, `$(...)`, `[ ]`) is POSIX `sh`, so it needs no
+ * `shell:` field to run correctly under `ash`, `dash`, or bash alike, and
+ * #2299 does not reopen: nothing here is a bash-only construct.
  *
  * The `node -e` line and the job's own `outputs:` mapping exist for exactly
  * one reader: the gate-notice job beside it, which is `needs:`-only readable
@@ -283,12 +294,15 @@ function gatedRunStep(
   env: Record<string, string>,
 ): Record<string, unknown> {
   const lines = [
-    "set -o pipefail",
+    "set +e",
     'json="${RUNNER_TEMP:-/tmp}/chant-run-' + op + '.json"',
-    `${invocation} | tee "$json"`,
+    'status="${RUNNER_TEMP:-/tmp}/chant-run-' + op + '.status"',
+    `{ ${invocation}; echo "$?" >"$status"; } | tee "$json"`,
+    'code=$(cat "$status")',
+    '[ "$code" -eq 0 ] || exit "$code"',
   ];
   if (emitOutputs) lines.push(`node -e '${GATE_OUTPUT_SCRIPT}' "$json"`);
-  return { id, run: lines.join("\n"), shell: "bash", env };
+  return { id, run: lines.join("\n"), env };
 }
 
 /**
