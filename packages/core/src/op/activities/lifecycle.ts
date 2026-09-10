@@ -1,5 +1,6 @@
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
+import { computePlanDigest } from "../../lifecycle/plan-digest";
 
 const execAsync = promisify(exec);
 
@@ -39,6 +40,40 @@ export interface LifecycleDiffResult {
    * `chant lifecycle diff --live`).
    */
   drifted: boolean;
+  /**
+   * This diff's identity (#2300) — the change set `chant lifecycle diff`
+   * reported, hashed. `ApplyOp` hands it to its gate step's `plan`, so an
+   * approval binds to the change set the approver read rather than to the
+   * next run of the Op.
+   *
+   * Computed over {@link normalizeDiffChangeSet}'s canonical form of
+   * `output`, so incidental whitespace does not read as a changed plan, while
+   * any added, removed or reworded row does.
+   */
+  planDigest: string;
+}
+
+/**
+ * The change set half of a `chant lifecycle diff` render, canonicalised for
+ * digesting (#2300).
+ *
+ * The diff render is line-oriented: section headers and the resource rows
+ * under them. Two runs over an unchanged environment print the same lines, so
+ * the lines are the change set. Normalising is deliberately minimal — CRLF to
+ * LF, trailing whitespace off each line, blank lines dropped — because
+ * anything more aggressive would start discarding rows, and a digest that
+ * discards rows is a digest that approves changes nobody saw.
+ *
+ * Unlike a terraform plan there is no timestamp to strip: the diff render
+ * carries none. If one is ever added it has to be dropped here, or every
+ * approval would be stale the moment it was written.
+ */
+export function normalizeDiffChangeSet(output: string): string[] {
+  return output
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .map((line) => line.replace(/\s+$/, ""))
+    .filter((line) => line !== "");
 }
 
 /**
@@ -60,6 +95,20 @@ function detectDrift(output: string): boolean {
 }
 
 /**
+ * The identity of one `chant lifecycle diff` result (#2300). The environment
+ * and the `--live` flag are hashed alongside the change set because they say
+ * what the change set is *of*: the same rows against `staging` are not an
+ * approval to apply against `prod`.
+ */
+function lifecycleDiffDigest(args: LifecycleDiffArgs, output: string): string {
+  return computePlanDigest("lifecycle-diff", {
+    env: args.env,
+    live: args.live === true,
+    changeSet: normalizeDiffChangeSet(output),
+  });
+}
+
+/**
  * Run `chant lifecycle diff <env>` and return the output + structured drift
  * flag. Read-only; intended for use inside watch/observation Ops.
  * Uses fastIdempotent profile.
@@ -75,11 +124,11 @@ export async function lifecycleDiff(args: LifecycleDiffArgs, signal?: AbortSigna
     const { stdout, stderr } = await execAsync(`chant lifecycle diff ${args.env}${liveFlag}`, { signal });
     const output = `${stdout}${stderr}`.trim();
     if (output) console.log(output);
-    return { output, exitCode: 0, drifted: detectDrift(output) };
+    return { output, exitCode: 0, drifted: detectDrift(output), planDigest: lifecycleDiffDigest(args, output) };
   } catch (err) {
     const e = err as { code?: number; stdout?: string; stderr?: string };
     const output = `${e.stdout ?? ""}${e.stderr ?? ""}`.trim();
     if (output) console.error(output);
-    return { output, exitCode: e.code ?? 1, drifted: detectDrift(output) };
+    return { output, exitCode: e.code ?? 1, drifted: detectDrift(output), planDigest: lifecycleDiffDigest(args, output) };
   }
 }

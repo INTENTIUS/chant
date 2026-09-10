@@ -19,6 +19,14 @@
  * pre-authorize a future run's gate that has since been recorded pending; a
  * resolution from last month does not answer the fact this run just wrote.
  *
+ * Since #2300 a gate can also bind a plan. `GateCheckInput.planDigest` is
+ * what this run's Plan phase produced (`../lifecycle/plan-digest.ts`), and a
+ * resolution counts only when it was recorded for that same plan — recency
+ * demoted from the criterion to the tiebreak. Approve, edit the root, re-run,
+ * and the gate refuses by name instead of applying something no approver saw,
+ * which is what INTENTIUS/choudoufu#1026 measured it doing. A gate with no
+ * `planDigest` decides exactly as it did before.
+ *
  * Ledger access goes through {@link GateLedgerPort} rather than straight to
  * git, so a test (and the operator's own in-memory paths) can drive the
  * decision without an orphan branch on disk.
@@ -28,7 +36,7 @@ import {
   appendPendingGate,
   isPendingGateExpired,
   latestPendingGate,
-  latestResolutionSince,
+  latestResolutionForPlan,
   readGateLedger,
   resolveApprovalUrl,
   DEFAULT_GATE_EXPIRY,
@@ -36,6 +44,7 @@ import {
   type PendingGateInput,
   type PendingGateRecord,
 } from "../lifecycle/gate-ledger";
+import { describePlanDigest } from "../lifecycle/plan-digest";
 import { pushLifecycle, requireLifecycleLedger } from "../lifecycle/git";
 import { parseDuration } from "./duration";
 
@@ -146,8 +155,61 @@ export interface GateCheckInput {
   timeout?: string;
   /** Identifies the run that reached the gate, when the caller has one. */
   runId?: string;
+  /**
+   * The plan this run reached the gate with (#2300) — `computePlanDigest`'s
+   * output (`../lifecycle/plan-digest.ts`), from the Plan phase that ran a
+   * moment ago.
+   *
+   * Supplying it makes the gate plan-bound: only a resolution recorded for
+   * this exact digest satisfies it, and one recorded for a different plan (or
+   * for no plan at all) is reported as a {@link GateDigestMismatch} instead.
+   * Omitting it keeps the pre-#2300 rule, where the newest resolution since
+   * the standing pending fact satisfies the gate whatever has changed since.
+   */
+  planDigest?: string;
   /** ISO-8601 "now" — supplied by the caller, so the decision is deterministic under test. */
   now?: string;
+}
+
+/**
+ * A standing resolution that answers this gate but not this plan (#2300) —
+ * what a refusal names.
+ */
+export interface GateDigestMismatch {
+  /** The plan that was approved. `undefined` for a resolution written before #2300, which recorded no plan at all. */
+  approved?: string;
+  /** The plan this run's Plan phase produced. */
+  planned: string;
+  /** Who recorded the approval that does not apply here. */
+  resolvedBy: string;
+  /** When they recorded it. */
+  timestamp: string;
+}
+
+/**
+ * The refusal line for a {@link GateDigestMismatch}: which plan was approved,
+ * which was planned, and what closes the gap. One function so the executor's
+ * step record, the human render and the CI summary say the same thing.
+ *
+ * The two cases get different prose because they are different facts. A
+ * resolution for another plan means something changed between the approval
+ * and this run. A resolution with no plan on it means nothing is known to
+ * have changed — the record simply never said what it approved, which is
+ * every record written before #2300.
+ */
+export function describeGateMismatch(op: string, gate: string, mismatch: GateDigestMismatch): string {
+  const why =
+    mismatch.approved === undefined
+      ? "That resolution predates plan-bound gates (#2300) and records no plan at all, so it cannot " +
+        "answer for this one. Approving again binds it:"
+      : "The configuration or the live system changed between that approval and this plan, so it needs " +
+        "a fresh one:";
+  return (
+    `Gate "${gate}" is approved, but not for this plan. ` +
+    `approved: ${describePlanDigest(mismatch.approved)} (by ${mismatch.resolvedBy} at ${mismatch.timestamp}); ` +
+    `planned: ${mismatch.planned}. ` +
+    `${why} ${approveCommand(op, gate)}`
+  );
 }
 
 /** Either the gate is answered, or it is a standing fact. */
@@ -166,6 +228,8 @@ export type GateCheck =
       pushed?: boolean;
       /** Set when `pushed` is false. */
       pushWarning?: string;
+      /** Present when a resolution stands for this gate but for another plan (#2300). */
+      mismatch?: GateDigestMismatch;
     };
 
 /** The beginning of time — the anchor for a gate that has never been recorded pending, so any resolution for it counts. */
@@ -175,24 +239,57 @@ const EPOCH = new Date(0).toISOString();
  * Decide a gate against the ledger, recording the pending fact when it isn't
  * answered.
  *
- * - A resolution newer than the newest pending fact satisfies the gate.
- * - Otherwise, a pending fact that hasn't expired stands as it is: the run
- *   ends `gated` and the ledger is left alone, so an operator ticking every
- *   minute against an unapproved gate does not append a line a minute.
- * - Otherwise (no pending fact, or the newest one has expired) a fresh pending
- *   fact is appended and the run ends `gated`. `recorded` says which of the
- *   two happened, so a renderer can tell "just recorded" from "still standing".
+ * - A resolution recorded for this run's own plan, newer than the newest
+ *   pending fact, satisfies the gate. On a gate that binds no plan
+ *   (`input.planDigest` absent) the plan half of that drops out and the rule
+ *   is the pre-#2300 one: any resolution newer than the pending fact.
+ * - A resolution that stands for the gate but for a different plan does not
+ *   satisfy it (#2300). The run is gated, `mismatch` names both plans, and a
+ *   fresh pending fact is recorded for the plan that actually ran — so
+ *   `chant approve` has something current to approve and the loop closes in
+ *   one more command rather than needing the digest typed out.
+ * - Otherwise, a pending fact that hasn't expired *and was recorded for this
+ *   same plan* stands as it is: the run ends `gated` and the ledger is left
+ *   alone, so an operator ticking every minute against an unapproved gate
+ *   does not append a line a minute. A pending fact for a different plan is
+ *   stale in the way that matters and is replaced.
+ * - Otherwise (no pending fact, or the newest one has expired, or it is for
+ *   another plan) a fresh pending fact is appended and the run ends `gated`.
+ *   `recorded` says which of the two happened, so a renderer can tell "just
+ *   recorded" from "still standing".
  */
 export async function evaluateGate(port: GateLedgerPort, input: GateCheckInput): Promise<GateCheck> {
   const now = input.now ?? new Date().toISOString();
   const { resolutions, pending } = await port.read(input.op);
 
   const standing = latestPendingGate(pending, input.gate);
-  const resolution = latestResolutionSince(resolutions, input.gate, standing?.timestamp ?? EPOCH);
+  const { resolution, mismatched } = latestResolutionForPlan(
+    resolutions,
+    input.gate,
+    standing?.timestamp ?? EPOCH,
+    input.planDigest,
+  );
   if (resolution) return { satisfied: true, resolution };
 
-  if (standing && !isPendingGateExpired(standing, now)) {
-    return { satisfied: false, pending: standing, recorded: false };
+  // `input.planDigest` is defined whenever `mismatched` is — `latestResolutionForPlan`
+  // returns a mismatch only on the plan-bound path.
+  const mismatch: GateDigestMismatch | undefined = mismatched
+    ? {
+        ...(mismatched.planDigest !== undefined ? { approved: mismatched.planDigest } : {}),
+        planned: input.planDigest!,
+        resolvedBy: mismatched.resolvedBy,
+        timestamp: mismatched.timestamp,
+      }
+    : undefined;
+  const asMismatch = mismatch ? { mismatch } : {};
+
+  // A standing fact only stands for the plan it was recorded against. When
+  // the plan has moved, re-recording is what gives `chant approve` (which
+  // defaults to the newest pending fact's digest) the current plan to
+  // approve; leaving the old fact standing would make the common path
+  // approve a plan that is no longer the one being run.
+  if (standing && !isPendingGateExpired(standing, now) && standing.planDigest === input.planDigest) {
+    return { satisfied: false, pending: standing, recorded: false, ...asMismatch };
   }
 
   const url = resolveApprovalUrl();
@@ -206,6 +303,7 @@ export async function evaluateGate(port: GateLedgerPort, input: GateCheckInput):
     ...(input.description ? { description: input.description } : {}),
     ...(input.runId ? { runId: input.runId } : {}),
     ...(url ? { url } : {}),
+    ...(input.planDigest !== undefined ? { planDigest: input.planDigest } : {}),
   });
   return {
     satisfied: false,
@@ -213,6 +311,7 @@ export async function evaluateGate(port: GateLedgerPort, input: GateCheckInput):
     recorded: true,
     pushed,
     ...(pushWarning ? { pushWarning } : {}),
+    ...asMismatch,
   };
 }
 

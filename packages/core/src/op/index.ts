@@ -50,8 +50,11 @@ export type { ActivityProfile, ActivityProfileName } from "./activity-profiles";
 export { NonRetryableActivityError, nonRetryableFailure } from "./activity-failure";
 export { runOpLocally, parseDuration, OpRunFailure } from "./local-executor";
 export type { StepRecord, OpRunResult, RunOpOptions } from "./local-executor";
-export { evaluateGate, gitGateLedgerPort, memoryGateLedgerPort, approveCommand } from "./gate";
-export type { GateLedgerPort, GateCheck, GateCheckInput, PendingGatePush } from "./gate";
+export { evaluateGate, gitGateLedgerPort, memoryGateLedgerPort, approveCommand, describeGateMismatch } from "./gate";
+export type { GateLedgerPort, GateCheck, GateCheckInput, PendingGatePush, GateDigestMismatch } from "./gate";
+export {
+  computePlanDigest, isPlanDigest, describePlanDigest, PLAN_DIGEST_ALGORITHM,
+} from "../lifecycle/plan-digest";
 export { gateName, usesDeprecatedGateKey, DEPRECATED_GATE_KEY_WARNING } from "./gate-name";
 export type { GateNamed } from "./gate-name";
 export { createLocalOpRuntime } from "./runtimes/local";

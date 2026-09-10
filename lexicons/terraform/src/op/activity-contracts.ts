@@ -84,6 +84,7 @@ export const terraformPlanContract = activityContract(
     dir: z.string(),
     json: z.unknown(),
     text: z.string(),
+    planDigest: z.string(),
   }),
   rootEntity,
 );

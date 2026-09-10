@@ -29,6 +29,8 @@ import {
   terraformEnvironment,
   terraformBinary,
   countPlanChanges,
+  terraformPlanChangeSet,
+  terraformPlanDigest,
   quoteArg,
   DEFAULT_PLAN_FILE,
 } from "./terraform";
@@ -253,6 +255,79 @@ describe("countPlanChanges (#2086)", () => {
   });
 });
 
+/**
+ * #2300. The digest is what a `TerraformApplyOp` gate binds its approval to,
+ * so what it covers and what it ignores is the contract an approver is
+ * relying on. Taken over the `show -json` rendering rather than the plan
+ * file's bytes: two `plan -out` runs over an unchanged root write different
+ * bytes and the same plan.
+ */
+describe("terraformPlanDigest (#2300)", () => {
+  test("the same change set digests the same across renderings that differ only in noise", () => {
+    const a = JSON.parse(PLAN_JSON) as Record<string, unknown>;
+    const b = {
+      ...JSON.parse(PLAN_JSON) as Record<string, unknown>,
+      format_version: "1.3",
+      terraform_version: "1.9.0",
+      timestamp: "2026-09-09T12:00:00Z",
+      prior_state: { anything: true },
+      configuration: { root_module: { resources: ["moved around"] } },
+      checks: [],
+    };
+    expect(terraformPlanDigest(b)).toBe(terraformPlanDigest(a));
+  });
+
+  test("a renamed resource changes it — the exact edit choudoufu#1026 made between approve and re-run", () => {
+    const before = JSON.parse(PLAN_JSON) as { resource_changes: { address: string }[] };
+    const after = JSON.parse(PLAN_JSON) as { resource_changes: { address: string }[] };
+    after.resource_changes[0].address = "null_resource.renamed";
+    expect(terraformPlanDigest(after)).not.toBe(terraformPlanDigest(before));
+  });
+
+  test("a changed planned value changes it, even at the same addresses and actions", () => {
+    const before = { resource_changes: [{ address: "null_resource.a", change: { actions: ["create"], after: { triggers: { v: "1" } } } }] };
+    const after = { resource_changes: [{ address: "null_resource.a", change: { actions: ["create"], after: { triggers: { v: "2" } } } }] };
+    expect(terraformPlanDigest(after)).not.toBe(terraformPlanDigest(before));
+  });
+
+  test("a changed action changes it — create is not destroy", () => {
+    const create = { resource_changes: [{ address: "null_resource.a", change: { actions: ["create"] } }] };
+    const destroy = { resource_changes: [{ address: "null_resource.a", change: { actions: ["delete"] } }] };
+    expect(terraformPlanDigest(destroy)).not.toBe(terraformPlanDigest(create));
+  });
+
+  test("output changes are part of the plan", () => {
+    const withOutput = { resource_changes: [], output_changes: { url: { actions: ["create"], after: "https://a" } } };
+    const withOther = { resource_changes: [], output_changes: { url: { actions: ["create"], after: "https://b" } } };
+    expect(terraformPlanDigest(withOther)).not.toBe(terraformPlanDigest(withOutput));
+  });
+
+  test("the emitter's iteration order does not change the answer", () => {
+    const one = { resource_changes: [{ address: "b", change: { actions: ["create"] } }, { address: "a", change: { actions: ["create"] } }] };
+    const two = { resource_changes: [{ address: "a", change: { actions: ["create"] } }, { address: "b", change: { actions: ["create"] } }] };
+    expect(terraformPlanDigest(one)).toBe(terraformPlanDigest(two));
+  });
+
+  test("a plan with no resource_changes still digests, rather than throwing", () => {
+    expect(terraformPlanDigest({ format_version: "1.2" })).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(terraformPlanDigest(null)).toMatch(/^sha256:[0-9a-f]{64}$/);
+  });
+
+  test("the change set keeps the fields an approver reads and drops the rest", () => {
+    const { resourceChanges } = terraformPlanChangeSet({
+      timestamp: "2026-09-09T12:00:00Z",
+      resource_changes: [{
+        address: "null_resource.a", mode: "managed", type: "null_resource", name: "a",
+        provider_name: "registry.terraform.io/hashicorp/null",
+        change: { actions: ["create"], before: null, after: { x: 1 }, after_unknown: {}, before_sensitive: false },
+      }],
+    });
+    expect(resourceChanges[0]).toMatchObject({ address: "null_resource.a", actions: ["create"], after: { x: 1 } });
+    expect(resourceChanges[0]).not.toHaveProperty("before_sensitive");
+    expect(resourceChanges[0]).not.toHaveProperty("change");
+  });
+});
+
 // ── Root resolution ─────────────────────────────────────────────────────────
 
 describe("root resolution against terraform.roots (#2086)", () => {
@@ -321,6 +396,16 @@ describe("terraformPlan — the -detailed-exitcode mapping (#2086)", () => {
       "terraform show -json chant.tfplan",
       "terraform show -no-color chant.tfplan",
     ]);
+  });
+
+  // #2300 — the Plan phase is where the plan gets its identity, so the
+  // activity's own result carries it and the Gate step references it from
+  // there rather than re-reading the file.
+  test("the result carries the plan's digest, taken off the show -json rendering", async () => {
+    const dir = project({ roots: { app: { dir: "./infra" } } });
+    showReplies();
+    const result = await terraformPlan({ root: "app", cwd: dir });
+    expect(result.planDigest).toBe(terraformPlanDigest(JSON.parse(PLAN_JSON)));
   });
 
   test("exit 2: changed, and the plan is still shown", async () => {

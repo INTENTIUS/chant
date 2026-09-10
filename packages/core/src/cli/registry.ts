@@ -318,6 +318,8 @@ export interface ParsedArgs {
   note?: string;
   /** `chant approve <op> <gate> --expire` (#2119) — clear the gate's standing pending fact instead of approving it, so the next run decides the gate from scratch and records a fresh one. Writes no resolution: nothing is approved, the wait is only restarted. */
   expire?: boolean;
+  /** `chant approve <op> <gate> --plan <digest>` (#2300) — the plan this approval is for, as `sha256:<64 hex>`. Omitted, the digest is taken from the gate's standing pending fact, which is the plan the run that stopped at the gate actually produced; pass it to approve a plan explicitly, or to approve one before any run has recorded a pending fact. */
+  plan?: string;
   /** `chant operator log --op <name>` (#2029) — restrict the tick history to one ConvergeOp by name. Omitted, every discovered ConvergeOp's ticks are merged into one timeline. */
   op?: string;
   /** `chant operator log --since <iso>` (#2029) — only entries at or after this ISO-8601 instant. */

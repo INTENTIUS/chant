@@ -48,6 +48,19 @@ describe("gatedRunSummaryMarkdown (#2243)", () => {
     const md = gatedRunSummaryMarkdown(summary);
     expect(md).not.toContain("was not pushed");
   });
+
+  // #2300 — the block is where a CI approver reads what they are approving,
+  // so it names the plan and says the approval does not carry to the next one.
+  test("names the plan the approval binds to, when the gate binds one", () => {
+    const digest = `sha256:${"d".repeat(64)}`;
+    const md = gatedRunSummaryMarkdown({ ...summary, planDigest: digest });
+    expect(md).toContain(digest);
+    expect(md).toContain("and not the next run");
+  });
+
+  test("a gate that binds no plan says nothing about one", () => {
+    expect(gatedRunSummaryMarkdown(summary)).not.toContain("and not the next run");
+  });
 });
 
 describe("writeGatedRunSummary surfaces (#2243, #2256)", () => {

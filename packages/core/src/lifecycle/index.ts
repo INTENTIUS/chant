@@ -23,3 +23,4 @@ export * from "./converge-ledger";
 export * from "./run-ledger";
 export * from "./scenario";
 export * from "./scenario-eval";
+export * from "./plan-digest";

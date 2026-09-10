@@ -7,6 +7,7 @@
 
 import type { EffectReceiptRef } from "./receipt-store";
 import type { ActivityProfileName } from "./activity-profiles";
+import type { StepOutputRef } from "./step-output-ref";
 
 export interface OpConfig {
   /** Kebab-case identifier. Names the Op's output directory (`dist/ops/<name>/`), and is the name `chant run <name>` and another Op's `depends` refer to. */
@@ -177,6 +178,24 @@ export interface GateStepBase {
   timeout?: string;
   /** Human-readable description of the action required to unblock this gate. */
   description?: string;
+  /**
+   * The plan this gate approves (#2300), normally a {@link StepOutputRef}
+   * into the Plan phase's own digest — `plan.out.planDigest`. The executor
+   * resolves it the same way it resolves an activity step's args, and hands
+   * the result to `evaluateGate` as `planDigest`.
+   *
+   * With it, a resolution satisfies this gate only when it was recorded for
+   * that exact plan; a resolution for another plan is refused by name.
+   * Without it the gate authorises the next run rather than a plan, which is
+   * what every gate did before #2300 and what
+   * INTENTIUS/choudoufu#1026 measured.
+   *
+   * A `string` here is a digest computed elsewhere; anything else is a
+   * reference resolved at run time. A reference that resolves to no string
+   * leaves the gate unbound rather than failing the run — an Op whose Plan
+   * phase publishes no digest is not thereby unrunnable.
+   */
+  plan?: string | StepOutputRef;
 }
 
 /**

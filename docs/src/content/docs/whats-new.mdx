@@ -44,6 +44,20 @@ Four failures came from running the pipelines rather than reading them. A gated 
 | [#2303](https://github.com/INTENTIUS/chant/issues/2303) | The ledger branch is fetched before it is read or appended to |
 | [#2305](https://github.com/INTENTIUS/chant/issues/2305) | `PrPlanReport`'s sticky comment targets the resolved API base |
 
+## A gate approves a plan, not the next run
+
+Approving a gated apply used to authorise the *next run* of that Op. The resolution on the gate ledger named the op and the gate, plus who approved it and when, and nothing about what had been planned; each `chant run` re-plans in its own Plan phase. INTENTIUS/choudoufu#1026 measured it against a real root. After an approval, a renamed resource and a re-run, the apply proceeded without a word.
+
+Both halves of the loop now carry a plan identity. A `TerraformApplyOp`'s Plan step publishes `planDigest`, a hash of its `terraform show -json` change set, and `ApplyOp`'s publishes one over the `lifecycleDiff` change set. The gate step references it, the run records it on the pending fact, and `chant approve` copies it onto the resolution. A later run whose fresh plan digests differently stops, naming the digest that was approved alongside the digest that was planned, with the `chant approve` line that closes the gap. Nothing is applied. This is a wider window than the exit-3 refusal a live `apply <planfile>` already made: that one compares the Apply step's fresh plan against the file it was handed inside one run, and this compares a later run's plan against what a human actually read.
+
+The digest covers the change set and only the change set: addresses, actions, and the values that would be written. It deliberately ignores when the plan was taken, which run took it, and the plan file's bytes, so re-planning an unchanged root is the same plan rather than a new one to re-approve.
+
+**Migration.** A resolution written before this carries no digest, and a digest-less resolution does not satisfy a plan-bound gate. The safe reading was the one to take: such a record proves somebody approved *something*, and nothing about what, and accepting it once would apply exactly the unreviewed change the check exists to catch, on the estates that have been running longest. Any gate standing open across the upgrade needs one more `chant approve` after its next run, and the refusal says so by name rather than leaving a reader to guess. `chant approve` with nothing pending now refuses too, since there is no plan on the ledger for it to approve; run the Op first, or pass `--plan <digest>`.
+
+| # | Capability |
+|---|---|
+| [#2300](https://github.com/INTENTIUS/chant/issues/2300) | The resolution record carries a plan digest, and a run whose plan has moved refuses by name |
+
 ## Exploitability-aware vulnerability gating
 
 `vuln-gate` can now gate on whether a CVE is actually being exploited, not just how bad it would be: **KEV** catalog membership (CISA's list of vulnerabilities exploited in the wild) and the **EPSS** score (likelihood of exploitation in the next 30 days). Four new `vulnPolicy` fields — `failOnKev`, `failEpssAtOrAbove`, `warnEpssAtOrAbove`, `exploitabilityFixableOnly` — work project-wide from `chant.config.ts` or per-step. All default to off, so upgrading blocks nothing new; the one change every gate sees is that `VulnGateFailedError` now names the rule that fired per finding (`in CISA KEV since 2024-03-11, known ransomware use` instead of a bare CVE list). VEX suppression still outranks everything, KEV included. grype reports the data; trivy (v0.73) reports none of it, in which case the gate behaves exactly as before. See [Exploitability gating](/chant/components/attestation-reference/#exploitability-gating-kev-and-epss).

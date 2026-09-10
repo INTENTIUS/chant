@@ -22,6 +22,13 @@
  * `chant approve` locally can write one, the same trust boundary a local
  * commit already has.
  *
+ * Since #2300 both halves also carry a plan identity (`./plan-digest.ts`): a
+ * run records the plan it reached the gate with, `chant approve` records the
+ * plan it approves, and {@link latestResolutionForPlan} matches on that
+ * rather than on recency alone. Before it, an approval authorised the next
+ * run of an op rather than the plan its approver had read
+ * (INTENTIUS/choudoufu#1026).
+ *
  * Since #2119 the file carries both halves of the loop. A `gate` step the
  * local executor reaches (`../op/local-executor.ts`) appends a
  * {@link PendingGateRecord} and ends that run with status `gated`; `chant
@@ -119,6 +126,18 @@ export interface GateResolutionRecord {
    * URL — see {@link isApprovalUrl}.
    */
   url?: string;
+  /**
+   * The plan this approval is for (#2300) — `computePlanDigest`'s output
+   * (`./plan-digest.ts`), normally copied off the {@link PendingGateRecord}
+   * this resolution answers.
+   *
+   * Absent on every resolution written before #2300, and on one written for a
+   * gate that binds no plan. Absent is not a wildcard: {@link
+   * latestResolutionForPlan} refuses a digest-less resolution against a
+   * plan-bound gate rather than letting it through, because the only thing
+   * such a record proves is that somebody approved *something*.
+   */
+  planDigest?: string;
 }
 
 export type GateResolutionInput = Omit<GateResolutionRecord, "version" | "kind">;
@@ -154,6 +173,16 @@ export interface PendingGateRecord {
   expiresAt: string;
   /** The address approval happens at, when the run knew one — see {@link resolveApprovalUrl}. */
   url?: string;
+  /**
+   * The plan the run reached this gate with (#2300) — `computePlanDigest`'s
+   * output (`./plan-digest.ts`). This is what `chant approve` copies onto the
+   * resolution by default, so approving the standing fact approves the plan
+   * the approver was shown rather than the next run's.
+   *
+   * Absent when the gate binds no plan (a component gate, an authored `gate`
+   * step with no `plan`), which is the shape every gate had before #2300.
+   */
+  planDigest?: string;
 }
 
 export type PendingGateInput = Omit<PendingGateRecord, "version" | "kind">;
@@ -262,6 +291,16 @@ export async function readGateLedger(
         malformed++;
         continue;
       }
+      // #2300: a `planDigest` that is present but not a string is a
+      // malformed line, not a line with a field to ignore. Ignoring it would
+      // silently demote a plan-bound record to a digest-less one, which is
+      // the shape `latestResolutionForPlan` refuses — a corrupted approval
+      // must not read as an approval of anything at all.
+      const rawDigest: unknown = (parsed as { planDigest?: unknown }).planDigest;
+      if (rawDigest !== undefined && typeof rawDigest !== "string") {
+        malformed++;
+        continue;
+      }
       if (parsed.kind === "pending") {
         if (typeof parsed.expiresAt !== "string") {
           malformed++;
@@ -318,4 +357,73 @@ export function latestResolutionSince(
     if (!latest || new Date(r.timestamp).getTime() >= new Date(latest.timestamp).getTime()) latest = r;
   }
   return latest;
+}
+
+/** What {@link latestResolutionForPlan} found for the plan a run is holding. */
+export interface PlanBoundResolution {
+  /** The resolution that answers this gate for this plan. Absent when nothing does. */
+  resolution?: GateResolutionRecord;
+  /**
+   * Present instead of {@link PlanBoundResolution.resolution} when a
+   * resolution stands for this gate but for a different plan — the newest
+   * such record, so a refusal can name who approved what and when. Its
+   * `planDigest` is `undefined` for a record written before #2300.
+   */
+  mismatched?: GateResolutionRecord;
+}
+
+/**
+ * The resolution that answers `gate` for the plan `planDigest` identifies
+ * (#2300).
+ *
+ * The criterion is the digest; recency is only the tiebreak between several
+ * resolutions that all match it. That inversion is the whole point of the
+ * issue: {@link latestResolutionSince} asks "is there a newer approval",
+ * which a run answers yes to no matter what has changed since, and this asks
+ * "is there an approval of *this*".
+ *
+ * - `planDigest` `undefined` — the gate binds no plan (a component gate, a
+ *   `gate` step authored with no `plan`). Falls straight through to
+ *   {@link latestResolutionSince}: gates that never claimed to bind a plan
+ *   behave exactly as they did before #2300.
+ * - A resolution whose `planDigest` equals `planDigest` answers the gate.
+ * - A resolution for a different plan does not, and comes back as
+ *   `mismatched` so the caller can name both digests.
+ * - A resolution with no `planDigest` at all — every record written before
+ *   #2300 — does not either, and comes back as `mismatched` with an absent
+ *   `planDigest`. This is the safe reading of the migration: such a record
+ *   proves someone approved something, and nothing about what. Accepting it
+ *   once would silently apply the very change this check exists to catch, on
+ *   exactly the estates that have been running longest. The cost is one
+ *   further `chant approve` per gate after the upgrade, which the refusal
+ *   says out loud.
+ */
+export function latestResolutionForPlan(
+  records: GateResolutionRecord[],
+  gate: string,
+  sinceIso: string,
+  planDigest: string | undefined,
+): PlanBoundResolution {
+  if (planDigest === undefined) {
+    const resolution = latestResolutionSince(records, gate, sinceIso);
+    return resolution ? { resolution } : {};
+  }
+
+  const since = new Date(sinceIso).getTime();
+  let matched: GateResolutionRecord | undefined;
+  let mismatched: GateResolutionRecord | undefined;
+  for (const r of records) {
+    if (r.gate !== gate) continue;
+    if (new Date(r.timestamp).getTime() < since) continue;
+    const newest = (best: GateResolutionRecord | undefined) =>
+      !best || new Date(r.timestamp).getTime() >= new Date(best.timestamp).getTime();
+    if (r.planDigest === planDigest) {
+      if (newest(matched)) matched = r;
+    } else if (newest(mismatched)) {
+      mismatched = r;
+    }
+  }
+
+  if (matched) return { resolution: matched };
+  return mismatched ? { mismatched } : {};
 }

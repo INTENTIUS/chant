@@ -222,6 +222,28 @@ describe("op.json IR", () => {
     expect(reconstructed.labels).toEqual({ Team: "infra", Env: "staging" });
   });
 
+  // #2300 — a gate can bind a plan by referencing the Plan step's digest, and
+  // the reference has to survive the IR: a foreign runtime resolves it the
+  // same way it resolves one in an activity's args.
+  it("carries a gate's plan reference through op.json and back", () => {
+    const config: OpConfig = {
+      name: "live-apply",
+      overview: "o",
+      phases: [
+        phase("Plan", [{ kind: "activity", fn: "shellCmd", id: "plan", args: { cmd: "plan" } }]),
+        phase("Gate", [{ kind: "gate", gate: "approve-live-apply", plan: stepOutput("plan", "planDigest") }]),
+      ],
+    };
+    const text = serializeOpIR(config);
+    const ir = JSON.parse(text) as OpIR;
+    const gate = ir.phases[1].steps[0];
+    expect(gate.kind).toBe("gate");
+    expect((gate as { plan?: unknown }).plan).toMatchObject({ step: "plan", path: "planDigest" });
+
+    const reconstructed = opConfigFromIR(ir);
+    expect(serializeOpIR(reconstructed)).toBe(text);
+  });
+
   it("round-trips a minimal Op (no gate, effect, onFailure or labels) too", () => {
     const original: OpConfig = { name: "minimal", overview: "o", phases: [phase("Only", [shell("echo hi")])] };
     const text = serializeOpIR(original);

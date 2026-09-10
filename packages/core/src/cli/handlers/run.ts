@@ -385,6 +385,7 @@ export async function runOpApprove(ctx: CommandContext): Promise<number> {
     actor: ctx.args.approver ?? ctx.args.actor,
     note: ctx.args.note,
     url: ctx.args.url,
+    plan: ctx.args.plan,
   });
   if (!outcome.ok) return 1;
 
@@ -762,6 +763,7 @@ export async function runOpComponents(ctx: CommandContext): Promise<number> {
         expiresAt: gate.expiresAt,
         ...(gate.url ? { url: gate.url } : {}),
         ...(result.gated.pushed === false ? { pushed: false, pushWarning: result.gated.pushWarning } : {}),
+        ...(gate.planDigest ? { planDigest: gate.planDigest } : {}),
       },
       gatedExit,
     );
@@ -882,6 +884,7 @@ export async function runOpOnRuntime(ctx: CommandContext): Promise<number> {
             ...(status.result?.gatePushed === false
               ? { pushed: false, pushWarning: status.result.gatePushWarning }
               : {}),
+            ...(pending?.planDigest ? { planDigest: pending.planDigest } : {}),
           },
           gatedExit,
         );

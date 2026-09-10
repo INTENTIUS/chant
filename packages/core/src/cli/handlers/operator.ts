@@ -34,6 +34,7 @@ import {
   latestResolutionSince, latestPendingGate, isPendingGateExpired,
   resolveApprovalUrl, isApprovalUrl,
 } from "../../lifecycle/gate-ledger";
+import { isPlanDigest } from "../../lifecycle/plan-digest";
 import { pushLifecycle, requireLifecycleLedger } from "../../lifecycle/git";
 import { formatError, formatWarning, formatSuccess, formatBold, formatInfo } from "../format";
 import type { CommandContext } from "../registry";
@@ -689,6 +690,7 @@ export async function runApprove(ctx: CommandContext): Promise<number> {
     actor: ctx.args.approver ?? ctx.args.actor,
     note: ctx.args.note,
     url: ctx.args.url,
+    plan: ctx.args.plan,
   });
   if (!outcome.ok) return 1;
 
@@ -707,6 +709,12 @@ export interface GateApprovalOptions {
   note?: string;
   /** `--url` — the approval surface, validated as absolute http/https. */
   url?: string;
+  /**
+   * `--plan <digest>` (#2300) — the plan this approval is for. Omitted, the
+   * digest is read off the gate's standing pending fact, so the common path
+   * stays one command: run, read what it planned, approve it.
+   */
+  plan?: string;
 }
 
 export type GateApprovalOutcome =
@@ -720,6 +728,13 @@ export type GateApprovalOutcome =
  *
  * Prints the same warning for an undiscovered op and the same success line as
  * `chant approve` always did; the caller adds whatever it does next.
+ *
+ * Since #2300 the resolution names the plan it approves. By default that is
+ * the standing pending fact's plan — the one the gated run produced — so the
+ * common path is still `chant run`, read, `chant approve`. With no pending
+ * fact and no `--plan`, this refuses: there is nothing on the ledger saying
+ * what would be approved, and writing a resolution anyway is what made an
+ * approval mean "the next run" instead of "this plan".
  */
 export async function recordGateApproval(
   opName: string,
@@ -748,8 +763,6 @@ export async function recordGateApproval(
     return { ok: false };
   }
 
-  const resolvedBy = opts.actor ?? process.env.GITHUB_ACTOR ?? process.env.GITLAB_USER_LOGIN ?? process.env.USER ?? "unknown";
-
   // #2028: the resolution's link is typed. `--url` wins; otherwise, running
   // inside the PR/MR job that carries the change is itself the address, the
   // same env fallback `--actor` uses. `--note` stays free-text prose.
@@ -762,6 +775,40 @@ export async function recordGateApproval(
     return { ok: false };
   }
 
+  // #2300: an approval is for a plan, so this command has to know which one.
+  // `--plan` names it outright; otherwise it comes off the gate's standing
+  // pending fact — the plan the run that stopped at this gate produced, which
+  // is the plan whoever is typing this just read. There is deliberately no
+  // third fallback: approving with no plan in sight is the behaviour
+  // INTENTIUS/choudoufu#1026 measured, where the resolution authorised the
+  // next run rather than anything anyone had seen.
+  let planDigest: string | undefined;
+  if (opts.plan !== undefined) {
+    if (!isPlanDigest(opts.plan)) {
+      console.error(formatError({
+        message: `--plan must be a plan digest ("sha256:" and 64 hex characters), got "${opts.plan}"`,
+        hint: "Copy it from the gated run's `plan :` line, or from the pending-gate summary. It is not a plan file path.",
+      }));
+      return { ok: false };
+    }
+    planDigest = opts.plan;
+  } else {
+    const standing = latestPendingGate((await readGateLedger(opName)).pending, gate);
+    if (!standing) {
+      console.error(formatError({
+        message: `Gate "${gate}" on "${opName}" has no pending fact, so there is no plan to approve`,
+        hint:
+          `Run \`chant run ${opName}\` first — it plans, stops at the gate, and records the plan this ` +
+          `approval would be for. To approve a plan you already have the digest for, pass ` +
+          `\`--plan <digest>\`.`,
+      }));
+      return { ok: false };
+    }
+    planDigest = standing.planDigest;
+  }
+
+  const resolvedBy = opts.actor ?? process.env.GITHUB_ACTOR ?? process.env.GITLAB_USER_LOGIN ?? process.env.USER ?? "unknown";
+
   const { record } = await appendGateResolution({
     op: opName,
     gate,
@@ -769,6 +816,7 @@ export async function recordGateApproval(
     timestamp: new Date().toISOString(),
     ...(opts.note ? { note: opts.note } : {}),
     ...(url ? { url } : {}),
+    ...(planDigest !== undefined ? { planDigest } : {}),
   });
   const pushed = await reportedPush(
     `The resolution is recorded locally on ${LIFECYCLE_BRANCH}. Until it reaches the remote, ` +
@@ -780,5 +828,11 @@ export async function recordGateApproval(
       (record.url ? ` (${record.url})` : "") +
       (pushed ? "" : " (local only — the push did not land)"),
   ));
+  if (record.planDigest) {
+    console.error(formatInfo(
+      `This approves the plan ${record.planDigest}, and only that plan. A run whose fresh plan ` +
+        "differs refuses rather than applying it.",
+    ));
+  }
   return { ok: true, record };
 }

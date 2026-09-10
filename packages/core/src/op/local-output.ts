@@ -47,6 +47,9 @@ export function renderHuman(result: OpRunResult, write: Writer = stderr): void {
       write(`    [approved] ${record.approval.resolvedBy} at ${record.approval.timestamp}` +
         (record.approval.url ? ` (${record.approval.url})` : ""));
     }
+    if (record.refusal) {
+      write(`    [refused] ${record.refusal}`);
+    }
     if (record.error) {
       write(`    ${record.error}`);
     }
@@ -68,6 +71,9 @@ export function renderHuman(result: OpRunResult, write: Writer = stderr): void {
   const { gate } = result;
   write(`Op "${result.op}" is gated on "${gate.gate}" after ${total}`);
   if (gate.description) write(`  ${gate.description}`);
+  // #2300: the plan the approval will be bound to. Printed before the
+  // command, because it is what the command approves.
+  if (gate.planDigest) write(`  plan    : ${gate.planDigest}`);
   write(`  approve : ${approveCommand(gate.op, gate.gate)}`);
   if (gate.url) write(`  approve at: ${gate.url}`);
   write(`  expires : ${gate.expiresAt}`);
