@@ -45,11 +45,24 @@ const execAsync = promisify(exec);
  * closes the issue itself. Only a run outside any known CI job — no
  * `CI_PROJECT_ID`, no `GITHUB_REPOSITORY` — falls back to `gh issue create`'s
  * own ambient repo detection, still marker-prefixed so a later CI run of the
- * same Op finds and edits it instead of opening a second one. `gh
- * api` was not exercised against a real Forgejo instance for this mode (only
- * the `comment` mode's endpoints were, chant #2291) — the request shape
- * mirrors that mode's exactly, but the search behavior itself is the one
- * part a mock cannot vouch for.
+ * same Op finds and edits it instead of opening a second one. `gh api` was
+ * not exercised against a real Forgejo instance for this mode (only the
+ * `comment` mode's endpoints were, chant #2291) — the request shape mirrors
+ * that mode's exactly, but the search behavior itself is the one part a mock
+ * cannot vouch for.
+ *
+ * "Mirrors that mode's exactly" was not true when it was written (chant
+ * #2320): the URL and the GET/PATCH/POST triple matched, but the credential
+ * did not travel. `postOrUpdateComment` resolved a token through {@link
+ * commentTokenFrom} and forwarded it as `GH_TOKEN`; the issue path forwarded
+ * no environment at all, so `CHANT_FORGEJO_TOKEN` never reached `gh` and the
+ * cross-instance Forgejo case that variable exists for 401'd. Both paths now
+ * resolve the same way, in the same order, and forward the same variable,
+ * with the two refusals differing only in what they name ({@link
+ * noCommentTokenMessage}, {@link noIssueTokenMessage}). The one deliberate
+ * exception is the `gh issue create` fallback above, which runs outside every
+ * CI job and so leaves the credential to `gh auth login` — see the comment on
+ * that branch.
  */
 export type ReconcileMode = "pull-request" | "issue" | "report" | "comment";
 
@@ -468,6 +481,16 @@ export function noCommentTokenMessage(repo: string, number: number): string {
   );
 }
 
+/** What an `issue`-mode step says on a repository it has no credential for (#2320). */
+export function noIssueTokenMessage(repo: string): string {
+  return (
+    `reconcilePr mode "issue" has repository ${repo} to open or edit its finding in and no token to do it ` +
+    "with. GH_TOKEN or GITHUB_TOKEN, set from github.token, already covers this on a GitHub Actions or " +
+    "Forgejo Actions run — set CHANT_FORGEJO_TOKEN to post against a different instance than the one the " +
+    "job runs on. CHANT_FORGEJO_TOKEN is read first where the two must differ."
+  );
+}
+
 /**
  * Post `body` as one comment on `ctx`'s pull request, or edit the comment this
  * Op already owns there. The sticky-comment recipe the github lexicon's
@@ -529,12 +552,23 @@ async function postOrUpdateComment(
  * Minimal `gh` invocation shape {@link postOrUpdateGithubIssue} threads its
  * calls through. `reconcilePr` wraps `execAsync` (carrying its own `signal`)
  * to this shape; `lexiconUpgrade` passes its injectable `GhRunner` straight
- * through, since the two already share the same `(cmd) => Promise<{ stdout,
- * stderr }>` signature. One function, not two copies, because the recipe
- * below — search, then PATCH or POST — is identical for both callers; only
- * the issue's title/body and the marker that owns it differ.
+ * through, since the two already share this signature. One function, not two
+ * copies, because the recipe below — search, then PATCH or POST — is
+ * identical for both callers; only the issue's title/body and the marker that
+ * owns it differ.
+ *
+ * The `opts` argument exists so `postOrUpdateGithubIssue` can hand `gh` the
+ * token it resolved (chant #2320) rather than leaving `gh` to find one
+ * ambiently. A caller that adds nothing of its own can ignore it and pass it
+ * straight to `exec`; `reconcilePr` merges it with the `signal` it already
+ * carries. It is deliberately not a whole `ExecOptions`: an implementation
+ * that had to honour `cwd` or `shell` too would be a second exec wrapper, and
+ * the point of this type is that there is only one.
  */
-export type GhExec = (cmd: string) => Promise<{ stdout: string; stderr: string }>;
+export type GhExec = (
+  cmd: string,
+  opts?: { env?: NodeJS.ProcessEnv },
+) => Promise<{ stdout: string; stderr: string }>;
 
 /**
  * Open `title`/`body` as one GitHub-shaped issue in `repo`, or edit the issue
@@ -548,6 +582,21 @@ export type GhExec = (cmd: string) => Promise<{ stdout: string; stderr: string }
  * Every call targets a full URL built from {@link githubApiBaseFrom}, the
  * same as `postOrUpdateComment` (#2291) — so this reaches GitHub Enterprise
  * Server the same way it reaches github.com.
+ *
+ * The credential is resolved and forwarded the same way too (chant #2320),
+ * through {@link commentTokenFrom} and out as `GH_TOKEN` on every call. It
+ * did not used to be: `reconcilePr` handed this `(cmd) => execAsync(cmd, {
+ * signal })` with no `env` at all, so `CHANT_FORGEJO_TOKEN` never reached
+ * `gh` and the one case that variable exists for — posting to a Forgejo
+ * instance other than the one the job runs on, where `github.token`'s scope
+ * stops at its own instance — failed with a 401 or a 404 that named nothing.
+ * With no token at all the operator got `gh`'s own error rather than chant's.
+ * The refusal here is {@link noIssueTokenMessage}, not the `comment` mode's
+ * {@link noCommentTokenMessage}: same resolution order, same advice, but that
+ * message names a pull request this mode does not have, and this function is
+ * shared with `lexiconUpgrade`, which is not `reconcilePr` at all. The same
+ * split GitLab already makes between `noGitlabNoteTokenMessage` and
+ * `noGitlabIssueTokenMessage`.
  *
  * ## Why plain pagination instead of GitHub's Search API
  *
@@ -613,13 +662,20 @@ export async function postOrUpdateGithubIssue(
   body: string,
   exec: GhExec,
 ): Promise<string> {
+  const token = commentTokenFrom(process.env);
+  if (!token) throw new Error(noIssueTokenMessage(repo));
+  const env = { ...process.env, GH_TOKEN: token.value };
+
   const base = githubApiBaseFrom(process.env);
   const listUrl = `${base}/repos/${repo}/issues?state=open`;
   const jq =
     'map(select((.pull_request == null) and ((.body // "") | startswith(' +
     `"${marker}"))))` +
     " | .[0].number // empty";
-  const { stdout: found } = await exec(`gh api ${shellQuote(listUrl)} --paginate --jq ${shellQuote(jq)}`);
+  const { stdout: found } = await exec(
+    `gh api ${shellQuote(listUrl)} --paginate --jq ${shellQuote(jq)}`,
+    { env },
+  );
   // `--paginate` prints one `--jq` result per page, same as postOrUpdateComment.
   const existing = found.split("\n").map((l) => l.trim()).find((l) => /^\d+$/.test(l));
   const titleField = shellQuote(`title=${title}`);
@@ -629,11 +685,13 @@ export async function postOrUpdateGithubIssue(
     const { stdout } = await exec(
       `gh api --method PATCH ${shellQuote(`${base}/repos/${repo}/issues/${existing}`)} ` +
         `-f ${titleField} -f ${bodyField} --jq .html_url`,
+      { env },
     );
     return stdout.trim();
   }
   const { stdout } = await exec(
     `gh api --method POST ${shellQuote(`${base}/repos/${repo}/issues`)} -f ${titleField} -f ${bodyField} --jq .html_url`,
+    { env },
   );
   return stdout.trim();
 }
@@ -1143,8 +1201,8 @@ export async function reconcilePr(args: ReconcilePrArgs, signal?: AbortSignal): 
     // the close decision.
     const repo = process.env.GITHUB_REPOSITORY;
     if (repo) {
-      const issueUrl = await postOrUpdateGithubIssue(repo, marker, title, summary, (cmd) =>
-        execAsync(cmd, { signal }),
+      const issueUrl = await postOrUpdateGithubIssue(repo, marker, title, summary, (cmd, opts) =>
+        execAsync(cmd, { signal, ...opts }),
       );
       return { mode, summary, entries, issueUrl };
     }
@@ -1154,6 +1212,17 @@ export async function reconcilePr(args: ReconcilePrArgs, signal?: AbortSignal): 
     // marker is still written here — it costs nothing, and means a later CI
     // run of the same Op finds and edits this issue instead of opening a
     // second one.
+    //
+    // This is the one path that does NOT go through `commentTokenFrom`
+    // (#2320), deliberately. It is reached only when the run is outside every
+    // CI job chant recognizes, which is where `gh auth login`'s stored
+    // credential is the credential — and that is a login `commentTokenFrom`
+    // cannot see, so refusing on a missing environment variable here would
+    // reject the exact setup the branch exists to serve. `gh` still reads
+    // GH_TOKEN and GITHUB_TOKEN off this process's own environment if they
+    // are set; what it does not get is CHANT_FORGEJO_TOKEN promoted into
+    // GH_TOKEN, because promoting it would silently outrank the login the
+    // operator is standing in front of.
     const { stdout } = await execAsync(
       `gh issue create --title ${shellQuote(title)} --body ${shellQuote(`${marker}\n\n${summary}`)}`,
       { signal },

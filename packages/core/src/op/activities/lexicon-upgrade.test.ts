@@ -257,9 +257,9 @@ describe("lexiconUpgrade issue mode", () => {
 
   test("on a GitHub Actions job (GITHUB_REPOSITORY set), opens the sticky issue via gh api (#2297)", async () => {
     const checkPinned: CheckPinnedFn = vi.fn(async () => pinnedResult());
-    const calls: string[] = [];
-    const gh = vi.fn(async (cmd: string) => {
-      calls.push(cmd);
+    const calls: Array<{ cmd: string; env?: NodeJS.ProcessEnv }> = [];
+    const gh = vi.fn(async (cmd: string, opts?: { env?: NodeJS.ProcessEnv }) => {
+      calls.push({ cmd, env: opts?.env });
       if (cmd.includes("--paginate")) return { stdout: "", stderr: "" }; // no owned issue yet
       if (cmd.includes("--method POST")) return { stdout: "https://github.com/acme/infra/issues/11\n", stderr: "" };
       return { stdout: "", stderr: "" };
@@ -267,6 +267,8 @@ describe("lexiconUpgrade issue mode", () => {
 
     vi.stubEnv("GITHUB_REPOSITORY", "acme/infra");
     vi.stubEnv("GITHUB_API_URL", "");
+    vi.stubEnv("CHANT_FORGEJO_TOKEN", "");
+    vi.stubEnv("GH_TOKEN", "ghs-workflow");
     try {
       const r = await lexiconUpgrade({
         lexicon: "gcp",
@@ -276,10 +278,14 @@ describe("lexiconUpgrade issue mode", () => {
       });
 
       expect(r.issueUrl).toBe("https://github.com/acme/infra/issues/11");
-      expect(calls.some((c) => c.includes("gh issue create"))).toBe(false);
-      const post = calls.find((c) => c.includes("--method POST"));
-      expect(post).toContain("https://api.github.com/repos/acme/infra/issues");
-      expect(post).toContain("<!-- chant-lexicon-upgrade:gcp -->");
+      expect(calls.some((c) => c.cmd.includes("gh issue create"))).toBe(false);
+      const post = calls.find((c) => c.cmd.includes("--method POST"));
+      expect(post?.cmd).toContain("https://api.github.com/repos/acme/infra/issues");
+      expect(post?.cmd).toContain("<!-- chant-lexicon-upgrade:gcp -->");
+      // #2320: the shared `postOrUpdateGithubIssue` resolves the credential
+      // and hands it to the runner, so this caller gets the same forwarding
+      // reconcilePr's issue mode does rather than leaving `gh` to guess.
+      for (const call of calls) expect(call.env?.GH_TOKEN).toBe("ghs-workflow");
     } finally {
       vi.unstubAllEnvs();
     }
@@ -287,9 +293,9 @@ describe("lexiconUpgrade issue mode", () => {
 
   test("a re-run on a GitHub Actions job PATCHes the issue it already owns (#2297)", async () => {
     const checkPinned: CheckPinnedFn = vi.fn(async () => pinnedResult());
-    const calls: string[] = [];
-    const gh = vi.fn(async (cmd: string) => {
-      calls.push(cmd);
+    const calls: Array<{ cmd: string; env?: NodeJS.ProcessEnv }> = [];
+    const gh = vi.fn(async (cmd: string, opts?: { env?: NodeJS.ProcessEnv }) => {
+      calls.push({ cmd, env: opts?.env });
       if (cmd.includes("--paginate")) return { stdout: "11\n", stderr: "" }; // marker search found issue 11
       if (cmd.includes("--method PATCH")) return { stdout: "https://github.com/acme/infra/issues/11\n", stderr: "" };
       return { stdout: "", stderr: "" };
@@ -297,6 +303,10 @@ describe("lexiconUpgrade issue mode", () => {
 
     vi.stubEnv("GITHUB_REPOSITORY", "acme/infra");
     vi.stubEnv("GITHUB_API_URL", "");
+    // The cross-instance case (#2320): a Forgejo token that must outrank the
+    // job's own `github.token`, on the path that used to forward neither.
+    vi.stubEnv("CHANT_FORGEJO_TOKEN", "forgejo-cross-instance");
+    vi.stubEnv("GH_TOKEN", "ghs-this-instance-only");
     try {
       const r = await lexiconUpgrade({
         lexicon: "gcp",
@@ -306,8 +316,10 @@ describe("lexiconUpgrade issue mode", () => {
       });
 
       expect(r.issueUrl).toBe("https://github.com/acme/infra/issues/11");
-      expect(calls.some((c) => c.includes("--method POST"))).toBe(false);
-      expect(calls.some((c) => c.includes("gh issue create"))).toBe(false);
+      expect(calls.some((c) => c.cmd.includes("--method POST"))).toBe(false);
+      expect(calls.some((c) => c.cmd.includes("gh issue create"))).toBe(false);
+      const patch = calls.find((c) => c.cmd.includes("--method PATCH"));
+      expect(patch?.env?.GH_TOKEN).toBe("forgejo-cross-instance");
     } finally {
       vi.unstubAllEnvs();
     }
