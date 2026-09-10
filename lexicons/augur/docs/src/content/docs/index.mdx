@@ -1,0 +1,46 @@
+---
+title: "augur"
+description: "A project's resource graph as a behaviour engine's request, with a coverage table"
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-augur` — DO NOT EDIT.
+    Edit lexicons/augur/src/codegen/docs.ts instead; changes here are overwritten. */}
+
+
+The augur lexicon turns a project's resource graph into a behaviour engine's
+request, and states plainly which of chant's entity kinds it can and cannot put
+in front of one.
+
+Nothing here reaches a network at build time. `chant build` is offline and
+byte-identical on re-run, and the request is assembled the same way from the
+same typed source, so a re-run is comparable rather than merely repeated. The
+engine itself is reached only by `predictBehaviour()`, and only when an
+environment variable names one; with none named, augur refuses by name and
+draws no overlay rather than reporting an estate that costs nothing.
+
+What you declare is the question. A `Profile` carries a traffic level
+verbatim — `1000 rps, p99` — and `chant build` writes the declared profiles
+as a small JSON document. The estate itself is already declared by whichever
+lexicons a project uses, and augur reads it rather than restating it.
+
+See [The coverage table](coverage/) for which entity types reach the engine and
+which are declared unmapped, and [Predicting](predicting/) for the request, the
+environment chain and what each refusal means.
+
+
+## At a Glance
+
+| Metric | Count |
+|--------|-------|
+| Resources | 0 |
+| Property types | 0 |
+| Services | 0 |
+| Intrinsic functions | 0 |
+| Pseudo-parameters | 0 |
+| Lint rules | 2 |
+
+**Lexicon version:** 0.64.0  
+**Namespace:** `Augur`
+
+- [All Rules](./rules) — 2 rules
+- [Serialization](./serialization) — output format details

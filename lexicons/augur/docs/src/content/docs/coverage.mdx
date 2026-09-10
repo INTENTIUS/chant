@@ -1,0 +1,121 @@
+---
+title: The coverage table
+description: Which chant entity types reach a behaviour engine, which are declared unmapped, and why
+diataxis: reference
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-augur` — DO NOT EDIT.
+    Edit lexicons/augur/docs/pages/coverage.mdx instead; changes here are overwritten. */}
+
+
+Not every kind chant knows about has an equivalent on an engine's side. This
+page is the whole of what augur will and will not send, and it is generated
+from `lexicons/augur/src/mapping.ts` — a table transcribed by hand is a table
+that stops being true.
+
+## Three states, not two
+
+An entity type resolves to exactly one of three verdicts, and the second and
+third are different answers rather than one answer written twice.
+
+| Verdict | What it means | Where the entity lands |
+|---|---|---|
+| **Mapped** | augur sends it, as a kind, a provider, a region and a size | `entities`, with figures |
+| **Declared unmapped** | augur has looked at this type and it carries no rate | `unpredicted`, reason `unsupported-kind`, detail naming the kind and the reason |
+| **No row** | augur has never looked at this type | `unpredicted`, reason `unsupported-kind`, detail saying so and where to add the row |
+
+The distinction between the last two is the point of writing the second table
+down. "IAM roles are not priced, and here is why" is an answer a reader can act
+on. "augur has never heard of this type" is a gap in `mapping.ts` and should be
+filed as one. Collapsing them would leave a reader unable to tell a decision
+from an omission — which is
+[the observation contract](/chant/lexicon-authoring/observation-contract/)'s
+"absent is not the same as unread", applied to prediction.
+
+Neither road ends in a dropped entity or a zero. `behaviourReport` refuses a
+report that leaves a name in neither map, so an entity that vanished is a
+build failure rather than an estate that looks smaller than it is.
+
+## Mapped
+
+The size is read from the named property and sent **verbatim**. `t3.medium` and
+`db.r6g.xlarge` are the provider's own vocabulary, which an engine's price model
+is written against; parsing either into vCPU counts here would put a lossy hop
+in front of a model that already knows the string. Where a declaration states no
+size, the request carries none — a guessed size is a guessed price.
+
+| Entity type | Engine kind | Provider | Size read from | Region |
+|---|---|---|---|---|
+| `AWS::CloudFront::Distribution` | cdn | aws | — | the request's |
+| `AWS::DynamoDB::Table` | database | aws | `BillingMode` | the request's |
+| `AWS::EC2::Instance` | compute | aws | `InstanceType` | the request's |
+| `AWS::EC2::Volume` | block-store | aws | `Size` | `AvailabilityZone`, else the request's |
+| `AWS::ElastiCache::CacheCluster` | cache | aws | `CacheNodeType` | the request's |
+| `AWS::ElasticLoadBalancingV2::LoadBalancer` | load-balancer | aws | `Type` | the request's |
+| `AWS::Lambda::Function` | serverless | aws | `MemorySize` | the request's |
+| `AWS::RDS::DBInstance` | database | aws | `DBInstanceClass` | the request's |
+| `AWS::S3::Bucket` | object-store | aws | — | the request's |
+| `AWS::SQS::Queue` | queue | aws | — | the request's |
+| `K8s::Apps::DaemonSet` | compute | kubernetes | `spec.template.spec.containers` | the request's |
+| `K8s::Apps::Deployment` | compute | kubernetes | `spec.template.spec.containers` | the request's |
+| `K8s::Apps::StatefulSet` | compute | kubernetes | `spec.template.spec.containers` | the request's |
+| `K8s::Batch::CronJob` | serverless | kubernetes | `spec.jobTemplate.spec.template.spec.containers` | the request's |
+| `K8s::Batch::Job` | serverless | kubernetes | `spec.template.spec.containers` | the request's |
+| `K8s::Core::PersistentVolumeClaim` | block-store | kubernetes | `spec.resources.requests.storage` | the request's |
+| `K8s::Core::Service` | load-balancer | kubernetes | `spec.type` | the request's |
+| `K8s::Networking::Ingress` | load-balancer | kubernetes | — | the request's |
+
+## Declared unmapped
+
+Three families run through these reasons.
+
+A **grant** is not a resource. An IAM role, an RBAC binding and a bucket policy
+are statements about who may act; they have no rate, no capacity and no
+behaviour under a lost zone.
+
+A **boundary** is not a node. A VPC, a subnet and a namespace are where other
+entities live. Sending them as nodes would draw a line from every resource to
+its VPC and then price the drawing. Their real contribution to a prediction is
+zone membership, which reaches the engine through
+`edgeCoverage.containmentEdges` instead.
+
+A **meter chant cannot read** is the honest one. A log group is priced by
+ingested volume and a NAT gateway by an hourly rate plus everything that
+crosses it. Both cost real money and neither number is in the declaration, so
+the answer is `unsupported-kind` rather than a figure derived from half of it.
+
+| Entity type | Why it carries no rate |
+|---|---|
+| `Augur::Profile` | the request's own input — the traffic level to predict at — and not part of the estate being predicted. Sending it would ask an engine to price the question |
+| `AWS::CloudFormation::Parameter` | a template input, not a thing the account holds. It shapes what is created and is never created itself |
+| `AWS::EC2::EIP` | priced only while it is attached to nothing, which is a fact about the running account rather than about the declaration |
+| `AWS::EC2::InternetGateway` | a boundary crossing rather than a resource: no rate of its own and no capacity to saturate |
+| `AWS::EC2::NatGateway` | priced as an hourly rate plus a per-gigabyte meter on everything that crosses it. The declaration states the first and nothing at all about the second, and no engine kind here models a half-known price — a figure covering the hourly half alone would read as the cost of the gateway and be wrong by whatever the traffic did |
+| `AWS::EC2::Route` | routing, which decides where an edge goes and is not itself at either end of one |
+| `AWS::EC2::RouteTable` | routing, which decides where an edge goes and is not itself at either end of one |
+| `AWS::EC2::SecurityGroup` | a filter on edges that already exist, not a thing at either end of one |
+| `AWS::EC2::Subnet` | a network boundary rather than a node: its contribution to a prediction is the zone membership that reaches the engine as containment coverage |
+| `AWS::EC2::SubnetRouteTableAssociation` | an association between two boundaries; nothing flows through it that does not already flow through them |
+| `AWS::EC2::VPC` | a network boundary rather than a node: its contribution to a prediction is the zone membership that reaches the engine as containment coverage |
+| `AWS::EC2::VPCGatewayAttachment` | an attachment between two boundaries, and neither end is priced by it |
+| `AWS::IAM::ManagedPolicy` | a policy document is a statement about permission; nothing about it saturates or accrues |
+| `AWS::IAM::Policy` | a policy document is a statement about permission; nothing about it saturates or accrues |
+| `AWS::IAM::Role` | a role is a grant, not a resource traffic flows through: no rate, no capacity, no verdict under a lost zone |
+| `AWS::Logs::LogGroup` | priced by the volume ingested into it, which the declaration does not state and no engine can infer from a graph |
+| `AWS::RDS::DBSubnetGroup` | the set of subnets a database may sit in; the database carries the figures |
+| `AWS::S3::BucketPolicy` | a bucket policy is a grant on the bucket beside it, and the bucket carries the figures |
+| `AWS::SQS::QueuePolicy` | a queue policy is a grant on the queue beside it, and the queue carries the figures |
+| `AWS::WAFv2::WebACL` | priced by the requests inspected through it, which the declaration does not state |
+| `K8s::Core::ConfigMap` | configuration the workloads read; it has no rate and no saturation axis of its own |
+| `K8s::Core::Namespace` | a boundary the workloads sit inside, and the workloads carry the figures |
+| `K8s::Core::Secret` | configuration the workloads read; it has no rate and no saturation axis of its own |
+| `K8s::Core::ServiceAccount` | an identity, not a workload |
+| `K8s::Rbac::Role` | an RBAC role is a grant; the workloads it admits are what cost and saturate |
+| `K8s::Rbac::RoleBinding` | an RBAC binding is a grant; the workloads it admits are what cost and saturate |
+
+## Adding a row
+
+A type in neither table is a gap. Add it to `ENGINE_KINDS_BY_ENTITY_TYPE` with
+its engine kind, or to `DECLARED_UNMAPPED` with a sentence saying what about it
+has no rate. `mapping.test.ts` refuses a type in both halves, a kind outside
+the closed set, and a reason short enough to be a shrug.

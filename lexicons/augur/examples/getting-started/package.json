@@ -1,0 +1,15 @@
+{
+  "name": "@intentius/chant-lexicon-augur-example-getting-started",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "chant build src -o build",
+    "lint": "chant lint src"
+  },
+  "dependencies": {
+    "@intentius/chant-lexicon-augur": "workspace:*",
+    "@intentius/chant-lexicon-aws": "*",
+    "@intentius/chant": "workspace:*"
+  }
+}

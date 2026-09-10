@@ -1,0 +1,118 @@
+---
+title: Predicting
+description: The four moves predictBehaviour makes, the address chain it resolves, and what each refusal means
+diataxis: explanation
+---
+
+`predictBehaviour()` is the fourth observation method, beside
+`describeResources()`, `observeResourcesDeep()` and `listArtifacts()`. The other
+three report what a substrate holds. This one reports what an engine believes
+would happen at a level nobody has run, which is why it is named `predict` and
+not `observe`.
+
+The contract is
+[`packages/core/src/behaviour.ts`](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/behaviour.ts);
+this page is what augur does inside it.
+
+## Four moves, in this order
+
+**Screen the request.** `screenBehaviourRequest` and nothing else. It walks the
+whole request, `entities[*].props` included, and it is the only entry point:
+calling `assertNoCredentialInOptions` instead applies one rule of three and
+drops the other two.
+
+**Resolve the engine.** Most specific first:
+
+1. `CHANT_BEHAVIOUR_ENGINE_AUGUR`
+2. `CHANT_BEHAVIOUR_ENGINE`
+3. `BEHAVIOUR_ENGINE`
+
+Nothing named is a refusal that names the variable to set. This happens before
+anything is priced — a lexicon that prices first and checks the engine
+afterwards has already decided what zero means.
+
+**Build the request.** Offline and pure: no clock, no randomness, no
+filesystem. Nodes and edges sorted, object keys sorted, the same input giving
+the same bytes forever. The declared prediction and the live prediction are
+meant to be shown as a delta, and a delta is only a statement about the estate
+if both sides were assembled the same way.
+
+**Ask, and translate.** One engine outcome onto the contract's builders. augur
+computes no figures at all — there is no arithmetic on money anywhere in
+`predict-behaviour.ts`, which is how "never a locally faked number" stays true
+rather than being remembered.
+
+## The screen runs first, and that ordering is load-bearing
+
+With no engine configured *and* a credential in the request, `no-engine` would
+be a correct-looking answer that hid the leak, and would keep hiding it until
+somebody set the variable. So the screen comes first and the credential
+refusal wins.
+
+The two arms differ in blast radius on purpose. A value that **is** a
+credential throws, which fails the whole lexicon: a live token bound for a
+third party is a stop, not a degradation. A merely suspicious *field name*
+returns a refusal, because that arm is a heuristic and an earlier version of it
+took a whole overlay down over one `tags: { author: "…" }`.
+
+The guard is a denylist of known formats with no entropy scoring. It walks
+build output full of ARNs, digests and resource ids, and a heuristic that
+refused those would refuse real projects rather than protect them. A novel
+issuer's format or a bare random string passes.
+
+## Reaching the engine
+
+The address may be a URL, a socket path, or a command on PATH. augur dials the
+third: the request goes to the command's stdin as canonical JSON and the answer
+comes back on stdout.
+
+The child is spawned with an environment holding `PATH` and nothing else. Rule
+3 is that the engine never sees a credential, and a subprocess inheriting
+`process.env` walks straight around the request-side screen — the request would
+be spotless and the child would hold the whole environment anyway.
+
+A URL address is refused by name. HTTP is
+[chant #2359](https://github.com/INTENTIUS/chant/issues/2359)'s first engine
+adapter, and an HTTP shape invented here would hand that issue a decision
+already made badly rather than an open seam.
+
+## What each refusal means
+
+| Cause | What happened | What to do |
+|---|---|---|
+| `no-engine` | No variable in the chain named one | Set `CHANT_BEHAVIOUR_ENGINE` |
+| `engine-unreachable` | An address was named and did not answer | Check the address, or repoint the variable |
+| `engine-out-of-credit` | The engine answered and the account has no balance | Pay. Waiting never fixes it |
+| `engine-over-quota` | The engine answered and a limit is spent | Usually wait for the window; paying does nothing |
+| `credential-in-request` | The request carried something that must not leave the process | Remove it, or hold it in a reference the build does not expand |
+
+Four causes rather than one, because a refusal exists to be acted on and each
+of these wants a different action. Reporting a spent quota as unreachable sends
+an operator to debug a network that is answering perfectly well.
+
+A refusal carries **no** `entities` map and **no** `meta`, empty or otherwise.
+"The engine is gone" and "the estate costs nothing" are different objects, and
+no amount of downstream carelessness can turn the first into the second.
+
+## Coverage, stated rather than assumed
+
+Two claims travel with every request, and both exist because the alternative is
+a confident wrong answer.
+
+`edgeCoverage` says how complete the edge list is. An empty edge list cannot
+distinguish "nothing references anything" from "I could not work out what
+references what", and containment — a subnet inside a VPC — is deliberately not
+an edge, so zone membership is absent by design. An engine asked whether an
+estate survives one zone lost, over a graph carrying no zone membership,
+answers confidently and wrongly.
+
+`withheld` says which entities were not sent, and why, from
+[the coverage table](../coverage/). Same argument one level along: an engine
+handed twelve nodes cannot tell whether the estate has twelve or twenty.
+
+## What is not here
+
+augur declares no `describeResources`, no `observeResourcesDeep` and no
+`listArtifacts`. That is the shape rather than a gap — augur has no substrate to
+read. Declaring one that returned an empty list would pass a check while
+claiming a read that never happens.

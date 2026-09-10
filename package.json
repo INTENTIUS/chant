@@ -20,6 +20,7 @@
     "lint:docs-prose": "node scripts/lint-docs-sentences.mjs"
   },
   "dependencies": {
+    "@intentius/chant-lexicon-augur": "workspace:*",
     "@intentius/chant-lexicon-aws": "*",
     "@intentius/chant-lexicon-azure": "*",
     "@intentius/chant-lexicon-cedar": "workspace:*",
