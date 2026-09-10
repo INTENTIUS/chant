@@ -27,6 +27,7 @@ What keeps that safe is the evaluability lint rules (EVL), covered in [TypeScrip
 - **Ternary**: `cond ? a : b`
 - **Binary expressions**: arithmetic, string concatenation, comparisons
 - **Nullish coalescing and logical operators**: `left ?? right`, `&&`, `||`
+- **Template literals**: plain interpolation (`` `${a}-${b}` ``), no tag required
 - **Tagged templates**: registered lexicon intrinsic tags
 
 This is the same subset the evaluability rules (EVL001/EVL003) flag violations of — one shared definition (`fold/subset.ts`), imported by both, with a short list of environment-dependent exceptions where the two can't fully agree; see [Evaluability Rules](/chant/lint-rules/evaluability/) for the list. Expressions outside this subset make `fold()` reject that one file; they don't stop the default run path at all, since running plain JavaScript imposes no such restriction on its own.

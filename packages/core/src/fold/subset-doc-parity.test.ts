@@ -3,7 +3,7 @@ import * as ts from "typescript";
 import { readFileSync } from "fs";
 import { fileURLToPath } from "url";
 import { join } from "path";
-import { collectConsts } from "./fold";
+import { collectConsts, fold, FoldError } from "./fold";
 import { findSubsetViolation } from "./subset";
 
 /**
@@ -50,6 +50,20 @@ import { findSubsetViolation } from "./subset";
  *     module boundary, or not at all (subset.ts's module doc, point 1) — a
  *     documented, intentional asymmetry, not something this guard can
  *     usefully narrow further without a binding resolver of its own.
+ *
+ * One doc claim below is checked against `fold()` instead of
+ * `findSubsetViolation` — chant #2306. "Unregistered tagged template
+ * intrinsics" is a claim `findSubsetViolation` structurally cannot decide:
+ * subset.ts treats every tagged template's interior as shape-valid
+ * regardless of tag registration (its own module doc explains why — EVL has
+ * no intrinsic registry at lint time), so registered vs. unregistered is
+ * indistinguishable at that layer no matter which heading the claim sits
+ * under. The registry check lives in `fold()` (`foldTaggedTemplate`), so
+ * that is what this one test calls instead. This is also why the doc bullet
+ * survived as long as it did in unfenced prose (chant #2306's own issue
+ * comment): moving it under a `###` heading with a fenced block, the shape
+ * every other case here uses, was necessary but not sufficient — the
+ * fixture still has to be run through the right function.
  */
 
 const repoRoot = fileURLToPath(new URL("../../../../", import.meta.url));
@@ -206,5 +220,25 @@ describe("subset-doc-parity — unsupported patterns in typescript-as-data.mdx c
     // is EVL004's job, not subset.ts's.
     const consts = parseConsts(extractFencedBlock("Spread from dynamic sources"));
     expect(findSubsetViolation(resourceArg(consts, "store"))).toBeDefined();
+  });
+});
+
+describe("subset-doc-parity — fold()-decided claim in typescript-as-data.mdx (#2306)", () => {
+  test("Unregistered tagged template intrinsics", () => {
+    // findSubsetViolation cannot decide this one — see this file's module
+    // doc. Fold the doc's own example with an empty intrinsics list (no tag
+    // registered at all, the same as no lexicon opting `unknownTag` in) and
+    // check the real rejection, `foldTaggedTemplate` in ./fold.ts, fires.
+    const consts = parseConsts(extractFencedBlock("Unregistered tagged template intrinsics"));
+    const arg = resourceArg(consts, "store");
+    let error: unknown;
+    try {
+      fold(arg, consts, []);
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toBeInstanceOf(FoldError);
+    expect((error as FoldError).message).toContain("unregistered tagged template intrinsic");
+    expect((error as FoldError).message).toContain("unknownTag");
   });
 });
