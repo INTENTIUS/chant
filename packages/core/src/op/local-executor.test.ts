@@ -8,7 +8,7 @@ import {
 } from "./local-executor";
 import { memoryGateLedgerPort } from "./gate";
 import { renderHuman } from "./local-output";
-import type { GateResolutionRecord, PendingGateRecord } from "../lifecycle/gate-ledger";
+import type { GateResolutionRecord, PendingGateRecord, PendingGateInput } from "../lifecycle/gate-ledger";
 import { stepOutput } from "./step-output-ref";
 
 // Fast profiles so retry/timeout tests run in milliseconds.
@@ -325,6 +325,33 @@ describe("runOpLocally — gate as fact (#2119)", () => {
     ]);
   });
 
+  // #2310: the gate still ends the run `gated` — an append that only reaches
+  // the local branch is still a correct local answer, and the #2309 author
+  // was right that this must not become a failure. But the run used to say
+  // nothing at all about the rejected push; now it does.
+  test("a pending fact whose push was rejected still ends the run gated, and says the push failed", async () => {
+    const { calls, activities } = tracked();
+    const port = {
+      async read() {
+        return { resolutions: [] as GateResolutionRecord[], pending: [] as PendingGateRecord[] };
+      },
+      async appendPending(input: PendingGateInput) {
+        return {
+          record: { version: 1 as const, kind: "pending" as const, ...input },
+          pushed: false,
+          pushWarning: "chant/lifecycle remote branch has moved since this run started",
+        };
+      },
+    };
+    const result = await runOpLocally(gatedOp(), activities, PROFILES, undefined, { gates: port, now: NOW });
+
+    expect(result.status).toBe("gated");
+    expect(calls).toEqual(["before"]);
+    expect(result.gate).toMatchObject({ op: "test-op", gate: "approve-prod" });
+    expect(result.gatePushed).toBe(false);
+    expect(result.gatePushWarning).toBe("chant/lifecycle remote branch has moved since this run started");
+  });
+
   // #2202: the gate step's name key is `gate`; `signalName` is read through
   // 0.59.0, so a step still spelling it that way reaches the same ledger entry.
   test("a gate step still using the deprecated `signalName` key names the same gate", async () => {
@@ -523,7 +550,7 @@ describe("runOpLocally — a failure inside the run says what it was (#2301)", (
       async read() {
         return { resolutions: [] as GateResolutionRecord[], pending: [] as PendingGateRecord[] };
       },
-      async appendPending(): Promise<PendingGateRecord> {
+      async appendPending(): Promise<never> {
         throw new Error(message);
       },
     };

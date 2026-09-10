@@ -14,6 +14,7 @@ import { describe, expect, it } from "vitest";
 import { CapabilityRegistry, type DeployContext } from "./capability";
 import { stubCapability } from "./verbs/stub";
 import { memoryGateLedgerPort } from "../op/gate";
+import type { PendingGateInput } from "../lifecycle/gate-ledger";
 import {
   DependencyCycleError,
   DriverRunFailure,
@@ -257,6 +258,36 @@ describe("runComponentDeploy — gate as fact (#2119)", () => {
       ["gate:approve-node-1", "skipped"],
       ["code-deploy", "skipped"],
     ]);
+  });
+
+  // #2310: the driver's own `pushLifecycle` swallow — the same shape
+  // `../op/gate.ts`'s `appendPending` had — a component still ends `gated`
+  // when its own append fails to reach the remote (the local fact is still
+  // correct), but the result now says so instead of staying silent.
+  it("still ends gated when the push is rejected, and reports it on the result", async () => {
+    const { registry, calls } = registryWithCalls();
+    const rejectingPort = {
+      async read() {
+        return { resolutions: [], pending: [] };
+      },
+      async appendPending(input: PendingGateInput) {
+        return {
+          record: { version: 1 as const, kind: "pending" as const, ...input },
+          pushed: false,
+          pushWarning: "chant/lifecycle remote branch has moved since this run started",
+        };
+      },
+    };
+    const result = await runComponentDeploy(
+      gatedComponent(), { env: "dev", component: "neo4j-cluster" }, registry, {}, undefined,
+      { port: rejectingPort, now: NOW },
+    );
+
+    expect(result.status).toBe("gated");
+    expect(result.gate).toMatchObject({ op: "neo4j-cluster", gate: "approve-node-1" });
+    expect(result.gatePushed).toBe(false);
+    expect(result.gatePushWarning).toBe("chant/lifecycle remote branch has moved since this run started");
+    expect(calls).toEqual(["cfn-deploy"]);
   });
 
   // #2202: `signalName` was the key that named a component gate through 0.58.0

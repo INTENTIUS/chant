@@ -72,6 +72,16 @@ export function renderDriverHuman(result: DriverRunResult, write: Writer = stder
     write(`interpret run completed (${result.order.length} component(s))`);
   } else if (result.status === "gated") {
     write(`interpret run is gated at component "${result.gatedComponent}"`);
+    // #2310: this run's own append reached only the local chant/lifecycle
+    // branch. The gate still stands correctly — but an operator elsewhere
+    // cannot see the pending fact to approve it.
+    if (result.gatePushed === false) {
+      write(
+        `  warning : the pending fact was not pushed to the remote — ` +
+          (result.gatePushWarning ?? "it exists only in this checkout") +
+          `. An operator elsewhere cannot approve it until it does.`,
+      );
+    }
   } else {
     write(`interpret run failed at component "${result.failedComponent}"`);
   }
