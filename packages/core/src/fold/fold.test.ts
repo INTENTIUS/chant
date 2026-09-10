@@ -253,6 +253,158 @@ describe("fold — element access", () => {
   });
 });
 
+// chant #2328 — a property or element read whose object folded to `null` or
+// `undefined` returned `undefined`, so a mistyped nested path folded away and
+// the build carried on emitting a resource with the property missing, while
+// RUNNING the same file throws a TypeError at that expression. Both branches
+// now refuse, and the file falls back to run — with `?.`, which JavaScript
+// DEFINES as `undefined` on a nullish object, still folding.
+describe("fold — property/element access on a nullish object (#2328)", () => {
+  test("a mistyped nested path throws a located FoldError rather than folding the property away", () => {
+    const src = `
+      const cfg = { net: { vpcId: "vpc-1" } };
+      const vpcId = cfg.nett.vpcId;
+    `;
+    let error: unknown;
+    try {
+      foldConst(src, "vpcId");
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toBeInstanceOf(FoldError);
+    expect((error as FoldError).message).toContain('property "vpcId" read on undefined is not foldable');
+    expect((error as FoldError).message).toContain("throws a TypeError");
+    // Located at the failing access itself — line 3 of the snippet above.
+    expect((error as FoldError).line).toBe(3);
+  });
+
+  test("the message points at `?.` as the way to say the value is genuinely optional", () => {
+    const src = `
+      const cfg = {};
+      const x = cfg.net.vpcId;
+    `;
+    expect(() => foldConst(src, "x")).toThrow(/write `\?\.` if the value is genuinely optional/);
+  });
+
+  test("a read on null refuses the same way a read on undefined does", () => {
+    const src = `
+      const cfg = null;
+      const x = cfg.vpcId;
+    `;
+    expect(() => foldConst(src, "x")).toThrow(/property "vpcId" read on null is not foldable/);
+  });
+
+  test("element access on a nullish object refuses too, naming the bracketed key", () => {
+    const src = `
+      const cfg = { net: { vpcId: "vpc-1" } };
+      const x = cfg["nett"]["vpcId"];
+    `;
+    expect(() => foldConst(src, "x")).toThrow(FoldError);
+    expect(() => foldConst(src, "x")).toThrow(/property "vpcId" read on undefined is not foldable/);
+  });
+
+  // The cross-file shape #2328 names: a sibling file's `export const a =
+  // undefined;` puts `a -> undefined` in the importer's externals, so
+  // `externals.has("a")` is true and `get("a")` is `undefined`. Held here at
+  // the `fold()` seam; ../discovery/fold-import.test.ts runs the real
+  // two-file version through `tryFoldFile`.
+  test("an imported binding whose value is undefined refuses on a property read, not folds", () => {
+    const src = `const x = a.vpcId;`;
+    const consts = parseConsts(src);
+    const externals = new Map<string, unknown>([["a", undefined]]);
+    expect(() => fold(consts.get("x") as ts.Expression, consts, [], externals)).toThrow(
+      /property "vpcId" read on undefined is not foldable/,
+    );
+  });
+
+  test("a method call on a nullish receiver keeps refusing, as it has since #1966", () => {
+    const src = `
+      const cfg = undefined;
+      const x = cfg.toString();
+    `;
+    expect(() => foldConst(src, "x")).toThrow(/cannot call "\.toString\(\.\.\.\)" on undefined/);
+  });
+});
+
+// chant #2328 — `a?.b` on a nullish `a` is DEFINED to be `undefined` in
+// JavaScript, and so is every link that follows it in the same chain. Fold
+// has to agree with that as exactly as it now disagrees with a plain `.`.
+describe("fold — optional chaining short-circuits rather than refusing (#2328)", () => {
+  test("`a?.b` on a nullish object folds to undefined", () => {
+    const src = `
+      const a = undefined;
+      const x = a?.b;
+    `;
+    expect(foldConst(src, "x")).toBeUndefined();
+  });
+
+  test("a `?.` earlier in the chain carries the whole chain to undefined", () => {
+    const src = `
+      const a = undefined;
+      const x = a?.b.c.d;
+    `;
+    expect(foldConst(src, "x")).toBeUndefined();
+  });
+
+  test("the bracketed spelling short-circuits identically", () => {
+    const src = `
+      const a = null;
+      const x = a?.["b"]["c"];
+    `;
+    expect(foldConst(src, "x")).toBeUndefined();
+  });
+
+  test("a non-null assertion inside the chain is transparent to the short-circuit", () => {
+    const src = `
+      const a = undefined;
+      const x = a?.b!.c;
+    `;
+    expect(foldConst(src, "x")).toBeUndefined();
+  });
+
+  test("an optional call link short-circuits with the rest of the chain", () => {
+    const src = `
+      const a = undefined;
+      const x = a?.b();
+      const y = a?.b.c();
+    `;
+    expect(foldConst(src, "x")).toBeUndefined();
+    expect(foldConst(src, "y")).toBeUndefined();
+  });
+
+  test("`?.` on a present object still indexes it — the short-circuit is not a blanket undefined", () => {
+    const src = `
+      const a = { b: { c: "deep" } };
+      const x = a?.b.c;
+    `;
+    expect(foldConst(src, "x")).toBe("deep");
+  });
+
+  test("parentheses end the chain, so the access after them refuses exactly as running it throws", () => {
+    const src = `
+      const a = undefined;
+      const x = (a?.b).c;
+    `;
+    expect(() => foldConst(src, "x")).toThrow(/property "c" read on undefined is not foldable/);
+  });
+
+  test("a genuine undefined mid-chain is not a short-circuit — the next plain link refuses", () => {
+    const src = `
+      const a = { b: undefined };
+      const x = a?.b.c;
+    `;
+    expect(() => foldConst(src, "x")).toThrow(/property "c" read on undefined is not foldable/);
+  });
+
+  test("...and the same read written optionally folds to undefined", () => {
+    const src = `
+      const a = { b: undefined };
+      const x = a?.b?.c;
+    `;
+    expect(foldConst(src, "x")).toBeUndefined();
+  });
+});
+
 describe("fold — intrinsic tagged templates", () => {
   const SUB: IntrinsicDef = { name: "Sub", isTag: true, outputKey: "Fn::Sub" };
 

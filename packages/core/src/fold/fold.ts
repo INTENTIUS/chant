@@ -785,6 +785,87 @@ function attrRefOnFoldedResource(
 }
 
 /**
+ * chant #2328 — the marker an optional-chain link leaves behind when it
+ * short-circuits, carried up the rest of the chain and unwrapped to
+ * `undefined` at its end.
+ *
+ * `a?.b` on a nullish `a` is DEFINED to be `undefined` in JavaScript, and so
+ * is every link after it: `a?.b.c` is `undefined` too, not a `TypeError` on
+ * `undefined.c`. A non-optional `a.b` on a nullish `a` throws. Both shapes
+ * reach the property-access branch below with the same nullish object, so
+ * telling them apart needs the answer to "did an EARLIER link short-circuit?"
+ * — which a plain `undefined` return cannot carry, because a genuine
+ * `undefined` looks identical: `({}).b.c` is `undefined` at the first link
+ * and running it DOES throw at the second.
+ *
+ * This marker carries it. {@link shortCircuited} produces it only where
+ * {@link continuesOptionalChain} says the parent node is the next link of the
+ * same chain, so the parent always consumes it, and turns it back into
+ * `undefined` at the last link — which is where JavaScript's own
+ * short-circuit lands. It never escapes {@link fold}'s return to a caller.
+ */
+const CHAIN_SHORT_CIRCUIT = Symbol("chant.fold.optional-chain-short-circuit");
+
+/** True when `value` is the {@link CHAIN_SHORT_CIRCUIT} marker. */
+function isChainShortCircuit(value: FoldedValue): boolean {
+  return (value as unknown) === CHAIN_SHORT_CIRCUIT;
+}
+
+/**
+ * The value a chain that short-circuited at or before `node` has AT `node`:
+ * the {@link CHAIN_SHORT_CIRCUIT} marker while another link follows,
+ * `undefined` once `node` is the last one.
+ */
+function shortCircuited(node: ts.Expression): FoldedValue {
+  return continuesOptionalChain(node) ? (CHAIN_SHORT_CIRCUIT as unknown as FoldedValue) : undefined;
+}
+
+/**
+ * True when `node`'s parent is the next link of the SAME optional chain, so a
+ * short-circuit at `node` must keep travelling rather than becoming
+ * `undefined` here.
+ *
+ * TypeScript flags every access/call node after a `?.` as part of that chain
+ * and stops flagging at the first construct that ends it, so this needs no
+ * bookkeeping of its own: `(a?.b).c` — where the parentheses end the chain
+ * and running really does throw on `.c` — is not a continuation, and neither
+ * is `(a?.b as X).c`. A `NonNullChain` (`a?.b!.c`) is transparent, exactly as
+ * {@link fold}'s own non-null unwrapping is.
+ */
+function continuesOptionalChain(node: ts.Node): boolean {
+  const parent: ts.Node | undefined = node.parent;
+  if (parent === undefined) return false;
+  if (ts.isNonNullExpression(parent) && ts.isOptionalChain(parent)) return continuesOptionalChain(parent);
+  return (
+    (ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent) || ts.isCallExpression(parent)) &&
+    parent.expression === node &&
+    ts.isOptionalChain(parent)
+  );
+}
+
+/**
+ * chant #2328 — a property or element read whose object folded to `null` or
+ * `undefined`. Folding it to `undefined` (what both branches did from #1026
+ * until now) drops the property from the output and lets the build carry on,
+ * while RUNNING the same expression throws `TypeError: Cannot read properties
+ * of undefined` — the fold/run disagreement #1535 already ruled unacceptable
+ * one branch over, where an attribute read on a resource envelope folded away
+ * and a trust policy shipped as `Principal: {}`.
+ *
+ * So it refuses, and the file falls back to run — where the real `TypeError`
+ * happens at the line that caused it, naming the property the way it would
+ * without `--fold` at all. The usual cause is a typo in a nested path
+ * (`cfg.nett.vpcId`); a genuinely optional read says so with `?.`, which
+ * short-circuits above instead of reaching this message.
+ */
+function nullishAccessMessage(member: string, obj: null | undefined): string {
+  return (
+    `property "${member}" read on ${String(obj)} is not foldable — running this expression throws a TypeError, ` +
+    `so the file falls back to run (write \`?.\` if the value is genuinely optional)`
+  );
+}
+
+/**
  * True when `node` is an identifier, or a dotted/bracketed access chain
  * rooted at an identifier, that neither `consts` nor `externals` can resolve
  * — e.g. `AWS.StackName` from an imported pseudo-parameter namespace inside
@@ -1074,7 +1155,14 @@ export function fold(
       };
     }
     const obj = fold(node.expression, consts, intrinsics, externals);
-    if (obj === null || obj === undefined) return undefined;
+    // chant #2328 — see {@link nullishAccessMessage}. An earlier `?.` that
+    // short-circuited carries the whole chain to `undefined`; a `?.` here does
+    // the same for a nullish object; a plain `.` on one is the refusal.
+    if (isChainShortCircuit(obj)) return shortCircuited(node);
+    if (obj === null || obj === undefined) {
+      if (node.questionDotToken) return shortCircuited(node);
+      throw foldError(node, nullishAccessMessage(node.name.text, obj));
+    }
     if (isFoldedResource(obj)) return attrRefOnFoldedResource(node, node.name.text);
     return (obj as { [key: string]: FoldedValue })[node.name.text];
   }
@@ -1085,7 +1173,13 @@ export function fold(
       return { __attrRef: { entity: node.expression.text, attribute: key } };
     }
     const obj = fold(node.expression, consts, intrinsics, externals);
-    if (obj === null || obj === undefined) return undefined;
+    // chant #2328 — identical to the property-access branch above; `a?.["k"]`
+    // is the bracketed spelling of the same short-circuit.
+    if (isChainShortCircuit(obj)) return shortCircuited(node);
+    if (obj === null || obj === undefined) {
+      if (node.questionDotToken) return shortCircuited(node);
+      throw foldError(node, nullishAccessMessage(key, obj));
+    }
     if (isFoldedResource(obj)) return attrRefOnFoldedResource(node, key);
     return (obj as { [key: string]: FoldedValue })[key];
   }
@@ -1310,7 +1404,13 @@ export function fold(
     if (ts.isPropertyAccessExpression(node.expression)) {
       const methodName = node.expression.name.text;
       const receiver = fold(node.expression.expression, consts, intrinsics, externals);
+      // chant #2328 — a call is a link of an optional chain like any other:
+      // `a?.b()` and `a?.b.c()` on a nullish `a` are `undefined` in
+      // JavaScript, not a call on nothing. Only a non-optional receiver keeps
+      // the refusal this branch has made since #1966.
+      if (isChainShortCircuit(receiver)) return shortCircuited(node);
       if (receiver === null || receiver === undefined) {
+        if (node.expression.questionDotToken) return shortCircuited(node);
         throw foldError(node, `cannot call ".${methodName}(...)" on ${String(receiver)}`);
       }
       if (isFoldSymbolicEnvelope(receiver)) {

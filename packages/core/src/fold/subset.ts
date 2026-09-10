@@ -44,6 +44,16 @@ import { intrinsicCallFolds, intrinsicCallFoldsEagerly, type IntrinsicDef } from
  *      re-folding the initializer would construct a duplicate of a resource
  *      discovery has already registered. Shape cannot see the difference, and
  *      the rejection is a fall-back-to-run, never a wrong value.
+ *
+ *      chant #2328 adds another, in the same direction and for the same
+ *      reason: a property or element read whose OBJECT resolves to `null` or
+ *      `undefined` (`cfg.nett.vpcId`, a typo in a nested path). Running it
+ *      throws a `TypeError`, so `fold()` refuses rather than answering
+ *      `undefined` and letting the build carry on with the property dropped.
+ *      What the object resolves to is exactly the resolution this module
+ *      does not do, so `cfg.nett.vpcId` stays shape-valid here — and a
+ *      genuinely optional `cfg.net?.vpcId`, which folds to `undefined`
+ *      because JavaScript defines it that way, is shape-valid in both.
  *   2. Tagged-template *tag registration* — needs a lexicon's intrinsics
  *      manifest, which isn't available to a syntax-only lint rule. `fold()`
  *      alone checks it; this module treats any tag name as shape-valid and

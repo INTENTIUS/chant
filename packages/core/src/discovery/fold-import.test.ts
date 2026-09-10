@@ -262,6 +262,61 @@ describe("tryFoldFile", () => {
     expect(result.reason).toBe("no foldable resource exports");
   });
 
+  // chant #2328 — the cross-file shape of the nullish property read. A
+  // sibling file's `export const region = undefined;` resolves through the
+  // module graph like any other imported const, so `externals.has("region")`
+  // is true and `get("region")` is `undefined`; the importer's `region.name`
+  // then folded to `undefined` and the prop vanished from the built resource,
+  // while running the same two files throws `TypeError: Cannot read
+  // properties of undefined (reading 'name')`. It must fall back instead.
+  test("falls back when a property is read off an imported binding whose value is undefined (#2328)", async () => {
+    await writeResourceDefs();
+    await writeFile(join(testDir, "config.ts"), `export const region = undefined;`);
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        import { Bucket } from "./resources";
+        import { region } from "./config";
+        export const bucket = new Bucket({ name: region.name });
+      `,
+    );
+
+    const result = await tryFoldFile(file);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toContain('property "name" read on undefined is not foldable');
+  });
+
+  // The same file with the read written optionally is genuinely `undefined`
+  // in JavaScript, so it keeps folding — the refusal above is about the
+  // non-optional read, not about nullish imports.
+  test("an optional read off the same undefined import still folds (#2328)", async () => {
+    await writeResourceDefs();
+    await writeFile(join(testDir, "config.ts"), `export const region = undefined;`);
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        import { Bucket } from "./resources";
+        import { region } from "./config";
+        throw new Error("must never execute — sentinel for #2328");
+        export const bucket = new Bucket({ name: "b", region: region?.name });
+      `,
+    );
+
+    const result = await tryFoldFile(file);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const [, entity] = result.entities[0];
+    expect((entity as unknown as { props: Record<string, unknown> }).props).toEqual({
+      name: "b",
+      region: undefined,
+    });
+  });
+
   // chant #1020: a plain-value-only export now folds too (contributing
   // nothing to `entities` — only Declarable/CompositeInstance land there —
   // but recorded in `exportedValues`). This is intentional, not a relaxed
