@@ -58,6 +58,8 @@ clamp 0..100              # no known native mapping → 0
 
 An `output` block that reads the carved resource counts too. It is an inbound dependency with the same urgency (the surviving plan errors on the dangling reference), but bridging it rewrites a single expression in a block that manages nothing, so it is weighted like an outbound edge rather than a data-source patch.
 
+A reference that reaches the carved resource through a `locals` block or a `data` source counts as a full inbound edge. Neither block is carvable, so the edge is recorded against the surviving resource that reads the local or the data source, and `carve bridge` lands the rewrite in the referrer's own body. Chained locals resolve through to whatever resource the chain ultimately names.
+
 | Score | Band | Meaning |
 |-------|------|---------|
 | 80–100 | clean leaf | carve now |

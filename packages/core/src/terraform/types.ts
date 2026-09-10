@@ -97,5 +97,12 @@ export interface Hcl2JsonTree {
   data?: Record<string, Record<string, unknown[]>>;
   /** Root-module `output` blocks. Not nodes — they reference, they are not carvable (#1638). */
   output?: Record<string, unknown[]>;
+  /**
+   * Root-module `locals` blocks, as hcl2json renders them: one array element
+   * per `locals` block, each an object of its assignments. Not nodes either —
+   * a local is a substitution — but a reference can reach a resource through
+   * one, so the graph resolves `local.x` to what it names (#2324).
+   */
+  locals?: unknown[];
   [k: string]: unknown;
 }
