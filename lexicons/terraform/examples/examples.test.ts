@@ -550,8 +550,13 @@ describe("plan-on-pr generates the pull_request plan and push apply pair (#2221)
       approve: "${{ steps.chant-run.outputs.approve }}",
     });
     // A failing run piped into `tee` would come back as `tee`'s zero, so the
-    // one line that keeps a broken apply red is asserted rather than assumed.
-    expect(step.run).toContain("set -o pipefail");
+    // mechanism that keeps a broken apply red is asserted rather than assumed.
+    // Since chant #2321 that is a POSIX status capture taken from inside the
+    // pipe's first stage, not `set -o pipefail` — a container job's default
+    // shell is `sh`, which rejects that option outright (chant #2299).
+    expect(step.run).toContain('echo "$?" >"$status"');
+    expect(step.run).toContain('[ "$code" -eq 0 ] || exit "$code"');
+    expect(step.run).not.toContain("set -o pipefail");
   });
 
   it("adds one follow-up job that needs the apply and runs only when it gated", async () => {
