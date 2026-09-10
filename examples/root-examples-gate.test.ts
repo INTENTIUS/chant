@@ -58,6 +58,13 @@ interface AllowEntry {
    * "expected-failure" — an enumerated example whose own scripts run and are
    * expected to fail. The test fails if they pass, which is what empties
    * this list as #2248's sub-issues land.
+   *
+   * chant #2347 — most of those are backlog, but not all of them are. A
+   * differential fixture whose whole subject is a build that fails belongs
+   * here permanently, and the entry says which kind it is. The gate treats
+   * both identically, and that is the point: pinning a deliberate failure and
+   * pinning a backlogged one are the same assertion, and either one silently
+   * starting to pass is the same bug.
    */
   kind: "no-config" | "expected-failure";
   reason: string;
@@ -73,6 +80,19 @@ const ALLOWLIST: Record<string, AllowEntry> = {
   },
 
   // ── Runs, and is expected to fail ──
+  "fold-adversarial": {
+    kind: "expected-failure",
+    reason:
+      "chant #2347 — a fold/run differential fixture, not a shipped example, and the one entry " +
+      "on this list whose failure is permanent by design rather than a burn-down item. Its " +
+      "`src/nullish-property-read.ts` reads a property off an object that resolves to " +
+      "`undefined`: `fold()` refuses it (#2328), the file falls back to run, and running it " +
+      "throws the TypeError the refusal predicted. That IS the fixture — the differential's " +
+      "claim is that both paths report the same failure — so `chant build .` reports one " +
+      "DiscoveryError and exits non-zero, for ever. If it ever stops failing, the fixture has " +
+      "stopped testing anything and this gate says so.",
+  },
+
   "supply-chain": {
     kind: "expected-failure",
     reason:

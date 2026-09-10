@@ -145,9 +145,8 @@ const { buildCommand } = await import("@intentius/chant/cli/commands/build");
 const { lintCommand } = await import("@intentius/chant/cli/commands/lint");
 const { runSearch } = await import("../packages/core/src/cli/handlers/search");
 const { runScenarioCheck } = await import("../packages/core/src/cli/handlers/scenario");
-const { discoverCorpus, entryBuildParams, ALL_SERIALIZERS, ALL_PLUGINS } = await import(
-  "../examples/differential-corpus"
-);
+const { discoverCorpus, entryBuildParams, ALL_SERIALIZERS, ALL_PLUGINS, buildErrorFiles, expectedBuildErrorFiles } =
+  await import("../examples/differential-corpus");
 const {
   EGRESS_CATALOGUE,
   EGRESS_CATALOGUE_DOCS,
@@ -299,7 +298,13 @@ describe("chant #1984 — the phases an adopter runs reach no network", () => {
           buildParams: await entryBuildParams(entry),
         }),
       );
-      expect(result.errors, `${entry.name}: the build itself failed`).toEqual([]);
+      // chant #2347 — not `[]`: `examples/fold-adversarial` is a differential
+      // fixture whose #2328 file throws on purpose, and this assertion is the
+      // guard against a vacuous pass, not the property under test (that is
+      // `violations`, below). See `EXPECTED_BUILD_ERRORS`.
+      expect(buildErrorFiles(result.errors), `${entry.name}: the build itself failed`).toEqual(
+        expectedBuildErrorFiles(entry.name),
+      );
       violations.push(...attemptsSince(mark));
     }
     report.push({ phase: "chant build", projects: CORPUS.length, violations: violations.length });

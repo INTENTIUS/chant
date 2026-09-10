@@ -422,7 +422,75 @@ export function outputsEqual(a: NormalizedOutputs, b: NormalizedOutputs): boolea
   return true;
 }
 
+/**
+ * chant #2347 — corpus entries that build with an error ON PURPOSE, keyed by
+ * name, valued by the basenames of the files expected to produce one.
+ *
+ * Several suites over this corpus assert `result.errors` is empty. In none of
+ * them is that the property under test: it is the guard that keeps the real
+ * assertion — no API client loaded, no socket opened — from passing vacuously
+ * on a build that never got far enough to do anything. Until #2347 the corpus
+ * was entirely happy-path, so "empty" and "what this entry is supposed to
+ * report" were the same list and nobody had to say which one they meant.
+ *
+ * `examples/fold-adversarial` is the first entry where they differ. Its
+ * `nullish-property-read.ts` is the #2328 shape — `fold()` refuses a property
+ * read on an object that resolves to `undefined`, the file falls back to run,
+ * and running it throws the `TypeError` the refusal predicted. An entry
+ * written to prove that fold and run agree about a failure has to be allowed
+ * to fail.
+ *
+ * One definition rather than a copy per suite, for the same reason
+ * {@link classifyFoldMode} is: two hand-written copies of "which entries may
+ * error" — `k8s-client-boundary.test.ts` and `test/no-egress.test.ts` — would
+ * drift, and the drift would show up as a suite quietly not checking
+ * something. Named and never counted, so a NEW erroring entry is a regression
+ * both of them fail on.
+ */
+export const EXPECTED_BUILD_ERRORS: ReadonlyMap<string, readonly string[]> = new Map([
+  ["examples/fold-adversarial", ["nullish-property-read.ts"]],
+]);
+
+/**
+ * The files an entry's build reported an error for, as sorted basenames —
+ * directly comparable with {@link EXPECTED_BUILD_ERRORS}'s value for it.
+ * A `BuildError` names an entity rather than a file and renders as
+ * `BuildError(<entity>)`, so it can never be mistaken for an expected one.
+ */
+export function buildErrorFiles(errors: Array<DiscoveryError | BuildError>): string[] {
+  return errors.map((e) => ("file" in e ? e.file.split("/").pop()! : `${e.name}(${e.entityName})`)).sort();
+}
+
+/** The sorted basenames {@link buildErrorFiles} must return for `entryName`. */
+export function expectedBuildErrorFiles(entryName: string): string[] {
+  return [...(EXPECTED_BUILD_ERRORS.get(entryName) ?? [])].sort();
+}
+
 /** Normalize discovery/build errors for order-independent comparison across two build paths. */
 export function normalizeErrors(errors: Array<DiscoveryError | BuildError>): string[] {
   return errors.map((e) => JSON.stringify(e.toJSON())).sort();
+}
+
+/**
+ * chant #2347 — the error-side counterpart of {@link outputsEqual}, for the
+ * differentials that decide whether to pay for a module-isolated retry.
+ *
+ * That decision used to read outputs only, which is sound exactly as long as
+ * no corpus entry contains a file that throws while being imported. One does
+ * now (`examples/fold-adversarial/src/nullish-property-read.ts`, the #2328
+ * fixture), and such a file produces no entities at all — so both builds
+ * agree on output, byte for byte, while disagreeing about whether the build
+ * reported an error.
+ *
+ * The disagreement is cross-build state bleed, the same category the retry
+ * already exists for: vitest's module runner caches a module that threw
+ * mid-evaluation as evaluated, and hands every later importer in the process a
+ * namespace holding whatever bindings were initialized before the throw. Node
+ * itself re-throws for every import of such a module, so the FIRST build in a
+ * process sees the error and no build after it does. Isolating modules and
+ * building both sides fresh puts both back on the first-build footing, which
+ * is what a real `chant build` always is. See chant #2368.
+ */
+export function errorsEqual(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((entry, i) => entry === b[i]);
 }
