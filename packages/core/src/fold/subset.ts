@@ -3,8 +3,32 @@ import { isFoldableHelperName } from "./foldable-helpers";
 import { intrinsicCallFolds, intrinsicCallFoldsEagerly, type IntrinsicDef } from "../lexicon";
 
 /**
- * subset — the single canonical definition of chant's statically-foldable
- * expression subset (chant #1024, epic #1019).
+ * subset — chant's implementation of the SHAPE layer of the TypeScript-as-Data
+ * specification (chant #1024, epic #1019).
+ *
+ * ## The specification is normative; this file implements it
+ *
+ * Since INTENTIUS/typescript-as-data#33 (2026-09-10) the subset is defined by
+ * the specification at https://github.com/INTENTIUS/typescript-as-data, not by
+ * this file. The rules this module implements are the `S-*` productions of
+ * `spec/grammar.md` §2 — S-Unwrap, S-Literal, S-Ident, S-Template, S-Tagged,
+ * S-Object (S-Prop / S-Shorthand / S-SpreadProp), S-Array, S-Member, S-Index,
+ * S-Unary, S-Binary, S-Conditional, S-New, the S-Call forms (S-CallHelper,
+ * S-CallIntrinsic, S-CallEager, S-CallMethod, S-CompositeStep) and S-Reject —
+ * and the direction rule `F-Direction` of `spec/divergence.md`: this classifier
+ * may accept what `fold()` rejects, never the reverse, outside the two named
+ * exceptions F-Exc-Lazy and F-Exc-Registry. The "environment-dependent
+ * exceptions" enumerated below are `spec/divergence.md`'s F-Div-* rows, kept
+ * here as implementation notes on WHY each resolution is out of this module's
+ * reach.
+ *
+ * Changing the subset goes spec-first: propose and land the rule there (with a
+ * fixture), then implement it here citing the identifier, then release. The
+ * provisional path for a change needed before the rule can be written: land it
+ * with the affected rule marked PROVISIONAL in this doc naming the spec issue;
+ * a provisional marker may survive at most one release, and the docs may not
+ * describe the change as supported until the rule exists. See
+ * `spec/README.md` "Ownership" and chant #2354.
  *
  * `fold()` ({@link "./fold"}, the enforcement layer — a construct outside
  * this subset simply has no case there) and EVL001/EVL003

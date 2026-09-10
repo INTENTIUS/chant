@@ -48,6 +48,18 @@ import { intrinsicCallFoldsEagerly, type IntrinsicDef } from "../lexicon";
 import type { BuildParamValue } from "../build-params";
 
 /**
+ * Implements judgments J2 (the per-file verdict: F-Scan, F-NoExports, F-Bind,
+ * F-Import, F-Namespace, F-Declarator, F-Call, F-Total, F-Reason,
+ * F-IsolatedRefusal), J3 (the identity-taint fixpoint: F-Capture, F-CallLeak,
+ * F-Memo, F-Count, F-Seed, F-Succ, F-Taint, F-Fix, F-Cycle — see
+ * {@link planFoldTaint}), J4's observables (F-Obs-Counters via
+ * {@link foldExecutionCounts}, F-Obs-Report via the `[fold:*]` decision
+ * lines), and the trust rule F-Host-Trust of `spec/hosts.md` (see
+ * {@link isTrustedExecutableBinding}) of the TypeScript-as-Data specification
+ * at https://github.com/INTENTIUS/typescript-as-data, normative for the subset
+ * since INTENTIUS/typescript-as-data#33. Subset changes go spec-first; see
+ * ../fold/subset.ts's module doc for the process.
+ *
  * Bridges the static folder ({@link ../fold/fold}, #1026) into discovery
  * (#1022/#1023, epic #1019): attempts to fold one source file into real
  * `Declarable`/`CompositeInstance` instances with zero execution of the

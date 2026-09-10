@@ -21,6 +21,16 @@ import { isFoldableHelperName } from "./foldable-helpers";
 /**
  * fold — static AST value reducer (chant #1026/#1021/#1024, part of epic #1019)
  *
+ * Implements judgment J1 (`F-Eval-*`, `spec/judgments.md`) and the value domain
+ * (`F-Val-*`, `spec/values.md`) of the TypeScript-as-Data specification at
+ * https://github.com/INTENTIUS/typescript-as-data, which is normative for the
+ * subset since INTENTIUS/typescript-as-data#33. Each branch of {@link fold}
+ * below is one F-Eval rule — the identifier branch is F-Eval-Ident, the
+ * property-access branch F-Eval-Member (its numbered steps match), the call
+ * branch F-Eval-CallHelper / CallIntrinsic / CallLocal / CallEager / CallMethod
+ * in that order — and the envelope types here are F-Val-Domain's cases.
+ * Subset changes go spec-first; see subset.ts's module doc for the process.
+ *
  * Reduces a single-file TypeScript expression AST to a value with NO
  * module execution. The node-kind/operator/key subset it covers — literals,
  * template interpolation, object/array literals (incl. spread), `const`
