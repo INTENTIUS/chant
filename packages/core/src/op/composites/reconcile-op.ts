@@ -96,10 +96,16 @@ export function ReconcileOp(config: ReconcileOpConfig): ReconcileOpResources {
         // regenerates via `chant import --from`, and opens a PR. Surface the
         // opened PR/issue URL as an outcome so `chant run` prints it — the
         // reconcile's result is the link.
+        //
+        // `op` names this Op in the marker `issue` mode's sticky issue is
+        // found by (#2319). The env alone is not unique across Ops: it shares
+        // a marker namespace with `TerraformWatchOp`, which passes a terraform
+        // *root* as its `env`, so a chant environment and a root that happen
+        // to share a name resolved to one marker and overwrote each other.
         {
           kind: "activity" as const,
           fn: "reconcilePr",
-          args: { env: config.env, mode: onDrift, owned },
+          args: { env: config.env, op: config.name, mode: onDrift, owned },
           ...(reconcileOutcome ? { outcomeAttribute: reconcileOutcome } : {}),
         },
       ]),

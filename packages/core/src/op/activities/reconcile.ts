@@ -37,6 +37,10 @@ const execAsync = promisify(exec);
  * sets `GITHUB_REPOSITORY`. Both are sticky now (chant #2292, #2297): each
  * finds and edits the OPEN issue it already owns by a hidden marker, the same
  * recipe `comment` mode's note uses, and opens a new one only when it finds
+ * none. Which is why that marker has to name the Op (chant #2319) and why
+ * this mode refuses a step that supplies neither an `op` nor a `marker` — see
+ * {@link issueMarker} and {@link noIssueIdentityMessage}.
+ *
  * none. See {@link postOrUpdateGithubIssue} for the GitHub/GHES/Forgejo half
  * — including why it does not use GitHub's Search API, and the decision that
  * this mode never closes the issue itself. Only a run outside any known CI
@@ -94,12 +98,32 @@ export interface ReconcilePrArgs {
   /** PR / issue title. Default derived from env. */
   title?: string;
   /**
+   * The name of the Op this step belongs to, which is what makes an `issue`
+   * mode marker unique (#2319) — see {@link issueMarker}. Set it to the
+   * enclosing `Op`'s own `name`; both in-tree composites do, and a
+   * hand-written step should too.
+   *
+   * `issue` mode needs this or an explicit `marker`, and refuses by name
+   * ({@link noIssueIdentityMessage}) with neither: without one the marker
+   * falls back to naming only the env, two Ops over one env collide on it,
+   * and each nightly run silently overwrites the other's report.
+   *
+   * `comment` mode ignores it. That mode's marker is scoped to one pull
+   * request rather than to the repository, so its collision (two `comment`
+   * Ops over one env, both triggered by one pull request) is bounded by that
+   * pull request's life and leaves nothing behind. Tracked separately rather
+   * than folded in here, because changing `commentMarker` would orphan the
+   * comments already sitting on open pull requests.
+   */
+  op?: string;
+  /**
    * Hidden marker identifying this Op's own comment or issue. The activity
    * writes it as the first line and finds it again by it on the next run, so
    * a re-run edits one comment/issue instead of stacking a new one. Default:
-   * {@link commentMarker} for `comment` mode, {@link issueMarker} for `issue`
-   * mode, both keyed on `env`, so two Ops over two roots get two comments (or
-   * two issues) and each updates in place.
+   * {@link commentMarker} for `comment` mode, keyed on `env`; {@link
+   * issueMarker} for `issue` mode, keyed on `op` and `env` together. Supply
+   * it directly to own uniqueness yourself — in `issue` mode that is the one
+   * way to satisfy the identity requirement without passing `op`.
    */
   marker?: string;
   /**
@@ -191,21 +215,132 @@ export interface PullRequestContext {
  * environments own two comments and each updates in place.
  */
 export function commentMarker(env: string): string {
-  return `<!-- chant-reconcile:${env.replace(/[^a-zA-Z0-9._-]+/g, "-")} -->`;
+  return `<!-- chant-reconcile:${markerSlug(env)} -->`;
 }
 
 /**
- * The hidden marker that makes an `issue`-mode GitLab finding findable across
- * re-runs (#2292): written as the issue description's first line, matched by
- * a server-side `search` plus a `startswith` check on the next run — the same
- * recipe {@link commentMarker} names for the `comment` mode's note, kept as
- * its own function (rather than reused) because the two modes write to
- * different resources and a caller may run both against the same `env`.
- * Slugified the same way, for the same reason: interpolated next to quotes
- * and URL-encoding it should not need escaping out of.
+ * The hidden marker that makes an `issue`-mode finding findable across re-runs
+ * (#2292, #2297): written as the issue description's first line, matched on
+ * the next run by a `startswith` check (GitHub/Forgejo) or a server-side
+ * `search` plus the same check (GitLab). The same recipe {@link commentMarker}
+ * names for the `comment` mode's note, kept as its own function (rather than
+ * reused) because the two modes write to different resources and a caller may
+ * run both against the same `env`.
+ *
+ * Keyed on the owning Op *and* the env, not the env alone (#2319). An
+ * env-keyed marker was not unique, and once #2311 made this mode edit in place
+ * that stopped being merely untidy: `postOrUpdateGithubIssue` PATCHes both the
+ * title and the body of whatever it matches, so two Ops resolving to one
+ * marker rewrite each other's report on every run and the issue alternates
+ * between two unrelated findings. Two in-tree pairings hit it — a stock
+ * `TerraformWatchOp` and a `live: true` one over the same root (both pass the
+ * root as `env`), and a `ReconcileOp` for a chant environment whose name
+ * matches some terraform root — and both are ordinary configurations, not
+ * abuse. The Op name is the identifier closest to unique that this activity
+ * can be handed: it names the Op's output directory and is what `chant run`
+ * takes, so two Ops in a project do not share a raw name.
+ * `lexicons/github`'s gate notice reached the same conclusion first, keying
+ * its own sticky marker on `$CHANT_OP` alone.
+ *
+ * Both halves are slugified the same way {@link reconcileBranchName} slugifies
+ * an env, which also keeps the value free of the quotes and backslashes it is
+ * interpolated next to and of anything URL-encoding should have to escape out
+ * of. `/` cannot survive that slugify, so it separates the two halves
+ * unambiguously: the marker parses back to exactly one `op` slug and one `env`
+ * slug.
+ *
+ * What that leaves, and what is accepted rather than solved (#2319 pre-merge
+ * review): the slug is not injective. {@link markerSlug} collapses every run
+ * of characters outside `[A-Za-z0-9._-]` to a single `-`, so `"app watch"` and
+ * `"app:watch"` share a slug, and so do `"café"` and `"caf€"`. Two Ops named
+ * that way in one project over one env would still collide. Nothing in this
+ * repository constrains an Op name's character set today, so this cannot be
+ * closed here — it wants a charset rule on `OpConfig.name` (which would also
+ * settle the output directory and the branch name, both of which slugify the
+ * same way and have the same aliasing). Until then the residual is: distinct
+ * raw names, distinct markers, unless the names differ only in characters the
+ * slug does not keep.
  */
-export function issueMarker(env: string): string {
-  return `<!-- chant-reconcile-issue:${env.replace(/[^a-zA-Z0-9._-]+/g, "-")} -->`;
+export function issueMarker(op: string, env: string): string {
+  return `<!-- chant-reconcile-issue:${markerSlug(op)}/${markerSlug(env)} -->`;
+}
+
+/** The slugify both markers share: everything outside `[A-Za-z0-9._-]` collapses to `-`. */
+function markerSlug(s: string): string {
+  return s.replace(/[^a-zA-Z0-9._-]+/g, "-");
+}
+
+/**
+ * What any mode says about a supplied `marker` it cannot use safely (#2319
+ * pre-merge review).
+ *
+ * The marker is interpolated raw into the `--jq` filter that finds this Op's
+ * own comment or issue, inside a jq string literal: `startswith("<marker>")`.
+ * Only the whole filter is shell-quoted, so a `"` or a `\` in the marker
+ * closes or escapes past that literal — at best a jq syntax error, at worst a
+ * filter that matches something other than what the caller wrote. A control
+ * character does the same to the jq program's own line structure.
+ *
+ * Markers this activity builds itself cannot contain any of the three:
+ * {@link markerSlug} keeps them to `[A-Za-z0-9._-]` plus the fixed `<!-- … -->`
+ * frame. This checks the one that comes in from outside, and refuses rather
+ * than escaping, because a marker is an identity a caller has to be able to
+ * predict — silently rewriting it would move the issue this run owns.
+ */
+export function unsafeMarkerMessage(marker: string): string {
+  return (
+    `reconcilePr was given the marker ${JSON.stringify(marker)}, which it cannot use. The marker goes into ` +
+    'the `--jq` filter that finds this Op\'s own comment or issue, as `startswith("<marker>")`, so a double ' +
+    "quote, a backslash or a control character in it either breaks that filter or changes what it matches. " +
+    "Markers this activity builds itself are slugified to letters, digits, dot, underscore and hyphen and " +
+    "cannot contain any of the three. Keep a supplied marker to printable text without `\"` or `\\`, or drop " +
+    "`marker` and pass `op` instead."
+  );
+}
+
+/**
+ * The caller's `marker` as this activity will actually use it, or `undefined`
+ * when the caller supplied nothing usable (#2319 pre-merge review).
+ *
+ * Blank is not a marker. `""` and `"   "` used to satisfy the `issue`-mode
+ * identity check — `args.marker === undefined` is false for both, and `??`
+ * only falls through on nullish — and then built `startswith("")`, which is
+ * true of every issue body in the repository. So the step took whichever OPEN
+ * non-pull-request issue the forge listed first, very possibly a human's, and
+ * PATCHed its title and body. That is the precise failure #2319 exists to
+ * close, reachable through the escape hatch #2319 added, which is why the
+ * check lives on the field rather than in one mode's branch.
+ *
+ * Trimming rather than only rejecting: a marker with a trailing space is
+ * written and matched consistently either way, and normalizing it here means
+ * one definition of "blank" for both modes.
+ */
+export function suppliedMarker(marker: string | undefined): string | undefined {
+  const trimmed = marker?.trim();
+  if (!trimmed) return undefined;
+  if (/["\\]|[\u0000-\u001f\u007f]/.test(trimmed)) throw new Error(unsafeMarkerMessage(trimmed));
+  return trimmed;
+}
+
+/**
+ * What an `issue`-mode step says when it was given no identity to key its
+ * marker on (#2319).
+ *
+ * A refusal rather than a fall back to the pre-#2319 env-only marker, because
+ * the fallback is the bug: it is silent, it looks like it worked, and what it
+ * costs is the *other* Op's report, which nobody is watching the log of. The
+ * step that has to change is the one being refused, and the message names the
+ * two ways to change it.
+ */
+export function noIssueIdentityMessage(env: string): string {
+  return (
+    'reconcilePr mode "issue" edits the one OPEN issue carrying this Op\'s hidden marker in place, so the ' +
+    `marker has to name the Op. This step supplies env "${env}" and no identity, and an env alone is not ` +
+    "unique: two Ops over one env — a stock terraform drift watch and a live one over the same root, or a " +
+    "terraform root and a chant environment that happen to share a name — resolve to the same marker, and " +
+    "each run then rewrites the other's issue title and body. Pass `op` with the Op's own name (every " +
+    "composite in tree does), or pass an explicit `marker` you keep unique yourself."
+  );
 }
 
 /** What a `comment`-mode step says when the run it is in has no pull request and no merge request. */
@@ -442,9 +577,9 @@ export type GhExec = (cmd: string) => Promise<{ stdout: string; stderr: string }
  *    read-after-write the sticky recipe depends on — a false "not found"
  *    means a duplicate issue, which is the bug this activity exists to fix.
  * 2. **The marker itself.** The hidden marker is deliberately punctuation-
- *    heavy (`<!-- chant-reconcile-issue:app -->`) so it renders invisibly.
- *    GitHub's search tokenizer is not documented to preserve that shape
- *    through `in:body` matching, and a wrong query would either miss the
+ *    heavy (`<!-- chant-reconcile-issue:nightly/app -->`) so it renders
+ *    invisibly. GitHub's search tokenizer is not documented to preserve that
+ *    shape through `in:body` matching, and a wrong query would either miss the
  *    marker (a duplicate, the same failure mode as above) or over-match and
  *    still need the same client-side `startswith` check this function
  *    already does — at which point the search bought nothing but risk.
@@ -919,6 +1054,36 @@ async function derivePlanEntries(
 }
 
 /**
+ * The marker the run will write and find its finding by, for the two modes
+ * that have one, or `undefined` for the two that do not (#2319, and its
+ * pre-merge review).
+ *
+ * Pure, and called before anything else in {@link reconcilePr} so that both
+ * refusals it can raise — no identity, unusable marker — happen before the
+ * activity shells out to anything.
+ *
+ * `issue` mode requires an identity: the Op's name, or a marker the caller
+ * keeps unique. `comment` mode does not, because its marker is scoped to one
+ * pull request rather than to the repository — see `ReconcilePrArgs.op` and
+ * {@link issueMarker} for that asymmetry and what is tracked separately.
+ * Both modes get the same {@link suppliedMarker} treatment of the field,
+ * because a blank or unusable marker is a property of the field, not of the
+ * mode reading it.
+ */
+function resolveMarker(mode: ReconcileMode, args: ReconcilePrArgs): string | undefined {
+  if (mode === "issue") {
+    const supplied = suppliedMarker(args.marker);
+    const op = args.op?.trim();
+    if (!supplied && !op) throw new Error(noIssueIdentityMessage(args.env));
+    return supplied ?? issueMarker(op as string, args.env);
+  }
+  if (mode === "comment") {
+    return suppliedMarker(args.marker) ?? commentMarker(args.env);
+  }
+  return undefined;
+}
+
+/**
  * Reconcile activity: turn regenerated TypeScript into a reviewable artifact.
  *
  * - `report` — return the summary only; no git, no network.
@@ -929,7 +1094,11 @@ async function derivePlanEntries(
  *   CI job (any trigger — the point of this mode is a cron run that has no
  *   merge request), the same recipe against one GitLab issue (#2292). Neither
  *   branch ever closes the issue itself — see {@link postOrUpdateGithubIssue}
- *   for that decision and why.
+ *   for that decision and why. The marker names the Op as well as the env
+ *   (#2319), so the step needs `op` or an explicit `marker` and fails by name
+ *   with neither; an issue left over from the pre-#2319 env-only marker
+ *   matches no Op's marker now and is left where it is, unedited, rather than
+ *   adopted by whichever Op happens to run first.
  * - `comment` — post the body as one comment on the pull request that
  *   triggered the run, editing that same comment on every re-run rather than
  *   stacking a new one (#2231) — on GitHub and on Forgejo alike (#2291), the
@@ -953,6 +1122,18 @@ async function derivePlanEntries(
 export async function reconcilePr(args: ReconcilePrArgs, signal?: AbortSignal): Promise<ReconcileResult> {
   const mode = args.mode ?? "pull-request";
   const owned = args.owned ?? false;
+
+  // Resolved first, ahead of the `chant lifecycle plan` shell-out below
+  // (#2319 pre-merge review). The identity refusal used to sit inside the
+  // `issue` branch, which is after that derivation, so the arg shape that
+  // actually reaches it — `{ env, op, mode, owned }`, `ReconcileOp`'s own,
+  // with no `body` to short-circuit the plan — ran a shell command before
+  // failing. `chant lifecycle plan` is read-only, so nothing was written; but
+  // a plan that fails first hands the operator a plan error in place of the
+  // named refusal this design rests on, which is the whole point of refusing
+  // by name.
+  const resolvedMarker = resolveMarker(mode, args);
+
   // A caller-supplied body means the finding is already written, so there is
   // nothing for `chant lifecycle plan` to tell us (#2087).
   const entries = args.entries ?? (args.body !== undefined ? [] : await derivePlanEntries(args.env, owned, signal));
@@ -964,7 +1145,9 @@ export async function reconcilePr(args: ReconcilePrArgs, signal?: AbortSignal): 
   }
 
   if (mode === "issue") {
-    const marker = args.marker ?? issueMarker(args.env);
+    // Non-null because `resolveMarker` returns a string for this mode or
+    // throws, and it already ran at the top of the function.
+    const marker = resolvedMarker!;
 
     // GitLab first, because its check is the narrow one: `CI_PROJECT_ID` is
     // set on every GitLab CI job, and nothing outside GitLab CI sets it
@@ -1005,7 +1188,7 @@ export async function reconcilePr(args: ReconcilePrArgs, signal?: AbortSignal): 
     // The trigger context is read here rather than passed in: a step's args
     // are serialized at build time, and the pull request is not known until
     // the run. Missing context is fatal — see `noPullRequestContextMessage`.
-    const marker = args.marker ?? commentMarker(args.env);
+    const marker = resolvedMarker!;
 
     // GitLab first, because its check is the narrow one: only a
     // `merge_request_event` pipeline sets `CI_MERGE_REQUEST_IID` (#2256), so

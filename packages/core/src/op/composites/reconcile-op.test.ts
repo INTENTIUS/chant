@@ -34,6 +34,24 @@ describe("ReconcileOp composite — PR/issue URL outcome (#8)", () => {
   });
 });
 
+describe("ReconcileOp composite — the finding step names its Op (#2319)", () => {
+  test("passes the Op's own name as `op`, which is what keeps the issue marker unique", () => {
+    const { op } = ReconcileOp({ name: "prod-reconcile", env: "prod", onDrift: "issue" });
+    expect((reconcileStep(op).args as { op: string }).op).toBe("prod-reconcile");
+  });
+
+  test("two Ops over one env carry two identities", () => {
+    // The collision #2319 reports: `env` alone is shared here by construction,
+    // and a `TerraformWatchOp` over a root named "prod" would share it too.
+    const a = ReconcileOp({ name: "prod-reconcile", env: "prod", onDrift: "issue" });
+    const b = ReconcileOp({ name: "prod-reconcile-owned", env: "prod", onDrift: "issue" });
+    const argsA = reconcileStep(a.op).args as { op: string; env: string };
+    const argsB = reconcileStep(b.op).args as { op: string; env: string };
+    expect(argsA.env).toBe(argsB.env);
+    expect(argsA.op).not.toBe(argsB.op);
+  });
+});
+
 describe("ReconcileOp composite — cadence on the op (#2120)", () => {
   function opProps(op: unknown): Record<string, unknown> {
     return (op as { props: Record<string, unknown> }).props;

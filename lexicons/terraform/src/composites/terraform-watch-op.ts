@@ -269,11 +269,21 @@ export function TerraformWatchOp(config: TerraformWatchOpConfig): TerraformWatch
     // terraform that is the root, which with its workspace is the deployment
     // target. `entries: []` and `body` together mean the activity opens what
     // it is given rather than running `chant lifecycle plan` to find out.
+    //
+    // `op` is what keeps the sticky issue this Op's own (#2319). The root
+    // alone does not: a stock drift watch and a `live: true` watch over one
+    // root is the pairing this composite is built for, and before #2319 both
+    // resolved to one env-keyed marker, so each nightly run rewrote the
+    // other's issue title and body. Two Ops in a project do not share a raw
+    // name — it names the Op's output directory — though the marker carries
+    // the slug rather than the raw name, and the slug is not injective; see
+    // `issueMarker` for what that leaves and why it is accepted.
     const report: ActivityStep = {
       kind: "activity",
       fn: "reconcilePr",
       args: {
         env: config.root,
+        op: config.name,
         mode: findingMode,
         entries: [],
         title: config.title ?? `Terraform drift in root "${config.root}"`,
