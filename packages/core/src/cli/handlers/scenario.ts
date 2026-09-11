@@ -12,7 +12,8 @@ import {
   type ReceiptReading,
 } from "../../lifecycle/receipt-plan";
 import { collectEffectReceipts, isEffectReceipt, type EffectReceiptDeclaration } from "../../effect-receipt";
-import { evaluateScenario, type ScenarioVerdict } from "../../lifecycle/scenario-eval";
+import { evaluateScenario, type ScenarioBehaviourFixture, type ScenarioVerdict } from "../../lifecycle/scenario-eval";
+import { validateBehaviourResult } from "../../behaviour-delta";
 import { collectScenarios, type ScenarioDeclaration, type ScenarioGiven } from "../../lifecycle/scenario";
 import { isResourceDeclarable } from "../../declarable";
 import { loadChantConfig } from "../../config";
@@ -153,6 +154,46 @@ interface GivenResolution {
   perLexicon: Map<string, LifecycleSnapshot>;
   /** Set when the fixture itself could not be resolved — the scenario fails on this alone. */
   error?: string;
+  /**
+   * The fixture's recorded prediction, for a `cost` clause (#2358): the one
+   * `behaviour` block the fixture carries, held to the contract on the way
+   * in, or the reason there is none. Always set once the fixture resolved,
+   * so a `cost` clause against a fixture with no block fails by name rather
+   * than on `undefined`.
+   */
+  behaviour: ScenarioBehaviourFixture;
+}
+
+/**
+ * Read the `behaviour` block off the fixture's snapshots. One block, not one
+ * per lexicon: a prediction is over the whole estate (augur reads every
+ * lexicon's entities and holds none of its own), so it belongs to no single
+ * lexicon's file, and two files carrying two different blocks is a fixture
+ * that answers twice. Validated on arrival — a hand-edited fixture with a
+ * negative rate or a bare `{ behaviour: "v1" }` is refused as not a
+ * prediction, never read as one.
+ */
+function behaviourFrom(snapshots: Iterable<LifecycleSnapshot>, where: string): ScenarioBehaviourFixture {
+  const found: unknown[] = [];
+  for (const snap of snapshots) {
+    if (snap.behaviour !== undefined) found.push(snap.behaviour);
+  }
+  if (found.length === 0) return { missing: `given ${where} carries no \`behaviour\` block` };
+  const distinct = new Set(found.map((b) => JSON.stringify(b)));
+  if (distinct.size > 1) {
+    return {
+      missing: `given ${where} carries ${found.length} different \`behaviour\` blocks across its lexicon snapshots; a prediction is one answer over the whole estate`,
+    };
+  }
+  const block = found[0] as { entities?: Record<string, unknown>; unpredicted?: Record<string, unknown> };
+  const names = [...Object.keys(block?.entities ?? {}), ...Object.keys(block?.unpredicted ?? {})];
+  try {
+    return { result: validateBehaviourResult(block, names) };
+  } catch (err) {
+    return {
+      missing: `given ${where} carries a \`behaviour\` block that is not a valid prediction: ${(err as Error).message}`,
+    };
+  }
 }
 
 /** Read `given`'s fixture data. Offline: a file read for `snapshot(path)`, a
@@ -162,41 +203,47 @@ async function resolveGiven(given: ScenarioGiven): Promise<GivenResolution> {
   if (given.kind === "file") {
     const abs = resolve(given.path);
     let raw: string;
+    const unresolved = (error: string, env = ""): GivenResolution => ({
+      env,
+      perLexicon: new Map(),
+      error,
+      behaviour: { missing: error },
+    });
     try {
       raw = await readFile(abs, "utf8");
     } catch {
-      return { env: "", perLexicon: new Map(), error: `fixture not found: ${given.path}` };
+      return unresolved(`fixture not found: ${given.path}`);
     }
     let snap: LifecycleSnapshot;
     try {
       snap = JSON.parse(raw) as LifecycleSnapshot;
     } catch {
-      return { env: "", perLexicon: new Map(), error: `fixture is not valid JSON: ${given.path}` };
+      return unresolved(`fixture is not valid JSON: ${given.path}`);
     }
     if (typeof snap.lexicon !== "string" || typeof snap.environment !== "string" || typeof snap.resources !== "object") {
-      return {
-        env: typeof snap.environment === "string" ? snap.environment : "",
-        perLexicon: new Map(),
-        error: `${given.path} is not a LifecycleSnapshot — missing lexicon/environment/resources`,
-      };
+      return unresolved(
+        `${given.path} is not a LifecycleSnapshot — missing lexicon/environment/resources`,
+        typeof snap.environment === "string" ? snap.environment : "",
+      );
     }
-    return { env: snap.environment, perLexicon: new Map([[snap.lexicon, snap]]) };
+    return {
+      env: snap.environment,
+      perLexicon: new Map([[snap.lexicon, snap]]),
+      behaviour: behaviourFrom([snap], given.path),
+    };
   }
 
   const stored = await readEnvironmentSnapshots(given.env);
   if (stored.size === 0) {
-    return {
-      env: given.env,
-      perLexicon: new Map(),
-      error: `no recorded snapshot for environment "${given.env}" on chant/lifecycle — record one with \`chant lifecycle snapshot ${given.env}\``,
-    };
+    const error = `no recorded snapshot for environment "${given.env}" on chant/lifecycle — record one with \`chant lifecycle snapshot ${given.env}\``;
+    return { env: given.env, perLexicon: new Map(), error, behaviour: { missing: error } };
   }
   const perLexicon = new Map<string, LifecycleSnapshot>();
   for (const [key, content] of stored) {
     const snap = JSON.parse(content) as LifecycleSnapshot;
     perLexicon.set(snap.lexicon ?? key, snap);
   }
-  return { env: given.env, perLexicon };
+  return { env: given.env, perLexicon, behaviour: behaviourFrom(perLexicon.values(), `env "${given.env}"`) };
 }
 
 /**
@@ -317,7 +364,7 @@ async function evaluateOneScenario(
     mergeReceiptEntries(merged, receipts, receiptEntries);
   }
 
-  return { env: resolved.env, verdict: evaluateScenario(merged, scenario.expect) };
+  return { env: resolved.env, verdict: evaluateScenario(merged, scenario.expect, resolved.behaviour) };
 }
 
 /** Fallback for `chant scenario <unknown subcommand>` — mirrors `runLifecycleUnknown`. */

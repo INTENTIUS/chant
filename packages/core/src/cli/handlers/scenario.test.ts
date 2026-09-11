@@ -8,6 +8,8 @@ import { Scenario, snapshot } from "../../lifecycle/scenario";
 import { EffectReceipt, receiptExpectation, type EffectReceiptDeclaration } from "../../effect-receipt";
 import type { ResourceMetadata } from "../../lexicon";
 import type { LifecycleSnapshot } from "../../lifecycle/types";
+import { behaviourReport, noBehaviourEngineRefusal, predictedRate } from "../../behaviour";
+import type { PredictedBehaviour } from "../../behaviour";
 
 const buildMock = vi.fn();
 const fetchLifecycleMock = vi.fn();
@@ -357,6 +359,112 @@ describe("runScenarioCheck", () => {
     expect(out).toContain("FAIL");
     expect(out).toContain("1 effect");
     expect(out).toContain("seeded");
+  });
+
+  // ── The cost clause end to end (#2358) ────────────────────────────────
+  //
+  // `../../lifecycle/scenario-cost.test.ts` drives the evaluator directly.
+  // These four go through the handler instead, because the half the evaluator
+  // never sees is the half that reads the block off a fixture on disk: a
+  // recorded prediction is a `behaviour` key on the `LifecycleSnapshot`, and
+  // the clause is only offline and credential-free if `chant scenario check`
+  // can bound a change from that file alone.
+
+  const TRAFFIC = "1000 rps, p99";
+
+  /** One entity's figure at {@link TRAFFIC}, at `perHour` USD. */
+  function figure(perHour: number): PredictedBehaviour {
+    return {
+      at: { traffic: TRAFFIC },
+      cost: predictedRate(perHour, "USD"),
+      headroom: { cpu: 0.4 },
+      errorRate: 0.002,
+      resilience: { failure: "one zone lost", verdict: "survives" },
+      provenance: { engine: "acme-sim", version: "1.4.2", tolerance: "±15%", basis: "modeled" },
+    };
+  }
+
+  /** A snapshot carrying a recorded prediction over one entity, as `chant lifecycle snapshot` would write it. */
+  function pricedSnap(name: string, perHour: number): LifecycleSnapshot {
+    return snap({
+      resources: { [name]: meta() },
+      behaviour: behaviourReport(
+        { entityNames: [name], traffic: TRAFFIC, edgeCoverage: { verdict: "unknown" } },
+        { engine: "acme-sim", version: "1.4.2" },
+        { [name]: figure(perHour) },
+      ),
+    });
+  }
+
+  test("a cost bound turns red when the fixture's prediction exceeds it, naming both rates and the level", async () => {
+    const fixturePath = await writeFixture(pricedSnap("bucket", 0.9));
+    const scenario = Scenario("stays under a dollar an hour", {
+      given: snapshot(fixturePath),
+      expect: { noop: true, cost: { maxPerHour: 0.5, currency: "USD" } },
+    });
+    buildMock.mockResolvedValue(makeBuildResult({ aws: ["bucket"] }, { budget: scenario }));
+
+    const exit = await runScenarioCheck({ args: makeArgs(), plugins: [], serializers: [] });
+
+    expect(exit).toBe(1);
+    const out = combined();
+    expect(out).toContain("FAIL");
+    expect(out).toContain("cost:");
+    expect(out).toContain("exceeded");
+    expect(out).toContain("0.9 USD/hour");
+    expect(out).toContain("0.5 USD/hour");
+    expect(out).toContain(TRAFFIC);
+    // The other clause is unaffected: the plan itself is still neutral.
+    expect(out).not.toContain("noop:");
+  });
+
+  test("the same bound passes under the rate, and the pass says which figure it read", async () => {
+    const fixturePath = await writeFixture(pricedSnap("bucket", 0.2));
+    const scenario = Scenario("stays under a dollar an hour", {
+      given: snapshot(fixturePath),
+      expect: { cost: { maxPerHour: 0.5, currency: "USD" } },
+    });
+    buildMock.mockResolvedValue(makeBuildResult({ aws: ["bucket"] }, { budget: scenario }));
+
+    const exit = await runScenarioCheck({ args: makeArgs(), plugins: [], serializers: [] });
+
+    expect(exit).toBe(0);
+    expect(combined()).toContain("PASS");
+  });
+
+  test("a fixture with no behaviour block fails the bound by name, never passes on nothing", async () => {
+    const fixturePath = await writeFixture(snap({ resources: { bucket: meta() } }));
+    const scenario = Scenario("stays under a dollar an hour", {
+      given: snapshot(fixturePath),
+      expect: { cost: { maxPerHour: 0.5, currency: "USD" } },
+    });
+    buildMock.mockResolvedValue(makeBuildResult({ aws: ["bucket"] }, { budget: scenario }));
+
+    const exit = await runScenarioCheck({ args: makeArgs(), plugins: [], serializers: [] });
+
+    expect(exit).toBe(1);
+    const out = combined();
+    expect(out).toContain("FAIL");
+    expect(out).toContain("carries no `behaviour` block");
+  });
+
+  test("a fixture whose recorded prediction is a refusal fails with the refusal's own cause", async () => {
+    const fixturePath = await writeFixture(
+      snap({ resources: { bucket: meta() }, behaviour: noBehaviourEngineRefusal("augur") }),
+    );
+    const scenario = Scenario("stays under a dollar an hour", {
+      given: snapshot(fixturePath),
+      expect: { cost: { maxPerHour: 0.5, currency: "USD" } },
+    });
+    buildMock.mockResolvedValue(makeBuildResult({ aws: ["bucket"] }, { budget: scenario }));
+
+    const exit = await runScenarioCheck({ args: makeArgs(), plugins: [], serializers: [] });
+
+    expect(exit).toBe(1);
+    const out = combined();
+    expect(out).toContain("FAIL");
+    expect(out).toContain("no-engine");
+    expect(out).toContain("CHANT_BEHAVIOUR_ENGINE");
   });
 
   test("a receipt whose live value matches its expectation is a genuine noop pass", async () => {
