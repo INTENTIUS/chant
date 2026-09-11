@@ -100,6 +100,29 @@ describe("fold — a symbolic value in a plain template (#2349)", () => {
     expect(() => "prefix" + (bucket.arn as unknown as string)).toThrow(/no string form/);
   });
 
+
+  test("a nested construction used as a value is refused too (#2397)", () => {
+    const src = `
+      const x = \`\${new S3Bucket({ BucketName: "b" })}-tag\`;
+    `;
+    expect(() => foldConst(src, "x")).toThrow(FoldError);
+    try {
+      foldConst(src, "x");
+    } catch (e) {
+      expect((e as FoldError).message).toContain("new S3Bucket");
+      expect((e as FoldError).message).toContain("[object Object]");
+    }
+  });
+
+  test("a composite `.step` is refused too (#2397)", () => {
+    // The run path builds a real instance whose default toString is the same
+    // "[object Object]", so this agreed across paths exactly as #2349 did.
+    const src = `
+      const x = \`\${Checkout({}).step}\`;
+    `;
+    expect(() => foldConst(src, "x")).toThrow(FoldError);
+  });
+
   test("an ordinary value in a template still interpolates", () => {
     const src = `
       const region = "us-east-1";

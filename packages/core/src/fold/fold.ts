@@ -156,9 +156,15 @@ export type FoldedValue =
  * `undefined` for a value that has an honest string form.
  *
  * These are the shapes `fold()` produces for things the build resolves later:
- * a resource attribute, a lexicon intrinsic in either of its two forms, and a
- * registered authoring helper. None of them can be concatenated into a string
- * here, because what they stand for is not known until the build runs.
+ * a resource attribute, a lexicon intrinsic in either of its two forms, a
+ * registered authoring helper, a nested construction used as a value, and a
+ * composite `.step`. None of them can be concatenated into a string here,
+ * because what they stand for is not known until the build runs.
+ *
+ * Five of the six envelope kinds. `__symbol` is the sixth and is deliberately
+ * absent: it is produced only inside an intrinsic's interior and cannot reach
+ * a plain template span, so a case for it would be unreachable code claiming
+ * to guard something (#2397).
  */
 export function symbolicEnvelopeKind(value: unknown): string | undefined {
   if (typeof value !== "object" || value === null) return undefined;
@@ -173,6 +179,15 @@ export function symbolicEnvelopeKind(value: unknown): string | undefined {
   }
   if ("__intrinsic" in v && typeof v.__intrinsic === "string") return `the intrinsic \`${v.__intrinsic}\``;
   if ("__helper" in v && typeof v.__helper === "string") return `the helper \`${v.__helper}\``;
+  // A nested construction used as a value (#1169). The run path builds a real
+  // instance here, whose default `toString` is `"[object Object]"` too, so
+  // fold and run agreed and the differential stayed silent — the same shape
+  // as #2349 itself (#2397).
+  if ("__resource" in v && typeof v.__resource === "string") return `a nested \`new ${v.__resource}\``;
+  // The `.step` idiom (#1174).
+  if ("__compositeStep" in v && typeof v.__compositeStep === "string") {
+    return `the composite step \`${v.__compositeStep}(…).step\``;
+  }
   return undefined;
 }
 

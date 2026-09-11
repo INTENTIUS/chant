@@ -65,6 +65,34 @@ describe("EVL011: a symbolic reference in a plain template", () => {
     expect(evl011SymbolicInTemplateRule.check(ctx)).toHaveLength(0);
   });
 
+
+  test("flags a nested construction used as a value (#2397)", () => {
+    const ctx = createContext(`
+      const x = \`\${new Image({ name: "n" })}-tag\`;
+    `);
+    const found = evl011SymbolicInTemplateRule.check(ctx);
+    expect(found).toHaveLength(1);
+    expect(found[0].message).toContain("new Image");
+  });
+
+  test("flags a composite `.step` (#2397)", () => {
+    const ctx = createContext(`
+      const x = \`\${Checkout({}).step}\`;
+    `);
+    const found = evl011SymbolicInTemplateRule.check(ctx);
+    expect(found).toHaveLength(1);
+    expect(found[0].message).toContain("Checkout(…).step");
+  });
+
+  test("an ordinary `.step`-less property on a call is not flagged", () => {
+    // The false positive worth avoiding: `.step` is the idiom, and a rule
+    // cannot know which callees are composites, so only that name qualifies.
+    const ctx = createContext(`
+      const x = \`\${getConfig().region}\`;
+    `);
+    expect(evl011SymbolicInTemplateRule.check(ctx)).toHaveLength(0);
+  });
+
   test("says nothing about a reference outside a template", () => {
     const ctx = createContext(`
       const bucket = new S3Bucket({ name: "b" });
