@@ -593,6 +593,11 @@ Lifecycle (alias: lc):
                             property-level drift; --update-baseline records
                             what it reports as accepted so it stops alerting)
   lifecycle plan <env>      Typed change set (create/update/delete/adopt) vs live
+                            --deep: also report properties declared
+                            heldElsewhere(). Never changes what the plan
+                            proposes; costs a provider call pair per readable
+                            resource, so the read's cost becomes a function of
+                            estate size rather than stack count (#2405)
   lifecycle affected        Stacks a change affects (--base <ref> [--include-dependents])
                             --json: emit the ChangeSet as JSON
   lifecycle whoami <env>    Who chant would act as in each configured lexicon,

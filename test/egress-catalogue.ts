@@ -415,6 +415,13 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     destination: "the behaviour engine an operator named in CHANT_BEHAVIOUR_ENGINE, where that address is an http or https URL",
     why: "The first behaviour-engine adapter (#2359): `chant graph --live --overlay` POSTs the resource graph a lexicon rendered and reads back per-entity cost, headroom and resilience. Not a provider API and not a chant service — a third party the operator chose, and the only row here that dials one. Unset, nothing is dialled and the overlay refuses by name; the transport is injectable, so no test opens a socket.",
   },
+  {
+    file: "scripts/api-call-proxy.mjs",
+    primitives: ["node:http"],
+    phase: "emulator",
+    destination: "the local floci emulator, on TARGET_PORT (default 4691), from a proxy bound to loopback",
+    why: "chant#2403's counting reverse proxy. The scale bench's cost number has to be measured rather than asserted, so `test/scale-estate.sh` points AWS_ENDPOINT_URL at this and it forwards each AWS Query POST to floci unchanged while counting it by `Action`. Loopback to loopback: it dials the emulator a developer already started, never a network chant does not control, and nothing on an adopter's path runs it.",
+  },
   // ── emulator ───────────────────────────────────────────────────────────────
   {
     file: "packages/core/src/op/emulator-lifecycle.ts",

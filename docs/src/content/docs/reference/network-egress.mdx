@@ -93,6 +93,7 @@ An in-process guard says nothing about a child process, so the offline phases' s
 
 | Module | Primitive | Destination | Why |
 |---|---|---|---|
+| `scripts/api-call-proxy.mjs` | `node:http` | the local floci emulator, on TARGET_PORT (default 4691), from a proxy bound to loopback | chant#2403's counting reverse proxy. The scale bench's cost number has to be measured rather than asserted, so `test/scale-estate.sh` points AWS_ENDPOINT_URL at this and it forwards each AWS Query POST to floci unchanged while counting it by `Action`. Loopback to loopback: it dials the emulator a developer already started, never a network chant does not control, and nothing on an adopter's path runs it. |
 | `packages/core/src/op/emulator-lifecycle.ts` | `fetch` | the just-started emulator container on localhost | The shared boot loop polls the container's health endpoint until it answers; loopback only, and the image pull it depends on is the container runtime's. |
 
 ### Code generation
@@ -125,7 +126,7 @@ Freshness checks that run in this repository's own CI, against `api.github.com`.
 | `scripts/dogwood-freshness.ts` | `fetch` | `api.github.com` commit and tree metadata | Compares the committed dogwood pin against upstream for `scripts/check-dogwood-freshness.ts`. The transport is injectable, which is why the comparison half is unit-tested without a network. |
 | `scripts/prior-art-sweep.ts` | `fetch` | the rule indexes of the tools the audit rules credit: `raw.githubusercontent.com`, `api.github.com` directory listings, and a few tools' own docs sites (checkov.io, PSRule for Azure, the Bicep linter page) | Diffs each credited tool's published rule list against `scripts/prior-art/snapshot.json` so a rule that appears or disappears upstream, or a credit whose upstream id no longer resolves, is reported. Run by the monthly `prior-art-sweep` workflow and by hand; never by a CLI command or a test. |
 
-**33 modules** across `packages/`, `lexicons/`, `scripts/`, `ops/` call a network primitive directly. Every other module that reaches the network does so through one of them.
+**34 modules** across `packages/`, `lexicons/`, `scripts/`, `ops/` call a network primitive directly. Every other module that reaches the network does so through one of them.
 
 {/* GENERATED:egress-catalogue:end */}
 

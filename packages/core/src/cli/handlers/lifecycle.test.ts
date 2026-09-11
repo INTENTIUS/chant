@@ -916,6 +916,71 @@ describe("runLifecyclePlan", () => {
   // #2162 — a held property is not an action, so the plan carries it beside
   // `entries` rather than inside one, attributed to its lexicon the same way
   // an entry is.
+  test("without --deep the pass does not run, and the entries are unchanged (#2405)", async () => {
+    // The property that makes `--deep` safe to default off: a held property is
+    // never a proposal, so the change set is identical either way and the only
+    // thing the flag buys is the HELD section. If that stops being true, this
+    // is where it shows.
+    const makeBuild = () => {
+      const b = makeBuildResult({ k8s: ["web"] });
+      b.entities.set("web", {
+        lexicon: "k8s",
+        entityType: "K8s::Apps::Deployment",
+        props: { spec: { replicas: heldElsewhere<number>({ by: "hpa", reason: "the autoscaler owns replicas after the first apply" }) } },
+      } as never);
+      return b;
+    };
+    let deepCalls = 0;
+    const makePlugins = (): LexiconPlugin[] => {
+      const inner = staticDeepObservation({
+        web: { type: "K8s::Apps::Deployment", properties: { spec: { replicas: 5 } } },
+      });
+      return [
+        createMockPlugin({
+          name: "k8s",
+          describeResources: staticObservation({ web: meta({ type: "K8s::Apps::Deployment" }) }),
+          // Counting wrapper: the helper's return type is the plugin member's,
+          // which is optional, so it is narrowed once here rather than at the
+          // call.
+          observeResourcesDeep: ((opts: never) => {
+            deepCalls += 1;
+            return inner!(opts);
+          }) as never,
+        }),
+      ];
+    };
+
+    const run = async (deep: boolean) => {
+      stdoutBuf.length = 0;
+      buildMock.mockResolvedValue(makeBuild());
+      const plugins = makePlugins();
+      const exit = await runLifecyclePlan({
+        args: makeArgs({ path: "plan", extraPositional: "prod", json: true, ...(deep ? { deep: true } : {}) }),
+        plugins,
+        serializers: plugins.map((p) => p.serializer),
+      } as never);
+      expect(exit).toBe(0);
+      return JSON.parse(stdoutBuf.join("\n"));
+    };
+
+    deepCalls = 0;
+    const shallow = await run(false);
+    const callsWithoutDeep = deepCalls;
+
+    deepCalls = 0;
+    const deep = await run(true);
+
+    // The cost: the pass is not run at all without the flag.
+    expect(callsWithoutDeep).toBe(0);
+    expect(deepCalls).toBeGreaterThan(0);
+
+    // The correctness: the same proposals either way, and the held section
+    // only when it was asked for.
+    expect(shallow.entries).toEqual(deep.entries);
+    expect(shallow.held).toBeUndefined();
+    expect(deep.held).toBeDefined();
+  });
+
   test("--json carries the held set beside entries, attributed to its lexicon", async () => {
     const build = makeBuildResult({ k8s: ["web"] });
     build.entities.set("web", {
@@ -934,7 +999,7 @@ describe("runLifecyclePlan", () => {
       }),
     ];
     const exit = await runLifecyclePlan({
-      args: makeArgs({ path: "plan", extraPositional: "prod", json: true }),
+      args: makeArgs({ path: "plan", extraPositional: "prod", json: true, deep: true }),
       plugins,
       serializers: plugins.map((p) => p.serializer),
     });
@@ -971,7 +1036,7 @@ describe("runLifecyclePlan", () => {
       }),
     ];
     const exit = await runLifecyclePlan({
-      args: makeArgs({ path: "plan", extraPositional: "prod" }),
+      args: makeArgs({ path: "plan", extraPositional: "prod", deep: true }),
       plugins,
       serializers: plugins.map((p) => p.serializer),
     });
