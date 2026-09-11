@@ -27,10 +27,28 @@ export type { CoverageRow, CoverageVerdict, EngineKind, EngineKindMapping } from
 export { AUGUR_REQUEST_VERSION, buildEngineRequest, renderEngineRequest, sizeOf } from "./request";
 export type { EngineEdge, EngineNode, EngineRequest, WithheldEntity } from "./request";
 
-// The transport seam #2359's adapter fills.
-export { commandEngine, defaultConnect, parseEngineAnswer } from "./engine";
-export type { BehaviourEngine, EngineAnswer, EngineConnect, EngineFailure, EngineFigure, EngineOutcome } from "./engine";
+// The engine level over the contract's transport (#2373): the parse of an
+// `augur/v1` answer, the command transport, and the chooser that routes a URL
+// to core's HTTP transport.
+export {
+  AUGUR,
+  commandEngine,
+  commandTransport,
+  connectWith,
+  defaultConnect,
+  figureProblems,
+  parseEngineAnswer,
+  transportEngine,
+} from "./engine";
+export type {
+  BehaviourEngine,
+  EngineAnswer,
+  EngineConnect,
+  EngineFigure,
+  EngineOutcome,
+  ParsedEngineAnswer,
+} from "./engine";
 
 // predictBehaviour, with the environment and transport injectable.
-export { AUGUR, createAugurPredict } from "./predict-behaviour";
+export { createAugurPredict } from "./predict-behaviour";
 export type { AugurPredictDeps } from "./predict-behaviour";

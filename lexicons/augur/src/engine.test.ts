@@ -1,14 +1,17 @@
 /**
- * The transport seam (#2357), and the two things about it that are not
- * bookkeeping: a malformed answer refuses rather than half-reporting, and the
- * child process does not inherit this one's environment.
+ * The engine level over the contract's transport (#2357, #2373), and the
+ * things about it that are not bookkeeping: a malformed answer refuses rather
+ * than half-reporting, the child process does not inherit this one's
+ * environment, and the chooser routes a URL to core's HTTP transport rather
+ * than refusing it.
  */
 
 import { describe, expect, it } from "vitest";
 import { mkdtempSync, writeFileSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { commandEngine, defaultConnect, figureProblems, parseEngineAnswer } from "./engine";
+import { isBehaviourRefusalReport } from "@intentius/chant/behaviour";
+import { commandEngine, connectWith, defaultConnect, figureProblems, parseEngineAnswer } from "./engine";
 import type { EngineRequest } from "./request";
 
 const REQUEST: EngineRequest = {
@@ -20,13 +23,15 @@ const REQUEST: EngineRequest = {
   withheld: [],
 };
 
-/** Write a node script to a temp dir and return an address a command engine can dial. */
-function scriptEngine(body: string): string {
+const NO_ENV: Record<string, string | undefined> = {};
+
+/** Write a node script to a temp dir and return an endpoint a command engine can dial. */
+function scriptEngine(body: string): { value: string; source: string } {
   const dir = mkdtempSync(join(tmpdir(), "augur-engine-"));
   const file = join(dir, "engine.mjs");
   writeFileSync(file, body);
   chmodSync(file, 0o755);
-  return `${process.execPath} ${file}`;
+  return { value: `${process.execPath} ${file}`, source: "CHANT_BEHAVIOUR_ENGINE" };
 }
 
 describe("an engine's answer, parsed", () => {
@@ -34,55 +39,87 @@ describe("an engine's answer, parsed", () => {
     // Taking the fields that parsed and reporting the rest unpredicted would
     // turn an engine emitting garbage into an estate that looks partly free —
     // the failure the refusal arm exists to prevent, one level down.
-    const outcome = parseEngineAnswer("<html>502 Bad Gateway</html>");
-    expect(outcome.ok).toBe(false);
-    if (outcome.ok) return;
-    expect(outcome.failure.cause).toBe("engine-unreachable");
-    expect(outcome.failure.detail).toContain("not JSON");
+    const parsed = parseEngineAnswer("<html>502 Bad Gateway</html>");
+    expect(parsed.ok).toBe(false);
+    if (parsed.ok) return;
+    expect(parsed.detail).toContain("not JSON");
   });
 
   it("refuses an answer that cannot say who produced it", () => {
-    const outcome = parseEngineAnswer(JSON.stringify({ figures: {} }));
-    expect(outcome.ok).toBe(false);
-    if (outcome.ok) return;
-    expect(outcome.failure.detail).toContain("engine, version, tolerance");
+    const parsed = parseEngineAnswer(JSON.stringify({ figures: {} }));
+    expect(parsed.ok).toBe(false);
+    if (parsed.ok) return;
+    expect(parsed.detail).toContain("engine, version, tolerance");
   });
 
   it("refuses an answer with no figures map at all", () => {
-    const outcome = parseEngineAnswer(
+    const parsed = parseEngineAnswer(
       JSON.stringify({ engine: "e", version: "1", tolerance: "±5%", basis: "modeled" }),
     );
-    expect(outcome.ok).toBe(false);
+    expect(parsed.ok).toBe(false);
   });
 
   it("accepts a well-formed answer", () => {
-    const outcome = parseEngineAnswer(
+    const parsed = parseEngineAnswer(
       JSON.stringify({ engine: "e", version: "1", tolerance: "±5%", basis: "modeled", figures: {} }),
     );
-    expect(outcome.ok).toBe(true);
+    expect(parsed.ok).toBe(true);
   });
 });
 
 describe("the transport chooser", () => {
   it("dials a command on PATH", () => {
-    expect(defaultConnect({ value: "augur-engine --model tiny", source: "CHANT_BEHAVIOUR_ENGINE" })).toBeDefined();
+    expect(defaultConnect({ value: "augur-engine --model tiny", source: "CHANT_BEHAVIOUR_ENGINE" }, NO_ENV)).toBeDefined();
   });
 
-  it("declines a URL, which is the first engine adapter's (#2359)", () => {
-    // Not a fetch invented here. Guessing an HTTP shape would hand #2359 a
-    // decision already made badly rather than an open seam.
-    expect(defaultConnect({ value: "https://engine.example/predict", source: "CHANT_BEHAVIOUR_ENGINE" })).toBeUndefined();
-    expect(defaultConnect({ value: "grpc://engine.internal:9000", source: "BEHAVIOUR_ENGINE" })).toBeUndefined();
+  it("dials a URL through the contract's HTTP transport (#2359)", () => {
+    // Not refused any more: the adapter landed in core, and augur routes a
+    // http(s) address at it. Whether a token is set is the transport's to
+    // refuse on, at send time, by name.
+    expect(defaultConnect({ value: "https://engine.example/predict", source: "CHANT_BEHAVIOUR_ENGINE" }, NO_ENV)).toBeDefined();
+    expect(defaultConnect({ value: "http://localhost:8080/predict", source: "CHANT_BEHAVIOUR_ENGINE" }, NO_ENV)).toBeDefined();
+  });
+
+  it("declines a scheme no transport speaks", () => {
+    expect(defaultConnect({ value: "grpc://engine.internal:9000", source: "BEHAVIOUR_ENGINE" }, NO_ENV)).toBeUndefined();
+    expect(defaultConnect({ value: "unix:///var/run/engine.sock", source: "BEHAVIOUR_ENGINE" }, NO_ENV)).toBeUndefined();
   });
 
   it("declines an empty address", () => {
-    expect(defaultConnect({ value: "   ", source: "BEHAVIOUR_ENGINE" })).toBeUndefined();
+    expect(defaultConnect({ value: "   ", source: "BEHAVIOUR_ENGINE" }, NO_ENV)).toBeUndefined();
+  });
+
+  it("hands the injected fetch to the HTTP transport, and the environment's token with it", async () => {
+    const seen: { url: string; auth: string | null; body: string }[] = [];
+    const fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      seen.push({
+        url: String(url),
+        auth: new Headers(init?.headers).get("authorization"),
+        body: String(init?.body),
+      });
+      return new Response(
+        JSON.stringify({ engine: "e", version: "1", tolerance: "±5%", basis: "modeled", figures: {} }),
+        { status: 200 },
+      );
+    }) as typeof globalThis.fetch;
+    const engine = connectWith({ fetch })(
+      { value: "https://engine.example/predict", source: "CHANT_BEHAVIOUR_ENGINE" },
+      { CHANT_BEHAVIOUR_TOKEN: "tok-from-the-injected-env" },
+    );
+    expect(engine).toBeDefined();
+    const outcome = await engine!.predict(REQUEST);
+    expect(outcome.ok).toBe(true);
+    expect(seen).toHaveLength(1);
+    expect(seen[0].url).toBe("https://engine.example/predict");
+    expect(seen[0].auth).toBe("Bearer tok-from-the-injected-env");
+    // The canonical request, byte for byte — the same bytes the golden holds.
+    expect(JSON.parse(seen[0].body)).toMatchObject({ request: "augur/v1", traffic: "100 rps, p50" });
   });
 });
 
 describe("a command engine", () => {
   it("sends the request on stdin and reads the answer from stdout", async () => {
-    const address = scriptEngine(`
+    const endpoint = scriptEngine(`
       let body = "";
       process.stdin.on("data", (c) => { body += c; });
       process.stdin.on("end", () => {
@@ -100,7 +137,7 @@ describe("a command engine", () => {
         }));
       });
     `);
-    const outcome = await commandEngine(address).predict(REQUEST);
+    const outcome = await commandEngine(endpoint).predict(REQUEST);
     expect(outcome.ok).toBe(true);
     if (!outcome.ok) return;
     expect(outcome.answer.engine).toBe("script");
@@ -111,10 +148,11 @@ describe("a command engine", () => {
     // Rule 3 says the engine never sees a credential, and
     // `screenBehaviourRequest` enforces that on the request. A subprocess
     // inheriting `process.env` walks straight around it: the request is
-    // spotless and the child holds the whole environment anyway.
+    // spotless and the child holds the whole environment anyway. The rule is
+    // `behaviourEngineChildEnvironment` in core; this pins that augur uses it.
     process.env.AUGUR_TEST_FAKE_SECRET = "hunter2-should-not-travel";
     try {
-      const address = scriptEngine(`
+      const endpoint = scriptEngine(`
         process.stdin.resume();
         process.stdin.on("end", () => {
           process.stdout.write(JSON.stringify({
@@ -123,16 +161,16 @@ describe("a command engine", () => {
           }));
         });
       `);
-      const outcome = await commandEngine(address).predict(REQUEST);
+      const outcome = await commandEngine(endpoint).predict(REQUEST);
       expect(outcome.ok).toBe(true);
       if (!outcome.ok) return;
       const inherited = (outcome.answer.declined?.env ?? "").split(",").filter((k) => k.length > 0);
       expect(inherited).not.toContain("AUGUR_TEST_FAKE_SECRET");
       // `PATH` is what the address is resolved against, and it is the only
-      // name this file puts there. Anything else the child holds came from the
-      // platform's own spawn (macOS adds `__CF_USER_TEXT_ENCODING`), never from
-      // chant's environment — so the assertion is that nothing of ours travels,
-      // not that the child's environment is empty.
+      // name core's rule puts there. Anything else the child holds came from
+      // the platform's own spawn (macOS adds `__CF_USER_TEXT_ENCODING`), never
+      // from chant's environment — so the assertion is that nothing of ours
+      // travels, not that the child's environment is empty.
       expect(inherited).toContain("PATH");
       expect(inherited.filter((k) => !k.startsWith("__") && k !== "PATH")).toEqual([]);
     } finally {
@@ -143,43 +181,67 @@ describe("a command engine", () => {
   it("reads an out-of-credit refusal off stderr, and does not call it unreachable", async () => {
     // The address is fine and the request arrived. Reporting this as
     // unreachable sends an operator to debug a network that is answering.
-    const address = scriptEngine(`
+    const endpoint = scriptEngine(`
       process.stdin.resume();
       process.stdin.on("end", () => {
         process.stderr.write("refused: the account is out of credit\\n");
         process.exit(2);
       });
     `);
-    const outcome = await commandEngine(address).predict(REQUEST);
+    const outcome = await commandEngine(endpoint).predict(REQUEST);
     expect(outcome.ok).toBe(false);
     if (outcome.ok) return;
-    expect(outcome.failure.cause).toBe("engine-out-of-credit");
+    expect(outcome.refusal.refusal.cause).toBe("engine-out-of-credit");
+    expect(outcome.refusal.refusal.reason).toContain("out of credit");
+    expect(outcome.refusal.refusal.remedy).not.toMatch(/reachable/i);
   });
 
   it("reads a spent quota off stderr", async () => {
-    const address = scriptEngine(`
+    const endpoint = scriptEngine(`
       process.stdin.resume();
       process.stdin.on("end", () => {
         process.stderr.write("429: rate limit reached, retry after 900s\\n");
         process.exit(3);
       });
     `);
-    const outcome = await commandEngine(address).predict(REQUEST);
+    const outcome = await commandEngine(endpoint).predict(REQUEST);
     expect(outcome.ok).toBe(false);
     if (outcome.ok) return;
-    expect(outcome.failure.cause).toBe("engine-over-quota");
+    expect(outcome.refusal.refusal.cause).toBe("engine-over-quota");
   });
 
-  it("treats a command that is not there as unreachable", async () => {
-    const outcome = await commandEngine("augur-engine-that-does-not-exist").predict(REQUEST);
+  it("treats a command that is not there as unreachable, naming the variable", async () => {
+    const outcome = await commandEngine({
+      value: "augur-engine-that-does-not-exist",
+      source: "CHANT_BEHAVIOUR_ENGINE_AUGUR",
+    }).predict(REQUEST);
     expect(outcome.ok).toBe(false);
     if (outcome.ok) return;
-    expect(outcome.failure.cause).toBe("engine-unreachable");
+    expect(isBehaviourRefusalReport(outcome.refusal)).toBe(true);
+    expect(outcome.refusal.refusal.cause).toBe("engine-unreachable");
+    expect(outcome.refusal.refusal.source).toBe("CHANT_BEHAVIOUR_ENGINE_AUGUR");
+  });
+
+  it("turns an answer that does not parse into an unreachable refusal naming the field", async () => {
+    const endpoint = scriptEngine(`
+      process.stdin.resume();
+      process.stdin.on("end", () => {
+        process.stdout.write(JSON.stringify({
+          engine: "script", version: "0.1", tolerance: "±30%", basis: "modeled",
+          figures: { web: { perHour: -1, currency: "USD" } },
+        }));
+      });
+    `);
+    const outcome = await commandEngine(endpoint).predict(REQUEST);
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.refusal.refusal.cause).toBe("engine-unreachable");
+    expect(outcome.refusal.refusal.reason).toContain("figures.web.perHour");
   });
 });
 
 describe("a malformed figure refuses, and never throws (D1)", () => {
-  const envelope = { engine: "e", version: "1", tolerance: "\u00b15%", basis: "modeled" as const };
+  const envelope = { engine: "e", version: "1", tolerance: "±5%", basis: "modeled" as const };
   const good = {
     perHour: 0.1,
     currency: "USD",
@@ -216,44 +278,43 @@ describe("a malformed figure refuses, and never throws (D1)", () => {
 
   for (const [label, figure, message] of malformed) {
     it(`refuses ${label}, naming the entity and the field`, () => {
-      const outcome = parseEngineAnswer(JSON.stringify({ ...envelope, figures: { web: figure } }));
-      expect(outcome.ok, `${label} was accepted`).toBe(false);
-      if (outcome.ok) return;
-      expect(outcome.failure.cause).toBe("engine-unreachable");
-      expect(outcome.failure.detail).toMatch(message);
+      const parsed = parseEngineAnswer(JSON.stringify({ ...envelope, figures: { web: figure } }));
+      expect(parsed.ok, `${label} was accepted`).toBe(false);
+      if (parsed.ok) return;
+      expect(parsed.detail).toMatch(message);
       // Named, because "the engine sent something wrong" is not actionable.
-      expect(outcome.failure.detail).toContain("figures.web");
+      expect(parsed.detail).toContain("figures.web");
     });
   }
 
   it("refuses a basis outside the closed enum", () => {
-    const outcome = parseEngineAnswer(JSON.stringify({ ...envelope, basis: "vibes", figures: {} }));
-    expect(outcome.ok).toBe(false);
-    if (outcome.ok) return;
-    expect(outcome.failure.detail).toMatch(/not\s+modeled or validated/);
+    const parsed = parseEngineAnswer(JSON.stringify({ ...envelope, basis: "vibes", figures: {} }));
+    expect(parsed.ok).toBe(false);
+    if (parsed.ok) return;
+    expect(parsed.detail).toMatch(/not\s+modeled or validated/);
   });
 
   it("refuses a negative estate total", () => {
-    const outcome = parseEngineAnswer(
+    const parsed = parseEngineAnswer(
       JSON.stringify({ ...envelope, total: { perHour: -3, currency: "USD" }, figures: {} }),
     );
-    expect(outcome.ok).toBe(false);
+    expect(parsed.ok).toBe(false);
   });
 
   it("refuses an array where the figures map should be", () => {
     // `typeof [] === "object"`, so `figures: []` parsed clean and produced a
     // report in which every node the request named had been lost.
-    const outcome = parseEngineAnswer(JSON.stringify({ ...envelope, figures: [] }));
-    expect(outcome.ok).toBe(false);
-    if (outcome.ok) return;
-    expect(outcome.failure.detail).toContain("no figures map");
+    const parsed = parseEngineAnswer(JSON.stringify({ ...envelope, figures: [] }));
+    expect(parsed.ok).toBe(false);
+    if (parsed.ok) return;
+    expect(parsed.detail).toContain("no figures map");
   });
 
   it("refuses a declined reason that is not a string", () => {
-    const outcome = parseEngineAnswer(
+    const parsed = parseEngineAnswer(
       JSON.stringify({ ...envelope, figures: {}, declined: { web: 7 } }),
     );
-    expect(outcome.ok).toBe(false);
+    expect(parsed.ok).toBe(false);
   });
 
   it("accepts a figure that models one headroom axis and not the other", () => {
@@ -264,14 +325,14 @@ describe("a malformed figure refuses, and never throws (D1)", () => {
   });
 
   it("reports several problems at once rather than only the first", () => {
-    const outcome = parseEngineAnswer(
+    const parsed = parseEngineAnswer(
       JSON.stringify({ ...envelope, figures: { web: { perHour: -1, currency: "", errorRate: 9 } } }),
     );
-    expect(outcome.ok).toBe(false);
-    if (outcome.ok) return;
-    expect(outcome.failure.detail).toContain("perHour");
-    expect(outcome.failure.detail).toContain("currency");
-    expect(outcome.failure.detail).toContain("errorRate");
+    expect(parsed.ok).toBe(false);
+    if (parsed.ok) return;
+    expect(parsed.detail).toContain("perHour");
+    expect(parsed.detail).toContain("currency");
+    expect(parsed.detail).toContain("errorRate");
   });
 
   it("figureProblems is empty for a well-formed figure", () => {

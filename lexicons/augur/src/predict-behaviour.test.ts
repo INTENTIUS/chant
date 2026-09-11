@@ -30,8 +30,11 @@ import {
   probeTrafficLevel,
 } from "@intentius/chant-test-utils";
 import {
+  behaviourWireRefusal,
   isBehaviourRefusalReport,
+  unreachableBehaviourEngineRefusal,
   type BehaviourResult,
+  type BehaviourWireCause,
   type PredictBehaviourOptions,
 } from "@intentius/chant/behaviour";
 import type { IREdge } from "@intentius/chant/graph-ir";
@@ -95,9 +98,15 @@ const predictWith = (env: Record<string, string | undefined>, connect: EngineCon
 
 const up = predictWith(UP);
 
-/** An engine that answered and refused, in each of the three shapes it can. */
-const refusing = (cause: "engine-unreachable" | "engine-out-of-credit" | "engine-over-quota", detail: string) =>
-  predictWith(UP, () => fixtureEngine({ refuse: { cause, detail } }));
+/** The endpoint the fixture stands at, for a refusal that names it. */
+const FIXTURE_ENDPOINT = { value: "augur-fixture", source: "CHANT_BEHAVIOUR_ENGINE" };
+
+/**
+ * An engine that answered and refused, in each of the three shapes it can —
+ * built by the contract's one mapping, the way a transport builds it.
+ */
+const refusing = (cause: BehaviourWireCause, detail: string) =>
+  predictWith(UP, () => fixtureEngine({ refuse: behaviourWireRefusal("augur", FIXTURE_ENDPOINT, cause, detail) }));
 
 describeBehaviourConformance({
   lexicon: "augur",
@@ -142,7 +151,18 @@ describeBehaviourConformance({
       expectRefusalCause: "engine-over-quota",
     },
     {
-      name: "the address is one no transport here speaks",
+      name: "the address is one no transport speaks",
+      declared: [...DECLARED.keys()],
+      run: () =>
+        createAugurPredict({
+          env: { CHANT_BEHAVIOUR_ENGINE: "grpc://engine.internal:9000" },
+          connect: defaultConnect,
+        })(REQUEST),
+      expectRefusal: true,
+      expectRefusalCause: "engine-unreachable",
+    },
+    {
+      name: "the address is a URL and no variable names a token",
       declared: [...DECLARED.keys()],
       run: () =>
         createAugurPredict({
@@ -150,7 +170,7 @@ describeBehaviourConformance({
           connect: defaultConnect,
         })(REQUEST),
       expectRefusal: true,
-      expectRefusalCause: "engine-unreachable",
+      expectRefusalCause: "no-engine",
     },
   ],
 });
@@ -449,9 +469,9 @@ describe("an engine that answers badly is unreachable, not a stop (D1)", () => {
     // uses, and an engine emitting one bad number is not a leak.
     const predict = createAugurPredict({
       env: UP,
-      connect: () => ({
+      connect: (endpoint) => ({
         async predict() {
-          return parseEngineAnswer(
+          const parsed = parseEngineAnswer(
             JSON.stringify({
               engine: "e",
               version: "1",
@@ -460,6 +480,8 @@ describe("an engine that answers badly is unreachable, not a stop (D1)", () => {
               figures: { web: { perHour: 0.1, currency: "USD" } },
             }),
           );
+          if (parsed.ok) throw new Error("the malformed figure was accepted");
+          return { ok: false, refusal: unreachableBehaviourEngineRefusal("augur", endpoint, parsed.detail) };
         },
       }),
     });

@@ -20,6 +20,7 @@
  *    genuinely reads the graph.
  */
 
+import type { BehaviourRefusalReport } from "@intentius/chant/behaviour";
 import type { BehaviourEngine, EngineFigure, EngineOutcome } from "../engine";
 import type { EngineKind } from "../mapping";
 import type { EngineRequest } from "../request";
@@ -61,8 +62,12 @@ export function trafficIntensity(traffic: string): number {
 
 /** What the fixture engine can be told to do instead of answering. */
 export interface FixtureEngineOptions {
-  /** Refuse every request this way, the three shapes an engine that answered can refuse in. */
-  refuse?: { cause: "engine-unreachable" | "engine-out-of-credit" | "engine-over-quota"; detail: string };
+  /**
+   * Refuse every request with this, as a transport would — already built by
+   * one of the contract's refusal builders, since #2359 moved that mapping
+   * to where the wire is seen.
+   */
+  refuse?: BehaviourRefusalReport;
   /** Node names the engine declines, with its reason for each. */
   decline?: Record<string, string>;
   /** Node names the engine answers about in neither map — an engine losing a node. */
@@ -79,7 +84,7 @@ export interface FixtureEngineOptions {
 export function fixtureEngine(options: FixtureEngineOptions = {}): BehaviourEngine {
   return {
     async predict(request: EngineRequest): Promise<EngineOutcome> {
-      if (options.refuse) return { ok: false, failure: options.refuse };
+      if (options.refuse) return { ok: false, refusal: options.refuse };
 
       const intensity = trafficIntensity(request.traffic);
       const degree = new Map<string, number>();

@@ -142,6 +142,54 @@
  * behold reads those keys and does arithmetic on the engine's figures; it never
  * produces one of its own. Fields beyond what it reads (`cause` and `source` on
  * a refusal, `edgeCoverage` on the meta) are additive and ignorable.
+ *
+ * ## The transport is part of the contract (#2373, decided in #2359)
+ *
+ * The first version of this module named the address chain, said the address
+ * may be a URL, a socket path or a command on `PATH`, and stopped. augur
+ * (#2357) then declared a private `BehaviourEngine` and its own mapping from
+ * what the wire said to which of the three engine-answered refusals to build.
+ * With a second implementation to generalise from, the seam is here:
+ * {@link BehaviourTransport} is one method, `send(body)`, taking the request
+ * as the lexicon rendered it and returning either the engine's answer as text
+ * or a {@link BehaviourRefusalReport} ready to return.
+ *
+ * Two things about that shape are decisions rather than defaults.
+ *
+ *   - **The transport returns text, not a report.** #2373 proposed
+ *     `send(request) → Promise<BehaviourResult>`. A report cannot be built
+ *     without the request's `entityNames`, `traffic` and `edgeCoverage`, and
+ *     what an answer's fields *mean* is the lexicon's wire version, not the
+ *     contract's. A transport that built reports would have to know both, and
+ *     every lexicon would need its own. One that carries bytes is one HTTP
+ *     client and one subprocess spawner for every lexicon there will ever be.
+ *   - **The failure arm is a finished refusal, not a `{cause, detail}` pair.**
+ *     The transport is the one party that saw the wire condition and holds the
+ *     lexicon name and the endpoint, so it is the one party that can name the
+ *     condition, the address and the variable together. Handing back a cause
+ *     for the lexicon to translate would put the same three-way switch in
+ *     every lexicon, and one of them would fold `engine-over-quota` into
+ *     `engine-unreachable` on a bad afternoon. {@link behaviourWireRefusal}
+ *     is that switch, written once.
+ *
+ * What the wire says maps to the causes above as follows, and
+ * `./behaviour-http.ts` (the first adapter) and augur's command transport both
+ * hold to it: an HTTP 402 is `engine-out-of-credit`; a 429 is
+ * `engine-over-quota`; a connection refused, a timeout, a 5xx, a redirect, or
+ * an answer that is not JSON is `engine-unreachable`; an unset address is
+ * `no-engine` before any transport is built; and an unset or rejected bearer
+ * token is `no-engine` too, because its remedy is the same kind — set a
+ * variable — and the reason says which. A transport that spawns a child hands
+ * it {@link behaviourEngineChildEnvironment} and nothing more, for the reason
+ * given on that function.
+ *
+ * A bearer token on the wire is the transport's, and is not the credential
+ * rule 3 is about. "The engine is never handed a credential" is a statement
+ * about the *request body* — the graph — which {@link screenBehaviourRequest}
+ * still walks first. {@link behaviourTokenFrom} resolves the token an engine
+ * authenticates chant with, on a chain parallel to the address chain, and the
+ * token goes in a header the engine reads and nowhere else: never in the body,
+ * never in a refusal, never in a `detail`.
  */
 
 import type { UnobservedReason } from "./observation";
@@ -339,8 +387,10 @@ export interface PredictedBehaviour {
  * `no-credentials` is excluded on purpose: the engine is never handed one, so
  * it can never be missing one. Two reasons are added for the predictor itself:
  *
- * - `no-engine` — no variable in the chain named an engine. Nothing is
- *   configured; this is a setup state, not a failure.
+ * - `no-engine` — no variable in the chain named an engine, or — for a
+ *   transport that authenticates — no variable in the token chain named a
+ *   token the engine accepts. Nothing usable is configured; this is a setup
+ *   state, not a failure, and the reason says which variable.
  * - `engine-unreachable` — a variable named an engine and it did not answer.
  * - `engine-out-of-credit` — the engine answered, and refused because the
  *   account behind it has no balance left (#2359).
@@ -483,7 +533,11 @@ export interface BehaviourRefusal {
   reason: string;
   /** How to fix it. Names the variable and how to set it. */
   remedy: string;
-  /** Which variable in the chain answered, when one did. Absent for `no-engine`. */
+  /**
+   * Which variable answered, when one did: the address variable for a refusal
+   * about the engine, the token variable for a refusal about a rejected
+   * token. Absent when no variable answered at all.
+   */
   source?: string;
 }
 
@@ -976,6 +1030,119 @@ export function noBehaviourEngineMessage(lexicon: string): string {
   );
 }
 
+/**
+ * The bearer token a transport authenticates chant to an engine with, and the
+ * variable that named it. The counterpart of {@link BehaviourEngineEndpoint}
+ * for the second thing a metered engine needs to know: whose account this is.
+ *
+ * This is **not** the credential rule 3 forbids. That rule is about the
+ * request body, and {@link screenBehaviourRequest} enforces it on every
+ * request before any transport is reached. The token here never enters the
+ * body; it goes in a header the engine reads, and the transport that sends it
+ * is the only code that ever holds it.
+ */
+export interface BehaviourEngineToken {
+  value: string;
+  /** The variable it came from, so a refusal or a log line can name it — never the value. */
+  source: string;
+}
+
+/**
+ * The variables that can hold a behaviour engine's token, most specific first.
+ * Parallel to {@link behaviourEngineVariables} and deliberately not the same
+ * chain: `CHANT_BEHAVIOUR_ENGINE` is an address, and an address is printed in
+ * refusals, while a token is never printed anywhere. Reusing one chain for
+ * both would put the token in every message that names the address.
+ */
+export function behaviourTokenVariables(lexicon: string): string[] {
+  const scope = lexicon.toUpperCase().replace(/[^A-Z0-9]+/g, "_");
+  return [`CHANT_BEHAVIOUR_TOKEN_${scope}`, "CHANT_BEHAVIOUR_TOKEN", "BEHAVIOUR_TOKEN"];
+}
+
+/**
+ * Resolve the token one lexicon's transport authenticates with, most specific
+ * first. Pure — exported for testing. The same shape as `gitlabNoteTokenFrom`
+ * (`./op/activities/reconcile.ts`): a chain, the first non-empty value wins,
+ * and the result names the variable so a refusal can say which one it read.
+ *
+ * Returns `undefined` when nothing in the chain answered. A transport whose
+ * engine bills an account turns that into {@link noBehaviourTokenRefusal}
+ * before sending anything: a request sent without the token is a request the
+ * engine will reject, and the refusal should name the variable rather than
+ * quote the engine's 401.
+ */
+export function behaviourTokenFrom(
+  lexicon: string,
+  env: Record<string, string | undefined>,
+): BehaviourEngineToken | undefined {
+  for (const source of behaviourTokenVariables(lexicon)) {
+    const value = env[source]?.trim();
+    if (value) return { value, source };
+  }
+  return undefined;
+}
+
+/** What a transport says when the engine bills an account and no variable named a token. */
+export function noBehaviourTokenMessage(lexicon: string, endpoint: BehaviourEngineEndpoint): string {
+  const [scoped, chantWide, bare] = behaviourTokenVariables(lexicon);
+  return (
+    `predictBehaviour has the ${lexicon} behaviour engine at ${redactEngineAddress(endpoint.value)}, ` +
+    `named by ${endpoint.source}, and no token to authenticate to it with, so nothing was sent. Set a ` +
+    `${chantWide} environment variable to the bearer token the engine issued — or ${bare} where nothing ` +
+    `else in the environment is chant's. ${scoped} is read first, for an estate whose lexicons are ` +
+    "priced by different engines on different accounts. The token goes in a header the engine reads " +
+    "and nowhere else; it is never in the request body and never in a message."
+  );
+}
+
+/**
+ * The refusal for a metered engine with no token configured. `no-engine`,
+ * because that is the cause whose remedy is "set a variable" — the engine is
+ * named, reachable for all anyone knows, and unusable until one more variable
+ * is set. No `source`: the token chain is the chain this refusal is about, and
+ * nothing in it answered.
+ */
+export function noBehaviourTokenRefusal(
+  lexicon: string,
+  endpoint: BehaviourEngineEndpoint,
+): BehaviourRefusalReport {
+  const [, chantWide] = behaviourTokenVariables(lexicon);
+  return behaviourRefusal({
+    cause: "no-engine",
+    reason: noBehaviourTokenMessage(lexicon, endpoint),
+    remedy: `Set ${chantWide} to the bearer token the engine at ${redactEngineAddress(endpoint.value)} issued.`,
+  });
+}
+
+/**
+ * The refusal for an engine that answered and rejected the token it was sent.
+ * Also `no-engine`: the address is fine, the account is not the problem, and
+ * the one action is to set the named variable to a token the engine accepts.
+ * `source` is the token variable, not the address variable, because that is
+ * the one a consumer would tell somebody to change.
+ *
+ * `detail` is whatever the engine said, and it goes through
+ * {@link scrubEngineDetail}. The token's own value is never in a message: a
+ * transport passes the variable's name here and keeps the value to itself.
+ */
+export function rejectedBehaviourTokenRefusal(
+  lexicon: string,
+  endpoint: BehaviourEngineEndpoint,
+  token: BehaviourEngineToken,
+  detail: string,
+): BehaviourRefusalReport {
+  return behaviourRefusal({
+    cause: "no-engine",
+    reason:
+      `The ${lexicon} behaviour engine at ${redactEngineAddress(endpoint.value)}, named by ` +
+      `${endpoint.source}, answered and rejected the token ${token.source} holds ` +
+      `(${scrubEngineDetail(detail)}). The address is reachable and the account is not the problem; ` +
+      "the token is not one this engine accepts. No overlay is drawn and no figure is guessed locally.",
+    remedy: `Set ${token.source} to a bearer token the engine at ${redactEngineAddress(endpoint.value)} accepts.`,
+    source: token.source,
+  });
+}
+
 /** What a lexicon says when a variable named an engine and the engine did not answer. */
 export function unreachableBehaviourEngineMessage(
   lexicon: string,
@@ -1078,6 +1245,91 @@ export function overQuotaBehaviourEngineRefusal(
     remedy: `Wait for the engine's window to roll over, or raise the limit on the account behind ${endpoint.source}.`,
     source: endpoint.source,
   });
+}
+
+/* -------------------------------------------------------------------------- */
+/* The transport                                                              */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * What a transport brings back: the engine's answer as the text it wrote, or a
+ * refusal ready to be returned from `predictBehaviour` as it stands.
+ *
+ * The answer is text rather than a parsed object because what the text means
+ * is the lexicon's wire version (`augur/v1`), and the lexicon is the one that
+ * validates it — an answer that fails that validation is
+ * {@link unreachableBehaviourEngineRefusal} with a detail naming the field,
+ * built by the lexicon, since the transport has nothing to say about it.
+ */
+export type BehaviourTransportOutcome =
+  | { ok: true; body: string }
+  | { ok: false; refusal: BehaviourRefusalReport };
+
+/**
+ * The seam between a lexicon and whatever answers its request (#2373).
+ *
+ * One method. `body` is the request as the lexicon rendered it — augur's
+ * canonical JSON, say — and the transport carries it to the address it was
+ * built for and brings back what came out, or a refusal naming why nothing
+ * did. A transport is built knowing the lexicon and the endpoint, which is
+ * what lets it build the refusal itself; see the module doc for why that is
+ * better than returning a cause.
+ *
+ * Two ship today: `./behaviour-http.ts` dials a URL with a bearer token, and
+ * augur's `commandTransport` spawns a command on `PATH` with
+ * {@link behaviourEngineChildEnvironment}. A lexicon picks one by the shape of
+ * the address and does not otherwise know which it got.
+ */
+export interface BehaviourTransport {
+  send(body: string): Promise<BehaviourTransportOutcome>;
+}
+
+/**
+ * The three things a wire can say that are the engine's to answer for, and
+ * that each want a different refusal. `no-engine` is not here: it is decided
+ * before a transport exists (an unset address) or by the transport's own
+ * constructor (an unset token), never by the wire.
+ */
+export type BehaviourWireCause = "engine-unreachable" | "engine-out-of-credit" | "engine-over-quota";
+
+/**
+ * One wire cause onto the refusal builder that names it. The whole of the
+ * mapping every transport applies, so it is written once: a transport that
+ * classified the wire correctly and then reached for the wrong builder would
+ * send an operator to check a network that is answering.
+ */
+export function behaviourWireRefusal(
+  lexicon: string,
+  endpoint: BehaviourEngineEndpoint,
+  cause: BehaviourWireCause,
+  detail: string,
+): BehaviourRefusalReport {
+  switch (cause) {
+    case "engine-out-of-credit":
+      return outOfCreditBehaviourEngineRefusal(lexicon, endpoint, detail);
+    case "engine-over-quota":
+      return overQuotaBehaviourEngineRefusal(lexicon, endpoint, detail);
+    case "engine-unreachable":
+      return unreachableBehaviourEngineRefusal(lexicon, endpoint, detail);
+  }
+}
+
+/**
+ * The environment a transport hands a child process: `PATH`, and nothing else.
+ *
+ * Rule 3 says the engine never sees a credential, and
+ * {@link screenBehaviourRequest} enforces it on the request. A child that
+ * inherits `process.env` walks straight around that: the request is spotless
+ * and the child holds `AWS_SECRET_ACCESS_KEY` anyway. So a transport that
+ * spawns builds the environment from this and nothing more — `PATH` because
+ * the address is resolved against it, and no allowlist beyond that, because
+ * every name added is a name a credential could be sitting under. augur's
+ * command transport pins this by test (#2372); this is the rule it pins.
+ */
+export function behaviourEngineChildEnvironment(
+  env: Record<string, string | undefined> = process.env,
+): Record<string, string> {
+  return { PATH: env.PATH ?? "" };
 }
 
 /* -------------------------------------------------------------------------- */

@@ -31,9 +31,11 @@ import {
   BEHAVIOUR_UNPREDICTED_REASONS,
   assertNoCredentialInOptions,
   copyEdgeCoverage,
+  behaviourEngineChildEnvironment,
   behaviourEngineFrom,
   behaviourEngineVariables,
   behaviourReport,
+  behaviourWireRefusal,
   compareFigures,
   compareProvenance,
   figureMismatches,
@@ -435,6 +437,54 @@ describe("an engine that answers and still refuses (#2359)", () => {
     }
     expect(broke).toContain("behaviour: refused (engine-out-of-credit)");
     expect(throttled).toContain("behaviour: refused (engine-over-quota)");
+  });
+});
+
+describe("the transport's one mapping from wire cause to refusal (#2373)", () => {
+  const endpoint = { value: "https://engine.example/predict", source: "CHANT_BEHAVIOUR_ENGINE_ACME" };
+
+  test("each wire cause reaches its own builder, and no other", () => {
+    const broke = behaviourWireRefusal("acme", endpoint, "engine-out-of-credit", "balance 0.00 USD");
+    const throttled = behaviourWireRefusal("acme", endpoint, "engine-over-quota", "5000/5000");
+    const down = behaviourWireRefusal("acme", endpoint, "engine-unreachable", "ECONNREFUSED");
+    expect(broke).toEqual(outOfCreditBehaviourEngineRefusal("acme", endpoint, "balance 0.00 USD"));
+    expect(throttled).toEqual(overQuotaBehaviourEngineRefusal("acme", endpoint, "5000/5000"));
+    expect(down).toEqual(unreachableBehaviourEngineRefusal("acme", endpoint, "ECONNREFUSED"));
+    expect([broke, throttled, down].map((r) => r.refusal.cause)).toEqual([
+      "engine-out-of-credit",
+      "engine-over-quota",
+      "engine-unreachable",
+    ]);
+    // Every one names the variable that pointed at the engine.
+    for (const r of [broke, throttled, down]) expect(r.refusal.source).toBe("CHANT_BEHAVIOUR_ENGINE_ACME");
+  });
+
+  test("the remedies stay distinct through the mapping", () => {
+    const remedies = (["engine-out-of-credit", "engine-over-quota", "engine-unreachable"] as const).map(
+      (cause) => behaviourWireRefusal("acme", endpoint, cause, "x").refusal.remedy,
+    );
+    expect(new Set(remedies).size).toBe(3);
+    expect(remedies[0]).toMatch(/credit/);
+    expect(remedies[0]).not.toMatch(/reachable/);
+    expect(remedies[1]).toMatch(/window|limit/);
+    expect(remedies[1]).not.toMatch(/credit/);
+    expect(remedies[2]).toMatch(/reachable|repoint/);
+  });
+});
+
+describe("the environment a transport hands a child (#2372, pinned by the contract)", () => {
+  test("is PATH and nothing else, whatever this process holds", () => {
+    const env = {
+      PATH: "/usr/bin:/bin",
+      AWS_SECRET_ACCESS_KEY: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+      CHANT_BEHAVIOUR_TOKEN: "a-token-the-child-must-not-see",
+      HOME: "/home/somebody",
+    };
+    expect(behaviourEngineChildEnvironment(env)).toEqual({ PATH: "/usr/bin:/bin" });
+  });
+
+  test("gives an empty PATH rather than none when the process has none", () => {
+    expect(behaviourEngineChildEnvironment({})).toEqual({ PATH: "" });
   });
 });
 

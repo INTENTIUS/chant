@@ -408,6 +408,13 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     why: "The pipeline-audit activity reads project and pipeline metadata for the same governance question on GitLab.",
   },
 
+  {
+    file: "packages/core/src/behaviour-http.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "the behaviour engine an operator named in CHANT_BEHAVIOUR_ENGINE, where that address is an http or https URL",
+    why: "The first behaviour-engine adapter (#2359): `chant graph --live --overlay` POSTs the resource graph a lexicon rendered and reads back per-entity cost, headroom and resilience. Not a provider API and not a chant service — a third party the operator chose, and the only row here that dials one. Unset, nothing is dialled and the overlay refuses by name; the transport is injectable, so no test opens a socket.",
+  },
   // ── emulator ───────────────────────────────────────────────────────────────
   {
     file: "packages/core/src/op/emulator-lifecycle.ts",
