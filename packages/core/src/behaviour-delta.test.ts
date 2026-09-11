@@ -79,7 +79,7 @@ describe("validateBehaviourResult — a result held to the contract on arrival",
   });
 
   test("accepts a refusal with a legal cause, a reason and a remedy", () => {
-    const r = noBehaviourEngineRefusal("augur");
+    const r = noBehaviourEngineRefusal("chant");
     expect(validateBehaviourResult(r, ["db"])).toBe(r);
   });
 
@@ -111,7 +111,7 @@ describe("validateBehaviourResult — a result held to the contract on arrival",
 
 describe("behaviourDelta — a whole-run refusal on either side is no prediction", () => {
   test("a refused base side yields no-prediction carrying that side's refusal, and no rows", () => {
-    const d = delta(noBehaviourEngineRefusal("augur"), report({ db: figure() }));
+    const d = delta(noBehaviourEngineRefusal("chant"), report({ db: figure() }));
     expect(d.kind).toBe("no-prediction");
     if (d.kind !== "no-prediction") return;
     expect(d.base.refusal?.cause).toBe("no-engine");
@@ -120,20 +120,20 @@ describe("behaviourDelta — a whole-run refusal on either side is no prediction
   });
 
   test("a refused head side likewise, and both when both refuse", () => {
-    const down = unreachableBehaviourEngineRefusal("augur", { value: "engine", source: "CHANT_BEHAVIOUR_ENGINE" }, "ECONNREFUSED");
+    const down = unreachableBehaviourEngineRefusal("chant", { value: "engine", source: "CHANT_BEHAVIOUR_ENGINE" }, "ECONNREFUSED");
     const d = delta(report({ db: figure() }), down);
     expect(d.kind).toBe("no-prediction");
-    const both = delta(noBehaviourEngineRefusal("augur"), down);
+    const both = delta(noBehaviourEngineRefusal("chant"), down);
     if (both.kind !== "no-prediction") throw new Error("expected no-prediction");
     expect(both.base.refusal?.cause).toBe("no-engine");
     expect(both.head.refusal?.cause).toBe("engine-unreachable");
   });
 
   test("the rendered finding says no prediction, carries renderBehaviourRefusal's text and the remedy, and no figure", () => {
-    const d = delta(noBehaviourEngineRefusal("augur"), report({ db: figure() }));
+    const d = delta(noBehaviourEngineRefusal("chant"), report({ db: figure() }));
     const body = renderBehaviourFinding(d, CTX);
     expect(body).toContain("no prediction");
-    const refusal = noBehaviourEngineRefusal("augur").refusal;
+    const refusal = noBehaviourEngineRefusal("chant").refusal;
     expect(body).toContain(renderBehaviourRefusal(refusal, { color: false }));
     expect(body).toContain(refusal.remedy);
     expect(body).not.toContain("/hour");
@@ -145,7 +145,7 @@ describe("behaviourDelta — a declined entity is a row, not an absent finding a
   const base = report({ db: figure(), orders: figure({ cost: predictedRate(0.004, "USD") }) });
   const head = report(
     { db: figure() },
-    { orders: { type: "AWS::SQS::Queue", reason: "unsupported-kind", detail: "AWS::SQS::Queue is declared unmapped by the augur coverage table" } },
+    { orders: { type: "AWS::SQS::Queue", reason: "unsupported-kind", detail: "AWS::SQS::Queue is declared unmapped by the aws coverage rows" } },
   );
 
   test("the declined side is a row of kind declined carrying the reason, with no delta number", () => {
@@ -285,7 +285,7 @@ describe("renderBehaviourFinding — every figure carries its provenance, and a 
     );
     for (const body of [
       renderBehaviourFinding(withEverything, CTX),
-      renderBehaviourFinding(delta(noBehaviourEngineRefusal("augur"), report({ db: figure() })), CTX),
+      renderBehaviourFinding(delta(noBehaviourEngineRefusal("chant"), report({ db: figure() })), CTX),
     ]) {
       for (const word of FORBIDDEN) expect(body).not.toMatch(word);
     }

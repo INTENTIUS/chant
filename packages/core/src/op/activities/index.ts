@@ -137,8 +137,7 @@ export {
   baseRefFrom,
   headRefFrom,
   noBaseRefMessage,
-  noPredictingLexiconMessage,
-  ambiguousPredictorMessage,
+  noContributedRowsMessage,
 } from "./predict-behaviour";
 export type {
   PredictBehaviourArgs,

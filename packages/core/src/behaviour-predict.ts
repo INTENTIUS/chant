@@ -1,5 +1,5 @@
 /**
- * augur's `predictBehaviour()` — the first implementation of the fourth
+ * `predictBehaviour()` — the fourth
  * observation method (#2357, contract #2356).
  *
  * The whole method is four moves, in this order, and the order is the contract:
@@ -10,7 +10,7 @@
  *     `ghp_…` past the walk's depth budget and an `awsSecretAccessKey` in
  *     `props` both went out with the request.
  *  2. **Resolve the engine.** `behaviourEngineFrom`, walking
- *     `CHANT_BEHAVIOUR_ENGINE_AUGUR` → `CHANT_BEHAVIOUR_ENGINE` →
+ *     `CHANT_BEHAVIOUR_ENGINE_BEHAVIOUR_SCOPE` → `CHANT_BEHAVIOUR_ENGINE` →
  *     `BEHAVIOUR_ENGINE`. Nothing named means `noBehaviourEngineRefusal`, and
  *     it happens **before** anything is priced: a lexicon that prices first and
  *     checks the engine afterwards has already decided what zero means.
@@ -56,18 +56,30 @@ import {
   type PredictBehaviourOptions,
   type PredictedBehaviour,
   type UnpredictedEntity,
-} from "@intentius/chant/behaviour";
-import { buildEngineRequest } from "./request";
-import { AUGUR, defaultConnect, type EngineConnect, type EngineFigure } from "./engine";
+} from "./behaviour";
+import { buildEngineRequest } from "./behaviour-request";
+import type { BehaviourKinds } from "./behaviour-kinds";
+import { BEHAVIOUR_SCOPE, defaultConnect, type EngineConnect, type EngineFigure } from "./behaviour-engine";
 
-export { AUGUR };
+export { BEHAVIOUR_SCOPE };
 
-/** What {@link createAugurPredict} needs that the method's own options do not carry. */
-export interface AugurPredictDeps {
+/** What {@link createBehaviourPredict} needs that the method's own options do not carry. */
+export interface BehaviourPredictDeps {
+  /**
+   * The coverage rows to resolve entity types against — every configured
+   * lexicon's `behaviourKinds`, in the order the plugins were loaded.
+   *
+   * An empty list is legal and means every declared entity is withheld as
+   * `unknown-type`: nothing has said what any of them are. That is a report
+   * about an estate nobody has rows for, not a refusal, because the engine was
+   * reachable and answered; the distinction is the whole point of the refusal
+   * arm.
+   */
+  kinds?: readonly BehaviourKinds[];
   /** The environment the engine address is resolved from. Defaults to the process's. */
   env?: Record<string, string | undefined>;
   /**
-   * How an address becomes an engine. Defaults to `./engine.ts`'s chooser,
+   * How an address becomes an engine. Defaults to `./behaviour-engine.ts`'s chooser,
    * which dials a URL through core's HTTP transport and a bare address as a
    * command on PATH.
    */
@@ -75,7 +87,7 @@ export interface AugurPredictDeps {
 }
 
 /**
- * Build the lexicon's `predictBehaviour`, with the environment and the
+ * Build core's `predictBehaviour`, with the environment and the
  * transport injected.
  *
  * Injected rather than read from module scope so a test can drive the whole
@@ -83,30 +95,31 @@ export interface AugurPredictDeps {
  * without touching `process.env`, which is what the shared conformance suite's
  * probes need in order to ask the same request twice and compare.
  */
-export function createAugurPredict(
-  deps: AugurPredictDeps = {},
+export function createBehaviourPredict(
+  deps: BehaviourPredictDeps = {},
 ): (options: PredictBehaviourOptions) => Promise<BehaviourResult> {
   const env = deps.env ?? process.env;
+  const kinds = deps.kinds ?? [];
   const connect = deps.connect ?? defaultConnect;
 
   return async function predictBehaviour(options: PredictBehaviourOptions): Promise<BehaviourResult> {
-    const unsafe = screenBehaviourRequest(AUGUR, options);
+    const unsafe = screenBehaviourRequest(BEHAVIOUR_SCOPE, options);
     if (unsafe) return unsafe;
 
-    const endpoint = behaviourEngineFrom(AUGUR, env);
-    if (!endpoint) return noBehaviourEngineRefusal(AUGUR);
+    const endpoint = behaviourEngineFrom(BEHAVIOUR_SCOPE, env);
+    if (!endpoint) return noBehaviourEngineRefusal(BEHAVIOUR_SCOPE);
 
     const engine = connect(endpoint, env);
     if (!engine) {
       return unreachableBehaviourEngineRefusal(
-        AUGUR,
+        BEHAVIOUR_SCOPE,
         endpoint,
         "no transport speaks that address — a http(s) URL is dialled with a bearer token, and a bare " +
           "address is run as a command on PATH; any other scheme has no transport yet",
       );
     }
 
-    const request = buildEngineRequest(options);
+    const request = buildEngineRequest(options, kinds);
     const outcome = await engine.predict(request);
 
     // Built where the wire was seen, and returned as it stands. The three

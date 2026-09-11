@@ -55,7 +55,6 @@ jobs:
 
       - name: Generate lexicon artifacts
         run: |
-          npm run --prefix lexicons/augur prepack
           npm run --prefix lexicons/aws prepack
           npm run --prefix lexicons/azure prepack
           npm run --prefix lexicons/gitlab prepack
@@ -192,7 +191,6 @@ jobs:
 
       - name: Generate lexicon artifacts
         run: |
-          npm run --prefix lexicons/augur prepack
           npm run --prefix lexicons/aws prepack
           npm run --prefix lexicons/azure prepack
           npm run --prefix lexicons/gitlab prepack
@@ -285,8 +283,6 @@ jobs:
           restore-keys: |
             lexicon-schemas-
 
-      - name: Generate and validate augur lexicon
-        run: npm run --prefix lexicons/augur prepack
 
       - name: Generate and validate AWS lexicon
         run: npm run --prefix lexicons/aws prepack

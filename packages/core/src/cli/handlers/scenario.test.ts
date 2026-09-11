@@ -450,7 +450,7 @@ describe("runScenarioCheck", () => {
 
   test("a fixture whose recorded prediction is a refusal fails with the refusal's own cause", async () => {
     const fixturePath = await writeFixture(
-      snap({ resources: { bucket: meta() }, behaviour: noBehaviourEngineRefusal("augur") }),
+      snap({ resources: { bucket: meta() }, behaviour: noBehaviourEngineRefusal("chant") }),
     );
     const scenario = Scenario("stays under a dollar an hour", {
       given: snapshot(fixturePath),

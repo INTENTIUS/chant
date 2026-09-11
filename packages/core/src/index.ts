@@ -64,6 +64,7 @@ export * from "./apply";
 export * from "./deep-observation";
 export * from "./behaviour";
 export * from "./behaviour-http";
+export * from "./behaviour-kinds";
 export * from "./behaviour-delta";
 export * from "./claimed-fields";
 export * from "./fold-provenance";

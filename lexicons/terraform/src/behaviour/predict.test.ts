@@ -10,7 +10,7 @@
  *
  * ## The engine
  *
- * `deps.predict` is augur's `predictBehaviour` in production. Here it is
+ * `deps.predict` is core's `predictBehaviour` in production. Here it is
  * {@link tariff}, which prices a node per hour by its provider type and
  * nothing else. That is a poor cost model and a good instrument: it makes an
  * estate's total a plain sum over the entities that side of the path sent, so

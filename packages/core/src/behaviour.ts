@@ -146,8 +146,8 @@
  * ## The transport is part of the contract (#2373, decided in #2359)
  *
  * The first version of this module named the address chain, said the address
- * may be a URL, a socket path or a command on `PATH`, and stopped. augur
- * (#2357) then declared a private `BehaviourEngine` and its own mapping from
+ * may be a URL, a socket path or a command on `PATH`, and stopped. The first
+ * consumer (#2357) then declared a private `BehaviourEngine` and its own mapping from
  * what the wire said to which of the three engine-answered refusals to build.
  * With a second implementation to generalise from, the seam is here:
  * {@link BehaviourTransport} is one method, `send(body)`, taking the request
@@ -173,7 +173,7 @@
  *     is that switch, written once.
  *
  * What the wire says maps to the causes above as follows, and
- * `./behaviour-http.ts` (the first adapter) and augur's command transport both
+ * `./behaviour-http.ts` (the first adapter) and `./behaviour-engine.ts`'s command transport both
  * hold to it: an HTTP 402 is `engine-out-of-credit`; a 429 is
  * `engine-over-quota`; a connection refused, a timeout, a 5xx, a redirect, or
  * an answer that is not JSON is `engine-unreachable`; an unset address is
@@ -1256,7 +1256,7 @@ export function overQuotaBehaviourEngineRefusal(
  * refusal ready to be returned from `predictBehaviour` as it stands.
  *
  * The answer is text rather than a parsed object because what the text means
- * is the lexicon's wire version (`augur/v1`), and the lexicon is the one that
+ * is the wire version (`behaviour/v1`), and `./behaviour-engine.ts` is what
  * validates it — an answer that fails that validation is
  * {@link unreachableBehaviourEngineRefusal} with a detail naming the field,
  * built by the lexicon, since the transport has nothing to say about it.
@@ -1268,7 +1268,7 @@ export type BehaviourTransportOutcome =
 /**
  * The seam between a lexicon and whatever answers its request (#2373).
  *
- * One method. `body` is the request as the lexicon rendered it — augur's
+ * One method. `body` is the request as it was rendered —
  * canonical JSON, say — and the transport carries it to the address it was
  * built for and brings back what came out, or a refusal naming why nothing
  * did. A transport is built knowing the lexicon and the endpoint, which is
@@ -1276,7 +1276,7 @@ export type BehaviourTransportOutcome =
  * better than returning a cause.
  *
  * Two ship today: `./behaviour-http.ts` dials a URL with a bearer token, and
- * augur's `commandTransport` spawns a command on `PATH` with
+ * `./behaviour-engine.ts`'s `commandTransport` spawns a command on `PATH` with
  * {@link behaviourEngineChildEnvironment}. A lexicon picks one by the shape of
  * the address and does not otherwise know which it got.
  */
@@ -1323,7 +1323,7 @@ export function behaviourWireRefusal(
  * and the child holds `AWS_SECRET_ACCESS_KEY` anyway. So a transport that
  * spawns builds the environment from this and nothing more — `PATH` because
  * the address is resolved against it, and no allowlist beyond that, because
- * every name added is a name a credential could be sitting under. augur's
+ * every name added is a name a credential could be sitting under. The
  * command transport pins this by test (#2372); this is the rule it pins.
  */
 export function behaviourEngineChildEnvironment(

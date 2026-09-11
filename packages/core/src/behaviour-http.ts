@@ -82,7 +82,7 @@ export interface HttpBehaviourTransportDeps {
   timeoutMs?: number;
 }
 
-/** The default deadline: the same one augur's command transport gives a child. */
+/** The default deadline: the same one the command transport gives a child. */
 export const HTTP_BEHAVIOUR_TIMEOUT_MS = 30_000;
 
 /** How much of an error body a `detail` repeats. `scrubEngineDetail` bounds it again downstream. */

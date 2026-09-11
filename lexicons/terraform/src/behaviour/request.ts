@@ -276,7 +276,7 @@ export function substituteReferences(
  * for an address it had none of, and is not a type.
  *
  * This is the kind a node is given for `reconstructEdges`, and it is the same
- * derivation augur's `terraformResourceType` runs to look a coverage row up,
+ * derivation `./kinds.ts`'s `resolveType` runs to look a coverage row up,
  * so the graph and the coverage table agree on what a block is. A live row
  * states its own type instead, on `props.resourceType`, the name
  * `observeAmbient` already uses for it.
@@ -401,7 +401,7 @@ function liveRootPart(
     if (entity.entityType !== RESOURCE_TYPE) {
       // A variable, an output, a data block: not a thing the account holds,
       // so the account has nothing to say about it. It rides through as
-      // declared, and augur declines it by name on both sides alike.
+      // declared, and the coverage rows decline it by name on both sides alike.
       part.sources[d.name] = "live";
       part.entities.set(d.name, entity);
       continue;

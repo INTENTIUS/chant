@@ -1,12 +1,12 @@
 /**
- * The seam between this lexicon and whatever answers its request (#2357),
+ * The seam between core and whatever answers its request (#2357),
  * on the contract's transport (#2373, decided in #2359).
  *
  * `packages/core/src/behaviour.ts` says what a prediction may mean, how an
  * absent engine must refuse, and — since #2359 — how a request reaches an
  * engine: a `BehaviourTransport` carries the rendered request and brings back
- * the engine's text or a finished refusal. This file adds what is augur's on
- * top of that and nothing more: the parse of an `augur/v1` answer, a command
+ * the engine's text or a finished refusal. This file adds what is core's on
+ * top of that and nothing more: the parse of a `behaviour/v1` answer, a command
  * transport for an address that is a program on `PATH`, and the chooser that
  * turns an address into one transport or the other.
  *
@@ -20,8 +20,8 @@
  *
  * A **URL** is dialled by core's `httpBehaviourTransport`
  * (`packages/core/src/behaviour-http.ts`): `POST`, a bearer token from
- * `CHANT_BEHAVIOUR_TOKEN_AUGUR` → `CHANT_BEHAVIOUR_TOKEN` → `BEHAVIOUR_TOKEN`,
- * and the status mapping the contract fixes. Nothing about that is augur's,
+ * `CHANT_BEHAVIOUR_TOKEN` → `BEHAVIOUR_TOKEN`,
+ * and the status mapping the contract fixes. Nothing about that is core's,
  * which is why it does not live here.
  *
  * A **command on PATH** is {@link commandTransport}, below: request on stdin,
@@ -55,7 +55,7 @@ import {
   isBehaviourBasis,
   isResilienceVerdict,
   unreachableBehaviourEngineRefusal,
-} from "@intentius/chant/behaviour";
+} from "./behaviour";
 import type {
   BehaviourBasis,
   BehaviourEngineEndpoint,
@@ -63,14 +63,21 @@ import type {
   BehaviourTransport,
   BehaviourWireCause,
   ResilienceVerdict,
-} from "@intentius/chant/behaviour";
-import { httpBehaviourTransport, isHttpBehaviourAddress } from "@intentius/chant/behaviour-http";
-import type { HttpBehaviourTransportDeps } from "@intentius/chant/behaviour-http";
-import type { EngineRequest } from "./request";
-import { renderEngineRequest } from "./request";
+} from "./behaviour";
+import { httpBehaviourTransport, isHttpBehaviourAddress } from "./behaviour-http";
+import type { HttpBehaviourTransportDeps } from "./behaviour-http";
+import type { EngineRequest } from "./behaviour-request";
+import { renderEngineRequest } from "./behaviour-request";
 
-/** The name this lexicon refuses under, and the one that scopes its variables. */
-export const AUGUR = "augur";
+/**
+ * The name a refusal is built under.
+ *
+ * It was the predicting lexicon's name while a lexicon predicted. Core
+ * predicts for the whole project since #2382, so there is no lexicon to scope
+ * the variable chain by: the chain is the chant-wide one, and this is the word
+ * a message uses for the thing that refused.
+ */
+export const BEHAVIOUR_SCOPE = "chant";
 
 /** One entity's figures, as the engine states them. */
 export interface EngineFigure {
@@ -153,10 +160,10 @@ export function transportEngine(
         if (said) {
           return {
             ok: false,
-            refusal: behaviourWireRefusal(AUGUR, endpoint, said, `the engine answered ${firstLine(sent.body)}`),
+            refusal: behaviourWireRefusal(BEHAVIOUR_SCOPE, endpoint, said, `the engine answered ${firstLine(sent.body)}`),
           };
         }
-        return { ok: false, refusal: unreachableBehaviourEngineRefusal(AUGUR, endpoint, parsed.detail) };
+        return { ok: false, refusal: unreachableBehaviourEngineRefusal(BEHAVIOUR_SCOPE, endpoint, parsed.detail) };
       }
       return { ok: true, answer: parsed.answer };
     },
@@ -174,7 +181,7 @@ const COMMAND_MAX_BUFFER = 8 * 1024 * 1024;
  * `BehaviourTransport` for the third kind of address it names.
  *
  * The address is split on whitespace into a program and its arguments, which
- * is the shape `CHANT_BEHAVIOUR_ENGINE="augur-engine --model tiny"` produces.
+ * is the shape `CHANT_BEHAVIOUR_ENGINE="my-engine --model tiny"` produces.
  * No shell: a shell would make the address a code-execution surface for
  * whatever set the variable, and every argument the address needs can be
  * written without one.
@@ -207,7 +214,7 @@ export function commandTransport(endpoint: BehaviourEngineEndpoint): BehaviourTr
         return {
           ok: false,
           refusal: behaviourWireRefusal(
-            AUGUR,
+            BEHAVIOUR_SCOPE,
             endpoint,
             causeFromEngineWords(raw.stderr) ?? "engine-unreachable",
             firstLine(raw.stderr) || raw.error.message,
@@ -460,7 +467,7 @@ export function connectWith(deps: HttpBehaviourTransportDeps = {}): EngineConnec
     const address = endpoint.value.trim();
     if (address.length === 0) return undefined;
     if (isHttpBehaviourAddress(address)) {
-      return transportEngine(httpBehaviourTransport(AUGUR, endpoint, env, deps), endpoint);
+      return transportEngine(httpBehaviourTransport(BEHAVIOUR_SCOPE, endpoint, env, deps), endpoint);
     }
     if (/^[a-z][a-z0-9+.-]*:\/\//i.test(address)) return undefined;
     return commandEngine(endpoint);
