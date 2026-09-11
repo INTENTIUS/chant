@@ -49,6 +49,33 @@ function resourceBindings(sourceFile: ts.SourceFile): Set<string> {
   return names;
 }
 
+/**
+ * What this span is, if it is one of the shapes that has no string form — or
+ * `undefined` for an ordinary expression.
+ *
+ * The three kinds a syntactic rule can see, matching what `fold()` refuses
+ * (#2397): a resource attribute on an identifier bound by `new` in this file,
+ * a nested construction used as a value, and a composite `.step`.
+ */
+function symbolicSpan(expr: ts.Expression, bound: Set<string>): string | undefined {
+  if (ts.isNewExpression(expr)) {
+    const name = ts.isIdentifier(expr.expression) ? expr.expression.text : "…";
+    return `a nested \`new ${name}\``;
+  }
+  if (ts.isPropertyAccessExpression(expr)) {
+    // `Checkout({}).step` — a call's `.step`, whatever the callee is: the
+    // idiom is the shape, and a rule cannot know which callees are composites.
+    if (expr.name.text === "step" && ts.isCallExpression(expr.expression)) {
+      const callee = ts.isIdentifier(expr.expression.expression) ? expr.expression.expression.text : "…";
+      return `the composite step \`${callee}(…).step\``;
+    }
+    if (ts.isIdentifier(expr.expression) && bound.has(expr.expression.text)) {
+      return `\`${expr.expression.text}.${expr.name.text}\` is a resource attribute and`;
+    }
+  }
+  return undefined;
+}
+
 function checkNode(
   node: ts.Node,
   context: LintContext,
@@ -60,11 +87,8 @@ function checkNode(
   if (ts.isTemplateExpression(node) && !ts.isTaggedTemplateExpression(node.parent)) {
     for (const span of node.templateSpans) {
       const expr = span.expression;
-      if (
-        ts.isPropertyAccessExpression(expr) &&
-        ts.isIdentifier(expr.expression) &&
-        bound.has(expr.expression.text)
-      ) {
+      const what = symbolicSpan(expr, bound);
+      if (what) {
         const { line, character } = context.sourceFile.getLineAndCharacterOfPosition(
           expr.getStart(context.sourceFile),
         );
@@ -75,10 +99,9 @@ function checkNode(
           ruleId: "EVL011",
           severity: "error",
           message:
-            `\`${expr.expression.text}.${expr.name.text}\` is a resource attribute and has no string ` +
-            "form until the build resolves it — a plain template would stringify it as " +
-            "\"[object Object]\". Use the lexicon's own intrinsic, whose interior handles references " +
-            "(`Sub`${…}`` for CloudFormation), or move the reference out of the template.",
+            `${what} has no string form until the build resolves it — a plain template would ` +
+            "stringify it as \"[object Object]\". Use the lexicon's own intrinsic, whose interior " +
+            "handles these (`Sub`${…}`` for CloudFormation), or move it out of the template.",
         });
       }
     }
