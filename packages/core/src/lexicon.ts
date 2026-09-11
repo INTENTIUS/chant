@@ -24,6 +24,7 @@ import type { DescribeResourcesResult, UnobservedReason } from "./observation";
 import type { DescribeIdentityOptions, DescribeIdentityResult } from "./identity";
 import type { DeepNormalizationHooks, DeepObservationResult } from "./deep-observation";
 import type { BehaviourResult, PredictBehaviourOptions } from "./behaviour";
+import type { BehaviourKinds } from "./behaviour-kinds";
 import type { DisruptionQuery, DisruptionVerdict } from "./lifecycle/disruption";
 import type { OwnerChainVerdict } from "./owner-chain";
 import type { CommandGroup } from "./cli/command-group";
@@ -1458,6 +1459,25 @@ export interface LexiconPlugin {
    * refusal: it says which variable, and a stack trace does not.
    */
   predictBehaviour?(options: PredictBehaviourOptions): Promise<BehaviourResult>;
+
+  /**
+   * What this lexicon's own entity types are, to an engine that prices them
+   * (#2382). Rows, not a capability: core resolves and predicts, and a lexicon
+   * says only what its types mean.
+   *
+   * Optional in the way rows can safely be and a capability cannot. A lexicon
+   * that is not installed declared no entities of its types, so its absent
+   * rows describe an absent part of the estate; whereas a *capability* behind
+   * an optional install leaves a consumer with entities nobody will say
+   * anything about, and no refusal naming why — an outcome
+   * `packages/core/src/behaviour.ts` never defined.
+   *
+   * Three things can be said, and saying none is itself a statement that this
+   * lexicon has not been considered: `mapped` rows price a type, `unmapped`
+   * rows state that a real type carries no rate and why, and `nothingPriced`
+   * says it once for the whole substrate — a CI workflow is not an estate.
+   */
+  behaviourKinds?: BehaviourKinds;
 
   /**
    * Report the live status of one deploy unit by its deployed name. Opt-in.
