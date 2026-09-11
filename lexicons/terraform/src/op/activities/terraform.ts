@@ -871,8 +871,27 @@ async function run(
   return execAsync(cmd, { cwd: dir, env: { ...process.env, ...env }, signal, maxBuffer: MAX_BUFFER });
 }
 
+/**
+ * Echo a subprocess's own output to the console for a human watching a
+ * `chant run` step. Both streams land on real stderr (`console.error`),
+ * never on real stdout (chant#2395): every activity here is reachable two
+ * ways — as a declared Op step, where a human is watching the terminal and
+ * stdout/stderr are both visible to them, and as an internal read a reader
+ * like `describeResources()` makes on a caller's behalf (`choudoufuLivePlan`,
+ * via `../../describe-resources.ts`), where the caller's own stdout is
+ * reserved for exactly one thing: the command's own JSON document, when one
+ * was asked for. Putting the subprocess's raw output on real stdout used to
+ * mean a caller running under `--json` (`chant lifecycle plan --live --json`,
+ * `chant components status --live --json`) got that raw `choudoufu
+ * live-plan -json` text landing on stdout ahead of chant's own document — two
+ * concatenated JSON values on one stream, which broke `convergeTick`'s bare
+ * `JSON.parse(stdout)` (`packages/core/src/op/activities/converge.ts`) with
+ * `Unexpected non-whitespace character after JSON at position …`. Stderr is
+ * still on the same terminal for an interactive `chant run`, so a human loses
+ * nothing; a `--json` caller now gets exactly one document on stdout.
+ */
 function report(stdout: string, stderr: string): void {
-  if (stdout) console.log(stdout);
+  if (stdout) console.error(stdout);
   if (stderr) console.error(stderr);
 }
 
