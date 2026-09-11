@@ -94,3 +94,20 @@ export type { TerraformAdoptOpConfig, TerraformAdoptOpResources } from "./compos
 // `describeResources` through a dynamic import; the ownership keys are here
 // because `ownershipChannel` declares them eagerly.
 export { TERRAFORM_STATE_OWNERSHIP_KEYS } from "./state-ownership";
+
+// The behaviour engine's request from a terraform estate (#2360): the live
+// path for a choudoufu root, reading `live-ls -json` and `live-plan -json`
+// through the same activities `describeResources` runs, and the same producer
+// over the declaration so the two sides of the delta are built alike. The
+// engine is injected: this lexicon dials none.
+export {
+  predictTerraformBehaviour,
+  terraformBehaviourRequest,
+  TERRAFORM_REFERENCE_CATALOG,
+  type TerraformBehaviourDeps,
+  type TerraformBehaviourEntity,
+  type TerraformBehaviourRequest,
+  type TerraformBehaviourRequestOptions,
+  type TerraformLiveRead,
+  type TerraformPredictOptions,
+} from "./behaviour";
