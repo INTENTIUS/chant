@@ -486,8 +486,12 @@ function omissionVerdict(row: LivePlanOmissionRow): UnobservedReason | "absent" 
   return mapped;
 }
 
-/** Every instance address in the document belonging to the declared block `address`. */
-function instancesOf(address: string, index: LivePlanIndex): string[] {
+/**
+ * Every instance address in the document belonging to the declared block
+ * `address`. Exported for the behaviour request builder (`./behaviour/`,
+ * #2360), which places the same blocks against the same document.
+ */
+export function instancesOf(address: string, index: LivePlanIndex): string[] {
   return index.addresses.filter((a) => a === address || a.startsWith(`${address}[`));
 }
 
@@ -499,7 +503,7 @@ function liveModuleMembers(address: string, index: LivePlanIndex): string[] {
 }
 
 /** One instance's verdict, before a block aggregates its instances. */
-type InstanceVerdict =
+export type InstanceVerdict =
   | { kind: "owned"; row: LivePlanBoundRow }
   | { kind: "adoptable"; row: LivePlanAdoptableRow }
   | { kind: "foreign"; row: LivePlanUnownedRow }
@@ -516,7 +520,7 @@ type InstanceVerdict =
  * its own would read as unsupported-kind and hide a real, actionable verdict
  * (choudoufu #962, chant #2241).
  */
-function classifyLiveInstance(address: string, index: LivePlanIndex): InstanceVerdict {
+export function classifyLiveInstance(address: string, index: LivePlanIndex): InstanceVerdict {
   const unowned = index.unowned.get(address);
   if (unowned) {
     return unowned.adoptEstate || unowned.adoptAddress
@@ -1015,7 +1019,7 @@ const REAL_DEPS: TerraformReadDeps = {
 };
 
 /** A declared entity, plus the root, address and mode `buildRoots()` recorded on it. */
-interface TerraformDeclared extends DeclaredEntity {
+export interface TerraformDeclared extends DeclaredEntity {
   root: string;
   address: string;
   /** `"live"` when the root runs under choudoufu with a declared estate (#2103). */
@@ -1053,7 +1057,12 @@ export function qualifiedAddress(address: string, callers: readonly string[]): s
   return callers.length === 0 ? address : `${callers.join(".")}.${address}`;
 }
 
-function declaredOf(name: string, entity: { entityType: string; props: Record<string, unknown> } | undefined): TerraformDeclared {
+/**
+ * The root, qualified address and mode of one declared entity, from what
+ * `buildRoots()` recorded on its props. Exported for the behaviour request
+ * builder (#2360), which groups entities by root the same way.
+ */
+export function declaredOf(name: string, entity: { entityType: string; props: Record<string, unknown> } | undefined): TerraformDeclared {
   const props = entity?.props ?? {};
   const fallback = fromEntityName(name);
   const callers = Array.isArray(props.callers)

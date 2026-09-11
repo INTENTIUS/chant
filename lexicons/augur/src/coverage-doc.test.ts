@@ -16,8 +16,19 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { mappedMarkdown, unmappedMarkdown } from "./coverage-doc";
-import { byCodeUnit, DECLARED_UNMAPPED, ENGINE_KINDS_BY_ENTITY_TYPE } from "./mapping";
+import {
+  mappedMarkdown,
+  terraformMappedMarkdown,
+  terraformUnmappedMarkdown,
+  unmappedMarkdown,
+} from "./coverage-doc";
+import {
+  byCodeUnit,
+  DECLARED_UNMAPPED,
+  DECLARED_UNMAPPED_TERRAFORM,
+  ENGINE_KINDS_BY_ENTITY_TYPE,
+  ENGINE_KINDS_BY_TERRAFORM_TYPE,
+} from "./mapping";
 
 const page = readFileSync(
   join(dirname(fileURLToPath(import.meta.url)), "..", "docs", "pages", "coverage.mdx"),
@@ -33,10 +44,17 @@ describe("the coverage docs page", () => {
     expect(page).toContain(unmappedMarkdown());
   });
 
+  it("carries the terraform half, both tables, as the code renders it (#2360)", () => {
+    expect(page).toContain(terraformMappedMarkdown());
+    expect(page).toContain(terraformUnmappedMarkdown());
+  });
+
   it("gives every entity type in either half exactly one row on the page", () => {
     for (const type of [
       ...Object.keys(ENGINE_KINDS_BY_ENTITY_TYPE),
       ...Object.keys(DECLARED_UNMAPPED),
+      ...Object.keys(ENGINE_KINDS_BY_TERRAFORM_TYPE),
+      ...Object.keys(DECLARED_UNMAPPED_TERRAFORM),
     ]) {
       const rows = page.split("\n").filter((line) => line.startsWith(`| \`${type}\` |`));
       expect(rows.length, `${type} appears on ${rows.length} rows`).toBe(1);
@@ -52,6 +70,8 @@ describe("the rendered tables", () => {
     for (const [table, columns] of [
       [mappedMarkdown(), 5],
       [unmappedMarkdown(), 2],
+      [terraformMappedMarkdown(), 5],
+      [terraformUnmappedMarkdown(), 2],
     ] as const) {
       for (const line of table.split("\n")) {
         const cells = line.split(/(?<!\\)\|/).slice(1, -1);
@@ -66,7 +86,7 @@ describe("the rendered tables", () => {
         .split("\n")
         .slice(2)
         .map((line) => line.split("|")[1].trim().replace(/`/g, ""));
-    for (const table of [mappedMarkdown(), unmappedMarkdown()]) {
+    for (const table of [mappedMarkdown(), unmappedMarkdown(), terraformMappedMarkdown(), terraformUnmappedMarkdown()]) {
       const rows = types(table);
       expect(rows).toEqual([...rows].sort(byCodeUnit));
     }

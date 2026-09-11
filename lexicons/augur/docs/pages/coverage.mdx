@@ -158,10 +158,128 @@ the answer is `unsupported-kind` rather than a figure derived from half of it.
 | `K8s::Rbac::RoleBinding` | an RBAC binding is a grant; the workloads it admits are what cost and saturate |
 | `K8s::Storage::StorageClass` | the kind of disk a claim may ask for; the PersistentVolumeClaim carries the figures |
 | `K8s::Traefik::IngressRoute` | routing handled by the Traefik workload, which carries the figures |
+| `Terraform::Data` | a read of something that exists outside this root; whatever it reads is priced where it is declared |
+| `Terraform::Live` | choudoufu's estate declaration, which names the ownership marker every resource of the root carries and holds nothing itself |
+| `Terraform::Locals` | named expressions a root reuses; they exist only in the evaluation |
+| `Terraform::Module` | a call to a child module; the blocks the call expands to are entities of their own and carry the figures |
+| `Terraform::Output` | a value the root publishes after an apply, not a thing the account holds |
+| `Terraform::Provider` | a provider configuration: how terraform reaches an account, not a thing the account holds |
+| `Terraform::Terraform` | the root's settings block, which names providers and a backend and holds nothing in any account |
+| `Terraform::Variable` | a root module input; it shapes what is created and is never created itself |
+
+## Terraform resource blocks
+
+Every `resource` block the terraform lexicon parses is `Terraform::Resource`
+to chant, whatever provider type it declares, so a row on the entity type
+alone would give a VPC and an instance the same verdict. augur looks a
+terraform block up on its provider type instead, and reads its size from the
+block's own arguments under `body`, in terraform's own vocabulary:
+`instance_type`, not `InstanceType`. An argument that is still a reference,
+`"${var.size}"`, is absent for the same reason a CloudFormation intrinsic is:
+it names a value rather than being one.
+
+A block carries no `type` field of its own, so the provider type is the
+segment before the first dot of its address — `aws_subnet.app` is an
+`aws_subnet` — taken only when that segment is shaped like a terraform type,
+a provider name and an underscore. A resource the live path found in the
+account and nothing declares has no terraform address at all; its identity
+stands in for one, and it states its type on `resourceType`, the same field
+ambient observation gives it.
+
+These rows exist because a choudoufu root is a terraform root, and the live
+path ([chant #2360](https://github.com/INTENTIUS/chant/issues/2360)) predicts
+the account such a root holds. Without them every resource in that estate
+was `provider-not-modelled` and the declared-versus-live delta was a
+difference between two zeroes.
+
+The substrate is the type's prefix. `aws_` has rows here. `google_` and
+`azurerm_` are substrates augur does not model, `kubernetes_` is the
+terraform provider rather than the k8s lexicon's own types, and `null_`,
+`random_`, `local_` and `tls_` are utility providers with nothing in any
+account; all of those are `provider-not-modelled`, naming the provider. An
+`aws_` type with no row is `unknown-type`, the one verdict that is a gap.
+The other block kinds a root declares, a `variable`, an `output`, a
+`provider` configuration, are entity types of their own and sit in the
+declared-unmapped table above.
+
+| Provider type | Engine kind | Provider | Size read from | Region |
+|---|---|---|---|---|
+| `aws_alb` | load-balancer | aws | `body.load_balancer_type` | the request's |
+| `aws_cloudfront_distribution` | cdn | aws | — | the request's |
+| `aws_db_instance` | database | aws | `body.instance_class` | the request's |
+| `aws_dynamodb_table` | database | aws | `body.billing_mode` | the request's |
+| `aws_ebs_volume` | block-store | aws | `body.size` | `body.availability_zone`, else the request's |
+| `aws_ecs_service` | compute | aws | — | the request's |
+| `aws_eks_cluster` | control-plane | aws | — | the request's |
+| `aws_eks_node_group` | compute | aws | — | the request's |
+| `aws_elasticache_cluster` | cache | aws | `body.node_type` | the request's |
+| `aws_instance` | compute | aws | `body.instance_type` | the request's |
+| `aws_lambda_function` | serverless | aws | `body.memory_size` | the request's |
+| `aws_lb` | load-balancer | aws | `body.load_balancer_type` | the request's |
+| `aws_rds_cluster` | database | aws | — | the request's |
+| `aws_rds_cluster_instance` | database | aws | `body.instance_class` | the request's |
+| `aws_s3_bucket` | object-store | aws | — | the request's |
+| `aws_sns_topic` | queue | aws | — | the request's |
+| `aws_sqs_queue` | queue | aws | — | the request's |
+
+One family the aws provider adds on its own: a **setting on the resource
+beside it**. The provider splits a bucket's versioning, encryption and
+public-access configuration into resources of their own, and each is a
+statement about the bucket, which carries the figures.
+
+| Provider type | Why it carries no rate |
+|---|---|
+| `aws_cloudwatch_event_rule` | priced by the events matched, which is a fact about traffic the declaration does not state |
+| `aws_cloudwatch_log_group` | priced by the volume ingested into it, which the declaration does not state and no engine can infer from a graph |
+| `aws_db_subnet_group` | the set of subnets a database may sit in; the database carries the figures |
+| `aws_ecr_repository` | priced by the gigabytes stored in it, which the declaration does not state |
+| `aws_ecs_cluster` | a namespace for services rather than capacity of its own; the services and their nodes carry the figures |
+| `aws_ecs_task_definition` | a template a service runs copies of; the service carries the figures, and pricing both would count the estate twice |
+| `aws_eip` | priced only while it is attached to nothing, which is a fact about the running account rather than about the declaration |
+| `aws_elasticache_subnet_group` | the set of subnets a cache may sit in; the cache carries the figures |
+| `aws_iam_instance_profile` | a wrapper that hands a role to an instance; the instance carries the figures |
+| `aws_iam_policy` | a policy document is a statement about permission; nothing about it saturates or accrues |
+| `aws_iam_role` | a role is a grant, not a resource traffic flows through: no rate, no capacity, no verdict under a lost zone |
+| `aws_iam_role_policy` | a policy document attached inline to a role; a statement about permission |
+| `aws_iam_role_policy_attachment` | the attachment of a grant to a role; neither end is priced by it |
+| `aws_internet_gateway` | a boundary crossing rather than a resource: no rate of its own and no capacity to saturate |
+| `aws_kms_key` | priced per key per month plus a per-request meter the declaration does not state, and neither half is an hourly rate |
+| `aws_lambda_event_source_mapping` | the wiring between a queue and a function, both of which are priced where they are declared |
+| `aws_lambda_permission` | a grant letting one service invoke a function; the function carries the figures |
+| `aws_launch_template` | a template instances are launched from; the instances carry the figures |
+| `aws_lb_listener` | a port on a load balancer; the load balancer carries the rate |
+| `aws_lb_listener_rule` | a routing rule on a listener, and a rule is not a thing at either end of an edge |
+| `aws_lb_target_group` | a set of targets behind a load balancer; the load balancer carries the rate |
+| `aws_lb_target_group_attachment` | one target's membership of a target group; the target and the load balancer carry the figures |
+| `aws_nat_gateway` | priced as an hourly rate plus a per-gigabyte meter on everything that crosses it. The declaration states the first and nothing at all about the second, and no engine kind here models a half-known price |
+| `aws_network_interface` | where an instance's networking lives; the instance carries the figures |
+| `aws_route` | routing, which decides where an edge goes and is not itself at either end of one |
+| `aws_route53_record` | a record in a zone priced per query; the zone is where the meter is, and the declaration does not state it |
+| `aws_route53_zone` | priced per zone per month plus a per-query meter the declaration does not state |
+| `aws_route_table` | routing, which decides where an edge goes and is not itself at either end of one |
+| `aws_route_table_association` | an association between two boundaries; nothing flows through it that does not already flow through them |
+| `aws_s3_bucket_acl` | a grant on the bucket beside it; the bucket carries the figures |
+| `aws_s3_bucket_lifecycle_configuration` | a setting on the bucket beside it; the bucket carries the figures |
+| `aws_s3_bucket_ownership_controls` | a setting on the bucket beside it; the bucket carries the figures |
+| `aws_s3_bucket_policy` | a bucket policy is a grant on the bucket beside it, and the bucket carries the figures |
+| `aws_s3_bucket_public_access_block` | a setting on the bucket beside it; the bucket carries the figures |
+| `aws_s3_bucket_server_side_encryption_configuration` | a setting on the bucket beside it; the bucket carries the figures |
+| `aws_s3_bucket_versioning` | a setting on the bucket beside it; the bucket carries the figures |
+| `aws_security_group` | a filter on edges that already exist, not a thing at either end of one |
+| `aws_security_group_rule` | one rule of a filter on edges that already exist; the rule is not a thing at either end of one |
+| `aws_sns_topic_subscription` | priced by the notifications delivered through it; the topic is what the graph has an edge to |
+| `aws_sqs_queue_policy` | a queue policy is a grant on the queue beside it, and the queue carries the figures |
+| `aws_subnet` | a network boundary rather than a node: its contribution to a prediction is the zone membership that reaches the engine as containment coverage |
+| `aws_vpc` | a network boundary rather than a node: its contribution to a prediction is the zone membership that reaches the engine as containment coverage |
+| `aws_vpc_security_group_egress_rule` | one rule of a filter on edges that already exist; the rule is not a thing at either end of one |
+| `aws_vpc_security_group_ingress_rule` | one rule of a filter on edges that already exist; the rule is not a thing at either end of one |
+| `aws_wafv2_web_acl` | priced by the requests inspected through it, which the declaration does not state |
 
 ## Adding a row
 
 A type in neither table is a gap. Add it to `ENGINE_KINDS_BY_ENTITY_TYPE` with
 its engine kind, or to `DECLARED_UNMAPPED` with a sentence saying what about it
-has no rate. `mapping.test.ts` refuses a type in both halves, a kind outside
-the closed set, and a reason short enough to be a shrug.
+has no rate; a terraform provider type goes in `ENGINE_KINDS_BY_TERRAFORM_TYPE`
+or `DECLARED_UNMAPPED_TERRAFORM` in `mapping-terraform.ts`. `mapping.test.ts`
+refuses a type in both halves, a kind outside the closed set, and a reason
+short enough to be a shrug.

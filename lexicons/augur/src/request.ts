@@ -32,7 +32,15 @@
 
 import type { IREdge } from "@intentius/chant/graph-ir";
 import type { BehaviourEdgeCoverage, PredictBehaviourOptions } from "@intentius/chant/behaviour";
-import { byCodeUnit, coverageFor, unmappedDetail, type EngineKind } from "./mapping";
+import {
+  byCodeUnit,
+  coverageFor,
+  coverageLabel,
+  TERRAFORM_RESOURCE_TYPE,
+  terraformResourceType,
+  unmappedDetail,
+  type EngineKind,
+} from "./mapping";
 
 /** The wire version. Bumped when the shape changes, the way `behaviour: "v1"` is. */
 export const AUGUR_REQUEST_VERSION = "augur/v1" as const;
@@ -43,6 +51,12 @@ export interface EngineNode {
   name: string;
   /** The declared type it was translated from, so an engine can say what it choked on. */
   entityType: string;
+  /**
+   * The provider's own type, where the declared type does not carry it: a
+   * terraform `resource` block is `Terraform::Resource` whatever it declares,
+   * and `aws_instance` is what an engine can say it choked on (#2360).
+   */
+  resourceType?: string;
   kind: EngineKind;
   provider: string;
   /** Absent where neither the entity nor the caller states one. Never defaulted. */
@@ -69,6 +83,8 @@ export interface EngineEdge {
 export interface WithheldEntity {
   name: string;
   entityType: string;
+  /** The provider's own type, for a terraform block. See {@link EngineNode.resourceType}. */
+  resourceType?: string;
   /**
    * Which of the coverage table's three not-sent verdicts this is:
    * `declared-unmapped` (looked at, and it carries no rate),
@@ -118,6 +134,10 @@ function readPath(props: Record<string, unknown>, path: string): unknown {
  * Anything else — an object, an array, an unresolved intrinsic, a `NaN` — is
  * absent too, because a size an engine cannot read is worse than no size: it
  * will either be ignored silently or matched against nothing.
+ *
+ * A terraform block's unresolved reference is a string, `"${var.size}"`, and
+ * is absent for the same reason a CloudFormation intrinsic object is: it is
+ * the name of a value, not the value (#2360).
  */
 export function sizeOf(
   props: Record<string, unknown>,
@@ -130,7 +150,12 @@ export function sizeOf(
     return typeof raw === "number" && Number.isFinite(raw) ? String(raw) : undefined;
   }
   // `string`, and the default for a row naming a property and no type.
-  return typeof raw === "string" && raw.length > 0 ? raw : undefined;
+  return isLiteral(raw) ? raw : undefined;
+}
+
+/** A non-empty string that is a value rather than a terraform `${…}` reference to one. */
+function isLiteral(raw: unknown): raw is string {
+  return typeof raw === "string" && raw.length > 0 && !raw.includes("${");
 }
 
 /**
@@ -168,13 +193,19 @@ export function buildEngineRequest(
       });
       continue;
     }
-    const verdict = coverageFor(declared.entityType);
+    const verdict = coverageFor(declared.entityType, declared.props);
+    // A terraform block's provider type rides beside the entity type, on the
+    // wire and in the withheld list, because `Terraform::Resource` alone
+    // names nothing an engine or a reader can act on (#2360).
+    const resourceType =
+      declared.entityType === TERRAFORM_RESOURCE_TYPE ? terraformResourceType(declared.props) : undefined;
     if (verdict.status !== "mapped") {
       withheld.push({
         name,
         entityType: declared.entityType,
+        ...(resourceType ? { resourceType } : {}),
         status: verdict.status,
-        detail: unmappedDetail(declared.entityType, verdict),
+        detail: unmappedDetail(coverageLabel(declared.entityType, declared.props), verdict),
       });
       continue;
     }
@@ -182,13 +213,12 @@ export function buildEngineRequest(
     const declaredRegion = mapping.regionProp
       ? readPath(declared.props, mapping.regionProp)
       : undefined;
-    const region = typeof declaredRegion === "string" && declaredRegion.length > 0
-      ? declaredRegion
-      : options.region;
+    const region = isLiteral(declaredRegion) ? declaredRegion : options.region;
     const size = sizeOf(declared.props, mapping.sizeProp, mapping.sizeType);
     nodes.push({
       name,
       entityType: declared.entityType,
+      ...(resourceType ? { resourceType } : {}),
       kind: mapping.kind,
       provider: mapping.provider,
       ...(region ? { region } : {}),
