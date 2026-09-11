@@ -62,9 +62,11 @@ not a credential — the engine is never handed one and never writes.
 A command on PATH is dialled by piping the request to its stdin and reading the
 answer from its stdout, with an environment holding `PATH` and nothing else: a
 subprocess inheriting `process.env` would walk straight around the
-request-side credential screen. A URL is refused by name until
-[#2359](https://github.com/INTENTIUS/chant/issues/2359)'s first engine adapter
-lands.
+request-side credential screen. A URL is dialled by the contract's HTTP
+transport (`packages/core/src/behaviour-http.ts`) with a bearer token from
+`CHANT_BEHAVIOUR_TOKEN_AUGUR`, then `CHANT_BEHAVIOUR_TOKEN`, then
+`BEHAVIOUR_TOKEN`. The token travels in a header and appears in no message; a
+URL named with no token set is refused by name before anything is sent.
 
 With no engine named, augur refuses and says which variable to set. It never
 reports an estate that costs nothing.

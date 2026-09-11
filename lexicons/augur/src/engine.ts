@@ -1,50 +1,76 @@
 /**
- * The seam between this lexicon and whatever answers its request (#2357).
+ * The seam between this lexicon and whatever answers its request (#2357),
+ * on the contract's transport (#2373, decided in #2359).
  *
- * `packages/core/src/behaviour.ts` says what a prediction may mean and how an
- * absent engine must refuse. It says nothing about how a request reaches an
- * engine, deliberately — the epic keeps the engine abstract, "held to a stated
- * shape and nothing more specific". So the transport is the lexicon's to
- * define, and this file defines exactly one thing: an object with a `predict`
- * method that takes {@link EngineRequest} and returns an answer or a named
- * failure.
+ * `packages/core/src/behaviour.ts` says what a prediction may mean, how an
+ * absent engine must refuse, and — since #2359 — how a request reaches an
+ * engine: a `BehaviourTransport` carries the rendered request and brings back
+ * the engine's text or a finished refusal. This file adds what is augur's on
+ * top of that and nothing more: the parse of an `augur/v1` answer, a command
+ * transport for an address that is a program on `PATH`, and the chooser that
+ * turns an address into one transport or the other.
  *
- * That narrowness is the point. #2359's first adapter is a `BehaviourEngine`
- * and so is the process transport below, and neither of them is a second code
- * path through the rest of this lexicon: `./predict-behaviour.ts` maps one
- * {@link EngineOutcome} onto the contract's four refusal builders and does not
- * know which transport produced it.
+ * {@link BehaviourEngine} is what `./predict-behaviour.ts` talks to. It is
+ * one level above the transport — request in, parsed answer or refusal out —
+ * so the fixture engine in `__fixtures__` can be one without pretending to be
+ * a wire, and so `predict-behaviour.ts` never sees a byte. {@link
+ * transportEngine} is the only bridge between the two levels.
  *
- * ## The transport that ships here
+ * ## The two transports
  *
- * `behaviourEngineFrom` resolves an address that may be "a URL, a socket path,
- * or a command on PATH". {@link commandEngine} implements the third: the
- * request goes to the command's stdin as canonical JSON, the answer comes back
- * on stdout as JSON, a non-zero exit is a named failure. It is engine-neutral
- * — there is no vendor in it, no token, and no retry policy — which is why it
- * belongs with the request rather than with #2359's adapter, whose job is a
- * particular vendor's API, its token chain and its credit accounting.
+ * A **URL** is dialled by core's `httpBehaviourTransport`
+ * (`packages/core/src/behaviour-http.ts`): `POST`, a bearer token from
+ * `CHANT_BEHAVIOUR_TOKEN_AUGUR` → `CHANT_BEHAVIOUR_TOKEN` → `BEHAVIOUR_TOKEN`,
+ * and the status mapping the contract fixes. Nothing about that is augur's,
+ * which is why it does not live here.
  *
- * A URL address gets a named refusal rather than a fetch. That is #2359's, and
- * inventing an HTTP shape here would give that issue a shape to fight rather
- * than a seam to fill.
+ * A **command on PATH** is {@link commandTransport}, below: request on stdin,
+ * answer on stdout, no shell — a shell would make the address a
+ * code-execution surface for whatever set the variable. The child gets
+ * `behaviourEngineChildEnvironment()` and nothing else, for the reason given
+ * on that function: the request-side screen cannot see an inherited
+ * `process.env`. An engine that answered and still refused says so on stderr,
+ * and the words it uses pick the cause.
  *
- * ## The child's environment is not this process's
+ * ## A malformed answer is unreachable, not a report with holes
  *
- * Rule 3 of the epic is that the engine never sees credentials, and
- * `screenBehaviourRequest` enforces it on the request. A subprocess inheriting
- * `process.env` would walk straight around that check: the request would be
- * spotless and the child would hold `AWS_SECRET_ACCESS_KEY` anyway. So
- * {@link commandEngine} spawns with an explicitly built environment holding
- * `PATH` and nothing else. The engine is a third party; it gets the graph and
- * the traffic level.
+ * Taking the fields that parsed and reporting the rest unpredicted would turn
+ * an engine emitting garbage into an estate that looks partly free — the
+ * failure the refusal arm exists to prevent, one level down. So the parse
+ * refuses whole, with a detail naming the entity and the field.
+ *
+ * With one exception, and it is the same rule the command transport applies
+ * to stderr: an engine that took the request, answered `200`, and wrote
+ * `{"error": "out of credit"}` has refused for a reason a status never
+ * carried. {@link transportEngine} reads that body's words after the parse
+ * has failed and never before, so an answer that priced the estate and
+ * declined one node "rate limit reached for this region" stays the report it
+ * is. Both transports reach the same three causes; only the evidence differs.
  */
 
 import { execFile, type ExecFileException } from "node:child_process";
-import { isBehaviourBasis, isResilienceVerdict } from "@intentius/chant/behaviour";
-import type { BehaviourBasis, BehaviourEngineEndpoint, ResilienceVerdict } from "@intentius/chant/behaviour";
+import {
+  behaviourEngineChildEnvironment,
+  behaviourWireRefusal,
+  isBehaviourBasis,
+  isResilienceVerdict,
+  unreachableBehaviourEngineRefusal,
+} from "@intentius/chant/behaviour";
+import type {
+  BehaviourBasis,
+  BehaviourEngineEndpoint,
+  BehaviourRefusalReport,
+  BehaviourTransport,
+  BehaviourWireCause,
+  ResilienceVerdict,
+} from "@intentius/chant/behaviour";
+import { httpBehaviourTransport, isHttpBehaviourAddress } from "@intentius/chant/behaviour-http";
+import type { HttpBehaviourTransportDeps } from "@intentius/chant/behaviour-http";
 import type { EngineRequest } from "./request";
 import { renderEngineRequest } from "./request";
+
+/** The name this lexicon refuses under, and the one that scopes its variables. */
+export const AUGUR = "augur";
 
 /** One entity's figures, as the engine states them. */
 export interface EngineFigure {
@@ -76,30 +102,66 @@ export interface EngineAnswer {
 }
 
 /**
- * A run the engine did not answer, in the three shapes the contract
- * distinguishes. `no-engine` is not here: that is decided before a transport
- * is chosen at all.
+ * What an engine call comes back with: a parsed answer, or a refusal built
+ * by whoever saw the failure — the transport for a wire condition, this file
+ * for an answer that does not parse. `./predict-behaviour.ts` returns the
+ * refusal as it stands and never rebuilds one, which is how the contract's
+ * four causes stay four remedies rather than one lexicon's guess.
  */
-export interface EngineFailure {
-  cause: "engine-unreachable" | "engine-out-of-credit" | "engine-over-quota";
-  /** Free text for the refusal's detail. `scrubEngineDetail` bounds it downstream. */
-  detail: string;
-}
+export type EngineOutcome = { ok: true; answer: EngineAnswer } | { ok: false; refusal: BehaviourRefusalReport };
 
-export type EngineOutcome = { ok: true; answer: EngineAnswer } | { ok: false; failure: EngineFailure };
-
-/** Whatever answers a request. #2359's adapter is one of these. */
+/** Whatever answers a request, one level above the wire. The fixture engine is one of these. */
 export interface BehaviourEngine {
   predict(request: EngineRequest): Promise<EngineOutcome>;
 }
 
 /**
- * Resolve an address to a transport, or to `undefined` when nothing here
- * speaks it. A caller that gets `undefined` refuses as `engine-unreachable`
- * naming the address, which is the honest verdict for an address chant cannot
- * dial.
+ * Resolve an address to an engine, or to `undefined` when nothing here
+ * speaks it. `env` is where a transport that authenticates reads its token
+ * from, and a chooser that has no use for it may ignore it. A caller that
+ * gets `undefined` refuses as `engine-unreachable` naming the address, which
+ * is the honest verdict for an address chant cannot dial.
  */
-export type EngineConnect = (endpoint: BehaviourEngineEndpoint) => BehaviourEngine | undefined;
+export type EngineConnect = (
+  endpoint: BehaviourEngineEndpoint,
+  env: Record<string, string | undefined>,
+) => BehaviourEngine | undefined;
+
+/**
+ * A {@link BehaviourEngine} over a contract transport: render the request
+ * canonically, send it, parse what came back. The one bridge between the
+ * transport level and the engine level, so the parse runs on every wire and
+ * no transport gets its own.
+ */
+export function transportEngine(
+  transport: BehaviourTransport,
+  endpoint: BehaviourEngineEndpoint,
+): BehaviourEngine {
+  return {
+    async predict(request: EngineRequest): Promise<EngineOutcome> {
+      const sent = await transport.send(renderEngineRequest(request));
+      if (!sent.ok) return { ok: false, refusal: sent.refusal };
+      const parsed = parseEngineAnswer(sent.body);
+      if (!parsed.ok) {
+        // An engine that answers 200 with an error envelope is a real shape,
+        // and its own words are the only thing that says which refusal it is.
+        // Read after the parse and never before: an answer that priced the
+        // estate and declined one node "rate limit reached for this region"
+        // parses, and a vocabulary check running first would turn a report
+        // about the other nodes into an over-quota refusal about none.
+        const said = causeFromEngineWords(sent.body);
+        if (said) {
+          return {
+            ok: false,
+            refusal: behaviourWireRefusal(AUGUR, endpoint, said, `the engine answered ${firstLine(sent.body)}`),
+          };
+        }
+        return { ok: false, refusal: unreachableBehaviourEngineRefusal(AUGUR, endpoint, parsed.detail) };
+      }
+      return { ok: true, answer: parsed.answer };
+    },
+  };
+}
 
 /** How long a command engine is given before it is treated as unreachable. */
 const COMMAND_TIMEOUT_MS = 30_000;
@@ -108,7 +170,8 @@ const COMMAND_TIMEOUT_MS = 30_000;
 const COMMAND_MAX_BUFFER = 8 * 1024 * 1024;
 
 /**
- * A `command on PATH` address, run as a subprocess.
+ * A `command on PATH` address, run as a subprocess: the contract's
+ * `BehaviourTransport` for the third kind of address it names.
  *
  * The address is split on whitespace into a program and its arguments, which
  * is the shape `CHANT_BEHAVIOUR_ENGINE="augur-engine --model tiny"` produces.
@@ -116,11 +179,10 @@ const COMMAND_MAX_BUFFER = 8 * 1024 * 1024;
  * whatever set the variable, and every argument the address needs can be
  * written without one.
  */
-export function commandEngine(command: string): BehaviourEngine {
-  const [program, ...args] = command.trim().split(/\s+/);
+export function commandTransport(endpoint: BehaviourEngineEndpoint): BehaviourTransport {
+  const [program, ...args] = endpoint.value.trim().split(/\s+/);
   return {
-    async predict(request: EngineRequest): Promise<EngineOutcome> {
-      const body = renderEngineRequest(request);
+    async send(body: string) {
       const raw = await new Promise<{ stdout: string; error?: ExecFileException; stderr: string }>(
         (resolve) => {
           const child = execFile(
@@ -129,9 +191,9 @@ export function commandEngine(command: string): BehaviourEngine {
             {
               timeout: COMMAND_TIMEOUT_MS,
               maxBuffer: COMMAND_MAX_BUFFER,
-              // Not `process.env`. See the module doc: an inherited environment
-              // is a credential channel the request-side screen cannot see.
-              env: { PATH: process.env.PATH ?? "" },
+              // Not `process.env`. The contract's rule, and its reason, are on
+              // `behaviourEngineChildEnvironment`; the test below pins it.
+              env: behaviourEngineChildEnvironment(),
             },
             (error, stdout, stderr) => {
               resolve({ stdout: String(stdout), stderr: String(stderr), ...(error ? { error } : {}) });
@@ -144,26 +206,40 @@ export function commandEngine(command: string): BehaviourEngine {
       if (raw.error) {
         return {
           ok: false,
-          failure: {
-            cause: causeFromStderr(raw.stderr) ?? "engine-unreachable",
-            detail: firstLine(raw.stderr) || raw.error.message,
-          },
+          refusal: behaviourWireRefusal(
+            AUGUR,
+            endpoint,
+            causeFromEngineWords(raw.stderr) ?? "engine-unreachable",
+            firstLine(raw.stderr) || raw.error.message,
+          ),
         };
       }
-      return parseEngineAnswer(raw.stdout);
+      return { ok: true, body: raw.stdout };
     },
   };
 }
 
+/** {@link commandTransport}, bridged to the engine level. */
+export function commandEngine(endpoint: BehaviourEngineEndpoint): BehaviourEngine {
+  return transportEngine(commandTransport(endpoint), endpoint);
+}
+
 /**
- * An engine that answered and still refused says so on stderr, and the three
+ * An engine that answered and still refused says so in words, and the three
  * causes want three different actions (`behaviour.ts`'s remedy table). Matched
- * on the words an engine would use rather than on an exit code, because the
- * contract fixes no exit codes and inventing some would bind every future
- * engine to this file.
+ * on the words an engine would use rather than on an exit code or an HTTP
+ * status, because the contract fixes no exit codes, inventing some would bind
+ * every future engine to this file, and a status is only available on one of
+ * the two transports anyway.
+ *
+ * Both transports read it, on the text each has: a command's stderr, and an
+ * HTTP body that failed to parse as an answer. `./behaviour-http.ts` has
+ * already classified every status that carries one, so this runs on the case
+ * a status does not cover — the engine that took the request, answered 200,
+ * and put its refusal in the envelope.
  */
-function causeFromStderr(stderr: string): EngineFailure["cause"] | undefined {
-  const text = stderr.toLowerCase();
+function causeFromEngineWords(said: string): BehaviourWireCause | undefined {
+  const text = said.toLowerCase();
   if (/\b(out of credit|insufficient (funds|balance)|no balance|payment required)\b/.test(text)) {
     return "engine-out-of-credit";
   }
@@ -253,13 +329,20 @@ export function figureProblems(name: string, figure: unknown): string[] {
   return out;
 }
 
-/** One `engine-unreachable` outcome, with the detail the refusal will scrub and print. */
-function malformed(detail: string): EngineOutcome {
-  return { ok: false, failure: { cause: "engine-unreachable", detail } };
+/**
+ * What the parse of an engine's text comes to: the answer, or a detail
+ * naming what was wrong with it. Not a refusal yet — {@link transportEngine}
+ * builds that, with the endpoint the parse does not need to know.
+ */
+export type ParsedEngineAnswer = { ok: true; answer: EngineAnswer } | { ok: false; detail: string };
+
+/** One malformed verdict, with the detail the refusal will scrub and print. */
+function malformed(detail: string): ParsedEngineAnswer {
+  return { ok: false, detail };
 }
 
 /**
- * Parse an engine's stdout into an {@link EngineAnswer}.
+ * Parse an engine's text into an {@link EngineAnswer}.
  *
  * A malformed answer is `engine-unreachable` and not a report full of holes.
  * The alternative — taking the fields that parsed and reporting the rest as
@@ -284,12 +367,12 @@ function malformed(detail: string): EngineOutcome {
  * `unreachableBehaviourEngineRefusal`, which runs it through
  * `scrubEngineDetail` and bounds it.
  */
-export function parseEngineAnswer(stdout: string): EngineOutcome {
+export function parseEngineAnswer(text: string): ParsedEngineAnswer {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(stdout);
+    parsed = JSON.parse(text);
   } catch {
-    return malformed(`the engine wrote ${stdout.length} byte(s) that are not JSON`);
+    return malformed(`the engine wrote ${text.length} byte(s) that are not JSON`);
   }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
     return malformed("the engine's answer is not an object");
@@ -363,16 +446,26 @@ export function parseEngineAnswer(stdout: string): EngineOutcome {
 }
 
 /**
- * The transport chooser this lexicon ships.
+ * The transport chooser, with what the HTTP transport needs injectable.
  *
- * A command address gets {@link commandEngine}. A URL gets `undefined`, and
- * the caller turns that into a refusal naming the address — the HTTP shape is
- * #2359's to define, and guessing at one here would hand that issue a
- * decision already made badly rather than an open seam.
+ * A `http://` or `https://` address gets core's `httpBehaviourTransport`,
+ * with its token read from `env` — the same `env` the address was read from,
+ * so a test drives both chains from one object. A bare address gets
+ * {@link commandTransport}. Any other scheme (`grpc://`, `unix://`) gets
+ * `undefined`, and the caller refuses naming the address: no transport here
+ * speaks it, and saying so beats a guess.
  */
-export const defaultConnect: EngineConnect = (endpoint) => {
-  const address = endpoint.value.trim();
-  if (address.length === 0) return undefined;
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(address)) return undefined;
-  return commandEngine(address);
-};
+export function connectWith(deps: HttpBehaviourTransportDeps = {}): EngineConnect {
+  return (endpoint, env) => {
+    const address = endpoint.value.trim();
+    if (address.length === 0) return undefined;
+    if (isHttpBehaviourAddress(address)) {
+      return transportEngine(httpBehaviourTransport(AUGUR, endpoint, env, deps), endpoint);
+    }
+    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(address)) return undefined;
+    return commandEngine(endpoint);
+  };
+}
+
+/** The chooser the shipped plugin uses: the process's own `fetch`, the default deadline. */
+export const defaultConnect: EngineConnect = connectWith();

@@ -17,11 +17,14 @@
  *  3. **Build the request.** `buildEngineRequest`, offline and pure
  *     (`./request.ts`).
  *  4. **Ask, and translate the answer.** One {@link EngineOutcome} onto the
- *     contract's builders. No figure is ever computed here — this file has no
- *     arithmetic on money in it at all, and that is not an accident: the epic's
- *     first rule is that a missing engine produces a refusal and "never a
- *     locally faked number", and the surest way to keep that true is for the
- *     code that would have faked it not to exist.
+ *     contract's builders. A refusal comes back from the transport already
+ *     built — the contract's transport (#2373) names the condition and the
+ *     variable where the wire was seen — and is returned as it stands; this
+ *     file holds no switch over causes. No figure is ever computed here either:
+ *     this file has no arithmetic on money in it at all, and that is not an
+ *     accident. The epic's first rule is that a missing engine produces a
+ *     refusal and "never a locally faked number", and the surest way to keep
+ *     that true is for the code that would have faked it not to exist.
  *
  * ## Every entity lands somewhere
  *
@@ -46,8 +49,6 @@ import {
   behaviourReport,
   behaviourEngineFrom,
   noBehaviourEngineRefusal,
-  outOfCreditBehaviourEngineRefusal,
-  overQuotaBehaviourEngineRefusal,
   predictedRate,
   screenBehaviourRequest,
   unreachableBehaviourEngineRefusal,
@@ -57,16 +58,19 @@ import {
   type UnpredictedEntity,
 } from "@intentius/chant/behaviour";
 import { buildEngineRequest } from "./request";
-import { defaultConnect, type EngineConnect, type EngineFigure } from "./engine";
+import { AUGUR, defaultConnect, type EngineConnect, type EngineFigure } from "./engine";
 
-/** The name this lexicon refuses under, and the one that scopes its variable. */
-export const AUGUR = "augur";
+export { AUGUR };
 
 /** What {@link createAugurPredict} needs that the method's own options do not carry. */
 export interface AugurPredictDeps {
   /** The environment the engine address is resolved from. Defaults to the process's. */
   env?: Record<string, string | undefined>;
-  /** How an address becomes a transport. Defaults to `./engine.ts`'s chooser. */
+  /**
+   * How an address becomes an engine. Defaults to `./engine.ts`'s chooser,
+   * which dials a URL through core's HTTP transport and a bare address as a
+   * command on PATH.
+   */
   connect?: EngineConnect;
 }
 
@@ -92,29 +96,23 @@ export function createAugurPredict(
     const endpoint = behaviourEngineFrom(AUGUR, env);
     if (!endpoint) return noBehaviourEngineRefusal(AUGUR);
 
-    const engine = connect(endpoint);
+    const engine = connect(endpoint, env);
     if (!engine) {
       return unreachableBehaviourEngineRefusal(
         AUGUR,
         endpoint,
-        "no transport in this lexicon speaks that address — a command on PATH is dialled here, and a " +
-          "URL is the first engine adapter's (chant #2359)",
+        "no transport speaks that address — a http(s) URL is dialled with a bearer token, and a bare " +
+          "address is run as a command on PATH; any other scheme has no transport yet",
       );
     }
 
     const request = buildEngineRequest(options);
     const outcome = await engine.predict(request);
 
-    if (!outcome.ok) {
-      const { cause, detail } = outcome.failure;
-      if (cause === "engine-out-of-credit") {
-        return outOfCreditBehaviourEngineRefusal(AUGUR, endpoint, detail);
-      }
-      if (cause === "engine-over-quota") {
-        return overQuotaBehaviourEngineRefusal(AUGUR, endpoint, detail);
-      }
-      return unreachableBehaviourEngineRefusal(AUGUR, endpoint, detail);
-    }
+    // Built where the wire was seen, and returned as it stands. The three
+    // engine-answered causes and the token cases are mapped once, in the
+    // contract's transport, rather than re-derived here from a cause.
+    if (!outcome.ok) return outcome.refusal;
 
     const { answer } = outcome;
     // `Object.create(null)`, not `{}`. An entity named `constructor` or

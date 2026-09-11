@@ -366,7 +366,7 @@ Those four are one axis split four ways because each has a different remedy, and
 | `no-binding` | the environment resolves to no concrete target to predict |
 | `unsupported-kind` | the engine has no model for this entity type |
 | `filtered` | reached but withheld by `owned: true` |
-| `no-engine` | no variable in the chain names an engine |
+| `no-engine` | no variable in the chain names an engine, or the transport needs a token and none is set or the engine rejected it |
 | `engine-unreachable` | a variable named an engine and it did not answer |
 | `engine-out-of-credit` | the engine answered and refused: the account has no balance |
 | `engine-over-quota` | the engine answered and refused: a rate or volume limit is spent |
@@ -403,7 +403,30 @@ try {
 
 Resolve the engine before pricing anything. A lexicon that prices first and checks its engine afterwards has already decided what a zero means.
 
-An engine that answers and still refuses gets its own builders, `outOfCreditBehaviourEngineRefusal` and `overQuotaBehaviourEngineRefusal`. Reach for those rather than `unreachableBehaviourEngineRefusal` whenever the request arrived: the address is fine in both cases, and a remedy that sends somebody to check their networking wastes the one thing a refusal is for.
+An engine that answers and still refuses gets its own builders, `outOfCreditBehaviourEngineRefusal` and `overQuotaBehaviourEngineRefusal`. Reach for those rather than `unreachableBehaviourEngineRefusal` whenever the request arrived: the address is fine in both cases, and a remedy that sends somebody to check their networking wastes the one thing a refusal is for. Better still, do not reach for any of them by hand: the transport below builds the refusal where the wire condition is seen.
+
+### The transport is the contract's
+
+`BehaviourTransport` is one method, `send(body)`. It takes the request as your lexicon rendered it and brings back the engine's text or a `BehaviourRefusalReport` ready to return. Two ship in chant. `httpBehaviourTransport` in `@intentius/chant/behaviour-http` `POST`s to a URL with a bearer token and maps the status the way HTTP means it: `402` is `engine-out-of-credit`, `429` is `engine-over-quota`, `401` and `403` are `no-engine` naming the token variable, and everything else that is not a `2xx`, including a thrown connection error and the timeout, is `engine-unreachable`. augur's `commandTransport` spawns a command on PATH with `behaviourEngineChildEnvironment()`, which is `PATH` and nothing else, so an inherited environment cannot carry a credential past the request-side screen. `behaviourWireRefusal` is the one place a wire cause becomes a refusal, and both transports go through it.
+
+Returning text rather than a report is deliberate. A report needs the request's `entityNames`, `traffic` and `edgeCoverage`, and what the answer's fields mean is your wire version rather than the contract's, so a transport that built reports would be one per lexicon. One that carries bytes is one HTTP client for every lexicon there will be.
+
+```typescript
+import { httpBehaviourTransport } from "@intentius/chant/behaviour-http";
+
+const transport = httpBehaviourTransport("acme", endpoint, process.env);
+const sent = await transport.send(renderRequest(graph, options.traffic));
+if (!sent.ok) return sent.refusal;
+const answer = parseAnswer(sent.body); // your wire version; a bad answer is unreachableBehaviourEngineRefusal
+```
+
+The bearer token is read from its own chain, `behaviourTokenFrom(lexicon, env)`, in the same shape as the address chain and the same shape as `gitlabNoteTokenFrom`:
+
+1. `CHANT_BEHAVIOUR_TOKEN_<LEXICON>`
+2. `CHANT_BEHAVIOUR_TOKEN`
+3. `BEHAVIOUR_TOKEN`
+
+A separate chain, because an address is printed in refusals and a token never is. The token is not the credential the rule above is about: that rule is about the request body, which `screenBehaviourRequest` walks before any transport exists. The token goes in the `authorization` header and appears in no refusal, no `detail` and no log line, even when the engine echoes it back into an error body. With a URL named and no token set, the HTTP transport refuses by name before sending anything, as `no-engine`, because the remedy is the same kind as for an unset address: set a variable, and the reason says which.
 
 ### Deltas carry provenance, or say they do not
 

@@ -66,12 +66,17 @@ assembled from it.
 export CHANT_BEHAVIOUR_ENGINE=augur-engine
 ```
 
-The address is a URL, a socket path, or a command on PATH — and it is an
-address, not a credential. augur dials a command on PATH by piping the request
-to its stdin and reading the answer from its stdout, with an environment
-holding `PATH` and nothing else. A URL is
-[chant #2359](https://github.com/INTENTIUS/chant/issues/2359)'s first engine
-adapter, and augur refuses one by name until that lands.
+The address is a URL or a command on PATH — and it is an address, not a
+credential. augur dials a command on PATH by piping the request to its stdin
+and reading the answer from its stdout, with an environment holding `PATH` and
+nothing else. A URL is `POST`ed to over HTTPS with a bearer token, read from
+`CHANT_BEHAVIOUR_TOKEN` (or `CHANT_BEHAVIOUR_TOKEN_AUGUR` first, or
+`BEHAVIOUR_TOKEN` last):
+
+```bash
+export CHANT_BEHAVIOUR_ENGINE=https://engine.example/v1/predict
+export CHANT_BEHAVIOUR_TOKEN=…   # the token the engine issued; never printed
+```
 
 With nothing set, augur refuses and names the variable to set. It does not
 report an estate that costs nothing.
