@@ -95,6 +95,37 @@ describe("OPS012: activity-contract", () => {
     expect(diags[0].entity).toBe("op");
   });
 
+  test("validates a step calling predictBehaviour or behaviourFinding against core's own table (#2358)", () => {
+    const ok = makeCtxFromEntities(new Map([
+      ["op", opEntity("pr-behaviour", [
+        { kind: "activity", fn: "predictBehaviour", args: { environment: "prod", traffic: "1000 rps, p99" } },
+        {
+          kind: "activity",
+          fn: "behaviourFinding",
+          args: { environment: "prod", traffic: "1000 rps, p99", op: "pr-behaviour", mode: "comment" },
+          outcomeAttribute: { name: "Comment", from: "commentUrl" },
+        },
+      ])],
+    ]));
+    expect(ops012.check(ok)).toHaveLength(0);
+
+    const typo = makeCtxFromEntities(new Map([
+      ["op", opEntity("pr-behaviour", [
+        { kind: "activity", fn: "behaviourFinding", args: { enviroment: "prod", traffic: "1000 rps, p99", op: "pr-behaviour" } },
+      ])],
+    ]));
+    const diags = ops012.check(typo);
+    expect(diags.length).toBeGreaterThan(0);
+    expect(diags.some((d) => d.message.includes("enviroment"))).toBe(true);
+
+    const badMode = makeCtxFromEntities(new Map([
+      ["op", opEntity("pr-behaviour", [
+        { kind: "activity", fn: "behaviourFinding", args: { environment: "prod", traffic: "1000 rps, p99", op: "pr-behaviour", mode: "issue" } },
+      ])],
+    ]));
+    expect(ops012.check(badMode).some((d) => d.message.includes("mode"))).toBe(true);
+  });
+
   test("errors on an outcomeAttribute.from path that doesn't exist on the declared return type", () => {
     const ctx = makeCtxFromEntities(new Map([
       ["op", opEntity("deploy", [

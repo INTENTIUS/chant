@@ -8,6 +8,9 @@ describe("loadActivityContracts", () => {
     const contracts = await loadActivityContracts();
     expect(contracts.get("shellCmd")).toBeDefined();
     expect(contracts.get("httpCheck")?.returns).toBeDefined();
+    // The behaviour activities (#2358) ship their contracts the same way.
+    expect(contracts.get("predictBehaviour")?.name).toBe("predictBehaviour");
+    expect(contracts.get("behaviourFinding")?.returns).toBeDefined();
     expect(contracts.get("lifecycleDiff")?.name).toBe("lifecycleDiff");
   });
 

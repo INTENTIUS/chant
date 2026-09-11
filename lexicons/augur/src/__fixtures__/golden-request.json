@@ -330,6 +330,12 @@
       "status": "declared-unmapped"
     },
     {
+      "detail": "Chant::Op is declared unmapped by the augur coverage table: an Op is a procedure chant runs, not a resource an account holds. What an Op creates is priced where that lands; the Op itself exists only in the build.",
+      "entityType": "Chant::Op",
+      "name": "pr-behaviour",
+      "status": "declared-unmapped"
+    },
+    {
       "detail": "AWS::S3::BucketPolicy is declared unmapped by the augur coverage table: a bucket policy is a grant on the bucket beside it, and the bucket carries the figures.",
       "entityType": "AWS::S3::BucketPolicy",
       "name": "receiptsPolicy",

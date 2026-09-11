@@ -239,6 +239,28 @@ A destructive apply is where the two safety features earn their place:
 
 An ungated, additive apply needs none of this. See [Ops as teammates](/chant/concepts/durable-workflows/) for where each kind of durability an apply needs actually lives.
 
+## Behaviour (a pull request's predicted delta)
+
+The `BehaviourOp` composite runs on a pull request and posts what the change does to the estate's predicted behaviour. It predicts the declared estate twice through the project's [`predictBehaviour()`](/chant/lexicon-authoring/observation-contract/#predictbehaviour) lexicon, once on the pull request's head and once on the base branch it targets, differences the two, and posts the finding as one sticky comment on the pull request (GitHub, Forgejo) or one note on the merge request (GitLab). The posting is `reconcilePr`'s `comment` mode, so it lands on the same three forges with the same marker recipe, and the marker names the Op as well as the env.
+
+```typescript
+import { BehaviourOp } from "@intentius/chant/op";
+
+const { op } = BehaviourOp({
+  name: "pr-behaviour",
+  env: "prod",
+  traffic: "1000 rps, p99",
+});
+
+export default op;
+```
+
+There is no `schedule`. The trigger is the pull request, given to `generateOpsPipeline` as `{ kind: "pull_request" }` with `findingMode: "comment"`, the same shape a Terraform plan-on-pull-request Op uses. The base branch is read off the run's own event (`GITHUB_BASE_REF`, or `CI_MERGE_REQUEST_TARGET_BRANCH_NAME` on GitLab). chant checks that branch out into a detached worktree and builds it there, then removes the worktree whether the prediction succeeded or not. A `chant run pr-behaviour` on a developer's machine passes `base` and `findingMode: "report"` to get the body without posting.
+
+The finding follows the behaviour contract's rules rather than a diff's. Every figure is a rate for one hypothetical hour at the stated traffic level, and each one carries the full provenance of the engine that produced it. A delta is computed only over entities the engine priced on both sides; an entity declined on either side is a row saying so, never a zero, so an estate that gained an unmapped kind is not a cost change. A pair that `compareFigures` finds mismatched on any axis is marked with every mismatching axis and never subtracted. Each side's edge coverage is shown, and unless both sides are `complete` the resilience verdicts are shown per side and not compared, because the declared path carries no containment yet and a verdict over a graph missing zone membership is not comparable to one over a graph that has it. A whole-run refusal on either side, whichever of the five causes it carries, produces a finding that says "no prediction" with the refusal's own remedy, never a partial delta.
+
+Two activities sit under the composite, both with contracts OPS012 validates: `predictBehaviour` returns the `BehaviourResult` for the working tree at a traffic level, and `behaviourFinding` does the two-sided run and the posting.
+
 ## Audit (supply-chain drift)
 
 Some CI/CD security checks can only be answered against a moving external truth: whether a pinned action SHA still corresponds to a real upstream tag, whether a referenced commit still exists, whether a new advisory now covers a dependency already in use, whether an upstream was archived since you pinned it. The reference was correct when authored, and the external world moved. That is drift, not a synthesis error, so it cannot live in the pure `chant build`; it belongs in the operational layer, exactly like lifecycle observation. On the dial it sits at **observe**, with a finding-mode as the **reconcile** step.
