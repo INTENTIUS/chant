@@ -10,7 +10,7 @@ chant includes a semantic lint system that validates the meaning of your declara
 
 | Category | ID Range | Scope | Description |
 |----------|----------|-------|-------------|
-| **Evaluability** | EVL001–EVL005, EVL007, EVL009–EVL010 | Single file | Flag TypeScript patterns that cannot be statically evaluated |
+| **Evaluability** | EVL001–EVL005, EVL007, EVL009–EVL011 | Single file | Flag TypeScript patterns that cannot be statically evaluated |
 | **Style** | COR001–COR009, COR012–COR015 | Single file | Structural and naming conventions |
 | **Cross-File** | COR010–COR011 | Multi-file | Unused exports and circular dependencies |
 | **Correctness** | COR003, COR004, COR007, COR008, COR017, COR021, COR022–COR026, OPS012–OPS014 | Single file / post-synth | Structural errors |
@@ -64,6 +64,7 @@ Rules are configured via `chant.config.ts` in your project root. When no config 
 | EVL001–EVL005, EVL007 | error |
 | EVL009 | warning |
 | EVL010 | warning |
+| EVL011 | error |
 | COMP001–COMP006 | error |
 | COMP007 | warning |
 

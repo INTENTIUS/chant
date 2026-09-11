@@ -23,6 +23,7 @@ export { evl005ResourceBlockBodyRule } from "./evl005-resource-block-body";
 export { evl007InvalidSiblingsRule } from "./evl007-invalid-siblings";
 export { evl009CompositeNoConstantRule } from "./evl009-composite-no-constant";
 export { evl010CompositeNoTransformRule } from "./evl010-composite-no-transform";
+export { evl011SymbolicInTemplateRule } from "./evl011-symbolic-in-template";
 export { cor017CompositeNameMatchRule } from "./cor017-composite-name-match";
 export { cor018CompositePreferLexiconTypeRule } from "./cor018-composite-prefer-lexicon-type";
 export { cor021EnvLiteralNameRule } from "./cor021-env-literal-name";
@@ -49,6 +50,7 @@ import { evl005ResourceBlockBodyRule } from "./evl005-resource-block-body";
 import { evl007InvalidSiblingsRule } from "./evl007-invalid-siblings";
 import { evl009CompositeNoConstantRule } from "./evl009-composite-no-constant";
 import { evl010CompositeNoTransformRule } from "./evl010-composite-no-transform";
+import { evl011SymbolicInTemplateRule } from "./evl011-symbolic-in-template";
 import { cor017CompositeNameMatchRule } from "./cor017-composite-name-match";
 import { cor018CompositePreferLexiconTypeRule } from "./cor018-composite-prefer-lexicon-type";
 import { cor021EnvLiteralNameRule } from "./cor021-env-literal-name";
@@ -79,6 +81,7 @@ export function loadCoreRules(): LintRule[] {
     evl007InvalidSiblingsRule,
     evl009CompositeNoConstantRule,
     evl010CompositeNoTransformRule,
+    evl011SymbolicInTemplateRule,
     cor017CompositeNameMatchRule,
     cor018CompositePreferLexiconTypeRule,
     cor021EnvLiteralNameRule,
