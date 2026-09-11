@@ -21,9 +21,12 @@ import { ConfigMap } from "@intentius/chant-lexicon-k8s";
  *
  * The two other bounds in the same family are out of reach of a corpus fixture
  * of this size and are covered by unit tests instead:
- * `MAX_INTERPRETATION_DEPTH = 16` (L7.8) needs a self-referential composite
- * factory, and `MAX_RESOLUTION_DEPTH = 200` (L8.10) needs a 200-file import
- * chain.
+ * `MAX_INTERPRETATION_DEPTH = 16` (L7.8) needs a seventeen-link composite
+ * chain — a genuinely self-referential factory would not terminate on the run
+ * path either, so it could never build both ways and could never be a
+ * differential fixture; `packages/core/src/discovery/fold-composite.test.ts`
+ * covers it with the chain instead (chant #2370). `MAX_RESOLUTION_DEPTH = 200`
+ * (L8.10) needs a 200-file import chain.
  *
  * Differential mode: **byte-identical output**, with the file falling back to
  * run rather than folding.

@@ -1769,8 +1769,38 @@ async function resolveCallArguments(
  * inside one module's source, crossing no file boundary — so this is what
  * terminates it. Deliberately small: real composite nesting is 2-3 deep, and a
  * chain past this is a bug, not a design.
+ *
+ * Exhausting it falls the file back to run, naming this bound (#2370). That is
+ * the second half of the specification's `F-Depth`: an implementation states
+ * its bounds and, on exhaustion, falls back rather than fails. The other two —
+ * {@link MAX_RESOLUTION_DEPTH} and `fold()`'s `MAX_FUNCTION_CALL_DEPTH` —
+ * already did.
+ *
+ * It previously returned `undefined` here, which
+ * {@link resolveInterpretableFactory}'s contract defines as "not
+ * interpretable", so the caller invoked the factory instead and the file was
+ * still reported as folded. That conflated two different facts: a factory
+ * whose shape is outside the subset (invoking it is correct) and a factory we
+ * stopped looking at (invoking it is a different evaluation than the one being
+ * reported). The first is a verdict; the second was a silent degradation, and
+ * a reader comparing chant's output against the reference implementation's
+ * "fell back at depth 16" had nothing to explain the difference.
  */
 const MAX_INTERPRETATION_DEPTH = 16;
+
+/**
+ * Exhaustion of {@link MAX_INTERPRETATION_DEPTH}, as its own type so it can
+ * pass through {@link interpretCompositeFactory}'s decline.
+ *
+ * That decline — a blanket `catch { return undefined }` — is right for every
+ * other failure inside a factory body: the body turned out not to interpret,
+ * the caller invokes it instead, and the file still folds. It is wrong for
+ * this one, because giving up at a depth bound is not a statement about the
+ * body. Without a type to test, the depth error was caught by the *enclosing*
+ * interpretation, declined, and the factory invoked — which is how the bound
+ * came to be silent (#2370).
+ */
+class InterpretationDepthError extends FoldError {}
 
 /**
  * The static scope of a module that DEFINES composites — everything
@@ -1969,7 +1999,18 @@ async function resolveInterpretableFactory(
   // Rule 1 — project files only. A text check; no resolution performed for a
   // bare specifier, so this costs nothing for the (common) lexicon case.
   if (!isProjectFileSpecifier(binding.specifier)) return undefined;
-  if (ctx.interpretDepth >= MAX_INTERPRETATION_DEPTH) return undefined;
+  // Not `undefined`: that answer means "not interpretable" and would invoke
+  // the factory while still reporting the file folded. Giving up is a
+  // different fact and falls the file back to run, naming the bound (#2370).
+  if (ctx.interpretDepth >= MAX_INTERPRETATION_DEPTH) {
+    throw new InterpretationDepthError(
+      `interpretation depth exceeded ${MAX_INTERPRETATION_DEPTH} at "${binding.imported}" — a composite ` +
+        "chain this deep is almost certainly recursive. Falling back to run rather than invoking the " +
+        "factory, which would have reported this file as folded while evaluating it a different way.",
+      0,
+      0,
+    );
+  }
 
   let modulePath: string;
   try {
@@ -2346,7 +2387,12 @@ async function interpretCompositeFactory(
     const instance = definition();
     executionCounts.factoryInterpretations += 1;
     return { value: instance };
-  } catch {
+  } catch (err) {
+    // Every other failure here means "this body did not interpret" and the
+    // caller invokes instead. Exhausting the depth bound means "we stopped
+    // looking", which has to reach the file's fold verdict rather than be
+    // answered with an invocation (#2370).
+    if (err instanceof InterpretationDepthError) throw err;
     return undefined;
   }
 }

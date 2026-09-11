@@ -197,6 +197,76 @@ describe("composite factory interpretation (chant #1023)", () => {
     expect([...result.entities.keys()].sort()).toEqual(["webBucket", "webRole"]);
   });
 
+
+  // ───────────────────────────────────────────────────────────────────────
+  // The interpretation depth bound (#2370).
+  // ───────────────────────────────────────────────────────────────────────
+
+  /**
+   * A chain of composites each calling the next, `depth` links long, across
+   * separate modules so every link is a fresh `resolveInterpretableFactory`.
+   * Link 0 is the one `main.ts` calls; the last link builds a real resource.
+   */
+  async function writeChain(depth: number): Promise<void> {
+    for (let i = 0; i < depth; i++) {
+      const isLast = i === depth - 1;
+      const body = isLast
+        ? `(props) => ({ bucket: new Bucket({ BucketName: props.name }) })`
+        : `(props) => ({ inner: Link${i + 1}({ name: props.name }) })`;
+      await writeFile(
+        join(testDir, `link${i}.ts`),
+        `
+          import { Bucket } from ${JSON.stringify(LEXICON)};
+          import { Composite } from ${JSON.stringify(compositePath)};
+          ${isLast ? "" : `import { Link${i + 1} } from "./link${i + 1}";`}
+          export const Link${i} = Composite(${body}, "Link${i}");
+        `,
+      );
+    }
+    await writeFile(
+      join(srcDir, "main.ts"),
+      `
+        import { Link0 } from ${JSON.stringify(join(testDir, "link0"))};
+        export const top = Link0({ name: "deep" });
+      `,
+    );
+  }
+
+  test("a chain within the bound interprets all the way down", async () => {
+    // The control. Without this, a test asserting the deep chain falls back
+    // proves only that something went wrong somewhere.
+    await writeChain(4);
+
+    const result = await discover(srcDir, { fold: true, lexicons: [LEXICON_NAME] });
+
+    expect(result.errors).toEqual([]);
+    expect(result.foldDecisions.find((d) => d.file.endsWith("main.ts"))?.mode).toBe("fold");
+    expect(foldExecutionCounts()).toMatchObject({ factoryInterpretations: 4, projectFactoryInvocations: 0 });
+  });
+
+  test("exhausting the bound falls the file back to run, naming the bound", async () => {
+    // 17 links against a bound of 16. Before #2370 this returned the "not
+    // interpretable" answer, so the factory was invoked and the file was
+    // still reported folded — a different evaluation than the one reported,
+    // with nothing in the output saying so.
+    await writeChain(17);
+
+    const result = await discover(srcDir, { fold: true, lexicons: [LEXICON_NAME] });
+
+    const decision = result.foldDecisions.find((d) => d.file.endsWith("main.ts"));
+    expect(decision?.mode).toBe("run");
+    expect(decision?.reason).toMatch(/interpretation depth exceeded 16/);
+    // The remedy half of the message: what a reader should suspect.
+    expect(decision?.reason).toMatch(/recursive/);
+    // Falling back means the estate is still built, by the other path. F-Depth
+    // asks for a fallback, not a failure.
+    expect(result.errors).toEqual([]);
+    // And it is a fallback rather than a degradation: the factory was not
+    // invoked instead. Before #2370 this read `projectFactoryInvocations: 1`
+    // with the file still reported folded.
+    expect(foldExecutionCounts()).toMatchObject({ projectFactoryInvocations: 0, factoryInvocations: 0 });
+  });
+
   test("a sibling reference inside the body is a LIVE AttrRef on the real instance", async () => {
     await writeComposite(ADMISSIBLE_BODY);
     await writeMain(CALL_WEBAPP);
