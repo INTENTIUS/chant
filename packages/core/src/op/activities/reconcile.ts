@@ -281,8 +281,13 @@ export function issueMarker(op: string, env: string): string {
   return `<!-- chant-reconcile-issue:${markerSlug(op)}/${markerSlug(env)} -->`;
 }
 
-/** The slugify both markers share: everything outside `[A-Za-z0-9._-]` collapses to `-`. */
-function markerSlug(s: string): string {
+/**
+ * The slugify every marker shares: everything outside `[A-Za-z0-9._-]`
+ * collapses to `-`. Exported for the behaviour finding's own marker
+ * (`./predict-behaviour.ts`), so a third marker cannot slugify differently
+ * from the two here.
+ */
+export function markerSlug(s: string): string {
   return s.replace(/[^a-zA-Z0-9._-]+/g, "-");
 }
 

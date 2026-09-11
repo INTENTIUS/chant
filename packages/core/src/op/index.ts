@@ -21,6 +21,7 @@ export { isValidCronExpression, cronSyntaxMessage, cronMatches, cronDueBetween }
 export {
   WatchOp, ReconcileOp, ApplyOp, ConvergeOp,
   WorkflowAuditOp, PipelineAuditOp, LexiconUpgradeOp, IN_SCOPE_LEXICONS,
+  BehaviourOp,
 } from "./composites";
 export type {
   WatchOpConfig, WatchOpResources,
@@ -30,6 +31,7 @@ export type {
   WorkflowAuditOpConfig, WorkflowAuditOpResources,
   PipelineAuditOpConfig, PipelineAuditOpResources,
   LexiconUpgradeOpConfig, LexiconUpgradeOpResources,
+  BehaviourOpConfig, BehaviourOpResources,
 } from "./composites";
 export { receiptActivities, receiptCheckInput } from "./receipt-store";
 export type {

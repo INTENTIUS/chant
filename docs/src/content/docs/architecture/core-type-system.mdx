@@ -102,7 +102,7 @@ export const planNeutral = Scenario("extracting the composite is plan-neutral", 
 
 `given` comes from the `snapshot()` helper, which classifies its argument structurally and offline — a string with a path separator or a `.json` suffix is a fixture file (`{ kind: "file", path }`); anything else is an environment name (`{ kind: "env", env }`), replayed from the last snapshot recorded for it on the `chant/lifecycle` branch.
 
-`expect` composes independently-optional clauses: `noop: true`; exact `create`/`update`/`delete` counts; `deletes: [{ name, ownership }]` for named, ownership-checked deletes; and `unobserved: "refuse" | { allow: [names] }` for the plan's unobserved holes. At least one clause is required.
+`expect` composes independently-optional clauses: `noop: true`; exact `create`/`update`/`delete` counts; `deletes: [{ name, ownership }]` for named, ownership-checked deletes; `unobserved: "refuse" | { allow: [names] }` for the plan's unobserved holes; and `cost: { maxPerHour, currency, entity? }`, a bound on one predicted rate read from the fixture's `behaviour` block. At least one clause is required.
 
 A scenario carries a recognition marker (`Symbol.for("chant.scenario")`, `isScenario`/`collectScenarios`) and is checked offline by `chant scenario check` — see [CLI: scenario](/chant/cli/scenario/).
 

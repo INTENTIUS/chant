@@ -17,7 +17,24 @@
 import { summarize, type ChangeSet } from "./change-set";
 import { evaluateUnobservedGate, type UnobservedGateFinding } from "./unobserved-gate";
 import { unobservedReasonText } from "../observation";
-import type { ScenarioDeleteExpectation, ScenarioExpect, ScenarioUnobservedPolicy } from "./scenario";
+import { isBehaviourRefusalReport, renderBehaviourRefusal, type BehaviourResult } from "../behaviour";
+import { formatPerHour } from "../behaviour-delta";
+import type {
+  ScenarioCostExpectation,
+  ScenarioDeleteExpectation,
+  ScenarioExpect,
+  ScenarioUnobservedPolicy,
+} from "./scenario";
+
+/**
+ * What stands in for the engine's answer when a scenario carries a `cost`
+ * clause (#2358): the fixture's `behaviour` block, or the reason there is
+ * none. The handler resolves it from the same fixture every other clause
+ * reads; this module only evaluates it.
+ */
+export type ScenarioBehaviourFixture =
+  | { readonly result: BehaviourResult }
+  | { readonly missing: string };
 
 /**
  * One clause's verdict — always present in {@link ScenarioVerdict.checks}, in
@@ -28,7 +45,11 @@ export interface ScenarioCheckResult {
   /** Which `expect` clause this is (`"noop"`, `"create"`, `"deletes"`, …). */
   clause: string;
   pass: boolean;
-  /** Present when `pass` is false — what was expected vs what the plan proposes, naming resources for delete/ownership failures. */
+  /** Present when `pass` is false — what was expected vs what the plan
+   * proposes, naming resources for delete/ownership failures. The `cost`
+   * clause carries it on a pass too, saying which figure was bounded and
+   * what the engine declined, so a passing bound is never read as a bound
+   * over the whole estate when it was not. */
   detail?: string;
 }
 
@@ -40,11 +61,17 @@ export interface ScenarioVerdict {
 }
 
 /**
- * Evaluate `expect` against `cs`. Pure: reads `cs` and `expect`, computes
- * nothing else. Every clause present on `expect` is checked independently and
- * every one contributes to `checks`; `pass` is true only when all of them are.
+ * Evaluate `expect` against `cs`. Pure: reads `cs`, `expect` and, for a
+ * `cost` clause, the fixture's `behaviour` block handed over as `behaviour`;
+ * computes nothing else. Every clause present on `expect` is checked
+ * independently and every one contributes to `checks`; `pass` is true only
+ * when all of them are.
  */
-export function evaluateScenario(cs: ChangeSet, expect: ScenarioExpect): ScenarioVerdict {
+export function evaluateScenario(
+  cs: ChangeSet,
+  expect: ScenarioExpect,
+  behaviour?: ScenarioBehaviourFixture,
+): ScenarioVerdict {
   const counts = summarize(cs);
   const checks: ScenarioCheckResult[] = [];
 
@@ -91,7 +118,107 @@ export function evaluateScenario(cs: ChangeSet, expect: ScenarioExpect): Scenari
     checks.push(evaluateUnobservedClause(cs, expect.unobserved));
   }
 
+  if (expect.cost !== undefined) {
+    checks.push(evaluateCostClause(expect.cost, behaviour));
+  }
+
   return { pass: checks.every((c) => c.pass), checks };
+}
+
+/**
+ * The `cost` clause (#2358). Three refusals before any number is read, each
+ * naming why, because the alternative to each is a bound that passes on
+ * nothing:
+ *
+ *  - no `behaviour` block in the fixture — nothing was predicted;
+ *  - the block is a refusal — the engine was absent, unreachable, out of
+ *    credit, over quota, or refused a credential, and the fixture carries
+ *    that refusal's own text;
+ *  - the named entity is not in the fixture's figures — declined with a
+ *    reason, or never asked about.
+ *
+ * The figure is then one of three, and the detail says which: the named
+ * entity's own rate, the engine's stated total, or chant's sum over every
+ * predicted entity when the engine states no total. The sum is chant's own
+ * arithmetic and is labelled so; it also names every entity the engine
+ * declined, because those are in the estate and not in the sum.
+ */
+function evaluateCostClause(
+  bound: ScenarioCostExpectation,
+  behaviour: ScenarioBehaviourFixture | undefined,
+): ScenarioCheckResult {
+  const fail = (detail: string): ScenarioCheckResult => ({ clause: "cost", pass: false, detail });
+
+  if (behaviour === undefined || "missing" in behaviour) {
+    return fail(
+      `${behaviour?.missing ?? "the fixture carries no `behaviour` block"} — a cost bound is checked against the ` +
+        "fixture's recorded prediction, and there is none. Record one on the snapshot, or drop the clause.",
+    );
+  }
+  const result = behaviour.result;
+  if (isBehaviourRefusalReport(result)) {
+    return fail(
+      `the fixture's prediction is a refusal (${result.refusal.cause}), and a bound cannot be checked against no ` +
+        `figure: ${renderBehaviourRefusal(result.refusal, { color: false }).replace(/\n\s*/g, " ")}`,
+    );
+  }
+
+  const declined = Object.entries(result.unpredicted ?? {}).map(
+    ([name, u]) => `${name} (${u.reason}${u.detail ? `: ${u.detail}` : ""})`,
+  );
+  const declinedNote = declined.length > 0 ? `; ${declined.length} declined and not in the figure: ${declined.join(", ")}` : "";
+
+  let perHour: number;
+  let currency: string;
+  let which: string;
+  if (bound.entity !== undefined) {
+    const figure = Object.prototype.hasOwnProperty.call(result.entities, bound.entity)
+      ? result.entities[bound.entity]
+      : undefined;
+    if (!figure) {
+      const hole = result.unpredicted?.[bound.entity];
+      return fail(
+        hole
+          ? `"${bound.entity}" was declined by the engine (${hole.reason}${hole.detail ? `: ${hole.detail}` : ""}), so it has no figure to bound`
+          : `"${bound.entity}" is in neither the fixture's figures nor its declined entities — the prediction never asked about it`,
+      );
+    }
+    perHour = figure.cost.perHour;
+    currency = figure.cost.currency;
+    which = `${bound.entity}'s own rate (${figure.provenance.engine} ${figure.provenance.version}, ${figure.provenance.tolerance}, ${figure.provenance.basis})`;
+  } else if (result.meta.total) {
+    perHour = result.meta.total.perHour;
+    currency = result.meta.total.currency;
+    which = `the engine's own estate total (${result.meta.engine} ${result.meta.version})${declinedNote}`;
+  } else {
+    const names = Object.keys(result.entities);
+    const currencies = new Set(names.map((n) => result.entities[n].cost.currency));
+    if (currencies.size > 1) {
+      return fail(
+        `the engine states no total and the entities are priced in ${[...currencies].sort().join(", ")} — chant converts ` +
+          "nothing, so there is no one sum to bound",
+      );
+    }
+    if (names.length === 0) {
+      return fail(`the engine states no total and predicted no entity${declinedNote} — nothing to bound`);
+    }
+    perHour = names.reduce((sum, n) => sum + result.entities[n].cost.perHour, 0);
+    currency = [...currencies][0];
+    which = `chant's own sum over ${names.length} predicted entit${names.length === 1 ? "y" : "ies"} (the engine states no total)${declinedNote}`;
+  }
+
+  const level = result.meta.at.traffic;
+  if (currency !== bound.currency) {
+    return fail(
+      `the bound is in ${bound.currency} and the figure is ${formatPerHour(perHour)} ${currency}/hour at "${level}" — ` +
+        `chant converts nothing; read from ${which}`,
+    );
+  }
+  const pass = perHour <= bound.maxPerHour;
+  const detail =
+    `${pass ? "" : "exceeded: "}${formatPerHour(perHour)} ${currency}/hour at "${level}" against a bound of ` +
+    `${formatPerHour(bound.maxPerHour)} ${bound.currency}/hour; read from ${which}`;
+  return { clause: "cost", pass, detail };
 }
 
 /** Names (with type) of every entry matching one of `actions`, for a legible failure message. */

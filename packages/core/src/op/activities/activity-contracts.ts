@@ -64,3 +64,52 @@ export const chantTeardownContract = activityContract(
   "chantTeardown",
   z.strictObject({ path: z.string() }),
 );
+
+/**
+ * The prediction (#2358). `args` mirrors `PredictBehaviourArgs` field for
+ * field; the return is the contract's `BehaviourResult`, a report or a
+ * refusal, so `returns` is the envelope both arms share and a step's
+ * `outcomeAttribute.from` may name `behaviour` or `refusal`.
+ */
+export const predictBehaviourContract = activityContract(
+  "predictBehaviour",
+  z.strictObject({
+    environment: z.string(),
+    traffic: z.string(),
+    stack: z.string().optional(),
+    region: z.string().optional(),
+    owned: z.boolean().optional(),
+  }),
+  z.object({ behaviour: z.literal("v1"), refusal: z.unknown().optional() }),
+);
+
+/**
+ * The pull-request finding (#2358). Same inputs as the prediction plus the
+ * Op's name (the marker's key, #2319), the mode, and an optional explicit
+ * base branch. `returns` names what a step reads as an outcome — the posted
+ * URL, and whether either side refused.
+ */
+export const behaviourFindingContract = activityContract(
+  "behaviourFinding",
+  z.strictObject({
+    environment: z.string(),
+    traffic: z.string(),
+    op: z.string(),
+    mode: z.enum(["comment", "report"]).optional(),
+    base: z.string().optional(),
+    title: z.string().optional(),
+    stack: z.string().optional(),
+    region: z.string().optional(),
+    owned: z.boolean().optional(),
+  }),
+  z.object({
+    mode: z.enum(["comment", "report"]),
+    base: z.string(),
+    head: z.string(),
+    refused: z.boolean(),
+    summary: z.string(),
+    commentUrl: z.string().optional(),
+    pullRequest: z.string().optional(),
+    mergeRequest: z.string().optional(),
+  }),
+);

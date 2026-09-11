@@ -1,6 +1,7 @@
 import type { ResourceMetadata, ArtifactMetadata } from "../lexicon";
 import type { UnobservedEntity } from "../observation";
 import type { DeepResourceObservation } from "../deep-observation";
+import type { BehaviourResult } from "../behaviour";
 import type { IREdge } from "../graph-ir";
 
 export type { ResourceMetadata, ArtifactMetadata } from "../lexicon";
@@ -84,6 +85,22 @@ export interface LifecycleSnapshot {
   stackExports?: Record<string, Record<string, unknown>>;
   /** Build digest at snapshot time — what was declared when this snapshot was taken */
   digest?: BuildDigest;
+  /**
+   * What a behaviour engine said about this estate, when one was asked
+   * (#2358): the whole `BehaviourResult`, a report or a named refusal,
+   * exactly as `predictBehaviour()` returned it.
+   *
+   * Carried on the snapshot rather than in a fixture of its own because a
+   * `Scenario` has one `given`, and that one fixture stands in for everything
+   * a live read would have answered — presence, ownership, and now the
+   * engine's figures. A scenario's `expect.cost` clause reads this block;
+   * `chant scenario check` refuses the clause, naming the reason, when the
+   * block is absent or is a refusal, because a bound checked against no figure
+   * would pass on nothing. Absent on every snapshot written before this and
+   * on every snapshot recorded without an engine, which is read as "no
+   * prediction was made" rather than as a prediction of nothing.
+   */
+  behaviour?: BehaviourResult;
 }
 
 /**

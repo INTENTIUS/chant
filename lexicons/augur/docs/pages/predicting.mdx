@@ -134,6 +134,46 @@ answers confidently and wrongly.
 [the coverage table](../coverage/). Same argument one level along: an engine
 handed twelve nodes cannot tell whether the estate has twelve or twenty.
 
+## On a pull request
+
+The prediction reaches a review as a finding through core's `BehaviourOp`
+composite ([chant #2358](https://github.com/INTENTIUS/chant/issues/2358)).
+The example project declares one in `src/pr-behaviour.op.ts`:
+
+```typescript
+import { BehaviourOp } from "@intentius/chant/op";
+
+const { op } = BehaviourOp({
+  name: "pr-behaviour",
+  env: "dev",
+  traffic: "1000 rps, p99",
+});
+
+export default op;
+```
+
+The Op predicts the declared estate twice, on the pull request's head and on
+the base branch it targets, and posts the delta as one sticky comment on the
+pull request (GitHub, Forgejo) or one note on the merge request (GitLab). The
+trigger is `{ kind: "pull_request" }` on the `ScheduledOpSpec` handed to
+`generateOpsPipeline`, with `findingMode: "comment"`; there is no schedule,
+because the pull request is the cadence.
+
+What the finding shows follows from this page. An entity the coverage table
+withholds — the Op itself, the two profiles, every VPC and subnet — is
+declined by name on both sides and appears as a row saying so, never as a zero
+and never as a cost change. A pair whose provenance or traffic level differs
+between the two sides is marked with every mismatching axis and is not
+subtracted. Each side's edge coverage is shown, and because the declared path
+never claims `complete` — it has references and no containment — the two
+resilience verdicts are shown per side rather than compared. A run with no
+engine configured posts a finding that says "no prediction" and carries the
+refusal from the table above, remedy included.
+
+`chant run pr-behaviour` on a developer's machine needs the base branch named
+by hand and no forge to post to: `BehaviourOp({ …, base: "main",
+findingMode: "report" })` returns the body instead.
+
 ## What is not here
 
 augur declares no `describeResources`, no `observeResourcesDeep` and no

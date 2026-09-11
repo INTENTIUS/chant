@@ -52,10 +52,30 @@ Every clause is independently optional, and clauses compose in one `expect` obje
 - **`create` / `update` / `delete`: `<number>`** — an exact count for that action. Omitted means unconstrained; `0` is a real assertion, not "don't check this."
 - **`deletes: [{ name, ownership }]`** — exactly these resources must be proposed for deletion, each with the stated ownership verdict, and no *other* delete may be proposed. This is arguably the single highest-value assertion in the vocabulary: "this plan deletes nothing foreign" — and it's meaningful specifically because chant's ownership marker is a live read, not a state-file record. A resource the fixture marks `foreign` is never classified as a delete by `buildChangeSet` in the first place (only `adopt`), so a `deletes` expectation against one fails loudly as "not proposed" — the safety property is structural, upstream of the scenario check.
 - **`unobserved: "refuse" | { allow: [names] }`** — how the scenario treats the change set's unobserved rows. `"refuse"` fails on any hole; `{ allow: [...] }` names the specific entities allowed to be unobserved (by entity name, not by [`UnobservedReason`](/chant/concepts/drift-detection/) — a scenario is written against one fixture, and "this resource has no data in it" is a per-resource fact, not a class of reason to trust everywhere).
+- **`cost: { maxPerHour, currency, entity? }`** bounds one predicted figure in the fixture's recorded prediction to a stated rate per hour. See [below](#bounding-a-predicted-rate) for which figure, and for why a fixture with no prediction, or a refused one, fails the clause rather than passing on nothing.
 
 ### The `update` count's real limit
 
 A scenario has exactly one fixture — not a before-and-after pair. `chant lifecycle plan`'s `update` action means *drift since the last recorded snapshot* (the live read now vs. the live read then), and a single-fixture scenario has no "then" to diff against. In practice this means `update` in a scenario's `expect` is only ever meaningfully `0`. That's not a placeholder gap to be filled in later — it's what a single-fixture model can express. `create`, `delete`, and ownership are fully expressive; drift since an *earlier* live read isn't, because there is no earlier live read here, only the one fixture standing in for "now."
+
+### Bounding a predicted rate
+
+A scenario can also bound what the change would cost to run, offline and with no engine in the loop, the same way it bounds what the change would do. The fixture carries the answer: a `LifecycleSnapshot` may hold a `behaviour` block, the whole `BehaviourResult` a lexicon's [`predictBehaviour()`](/chant/lexicon-authoring/observation-contract/#predictbehaviour) returned for that estate, and `expect.cost` reads one figure out of it.
+
+```typescript
+export const peakStaysUnder = Scenario("the checkout path stays under 12.50 USD an hour at peak", {
+  given: snapshot("fixtures/prod-baseline.json"),
+  expect: { cost: { maxPerHour: 12.5, currency: "USD" } },
+});
+```
+
+The bound is a rate for one hypothetical hour at the fixture's own stated traffic level, and a scenario has one fixture, so this bounds a single figure and never a delta. With `entity` named, the figure is that entity's own rate. Without it the figure is the estate's. That means the engine's stated total when it states one, and chant's own sum over every predicted entity when it does not. The verdict's detail says which of the three it read, on a pass as well as a failure, and names every entity the engine declined, because a sum over an estate with declined entities is a sum over less than the estate.
+
+`currency` is required and compared exactly. chant converts nothing, and a bound in USD says nothing about a figure in EUR.
+
+Three fixtures fail the clause by name rather than passing on nothing. A fixture with no `behaviour` block fails because nothing was predicted. A fixture whose block is a refusal fails with that refusal's own text in the detail, whichever of the five refusal causes it carries. A fixture whose named `entity` the engine declined fails with the decline's reason. A bound cannot be checked against no figure, and a pass there would be the faked number the behaviour contract exists to prevent.
+
+The block rides on the snapshot rather than in a fixture of its own for one reason: a scenario's `given` is one stand-in for everything a live read would have answered. Putting the prediction in a second fixture would make a scenario choose between asserting the plan's shape and asserting its rate, when the point of the clause is to assert both against one recorded state.
 
 ### Effect receipts in a scenario
 

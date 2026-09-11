@@ -124,3 +124,27 @@ export type {
   GhRunner,
   ApplyBumpFn,
 } from "./lexicon-upgrade";
+
+// The behaviour prediction and the pull-request finding built on it (#2358).
+// Only the two activities and the pure helpers are re-exported: the registry
+// collects every exported function as an activity, so `createBehaviourFinding`
+// and `checkoutBase` stay on the module.
+export {
+  predictBehaviour,
+  behaviourFinding,
+  behaviourFindingMarker,
+  declaredEdgeCoverage,
+  baseRefFrom,
+  headRefFrom,
+  noBaseRefMessage,
+  noPredictingLexiconMessage,
+  ambiguousPredictorMessage,
+} from "./predict-behaviour";
+export type {
+  PredictBehaviourArgs,
+  BehaviourFindingArgs,
+  BehaviourFindingResult,
+  BehaviourFindingMode,
+  BehaviourFindingDeps,
+  BaseCheckout,
+} from "./predict-behaviour";

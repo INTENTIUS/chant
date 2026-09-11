@@ -71,6 +71,15 @@ git show chant/lifecycle:prod/aws.json > fixtures/prod-baseline.json
 
 `given: snapshot("prod")` reads the *current* last-recorded snapshot for that environment straight off the `chant/lifecycle` branch — no file to keep in sync, but the scenario's answer moves whenever a new snapshot is recorded.
 
+A `cost` clause reads the fixture's `behaviour` block, the `BehaviourResult` a lexicon's `predictBehaviour()` returned for that estate, recorded on the snapshot beside its resources. The block is held to the behaviour contract on the way in, so a hand-edited fixture with a negative rate is refused as not a prediction. A fixture with no block, or whose block is a refusal, fails the clause with that reason:
+
+```
+the checkout path stays under 12.50 USD an hour at peak [peakStaysUnder] — given fixtures/prod-baseline.json, env prod: FAIL
+  cost: the fixture's prediction is a refusal (no-engine), and a bound cannot be checked against no figure: behaviour: refused (no-engine) — predictBehaviour has the augur estate to predict and no engine to predict it with. …
+```
+
+See [Plan Scenarios](/chant/concepts/plan-scenarios/#bounding-a-predicted-rate) for which figure the clause bounds.
+
 ## Exit Codes
 
 | Exit | Meaning |

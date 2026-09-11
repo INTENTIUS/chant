@@ -108,11 +108,47 @@ export interface ScenarioDeleteExpectation {
 export type ScenarioUnobservedPolicy = "refuse" | { readonly allow: readonly string[] };
 
 /**
+ * A bound on one predicted figure in the fixture (#2358).
+ *
+ * A scenario has one fixture, not a before-and-after pair, so this bounds a
+ * **single** predicted rate rather than a delta: the fixture's own
+ * `behaviour` block (a `BehaviourResult` recorded on the `LifecycleSnapshot`,
+ * ../lifecycle/types.ts) stands in for the engine's answer the way the rest
+ * of the snapshot stands in for a live read, and the clause asks whether one
+ * figure in it is at or under `maxPerHour`.
+ *
+ * Which figure: `entity`'s own `cost.perHour` when named; otherwise the
+ * estate's — the engine's own `meta.total` when it states one, and chant's
+ * sum over every predicted entity when it does not. The verdict's detail says
+ * which of the three it read, and names every entity the engine declined,
+ * because a sum over an estate with declined entities is a sum over less
+ * than the estate and the reader should know it.
+ *
+ * The bound is a rate for one hypothetical hour at the fixture's stated
+ * traffic level, never an amount; `currency` is required and compared
+ * exactly, because chant converts nothing and a bound in USD says nothing
+ * about a figure in EUR.
+ *
+ * A fixture whose `behaviour` block is a refusal, or that carries none, fails
+ * the clause with the refusal's reason. A bound cannot be checked against no
+ * figure, and passing would be the faked number the epic forbids.
+ */
+export interface ScenarioCostExpectation {
+  /** The figure must be at or under this many `currency` per hour. */
+  readonly maxPerHour: number;
+  /** ISO 4217 code the figure must be stated in. Compared exactly. */
+  readonly currency: string;
+  /** Bound one entity's figure instead of the estate's. */
+  readonly entity?: string;
+}
+
+/**
  * The assertion vocabulary (#1292 research, settled shape). Every clause is
  * independently optional and clauses compose within one `expect` object — a
- * scenario can assert `noop`, exact counts, specific named deletes, and an
- * unobserved policy together. At least one clause must be present; an empty
- * `expect` asserts nothing and is refused as a likely mistake.
+ * scenario can assert `noop`, exact counts, specific named deletes, an
+ * unobserved policy and a cost bound together. At least one clause must be
+ * present; an empty `expect` asserts nothing and is refused as a likely
+ * mistake.
  */
 export interface ScenarioExpect {
   /** The plan proposes no create, update, or delete, and no declared effect
@@ -135,11 +171,15 @@ export interface ScenarioExpect {
   /** How the scenario treats unobserved rows. Omitted = unconstrained (an
    * unobserved entity neither passes nor fails the scenario on its own). */
   readonly unobserved?: ScenarioUnobservedPolicy;
+  /** One predicted figure in the fixture's `behaviour` block is at or under
+   * a stated rate per hour (#2358). See {@link ScenarioCostExpectation} for
+   * which figure, and for why a refusal in the fixture fails it. */
+  readonly cost?: ScenarioCostExpectation;
 }
 
 /** Every recognized `expect` clause key — for the excess-key check below and
  * for exhaustiveness at call sites. */
-const EXPECT_KEYS = ["noop", "create", "update", "delete", "deletes", "unobserved"] as const;
+export const EXPECT_KEYS = ["noop", "create", "update", "delete", "deletes", "unobserved", "cost"] as const;
 
 const OWNERSHIP_VALUES: readonly Ownership[] = ["owned", "foreign", "unknown"];
 
@@ -292,6 +332,34 @@ function validateExpect(name: string, expect: unknown): ScenarioExpect {
         `Scenario("${name}"): \`expect.unobserved\` must be "refuse" or { allow: [names] }`,
       );
     }
+  }
+  if ("cost" in e) {
+    const c = e.cost;
+    if (typeof c !== "object" || c === null || Array.isArray(c)) {
+      throw new Error(`Scenario("${name}"): \`expect.cost\` must be { maxPerHour, currency, entity? }`);
+    }
+    const { maxPerHour, currency, entity } = c as Record<string, unknown>;
+    if (typeof maxPerHour !== "number" || !Number.isFinite(maxPerHour) || maxPerHour < 0) {
+      throw new Error(`Scenario("${name}"): \`expect.cost.maxPerHour\` must be a non-negative finite number`);
+    }
+    if (typeof currency !== "string" || currency.trim() === "") {
+      throw new Error(
+        `Scenario("${name}"): \`expect.cost.currency\` must be a non-empty ISO 4217 code — chant converts nothing, so a bound needs its currency`,
+      );
+    }
+    if (entity !== undefined && (typeof entity !== "string" || entity.length === 0)) {
+      throw new Error(`Scenario("${name}"): \`expect.cost.entity\`, when present, must be a non-empty string`);
+    }
+    for (const key of Object.keys(c as object)) {
+      if (!["maxPerHour", "currency", "entity"].includes(key)) {
+        throw new Error(`Scenario("${name}"): unknown \`expect.cost\` field "${key}" — expected maxPerHour, currency, entity`);
+      }
+    }
+    out.cost = Object.freeze({
+      maxPerHour,
+      currency: currency.trim(),
+      ...(entity !== undefined ? { entity } : {}),
+    });
   }
 
   return Object.freeze(out) as ScenarioExpect;
