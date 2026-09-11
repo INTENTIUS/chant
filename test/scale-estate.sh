@@ -87,6 +87,12 @@ STACKS=""
 RESOURCES=""
 TEAMS_PER_STACK=""
 PORT=4691
+# Not PORT+1: a neighboring probe/compose stack routinely claims that port
+# (observed live during this unit's own development — see the harness's own
+# doc comment above). PORT+7 keeps clear of every *_PORT this repo's other
+# on-demand e2e scripts default to (aws-cc-e2e.sh's 4598, components-aws-e2e's
+# 4599, floci's own 4566) without a registry to check against.
+PROXY_PORT=""
 RECORD_PATH=""
 CONTINUE_ON_FAILURE=0
 KEEP=0
@@ -99,6 +105,7 @@ while [ $# -gt 0 ]; do
     --resources) RESOURCES="$2"; shift 2 ;;
     --teams-per-stack) TEAMS_PER_STACK="$2"; shift 2 ;;
     --port) PORT="$2"; shift 2 ;;
+    --proxy-port) PROXY_PORT="$2"; shift 2 ;;
     --record) RECORD_PATH="$2"; shift 2 ;;
     --continue-on-failure) CONTINUE_ON_FAILURE=1; shift ;;
     --keep) KEEP=1; shift ;;
@@ -117,7 +124,7 @@ OUT="$(mkdir -p "$OUT" && cd "$OUT" && pwd)"
 RECORD_PATH="${RECORD_PATH:-$OUT/../scale-record.json}"
 
 ENDPOINT="http://localhost:${PORT}"
-PROXY_PORT=$((PORT + 1))
+PROXY_PORT="${PROXY_PORT:-$((PORT + 7))}"
 PROXY_ENDPOINT="http://localhost:${PROXY_PORT}"
 
 command -v docker >/dev/null 2>&1 || { echo "scale-estate.sh: docker is required" >&2; exit 1; }
@@ -316,7 +323,7 @@ fi
 
 # ---- 4. read the estate back, cost measured via a counting proxy -------
 log "=== read-back: chant lifecycle plan local ==="
-node "$ROOT/scripts/api-call-proxy.mjs" >"$OUT/.api-call-proxy.log" 2>&1 &
+PROXY_PORT="$PROXY_PORT" TARGET_PORT="$PORT" node "$ROOT/scripts/api-call-proxy.mjs" >"$OUT/.api-call-proxy.log" 2>&1 &
 PROXY_PID=$!
 trap 'kill "$PROXY_PID" 2>/dev/null || true' EXIT
 i=0
