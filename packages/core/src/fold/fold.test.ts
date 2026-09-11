@@ -66,6 +66,59 @@ describe("fold — template interpolation", () => {
   });
 });
 
+describe("fold — a symbolic value in a plain template (#2349)", () => {
+  // The bug this replaces: both paths produced "[object Object]" and agreed,
+  // so the differential harness — the thing that catches everything else —
+  // saw agreement and said nothing.
+  test("an attribute reference is refused, located, and names the entity", () => {
+    const src = `
+      const bucket = new S3Bucket({ name: "my-bucket" });
+      const x = \`\${bucket.arn}-suffix\`;
+    `;
+    expect(() => foldConst(src, "x")).toThrow(FoldError);
+    try {
+      foldConst(src, "x");
+    } catch (e) {
+      const err = e as FoldError;
+      expect(err.message).toContain("bucket.arn");
+      expect(err.message).toContain("[object Object]");
+      // The remedy, not just the complaint.
+      expect(err.message).toMatch(/Sub|intrinsic/);
+      // Located on the span, so an editor can point at it.
+      expect(err.line).toBeGreaterThan(0);
+      expect(err.column).toBeGreaterThan(0);
+    }
+  });
+
+  test("the run path refuses the same program rather than producing the wrong string", () => {
+    // The other half of #2349: a file that falls back to run must not quietly
+    // succeed where fold refused. `AttrRef.toString` throws, so the two paths
+    // now refuse together instead of agreeing on a wrong value.
+    const Bucket = createResource("S3Bucket", "aws", { arn: "arn" });
+    const bucket = new Bucket({ name: "my-bucket" }) as unknown as Declarable & { arn: AttrRef };
+    expect(() => `${bucket.arn}-suffix`).toThrow(/no string form/);
+    expect(() => "prefix" + (bucket.arn as unknown as string)).toThrow(/no string form/);
+  });
+
+  test("an ordinary value in a template still interpolates", () => {
+    const src = `
+      const region = "us-east-1";
+      const x = \`bucket-\${region}\`;
+    `;
+    expect(foldConst(src, "x")).toBe("bucket-us-east-1");
+  });
+
+  test("a tagged template is untouched — that is the documented idiom", () => {
+    // The refusal is about *plain* templates. The intrinsic form handles
+    // envelopes in its interior and must keep doing so.
+    const src = `
+      const bucket = new S3Bucket({ name: "my-bucket" });
+      const x = Sub\`\${bucket.arn}-suffix\`;
+    `;
+    expect(() => foldConst(src, "x")).not.toThrow(/no string form/);
+  });
+});
+
 describe("fold — objects and spread", () => {
   test("object literal with property and shorthand assignment", () => {
     const src = `

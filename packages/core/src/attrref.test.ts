@@ -146,3 +146,34 @@ describe("AttrRef", () => {
     });
   });
 });
+
+describe("stringification is refused (#2349)", () => {
+  test("a template literal throws instead of yielding \"[object Object]\"", () => {
+    const ref = new AttrRef({}, "arn");
+    expect(() => `${ref}`).toThrow(/no string form/);
+  });
+
+  test("concatenation takes the same path, not a different one to the same wrong string", () => {
+    const ref = new AttrRef({}, "arn");
+    expect(() => "prefix-" + (ref as unknown as string)).toThrow(/no string form/);
+  });
+
+  test("the message names the attribute and points at the remedy", () => {
+    const ref = new AttrRef({}, "arn");
+    ref._setLogicalName("Bucket");
+    try {
+      `${ref}`;
+      throw new Error("expected a refusal");
+    } catch (e) {
+      const m = (e as Error).message;
+      expect(m).toContain("Bucket.arn");
+      expect(m).toMatch(/Sub|intrinsic/);
+    }
+  });
+
+  test("toJSON is untouched — a serializer that wants the envelope asks by name", () => {
+    const ref = new AttrRef({}, "arn");
+    ref._setLogicalName("Bucket");
+    expect(ref.toJSON()).toEqual({ __attrRef: { entity: "Bucket", attribute: "arn" } });
+  });
+});

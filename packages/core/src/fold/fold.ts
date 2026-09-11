@@ -151,6 +151,31 @@ export type FoldedValue =
  * invented shape: it's the existing envelope, produced without running the
  * module that would otherwise construct the real `AttrRef`.
  */
+/**
+ * Which symbolic envelope a folded value is, in words a message can use — or
+ * `undefined` for a value that has an honest string form.
+ *
+ * These are the shapes `fold()` produces for things the build resolves later:
+ * a resource attribute, a lexicon intrinsic in either of its two forms, and a
+ * registered authoring helper. None of them can be concatenated into a string
+ * here, because what they stand for is not known until the build runs.
+ */
+export function symbolicEnvelopeKind(value: unknown): string | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const v = value as Record<string, unknown>;
+  if ("__attrRef" in v) {
+    const ref = v.__attrRef as { entity?: unknown; attribute?: unknown } | undefined;
+    const named =
+      typeof ref?.entity === "string" && typeof ref?.attribute === "string"
+        ? ` (${ref.entity}.${ref.attribute})`
+        : "";
+    return `a resource attribute reference${named}`;
+  }
+  if ("__intrinsic" in v && typeof v.__intrinsic === "string") return `the intrinsic \`${v.__intrinsic}\``;
+  if ("__helper" in v && typeof v.__helper === "string") return `the helper \`${v.__helper}\``;
+  return undefined;
+}
+
 export interface AttrRefValue {
   __attrRef: { entity: string; attribute: string };
 }
@@ -1028,7 +1053,24 @@ export function fold(
   if (ts.isTemplateExpression(node)) {
     let out = node.head.text;
     for (const span of node.templateSpans) {
-      out += String(fold(span.expression, consts, intrinsics, externals)) + span.literal.text;
+      const value = fold(span.expression, consts, intrinsics, externals);
+      // A symbolic envelope has no string form. `String({__attrRef: …})` is
+      // `"[object Object]"`, and so is `String(attrRef)` on the run path,
+      // because `../attrref.ts` defines no `toString` — so the two paths
+      // agreed on a wrong answer and the differential saw nothing (#2349).
+      // Refused here rather than stringified, for the same reason the
+      // eager-intrinsic branch refuses a deferred envelope (#1966).
+      const symbolic = symbolicEnvelopeKind(value);
+      if (symbolic) {
+        throw foldError(
+          span.expression,
+          `${symbolic} interpolated into a plain template literal, which would stringify it as ` +
+            '"[object Object]". A symbolic value has no string form until the build resolves it, so a ' +
+            "plain template cannot carry one. Use the lexicon's own intrinsic, whose interior handles " +
+            "envelopes — `Sub`${…}`` for CloudFormation — or move the reference out of the template.",
+        );
+      }
+      out += String(value) + span.literal.text;
     }
     return out;
   }
