@@ -307,10 +307,36 @@ describe("classifyDispatchFailure", () => {
     const raw = JSON.stringify({
       op: "fountain-apply",
       status: "gated",
-      gate: { version: 1, kind: "pending", op: "fountain-apply", gate: "rollout-gate", timestamp: "t", expiresAt: "t2" },
+      gate: { name: "rollout-gate", since: "t2" },
       records: [],
     });
     expect(classifyDispatchFailure(raw)).toEqual({ gateName: "rollout-gate" });
+  });
+
+  // chant#2396: a real gated `OpRunRecord` (`../runtime.ts`'s own
+  // `gate?: { name: string; since: string }`) never carries a nested field
+  // literally named `gate` — `parsed.gate?.gate` is always `undefined`, so
+  // this used to fall through to a regex that never matches `--json` output
+  // either, and a `ConvergeOp` tick recorded every gated dispatch as an
+  // ordinary "reported" failure. This is the exact record shape
+  // `TerraformApplyOp`'s own `chant run dev-apply --json` printed while
+  // building `examples/converge-operator` against a live floci.
+  test("reads the gate off a real gated Op run record — gate.name, not gate.gate (#2396)", () => {
+    const raw = JSON.stringify({
+      version: 1,
+      id: "local-abc123",
+      op: "dev-apply",
+      env: "dev",
+      started: "2026-09-11T05:39:16.000Z",
+      ended: "2026-09-11T05:39:16.058Z",
+      status: "gated",
+      labels: {},
+      outcomes: {},
+      phases: [],
+      gate: { name: "approve-dev-apply", since: "2026-09-11T05:39:16.058Z" },
+      approve: "chant approve dev-apply approve-dev-apply",
+    });
+    expect(classifyDispatchFailure(raw)).toEqual({ gateName: "approve-dev-apply" });
   });
 
   test("falls back to the human summary line, wherever it appears in the output", () => {
