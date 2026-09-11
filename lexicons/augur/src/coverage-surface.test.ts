@@ -32,7 +32,7 @@ import { fileURLToPath } from "node:url";
 import { build } from "@intentius/chant/build";
 import { loadPlugins, resolveProjectLexicons } from "@intentius/chant/cli";
 import type { LexiconPlugin } from "@intentius/chant/lexicon";
-import { coverageFor } from "./mapping";
+import { coverageFor, coverageLabel } from "./mapping";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 
@@ -58,6 +58,14 @@ function chantProjects(): string[] {
   return roots.sort();
 }
 
+/** One entity type a project declared, with the props the verdict may need (a terraform block's `type`). */
+interface DeclaredType {
+  entityType: string;
+  props: Record<string, unknown>;
+  /** What the gap is reported as: the entity type, or `aws_vpc (Terraform::Resource)` for a terraform block. */
+  label: string;
+}
+
 /**
  * Build one project and return the entity types it produced, or `undefined`
  * when it does not build.
@@ -67,18 +75,23 @@ function chantProjects(): string[] {
  * and `chant dev check-lexicon`'s, and answering it a third time here would
  * make an unrelated breakage look like a coverage-table defect.
  */
-async function typesIn(root: string): Promise<string[] | undefined> {
+async function typesIn(root: string): Promise<DeclaredType[] | undefined> {
   try {
     const lexicons = (await resolveProjectLexicons(root)) as string[];
     const plugins = (await loadPlugins(lexicons)) as LexiconPlugin[];
     const result = await build(join(root, "src"), plugins.map((p) => p.serializer));
     if (result.errors.length > 0) return undefined;
-    const types = new Set<string>();
+    const types = new Map<string, DeclaredType>();
     for (const [, entity] of result.entities) {
-      const type = (entity as { entityType?: string }).entityType;
-      if (type) types.add(type);
+      const { entityType, props } = entity as { entityType?: string; props?: Record<string, unknown> };
+      if (!entityType) continue;
+      // A terraform `resource` block is one entity type for every provider
+      // type, and the verdict is per provider type (#2360), so each is its own
+      // entry here rather than one `Terraform::Resource` standing for all.
+      const label = coverageLabel(entityType, props);
+      if (!types.has(label)) types.set(label, { entityType, props: props ?? {}, label });
     }
-    return [...types];
+    return [...types.values()];
   } catch {
     return undefined;
   }
@@ -99,18 +112,18 @@ describe("the coverage table against every entity type this repository declares 
       const types = await typesIn(root);
       if (!types) continue;
       built++;
-      for (const type of types) {
-        if (coverageFor(type).status !== "unknown-type") continue;
-        const where = gaps.get(type) ?? [];
+      for (const { entityType, props, label } of types) {
+        if (coverageFor(entityType, props).status !== "unknown-type") continue;
+        const where = gaps.get(label) ?? [];
         where.push(root.slice(repoRoot.length + 1));
-        gaps.set(type, where);
+        gaps.set(label, where);
       }
     }
     expect(built).toBeGreaterThan(20);
     expect(
       [...gaps].map(([type, where]) => `${type} (${where.length}: ${where[0]})`).sort(),
-      "entity types with no row in lexicons/augur/src/mapping.ts — add each to " +
-        "ENGINE_KINDS_BY_ENTITY_TYPE or to DECLARED_UNMAPPED with a reason",
+      "entity types with no row in lexicons/augur/src/mapping.ts (or, for a terraform block, " +
+        "mapping-terraform.ts) — add each to the mapped table or to the declared-unmapped one with a reason",
     ).toEqual([]);
   }, 300_000);
 });
@@ -140,6 +153,24 @@ describe("the three not-sent verdicts say different things", () => {
     expect(verdict.status).toBe("declared-unmapped");
     if (verdict.status !== "declared-unmapped") return;
     expect(verdict.reason).toContain("nested block of the resource above it");
+  });
+
+  it("checks a terraform block on its provider type, not on Terraform::Resource (#2360)", () => {
+    // Every resource block is `Terraform::Resource`, so a verdict on the entity
+    // type alone would be one verdict for a VPC and an instance alike.
+    const block = (type: string) => ({ address: `${type}.block`, body: {} });
+    expect(coverageFor("Terraform::Resource", block("aws_instance")).status).toBe("mapped");
+    expect(coverageFor("Terraform::Resource", block("aws_vpc")).status).toBe("declared-unmapped");
+    const gcp = coverageFor("Terraform::Resource", block("google_compute_instance"));
+    expect(gcp.status).toBe("provider-not-modelled");
+    if (gcp.status === "provider-not-modelled") expect(gcp.substrate).toContain("Google Cloud");
+    expect(coverageFor("Terraform::Resource", block("null_resource")).status).toBe("provider-not-modelled");
+    expect(coverageFor("Terraform::Resource", block("aws_imaginary_thing")).status).toBe("unknown-type");
+    // A block naming no provider type has nothing to look up.
+    expect(coverageFor("Terraform::Resource").status).toBe("unknown-type");
+    // The other block kinds are entity types of their own, and decided.
+    expect(coverageFor("Terraform::Variable").status).toBe("declared-unmapped");
+    expect(coverageFor("Terraform::Live").status).toBe("declared-unmapped");
   });
 
   it("still calls a modelled provider's unrowed type a gap, and names this file", () => {

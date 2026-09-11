@@ -34,6 +34,17 @@
  * not tell which. `coverage-surface.test.ts` walks every shipped example and
  * requires it to be empty.
  *
+ * ## The terraform half
+ *
+ * A terraform `resource` block is `Terraform::Resource` whatever its provider
+ * type, so an entity-type row cannot say anything about one. `coverageFor`
+ * takes the block's props and dispatches on the provider type its address
+ * carries to
+ * `./mapping-terraform.ts`, where the same four verdicts are keyed by provider
+ * type (`aws_instance`) and sizes are read from `body.<argument>` (#2360).
+ * The other block kinds — a variable, an output, a provider configuration —
+ * are entity types of their own and are declared unmapped below.
+ *
  * ## Why the second table exists at all
  *
  * `declared-unmapped` and `unknown-type` both end in `unpredicted` with
@@ -70,6 +81,22 @@
  * workload, so those rows state none and say so, rather than naming a path
  * that resolves to an array and silently yields nothing.
  */
+
+import {
+  DECLARED_UNMAPPED_TERRAFORM,
+  ENGINE_KINDS_BY_TERRAFORM_TYPE,
+  TERRAFORM_RESOURCE_TYPE,
+  terraformCoverageFor,
+  terraformResourceType,
+} from "./mapping-terraform";
+
+export {
+  DECLARED_UNMAPPED_TERRAFORM,
+  ENGINE_KINDS_BY_TERRAFORM_TYPE,
+  TERRAFORM_RESOURCE_TYPE,
+  terraformCoverageFor,
+  terraformResourceType,
+} from "./mapping-terraform";
 
 /**
  * What an engine is asked to price. Deliberately small and deliberately
@@ -326,6 +353,20 @@ export const DECLARED_UNMAPPED: Readonly<Record<string, string>> = {
   "AWS::BedrockAgentCore::Memory": "agent memory billed by what is stored and retrieved, which the declaration does not state",
   "AWS::BedrockAgentCore::WorkloadIdentity": "an identity a runtime acts as; a grant, with no rate and no capacity",
 
+  // ── Terraform blocks that are not resources ──────────────────────
+  // A `resource` block is not here: it is `Terraform::Resource` whatever its
+  // provider type, and `coverageFor` dispatches it on the provider type in
+  // its address to the
+  // terraform half of the table (`./mapping-terraform.ts`, #2360).
+  "Terraform::Terraform": "the root's settings block, which names providers and a backend and holds nothing in any account",
+  "Terraform::Provider": "a provider configuration: how terraform reaches an account, not a thing the account holds",
+  "Terraform::Variable": "a root module input; it shapes what is created and is never created itself",
+  "Terraform::Output": "a value the root publishes after an apply, not a thing the account holds",
+  "Terraform::Locals": "named expressions a root reuses; they exist only in the evaluation",
+  "Terraform::Module": "a call to a child module; the blocks the call expands to are entities of their own and carry the figures",
+  "Terraform::Data": "a read of something that exists outside this root; whatever it reads is priced where it is declared",
+  "Terraform::Live": "choudoufu's estate declaration, which names the ownership marker every resource of the root carries and holds nothing itself",
+
   // ── chant's own model ────────────────────────────────────────────
   "Chant::Op": "an Op is a procedure chant runs, not a resource an account holds. What an Op creates is priced where that lands; the Op itself exists only in the build",
 
@@ -364,7 +405,6 @@ const UNMODELLED_PROVIDERS: ReadonlyArray<{ prefix: string; substrate: string }>
   { prefix: "Render::", substrate: "Render (the render lexicon)" },
   { prefix: "Cedar::", substrate: "Cedar (a policy language, with nothing to saturate)" },
   { prefix: "Dogwood::", substrate: "the dogwood temporal dialect inside the cedar lexicon, which is policy rather than estate" },
-  { prefix: "Terraform::", substrate: "Terraform (a block in a root module, whose real resources belong to a provider)" },
 ];
 
 /**
@@ -384,7 +424,7 @@ export type CoverageVerdict =
   | { status: "mapped"; mapping: EngineKindMapping }
   | { status: "declared-unmapped"; reason: string }
   | { status: "provider-not-modelled"; substrate: string }
-  | { status: "unknown-type" };
+  | { status: "unknown-type"; tables?: string };
 
 /**
  * A CloudFormation **property** type — `AWS::S3::Bucket.VersioningConfiguration`
@@ -410,7 +450,15 @@ function isAwsPropertyType(entityType: string): boolean {
  * function and an entity named after a prototype member would resolve to a
  * mapping that does not exist.
  */
-export function coverageFor(entityType: string): CoverageVerdict {
+export function coverageFor(entityType: string, props?: Record<string, unknown>): CoverageVerdict {
+  // A terraform `resource` block: one entityType for every provider type, so
+  // the row is looked up on the provider type its address carries (#2360). A
+  // block with no address to read one from has nothing to look up, and is the
+  // same "no opinion" an unseen type gets.
+  if (entityType === TERRAFORM_RESOURCE_TYPE) {
+    const type = terraformResourceType(props);
+    return type === undefined ? { status: "unknown-type" } : terraformCoverageFor(type);
+  }
   if (Object.prototype.hasOwnProperty.call(ENGINE_KINDS_BY_ENTITY_TYPE, entityType)) {
     return { status: "mapped", mapping: ENGINE_KINDS_BY_ENTITY_TYPE[entityType] };
   }
@@ -452,6 +500,11 @@ export function coverageFor(entityType: string): CoverageVerdict {
  * bucket would take the other nineteen entities' figures down with it.
  */
 export function unmappedDetail(entityType: string, verdict: CoverageVerdict): string {
+  // `entityType` here is whatever names the kind to a reader: the chant
+  // entity type, or for a terraform block the provider type with the block
+  // kind beside it (see {@link coverageLabel}).
+  const tables = (verdict.status === "unknown-type" && verdict.tables) ||
+    "ENGINE_KINDS_BY_ENTITY_TYPE or to DECLARED_UNMAPPED in lexicons/augur/src/mapping.ts";
   if (verdict.status === "declared-unmapped") {
     return `${entityType} is declared unmapped by the augur coverage table: ${verdict.reason}.`;
   }
@@ -465,9 +518,20 @@ export function unmappedDetail(entityType: string, verdict: CoverageVerdict): st
   return (
     `${entityType} has no row in the augur coverage table — it is a type from a substrate augur does ` +
     "model, and is neither mapped to an engine kind nor declared unmapped, so this lexicon has no " +
-    "opinion about it rather than a stated one. Add a row to ENGINE_KINDS_BY_ENTITY_TYPE or to " +
-    "DECLARED_UNMAPPED in lexicons/augur/src/mapping.ts."
+    `opinion about it rather than a stated one. Add a row to ${tables}.`
   );
+}
+
+/**
+ * How a detail names an entity's kind. The chant entity type, except for a
+ * terraform `resource` block, where `Terraform::Resource` names nothing a
+ * reader can act on and the provider type is the kind: `aws_vpc
+ * (Terraform::Resource)`.
+ */
+export function coverageLabel(entityType: string, props?: Record<string, unknown>): string {
+  if (entityType !== TERRAFORM_RESOURCE_TYPE) return entityType;
+  const type = terraformResourceType(props);
+  return type === undefined ? entityType : `${type} (${entityType})`;
 }
 
 /**
@@ -512,5 +576,21 @@ export function augurCoverageTable(): CoverageRow[] {
     size: "—",
     note: reason,
   }));
-  return [...mapped, ...unmapped].sort((a, b) => byCodeUnit(a.entityType, b.entityType));
+  // The terraform half (#2360), keyed by provider type. A row's `entityType`
+  // is the provider type, which is what a terraform block is to an engine.
+  const terraformMapped: CoverageRow[] = Object.entries(ENGINE_KINDS_BY_TERRAFORM_TYPE).map(
+    ([entityType, m]) => ({
+      entityType,
+      kind: m.kind,
+      provider: m.provider,
+      size: m.sizeProp ?? "—",
+      note: m.regionProp ? `region from ${m.regionProp}` : "region from the request",
+    }),
+  );
+  const terraformUnmapped: CoverageRow[] = Object.entries(DECLARED_UNMAPPED_TERRAFORM).map(
+    ([entityType, reason]) => ({ entityType, kind: "—" as const, provider: "—", size: "—", note: reason }),
+  );
+  return [...mapped, ...unmapped, ...terraformMapped, ...terraformUnmapped].sort((a, b) =>
+    byCodeUnit(a.entityType, b.entityType),
+  );
 }
