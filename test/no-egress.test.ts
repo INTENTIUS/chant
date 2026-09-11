@@ -323,7 +323,16 @@ describe("chant #1984 — the phases an adopter runs reach no network", () => {
           buildParams: await entryBuildParams(entry),
         }),
       );
-      expect(result.errors, `${entry.name}: the folded build itself failed`).toEqual([]);
+      // The same per-entry expectation the plain build above uses. A flat
+      // `[]` passed only because an earlier build in this process had already
+      // absorbed the error: vitest's module runner forgot the evaluation
+      // failure, so the second import of a throwing file resolved (#2368).
+      // With that fixed the entry reports what it is designed to report, and
+      // `EXPECTED_BUILD_ERRORS` is the one place that says which entries may.
+      expect(
+        buildErrorFiles(result.errors),
+        `${entry.name}: the folded build itself failed`,
+      ).toEqual(expectedBuildErrorFiles(entry.name));
       violations.push(...attemptsSince(mark));
     }
     report.push({ phase: "chant build --fold", projects: CORPUS.length, violations: violations.length });

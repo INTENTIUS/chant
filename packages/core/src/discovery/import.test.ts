@@ -1,9 +1,10 @@
 import { describe, test, expect } from "vitest";
-import { importModule } from "./import";
+import { importModule, resetImportFailures } from "./import";
+import { discover } from "./index";
 import { DiscoveryError } from "../errors";
 import { withTestDir, expectToThrow } from "@intentius/chant-test-utils";
 import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 describe("importModule", () => {
 
@@ -196,5 +197,112 @@ describe("importModule", () => {
       expect(json.type).toBe("import");
       expect(json.message).toBeDefined();
     });
+  });
+});
+
+describe("a module whose evaluation threw stays thrown (#2368)", () => {
+  /**
+   * The spec records an evaluation failure on the module record and re-throws
+   * it on every later import, forever. Node does that; vitest's module runner
+   * does not, and hands the second importer a namespace holding whatever was
+   * initialized before the throw.
+   *
+   * These assert the contract directly. They do not reproduce the runner bug —
+   * a module written to a temp directory is outside vitest's transform root and
+   * is imported by Node, which already records the failure. The reproduction is
+   * the corpus-backed test at the bottom of this file, which is the one that
+   * fails without the failure map.
+   */
+  test("a second import throws the same error, not a half-initialized namespace", async () => {
+    await withTestDir(async (testDir) => {
+      const filePath = join(testDir, "throws.ts");
+      await writeFile(filePath, `const o = undefined as unknown as { k: string };\nexport const value = o.k;\n`);
+
+      const first = await expectToThrow(() => importModule(filePath), DiscoveryError);
+      const second = await expectToThrow(() => importModule(filePath), DiscoveryError);
+
+      expect(second.message).toBe(first.message);
+      expect(second.file).toBe(filePath);
+      // The same error object, because it is the recorded one being replayed
+      // rather than a second failure that happened to look alike.
+      expect(second).toBe(first);
+    });
+  });
+
+  test("a third and fourth import keep throwing", async () => {
+    await withTestDir(async (testDir) => {
+      const filePath = join(testDir, "throws-again.ts");
+      await writeFile(filePath, `const o = undefined as unknown as { k: string };\nexport const value = o.k;\n`);
+
+      await expectToThrow(() => importModule(filePath), DiscoveryError);
+      await expectToThrow(() => importModule(filePath), DiscoveryError);
+      await expectToThrow(() => importModule(filePath), DiscoveryError);
+      await expectToThrow(() => importModule(filePath), DiscoveryError);
+    });
+  });
+
+  test("a module that imports cleanly is unaffected and is not cached as failed", async () => {
+    await withTestDir(async (testDir) => {
+      const filePath = join(testDir, "fine.ts");
+      await writeFile(filePath, `export const value = "ok";\n`);
+
+      const a = await importModule(filePath);
+      const b = await importModule(filePath);
+      expect(a.value).toBe("ok");
+      expect(b.value).toBe("ok");
+    });
+  });
+
+  test("resetImportFailures forgets the record, and does not make the module re-evaluate", async () => {
+    await withTestDir(async (testDir) => {
+      const filePath = join(testDir, "throws-reset.ts");
+      await writeFile(filePath, `const o = undefined as unknown as { k: string };\nexport const value = o.k;\n`);
+
+      const first = await expectToThrow(() => importModule(filePath), DiscoveryError);
+      resetImportFailures();
+
+      // Under Node the registry still holds the failed record and throws
+      // again; under vitest the module is served from its cache. Either way
+      // the escape hatch only clears chant's memory, which is what its doc
+      // says — so this asserts the clearing, not a re-evaluation.
+      let replayedSameObject = false;
+      try {
+        await importModule(filePath);
+      } catch (err) {
+        replayedSameObject = err === first;
+      }
+      expect(replayedSameObject).toBe(false);
+    });
+  });
+});
+
+describe("discover() reports the same errors on a second pass (#2368)", () => {
+  /**
+   * The reproduction from the issue, over the corpus entry that exposed it.
+   *
+   * It has to be a file inside the project: vitest transforms and caches those,
+   * and it is that cache which forgets an evaluation failure. A module written
+   * to a temp directory outside the runner's root is imported by Node natively
+   * and already behaves correctly, so a fixture built with `withTestDir` would
+   * pass with or without the fix and prove nothing.
+   *
+   * `examples/fold-adversarial/src/nullish-property-read.ts` folds to a refusal
+   * and then throws a TypeError when the run path imports it (#2328). Before
+   * the failure map: `discover #1 errors=1`, `discover #2 errors=0`.
+   */
+  const ADVERSARIAL = resolve(import.meta.dirname, "../../../../examples/fold-adversarial/src");
+
+  test("the corpus entry with a throwing file reports it on every pass", async () => {
+    const first = await discover(ADVERSARIAL);
+    const second = await discover(ADVERSARIAL);
+    const third = await discover(ADVERSARIAL);
+
+    expect(first.errors.length).toBeGreaterThan(0);
+    expect(second.errors.length).toBe(first.errors.length);
+    expect(third.errors.length).toBe(first.errors.length);
+
+    const named = (r: { errors: unknown[] }): boolean =>
+      (r.errors[0] as { file?: string }).file?.endsWith("nullish-property-read.ts") === true;
+    expect(named(first) && named(second) && named(third)).toBe(true);
   });
 });
