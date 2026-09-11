@@ -153,15 +153,25 @@ const GATED_EXIT_CODE = 3;
  * The gate a gated `chant run` stopped at, read off its JSON result (#2119) —
  * pure, unit-tested directly rather than only through `dispatchOp`'s
  * subprocess plumbing. `undefined` when the output says nothing about a gate.
+ *
+ * Reads `gate.name`, matching a real `OpRunStatus`/`OpRunRecord`
+ * (`../runtime.ts`'s own `gate?: { name: string; since: string }`) — a gated
+ * run's record never carries a nested field literally named `gate`. Checking
+ * `gate.gate` instead (chant#2396) is `typeof undefined === "string"`, always
+ * false, so every gated dispatch fell through to the regex below, which also
+ * never matches a `--json` result: the phrase it looks for belongs to the
+ * human-readable render `--json` mode suppresses. The regex stays as the
+ * fallback for exactly that human-mode case, where the caller's output is
+ * prose rather than JSON.
  */
 export function classifyDispatchFailure(raw: string): { gateName: string } | undefined {
   for (const line of raw.split("\n")) {
     const trimmed = line.trim();
     if (!trimmed.startsWith("{")) continue;
     try {
-      const parsed = JSON.parse(trimmed) as { status?: string; gate?: { gate?: string } };
-      if (parsed.status === "gated" && typeof parsed.gate?.gate === "string") {
-        return { gateName: parsed.gate.gate };
+      const parsed = JSON.parse(trimmed) as { status?: string; gate?: { name?: string } };
+      if (parsed.status === "gated" && typeof parsed.gate?.name === "string") {
+        return { gateName: parsed.gate.name };
       }
     } catch {
       // Not this line's JSON — keep looking.

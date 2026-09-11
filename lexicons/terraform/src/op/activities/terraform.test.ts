@@ -22,6 +22,7 @@ import {
   terraformPlan,
   terraformApply,
   terraformShow,
+  choudoufuLivePlan,
   terraformInitCommand,
   terraformPlanCommand,
   terraformApplyCommand,
@@ -33,6 +34,7 @@ import {
   terraformPlanDigest,
   quoteArg,
   DEFAULT_PLAN_FILE,
+  __resetChoudoufuVersionCheckForTests,
 } from "./terraform";
 
 // ── The child-process stub ──────────────────────────────────────────────────
@@ -505,6 +507,73 @@ describe("terraformShow (#2086)", () => {
     expect(result.planFile).toBe("chant.tfplan");
     expect(result.destroys).toBe(1);
     expect(execCalls[0].cmd).toBe("terraform show -json chant.tfplan");
+  });
+});
+
+// ── choudoufuLivePlan: subprocess echo never lands on real stdout (chant#2395) ─
+//
+// `describeResources()` (`../../describe-resources.ts`) calls this activity
+// directly, in-process, as an internal read — the same call `chant lifecycle
+// plan --live --json` and `chant components status --live --json` make while
+// building their own JSON document. Before the fix, `report()` echoed the
+// `choudoufu live-plan -json` subprocess's raw stdout onto real
+// `console.log`, landing on the very stream the caller's own JSON document is
+// about to be printed to: two concatenated JSON values on one stdout, which
+// broke `convergeTick`'s bare `JSON.parse(stdout)` downstream
+// (`packages/core/src/op/activities/converge.ts`) with "Unexpected
+// non-whitespace character after JSON at position …". This captures exactly
+// that scenario — a live root, a `-json` live-plan read — and asserts real
+// stdout carries none of the subprocess's document.
+describe("choudoufuLivePlan — subprocess echo never lands on real stdout (chant#2395)", () => {
+  const LIVE_PLAN_DOCUMENT = JSON.stringify({
+    estate: "converge-operator-example",
+    bound: [],
+    omissions: [],
+    unowned: [],
+  });
+
+  function liveProject(): string {
+    const dir = project({ binary: "choudoufu", roots: { estate: { dir: "./infra" } } });
+    writeFileSync(join(dir, "infra", "estate.chdf.hcl"), 'estate = "converge-operator-example"\n');
+    return dir;
+  }
+
+  beforeEach(() => {
+    __resetChoudoufuVersionCheckForTests();
+    replies.push(
+      { match: "choudoufu version", reply: { stdout: "choudoufu v0.15.0 (based on OpenTofu v1.13.0)\non darwin_arm64", stderr: "" } },
+      { match: "-json", reply: { stdout: LIVE_PLAN_DOCUMENT, stderr: "" } },
+      { match: "-no-color", reply: { stdout: "No changes.\n\nPlan: 0 to add, 0 to change, 0 to destroy.\n", stderr: "" } },
+    );
+  });
+
+  test("RED/GREEN: real stdout carries no part of the subprocess's JSON document", async () => {
+    const dir = liveProject();
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const result = await choudoufuLivePlan({ root: "estate", cwd: dir });
+      expect(result.estate).toBe("converge-operator-example");
+
+      // The would-be second document — chant's own JSON render for the
+      // command as a whole — is simulated here the way the real CLI produces
+      // it: one more line on real stdout after the activity returns.
+      console.log(JSON.stringify({ env: "dev", entries: [] }));
+
+      const stdoutText = logSpy.mock.calls.map((c) => c.join(" ")).join("\n");
+      expect(stdoutText).not.toContain(LIVE_PLAN_DOCUMENT);
+      // Exactly one JSON value on stdout: the caller's own document, not the
+      // subprocess's.
+      expect(() => JSON.parse(stdoutText)).not.toThrow();
+
+      // The subprocess's document went to stderr instead — echoed, not
+      // silently dropped, for a human running this as a `chant run` step.
+      const stderrText = errorSpy.mock.calls.map((c) => c.join(" ")).join("\n");
+      expect(stderrText).toContain(LIVE_PLAN_DOCUMENT);
+    } finally {
+      logSpy.mockRestore();
+      errorSpy.mockRestore();
+    }
   });
 });
 
