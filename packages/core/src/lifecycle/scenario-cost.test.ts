@@ -105,12 +105,12 @@ describe("evaluateScenario — cost against the fixture's recorded prediction", 
   });
 
   test("a fixture whose prediction is a refusal fails with the refusal's reason, never a pass on nothing", () => {
-    const verdict = evaluateScenario(EMPTY, { cost: { maxPerHour: 1e9, currency: "USD" } }, { result: noBehaviourEngineRefusal("augur") });
+    const verdict = evaluateScenario(EMPTY, { cost: { maxPerHour: 1e9, currency: "USD" } }, { result: noBehaviourEngineRefusal("chant") });
     expect(verdict.pass).toBe(false);
     expect(cost(verdict).detail).toContain("the fixture's prediction is a refusal (no-engine)");
     expect(cost(verdict).detail).toContain("Set CHANT_BEHAVIOUR_ENGINE to the engine's address.");
 
-    const broke = outOfCreditBehaviourEngineRefusal("augur", { value: "engine", source: "CHANT_BEHAVIOUR_ENGINE" }, "balance 0");
+    const broke = outOfCreditBehaviourEngineRefusal("chant", { value: "engine", source: "CHANT_BEHAVIOUR_ENGINE" }, "balance 0");
     expect(cost(evaluateScenario(EMPTY, { cost: { maxPerHour: 1e9, currency: "USD" } }, { result: broke })).detail).toContain("engine-out-of-credit");
   });
 

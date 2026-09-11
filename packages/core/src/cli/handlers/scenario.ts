@@ -166,7 +166,7 @@ interface GivenResolution {
 
 /**
  * Read the `behaviour` block off the fixture's snapshots. One block, not one
- * per lexicon: a prediction is over the whole estate (augur reads every
+ * per lexicon: a prediction is over the whole estate (it reads every
  * lexicon's entities and holds none of its own), so it belongs to no single
  * lexicon's file, and two files carrying two different blocks is a fixture
  * that answers twice. Validated on arrival — a hand-edited fixture with a

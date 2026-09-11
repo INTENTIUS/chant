@@ -1,4 +1,5 @@
 import type { AuditEntitiesInput, LexiconPlugin } from "@intentius/chant/lexicon";
+import { terraformBehaviourKinds } from "./behaviour/kinds";
 import type { CompletionContext, HoverContext } from "@intentius/chant/lsp/types";
 import type { Declarable } from "@intentius/chant/declarable";
 import { createSkillsLoader } from "@intentius/chant/lexicon-plugin-helpers";
@@ -70,6 +71,7 @@ function looksLikeHcl(text: string): boolean {
  * and `codegen/` stay near-empty and there is no `upstreamPin`.
  */
 export const terraformPlugin: LexiconPlugin = {
+  behaviourKinds: terraformBehaviourKinds,
   name: "terraform",
   serializer: terraformSerializer,
   configSchema: terraformConfigSchema,

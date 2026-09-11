@@ -45,7 +45,7 @@ const cedar: BehaviourKinds = {
 const terraform: BehaviourKinds = {
   provider: "aws",
   prefixes: ["Terraform::"],
-  resolveType: (props) => {
+  resolveType: (_entityType, props) => {
     const address = props?.address;
     if (typeof address !== "string") return undefined;
     const dot = address.indexOf(".");
@@ -57,7 +57,17 @@ const terraform: BehaviourKinds = {
   unmapped: { aws_iam_role: "a grant is not a resource" },
 };
 
-const ALL = [aws, cedar, terraform];
+/** A lexicon that models part of what it declares, which is terraform's shape. */
+const partial: BehaviourKinds = {
+  provider: "aws",
+  prefixes: ["Partial::"],
+  mapped: { "Partial::aws_instance": { kind: "compute" } },
+  unmapped: { "Partial::aws_iam_role": "a grant is not a resource" },
+  notModelledWhen: (type) =>
+    type.startsWith("Partial::aws_") ? undefined : `the ${type.split("::")[1]?.split("_")[0]} provider, which nothing here models`,
+};
+
+const ALL = [aws, cedar, terraform, partial];
 
 describe("the kind enum", () => {
   test("is derived from a total witness, so a kind cannot be added and forgotten", () => {
@@ -125,6 +135,36 @@ describe("a lexicon whose entities share one entity type", () => {
   });
 });
 
+describe("a contributor that redirects only some of its types", () => {
+  // terraform's shape: `Terraform::Resource` keys off its address, and the
+  // root's own blocks key by entity type like everyone else. The bug this
+  // pins: with `resolveType` blind to the entity type, every root block
+  // resolved through the address path and came back a defect.
+  const mixed: BehaviourKinds = {
+    provider: "aws",
+    prefixes: ["Tf::"],
+    resolveType: (entityType, props) =>
+      entityType === "Tf::Resource"
+        ? typeof props?.address === "string"
+          ? props.address.split(".")[0]
+          : undefined
+        : entityType,
+    mapped: { aws_instance: { kind: "compute" } },
+    unmapped: { "Tf::Variable": "a root module input; it shapes what is created and is never created itself" },
+  };
+
+  test("the redirected type reads its key out of the props", () => {
+    expect(coverageFor([mixed], "Tf::Resource", { address: "aws_instance.web" }).status).toBe("mapped");
+  });
+
+  test("an ordinary type of the same lexicon still keys by entity type", () => {
+    const v = coverageFor([mixed], "Tf::Variable");
+    expect(v.status).toBe("declared-unmapped");
+    if (v.status !== "declared-unmapped") return;
+    expect(v.reason).toContain("never created itself");
+  });
+});
+
 describe("what an absent contributor means", () => {
   test("a type nobody claims is nobody's mistake", () => {
     // The gcp lexicon is not installed, so no GCP:: entity was declared. The
@@ -138,6 +178,22 @@ describe("what an absent contributor means", () => {
     // Everyone else's verdicts are untouched — rows are additive, which is why
     // they may be optional when the capability may not be.
     expect(coverageFor([cedar, terraform], "Cedar::Policy").status).toBe("provider-not-modelled");
+  });
+});
+
+describe("a lexicon that models only part of what it declares", () => {
+  test("a family outside the modelled substrate is named, not called a defect", () => {
+    const v = coverageFor(ALL, "Partial::google_compute_instance");
+    expect(v.status).toBe("provider-not-modelled");
+    if (v.status !== "provider-not-modelled") return;
+    expect(v.substrate).toContain("google");
+  });
+
+  test("a type inside the modelled substrate with no row is still the defect", () => {
+    // The ordering that matters: a substrate boundary is a statement about
+    // types this lexicon never models, and it must not swallow a row somebody
+    // forgot to write for one it does.
+    expect(coverageFor(ALL, "Partial::aws_kinesis_stream").status).toBe("unknown-type");
   });
 });
 

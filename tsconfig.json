@@ -141,12 +141,6 @@
       ],
       "@intentius/chant-lexicon-terraform/*": [
         "lexicons/terraform/src/*"
-      ],
-      "@intentius/chant-lexicon-augur": [
-        "lexicons/augur/src/index.ts"
-      ],
-      "@intentius/chant-lexicon-augur/*": [
-        "lexicons/augur/src/*"
       ]
     }
   },

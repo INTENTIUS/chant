@@ -5,6 +5,7 @@
  */
 
 import { describe, expect, test, vi } from "vitest";
+import { coverageFor, type BehaviourKinds } from "../../behaviour-kinds";
 import {
   behaviourReport,
   noBehaviourEngineRefusal,
@@ -15,14 +16,13 @@ import {
 } from "../../behaviour";
 import { commentMarker, issueMarker, type ReconcilePrArgs, type ReconcileResult } from "./reconcile";
 import {
-  ambiguousPredictorMessage,
   baseRefFrom,
   behaviourFindingMarker,
   createBehaviourFinding,
   declaredEdgeCoverage,
   headRefFrom,
   noBaseRefMessage,
-  noPredictingLexiconMessage,
+  noContributedRowsMessage,
   type BaseCheckout,
 } from "./predict-behaviour";
 
@@ -97,12 +97,25 @@ describe("declaredEdgeCoverage — never complete on the declared path", () => {
 
 describe("the refusals for a project that cannot predict", () => {
   test("no predicting lexicon names the configured ones and what to add", () => {
-    expect(noPredictingLexiconMessage(["aws", "k8s"])).toMatch(/\(aws, k8s\).*augur.*CHANT_BEHAVIOUR_ENGINE/s);
-    expect(noPredictingLexiconMessage([])).toContain("(none)");
+    // Not an error any more: with rows contributed per lexicon there is
+    // nothing to choose between, and an estate whose lexicons contribute no
+    // rows is a real state with a real answer rather than a broken command
+    // (#2382).
+    expect(noContributedRowsMessage(["aws", "k8s"])).toMatch(/\(aws, k8s\).*behaviourKinds.*CHANT_BEHAVIOUR_ENGINE/s);
+    expect(noContributedRowsMessage([])).toContain("(none)");
+    expect(noContributedRowsMessage(["aws"])).toContain("unknown-type");
   });
 
-  test("two predicting lexicons is refused rather than merged", () => {
-    expect(ambiguousPredictorMessage(["augur", "other"])).toMatch(/2 configured lexicons.*\(augur, other\)/);
+  test("two lexicons contributing rows is ordinary, not a conflict", () => {
+    // The old shape refused here, because two lexicons implementing
+    // predictBehaviour() meant two engines pricing one estate. Rows do not
+    // have that problem: each lexicon speaks only about its own entity types,
+    // so contributions are additive and there is nothing to merge.
+    const aws: BehaviourKinds = { provider: "aws", prefixes: ["AWS::"], mapped: { "AWS::S3::Bucket": { kind: "object-store" } } };
+    const k8s: BehaviourKinds = { provider: "kubernetes", prefixes: ["K8s::"], mapped: { "K8s::Core::Pod": { kind: "compute" } } };
+    expect(coverageFor([aws, k8s], "AWS::S3::Bucket").status).toBe("mapped");
+    expect(coverageFor([aws, k8s], "K8s::Core::Pod").status).toBe("mapped");
+    expect(coverageFor([k8s, aws], "AWS::S3::Bucket").status).toBe("mapped");
   });
 });
 
@@ -198,7 +211,7 @@ describe("behaviourFinding — predicts both sides, differences them, and posts 
   });
 
   test("a refusal on the base side posts a finding that says no prediction, and flags the run", async () => {
-    const { run, posted } = harness({ base: noBehaviourEngineRefusal("augur"), head: report({ db: figure(0.1) }) });
+    const { run, posted } = harness({ base: noBehaviourEngineRefusal("chant"), head: report({ db: figure(0.1) }) });
     const result = await run({ environment: "prod", traffic: TRAFFIC, op: "pr-behaviour" });
     expect(result.refused).toBe(true);
     expect(result.finding.kind).toBe("no-prediction");

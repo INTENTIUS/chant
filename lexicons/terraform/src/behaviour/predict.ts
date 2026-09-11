@@ -9,7 +9,7 @@
  * declaration — through the same injected activities, builds the engine's
  * request from them (`./request.ts`), and hands it to whichever lexicon fronts
  * the engine. The terraform lexicon has no engine of its own and dials none:
- * `deps.predict` is augur's `predictBehaviour` in production, and a fixture
+ * `deps.predict` is core's `predictBehaviour` in production, and a fixture
  * in a test.
  *
  * ## Four moves, in this order

@@ -55,7 +55,7 @@
  * `partial` either, because `partial` has to name a gap as `dangling` or
  * `unresolvedKinds`, and the gap here is neither — every reference resolved,
  * and the generic builder has no vocabulary for "this kind is a boundary
- * whose containment is missing" (augur's own fixture names its boundary
+ * whose containment is missing" (the request fixture names its boundary
  * kinds by hand, which is lexicon knowledge core does not have). An earlier
  * draft named every kind no reference touched, and named a queue nobody
  * references as "unresolved", which it is not. So the claim is `unknown`,
@@ -81,6 +81,8 @@ import {
   type BehaviourDelta,
 } from "../../behaviour-delta";
 import type { LexiconPlugin } from "../../lexicon";
+import type { BehaviourKinds } from "../../behaviour-kinds";
+import { createBehaviourPredict } from "../../behaviour-predict";
 import type { SerializerResult } from "../../serializer";
 import { markerSlug, reconcilePr, suppliedMarker, type ReconcileResult } from "./reconcile";
 
@@ -107,22 +109,23 @@ export interface PredictBehaviourArgs {
   owned?: boolean;
 }
 
-/** What the activity says when no configured lexicon implements the fourth method. */
-export function noPredictingLexiconMessage(lexicons: readonly string[]): string {
+/**
+ * What the activity says when nothing has contributed coverage rows.
+ *
+ * Not an error and not a refusal: the prediction runs, every declared entity
+ * is withheld as `unknown-type`, and this is what the report's own detail says
+ * one level down. Kept as a message rather than a throw because an estate
+ * whose lexicons contribute no rows is a real state with a real answer — "no
+ * row says what any of these are" — and a throw would turn it into a broken
+ * command (#2382).
+ */
+export function noContributedRowsMessage(lexicons: readonly string[]): string {
   const configured = lexicons.length > 0 ? lexicons.join(", ") : "(none)";
   return (
-    "predictBehaviour has the estate to predict and no lexicon to predict it with: none of the configured " +
-    `lexicons (${configured}) implements predictBehaviour(). Add augur to \`lexicons\` in chant.config.ts — it ` +
-    "reads whatever the other lexicons declare — and set CHANT_BEHAVIOUR_ENGINE to the engine's address."
-  );
-}
-
-/** What the activity says when more than one configured lexicon predicts. */
-export function ambiguousPredictorMessage(names: readonly string[]): string {
-  return (
-    `predictBehaviour found ${names.length} configured lexicons that implement predictBehaviour() (${names.join(", ")}) ` +
-    "and predicts with one. Two engines pricing one estate is a merge this activity does not do, because an entity " +
-    "priced twice has two provenances and one row; configure one predicting lexicon."
+    "predictBehaviour has the estate to predict and no coverage rows to read it with: none of the " +
+    `configured lexicons (${configured}) contributes \`behaviourKinds\`. Every entity will be reported ` +
+    "unpredicted as `unknown-type`. Set CHANT_BEHAVIOUR_ENGINE to the engine's address, and add rows " +
+    "in the lexicon that owns the entity types you expect priced."
   );
 }
 
@@ -157,10 +160,10 @@ export async function predictDeclared(projectPath: string, args: PredictBehaviou
   const { config } = await loadChantConfigUpward(projectPath);
   const lexicons = await resolveProjectLexicons(projectPath);
   const plugins = (await loadPlugins(lexicons)) as LexiconPlugin[];
-  const predictors = plugins.filter((p) => typeof p.predictBehaviour === "function");
-  if (predictors.length === 0) throw new Error(noPredictingLexiconMessage(lexicons));
-  if (predictors.length > 1) throw new Error(ambiguousPredictorMessage(predictors.map((p) => p.name)));
-  const [predictor] = predictors;
+  // Rows, not a predictor. Since #2382 core predicts and each lexicon says
+  // only what its own entity types mean, so there is nothing to choose between
+  // and nothing to refuse when two lexicons both answer — they are additive.
+  const kinds = plugins.map((p) => p.behaviourKinds).filter((k): k is BehaviourKinds => k !== undefined);
 
   const sourceDir = resolve(projectPath, config.sourceDir ?? ".");
   const result = await build(sourceDir, plugins.map((p) => p.serializer));
@@ -169,11 +172,10 @@ export async function predictDeclared(projectPath: string, args: PredictBehaviou
     throw new Error(`predictBehaviour: the project under ${projectPath} did not build: ${messages.join("; ")}`);
   }
 
-  // Every declared entity with a type, the way augur's own request fixture
-  // assembles it: the predicting lexicon decides what reaches the engine and
-  // what is declared unmapped, and it can only decide about what it is
-  // handed. Filtering here to "resources" would silently drop the kinds the
-  // coverage table exists to name.
+  // Every declared entity with a type. The contributed rows decide what
+  // reaches the engine and what is declared unmapped, and they can only decide
+  // about what they are handed: filtering here to "resources" would silently
+  // drop the kinds the coverage rows exist to name.
   const entities = new Map<string, { entityType: string; props: Record<string, unknown> }>();
   for (const [name, entity] of result.entities) {
     const declarable = entity as { entityType?: unknown; props?: unknown };
@@ -185,11 +187,11 @@ export async function predictDeclared(projectPath: string, args: PredictBehaviou
   }
   const edges = buildGraphIr(result.entities, sourceDir).edges;
 
-  // The predicting lexicon's own serialized output, as the deep read is handed
-  // its lexicon's — a string, not a path (cli/handlers/lifecycle.ts). augur
-  // reads nothing off it; the mirror is kept so a lexicon that does gets what
-  // the other three methods get.
-  const raw = result.outputs.get(predictor.name);
+  // The build output the other three reads are handed — a string, not a path
+  // (cli/handlers/lifecycle.ts). Nothing on this path reads it; the mirror is
+  // kept so the four methods take the same shape. With no predicting lexicon
+  // to take it from, it is the first output the build produced, or empty.
+  const raw = [...result.outputs.values()][0];
   const buildOutput = raw === undefined ? "" : typeof raw === "string" ? raw : (raw as SerializerResult).primary;
 
   const options: PredictBehaviourOptions = {
@@ -204,7 +206,7 @@ export async function predictDeclared(projectPath: string, args: PredictBehaviou
     edges,
     edgeCoverage: declaredEdgeCoverage(),
   };
-  const answer = await predictor.predictBehaviour!(options);
+  const answer = await createBehaviourPredict({ kinds })(options);
   // On arrival, with the names that were asked — `behaviourReport` checks the
   // ordinary route and says a consumer that needs the guarantee checks again.
   return validateBehaviourResult(answer, options.entityNames);

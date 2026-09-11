@@ -1,4 +1,5 @@
 import { createRequire } from "module";
+import { awsBehaviourKinds } from "./behaviour-kinds";
 import { detectTemplate } from "./detect";
 import type { LexiconPlugin, IntrinsicDef, ObservationResult, DeepObservationResult, DependencyObservation, DescribeIdentityOptions, DescribeIdentityResult, DisruptionQuery, DisruptionVerdict, ResourceMetadata, ExportedTemplate, ResourceSelector, InitTemplateSet, StackStatusObservation } from "@intentius/chant/lexicon";
 const require = createRequire(import.meta.url);
@@ -59,6 +60,7 @@ const OWNERSHIP_UNRESOLVED_NOTE =
   "ownership filter not applied on describeResources (this stack's own tags carry no chant marker, or DescribeStacks did not answer) — returning all, each with the verdict the read supports; use `chant import --from <env> --owned` for ownership-filtered export";
 
 export const awsPlugin: LexiconPlugin = {
+  behaviourKinds: awsBehaviourKinds,
   name: "aws",
   // The thin read's marker channel is the STACK's own tags (#1998), read off
   // the DescribeStacks call it already makes for the outputs.

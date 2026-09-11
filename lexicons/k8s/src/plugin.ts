@@ -6,6 +6,7 @@
  */
 
 import type { LexiconPlugin, InitTemplateSet, ResourceMetadata } from "@intentius/chant/lexicon";
+import { k8sBehaviourKinds } from "./behaviour-kinds";
 import type { CommandGroup } from "@intentius/chant/cli/command-group";
 import { kubeCommandGroup } from "./kube/group";
 import { detectTemplate } from "./detect";
@@ -35,6 +36,7 @@ import { encryptedSecretBuildRoot } from "./sops/encrypted-secret-file";
 import type { Declarable } from "@intentius/chant/declarable";
 
 export const k8sPlugin: LexiconPlugin = {
+  behaviourKinds: k8sBehaviourKinds,
   name: "k8s",
   ownershipChannel: { keys: LABEL_OWNERSHIP_KEYS, reads: ["describeResources", "observeResourcesDeep", "exportResources"] },
   configSchema: k8sConfigSchema,

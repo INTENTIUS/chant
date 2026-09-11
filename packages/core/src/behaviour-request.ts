@@ -30,20 +30,20 @@
  * level down from where the contract made it visible.
  */
 
-import type { IREdge } from "@intentius/chant/graph-ir";
-import type { BehaviourEdgeCoverage, PredictBehaviourOptions } from "@intentius/chant/behaviour";
+import type { IREdge } from "./graph-ir";
+import type { BehaviourEdgeCoverage, PredictBehaviourOptions } from "./behaviour";
 import {
   byCodeUnit,
   coverageFor,
   coverageLabel,
-  TERRAFORM_RESOURCE_TYPE,
-  terraformResourceType,
+  ownerOf,
   unmappedDetail,
+  type BehaviourKinds,
   type EngineKind,
-} from "./mapping";
+} from "./behaviour-kinds";
 
 /** The wire version. Bumped when the shape changes, the way `behaviour: "v1"` is. */
-export const AUGUR_REQUEST_VERSION = "augur/v1" as const;
+export const BEHAVIOUR_REQUEST_VERSION = "behaviour/v1" as const;
 
 /** One entity, in the engine's four words: a kind, a provider, a region and a size. */
 export interface EngineNode {
@@ -88,7 +88,7 @@ export interface WithheldEntity {
   /**
    * Which of the coverage table's three not-sent verdicts this is:
    * `declared-unmapped` (looked at, and it carries no rate),
-   * `provider-not-modelled` (a substrate augur states it does not cover), or
+   * `provider-not-modelled` (a substrate a lexicon states it does not cover), or
    * `unknown-type` (a modelled provider's type with no row — the only one that
    * is a defect). See `./mapping.ts` for why they are not one.
    */
@@ -98,7 +98,7 @@ export interface WithheldEntity {
 
 /** What goes on the wire. */
 export interface EngineRequest {
-  request: typeof AUGUR_REQUEST_VERSION;
+  request: typeof BEHAVIOUR_REQUEST_VERSION;
   /** The level to predict at, verbatim from the caller. chant parses nothing. */
   traffic: string;
   /** Present only when the caller named one; the engine's own default is not chant's to pick. */
@@ -174,6 +174,7 @@ export function buildEngineRequest(
     PredictBehaviourOptions,
     "entityNames" | "entities" | "edges" | "edgeCoverage" | "traffic" | "region"
   >,
+  kinds: readonly BehaviourKinds[],
 ): EngineRequest {
   const nodes: EngineNode[] = [];
   const withheld: WithheldEntity[] = [];
@@ -193,19 +194,26 @@ export function buildEngineRequest(
       });
       continue;
     }
-    const verdict = coverageFor(declared.entityType, declared.props);
-    // A terraform block's provider type rides beside the entity type, on the
-    // wire and in the withheld list, because `Terraform::Resource` alone
-    // names nothing an engine or a reader can act on (#2360).
-    const resourceType =
-      declared.entityType === TERRAFORM_RESOURCE_TYPE ? terraformResourceType(declared.props) : undefined;
+    const verdict = coverageFor(kinds, declared.entityType, declared.props);
+    // Where a lexicon keys its rows on something other than the entity type,
+    // that key rides beside the entity type on the wire and in the withheld
+    // list: `Terraform::Resource` alone names nothing an engine or a reader
+    // can act on (#2360), and its provider type is what does. Asked of the
+    // owning contributor rather than special-cased here (#2382).
+    const owner = ownerOf(kinds, declared.entityType);
+    const resolved = owner?.resolveType?.(declared.entityType, declared.props);
+    const resourceType = resolved && resolved !== declared.entityType ? resolved : undefined;
     if (verdict.status !== "mapped") {
       withheld.push({
         name,
         entityType: declared.entityType,
         ...(resourceType ? { resourceType } : {}),
         status: verdict.status,
-        detail: unmappedDetail(coverageLabel(declared.entityType, declared.props), verdict),
+        detail: unmappedDetail(
+          coverageLabel(kinds, declared.entityType, declared.props),
+          verdict,
+          owner,
+        ),
       });
       continue;
     }
@@ -246,7 +254,7 @@ export function buildEngineRequest(
     );
 
   return {
-    request: AUGUR_REQUEST_VERSION,
+    request: BEHAVIOUR_REQUEST_VERSION,
     traffic: options.traffic,
     ...(options.region ? { region: options.region } : {}),
     nodes,

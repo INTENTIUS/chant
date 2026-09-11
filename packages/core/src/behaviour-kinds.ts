@@ -4,10 +4,10 @@
  * `./behaviour.ts` says what a prediction may mean and `./behaviour-http.ts`
  * carries one to an engine. Between them sits a question neither answers: for
  * a given entity in a project's graph, what *kind* of thing is it, and is it
- * something an engine prices at all? #2357 answered it with one table in the
- * augur lexicon, keyed by every other lexicon's entity types. That table
- * described 117 types it did not own, and the capability rode on whether an
- * optional package happened to be installed — which gave a consumer a fourth
+ * something an engine prices at all? #2357 answered it with one table in one
+ * lexicon, keyed by every other lexicon's entity types. That table described
+ * 117 types it did not own, and the capability rode on whether an optional
+ * package happened to be installed — which gave a consumer a fourth
  * outcome this contract never named: no overlay, no refusal, and no reason.
  *
  * So the resolution lives here, where every other part of the feature already
@@ -148,13 +148,31 @@ export interface BehaviourKinds {
    */
   nothingPriced?: string;
   /**
-   * For a lexicon whose entities all share one entity type, the provider type
-   * to look rows up on instead. terraform's every `resource` block arrives as
-   * `Terraform::Resource`, and what an engine would price is the type its
-   * address carries. Returning `undefined` is "nothing to look up", which is
-   * the same no-opinion an unseen type gets.
+   * For a lexicon whose entities do not key rows by their entity type, the
+   * key to look rows up on instead. terraform's every `resource` block arrives
+   * as `Terraform::Resource`, and what an engine would price is the type its
+   * address carries.
+   *
+   * It is handed the entity type as well as the props, because a lexicon
+   * usually redirects only *some* of its types: terraform's root blocks
+   * (`Terraform::Variable`, `Terraform::Output`) key by entity type like
+   * everyone else, and only `Terraform::Resource` reads its key out of the
+   * props. Returning the entity type unchanged is how a contributor says "this
+   * one is ordinary". Returning `undefined` is "nothing to look up", the same
+   * no-opinion an unseen type gets.
    */
-  resolveType?: (props: Record<string, unknown> | undefined) => string | undefined;
+  resolveType?: (entityType: string, props: Record<string, unknown> | undefined) => string | undefined;
+  /**
+   * A family of this lexicon's types that belongs to a substrate nothing here
+   * models, named as the substrate — or `undefined` to let the type carry on
+   * to {@link unmappedWhen}. terraform is the case this exists for: one
+   * lexicon's `resource` blocks span every provider there is, so `google_`
+   * and `azurerm_` and `null_` are each a boundary of their own, while an
+   * `aws_` type with no row stays the defect it is. A contributor whose whole
+   * substrate is unpriced uses {@link nothingPriced} instead; this is for the
+   * lexicon that models part of what it declares.
+   */
+  notModelledWhen?: (type: string) => string | undefined;
   /**
    * A last word on a type this lexicon claims and has no row for: the reason
    * it is unmapped, or `undefined` to leave it a defect. CloudFormation's
@@ -206,7 +224,7 @@ export function coverageFor(
   if (!owner) return { status: "unknown-type" };
   if (owner.nothingPriced) return { status: "provider-not-modelled", substrate: owner.nothingPriced };
 
-  const type = owner.resolveType ? owner.resolveType(props) : entityType;
+  const type = owner.resolveType ? owner.resolveType(entityType, props) : entityType;
   if (type === undefined) return { status: "unknown-type" };
 
   if (owner.mapped && Object.prototype.hasOwnProperty.call(owner.mapped, type)) {
@@ -216,7 +234,91 @@ export function coverageFor(
   if (owner.unmapped && Object.prototype.hasOwnProperty.call(owner.unmapped, type)) {
     return { status: "declared-unmapped", reason: owner.unmapped[type] };
   }
+  // Before `unmappedWhen`, and after both tables: a row is this lexicon's
+  // decision about a type it models, and a substrate boundary is a statement
+  // about types it never will. A type inside the modelled substrate with no
+  // row falls past both and stays the defect it is.
+  const elsewhere = owner.notModelledWhen?.(type);
+  if (elsewhere !== undefined) return { status: "provider-not-modelled", substrate: elsewhere };
   const late = owner.unmappedWhen?.(type);
   if (late !== undefined) return { status: "declared-unmapped", reason: late };
   return { status: "unknown-type" };
 }
+
+/**
+ * The contributor that owns an entity type, or `undefined` when nobody claims
+ * it. Exported because a caller that has already resolved a verdict often
+ * needs the owner too — to name it in a detail, or to label the entity the way
+ * its own lexicon would.
+ */
+export function ownerOf(
+  contributors: readonly BehaviourKinds[],
+  entityType: string,
+): BehaviourKinds | undefined {
+  return contributors.find((c) => c.prefixes.some((p) => entityType.startsWith(p)));
+}
+
+/**
+ * How a detail names an entity's kind. The chant entity type, except where the
+ * owning lexicon keys its rows on something else: `Terraform::Resource` names
+ * nothing a reader can act on, and the provider type is the kind, so the label
+ * is `aws_vpc (Terraform::Resource)`.
+ */
+export function coverageLabel(
+  contributors: readonly BehaviourKinds[],
+  entityType: string,
+  props?: Record<string, unknown>,
+): string {
+  const owner = ownerOf(contributors, entityType);
+  if (!owner?.resolveType) return entityType;
+  const type = owner.resolveType(entityType, props);
+  return type === undefined || type === entityType ? entityType : `${type} (${entityType})`;
+}
+
+/**
+ * The `detail` an `unpredicted` entry carries, naming the kind in every case.
+ *
+ * The kind is named here, in the per-entity decline, because that is the only
+ * place in this contract with a per-entity axis: a `BehaviourRefusalReport` is
+ * a statement about the whole run and has no `entities` key by design, so a
+ * report-level refusal for one unmapped bucket would take the other nineteen
+ * entities' figures down with it.
+ *
+ * The `unknown-type` arm names the lexicon that owns the type rather than a
+ * file path, because since #2382 the row belongs to whichever lexicon defines
+ * the type, and that is the thing a reader needs to be told.
+ */
+export function unmappedDetail(
+  label: string,
+  verdict: CoverageVerdict,
+  owner?: BehaviourKinds,
+): string {
+  if (verdict.status === "declared-unmapped") {
+    return `${label} is declared unmapped by the ${owner?.provider ?? "declaring"} coverage rows: ${verdict.reason}.`;
+  }
+  if (verdict.status === "provider-not-modelled") {
+    return (
+      `${label} belongs to ${verdict.substrate}, which nothing here models. A substrate is added by ` +
+      "the lexicon that owns its types contributing rows for them, not by adding a row elsewhere. " +
+      "This is a stated boundary rather than a gap — nothing needs filing."
+    );
+  }
+  const where = owner
+    ? `the lexicon that owns ${owner.prefixes.join(", ")}`
+    : "the lexicon that owns this entity type";
+  return (
+    `${label} has no row in any contributed coverage table — it is a type from a substrate that is ` +
+    "modelled, and is neither mapped to an engine kind nor declared unmapped, so nothing has an " +
+    `opinion about it rather than a stated one. Add a row in ${where}.`
+  );
+}
+
+/**
+ * Compare two strings by UTF-16 code unit.
+ *
+ * Not `localeCompare`, which reads the ambient locale: under `sv-SE` and
+ * `et-EE` it orders these type names differently from `en-US`, which would
+ * make the request's bytes — and therefore any golden fixture, and therefore
+ * any declared-versus-live delta — a function of the machine that built them.
+ */
+export const byCodeUnit = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
