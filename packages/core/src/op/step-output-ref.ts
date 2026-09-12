@@ -112,15 +112,36 @@ export interface StepOutputRef {
 }
 
 /**
- * `T` with every own property additionally accepting a {@link StepOutputRef}
- * in its place (chant #1288 Stage 2) — the authoring-time counterpart of
- * `args` accepting a reference anywhere in the structure (#1290): a typed
- * step-builder wrapper whose opts type is `WithStepRefs<SomeActivityArgs>`
- * lets an author pass `diff.out.driftedStacks` for any field without an
- * `as` cast, while runtime validation of the reference itself is still
- * `validateStepOutputRefs`' job, not this type's.
+ * `V`, or a {@link StepOutputRef} in its place, at every position inside it.
+ *
+ * Recurses through arrays and plain objects — including an index signature,
+ * which is the case that motivated it (#2414): `shell()`'s `env` is a
+ * `Record<string, string>`, and a reference in one of its values resolves at
+ * run time (`local-executor`'s `resolveStepOutputRefs` deep-walks `args`) and
+ * passes OPS012 (`activity-contract.ts` skips a reference at the issue path),
+ * so the compiler was the only one of the three layers rejecting it.
+ *
+ * Functions are left alone rather than mapped — nothing in an activity's args
+ * is callable, and mapping one would silently strip its call signature.
  */
-export type WithStepRefs<T> = { [K in keyof T]: T[K] | StepOutputRef };
+type StepRefAt<V> =
+  | StepOutputRef
+  | (V extends Function ? V
+    : V extends readonly (infer E)[] ? (V extends unknown[] ? StepRefAt<E>[] : readonly StepRefAt<E>[])
+    : V extends object ? { [K in keyof V]: StepRefAt<V[K]> }
+    : V);
+
+/**
+ * `T` with every property — at any depth — additionally accepting a {@link
+ * StepOutputRef} in its place (chant #1288 Stage 2, deepened in #2414) — the
+ * authoring-time counterpart of `args` accepting a reference anywhere in the
+ * structure (#1290): a typed step-builder wrapper whose opts type is
+ * `WithStepRefs<SomeActivityArgs>` lets an author pass
+ * `diff.out.driftedStacks` for any field without an `as` cast, while runtime
+ * validation of the reference itself is still `validateStepOutputRefs`' job,
+ * not this type's.
+ */
+export type WithStepRefs<T> = { [K in keyof T]: StepRefAt<T[K]> };
 
 /** Structural guard for a value produced by {@link stepOutput} (or `activity()`'s `.out`). */
 export function isStepOutputRef(value: unknown): value is StepOutputRef {

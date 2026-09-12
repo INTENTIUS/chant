@@ -313,6 +313,20 @@ export const lifecycleSnapshot = (env: string, opts?: { id?: string }): NamedAct
  * purpose is to run something chant does not model, so a failed command is
  * not repeated unless the author says it may be. Name `fastIdempotent` or
  * `longInfra` to get retries back for a command that is safe to repeat.
+ *
+ * Give the step an `id` and later steps can read what it produced —
+ * `sh.out.stdout`, `sh.out.stderr`, `sh.out.exitCode` (#2413) — and a value
+ * from an earlier step reaches the command through `env` (#2414):
+ *
+ * ```ts
+ * const host = shell("terraform output -raw host", { id: "host" });
+ * shell("./smoke.sh", { env: { HOST: host.out.stdout } });
+ * ```
+ *
+ * `cmd` stays a plain `string` and takes no references. A value spliced into
+ * a command line is a quoting decision chant would then be making on the
+ * author's behalf, and `env` carries the same value into the same command
+ * with the shell's own rules intact.
  */
 export const shell = (
   cmd: string,

@@ -14,7 +14,7 @@ Pre-built step builders:
 
 | Builder | What it does |
 |---------|-------------|
-| `shell(cmd, opts?)` | Run an arbitrary shell command |
+| `shell(cmd, opts?)` | Run an arbitrary shell command; returns `stdout`, `stderr`, `exitCode` |
 | `build(path)` | Run `chant build` |
 | `kubectlApply(manifest, opts?)` | Server-side apply a manifest as chant's field manager |
 | `helmInstall(name, chart, opts?)` | `helm upgrade --install` |

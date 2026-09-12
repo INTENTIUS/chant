@@ -37,9 +37,25 @@ export const lifecycleDiffContract = activityContract(
   z.object({ output: z.string(), exitCode: z.number(), drifted: z.boolean() }),
 );
 
+/**
+ * The escape hatch (#2413). `returns` is what `shellCmd` captured and used to
+ * throw away: the trimmed stdout, the trimmed stderr, and the exit code —
+ * which only ever differs from `0` when the step named that code in `okExit`,
+ * since anything else still rejects.
+ *
+ * Running a command chant does not model in order to discard what it produced
+ * is the odd case, not the normal one, so the value a later step reads through
+ * `sh.out.stdout` is the point of the step rather than an extra.
+ */
 export const shellCmdContract = activityContract(
   "shellCmd",
-  z.strictObject({ cmd: z.string(), env: z.record(z.string(), z.string()).optional(), cwd: z.string().optional() }),
+  z.strictObject({
+    cmd: z.string(),
+    env: z.record(z.string(), z.string()).optional(),
+    cwd: z.string().optional(),
+    okExit: z.array(z.number()).optional(),
+  }),
+  z.object({ stdout: z.string(), stderr: z.string(), exitCode: z.number() }),
 );
 
 export const httpCheckContract = activityContract(

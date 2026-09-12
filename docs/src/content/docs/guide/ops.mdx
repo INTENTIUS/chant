@@ -91,6 +91,29 @@ That marker decides which issue a run edits, so it has to name the Op. `issue` m
 
 The credential works the way `comment` mode's does. `CHANT_FORGEJO_TOKEN` is read first. `GH_TOKEN` and then `GITHUB_TOKEN` follow it. Whichever wins is forwarded to `gh` as `GH_TOKEN`. A GitHub Actions or Forgejo Actions job already sets the last two from `github.token`, so the ordinary case needs nothing extra. Set `CHANT_FORGEJO_TOKEN` when the run has to post to a Forgejo instance other than the one it executes on, since `github.token` does not reach past its own host. A run with none of the three fails by name before it shells out to `gh`. The exception is a local run outside any CI job, which opens its issue through `gh issue create` and leaves the credential to your own `gh auth login`.
 
+### Passing a value from one step to the next
+
+Give a step an `id` and later steps can read what it returned. `shell()` publishes `stdout`, `stderr` (both trimmed) and `exitCode` ([#2413](https://github.com/INTENTIUS/chant/issues/2413)).
+
+```typescript
+const host = shell("terraform output -raw db_host", { id: "host" });
+
+phase("Smoke", [
+  host,
+  shell("./smoke.sh", { env: { HOST: host.out.stdout } }),
+]),
+```
+
+The reference is inert until the run resolves it, so nothing is interpolated at build time, and OPS013 checks it against the producer's declared return type before `chant build` emits.
+
+`cmd` itself takes no references and stays a plain string. A value spliced into a command line is a quoting decision, and `env` carries the same value into the same command with the shell's own rules intact.
+
+A non-zero exit still fails the step. `okExit` names the codes that do not, which is what makes `exitCode` worth reading at all. A command that reports its answer through its exit status, the way `diff` and `grep` do, then becomes a value a later step can branch on rather than a failed run.
+
+```typescript
+const changed = shell("git diff --quiet HEAD~1 -- migrations/", { okExit: [0, 1], id: "changed" });
+```
+
 ## Gate steps
 
 A gate is a fact on the gate ledger: a run that reaches one with no resolution records that it is waiting and ends there. Typical gate scenarios:
