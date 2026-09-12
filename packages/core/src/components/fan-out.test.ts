@@ -265,6 +265,15 @@ describe("finishing a fan-out that stopped", () => {
     expect(rest.waves).toEqual([]);
   });
 
+  test("a component downstream of two failures names the same one either way", () => {
+    const joined = [c("left"), c("right"), c("join", ["left", "right"])];
+    const plan = planFanOut({ components: joined, changed: ["left", "right"] });
+    const one = remainingFanOut(plan, joined, { failed: ["left", "right"] });
+    const other = remainingFanOut(plan, joined, { failed: ["right", "left"] });
+    expect(other.skipped).toEqual(one.skipped);
+    expect(one.skipped).toContainEqual({ component: "join", reason: "blocked", blockedBy: "left" });
+  });
+
   test("progress naming a component outside the plan is ignored rather than trusted", () => {
     // `billing` was never selected, so a stale record claiming it completed
     // must not quietly widen or narrow the approved fan-out.

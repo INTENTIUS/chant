@@ -346,7 +346,10 @@ export function remainingFanOut(
   // Everything downstream of a failure, within the plan, and who blocked it.
   const consumers = consumersOf(components);
   const blockedBy = new Map<string, string>();
-  const queue = [...failed];
+  // Sorted, so a component downstream of two separate failures always names the
+  // same one. Unsorted, the report would depend on the order the caller listed
+  // the failures in, which is not a fact about anything.
+  const queue = [...failed].sort();
   while (queue.length > 0) {
     const node = queue.shift()!;
     for (const consumer of consumers.get(node) ?? []) {
