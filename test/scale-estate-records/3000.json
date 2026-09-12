@@ -1,0 +1,112 @@
+{
+  "schema": 3,
+  "estate": "chant-scale-estate",
+  "target": "floci",
+  "scale": 8,
+  "commit": "3d82057f6f8b72e4b4b0a0ce23e1c1331b9228ba",
+  "emulator": "ghcr.io/lex00/floci@sha256:0bbeb43075c9df9c7e06311cd4eec99a354594d304faa4fe5899b494a009d23d",
+  "resources": {
+    "total": 3088,
+    "taggable": 3088,
+    "skipped": 0
+  },
+  "stages": {
+    "cold_deploy": {
+      "verdict": "pass",
+      "seconds": 79,
+      "detail": "8/8 stacks, 3088/3088 resources",
+      "stacks": [
+        {
+          "name": "scale-stack-000",
+          "seconds": 7,
+          "anomaly": null
+        },
+        {
+          "name": "scale-stack-001",
+          "seconds": 6,
+          "anomaly": null
+        },
+        {
+          "name": "scale-stack-002",
+          "seconds": 6,
+          "anomaly": null
+        },
+        {
+          "name": "scale-stack-003",
+          "seconds": 6,
+          "anomaly": null
+        },
+        {
+          "name": "scale-stack-004",
+          "seconds": 6,
+          "anomaly": null
+        },
+        {
+          "name": "scale-stack-005",
+          "seconds": 6,
+          "anomaly": null
+        },
+        {
+          "name": "scale-stack-006",
+          "seconds": 7,
+          "anomaly": null
+        },
+        {
+          "name": "scale-stack-007",
+          "seconds": 7,
+          "anomaly": null
+        }
+      ],
+      "median_seconds": 6,
+      "anomaly_detected": false
+    }
+  },
+  "reads": {
+    "cold_plan": {
+      "command": "chant lifecycle plan local",
+      "verdict": "pass",
+      "seconds": 3,
+      "detail": "create=0 noop=3088 unobserved=0 calls_total=16",
+      "calls": {
+        "total": {
+          "chant": 16
+        },
+        "by_action": {
+          "DescribeStackResources": 8,
+          "DescribeStacks": 8
+        }
+      },
+      "per_stack": 2
+    },
+    "snapshot": {
+      "command": "chant lifecycle snapshot local",
+      "verdict": "pass",
+      "seconds": 4,
+      "detail": "saved=8/8 calls_total=16",
+      "calls": {
+        "total": {
+          "chant": 16
+        },
+        "by_action": {
+          "DescribeStackResources": 8,
+          "DescribeStacks": 8
+        }
+      },
+      "per_stack": 2
+    },
+    "warm_diff": {
+      "command": "chant lifecycle diff local",
+      "verdict": "pass",
+      "seconds": 3,
+      "detail": "unchanged=3088 changed=0 added=0 removed=0 calls_total=0",
+      "calls": {
+        "total": {
+          "chant": 0
+        },
+        "by_action": {}
+      },
+      "per_stack": 0
+    }
+  },
+  "source": "test/scale-estate.sh"
+}

@@ -10,10 +10,18 @@ set -euo pipefail
 # each measured independently through a counting proxy:
 #
 #   1. cold_plan — `chant lifecycle plan local`. Unconditionally live: no
-#      flag defers it, `--live` doesn't exist for this command (#2405). This
-#      is the expensive path: it discovers every stack's own *.component.ts
-#      and observes each (packages/core/src/cli/handlers/lifecycle.ts's
-#      componentStacks), including the deep held-properties pass.
+#      flag defers it, `--live` doesn't exist for this command (#2405). It
+#      discovers every stack's own *.component.ts and observes each
+#      (packages/core/src/cli/handlers/lifecycle.ts's componentStacks) —
+#      two calls per stack (DescribeStackResources + DescribeStacks),
+#      nothing per resource, same as snapshot below. It was the expensive
+#      path (the deep held-properties pass ran whenever the lexicon could
+#      do it, ~1 call per resource) until #2407 (2026-09-11, landed on main
+#      ahead of this file's own #2409 merge) gated that pass behind an
+#      explicit `--deep` this invocation does not pass. Measured against
+#      chant#2403's own climb (1,158 / 3,088 / 10,036 resources): flat at
+#      2 calls per stack at every size — the `--deep` number is a different,
+#      currently unmeasured read this harness would need a fourth arm for.
 #   2. snapshot — `chant lifecycle snapshot local`. Also live (it is what
 #      populates the cache: two calls per stack, DescribeStackResources +
 #      DescribeStacks, nothing per resource), and writes the result to the
