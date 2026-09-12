@@ -266,10 +266,15 @@ describe("profile routing (opts.profile sets the step profile, never leaks into 
     expect("profile" in (a.args ?? {})).toBe(false);
   });
 
-  it("shell() without profile leaves the step unprofiled (defaults apply downstream)", () => {
+  it("shell() without profile names atMostOnce, so the retrying default cannot apply (#2411)", () => {
+    // It used to leave the step unprofiled and let the executor's default
+    // apply, which meant the one activity chant cannot know is idempotent
+    // inherited three attempts by omission. The builder names its profile now,
+    // the way terraformPlan and terraformApply already did.
     const a = shell("echo hi", { env: { A: "1" } });
-    expect("profile" in a).toBe(false);
+    expect(a.profile).toBe("atMostOnce");
     expect(a.args?.env).toEqual({ A: "1" });
+    expect("profile" in (a.args ?? {})).toBe(false);
   });
 
   it("build() accepts a profile override and does not leak it into args", () => {

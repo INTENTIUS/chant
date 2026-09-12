@@ -10,10 +10,24 @@ import { activity } from "./builders";
  * in an in-process step, so it did not come along.
  */
 describe("ACTIVITY_PROFILES", () => {
-  test("carries the six named profiles", () => {
+  test("carries the seven named profiles", () => {
     expect(Object.keys(ACTIVITY_PROFILES).sort()).toEqual(
-      ["argoSync", "fastIdempotent", "humanGate", "k8sWait", "longInfra", "policyCheck"],
+      ["argoSync", "atMostOnce", "fastIdempotent", "humanGate", "k8sWait", "longInfra", "policyCheck"],
     );
+  });
+
+  test("atMostOnce runs once, and is the only non-gate profile that does (#2411)", () => {
+    expect(ACTIVITY_PROFILES.atMostOnce.retry.maximumAttempts).toBe(1);
+    // The two other single-attempt profiles carry semantics a shell step must
+    // not borrow: a gate's single attempt is about not re-asking a human, and
+    // a policy check's is about not re-running an evaluation. A run ledger
+    // that called a shell step either of those would be saying something
+    // false about what ran.
+    const singleAttempt = Object.entries(ACTIVITY_PROFILES)
+      .filter(([, p]) => p.retry.maximumAttempts === 1)
+      .map(([name]) => name)
+      .sort();
+    expect(singleAttempt).toEqual(["atMostOnce", "humanGate", "policyCheck"]);
   });
 
   test("every profile has a timeout, and none has a worker-era field", () => {
