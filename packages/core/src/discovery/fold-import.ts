@@ -307,6 +307,19 @@ export function createFoldSession(
   buildParams?: Readonly<Record<string, BuildParamValue>>,
   lexicons: readonly string[] = [],
   sandbox = false,
+  /**
+   * chant#2438 — package specifiers to allow verbatim, alongside the ones
+   * derived from `lexicons`.
+   *
+   * A chant build's active packages are always `@intentius/chant-lexicon-*`,
+   * so naming lexicons is the whole story there. A caller embedding the fold
+   * path against a host that is not a chant lexicon has packages the naming
+   * convention cannot express: the specification's conformance harness supplies
+   * `@tsad/shapes`, which is its host's own specifier. The boundary is
+   * unchanged, an explicitly named package of this build, only now it can be
+   * named as a specifier rather than only as a lexicon.
+   */
+  lexiconPackages: readonly string[] = [],
 ): FoldSession {
   return {
     intrinsics,
@@ -315,7 +328,7 @@ export function createFoldSession(
     importCache: new Map(),
     resolvePathCache: new Map(),
     buildParams,
-    lexiconPackages: new Set(lexicons.map(lexiconPackageName)),
+    lexiconPackages: new Set([...lexicons.map(lexiconPackageName), ...lexiconPackages]),
     sandbox,
     factoryModules: new Map(),
   };
@@ -4099,6 +4112,20 @@ export interface FoldProjectOptions {
   readonly buildParams?: Readonly<Record<string, BuildParamValue>>;
   /** chant #1093: this build asked for the sandbox, so fold may not reach outside the trusted allowlist. */
   readonly sandbox?: boolean;
+  /**
+   * chant#2438 — package specifiers to follow a bare import into, verbatim,
+   * alongside whatever `lexicons` names.
+   *
+   * For a chant project this is never needed: an active package is always
+   * `@intentius/chant-lexicon-<name>`, which `lexicons` already expresses. It
+   * is here for a caller driving the fold path against a host of its own, where
+   * the package has a name chant's convention cannot spell. The specification's
+   * conformance harness is the first such caller, with `@tsad/shapes`.
+   *
+   * The boundary does not move. This is still an allowlist the caller states
+   * outright, matched by text, and absent it nothing bare resolves at all.
+   */
+  readonly lexiconPackages?: readonly string[];
 }
 
 /** One file's place in a whole-build fold, as {@link foldProject} reports it. */
@@ -4146,6 +4173,7 @@ export async function foldProject(
     options.buildParams,
     options.lexicons ?? [],
     options.sandbox ?? false,
+    options.lexiconPackages ?? [],
   );
   const attempts = new Map<string, FoldFileResult>();
   for (const file of files) attempts.set(file, await tryFoldFile(file, intrinsics, session));
