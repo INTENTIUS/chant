@@ -1,7 +1,7 @@
 import { describe, test, expect } from "vitest";
 import * as ts from "typescript";
 import { fold, foldResource, collectConsts, FoldError } from "./fold";
-import { briefNodeText, callExpressionMessage, findSubsetViolation } from "./subset";
+import { briefNodeText, callExpressionMessage, findSubsetViolation, collectLocalCallables } from "./subset";
 import { evl001NonLiteralExpressionRule } from "../lint/rules/evl001-non-literal-expression";
 import { evl003DynamicPropertyAccessRule } from "../lint/rules/evl003-dynamic-property-access";
 import { evl004SpreadNonConstRule } from "../lint/rules/evl004-spread-non-const";
@@ -548,5 +548,133 @@ describe("callExpressionMessage — one line regardless of the call's own argume
     const message = callExpressionMessage(call);
 
     expect(message).toBe("function call as a value is not foldable: GkeCluster(...)");
+  });
+});
+
+/**
+ * chant#2435 — `S-CallLocal`.
+ *
+ * The classifier rejected every call to a project-local function while the
+ * build folds all of them, which is the one direction `F-Direction` forbids:
+ * this module may accept what the fold rejects, never the reverse. In practice
+ * it meant `chant lint` reported EVL001 on a file `chant build --fold` folds
+ * cleanly.
+ *
+ * The admission is by NAME and the names come from the node's own source file,
+ * so nothing a caller does changes the answer.
+ */
+describe("findSubsetViolation — project-local calls (chant#2435)", () => {
+  /** The initializer of `export const x = …` in `src`, with its file attached. */
+  const initializerOf = (src: string): ts.Expression => {
+    const sourceFile = ts.createSourceFile("m.ts", src, ts.ScriptTarget.Latest, true);
+    for (const statement of sourceFile.statements) {
+      if (!ts.isVariableStatement(statement)) continue;
+      for (const decl of statement.declarationList.declarations) {
+        if (ts.isIdentifier(decl.name) && decl.name.text === "x" && decl.initializer) return decl.initializer;
+      }
+    }
+    throw new Error("fixture has no `x`");
+  };
+  const accepts = (src: string) => findSubsetViolation(initializerOf(src)) === undefined;
+
+  describe("admitted, because a build folds them", () => {
+    test("a same-file function declaration, exported or not", () => {
+      expect(accepts("function twice(n: number) { return n * 2; }\nexport const x = twice(21);")).toBe(true);
+      expect(accepts("export function twice(n: number) { return n * 2; }\nexport const x = twice(21);")).toBe(true);
+    });
+
+    test("a same-file arrow const, through parentheses and `as`", () => {
+      expect(accepts('const label = (s: string) => ({ label: s });\nexport const x = label("k");')).toBe(true);
+      expect(accepts('const label = ((s: string) => s) as (s: string) => string;\nexport const x = label("k");')).toBe(true);
+    });
+
+    test("a name imported from a project specifier", () => {
+      expect(accepts('import { twice } from "./pure";\nexport const x = twice(21);')).toBe(true);
+      expect(accepts('import { twice } from "../lib/pure";\nexport const x = twice(21);')).toBe(true);
+    });
+
+    test("a default import from a project specifier", () => {
+      expect(accepts('import make from "./make";\nexport const x = make(1);')).toBe(true);
+    });
+  });
+
+  describe("still rejected, so the diagnostic keeps its value", () => {
+    test("a call to a name imported from a package", () => {
+      expect(accepts('import { v4 } from "uuid";\nexport const x = v4();')).toBe(false);
+    });
+
+    test("a call to a name the file never binds", () => {
+      expect(accepts("export const x = getId();")).toBe(false);
+    });
+
+    test("a local name that shadows nothing local — the specifier decides, not the name", () => {
+      expect(accepts('import { twice } from "some-package";\nexport const x = twice(1);')).toBe(false);
+    });
+
+    test("a type-only import, which is erased before anything can call it", () => {
+      expect(accepts('import type { T } from "./t";\nexport const x = T();')).toBe(false);
+      expect(accepts('import { type T } from "./t";\nexport const x = T();')).toBe(false);
+    });
+
+    test("a `let`-bound arrow, which `S-LocalFunction` does not admit", () => {
+      expect(accepts("let f = (n: number) => n;\nexport const x = f(1);")).toBe(false);
+    });
+
+    test("a function nested inside another, so not a top-level binding", () => {
+      expect(accepts("function outer() { function inner() { return 1; } return inner; }\nexport const x = inner();")).toBe(false);
+    });
+
+    test("an argument outside the subset, even when the callee is local", () => {
+      const violation = findSubsetViolation(
+        initializerOf("function twice(n: number) { return n; }\nexport const x = twice(getId());"),
+      );
+      expect(violation?.ruleId).toBe("EVL001");
+      // The rejection points at the argument, not at the admitted call.
+      expect(violation?.node.getText()).toBe("getId()");
+    });
+  });
+
+  describe("collectLocalCallables", () => {
+    test("collects each binding kind, and nothing else", () => {
+      const sourceFile = ts.createSourceFile(
+        "m.ts",
+        [
+          'import { fromProject } from "./p";',
+          'import fromProjectDefault from "./d";',
+          'import { fromPackage } from "pkg";',
+          'import type { TypeOnly } from "./t";',
+          "export function declared() { return 1; }",
+          "const arrowConst = () => 1;",
+          "let notConst = () => 1;",
+          "const notAFunction = 1;",
+        ].join("\n"),
+        ts.ScriptTarget.Latest,
+        true,
+      );
+
+      expect([...collectLocalCallables(sourceFile)].sort()).toEqual([
+        "arrowConst",
+        "declared",
+        "fromProject",
+        "fromProjectDefault",
+      ]);
+    });
+
+    test("is memoized per source file, so a large file is walked once", () => {
+      const sourceFile = ts.createSourceFile("m.ts", "function f() { return 1; }", ts.ScriptTarget.Latest, true);
+      expect(collectLocalCallables(sourceFile)).toBe(collectLocalCallables(sourceFile));
+    });
+  });
+
+  test("the local-callable lookup is not a new failure mode for a node with no file", () => {
+    // A synthetic node has no parent chain, so `getSourceFile()` throws. That
+    // is pre-existing: `violation()` renders the offending node with
+    // `getText()`, which throws for the same reason, so this shape was never
+    // supported. What is asserted here is narrower and is what chant#2435
+    // could have broken: the lookup added in front of that rejection swallows
+    // the throw instead of turning it into a different error.
+    const synthetic = ts.factory.createCallExpression(ts.factory.createIdentifier("twice"), undefined, []);
+    expect(() => collectLocalCallables(synthetic.getSourceFile())).toThrow();
+    expect(() => findSubsetViolation(synthetic)).toThrow(/Cannot read|undefined|getSourceFile|getText/i);
   });
 });

@@ -43,7 +43,7 @@ export * from "./fold/fold";
 // fold?" of without running a fold (subset.ts module doc, point 2c), and the
 // half of the fold subset a conformance adapter needs that `fold()` alone
 // does not expose. INTENTIUS/typescript-as-data#11.
-export { findSubsetViolation, checkObjectMember, type SubsetViolation, type SubsetRuleId } from "./fold/subset";
+export { findSubsetViolation, checkObjectMember, collectLocalCallables, type SubsetViolation, type SubsetRuleId } from "./fold/subset";
 // The version of the TypeScript-as-Data specification chant implements
 // (INTENTIUS/typescript-as-data#18, chant#2424). The specification's
 // conformance adapter reads this off the public entry; without it a suite
