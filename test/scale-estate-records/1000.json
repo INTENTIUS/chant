@@ -1,0 +1,87 @@
+{
+  "schema": 3,
+  "estate": "chant-scale-estate",
+  "target": "floci",
+  "scale": 3,
+  "commit": "3d82057f6f8b72e4b4b0a0ce23e1c1331b9228ba",
+  "emulator": "ghcr.io/lex00/floci@sha256:0bbeb43075c9df9c7e06311cd4eec99a354594d304faa4fe5899b494a009d23d",
+  "resources": {
+    "total": 1158,
+    "taggable": 1158,
+    "skipped": 0
+  },
+  "stages": {
+    "cold_deploy": {
+      "verdict": "pass",
+      "seconds": 30,
+      "detail": "3/3 stacks, 1158/1158 resources",
+      "stacks": [
+        {
+          "name": "scale-stack-000",
+          "seconds": 6,
+          "anomaly": null
+        },
+        {
+          "name": "scale-stack-001",
+          "seconds": 6,
+          "anomaly": null
+        },
+        {
+          "name": "scale-stack-002",
+          "seconds": 6,
+          "anomaly": null
+        }
+      ],
+      "median_seconds": 6,
+      "anomaly_detected": false
+    }
+  },
+  "reads": {
+    "cold_plan": {
+      "command": "chant lifecycle plan local",
+      "verdict": "pass",
+      "seconds": 3,
+      "detail": "create=0 noop=1158 unobserved=0 calls_total=6",
+      "calls": {
+        "total": {
+          "chant": 6
+        },
+        "by_action": {
+          "DescribeStackResources": 3,
+          "DescribeStacks": 3
+        }
+      },
+      "per_stack": 2
+    },
+    "snapshot": {
+      "command": "chant lifecycle snapshot local",
+      "verdict": "pass",
+      "seconds": 3,
+      "detail": "saved=3/3 calls_total=6",
+      "calls": {
+        "total": {
+          "chant": 6
+        },
+        "by_action": {
+          "DescribeStackResources": 3,
+          "DescribeStacks": 3
+        }
+      },
+      "per_stack": 2
+    },
+    "warm_diff": {
+      "command": "chant lifecycle diff local",
+      "verdict": "pass",
+      "seconds": 3,
+      "detail": "unchanged=1158 changed=0 added=0 removed=0 calls_total=0",
+      "calls": {
+        "total": {
+          "chant": 0
+        },
+        "by_action": {}
+      },
+      "per_stack": 0
+    }
+  },
+  "source": "test/scale-estate.sh"
+}
