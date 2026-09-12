@@ -1319,11 +1319,24 @@ export async function runLifecyclePlan(ctx: CommandContext): Promise<number> {
 
       Object.assign(allObservedResources, observed.resources);
 
-      // Held properties (#2162): opt-in on the same capability the deep diff
-      // path gates on. A held property is never a proposal, so it is
-      // computed here (once per lexicon, against this same observation) and
-      // carried on the plan beside `entries` rather than folded into one.
-      if (plugin.observeResourcesDeep) {
+      // Held properties (#2162), behind `--deep` since #2405.
+      //
+      // A held property is never a proposal: it is computed against this same
+      // observation and carried on the plan beside `entries`, never folded
+      // into one. So the entries a plan proposes are identical whether this
+      // ran or not, and the only thing `--deep` buys is the HELD section.
+      //
+      // It used to run whenever the lexicon could, which made the read's cost
+      // a function of how many resources an estate holds rather than how it is
+      // organised. Measured on 528 resources across 8 stacks: 24 stack-shaped
+      // calls, and 496 from this pass. At ten thousand resources that is
+      // roughly twenty thousand calls against eighty, for a section the caller
+      // did not ask for.
+      //
+      // `--deep` is the flag `lifecycle snapshot` already uses for the same
+      // choice, and `lifecycle diff` still runs the pass unconditionally
+      // because property drift is the question it exists to answer.
+      if (args.deep && plugin.observeResourcesDeep) {
         const deep = await deepDiffForLexicon(plugin, {
           environment,
           buildOutput,
