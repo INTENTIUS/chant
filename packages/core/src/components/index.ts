@@ -107,8 +107,10 @@ export {
   type FanOutSkipReason,
   type ChangedUnits,
   type ComponentChangeSignal,
+  type FanOutProgress,
   planFanOut,
   componentsForUnits,
+  remainingFanOut,
   UnknownComponentError,
 } from "./fan-out";
 export {

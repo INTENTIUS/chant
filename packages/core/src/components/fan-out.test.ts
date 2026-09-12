@@ -7,7 +7,7 @@
  */
 
 import { describe, test, expect } from "vitest";
-import { componentsForUnits, planFanOut, UnknownComponentError } from "./fan-out";
+import { componentsForUnits, planFanOut, remainingFanOut, UnknownComponentError } from "./fan-out";
 import { DependencyCycleError, UnknownDependencyError, type DriverComponent } from "./driver";
 
 const c = (name: string, dependsOn?: string[]): DriverComponent =>
@@ -210,5 +210,66 @@ describe("joining a stack-level change signal to components", () => {
     const signal = componentsForUnits(graph, { changed: ["core-stack"] });
     const plan = planFanOut({ components: graph, changed: signal.changed, indeterminate: signal.indeterminate });
     expect(plan.order).toEqual(["core", "edge"]);
+  });
+});
+
+describe("finishing a fan-out that stopped", () => {
+  const plan = () => planFanOut({ components: ESTATE, changed: ["net"] });
+
+  test("a re-run does not redo what already applied", () => {
+    const rest = remainingFanOut(plan(), ESTATE, { completed: ["net", "cluster-a"] });
+    // cluster-a's apps are free immediately, because the thing they waited for
+    // is already applied; app-three still waits behind cluster-b.
+    expect(rest.waves).toEqual([["app-one", "app-two", "cluster-b"], ["app-three"]]);
+    expect(rest.order).toEqual(["app-one", "app-two", "cluster-b", "app-three"]);
+    expect(rest.skipped).toContainEqual({ component: "net", reason: "already-applied" });
+  });
+
+  test("the approval survives: the digest is the one that was approved", () => {
+    const original = plan();
+    const rest = remainingFanOut(original, ESTATE, { completed: ["net"], failed: [] });
+    // Re-deriving would mint a new identity and invalidate a standing
+    // resolution, which is exactly what a resumed run must not do.
+    expect(rest.digest).toBe(original.digest);
+  });
+
+  test("a failure blocks its subtree and nothing else", () => {
+    const rest = remainingFanOut(plan(), ESTATE, { completed: ["net"], failed: ["cluster-a"] });
+    // cluster-b shares no edge with the failure, so it and its app still run.
+    expect(rest.order).toEqual(["cluster-b", "app-three"]);
+    expect(rest.skipped).toContainEqual({ component: "app-one", reason: "blocked", blockedBy: "cluster-a" });
+    expect(rest.skipped).toContainEqual({ component: "app-two", reason: "blocked", blockedBy: "cluster-a" });
+  });
+
+  test("a blocked component names the failure to fix, not the nearest edge", () => {
+    // net → cluster-a → app-one: app-one is two hops from the failure.
+    const rest = remainingFanOut(plan(), ESTATE, { failed: ["net"] });
+    for (const name of ["cluster-a", "cluster-b", "app-one", "app-two", "app-three"]) {
+      expect(rest.skipped).toContainEqual({ component: name, reason: "blocked", blockedBy: "net" });
+    }
+    expect(rest.order).toEqual([]);
+  });
+
+  test("a completed dependency does not hold its dependents back a wave", () => {
+    const rest = remainingFanOut(plan(), ESTATE, { completed: ["net"] });
+    expect(rest.waves[0]).toEqual(["cluster-a", "cluster-b"]);
+    // And its outputs have to be seeded, like any dependency not running.
+    expect(rest.seeds).toEqual(["net"]);
+  });
+
+  test("nothing left to do is an empty plan, not an error", () => {
+    const rest = remainingFanOut(plan(), ESTATE, {
+      completed: ["net", "cluster-a", "cluster-b", "app-one", "app-two", "app-three"],
+    });
+    expect(rest.order).toEqual([]);
+    expect(rest.waves).toEqual([]);
+  });
+
+  test("progress naming a component outside the plan is ignored rather than trusted", () => {
+    // `billing` was never selected, so a stale record claiming it completed
+    // must not quietly widen or narrow the approved fan-out.
+    const rest = remainingFanOut(plan(), ESTATE, { completed: ["billing"], failed: ["billing"] });
+    expect(rest.order).toEqual(plan().order);
+    expect(rest.digest).toBe(plan().digest);
   });
 });

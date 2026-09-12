@@ -57,11 +57,17 @@ export type FanOutSkipReason =
   /** Nothing it depends on moved, and it did not move itself. */
   | "unaffected"
   /** Its inputs arrive at deploy time, so a source diff cannot judge it. */
-  | "indeterminate";
+  | "indeterminate"
+  /** It already applied in an earlier attempt at this same fan-out. */
+  | "already-applied"
+  /** Something it depends on failed, so the value it would read never landed. */
+  | "blocked";
 
 export interface FanOutSkip {
   component: string;
   reason: FanOutSkipReason;
+  /** For `blocked`, the failed component the walk reached this one from. */
+  blockedBy?: string;
 }
 
 export interface FanOutRequest {
@@ -295,4 +301,99 @@ export function componentsForUnits(
     indeterminate: indeterminate.sort(),
     unclaimed: [...new Set(unclaimed)].sort(),
   };
+}
+
+// ── Finishing a fan-out that stopped ─────────────────────────────────────────
+
+export interface FanOutProgress {
+  /** Components that reached `ok` in an earlier attempt at this same plan. */
+  completed?: string[];
+  /** Components that failed. Everything downstream of one is blocked, not failed. */
+  failed?: string[];
+}
+
+/**
+ * Narrow a plan to what still has to run.
+ *
+ * **The digest does not change.** That is the whole point: an operator approved
+ * a fan-out, a component in the middle of it failed, and finishing the work
+ * they already approved must not ask them to approve it again. `remainingFanOut`
+ * returns the same `digest` the original derivation produced, so the standing
+ * resolution still satisfies the gate on the next attempt. Re-deriving with
+ * {@link planFanOut} would mint a new identity and invalidate the approval,
+ * which is why resume narrows a plan rather than recomputing one.
+ *
+ * **A component beneath a failure is `blocked`, never `failed`.** Nothing about
+ * it failed. It did not run because the value it would have read never landed,
+ * and the distinction is what makes the next attempt legible: an operator
+ * reading `blocked by "cluster-a"` knows to fix one thing, not fourteen.
+ *
+ * **Independent branches keep going.** The order was derived from the source,
+ * so a branch that shares no edge with the failure is *known* to be independent
+ * rather than assumed to be. Stopping it is the conservative-looking choice
+ * that throws away the reason for deriving the graph in the first place.
+ */
+export function remainingFanOut(
+  plan: FanOutPlan,
+  components: DriverComponent[],
+  progress: FanOutProgress,
+): FanOutPlan {
+  const byName = new Map(components.map((c) => [c.name, c]));
+  const planned = new Set(plan.order);
+  const completed = new Set((progress.completed ?? []).filter((n) => planned.has(n)));
+  const failed = new Set((progress.failed ?? []).filter((n) => planned.has(n)));
+
+  // Everything downstream of a failure, within the plan, and who blocked it.
+  const consumers = consumersOf(components);
+  const blockedBy = new Map<string, string>();
+  const queue = [...failed];
+  while (queue.length > 0) {
+    const node = queue.shift()!;
+    for (const consumer of consumers.get(node) ?? []) {
+      if (!planned.has(consumer) || failed.has(consumer) || blockedBy.has(consumer)) continue;
+      // Named for the failure the walk reached it from, so the report points at
+      // the thing to fix rather than at the nearest edge.
+      blockedBy.set(consumer, failed.has(node) ? node : blockedBy.get(node)!);
+      queue.push(consumer);
+    }
+  }
+
+  const runnable = new Set(
+    plan.order.filter((n) => !completed.has(n) && !failed.has(n) && !blockedBy.has(n)),
+  );
+
+  // Re-layer what is left. A dependency that already applied is satisfied, so
+  // it does not hold its dependents back — the same rule the original
+  // derivation applies to a dependency outside the selection.
+  const remaining = new Set(runnable);
+  const deps = new Map(
+    [...runnable].map((n) => [n, new Set((byName.get(n)?.dependsOn ?? []).filter((d) => runnable.has(d)))]),
+  );
+  const waves: string[][] = [];
+  while (remaining.size > 0) {
+    const wave = [...remaining].filter((n) => [...deps.get(n)!].every((d) => !remaining.has(d))).sort();
+    for (const n of wave) remaining.delete(n);
+    waves.push(wave);
+  }
+  const order = waves.flat();
+
+  // A completed component's outputs have to be seeded for a reference to
+  // resolve, exactly like a component that was never selected.
+  const seeds = [
+    ...new Set([
+      ...plan.seeds,
+      ...order.flatMap((n) => (byName.get(n)?.dependsOn ?? []).filter((d) => !runnable.has(d))),
+    ]),
+  ].sort();
+
+  const carried = plan.skipped.filter((s) => !runnable.has(s.component));
+  const skipped: FanOutSkip[] = [
+    ...carried,
+    ...[...completed].sort().map((component) => ({ component, reason: "already-applied" as const })),
+    ...[...blockedBy.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([component, by]) => ({ component, reason: "blocked" as const, blockedBy: by })),
+  ].sort((a, b) => a.component.localeCompare(b.component));
+
+  return { order, waves, skipped, seeds, indeterminate: plan.indeterminate, digest: plan.digest };
 }
