@@ -181,17 +181,33 @@ describe("examples/fold-adversarial — the fold/run split is the fixture (chant
     expect(seed.reverseTainted, "the seed was never overruled by the fixpoint; it could not fold").toBe(false);
     expect(seed.reason, "the seed's reason must be its own, not the fixpoint's").toContain("in a function body is not foldable");
 
-    for (const [name, edge] of [
-      ["taint-shared-config.ts", "forward: an importer that runs pulls its imports back"],
-      ["taint-capturing-sibling.ts", "reverse: a captured object's source pulls the capturer back"],
+    // chant#2406 — each row asserts the reason names the edge that actually
+    // fired. The reverse row used to be told it was imported by a file that
+    // runs, which is not true of it and sends a reader hunting for an importer
+    // that does not exist.
+    for (const [name, edge, expected] of [
+      [
+        "taint-shared-config.ts",
+        "forward: an importer that runs pulls its imports back",
+        "would fold in isolation, but a file that imports it",
+      ],
+      [
+        "taint-capturing-sibling.ts",
+        "reverse: a captured object's source pulls the capturer back",
+        "would fold in isolation, but it captured objects from",
+      ],
     ] as const) {
       const d = by(name);
       expect(d.mode, `${name} (${edge})`).toBe("run");
       expect(d.reverseTainted, `${name} folds in isolation; only the fixpoint puts it on the run path (${edge})`).toBe(
         true,
       );
-      expect(d.reason, `${name} (${edge})`).toContain("would fold in isolation, but a file that imports it");
+      expect(d.reason, `${name} (${edge})`).toContain(expected);
     }
+    expect(
+      by("taint-capturing-sibling.ts").reason,
+      "the reverse reason must name the file whose objects it captured",
+    ).toContain("taint-shared-config.ts");
 
     const control = by("taint-independent.ts");
     expect(control.mode, "the control must fold, or the three rows above prove nothing").toBe("fold");
@@ -233,5 +249,70 @@ describe("examples/fold-adversarial — the fold/run split is the fixture (chant
     expect(normalizeOutputs(fold.outputs), "and it agrees with run on everything it did produce").toEqual(
       normalizeOutputs(run.outputs),
     );
+  });
+});
+
+/**
+ * chant#2408 — the same split, through the public whole-build entry.
+ *
+ * The test above reads `discover()`'s own decisions, which are internal to a
+ * build. `foldProject` is the addressable form of the same thing, added so
+ * anything outside chant can check the cross-file rules: neither taint
+ * direction is observable one file at a time, so a per-file entry cannot be
+ * held to them. The specification's conformance suite is the first caller
+ * (INTENTIUS/typescript-as-data#62).
+ *
+ * Asserted against the same expectations, so the two entries cannot drift: if
+ * `foldProject` ever answers differently from the build it is meant to
+ * describe, this fails.
+ */
+describe("foldProject — the whole-build entry agrees with the build (chant#2408)", () => {
+  test("every file's verdict, tentative verdict and taint edge", async () => {
+    const { foldProject } = await import("../../packages/core/src/index");
+    const { findInfraFiles } = await import("../../packages/core/src/discovery/files");
+    const files = await findInfraFiles(SRC);
+    const verdicts = await foldProject(files, ALL_INTRINSICS);
+
+    expect(verdicts.size, "every discovered file gets a verdict").toBe(files.length);
+
+    for (const [file, v] of verdicts) {
+      const expected = EXPECTED_SPLIT.get(basename(file));
+      expect(expected, `${basename(file)} is not in EXPECTED_SPLIT`).toBeDefined();
+      if (!expected) continue;
+      expect(v.verdict, `${basename(file)} — ${expected.decisionPoint}`).toBe(expected.split.mode);
+      if (expected.split.mode === "fold") {
+        expect(v.tentative, `${basename(file)} folded, so its own attempt must have succeeded`).toBe("fold");
+        expect(v.exports, `${basename(file)} folded, so its namespace is present`).toBeDefined();
+        continue;
+      }
+      // A taint casualty folded on its own and was overruled; a blocker did not.
+      expect(v.tentative, `${basename(file)} — taintForced ${expected.split.taintForced}`).toBe(
+        expected.split.taintForced ? "fold" : "run",
+      );
+      if (expected.split.taintForced) {
+        expect(v.taintedBy, `${basename(file)} was moved by the fixpoint, so the edge is named`).toBeDefined();
+      } else {
+        expect(v.reason, `${basename(file)} could not fold, so it carries its own located reason`).toBeTruthy();
+      }
+    }
+  });
+
+  test("the two taint directions are distinguishable through the entry", async () => {
+    const { foldProject } = await import("../../packages/core/src/index");
+    const { findInfraFiles } = await import("../../packages/core/src/discovery/files");
+    const verdicts = await foldProject(await findInfraFiles(SRC), ALL_INTRINSICS);
+    const by = (name: string) => [...verdicts].find(([f]) => basename(f) === name)![1];
+
+    const forward = by("taint-shared-config.ts");
+    expect(forward.taintedBy?.kind, "an importer that runs pulls its imports back").toBe("importer");
+    expect(basename(forward.taintedBy!.from)).toBe("taint-run-only-importer.ts");
+
+    const backward = by("taint-capturing-sibling.ts");
+    expect(backward.taintedBy?.kind, "a captured object's source pulls the capturer back").toBe("capture");
+    expect(basename(backward.taintedBy!.from)).toBe("taint-shared-config.ts");
+
+    // The control: no edge reaches it, so there is nothing to name.
+    expect(by("taint-independent.ts").verdict).toBe("fold");
+    expect(by("taint-independent.ts").taintedBy).toBeUndefined();
   });
 });

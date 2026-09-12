@@ -3949,7 +3949,40 @@ export async function planFoldTaint(
   files: readonly string[],
   wouldFold: ReadonlyMap<string, boolean>,
   liveSources?: ReadonlyMap<string, ReadonlySet<string>>,
-): Promise<Set<string>> {
+): Promise<ReadonlySet<string>> {
+  return (await planFoldTaintWithEdges(files, wouldFold, liveSources)).tainted;
+}
+
+/** Which of the two rules put a file on the run path. */
+export type TaintEdgeKind =
+  /** A file this one imports, directly or transitively, falls back to run (#1023). */
+  | "importer"
+  /** This file captured the objects of a file that falls back to run (#1044). */
+  | "capture";
+
+export interface TaintPlan {
+  /** Every file that must run: the seed, plus everything reachable from it. */
+  readonly tainted: ReadonlySet<string>;
+  /**
+   * For a file the walk reached (never for a seed file), the file whose taint
+   * reached it and by which rule. chant#2406: the fallback reason has to name
+   * the actual edge — a reverse-tainted file is not imported by anything that
+   * runs, and saying it is sends a reader looking for an importer that does
+   * not exist.
+   */
+  readonly reachedBy: ReadonlyMap<string, { from: string; kind: TaintEdgeKind }>;
+}
+
+/**
+ * {@link planFoldTaint}'s walk, keeping the edge that fired for each file it
+ * reaches. Split out for two consumers that need to say *why*: the fallback
+ * reason in `discover()`, and {@link foldProject}'s verdicts.
+ */
+export async function planFoldTaintWithEdges(
+  files: readonly string[],
+  wouldFold: ReadonlyMap<string, boolean>,
+  liveSources?: ReadonlyMap<string, ReadonlySet<string>>,
+): Promise<TaintPlan> {
   const fileSet = new Set(files);
 
   // file -> set of OTHER discovered files it relatively imports OR re-exports
@@ -3958,7 +3991,9 @@ export async function planFoldTaint(
 
   // chant #1044 — reverse edges: consumed-file -> the folded files that
   // captured its objects. Same taint set, same fixpoint walk; see this
-  // function's doc for the crash this closes.
+  // function's doc for the crash this closes. Kept in their own map as well,
+  // so the walk below can tell which rule an edge belongs to.
+  const reverse = new Map<string, Set<string>>();
   for (const [consumer, sources] of liveSources ?? []) {
     if (!fileSet.has(consumer)) continue;
     for (const source of sources) {
@@ -3969,20 +4004,97 @@ export async function planFoldTaint(
         edges.set(source, back);
       }
       back.add(consumer);
+      let mine = reverse.get(source);
+      if (!mine) {
+        mine = new Set<string>();
+        reverse.set(source, mine);
+      }
+      mine.add(consumer);
     }
   }
 
   const tainted = new Set<string>(files.filter((f) => wouldFold.get(f) !== true));
+  const reachedBy = new Map<string, { from: string; kind: TaintEdgeKind }>();
   const queue = [...tainted];
   while (queue.length > 0) {
     const current = queue.shift()!;
     for (const target of edges.get(current) ?? []) {
       if (!tainted.has(target)) {
         tainted.add(target);
+        // A forward edge means `current` imports `target`; the reverse map is
+        // consulted second so a file reachable both ways is reported as the
+        // importer case, the one a reader can see in its own source.
+        const forward = !reverse.get(current)?.has(target);
+        reachedBy.set(target, { from: current, kind: forward ? "importer" : "capture" });
         queue.push(target);
       }
     }
   }
 
-  return tainted;
+  return { tainted, reachedBy };
+}
+
+/** One file's place in a whole-build fold, as {@link foldProject} reports it. */
+export interface FoldProjectVerdict {
+  /** What the build does with this file. */
+  readonly verdict: "fold" | "run";
+  /** What the file's own fold attempt concluded, before the taint walk. */
+  readonly tentative: "fold" | "run";
+  /** Present when `tentative` is "run": the located reason its own fold gave. */
+  readonly reason?: string;
+  /** Present when the file would have folded and taint overruled it. */
+  readonly taintedBy?: { from: string; kind: TaintEdgeKind };
+  /** The file's complete export namespace, present only when `verdict` is "fold". */
+  readonly exports?: ReadonlyMap<string, unknown>;
+}
+
+/**
+ * Fold a whole set of project files and report every file's verdict
+ * (chant#2408).
+ *
+ * `discover()` does this as part of building, and its per-file decisions are
+ * not addressable from outside. Anything that wants to *check* the
+ * cross-file rules needs the whole picture: the forward rule (#1023) needs an
+ * importer, the reverse rule (#1044) needs a capturing sibling, and the
+ * fixpoint needs the whole set, so none of the three is observable one file at
+ * a time. The conformance suite of the specification is the first such caller
+ * (INTENTIUS/typescript-as-data#62).
+ *
+ * Same session, same memo, same taint walk as a real build — this is not a
+ * second implementation of the rules, it is the existing one with its
+ * intermediate results kept instead of consumed.
+ */
+export async function foldProject(
+  files: readonly string[],
+  intrinsics: readonly IntrinsicDef[] = [],
+): Promise<Map<string, FoldProjectVerdict>> {
+  const session = createFoldSession(intrinsics);
+  const attempts = new Map<string, FoldFileResult>();
+  for (const file of files) attempts.set(file, await tryFoldFile(file, intrinsics, session));
+
+  const plan = await planFoldTaintWithEdges(
+    files,
+    new Map(files.map((file) => [file, attempts.get(file)?.ok === true])),
+    new Map(files.flatMap((file) => {
+      const attempt = attempts.get(file);
+      return attempt?.ok === true ? [[file, attempt.liveSources] as const] : [];
+    })),
+  );
+
+  const out = new Map<string, FoldProjectVerdict>();
+  for (const file of files) {
+    const attempt = attempts.get(file)!;
+    const tentative = attempt.ok ? "fold" : "run";
+    if (attempt.ok && !plan.tainted.has(file)) {
+      out.set(file, { verdict: "fold", tentative, exports: attempt.exportedValues });
+      continue;
+    }
+    out.set(file, {
+      verdict: "run",
+      tentative,
+      reason: attempt.ok ? undefined : attempt.reason,
+      taintedBy: attempt.ok ? plan.reachedBy.get(file) : undefined,
+    });
+  }
+  return out;
 }
