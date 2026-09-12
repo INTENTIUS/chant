@@ -44,6 +44,18 @@ export * from "./fold/fold";
 // half of the fold subset a conformance adapter needs that `fold()` alone
 // does not expose. INTENTIUS/typescript-as-data#11.
 export { findSubsetViolation, checkObjectMember, type SubsetViolation, type SubsetRuleId } from "./fold/subset";
+// The whole-build fold. `fold()` and `foldModule()` answer one expression and
+// one file; neither cross-file rule is observable at that granularity — the
+// forward rule needs an importer, the reverse rule needs a capturing sibling,
+// and the fixpoint needs the whole set. chant#2408,
+// INTENTIUS/typescript-as-data#62.
+export {
+  foldProject,
+  planFoldTaintWithEdges,
+  type FoldProjectVerdict,
+  type TaintPlan,
+  type TaintEdgeKind,
+} from "./discovery/fold-import";
 export * from "./lint/parser";
 export * from "./lint/rule";
 export * from "./lint/rules";

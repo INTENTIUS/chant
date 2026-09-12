@@ -1,3 +1,4 @@
+import { relative } from "node:path";
 import type { Declarable } from "../declarable";
 import type { DiscoveryError } from "../errors";
 import type { IntrinsicDef } from "../lexicon";
@@ -6,7 +7,7 @@ import { importModule } from "./import";
 import { collectEntities } from "./collect";
 import { resolveAttrRefs } from "./resolve";
 import { buildDependencyGraph } from "./graph";
-import { tryFoldFile, planFoldTaint, createFoldSession } from "./fold-import";
+import { tryFoldFile, planFoldTaintWithEdges, createFoldSession } from "./fold-import";
 import { getProvenance } from "../provenance";
 import type { BuildParamProvenance } from "../provenance";
 import { buildParamValues } from "../build-params";
@@ -270,8 +271,8 @@ export async function discover(path: string, options?: DiscoveryOptions): Promis
       foldAttempts.set(file, await tryFoldFile(file, options.intrinsics, foldSession));
     }
   }
-  const taintedFiles = options?.fold
-    ? await planFoldTaint(
+  const taintPlan = options?.fold
+    ? await planFoldTaintWithEdges(
         files,
         new Map(files.map((file) => [file, foldAttempts.get(file)?.ok === true])),
         // chant #1044 — which files' OBJECTS each successful fold captured,
@@ -284,7 +285,8 @@ export async function discover(path: string, options?: DiscoveryOptions): Promis
           }),
         ),
       )
-    : new Set<string>();
+    : { tainted: new Set<string>(), reachedBy: new Map() };
+  const taintedFiles = taintPlan.tainted;
 
   for (const file of files) {
     if (options?.fold) {
@@ -307,9 +309,15 @@ export async function discover(path: string, options?: DiscoveryOptions): Promis
         foldDecisions.push({ file, mode: "fold", resourceCount: folded.entities.length });
         continue;
       }
+      // chant#2406 — name the edge that actually fired. A reverse-tainted file
+      // is not imported by anything that falls back; saying so sends a reader
+      // looking for an importer that does not exist.
+      const edge = taintPlan.reachedBy.get(file);
       const reason = !folded.ok
         ? folded.reason
-        : `would fold in isolation, but a file that imports it (directly or transitively) falls back to run — folding independently would create a duplicate, non-identical instance`;
+        : edge?.kind === "capture"
+          ? `would fold in isolation, but it captured objects from ${relative(process.cwd(), edge.from)}, which falls back to run — folding independently would hold an instance the build never collects`
+          : `would fold in isolation, but a file that imports it (directly or transitively) falls back to run — folding independently would create a duplicate, non-identical instance`;
       foldDecisions.push({ file, mode: "run", reason, reverseTainted: folded.ok });
     }
 
