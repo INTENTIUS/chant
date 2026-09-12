@@ -688,11 +688,17 @@ describe("fold — registered call-form intrinsics (#1044)", () => {
     expect(() => fold(expr, consts, [REF])).toThrow(FoldError);
   });
 
-  test("a registered name SHADOWED by a local const is rejected — the local binding wins, and it isn't the lexicon's", () => {
+  test("a registered name SHADOWED by a local const folds as the LOCAL function, never the lexicon's", () => {
+    // chant#2436 — the local binding wins, which is what this has always
+    // asserted. It used to win by rejecting, because `fold()` had no way to
+    // call a local function; now it wins by being called, which is what a
+    // build does with this file. The registered meaning is still not applied:
+    // the lexicon's `Ref` produces `{ __intrinsic: "Ref" }`, this produces the
+    // arrow's own object.
     const consts = parseConsts(`const Ref = (n) => ({ mine: n }); const x = Ref("db");`);
     const expr = consts.get("x");
     if (!expr) throw new Error("fixture error");
-    expect(() => fold(expr, consts, [REF])).toThrow(FoldError);
+    expect(fold(expr, consts, [REF])).toEqual({ mine: "db" });
   });
 
   test("an unfoldable argument still rejects the whole call", () => {
@@ -765,11 +771,14 @@ describe("fold — registered authoring helpers (#1082)", () => {
     expect((error as FoldError).message).toContain("function call as a value is not foldable: compose(...)");
   });
 
-  test("a registered name SHADOWED by a local const is rejected — the local binding wins, and it isn't chant's", () => {
+  test("a registered name SHADOWED by a local const folds as the LOCAL function, never chant's", () => {
+    // chant#2436 — see the matching case under the intrinsic registry above.
+    // chant's own `phase(name, steps)` yields `{ phase, steps }`; the absence
+    // of `steps` here is what proves the shadowing arrow was the one called.
     const consts = parseConsts(`const phase = (n) => ({ phase: n }); const x = phase("Apply");`);
     const expr = consts.get("x");
     if (!expr) throw new Error("fixture error");
-    expect(() => fold(expr, consts)).toThrow(FoldError);
+    expect(fold(expr, consts)).toEqual({ phase: "Apply" });
   });
 
   test("a registered name used as a METHOD (`ns.phase(...)`) is rejected — only a bare identifier callee folds", () => {
@@ -835,11 +844,13 @@ describe("fold: the ConvergeOp rule builders are registered helpers (#2171)", ()
     }
   });
 
-  test("a rule builder SHADOWED by a local const is still rejected", () => {
+  test("a rule builder SHADOWED by a local const folds as the LOCAL function", () => {
+    // chant#2436 — the builder's own shape is `{ field, op, value }`; this
+    // yields the arrow's `{ f, v }`, so the shadowing binding is the one used.
     const consts = parseConsts(`const gt = (f, v) => ({ f, v }); const x = gt("updateCount", 0);`);
     const expr = consts.get("x");
     if (!expr) throw new Error("fixture error");
-    expect(() => fold(expr, consts)).toThrow(FoldError);
+    expect(fold(expr, consts)).toEqual({ f: "updateCount", v: 0 });
   });
 });
 
@@ -1242,5 +1253,87 @@ describe("constructions as values (chant #1169)", () => {
     expect((folded as { props: Record<string, unknown> }).props.host).toEqual({
       __attrRef: { entity: "db", attribute: "Endpoint" },
     });
+  });
+});
+
+/**
+ * chant#2436 — a unit-level fold binds the file's own functions.
+ *
+ * The build has bound them since #1373: `fold-import.ts` puts a
+ * {@link FoldableFunction} in `externals` for every top-level declaration
+ * before folding anything. A caller with no module graph, and so no
+ * `externals`, had no way to call one, so `fold()` alone answered `run` for a
+ * shape the build folds. The spec's conformance adapter is exactly such a
+ * caller.
+ *
+ * The binding is derived from the node's own source file, and only when the
+ * caller passed no `externals` at all: a caller that passed one is managing
+ * its own bindings and may have left a name out on purpose.
+ */
+describe("fold — same-file functions without externals (chant#2436)", () => {
+  const foldSource = (src: string): unknown => {
+    const sourceFile = ts.createSourceFile("m.ts", src, ts.ScriptTarget.Latest, true);
+    const consts = collectConsts(sourceFile);
+    const expr = consts.get("x");
+    if (!expr) throw new Error("fixture has no `x`");
+    return fold(expr, consts);
+  };
+
+  test("a function declaration, exported or not", () => {
+    expect(foldSource("function twice(n) { return n * 2; } const x = twice(21);")).toBe(42);
+    expect(foldSource("export function twice(n) { return n * 2; } const x = twice(21);")).toBe(42);
+  });
+
+  test("an arrow const", () => {
+    expect(foldSource('const label = (s) => ({ label: s }); const x = label("k");')).toEqual({ label: "k" });
+  });
+
+  test("a sibling calling a sibling", () => {
+    expect(foldSource("function a(n) { return b(n) + 1; } function b(n) { return n * 2; } const x = a(10);")).toBe(21);
+  });
+
+  test("recursion terminates on its own base case", () => {
+    expect(foldSource("function down(n) { return n <= 0 ? 0 : down(n - 1); } const x = down(3);")).toBe(0);
+  });
+
+  describe("falls back to run rather than producing a value", () => {
+    const rejects = (src: string) => expect(() => foldSource(src)).toThrow(FoldError);
+
+    test("a body that reads a `new`-bound const, so no duplicate resource is built", () => {
+      // The stripping this relies on is why `collectSameFileFunctions` has one
+      // implementation: the body must read the live instance out of
+      // `externals`, never re-fold the initializer. With no externals there is
+      // no instance to read, so the only correct answer is to fall back.
+      rejects("class B { constructor(_p) {} } const b = new B({}); function f() { return b; } const x = f();");
+    });
+
+    test("through an alias of one, so aliasing cannot smuggle it in", () => {
+      rejects(
+        "class B { constructor(_p) {} } const b = new B({}); const alias = b; function f() { return alias; } const x = f();",
+      );
+    });
+
+    test("a body reading an import, which needs a module graph this entry does not have", () => {
+      rejects('import { thing } from "./other"; function f() { return thing; } const x = f();');
+    });
+
+    test("a body with a statement outside the subset", () => {
+      rejects("function f() { for (;;) {} } const x = f();");
+    });
+
+    test("a name the file never binds", () => {
+      rejects("const x = missing(1);");
+    });
+  });
+
+  test("an imported project-local function is still not called here — that needs the module graph", () => {
+    expect(() => foldSource('import { twice } from "./pure"; const x = twice(21);')).toThrow(FoldError);
+  });
+
+  test("an explicit `externals` is left alone, even when it omits the name", () => {
+    const sourceFile = ts.createSourceFile("m.ts", "function twice(n) { return n * 2; } const x = twice(21);", ts.ScriptTarget.Latest, true);
+    const consts = collectConsts(sourceFile);
+    // The caller said "these are the bindings" and did not include `twice`.
+    expect(() => fold(consts.get("x")!, consts, [], new Map())).toThrow(FoldError);
   });
 });

@@ -137,6 +137,38 @@ describe("subset equivalence — supported cases: fold succeeds AND EVL is clean
   }
 });
 
+/**
+ * chant#2436 closed a divergence that used to live in the block below.
+ *
+ * `phase` is a registered authoring helper, but shadowed by the file's own
+ * arrow the local binding wins — which is what #1082 asserted, and still
+ * true. It used to win by making `fold()` reject, because `fold()` had no way
+ * to call a local function; a build folded the same file. Now both fold it, so
+ * the two agree rather than diverging by design.
+ */
+describe("authoring-helper shadowing — now unified (chant#2436)", () => {
+  const source = `
+      const phase = (n) => ({ phase: n });
+      const good = new Thing({ x: phase("Apply") });
+    `;
+
+  test("fold calls the local arrow, and does not apply the registered meaning", () => {
+    const sourceFile = ts.createSourceFile("t.ts", source, ts.ScriptTarget.Latest, true);
+    const consts = collectConsts(sourceFile);
+    const folded = foldResource(consts.get("good") as ts.NewExpression, consts, []);
+
+    // chant's own `phase(name, steps)` yields `{ phase, steps }`; no `steps`
+    // here is what proves the shadowing binding was the one called.
+    expect((folded.props as { x: unknown }).x).toEqual({ phase: "Apply" });
+  });
+
+  test("and EVL001 is clean, as it always was", () => {
+    const sourceFile = ts.createSourceFile("t.ts", source, ts.ScriptTarget.Latest, true);
+    const context: LintContext = { sourceFile, entities: [], filePath: "t.ts", lexicon: undefined };
+    expect(evl001NonLiteralExpressionRule.check(context)).toHaveLength(0);
+  });
+});
+
 describe("subset equivalence — unsupported cases: fold rejects AND EVL flags the same rule id + position", () => {
   for (const c of UNSUPPORTED_CASES) {
     test(c.name, () => {
@@ -236,25 +268,6 @@ describe("documented divergences — NOT unified by design (see subset.ts module
     const badInit = consts.get("bad") as ts.NewExpression;
 
     expect(() => foldResource(badInit, consts, [{ name: "Sub", isTag: true }])).toThrow(FoldError);
-
-    const context: LintContext = { sourceFile, entities: [], filePath: "t.ts", lexicon: undefined };
-    expect(evl001NonLiteralExpressionRule.check(context)).toHaveLength(0);
-  });
-
-  test("authoring-helper shadowing: fold rejects a registered name bound to a local const; EVL001 does not (shape-only, no binding resolution)", () => {
-    // chant #1082 — `phase` is registered, but here it's the file's own local
-    // arrow function, so the local binding wins and fold() rejects. EVL has no
-    // binding resolver (subset.ts module doc, point 1) and stays permissive —
-    // the same direction as every other divergence here.
-    const source = `
-      const phase = (n) => ({ phase: n });
-      const bad = new Thing({ x: phase("Apply") });
-    `;
-    const sourceFile = ts.createSourceFile("t.ts", source, ts.ScriptTarget.Latest, true);
-    const consts = collectConsts(sourceFile);
-    const badInit = consts.get("bad") as ts.NewExpression;
-
-    expect(() => foldResource(badInit, consts, [])).toThrow(FoldError);
 
     const context: LintContext = { sourceFile, entities: [], filePath: "t.ts", lexicon: undefined };
     expect(evl001NonLiteralExpressionRule.check(context)).toHaveLength(0);
