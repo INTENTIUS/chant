@@ -306,16 +306,20 @@ export const lifecycleSnapshot = (env: string, opts?: { id?: string }): NamedAct
   activity("lifecycleSnapshot", { env } satisfies LifecycleSnapshotArgs, opts?.id ? { id: opts.id } : undefined);
 
 /**
- * Run an arbitrary shell command. Tag long-running commands with a `profile`
- * (e.g. `longInfra` for a multi-GB image push) so they get the right
- * start-to-close timeout on whichever runtime hosts the run.
+ * Run an arbitrary shell command.
+ *
+ * Defaults to the `atMostOnce` profile: twenty minutes, one attempt (#2411).
+ * This is the one activity chant cannot know is idempotent, because its
+ * purpose is to run something chant does not model, so a failed command is
+ * not repeated unless the author says it may be. Name `fastIdempotent` or
+ * `longInfra` to get retries back for a command that is safe to repeat.
  */
 export const shell = (
   cmd: string,
   opts?: WithStepRefs<Omit<ShellCmdArgs, "cmd">> & StepOpts,
 ): NamedActivityStep => {
   const { args, profile, id } = takeProfileAndId(opts as Record<string, unknown> | undefined);
-  return activity("shellCmd", { cmd, ...args }, { ...(profile ? { profile } : {}), ...(id ? { id } : {}) });
+  return activity("shellCmd", { cmd, ...args }, { profile: profile ?? "atMostOnce", ...(id ? { id } : {}) });
 };
 
 /**

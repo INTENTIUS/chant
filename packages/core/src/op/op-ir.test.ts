@@ -123,7 +123,10 @@ describe("op.json IR", () => {
 
     expect(ir.name).toBe("full-deploy");
     const [build, approve, deploy, seed, verify] = ir.phases;
-    expect(build.steps[0]).toMatchObject({ kind: "activity", fn: "shellCmd", profile: "fastIdempotent" });
+    // A shell step carries `atMostOnce` since #2411: the IR records the
+    // profile the builder named, and the builder names one precisely so a
+    // command chant cannot judge does not inherit a retrying default.
+    expect(build.steps[0]).toMatchObject({ kind: "activity", fn: "shellCmd", profile: "atMostOnce" });
     expect(approve.steps[0]).toMatchObject({
       kind: "gate",
       gate: "approve-deploy",

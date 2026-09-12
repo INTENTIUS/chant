@@ -73,6 +73,24 @@ export const ACTIVITY_PROFILES = {
   },
 
   /**
+   * A command chant did not write and cannot know is safe to repeat (#2411).
+   *
+   * `shellCmd` is the escape hatch: its whole purpose is to run something
+   * outside the model, so nothing here can judge whether a second attempt is
+   * harmless or a second deployment. Every other activity carrying a retrying
+   * profile is one chant authored and knows the shape of.
+   *
+   * Twenty minutes, because a shell step is as likely to be a long build as a
+   * quick script, and one attempt, because retrying is the claim that needs
+   * evidence. An author who knows their command is idempotent names
+   * `fastIdempotent` or `longInfra` and gets retries back.
+   */
+  atMostOnce: {
+    timeout: "20m",
+    retry: { maximumAttempts: 1 },
+  },
+
+  /**
    * Human-gate steps: waiting for an operator action (DNS delegation, approval).
    * Very long timeout, single attempt — no retry on human-gate timeouts.
    */
