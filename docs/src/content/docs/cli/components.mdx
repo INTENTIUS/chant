@@ -12,11 +12,18 @@ chant components release <env> --component <name> --digest <sha256:...>
 chant components status [env] [--live] [--json] [--compare-to <env>]
 chant components export <env> --component <name> [--digest <manifestDigest>]
                                 -o <dir> [--json]
+chant components fan-out (--base <ref> [--head <ref>] [--include-dependents]
+                          | --from-affected <file>)
+                                [--env <env>] [--gate <name>] [--dry-run] [--json]
+                                [--resume <file>] [--seed-outputs <file>]
+                                [--dump-outputs <file>] [--progress-json]
 ```
 
 ## Description
 
 `chant components` holds the release ledger, status surface, and build-archive export for [component](/chant/components/component-contract/) deploys: the recorded half of build & deploy observability. See [Observability](/chant/components/observability/) for the conceptual model. The release ledger lives on the same `chant/lifecycle` orphan branch [`chant lifecycle`](/chant/cli/lifecycle/) snapshots already use, at `<env>/releases.jsonl` — one immutable JSON line per recorded deploy.
+
+`components fan-out` is the odd one out on this page. It runs rather than records, taking a change signal and applying the components downstream of it in a derived order. It sits here because it is the component subsystem's own dispatch path, next to the ledger those deploys write to.
 
 `components release` below is the standalone, explicit way to append a record. [`chant run --components`](/chant/cli/run/#auto-recorded-releases) auto-emits one on every successful deploy, so most projects never need to call `components release` directly — it remains useful for CI compositions and Verify phases outside `chant run`'s own execution.
 
@@ -126,15 +133,125 @@ A source file missing on disk (the build ran somewhere else, or its output was s
 }
 ```
 
+### `components fan-out`
+
+Run a change out across the components downstream of it, in an order chant derives from the source. See [Orchestration](/chant/components/orchestration/#fanning-a-change-out) for the model behind it.
+
+```bash
+chant components fan-out --base origin/main --env prod --dry-run
+chant components fan-out --base origin/main --env prod --gate release --resume .chant/fan-out.json
+chant approve fan-out release --plan sha256:9fae3d7c...
+chant components fan-out --base origin/main --env prod --gate release --resume .chant/fan-out.json
+```
+
+#### Where the change signal comes from
+
+Exactly one of `--base` and `--from-affected` is required. Both at once is refused, and so is neither, because defaulting one way or the other would let a stale file quietly beat a fresh diff, or a fresh diff quietly beat a file somebody meant to use.
+
+`--base <ref>` derives the signal in place, running the same artifact diff [`chant lifecycle affected`](/chant/cli/lifecycle/) runs. That is the one-command shape for a developer working in a checkout. `--from-affected <file>` reads the JSON that `chant lifecycle affected --base <ref> --json` already wrote, which is what a CI job wants when an earlier step ran the diff and there is no reason to build twice. Reading a file builds nothing, so a project whose lexicon plugins are not installed is not turned away for a step this form never runs.
+
+Either way the signal names stacks. A component claims a stack through its own deploy steps, so the join to components needs no fan-out config restating a relationship the composition already makes. A changed stack that no component deploys is reported as a warning naming that stack, because a hole in the fan-out's coverage is worth saying out loud rather than dropping.
+
+`--include-dependents` is handed to the diff and folded into the changed set before the join.
+
+#### The printed derivation
+
+`--dry-run` prints the derivation and dispatches nothing. A dispatching run prints the same block first, so what ran always follows why it was picked.
+
+```
+fan-out: 3 selected, 4 unaffected, 0 indeterminate
+  wave 1: cluster-a
+  wave 2: app-one, app-two
+  seeded from an earlier run: net
+  not running (4):
+    app-three  unaffected
+    billing    unaffected
+    cluster-b  unaffected
+    net        unaffected
+  plan: sha256:9fae3d7c...
+  approve: chant approve fan-out release --plan sha256:9fae3d7c...
+```
+
+Each line answers a question an operator would otherwise have to ask.
+
+- The waves are the derived order shown as a graph. A flat list could not show that the order came out of each component's `dependsOn` rather than out of somebody's hand.
+- Every component that is not running is named with its reason, one of `unaffected`, `indeterminate`, `already-applied` or `blocked`. A `blocked` row also names the failure it was reached from, as `blocked by "cluster-a"`. Absent from a list and deliberately held back would read identically without this.
+- `indeterminate` has a count on the first line, and components a source diff could not judge that the walk never reached get a line of their own (`a source diff cannot judge these, and the walk did not reach them: ...`). It is the third outcome, and a two-state render would quietly fold it into one of the other two.
+- `seeded from an earlier run` lists dependencies of selected components that are not themselves running. Their outputs are taken on trust from a run that happened earlier and somewhere else, which is the price of running a subset instead of the whole graph.
+- `plan:` carries the digest verbatim and unabbreviated (shortened above to fit this page). It is the exact string `chant approve --plan` takes, so truncating it for width would make the line useless for the one job it has.
+- `approve:` appears only when `--gate <name>` was given, and is the whole command to run.
+
+`--json` puts JSON on stdout, writes nothing else there, and replaces the human render rather than accompanying it. Under `--dry-run` the payload is the plan. Without it the payload is the run result, which carries the plan it dispatched under `plan`. A gated run still prints its approve line on stderr, so a CI job reading stdout as JSON sees the pending gate in its log.
+
+#### One gate over the whole set
+
+`--gate <name>` puts a single approval over the ordered set, under the op name `fan-out`. Twenty components behind one fan-out is one approval, not twenty. The gate is evaluated once, before the first wave, bound to the plan's digest by the same plan-bound gate mechanism a gated [Op](/chant/guide/ops/) uses.
+
+Nothing runs while it stands open. The run prints the pending fact and exits 3.
+
+```
+gated: nothing ran. Waiting on "release" on "fan-out".
+approve : chant approve fan-out release --plan sha256:9fae3d7c...
+```
+
+The digest identifies the derivation. It covers the ordered selection and the waves, plus the seeds and the edges each component came from. It does not cover what each component would apply, so editing a template without changing the graph leaves the digest, and a standing approval, where they were. `planFanOut` takes per-component input digests when a caller has them, and this command does not supply any yet. A resolution recorded against a different digest does not let this fan-out through, since a fan-out that derives differently is a different change. Each component's own authored gates still decide per component. This adds a gate over the set without removing the ones inside it.
+
+#### Failure semantics
+
+A failed component stops its own subtree and nothing else. Components beneath it record as `blocked` naming the failure rather than as `failed`, because nothing about them failed, and that distinction is what makes the next attempt readable. Branches sharing no edge with the failure run to completion.
+
+```
+applied: app-three, cluster-b, net
+failed: cluster-a
+  app-one: blocked by "cluster-a", so it never ran
+  app-two: blocked by "cluster-a", so it never ran
+fan-out failed: 3 applied, 1 failed, 2 blocked
+```
+
+This is where a fan-out departs from [`chant run --components all`](/chant/cli/run/), which stops the whole run at the first failed component and goes on doing so. There the user asked for everything, so a failure means the estate is in a state nobody described. Here the order was derived from the source, so a branch independent of the failure is known to be independent rather than assumed to be, and stopping it buys nothing while costing a second approval to finish.
+
+#### Finishing an attempt that stopped
+
+`--resume <file>` names an attempt record. The run reads it before it starts and writes it when it finishes, including after a failure and after a gate, because the next attempt needs to know what this one got through.
+
+Repeating the identical command finishes the work. The record narrows the plan before the gate is decided, and the digest is carried rather than recomputed, so an approval already given still stands. The re-run prints what it is skipping as `already-applied` and dispatches only the rest.
+
+Only the earlier attempt's completions are carried forward. Its failures are recorded in the file for whoever has to read it, but feeding them back as progress would block their subtrees again on the very run that exists to retry them.
+
+`--dry-run` reads the record too, so a plan-only invocation alongside `--resume` shows what is actually left and prints the digest the earlier approval was given for.
+
+A record whose digest does not match the fan-out derived now is refused with a warning, and its progress is not applied. The derivation changed, which makes this a different change, and carrying `cluster-a already applied` into it would be a claim about work nobody did.
+
+#### Seeding and progress
+
+`--seed-outputs <file>` (repeatable) loads component outputs before the run, so a `stackOutput()` or `@<dep>.publish.*` reference into a component the plan lists under `seeds` resolves. `--dump-outputs <file>` writes what the run holds afterwards. `--progress-json` streams one NDJSON progress record per line to stdout as the waves execute. All three behave as they do on [`chant run --components`](/chant/cli/run/).
+
+| Flag | Meaning |
+|---|---|
+| `--base <ref>` | Derive the change signal here, by diffing built artifacts against this git ref. Required unless `--from-affected` is given. |
+| `--head <ref>` | Head ref for that diff. Defaults to the working tree. |
+| `--include-dependents` | Add downstream consumers of changed stacks to the signal before the join to components. |
+| `--from-affected <file>` | Read the change signal from JSON `chant lifecycle affected --json` already wrote. Required unless `--base` is given. |
+| `--env <env>` | Environment each selected component deploys into. Defaults to `local`. |
+| `--gate <name>` | One approval over the whole derived set, answered by `chant approve fan-out <name> --plan <digest>`. |
+| `--dry-run` | Print the derivation and dispatch nothing. |
+| `--json` | Emit the plan (with `--dry-run`) or the run result on stdout, and nothing else on stdout. |
+| `--resume <file>` | Attempt record read before the run and written after it, so repeating the command finishes what stopped. |
+| `--seed-outputs <file>` | Load component outputs before the run. Repeatable; a later file wins on a key two files share. |
+| `--dump-outputs <file>` | Write the outputs the run holds to this file afterwards. |
+| `--progress-json` | Stream one NDJSON progress record per line to stdout while the waves execute. |
+
 ## Exit Codes
 
 | Code | Meaning |
 |------|---------|
-| 0 | Success |
-| 1 | Error (missing required flags, unresolvable actor, concurrent ledger write, no manifest found, an export entry missing on disk) |
+| 0 | Success (for `fan-out`, every selected component applied) |
+| 1 | Error (missing required flags, unresolvable actor, concurrent ledger write, no manifest found, an export entry missing on disk; for `fan-out`, a component failed, or the change signal was unusable) |
+| 3 | `fan-out` only: stopped at a gate nobody has approved. Nothing ran. |
 
 ## See Also
 
 - [Observability](/chant/components/observability/) — the release ledger, build-ledger referrer discovery, and the reconciliation model this command implements.
 - [`chant lifecycle`](/chant/cli/lifecycle/) — snapshots, `diff --live`, and `plan`, whose ownership/drift classification `components status --live` reuses.
 - [Build Archive](/chant/components/build-archive/) — the content-addressed manifest and digest identity the release ledger joins against, and what `components export` materializes.
+- [Orchestration](/chant/components/orchestration/#fanning-a-change-out) covers the derived fan-out as a model, and where the order comes from.

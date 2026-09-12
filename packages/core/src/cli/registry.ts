@@ -183,6 +183,29 @@ export interface ParsedArgs {
   head?: string;
   /** `chant lifecycle affected --include-dependents` — add downstream consumers */
   includeDependents?: boolean;
+  /**
+   * `chant components fan-out --from-affected <file>` (#2420) — read the
+   * stack-level change signal from the JSON `chant lifecycle affected --json`
+   * wrote, instead of re-deriving it with `--base`. The composable half of the
+   * pair: a CI job that already ran the diff has no reason to build twice.
+   */
+  fromAffected?: string;
+  /**
+   * `chant components fan-out --gate <name>` (#2420) — the name of the single
+   * gate over the whole derived set, answered by `chant approve fan-out <name>
+   * --plan <digest>`. One approval covers the fan-out, bound to the plan's
+   * digest (#2300's mechanism, #2417's decision); omitted, the fan-out runs
+   * ungated. A component's own authored gates are unaffected either way.
+   */
+  gate?: string;
+  /**
+   * `chant components fan-out --resume <file>` (#2420) — the attempt record
+   * this fan-out reads before it starts and writes when it finishes. Repeating
+   * the identical command finishes what an interrupted attempt left, because
+   * the plan is narrowed by this file before the gate is decided and the
+   * digest is carried rather than recomputed, so the approval still stands.
+   */
+  resume?: string;
   /** `chant audit --tier merge-worthy|all` */
   tier?: string;
   /**

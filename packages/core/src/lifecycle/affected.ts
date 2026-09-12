@@ -15,8 +15,19 @@
  * be judged from a source diff — reported as **indeterminate**, not silently
  * included or excluded.
  *
- * This returns the set; it does not act. Fanning `lifecycle plan` / `ApplyOp`
- * over it is an Op the user composes.
+ * ## What "stack" means here depends on the project
+ *
+ * A project that declares `stacks` in `chant.config.ts` gets each declared
+ * stack's own source built, and the answer names stacks. A single-root project
+ * has no such partition to build, so its answer names lexicon partitions, which
+ * is the only granularity it has. The difference matters downstream: a
+ * component's deploy step names a stack, so only the first kind of answer can
+ * be joined to components (#2420).
+ *
+ * This returns the set; it does not act. `chant components fan-out`
+ * (../cli/handlers/fan-out.ts) is the command that acts on it, and fanning
+ * `lifecycle plan` / `ApplyOp` over it by hand is still an Op the user
+ * composes.
  */
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -140,10 +151,92 @@ async function withWorktree<T>(repoRoot: string, ref: string, fn: (dir: string) 
   }
 }
 
+/** One independently-deployed stack, as `ChantConfig.stacks` declares it. */
+export interface StackSource {
+  /** The deployed stack name — what a component's deploy step names. */
+  name: string;
+  /** Source directory to build for this stack, relative to the project root. */
+  src: string;
+}
+
+/**
+ * Build each declared stack's own source directory and key the result by
+ * **stack name**.
+ *
+ * Without this, one build of the project root produces a map keyed by lexicon
+ * partition, so an aws-only estate of fifteen stacks answers "aws changed" no
+ * matter which one moved. That answer cannot be joined to anything: a
+ * component's deploy step names a stack, not a lexicon, so
+ * `componentsForUnits` (../components/fan-out.ts) would claim none of it and
+ * a fan-out derived from it would be empty. The two halves have to speak the
+ * same names for either to be worth having.
+ *
+ * A stack that serializes through more than one lexicon folds its partitions
+ * into one artifact, because the unit being deployed is the stack.
+ */
+async function stackArtifacts(
+  root: string,
+  serializers: Serializer[],
+  stacks: readonly StackSource[],
+  /**
+   * Whether a missing `src` is an error. True for the head side, where every
+   * declared stack must exist; false for the base side, where a stack added
+   * since then legitimately has no source yet and reads as an empty artifact,
+   * which is what makes it `changed`.
+   */
+  requireSrc: boolean,
+): Promise<{ artifacts: Map<string, string>; externalInput: string[] }> {
+  const artifacts = new Map<string, string>();
+  const externalInput: string[] = [];
+  for (const stack of stacks) {
+    const src = resolve(root, stack.src);
+    // `build()` on a directory that is not there returns empty outputs rather
+    // than throwing, so a typo in `src` would make both sides build nothing,
+    // match, and report the stack as unchanged forever. A silent answer of
+    // exactly that shape is what this whole path exists to prevent.
+    if (requireSrc && !existsSync(src)) {
+      throw new Error(
+        `stack "${stack.name}" declares src "${stack.src}", which does not exist under ${root}. ` +
+          `Fix chant.config.ts's stacks[] entry: a source directory that is not there builds to nothing, ` +
+          `and a stack that builds to nothing can never be reported as changed.`,
+      );
+    }
+    const built = await build(src, serializers);
+    artifacts.set(
+      stack.name,
+      [...built.outputs.entries()]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([lexicon, output]) => `${lexicon}\n${getPrimaryOutput(output as string)}`)
+        .join("\n"),
+    );
+    if (externalInputStacks(built.entities).length > 0) externalInput.push(stack.name);
+  }
+  return { artifacts, externalInput: externalInput.sort() };
+}
+
 export interface AffectedStacksOptions {
   /** Project source directory to scope (the head/working-tree build root). */
   projectPath: string;
   serializers: Serializer[];
+  /**
+   * The project's independently-deployed stacks (`ChantConfig.stacks`). With
+   * them, each stack's own source is built and the answer names stacks; without
+   * them, one build of `projectPath` answers by lexicon partition, which is the
+   * only granularity a single-root project has.
+   *
+   * `dependents` is always empty in this mode, and that is not an omission: the
+   * build holds cross-*lexicon* edges, and the relation between two deployed
+   * stacks is stated by a component's `dependsOn` and `stackOutput`, which
+   * `chant components fan-out` walks for itself. Inventing stack edges from
+   * lexicon ones would be a guess dressed as a graph.
+   *
+   * Each `src` resolves against `projectPath`, so in this mode `projectPath`
+   * has to be the project root that `ChantConfig.stacks` is written relative
+   * to. A `sourceDir` that narrows the build root does not apply here: the
+   * stacks already say which source belongs to which of them, which is the
+   * narrowing, and applying both would look for `<sourceDir>/<stack.src>`.
+   */
+  stacks?: readonly StackSource[];
   /** Base git ref to diff against (built in a throwaway worktree). */
   baseRef?: string;
   /** Head git ref. Defaults to the working tree (built in place — no worktree). */
@@ -175,28 +268,39 @@ export async function affectedStacks(opts: AffectedStacksOptions): Promise<Affec
   // Head: the in-place build of the working tree, unless an explicit headRef is
   // given (then a throwaway worktree — removed before the base worktree, so at
   // most one exists at a time).
+  const perStack = opts.stacks && opts.stacks.length > 0 ? opts.stacks : undefined;
+  // No cross-stack graph in per-stack mode, by construction: see `stacks` above.
+  const EMPTY_GRAPH: StackGraph = { nodes: [], edges: [], order: [], waves: [], cycles: [] };
+  /** One build root in, its artifact map and external-input set out, at whichever granularity applies. */
+  const readArtifacts = async (
+    root: string,
+    isHead: boolean,
+  ): Promise<{ artifacts: Map<string, string>; externalInput: string[]; graph: StackGraph }> => {
+    if (perStack) return { ...(await stackArtifacts(root, opts.serializers, perStack, isHead)), graph: EMPTY_GRAPH };
+    const built = await build(root, opts.serializers);
+    return {
+      artifacts: artifactMap(built.outputs),
+      externalInput: externalInputStacks(built.entities),
+      graph: built.manifest.stackGraph,
+    };
+  };
+
   const head = opts.headRef
-    ? await withWorktree(repoRoot, opts.headRef, (dir) => build(join(dir, relProject), opts.serializers))
-    : await build(projectPath, opts.serializers);
-  const headMap = artifactMap(head.outputs);
-  const externalInput = externalInputStacks(head.entities);
+    ? await withWorktree(repoRoot, opts.headRef, (dir) => readArtifacts(join(dir, relProject), true))
+    : await readArtifacts(projectPath, true);
 
   // Base: caller-supplied dir (cheapest), else a single worktree at baseRef.
   let baseMap: Map<string, string>;
   if (opts.baseDir) {
-    const baseBuild = await build(resolve(opts.baseDir), opts.serializers);
-    baseMap = artifactMap(baseBuild.outputs);
+    baseMap = (await readArtifacts(resolve(opts.baseDir), false)).artifacts;
   } else if (opts.baseRef) {
-    baseMap = await withWorktree(repoRoot, opts.baseRef, async (dir) => {
-      const baseBuild = await build(join(dir, relProject), opts.serializers);
-      return artifactMap(baseBuild.outputs);
-    });
+    baseMap = await withWorktree(repoRoot, opts.baseRef, async (dir) => (await readArtifacts(join(dir, relProject), false)).artifacts);
   } else {
     throw new Error("affectedStacks requires either baseDir or baseRef");
   }
 
-  return computeAffected(baseMap, headMap, head.manifest.stackGraph, {
+  return computeAffected(baseMap, head.artifacts, head.graph, {
     includeDependents: opts.includeDependents,
-    externalInput,
+    externalInput: head.externalInput,
   });
 }

@@ -513,6 +513,28 @@ describe("runApprove", () => {
     errSpy.mockRestore();
   });
 
+  test("the fan-out op is not reported as a missing *.op.ts, and the hint names the right command (#2420)", async () => {
+    discoverOpsMock.mockResolvedValue({ ops: new Map(), errors: [] });
+    seedPending("fan-out", "release", PLAN_A);
+    appendGateResolutionMock.mockResolvedValue({
+      commit: "sha",
+      record: { version: 1, op: "fan-out", gate: "release", resolvedBy: "alex", timestamp: "2026-01-01T00:00:00.000Z", planDigest: PLAN_A },
+    });
+    const lines: string[] = [];
+    const errSpy = vi.spyOn(console, "error").mockImplementation((...a: unknown[]) => {
+      lines.push(a.map(String).join(" "));
+    });
+
+    const code = await runApprove(ctx({ path: "fan-out", extraPositional: "release", actor: "alex" }));
+
+    expect(code).toBe(0);
+    const out = lines.join("\n");
+    expect(out).not.toContain("was not found among discovered");
+    expect(out).toContain("Repeat the `chant components fan-out` command");
+    expect(out).not.toContain("chant run fan-out");
+    errSpy.mockRestore();
+  });
+
   test("warns (but still records) when the op isn't among discovered *.op.ts declarations", async () => {
     discoverOpsMock.mockResolvedValue({ ops: new Map(), errors: [] });
     seedPending("unknown-op", "g", PLAN_A);

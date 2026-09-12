@@ -1871,6 +1871,19 @@ function printSnapshotTable(snapshot: LifecycleSnapshot): void {
  * Read-only: report which stacks a change affects (directly-changed via artifact
  * diff, dependents via the cross-stack graph, external-input as indeterminate).
  * Returns the set; fanning plan/apply over it is an Op the user composes.
+ *
+ * `config.stacks` is passed through, so on a multi-stack project the answer is
+ * keyed by deployed **stack name** — the name a component's `cfn-deploy` step
+ * uses — instead of by lexicon partition. That is what lets `chant components
+ * fan-out` join a change set to the components that deploy it; an aws-only
+ * estate of fifteen stacks used to answer "aws" no matter which one moved. A
+ * project with no `stacks` declared is untouched: one build of the source root,
+ * one lexicon-keyed answer.
+ *
+ * The cost of per-stack mode is that `dependents` comes back empty (the build
+ * carries cross-lexicon edges, not stack ones), so `--include-dependents` prints
+ * a note saying where the downstream relation actually lives rather than showing
+ * an empty list as if it meant "nothing downstream".
  */
 export async function runLifecycleAffected(ctx: CommandContext): Promise<number> {
   const { args, plugins } = ctx;
@@ -1882,13 +1895,17 @@ export async function runLifecycleAffected(ctx: CommandContext): Promise<number>
   }
 
   const { config } = await loadChantConfig(resolve("."));
-  const projectPath = resolveBuildRoot(args, config);
+  // A multi-stack project's `stacks[].src` entries are written relative to the
+  // project root, and they are themselves the scoping, so `--src`/`sourceDir`
+  // does not narrow the root a second time (see `AffectedStacksOptions.stacks`).
+  const projectPath = config.stacks?.length ? resolve(".") : resolveBuildRoot(args, config);
 
   let result;
   try {
     result = await affectedStacks({
       projectPath,
       serializers: plugins.map((p) => p.serializer),
+      stacks: config.stacks,
       baseRef: args.base,
       headRef: args.head,
       includeDependents: args.includeDependents,
@@ -1896,6 +1913,17 @@ export async function runLifecycleAffected(ctx: CommandContext): Promise<number>
   } catch (err) {
     console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
     return 1;
+  }
+
+  // Per-stack mode has no stack graph to walk, so an empty `dependents` here
+  // means "not computed", not "nothing downstream". Say so on stderr — silently
+  // handing back an empty list is the failure this command exists to avoid.
+  const multiStack = (config.stacks?.length ?? 0) > 0;
+  if (multiStack && args.includeDependents) {
+    console.error(formatWarning({
+      message: "Dependents are not computed for a multi-stack project: the downstream relation between deployed stacks is stated by the components' dependsOn, not by the build.",
+      hint: "Run chant components fan-out to walk it.",
+    }));
   }
 
   if (args.json) {

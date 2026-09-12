@@ -29,6 +29,7 @@ const loadChantConfigMock = vi.fn();
 const pushLifecycleMock = vi.fn();
 const readBlobFromPathMock = vi.fn();
 const writeBlobToPathMock = vi.fn();
+const affectedStacksMock = vi.fn();
 
 vi.mock("../../build", () => ({ build: (...args: unknown[]) => buildMock(...args) }));
 vi.mock("../../lifecycle/git", () => ({
@@ -54,7 +55,11 @@ vi.mock("../../config", async () => {
   };
 });
 
-const { runLifecycleDiff, runLifecyclePlan, runLifecycleSnapshot, runLifecycleShow, runLifecycleLog, runLifecycleTeardown, runLifecycleWhoami, runLifecycleUnknown } = await import("./lifecycle");
+vi.mock("../../lifecycle/affected", () => ({
+  affectedStacks: (...args: unknown[]) => affectedStacksMock(...args),
+}));
+
+const { runLifecycleDiff, runLifecyclePlan, runLifecycleSnapshot, runLifecycleShow, runLifecycleLog, runLifecycleTeardown, runLifecycleWhoami, runLifecycleUnknown, runLifecycleAffected } = await import("./lifecycle");
 
 function makeArgs(overrides: Partial<ParsedArgs>): ParsedArgs {
   return {
@@ -2105,5 +2110,73 @@ describe("runLifecycleWhoami (#1982)", () => {
     } finally {
       delete process.env.CHANT_TEST_API_TOKEN;
     }
+  });
+});
+
+describe("runLifecycleAffected (#2420)", () => {
+  let stdoutBuf: string[];
+  let stderrBuf: string[];
+
+  beforeEach(() => {
+    stdoutBuf = [];
+    stderrBuf = [];
+    vi.spyOn(console, "log").mockImplementation((s: string) => { stdoutBuf.push(s); });
+    vi.spyOn(console, "error").mockImplementation((s: string) => { stderrBuf.push(s); });
+    loadChantConfigMock.mockReset();
+    affectedStacksMock.mockReset();
+    affectedStacksMock.mockResolvedValue({ changed: ["api-stack"], dependents: [], indeterminate: [] });
+  });
+
+  afterEach(() => vi.restoreAllMocks());
+
+  const multiStack = [
+    { name: "api-stack", src: "stacks/api" },
+    { name: "worker-stack", src: "stacks/worker" },
+  ];
+
+  function affectedCtx(overrides: Partial<ParsedArgs> = {}) {
+    return {
+      args: makeArgs({ command: "lifecycle", path: "affected", base: "main", ...overrides }),
+      plugins: [], serializers: [],
+    };
+  }
+
+  test("passes config.stacks through, so the answer is keyed by stack name", async () => {
+    loadChantConfigMock.mockResolvedValue({ config: { stacks: multiStack } });
+    expect(await runLifecycleAffected(affectedCtx())).toBe(0);
+    expect(affectedStacksMock).toHaveBeenCalledWith(expect.objectContaining({ stacks: multiStack }));
+    expect(stdoutBuf.join("\n")).toContain("api-stack");
+  });
+
+  test("a project with no stacks declared passes none — same single-root build", async () => {
+    loadChantConfigMock.mockResolvedValue({ config: {} });
+    expect(await runLifecycleAffected(affectedCtx())).toBe(0);
+    expect(affectedStacksMock.mock.calls[0][0].stacks).toBeUndefined();
+  });
+
+  test("multi-stack + --include-dependents says where the downstream relation lives", async () => {
+    loadChantConfigMock.mockResolvedValue({ config: { stacks: multiStack } });
+    expect(await runLifecycleAffected(affectedCtx({ includeDependents: true }))).toBe(0);
+    const stderr = stderrBuf.join("\n");
+    expect(stderr).toContain("dependsOn");
+    expect(stderr).toContain("chant components fan-out");
+  });
+
+  test("no note for a single-root project, even with --include-dependents", async () => {
+    loadChantConfigMock.mockResolvedValue({ config: {} });
+    expect(await runLifecycleAffected(affectedCtx({ includeDependents: true }))).toBe(0);
+    expect(stderrBuf.join("\n")).not.toContain("chant components fan-out");
+  });
+
+  test("no note for a multi-stack project when dependents were not asked for", async () => {
+    loadChantConfigMock.mockResolvedValue({ config: { stacks: multiStack } });
+    expect(await runLifecycleAffected(affectedCtx())).toBe(0);
+    expect(stderrBuf.join("\n")).not.toContain("chant components fan-out");
+  });
+
+  test("--base is required", async () => {
+    loadChantConfigMock.mockResolvedValue({ config: {} });
+    expect(await runLifecycleAffected(affectedCtx({ base: undefined }))).toBe(1);
+    expect(affectedStacksMock).not.toHaveBeenCalled();
   });
 });

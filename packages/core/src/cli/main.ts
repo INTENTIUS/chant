@@ -26,6 +26,7 @@ import { runCarveApply } from "./handlers/carve-apply";
 import { runCarveStatus } from "./handlers/carve-status";
 import { runLifecycleSnapshot, runLifecycleShow, runLifecycleDiff, runLifecycleRollback, runLifecyclePlan, runLifecycleAffected, runLifecycleLog, runLifecycleTeardown, runLifecycleWhoami, runLifecycleUnknown } from "./handlers/lifecycle";
 import { runComponentsStatus, runComponentsReleaseRecord, runComponentsExport, runComponentsUnknown } from "./handlers/components";
+import { runComponentsFanOut } from "./handlers/fan-out";
 import { runScenarioCheck, runScenarioUnknown } from "./handlers/scenario";
 import { runGraph } from "./handlers/graph";
 import { runExplain } from "./handlers/explain";
@@ -301,6 +302,12 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.head = args[++i];
     } else if (arg === "--include-dependents") {
       result.includeDependents = true;
+    } else if (arg === "--from-affected") {
+      result.fromAffected = args[++i];
+    } else if (arg === "--gate") {
+      result.gate = args[++i];
+    } else if (arg === "--resume") {
+      result.resume = args[++i];
     } else if (arg === "--local") {
       result.local = true;
     } else if (arg === "--json") {
@@ -621,6 +628,13 @@ Component release ledger + status:
                             --json: stable machine-readable contract;
                             --compare-to <env>: cross-check the same
                             component's recorded digest against another env)
+  components fan-out       Run a change out across the components downstream
+                            of it, in an order derived from the source
+                            (--base <ref> [--head <ref>] [--include-dependents],
+                             or --from-affected <file>; --dry-run prints the
+                             derivation and dispatches nothing; --gate <name>
+                             puts one approval over the whole set; --resume
+                             <file> finishes an attempt that stopped)
   components release <env> Append one immutable release record
                             (--component <name> --digest <sha256:...>
                              [--git-sha <sha>] [--run-id <id>] [--actor <name>])
@@ -736,7 +750,8 @@ Options:
                         project source; network egress is NOT blocked (see
                         docs). Default: off (also settable via
                         chant.config.ts's build.sandbox: true; #1045)
-  --param <name=value>  (build, graph, run --components) Bind a declared
+  --param <name=value>  (build, graph, run --components, components fan-out)
+                        Bind a declared
                         build-time parameter (chant.config.ts's buildParams)
                         to a value, for source to read as params.<name>
                         (#1064) instead of process.env — repeatable.
@@ -744,7 +759,8 @@ Options:
                         Parameter(): this resolves before synthesis, so it
                         can change which resources are produced at all.
                         Highest precedence.
-  --params-file <path>  (build, graph, run --components) JSON file of
+  --params-file <path>  (build, graph, run --components, components fan-out)
+                        JSON file of
                         { "name": value } build-time parameter values
                         (#1064). Second precedence, after --param.
 
@@ -967,6 +983,7 @@ export const commandRegistry: CommandDef[] = [
   { name: "scenario check", requiresPlugins: true, handler: runScenarioCheck },
 
   // Component release ledger + status surface (#568, epic #551)
+  { name: "components fan-out", requiresPlugins: true, handler: runComponentsFanOut },
   { name: "components status", requiresPlugins: true, handler: runComponentsStatus },
   { name: "components release", handler: runComponentsReleaseRecord },
   { name: "components export", handler: runComponentsExport },
@@ -1102,12 +1119,17 @@ async function main(): Promise<void> {
   // missing plugins there is "no live evidence" (a warning), not a hard exit.
   const isGenerateComponents = match.def.name === "build" && args.components && !!args.generate;
   const isComponentsStatus = match.def.name === "components status";
+  // `components fan-out` (#2420) needs serializers only when it derives the
+  // change signal itself (`--base` builds both refs). Reading one somebody
+  // else already produced (`--from-affected`) touches no lexicon at all, so a
+  // components-only project is not turned away for a step it will not run.
+  const isFanOutFromFile = match.def.name === "components fan-out" && !args.base;
   // `emulator` (#920) is a property of the *configured* lexicons, not of any infra
   // file — a fresh/local project with no declarables still boots Floci. Load from
   // chant.config best-effort, like components status, rather than detectLexicon.
   const isEmulator = match.def.name === "emulator" || match.def.name.startsWith("emulator ");
   const plugins = match.def.requiresPlugins
-    ? isGenerateComponents || isComponentsStatus || isEmulator
+    ? isGenerateComponents || isComponentsStatus || isEmulator || isFanOutFromFile
       ? await loadPlugins(await resolveProjectLexicons(resolve(projectPath)).catch(() => [])).catch(() => [])
       : await loadPluginsOrExit(projectPath)
     : [];
