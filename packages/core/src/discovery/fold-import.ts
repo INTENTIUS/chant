@@ -1857,6 +1857,16 @@ interface InterpretableFactory {
   fn: ts.ArrowFunction | ts.FunctionExpression;
   /** `Composite()`'s second argument, or `"anonymous"` when it has none — matching {@link Composite}'s own default. */
   compositeName: string;
+  /**
+   * chant#2442 — the registration form came from a HOST the caller named
+   * ({@link FoldSession.lexiconPackages}), not from chant.
+   *
+   * The members are then the host's own, so they are returned as the factory
+   * produced them rather than wrapped in chant's {@link Composite}, whose
+   * member validation asks for chant's own `Declarable` and would reject an
+   * entity carrying a different marker. Chant's own form is untouched.
+   */
+  hostForm: boolean;
 }
 
 /**
@@ -1937,7 +1947,7 @@ function findCompositeDefinition(
   scope: FactoryModuleScope,
   exportName: string,
   ctx: ResolveCtx,
-): { fn: ts.ArrowFunction | ts.FunctionExpression; compositeName: string } | undefined {
+): { fn: ts.ArrowFunction | ts.FunctionExpression; compositeName: string; hostForm: boolean } | undefined {
   for (const statement of scope.sourceFile.statements) {
     if (!ts.isVariableStatement(statement)) continue;
     if (!hasExportModifier(statement)) continue;
@@ -1955,7 +1965,16 @@ function findCompositeDefinition(
       // call to it is not a registered composite.
       const compositeBinding = scope.imports.get(init.expression.text);
       if (!compositeBinding || compositeBinding.imported !== "Composite") return undefined;
-      if (!isChantOwnedHelperBinding(compositeBinding, { ...ctx, file: scope.file })) return undefined;
+      // chant's own is the answer for every chant project, and #1082's
+      // provenance question is why: a project-local `function Composite(...)`
+      // shadowing the name is not chant's. chant#2442 adds the case chant had
+      // never had to consider, a HOST supplying the form (`F-Host-Composite`),
+      // which only a caller that named its own host packages can reach. For a
+      // chant build the set holds only `@intentius/chant-lexicon-*`, and no
+      // lexicon exports a `Composite`, so nothing about a chant project moves.
+      const chantOwned = isChantOwnedHelperBinding(compositeBinding, { ...ctx, file: scope.file });
+      const hostOwned = activeLexiconPackage(compositeBinding.specifier, ctx.lexiconPackages) !== undefined;
+      if (!chantOwned && !hostOwned) return undefined;
 
       const [fnArg, nameArg] = init.arguments;
       if (!fnArg || (!ts.isArrowFunction(fnArg) && !ts.isFunctionExpression(fnArg))) return undefined;
@@ -1963,7 +1982,7 @@ function findCompositeDefinition(
       // COR017 requires the literal in practice; anything that is not a plain
       // string literal is not something to guess at.
       if (nameArg !== undefined && !ts.isStringLiteral(nameArg)) return undefined;
-      return { fn: fnArg, compositeName: nameArg ? nameArg.text : "anonymous" };
+      return { fn: fnArg, compositeName: nameArg ? nameArg.text : "anonymous", hostForm: !chantOwned };
     }
   }
   return undefined;
@@ -2011,7 +2030,7 @@ async function resolveInterpretableFactory(
   // Rules 3-5.
   if (findFactorySubsetViolation(definition.fn) !== undefined) return undefined;
 
-  return { scope, fn: definition.fn, compositeName: definition.compositeName };
+  return { scope, fn: definition.fn, compositeName: definition.compositeName, hostForm: definition.hostForm };
 }
 
 /**
@@ -2365,10 +2384,17 @@ async function interpretCompositeFactory(
     // one per module, as the run path has) is the single visible difference:
     // `_id` is a fresh symbol, which nothing outside `CompositeRegistry` — used
     // only by tests — reads.
-    const definition = Composite<void, CompositeMembers>(() => members as CompositeMembers, factory.compositeName);
-    const instance = definition();
+    // chant#2442 — a HOST's registration form produces the host's own members,
+    // so they are returned as the factory built them. Wrapping them in chant's
+    // `Composite` would run chant's member validation, which asks for chant's
+    // own `Declarable` and rejects an entity carrying a different marker —
+    // rejecting it for not being chant's rather than for being malformed.
+    // Chant's own form still goes through `Composite`, unchanged.
+    const value = factory.hostForm
+      ? members
+      : (Composite<void, CompositeMembers>(() => members as CompositeMembers, factory.compositeName))();
     executionCounts.factoryInterpretations += 1;
-    return { value: instance };
+    return { value };
   } catch (err) {
     // Every other failure here means "this body did not interpret" and the
     // caller invokes instead. Exhausting the depth bound means "we stopped
