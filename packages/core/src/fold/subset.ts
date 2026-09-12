@@ -147,7 +147,30 @@ import { intrinsicCallFolds, intrinsicCallFoldsEagerly, type IntrinsicDef } from
  * folder would actually accept) — never the reverse. Making EVL
  * flow-sensitive would mean re-implementing an evaluator inside a lint
  * rule; out of scope here. See #1024.
+ *
+ * ## Which version of the specification this is
+ *
+ * A specification version names a set of rules and moves on its own schedule,
+ * separately from chant's releases (INTENTIUS/typescript-as-data#18). The
+ * version chant implements is {@link SPEC_VERSION}, and it is exported from
+ * `@intentius/chant`'s public entry so the specification's conformance suite
+ * can read it. A suite that finds no declaration reports the implementation as
+ * `undeclared` rather than assuming it is current, which is the right default
+ * and a useless answer to get from an implementation that does know.
+ *
+ * Raising it is part of adopting a new version of the rules, alongside the
+ * spec-first change process above: land the rule there, implement it here
+ * citing the identifier, then move this constant.
  */
+
+/**
+ * The version of the TypeScript-as-Data specification chant implements
+ * (chant#2424).
+ *
+ * `spec/VERSION` in the specification repository carries the same string, and
+ * the conformance adapter reads this one to fill its `specVersion` field.
+ */
+export const SPEC_VERSION = "1.0";
 
 /** The two EVL rule ids a shape violation can be attributed to. */
 export type SubsetRuleId = "EVL001" | "EVL003";

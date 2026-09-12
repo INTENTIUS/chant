@@ -1248,6 +1248,21 @@ interface ResolveCtx {
    */
   crossFileFailures: Map<string, string>;
   /**
+   * chant #2422/#2423 — for a same-file `const x = new T(...)` whose pre-build
+   * ({@link preresolveResourceConsts}) failed, WHY, located.
+   *
+   * The pre-build swallows a failed construction by design, so the name stays
+   * absent from {@link externals} and the first reference to it rejects with
+   * "same-file resource `x` used as a value", at the reference. That rejection
+   * is right, and it points at the consequence: the located cause is on the
+   * `new` line, which the reader never sees. `F-Reason` asks a reason to carry
+   * the innermost located cause, so {@link describeFoldFailure} appends this.
+   *
+   * Present only on the one context the pre-build runs in. Purely cosmetic;
+   * nothing about whether a file folds depends on it.
+   */
+  prebuildFailures?: Map<string, string>;
+  /**
    * chant #1020 hang fix — session-wide {@link importModule} memo (see
    * {@link FoldSession.importCache}'s doc). Every constructor/composite-
    * factory/intrinsic import in this module goes through
@@ -3235,9 +3250,16 @@ async function preresolveResourceConsts(ctx: ResolveCtx): Promise<Map<ts.Express
       stampParamDependencies(instance, initializer, ctx);
       built.set(initializer, instance);
       ctx.externals.set(name, instance);
-    } catch {
+    } catch (err) {
       // Not constructible here (an unresolvable constructor import, a prop
-      // outside the fold subset, a --sandbox refusal). Leave the name alone.
+      // outside the fold subset, a --sandbox refusal). Leave the name alone:
+      // the failure is deliberately not fatal, and the first reference to the
+      // name rejects on its own terms.
+      //
+      // chant#2423 — but keep the located reason. Without it the file's only
+      // reported cause is the reference site, which is where the consequence
+      // is, not where the problem is.
+      ctx.prebuildFailures?.set(name, describeFoldFailure(err, ctx));
     }
   }
   return built;
@@ -3292,6 +3314,9 @@ async function resolveResourceEntity(
 
 const UNRESOLVED_IDENTIFIER_RE = /unresolved identifier: (\S+)$/;
 
+/** The rejection a reference to a const whose pre-build failed produces (chant#2423). */
+const SAME_FILE_RESOURCE_RE = /same-file resource `([^`]+)` used as a value is not foldable/;
+
 /**
  * Enrich an otherwise-generic "unresolved identifier: X" failure when X is a
  * name whose OWN cross-file resolution was attempted and failed for a known
@@ -3305,6 +3330,13 @@ function describeFoldFailure(err: unknown, ctx: ResolveCtx): string {
   if (match) {
     const reason = ctx.crossFileFailures.get(match[1]);
     if (reason) return `${err.message} (${reason})`;
+  }
+  // chant#2423 — the reference rejected because the pre-build never produced
+  // the instance. Say what stopped the pre-build, at the line it stopped on.
+  const sameFile = SAME_FILE_RESOURCE_RE.exec(err.message);
+  if (sameFile) {
+    const cause = ctx.prebuildFailures?.get(sameFile[1]);
+    if (cause) return `${err.message} (${cause})`;
   }
   return err.message;
 }
@@ -3635,6 +3667,10 @@ async function tryFoldFileCore(file: string, session: FoldSession): Promise<Fold
       sandbox: session.sandbox,
       session,
       interpretDepth: 0,
+      // chant#2423 — filled by the pre-build below, read by
+      // `describeFoldFailure` when a reference rejects for a const it could
+      // not build.
+      prebuildFailures: new Map<string, string>(),
     };
 
     // chant #1169 — every same-file `const x = new Type(...)`, built once, in
@@ -4034,6 +4070,37 @@ export async function planFoldTaintWithEdges(
   return { tainted, reachedBy };
 }
 
+/**
+ * The rest of the session a whole-build fold needs, mirroring the same fields
+ * on `DiscoveryOptions` (chant#2422).
+ *
+ * Without them {@link foldProject} answered a strictly harsher question than a
+ * real `chant build --fold` does. `lexiconPackages` was always empty, and per
+ * its own contract an empty set "disables lexicon-package resolution entirely
+ * rather than falling back to something more permissive", so no file that reads
+ * a lexicon data export as a value could fold through this entry. `buildParams`
+ * was always unset, so no file reading `params` could either. Both fold under a
+ * real build, and 21 corpus files flipped from `run` to `fold` at
+ * `chant-v0.70.1` once the list was supplied.
+ *
+ * `../build.ts` already threads all three into `../discovery/index.ts`; this is
+ * the same three reaching the same `createFoldSession` by the other route.
+ */
+export interface FoldProjectOptions {
+  /**
+   * Lexicon NAMES active for this build (`["aws", "k8s"]`), as
+   * `resolveProjectLexicons()` returns them. A caller building through core has
+   * to supply these itself, the same way `examples/differential-corpus.ts`
+   * reproduces the CLI's `options.plugins.map((p) => p.name)` step, or the fold
+   * is measured without the bare-specifier allowlist a real build gives it.
+   */
+  readonly lexicons?: readonly string[];
+  /** Resolved build-time parameter values, so a file reading `params.<name>` folds. */
+  readonly buildParams?: Readonly<Record<string, BuildParamValue>>;
+  /** chant #1093: this build asked for the sandbox, so fold may not reach outside the trusted allowlist. */
+  readonly sandbox?: boolean;
+}
+
 /** One file's place in a whole-build fold, as {@link foldProject} reports it. */
 export interface FoldProjectVerdict {
   /** What the build does with this file. */
@@ -4063,12 +4130,23 @@ export interface FoldProjectVerdict {
  * Same session, same memo, same taint walk as a real build — this is not a
  * second implementation of the rules, it is the existing one with its
  * intermediate results kept instead of consumed.
+ *
+ * `options` carries the rest of what a build's session holds (chant#2422).
+ * Omitting it answers a harsher question than a real build asks: with no
+ * lexicon list nothing reading a lexicon data export folds, and with no build
+ * parameters nothing reading `params` does. See {@link FoldProjectOptions}.
  */
 export async function foldProject(
   files: readonly string[],
   intrinsics: readonly IntrinsicDef[] = [],
+  options: FoldProjectOptions = {},
 ): Promise<Map<string, FoldProjectVerdict>> {
-  const session = createFoldSession(intrinsics);
+  const session = createFoldSession(
+    intrinsics,
+    options.buildParams,
+    options.lexicons ?? [],
+    options.sandbox ?? false,
+  );
   const attempts = new Map<string, FoldFileResult>();
   for (const file of files) attempts.set(file, await tryFoldFile(file, intrinsics, session));
 
