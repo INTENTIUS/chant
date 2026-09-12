@@ -14,7 +14,17 @@
  * The registry is data, not a rule about what steps look like — a kind not
  * listed here contributes no unit, exactly as before.
  */
-import type { Phase } from "./component";
+/**
+ * The only shape this walk reads: something with `steps`, whose entries may
+ * carry a `kind` and may themselves nest. Both `Phase` (./component.ts) and
+ * `DriverPhase` (./driver.ts) satisfy it — they differ on how a gate step is
+ * typed, which this module never looks at — so declaring the narrower of the
+ * two would force a cast on one caller for no gain in safety, given the walk
+ * discriminates structurally anyway.
+ */
+export interface UnitBearingPhase {
+  steps: readonly unknown[];
+}
 
 /** A deploy-family step kind that names a live unit, and who observes it. */
 export interface DeployUnitRule {
@@ -61,17 +71,17 @@ export interface DeployUnit {
  * order. A step may itself be a nested `Phase`, so the walk recurses; a
  * resolved component carries the unit as a concrete string. Pure.
  */
-export function deployUnits(deploy: Phase[]): DeployUnit[] {
+export function deployUnits(deploy: readonly UnitBearingPhase[]): DeployUnit[] {
   const byKind = new Map(DEPLOY_UNIT_RULES.map((r) => [r.kind, r]));
   const seen = new Set<string>();
   const units: DeployUnit[] = [];
-  const walkSteps = (steps: Phase["steps"]): void => {
+  const walkSteps = (steps: readonly unknown[]): void => {
     for (const step of steps) {
       // A step may itself be a nested Phase (it carries its own `steps`). Step
       // is open-typed (capability inputs), so discriminate structurally.
       const nested = (step as { steps?: unknown }).steps;
       if (Array.isArray(nested)) {
-        walkSteps(nested as Phase["steps"]);
+        walkSteps(nested as readonly unknown[]);
         continue;
       }
       const s = step as { kind?: string } & Record<string, unknown>;

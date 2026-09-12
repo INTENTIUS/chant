@@ -101,6 +101,19 @@ export {
   DriverRunFailure,
 } from "./driver";
 export {
+  type FanOutRequest,
+  type FanOutPlan,
+  type FanOutSkip,
+  type FanOutSkipReason,
+  type ChangedUnits,
+  type ComponentChangeSignal,
+  type FanOutProgress,
+  planFanOut,
+  componentsForUnits,
+  remainingFanOut,
+  UnknownComponentError,
+} from "./fan-out";
+export {
   EcsFargateComponent,
   type EcsFargateComponentConfig,
   LambdaComponent,
