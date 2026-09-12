@@ -138,6 +138,124 @@ describe("affectedStacks — baseDir (caller-supplied)", () => {
   });
 });
 
+// A second lexicon, so a stack that serializes through two of them can be shown
+// folding into one artifact.
+const fakeSerializer2: Serializer = {
+  name: "fake2",
+  rulePrefix: "FAKE2",
+  serialize: (entities) =>
+    JSON.stringify([...entities.keys()].sort().map((k) => ({ k, t: entities.get(k)!.entityType }))),
+};
+
+function otherWidget(type: string): string {
+  return `export const bar = { lexicon: "fake2", entityType: "${type}", [Symbol.for("chant.declarable")]: true };\n`;
+}
+
+function deployTimeParam(): string {
+  return `export const p = { lexicon: "fake", entityType: "Param", parameterType: "String", [Symbol.for("chant.declarable")]: true };\n`;
+}
+
+describe("affectedStacks — per-stack mode (#2420)", () => {
+  let root: string;
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "chant-affected-stacks-"));
+  });
+  afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+  // A project root holding one source directory per stack, as ChantConfig.stacks
+  // describes it: { api: <infra.ts contents>, worker: ... }.
+  const project = (name: string, sources: Record<string, string>): string => {
+    const dir = join(root, name);
+    for (const [stack, content] of Object.entries(sources)) {
+      mkdirSync(join(dir, stack), { recursive: true });
+      writeFileSync(join(dir, stack, "infra.ts"), content);
+    }
+    return dir;
+  };
+
+  const stacks = [
+    { name: "api-stack", src: "api" },
+    { name: "worker-stack", src: "worker" },
+  ];
+
+  test("a stacks[] entry whose src is not there is refused by name at head", async () => {
+    const base = project("base", { api: widget("Widget"), worker: widget("Queue") });
+    const head = project("head", { api: widget("Gadget") });
+    await expect(
+      affectedStacks({ projectPath: head, baseDir: base, serializers: [fakeSerializer], stacks }),
+    ).rejects.toThrow(/stack "worker-stack" declares src "worker", which does not exist/);
+  });
+
+  test("a stack added since base is changed, rather than refused for having no base source", async () => {
+    const base = project("base", { api: widget("Widget") });
+    const head = project("head", { api: widget("Widget"), worker: widget("Queue") });
+    const r = await affectedStacks({ projectPath: head, baseDir: base, serializers: [fakeSerializer], stacks });
+    expect(r.changed).toEqual(["worker-stack"]);
+  });
+
+  test("names the changed stack, not its lexicon — and leaves the untouched stack out", async () => {
+    const base = project("base", { api: widget("Widget"), worker: widget("Queue") });
+    const head = project("head", { api: widget("Gadget"), worker: widget("Queue") });
+    const r = await affectedStacks({ projectPath: head, baseDir: base, serializers: [fakeSerializer], stacks });
+    expect(r.changed).toEqual(["api-stack"]);
+    expect(r.changed).not.toContain("fake"); // the lexicon name is not an answer
+  });
+
+  test("a no-output-change refactor in the changed stack's own directory is NOT affected", async () => {
+    const base = project("base", { api: widget("Widget"), worker: widget("Queue") });
+    const head = project("head", { api: "// a harmless refactor\n" + widget("Widget"), worker: widget("Queue") });
+    const r = await affectedStacks({ projectPath: head, baseDir: base, serializers: [fakeSerializer], stacks });
+    expect(r.changed).toEqual([]);
+  });
+
+  test("a stack spanning two lexicons folds into one artifact keyed by the stack", async () => {
+    const both = (type: string) => widget("Widget") + otherWidget(type);
+    const base = project("base", { api: both("Topic"), worker: widget("Queue") });
+    // Only the second lexicon's partition moves; the stack is still what changed.
+    const head = project("head", { api: both("Bus"), worker: widget("Queue") });
+    const r = await affectedStacks({
+      projectPath: head,
+      baseDir: base,
+      serializers: [fakeSerializer, fakeSerializer2],
+      stacks,
+    });
+    expect(r.changed).toEqual(["api-stack"]);
+  });
+
+  test("a deploy-time Parameter is reported as indeterminate under the stack name", async () => {
+    const base = project("base", { api: deployTimeParam(), worker: widget("Queue") });
+    const head = project("head", { api: deployTimeParam(), worker: widget("Queue") });
+    const r = await affectedStacks({ projectPath: head, baseDir: base, serializers: [fakeSerializer], stacks });
+    expect(r.indeterminate).toEqual(["api-stack"]);
+  });
+
+  test("dependents stay empty — the stack-to-stack relation is not in the build", async () => {
+    const base = project("base", { api: widget("Widget"), worker: widget("Queue") });
+    const head = project("head", { api: widget("Gadget"), worker: widget("Queue") });
+    const r = await affectedStacks({
+      projectPath: head,
+      baseDir: base,
+      serializers: [fakeSerializer],
+      stacks,
+      includeDependents: true,
+    });
+    expect(r.changed).toEqual(["api-stack"]);
+    expect(r.dependents).toEqual([]);
+  });
+
+  test("an empty stacks list keeps the single-root, lexicon-keyed answer", async () => {
+    const base = project("base", { api: widget("Widget") });
+    const head = project("head", { api: widget("Gadget") });
+    const r = await affectedStacks({
+      projectPath: join(head, "api"),
+      baseDir: join(base, "api"),
+      serializers: [fakeSerializer],
+      stacks: [],
+    });
+    expect(r.changed).toEqual(["fake"]);
+  });
+});
+
 describe("affectedStacks — baseRef (git worktree)", () => {
   let repo: string;
   beforeEach(async () => {

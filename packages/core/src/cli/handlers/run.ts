@@ -570,8 +570,14 @@ export async function runOp(ctx: CommandContext): Promise<number> {
  * failure (`reason: "error"`) is surfaced, as a warning — never a nonzero
  * exit, since the deploy itself already succeeded and a ledger-write hiccup
  * must not retroactively fail it.
+ *
+ * Exported for `chant components fan-out` (#2420), which applies components
+ * through a different runner and would otherwise leave no trace in the release
+ * ledger for work `chant run --components` records. Each result is filtered on
+ * its own `ok`, so a fan-out that partly succeeded records exactly the
+ * components that did.
  */
-async function recordAutoReleasesForRun(
+export async function recordAutoReleasesForRun(
   results: DriverComponentResult[],
   env: string,
   runId: string,

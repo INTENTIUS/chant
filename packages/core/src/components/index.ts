@@ -121,6 +121,19 @@ export {
   runFanOut,
 } from "./fan-out-run";
 export {
+  type FanOutGateRef,
+  type FanOutRenderOptions,
+  renderFanOutPlan,
+  renderFanOutHuman,
+  renderFanOutJson,
+} from "./fan-out-output";
+export {
+  type DeriveFanOutOptions,
+  type DerivedFanOut,
+  deriveFanOut,
+  fanOutRegistry,
+} from "./fan-out-support";
+export {
   EcsFargateComponent,
   type EcsFargateComponentConfig,
   LambdaComponent,

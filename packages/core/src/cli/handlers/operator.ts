@@ -35,6 +35,7 @@ import {
   resolveApprovalUrl, isApprovalUrl,
 } from "../../lifecycle/gate-ledger";
 import { isPlanDigest } from "../../lifecycle/plan-digest";
+import { FAN_OUT_GATE_OP } from "../../op/gate-name";
 import { pushLifecycle, requireLifecycleLedger } from "../../lifecycle/git";
 import { formatError, formatWarning, formatSuccess, formatBold, formatInfo } from "../format";
 import type { CommandContext } from "../registry";
@@ -677,7 +678,9 @@ export async function runApprove(ctx: CommandContext): Promise<number> {
         (pushed ? "" : " (local only — the push did not land)"),
     ));
     console.error(formatInfo(
-      `The next \`chant run ${opName}\` decides this gate from scratch and records a fresh pending fact.`,
+      opName === FAN_OUT_GATE_OP
+        ? `The next \`chant components fan-out\` decides this gate from scratch and records a fresh pending fact.`
+        : `The next \`chant run ${opName}\` decides this gate from scratch and records a fresh pending fact.`,
     ));
     return 0;
   }
@@ -696,7 +699,9 @@ export async function runApprove(ctx: CommandContext): Promise<number> {
 
   console.error(formatInfo(
     `This records the resolution as a fact; it does not itself re-run anything. ` +
-      `Run \`chant run ${opName}\` and it walks through gate "${gate}".`,
+      (opName === FAN_OUT_GATE_OP
+        ? `Repeat the \`chant components fan-out\` command and it walks through gate "${gate}".`
+        : `Run \`chant run ${opName}\` and it walks through gate "${gate}".`),
   ));
   return 0;
 }
@@ -742,7 +747,10 @@ export async function recordGateApproval(
   opts: GateApprovalOptions,
 ): Promise<GateApprovalOutcome> {
   const { ops } = await discoverOps();
-  if (!ops.has(opName)) {
+  // `fan-out` is the op name every `chant components fan-out` gate is recorded
+  // under (../handlers/fan-out.ts). It is a command rather than a declaration,
+  // so there is no `*.op.ts` to find and nothing is wrong when none is there.
+  if (!ops.has(opName) && opName !== FAN_OUT_GATE_OP) {
     console.error(formatWarning({
       message: `Op "${opName}" was not found among discovered *.op.ts declarations — recording the resolution anyway`,
     }));

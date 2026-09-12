@@ -1,0 +1,23 @@
+{
+  "name": "fan-out-estate",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "One network stack feeding two clusters feeding twelve apps, as fifteen independently-deployed CloudFormation stacks, deployed by a fan-out whose order is derived from the source.",
+  "devDependencies": {
+    "@intentius/chant": "*",
+    "@intentius/chant-lexicon-aws": "*",
+    "typescript": "*"
+  },
+  "scripts": {
+    "build": "npm run build:network && npm run build:clusters && npm run build:apps",
+    "build:network": "chant build src/network --lexicon aws -o dist/network.template.json",
+    "build:clusters": "chant build src/cluster-a --lexicon aws -o dist/cluster-a.template.json && chant build src/cluster-b --lexicon aws -o dist/cluster-b.template.json",
+    "build:apps": "chant build src/app-01 --lexicon aws -o dist/app-01.template.json && chant build src/app-02 --lexicon aws -o dist/app-02.template.json && chant build src/app-03 --lexicon aws -o dist/app-03.template.json && chant build src/app-04 --lexicon aws -o dist/app-04.template.json && chant build src/app-05 --lexicon aws -o dist/app-05.template.json && chant build src/app-06 --lexicon aws -o dist/app-06.template.json && chant build src/app-07 --lexicon aws -o dist/app-07.template.json && chant build src/app-08 --lexicon aws -o dist/app-08.template.json && chant build src/app-09 --lexicon aws -o dist/app-09.template.json && chant build src/app-10 --lexicon aws -o dist/app-10.template.json && chant build src/app-11 --lexicon aws -o dist/app-11.template.json && chant build src/app-12 --lexicon aws -o dist/app-12.template.json",
+    "lint": "chant lint src",
+    "plan": "chant components fan-out --base HEAD~1 --dry-run",
+    "deploy": "chant components fan-out --base HEAD~1 --env local --no-release-record",
+    "deploy:gated": "chant components fan-out --base HEAD~1 --env local --gate release --resume .chant/fan-out.json --no-release-record",
+    "teardown": "for s in app-01 app-02 app-03 app-04 app-05 app-06 app-07 app-08 app-09 app-10 app-11 app-12 cluster-a cluster-b network; do aws cloudformation delete-stack --stack-name $s; done"
+  }
+}

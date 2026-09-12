@@ -474,6 +474,8 @@ Builds are obtained lazily: **head** is the in-place build of the working tree (
 
 `--json` emits `{ changed, dependents, indeterminate }`. The same logic is exported as `affectedStacks()` for programmatic use.
 
+**Stack names, when the project declares its stacks.** A project that sets `stacks` in `chant.config.ts` gets each declared stack's own source built and the answer keyed by stack name. Without it, one build of the source root can only answer by lexicon partition, so an aws-only estate of fifteen stacks reports "aws changed" whichever one moved, and nothing downstream can join to that. Stack names are what a component's deploy step uses, which is what makes [`chant components fan-out`](/chant/cli/components/#components-fan-out) able to consume this output. In that mode `--include-dependents` has nothing to add and prints a note saying so: the build holds cross-lexicon edges, not edges between deployed stacks, and the relation between two deployed stacks is stated by the components' `dependsOn`, which the fan-out walks for itself. An empty `dependents` there means "not computed", never "nothing downstream".
+
 **Composing it.** chant returns the set; you drive the fan-out. For example, plan only the affected stacks in CI:
 
 ```bash

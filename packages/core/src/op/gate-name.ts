@@ -18,6 +18,17 @@
 
 import type { OpConfig, PhaseDefinition, StepDefinition } from "./types";
 
+/**
+ * The op name a `chant components fan-out` gate is recorded under (#2420).
+ *
+ * A fan-out is a command rather than an authored `*.op.ts`, so `chant approve`
+ * has nothing to discover for this name and must not report that as a problem.
+ * It lives here, next to the other thing that decides what a gate is called,
+ * so both the command that records the pending fact and the command that
+ * answers it read one constant instead of agreeing by hand.
+ */
+export const FAN_OUT_GATE_OP = "fan-out";
+
 /** Either spelling of a gate step's name. `gate` since #2202; `signalName` through 0.59.0. */
 export interface GateNamed {
   gate?: string;
