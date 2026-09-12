@@ -25,3 +25,34 @@ describe("findSubsetViolation is exported from the package entry", () => {
     expect(chant.findSubsetViolation(initializerOf("export const x = cfg[key];"))?.ruleId).toBe("EVL003");
   });
 });
+
+/**
+ * chant#2424 — the specification's conformance adapter reads `SPEC_VERSION`
+ * off exactly this namespace:
+ *
+ * ```ts
+ * specVersion: (chant as { SPEC_VERSION?: string }).SPEC_VERSION ?? "undeclared",
+ * ```
+ *
+ * so a suite that finds nothing there reports chant as `undeclared` rather
+ * than as implementing anything. The barrel is the thing that can silently
+ * drop it, which is what this pins.
+ */
+describe("SPEC_VERSION is declared on the package entry (chant#2424)", () => {
+  test("the public namespace carries it", () => {
+    expect(typeof chant.SPEC_VERSION).toBe("string");
+    expect(chant.SPEC_VERSION).not.toBe("");
+  });
+
+  test("it is a specification version, not a chant release", () => {
+    // `spec/VERSION` carries a two-part version that moves separately from
+    // chant's own releases (INTENTIUS/typescript-as-data#18), so a value that
+    // looks like a package version is the mistake worth catching.
+    expect(chant.SPEC_VERSION).toMatch(/^\d+\.\d+$/);
+  });
+
+  test("and it is the same string the subset module defines", async () => {
+    const { SPEC_VERSION } = await import("./subset");
+    expect(chant.SPEC_VERSION).toBe(SPEC_VERSION);
+  });
+});

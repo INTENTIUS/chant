@@ -65,6 +65,10 @@ export default defineConfig({
       // entries came back as.
       "examples/differential-corpus.test.ts",
       "examples/fold-differential.test.ts",
+      // chant #2422/#2423 — what `foldProject()` needs beyond intrinsics
+      // before it answers the same question a build does. Same corpus-walking
+      // shape as the differential above (no Docker, no build).
+      "examples/fold-project-options.test.ts",
       // chant #2347 — the adversarial corpus entry's own test: which of its
       // files fold, which fall back, and which of those the taint fixpoint
       // moved. The differential above builds the same entry and compares

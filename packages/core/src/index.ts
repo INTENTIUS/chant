@@ -44,6 +44,11 @@ export * from "./fold/fold";
 // half of the fold subset a conformance adapter needs that `fold()` alone
 // does not expose. INTENTIUS/typescript-as-data#11.
 export { findSubsetViolation, checkObjectMember, type SubsetViolation, type SubsetRuleId } from "./fold/subset";
+// The version of the TypeScript-as-Data specification chant implements
+// (INTENTIUS/typescript-as-data#18, chant#2424). The specification's
+// conformance adapter reads this off the public entry; without it a suite
+// reports chant as `undeclared` rather than as implementing anything.
+export { SPEC_VERSION } from "./fold/subset";
 // The whole-build fold. `fold()` and `foldModule()` answer one expression and
 // one file; neither cross-file rule is observable at that granularity — the
 // forward rule needs an importer, the reverse rule needs a capturing sibling,
@@ -52,6 +57,7 @@ export { findSubsetViolation, checkObjectMember, type SubsetViolation, type Subs
 export {
   foldProject,
   planFoldTaintWithEdges,
+  type FoldProjectOptions,
   type FoldProjectVerdict,
   type TaintPlan,
   type TaintEdgeKind,
