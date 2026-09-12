@@ -42,7 +42,9 @@ set -euo pipefail
 # one accessor handles any of them. This is schema 2 (was 1): the old
 # top-level `plan_calls` (one read, mislabeled under an arm key of
 # "choudoufu" even though it was always chant's own number) is replaced by
-# `reads.cold_plan.calls`, keyed honestly as "chant".
+# `reads.cold_plan.calls`, keyed honestly as "chant". Schema 3 (chant#2409)
+# adds `stages.cold_deploy.stacks`, one uniform `{name, seconds, anomaly}`
+# entry per stack, plus `median_seconds` — see "the cost record" below.
 #
 # This is NOT a comparison with choudoufu: two independent results, each
 # proving its own tool handles the size on its own path.
@@ -65,13 +67,40 @@ set -euo pipefail
 #     completes, each carrying its own call count — never collapsed into one
 #     number
 #
+# chant#2409 — the heartbeat's OWN call can hang (it did, once, for 13
+# minutes, and everything downstream looked normal before and after): two
+# more things stream live rather than surfacing only in hindsight or not at
+# all.
+#   - a poll that does not answer: the heartbeat's DescribeStackEvents call
+#     is bounded (POLL_TIMEOUT_SECONDS below); when it trips, every
+#     heartbeat tick says so explicitly ("POLL DID NOT ANSWER") with how
+#     long it has been waiting, instead of printing nothing — "nothing is
+#     happening yet" and "we cannot see what is happening" must never look
+#     the same in the log, and the loop keeps ticking through it rather than
+#     blocking on the one call
+#   - an outlier while it is still running: each stack's own elapsed time is
+#     compared, live, against the median of stacks that have already
+#     finished (the first stack has no median yet and is exempt, honestly,
+#     rather than compared against a fabricated one); crossing the threshold
+#     (OUTLIER_MULTIPLIER / OUTLIER_FLOOR_SECONDS below) is flagged on the
+#     spot, with the emulator's log dumped to --out immediately — not queued
+#     for a teardown that, per the next point, will not happen
+#
+# Never destroys the evidence for an anomaly it just found: a stall or an
+# outlier suppresses the clean-pass teardown even when every stage passed,
+# prints the container name and the exact command to inspect it, and says
+# why it was kept. And the published cost record itself carries the same
+# per-stack durations, median, and flagged-stack reasons the log streamed —
+# a reader of the record alone, not just the log, can see that one stack
+# behaved unlike the others.
+#
 # Resumable: re-running this script against the SAME floci container skips
 # every stack `DescribeStacks` already reports CREATE_COMPLETE/
 # UPDATE_COMPLETE, and skips re-generating the project if its manifest
 # already exists. A run that dies at stack 14 of 20 picks up at 14 on the
 # next invocation, not 1 — as long as the container from the first attempt
 # is still up (a failed/interrupted run leaves it running on purpose; only
-# a clean full pass tears it down, unless --keep is given).
+# a clean full pass with no anomaly tears it down, unless --keep is given).
 #
 # Usage:
 #   test/scale-estate.sh down [container-name]
@@ -88,14 +117,36 @@ set -euo pipefail
 #     --continue-on-failure  keep deploying remaining stacks after one fails,
 #                             instead of stopping immediately (default: stop).
 #     --keep                 never tear down floci at the end, even on a
-#                             clean pass (default: tear down only on a clean
-#                             pass; a failed/stopped run always leaves it up).
+#                             clean pass (default: tear down only on a clean,
+#                             ANOMALY-FREE pass — chant#2409: a stall or an
+#                             outlier keeps the container up on its own,
+#                             whether or not --keep was given, the same as a
+#                             failed/stopped run always has).
 #     --force                regenerate the project even if a manifest
 #                             already exists at --out.
 #
 # Needs: docker, the aws CLI, jq, node, npx. Never talks to real AWS — every
 # AWS_ENDPOINT_URL this script sets points at floci or at its own counting
 # proxy in front of floci.
+#
+# Two test seams, chant#2409, both no-ops by default (unset = the same real
+# floci endpoint everything already used) — proving this file's own
+# behavior needs to move ONE call at a time onto a deliberately misbehaving
+# stand-in without disturbing the rest of the run:
+#   env HEARTBEAT_ENDPOINT_URL — retargets only the heartbeat's own
+#     DescribeStackEvents call (count_landed_resources). Point it at
+#     scripts/api-call-proxy.mjs with STALL_ACTION=DescribeStackEvents to
+#     prove the poll-timeout/anomaly behavior against a call that
+#     reproducibly does not answer, rather than waiting on a repeat of the
+#     incident that opened #2409.
+#   env DEPLOY_ENDPOINT_URL — retargets everything else chant#2409 doesn't
+#     touch (chant build, chant run, stack_status, first_failure_of). Point
+#     it at api-call-proxy.mjs with STALL_DELAY_MS to make one stack's own
+#     deploy genuinely, honestly slower (e.g. a delayed CreateStack), so the
+#     live outlier-vs-median detection can be proven against a real
+#     duration outlier — independent of, and without touching, the
+#     heartbeat's own poll.
+# Setting either has no effect on the other call.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FLOCI_IMAGE_FILE="${FLOCI_IMAGE_FILE:-/Users/alex/Documents/checkouts/intentius/choudoufu/live/floci-image}"
@@ -159,6 +210,25 @@ RECORD_PATH="${RECORD_PATH:-$OUT/../scale-record.json}"
 ENDPOINT="http://localhost:${PORT}"
 PROXY_PORT="${PROXY_PORT:-$((PORT + 7))}"
 PROXY_ENDPOINT="http://localhost:${PROXY_PORT}"
+# chant#2409 test seam: defaults to the real floci endpoint, so with no
+# override this is a no-op and behavior is unchanged. See the header comment.
+HEARTBEAT_ENDPOINT="${HEARTBEAT_ENDPOINT_URL:-$ENDPOINT}"
+
+# ---- chant#2409: stall/outlier thresholds --------------------------------
+# The heartbeat's own DescribeStackEvents call. 5s: long enough to absorb
+# floci's ordinary jitter under load (a bare `sleep 3` between ticks already
+# gives it breathing room), short enough that #2409's 13-minute hang is
+# caught on its very first tick instead of after hundreds of silent retries.
+POLL_TIMEOUT_SECONDS=5
+# A stack's own elapsed time vs. the median of stacks that have ALREADY
+# finished. #2409's real outlier was ~113x the median (791s vs ~7s) — 8x
+# catches that with enormous margin while tolerating the 2-3x jitter a
+# shared docker host produces under ordinary load. The 20s floor exists
+# because 8x of a very fast median (a nearly-empty stack can finish in 1-2s)
+# would fire on noise alone; nothing under 20s is worth interrupting a run
+# to investigate.
+OUTLIER_MULTIPLIER=8
+OUTLIER_FLOOR_SECONDS=20
 
 command -v docker >/dev/null 2>&1 || { echo "scale-estate.sh: docker is required" >&2; exit 1; }
 command -v aws >/dev/null 2>&1 || { echo "scale-estate.sh: the aws CLI is required" >&2; exit 1; }
@@ -189,7 +259,13 @@ done
 log "floci healthy after $((i * 2))s"
 
 export AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_REGION=us-east-1
-export AWS_ENDPOINT_URL="$ENDPOINT"
+# chant#2409 test seam (see HEARTBEAT_ENDPOINT above): defaults to floci
+# itself, so this is a no-op unless a test deliberately overrides it. Lets
+# chant's OWN calls (build/run/stack_status — everything except the
+# heartbeat's own poll) be pointed at a stand-in that delays one call
+# genuinely, so a real (not fabricated) duration outlier can be proven on
+# its own, independent of and without touching the poll-timeout path above.
+export AWS_ENDPOINT_URL="${DEPLOY_ENDPOINT_URL:-$ENDPOINT}"
 
 # ---- 2. generate the project, idempotent -------------------------------
 log "=== generate estate at $OUT ==="
@@ -266,10 +342,90 @@ stack_status() { # $1 = stack name; "NONE" if it doesn't exist / can't be read
 
 # Distinct logical ids (excluding the stack resource itself) that have
 # reached a *_COMPLETE status so far — the heartbeat's own progress number.
+#
+# chant#2409: bounded by POLL_TIMEOUT_SECONDS on both connect and read, and
+# targets HEARTBEAT_ENDPOINT (normally == floci, see the header comment) so
+# this one call can be pointed at a deliberately-hanging stand-in for proof.
+# Before #2409 a failed call here was swallowed to a bare "0", printing the
+# exact same line a genuinely idle stack would — this now prints the literal
+# string "TIMEOUT" instead, so the caller (and the heartbeat log line it
+# drives) can tell "0 landed so far" from "the call did not answer" rather
+# than collapsing both into the same silence.
+#
+# "Failed" is NOT the same as "didn't answer": in the first second or two
+# after `chant run` issues CreateStack, DescribeStackEvents on a stack floci
+# hasn't finished registering yet legitimately fails with an ordinary
+# ValidationError ("Stack ... does not exist") — that's "0 landed so far",
+# the same as before #2409, not an anomaly. Only botocore's own read/connect
+# timeout (an aws-cli process that gave up waiting, distinct stderr text) is
+# "TIMEOUT" — checked directly rather than inferred from "any error", so an
+# ordinary transient error during normal startup is never misreported as a
+# stall.
+#
+# AWS_MAX_ATTEMPTS=1: botocore retries a read/connect timeout automatically
+# (3 attempts by default, each up to POLL_TIMEOUT_SECONDS, with backoff in
+# between) — left alone, a single stalled tick could silently cost 15-20+
+# seconds of hidden, unreported retrying before this function returns at
+# all, which is exactly the kind of blind wait #2409 exists to end. Forcing
+# one attempt makes the bound real: this call returns (with an answer, or
+# with "it didn't answer") within POLL_TIMEOUT_SECONDS, full stop, so the
+# heartbeat's own reporting interval means what it says.
 count_landed_resources() { # $1 = stack name
-  aws cloudformation describe-stack-events --stack-name "$1" 2>/dev/null \
-    | jq '[.StackEvents[] | select(.ResourceStatus | test("_COMPLETE$")) | select(.ResourceType != "AWS::CloudFormation::Stack") | .LogicalResourceId] | unique | length' \
-    2>/dev/null || echo 0
+  local out err_file
+  err_file="$(mktemp)"
+  out="$(AWS_ENDPOINT_URL="$HEARTBEAT_ENDPOINT" AWS_MAX_ATTEMPTS=1 aws cloudformation describe-stack-events --stack-name "$1" \
+      --cli-connect-timeout "$POLL_TIMEOUT_SECONDS" --cli-read-timeout "$POLL_TIMEOUT_SECONDS" 2>"$err_file" \
+      | jq '[.StackEvents[] | select(.ResourceStatus | test("_COMPLETE$")) | select(.ResourceType != "AWS::CloudFormation::Stack") | .LogicalResourceId] | unique | length' \
+      2>/dev/null)" || true
+  if [ -n "$out" ]; then
+    echo "$out"
+  elif grep -qi 'timeout' "$err_file"; then
+    echo "TIMEOUT"
+  else
+    echo 0
+  fi
+  rm -f "$err_file"
+}
+
+# chant#2409 bookkeeping, populated as stacks complete (never for a
+# resumed/already-complete stack — its "duration" this run is ~0 and would
+# only pollute the median). RUN_STACK_ANOMALY holds "" for a clean stack or
+# the flagged reason, parallel by index to the other two.
+RUN_STACK_NAMES=()
+RUN_STACK_SECONDS=()
+RUN_STACK_ANOMALY=()
+ANOMALY_DETECTED=0
+ANOMALY_STACKS=()
+ANOMALY_REASONS_LIST=()
+
+record_stack_duration() { # $1=stack $2=seconds $3=anomaly reason ("" if none)
+  RUN_STACK_NAMES+=("$1")
+  RUN_STACK_SECONDS+=("$2")
+  RUN_STACK_ANOMALY+=("$3")
+}
+
+# Median of the given integers (floor of the average for an even count).
+# Callers must not invoke this with zero arguments — chant#2409's first
+# stack has no prior durations to compare against, and manufacturing a
+# baseline from nothing would be worse than admitting there isn't one yet.
+median_of() {
+  printf '%s\n' "$@" | sort -n | awk -v n="$#" '{a[NR]=$1} END { if (n % 2 == 1) print a[(n+1)/2]; else print int((a[n/2]+a[n/2+1])/2) }'
+}
+
+# chant#2409: marks the run as having witnessed an anomaly (a stall, an
+# outlier — either) and captures, right now, the one piece of evidence a
+# clean-pass teardown would otherwise destroy: the emulator's own log.
+# Idempotent per call site (deploy_one_stack only calls this once per stack,
+# on whichever condition trips first) so one stack can't dump twice.
+flag_anomaly() { # $1=stack $2=reason
+  local stack="$1" reason="$2" dump
+  ANOMALY_DETECTED=1
+  ANOMALY_STACKS+=("$stack")
+  ANOMALY_REASONS_LIST+=("$reason")
+  dump="$OUT/../anomaly-${stack}-$(date +%s).log"
+  docker logs "$CONTAINER" >"$dump" 2>&1 || true
+  log "  !!! ANOMALY [$stack]: $reason"
+  log "  !!! dumped $CONTAINER's log to $dump now — not waiting for a teardown that will not happen for this run (chant#2409)"
 }
 
 # The first (earliest) *_FAILED stack event, as "logicalId (type): reason".
@@ -285,6 +441,7 @@ first_failure_of() { # $1 = stack name
 deploy_one_stack() {
   local STACK="$1" IDX="$2"
   local BUILD_LOG RES_COUNT EXISTING STACK_START DEPLOY_LOG DEPLOY_PID LANDED HB_ELAPSED RC FINAL_STATUS STACK_SECONDS DETAIL
+  local ANOMALY_REASON="" POLL_STALL_SINCE=0 NOW WAITING MEDIAN_SO_FAR THRESHOLD
 
   BUILD_LOG="$(mktemp)"
   if ! "$CHANT" build "src/$STACK" --lexicon aws -o "src/$STACK/template.json" >"$BUILD_LOG" 2>&1; then
@@ -302,18 +459,50 @@ deploy_one_stack() {
   fi
 
   log "stack $IDX/$STACK_COUNT: $STACK starting deploy ($RES_COUNT resources)"
+  if [ "${#RUN_STACK_SECONDS[@]}" -eq 0 ]; then
+    log "  (no finished stacks yet — chant#2409 outlier detection starts once one completes; this one is exempt)"
+  fi
   STACK_START=$(date +%s)
   DEPLOY_LOG="$(mktemp)"
   "$CHANT" run --components "$STACK" --env local --no-release-record >"$DEPLOY_LOG" 2>&1 &
   DEPLOY_PID=$!
 
   # Heartbeat: poll the stack's own events while chant's apply is in flight —
-  # never a blind, silent wait on the child process.
+  # never a blind, silent wait on the child process. chant#2409: the poll
+  # itself can hang (count_landed_resources is bounded and reports
+  # "TIMEOUT" rather than swallowing the failure), and separately, this
+  # stack's own elapsed time is compared live against the median of stacks
+  # that have already finished — both conditions are said out loud the
+  # moment they're seen, not after the fact.
   while kill -0 "$DEPLOY_PID" 2>/dev/null; do
     sleep 3
     LANDED="$(count_landed_resources "$STACK")"
     HB_ELAPSED=$(($(date +%s) - STACK_START))
-    log "  ... $STACK: ${LANDED:-0}/$RES_COUNT resources landed (${HB_ELAPSED}s)"
+
+    if [ "$LANDED" = "TIMEOUT" ]; then
+      NOW=$(date +%s)
+      [ "$POLL_STALL_SINCE" -eq 0 ] && POLL_STALL_SINCE=$NOW
+      WAITING=$((NOW - POLL_STALL_SINCE + POLL_TIMEOUT_SECONDS))
+      log "  ... $STACK: POLL DID NOT ANSWER — DescribeStackEvents exceeded ${POLL_TIMEOUT_SECONDS}s, waiting ${WAITING}s so far (stack running ${HB_ELAPSED}s)"
+      if [ -z "$ANOMALY_REASON" ]; then
+        ANOMALY_REASON="heartbeat poll did not answer within ${POLL_TIMEOUT_SECONDS}s (first seen at ${HB_ELAPSED}s into this stack)"
+        flag_anomaly "$STACK" "$ANOMALY_REASON"
+      fi
+    else
+      POLL_STALL_SINCE=0
+      log "  ... $STACK: ${LANDED:-0}/$RES_COUNT resources landed (${HB_ELAPSED}s)"
+    fi
+
+    if [ -z "$ANOMALY_REASON" ] && [ "${#RUN_STACK_SECONDS[@]}" -gt 0 ]; then
+      MEDIAN_SO_FAR="$(median_of "${RUN_STACK_SECONDS[@]}")"
+      THRESHOLD=$((MEDIAN_SO_FAR * OUTLIER_MULTIPLIER))
+      [ "$THRESHOLD" -lt "$OUTLIER_FLOOR_SECONDS" ] && THRESHOLD=$OUTLIER_FLOOR_SECONDS
+      if [ "$HB_ELAPSED" -gt "$THRESHOLD" ]; then
+        ANOMALY_REASON="${HB_ELAPSED}s so far vs a median of ${MEDIAN_SO_FAR}s from ${#RUN_STACK_SECONDS[@]} finished stack(s) — over ${OUTLIER_MULTIPLIER}x (floor ${OUTLIER_FLOOR_SECONDS}s)"
+        log "  !!! OUTLIER: $STACK is at ${HB_ELAPSED}s against a median of ${MEDIAN_SO_FAR}s (threshold ${THRESHOLD}s) — flagging now, while it is still running"
+        flag_anomaly "$STACK" "$ANOMALY_REASON"
+      fi
+    fi
   done
 
   RC=0
@@ -328,6 +517,7 @@ deploy_one_stack() {
     else
       tail -10 "$DEPLOY_LOG" | while IFS= read -r line; do log "  $line"; done
     fi
+    record_stack_duration "$STACK" "$STACK_SECONDS" "$ANOMALY_REASON"
     return 1
   fi
 
@@ -336,12 +526,14 @@ deploy_one_stack() {
     DETAIL="$(first_failure_of "$STACK")"
     log "FAIL [$STACK]: chant run exited 0 but stack status is $FINAL_STATUS, expected CREATE_COMPLETE"
     [ -n "$DETAIL" ] && log "  first failure: $DETAIL"
+    record_stack_duration "$STACK" "$STACK_SECONDS" "$ANOMALY_REASON"
     return 1
   fi
 
   DONE=$((DONE + 1))
   RESOURCES_APPLIED=$((RESOURCES_APPLIED + RES_COUNT))
   log "stack $IDX/$STACK_COUNT: $STACK done $FINAL_STATUS ($RES_COUNT resources) in ${STACK_SECONDS}s"
+  record_stack_duration "$STACK" "$STACK_SECONDS" "$ANOMALY_REASON"
   return 0
 }
 
@@ -505,15 +697,42 @@ log "warm_diff verdict=$DIFF_VERDICT ($DIFF_DETAIL) in ${DIFF_SECONDS}s"
 echo "VERDICT stage=read_warm_diff verdict=$DIFF_VERDICT seconds=$DIFF_SECONDS calls=$DIFF_CALLS_TOTAL detail=\"$DIFF_DETAIL\""
 
 # ---- 5. the cost record --------------------------------------------------
+# schema 3 (was 2): chant#2409 adds `stages.cold_deploy.stacks` — one entry
+# per stack actually deployed this run (name, seconds, and `anomaly`: null
+# for a clean stack or the flagged reason string), plus the run's
+# `median_seconds`. Same discipline schema 2 already set for `reads`: one
+# uniform per-item shape (here `{name, seconds, anomaly}`), so chant-bench's
+# ingest can tell "one stack behaved unlike the others" straight from the
+# record — filter `stacks[]` for `anomaly != null` — without a second parser
+# or falling back to the log.
+#
 # schema 2 (was 1): the old single `plan_calls` field — one read, keyed under
 # an arm name of "choudoufu" even though the number was always chant's own —
 # is replaced by `reads`, an object with the SAME `{ calls: { total,
 # by_action }, verdict, seconds, detail }` shape for all three of
 # cold_plan/snapshot/warm_diff (one accessor handles any of them), keyed
 # honestly as "chant".
+STACK_DURATIONS_NDJSON="$(mktemp)"
+: > "$STACK_DURATIONS_NDJSON"
+for i in "${!RUN_STACK_NAMES[@]}"; do
+  jq -n \
+    --arg name "${RUN_STACK_NAMES[$i]}" \
+    --argjson seconds "${RUN_STACK_SECONDS[$i]}" \
+    --arg anomaly "${RUN_STACK_ANOMALY[$i]}" \
+    '{name: $name, seconds: $seconds, anomaly: (if $anomaly == "" then null else $anomaly end)}' \
+    >> "$STACK_DURATIONS_NDJSON"
+done
+STACK_DURATIONS_JSON="$(jq -s '.' "$STACK_DURATIONS_NDJSON")"
+rm -f "$STACK_DURATIONS_NDJSON"
+if [ "${#RUN_STACK_SECONDS[@]}" -gt 0 ]; then
+  RECORD_MEDIAN_SECONDS="$(median_of "${RUN_STACK_SECONDS[@]}")"
+else
+  RECORD_MEDIAN_SECONDS="null"
+fi
+
 COMMIT="$(git -C "$ROOT" rev-parse HEAD)"
 jq -n \
-  --argjson schema 2 \
+  --argjson schema 3 \
   --arg estate "chant-scale-estate" \
   --arg target "floci" \
   --argjson scale "$STACK_COUNT" \
@@ -524,6 +743,9 @@ jq -n \
   --arg deploy_verdict "$DEPLOY_VERDICT" \
   --argjson deploy_seconds "$DEPLOY_SECONDS" \
   --arg deploy_detail "$DONE/$STACK_COUNT stacks, $RESOURCES_APPLIED/$TOTAL_RESOURCES resources" \
+  --argjson deploy_stacks "$STACK_DURATIONS_JSON" \
+  --argjson deploy_median_seconds "$RECORD_MEDIAN_SECONDS" \
+  --argjson anomaly_detected "$([ "$ANOMALY_DETECTED" -eq 1 ] && echo true || echo false)" \
   --arg plan_command "chant lifecycle plan local" \
   --arg plan_verdict "$PLAN_VERDICT" \
   --argjson plan_seconds "$PLAN_SECONDS" \
@@ -553,7 +775,14 @@ jq -n \
     emulator: $emulator,
     resources: { total: $total, taggable: $taggable, skipped: ($total - $taggable) },
     stages: {
-      cold_deploy: { verdict: $deploy_verdict, seconds: $deploy_seconds, detail: $deploy_detail }
+      cold_deploy: {
+        verdict: $deploy_verdict,
+        seconds: $deploy_seconds,
+        detail: $deploy_detail,
+        stacks: $deploy_stacks,
+        median_seconds: $deploy_median_seconds,
+        anomaly_detected: $anomaly_detected
+      }
     },
     reads: {
       cold_plan: {
@@ -592,9 +821,22 @@ OVERALL_VERDICT="pass"
 echo "VERDICT overall=$OVERALL_VERDICT"
 
 # ---- 6. teardown ----------------------------------------------------------
-if [ "$OVERALL_VERDICT" = "pass" ] && [ "$KEEP" -eq 0 ]; then
+# chant#2409: an anomaly (a stall, an outlier — either) suppresses teardown
+# even on an otherwise-clean pass. The incident that opened this issue had
+# exactly that shape — overall=pass, one stack behaved nothing like the
+# others — and the container went down anyway, taking the only evidence
+# that could have explained it with it.
+if [ "$OVERALL_VERDICT" = "pass" ] && [ "$KEEP" -eq 0 ] && [ "$ANOMALY_DETECTED" -eq 0 ]; then
   log "=== tearing down $CONTAINER ==="
   docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+elif [ "$ANOMALY_DETECTED" -eq 1 ]; then
+  log "leaving $CONTAINER running: an anomaly was flagged this run (overall=$OVERALL_VERDICT) — chant#2409 never tears down after one, pass or not"
+  for i in "${!ANOMALY_STACKS[@]}"; do
+    log "  anomaly: ${ANOMALY_STACKS[$i]}: ${ANOMALY_REASONS_LIST[$i]}"
+  done
+  log "  inspect its log with: docker logs $CONTAINER"
+  log "  or get a shell in it with: docker exec -it $CONTAINER /bin/sh"
+  log "  tear down when done: test/scale-estate.sh down $CONTAINER"
 else
   log "leaving $CONTAINER running (overall=$OVERALL_VERDICT keep=$KEEP) — \`test/scale-estate.sh down\` to tear down"
 fi
