@@ -48,7 +48,16 @@ import { intrinsicCallFolds, intrinsicCallFoldsEagerly, type IntrinsicDef } from
  * expression, its operator, and (for keys) its literal-ness. It
  * deliberately does NOT resolve bindings or perform any evaluation, because
  * three things a full fold needs are inherently environment-dependent and
- * cannot be recovered from shape alone:
+ * cannot be recovered from shape alone.
+ *
+ * One thing it does read beyond the expression itself, since chant#2435: the
+ * enclosing file's top-level bindings, for `S-CallLocal`. A call to a
+ * project-local function is admitted by NAME (see
+ * {@link collectLocalCallables}), which is decidable from that file's syntax
+ * and needs no resolution. Before that, this module rejected all four shapes
+ * the build folds, which is the one direction `F-Direction` forbids, and it
+ * made `chant lint` report EVL001 on a file `chant build --fold` folds
+ * cleanly. The three genuinely environment-dependent cases are:
  *
  *   1. Identifier *resolution* — is a bare name actually a local `const`,
  *      vs. an unbound name? That needs the file's `consts` map. Both
@@ -236,6 +245,111 @@ export function briefNodeText(node: ts.Node, maxLength = 60): string {
   const collapsed = node.getText().replace(/\s+/g, " ").trim();
   return collapsed.length > maxLength ? `${collapsed.slice(0, maxLength - 3)}...` : collapsed;
 }
+
+// ---------------------------------------------------------------------------
+// Project-local callables (chant#2435, spec `S-CallLocal`)
+// ---------------------------------------------------------------------------
+
+/**
+ * Every name a file binds to something a project-local call can reach.
+ *
+ * Two bindings, both of which the specification's `S-LocalFunction` names and
+ * both decidable from this file's own syntax, which is all a shape classifier
+ * has:
+ *
+ *   - a top-level `function f(...) {...}`, or a `const f = (...) => ...`
+ *     (a function expression counts, and parentheses / `as` / `satisfies`
+ *     wrappers are unwrapped), exported or not;
+ *   - a name imported from a *project* specifier, one starting `./` or `../`.
+ *     A bare specifier is a package, and a package's function is not
+ *     project-local.
+ *
+ * Deliberately syntax-only, and deliberately not a judgment about the callee's
+ * body. Whether the body is admissible is `S-FnBody`'s question and the fold's
+ * to answer, exactly as it already is for a call this classifier admits by
+ * name (a registered authoring helper, an opted-in intrinsic).
+ *
+ * Mirrors `collectLocalFunctions` in ../discovery/fold-import.ts, which builds
+ * the real `FoldableFunction` for each of these during a build. This one only
+ * needs the names.
+ */
+export function collectLocalCallables(sourceFile: ts.SourceFile): ReadonlySet<string> {
+  const cached = localCallableCache.get(sourceFile);
+  if (cached) return cached;
+
+  const names = new Set<string>();
+  const unwrap = (node: ts.Expression): ts.Expression => {
+    let current = node;
+    while (
+      ts.isParenthesizedExpression(current) ||
+      ts.isAsExpression(current) ||
+      ts.isSatisfiesExpression(current)
+    ) {
+      current = current.expression;
+    }
+    return current;
+  };
+
+  for (const statement of sourceFile.statements) {
+    if (ts.isFunctionDeclaration(statement)) {
+      if (statement.name && statement.body) names.add(statement.name.text);
+      continue;
+    }
+    if (ts.isImportDeclaration(statement)) {
+      const specifier = statement.moduleSpecifier;
+      if (!ts.isStringLiteral(specifier) || !/^\.\.?\//.test(specifier.text)) continue;
+      const clause = statement.importClause;
+      // `import type { T } from "./t"` is erased before anything runs, so `T`
+      // is not something a call can reach. Both spellings are skipped: the
+      // whole-clause one and the per-specifier `import { type T }`.
+      if (!clause || clause.isTypeOnly) continue;
+      if (clause.name) names.add(clause.name.text);
+      const bindings = clause.namedBindings;
+      if (bindings && ts.isNamedImports(bindings)) {
+        for (const element of bindings.elements) {
+          if (!element.isTypeOnly) names.add(element.name.text);
+        }
+      }
+      continue;
+    }
+    if (!ts.isVariableStatement(statement)) continue;
+    if ((statement.declarationList.flags & ts.NodeFlags.Const) === 0) continue;
+    for (const decl of statement.declarationList.declarations) {
+      if (!ts.isIdentifier(decl.name) || !decl.initializer) continue;
+      const initializer = unwrap(decl.initializer);
+      if (ts.isArrowFunction(initializer) || ts.isFunctionExpression(initializer)) {
+        names.add(decl.name.text);
+      }
+    }
+  }
+
+  localCallableCache.set(sourceFile, names);
+  return names;
+}
+
+/** Per-file memo: the classifier asks this once per call expression, and a big file has many. */
+const localCallableCache = new WeakMap<ts.SourceFile, ReadonlySet<string>>();
+
+/**
+ * The project-local callables in scope at `node`, or an empty set when the node
+ * has no file to read.
+ *
+ * The guard is not a claim that a file-less node is supported: the rejection
+ * this sits in front of renders the node with `getText()`, which needs the same
+ * parent chain. It is here so that looking the names up never becomes a *new*
+ * way for this function to fail, and so the answer for a node whose file cannot
+ * be read is the pre-#2435 one, that every call is a violation.
+ */
+function localCallablesAt(node: ts.Node): ReadonlySet<string> {
+  try {
+    const sourceFile = node.getSourceFile();
+    return sourceFile ? collectLocalCallables(sourceFile) : EMPTY_NAMES;
+  } catch {
+    return EMPTY_NAMES;
+  }
+}
+
+const EMPTY_NAMES: ReadonlySet<string> = new Set<string>();
 
 // ---------------------------------------------------------------------------
 // Shared message builders — `fold()` and `findSubsetViolation` both call
@@ -543,6 +657,27 @@ export function findSubsetViolation(
       for (const arg of node.arguments) {
         const argViolation = findSubsetViolation(arg, intrinsics);
         if (argViolation) return argViolation;
+      }
+      return undefined;
+    }
+
+    // chant#2435 — a call to a project-local function. `fold-import.ts` binds
+    // every top-level function a file declares (and every one it imports from
+    // a project file) before folding it, so a build folds all four shapes the
+    // issue tabulates; this classifier rejected all four. That is the one
+    // direction `F-Direction` forbids, and it made `chant lint` report EVL001
+    // on a file `chant build --fold` folds cleanly.
+    //
+    // Name-only, like the authoring-helper case above and for the same reason:
+    // this module classifies shape and never resolves bindings. Whether the
+    // callee's body is admissible is `S-FnBody`'s question, which the fold
+    // answers. The set comes from the node's own source file, so every caller
+    // gets the corrected answer without passing anything — a caller holding a
+    // synthetic node with no file keeps the old, stricter one.
+    if (ts.isIdentifier(node.expression) && localCallablesAt(node).has(node.expression.text)) {
+      for (const arg of node.arguments) {
+        const v = findSubsetViolation(arg, intrinsics);
+        if (v) return v;
       }
       return undefined;
     }

@@ -494,10 +494,42 @@ export const queue = new Queue({ name: Ref(environment) });
 
   test("an unregistered call is still flagged as EVL001 in the same project", async () => {
     await writeFile(join(testDir, "chant.config.json"), JSON.stringify({ lexicons: ["aws"] }));
+    // The call is to a name imported from a PACKAGE, which is what "unregistered"
+    // has to mean for this test to be about the registry. It used to be a
+    // same-file `function makeName()`, which chant#2435 established is
+    // `S-CallLocal` and admissible — the build folds that shape, so flagging it
+    // was the divergence, not the point being asserted here.
     await writeFile(
       join(testDir, "index.ts"),
       `
 import { Ref } from "@intentius/chant-lexicon-aws";
+import { randomUUID } from "node:crypto";
+
+class Queue {
+  constructor(_props: Record<string, unknown>) {}
+}
+
+export const queue = new Queue({ name: randomUUID() });
+      `,
+    );
+
+    const result = await lintCommand({ path: testDir, format: "stylish" });
+
+    const evl001 = result.diagnostics.filter((d) => d.ruleId === "EVL001");
+    expect(evl001).toHaveLength(1);
+    expect(evl001[0].message).toContain("statically evaluable");
+  });
+
+  test("a call to a project-local function is not flagged (chant#2435)", async () => {
+    await writeFile(join(testDir, "chant.config.json"), JSON.stringify({ lexicons: ["aws"] }));
+    // All three `S-LocalFunction` bindings in one file: a top-level function
+    // declaration, an arrow const, and a name imported from a project
+    // specifier. A build folds a call to each, so EVL001 must not flag one.
+    await writeFile(join(testDir, "helpers.ts"), `export function suffix(s: string): string { return s + "-x"; }\n`);
+    await writeFile(
+      join(testDir, "index.ts"),
+      `
+import { suffix } from "./helpers";
 
 class Queue {
   constructor(_props: Record<string, unknown>) {}
@@ -507,15 +539,17 @@ function makeName(): string {
   return "generated";
 }
 
-export const queue = new Queue({ name: makeName() });
+const label = (s: string): string => s.toUpperCase();
+
+export const a = new Queue({ name: makeName() });
+export const b = new Queue({ name: label("k") });
+export const c = new Queue({ name: suffix("q") });
       `,
     );
 
     const result = await lintCommand({ path: testDir, format: "stylish" });
 
-    const evl001 = result.diagnostics.filter((d) => d.ruleId === "EVL001");
-    expect(evl001).toHaveLength(1);
-    expect(evl001[0].message).toContain("statically evaluable");
+    expect(result.diagnostics.filter((d) => d.ruleId === "EVL001")).toHaveLength(0);
   });
 });
 
