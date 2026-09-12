@@ -38,3 +38,7 @@ CLAUDE.md
 
 # Scratch project the fountain init-template test materializes (cleaned up in afterAll)
 lexicons/fountain/.init-template-*/
+
+# chant#2425 — the specification checkout the docs citation gate loads its
+# check from, until @intentius/tsad-conformance is on npm.
+.tsad/

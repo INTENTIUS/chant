@@ -17,7 +17,8 @@
     "generate:audit-rules-doc": "tsx scripts/generate-audit-rules-doc.ts",
     "sweep:prior-art": "tsx scripts/prior-art-sweep.ts",
     "typecheck": "tsx scripts/typecheck.ts",
-    "lint:docs-prose": "node scripts/lint-docs-sentences.mjs"
+    "lint:docs-prose": "node scripts/lint-docs-sentences.mjs",
+    "lint:docs-citations": "tsx scripts/check-docs-citations.ts"
   },
   "dependencies": {
     "@intentius/chant-lexicon-aws": "*",
