@@ -9,6 +9,8 @@ on:
       - 'packages/core/src/codegen/**'
       - 'scripts/build-docs.sh'
       - 'scripts/check-docs-diataxis.mjs'
+      - 'scripts/check-docs-citations.ts'
+      - 'packages/core/src/fold/subset.ts'
       - 'scripts/build-diagrams.sh'
       - 'justfile'
       - '.github/workflows/docs-check.yml'
@@ -48,6 +50,27 @@ jobs:
       # AI-trope prose fails, existing debt is baselined and burns down.
       - name: Lint docs prose (sentences ratchet)
         run: node scripts/lint-docs-sentences.mjs
+
+      # chant#2425 — the docs' rule citations, against the specification that
+      # owns them. `@intentius/tsad-conformance` is built and gated in the
+      # specification's repository and is not on npm yet
+      # (INTENTIUS/typescript-as-data#23), so the check is loaded from a
+      # pinned checkout of that public repository rather than reimplemented
+      # here. Pinned to a commit rather than a tag because the package has no
+      # release tag yet; `spec/VERSION` inside it is compared against chant's
+      # own SPEC_VERSION by the script, so a bump on either side fails loudly.
+      #
+      # When the package publishes this becomes a devDependency and a plain
+      # vitest file; delete these two steps and the fallback in the script.
+      - name: Check out the specification (for its citation check)
+        uses: actions/checkout@v6
+        with:
+          repository: INTENTIUS/typescript-as-data
+          ref: 3b1c14672d1918054b6fdc63dcfc39c7f7f368ce
+          path: .tsad
+
+      - name: Check docs rule citations against the specification
+        run: npx tsx scripts/check-docs-citations.ts
 
       - name: Build unified docs
         run: chmod +x scripts/build-docs.sh && ./scripts/build-docs.sh
