@@ -111,8 +111,15 @@ export {
   planFanOut,
   componentsForUnits,
   remainingFanOut,
+  downstreamWithin,
   UnknownComponentError,
 } from "./fan-out";
+export {
+  type FanOutGate,
+  type FanOutRunOptions,
+  type FanOutRunResult,
+  runFanOut,
+} from "./fan-out-run";
 export {
   EcsFargateComponent,
   type EcsFargateComponentConfig,
