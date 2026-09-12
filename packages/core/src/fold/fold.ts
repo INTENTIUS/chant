@@ -471,6 +471,131 @@ function carriesLiveObject(value: unknown, seen = new Set<unknown>()): boolean {
   return false;
 }
 
+/**
+ * True when a module-level `const` is (transitively) bound to a `new Type(...)`.
+ * Follows an identifier chain (`const a = new T(); const b = a;`) so aliasing
+ * cannot smuggle a module-level resource into a function body.
+ *
+ * chant#2436 moved this here from ../discovery/fold-import.ts so the two places
+ * that build {@link FoldableFunction}s share one implementation rather than two
+ * that can drift.
+ */
+export function constResolvesToResource(
+  consts: ReadonlyMap<string, ts.Expression>,
+  name: string,
+  seen: Set<string> = new Set(),
+): boolean {
+  if (seen.has(name)) return false;
+  seen.add(name);
+  const init = consts.get(name);
+  if (init === undefined) return false;
+  if (ts.isNewExpression(init)) return true;
+  if (ts.isIdentifier(init)) return constResolvesToResource(consts, init.text, seen);
+  return false;
+}
+
+/** `const f = (…) => …`, through parentheses / `as` / `satisfies`. */
+function unwrapFunctionInitializer(node: ts.Expression): ts.ArrowFunction | ts.FunctionExpression | undefined {
+  let current = node;
+  while (ts.isParenthesizedExpression(current) || ts.isAsExpression(current) || ts.isSatisfiesExpression(current)) {
+    current = current.expression;
+  }
+  return ts.isArrowFunction(current) || ts.isFunctionExpression(current) ? current : undefined;
+}
+
+/**
+ * Every top-level function a file declares, exported or not, as a
+ * {@link FoldableFunction}: `function f(...) {...}` and `const f = (...) => …`.
+ *
+ * The markers carry `externals` BY REFERENCE, so the caller may keep filling it
+ * after this returns (which is how a sibling function, or a resource built
+ * later, becomes reachable from a body).
+ *
+ * `consts` drops every `new`-bound const, transitively through aliases: a body
+ * that mentions one must read the live instance out of `externals`, the same
+ * object the module's own fold registered, never re-fold the initializer and
+ * construct a duplicate of a resource discovery already has.
+ *
+ * chant#2436 — one implementation, called both by ../discovery/fold-import.ts
+ * during a build and by {@link fold} when a unit-level fold has no externals of
+ * its own. Getting the `new`-bound stripping wrong yields a wrong value rather
+ * than a fallback to run, which is why there is only one copy of it.
+ */
+export function collectSameFileFunctions(
+  sourceFile: ts.SourceFile,
+  consts: ReadonlyMap<string, ts.Expression>,
+  file: string,
+  externals: ReadonlyMap<string, unknown>,
+  failures?: ReadonlyMap<string, string>,
+): Map<string, FoldableFunction> {
+  const bodyConsts = new Map(consts);
+  for (const [name] of [...bodyConsts]) {
+    if (constResolvesToResource(consts, name, new Set())) bodyConsts.delete(name);
+  }
+
+  const functions = new Map<string, FoldableFunction>();
+  const add = (name: string, fn: ts.FunctionDeclaration | ts.ArrowFunction | ts.FunctionExpression): void => {
+    functions.set(name, new FoldableFunction(name, fn, file, bodyConsts, externals, failures));
+  };
+
+  for (const statement of sourceFile.statements) {
+    if (ts.isFunctionDeclaration(statement)) {
+      if (statement.name && statement.body) add(statement.name.text, statement);
+      continue;
+    }
+    if (!ts.isVariableStatement(statement)) continue;
+    if ((statement.declarationList.flags & ts.NodeFlags.Const) === 0) continue;
+    for (const decl of statement.declarationList.declarations) {
+      if (!ts.isIdentifier(decl.name) || !decl.initializer) continue;
+      const fn = unwrapFunctionInitializer(decl.initializer);
+      if (fn) add(decl.name.text, fn);
+    }
+  }
+  return functions;
+}
+
+/**
+ * The same-file functions in scope at `node`, for a fold with no `externals`.
+ *
+ * Memoized per (source file, consts map), both of which are objects the caller
+ * holds for the duration of a fold, so a file with many calls walks its
+ * statements once. `undefined` when the node has no file to read, which is the
+ * pre-#2436 answer: the call is not foldable.
+ *
+ * The map is its own `externals`, so a function can call a sibling.
+ */
+function sameFileFunctions(
+  node: ts.Node,
+  consts: Map<string, ts.Expression>,
+): Map<string, FoldableFunction> | undefined {
+  let sourceFile: ts.SourceFile | undefined;
+  try {
+    sourceFile = node.getSourceFile();
+  } catch {
+    return undefined;
+  }
+  if (!sourceFile) return undefined;
+
+  let byConsts = sameFileFunctionCache.get(sourceFile);
+  if (!byConsts) {
+    byConsts = new WeakMap();
+    sameFileFunctionCache.set(sourceFile, byConsts);
+  }
+  const cached = byConsts.get(consts);
+  if (cached) return cached;
+
+  const scope = new Map<string, unknown>();
+  const functions = collectSameFileFunctions(sourceFile, consts, sourceFile.fileName, scope);
+  for (const [name, fn] of functions) scope.set(name, fn);
+  byConsts.set(consts, functions);
+  return functions;
+}
+
+const sameFileFunctionCache = new WeakMap<
+  ts.SourceFile,
+  WeakMap<Map<string, ts.Expression>, Map<string, FoldableFunction>>
+>();
+
 export function isFoldableFunction(value: unknown): value is FoldableFunction {
   return value instanceof FoldableFunction;
 }
@@ -1429,6 +1554,20 @@ export function fold(
       const callee = externals?.get(node.expression.text);
       if (isFoldableFunction(callee)) {
         return callFoldableFunction(callee, node, consts, intrinsics, externals);
+      }
+      // chant#2436 — the same shape, reached without a build. A caller that
+      // supplied no `externals` has no module graph and so no markers, and a
+      // same-file call fell through to the throw below even though a build
+      // folds it. Derive the file's own functions and call one.
+      //
+      // Only when `externals` is absent. A caller that passed one is managing
+      // its own bindings (a build, which already put the markers there before
+      // folding anything), and second-guessing it here could bind a name it
+      // deliberately left out. A same-file function only: an imported one needs
+      // module resolution, which this module does not do and will not start.
+      if (externals === undefined) {
+        const local = sameFileFunctions(node, consts)?.get(node.expression.text);
+        if (local) return callFoldableFunction(local, node, consts, intrinsics, local.externals);
       }
     }
 

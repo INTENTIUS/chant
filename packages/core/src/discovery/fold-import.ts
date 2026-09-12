@@ -17,6 +17,8 @@ import {
   FoldableFunction,
   isFoldableFunction,
   locate,
+  collectSameFileFunctions,
+  constResolvesToResource,
   type FoldedResource,
   type FoldedValue,
   type FoldedIntrinsic,
@@ -764,14 +766,6 @@ function collectLocalBindings(sourceFile: ts.SourceFile): Map<string, LocalBindi
 }
 
 /** `(x) => …` / `function (x) {…}`, possibly wrapped in parens/`as`/`satisfies` — the initializer shapes that make a `const` a function binding. */
-function unwrapFunctionInitializer(node: ts.Expression): ts.ArrowFunction | ts.FunctionExpression | undefined {
-  let current = node;
-  while (ts.isParenthesizedExpression(current) || ts.isAsExpression(current) || ts.isSatisfiesExpression(current)) {
-    current = current.expression;
-  }
-  return ts.isArrowFunction(current) || ts.isFunctionExpression(current) ? current : undefined;
-}
-
 /**
  * chant #1373 — every top-level function a file declares, exported or not, as
  * a {@link FoldableFunction}: `function f(...) {...}` and `const f = (...) =>
@@ -786,29 +780,10 @@ function unwrapFunctionInitializer(node: ts.Expression): ts.ArrowFunction | ts.F
  * module-level resource through `externals` only.
  */
 function collectLocalFunctions(sourceFile: ts.SourceFile, ctx: ResolveCtx): Map<string, FoldableFunction> {
-  const consts = new Map(ctx.consts);
-  for (const [name] of [...consts]) {
-    if (constResolvesToResource(ctx.consts, name, new Set())) consts.delete(name);
-  }
-  const functions = new Map<string, FoldableFunction>();
-  const add = (name: string, fn: ts.FunctionDeclaration | ts.ArrowFunction | ts.FunctionExpression): void => {
-    functions.set(name, new FoldableFunction(name, fn, ctx.file, consts, ctx.externals, ctx.crossFileFailures));
-  };
-
-  for (const statement of sourceFile.statements) {
-    if (ts.isFunctionDeclaration(statement)) {
-      if (statement.name && statement.body) add(statement.name.text, statement);
-      continue;
-    }
-    if (!ts.isVariableStatement(statement)) continue;
-    if ((statement.declarationList.flags & ts.NodeFlags.Const) === 0) continue;
-    for (const decl of statement.declarationList.declarations) {
-      if (!ts.isIdentifier(decl.name) || !decl.initializer) continue;
-      const fn = unwrapFunctionInitializer(decl.initializer);
-      if (fn) add(decl.name.text, fn);
-    }
-  }
-  return functions;
+  // chant#2436 — the walk itself, and the `new`-bound stripping that makes it
+  // correct, live in ../fold/fold.ts so a unit-level fold with no externals of
+  // its own binds exactly what a build binds.
+  return collectSameFileFunctions(sourceFile, ctx.consts, ctx.file, ctx.externals, ctx.crossFileFailures);
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1937,27 +1912,6 @@ function factoryModuleScopeResolved(
     if (idx !== -1) session.stack.splice(idx, 1);
   });
   return scope.resolved;
-}
-
-/**
- * True when a module-level `const` is (transitively) bound to a
- * `new Type(...)`. Mirrors `fold()`'s own `resolvesToResource`, but follows an
- * identifier chain (`const a = new T(); const b = a;`) so aliasing can't smuggle
- * a module-level resource into a factory body — see
- * {@link FactoryModuleScope.consts}.
- */
-function constResolvesToResource(
-  consts: Map<string, ts.Expression>,
-  name: string,
-  seen: Set<string>,
-): boolean {
-  if (seen.has(name)) return false;
-  seen.add(name);
-  const init = consts.get(name);
-  if (init === undefined) return false;
-  if (ts.isNewExpression(init)) return true;
-  if (ts.isIdentifier(init)) return constResolvesToResource(consts, init.text, seen);
-  return false;
 }
 
 /**
