@@ -14,7 +14,7 @@ export type { WaitForStackArgs } from "./wait";
 // provides gitlabPipeline. The gitlabPipeline step builder stays in core.
 
 export { shellCmd } from "./shell";
-export type { ShellCmdArgs } from "./shell";
+export type { ShellCmdArgs, ShellCmdResult } from "./shell";
 
 export { httpCheck, statusOk } from "./http-check";
 export type { HttpCheckArgs, HttpFetch } from "./http-check";
