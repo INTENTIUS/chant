@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import { describe, expect, test } from "vitest";
 import { foldProject, type FoldProjectVerdict } from "@intentius/chant";
+import type { BuildParamValue } from "@intentius/chant/build-params";
 import { findInfraFiles } from "@intentius/chant/discovery/files";
 import { discoverCorpus, entryBuildParams, type CorpusEntry } from "./differential-corpus";
 
@@ -37,7 +38,7 @@ async function entryFor(suffix: string): Promise<CorpusEntry> {
 }
 
 /** This entry's build parameters, resolved the way the CLI resolves them. */
-async function paramsOf(entry: CorpusEntry): Promise<Record<string, unknown>> {
+async function paramsOf(entry: CorpusEntry): Promise<Record<string, BuildParamValue>> {
   const provenance = await entryBuildParams(entry);
   return Object.fromEntries(provenance.map((p) => [p.name, p.value]));
 }
