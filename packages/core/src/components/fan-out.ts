@@ -303,6 +303,41 @@ export function componentsForUnits(
   };
 }
 
+/**
+ * Components inside `within` that are transitively downstream of any of
+ * `roots`, each mapped to the **root** it was reached from rather than to its
+ * immediate parent — so a report names the one thing to fix instead of the
+ * nearest consequence of it.
+ *
+ * `roots` is sorted before the walk, so a component downstream of two separate
+ * roots always names the same one. Unsorted, the answer would depend on the
+ * order the caller listed them in, which is not a fact about anything.
+ *
+ * Shared by {@link remainingFanOut}, which needs it over a whole plan, and by
+ * the runner in ./fan-out-run.ts, which needs it as failures accumulate.
+ */
+export function downstreamWithin(
+  components: DriverComponent[],
+  within: Iterable<string>,
+  roots: readonly string[],
+): Map<string, string> {
+  const inside = new Set(within);
+  const consumers = consumersOf(components);
+  const rootSet = new Set(roots);
+  const reached = new Map<string, string>();
+  const queue = [...roots].sort();
+  while (queue.length > 0) {
+    const node = queue.shift()!;
+    const blamed = rootSet.has(node) ? node : reached.get(node)!;
+    for (const consumer of consumers.get(node) ?? []) {
+      if (!inside.has(consumer) || rootSet.has(consumer) || reached.has(consumer)) continue;
+      reached.set(consumer, blamed);
+      queue.push(consumer);
+    }
+  }
+  return reached;
+}
+
 // ── Finishing a fan-out that stopped ─────────────────────────────────────────
 
 export interface FanOutProgress {
@@ -343,23 +378,7 @@ export function remainingFanOut(
   const completed = new Set((progress.completed ?? []).filter((n) => planned.has(n)));
   const failed = new Set((progress.failed ?? []).filter((n) => planned.has(n)));
 
-  // Everything downstream of a failure, within the plan, and who blocked it.
-  const consumers = consumersOf(components);
-  const blockedBy = new Map<string, string>();
-  // Sorted, so a component downstream of two separate failures always names the
-  // same one. Unsorted, the report would depend on the order the caller listed
-  // the failures in, which is not a fact about anything.
-  const queue = [...failed].sort();
-  while (queue.length > 0) {
-    const node = queue.shift()!;
-    for (const consumer of consumers.get(node) ?? []) {
-      if (!planned.has(consumer) || failed.has(consumer) || blockedBy.has(consumer)) continue;
-      // Named for the failure the walk reached it from, so the report points at
-      // the thing to fix rather than at the nearest edge.
-      blockedBy.set(consumer, failed.has(node) ? node : blockedBy.get(node)!);
-      queue.push(consumer);
-    }
-  }
+  const blockedBy = downstreamWithin(components, planned, [...failed]);
 
   const runnable = new Set(
     plan.order.filter((n) => !completed.has(n) && !failed.has(n) && !blockedBy.has(n)),
