@@ -725,7 +725,7 @@ export function buildLiveGraphIr(observations: LiveObservation[]): GraphIR {
   for (const observation of observations) {
     for (const edge of observation.edges ?? []) {
       if (!observedIds.has(edge.from) || !observedIds.has(edge.to)) continue;
-      const key = `${edge.from} ${edge.to} ${edge.viaAttr ?? ""} ${edge.toAttr ?? ""}`;
+      const key = `${edge.from}\u0000${edge.to}\u0000${edge.viaAttr ?? ""}\u0000${edge.toAttr ?? ""}`;
       if (seen.has(key)) continue;
       seen.add(key);
       edges.push(edge);

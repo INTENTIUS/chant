@@ -288,7 +288,7 @@ function runChecks(
 }
 
 function diagKey(d: { checkId: string; entity?: string; message: string }): string {
-  return `${d.checkId} ${d.entity ?? ""} ${d.message}`;
+  return `${d.checkId}\u0000${d.entity ?? ""}\u0000${d.message}`;
 }
 
 /**
