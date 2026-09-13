@@ -210,13 +210,25 @@ import { intrinsicCallFolds, intrinsicCallFoldsEagerly, type IntrinsicDef } from
  *   binding whatever an invoked factory returns is what chant never checked
  *   (`L8.19`), and a declarator reaching a call through a const alias is what
  *   chant resolves while refusing a call nested elsewhere (`L2.18`).
+ * - **1.7** put `F-Eval-CallLocal` before the two registered call shapes, so a
+ *   call through a name the project bound is the project function's call
+ *   whatever the registry says. That is what chant's whole-build fold already
+ *   did, and the reason the specification moved rather than chant: probes with
+ *   chant's own `output` showed the binding-first order living in
+ *   `resolveCallExpression`, while `L2.11` described the expression
+ *   classifier. The two were never required to share an order.
+ * - **1.8** added `ι = executing`, and chant carries it as of `0.72.3`
+ *   (#2455) — `FoldProjectOptions.executing`, mutually exclusive with
+ *   `sandbox`. `open` stays the default and stays strict (#2453).
  *
  * `scripts/check-docs-citations.ts` refuses to run when this constant and the
  * pinned specification disagree, so `.github/workflows/docs-check.yml` pins the
- * `spec-1.6` commit and the two move together. That coupling is deliberate: it
- * is what stops the docs being gated against a rule set nobody writes against.
+ * `spec-1.8` commit and the two move together. That coupling is deliberate: it
+ * is what stops the docs being gated against a rule set nobody writes against
+ * — which is exactly what happened while this sat at `1.0` through six
+ * versions, passing because both sides were equally stale.
  */
-export const SPEC_VERSION = "1.6";
+export const SPEC_VERSION = "1.8";
 
 /** The two EVL rule ids a shape violation can be attributed to. */
 export type SubsetRuleId = "EVL001" | "EVL003";

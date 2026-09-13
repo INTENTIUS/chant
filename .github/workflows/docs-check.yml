@@ -56,7 +56,7 @@ jobs:
       # specification's repository and is not on npm yet
       # (INTENTIUS/typescript-as-data#23), so the check is loaded from a
       # pinned checkout of that public repository rather than reimplemented
-      # here. Pinned to the commit the `spec-1.6` tag names, by SHA rather than
+      # here. Pinned to the commit the `spec-1.8` tag names, by SHA rather than
       # by tag name so the ref cannot be moved under us; `spec/VERSION` inside
       # it is compared against chant's own SPEC_VERSION by the script, which
       # refuses to run when the two disagree. So this pin and SPEC_VERSION move
@@ -70,7 +70,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: INTENTIUS/typescript-as-data
-          ref: 456060bf74c005494672e7896eab3600e3a806a7 # spec-1.6
+          ref: 281a42058d4837f0aaf69c20e0c4f7fe7ec6e241 # spec-1.8
           path: .tsad
 
       - name: Check docs rule citations against the specification
