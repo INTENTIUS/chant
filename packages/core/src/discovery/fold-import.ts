@@ -1458,24 +1458,34 @@ async function resolveCallExpression(node: ts.CallExpression, ctx: ResolveCtx): 
       if (!(err instanceof Error)) throw err;
       foldFailure = err;
     }
-    if (!binding) throw foldFailure;
-    // chant#2441 — `F-Div-Depth` is a refusal, not a failure to try hard
-    // enough. The fallback below imports the callee and invokes it, which is
-    // right when its body merely did not fold; here the folder has DECLINED,
-    // and invoking anyway produces exactly the envelope the specification says
-    // must not appear — a value the file's own declarators never produced.
+    // chant#2453 — a DECLARED function is judged by its body, and that is the
+    // whole answer. There is no invocation arm here any more.
     //
-    // Every other `F-Div` row is a fallback and `divergence.md` says so
-    // outright, which is what makes the direction safe. This one is not, so it
-    // propagates and the file runs, which is what the reference does.
-    if (foldFailure instanceof FoldError && foldFailure.refusedAtDepth) throw foldFailure;
-    try {
-      return await resolveImportedCall(node, calleeName, binding, ctx);
-    } catch (err) {
-      throw cheapError(
-        `${foldFailure.message}; invoking it instead failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
+    // There used to be: when the body did not fold, an imported callee was
+    // imported and invoked instead. chant#2441 narrowed that to stop it
+    // rescuing a depth refusal. The external corpus then showed what the rest
+    // of it does, in a project nobody here maintains
+    // (jhgaylor/infisical-chant, INTENTIUS/typescript-as-data#129):
+    //
+    //     export const namingParams = namingParamsFromEnv();
+    //
+    // whose body reads `process.env`. `F-Eval-Ident` step 4 rejects `process`,
+    // so the body does not fold — and chant imported the module and ran it,
+    // folding the file to whatever the FOLDING PROCESS's environment held. The
+    // file reported `fold`, which reads as "determined statically". Two people
+    // folding the same source got different output and nothing said so.
+    //
+    // That is wrong in chant's own terms before it is wrong in J1's: `--fold`
+    // is the value you would get by running, WITHOUT running, and this ran. So
+    // the rejection propagates and the file runs, carrying the reason
+    // `F-Eval-CallLocal` gives.
+    //
+    // `F-Call` step 6's invocation is for a binding that is neither a declared
+    // function nor an interpretable composite, and it still happens — below,
+    // in the arm this one is not. A composite factory is not a
+    // `FoldableFunction`, so `resolveImportedCall` still interprets it and
+    // still invokes it when interpretation declines.
+    throw foldFailure;
   }
 
   if (!binding) {
