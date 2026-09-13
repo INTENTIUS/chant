@@ -20,74 +20,23 @@
  *     is `rule: F-X`. The quote must occur verbatim in the rule's own text,
  *     because a paraphrase is a claim the gate cannot check.
  *
- * ## Where the package comes from, for now
+ * `@intentius/tsad-conformance` is a devDependency, published on npm since
+ * `1.8.0` (INTENTIUS/typescript-as-data#23). Before that CI checked the
+ * specification's repository out at a pinned commit and this script loaded the
+ * package from there; chant#2470 removed that, along with the `.tsad` steps in
+ * `docs-check.yml`.
  *
- * `@intentius/tsad-conformance` is built and gated in the specification's
- * repository and is not on npm yet (INTENTIUS/typescript-as-data#23 is waiting
- * on the registry records). Until it is, CI checks the specification's public
- * repository out at a pinned commit and this script loads the package from
- * there; see
- * {@link SPEC_CHECKOUT} and `.github/workflows/docs-check.yml`.
- *
- * The moment it publishes, this becomes a devDependency and a plain vitest
- * file beside `packages/core/src/fold/subset-doc-parity.test.ts`. Both halves
- * of the resolution below are deliberate and neither is silent: an installed
- * package wins, a checkout is the fallback, and finding neither is a failure
- * rather than a skip. A citation gate that quietly passes when it could not
- * load the rules would be worse than no gate, since it reports the same green
- * as a real pass.
+ * It stays a script rather than a vitest file because it wants a real
+ * `@intentius/tsad-conformance` and the docs tree, not chant's source, and
+ * `docs-check.yml` is where the rest of the docs gates live.
  */
-import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const DOCS = join(ROOT, "docs", "src", "content", "docs");
 
-/**
- * Where CI puts the specification's repository, and what a developer can point
- * at a local clone with. The workflow pins a commit; `spec/VERSION` inside it is
- * compared against chant's own `SPEC_VERSION` by the check itself, so a
- * checkout of the wrong version fails loudly rather than gating against rules
- * chant does not claim to implement.
- */
-const SPEC_CHECKOUT = process.env.TSAD_CONFORMANCE_SRC ?? join(ROOT, ".tsad", "packages", "conformance", "src", "index.ts");
-
-interface CitationFinding {
-  kind: string;
-}
-
-interface Conformance {
-  loadRules(specDir: string): { version: string; rules: ReadonlyMap<string, unknown> };
-  checkCitations(document: string, index: { version: string; rules: ReadonlyMap<string, unknown> }, declared?: string): CitationFinding[];
-  describeFinding(finding: CitationFinding): string;
-  bundledSpecDir(): string;
-}
-
-/** The installed package if there is one, else the checkout. Never neither. */
-async function loadConformance(): Promise<{ mod: Conformance; from: string }> {
-  // The specifier is a variable on purpose: the package is not installed yet,
-  // and a literal here would be a module the repo-wide typecheck cannot
-  // resolve. It becomes a literal import in the same commit that adds the
-  // devDependency.
-  const installed = "@intentius/tsad-conformance";
-  try {
-    const mod = (await import(installed)) as unknown as Conformance;
-    return { mod, from: `the installed ${installed}` };
-  } catch {
-    // Not installed, which is expected until it is on npm.
-  }
-  if (existsSync(SPEC_CHECKOUT)) {
-    const mod = (await import(pathToFileURL(SPEC_CHECKOUT).href)) as unknown as Conformance;
-    return { mod, from: relative(ROOT, SPEC_CHECKOUT) };
-  }
-  throw new Error(
-    `cannot load @intentius/tsad-conformance.\n` +
-      `  It is not installed, and there is no checkout at ${relative(ROOT, SPEC_CHECKOUT)}.\n` +
-      `  CI checks the specification out there; locally, point TSAD_CONFORMANCE_SRC at\n` +
-      `  <a typescript-as-data clone>/packages/conformance/src/index.ts.`,
-  );
-}
+import { checkCitations, loadRules, describeFinding, bundledSpecDir } from "@intentius/tsad-conformance";
 
 function docFiles(dir: string): string[] {
   return readdirSync(dir)
@@ -100,10 +49,9 @@ function docFiles(dir: string): string[] {
 }
 
 async function main(): Promise<number> {
-  const { mod, from } = await loadConformance();
   const { SPEC_VERSION } = await import("../packages/core/src/fold/subset");
 
-  const index = mod.loadRules(mod.bundledSpecDir());
+  const index = loadRules(bundledSpecDir());
   if (index.version !== SPEC_VERSION) {
     console.error(
       `Docs citations: chant declares specification ${SPEC_VERSION}, the loaded rules are ${index.version}.\n` +
@@ -115,10 +63,10 @@ async function main(): Promise<number> {
   const files = docFiles(DOCS);
   let findings = 0;
   for (const file of files) {
-    for (const finding of mod.checkCitations(readFileSync(file, "utf8"), index, SPEC_VERSION)) {
+    for (const finding of checkCitations(readFileSync(file, "utf8"), index, SPEC_VERSION)) {
       if (findings === 0) console.error("Docs citations: findings against the specification.\n");
       findings++;
-      console.error(`  ${relative(ROOT, file)}: ${mod.describeFinding(finding)}`);
+      console.error(`  ${relative(ROOT, file)}: ${describeFinding(finding)}`);
     }
   }
 
@@ -132,7 +80,7 @@ async function main(): Promise<number> {
 
   console.error(
     `Docs citations: ${files.length} file(s) clean against specification ${index.version} ` +
-      `(${index.rules.size} rules, from ${from}).`,
+      `(${index.rules.size} rules).`,
   );
   return 0;
 }

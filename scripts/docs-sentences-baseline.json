@@ -156,6 +156,7 @@
   "discourse/punchy-fragments": 1,
   "anaphora/repeated-opening": 2,
   "tricolon/comma-series": 4,
+  "reframe": 1,
   "claude/figurative-suffixes": 1,
   "claude/contrast-tail": 3,
   "repetition/near-duplicate": 2,
@@ -178,8 +179,7 @@
  },
  "docs/src/content/docs/cli/mcp.mdx": {
   "formatting/em-dash-density": 8,
-  "claude/colon-reveal": 3,
-  "anaphora/repeated-opening": 1
+  "claude/colon-reveal": 3
  },
  "docs/src/content/docs/cli/migrate.mdx": {
   "formatting/em-dash-density": 9,
@@ -326,7 +326,7 @@
   "tricolon/comma-series": 3
  },
  "docs/src/content/docs/concepts/comparison.mdx": {
-  "formatting/em-dash-density": 59,
+  "formatting/em-dash-density": 58,
   "claude/colon-reveal": 13,
   "tricolon/comma-series": 8,
   "claude-technical-vocabulary": 1,
@@ -440,7 +440,8 @@
   "formatting/em-dash-density": 33,
   "claude/colon-reveal": 5,
   "tricolon/comma-series": 4,
-  "claude/contrast-tail": 3
+  "claude/contrast-tail": 3,
+  "reframe": 1
  },
  "docs/src/content/docs/configuration/config-file.mdx": {
   "formatting/em-dash-density": 10,
