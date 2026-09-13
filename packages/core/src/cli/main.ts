@@ -91,6 +91,7 @@ const BOOLEAN_FLAGS = new Set([
   "--check-snapshot",
   "--fail-on-drift",
   "--durable-requests",
+  "--skip-mcp",
 ]);
 
 /**
@@ -132,6 +133,7 @@ export function parseArgs(args: string[]): ParsedArgs {
     useComposites: false,
     reportFile: undefined,
     skill: undefined,
+    skipMcp: undefined,
     src: undefined,
     env: undefined,
   };
@@ -252,6 +254,8 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.useComposites = true;
     } else if (arg === "--skill") {
       result.skill = args[++i];
+    } else if (arg === "--skip-mcp") {
+      result.skipMcp = true;
     } else if (arg === "--src") {
       result.src = args[++i];
     } else if (arg === "--env") {
@@ -691,6 +695,7 @@ Options:
                         \`environments\` when declared.
   -t, --template <name> Init template (e.g. node-pipeline, docker-build)
   --skill <name>        Init: install only this skill from the lexicon
+  --skip-mcp            Init: scaffold without writing the project's .mcp.json
   --fix                 Auto-fix fixable issues (lint command)
   --force               Force overwrite existing files (import command)
   -w, --watch           Watch for changes and rebuild/re-lint (build, lint)

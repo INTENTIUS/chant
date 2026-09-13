@@ -5,6 +5,7 @@ import { fileURLToPath } from "url";
 import { checkVersionCompatibility } from "../../lexicon-manifest";
 import { debug } from "../debug";
 import { loadPlugins, resolveProjectLexicons } from "../plugins";
+import { MCP_CONFIG_FILENAME, MCP_SETUP_COMMAND, mcpConfigPath } from "../mcp-config";
 import { loadCapabilityPlugin } from "../../components/capability-plugin-loader";
 import { isCapabilityPlugin } from "../../components/capability-plugin";
 
@@ -209,21 +210,32 @@ export async function doctorCommand(path: string): Promise<DoctorReport> {
     }
   }
 
-  // Check 9: .mcp.json exists and has chant entry
-  const mcpPath = join(projectPath, ".mcp.json");
+  // Check 9: the project's MCP config exists and has a chant entry. Path and
+  // remediation both come from ../mcp-config.ts, so this check cannot drift
+  // away from what `chant init` and `chant update` write, and cannot name a
+  // command the registry does not have (chant #2383).
+  const mcpPath = mcpConfigPath(projectPath);
   if (!existsSync(mcpPath)) {
-    checks.push({ name: "mcp-config", status: "warn", message: ".mcp.json not found — run chant agent setup" });
+    checks.push({
+      name: "mcp-config",
+      status: "warn",
+      message: `${MCP_CONFIG_FILENAME} not found — run ${MCP_SETUP_COMMAND}`,
+    });
   } else {
     try {
       const mcp = JSON.parse(readFileSync(mcpPath, "utf-8"));
       if (!mcp.mcpServers?.chant) {
-        checks.push({ name: "mcp-config", status: "warn", message: ".mcp.json missing mcpServers.chant entry" });
+        checks.push({
+          name: "mcp-config",
+          status: "warn",
+          message: `${MCP_CONFIG_FILENAME} missing mcpServers.chant entry — run ${MCP_SETUP_COMMAND}`,
+        });
       } else {
         checks.push({ name: "mcp-config", status: "pass" });
       }
     } catch (e) {
-      debug(".mcp.json parse failed:", e);
-      checks.push({ name: "mcp-config", status: "fail", message: ".mcp.json is invalid JSON" });
+      debug(`${MCP_CONFIG_FILENAME} parse failed:`, e);
+      checks.push({ name: "mcp-config", status: "fail", message: `${MCP_CONFIG_FILENAME} is invalid JSON` });
     }
   }
 

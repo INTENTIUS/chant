@@ -4,6 +4,7 @@ import { createRequire } from "module";
 import { formatSuccess, formatWarning, formatError } from "../format";
 import { loadChantConfig } from "../../config";
 import { loadPlugins } from "../plugins";
+import { writeProjectMcpConfig } from "../mcp-config";
 
 /**
  * Update command options
@@ -177,6 +178,14 @@ export async function updateCommand(options: UpdateOptions): Promise<UpdateResul
     // Skills are optional — don't fail the update if plugin loading fails
     warnings.push("Could not load plugins for skill installation");
   }
+
+  // Restore the project's MCP registration if it went missing. This is what
+  // makes the doctor's `mcp-config` remediation runnable: `chant init`
+  // refuses a non-empty directory without --force, so an already scaffolded
+  // project needs some other command to put the file back, and this is the
+  // same command the doctor's skills check already points at (chant #2383).
+  const writtenMcp = writeProjectMcpConfig(projectDir);
+  if (writtenMcp) synced.push(writtenMcp);
 
   return {
     success: true,
