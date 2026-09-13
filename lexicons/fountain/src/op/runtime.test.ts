@@ -585,11 +585,23 @@ describe("tailConversation", () => {
         json: { data: { id: "conv-1", status: "running", turn_count: 1 } },
       },
     });
-    // The turn thinks for a while, then finishes: several polls, then the event
-    // the polls were waiting through.
+    // The turn thinks until the poller has had more than one look at it, then
+    // finishes: several polls, then the event the polls were waiting through.
+    //
+    // The wait is on the poll count rather than on a fixed sleep. This used to
+    // sleep 25ms and assert that more than one 1ms poll had fit inside it,
+    // which is a wall-clock race the full suite loses every so often: a worker
+    // stalled past the sleep leaves the first event already due, exactly one
+    // poll lands, and `calls.length` is 1. Waiting on the number the assertion
+    // is about makes the same claim without timing it. The deadline keeps a
+    // genuine regression — a tail that stops polling — a loud failure here
+    // instead of a hang.
+    const deadline = Date.now() + 5_000;
     const sse: FountainSse = () => ({
       async *[Symbol.asyncIterator]() {
-        await new Promise((resolve) => setTimeout(resolve, 25));
+        while (calls.length < 2 && Date.now() < deadline) {
+          await new Promise((resolve) => setTimeout(resolve, 1));
+        }
         yield sseEvent("1", { stream: "stdout", blocks: [{ kind: "text", body: JSON.stringify(RECORD) }] });
         yield sseEvent("2", { stream: "stage", stage: "turn", state: "done" });
       },
