@@ -268,16 +268,93 @@ const EXPECTED_MIXED_DIVERGENT: ReadonlyMap<string, string> = new Map<string, st
   // diverging.
 ]);
 
+/**
+ * Every corpus entry that does NOT fold today, and why — chant#2225.
+ *
+ * {@link EXPECTED_FOLD} is a ratchet over names known to fold, and the gate
+ * below only walks names already in it. So an entry absent from that list can
+ * never appear in `regressed`, whether it folds or not: a new corpus entry that
+ * never folds passed by construction, and twice did.
+ *
+ * `lexicons/forgejo/examples/ci-workflow` joined in #1119 and stayed
+ * run-fallback for a month until #1965. `examples/fountain-steward` joined in
+ * #2129 with every `*.op.ts` default-exporting its Op, the one shape the fold
+ * path refuses, and all four files fell back; the published count moved from
+ * 96 of 110 to 96 of 111, denominator only, until #2189. Neither was caught
+ * here, because neither dropped the numerator.
+ *
+ * This closes the corpus: an entry must be in one list or the other, and one in
+ * neither fails by name. The reason is required at review time, which is the
+ * same posture as `KNOWN_FAILURES` in `scripts/check-lexicons.ts` — a failure
+ * not listed there is a regression.
+ *
+ * A reason here is a statement about chant, not an excuse. When one stops being
+ * true the entry moves to {@link EXPECTED_FOLD}, and the gate below says so.
+ */
+const EXPECTED_RUN_FALLBACK: ReadonlyMap<string, string> = new Map<string, string>([
+  [
+    "examples/cc-aws-canonical",
+    "a same-file resource reference passed to a folded intrinsic or authoring helper, and `kubectlApply(...)` as a value",
+  ],
+  ["examples/cc-azure-canonical", "`kubectlApply(...)` as a value"],
+  [
+    "examples/flux-apps",
+    "`String(...)` as a value; the taint fixpoint then takes the files that import it",
+  ],
+  [
+    "examples/fold-adversarial",
+    "deliberate, and the one entry here that should never move: it exists to exercise refusals — the call-depth bound, a property read on undefined, a spread of a non-object",
+  ],
+  [
+    "examples/gitlab-cells-single-region-gke",
+    "`_cells.map(...)` as a value, and an `IfStatement` in a called function body",
+  ],
+  [
+    "examples/ray-kuberay-gke",
+    "a destructured composite call; the taint fixpoint then takes its importers and capturers",
+  ],
+  [
+    "lexicons/aws/examples/core-concepts",
+    "a function used as a value, and an exported destructured or uninitialized declaration",
+  ],
+  [
+    "lexicons/aws/examples/docs-snippets",
+    "`export default`, and composite calls (`VpcDefault(...)`, `SmartApi(...)`) as values",
+  ],
+  [
+    "lexicons/aws/examples/lambda-api",
+    "`export default`; the capture edge then takes the files that read its exports",
+  ],
+  [
+    "lexicons/cpln/examples/secret-access",
+    "an ambient `process` read, which wants a build-time parameter instead",
+  ],
+  [
+    "lexicons/github/examples/docs-snippets",
+    "`Checkout(...)` as a value, and one file with no foldable resource exports",
+  ],
+  [
+    "lexicons/gitlab/examples/docs-snippets",
+    "`reference(...)` as a value; the taint fixpoint then takes its importers",
+  ],
+  ["lexicons/gitlab/examples/monorepo-pipeline", "a function used as a value"],
+]);
+
 const EXPECTED_FOLD: readonly string[] = [
   "examples/adopt-alb-services",
   "examples/alert-triage",
+  "examples/argo-cd-gke",
   "examples/bedrock-agentcore-agent",
+  "examples/cc-gcp-canonical",
+  "examples/cockroachdb-multi-region-gke",
   "examples/components-aws-e2e",
+  "examples/fan-out-estate",
   "examples/fly-deploy-rollback",
   "examples/fly-durable-deploy",
   "examples/fly-reconcile",
   "examples/fountain-steward",
   "examples/getting-started",
+  "examples/github-pr-preview",
   "examples/gitlab-aws-alb-infra",
   "examples/gitlab-aws-alb-services",
   "examples/k8s-aks-microservice",
@@ -285,6 +362,7 @@ const EXPECTED_FOLD: readonly string[] = [
   "examples/k8s-gke-microservice",
   "examples/local-cloud-trio",
   "examples/local-fly",
+  "examples/testing-harness-aws",
   "lexicons/aws/examples/fargate-alb",
   "lexicons/aws/examples/lambda-dynamodb",
   "lexicons/aws/examples/lambda-eventbridge",
@@ -318,6 +396,7 @@ const EXPECTED_FOLD: readonly string[] = [
   "lexicons/cpln/examples/stateful-postgres",
   "lexicons/docker/examples/basic-app",
   "lexicons/fly/examples/getting-started",
+  "lexicons/forgejo/examples/ci-workflow",
   "lexicons/gcp/examples/basic-bucket",
   "lexicons/gcp/examples/cloud-function",
   "lexicons/gcp/examples/cloud-run",
@@ -326,7 +405,6 @@ const EXPECTED_FOLD: readonly string[] = [
   "lexicons/gcp/examples/gke-cluster",
   "lexicons/gcp/examples/pubsub",
   "lexicons/gcp/examples/vpc-network",
-  "lexicons/forgejo/examples/ci-workflow",
   "lexicons/github/examples/deploy-pages",
   "lexicons/github/examples/docker-build",
   "lexicons/github/examples/getting-started",
@@ -344,9 +422,6 @@ const EXPECTED_FOLD: readonly string[] = [
   "lexicons/helm/examples/composites-infrastructure",
   "lexicons/helm/examples/composites-production",
   "lexicons/helm/examples/cron-job",
-  // helm-render-external-secrets left the corpus in #2035 (network-reaching
-  // fixture the helm lexicon's own suite always skipped) — not a fold
-  // regression.
   "lexicons/helm/examples/microservice-chart",
   "lexicons/helm/examples/multi-container",
   "lexicons/helm/examples/stateful-service",
@@ -358,6 +433,7 @@ const EXPECTED_FOLD: readonly string[] = [
   "lexicons/k8s/examples/ingress-tls",
   "lexicons/k8s/examples/layered-config",
   "lexicons/k8s/examples/namespace-rbac",
+  "lexicons/k8s/examples/operator-stack",
   "lexicons/k8s/examples/org-policy",
   "lexicons/k8s/examples/statefulset",
   "lexicons/k8s/examples/web-platform",
@@ -502,6 +578,41 @@ describe("fold differential — fold output === run output (#1025, epic #1019)",
     const byName = new Map(report.map((r) => [r.name, r]));
     const regressed = EXPECTED_FOLD.filter((name) => byName.get(name)?.mode !== "fold");
     expect(regressed, `these entries folded before but fell back to run: ${regressed.join(", ")}`).toEqual([]);
+  });
+
+  // chant#2225 — the gate above only walks names already in EXPECTED_FOLD, so
+  // an entry in neither list could never fail it. These three close the corpus.
+  test("every corpus entry is classified — one in neither list fails by name", () => {
+    const unclassified = report
+      .filter((r) => !EXPECTED_FOLD.includes(r.name) && !EXPECTED_RUN_FALLBACK.has(r.name))
+      .map((r) => `${r.name} (${r.mode})`);
+    expect(
+      unclassified,
+      "a new corpus entry must be added to EXPECTED_FOLD if it folds, or to " +
+        "EXPECTED_RUN_FALLBACK with a one-line reason if it does not. Without this " +
+        "an entry that never folds passes by construction, which is how " +
+        "forgejo/ci-workflow sat unfolded for a month and fountain-steward moved the " +
+        "denominator only.",
+    ).toEqual([]);
+  });
+
+  test("no entry is in both lists", () => {
+    const both = EXPECTED_FOLD.filter((name) => EXPECTED_RUN_FALLBACK.has(name));
+    expect(both, `listed as both folding and falling back: ${both.join(", ")}`).toEqual([]);
+  });
+
+  test("every EXPECTED_RUN_FALLBACK entry still falls back, and still exists", () => {
+    // The list can only shrink. An entry that starts folding must move to
+    // EXPECTED_FOLD rather than sit here with a reason that is no longer true,
+    // and a deleted corpus entry must not leave a stale row behind.
+    const byName = new Map(report.map((r) => [r.name, r]));
+    const stale: string[] = [];
+    for (const [name, reason] of EXPECTED_RUN_FALLBACK) {
+      const row = byName.get(name);
+      if (!row) stale.push(`${name} — no longer in the corpus, drop the row`);
+      else if (row.mode === "fold") stale.push(`${name} — folds now, move it to EXPECTED_FOLD (was: ${reason})`);
+    }
+    expect(stale, stale.join("\n")).toEqual([]);
   });
 
   // chant #1062 — the fold-coverage count published in the docs
