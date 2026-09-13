@@ -134,18 +134,28 @@ function lineBuffered(emit: (line: string) => void) {
  * no message. That reads like the child was cut off, and it was not — it ran
  * to completion and sent nothing.
  *
- * The mechanism worth naming, because nothing else in the process reports it:
- * the driver's `main()` is `async`, and `main().catch(...)` catches a
- * REJECTION. A promise that never settles is not a rejection. If something the
- * child awaits never settles and no handle keeps the loop alive, Node drains
- * the loop and exits 0, silently, having sent nothing and written nothing. The
- * signature is exactly what was seen.
+ * Two mechanisms produce it, and the driver decides which is possible.
  *
- * The suspected exit/message race is deliberately NOT named here. It was
- * measured and did not reproduce: with the parent blocked so that a queued
- * payload and the reap were both pending, `message` was dispatched first 60
- * times out of 60, because the live IPC channel keeps the child alive until the
- * payload flushes.
+ * The first is an `await` that never settles. `main().catch(...)` catches a
+ * REJECTION, and a promise that never settles is not one, so if nothing keeps
+ * the loop alive Node drains it and exits 0 having sent nothing and written
+ * nothing. Nothing else in the process reports that.
+ *
+ * The second is the payload being lost between `process.send` and exit.
+ *
+ * For the CONFIG driver the first is impossible, which is worth stating because
+ * it was the working hypothesis until the bundle was read. Its `await
+ * import(configPath)` bundles to `await Promise.resolve().then(() =>
+ * (init_chant_config(), chant_config_exports))` — one microtask over
+ * synchronous code — and the bundle has no runtime imports, no dynamic
+ * `import(`, and exactly one `process.send`. There is nothing there to hang on.
+ * So a config child that exits 0 with nothing sent DID send, and the payload
+ * did not arrive.
+ *
+ * The exit/message race originally proposed in chant#2461 is a third thing and
+ * is not it: with the parent blocked so a queued payload and the reap were both
+ * pending, `message` was dispatched first 60 times out of 60, because the live
+ * IPC channel keeps the child alive until the payload flushes.
  */
 function describeSilentExit(
   label: string,
@@ -173,13 +183,16 @@ function describeSilentExit(
   if (stderr) return `${head}: ${stderr}`;
   if (code !== 0 || signal !== null) return head;
 
-  // Exit 0, nothing on stderr, nothing sent: the child finished normally and
-  // never reported. See this function's doc for why that is a hung await rather
-  // than a race.
+  // Exit 0, nothing on stderr, nothing sent. The child finished normally and
+  // the parent has nothing. Two mechanisms produce exactly this, and which one
+  // it is depends on the driver — see this function's doc.
   return (
-    `${head}. It exited cleanly with nothing on stderr and sent no message, so it drained its ` +
-    `event loop without reporting — something it awaited never settled. A promise that never ` +
-    `settles is not a rejection, so the driver's own \`main().catch\` does not see it either.`
+    `${head}. It exited cleanly with nothing on stderr and sent no message, so either its ` +
+    `payload was lost between \`process.send\` and exit, or something it awaited never settled ` +
+    `and it drained its event loop without reporting. A promise that never settles is not a ` +
+    `rejection, so the driver's own \`main().catch\` would not see the second case either. ` +
+    `The config driver bundles to one microtask and no runtime I/O, so on that path only the ` +
+    `first is possible (chant#2461).`
   );
 }
 
