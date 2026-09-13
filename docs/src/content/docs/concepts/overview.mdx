@@ -53,7 +53,7 @@ chant hosts no authoritative state file, and the build path itself never touches
 
 ## The subset has a specification
 
-Which TypeScript folds is defined by a published specification, [TypeScript-as-Data](https://github.com/INTENTIUS/typescript-as-data), rather than by chant's source alone. It is versioned, and chant declares the version it implements as `SPEC_VERSION`, exported from `@intentius/chant`:
+A published specification, [TypeScript-as-Data](https://github.com/INTENTIUS/typescript-as-data), defines which TypeScript folds. chant implements it, the specification is versioned, and chant declares the version it implements as `SPEC_VERSION`, exported from `@intentius/chant`:
 
 ```ts
 import { SPEC_VERSION } from "@intentius/chant";
