@@ -30,6 +30,21 @@ const DOCS_ROOT = join(here, "..", "docs", "src", "content", "docs");
 const BASELINE = join(here, "docs-sentences-baseline.json");
 const GATED_SEVERITIES = new Set(["medium", "high"]);
 
+/**
+ * Rules that gate at whatever severity they carry (chant#2470).
+ *
+ * `reframe` is the "It is not X. It is Y." shape — the first pattern on the
+ * writing guide and the one the user objects to by name. It fires at `low`, so
+ * `GATED_SEVERITIES` alone would never stop it. Widening that set is the wrong
+ * lever: `low` is where the bulk lives (913 findings here), and admitting it
+ * would gate all of them at once.
+ *
+ * Measured before switching it on, over chant, typescript-as-data and a
+ * 32-file prose corpus outside both: seven findings, five real. The two wrong
+ * ones cost a baseline line each, once, which is what a ratchet is for.
+ */
+const ALWAYS_GATED_RULES = new Set(["reframe"]);
+
 const verbose = process.argv.includes("--verbose");
 const updateBaseline = process.argv.includes("--update-baseline");
 
@@ -65,7 +80,7 @@ for (const file of files) {
   for (const f of findings) {
     total++;
     if (verbose) detail.push(`${rel}:${lineOf(prose, f.span.start)} [${f.severity}] ${f.ruleId} — ${f.message}`);
-    if (!GATED_SEVERITIES.has(f.severity)) continue;
+    if (!GATED_SEVERITIES.has(f.severity) && !ALWAYS_GATED_RULES.has(f.ruleId)) continue;
     gated++;
     const perFile = (current[rel] ??= {});
     perFile[f.ruleId] = (perFile[f.ruleId] ?? 0) + 1;

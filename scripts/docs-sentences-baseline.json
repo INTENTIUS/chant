@@ -156,6 +156,7 @@
   "discourse/punchy-fragments": 1,
   "anaphora/repeated-opening": 2,
   "tricolon/comma-series": 4,
+  "reframe": 1,
   "claude/figurative-suffixes": 1,
   "claude/contrast-tail": 3,
   "repetition/near-duplicate": 2,
