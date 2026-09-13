@@ -17,7 +17,11 @@
  * transform faithful: the github serializer still does the actual emission.
  */
 
-import { DECLARABLE_MARKER, isResourceDeclarable, type Declarable } from "@intentius/chant/declarable";
+// chant#2444 — core's `isDeclarable`, not a local copy. This file carried its
+// own, testing only that the marker was PRESENT where core also requires it to
+// be `true`, so the two disagreed about a value carrying `false`. Core's also
+// accepts an entity a host built, which a local identity check cannot.
+import { isDeclarable, isResourceDeclarable, type Declarable } from "@intentius/chant/declarable";
 import { resolveActionRef } from "./actions";
 
 /**
@@ -63,10 +67,6 @@ export interface ForgejoDialectResult {
 /** Convert a camelCase or kebab-case key to a canonical kebab-case form. */
 function toKebabCase(name: string): string {
   return name.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
-}
-
-function isDeclarable(value: unknown): value is Declarable {
-  return typeof value === "object" && value !== null && DECLARABLE_MARKER in value;
 }
 
 interface TransformCtx {
