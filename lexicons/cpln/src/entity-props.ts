@@ -39,7 +39,7 @@ export function propsOf(entity: unknown): Record<string, unknown> {
 export function readProp(source: unknown, key: string): unknown {
   const props = propsOf(source);
   const value = props[key];
-  return isDeclarableLike(value) ? propsOf(value) : value;
+  return wrapsProps(value) ? propsOf(value) : value;
 }
 
 /** Read a nested path, unwrapping declarables at each step. `readPath(w, "spec", "job")`. */
@@ -56,7 +56,7 @@ export function readPath(source: unknown, ...keys: string[]): unknown {
 export function readArray(source: unknown, ...keys: string[]): unknown[] {
   const value = readPath(source, ...keys);
   if (!Array.isArray(value)) return [];
-  return value.map((item) => (isDeclarableLike(item) ? propsOf(item) : item));
+  return value.map((item) => (wrapsProps(item) ? propsOf(item) : item));
 }
 
 /** Read a property expected to be a string. */
@@ -77,8 +77,22 @@ export function readBoolean(source: unknown, ...keys: string[]): boolean | undef
   return typeof value === "boolean" ? value : undefined;
 }
 
-/** A value that carries authored props under `.props` (a declarable instance). */
-function isDeclarableLike(value: unknown): boolean {
+/**
+ * A value that carries authored props under `.props`.
+ *
+ * chant#2444 — deliberately NOT `isDeclarable`, and deliberately not named as
+ * though it were. This answers "does this wrap props that should be unwrapped",
+ * which is a different question from "is this an entity", and it has to match
+ * markerless objects: swapping it for core's marker test fails 85 of this
+ * lexicon's tests, because cpln's nested property shapes carry `.props` without
+ * carrying an entity marker.
+ *
+ * The old name invited exactly that swap. It is one of three readings of
+ * "declarable" chant#2444 found in the tree, and the only one that was never a
+ * divergent copy of the entity test — the other, in `forgejo/src/dialect.ts`,
+ * was and is now core's.
+ */
+function wrapsProps(value: unknown): boolean {
   return (
     !!value &&
     typeof value === "object" &&
