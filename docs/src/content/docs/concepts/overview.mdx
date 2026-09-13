@@ -51,7 +51,7 @@ The whole arc is available. None of it is forced: hand a chant-built artifact to
 
 chant hosts no authoritative state file, and the build path itself never touches your cloud. The apply mechanism — `kubectl`, CloudFormation, an ARM deployment, a CI pipeline, an agent — is one you bring or one chant drives for you through an Op. That boundary is a design choice that keeps the core small and the output portable, not a gap in what chant can do. [How chant compares](/chant/concepts/comparison/) works through the trade-offs against Terraform, CDK, and Pulumi.
 
-## The subset is specified, not just implemented
+## The subset has a specification
 
 Which TypeScript folds is defined by a published specification, [TypeScript-as-Data](https://github.com/INTENTIUS/typescript-as-data), rather than by chant's source alone. It is versioned, and chant declares the version it implements as `SPEC_VERSION`, exported from `@intentius/chant`:
 
