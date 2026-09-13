@@ -1459,6 +1459,16 @@ async function resolveCallExpression(node: ts.CallExpression, ctx: ResolveCtx): 
       foldFailure = err;
     }
     if (!binding) throw foldFailure;
+    // chant#2441 — `F-Div-Depth` is a refusal, not a failure to try hard
+    // enough. The fallback below imports the callee and invokes it, which is
+    // right when its body merely did not fold; here the folder has DECLINED,
+    // and invoking anyway produces exactly the envelope the specification says
+    // must not appear — a value the file's own declarators never produced.
+    //
+    // Every other `F-Div` row is a fallback and `divergence.md` says so
+    // outright, which is what makes the direction safe. This one is not, so it
+    // propagates and the file runs, which is what the reference does.
+    if (foldFailure instanceof FoldError && foldFailure.refusedAtDepth) throw foldFailure;
     try {
       return await resolveImportedCall(node, calleeName, binding, ctx);
     } catch (err) {

@@ -383,8 +383,22 @@ export class FoldError extends Error {
   readonly line: number;
   readonly column: number;
   readonly ruleId: SubsetRuleId;
+  /**
+   * This refusal is `F-Div-Depth` (chant#2441), not an ordinary fold failure.
+   *
+   * The distinction is load-bearing rather than informational. An ordinary
+   * failure to fold an imported call is allowed to fall back to importing and
+   * invoking the callee, which is `resolveCallExpression`'s pre-#1373 arm and
+   * is right for a helper that wraps a composite call. A depth refusal must
+   * NOT take that arm: the specification says the folder declines here, and
+   * invoking instead produces the envelope the fixture's own note warns about
+   * — a value the file's own declarators never produced. Unlike every other
+   * `F-Div` row this one is not a fallback, so papering over it is wrong
+   * output rather than a safe degradation.
+   */
+  readonly refusedAtDepth: boolean;
 
-  constructor(message: string, line: number, column: number, ruleId: SubsetRuleId = "EVL001") {
+  constructor(message: string, line: number, column: number, ruleId: SubsetRuleId = "EVL001", refusedAtDepth = false) {
     const prevStackTraceLimit = Error.stackTraceLimit;
     Error.stackTraceLimit = 0;
     super(`${line}:${column} - ${message}`);
@@ -393,6 +407,7 @@ export class FoldError extends Error {
     this.line = line;
     this.column = column;
     this.ruleId = ruleId;
+    this.refusedAtDepth = refusedAtDepth;
   }
 }
 
@@ -690,7 +705,7 @@ const MAX_FUNCTION_CALL_DEPTH = 32;
 
 function insideFunctionBody(node: ts.Node, what: string): FoldError | undefined {
   if (functionBodyDepth === 0) return undefined;
-  return foldError(node, `${what} inside a folded function body is not foldable`);
+  return foldError(node, `${what} inside a folded function body is not foldable`, "EVL001", true);
 }
 
 function fileLabel(file: string): string {
@@ -769,6 +784,10 @@ function callFoldableFunction(
       node,
       `${label} is not foldable: ${fileLabel(callee.file)}:${err.line}:${err.column} - ${reason}`,
       err.ruleId,
+      // chant#2441 — the refusal happened inside the callee's body and this
+      // frame is the CALL site, so without carrying the flag the caller sees
+      // an ordinary failure and falls back to invoking.
+      err.refusedAtDepth,
     );
   } finally {
     functionBodyDepth -= 1;
@@ -823,9 +842,9 @@ export function locate(node: ts.Node): { line: number; column: number } {
   return { line: line + 1, column: character + 1 };
 }
 
-function foldError(node: ts.Node, message: string, ruleId: SubsetRuleId = "EVL001"): FoldError {
+function foldError(node: ts.Node, message: string, ruleId: SubsetRuleId = "EVL001", refusedAtDepth = false): FoldError {
   const { line, column } = locate(node);
-  return new FoldError(message, line, column, ruleId);
+  return new FoldError(message, line, column, ruleId, refusedAtDepth);
 }
 
 /**
