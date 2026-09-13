@@ -10,6 +10,7 @@
  */
 
 import { readFileSync } from "node:fs";
+import { setGateOrigin } from "@intentius/chant/lifecycle/gate-origin";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { AcpServer } from "./server";
@@ -17,6 +18,14 @@ import { streamTransport } from "./jsonrpc";
 
 /** Serve until the client closes stdin, which is how it says the connection is over. */
 export async function serveAcpOverStdio(opts: { durableRequests?: boolean } = {}): Promise<void> {
+  // chant#2384 — every prompt this session carries is authored by the model,
+  // and `approve` is a verb in chant's registry like any other, so nothing in
+  // the transport stops `chant run <op>` being followed by
+  // `chant approve <op> <gate>` as the next prompt. Declaring the channel is
+  // what makes the gate ledger able to tell that apart from a person at a
+  // shell; the same-origin rule then refuses it.
+  setGateOrigin("acp");
+
   const server = new AcpServer({
     durableRequests: opts.durableRequests ?? false,
     version: lexiconVersion(),

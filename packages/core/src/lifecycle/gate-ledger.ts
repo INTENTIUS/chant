@@ -42,6 +42,7 @@
  * `"resolution"` is the default reading).
  */
 import { sortedJsonReplacer } from "../utils";
+import { currentGateOrigin, type GateOrigin } from "./gate-origin";
 import { readBlobFromPath, readPathSha, readBlobBySha, writeBlobToPath, RefCASConflictError } from "./git";
 
 const DIR = "_gates";
@@ -138,6 +139,27 @@ export interface GateResolutionRecord {
    * such a record proves is that somebody approved *something*.
    */
   planDigest?: string;
+  /**
+   * The channel this resolution was authored on (chant#2384) — set by the
+   * writer, never by the caller. `chant approve` records `"cli"`, the
+   * `op-approve` MCP tool records `"mcp"`, an ACP-driven approve records
+   * `"acp"`.
+   *
+   * Absent on every resolution written before chant#2384, and absent is not
+   * `"cli"`: an old record simply does not say. `sameOriginRefusal`
+   * (./gate-origin.ts) refuses only on a positive match, so an unlabelled
+   * record is never refused on this ground.
+   */
+  origin?: GateOrigin;
+  /**
+   * This resolution was recorded from the same channel that reached the gate,
+   * deliberately (chant#2384's `--allow-same-origin`).
+   *
+   * On the record rather than only in the console, because the point of the
+   * refusal is that someone chose to bypass it. A reader auditing the ledger
+   * later should see which approvals had a second party and which did not.
+   */
+  sameOriginOverride?: boolean;
 }
 
 export type GateResolutionInput = Omit<GateResolutionRecord, "version" | "kind">;
@@ -183,6 +205,13 @@ export interface PendingGateRecord {
    * step with no `plan`), which is the shape every gate had before #2300.
    */
   planDigest?: string;
+  /**
+   * The channel the run that reached this gate was driven from (chant#2384).
+   *
+   * This is the half a resolution is compared against: a gate reached over MCP
+   * and resolved over MCP has one author, not two.
+   */
+  origin?: GateOrigin;
 }
 
 export type PendingGateInput = Omit<PendingGateRecord, "version" | "kind">;
@@ -233,7 +262,16 @@ export async function appendPendingGate(
   input: PendingGateInput,
   opts?: { cwd?: string },
 ): Promise<{ commit: string; record: PendingGateRecord }> {
-  const record: PendingGateRecord = { version: 1, kind: "pending", ...input };
+  // chant#2384 — stamped here rather than at each caller, because every pending
+  // fact goes through this function and a channel is a property of the process
+  // rather than of the call. An explicit `origin` on the input still wins, so a
+  // caller that knows better can say so.
+  const record: PendingGateRecord = {
+    version: 1,
+    kind: "pending",
+    origin: currentGateOrigin(),
+    ...input,
+  };
   const commit = await appendGateLine(record, "Pending gate record", opts);
   return { commit, record };
 }
