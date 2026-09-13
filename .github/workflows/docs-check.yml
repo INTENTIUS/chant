@@ -52,27 +52,10 @@ jobs:
         run: node scripts/lint-docs-sentences.mjs
 
       # chant#2425 — the docs' rule citations, against the specification that
-      # owns them. `@intentius/tsad-conformance` is built and gated in the
-      # specification's repository and is not on npm yet
-      # (INTENTIUS/typescript-as-data#23), so the check is loaded from a
-      # pinned checkout of that public repository rather than reimplemented
-      # here. Pinned to the commit the `spec-1.8` tag names, by SHA rather than
-      # by tag name so the ref cannot be moved under us; `spec/VERSION` inside
-      # it is compared against chant's own SPEC_VERSION by the script, which
-      # refuses to run when the two disagree. So this pin and SPEC_VERSION move
-      # together, always, and that is deliberate (chant#2445): it is what stops
-      # the docs being gated against a rule set nobody writes against. It sat at
-      # 1.0 through six specification versions before anyone noticed.
-      #
-      # When the package publishes this becomes a devDependency and a plain
-      # vitest file; delete these two steps and the fallback in the script.
-      - name: Check out the specification (for its citation check)
-        uses: actions/checkout@v6
-        with:
-          repository: INTENTIUS/typescript-as-data
-          ref: 281a42058d4837f0aaf69c20e0c4f7fe7ec6e241 # spec-1.8
-          path: .tsad
-
+      # owns them. `@intentius/tsad-conformance` is a devDependency since it
+      # published at 1.8.0, so this is the package's own check rather than a
+      # second implementation of it, and `npm install` above is all it needs.
+      # chant#2470 removed the pinned-checkout dance this used before.
       - name: Check docs rule citations against the specification
         run: npx tsx scripts/check-docs-citations.ts
 

@@ -222,11 +222,14 @@ import { intrinsicCallFolds, intrinsicCallFoldsEagerly, type IntrinsicDef } from
  *   `sandbox`. `open` stays the default and stays strict (#2453).
  *
  * `scripts/check-docs-citations.ts` refuses to run when this constant and the
- * pinned specification disagree, so `.github/workflows/docs-check.yml` pins the
- * `spec-1.8` commit and the two move together. That coupling is deliberate: it
- * is what stops the docs being gated against a rule set nobody writes against
- * — which is exactly what happened while this sat at `1.0` through six
- * versions, passing because both sides were equally stale.
+ * rules it loads disagree, so this and the `@intentius/tsad-conformance`
+ * devDependency move together. That coupling is deliberate: it is what stops
+ * the docs being gated against a rule set nobody writes against — which is
+ * exactly what happened while this sat at `1.0` through six versions, passing
+ * because both sides were equally stale.
+ *
+ * Until chant#2470 the rules came from a commit `docs-check.yml` checked out;
+ * now they come from the published package, so bumping it is what moves this.
  */
 export const SPEC_VERSION = "1.8";
 

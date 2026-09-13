@@ -178,8 +178,7 @@
  },
  "docs/src/content/docs/cli/mcp.mdx": {
   "formatting/em-dash-density": 8,
-  "claude/colon-reveal": 3,
-  "anaphora/repeated-opening": 1
+  "claude/colon-reveal": 3
  },
  "docs/src/content/docs/cli/migrate.mdx": {
   "formatting/em-dash-density": 9,

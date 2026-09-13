@@ -406,14 +406,14 @@ Folded files execute none of their own code, but a run-fallback file does — in
 
 ### Fold depth bounds
 
-Three counters cap the recursion the fold path can do instead of letting it run away. Here is what the specification's `F-Depth` judgment says about them (J4 in `spec/judgments.md`, [INTENTIUS/typescript-as-data#46](https://github.com/INTENTIUS/typescript-as-data/issues/46)).
+Three counters cap the recursion the fold path can do instead of letting it run away. Here is what the specification's `F-Depth` judgment says about them (J4 in `spec/judgments.md`).
 
 {/* rule: F-Depth */}
 > An implementation bounds three recursions and may choose the values.
 
 The rule also requires the values to be stated, and requires that exhausting one produce a fallback to the run path rather than a failure or a silent change of evaluation mode. The table below is chant's statement of its three.
 
-Whether the call-depth bound is genuinely the implementation's to choose is not settled. `F-Eval-CallLocal` step 2 fixes it at 32 in its own text while `F-Depth` leaves it open, and [INTENTIUS/typescript-as-data#71](https://github.com/INTENTIUS/typescript-as-data/issues/71) is where the two get reconciled. What holds under either reading, and what chant meets, is that exhaustion falls back rather than producing wrong output.
+The values are chant's to choose. `F-Eval-CallLocal` step 2 says so outright: "The value is the implementation's; exhaustion is a fallback and never wrong output". The numbers below are chant's stated choice, which the rule requires it to make.
 
 | Bound | Value | Guards | Where |
 |---|---|---|---|

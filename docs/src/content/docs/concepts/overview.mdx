@@ -10,7 +10,7 @@ The core is a **compiler**: typed TypeScript in, spec-native artifacts out, vali
 
 ## The core is a compiler
 
-`chant build` imports your TypeScript, reads the resource objects it exports, and emits the target format. It never calls a cloud API, reads or writes state, or deploys. A separate evaluability lint pass (EVL) restricts source to literals, constants, and cross-resource references, so running your files is equivalent to reading static data. Same conforming source, same output.
+`chant build` reads the resource objects your TypeScript exports and emits the target format. The default path does not import your file at all: the source is reduced to values without executing it, which the specification calls folding. A file that does more than declare values is imported and run instead, and both paths produce the same output. No cloud API is called, no state is read or written, nothing is deployed.
 
 That determinism is the point. Every value in the output traces to a line of source; the build makes no network calls and holds no credentials; synthesis is fast and IDE-native. It is a small, side-effect-free thing to audit — and everything above it inherits that trust. See [Philosophy](/chant/concepts/philosophy/) and [TypeScript as Data](/chant/concepts/typescript-as-data/) for why the core is built this way.
 
@@ -50,6 +50,17 @@ The whole arc is available. None of it is forced: hand a chant-built artifact to
 ## Where chant draws the line
 
 chant hosts no authoritative state file, and the build path itself never touches your cloud. The apply mechanism — `kubectl`, CloudFormation, an ARM deployment, a CI pipeline, an agent — is one you bring or one chant drives for you through an Op. That boundary is a design choice that keeps the core small and the output portable, not a gap in what chant can do. [How chant compares](/chant/concepts/comparison/) works through the trade-offs against Terraform, CDK, and Pulumi.
+
+## The subset is specified, not just implemented
+
+Which TypeScript folds is defined by a published specification, [TypeScript-as-Data](https://github.com/INTENTIUS/typescript-as-data), rather than by chant's source alone. It is versioned, and chant declares the version it implements as `SPEC_VERSION`, exported from `@intentius/chant`:
+
+```ts
+import { SPEC_VERSION } from "@intentius/chant";
+// "1.8"
+```
+
+A conformance suite runs chant and a second, independent implementation over the same fixtures and compares them, so "chant folds this" is a claim something else checks. [TypeScript as Data](/chant/concepts/typescript-as-data/) is chant's guide to that rule set.
 
 ## Next
 
