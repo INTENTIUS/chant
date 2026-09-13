@@ -1,8 +1,9 @@
 import { describe, test, expect } from "vitest";
 import { fork } from "node:child_process";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { runFallbackFilesSandboxed } from "./run";
 
 /**
  * chant#2461 — a child that ends without a usable result says which way it did.
@@ -84,4 +85,33 @@ describe("why a sandboxed child ends without a result (chant#2461)", () => {
 
     expect(r.message).toEqual({ fatal: "Error: boom" });
   });
+
+  test("a project file with an unsettled top-level await reproduces it end to end", async () => {
+    // The run path's real mechanism, not a stand-in. `main()` does
+    // `await import(<project file>)` per run-fallback file, module scope is
+    // arbitrary project source, and a top level that awaits something which
+    // never settles makes that import never complete. Nothing keeps the loop
+    // alive, so Node exits 0 having sent nothing.
+    //
+    // This is what the diagnostic's wording is checked against. Before
+    // chant#2461 it said only "child exited before reporting results", which
+    // gave a reader nothing to look at.
+    const root = mkdtempSync(join(tmpdir(), "chant-tla-"));
+    try {
+      mkdirSync(join(root, "src"), { recursive: true });
+      writeFileSync(
+        join(root, "src", "hangs.ts"),
+        "await new Promise<void>(() => {});\nexport const never = { reached: true };\n",
+      );
+
+      const result = await runFallbackFilesSandboxed([join(root, "src", "hangs.ts")], root);
+
+      const message = result.errors.map((e) => e.message).join("\n");
+      expect(message).toContain("child exited before reporting results (code 0, signal null)");
+      expect(message).toContain("drained its loop without sending");
+      expect(message).toContain("top-level");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 120_000);
 });

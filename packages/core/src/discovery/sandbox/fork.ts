@@ -141,6 +141,13 @@ function lineBuffered(emit: (line: string) => void) {
  * the loop alive Node drains it and exits 0 having sent nothing and written
  * nothing. Nothing else in the process reports that.
  *
+ * On the RUN path that is not hypothetical, and it is reproducible: the driver
+ * does `await import(<project file>)` for each run-fallback file, module scope
+ * is arbitrary project source, and a file whose top level awaits something that
+ * never settles makes that import never complete. A fixture doing exactly that
+ * yields this error, which is how the wording here was checked rather than
+ * guessed.
+ *
  * The second is the payload being lost between `process.send` and exit.
  *
  * For the CONFIG driver the first is impossible, which is worth stating because
@@ -187,12 +194,14 @@ function describeSilentExit(
   // the parent has nothing. Two mechanisms produce exactly this, and which one
   // it is depends on the driver — see this function's doc.
   return (
-    `${head}. It exited cleanly with nothing on stderr and sent no message, so either its ` +
-    `payload was lost between \`process.send\` and exit, or something it awaited never settled ` +
-    `and it drained its event loop without reporting. A promise that never settles is not a ` +
-    `rejection, so the driver's own \`main().catch\` would not see the second case either. ` +
-    `The config driver bundles to one microtask and no runtime I/O, so on that path only the ` +
-    `first is possible (chant#2461).`
+    `${head}. It exited cleanly with nothing on stderr and sent no message, so the child drained ` +
+    `its loop without sending: something it awaited never settled. On the run path the usual ` +
+    `cause is a project file with a top-level \`await\` that does not settle — module scope is ` +
+    `arbitrary project source, and an import of such a file never completes. A promise that ` +
+    `never settles is not a rejection, so the driver's own \`main().catch\` does not see it ` +
+    `either, which is why nothing is written anywhere. The config driver bundles to one ` +
+    `microtask over synchronous code with no runtime I/O, so on THAT path nothing can hang and ` +
+    `the payload was lost between \`process.send\` and exit instead (chant#2461).`
   );
 }
 
