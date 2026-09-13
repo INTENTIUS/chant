@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { foldProject } from "../index";
-import type { IntrinsicDef } from "../intrinsic";
+import type { IntrinsicDef } from "../lexicon";
 
 /**
  * chant#2441 — `F-Div-Depth` is a refusal, and a refusal must not be
