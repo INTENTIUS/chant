@@ -61,6 +61,16 @@ export {
   type FoldProjectVerdict,
   type TaintPlan,
   type TaintEdgeKind,
+  // F-Obs-Counters' three integers: what a build invoked, what it invoked from
+  // project code, and what it interpreted instead. Already exported from the
+  // module; on the public entry so a conformance harness can report them per
+  // build (chant#2446, INTENTIUS/typescript-as-data#121). The counters are
+  // process-wide and monotonic, so a per-build figure means calling
+  // `resetFoldExecutionCounts()` first — which is why both travel together and
+  // neither is useful alone.
+  foldExecutionCounts,
+  resetFoldExecutionCounts,
+  type FoldExecutionCounts,
 } from "./discovery/fold-import";
 export * from "./lint/parser";
 export * from "./lint/rule";
