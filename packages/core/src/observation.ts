@@ -57,14 +57,33 @@ export type UnobservedReason =
   | "unsupported-kind"
   | "filtered";
 
-/** Every legal {@link UnobservedReason}, for validation and conformance checks. */
-export const UNOBSERVED_REASONS: readonly UnobservedReason[] = [
-  "read-failed",
-  "no-credentials",
-  "no-binding",
-  "unsupported-kind",
-  "filtered",
-];
+/**
+ * Every legal {@link UnobservedReason}, for validation and conformance checks.
+ *
+ * Derived from a witness keyed off the union rather than written out beside it
+ * (chant#2366). A hand-maintained array is only ever checked for holding legal
+ * members, never for holding ALL of them, so a reason added to the type left
+ * the array silently short — `tsc` clean, every observation test green, and a
+ * value the type permits that `observation-conformance.ts` refuses. A lexicon
+ * could construct a value its own suite rejected.
+ *
+ * Keying a `Record` off the union makes the omission a compile error at the
+ * point of the omission. This is the construction #2365 applied to all four
+ * closed sets in `./behaviour.ts`; `BEHAVIOUR_UNPREDICTED_REASONS` derives from
+ * this very type, so that module was already protected against a change here
+ * while this module was not.
+ */
+const UNOBSERVED_REASON_WITNESS: Record<UnobservedReason, true> = {
+  "read-failed": true,
+  "no-credentials": true,
+  "no-binding": true,
+  "unsupported-kind": true,
+  filtered: true,
+};
+
+export const UNOBSERVED_REASONS: readonly UnobservedReason[] = Object.keys(
+  UNOBSERVED_REASON_WITNESS,
+) as UnobservedReason[];
 
 /** True when `value` is a legal {@link UnobservedReason}. */
 export function isUnobservedReason(value: unknown): value is UnobservedReason {
