@@ -85,6 +85,7 @@ export function generateDriverSource(options: GenerateDriverOptions): string {
     `import { classifyChildError } from ${lit(CHILD_ERRORS_MODULE)};`,
     `import { getProvenance } from ${lit(PROVENANCE_MODULE)};`,
     `import { setBuildParams } from ${lit(PARAMS_MODULE)};`,
+    `import { writeSync } from "node:fs";`,
     ``,
     `const BUILD_ROOT = ${lit(buildRoot)};`,
     ``,
@@ -95,7 +96,29 @@ export function generateDriverSource(options: GenerateDriverOptions): string {
     // them exactly. Bound before any project import below.
     `setBuildParams(${lit({ ...currentBuildParams })});`,
     ``,
+    // chant#2461 — which file was being imported when the loop drained.
+    //
+    // A project file whose module scope awaits something that never settles
+    // makes its `await import(...)` never complete. Nothing keeps the loop
+    // alive, so Node exits 0 having sent nothing, and `main().catch` never
+    // fires because an unsettled promise is not a rejection. The parent then
+    // knows only that the child vanished.
+    //
+    // The child DOES know, right up to the moment it exits. `process.on("exit")`
+    // runs synchronously, so it cannot `process.send` — that is asynchronous and
+    // the channel will never be serviced — but a synchronous `writeSync` to fd 2
+    // lands, and the parent already captures and forwards stderr.
+    `let importing;`,
+    `let reported = false;`,
+    `process.on("exit", () => {`,
+    `  if (reported || importing === undefined) return;`,
+    `  writeSync(2, "chant: this file's module scope never finished evaluating, so the build could not " +`,
+    `    "report anything: " + importing + "\\n  A top-level \`await\` that never settles does this. " +`,
+    `    "Nothing is thrown, so nothing else can name it (chant#2461).\\n");`,
+    `});`,
+    ``,
     `function send(payload) {`,
+    `  reported = true;`,
     `  if (typeof process.send === "function") process.send(payload);`,
     `  else console.log(JSON.stringify(payload));`,
     `}`,
@@ -115,12 +138,14 @@ export function generateDriverSource(options: GenerateDriverOptions): string {
 
   for (const file of files) {
     lines.push(
+      `  importing = ${lit(file)};`,
       `  try {`,
       `    const mod = await import(${lit(file)});`,
       `    modules.push({ file: ${lit(file)}, exports: mod });`,
       `  } catch (err) {`,
       `    errors.push(classifyChildError(${lit(file)}, err).toJSON());`,
       `  }`,
+      `  importing = undefined;`,
     );
   }
 
