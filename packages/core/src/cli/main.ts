@@ -411,6 +411,10 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.note = args[++i];
     } else if (arg === "--expire") {
       result.expire = true;
+    } else if (arg === "--allow-same-origin") {
+      // chant#2384 — record a resolution the same-origin rule would refuse,
+      // deliberately. Flagged on the record, not just accepted quietly.
+      result.allowSameOrigin = true;
     } else if (arg === "--plan") {
       result.plan = args[++i];
     } else if (arg === "--url") {

@@ -30,6 +30,9 @@ import { readRunLedger } from "../../lifecycle/run-ledger";
 import type { OpRunRecord } from "../../op/runtime";
 import type { GateResolutionRecord, PendingGateRecord } from "../../lifecycle/gate-ledger";
 import {
+  currentGateOrigin, isModelAuthored, sameOriginRefusal, UNATTESTED_APPROVER, type GateOrigin,
+} from "../../lifecycle/gate-origin";
+import {
   appendGateResolution, appendPendingGate, readGateResolutions, readGateLedger,
   latestResolutionSince, latestPendingGate, isPendingGateExpired,
   resolveApprovalUrl, isApprovalUrl,
@@ -694,6 +697,7 @@ export async function runApprove(ctx: CommandContext): Promise<number> {
     note: ctx.args.note,
     url: ctx.args.url,
     plan: ctx.args.plan,
+    allowSameOrigin: ctx.args.allowSameOrigin,
   });
   if (!outcome.ok) return 1;
 
@@ -708,6 +712,21 @@ export async function runApprove(ctx: CommandContext): Promise<number> {
 
 /** What a caller supplies alongside the op and gate names. */
 export interface GateApprovalOptions {
+  /**
+   * The channel this resolution arrived on (chant#2384). Defaults to the
+   * process's own — `"cli"` unless an entry point declared otherwise — and is
+   * a parameter only so a caller that knows better can say so.
+   */
+  origin?: GateOrigin;
+  /**
+   * Record a resolution that the same-origin rule would refuse (chant#2384).
+   *
+   * There is a legitimate case: a single operator driving an agent, who wants
+   * the model's run resolved from the same session and accepts what that
+   * means. The override exists so that is a deliberate act with a trace on the
+   * record, rather than the default.
+   */
+  allowSameOrigin?: boolean;
   /** `--actor`/`--approver`; falls back to the CI or shell identity. */
   actor?: string;
   /** `--note` — free-text prose. */
@@ -815,7 +834,33 @@ export async function recordGateApproval(
     planDigest = standing.planDigest;
   }
 
-  const resolvedBy = opts.actor ?? process.env.GITHUB_ACTOR ?? process.env.GITLAB_USER_LOGIN ?? process.env.USER ?? "unknown";
+  // chant#2384 — the gate's whole value is that its two halves have different
+  // authors. At a shell they do: a person runs, reads the plan, and approves.
+  // On MCP and ACP the person's only act was launching the server, and every
+  // call after is the model's, so a gate reached over one of those channels and
+  // resolved over the same one has no second party in it. Refused by default,
+  // the way #2300 refuses a plan nobody approved.
+  const origin = opts.origin ?? currentGateOrigin();
+  const standingForOrigin = latestPendingGate((await readGateLedger(opName)).pending, gate);
+  const refusal = sameOriginRefusal(standingForOrigin?.origin, origin);
+  if (refusal && !opts.allowSameOrigin) {
+    console.error(formatError({
+      message: `Gate "${gate}" on "${opName}" cannot be resolved from here: ${refusal}`,
+      hint:
+        `Approve it from a channel the run did not come from — \`chant approve ${opName} ${gate}\` ` +
+        `at a shell is the usual one. If resolving from the same channel genuinely is the intent, ` +
+        `pass --allow-same-origin, which records that it was deliberate.`,
+    }));
+    return { ok: false };
+  }
+
+  const resolvedBy = opts.actor
+    ?? (isModelAuthored(origin)
+      // A channel that cannot attest to a name does not get to write one down.
+      // "unattested" reads as what it is; a name the model chose would read in
+      // the ledger exactly like a name a person gave.
+      ? UNATTESTED_APPROVER
+      : process.env.GITHUB_ACTOR ?? process.env.GITLAB_USER_LOGIN ?? process.env.USER ?? "unknown");
 
   const { record } = await appendGateResolution({
     op: opName,
@@ -825,6 +870,8 @@ export async function recordGateApproval(
     ...(opts.note ? { note: opts.note } : {}),
     ...(url ? { url } : {}),
     ...(planDigest !== undefined ? { planDigest } : {}),
+    origin,
+    ...(refusal && opts.allowSameOrigin ? { sameOriginOverride: true } : {}),
   });
   const pushed = await reportedPush(
     `The resolution is recorded locally on ${LIFECYCLE_BRANCH}. Until it reaches the remote, ` +

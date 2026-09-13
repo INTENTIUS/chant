@@ -9,6 +9,7 @@ import { searchTool, createSearchHandler } from "./tools/search";
 import type { LexiconPlugin } from "../../lexicon";
 import type { McpRequest, McpResponse, McpRequestMeta, ToolDefinition, ToolHandler, ResourceDefinition } from "./types";
 import { createSnapshotTool, createDiffTool } from "./lifecycle-tools";
+import { setGateOrigin } from "../../lifecycle/gate-origin";
 import { createOpListTool, createOpRunTool, createOpStatusTool, createOpApproveTool, createOpReportTool } from "./op-tools";
 import { buildResourcesList, handleResourcesRead } from "./resource-handlers";
 
@@ -302,6 +303,16 @@ export class McpServer {
    * Start the MCP server on stdio
    */
   async start(): Promise<void> {
+    // chant#2384 — declared here rather than in the constructor, because this
+    // is where the PROCESS becomes an MCP server. Constructing the object does
+    // not change what the process is, and a test that builds one should not
+    // silently make every later gate fact in that worker read as model-authored.
+    //
+    // From here on a person's only act was launching this; every call is the
+    // model's. So every gate fact written records the channel it came through,
+    // and a gate reached here cannot also be resolved here.
+    setGateOrigin("mcp");
+
     const rl = createInterface({
       input: process.stdin,
       output: process.stdout,

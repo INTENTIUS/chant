@@ -181,13 +181,18 @@ export function createOpApproveTool(): ToolRegistration {
     definition: {
       name: "op-approve",
       description:
-        "Record a gate's resolution on the gate ledger and wake the runtime hosting the gated run. The rename of op-signal: a gate is resolved by recording the fact, not by sending a message.",
+        "Record a gate's resolution on the gate ledger and wake the runtime hosting the gated run. " +
+        "Refuses a gate this same channel reached: a run started with op-run must be approved from " +
+        "somewhere else, normally `chant approve <op> <gate>` at a shell. The approver is recorded as " +
+        "unattested, because this channel cannot verify a name.",
       inputSchema: {
         type: "object",
         properties: {
           name: { type: "string", description: "Op name (e.g. alb-deploy)" },
           gate: { type: "string", description: "Gate name (e.g. gate-dns-delegation)" },
-          approver: { type: "string", description: "Who approved; defaults to the CI or shell identity" },
+          // chant#2384 — no `approver`. It was free text on a channel that
+          // cannot verify one, so the model named itself whatever it liked and
+          // the ledger recorded it indistinguishably from a name a person gave.
           note: { type: "string", description: "Free-text context recorded on the resolution" },
           url: { type: "string", description: "Absolute http/https URL this resolution happened at" },
           runtime: RUNTIME_PARAM,
@@ -202,11 +207,19 @@ export function createOpApproveTool(): ToolRegistration {
 
       const runtime = await runtimeFor(params.runtime);
       const outcome = await recordGateApproval(name, gate, {
-        actor: params.approver as string | undefined,
         note: params.note as string | undefined,
         url: params.url as string | undefined,
+        // Named rather than left to the ambient value, so this tool states its
+        // own channel even if it is ever registered on a server that did not.
+        origin: "mcp",
       });
-      if (!outcome.ok) throw new Error(`Gate "${gate}" on "${name}" was not recorded`);
+      if (!outcome.ok) {
+        throw new Error(
+          `Gate "${gate}" on "${name}" was not recorded. If the gate was reached over MCP, it cannot ` +
+            `also be resolved over MCP — approve it from another channel, normally ` +
+            `\`chant approve ${name} ${gate}\` at a shell.`,
+        );
+      }
 
       if (runtime.resolveGate) await runtime.resolveGate(name, gate, outcome.record);
 
@@ -214,6 +227,7 @@ export function createOpApproveTool(): ToolRegistration {
         op: name,
         gate,
         resolvedBy: outcome.record.resolvedBy,
+        origin: outcome.record.origin,
         timestamp: outcome.record.timestamp,
         runtimeNotified: Boolean(runtime.resolveGate),
       };
