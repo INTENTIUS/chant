@@ -88,6 +88,21 @@ const DECLARABLE_MARKER_SUFFIX = ".declarable";
  * The reference can read any symbol because its domain has one. chant
  * distinguishes seven kinds BY symbol identity, so it needs the marker's name.
  * Hence the suffix: the marker must say `declarable`, whoever owns it.
+ *
+ * ## What the suffix cannot do
+ *
+ * It is a convention, not a registry. A host that marks with, say,
+ * `Symbol.for("acme.entity")` carries a perfectly good non-enumerable marker
+ * and is refused here, because nothing in this function knows that package is
+ * one the caller named. The context that would settle it —
+ * `FoldProjectOptions.lexiconPackages`, chant#2438 — lives in the fold path and
+ * does not reach a type guard called from a dozen places.
+ *
+ * That is a deliberate trade, not an oversight: a convention that refuses an
+ * unknown-but-valid marker costs a host one symbol name, while a rule loose
+ * enough to accept any marker miscounts chant's own seven kinds on every build.
+ * If a real host ever needs the other side of it, the fix is to thread the
+ * named packages through rather than to widen the test.
  */
 export function isDeclarable(value: unknown): value is Declarable {
   if (typeof value !== "object" || value === null) return false;
