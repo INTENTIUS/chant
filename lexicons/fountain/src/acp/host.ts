@@ -94,11 +94,28 @@ export function createChantHost(cwd: string): ChantHost {
     },
 
     async resolveGate(op, gate, resolvedBy) {
-      const { appendGateResolution } = await import("@intentius/chant/lifecycle/gate-ledger");
-      await appendGateResolution(
-        { op, gate, resolvedBy, timestamp: new Date().toISOString() },
-        { cwd },
-      );
+      // chant#2400 — through `recordGateApproval`, the same function `chant
+      // approve` calls, rather than straight to `appendGateResolution`.
+      //
+      // Going direct wrote a line that looked like an approval and was missing
+      // every check one carries. It skipped #2300's plan binding, so the
+      // resolution named no plan and authorised whatever the next run produced
+      // rather than what anyone had read. It skipped the standing-pending-fact
+      // requirement, so it could answer a gate nothing had reached. And it
+      // skipped chant#2384's origin rule, which is the one that matters here:
+      // the pending fact and this resolution are both authored by the same ACP
+      // session, so the model that produced the gate was resolving it.
+      //
+      // With the rule applied, that case now refuses, which is the point. A
+      // Steward's gate reaches a person or it does not clear.
+      const { recordGateApproval } = await import("@intentius/chant/cli/handlers/operator");
+      const outcome = await recordGateApproval(op, gate, { actor: resolvedBy, origin: "acp" });
+      if (!outcome.ok) {
+        throw new Error(
+          `the resolution for gate "${gate}" on "${op}" was refused. A gate reached over ACP cannot ` +
+            `also be resolved over ACP — approve it with \`chant approve ${op} ${gate}\` at a shell.`,
+        );
+      }
     },
   };
 }
