@@ -125,6 +125,86 @@ function lineBuffered(emit: (line: string) => void) {
  * resolve with the first IPC message that satisfies `isResponse` (or reject
  * on crash / timeout / fork error).
  */
+/**
+ * Why a child ended without a usable result, in terms a reader can act on.
+ *
+ * chant#2461 — this used to be one sentence, `child exited before reporting
+ * results (code N, signal S)`, for three unrelated situations. The one that
+ * was observed in the wild is the hardest to read: exit code 0, empty stderr,
+ * no message. That reads like the child was cut off, and it was not — it ran
+ * to completion and sent nothing.
+ *
+ * Two mechanisms produce it, and the driver decides which is possible.
+ *
+ * The first is an `await` that never settles. `main().catch(...)` catches a
+ * REJECTION, and a promise that never settles is not one, so if nothing keeps
+ * the loop alive Node drains it and exits 0 having sent nothing and written
+ * nothing. Nothing else in the process reports that.
+ *
+ * On the RUN path that is not hypothetical, and it is reproducible: the driver
+ * does `await import(<project file>)` for each run-fallback file, module scope
+ * is arbitrary project source, and a file whose top level awaits something that
+ * never settles makes that import never complete. A fixture doing exactly that
+ * yields this error, which is how the wording here was checked rather than
+ * guessed.
+ *
+ * The second is the payload being lost between `process.send` and exit.
+ *
+ * For the CONFIG driver the first is impossible, which is worth stating because
+ * it was the working hypothesis until the bundle was read. Its `await
+ * import(configPath)` bundles to `await Promise.resolve().then(() =>
+ * (init_chant_config(), chant_config_exports))` — one microtask over
+ * synchronous code — and the bundle has no runtime imports, no dynamic
+ * `import(`, and exactly one `process.send`. There is nothing there to hang on.
+ * So a config child that exits 0 with nothing sent DID send, and the payload
+ * did not arrive.
+ *
+ * The exit/message race originally proposed in chant#2461 is a third thing and
+ * is not it: with the parent blocked so a queued payload and the reap were both
+ * pending, `message` was dispatched first 60 times out of 60, because the live
+ * IPC channel keeps the child alive until the payload flushes.
+ */
+function describeSilentExit(
+  label: string,
+  code: number | null,
+  signal: NodeJS.Signals | null,
+  stderrBuf: string,
+  unrecognised: readonly unknown[],
+): string {
+  const stderr = stderrBuf.trim();
+  const head = `${label}: child exited before reporting results (code ${code}, signal ${signal})`;
+
+  if (unrecognised.length > 0) {
+    // It DID send. The parent refused the shape, which is a bug in one of them
+    // and not the child dying early.
+    const shapes = unrecognised
+      .map((m) => (m && typeof m === "object" ? `{${Object.keys(m as object).join(", ")}}` : typeof m))
+      .join(", ");
+    return (
+      `${head}. It sent ${unrecognised.length} message(s) the parent did not recognise (${shapes}), ` +
+      `so the payload shape and the parent's check disagree` +
+      (stderr ? `: ${stderr}` : "")
+    );
+  }
+
+  if (stderr) return `${head}: ${stderr}`;
+  if (code !== 0 || signal !== null) return head;
+
+  // Exit 0, nothing on stderr, nothing sent. The child finished normally and
+  // the parent has nothing. Two mechanisms produce exactly this, and which one
+  // it is depends on the driver — see this function's doc.
+  return (
+    `${head}. It exited cleanly with nothing on stderr and sent no message, so the child drained ` +
+    `its loop without sending: something it awaited never settled. On the run path the usual ` +
+    `cause is a project file with a top-level \`await\` that does not settle — module scope is ` +
+    `arbitrary project source, and an import of such a file never completes. A promise that ` +
+    `never settles is not a rejection, so the driver's own \`main().catch\` does not see it ` +
+    `either, which is why nothing is written anywhere. The config driver bundles to one ` +
+    `microtask over synchronous code with no runtime I/O, so on THAT path nothing can hang and ` +
+    `the payload was lost between \`process.send\` and exit instead (chant#2461).`
+  );
+}
+
 export function forkSandboxed<T>(
   options: SandboxForkOptions,
   isResponse: (value: unknown) => value is T,
@@ -144,6 +224,8 @@ export function forkSandboxed<T>(
 
     let settled = false;
     let stderrBuf = "";
+    /** Messages the child sent that `isResponse` refused — see the `message` handler. */
+    const unrecognised: unknown[] = [];
 
     const timeout = setTimeout(() => {
       if (settled) return;
@@ -185,7 +267,15 @@ export function forkSandboxed<T>(
     child.stderr?.on("end", () => stderrForwarder.flush());
 
     child.on("message", (msg: unknown) => {
-      if (settled || !isResponse(msg)) return;
+      if (settled) return;
+      if (!isResponse(msg)) {
+        // chant#2461 — remember it rather than dropping it. A child that sent
+        // something the parent does not recognise is a different failure from
+        // a child that sent nothing, and both used to arrive as "exited before
+        // reporting results" with no way to tell them apart.
+        unrecognised.push(msg);
+        return;
+      }
       settled = true;
       clearTimeout(timeout);
       // chant #1131 — the child's entire job is to send this one message, so
@@ -212,11 +302,7 @@ export function forkSandboxed<T>(
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
-      reject(
-        new Error(
-          `${label}: child exited before reporting results (code ${code}, signal ${signal})${stderrBuf.trim() ? `: ${stderrBuf.trim()}` : ""}`,
-        ),
-      );
+      reject(new Error(describeSilentExit(label, code, signal, stderrBuf, unrecognised)));
     });
   });
 }
