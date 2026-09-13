@@ -22,7 +22,13 @@
  * `sandbox_mode: "persistent"` because the environment's checkout and tool
  * cache have to survive a turn ending, `permission_policy: { default:
  * "auto_allow" }` because there is nobody at the keyboard to answer a
- * permission card and chant's own gates are where a human belongs, no `model`
+ * permission card. Chant's own gates are still where a human belongs, and
+ * that is enforced rather than assumed: a gate resolved from this session
+ * would be answering a gate this session produced, which `recordGateApproval`
+ * refuses (chant#2384's origin rule, reached through chant#2400). So
+ * `auto_allow` decides ordinary tool calls and cannot clear a gate — the
+ * resolution has to arrive on a channel this agent is not on, normally
+ * `chant approve` at a shell, no `model`
  * because an `acp` agent's model is whatever the command it launches decides
  * to use, and no skills because a steward's competence is chant's op
  * definitions rather than prose.
