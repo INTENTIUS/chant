@@ -261,6 +261,8 @@ export interface FoldSession {
    * only the fold half would buy nothing there.
    */
   readonly sandbox: boolean;
+  /** chant#2455 — `ι = executing`: invoke a declared project function whose body did not fold. */
+  readonly executing: boolean;
   /**
    * chant #1023 — per-build memo for {@link readFactoryModule}, keyed by the
    * resolved absolute path of a module that DEFINES a composite. A composite
@@ -322,6 +324,8 @@ export function createFoldSession(
    * named as a specifier rather than only as a lexicon.
    */
   lexiconPackages: readonly string[] = [],
+  /** chant#2455 — `ι = executing`. Mutually exclusive with `sandbox`. */
+  executing = false,
 ): FoldSession {
   return {
     intrinsics,
@@ -332,6 +336,7 @@ export function createFoldSession(
     buildParams,
     lexiconPackages: new Set([...lexicons.map(lexiconPackageName), ...lexiconPackages]),
     sandbox,
+    executing,
     factoryModules: new Map(),
   };
 }
@@ -1275,6 +1280,8 @@ interface ResolveCtx {
   lexiconPackages: ReadonlySet<string>;
   /** chant #1093 — see {@link FoldSession.sandbox}. */
   sandbox: boolean;
+  /** chant#2455 — see {@link FoldSession.executing}. */
+  executing: boolean;
   /**
    * chant #1023 — the whole build session, for the two things composite-factory
    * interpretation needs that a per-file context cannot carry: the
@@ -1485,6 +1492,29 @@ async function resolveCallExpression(node: ts.CallExpression, ctx: ResolveCtx): 
     // in the arm this one is not. A composite factory is not a
     // `FoldableFunction`, so `resolveImportedCall` still interprets it and
     // still invokes it when interpretation declines.
+    //
+    // chant#2455 — unless the caller asked for `ι = executing` (spec 1.8),
+    // which is this behaviour as a MODE rather than as a silent default. The
+    // value is then what a run would compute in this process, environment and
+    // all, which is exactly why it cannot be implicit.
+    if (ctx.executing && binding) {
+      try {
+        return await resolveImportedCall(node, calleeName, binding, ctx);
+      } catch (err) {
+        throw cheapError(
+          `${foldFailure.message}; invoking it instead failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+    // Name the mode that would have folded it, so the reason is actionable
+    // rather than only correct. Not under `sandbox`, where `executing` is not
+    // an option the caller could take.
+    if (binding && !ctx.sandbox) {
+      throw cheapError(
+        `${foldFailure.message} (the default mode does not invoke a declared project function; ` +
+          "`executing` would run it and fold what it returns)",
+      );
+    }
     throw foldFailure;
   }
 
@@ -2366,6 +2396,7 @@ async function interpretCompositeFactory(
     resolvePathCache: ctx.resolvePathCache,
     lexiconPackages: ctx.lexiconPackages,
     sandbox: ctx.sandbox,
+    executing: ctx.executing,
     session: ctx.session,
     interpretDepth: ctx.interpretDepth + 1,
     // chant #2161 — set unconditionally, and NOT inherited from `ctx`: a nested
@@ -3678,6 +3709,7 @@ async function tryFoldFileCore(file: string, session: FoldSession): Promise<Fold
       resolvePathCache: session.resolvePathCache,
       lexiconPackages: session.lexiconPackages,
       sandbox: session.sandbox,
+      executing: session.executing,
       session,
       interpretDepth: 0,
       // chant#2423 — filled by the pre-build below, read by
@@ -4113,6 +4145,25 @@ export interface FoldProjectOptions {
   /** chant #1093: this build asked for the sandbox, so fold may not reach outside the trusted allowlist. */
   readonly sandbox?: boolean;
   /**
+   * chant#2455 — opt in to `ι = executing`, the third isolation mode
+   * (typescript-as-data spec `1.8`).
+   *
+   * Under it, a declarator call to a declared project function whose body
+   * cannot fold continues at `F-Call` step 6 and is invoked, so the fold's
+   * value is what a run would compute **in the folding process's
+   * environment**. That is the behaviour chant had before #2453, where it was
+   * the silent default and leaked the folding shell's `process.env` into the
+   * output of a file reported as `fold`.
+   *
+   * It is here as a mode rather than gone, because the value is real when the
+   * caller means it. What it cannot be is implicit: `open` is the default and
+   * is strict, so a build that wants a run's answer has to say so.
+   *
+   * Mutually exclusive with {@link sandbox}, which refuses to import project
+   * code at all. Asking for both is a contradiction and refuses.
+   */
+  readonly executing?: boolean;
+  /**
    * chant#2438 — package specifiers to follow a bare import into, verbatim,
    * alongside whatever `lexicons` names.
    *
@@ -4168,12 +4219,24 @@ export async function foldProject(
   intrinsics: readonly IntrinsicDef[] = [],
   options: FoldProjectOptions = {},
 ): Promise<Map<string, FoldProjectVerdict>> {
+  // chant#2455 — `sandbox` refuses to import project code at all and
+  // `executing` exists to invoke it. Asking for both is not a preference
+  // between two readings, it is a contradiction, and silently picking one would
+  // make the fold's meaning depend on which.
+  if (options.sandbox === true && options.executing === true) {
+    throw new Error(
+      "foldProject: `sandbox` and `executing` are mutually exclusive — the first refuses to import " +
+        "project code and the second exists to invoke it. Pass one.",
+    );
+  }
+
   const session = createFoldSession(
     intrinsics,
     options.buildParams,
     options.lexicons ?? [],
     options.sandbox ?? false,
     options.lexiconPackages ?? [],
+    options.executing ?? false,
   );
   const attempts = new Map<string, FoldFileResult>();
   for (const file of files) attempts.set(file, await tryFoldFile(file, intrinsics, session));
