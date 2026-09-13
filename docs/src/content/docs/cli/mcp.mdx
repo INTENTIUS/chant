@@ -18,7 +18,9 @@ Typically you don't run this directly. `chant init` detects your IDE and writes 
 
 ## Tools
 
-The server exposes six core tools that agents can invoke:
+These are the core tools the server registers. Lexicon plugins contribute more.
+
+A test ties this list to the server's own registrations, so a tool added or removed in `packages/core/src/cli/mcp/server.ts` fails the build until this page names it.
 
 ### `build`
 
@@ -27,10 +29,10 @@ Build chant infrastructure code and generate output for the target lexicon.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `path` | `string` | Yes | Path to the infrastructure directory or file |
-| `output` | `string` | No | Output file path (returns in response if omitted) |
+| `output` | `string` | No | Accepted by the schema and currently ignored; the built output always comes back in the response |
 | `format` | `"json" \| "yaml"` | No | Output format (default: `json`) |
 
-Returns `{ success, resourceCount, output, format }`.
+Returns `{ success, resourceCount, output, format }`. A build that reports errors fails the call instead of returning them.
 
 ### `lint`
 
@@ -52,7 +54,7 @@ Import external templates and convert them to chant TypeScript.
 | `source` | `string` | Yes | Path to the template file to import |
 | `output` | `string` | No | Output directory (default: `./infra/`) |
 
-Returns `{ success, lexicon, generatedFiles, warnings }`.
+The response is `{ success, lexicon, generatedFiles, warnings }`. A failed import fails the call.
 
 ### `explain`
 
@@ -61,9 +63,9 @@ Summarize the resources in a chant project.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `path` | `string` | Yes | Path to the infrastructure directory |
-| `format` | `"markdown" \| "json"` | No | Output format (default: `markdown`) |
+| `format` | `"markdown" \| "json" \| "okf"` | No | Output format (default: `markdown`) |
 
-Returns a structured summary of resource counts, entity types, and lexicon groupings.
+`markdown` returns a prose summary. `json` returns `{ sourceFiles, totalEntities, lexicons, dependencies, errors }`, carrying an extra `knowledge` key when the project's OKF bundle bound a concept to a discovered entity, and omitting that key entirely when nothing bound. `okf` returns `{ okf_version, files, errors }`, where `files` maps each bundle-relative path to its content, which is the same bundle `chant explain --format okf` writes to a directory.
 
 ### `scaffold`
 
@@ -72,9 +74,10 @@ Generate starter files for a chant project.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `pattern` | `string` | Yes | Resource pattern to scaffold (e.g. `"s3-bucket"`, `"pipeline"`) |
-| `lexicon` | `string` | No | Lexicon to use for templates |
+| `lexicon` | `string` | No | Lexicon to use for templates. Auto-detected if omitted |
+| `template` | `string` | No | Named init template (e.g. `"node-pipeline"`). Given one, the template's own source files come back instead of a pattern match |
 
-Returns `{ success, files }` with generated file contents.
+Returns `{ lexicon, pattern, files }`, where `files` is `[{ filename, content }]`. A named template that matched adds `template`. When no lexicon template matched at all, the response is a generic skeleton with a `note` saying so.
 
 ### `search`
 
@@ -86,7 +89,29 @@ Search available resource types across loaded lexicons.
 | `lexicon` | `string` | No | Filter to a specific lexicon |
 | `limit` | `number` | No | Maximum results (default: `20`) |
 
-Returns matching resource type entries sorted by relevance.
+The response is `{ query, total, results }`, with prefix matches ahead of substring matches and `total` counting the matches before `limit` was applied.
+
+### `lifecycle-snapshot`
+
+Capture deployed state for an environment, reading every loaded lexicon that implements `describeResources`.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `environment` | `string` | Yes | Target environment |
+| `lexicon` | `string` | No | Restrict to one lexicon; snapshots all of them if omitted |
+
+Returns `{ snapshots, warnings, errors }`, where `snapshots` is how many were captured. Two conditions come back as a plain string rather than that object: `No plugins implement describeResources` when nothing loaded can describe live state, and `Build failed` when the project did not build.
+
+### `lifecycle-diff`
+
+Compare the current build's digest against the digest stored in an environment's last snapshot.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `environment` | `string` | Yes | Target environment |
+| `lexicon` | `string` | No | Restrict to one lexicon; diffs all of them if omitted |
+
+The response is an object keyed by lexicon name, each value that lexicon's digest diff. A lexicon with no stored snapshot for the environment diffs against nothing, which reads as everything being new. `Build failed` comes back as a plain string when the project did not build.
 
 Every Op tool takes an optional `runtime`, the same choice [`chant run --on`](/chant/cli/run/#choosing-a-runtime-with---on) makes on the command line. Omitted, it is the built-in local runtime, which executes the Op in this process.
 
@@ -98,6 +123,8 @@ List every Op discovered from `*.op.ts` files with the run state the runtime rep
 |-----------|------|----------|-------------|
 | `runtime` | `string` | No | Runtime to address: a lexicon name with an `opRuntime`, or `local` (the default) |
 
+Returns `{ ops, errors }`. Each entry carries `{ name, overview, phases, labels, depends, runState }`, and an unreachable runtime leaves `runState` as a dash rather than failing the call.
+
 ### `op-run`
 
 Run an Op on a runtime and return its result.
@@ -106,6 +133,8 @@ Run an Op on a runtime and return its result.
 |-----------|------|----------|-------------|
 | `name` | `string` | Yes | Op name (must match an `*.op.ts` file) |
 | `runtime` | `string` | No | Runtime to address: a lexicon name with an `opRuntime`, or `local` (the default) |
+
+A finished run comes back as `{ op, runId, state, startedAt, endedAt }`, plus `records` and `gate` when the run produced them.
 
 ### `op-status`
 
@@ -116,7 +145,7 @@ Show the state the runtime reports for an Op's latest run.
 | `name` | `string` | Yes | Op name |
 | `runtime` | `string` | No | Runtime to address: a lexicon name with an `opRuntime`, or `local` (the default) |
 
-Returns `{ op, runId, state, startedAt, endedAt, records, gate }`. `records` is the per-phase `StepRecord[]` array (present when the Op's `*.op.ts` is discoverable; see [Progress and gate state](/chant/guide/ops-reference/#progress-and-gate-state)) — the same shape `--progress-json` streams. `gate` is the pending gate (`{ name, since }`), absent when none is standing.
+Returns `{ op, runtime, runId, state, startedAt, endedAt, records, gate }`. `records` is the per-phase `StepRecord[]` array (present when the Op's `*.op.ts` is discoverable; see [Progress and gate state](/chant/guide/ops-reference/#progress-and-gate-state)) — the same shape `--progress-json` streams. `gate` is the pending gate (`{ name, since }`), null when none is standing.
 
 ### `op-approve`
 
@@ -126,10 +155,21 @@ Record a gate's resolution on the gate ledger, then wake the runtime hosting the
 |-----------|------|----------|-------------|
 | `name` | `string` | Yes | Op name |
 | `gate` | `string` | Yes | Gate name (must match the gate's name in the Op) |
-| `approver` | `string` | No | Who approved; defaults to the CI or shell identity |
 | `note` | `string` | No | Free-text context recorded on the resolution |
 | `url` | `string` | No | Absolute http/https URL this resolution happened at |
 | `runtime` | `string` | No | Runtime to address: a lexicon name with an `opRuntime`, or `local` (the default) |
+
+Returns `{ op, gate, resolvedBy, origin, timestamp, runtimeNotified }`.
+
+#### A gate reached over MCP cannot be resolved over MCP
+
+Every gate fact records the channel it came through, one of `cli`, `mcp` or `acp`. When a run reaches a gate over MCP, the pending fact says `mcp`, and this tool then refuses to answer it. `op-run` wrote the first half and `op-approve` would write the second, so one caller in one session would have written both, and the gate would have no second party in it.
+
+The refusal names the way through. Approve from a channel the run did not arrive on, which is normally `chant approve <op> <gate>` at a shell. A gate reached at a shell or over ACP is resolvable here, because that is the separation the gate exists for. `chant approve` carries an `--allow-same-origin` override for the operator who genuinely wants both halves in one session; this tool deliberately has no equivalent.
+
+There is no `approver` parameter, and the resolution records `resolvedBy` as `unattested`. MCP cannot verify a name, so a name supplied here would sit on the ledger looking exactly like a name a person gave. A shell approval takes `--actor` and can be believed.
+
+The approval is for the plan the gated run recorded, so a gate with no pending fact standing has nothing for this tool to approve and the call fails. Naming a plan digest by hand is a shell-only affordance, `chant approve --plan <digest>`.
 
 ### `op-report`
 
@@ -152,10 +192,14 @@ The server provides resources that agents can read for context:
 |-----|-----------|-------------|
 | `chant://context` | `text/markdown` | Lexicon-specific instructions, patterns, and best practices |
 | `chant://examples/list` | `application/json` | JSON array of available examples (`[{ name, description }]`) |
-| `chant://examples/<name>` | `text/typescript` | Source code of a specific example |
-| `chant://ops` | `application/json` | List of all discovered Ops with metadata |
-| `chant://ops/{name}/runs` | `application/json` | Recent run history for a specific Op |
-| `chant://ops/{name}/runs/latest` | `application/json` | Latest run state for a specific Op |
+| `chant://ops` | `application/json` | Every Op discovered from `*.op.ts`, with overview, phase count, labels and dependencies |
+| `chant://ops/{name}/runs` | `application/json` | Run history for a named Op, newest first |
+| `chant://ops/{name}/runs/latest` | `application/json` | Latest run state for a named Op |
+| `chant://knowledge` | `application/json` | The project's OKF knowledge bundle as `{ dir, index, concepts }`, empty when the project has authored none |
+| `chant://state/{environment}` | `application/json` | Every lexicon's snapshot for an environment, keyed by lexicon |
+| `chant://state/{environment}/{lexicon}` | `application/json` | One lexicon's snapshot for an environment |
+
+`chant://examples/{name}` reads too, although `resources/list` does not advertise it. It resolves to whichever plugin resource has a URI ending in `/examples/{name}`.
 
 ### Plugin Resources
 
@@ -198,17 +242,27 @@ The server communicates over stdin/stdout using JSON-RPC 2.0 with line-based fra
 
 ## Protocol Details
 
-The MCP server implements the [Model Context Protocol](https://modelcontextprotocol.io/) specification version `2024-11-05`.
+The MCP server implements the [Model Context Protocol](https://modelcontextprotocol.io/). It negotiates a revision rather than assuming the client's, and understands two:
+
+| Version | Role |
+|---------|------|
+| `2026-07-28` | Preferred. Answered to a client that asks for it, and to one that names no version at all |
+| `2024-11-05` | Answered to a client that asks for it by name |
+
+On the 2026-07-28 revision the requested version and the client identity travel in a `_meta` envelope on every request, and the server falls back to the top-level `protocolVersion` and `clientInfo` fields a prior-revision client sends on `initialize`.
 
 ### Supported Methods
 
 | Method | Description |
 |--------|-------------|
-| `initialize` | Handshake — returns protocol version, capabilities, and server info |
+| `initialize` | Handshake — returns the negotiated protocol version, capabilities, and server info |
+| `server/discover` | The `initialize` result merged with the tool and resource listings, so a client can discover everything in one call |
 | `tools/list` | List all available tools (core + plugin-contributed) |
 | `tools/call` | Invoke a tool by name with parameters |
 | `resources/list` | List all available resources (core + plugin-contributed) |
 | `resources/read` | Read a resource by URI |
+
+A message with no `id` is a notification, `notifications/initialized` being the one every client sends, and gets no response at all. A tool whose handler returns an object is answered with both a text block and a `structuredContent` field holding the parsed shape.
 
 ## Exit Codes
 

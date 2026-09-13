@@ -56,12 +56,21 @@ To configure manually, add the chant MCP server to your IDE's MCP config:
 
 | MCP tool | Description |
 |----------|-------------|
-| `build` | Synthesize and write infrastructure output |
+| `build` | Synthesize infrastructure output |
 | `lint` | Run lint checks on TypeScript intent definitions |
 | `import` | Import infrastructure templates and generate TypeScript files |
 | `explain` | Summarize project resources by lexicon and kind |
 | `scaffold` | Generate starter files from lexicon templates |
 | `search` | Search available resource types across lexicons |
+| `lifecycle-snapshot` | Capture deployed state for an environment |
+| `lifecycle-diff` | Compare the current build against an environment's last snapshot |
+| `op-list` | List discovered Ops with the run state a runtime reports |
+| `op-run` | Run an Op on a runtime and return its result |
+| `op-status` | Show the state of an Op's latest run |
+| `op-approve` | Record a gate's resolution, unless the gate arrived over this same channel |
+| `op-report` | Return a markdown report for an Op's latest run |
+
+The parameters each one takes, and what it returns, are in the [`chant serve mcp` reference](/chant/cli/mcp/). Read the `op-approve` entry there before wiring up an approval flow: a gate an agent's own `op-run` reached cannot be resolved over MCP, which keeps the two halves of an approval in different hands.
 
 ### Resources
 
@@ -70,7 +79,7 @@ To configure manually, add the chant MCP server to your IDE's MCP config:
 | `chant://context` | Lexicon-specific instructions and patterns for chant development |
 | `chant://examples/list` | List of available chant examples |
 
-Lexicon plugins can contribute additional tools and resources.
+Lexicon plugins can contribute additional tools and resources. The [`chant serve mcp` reference](/chant/cli/mcp/#resources) lists every core resource the server serves, the knowledge bundle and per-environment state among them.
 
 ### Read-only context tools
 

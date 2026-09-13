@@ -17,8 +17,12 @@ import { buildResourcesList, handleResourcesRead } from "./resource-handlers";
  * Protocol versions this server understands, newest first. `initialize` and
  * `server/discover` both negotiate against this list rather than assuming
  * the client's revision (#1194).
+ *
+ * Exported because `docs-parity.test.ts` reads it: `cli/mcp.mdx` states these
+ * revisions in prose, and stating them twice is how the page came to claim
+ * 2024-11-05 for two releases after this list moved past it (#2385).
  */
-const SUPPORTED_PROTOCOL_VERSIONS = ["2026-07-28", "2024-11-05"] as const;
+export const SUPPORTED_PROTOCOL_VERSIONS = ["2026-07-28", "2024-11-05"] as const;
 const LATEST_PROTOCOL_VERSION = SUPPORTED_PROTOCOL_VERSIONS[0];
 
 /**
