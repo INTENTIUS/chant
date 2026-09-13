@@ -440,7 +440,8 @@
   "formatting/em-dash-density": 33,
   "claude/colon-reveal": 5,
   "tricolon/comma-series": 4,
-  "claude/contrast-tail": 3
+  "claude/contrast-tail": 3,
+  "reframe": 1
  },
  "docs/src/content/docs/configuration/config-file.mdx": {
   "formatting/em-dash-density": 10,
