@@ -125,6 +125,64 @@ function lineBuffered(emit: (line: string) => void) {
  * resolve with the first IPC message that satisfies `isResponse` (or reject
  * on crash / timeout / fork error).
  */
+/**
+ * Why a child ended without a usable result, in terms a reader can act on.
+ *
+ * chant#2461 — this used to be one sentence, `child exited before reporting
+ * results (code N, signal S)`, for three unrelated situations. The one that
+ * was observed in the wild is the hardest to read: exit code 0, empty stderr,
+ * no message. That reads like the child was cut off, and it was not — it ran
+ * to completion and sent nothing.
+ *
+ * The mechanism worth naming, because nothing else in the process reports it:
+ * the driver's `main()` is `async`, and `main().catch(...)` catches a
+ * REJECTION. A promise that never settles is not a rejection. If something the
+ * child awaits never settles and no handle keeps the loop alive, Node drains
+ * the loop and exits 0, silently, having sent nothing and written nothing. The
+ * signature is exactly what was seen.
+ *
+ * The suspected exit/message race is deliberately NOT named here. It was
+ * measured and did not reproduce: with the parent blocked so that a queued
+ * payload and the reap were both pending, `message` was dispatched first 60
+ * times out of 60, because the live IPC channel keeps the child alive until the
+ * payload flushes.
+ */
+function describeSilentExit(
+  label: string,
+  code: number | null,
+  signal: NodeJS.Signals | null,
+  stderrBuf: string,
+  unrecognised: readonly unknown[],
+): string {
+  const stderr = stderrBuf.trim();
+  const head = `${label}: child exited before reporting results (code ${code}, signal ${signal})`;
+
+  if (unrecognised.length > 0) {
+    // It DID send. The parent refused the shape, which is a bug in one of them
+    // and not the child dying early.
+    const shapes = unrecognised
+      .map((m) => (m && typeof m === "object" ? `{${Object.keys(m as object).join(", ")}}` : typeof m))
+      .join(", ");
+    return (
+      `${head}. It sent ${unrecognised.length} message(s) the parent did not recognise (${shapes}), ` +
+      `so the payload shape and the parent's check disagree` +
+      (stderr ? `: ${stderr}` : "")
+    );
+  }
+
+  if (stderr) return `${head}: ${stderr}`;
+  if (code !== 0 || signal !== null) return head;
+
+  // Exit 0, nothing on stderr, nothing sent: the child finished normally and
+  // never reported. See this function's doc for why that is a hung await rather
+  // than a race.
+  return (
+    `${head}. It exited cleanly with nothing on stderr and sent no message, so it drained its ` +
+    `event loop without reporting — something it awaited never settled. A promise that never ` +
+    `settles is not a rejection, so the driver's own \`main().catch\` does not see it either.`
+  );
+}
+
 export function forkSandboxed<T>(
   options: SandboxForkOptions,
   isResponse: (value: unknown) => value is T,
@@ -144,6 +202,8 @@ export function forkSandboxed<T>(
 
     let settled = false;
     let stderrBuf = "";
+    /** Messages the child sent that `isResponse` refused — see the `message` handler. */
+    const unrecognised: unknown[] = [];
 
     const timeout = setTimeout(() => {
       if (settled) return;
@@ -185,7 +245,15 @@ export function forkSandboxed<T>(
     child.stderr?.on("end", () => stderrForwarder.flush());
 
     child.on("message", (msg: unknown) => {
-      if (settled || !isResponse(msg)) return;
+      if (settled) return;
+      if (!isResponse(msg)) {
+        // chant#2461 — remember it rather than dropping it. A child that sent
+        // something the parent does not recognise is a different failure from
+        // a child that sent nothing, and both used to arrive as "exited before
+        // reporting results" with no way to tell them apart.
+        unrecognised.push(msg);
+        return;
+      }
       settled = true;
       clearTimeout(timeout);
       // chant #1131 — the child's entire job is to send this one message, so
@@ -212,11 +280,7 @@ export function forkSandboxed<T>(
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
-      reject(
-        new Error(
-          `${label}: child exited before reporting results (code ${code}, signal ${signal})${stderrBuf.trim() ? `: ${stderrBuf.trim()}` : ""}`,
-        ),
-      );
+      reject(new Error(describeSilentExit(label, code, signal, stderrBuf, unrecognised)));
     });
   });
 }
