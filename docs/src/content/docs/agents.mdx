@@ -24,9 +24,10 @@ semantic lint rules.
 
      npx chant init . --lexicon <name>
 
-   This writes `chant.config.ts`, starter resources, and — unless
-   `--skip-mcp`/`--skip-install` were passed — a `skills/` directory and an
-   MCP server entry in your IDE's config.
+   This writes `chant.config.ts`, starter resources, a `skills/` directory,
+   and a project `.mcp.json` registering the chant MCP server. Pass
+   `--skip-mcp` to scaffold without the `.mcp.json`, or `--skip-install` to
+   skip the dependency install prompt.
 
 3. Read every `skills/*/SKILL.md` chant init just wrote before authoring
    anything. They're the operational playbook for this platform: which

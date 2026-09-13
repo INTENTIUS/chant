@@ -1,10 +1,10 @@
 import { existsSync, mkdirSync, writeFileSync, readdirSync, readFileSync } from "fs";
 import { join, resolve, dirname } from "path";
 import { fileURLToPath } from "url";
-import { homedir } from "os";
 import { createInterface } from "readline";
 import { formatSuccess, formatWarning } from "../format";
 import { loadPlugin } from "../plugins";
+import { MCP_CONFIG_FILENAME, detectPackageManager, generateMcpConfig, mcpConfigPath } from "../mcp-config";
 
 /** Read the current chant package version from our own package.json. */
 export function getChantVersion(): string {
@@ -29,7 +29,7 @@ export interface InitOptions {
   template?: string;
   /** Force init even in non-empty directory */
   force?: boolean;
-  /** Skip MCP config generation */
+  /** Skip writing the project's `.mcp.json` (`--skip-mcp`) */
   skipMcp?: boolean;
   /** Skip interactive install prompt */
   skipInstall?: boolean;
@@ -53,46 +53,6 @@ export interface InitResult {
   warnings: string[];
   /** Error message if failed */
   error?: string;
-}
-
-/**
- * Detect whether the user's project uses bun or npm.
- * Checks for lock files.
- */
-function detectPackageManager(dir?: string): "bun" | "npm" {
-  if (dir && (existsSync(join(dir, "bun.lockb")) || existsSync(join(dir, "bun.lock")))) return "bun";
-  return "npm";
-}
-
-/**
- * Detect the IDE environment for MCP config
- */
-function detectIdeEnvironment(): "claude-code" | "cursor" | "generic" {
-  // Check for Claude Code
-  if (existsSync(join(homedir(), ".claude"))) {
-    return "claude-code";
-  }
-
-  // Check for Cursor
-  if (existsSync(join(homedir(), ".cursor"))) {
-    return "cursor";
-  }
-
-  return "generic";
-}
-
-/**
- * Get MCP config directory based on IDE
- */
-function getMcpConfigDir(ide: "claude-code" | "cursor" | "generic"): string {
-  switch (ide) {
-    case "claude-code":
-      return join(homedir(), ".claude");
-    case "cursor":
-      return join(homedir(), ".cursor");
-    default:
-      return join(homedir(), ".config", "mcp");
-  }
 }
 
 /**
@@ -222,22 +182,6 @@ export interface ChantConfig {
 }
 
 `;
-}
-
-/**
- * Generate MCP config
- */
-function generateMcpConfig(pm: "bun" | "npm"): string {
-  const config = {
-    mcpServers: {
-      chant: {
-        command: pm === "bun" ? "bunx" : "npx",
-        args: ["chant", "serve", "mcp"],
-      },
-    },
-  };
-
-  return JSON.stringify(config, null, 2);
 }
 
 /**
@@ -441,19 +385,16 @@ export async function initCommand(options: InitOptions): Promise<InitResult> {
     warnings,
   );
 
-  // Generate MCP config
+  // Generate the project's MCP config. It lands in the directory init was
+  // pointed at, like everything else init produces, and at the path
+  // `chant doctor` checks — see ../mcp-config.ts for why project scope, and
+  // chant #2383 for the three-way disagreement that came of writing it into
+  // the user's home directory instead.
   if (!options.skipMcp) {
-    const ide = detectIdeEnvironment();
-    const mcpDir = getMcpConfigDir(ide);
-
-    if (!existsSync(mcpDir)) {
-      mkdirSync(mcpDir, { recursive: true });
-    }
-
     writeIfNotExists(
-      join(mcpDir, "mcp.json"),
+      mcpConfigPath(targetDir),
       generateMcpConfig(detectPackageManager(targetDir)),
-      `~/.${ide === "generic" ? "config/mcp" : ide}/mcp.json`,
+      MCP_CONFIG_FILENAME,
       createdFiles,
       warnings,
     );

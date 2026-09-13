@@ -101,6 +101,12 @@ export interface ParsedArgs {
   reportFile?: string;
   /** `chant init --skill <name>` filter (added in #95 commit) */
   skill?: string;
+  /**
+   * `chant init --skip-mcp` (#2383) — scaffold without writing the project's
+   * `.mcp.json`. The option existed on `InitOptions` and was documented long
+   * before anything parsed it, so there was no way to decline the write.
+   */
+  skipMcp?: boolean;
   /** `chant import --type <ResourceType>` selector */
   selectType?: string;
   /** `chant import --name <name>` selector */

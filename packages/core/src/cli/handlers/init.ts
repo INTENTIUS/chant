@@ -19,6 +19,7 @@ export async function runInit(ctx: CommandContext): Promise<number> {
     template: args.template,
     skill: args.skill,
     force: args.force,
+    skipMcp: args.skipMcp,
     skipInstall: true,
   });
   await printInitResult(result, { skipInstall: false, cwd: args.path });
