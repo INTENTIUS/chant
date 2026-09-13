@@ -56,9 +56,13 @@ jobs:
       # specification's repository and is not on npm yet
       # (INTENTIUS/typescript-as-data#23), so the check is loaded from a
       # pinned checkout of that public repository rather than reimplemented
-      # here. Pinned to a commit rather than a tag because the package has no
-      # release tag yet; `spec/VERSION` inside it is compared against chant's
-      # own SPEC_VERSION by the script, so a bump on either side fails loudly.
+      # here. Pinned to the commit the `spec-1.6` tag names, by SHA rather than
+      # by tag name so the ref cannot be moved under us; `spec/VERSION` inside
+      # it is compared against chant's own SPEC_VERSION by the script, which
+      # refuses to run when the two disagree. So this pin and SPEC_VERSION move
+      # together, always, and that is deliberate (chant#2445): it is what stops
+      # the docs being gated against a rule set nobody writes against. It sat at
+      # 1.0 through six specification versions before anyone noticed.
       #
       # When the package publishes this becomes a devDependency and a plain
       # vitest file; delete these two steps and the fallback in the script.
@@ -66,7 +70,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: INTENTIUS/typescript-as-data
-          ref: 3b1c14672d1918054b6fdc63dcfc39c7f7f368ce
+          ref: 456060bf74c005494672e7896eab3600e3a806a7 # spec-1.6
           path: .tsad
 
       - name: Check docs rule citations against the specification

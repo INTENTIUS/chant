@@ -178,8 +178,45 @@ import { intrinsicCallFolds, intrinsicCallFoldsEagerly, type IntrinsicDef } from
  *
  * `spec/VERSION` in the specification repository carries the same string, and
  * the conformance adapter reads this one to fill its `specVersion` field.
+ *
+ * ## Why 1.6, and what each version since 1.0 asked for (chant#2445)
+ *
+ * Raising this is the last step of adopting a rule set, so each version was
+ * checked against what chant does rather than against whether the suite is
+ * green:
+ *
+ * - **1.1** added the two profiles. Its own changelog says nothing in `full`
+ *   changed, so an implementation of 1.0 implements 1.1's `full` unchanged.
+ * - **1.2** added `S-LocalFunction`, which chant already folded in both forms,
+ *   and `S-CallLocal`, which chant's classifier rejected until `chant-v0.72.0`
+ *   (#2435). `S-ExportDefault` is `data-host`; the profile table records it in
+ *   `full` as permitted, not required.
+ * - **1.3** dropped the number from `F-Eval-CallLocal` step 2, which chant
+ *   satisfies by reporting the engine's stack overflow as a fallback under
+ *   `F-Depth`, and clarified `F-Eval-Ident` step 3 with the reading both
+ *   implementations already had.
+ * - **1.4** added the `F-Rule-*` family, extracted from chant's own
+ *   post-synthesis engine. The conformance bridge answers all five fixtures
+ *   with no disagreements.
+ * - **1.5** added `F-Val-Source`, and this is the one that looks like a gap and
+ *   is not. The rule says that for every value of the domain there is source in
+ *   the subset whose fold is that value: a property of the subset, not a demand
+ *   that an implementation ship a generator. The round trip's fidelity half is
+ *   named in the specification's README as an obligation on generators and
+ *   explicitly not a rule. Inventory rows `L12.1` to `L12.4` record chant's
+ *   generators against it. The conformance adapter's unanswered `generate`
+ *   hook is a harness capability, not a rule chant fails.
+ * - **1.6** was written from chant's behaviour and no further: `F-Call` step 7
+ *   binding whatever an invoked factory returns is what chant never checked
+ *   (`L8.19`), and a declarator reaching a call through a const alias is what
+ *   chant resolves while refusing a call nested elsewhere (`L2.18`).
+ *
+ * `scripts/check-docs-citations.ts` refuses to run when this constant and the
+ * pinned specification disagree, so `.github/workflows/docs-check.yml` pins the
+ * `spec-1.6` commit and the two move together. That coupling is deliberate: it
+ * is what stops the docs being gated against a rule set nobody writes against.
  */
-export const SPEC_VERSION = "1.0";
+export const SPEC_VERSION = "1.6";
 
 /** The two EVL rule ids a shape violation can be attributed to. */
 export type SubsetRuleId = "EVL001" | "EVL003";
