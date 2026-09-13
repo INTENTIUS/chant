@@ -108,7 +108,15 @@ describe("why a sandboxed child ends without a result (chant#2461)", () => {
 
       const message = result.errors.map((e) => e.message).join("\n");
       expect(message).toContain("child exited before reporting results (code 0, signal null)");
-      expect(message).toContain("drained its loop without sending");
+
+      // chant#2461's user-facing half: the child names the file it was
+      // importing when its loop drained. It cannot `process.send` from an exit
+      // handler — that is asynchronous and the channel will never be serviced —
+      // so it writes synchronously to stderr, which the parent captures and
+      // forwards. Without this the build dies silently and nothing anywhere
+      // says which file.
+      expect(message).toContain("never finished evaluating");
+      expect(message).toContain("hangs.ts");
       expect(message).toContain("top-level");
     } finally {
       rmSync(root, { recursive: true, force: true });
