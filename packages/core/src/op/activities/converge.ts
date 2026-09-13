@@ -104,6 +104,22 @@ export interface ConvergeTickResult {
   gated: number;
   /** The one human-readable summary line this tick produced. */
   log: string;
+  /**
+   * Whether this tick's ledger record reached the remote (chant#2337).
+   *
+   * The append is local-first and always lands, so the tick's own result is
+   * correct either way — this says whether anyone else can see it. Before
+   * this, the push was `.catch(() => undefined)` and the tick reported success
+   * whether or not the record left the machine, which is the last instance of
+   * the idiom #2310 was filed about.
+   *
+   * Softer than the gate's version of the same bug (#2336): a lost tick record
+   * is an informational log rather than an approval, so nobody is stranded
+   * waiting on a fact they cannot see. It is still not success.
+   */
+  pushed: boolean;
+  /** Why the record did not reach the remote, when `pushed` is false. */
+  pushWarning?: string;
 }
 
 function shellQuote(s: string): string {
@@ -442,7 +458,19 @@ export async function convergeTick(args: ConvergeTickArgs, signal?: AbortSignal)
     },
     log,
   });
-  await pushLifecycle().catch(() => undefined);
+  // chant#2337 — reported rather than swallowed, the way #2336 does it for the
+  // gate. A push that did not land leaves a correct local record nobody else
+  // can read, and the caller is the only one positioned to say so.
+  let pushed = false;
+  let pushWarning: string | undefined;
+  try {
+    pushed = await pushLifecycle();
+    if (!pushed) {
+      pushWarning = "no remote is configured for chant/lifecycle — the tick record was recorded locally only";
+    }
+  } catch (err) {
+    pushWarning = err instanceof Error ? err.message : String(err);
+  }
 
   return {
     id: record.id,
@@ -455,5 +483,7 @@ export async function convergeTick(args: ConvergeTickArgs, signal?: AbortSignal)
     unobserved: record.summary.unobserved,
     adopted: record.summary.adopted,
     log: record.log,
+    pushed,
+    ...(pushWarning !== undefined ? { pushWarning } : {}),
   };
 }
