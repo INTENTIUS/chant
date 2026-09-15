@@ -1576,6 +1576,36 @@ async function invokeResolvedCallee(
   const refusal = sandboxedExecutionRefusal(binding, ctx, calleeName, "composite factory");
   if (refusal) throw cheapError(refusal);
 
+  // spec 2.0, `F-Call` step 5 — a callee that resolves to a PROJECT FILE is
+  // not imported and invoked here. Invoking it runs the factory body, and its
+  // whole module's top level, in the CLI's own process, and that is the
+  // project's own code rather than a package's.
+  //
+  // Step 2's project-owned invocation moved behind `ι = executing` at v0.72.3
+  // (chant#2455). Step 6 is the same path and had not moved, which is the
+  // whole of this change. The specification took the decision first: its
+  // rationale says of `executing` that "it is never the default", and
+  // `verdict.md` calls `open` the strict default.
+  //
+  // A package factory still runs here, which is what `F-Host-Admission`
+  // governs. A project-file callee that a `Composite` registered is
+  // INTERPRETED at step 4 and never reaches this line; only one that
+  // interpretation declined does, and for that the verdict is `run`.
+  // "Project file" is the specifier's ORIGIN, not its syntax.
+  // {@link isProjectFileSpecifier} is true of any absolute path, and chant's
+  // own modules are imported by absolute path throughout the tests, so the
+  // shape test alone refuses `propagate` and every other host function chant
+  // publishes. {@link isTrustedExecutableBinding} draws the line the rule
+  // means: an active lexicon package or chant-core's own tree is a package's
+  // code, and everything else reached by a relative or absolute specifier is
+  // the project's.
+  if (!ctx.executing && isProjectFileSpecifier(binding.specifier) && !isTrustedExecutableBinding(binding, ctx)) {
+    throw cheapError(
+      `"${calleeName}" is imported from "${binding.specifier}", which is a project file; ` +
+        "the default mode does not invoke project-owned code (`executing` would run it and fold what it returns)",
+    );
+  }
+
   let modulePath: string;
   try {
     modulePath = resolveModulePathMemoized(binding.specifier, ctx.file, ctx.resolvePathCache);

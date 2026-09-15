@@ -372,7 +372,14 @@ describe("discover — fold mode (#1022, epic #1019)", () => {
     );
 
     const withoutFold = await discover(testDir);
-    const withFold = await discover(testDir, { fold: true });
+    // spec 2.0 — the default refuses to invoke the project-file factory, so
+    // the file falls back. Output equivalence is what this test is about and
+    // it holds either way, because the fallback run computes the same thing.
+    const refused = await discover(testDir, { fold: true });
+    expect(refused.foldDecisions.find((d) => d.file.endsWith("stack.ts"))?.mode).toBe("run");
+    expect([...refused.entities.keys()].sort()).toEqual([...withoutFold.entities.keys()].sort());
+
+    const withFold = await discover(testDir, { fold: true, executing: true });
 
     expect(withFold.errors).toEqual([]);
     expect(withFold.entities.size).toBe(withoutFold.entities.size);

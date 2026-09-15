@@ -104,12 +104,14 @@ describe("tryFoldFile", () => {
     expect(result.entities.map(([name]) => name).sort()).toEqual(["a", "b"]);
   });
 
-  // chant #1023 (epic #1019 Phase 5): a bare composite factory call, resolved
-  // through the file's own imports, now folds — the factory is invoked for
-  // real with statically-folded props, exactly as `#1022`'s resource
-  // constructors already were. This used to be the canonical fallback case;
-  // flipping it to fold is the point of #1023.
-  test("folds a top-level composite factory call, zero module execution", async () => {
+  // chant #1023 (epic #1019 Phase 5) made this fold by INVOKING the factory
+  // for real with statically-folded props. spec 2.0's `F-Call` step 5 moved
+  // that invocation behind `ι = executing`, because the factory's body and its
+  // module's top level are the project's own code. The body here is admissible
+  // in shape but interpretation declines on it — `Bucket` is a module-level
+  // const bound to a `createResource(...)` call — so step 4 does not catch it
+  // and step 5 decides.
+  test("a top-level composite factory call falls back, and folds under `executing`", async () => {
     await writeResourceDefs();
     await writeFile(
       join(testDir, "composites.ts"),
@@ -133,7 +135,11 @@ describe("tryFoldFile", () => {
       `,
     );
 
-    const result = await tryFoldFile(file);
+    const refused = await tryFoldFile(file);
+    expect(refused.ok).toBe(false);
+    if (!refused.ok) expect(refused.reason).toContain("does not invoke project-owned code");
+
+    const result = await tryFoldFile(file, undefined, createFoldSession(undefined, undefined, undefined, false, [], true));
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;

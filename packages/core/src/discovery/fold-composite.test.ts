@@ -167,15 +167,31 @@ describe("composite factory interpretation (chant #1023)", () => {
   // The probe fires — an inadmissible factory still invokes, exactly as before.
   // ───────────────────────────────────────────────────────────────────────
 
-  test("an INADMISSIBLE factory is still invoked in-process (the probe fires)", async () => {
+  test("an INADMISSIBLE factory is refused rather than invoked (spec 2.0)", async () => {
     await writeComposite(INADMISSIBLE_BODY);
     await writeMain(CALL_WEBAPP);
 
     const result = await discover(srcDir, { fold: true, lexicons: [LEXICON_NAME] });
 
+    // Interpretation declines on the body's shape, which is step 4. `F-Call`
+    // step 5 then makes the verdict `run` rather than importing the module and
+    // invoking it, because the specifier is a project file.
+    expect(result.errors).toEqual([]);
+    expect(result.foldDecisions.find((d) => d.file.endsWith("main.ts"))?.mode).toBe("run");
+    // The module does run, because `run` means the file is run and this build
+    // asked for no sandbox. What the fold no longer does is invoke it.
+    expect(foldExecutionCounts()).toMatchObject({ factoryInterpretations: 0, projectFactoryInvocations: 0 });
+  });
+
+  test("an INADMISSIBLE factory is invoked under `executing` (spec 2.0)", async () => {
+    await writeComposite(INADMISSIBLE_BODY);
+    await writeMain(CALL_WEBAPP);
+
+    const result = await discover(srcDir, { fold: true, executing: true, lexicons: [LEXICON_NAME] });
+
     expect(result.errors).toEqual([]);
     expect(result.foldDecisions.find((d) => d.file.endsWith("main.ts"))?.mode).toBe("fold");
-    expect(moduleRan(), "the defining module must have been imported and run here").toBe(true);
+    expect(moduleRan(), "the defining module was imported, because the caller asked").toBe(true);
     expect(foldExecutionCounts()).toMatchObject({ factoryInterpretations: 0, projectFactoryInvocations: 1 });
     expect([...result.entities.keys()]).toEqual(["webBucket"]);
   });
@@ -416,9 +432,20 @@ describe("composite factory interpretation (chant #1023)", () => {
       export const web = makeApp({ name: "data" });
     `);
 
-    const result = await discover(srcDir, { fold: true, lexicons: [LEXICON_NAME] });
+    const plain = await discover(srcDir, { fold: true, lexicons: [LEXICON_NAME] });
 
-    expect(moduleRan(), "a plain function must still be invoked").toBe(true);
+    // Rule 2 still holds — a plain function is not a registered composite, so
+    // interpretation never applies to it. What changed at spec 2.0 is the arm
+    // it falls to: `F-Call` step 5 refuses a project file rather than invoking.
+    expect(plain.foldDecisions.find((d) => d.file.endsWith("main.ts"))?.mode).toBe("run");
+    expect(foldExecutionCounts(), "the fold invoked nothing; the fallback run is what imported it").toMatchObject({
+      factoryInterpretations: 0,
+      projectFactoryInvocations: 0,
+    });
+
+    const result = await discover(srcDir, { fold: true, executing: true, lexicons: [LEXICON_NAME] });
+
+    expect(moduleRan(), "a plain function is invoked under `executing`").toBe(true);
     expect(foldExecutionCounts()).toMatchObject({ factoryInterpretations: 0, projectFactoryInvocations: 1 });
     expect([...result.entities.keys()].sort()).toEqual(["webBucket", "webRole"]);
   });
