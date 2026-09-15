@@ -209,6 +209,15 @@ export interface BuildOptions {
    * (unchanged behavior/performance).
    */
   sandbox?: boolean;
+  /**
+   * spec 2.0, `ι = executing` — invoke project-owned code at `F-Call` step 6
+   * instead of falling back. See {@link DiscoveryOptions.executing}.
+   *
+   * The fold's value is then what a run computes in this process, environment
+   * and all, which is why `open` is the default and is strict. Mutually
+   * exclusive with {@link sandbox}. Default `false`.
+   */
+  executing?: boolean;
 
   /**
    * chant #1064 — this build's resolved build-time parameter values (see
@@ -676,6 +685,7 @@ export async function build(
     intrinsics: options?.intrinsics,
     lexicons: options?.lexicons,
     sandbox: options?.sandbox,
+    executing: options?.executing,
     buildParams: options?.buildParams,
   });
 

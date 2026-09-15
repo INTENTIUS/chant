@@ -335,10 +335,24 @@ const COMPOSITES = `
 
 const MAIN = `
   import { Bucket } from ${JSON.stringify(LEXICON)};
-  import { WebService, LegacyService } from "../composites";
+  import { WebService } from "../composites";
 
   export const logs = new Bucket({ BucketName: "logs" });
   export const web = WebService({ name: "data", tier: "prod", iam: { path: "/service/" } });
+`;
+
+/**
+ * `LegacyService` sits in its own file since spec 2.0.
+ *
+ * It is one `if` outside the subset, so step 4 declines and `F-Call` step 5
+ * makes the declarator `run`. A verdict is per file, so leaving it beside
+ * `web` took the whole file to run and every field's origin with it — the
+ * interpreted composite's provenance is only observable in a file that folds.
+ * `executing` is the other way to keep it, and this fixture wants the default.
+ */
+const LEGACY_MAIN = `
+  import { LegacyService } from "../composites";
+
   export const legacy = LegacyService({ name: "old" });
 `;
 
@@ -361,6 +375,7 @@ describe("fold provenance over a real composite build (#2161)", () => {
     await mkdir(srcDir, { recursive: true });
     await writeFile(join(testDir, "composites.ts"), COMPOSITES);
     await writeFile(join(srcDir, "main.ts"), MAIN);
+    await writeFile(join(srcDir, "legacy.ts"), LEGACY_MAIN);
   });
 
   afterEach(async () => {

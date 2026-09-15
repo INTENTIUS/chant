@@ -4,6 +4,7 @@ import { join, dirname, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { discover } from "../index";
+import { foldExecutionCounts, resetFoldExecutionCounts } from "../fold-import";
 
 /**
  * chant #1093 — the security property `--sandbox` is supposed to buy, tested
@@ -101,16 +102,37 @@ describe("fold under --sandbox never executes project code in the CLI process (c
     );
   }
 
-  test("plain --fold DOES invoke a project-owned composite factory in-process (the probe fires)", async () => {
+  test("plain --fold refuses a project-owned composite factory: nothing runs here (spec 2.0)", async () => {
     await writeCompositeFixture();
+    resetFoldExecutionCounts();
 
     const result = await discover(testDir, { fold: true });
 
-    // The file folds today — and folding it ran project code right here.
+    // Until spec 2.0 this folded, and folding it ran project code right here.
+    // `F-Call` step 5 moved that invocation behind `ι = executing`, so the
+    // verdict is `run` and the FOLD invokes nothing.
+    const main = result.foldDecisions.find((d) => d.file.endsWith("main.ts"));
+    expect(main?.mode).toBe("run");
+    expect(foldExecutionCounts()).toMatchObject({ projectFactoryInvocations: 0 });
+    // The markers still fire, because a `run` verdict means the file is run,
+    // and without --sandbox the run path is this process. That is the fallback
+    // doing its job rather than the fold reaching project code, and it is
+    // exactly what the next test moves to the child.
+    expect(marker(MODULE_MARKER)).toBe(true);
+    expect([...result.entities.keys()].sort()).toEqual(["webBucket", "webRole"]);
+  });
+
+  test("`executing` invokes it, which is what that mode is for (spec 2.0)", async () => {
+    await writeCompositeFixture();
+    resetFoldExecutionCounts();
+
+    const result = await discover(testDir, { fold: true, executing: true });
+
     const main = result.foldDecisions.find((d) => d.file.endsWith("main.ts"));
     expect(main?.mode).toBe("fold");
-    expect(marker(MODULE_MARKER), "composites.ts's module top level ran in this process").toBe(true);
-    expect(marker(FACTORY_MARKER), "the factory body ran in this process").toBe(true);
+    expect(foldExecutionCounts()).toMatchObject({ projectFactoryInvocations: 1 });
+    expect(marker(MODULE_MARKER), "composites.ts's module top level ran, because the caller asked").toBe(true);
+    expect(marker(FACTORY_MARKER), "the factory body ran, because the caller asked").toBe(true);
     expect([...result.entities.keys()].sort()).toEqual(["webBucket", "webRole"]);
   });
 

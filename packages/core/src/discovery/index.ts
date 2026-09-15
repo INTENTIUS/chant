@@ -165,6 +165,20 @@ export interface DiscoveryOptions {
    * process, no IPC) and fold coverage, is unchanged unless requested.
    */
   sandbox?: boolean;
+  /**
+   * spec 2.0, `ι = executing` — invoke project-owned code at `F-Call` step 6
+   * rather than falling back.
+   *
+   * `F-Call` step 5 makes a declarator whose callee resolves to a project file
+   * `run` under every other mode, so a build that wants the value a run would
+   * compute has to say so. The value is then this process's: the factory body
+   * and its module's top level execute here, environment and all, which is
+   * exactly why it cannot be the default.
+   *
+   * Mutually exclusive with {@link sandbox}, which refuses to import project
+   * code at all. Asking for both is a contradiction rather than a preference.
+   */
+  executing?: boolean;
 
   /**
    * chant #1064 — this build's resolved build-time parameter values (see
@@ -263,8 +277,21 @@ export async function discover(path: string, options?: DiscoveryOptions): Promis
   // `sandbox` the session refuses those imports and the file demotes to the
   // run path — which, under `sandbox`, is the isolated child. See
   // fold-import.ts's `sandboxedExecutionRefusal`.
+  if (options?.sandbox === true && options?.executing === true) {
+    throw new Error(
+      "discover: `sandbox` and `executing` are mutually exclusive — the first refuses to import " +
+        "project code and the second exists to invoke it. Pass one.",
+    );
+  }
   const foldSession = options?.fold
-    ? createFoldSession(options.intrinsics, buildParamValuesMap, options.lexicons, options.sandbox === true)
+    ? createFoldSession(
+        options.intrinsics,
+        buildParamValuesMap,
+        options.lexicons,
+        options.sandbox === true,
+        [],
+        options.executing === true,
+      )
     : undefined;
   if (options?.fold) {
     for (const file of files) {

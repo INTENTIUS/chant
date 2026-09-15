@@ -231,7 +231,7 @@ import { intrinsicCallFolds, intrinsicCallFoldsEagerly, type IntrinsicDef } from
  * Until chant#2470 the rules came from a commit `docs-check.yml` checked out;
  * now they come from the published package, so bumping it is what moves this.
  */
-export const SPEC_VERSION = "1.8";
+export const SPEC_VERSION = "2.1";
 
 /** The two EVL rule ids a shape violation can be attributed to. */
 export type SubsetRuleId = "EVL001" | "EVL003";
