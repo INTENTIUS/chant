@@ -79,3 +79,17 @@ Everything regenerates from committed inputs: pinned exact versions in both esta
 `package.json` + committed lockfiles, `capture.sh` end to end. Machine-local absolute
 paths never survive into the committed captures. Sampling profiles vary run to run in
 which frames they catch; neither reported number depends on sample timing.
+
+## The counters beside the bytes
+
+`definitionLibraryBytes` comes off a `node --cpu-prof` recording, and a profile
+has a sampling floor. `0` means everything the profiler could see rather than
+nothing having run: revival does construct entities through the lexicon's real
+classes.
+
+`chant build --verbose` prints L10.1's fold execution counts as a
+`[fold:counts]` line, `analyze.mjs` reads them out of `results/chant-build.log`,
+and `analysis.json` carries them as `foldExecutionCounts`. An invocation count
+has no floor. The field is `null` for a tool that prints none, which is every
+tool here but chant, and `null` in any analysis produced before this landed
+until the next capture (typescript-as-data#177).

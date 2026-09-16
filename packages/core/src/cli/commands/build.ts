@@ -31,6 +31,7 @@ import { loadPolicyChecks } from "../../lint/policy";
 import { armSandboxPolicyExecution, runProjectPolicies } from "../../lint/policy-sandbox";
 import { sortedJsonReplacer } from "../../utils";
 import { rankFoldBlockers, toCollapsedFormat, type FoldRankResult } from "../../discovery/fold-rank";
+import { foldExecutionCounts } from "../../discovery/fold-import";
 import { formatError, formatWarning, formatSuccess, formatBold, formatInfo } from "../format";
 import { writeFileSync, mkdirSync } from "fs";
 import { resolve, dirname, join, relative } from "path";
@@ -338,6 +339,23 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
             : (decision.reason ?? "fell back to run");
         console.error(formatInfo(`[fold:${decision.mode}] ${rel} — ${detail}`));
       }
+      // typescript-as-data#177 — the exact instrument beside the sampled one.
+      // `test/leftness` reports "0 MB of definition-library code on the path"
+      // from a `node --cpu-prof` recording, and a profile has a sampling
+      // floor: 0 MB is everything the profiler could see rather than nothing
+      // having run. L10.1's counters have no floor.
+      //
+      // Inside --verbose with the per-file lines, not beside them. The default
+      // path is deliberately quiet for the reason above, and the leftness
+      // capture already runs --verbose and greps this log for `[fold:fold]`.
+      const counts = foldExecutionCounts();
+      console.error(
+        formatInfo(
+          `[fold:counts] factoryInvocations=${counts.factoryInvocations} ` +
+            `projectFactoryInvocations=${counts.projectFactoryInvocations} ` +
+            `factoryInterpretations=${counts.factoryInterpretations}`,
+        ),
+      );
     } else {
       console.error(formatInfo(summarizeFoldDecisions(result.foldDecisions)));
     }
