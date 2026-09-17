@@ -1367,3 +1367,28 @@ has no suppressing effect on that id, and is itself reported as a finding,
 matching tflint's own `ignorable = false` setting. Every rule is ignorable
 by default; TF008 (hardcoded provider credentials) is the kind of rule a
 project might want to lock this way.
+
+## TF029: live root names its estate twice
+
+A root that names its estate in both `terraform.roots.<name>.estate` and its
+own HCL, in a `live { }` block or an `estate.chdf.hcl` sidecar.
+
+**Why it matters.** The two are not equal in authority. A declaration is what
+choudoufu reads for itself; `terraform.roots.<name>.estate` is what this
+lexicon would otherwise hand it as `-estate`. choudoufu refuses that flag
+beside a declaration outright — "This configuration's live block is what names
+its estate, and `-estate=...` would name a second one for this run only" — so
+the lexicon does not pass it, and the config value is simply never used.
+
+A setting written down and silently ignored is worse than one that errors. An
+author who moves an environment by editing `roots.app.estate` gets a run
+against the old estate and nothing tells them the edit was disregarded. The
+diagnostic names both values even when they agree today, because two settings
+that happen to match still means one of them does nothing, and the next edit to
+the ignored one is the incident this rule exists to prevent.
+
+**The fix.** Pick one. A root whose directory is shared across environments
+declares no estate in HCL and names it per root in chant.config — that is the
+environment dimension, and it is why `terraform.roots.<name>.estate` exists. A
+root with its own `live` block already has an estate and needs nothing in
+chant.config.

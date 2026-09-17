@@ -86,7 +86,7 @@ export async function renderTerraformRoots(
     }
 
     try {
-      const modeOptions = { binary: opts.binary, workspace: root.workspace, delete: root.delete };
+      const modeOptions = { binary: opts.binary, workspace: root.workspace, delete: root.delete, configEstate: root.estate };
       const parsed = await parseTerraformRootDir(dir, name, opts.hcl2json, modeOptions);
       for (const [key, entity] of parsed) entities.set(key, entity);
 

@@ -851,7 +851,19 @@ async function resolveRoot(args: TerraformRootArgs, signal?: AbortSignal): Promi
   const dir = resolve(projectRoot, root.dir);
   await ensureChoudoufuVersion(binary, signal);
   const estate = binary === "choudoufu" ? detectLiveEstate(dir) : undefined;
-  return { binary, root, dir, ...(estate !== undefined ? { estate } : {}), live: estate !== undefined };
+  // `estate` stays what it has always been: the estate the root's own HCL
+  // declares, which is what decides whether `-estate` may be passed at all.
+  // `live` is the broader question, and a root that names its estate in
+  // chant.config rather than in HCL (#2479) is just as live - that is the
+  // `-estate` flag form, choudoufu's own supported second pipeline.
+  const configEstate = binary === "choudoufu" ? root.estate : undefined;
+  return {
+    binary,
+    root,
+    dir,
+    ...(estate !== undefined ? { estate } : {}),
+    live: estate !== undefined || configEstate !== undefined,
+  };
 }
 
 /** The shape `promisify(exec)` rejects with: an Error carrying the child's exit code and output. */
@@ -1098,17 +1110,27 @@ export async function terraformShow(
 }
 
 /**
- * The estate a choudoufu-only activity runs against: `args.estate` when
- * given, else the one {@link resolveRoot} auto-detected from the root's
- * `live` block or `estate.chdf.hcl` sidecar. Throws when neither names one,
- * since `live-plan`/`live-ls` need an estate to filter on, unlike a stock command.
+ * The estate a choudoufu-only activity runs against, in precedence order:
+ * `args.estate` when the step names one, then the root's own `estate`
+ * (#2479), then the one {@link resolveRoot} auto-detected from the root's
+ * `live` block or `estate.chdf.hcl` sidecar. Throws when none of the three
+ * names one, since `live-plan`/`live-ls` need an estate to filter on, unlike
+ * a stock command.
+ *
+ * The order is step, then root, then declaration - narrowest first. A root's
+ * `estate` and a declared one cannot both be in play on a healthy project:
+ * TF028 refuses that pair at build time, for the same reason choudoufu
+ * refuses `-estate` beside a `live` block. The precedence here is what
+ * happens if that refusal is ever bypassed, and it deliberately lets the
+ * declaration win, because the declaration is the thing choudoufu itself
+ * will act on.
  */
 function resolveEstate(args: { estate?: string }, resolved: ResolvedRoot, activity: string): string {
-  const estate = args.estate ?? resolved.estate;
+  const estate = args.estate ?? resolved.estate ?? resolved.root.estate;
   if (!estate) {
     throw new Error(
       `${activity}: no estate to run against. Declare one in the root's \`live\` block or ` +
-        "`estate.chdf.hcl` sidecar, or pass `estate` explicitly.",
+        "`estate.chdf.hcl` sidecar, give the root an `estate` in chant.config, or pass `estate` explicitly.",
     );
   }
   return estate;

@@ -57,6 +57,32 @@ export const terraformRootSchema = z.strictObject({
   varFiles: z.array(z.string()).optional(),
   /** `-backend-config` key/value pairs handed to `init`. */
   backendConfig: z.record(z.string(), z.string()).optional(),
+  /**
+   * The choudoufu estate this root runs against, for a live root whose HCL
+   * does not declare one of its own (#2479).
+   *
+   * This is the environment dimension. A live root has no backend and no
+   * state file, so nothing about it is positional: dev, staging and
+   * production can be the same directory under different estates, which is
+   * why named roots rather than a directory tree are where environments
+   * belong here.
+   *
+   *     roots: {
+   *       "app-staging": { dir: "./terraform", estate: "app-staging", varFiles: ["staging.tfvars"] },
+   *       "app-prod":    { dir: "./terraform", estate: "app-prod",    varFiles: ["prod.tfvars"] },
+   *     }
+   *
+   * How inputs vary across those environments is `varFiles`, which is
+   * already per-root and ordered - the question a directory tree answers
+   * with HCL inheritance, answered here by a map entry.
+   *
+   * Refused (TF028) when the root's own HCL declares an estate in a `live`
+   * block or `estate.chdf.hcl` sidecar. choudoufu refuses `-estate` beside a
+   * declaration ("This configuration's live block is what names its estate"),
+   * and a value here that the declaration then overrode would be a setting
+   * written down and silently ignored.
+   */
+  estate: z.string().optional(),
   /** This root's declared delete mode. See {@link terraformDeleteModeSchema}. */
   delete: terraformDeleteModeSchema.optional(),
 });
