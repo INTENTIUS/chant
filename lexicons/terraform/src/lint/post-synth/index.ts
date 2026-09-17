@@ -27,6 +27,7 @@ import { tf025 } from "./tf025";
 import { tf026 } from "./tf026";
 import { tf027 } from "./tf027";
 import { tf028 } from "./tf028";
+import { tf029 } from "./tf029";
 
 export const postSynthChecks: PostSynthCheck[] = [
   tf001,
@@ -56,4 +57,5 @@ export const postSynthChecks: PostSynthCheck[] = [
   tf026,
   tf027,
   tf028,
+  tf029,
 ];

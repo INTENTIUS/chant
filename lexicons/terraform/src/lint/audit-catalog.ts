@@ -4,7 +4,7 @@
  * Every post-synth check needs an entry or it contributes nothing to
  * `chant audit`, silently, and `packages/core/src/audit/catalog.test.ts` fails.
  *
- * TF001 and TF024 through TF028 all read the chant model (`ctx.entities`),
+ * TF001 and TF024 through TF029 all read the chant model (`ctx.entities`),
  * never emitted output, so `yamlBased` is false for all of them. Prior-art
  * lineage lives in ./audit-lineage.ts.
  */
@@ -91,6 +91,19 @@ export const terraformAuditCatalog: Record<string, RuleMeta> = {
       "Set live: true on the TerraformWatchOp that names this root, so the Plan phase runs " +
       "choudoufuLivePlan and reports the unowned and adoptable counts as well as drift. Drop the root's " +
       "estate instead if it is not a live root.",
+    yamlBased: false,
+  },
+  TF029: {
+    id: "TF029",
+    tier: "merge-worthy",
+    fixKind: "guidance",
+    category: "correctness",
+    title: "Live root names its estate both in chant.config and in its own HCL",
+    remediation:
+      "Pick one. A root whose directory is shared across environments declares no estate in HCL and " +
+      "names it per root with terraform.roots.<name>.estate; a root with its own live block already " +
+      "has an estate and needs nothing in chant.config. The declaration wins today, so the config " +
+      "value is written down and never used.",
     yamlBased: false,
   },
   TF002: {

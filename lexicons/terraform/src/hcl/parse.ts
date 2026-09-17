@@ -190,7 +190,7 @@ export function terraformEntity(
   body: BlockBody,
   file: string,
   root: string,
-  extra?: { mode?: TerraformRootMode; estate?: string; workspace?: string; delete?: TerraformDeleteMode; callers?: readonly string[] },
+  extra?: { mode?: TerraformRootMode; estate?: string; configEstate?: string; workspace?: string; delete?: TerraformDeleteMode; callers?: readonly string[] },
   source: string = "",
   line?: number,
   suppressions?: readonly SuppressionDirective[],
@@ -214,6 +214,7 @@ export function terraformEntity(
       ...(extra?.estate !== undefined ? { estate: extra.estate } : {}),
       ...(extra?.workspace !== undefined ? { workspace: extra.workspace } : {}),
       ...(extra?.delete !== undefined ? { delete: extra.delete } : {}),
+      ...(extra?.configEstate !== undefined ? { configEstate: extra.configEstate } : {}),
       ...(extra?.callers !== undefined && extra.callers.length > 0 ? { callers: extra.callers } : {}),
     },
     suppressions,
@@ -303,6 +304,15 @@ export interface TerraformRootModeOptions {
   workspace?: string;
   /** `terraform.roots.<name>.delete`, recorded verbatim regardless of mode (#2106). */
   delete?: TerraformDeleteMode;
+  /**
+   * `terraform.roots.<name>.estate`, recorded verbatim (#2479), and kept
+   * separate from the `estate` prop a declaration produces. The two have
+   * different authorities: a declaration is what choudoufu itself reads, and
+   * this is what chant would otherwise pass as `-estate`. TF029 exists
+   * because a root carrying both has written down a setting that the
+   * declaration silently overrides.
+   */
+  configEstate?: string;
 }
 
 /**
@@ -352,6 +362,7 @@ export async function blocksToEntities(
       {
         ...(modeOptions?.workspace !== undefined ? { workspace: modeOptions.workspace } : {}),
         ...(modeOptions?.delete !== undefined ? { delete: modeOptions.delete } : {}),
+        ...(modeOptions?.configEstate !== undefined ? { configEstate: modeOptions.configEstate } : {}),
         ...(callers.length > 0 ? { callers } : {}),
       },
       file.source,

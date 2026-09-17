@@ -2963,6 +2963,12 @@ Remove undeclared_untagged = "delete" from the live root's policy block. chant n
 
 Set live: true on the TerraformWatchOp that names this root, so the Plan phase runs choudoufuLivePlan and reports the unowned and adoptable counts as well as drift. Drop the root's estate instead if it is not a live root.
 
+### TF029
+
+**Live root names its estate both in chant.config and in its own HCL** — merge-worthy · guidance
+
+Pick one. A root whose directory is shared across environments declares no estate in HCL and names it per root with terraform.roots.\<name>.estate; a root with its own live block already has an estate and needs nothing in chant.config. The declaration wins today, so the config value is written down and never used.
+
 ## Secrets & credentials (SEC)
 
 Lexicon-independent — scans the raw text of every scanned file for likely credentials, regardless of which audit lexicons are installed. Matched values are always redacted; see [suppressing false positives](/chant/cli/audit/#suppressing-a-secrets-finding).
