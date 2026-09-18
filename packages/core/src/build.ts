@@ -65,6 +65,30 @@ export interface StackGraph {
  * referencing an attribute of a resource in lexicon B ⇒ A depends on B). Returns
  * the edge set plus a topological order, parallel-safe waves, and any cycles.
  */
+/**
+ * Is this entity a member of a lexicon stack?
+ *
+ * Four kinds are not, and every one of them is serializer-neutral: a
+ * `LexiconOutput` is collected separately, a secret provenance declaration
+ * (#1828) and a plan scenario (#1292) are data lint and the CLI read off the
+ * entity map, and an Op (#2118) builds to its own `op.json` rather than
+ * through a lexicon serializer.
+ *
+ * {@link partitionByLexicon} has skipped all four since each landed, and
+ * {@link computeStackGraph}'s walk did not — so an entity with no `lexicon`
+ * (a `LexiconOutput`) entered `edges`, `order` and `waves` as `undefined`
+ * while `nodes`, built from the partition, could never contain it (#2480).
+ * One predicate for both sites, so they cannot drift apart again.
+ */
+export function isStackMember(entity: Declarable): boolean {
+  return (
+    !isLexiconOutput(entity) &&
+    !isSecretDeclaration(entity) &&
+    !isScenario(entity) &&
+    !isOpEntity(entity)
+  );
+}
+
 export function computeStackGraph(
   entities: Map<string, Declarable>,
   lexiconNames: string[],
@@ -72,6 +96,10 @@ export function computeStackGraph(
   const edges: Array<{ from: string; to: string }> = [];
   const edgeSet = new Set<string>();
   const addEdge = (from: string, to: string): void => {
+    // A structural guard, not a defensive one: `nodes` comes from the
+    // partition, so an endpoint the partition would have dropped can never be
+    // a legitimate member of this graph (#2480).
+    if (typeof from !== "string" || typeof to !== "string") return;
     if (from === to) return;
     const key = `${from}\0${to}`;
     if (edgeSet.has(key)) return;
@@ -104,6 +132,9 @@ export function computeStackGraph(
   };
 
   for (const [, entity] of entities) {
+    // #2480: the same four kinds `partitionByLexicon` drops. Walking one as a
+    // consumer takes its absent `lexicon` as the edge's `from`.
+    if (!isStackMember(entity)) continue;
     const consumer = entity.lexicon;
     const visited = new Set<unknown>();
     for (const val of Object.values(entity as unknown as Record<string, unknown>)) {
@@ -117,10 +148,10 @@ export function computeStackGraph(
   // Dependency map: node → producers it depends on.
   const nodes = lexiconNames.length
     ? [...lexiconNames]
-    : // Secret provenance declarations (#1828) and plan scenarios (#1292) never
-      // form a stack — their pseudo-lexicon has no serializer and must not
-      // appear in the manifest.
-      [...new Set([...entities.values()].filter((e) => !isSecretDeclaration(e) && !isScenario(e)).map((e) => e.lexicon))];
+    : // The same predicate, rather than the partial copy of it this branch
+      // carried: it filtered secrets and scenarios but not outputs or Ops, so
+      // it could mint a node the partition would have dropped (#2480).
+      [...new Set([...entities.values()].filter(isStackMember).map((e) => e.lexicon))];
   const deps = new Map<string, Set<string>>();
   for (const n of nodes) deps.set(n, new Set());
   for (const { from, to } of edges) {
@@ -325,23 +356,13 @@ export function partitionByLexicon(
   const partitions = new Map<string, Map<string, Declarable>>();
 
   for (const [name, entity] of entities) {
-    // LexiconOutput instances are collected separately; skip them here
-    if (isLexiconOutput(entity)) continue;
-    // Secret provenance declarations (#1828) are serializer-neutral: data
-    // that lint and lexicons read from the entity map, never output. Keeping
-    // them out of every partition means no serializer sees them and no
-    // "No serializer found" warning fires for their pseudo-lexicon.
-    if (isSecretDeclaration(entity)) continue;
-    // Plan scenarios (#1292) are serializer-neutral the same way: a checkable
-    // expectation the CLI reads off the entity map, never output.
-    if (isScenario(entity)) continue;
-    // Op declarations (#2118) too. An Op's build output is its `op.json` IR,
-    // and core writes that itself from the entity map (`./cli/commands/build.ts`)
-    // rather than routing it through a lexicon serializer — the Op model, the
-    // executor and the IR are all core's, and no lexicon renders an Op entity
-    // into its own manifest. Keeping them out of every partition means no
-    // "No serializer found" warning fires for core's own `chant` lexicon.
-    if (isOpEntity(entity)) continue;
+    // The four serializer-neutral kinds, each explained on {@link isStackMember}:
+    // a LexiconOutput is collected separately, and a secret declaration
+    // (#1828), a plan scenario (#1292) and an Op (#2118) are read off the
+    // entity map rather than routed through a lexicon serializer. Keeping them
+    // out of every partition is what stops a "No serializer found" warning
+    // firing for a pseudo-lexicon.
+    if (!isStackMember(entity)) continue;
     const lexicon = entity.lexicon;
     if (!partitions.has(lexicon)) {
       partitions.set(lexicon, new Map());

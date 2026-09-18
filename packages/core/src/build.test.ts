@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
 import { build, partitionByLexicon, detectCrossLexiconRefs, collectLexiconOutputs, computeStackGraph } from "./build";
 import { output } from "./lexicon-output";
 import { AttrRef } from "./attrref";
-import { INTRINSIC_MARKER } from "./intrinsic";
+import { INTRINSIC_MARKER, type Intrinsic } from "./intrinsic";
 import type { Serializer } from "./serializer";
 import type { Declarable } from "./declarable";
 import { DECLARABLE_MARKER } from "./declarable";
@@ -792,6 +792,59 @@ describe("detectCrossLexiconRefs", () => {
 describe("computeStackGraph (#200 — cross-stack apply ordering)", () => {
   const ent = (lexicon: string, props: Record<string, unknown> = {}): Declarable =>
     ({ lexicon, entityType: `${lexicon}::X`, [DECLARABLE_MARKER]: true, props }) as unknown as Declarable;
+
+  // #2480: the walk took `entity.lexicon` as the consumer for every entity,
+  // and four kinds have no place in a stack graph. A LexiconOutput carries no
+  // `lexicon` at all, so it produced an edge with `from: undefined`, and that
+  // `undefined` then reached `order` and `waves` — while `nodes`, built from
+  // the partition, could never contain it. Reproduced on chant's own
+  // fan-out-estate and bedrock-agentcore-agent examples, both of which declare
+  // outputs built from intrinsics.
+  //
+  // The invariant these assert is the one a consumer can actually rely on:
+  // `nodes` is the roster, and nothing may appear anywhere else that is not
+  // named in it.
+  const rosterHolds = (g: ReturnType<typeof computeStackGraph>): void => {
+    const roster = new Set(g.nodes);
+    expect(g.nodes.every((n) => typeof n === "string")).toBe(true);
+    for (const e of g.edges) {
+      expect(roster.has(e.from)).toBe(true);
+      expect(roster.has(e.to)).toBe(true);
+    }
+    for (const n of g.order) expect(roster.has(n)).toBe(true);
+    for (const wave of g.waves) for (const n of wave) expect(roster.has(n)).toBe(true);
+    for (const cycle of g.cycles) for (const n of cycle) expect(roster.has(n)).toBe(true);
+  };
+
+  test("a LexiconOutput is not a stack member, so it cannot reach edges, order or waves (#2480)", () => {
+    const vpc = ent("aws");
+    // An output built from an intrinsic holds real AttrRefs inside it, which
+    // is what carried the walk into `addEdge(undefined, "aws")`.
+    // Built from an INTRINSIC holding an AttrRef, which is the shape the two
+    // reproducing examples have (`Fn::Sub`/`Ref` over a resource attribute).
+    // An output built from a bare AttrRef stores only a WeakRef and carries
+    // the walk nowhere, so it does not reproduce this.
+    const intrinsic: Intrinsic = {
+      [INTRINSIC_MARKER]: true as const,
+      ref: new AttrRef(vpc, "id"),
+      toJSON: () => ({ "Fn::Sub": "x" }),
+    } as Intrinsic;
+    const out = output(intrinsic, "vpcId");
+
+    const g = computeStackGraph(new Map([["vpc", vpc], ["vpcId", out as unknown as Declarable]]), ["aws"]);
+
+    expect(g.nodes).toEqual(["aws"]);
+    expect(g.edges).toEqual([]);
+    expect(g.order).toEqual(["aws"]);
+    expect(g.waves).toEqual([["aws"]]);
+    rosterHolds(g);
+  });
+
+  test("the roster invariant holds for an ordinary cross-lexicon graph too", () => {
+    const vpc = ent("aws");
+    const svc = ent("k8s", { vpcId: new AttrRef(vpc, "id") });
+    rosterHolds(computeStackGraph(new Map([["vpc", vpc], ["svc", svc]]), ["aws", "k8s"]));
+  });
 
   test("infers a consumer→producer edge from a cross-lexicon AttrRef", () => {
     const vpc = ent("aws");
