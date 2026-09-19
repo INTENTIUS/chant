@@ -599,11 +599,12 @@ Ops:
                         add the CI/pipeline projection (stages/jobs/needs) to
                         the component-graph IR, from the same generator
                         'build --components --generate' uses (#989)
-                        --live --overlay --traffic "<level>": ask the project's
-                        predicting lexicon what the overlaid estate does at that
-                        traffic level, and carry each entity's prediction on the
-                        IR. The level is passed to the engine verbatim; without
-                        the flag nothing is asked and nothing is carried (#2377)
+                        --traffic "<level>": ask the project's predicting
+                        lexicon what the estate does at that traffic level, and
+                        carry each entity's prediction on the IR. On the
+                        declared graph it predicts the file; with --live it
+                        predicts the account. The level reaches the engine
+                        verbatim; without the flag nothing is asked (#2377)
 
 Lifecycle (alias: lc):
   lifecycle snapshot <env>  Query API, save metadata to orphan branch
