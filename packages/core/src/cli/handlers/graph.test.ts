@@ -259,6 +259,66 @@ describe("runGraph", () => {
         expect(ir.nodes.find((n: { id: string }) => n.id === "deploy").attrs.phases).toEqual([]);
       });
 
+      // #2377 / epic #2355: "the live path predicts the account as it stands,
+      // drift included. The declared path predicts the file. The two are shown
+      // as a delta." An earlier draft of #2377 required --live, which forbade
+      // the declared half and so forbade the delta.
+      test("--traffic predicts the declared graph, without --live", async () => {
+        lintClean(); discovered();
+        const seen: Array<{ traffic: string; environment: string }> = [];
+        loadPluginsMock.mockResolvedValue([{
+          name: "gcp",
+          serializer: {},
+          predictBehaviour: (o: { traffic: string; environment: string }) => {
+            seen.push({ traffic: o.traffic, environment: o.environment });
+            return Promise.resolve(behaviourReport(
+              { entityNames: ["vpc"], traffic: o.traffic, edgeCoverage: { verdict: "unknown" } },
+              { engine: "fixture", version: "0.0.1", total: predictedRate(1, "USD") },
+              { vpc: {
+                at: { traffic: o.traffic },
+                cost: predictedRate(1, "USD"),
+                headroom: { cpu: 0.5 },
+                errorRate: 0,
+                resilience: { failure: "one zone lost", verdict: "survives" },
+                provenance: { engine: "fixture", version: "0.0.1", tolerance: "±20%", basis: "modeled" },
+              } },
+              {},
+            ));
+          },
+        }]);
+        resolveLexMock.mockResolvedValue(["gcp"]);
+
+        const exit = await runGraph({
+          args: makeArgs({ format: "ir", traffic: "100 rps, p50" }),
+          plugins: [], serializers: [],
+        });
+
+        expect(exit).toBe(0);
+        expect(seen[0]?.traffic).toBe("100 rps, p50");
+        const ir = JSON.parse(stdoutBuf.join("\n"));
+        expect(ir.meta?._behaviour?.engine).toBe("fixture");
+        expect(ir.nodes.find((n: { id: string }) => n.id === "vpc").attrs._behaviour.cost.perHour).toBe(1);
+      });
+
+      test("the declared path names no environment, because the file is deployed nowhere", async () => {
+        lintClean(); discovered();
+        const seen: string[] = [];
+        loadPluginsMock.mockResolvedValue([{
+          name: "gcp",
+          serializer: {},
+          predictBehaviour: (o: { environment: string }) => {
+            seen.push(o.environment);
+            return Promise.resolve(noBehaviourEngineRefusal("gcp"));
+          },
+        }]);
+        resolveLexMock.mockResolvedValue(["gcp"]);
+
+        await runGraph({ args: makeArgs({ format: "ir", traffic: "100 rps, p50" }), plugins: [], serializers: [] });
+
+        // Naming one would claim the declared estate was deployed there.
+        expect(seen[0]).toBe("");
+      });
+
       test("op-discovery errors are warnings, not a refusal", async () => {
         lintClean(); discovered();
         discoverOpsMock.mockResolvedValue({ ops: new Map(), errors: ["ops/bad.op.ts: boom"] });
@@ -788,18 +848,6 @@ describe("runGraph", () => {
         const ir = JSON.parse(stdoutBuf.join("\n")) as { nodes: unknown[]; meta?: Record<string, unknown> };
         expect(ir.nodes.length).toBeGreaterThan(0);
         expect(ir.meta?._behaviour).toBeUndefined();
-      });
-
-      test("--traffic without --live is refused rather than silently ignored", async () => {
-        // Accepted-and-ignored would read as "predicted, and everything came
-        // back empty", which is the opposite of what happened.
-        const exit = await runGraph({
-          args: makeArgs({ format: "ir", traffic: "100 rps, p50" }),
-          plugins: [], serializers: [],
-        });
-
-        expect(exit).toBe(1);
-        expect(stderrBuf.join("\n")).toContain("--traffic needs --live");
       });
 
       test("two predicting lexicons is refused rather than attributed to one", async () => {

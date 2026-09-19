@@ -22,7 +22,8 @@ import { lintCommand } from "../commands/lint";
 import { loadPlugins, resolveProjectLexicons, collectBuildRootContributors } from "../plugins";
 import { readFileSync } from "node:fs";
 import { formatError, formatWarning, formatBold } from "../format";
-import type { CommandContext } from "../registry";
+import type { CommandContext, ParsedArgs } from "../registry";
+import type { LexiconPlugin } from "../../lexicon";
 import { computeComponentGraph, generateComponentsPipeline } from "../../components/cli-support";
 import { resolveCliBuildParams, parseParamFlags } from "../build-params-cli";
 import type { BuildParamProvenance } from "../../provenance";
@@ -157,16 +158,6 @@ export async function runGraph(ctx: CommandContext): Promise<number> {
   if (ctx.args.projection && !(ctx.args.components && ctx.args.format === "ir")) {
     console.error(formatError({
       message: "--projection needs --components --format ir — the CI/pipeline projection extends the component-graph IR, the only mode that carries it.",
-    }));
-    return 1;
-  }
-  // A prediction is about an estate, and only the live path has one. Without
-  // `--live` the flag would be accepted and do nothing at all, which reads as
-  // "predicted, and everything came back empty" rather than "never ran".
-  if (ctx.args.traffic && !ctx.args.live) {
-    console.error(formatError({
-      message: "--traffic needs --live: a prediction is made about the observed estate, and there is nothing to predict on the declared graph alone.",
-      hint: 'chant graph --format ir --live --env <name> --overlay --traffic "100 rps, p50"',
     }));
     return 1;
   }
@@ -448,68 +439,16 @@ async function runGraphLive(
   }
 
   // Behaviour overlay (#2377, epic #2355): carry a prediction on the graph.
-  //
-  // `--traffic` is the trigger, and it is the trigger because the contract
-  // forbids defaulting the level (../../behaviour.ts): every figure an engine
-  // returns is *at* a stated traffic, so inventing one here would silently
-  // decide what every number on the graph means. No flag: nothing is asked,
-  // neither key appears, and a consumer reads that absence as "not looked".
-  //
-  // Placed after the drift overlay so the prediction lands on the final node
-  // set — the canvas is settled by here under either anchoring — and before
-  // the lens below, so a lens filters predicted nodes like any other.
-  if (args.traffic) {
-    const predicting = plugins.filter((p) => p.predictBehaviour);
-    if (predicting.length === 0) {
-      console.error(formatWarning({
-        message:
-          "--traffic: no installed lexicon implements predictBehaviour, so nothing was predicted. The graph is unchanged.",
-      }));
-    } else if (predicting.length > 1) {
-      // Two engines would mean two `meta._behaviour` values and one key. Rather
-      // than pick, say so: a merged prediction across engines is not defined by
-      // the contract, and silently taking the first would attribute one
-      // engine's figures to the other's provenance.
-      console.error(formatError({
-        message: `--traffic: ${predicting.length} lexicons implement predictBehaviour (${predicting.map((p) => p.name).join(", ")}) — chant cannot merge two engines' figures onto one graph.`,
-        hint: "Predict one lexicon at a time, or drop --traffic to graph without a prediction",
-      }));
-      return 1;
-    } else {
-      // The first output the build produced, or empty. Nothing on this path
-      // reads it — the mirror is kept so the four observation methods take the
-      // same shape (../../op/activities/predict-behaviour.ts) — so a build
-      // result without outputs costs an empty string, never the graph.
-      const raw = buildResult.outputs ? [...buildResult.outputs.values()][0] : undefined;
-      const buildOutput = raw === undefined ? "" : typeof raw === "string" ? raw : (raw as SerializerResult).primary;
-      const request = behaviourRequestFromIr(ir, {
-        environment: environment ?? "",
-        traffic: args.traffic,
-        buildOutput,
-        // `unknown`, for the reason the declared path claims it
-        // (../../op/activities/predict-behaviour.ts): reference edges resolved,
-        // containment absent, and no vocabulary here for "this kind is a
-        // boundary whose containment is missing". Claiming `complete` would be
-        // true about references and false about the graph; `partial` has to
-        // name its gap as `dangling` or `unresolvedKinds`, and this gap is
-        // neither.
-        edgeCoverage: { verdict: "unknown" },
-        ...(args.owned === undefined ? {} : { owned: args.owned }),
-      });
-      try {
-        // A refusal is a value, not a throw: it comes back as a result and
-        // rides on `meta._behaviour` whole, which is the one shape behold's
-        // reader branches on (../../behaviour-overlay.ts).
-        const result = await predicting[0].predictBehaviour!(request);
-        ir = applyBehaviourOverlay(ir, behaviourOverlay(result));
-      } catch (err) {
-        // The estate graph is the thing asked for; a broken engine must not
-        // take it away. Say what failed and serve the graph without the block.
-        console.error(formatWarning({
-          message: `--traffic: ${predicting[0].name}'s predictBehaviour failed (${err instanceof Error ? err.message : String(err)}) — showing the graph without a prediction`,
-        }));
-      }
-    }
+  // After the drift overlay so it lands on the final node set beside `_status`,
+  // and before the lens so a lens filters a predicted node like any other.
+  {
+    const raw = buildResult.outputs ? [...buildResult.outputs.values()][0] : undefined;
+    const predicted = await predictOntoIr(ir, plugins, args, {
+      environment: environment ?? "",
+      buildOutput: raw === undefined ? "" : typeof raw === "string" ? raw : (raw as SerializerResult).primary,
+    });
+    if (predicted === REFUSED) return 1;
+    ir = predicted;
   }
 
   if (args.lens) {
@@ -732,6 +671,82 @@ async function buildPipelineProjection(
  * Lint-gated: the IR represents valid infra, so we refuse to emit for source that
  * does not pass lint. Non-zero on discovery errors or a layout-engine failure.
  */
+/** Returned instead of a graph when the prediction cannot be attempted honestly. */
+const REFUSED = Symbol("behaviour-refused");
+
+/**
+ * Carry a prediction on `ir`, if one was asked for (#2377, epic #2355).
+ *
+ * Shared by both graph paths, because the epic wants both: "the live path
+ * predicts the account as it stands, drift included. The declared path
+ * predicts the file. The two are shown as a delta" (#2355). A delta between
+ * two shapes that reached the engine by different routes is the worst possible
+ * input to a delta, so there is one route.
+ *
+ * `--traffic` is the trigger, and it is the trigger rather than the engine
+ * variable because the contract forbids defaulting the level
+ * (../../behaviour.ts): every figure an engine returns is *at* a stated
+ * traffic, so inventing one would silently decide what every number on the
+ * graph means. Without the flag nothing is asked, neither key appears, and a
+ * consumer reads that absence as "not looked" rather than as a refusal.
+ */
+async function predictOntoIr(
+  ir: GraphIR,
+  plugins: LexiconPlugin[],
+  args: ParsedArgs,
+  ctx: { environment: string; buildOutput: string },
+): Promise<GraphIR | typeof REFUSED> {
+  if (!args.traffic) return ir;
+
+  const predicting = plugins.filter((p) => p.predictBehaviour);
+  if (predicting.length === 0) {
+    console.error(formatWarning({
+      message:
+        "--traffic: no installed lexicon implements predictBehaviour, so nothing was predicted. The graph is unchanged.",
+    }));
+    return ir;
+  }
+  if (predicting.length > 1) {
+    // Two engines would mean two `meta._behaviour` values and one key. Rather
+    // than pick, say so: a merged prediction across engines is not defined by
+    // the contract, and silently taking the first would attribute one engine's
+    // figures to the other's provenance.
+    console.error(formatError({
+      message: `--traffic: ${predicting.length} lexicons implement predictBehaviour (${predicting.map((p) => p.name).join(", ")}) — chant cannot merge two engines' figures onto one graph.`,
+      hint: "Predict one lexicon at a time, or drop --traffic to graph without a prediction",
+    }));
+    return REFUSED;
+  }
+
+  const request = behaviourRequestFromIr(ir, {
+    environment: ctx.environment,
+    traffic: args.traffic,
+    buildOutput: ctx.buildOutput,
+    // `unknown`, for the reason the declared path claims it
+    // (../../op/activities/predict-behaviour.ts): reference edges resolved,
+    // containment absent, and no vocabulary here for "this kind is a boundary
+    // whose containment is missing". Claiming `complete` would be true about
+    // references and false about the graph; `partial` has to name its gap as
+    // `dangling` or `unresolvedKinds`, and this gap is neither.
+    edgeCoverage: { verdict: "unknown" },
+    ...(args.owned === undefined ? {} : { owned: args.owned }),
+  });
+
+  try {
+    // A refusal is a value, not a throw: it comes back as a result and rides on
+    // `meta._behaviour` whole, which is the one shape behold's reader branches
+    // on (../../behaviour-overlay.ts).
+    return applyBehaviourOverlay(ir, behaviourOverlay(await predicting[0].predictBehaviour!(request)));
+  } catch (err) {
+    // The estate graph is the thing asked for; a broken engine must not take it
+    // away. Say what failed and serve the graph without the block.
+    console.error(formatWarning({
+      message: `--traffic: ${predicting[0].name}'s predictBehaviour failed (${err instanceof Error ? err.message : String(err)}) — showing the graph without a prediction`,
+    }));
+    return ir;
+  }
+}
+
 async function runGraphView(
   ctx: CommandContext,
   format: "ir" | "mermaid" | "dot" | "layout",
@@ -788,6 +803,24 @@ async function runGraphView(
   // Build the base IR, focus with a lens (declarable-level, most precise), then
   // apply the detail tier — so e.g. blast:<resource> works before any collapse.
   let ir: GraphIR = buildGraphIr(result.entities, projectPath);
+
+  // The declared half of the epic's delta (#2355): this path predicts the
+  // file, the live path predicts the account. Same helper, so the two shapes
+  // reach the engine by one route and stay comparable.
+  {
+    const plugins = ctx.plugins.length > 0
+      ? ctx.plugins
+      : await loadPlugins(await resolveProjectLexicons(projectPath));
+    const predicted = await predictOntoIr(ir, plugins as LexiconPlugin[], ctx.args, {
+      // No environment on the declared path: the file is not deployed anywhere
+      // yet, and naming one would claim it was.
+      environment: ctx.args.env ?? "",
+      buildOutput: "",
+    });
+    if (predicted === REFUSED) return 1;
+    ir = predicted;
+  }
+
   if (ctx.args.lens) {
     try {
       ir = applyLens(ir, parseLens(ctx.args.lens, { up: ctx.args.up, down: ctx.args.down }));

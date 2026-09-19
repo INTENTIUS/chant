@@ -79,10 +79,13 @@ chant graph --format ir --live --env prod --overlay --overlay-anchor live  # pro
 
 ##### `--traffic "<level>"` for a prediction on the graph
 
-`--live --overlay --traffic "<level>"` asks the project's predicting lexicon what the overlaid estate does at that traffic level, and carries the answer on the IR. Each entity's block rides on `attrs._behaviour`. The graph-level half rides on `meta._behaviour`: which engine answered, at what version and level, with the estate totals.
+`--traffic "<level>"` asks the project's predicting lexicon what the estate does at that traffic level, and carries the answer on the IR. Each entity's block rides on `attrs._behaviour`. The graph-level half rides on `meta._behaviour`: which engine answered, at what version and level, with the estate totals.
+
+It works on either graph, and the two answer different questions. With `--live` the prediction is about the account as it stands, drift included. Without it, the prediction is about the declared source, which is the file rather than anything deployed, so no environment is named. Showing the pair as a delta is the point:
 
 ```bash
-chant graph --format ir --live --env prod --overlay --traffic "100 rps, p50"
+chant graph --format ir --traffic "100 rps, p50"                                  # the file
+chant graph --format ir --live --env prod --overlay --traffic "100 rps, p50"      # the account
 ```
 
 The level is passed to the engine verbatim. chant neither parses it nor supplies a default of its own. Every figure an engine returns is *at* a stated traffic, so inventing one would silently decide what every number on the graph means. That is why the flag is the trigger rather than the engine variable:
