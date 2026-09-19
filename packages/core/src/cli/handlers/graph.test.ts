@@ -110,6 +110,7 @@ vi.mock("../../build", async () => {
 });
 
 const { runGraph } = await import("./graph");
+const { behaviourReport, noBehaviourEngineRefusal, predictedRate } = await import("../../behaviour");
 
 function makeArgs(overrides: Partial<ParsedArgs> = {}): ParsedArgs {
   return {
@@ -624,6 +625,200 @@ describe("runGraph", () => {
       const out = stdoutBuf.join("\n");
       expect(out).not.toContain("No lexicons implement describeResources");
       expect(out).toContain("web-vpc");
+    });
+
+    // #2377 — the overlay carries the prediction. behold's reader takes
+    // `attrs._behaviour` per node and `meta._behaviour` on the graph, and
+    // reads the absence of both as "not looked" rather than as a refusal, so
+    // all three states are asserted on what actually reaches the IR.
+    describe("behaviour overlay (--traffic)", () => {
+      const predictingPlugin = (predictBehaviour: unknown) => ({
+        name: "aws",
+        serializer: {},
+        emulator: awsEmulatorStub,
+        describeResources: () => Promise.resolve({}),
+        predictBehaviour,
+      });
+
+      const liveEstate = () => {
+        resolveLexMock.mockResolvedValue(["aws"]);
+        // `--overlay` builds the declared canvas to classify against. Empty is
+        // enough here: what is under test is the behaviour block, and an empty
+        // declared graph leaves the observed nodes in place as foreign.
+        discoverMock.mockResolvedValue({ entities: new Map(), errors: [], sourceFiles: [] });
+        observeMock.mockResolvedValue({
+          observations: [{ lexicon: "aws", resources: {
+            web: { type: "AWS::EC2::Instance", status: "OK" },
+            role: { type: "AWS::IAM::Role", status: "OK" },
+          } }],
+          errors: [],
+          warnings: [],
+        });
+      };
+
+      const report = () => behaviourReport(
+        { entityNames: ["web", "role"], traffic: "100 rps, p50", edgeCoverage: { verdict: "unknown" } },
+        { engine: "fixture", version: "0.0.1", total: predictedRate(0.0416, "USD") },
+        { web: {
+          at: { traffic: "100 rps, p50" },
+          cost: predictedRate(0.0416, "USD"),
+          headroom: { cpu: 0.6 },
+          errorRate: 0.0005,
+          resilience: { failure: "one zone lost", verdict: "survives" },
+          provenance: { engine: "fixture", version: "0.0.1", tolerance: "±20%", basis: "modeled" },
+        } },
+        { role: { reason: "unsupported-kind", detail: "a role is a grant" } },
+      );
+
+      test("with an engine: the block is on its node and the meta on the graph", async () => {
+        liveEstate();
+        loadPluginsMock.mockResolvedValue([predictingPlugin(() => Promise.resolve(report()))]);
+
+        const exit = await runGraph({
+          args: makeArgs({ format: "ir", live: true, overlay: true, env: "prod", traffic: "100 rps, p50" }),
+          plugins: [], serializers: [],
+        });
+
+        expect(exit).toBe(0);
+        const ir = JSON.parse(stdoutBuf.join("\n")) as {
+          nodes: Array<{ id: string; attrs: Record<string, unknown> }>;
+          meta?: Record<string, { engine?: string; at?: { traffic?: string } }>;
+        };
+        expect(ir.meta?._behaviour?.engine).toBe("fixture");
+        expect(ir.meta?._behaviour?.at?.traffic).toBe("100 rps, p50");
+        const web = ir.nodes.find((n) => n.id === "web");
+        expect((web?.attrs._behaviour as { cost?: { perHour?: number } })?.cost?.perHour).toBe(0.0416);
+        // An entity the engine could not price carries no block rather than a
+        // zeroed one — "costs nothing" is a different claim from "not priced".
+        expect("_behaviour" in (ir.nodes.find((n) => n.id === "role")?.attrs ?? {})).toBe(false);
+      });
+
+      test("the traffic level reaches the engine verbatim, with the graph's own entities", async () => {
+        liveEstate();
+        const seen: Array<{ traffic: string; entityNames: string[] }> = [];
+        loadPluginsMock.mockResolvedValue([predictingPlugin((o: { traffic: string; entityNames: string[] }) => {
+          seen.push({ traffic: o.traffic, entityNames: o.entityNames });
+          return Promise.resolve(report());
+        })]);
+
+        await runGraph({
+          args: makeArgs({ format: "ir", live: true, overlay: true, env: "prod", traffic: "1000 rps, p99" }),
+          plugins: [], serializers: [],
+        });
+
+        expect(seen[0]?.traffic).toBe("1000 rps, p99");
+        expect(seen[0]?.entityNames).toContain("web");
+      });
+
+      test("without --traffic: nothing is asked and neither key appears", async () => {
+        liveEstate();
+        let called = false;
+        loadPluginsMock.mockResolvedValue([predictingPlugin(() => { called = true; return Promise.resolve(report()); })]);
+
+        const exit = await runGraph({
+          args: makeArgs({ format: "ir", live: true, overlay: true, env: "prod" }),
+          plugins: [], serializers: [],
+        });
+
+        expect(exit).toBe(0);
+        // Not a refusal: an engine was configured and reachable. behold reads
+        // this absence as "not looked", which is why nothing may be written.
+        expect(called).toBe(false);
+        const ir = JSON.parse(stdoutBuf.join("\n")) as {
+          nodes: Array<{ attrs: Record<string, unknown> }>; meta?: Record<string, unknown>;
+        };
+        expect(ir.meta?._behaviour).toBeUndefined();
+        for (const n of ir.nodes) expect("_behaviour" in n.attrs).toBe(false);
+      });
+
+      test("a refusal rides on the meta whole, and no node carries a block", async () => {
+        liveEstate();
+        loadPluginsMock.mockResolvedValue([
+          predictingPlugin(() => Promise.resolve(noBehaviourEngineRefusal("aws"))),
+        ]);
+
+        const exit = await runGraph({
+          args: makeArgs({ format: "ir", live: true, overlay: true, env: "prod", traffic: "100 rps, p50" }),
+          plugins: [], serializers: [],
+        });
+
+        expect(exit).toBe(0);
+        const ir = JSON.parse(stdoutBuf.join("\n")) as {
+          nodes: Array<{ attrs: Record<string, unknown> }>;
+          meta?: { _behaviour?: { refusal?: { reason?: string }; behaviour?: string } };
+        };
+        // behold branches on `refusal` before it looks for `engine`; the
+        // envelope is what makes it findable at all.
+        expect(ir.meta?._behaviour?.refusal?.reason).toMatch(/CHANT_BEHAVIOUR_ENGINE/);
+        expect(ir.meta?._behaviour?.behaviour).toBe("v1");
+        for (const n of ir.nodes) expect("_behaviour" in n.attrs).toBe(false);
+      });
+
+      test("no predicting lexicon: the graph is served unchanged, and says so once", async () => {
+        liveEstate();
+        loadPluginsMock.mockResolvedValue([
+          { name: "aws", serializer: {}, emulator: awsEmulatorStub, describeResources: () => Promise.resolve({}) },
+        ]);
+
+        const exit = await runGraph({
+          args: makeArgs({ format: "ir", live: true, overlay: true, env: "prod", traffic: "100 rps, p50" }),
+          plugins: [], serializers: [],
+        });
+
+        expect(exit).toBe(0);
+        expect(stderrBuf.join("\n")).toContain("no installed lexicon implements predictBehaviour");
+        expect(JSON.parse(stdoutBuf.join("\n")).meta?._behaviour).toBeUndefined();
+      });
+
+      test("a thrown engine costs the prediction, never the graph", async () => {
+        liveEstate();
+        loadPluginsMock.mockResolvedValue([
+          predictingPlugin(() => Promise.reject(new Error("socket hang up"))),
+        ]);
+
+        const exit = await runGraph({
+          args: makeArgs({ format: "ir", live: true, overlay: true, env: "prod", traffic: "100 rps, p50" }),
+          plugins: [], serializers: [],
+        });
+
+        // The estate graph is what was asked for; a broken engine must not
+        // take it away.
+        expect(exit).toBe(0);
+        expect(stderrBuf.join("\n")).toContain("socket hang up");
+        const ir = JSON.parse(stdoutBuf.join("\n")) as { nodes: unknown[]; meta?: Record<string, unknown> };
+        expect(ir.nodes.length).toBeGreaterThan(0);
+        expect(ir.meta?._behaviour).toBeUndefined();
+      });
+
+      test("--traffic without --live is refused rather than silently ignored", async () => {
+        // Accepted-and-ignored would read as "predicted, and everything came
+        // back empty", which is the opposite of what happened.
+        const exit = await runGraph({
+          args: makeArgs({ format: "ir", traffic: "100 rps, p50" }),
+          plugins: [], serializers: [],
+        });
+
+        expect(exit).toBe(1);
+        expect(stderrBuf.join("\n")).toContain("--traffic needs --live");
+      });
+
+      test("two predicting lexicons is refused rather than attributed to one", async () => {
+        liveEstate();
+        loadPluginsMock.mockResolvedValue([
+          predictingPlugin(() => Promise.resolve(report())),
+          { ...predictingPlugin(() => Promise.resolve(report())), name: "gcp" },
+        ]);
+
+        const exit = await runGraph({
+          args: makeArgs({ format: "ir", live: true, overlay: true, env: "prod", traffic: "100 rps, p50" }),
+          plugins: [], serializers: [],
+        });
+
+        // One `meta._behaviour` key and two engines: taking the first would
+        // put one engine's figures under the other's provenance.
+        expect(exit).toBe(1);
+        expect(stderrBuf.join("\n")).toContain("cannot merge two engines");
+      });
     });
 
     // #1279 — `graph` had no `--at`, so anyone wanting the raw IR of a recorded

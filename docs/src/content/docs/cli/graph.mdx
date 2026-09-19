@@ -77,6 +77,26 @@ chant graph --format ir --live --env prod --overlay                     # source
 chant graph --format ir --live --env prod --overlay --overlay-anchor live  # provisioned graph's own edges
 ```
 
+##### `--traffic "<level>"` — carry a prediction on the graph
+
+`--live --overlay --traffic "<level>"` asks the project's predicting lexicon what the overlaid estate does at that traffic level, and carries the answer on the IR: each entity's block on `attrs._behaviour`, and the engine, its version, the level and the estate totals on `meta._behaviour`.
+
+```bash
+chant graph --format ir --live --env prod --overlay --traffic "100 rps, p50"
+```
+
+The level is passed to the engine verbatim. chant does not parse it, default it, or convert it, because every figure an engine returns is *at* a stated traffic and inventing one would silently decide what every number on the graph means. That is why the flag is the trigger rather than the engine variable:
+
+| | `attrs._behaviour` | `meta._behaviour` |
+|---|---|---|
+| flag, and an engine answered | the block, per priced entity | the report's meta |
+| flag, and no engine or an unreachable one | absent | the whole refusal report |
+| no flag | absent | absent |
+
+Absence of both means chant did not look, which is a different statement from a refusal — a refusal names a cause and a remedy. An entity the engine could not price carries no block rather than a zeroed one, since "costs nothing" and "was not priced" are different claims.
+
+The engine sees no credentials: the request is built from the graph the read already holds, so there is no second read for one to leak from. Predictions need `predictBehaviour` from an installed lexicon; with none, the graph is served unchanged and says so once.
+
 ##### `--namespace <ns>` — where to read entities that declare none
 
 A live read resolves each entity's address from its own declaration. For a Kubernetes object whose namespace is stamped by a controller at apply time (a Flux/Argo estate where the binding lives in a different project than the objects), there is nothing to resolve, so the read goes to `default` and every node paints pending. `--namespace <ns>` supplies the missing default:

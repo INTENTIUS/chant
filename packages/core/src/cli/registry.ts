@@ -159,6 +159,17 @@ export interface ParsedArgs {
    * cross-substrate topology) and joins live status per node; `live` keeps the
    * provisioned graph's reconstructed edges (the pre-#821 behaviour). */
   overlayAnchor?: "source" | "live";
+  /** `chant graph --live --overlay --traffic "<level>"` (#2377) — predict the
+   * overlaid estate's behaviour at this traffic level and carry the result on
+   * the IR: each entity's block on `attrs._behaviour`, the report's meta (or a
+   * whole refusal report) on `meta._behaviour`.
+   *
+   * The flag is the trigger, and it has no default. The level is passed to the
+   * engine verbatim — chant does not parse it, default it or convert it
+   * (`../behaviour.ts`) — so without the flag there is no traffic level to
+   * predict *at*, nothing is asked, and neither key appears. A consumer reads
+   * that absence as "not looked", never as a refusal. */
+  traffic?: string;
   /** `chant list --components` / `chant graph --components` — surface discovered
    * `Component` declarations (#560) instead of/alongside lexicon resources. */
   components?: boolean;

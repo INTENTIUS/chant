@@ -295,6 +295,21 @@ export interface GraphIR {
   nodes: IRNode[];
   edges: IREdge[];
   groups: IRGroups;
+  /**
+   * Graph-level facts that are about the whole read rather than any one node.
+   *
+   * Deliberately an open bag. A fact lands here when it has no node to sit on
+   * — `_behaviour` (#2377) carries the engine, its version, the traffic level
+   * the figures are *at*, and the estate's totals, or a whole refusal report
+   * when there was no engine to ask. None of that is a property of a single
+   * entity, and putting the refusal on nodes would mean writing it N times or
+   * dropping it, and dropping it is the one outcome the contract forbids
+   * (`./behaviour-overlay.ts`).
+   *
+   * Absent unless something filled it, and a consumer reads absence as "not
+   * looked" rather than as a negative finding.
+   */
+  meta?: Record<string, unknown>;
   /** Outputs this stack publishes for other stacks to import (#513). */
   exports?: IRExport[];
   /** Parameters this stack imports from other stacks. A viewer matches an import's
