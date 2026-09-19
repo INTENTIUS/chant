@@ -11,4 +11,17 @@ done
 SCRIPT_DIR="$(cd "$(dirname "$SELF")" && pwd)"
 MAIN_TS="$SCRIPT_DIR/../src/cli/main.ts"
 
+# tsx is our own dependency, so register its hooks in this node process rather
+# than shelling `npx tsx`, which resolves a bin and then spawns a second node.
+# Worth ~30% of startup (#2481). Nested install first, then hoisted; npx stays
+# as the fallback for any layout neither guess covers.
+for CANDIDATE in \
+  "$SCRIPT_DIR/../node_modules/tsx/dist/loader.mjs" \
+  "$SCRIPT_DIR/../../../tsx/dist/loader.mjs"
+do
+  if [ -f "$CANDIDATE" ]; then
+    exec node --import "file://$CANDIDATE" "$MAIN_TS" "$@"
+  fi
+done
+
 exec npx tsx "$MAIN_TS" "$@"
