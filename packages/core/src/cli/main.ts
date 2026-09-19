@@ -195,6 +195,10 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.betweenA = args[++i];
       result.betweenB = args[++i];
       if (!result.betweenA || !result.betweenB) throw new Error("--between needs two snapshot refs: --between <refA> <refB>");
+    } else if (arg === "--traffic") {
+      const v = args[++i];
+      if (!v) throw new Error('--traffic needs a level, passed to the engine verbatim: --traffic "100 rps, p50"');
+      result.traffic = v;
     } else if (arg === "--overlay-anchor") {
       const v = args[++i];
       if (v !== "source" && v !== "live") throw new Error(`--overlay-anchor must be 'source' or 'live', got '${v}'`);
@@ -595,6 +599,11 @@ Ops:
                         add the CI/pipeline projection (stages/jobs/needs) to
                         the component-graph IR, from the same generator
                         'build --components --generate' uses (#989)
+                        --live --overlay --traffic "<level>": ask the project's
+                        predicting lexicon what the overlaid estate does at that
+                        traffic level, and carry each entity's prediction on the
+                        IR. The level is passed to the engine verbatim; without
+                        the flag nothing is asked and nothing is carried (#2377)
 
 Lifecycle (alias: lc):
   lifecycle snapshot <env>  Query API, save metadata to orphan branch

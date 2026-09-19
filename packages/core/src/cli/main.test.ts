@@ -4,6 +4,16 @@ import { parseArgs, waitForStreamDrain } from "./main";
 import { resolveCommand, type CommandDef, type ParsedArgs } from "./registry";
 
 describe("parseArgs", () => {
+  // #2377 — the level reaches the engine verbatim, so parsing must not
+  // normalise it, and an empty one must not read as "predict at nothing".
+  test("takes --traffic as an opaque level, and refuses an empty one", () => {
+    expect(parseArgs(["graph", "--live", "--overlay"]).traffic).toBeUndefined();
+    expect(parseArgs(["graph", "--live", "--overlay", "--traffic", "100 rps, p50"]).traffic).toBe("100 rps, p50");
+    // Spacing, casing and punctuation are the engine's to interpret.
+    expect(parseArgs(["graph", "--traffic", "1000rps p99"]).traffic).toBe("1000rps p99");
+    expect(() => parseArgs(["graph", "--traffic"])).toThrow(/--traffic needs a level/);
+  });
+
   test("--fold and --no-fold set the tri-state fold option (#1134)", () => {
     expect(parseArgs(["build", "src"]).fold).toBeUndefined();
     expect(parseArgs(["build", "src", "--fold"]).fold).toBe(true);

@@ -3,6 +3,9 @@ import { discoverOps } from "../../op/discover";
 import { discover } from "../../discovery/index";
 import { partitionByLexicon, computeStackGraph, build, mergeBuildRootEntities } from "../../build";
 import { buildGraphIr, buildLiveGraphIr, collectUnobserved, overlayGraphs, sourceOverlayGraphs, type GraphIR, type IRPipeline, type LiveObservation } from "../../graph-ir";
+import { behaviourOverlay } from "../../behaviour-overlay";
+import type { SerializerResult } from "../../serializer";
+import { applyBehaviourOverlay, behaviourRequestFromIr } from "../../behaviour-graph";
 import { buildDeclaredPerStack } from "../../graph-declared";
 import { mergeProjectOps } from "../../graph-ops";
 import { reconstructEdges, mergeCatalogs, containmentGroups, type ReferenceCatalog, type ContainmentPair } from "../../graph-refs";
@@ -154,6 +157,16 @@ export async function runGraph(ctx: CommandContext): Promise<number> {
   if (ctx.args.projection && !(ctx.args.components && ctx.args.format === "ir")) {
     console.error(formatError({
       message: "--projection needs --components --format ir — the CI/pipeline projection extends the component-graph IR, the only mode that carries it.",
+    }));
+    return 1;
+  }
+  // A prediction is about an estate, and only the live path has one. Without
+  // `--live` the flag would be accepted and do nothing at all, which reads as
+  // "predicted, and everything came back empty" rather than "never ran".
+  if (ctx.args.traffic && !ctx.args.live) {
+    console.error(formatError({
+      message: "--traffic needs --live: a prediction is made about the observed estate, and there is nothing to predict on the declared graph alone.",
+      hint: 'chant graph --format ir --live --env <name> --overlay --traffic "100 rps, p50"',
     }));
     return 1;
   }
@@ -430,6 +443,71 @@ async function runGraphLive(
           args.overlayAnchor === "live"
             ? overlayGraphs(ir, declaredIr, overlayOpts)
             : sourceOverlayGraphs(declaredIr, ir, overlayOpts);
+      }
+    }
+  }
+
+  // Behaviour overlay (#2377, epic #2355): carry a prediction on the graph.
+  //
+  // `--traffic` is the trigger, and it is the trigger because the contract
+  // forbids defaulting the level (../../behaviour.ts): every figure an engine
+  // returns is *at* a stated traffic, so inventing one here would silently
+  // decide what every number on the graph means. No flag: nothing is asked,
+  // neither key appears, and a consumer reads that absence as "not looked".
+  //
+  // Placed after the drift overlay so the prediction lands on the final node
+  // set — the canvas is settled by here under either anchoring — and before
+  // the lens below, so a lens filters predicted nodes like any other.
+  if (args.traffic) {
+    const predicting = plugins.filter((p) => p.predictBehaviour);
+    if (predicting.length === 0) {
+      console.error(formatWarning({
+        message:
+          "--traffic: no installed lexicon implements predictBehaviour, so nothing was predicted. The graph is unchanged.",
+      }));
+    } else if (predicting.length > 1) {
+      // Two engines would mean two `meta._behaviour` values and one key. Rather
+      // than pick, say so: a merged prediction across engines is not defined by
+      // the contract, and silently taking the first would attribute one
+      // engine's figures to the other's provenance.
+      console.error(formatError({
+        message: `--traffic: ${predicting.length} lexicons implement predictBehaviour (${predicting.map((p) => p.name).join(", ")}) — chant cannot merge two engines' figures onto one graph.`,
+        hint: "Predict one lexicon at a time, or drop --traffic to graph without a prediction",
+      }));
+      return 1;
+    } else {
+      // The first output the build produced, or empty. Nothing on this path
+      // reads it — the mirror is kept so the four observation methods take the
+      // same shape (../../op/activities/predict-behaviour.ts) — so a build
+      // result without outputs costs an empty string, never the graph.
+      const raw = buildResult.outputs ? [...buildResult.outputs.values()][0] : undefined;
+      const buildOutput = raw === undefined ? "" : typeof raw === "string" ? raw : (raw as SerializerResult).primary;
+      const request = behaviourRequestFromIr(ir, {
+        environment: environment ?? "",
+        traffic: args.traffic,
+        buildOutput,
+        // `unknown`, for the reason the declared path claims it
+        // (../../op/activities/predict-behaviour.ts): reference edges resolved,
+        // containment absent, and no vocabulary here for "this kind is a
+        // boundary whose containment is missing". Claiming `complete` would be
+        // true about references and false about the graph; `partial` has to
+        // name its gap as `dangling` or `unresolvedKinds`, and this gap is
+        // neither.
+        edgeCoverage: { verdict: "unknown" },
+        ...(args.owned === undefined ? {} : { owned: args.owned }),
+      });
+      try {
+        // A refusal is a value, not a throw: it comes back as a result and
+        // rides on `meta._behaviour` whole, which is the one shape behold's
+        // reader branches on (../../behaviour-overlay.ts).
+        const result = await predicting[0].predictBehaviour!(request);
+        ir = applyBehaviourOverlay(ir, behaviourOverlay(result));
+      } catch (err) {
+        // The estate graph is the thing asked for; a broken engine must not
+        // take it away. Say what failed and serve the graph without the block.
+        console.error(formatWarning({
+          message: `--traffic: ${predicting[0].name}'s predictBehaviour failed (${err instanceof Error ? err.message : String(err)}) — showing the graph without a prediction`,
+        }));
       }
     }
   }
