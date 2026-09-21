@@ -65,11 +65,12 @@ beforeAll(async () => {
 const common = { environment: "prod", buildOutput: "/tmp/build", traffic: "100 rps, p50" };
 
 const declaredSide = (): TerraformBehaviourRequest =>
-  terraformBehaviourRequest({ ...common, entityNames, entities });
+  terraformBehaviourRequest({ ...common, from: "declared", entityNames, entities });
 
 const liveSide = (): TerraformBehaviourRequest =>
   terraformBehaviourRequest({
     ...common,
+    from: "live",
     entityNames,
     entities,
     live: [{ root: ROOT, listing: LISTING, plan: PLAN }],
@@ -79,6 +80,11 @@ const factsOf = (built: TerraformBehaviourRequest, address: string): LiveResourc
   (built.request.entities.get(key(address))!.props as { live: LiveResourceFacts }).live;
 
 describe("the declared side", () => {
+  it("says which estate the request is about, on both sides (#2494)", () => {
+    expect(declaredSide().request.from).toBe("declared");
+    expect(liveSide().request.from).toBe("live");
+  });
+
   it("builds every declared block, from the file and nothing else", () => {
     const built = declaredSide();
     expect(built.request.entityNames).toEqual(entityNames);
@@ -179,6 +185,7 @@ describe("the live side", () => {
   it("withholds what is not this estate's when --owned was asked for", () => {
     const built = terraformBehaviourRequest({
       ...common,
+      from: "live",
       entityNames,
       entities,
       owned: true,

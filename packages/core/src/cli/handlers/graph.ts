@@ -446,6 +446,8 @@ async function runGraphLive(
     const predicted = await predictOntoIr(ir, plugins, args, {
       environment: environment ?? "",
       buildOutput: raw === undefined ? "" : typeof raw === "string" ? raw : (raw as SerializerResult).primary,
+      // This graph was read from the account, drift included.
+      from: "live",
     });
     if (predicted === REFUSED) return 1;
     ir = predicted;
@@ -694,7 +696,7 @@ async function predictOntoIr(
   ir: GraphIR,
   plugins: LexiconPlugin[],
   args: ParsedArgs,
-  ctx: { environment: string; buildOutput: string },
+  ctx: { environment: string; buildOutput: string; from: "live" | "declared" },
 ): Promise<GraphIR | typeof REFUSED> {
   if (!args.traffic) return ir;
 
@@ -722,6 +724,7 @@ async function predictOntoIr(
     environment: ctx.environment,
     traffic: args.traffic,
     buildOutput: ctx.buildOutput,
+    from: ctx.from,
     // `unknown`, for the reason the declared path claims it
     // (../../op/activities/predict-behaviour.ts): reference edges resolved,
     // containment absent, and no vocabulary here for "this kind is a boundary
@@ -816,6 +819,10 @@ async function runGraphView(
       // yet, and naming one would claim it was.
       environment: ctx.args.env ?? "",
       buildOutput: "",
+      // And this graph was built from the file, so say so. Without it a
+      // lexicon cannot tell the two paths apart and answers about whichever
+      // estate it defaults to, with nothing in the report to say which.
+      from: "declared",
     });
     if (predicted === REFUSED) return 1;
     ir = predicted;

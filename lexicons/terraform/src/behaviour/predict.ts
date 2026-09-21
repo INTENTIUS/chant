@@ -105,19 +105,22 @@ export interface TerraformPredictOptions
   /** Directory the activities start the `chant.config.*` search from. Default: the process cwd. */
   cwd?: string;
   /**
-   * Which estate to predict. `"live"`, the default, is this path's whole
-   * point: the account as it stands, drift included. `"declared"` runs the
-   * same producer over the declaration alone and reads no account, which is
-   * the other half of the delta the epic asks for (#2355) — a caller wanting
-   * that delta calls this twice and differences the two reports, and gets two
-   * reports assembled by one producer rather than two shapes that have each
-   * been through a different translation.
+   * Which estate to predict, as the contract's own `from` (#2494) and required
+   * for the same reason: a default is a guess about which estate somebody
+   * meant, and the report that comes back from a wrong guess is well-formed.
+   *
+   * `"live"` is this path's whole point: the account as it stands, drift
+   * included. `"declared"` runs the same producer over the declaration alone
+   * and reads no account, which is the other half of the delta the epic asks
+   * for (#2355) — a caller wanting that delta calls this twice and differences
+   * the two reports, and gets two reports assembled by one producer rather
+   * than two shapes that have each been through a different translation.
    *
    * `"declared"` on a project with no live root is the same request `"live"`
    * builds, because there is no account to read; the option exists so that a
    * caller can ask for the declaration of a root that *is* live.
    */
-  from?: "live" | "declared";
+  from: "live" | "declared";
 }
 
 /** Which roots the request would read live: those whose entities the parse stamped `mode: "live"`. */
@@ -191,6 +194,7 @@ export async function predictTerraformBehaviour(
     environment: contract.environment,
     buildOutput: contract.buildOutput,
     traffic: contract.traffic,
+    from: options.from,
     ...(contract.region !== undefined ? { region: contract.region } : {}),
     ...(contract.stack !== undefined ? { stack: contract.stack } : {}),
     ...(contract.owned !== undefined ? { owned: contract.owned } : {}),
