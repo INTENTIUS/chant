@@ -183,7 +183,7 @@ async function predict(
 ): Promise<{ result: BehaviourResult; calls: Call[] }> {
   const d = deps(overrides?.deps);
   const result = await predictTerraformBehaviour(
-    { ...common, entityNames, entities, ...(overrides?.owned ? { owned: true } : {}) },
+    { ...common, from: "live", entityNames, entities, ...(overrides?.owned ? { owned: true } : {}) },
     { liveLs: d.deps.liveLs, livePlan: d.deps.livePlan, predict: tariff },
   );
   return { result, calls: d.calls };
@@ -325,7 +325,7 @@ describe("the screen runs before the engine", () => {
     });
     const d = deps();
     const result = await predictTerraformBehaviour(
-      { ...common, entityNames, entities: tainted },
+      { ...common, from: "live", entityNames, entities: tainted },
       {
         liveLs: d.deps.liveLs,
         livePlan: d.deps.livePlan,
@@ -377,5 +377,21 @@ describe("the delta the epic asks for", () => {
     // And the same edge-coverage claim, so a resilience verdict on one side is
     // not computed over a graph the other side does not have.
     expect(live.meta.edgeCoverage.verdict).toBe(declared.meta.edgeCoverage.verdict);
+  });
+
+  it("tells the engine which estate each side is about (#2494)", async () => {
+    const asked: Array<PredictBehaviourOptions["from"]> = [];
+    const listening = async (options: PredictBehaviourOptions): Promise<BehaviourResult> => {
+      asked.push(options.from);
+      return tariff(options);
+    };
+    const d = deps();
+    for (const from of ["live", "declared"] as const) {
+      await predictTerraformBehaviour(
+        { ...common, from, entityNames, entities },
+        { liveLs: d.deps.liveLs, livePlan: d.deps.livePlan, predict: listening },
+      );
+    }
+    expect(asked).toEqual(["live", "declared"]);
   });
 });
