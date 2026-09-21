@@ -300,14 +300,14 @@ describe("runGraph", () => {
         expect(ir.nodes.find((n: { id: string }) => n.id === "vpc").attrs._behaviour.cost.perHour).toBe(1);
       });
 
-      test("the declared path names no environment, because the file is deployed nowhere", async () => {
+      test("the declared path says so, and names no environment", async () => {
         lintClean(); discovered();
-        const seen: string[] = [];
+        const seen: Array<{ environment: string; from: string }> = [];
         loadPluginsMock.mockResolvedValue([{
           name: "gcp",
           serializer: {},
-          predictBehaviour: (o: { environment: string }) => {
-            seen.push(o.environment);
+          predictBehaviour: (o: { environment: string; from: string }) => {
+            seen.push({ environment: o.environment, from: o.from });
             return Promise.resolve(noBehaviourEngineRefusal("gcp"));
           },
         }]);
@@ -315,8 +315,12 @@ describe("runGraph", () => {
 
         await runGraph({ args: makeArgs({ format: "ir", traffic: "100 rps, p50" }), plugins: [], serializers: [] });
 
-        // Naming one would claim the declared estate was deployed there.
-        expect(seen[0]).toBe("");
+        // The half of the epic's delta that reads no account (#2355). A lexicon
+        // handed the same options as the live path would predict the account
+        // and label it the file.
+        expect(seen[0]?.from).toBe("declared");
+        // Naming an environment would claim the declared estate was deployed there.
+        expect(seen[0]?.environment).toBe("");
       });
 
       test("op-discovery errors are warnings, not a refusal", async () => {
@@ -755,9 +759,9 @@ describe("runGraph", () => {
 
       test("the traffic level reaches the engine verbatim, with the graph's own entities", async () => {
         liveEstate();
-        const seen: Array<{ traffic: string; entityNames: string[] }> = [];
-        loadPluginsMock.mockResolvedValue([predictingPlugin((o: { traffic: string; entityNames: string[] }) => {
-          seen.push({ traffic: o.traffic, entityNames: o.entityNames });
+        const seen: Array<{ traffic: string; entityNames: string[]; from: string }> = [];
+        loadPluginsMock.mockResolvedValue([predictingPlugin((o: { traffic: string; entityNames: string[]; from: string }) => {
+          seen.push({ traffic: o.traffic, entityNames: o.entityNames, from: o.from });
           return Promise.resolve(report());
         })]);
 
@@ -768,6 +772,10 @@ describe("runGraph", () => {
 
         expect(seen[0]?.traffic).toBe("1000 rps, p99");
         expect(seen[0]?.entityNames).toContain("web");
+        // This graph came off the account, and the lexicon is told so: without
+        // it, a lexicon answers about whichever estate it defaults to and the
+        // report cannot say which one it described (#2494).
+        expect(seen[0]?.from).toBe("live");
       });
 
       test("without --traffic: nothing is asked and neither key appears", async () => {

@@ -1793,6 +1793,23 @@ export interface PredictBehaviourOptions {
   buildOutput: string;
   entityNames: string[];
   entities: Map<string, { entityType: string; props: Record<string, unknown> }>;
+  /**
+   * Which estate the caller is asking about (#2355, #2494).
+   *
+   * `live` is the account as it stands, drift included. `declared` is the
+   * file, and reads no account. The epic's delta is those two differenced, so
+   * a lexicon has to be able to tell them apart — and until this field existed
+   * it could not: both graph paths handed over identical options, and a
+   * lexicon defaulting to one of them answered the wrong question for the
+   * other with nothing in the report to say so. A figure about the file,
+   * labelled as the account, is precisely what "a prediction is never
+   * presented as a bill" exists to prevent.
+   *
+   * Required, and deliberately not defaulted. A default here is a guess about
+   * which estate somebody meant, and getting that wrong is silent: the report
+   * that comes back is well-formed and about the wrong thing.
+   */
+  from: "live" | "declared";
   /** Deployed stack to predict for, in a multi-stack project (see `stacks` in `ChantConfig`). */
   stack?: string;
   /** Region the stack is deployed in, mirroring the deep read (#1267). Omitted keeps the ambient default. */

@@ -36,13 +36,14 @@ import type { PredictBehaviourOptions } from "./behaviour";
 /**
  * What the caller knows and the graph does not.
  *
- * `edgeCoverage` is here rather than derived because this module cannot
- * honestly derive it. Whether the edges in hand are the whole graph depends on
+ * `from` and `edgeCoverage` are here rather than derived because this module
+ * cannot honestly derive either. A graph does not remember whether it was read
+ * from an account or built from a file, and this reshapes both the same way. Whether the edges in hand are the whole graph depends on
  * which anchoring produced them and which lexicons contributed a reference
  * catalog, and both facts live with the caller.
  */
 export interface BehaviourRequestContext
-  extends Pick<PredictBehaviourOptions, "environment" | "traffic" | "buildOutput" | "edgeCoverage"> {
+  extends Pick<PredictBehaviourOptions, "environment" | "traffic" | "buildOutput" | "edgeCoverage" | "from"> {
   stack?: string;
   region?: string;
   owned?: boolean;
@@ -69,6 +70,7 @@ export function behaviourRequestFromIr(ir: GraphIR, ctx: BehaviourRequestContext
     entities,
     edges: ir.edges,
     edgeCoverage: ctx.edgeCoverage,
+    from: ctx.from,
     traffic: ctx.traffic,
     ...(ctx.stack === undefined ? {} : { stack: ctx.stack }),
     ...(ctx.region === undefined ? {} : { region: ctx.region }),

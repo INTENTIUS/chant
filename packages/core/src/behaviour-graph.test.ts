@@ -46,6 +46,7 @@ const ctx = {
   traffic: "100 rps, p50",
   buildOutput: "",
   edgeCoverage: { verdict: "unknown" } as const,
+  from: "live" as const,
 };
 
 describe("behaviourRequestFromIr", () => {
