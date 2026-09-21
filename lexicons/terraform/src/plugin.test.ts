@@ -1,6 +1,7 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { behaviourEngineVariables, isBehaviourRefusalReport } from "@intentius/chant/behaviour";
 import { isLexiconPlugin } from "@intentius/chant/lexicon";
 import { validateLexiconConfig } from "@intentius/chant/lexicon-config";
 import type { ChantConfig } from "@intentius/chant/config";
@@ -76,6 +77,27 @@ describe("terraform plugin", () => {
     expect(skills[0].name).toBe("chant-terraform");
     expect(skills[0].content.length).toBeGreaterThan(0);
     expect(skills[0].content).toContain("TerraformApplyOp");
+  });
+});
+
+describe("predictBehaviour on the plugin (#2495)", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("reaches core's engine front with nothing injected, and refuses by name when no engine is set", async () => {
+    for (const name of behaviourEngineVariables("chant")) vi.stubEnv(name, "");
+    const result = await terraformPlugin.predictBehaviour!({
+      environment: "prod",
+      buildOutput: "",
+      from: "declared",
+      traffic: "100 rps, p50",
+      entityNames: ["net/aws_vpc.main"],
+      entities: new Map([
+        ["net/aws_vpc.main", { entityType: "Terraform::Resource", props: { root: "net", address: "aws_vpc.main", body: {} } }],
+      ]),
+      edges: [],
+      edgeCoverage: { verdict: "unknown" },
+    });
+    expect(isBehaviourRefusalReport(result) && result.refusal.cause).toBe("no-engine");
   });
 });
 

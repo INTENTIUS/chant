@@ -99,10 +99,12 @@ export { TERRAFORM_STATE_OWNERSHIP_KEYS } from "./state-ownership";
 // path for a choudoufu root, reading `live-ls -json` and `live-plan -json`
 // through the same activities `describeResources` runs, and the same producer
 // over the declaration so the two sides of the delta are built alike. The
-// engine is injected: this lexicon dials none.
+// engine is injected, and defaults to core's front (#2495): this lexicon
+// dials none.
 export {
   predictTerraformBehaviour,
   terraformBehaviourRequest,
+  terraformPredictOptionsFrom,
   TERRAFORM_REFERENCE_CATALOG,
   type TerraformBehaviourDeps,
   type TerraformBehaviourEntity,

@@ -60,8 +60,13 @@ import {
   type PredictBehaviourOptions,
   type UnpredictedEntity,
 } from "@intentius/chant/behaviour";
+import { createBehaviourPredict } from "@intentius/chant/behaviour-predict";
+import type { EntityReference } from "@intentius/chant/graph-ir";
 import { indexLivePlan, readLiveLs, type TerraformReadDeps } from "../describe-resources";
+import type { TerraformConfig } from "../config";
 import { RESOURCE_TYPE } from "../hcl/parse";
+import { choudoufuLiveLs, choudoufuLivePlan } from "../op/activities/terraform";
+import { terraformBehaviourKinds } from "./kinds";
 import {
   terraformBehaviourRequest,
   type TerraformBehaviourEntity,
@@ -123,6 +128,159 @@ export interface TerraformPredictOptions
   from: "live" | "declared";
 }
 
+/**
+ * What the plugin method runs with, where a caller injects nothing (#2495).
+ *
+ * The two reads are the activities `describeResources` already drives. The
+ * engine front is core's, handed this lexicon's coverage rows and no other's:
+ * a plugin method takes options alone and cannot see which other lexicons the
+ * project configured, and every name this producer sends is a terraform block
+ * or a name it passed through untouched. A passed-through name of another
+ * lexicon's type comes back `unknown-type`, which is true of what this path
+ * knows about it.
+ */
+const REAL_DEPS: TerraformBehaviourDeps = {
+  liveLs: choudoufuLiveLs,
+  livePlan: choudoufuLivePlan,
+  predict: createBehaviourPredict({ kinds: [terraformBehaviourKinds] }),
+};
+
+/** Reads the project's declaration afresh. Injectable so a test parses nothing from disk. */
+export type TerraformDeclarationReader = (cwd?: string) => Promise<ReadonlyMap<string, TerraformBehaviourEntity>>;
+
+/**
+ * The build's own entities, read again from the project's config: what
+ * `buildRoots()` renders, with `mode`, `body` and `references` as the parse
+ * stamps them. The config is found the way `observeAmbient` and the
+ * activities find it, so `terraform.roots` means one thing to all of them.
+ */
+export const readTerraformDeclaration: TerraformDeclarationReader = async (cwd) => {
+  const { loadChantConfigUpward } = await import("@intentius/chant/config");
+  const { renderTerraformRoots } = await import("../hcl/roots");
+  const { dirname, resolve } = await import("node:path");
+
+  const start = resolve(cwd ?? process.cwd());
+  const { config, configPath } = await loadChantConfigUpward(start);
+  const namespace = (config as { terraform?: TerraformConfig }).terraform;
+  const entities = new Map<string, TerraformBehaviourEntity>();
+  if (!namespace?.roots || Object.keys(namespace.roots).length === 0) return entities;
+  const rendered = await renderTerraformRoots({
+    projectRoot: configPath ? dirname(configPath) : start,
+    roots: namespace.roots,
+    binary: namespace.binary,
+    callModuleType: namespace.callModuleType,
+  });
+  for (const [name, entity] of rendered.entities) {
+    const e = entity as unknown as TerraformBehaviourEntity;
+    entities.set(name, {
+      entityType: e.entityType,
+      props: e.props ?? {},
+      ...(Array.isArray(e.references) ? { references: e.references } : {}),
+    });
+  }
+  return entities;
+};
+
+const rootOf = (entity: TerraformBehaviourEntity | undefined): string | undefined =>
+  typeof entity?.props.root === "string" ? entity.props.root : undefined;
+
+/**
+ * Read the contract's options as this producer's (#2495): the plugin method's
+ * whole adaptation. Two things are missing from an entity by the time a graph
+ * has carried it here, and which one depends on the graph.
+ *
+ * ## A declared graph has lost its `references`
+ *
+ * `root` and `mode` need no work: they are on `props`, the graph projects
+ * `props` onto a node's `attrs` as they stand, and `behaviourRequestFromIr`
+ * hands `attrs` back as `props`. `references` are left off `attrs` on
+ * purpose, because an edge already says the same thing (`graph-ir.ts`'s
+ * `SKIP_KEYS`), and the contract's `edges` arrive in their place. An `IREdge`
+ * is an `EntityReference` plus the entity it leaves from, so grouping the
+ * edges by `from` gives every entity its references back, field for field.
+ * Without this a block whose body holds a `${…}` is counted as an unresolved
+ * kind on a graph that resolved it. An entity that still carries its own
+ * `references` keeps them: the edges are the copy.
+ *
+ * ## A live graph has lost the declaration
+ *
+ * `chant graph --live` hands over observed nodes: an address, a root, the
+ * provider's type, and no `mode`, no `body` and no edge. Read as they stand,
+ * no root is live, so the account is never read here; no block has a size,
+ * because `body.instance_type` went with the body; and containment is empty.
+ * The figures that come back are well-formed and differ from the declared
+ * side's for reasons that have nothing to do with the account, which is the
+ * delta this producer exists to keep honest.
+ *
+ * So under `from: "live"`, a root any of whose entities arrived with no
+ * `mode` is declared again from the project's own config, and the producer
+ * then reads the account itself, as it does for any other caller. The
+ * observed entities of that root are set aside, the undeclared ones
+ * included: an owned orphan is the live read's to list, under the key
+ * `observeAmbient` gave it, and one the account no longer holds is not in a
+ * prediction of the account.
+ *
+ * A root the config does not render is left as it arrived. That is a worse
+ * reading and the only one available.
+ *
+ * ## What stops here
+ *
+ * The caller's `edges` and `edgeCoverage`. Both are this producer's to
+ * compute, from whichever reads it ends up making (see
+ * {@link TerraformPredictOptions}).
+ */
+export async function terraformPredictOptionsFrom(
+  options: PredictBehaviourOptions,
+  redeclare: TerraformDeclarationReader = readTerraformDeclaration,
+): Promise<TerraformPredictOptions> {
+  const { entities: given, edges, edgeCoverage: _edgeCoverage, ...rest } = options;
+  const leaving = new Map<string, EntityReference[]>();
+  for (const edge of edges ?? []) {
+    if (edge.kind !== "ref") continue;
+    const reference: EntityReference = {
+      to: edge.to,
+      ...(edge.viaAttr !== undefined ? { viaAttr: edge.viaAttr } : {}),
+      ...(edge.toAttr !== undefined ? { toAttr: edge.toAttr } : {}),
+    };
+    (leaving.get(edge.from) ?? leaving.set(edge.from, []).get(edge.from)!).push(reference);
+  }
+  const entities = new Map<string, TerraformBehaviourEntity>();
+  for (const [name, entity] of given) {
+    const own = (entity as TerraformBehaviourEntity).references;
+    const references = Array.isArray(own) ? own : leaving.get(name);
+    entities.set(name, references === undefined ? entity : { ...entity, references });
+  }
+  if (options.from !== "live") return { ...rest, entities };
+
+  const observed = new Set<string>();
+  for (const name of options.entityNames) {
+    const entity = entities.get(name);
+    const root = rootOf(entity);
+    if (root !== undefined && entity?.props.mode === undefined) observed.add(root);
+  }
+  if (observed.size === 0) return { ...rest, entities };
+
+  const declared = new Map<string, Map<string, TerraformBehaviourEntity>>();
+  for (const [name, entity] of await redeclare()) {
+    const root = rootOf(entity);
+    if (root === undefined || !observed.has(root)) continue;
+    (declared.get(root) ?? declared.set(root, new Map()).get(root)!).set(name, entity);
+  }
+  const entityNames = options.entityNames.filter((name) => {
+    const root = rootOf(entities.get(name));
+    if (root === undefined || !declared.has(root)) return true;
+    entities.delete(name);
+    return false;
+  });
+  for (const again of declared.values()) {
+    for (const [name, entity] of again) {
+      entities.set(name, entity);
+      entityNames.push(name);
+    }
+  }
+  return { ...rest, entityNames, entities };
+}
+
 /** Which roots the request would read live: those whose entities the parse stamped `mode: "live"`. */
 export function liveRootsOf(
   entityNames: readonly string[],
@@ -149,7 +307,7 @@ function readsAsCredentials(text: string): boolean {
  */
 export async function predictTerraformBehaviour(
   options: TerraformPredictOptions,
-  deps: TerraformBehaviourDeps,
+  deps: TerraformBehaviourDeps = REAL_DEPS,
 ): Promise<BehaviourResult> {
   const { cwd, from: _from, ...contract } = options;
   const where = cwd ? { cwd } : {};

@@ -98,7 +98,9 @@ The level is passed to the engine verbatim. chant neither parses it nor supplies
 
 Absence of both means chant did not look, which is a different statement from a refusal. A refusal names a cause and a remedy. An entity the engine could not price carries no block rather than a zeroed one, since "costs nothing" and "was not priced" are different claims.
 
-The engine sees no credentials: the request is built from the graph the read already holds, so there is no second read for one to leak from. Predictions need `predictBehaviour` from an installed lexicon. With none the graph is served unchanged, and says so once.
+The engine sees no credentials. Every request is screened before it is sent, and an engine run as a command is started with a fixed environment and none of the caller's.
+
+Predictions need `predictBehaviour` from an installed lexicon. With none the graph is served unchanged, and says so once. The Terraform lexicon implements it ([chant #2495](https://github.com/INTENTIUS/chant/issues/2495)). Under `--live` it makes one read of its own: a live graph's nodes carry an address and a provider type and no body, so an instance arrives with no `instance_type` for an engine to price. The lexicon declares each observed root again from `terraform.roots` and runs `live-ls` and `live-plan` on it, the two reads `describeResources` already makes. Both sides of the delta then reach the engine with the same sizes and the same containment, and what differs between them is the account.
 
 ##### `--namespace <ns>` — where to read entities that declare none
 
