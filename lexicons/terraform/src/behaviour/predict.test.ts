@@ -33,10 +33,12 @@ import {
   type PredictedBehaviour,
   type UnpredictedEntity,
 } from "@intentius/chant/behaviour";
+import { behaviourRequestFromIr } from "@intentius/chant/behaviour-graph";
 import type { Declarable } from "@intentius/chant/declarable";
+import { buildGraphIr } from "@intentius/chant/graph-ir";
 import type { TerraformReadDeps } from "../describe-resources";
 import { renderTerraformRoots } from "../hcl/roots";
-import { liveRootsOf, predictTerraformBehaviour, TERRAFORM } from "./predict";
+import { liveRootsOf, predictTerraformBehaviour, TERRAFORM, terraformPredictOptionsFrom } from "./predict";
 import type { TerraformBehaviourEntity } from "./request";
 
 const fixtures = join(dirname(fileURLToPath(import.meta.url)), "..", "__fixtures__");
@@ -49,6 +51,8 @@ const key = (address: string): string => `${ROOT}/${address}`;
 
 let entities: Map<string, TerraformBehaviourEntity>;
 let entityNames: string[];
+/** The build's own entities, as `chant graph` is handed them. */
+let built: Map<string, Declarable>;
 
 beforeAll(async () => {
   const rendered = await renderTerraformRoots({
@@ -56,6 +60,7 @@ beforeAll(async () => {
     roots: { [ROOT]: { dir: "./live-estate" } },
     binary: "choudoufu",
   });
+  built = rendered.entities;
   entities = new Map();
   for (const [name, entity] of rendered.entities) {
     const e = entity as Declarable & { props: Record<string, unknown>; references?: readonly never[] };
@@ -393,5 +398,152 @@ describe("the delta the epic asks for", () => {
       );
     }
     expect(asked).toEqual(["live", "declared"]);
+  });
+});
+
+describe("the contract's options, read as this producer's (#2495)", () => {
+  /** What `chant graph --traffic` hands a plugin: the graph reshaped, references left behind on the edges. */
+  const throughTheGraph = (from: "live" | "declared"): PredictBehaviourOptions =>
+    behaviourRequestFromIr(buildGraphIr(built, fixtures), {
+      ...common,
+      from,
+      edgeCoverage: { verdict: "unknown" },
+    });
+
+  /** Run the producer and keep the request the engine was sent. */
+  async function sent(options: Parameters<typeof predictTerraformBehaviour>[0]): Promise<PredictBehaviourOptions> {
+    let request: PredictBehaviourOptions | undefined;
+    const d = deps();
+    await predictTerraformBehaviour(options, {
+      liveLs: d.deps.liveLs,
+      livePlan: d.deps.livePlan,
+      predict: async (o) => {
+        request = o;
+        return tariff(o);
+      },
+    });
+    if (!request) throw new Error("the engine was never asked");
+    return request;
+  }
+
+  /** A reader that must not be reached: nothing on the declared side, or on a live side that kept its `mode`, reads the project again. */
+  const neverRedeclared = async (): Promise<never> => {
+    throw new Error("the declaration was read again");
+  };
+
+  it("the graph drops every reference, and the edges give each one back", async () => {
+    const graphed = throughTheGraph("declared");
+    const referencing = [...entities].filter(([, e]) => (e.references ?? []).length > 0);
+    expect(referencing.length).toBeGreaterThan(0);
+    for (const [name] of referencing) {
+      expect(Object.prototype.hasOwnProperty.call(graphed.entities.get(name), "references"), name).toBe(false);
+    }
+    const read = await terraformPredictOptionsFrom(graphed, neverRedeclared);
+    for (const [name, entity] of referencing) {
+      expect(read.entities.get(name)?.references, name).toEqual(entity.references);
+    }
+  });
+
+  it.each(["live", "declared"] as const)("sends the engine the %s request the build's own entities would have", async (from) => {
+    const direct = await sent({ ...common, from, entityNames, entities });
+    const graphed = await sent(await terraformPredictOptionsFrom(throughTheGraph(from), neverRedeclared));
+    expect(graphed.edges).toEqual(direct.edges);
+    expect(graphed.edgeCoverage).toEqual(direct.edgeCoverage);
+    expect(graphed.entityNames).toEqual(direct.entityNames);
+    expect(graphed.from).toBe(from);
+  });
+
+  it("keeps the references an entity still carries over the edges' copy", async () => {
+    const [name, entity] = [...entities].find(([, e]) => (e.references ?? []).length > 0)!;
+    const read = await terraformPredictOptionsFrom({
+      ...common,
+      from: "declared",
+      entityNames,
+      entities: entities as PredictBehaviourOptions["entities"],
+      edges: [{ from: name, to: "somewhere/else", kind: "ref" }],
+      edgeCoverage: { verdict: "unknown" },
+    }, neverRedeclared);
+    expect(read.entities.get(name)?.references).toEqual(entity.references);
+  });
+
+  it("does not pass the caller's edges or coverage claim on", async () => {
+    const read = (await terraformPredictOptionsFrom(throughTheGraph("declared"), neverRedeclared)) as unknown as Record<
+      string,
+      unknown
+    >;
+    expect(Object.prototype.hasOwnProperty.call(read, "edges")).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(read, "edgeCoverage")).toBe(false);
+  });
+
+  /**
+   * What `chant graph --live` hands over: observed nodes. An address, a root
+   * and the provider's type; no `mode`, no `body`, no edge. Plus one the
+   * account holds that nothing declares.
+   */
+  const ORPHAN = key("aws_sqs_queue.nobody_declared");
+  function throughTheLiveGraph(): PredictBehaviourOptions {
+    const observed = new Map<string, { entityType: string; props: Record<string, unknown> }>();
+    for (const [name, entity] of entities) {
+      if (entity.entityType !== "Terraform::Resource") continue;
+      const address = String(entity.props.address);
+      observed.set(name, {
+        entityType: entity.entityType,
+        props: { address, root: ROOT, estate: ESTATE, resourceType: address.slice(0, address.indexOf(".")) },
+      });
+    }
+    observed.set(ORPHAN, {
+      entityType: "Terraform::Resource",
+      props: { address: "aws_sqs_queue.nobody_declared", root: ROOT, estate: ESTATE, resourceType: "aws_sqs_queue" },
+    });
+    return {
+      ...common,
+      from: "live",
+      entityNames: [...observed.keys()],
+      entities: observed,
+      edges: [],
+      edgeCoverage: { verdict: "unknown" },
+    };
+  }
+
+  it("declares a live graph's root again, so the account is read and the engine is sent what the build would send", async () => {
+    const direct = await sent({ ...common, from: "live", entityNames, entities });
+    const graphed = await sent(await terraformPredictOptionsFrom(throughTheLiveGraph(), async () => entities));
+    expect(graphed.entityNames).toEqual(direct.entityNames);
+    expect(graphed.edges).toEqual(direct.edges);
+    expect(graphed.edgeCoverage).toEqual(direct.edgeCoverage);
+    for (const name of direct.entityNames) {
+      expect(graphed.entities.get(name)?.props, name).toEqual(direct.entities.get(name)?.props);
+    }
+  });
+
+  it("read as it arrived, the same live graph reads no account at all", async () => {
+    // The hole the test above closes, pinned so it cannot close by accident:
+    // no observed entity says `mode: "live"`, so no root is live.
+    const asArrived = throughTheLiveGraph();
+    expect(liveRootsOf(asArrived.entityNames, asArrived.entities)).toEqual([]);
+    const read = await terraformPredictOptionsFrom(asArrived, async () => entities);
+    expect(liveRootsOf(read.entityNames, read.entities)).toEqual([ROOT]);
+  });
+
+  it("sets an observed orphan aside for the live read to list", async () => {
+    const read = await terraformPredictOptionsFrom(throughTheLiveGraph(), async () => entities);
+    expect(read.entityNames).not.toContain(ORPHAN);
+    expect(read.entities.has(ORPHAN)).toBe(false);
+    expect([...read.entityNames].sort()).toEqual(entityNames);
+  });
+
+  it("leaves a root the config does not render as it arrived", async () => {
+    const asArrived = throughTheLiveGraph();
+    const read = await terraformPredictOptionsFrom(asArrived, async () => new Map());
+    expect(read.entityNames).toEqual(asArrived.entityNames);
+    expect(read.entities.get(ORPHAN)).toEqual(asArrived.entities.get(ORPHAN));
+  });
+
+  it("reads the declaration again only for a live graph", async () => {
+    const declaredSide = { ...throughTheLiveGraph(), from: "declared" as const };
+    await expect(terraformPredictOptionsFrom(declaredSide, neverRedeclared)).resolves.toBeDefined();
+    await expect(terraformPredictOptionsFrom(throughTheLiveGraph(), neverRedeclared)).rejects.toThrow(
+      "the declaration was read again",
+    );
   });
 });

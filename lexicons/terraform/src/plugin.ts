@@ -136,6 +136,19 @@ export const terraformPlugin: LexiconPlugin = {
   },
 
   /**
+   * The prediction, for whichever estate `options.from` names (#2495). The
+   * producer is `predictTerraformBehaviour` and this is its second caller, not
+   * a second producer: the contract's options are read as its own and handed
+   * over, and it runs with the real reads and core's engine front. What that
+   * reading has to put back, for a declared graph and for a live one, is on
+   * `terraformPredictOptionsFrom`.
+   */
+  async predictBehaviour(options) {
+    const { predictTerraformBehaviour, terraformPredictOptionsFrom } = await import("./behaviour");
+    return predictTerraformBehaviour(await terraformPredictOptionsFrom(options));
+  },
+
+  /**
    * The kinds a live root can enumerate beyond its declaration (#1278,
    * #2104). Empty on a project with no live root, because `live-ls` is the
    * only estate-wide read this lexicon has and a stock root has none: a state
