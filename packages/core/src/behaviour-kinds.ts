@@ -307,7 +307,7 @@ export function unmappedDetail(
     ? `the lexicon that owns ${owner.prefixes.join(", ")}`
     : "the lexicon that owns this entity type";
   return (
-    `${label} has no row in any contributed coverage table — it is a type from a substrate that is ` +
+    `${label} has no row in any contributed coverage table. It is a type from a substrate that is ` +
     "modelled, and is neither mapped to an engine kind nor declared unmapped, so nothing has an " +
     `opinion about it rather than a stated one. Add a row in ${where}.`
   );

@@ -111,6 +111,8 @@ export default defineConfig({
       // (no Docker, no network — that is the point), and additionally scans
       // packages/ and lexicons/ for network primitives.
       "test/no-egress.test.ts",
+      // chant #2404 — the behaviour coverage page against the contributed rows.
+      "test/behaviour-coverage.test.ts",
     ],
     // chant #1419 — a fresh clone has no lexicon src/generated/ or
     // dist/meta.json, and lexicon tests fail against their absence with

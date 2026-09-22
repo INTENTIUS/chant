@@ -916,6 +916,11 @@
   "tricolon/comma-series": 1,
   "formatting/bold-first-bullet": 1
  },
+ "docs/src/content/docs/reference/behaviour-coverage.mdx": {
+  "formatting/em-dash-density": 2,
+  "discourse/punchy-fragments": 1,
+  "claude/colon-reveal": 5
+ },
  "docs/src/content/docs/reference/network-egress.mdx": {
   "formatting/em-dash-density": 17,
   "claude/colon-reveal": 5,
