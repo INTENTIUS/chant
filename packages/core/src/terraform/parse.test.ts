@@ -6,7 +6,7 @@ import { parseTerraformDir, loadHcl2json, Hcl2JsonNotInstalled, HCL2JSON_RECORD_
 import { readFileSync } from "fs";
 
 /**
- * `@cdktf/hcl2json` is an optional (dev-only in this repo) dependency. These
+ * `@cdktn/hcl2json` is an optional (dev-only in this repo) dependency. These
  * tests exercise the real wasm parser when it resolves and skip cleanly when it
  * does not, so a consumer install without the parser never fails the suite.
  */
@@ -22,8 +22,8 @@ beforeAll(async () => {
 
 describe("loadHcl2json", () => {
   test("missing parser throws an install-hint error, not a raw MODULE_NOT_FOUND", () => {
-    const err = new Hcl2JsonNotInstalled(new Error("Cannot find module '@cdktf/hcl2json'"));
-    expect(err.message).toContain("npm install -D @cdktf/hcl2json");
+    const err = new Hcl2JsonNotInstalled(new Error("Cannot find module '@cdktn/hcl2json'"));
+    expect(err.message).toContain("npm install -D @cdktn/hcl2json");
     expect(err.message).toContain("HCL parser");
     expect(err.name).toBe("Hcl2JsonNotInstalled");
   });

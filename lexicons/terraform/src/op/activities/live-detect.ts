@@ -9,7 +9,7 @@
  * time and is dependency-light on purpose, since it shells out to the
  * configured binary and never touches the lexicon's HCL parse or serializer,
  * so it never pulls in
- * the ~1.8 MB `@cdktf/hcl2json` wasm parser just to decide whether an apply
+ * the ~1.8 MB `@cdktn/hcl2json` wasm parser just to decide whether an apply
  * should run `apply -auto-approve` with no plan file. Plain text and a
  * hand-rolled brace counter are enough for that narrower question, and the
  * literal sidecar filename below is kept in sync with `LIVE_SIDECAR_FILENAME`

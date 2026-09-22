@@ -1,7 +1,7 @@
 /**
  * Pure Terraform dependency-graph builder for the carve-out advisor (#214 T1).
  *
- * Input is the JSON tree `@cdktf/hcl2json` produces (`Hcl2JsonTree`) plus the
+ * Input is the JSON tree `@cdktn/hcl2json` produces (`Hcl2JsonTree`) plus the
  * traversal accessors its expression AST found per interpolated string
  * (`ExpressionRefs`, resolved in `parse.ts` — #998). Tokenizing `${...}`
  * expression bodies is the AST's job — a quoted address inside an expression

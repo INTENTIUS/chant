@@ -1,9 +1,9 @@
 /**
  * Thin wasm glue for the carve-out advisor (#214 T1): read a Terraform estate's
- * `.tf` files, run them through `@cdktf/hcl2json`, merge into one tree, and hand
+ * `.tf` files, run them through `@cdktn/hcl2json`, merge into one tree, and hand
  * off to the pure `buildGraph`.
  *
- * `@cdktf/hcl2json` is NOT a chant dependency — it carries a ~1.8 MB wasm blob
+ * `@cdktn/hcl2json` is NOT a chant dependency — it carries a ~1.8 MB wasm blob
  * and only carve-out users need it. It is lazy-loaded here and, if absent, the
  * advisor fails with a one-line install hint.
  */
@@ -25,7 +25,7 @@ export class Hcl2JsonNotInstalled extends Error {
   constructor(cause: unknown) {
     super(
       "Terraform carve-out needs the HCL parser, which is not installed.\n" +
-        "  Install it once:  npm install -D @cdktf/hcl2json\n" +
+        "  Install it once:  npm install -D @cdktn/hcl2json\n" +
         `(underlying error: ${cause instanceof Error ? cause.message : String(cause)})`,
     );
     this.name = "Hcl2JsonNotInstalled";
@@ -75,7 +75,7 @@ function recording(parser: Hcl2Json, path: string): Hcl2Json {
 export async function loadHcl2json(): Promise<Hcl2Json> {
   let parser: Hcl2Json;
   try {
-    parser = (await import("@cdktf/hcl2json")) as Hcl2Json;
+    parser = (await import("@cdktn/hcl2json")) as Hcl2Json;
   } catch (err) {
     throw new Hcl2JsonNotInstalled(err);
   }

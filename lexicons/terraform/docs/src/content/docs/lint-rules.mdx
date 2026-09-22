@@ -659,7 +659,7 @@ reports the deprecated interpolation in an object KEY (`"${var.k}" = value`);
 that is a different line shape whose fix is not a simple unquote, so this rule
 leaves it alone rather than emit a diff it cannot justify. And chant's version
 reads the block's source text rather than its parsed body, which is the one
-rule in the family that has to: `@cdktf/hcl2json` renders `x = var.y` and
+rule in the family that has to: `@cdktn/hcl2json` renders `x = var.y` and
 `x = "${var.y}"` as the same string, so a check over the parse alone would
 report every reference in the root. The quotes only survive in the text.
 

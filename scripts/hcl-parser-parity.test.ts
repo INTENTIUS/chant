@@ -177,7 +177,7 @@ describe("runWorker (real parser)", () => {
   let parserDir: string | undefined;
   try {
     const require = createRequire(join(dirname(__dirname), "package.json"));
-    parserDir = dirname(require.resolve("@cdktf/hcl2json/package.json"));
+    parserDir = dirname(require.resolve("@cdktn/hcl2json/package.json"));
   } catch {
     parserDir = undefined;
   }

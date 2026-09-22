@@ -2,7 +2,7 @@
  * A value envelope over a parsed block body (chant #2113).
  *
  * Every TF post-synth check reads `BlockBody` (`./parse.ts`), raw
- * `@cdktf/hcl2json` output, and re-derives, by hand, whether an attribute is
+ * `@cdktn/hcl2json` output, and re-derives, by hand, whether an attribute is
  * a plain literal, a reference/expression, or absent. tflint's OPA ruleset
  * hands a policy `{value, unknown, sensitive, ephemeral, range}` per
  * attribute so a check reads that uniformly instead of re-deriving it

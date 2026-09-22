@@ -9,7 +9,7 @@
  * Both funnel through `blocksToEntities`, so an entity the audit path sees is
  * the entity the build path sees.
  *
- * Core owns the parser glue: `loadHcl2json()` lazy-loads `@cdktf/hcl2json`
+ * Core owns the parser glue: `loadHcl2json()` lazy-loads `@cdktn/hcl2json`
  * (a ~1.8 MB wasm blob) and raises a one-line install hint when it is absent.
  * `parseTerraformDir()` next to it is NOT reused: it returns carve's `TfGraph`,
  * a scoring-and-excision shape with no room for the per-block bodies a
@@ -27,7 +27,7 @@ import type { SuppressionDirective } from "@intentius/chant/lint/suppressions";
 import type { TerraformDeleteMode } from "../config";
 import { scanSuppressions, directivesFor, type FileScan } from "./suppressions";
 
-/** A parsed HCL block body, as `@cdktf/hcl2json` encodes it. */
+/** A parsed HCL block body, as `@cdktn/hcl2json` encodes it. */
 export type BlockBody = Record<string, unknown>;
 
 /**

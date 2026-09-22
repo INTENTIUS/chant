@@ -168,7 +168,7 @@ function dropRedundantDefaults(content: string): { patched: string; changed: boo
  * (`x = "${var.y}"` becomes `x = var.y`), the deprecated pre-0.12 style
  * tflint's `terraform_deprecated_interpolation` reports. Anchored on the
  * source text rather than the parsed body for the reason TF016's own module
- * gives: `@cdktf/hcl2json` renders a bare reference and a quoted interpolation
+ * gives: `@cdktn/hcl2json` renders a bare reference and a quoted interpolation
  * identically, so the quotes only exist here.
  */
 const INTERPOLATION_ONLY_RE = /^([ \t]*)([A-Za-z_][A-Za-z0-9_-]*)([ \t]*=[ \t]*)"\$\{([^"]+)\}"([ \t]*(?:#.*)?)$/;

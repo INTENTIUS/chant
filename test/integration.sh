@@ -607,7 +607,7 @@ for example_dir in /app/examples/*/; do
 done
 
 # ── Terraform carve-out (full offline flow: advise → emit → bridge → apply) ──
-# @cdktf/hcl2json is a devDependency, installed by the `npm install` above, so
+# @cdktn/hcl2json is a devDependency, installed by the `npm install` above, so
 # the parser is available in this workspace image. The whole flow is offline:
 # emit adopts from terraform.tfstate, so no cloud is needed.
 

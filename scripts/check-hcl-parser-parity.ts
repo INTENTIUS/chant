@@ -8,7 +8,7 @@
  *
  * `--candidate` is a package directory, or an npm spec that is installed
  * into a temporary prefix first. `--reference` defaults to the
- * `@cdktf/hcl2json` this checkout resolves. `--corpus` (repeatable) adds a
+ * `@cdktn/hcl2json` this checkout resolves. `--corpus` (repeatable) adds a
  * directory to walk; with none given, the lexicon fixtures, core's carve
  * fixtures and `examples/` are walked. `--record` (repeatable) replays a file
  * the test suite wrote under `CHANT_HCL2JSON_RECORD`:
@@ -116,7 +116,7 @@ function resolveCandidate(spec: string): string {
 function resolveReference(given: string | undefined): string {
   if (given) return resolve(given);
   const require = createRequire(join(repoRoot, "package.json"));
-  return dirname(require.resolve("@cdktf/hcl2json/package.json"));
+  return dirname(require.resolve("@cdktn/hcl2json/package.json"));
 }
 
 /** Run one parser in a child process and read its outputs back. */

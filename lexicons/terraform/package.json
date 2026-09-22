@@ -45,19 +45,19 @@
     "bundle": "tsx src/package-cli.ts"
   },
   "devDependencies": {
+    "@cdktn/hcl2json": "^0.24.0",
     "@intentius/chant": "*",
     "tsc-alias": "^1.8.17",
     "typescript": "^5.9.3",
-    "@cdktf/hcl2json": "^0.21.0",
     "zod": "^4.3.6"
   },
   "publishConfig": {
     "access": "public"
   },
   "peerDependencies": {
-    "zod": "^4.3.6",
     "@intentius/chant": "^0.76.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "zod": "^4.3.6"
   },
   "description": "terraform lexicon for chant, existing Terraform root modules as declarable entities",
   "license": "Apache-2.0",
