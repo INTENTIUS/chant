@@ -11,12 +11,13 @@ import { propsOf } from "../../entity-props";
  * expects to run that nothing will ever execute, which is worse than an error
  * because it looks configured.
  *
- * Both fields are chant extensions pending BinaryBourbon/fountain#1634; the
- * rule holds the shape steady until upstream enforces it.
+ * Both fields are in the spec since fountain v0.21.0, and the server refuses
+ * either half without the other at apply. The rule moves that refusal to
+ * build, where it is a diagnostic in review instead of a 422 in a run.
  */
 export const acpRuntimeCommandCheck: PostSynthCheck = {
   id: "FTN023",
-  description: 'Agent runtime "acp" requires runtime_command, and no other runtime accepts one',
+  description: "Agent runtime \"acp\" requires runtime_command, and no other runtime accepts one",
 
   check(ctx: PostSynthContext): PostSynthDiagnostic[] {
     const diagnostics: PostSynthDiagnostic[] = [];

@@ -13,6 +13,7 @@ import { scheduleCronSyntaxCheck } from "./ftn020-schedule-cron-syntax";
 import { typedReferencesResolveCheck } from "./ftn021-typed-references-resolve";
 import { webhookUrlPublicHttpsCheck } from "./ftn022-webhook-url-public-https";
 import { acpRuntimeCommandCheck } from "./ftn023-acp-runtime-command";
+import { setupTimeoutRangeCheck } from "./ftn024-setup-timeout-range";
 
 function ctx(entities: Record<string, Record<string, unknown>>): PostSynthContext {
   const map = new Map<string, Declarable>();
@@ -277,6 +278,29 @@ describe("FTN023 acp-runtime-command", () => {
     ).toHaveLength(0);
     expect(
       acpRuntimeCommandCheck.check(ctx({ a: { entityType: AGENT, runtime: "claude", model: "anthropic/x" } })),
+    ).toHaveLength(0);
+  });
+});
+
+describe("FTN024 setup-timeout-range", () => {
+  const env = (setup_timeout_seconds: unknown) =>
+    ctx({ e: { entityType: ENV, name: "e", networking_type: "limited", setup_timeout_seconds } });
+
+  it.each([0, 901, 12.5, -1, "120"])("errors on %j", (value) => {
+    const diags = setupTimeoutRangeCheck.check(env(value));
+    expect(diags).toHaveLength(1);
+    expect(diags[0].checkId).toBe("FTN024");
+    expect(diags[0].message).toContain("1 to 900");
+  });
+
+  it.each([1, 120, 900])("is silent on %j", (value) => {
+    expect(setupTimeoutRangeCheck.check(env(value))).toHaveLength(0);
+  });
+
+  it("is silent when the field is absent, and on other kinds", () => {
+    expect(setupTimeoutRangeCheck.check(ctx({ e: { entityType: ENV, name: "e" } }))).toHaveLength(0);
+    expect(
+      setupTimeoutRangeCheck.check(ctx({ v: { entityType: VAULT, name: "v", setup_timeout_seconds: 901 } })),
     ).toHaveLength(0);
   });
 });

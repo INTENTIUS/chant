@@ -27,12 +27,13 @@ For the live half, a fountain endpoint and a token in `FOUNTAIN_TOKEN`. Mint
 one with `POST /api/auth/token` or from the account UI. A local
 `mix phx.server` fountain works the same way.
 
-<Aside type="caution" title="Two upstream pieces are not in v0.16.0">
-The `runtime: "acp"` and `runtime_command` pair a steward sets is
-[fountain#1634](https://github.com/BinaryBourbon/fountain/pull/1634); an
-instance without it rejects the pair at apply. Answering a gate as a fountain
-permission card is [fountain#1635](https://github.com/BinaryBourbon/fountain/issues/1635).
-Everything else here works against the routes fountain has today.
+<Aside type="caution" title="Needs fountain v0.21.0 or later">
+The lexicon is generated from fountain v0.21.0, the first release whose spec
+has the `runtime: "acp"` and `runtime_command` pair a steward sets. An older
+instance rejects the pair at apply. That release also carries the path for
+answering a gate as a fountain permission card
+([fountain#1635](https://github.com/managoat/fountain/issues/1635)), which chant
+does not use yet (chant#2391).
 </Aside>
 
 ## 1. Scaffold the project

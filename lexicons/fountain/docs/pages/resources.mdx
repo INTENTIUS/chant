@@ -19,6 +19,16 @@ encrypted secrets, and the networking policy. `networking_type` is
 sandbox denies all egress — a deny-all, not an allow-all. FTN010 requires the
 networking intent to be explicit.
 
+`setup_timeout_seconds` bounds how long the setup script may run, from 1 to 900
+seconds with a default of 120. FTN024 checks the range at build, since the
+generated type is a plain `number`. Changing the value invalidates the
+environment's checkpoints.
+
+`secrets` is a list of `{ key, value }` pairs, and Vault takes the same field.
+Neither request schema has it; it comes from fountain's manifest format, and
+`fountainApply` sends it as the inline `secrets` map. Values are write-only, so
+write a reference that resolves at build, never a literal (FTN001).
+
 ## Vault
 
 A bag of env-var overrides selected at conversation create. Vault values
@@ -37,14 +47,15 @@ conversation and one persistent computer per agent identity.
 
 ### The ACP runtime
 
-`runtime: "acp"` and `runtime_command` are chant extensions. Upstream does not
-have them yet: the PR that adds them is
-[BinaryBourbon/fountain#1634](https://github.com/BinaryBourbon/fountain/pull/1634),
-and until it lands an instance rejects the pair at apply. They are on the
-generated `Agent` type anyway, for the same reason `metadata` is — an author
-needs somewhere honest to put them, and `metadata` is not it. FTN023 keeps the
-two together, and FTN016 rejects a `model` on an acp agent, because the model
-is whatever the command on the other end of the protocol chooses.
+`runtime: "acp"` launches `runtime_command` inside the sandbox and speaks the
+Agent Client Protocol to it. Both are in fountain's spec from v0.21.0, which
+also made `model` optional. FTN023 keeps the two together, and FTN016 rejects a
+`model` on an acp agent, because the model is whatever the command on the other
+end of the protocol chooses.
+
+`inference_credential_id` and `allowed_inference_credential_ids` name
+inference credential sets by uuid. The lexicon does not model the sets
+themselves, so these stay ids rather than typed references.
 
 ## Teammate
 

@@ -5,6 +5,9 @@ import { Steward, stewardForOp, __resetStewardsForTests } from "./steward";
 import { Environment, Vault } from "../generated/index";
 import { fountainSerializer } from "../serializer";
 import type { Declarable } from "@intentius/chant";
+import type { PostSynthContext } from "@intentius/chant/lint/post-synth";
+import { runtimeModelValidCheck } from "../lint/post-synth/ftn016-runtime-model-valid";
+import { acpRuntimeCommandCheck } from "../lint/post-synth/ftn023-acp-runtime-command";
 
 describe("ConciergeStack", () => {
   it("defaults to deny-all egress, no vaults, and the ownership marker", () => {
@@ -60,6 +63,22 @@ describe("Steward", () => {
 
   const toolchain = () => new Environment({ name: "toolchain" });
   const creds = () => new Vault({ name: "prod-creds" });
+
+  it("passes FTN016 and FTN023 now that acp is upstream's runtime, not chant's extension", () => {
+    const { agent, teammate } = Steward({
+      name: "prod-steward",
+      environment: toolchain(),
+      ops: [op("prod-watch", { cron: "*/10 * * * *" })],
+    });
+    const entities = new Map<string, Declarable>([
+      ["agent", agent as unknown as Declarable],
+      ["teammate", teammate as unknown as Declarable],
+    ]);
+    const ctx = { outputs: new Map(), entities, buildResult: { warnings: [], errors: [] } } as unknown as PostSynthContext;
+
+    expect(runtimeModelValidCheck.check(ctx)).toEqual([]);
+    expect(acpRuntimeCommandCheck.check(ctx)).toEqual([]);
+  });
 
   it("returns an acp agent, a teammate, a schedule per scheduled op, and the webhook", () => {
     const environment = toolchain();

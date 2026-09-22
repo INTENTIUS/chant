@@ -6,7 +6,7 @@ description: "Fountain workload primitives (Environment, Vault, Agent) as typed 
 {/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-fountain` — DO NOT EDIT.
     Edit lexicons/fountain/src/codegen/docs.ts instead; changes here are overwritten. */}
 
-The **fountain** lexicon declares [fountain](https://github.com/BinaryBourbon/fountain)'s workload layer as typed chant resources. fountain runs coding agents in sandboxed VMs. Six kinds are declarable: `Environment` (sandbox baseline), `Vault` (env-var overrides) and `Agent` (a runnable agent config) are what `fountain apply` reconciles; `Teammate` (an agent seated on the team, with a thread of its own), `Schedule` (a cron prompt into that thread) and `Webhook` (where the estate's events leave it) belong to the team, schedule and webhook routes.
+The **fountain** lexicon declares [fountain](https://github.com/managoat/fountain)'s workload layer as typed chant resources. fountain runs coding agents in sandboxed VMs. Six kinds are declarable: `Environment` (sandbox baseline), `Vault` (env-var overrides) and `Agent` (a runnable agent config) are what `fountain apply` reconciles; `Teammate` (an agent seated on the team, with a thread of its own), `Schedule` (a cron prompt into that thread) and `Webhook` (where the estate's events leave it) belong to the team, schedule and webhook routes.
 
 Types are generated from a pinned fountain release's OpenAPI spec, so they track the real API.
 
@@ -65,10 +65,10 @@ export const nightly = new Schedule({
 | Services | 1 |
 | Intrinsic functions | 0 |
 | Pseudo-parameters | 0 |
-| Lint rules | 13 |
+| Lint rules | 14 |
 
-**Lexicon version:** 0.57.0  
+**Lexicon version:** 0.77.0  
 **Namespace:** `Fountain`
 
-- [All Rules](./rules) — 13 rules
+- [All Rules](./rules) — 14 rules
 - [Serialization](./serialization) — output format details

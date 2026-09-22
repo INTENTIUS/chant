@@ -2,7 +2,7 @@
 
 fountain lexicon plugin for [chant](https://github.com/intentius/chant).
 
-[fountain](https://github.com/BinaryBourbon/fountain) runs coding agents in
+[fountain](https://github.com/managoat/fountain) runs coding agents in
 sandboxed VMs. This lexicon declares its workload layer as typed chant
 resources: `Environment` (sandbox baseline), `Vault` (env-var overrides),
 `Agent` (a runnable agent config), `Teammate` (an agent seated on the team,
@@ -41,10 +41,11 @@ export const nightly = new Schedule({
 });
 ```
 
-`runtime: "acp"` and `runtime_command` are on the generated `Agent` type as
-chant extensions. Upstream does not have them until
-[BinaryBourbon/fountain#1634](https://github.com/BinaryBourbon/fountain/pull/1634)
-lands, and an instance without that PR rejects the pair at apply.
+Types are generated from fountain v0.21.0. That release describes
+`runtime: "acp"` and `runtime_command` on `Agent` itself, so an older instance
+rejects the pair at apply. `secrets` on `Environment` and `Vault` is the one
+field the lexicon adds to the request schemas, taken from fountain's manifest
+format.
 
 For agents handling anything sensitive, `ConciergeStack` bundles the
 locked-down defaults (deny-all egress, no vault overrides, ownership marker

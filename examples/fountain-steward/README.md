@@ -63,7 +63,7 @@ npx chant build src --lexicon fountain -o dist/fountain.yaml \
 
 ```bash
 export FOUNTAIN_TOKEN=...          # the variable chant.config.ts names
-npx chant lint src                 # FTN010, FTN016, FTN020..FTN023
+npx chant lint src                 # FTN010, FTN016, FTN020..FTN024
 node -e "import('@intentius/chant-lexicon-fountain').then(m => m.fountainApply({ manifestPath: 'dist/fountain.yaml', profile: 'prod' }))"
 ```
 
@@ -71,17 +71,15 @@ node -e "import('@intentius/chant-lexicon-fountain').then(m => m.fountainApply({
 bulk `POST /api/apply`, then reconciles `Teammate` and the two `Schedule`s
 through their own routes, matched by name. A second apply of an unchanged
 manifest makes no writes for the routed kinds, which compare before they
-write and report `unchanged`. `Environment`, `Vault` and `Agent` come back
-`updated` even when nothing changed: v0.16.0's `ApplyResult.action` is
-`created | updated | error`, so the server has no `unchanged` to answer with.
-chant records one the day fountain sends it.
+write and report `unchanged`. From fountain v0.21.0, bulk apply reports
+`unchanged` too, for a document that already matched, and chant records it.
+An older instance answers `updated` for `Environment`, `Vault` and `Agent` even
+when nothing changed, because its `ApplyResult.action` has no `unchanged`.
 
-`runtime: "acp"` with `runtime_command` is
-[fountain#1634](https://github.com/BinaryBourbon/fountain/pull/1634) and is not
-in v0.16.0. An instance without that PR rejects the `Agent` on both `runtime`
-and `model`: `{"runtime":["is invalid"],"model":["can't be blank"]}`. The
-v0.16.0 runtime enum is `claude | codex | gemini | opencode`, and `model` is
-required there and format-checked, while the steward deliberately emits none.
+`runtime: "acp"` and `runtime_command` are in fountain's spec from v0.21.0,
+which the lexicon is generated from, and `model` is optional there. An instance
+older than v0.21.0 rejects the steward's `Agent` on both `runtime` and `model`:
+`{"runtime":["is invalid"],"model":["can't be blank"]}`.
 
 ## 3. Run an op on the steward
 

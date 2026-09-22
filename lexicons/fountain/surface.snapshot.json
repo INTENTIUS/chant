@@ -1,18 +1,20 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-09-06T14:56:24.144Z",
+  "generatedAt": "2026-09-22T17:04:35.850Z",
   "entries": {
     "Agent": {
       "kind": "resource",
       "resourceType": "Fountain::V1::Agent",
       "props": [
         "allowed_environment_ids:false",
+        "allowed_inference_credential_ids:false",
         "allowed_vault_ids:false",
         "description:false",
         "environment_id:false",
+        "inference_credential_id:false",
         "mcp_servers:false",
         "metadata:false",
-        "model:true",
+        "model:false",
         "name:true",
         "permission_policy:false",
         "runtime:true",
@@ -34,7 +36,9 @@
         "networking_type:false",
         "packages:false",
         "repositories:false",
-        "setup_script:false"
+        "secrets:false",
+        "setup_script:false",
+        "setup_timeout_seconds:false"
       ]
     },
     "Repository": {
@@ -69,7 +73,8 @@
       "props": [
         "description:false",
         "metadata:false",
-        "name:true"
+        "name:true",
+        "secrets:false"
       ]
     },
     "Webhook": {
