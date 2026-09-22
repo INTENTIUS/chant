@@ -8,7 +8,7 @@ user-invocable: true
 
 ## What this lexicon covers
 
-[fountain](https://github.com/BinaryBourbon/fountain) runs coding agents in sandboxed VMs. Six kinds are declarable, and this lexicon types all of them. `Environment` (sandbox baseline), `Vault` (env-var overrides) and `Agent` (a runnable agent config) are the workload layer; `Teammate` (an agent seated on the team, with a thread of its own), `Schedule` (a cron prompt into that thread) and `Webhook` (where the estate's events leave it) are the team, schedule and webhook routes. Conversations are runs, not resources: start them with the `fountainRun` op, never declare them.
+[fountain](https://github.com/managoat/fountain) runs coding agents in sandboxed VMs. Six kinds are declarable, and this lexicon types all of them. `Environment` (sandbox baseline), `Vault` (env-var overrides) and `Agent` (a runnable agent config) are the workload layer; `Teammate` (an agent seated on the team, with a thread of its own), `Schedule` (a cron prompt into that thread) and `Webhook` (where the estate's events leave it) are the team, schedule and webhook routes. Conversations are runs, not resources: start them with the `fountainRun` op, never declare them.
 
 The source of truth is the TypeScript in `src/`. `chant build` serializes it to fountain's own manifest YAML (ejectable — `fountain apply -f` accepts it verbatim). `fountainApply` sends that same YAML to fountain's bulk `POST /api/apply` endpoint in one request: create-if-new, update-by-name, opt-in owned-only prune keyed on the `managed-by: chant` metadata marker. Bulk apply covers Environment, Vault and Agent only — a Teammate, Schedule or Webhook document is emitted and valid, and applying it through its own route waits on chant #2127.
 
@@ -64,6 +64,6 @@ What a client sees:
 - A run that stops at an unapproved gate replies with the pending fact and the `chant approve <op> <gate>` line, and the turn ends. The gate is a fact on chant's ledger, not a wait — the next run re-evaluates it.
 - `session/cancel` aborts the in-flight step, runs the op's `onFailure` phases, and ends the turn `cancelled`.
 
-`--durable-requests` turns the gated reply into a `session/request_permission` with `allow_once`/`reject_once` and ends the turn `waiting`; the client answers on a later prompt carrying `_meta.chant.permission`, which records the resolution and re-runs. It is off by default because a request that outlives a turn needs BinaryBourbon/fountain#1635.
+`--durable-requests` turns the gated reply into a `session/request_permission` with `allow_once`/`reject_once` and ends the turn `waiting`; the client answers on a later prompt carrying `_meta.chant.permission`, which records the resolution and re-runs. It is off by default because a request that outlives a turn needs fountain#1635, which v0.21.0 carries and chant does not answer through yet (chant#2391).
 
 The server does not redact. A step's output reaches the thread verbatim and fountain redacts secrets on the way in; chant never reads or prints the environment it was spawned with.

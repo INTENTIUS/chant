@@ -201,7 +201,7 @@ poor place to keep an hourly drift check, and `chant approve` on a production
 gate should leave a trail somebody else can read.
 
 `chant run <op> --on fountain` hands the same Op to a
-[fountain](https://github.com/BinaryBourbon/fountain) teammate instead. The
+[fountain](https://github.com/managoat/fountain) teammate instead. The
 command line is posted to that teammate's thread, its sandbox runs it, and the
 record comes back in the shape a local run would have written. One teammate per
 environment, one thread, so the conversation is that environment's operational

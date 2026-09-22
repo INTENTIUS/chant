@@ -12,7 +12,9 @@ const KIND_NOTES: Record<string, string> = {
   Environment:
     "Sandbox baseline — packages, repositories, env_vars, secrets, networking.\n\n" +
     "`networking_type: limited` restricts egress to `networking_config.allowed_hosts`; " +
-    "an empty list denies all egress. `unrestricted` is open — FTN010/FTN011 flag both silence and openness.",
+    "an empty list denies all egress. `unrestricted` is open — FTN010/FTN011 flag both silence and openness.\n\n" +
+    "`setup_timeout_seconds` is an integer from 1 to 900 (default 120); FTN024 checks the range, " +
+    "and changing it invalidates the environment's checkpoints.",
   Vault:
     "Env-var overrides attached at conversation create. Vault values win on key " +
     "collision with the environment, silently — FTN014 surfaces the shadowing in review.",
@@ -20,9 +22,9 @@ const KIND_NOTES: Record<string, string> = {
     "A runnable agent config bound to one Environment. `allowed_vault_ids`: " +
     "`null` allows any tenant vault, `[]` forbids all, a list is an allowlist — " +
     "set `[]` when the reviewed environment must not be overridable at spawn.\n\n" +
-    "`runtime: \"acp\"` with `runtime_command` is a chant extension pending " +
-    "BinaryBourbon/fountain#1634; FTN023 keeps the pair together and FTN016 " +
-    "rejects a model on it.",
+    "`runtime: \"acp\"` launches `runtime_command` inside the sandbox and speaks " +
+    "the Agent Client Protocol to it. FTN023 keeps the pair together and FTN016 " +
+    "rejects a model on it, since the command picks its own.",
   Teammate:
     "An Agent seated on the team, with a thread of its own. `agent` is a typed " +
     "reference; `environment` and `vault` override the agent's own for this " +

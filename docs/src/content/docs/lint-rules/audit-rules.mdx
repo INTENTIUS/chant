@@ -2608,7 +2608,7 @@ Set networking_type — an open sandbox by silence is not a reviewed decision.
 
 | | |
 |---|---|
-| Authority | [fountain — Environment, Vault, Agent, Teammate, Schedule and Webhook primitives](https://github.com/BinaryBourbon/fountain/blob/main/docs/primitives.md) |
+| Authority | [fountain: Environment, Vault, Agent, Teammate, Schedule and Webhook primitives](https://github.com/managoat/fountain/blob/main/docs/primitives.md) |
 
 ### FTN011
 
@@ -2618,7 +2618,7 @@ Prefer limited with an allowed_hosts allowlist; an empty list denies all egress.
 
 | | |
 |---|---|
-| Authority | [fountain — Environment, Vault, Agent, Teammate, Schedule and Webhook primitives](https://github.com/BinaryBourbon/fountain/blob/main/docs/primitives.md) |
+| Authority | [fountain: Environment, Vault, Agent, Teammate, Schedule and Webhook primitives](https://github.com/managoat/fountain/blob/main/docs/primitives.md) |
 
 ### FTN012
 
@@ -2663,7 +2663,7 @@ Use a known runtime and a canonical provider/model_id.
 
 **Two declarations of one kind resolve to the same fountain name** — merge-worthy · guidance
 
-fountain reconciles by name — rename one, or the second silently overwrites the first.
+fountain reconciles by name, so rename one. Otherwise the second silently overwrites the first.
 
 ### FTN020
 
@@ -2692,6 +2692,12 @@ Deliver over https to a public host; a private target makes the delivery worker 
 **Agent runtime "acp" is missing runtime_command, or another runtime carries one** — merge-worthy · guidance
 
 Pair the acp runtime with the command it speaks the protocol over, and drop the field elsewhere.
+
+### FTN024
+
+**Environment setup_timeout_seconds is outside 1 to 900, or not a whole number** — merge-worthy · guidance
+
+Use an integer from 1 to 900, or omit the field for fountain's default of 120. Changing the value invalidates the environment's checkpoints.
 
 ## Terraform (TF)
 

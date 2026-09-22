@@ -125,7 +125,8 @@ The second posts `chant run <op>` back onto the steward's thread, with
 now-resolved fact.
 
 `--durable-requests` (answering fountain's own permission card instead) is
-refused by name: it needs BinaryBourbon/fountain#1635, which has not shipped.
+refused by name: it needs fountain#1635's request-answer path, which fountain
+v0.21.0 carries and chant does not use yet (chant#2391).
 
 ## When the steward is busy
 
@@ -158,7 +159,7 @@ success nobody saw.
 
 ## Two upstream caveats
 
-- `runtime: "acp"` with `runtime_command` is BinaryBourbon/fountain#1634 and is
-  not in v0.16.0. An instance without it rejects the pair at apply.
-- Bulk apply covering the team-side kinds is BinaryBourbon/fountain#1636. Until
-  then they go through their own routes, which is what `fountainApply` does.
+- `runtime: "acp"` with `runtime_command` needs fountain v0.21.0 or later. An
+  older instance rejects the pair at apply.
+- Bulk apply covering the team-side kinds is fountain#1636. Until chant uses it,
+  they go through their own routes, which is what `fountainApply` does.

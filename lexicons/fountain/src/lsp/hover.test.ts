@@ -46,8 +46,15 @@ describe("LSP hover", () => {
     expect(hover(ctx("Webhook"))?.contents).toContain("RFC1918");
   });
 
-  it("says the acp runtime is a chant extension pending upstream", () => {
-    expect(hover(ctx("Agent"))?.contents).toContain("BinaryBourbon/fountain#1634");
+  it("describes the acp runtime without calling it an extension", () => {
+    const agent = hover(ctx("Agent"))?.contents;
+    expect(agent).toContain("runtime_command");
+    expect(agent).toContain("FTN023");
+    expect(agent).not.toContain("#1634");
+  });
+
+  it("points an Environment's setup timeout at FTN024", () => {
+    expect(hover(ctx("Environment"))?.contents).toContain("FTN024");
   });
 
   it("marks property types as non-declarable", () => {

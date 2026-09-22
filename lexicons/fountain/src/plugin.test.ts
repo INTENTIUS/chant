@@ -41,7 +41,7 @@ describe("fountain plugin", () => {
 
   it("exposes every post-synth check and lint rule", () => {
     expect(fountainPlugin.lintRules?.()).toHaveLength(1);
-    expect(fountainPlugin.postSynthChecks?.()).toHaveLength(12);
+    expect(fountainPlugin.postSynthChecks?.()).toHaveLength(13);
   });
 
   it("carries audit metadata for every rule it ships", () => {

@@ -13,7 +13,7 @@ import { docsPipeline, writeDocsSite, type DocsConfig } from "@intentius/chant/c
 
 const pkgDir = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 
-const overview = `The **fountain** lexicon declares [fountain](https://github.com/BinaryBourbon/fountain)'s workload layer as typed chant resources. fountain runs coding agents in sandboxed VMs. Six kinds are declarable: \`Environment\` (sandbox baseline), \`Vault\` (env-var overrides) and \`Agent\` (a runnable agent config) are what \`fountain apply\` reconciles; \`Teammate\` (an agent seated on the team, with a thread of its own), \`Schedule\` (a cron prompt into that thread) and \`Webhook\` (where the estate's events leave it) belong to the team, schedule and webhook routes.
+const overview = `The **fountain** lexicon declares [fountain](https://github.com/managoat/fountain)'s workload layer as typed chant resources. fountain runs coding agents in sandboxed VMs. Six kinds are declarable: \`Environment\` (sandbox baseline), \`Vault\` (env-var overrides) and \`Agent\` (a runnable agent config) are what \`fountain apply\` reconciles; \`Teammate\` (an agent seated on the team, with a thread of its own), \`Schedule\` (a cron prompt into that thread) and \`Webhook\` (where the estate's events leave it) belong to the team, schedule and webhook routes.
 
 Types are generated from a pinned fountain release's OpenAPI spec, so they track the real API.
 
@@ -91,7 +91,7 @@ The output is ejectable — \`fountain apply -f\` accepts it verbatim, so adopti
 
 \`fountainApply\` parses this same YAML and sends it to fountain's bulk \`POST /api/apply\` endpoint in one request — the server reconciles by name, Environment then Vault then Agent, and resolves an agent's \`environment\` reference itself, against the manifest or the tenant's existing environments. See the Ops page for the activity's own behavior (prune, secrets, failure reporting).
 
-Bulk apply accepts those three kinds only. A \`Teammate\`, \`Schedule\` or \`Webhook\` document is emitted and is valid, and \`fountainApply\` does not send it yet: applying the three through their own routes waits on chant #2127, and on BinaryBourbon/fountain#1636 for a bulk call that covers them.
+\`fountainApply\` sends those three kinds in the bulk call. A \`Teammate\`, \`Schedule\` or \`Webhook\` document goes through its own route afterwards, matched by name (a webhook by url). fountain v0.21.0's bulk apply accepts all six kinds (fountain#1636), and \`fountainApply\` has not moved the team-side three onto it yet.
 
 ## Ownership
 

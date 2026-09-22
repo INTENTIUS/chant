@@ -20,8 +20,8 @@ import { fountainAuditLineage } from "./audit-lineage";
 import { applyLineage } from "@intentius/chant/audit/catalog";
 
 const FOUNTAIN_PRIMITIVES: Authority = {
-  name: "fountain — Environment, Vault, Agent, Teammate, Schedule and Webhook primitives",
-  url: "https://github.com/BinaryBourbon/fountain/blob/main/docs/primitives.md",
+  name: "fountain: Environment, Vault, Agent, Teammate, Schedule and Webhook primitives",
+  url: "https://github.com/managoat/fountain/blob/main/docs/primitives.md",
 };
 
 const OWASP_LLM_INJECTION: Authority = {
@@ -114,7 +114,7 @@ export const fountainAuditCatalog: Record<string, RuleMeta> = {
     "merge-worthy",
     "correctness",
     "Two declarations of one kind resolve to the same fountain name",
-    "fountain reconciles by name — rename one, or the second silently overwrites the first.",
+    "fountain reconciles by name, so rename one. Otherwise the second silently overwrites the first.",
   ),
   FTN020: rule(
     "FTN020",
@@ -147,6 +147,14 @@ export const fountainAuditCatalog: Record<string, RuleMeta> = {
     "correctness",
     'Agent runtime "acp" is missing runtime_command, or another runtime carries one',
     "Pair the acp runtime with the command it speaks the protocol over, and drop the field elsewhere.",
+  ),
+  FTN024: rule(
+    "FTN024",
+    "merge-worthy",
+    "correctness",
+    "Environment setup_timeout_seconds is outside 1 to 900, or not a whole number",
+    "Use an integer from 1 to 900, or omit the field for fountain's default of 120. Changing the value " +
+      "invalidates the environment's checkpoints.",
   ),
 };
 

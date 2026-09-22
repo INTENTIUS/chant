@@ -44,6 +44,14 @@ describe("fountain coverage", () => {
     expect(report.unaccountedKinds).toEqual([]);
   });
 
+  it("excludes only schemas the pinned spec still has", () => {
+    // An exclusion for a schema upstream removed matches nothing and proves
+    // nothing. v0.21.0 dropped three that v0.16.0 had (#2505).
+    const schemas = (JSON.parse(spec) as { components: { schemas: Record<string, unknown> } }).components.schemas;
+    const stale = Object.keys(EXCLUDED_KINDS).filter((name) => !(name in schemas));
+    expect(stale).toEqual([]);
+  });
+
   it("flags a property upstream added that the surface lacks", () => {
     const stripped = structuredClone(surface);
     stripped.entries.Agent.props = stripped.entries.Agent.props!.filter(
