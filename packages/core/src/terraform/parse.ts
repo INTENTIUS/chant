@@ -1,14 +1,14 @@
 /**
  * Thin wasm glue for the carve-out advisor (#214 T1): read a Terraform estate's
- * `.tf` files, run them through `@cdktf/hcl2json`, merge into one tree, and hand
+ * `.tf` files, run them through `@cdktn/hcl2json`, merge into one tree, and hand
  * off to the pure `buildGraph`.
  *
- * `@cdktf/hcl2json` is NOT a chant dependency — it carries a ~1.8 MB wasm blob
+ * `@cdktn/hcl2json` is NOT a chant dependency — it carries a ~1.8 MB wasm blob
  * and only carve-out users need it. It is lazy-loaded here and, if absent, the
  * advisor fails with a one-line install hint.
  */
 
-import { readdirSync, readFileSync } from "fs";
+import { appendFileSync, readdirSync, readFileSync } from "fs";
 import { join } from "path";
 import { buildGraph, collectExpressions, type ExpressionRefs } from "./graph";
 import { readStateInstanceCounts, applyStateCounts } from "./state";
@@ -25,7 +25,7 @@ export class Hcl2JsonNotInstalled extends Error {
   constructor(cause: unknown) {
     super(
       "Terraform carve-out needs the HCL parser, which is not installed.\n" +
-        "  Install it once:  npm install -D @cdktf/hcl2json\n" +
+        "  Install it once:  npm install -D @cdktn/hcl2json\n" +
         `(underlying error: ${cause instanceof Error ? cause.message : String(cause)})`,
     );
     this.name = "Hcl2JsonNotInstalled";
@@ -33,15 +33,54 @@ export class Hcl2JsonNotInstalled extends Error {
 }
 
 /**
+ * The environment variable that turns on parser-input recording (chant #2483).
+ *
+ * When set to a file path, every `parse(filename, source)` and every
+ * `getReferencesInExpression(filename, expression)` this process makes is
+ * appended to that file as one JSON line before the real call runs. That is
+ * how `scripts/check-hcl-parser-parity.ts` gets hold of the inline HCL the
+ * test suite parses, which no corpus walk on disk would find: run the suite
+ * with this set, then replay the file through two parsers and compare. Off
+ * unless set, and never changes a result.
+ */
+export const HCL2JSON_RECORD_ENV = "CHANT_HCL2JSON_RECORD";
+
+/** One recorded parser input, as {@link HCL2JSON_RECORD_ENV} writes it. */
+export interface Hcl2JsonRecordLine {
+  kind: "parse" | "refs";
+  filename: string;
+  text: string;
+}
+
+function recording(parser: Hcl2Json, path: string): Hcl2Json {
+  const note = (line: Hcl2JsonRecordLine): void => {
+    appendFileSync(path, `${JSON.stringify(line)}\n`);
+  };
+  return {
+    parse: (filename, hcl) => {
+      note({ kind: "parse", filename, text: hcl });
+      return parser.parse(filename, hcl);
+    },
+    getReferencesInExpression: (filename, expression) => {
+      note({ kind: "refs", filename, text: expression });
+      return parser.getReferencesInExpression(filename, expression);
+    },
+  };
+}
+
+/**
  * Lazy-load the optional HCL parser. Throws `Hcl2JsonNotInstalled` with an
  * install hint when the package is missing, rather than a raw MODULE_NOT_FOUND.
  */
 export async function loadHcl2json(): Promise<Hcl2Json> {
+  let parser: Hcl2Json;
   try {
-    return (await import("@cdktf/hcl2json")) as Hcl2Json;
+    parser = (await import("@cdktn/hcl2json")) as Hcl2Json;
   } catch (err) {
     throw new Hcl2JsonNotInstalled(err);
   }
+  const record = process.env[HCL2JSON_RECORD_ENV];
+  return record ? recording(parser, record) : parser;
 }
 
 /**

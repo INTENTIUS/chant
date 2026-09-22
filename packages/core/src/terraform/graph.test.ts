@@ -4,7 +4,7 @@ import { buildFixtureGraph } from "./__fixtures__/build-graph";
 import type { Hcl2JsonTree } from "./types";
 
 /**
- * The #197 worked example, in the JSON shape `@cdktf/hcl2json` emits: a bucket,
+ * The #197 worked example, in the JSON shape `@cdktn/hcl2json` emits: a bucket,
  * its versioning sub-resource, and a Lambda that reads the bucket's name + arn.
  */
 const workedExample: Hcl2JsonTree = {

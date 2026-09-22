@@ -511,8 +511,8 @@ Commands:
   carve advise          Read-only peelability advisor: rank which resources
                         --from <dir>      are cheap to carve into native chant
                         (--json, --report <path>). Emits nothing, changes nothing.
-                        --from a Terraform dir needs @cdktf/hcl2json
-                        (npm install -D @cdktf/hcl2json); --from a CDK cloud
+                        --from a Terraform dir needs @cdktn/hcl2json
+                        (npm install -D @cdktn/hcl2json); --from a CDK cloud
                         assembly (cdk.out) needs nothing and ranks constructs.
   carve emit            Adopt a selected TF resource into chant source + report
                         --from <tf-dir>   its boundary. --state <tfstate> adopts offline

@@ -528,7 +528,7 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
       ],
       preConditions: [
         "chant CLI is installed (chant --version succeeds)",
-        "@cdktf/hcl2json is installed (npm install -D @cdktf/hcl2json)",
+        "@cdktn/hcl2json is installed (npm install -D @cdktn/hcl2json)",
       ],
       parameters: [
         {

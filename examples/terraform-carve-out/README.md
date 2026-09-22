@@ -21,10 +21,10 @@ walks them with full output.
 
 ## Prerequisites
 
-The advisor parses HCL with `@cdktf/hcl2json`, installed on demand:
+The advisor parses HCL with `@cdktn/hcl2json`, installed on demand:
 
 ```bash
-npm install -D @cdktf/hcl2json
+npm install -D @cdktn/hcl2json
 ```
 
 ## 1. See what is cheap to carve

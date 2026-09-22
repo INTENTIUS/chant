@@ -3,7 +3,7 @@
  *
  * `hcl2json` drops comments entirely, and a probe of its output confirmed it
  * exposes no source ranges either, so a suppression comment has nothing to
- * attach to once a file goes through `@cdktf/hcl2json`. This module runs a
+ * attach to once a file goes through `@cdktn/hcl2json`. This module runs a
  * second, cheap pass over the SAME raw text `./parse.ts` hands the parser,
  * entirely with line-oriented regexes: a brace-depth counter to find each
  * top-level block's start line (`terraform`, `locals`, `provider "x"`,

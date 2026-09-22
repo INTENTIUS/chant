@@ -28,10 +28,10 @@ const require = createRequire(import.meta.url);
  * file that imports a lexicon package pulls `typescript` in transitively,
  * every time, not just for the rare file that uses the compiler itself.
  *
- * `@cdktf/hcl2json` is here for the same reason and by a longer road. It is
+ * `@cdktn/hcl2json` is here for the same reason and by a longer road. It is
  * an OPTIONAL dependency — `../../terraform/parse.ts` reaches it through
  * `await import(...)` and turns a missing module into an actionable "npm
- * install -D @cdktf/hcl2json" — but esbuild follows a dynamic import as
+ * install -D @cdktn/hcl2json" — but esbuild follows a dynamic import as
  * eagerly as a static one, and the package ships a Go `wasm_exec` shim whose
  * `performance` reference does not resolve under `platform: "node"`. So a
  * bundle that merely *reaches* the carve commands fails outright. Reaching
@@ -42,7 +42,7 @@ const require = createRequire(import.meta.url);
  * cannot fold — pulled the whole CLI, and carve with it, into its sandbox
  * bundle (chant #2129).
  */
-const EXTERNAL_PACKAGES = ["typescript", "@cdktf/hcl2json"];
+const EXTERNAL_PACKAGES = ["typescript", "@cdktn/hcl2json"];
 
 /**
  * Resolve each of {@link EXTERNAL_PACKAGES} to its real, absolute path on

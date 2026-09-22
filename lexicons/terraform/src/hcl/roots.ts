@@ -56,7 +56,7 @@ export interface RenderTerraformRootsOptions {
    * `../` is parsed as a child scope of the root that calls it.
    */
   callModuleType?: CallModuleType;
-  /** Injectable parser (tests); defaults to core's lazy-loaded `@cdktf/hcl2json`. */
+  /** Injectable parser (tests); defaults to core's lazy-loaded `@cdktn/hcl2json`. */
   hcl2json?: Hcl2Json;
 }
 
