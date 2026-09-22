@@ -44,6 +44,7 @@ import { writeFileSync } from "node:fs";
 import { promisify } from "node:util";
 import { resolve, dirname, join } from "node:path";
 import { loadChantConfigUpward } from "@intentius/chant/config";
+import { liveReadKey, memoLiveRead } from "@intentius/chant/live-read-session";
 import { computePlanDigest } from "@intentius/chant/op";
 import type { TerraformConfig, TerraformRootConfig } from "../../config";
 import { detectLiveEstate } from "./live-detect";
@@ -1173,10 +1174,46 @@ export function liveDocumentFrom(stdout: string): string {
   return start === -1 ? stdout : lines.slice(start).join("\n");
 }
 
-export async function choudoufuLivePlan(
+/**
+ * What {@link choudoufuLivePlanDocument} resolves: the document and the facts
+ * around it, and none of the human render. The subset of
+ * {@link ChoudoufuLivePlanResult} a reader of the document needs.
+ */
+export interface ChoudoufuLivePlanDocumentResult extends LivePlanUnownedCounts {
+  /** `true` when `-detailed-exitcode` reported exit 2: the live plan proposes changes. */
+  drift: boolean;
+  /** GitHub issue #788's JSON document, captured whole. */
+  json: unknown;
+  /** Absolute path of the root module directory. */
+  dir: string;
+  /** Where the JSON document was written, relative to `dir`. */
+  documentPath: string;
+  /** The estate this plan ran against. */
+  estate: string;
+}
+
+/**
+ * `live-plan -detailed-exitcode -json` alone: the document, without the
+ * second run that renders the plan for a human (chant #2498).
+ *
+ * Two of {@link choudoufuLivePlan}'s three callers never read `text`:
+ * `describeResources()` indexes the document and `predictBehaviour()` prices
+ * it. Each was paying for the render anyway, and on a drifted estate whose
+ * provider retries a deleted resource the render costs as much as the
+ * document. This is the read they make instead.
+ *
+ * Inside a `withLiveReadSession` scope (core's `live-read-session.ts`) the
+ * run is shared with every identical read in the same command, keyed on
+ * the root, its resolved directory, the binary, the estate, the flags and
+ * the root's environment. The graph command runs in such a scope, so its
+ * observation and its prediction see one `live-plan` between them, and the
+ * graph's statuses and the prediction's figures are statements about the
+ * same read. The document file is still written on every call.
+ */
+export async function choudoufuLivePlanDocument(
   args: ChoudoufuLivePlanArgs & { documentPath?: string },
   signal?: AbortSignal,
-): Promise<ChoudoufuLivePlanResult> {
+): Promise<ChoudoufuLivePlanDocumentResult> {
   const resolved = await resolveRoot(args, signal);
   const { binary, dir } = resolved;
   const estate = resolveEstate(args, resolved, "choudoufuLivePlan");
@@ -1187,8 +1224,6 @@ export async function choudoufuLivePlan(
   // from the declaration itself. See {@link choudoufuLivePlanCommand}.
   const estateFlag: { estate?: string } = resolved.estate === undefined ? { estate } : {};
 
-  let drift: boolean;
-  let jsonStdout: string;
   const planCmd = choudoufuLivePlanCommand({ binary, ...estateFlag, json: true });
   // The document's `adoptable` and `swept` sections are populated only on a
   // run that asked the estate-wide sweep the account-bounded question, which
@@ -1198,30 +1233,47 @@ export async function choudoufuLivePlan(
   // run asks for the same thing. Set only under `adoptionOnly`: the sweep is
   // an account-wide list per admitted type, and an observation read has no use
   // for it.
-  const planEnv = args.adoptionOnly ? { ...env, TOFU_LIVE_COLLECT_UNCLAIMED: "1" } : env;
-  try {
-    const { stdout, stderr } = await run(planCmd, dir, planEnv, signal);
-    report(stdout, stderr);
-    drift = false;
-    jsonStdout = stdout;
-  } catch (err) {
-    const failure = err as ExecFailure;
-    if (typeof failure.code !== "number") throw err;
-    if (failure.code !== 2) {
-      const detail = (failure.stderr ?? "").trim() || (failure.stdout ?? "").trim();
-      throw new Error(
-        `${binary} live-plan failed in ${dir} (exit ${failure.code})${detail ? `\n${detail}` : ""}`,
-      );
+  const adoptionOnly = args.adoptionOnly === true;
+  const planEnv = adoptionOnly ? { ...env, TOFU_LIVE_COLLECT_UNCLAIMED: "1" } : env;
+  const key = liveReadKey("live-plan", { root: args.root, dir, binary, estate, adoptionOnly, env });
+
+  const { drift, jsonStdout } = await memoLiveRead(key, async (): Promise<{ drift: boolean; jsonStdout: string }> => {
+    try {
+      const { stdout, stderr } = await run(planCmd, dir, planEnv, signal);
+      report(stdout, stderr);
+      return { drift: false, jsonStdout: stdout };
+    } catch (err) {
+      const failure = err as ExecFailure;
+      if (typeof failure.code !== "number") throw err;
+      if (failure.code !== 2) {
+        const detail = (failure.stderr ?? "").trim() || (failure.stdout ?? "").trim();
+        throw new Error(
+          `${binary} live-plan failed in ${dir} (exit ${failure.code})${detail ? `\n${detail}` : ""}`,
+        );
+      }
+      report(failure.stdout ?? "", failure.stderr ?? "");
+      return { drift: true, jsonStdout: failure.stdout ?? "" };
     }
-    report(failure.stdout ?? "", failure.stderr ?? "");
-    drift = true;
-    jsonStdout = failure.stdout ?? "";
-  }
+  });
 
   // Belt and braces: v0.14.0 keeps `-json` stdout to the document, so this is
   // the identity on a supported binary. See {@link liveDocumentFrom}.
   const document = liveDocumentFrom(jsonStdout);
   const json: unknown = JSON.parse(document);
+  writeFileSync(join(dir, documentPath), document);
+  return { drift, json, dir, documentPath, estate, ...countLivePlanUnowned(json) };
+}
+
+export async function choudoufuLivePlan(
+  args: ChoudoufuLivePlanArgs & { documentPath?: string },
+  signal?: AbortSignal,
+): Promise<ChoudoufuLivePlanResult> {
+  const { drift, json, dir, documentPath, estate, ...unowned } = await choudoufuLivePlanDocument(args, signal);
+  const resolved = await resolveRoot(args, signal);
+  const { binary } = resolved;
+  const env = terraformEnvironment(resolved.root);
+  const estateFlag: { estate?: string } = resolved.estate === undefined ? { estate } : {};
+
   // #788's document carries no render of the human plan itself
   // (`views.LivePlanDocument` has no such field), so the human text needs a
   // second live read rather than a field on the same response. `-adoption-only`
@@ -1255,8 +1307,6 @@ export async function choudoufuLivePlan(
     text = failure.stdout ?? "";
   }
 
-  writeFileSync(join(dir, documentPath), document);
-
   // An `adoptable[]` row carries its own tagging command in the document
   // (choudoufu #962). An `unowned[]` row does not, and the render is the only
   // place one is printed for it, so the parse still runs on an adoption run
@@ -1279,7 +1329,7 @@ export async function choudoufuLivePlan(
     dir,
     documentPath,
     estate,
-    ...countLivePlanUnowned(json),
+    ...unowned,
     ...parseChoudoufuPlanSummary(text),
   };
 }
@@ -1301,9 +1351,16 @@ export async function choudoufuLiveLs(
   const estate = resolveEstate(args, resolved, "choudoufuLiveLs");
   const env = terraformEnvironment(resolved.root);
 
-  const cmd = choudoufuLiveLsCommand({ binary, estate, ...(args.consistent ? { consistent: true } : {}) });
-  const { stdout, stderr } = await run(cmd, dir, env, signal);
-  report(stdout, stderr);
+  const consistent = args.consistent === true;
+  const cmd = choudoufuLiveLsCommand({ binary, estate, ...(consistent ? { consistent: true } : {}) });
+  // Shared with every identical listing in the same read session, the way
+  // {@link choudoufuLivePlanDocument} shares the document (chant #2498).
+  const key = liveReadKey("live-ls", { root: args.root, dir, binary, estate, consistent, env });
+  const stdout = await memoLiveRead(key, async () => {
+    const result = await run(cmd, dir, env, signal);
+    report(result.stdout, result.stderr);
+    return result.stdout;
+  });
 
   return { json: JSON.parse(stdout), dir, estate };
 }

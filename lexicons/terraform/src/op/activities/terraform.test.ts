@@ -23,6 +23,8 @@ import {
   terraformApply,
   terraformShow,
   choudoufuLivePlan,
+  choudoufuLivePlanDocument,
+  choudoufuLiveLs,
   terraformInitCommand,
   terraformPlanCommand,
   terraformApplyCommand,
@@ -36,6 +38,7 @@ import {
   DEFAULT_PLAN_FILE,
   __resetChoudoufuVersionCheckForTests,
 } from "./terraform";
+import { withLiveReadSession } from "@intentius/chant/live-read-session";
 
 // ── The child-process stub ──────────────────────────────────────────────────
 
@@ -600,4 +603,118 @@ describe("every activity forwards the AbortSignal (#2086)", () => {
       await expect(pending).rejects.toThrow(/aborted/i);
     });
   }
+});
+
+describe("one command, one read of the account (chant#2498)", () => {
+  const LIVE_PLAN_DOCUMENT = JSON.stringify({ estate: "one-read", bound: [], omissions: [], unowned: [] });
+  const LIVE_LS = JSON.stringify({ estate: "one-read", resources: [] });
+
+  function liveProject(): string {
+    const dir = project({ binary: "choudoufu", roots: { estate: { dir: "./infra" } } });
+    writeFileSync(join(dir, "infra", "estate.chdf.hcl"), 'estate = "one-read"\n');
+    return dir;
+  }
+
+  const runs = (fragment: string): number => execCalls.filter((c) => c.cmd.includes(fragment)).length;
+
+  beforeEach(() => {
+    __resetChoudoufuVersionCheckForTests();
+    replies.push(
+      { match: "choudoufu version", reply: { stdout: "choudoufu v0.15.0 (based on OpenTofu v1.13.0)\non darwin_arm64", stderr: "" } },
+      { match: "live-plan -detailed-exitcode -json", reply: { stdout: LIVE_PLAN_DOCUMENT, stderr: "" } },
+      { match: "-no-color", reply: { stdout: "No changes.\n\nPlan: 0 to add, 0 to change, 0 to destroy.\n", stderr: "" } },
+      { match: "live-ls", reply: { stdout: LIVE_LS, stderr: "" } },
+    );
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+  });
+
+  test("the document alone is one run, with no human render", async () => {
+    const dir = liveProject();
+    const result = await choudoufuLivePlanDocument({ root: "estate", cwd: dir });
+    expect(result.estate).toBe("one-read");
+    expect(result.drift).toBe(false);
+    expect(result.json).toEqual(JSON.parse(LIVE_PLAN_DOCUMENT));
+    expect(runs("live-plan -detailed-exitcode -json")).toBe(1);
+    expect(runs("-no-color")).toBe(0);
+    expect("text" in result).toBe(false);
+  });
+
+  test("the full activity still makes the two runs, the second for the render", async () => {
+    const dir = liveProject();
+    const result = await choudoufuLivePlan({ root: "estate", cwd: dir });
+    expect(result.text).toContain("No changes.");
+    expect(runs("live-plan -detailed-exitcode -json")).toBe(1);
+    expect(runs("live-plan -detailed-exitcode -no-color")).toBe(1);
+  });
+
+  test("outside a read session, every call reads", async () => {
+    const dir = liveProject();
+    await choudoufuLivePlanDocument({ root: "estate", cwd: dir });
+    await choudoufuLivePlanDocument({ root: "estate", cwd: dir });
+    await choudoufuLiveLs({ root: "estate", cwd: dir, consistent: true });
+    await choudoufuLiveLs({ root: "estate", cwd: dir, consistent: true });
+    expect(runs("live-plan -detailed-exitcode -json")).toBe(2);
+    expect(runs("live-ls")).toBe(2);
+  });
+
+  test("inside one session, the observation's read and the prediction's read are one live-plan and one live-ls", async () => {
+    const dir = liveProject();
+    await withLiveReadSession(async () => {
+      // What describeResources() does, then what predictBehaviour() does,
+      // then the full activity a finding mode would run on top.
+      const observed = await choudoufuLivePlanDocument({ root: "estate", cwd: dir });
+      const listed = await choudoufuLiveLs({ root: "estate", cwd: dir, consistent: true });
+      const predicted = await choudoufuLivePlanDocument({ root: "estate", cwd: dir });
+      const listedAgain = await choudoufuLiveLs({ root: "estate", cwd: dir, consistent: true });
+      const rendered = await choudoufuLivePlan({ root: "estate", cwd: dir });
+      expect(predicted.json).toEqual(observed.json);
+      expect(listedAgain.json).toEqual(listed.json);
+      expect(rendered.json).toEqual(observed.json);
+    });
+    expect(runs("live-plan -detailed-exitcode -json")).toBe(1);
+    expect(runs("live-plan -detailed-exitcode -no-color")).toBe(1);
+    expect(runs("live-ls")).toBe(1);
+  });
+
+  test("a different flag is a different read", async () => {
+    const dir = liveProject();
+    await withLiveReadSession(async () => {
+      await choudoufuLivePlanDocument({ root: "estate", cwd: dir });
+      await choudoufuLivePlanDocument({ root: "estate", cwd: dir, adoptionOnly: true });
+      await choudoufuLiveLs({ root: "estate", cwd: dir, consistent: true });
+      await choudoufuLiveLs({ root: "estate", cwd: dir });
+    });
+    expect(runs("live-plan -detailed-exitcode -json")).toBe(2);
+    expect(runs("live-ls -estate=one-read -json -consistent")).toBe(1);
+    expect(runs("live-ls")).toBe(2);
+    const adoption = execCalls.filter((c) => c.opts.env?.TOFU_LIVE_COLLECT_UNCLAIMED === "1");
+    expect(adoption.length).toBe(1);
+  });
+
+  test("a read that failed is not shared: the next caller reads again", async () => {
+    const dir = liveProject();
+    replies.unshift({ match: "live-plan -detailed-exitcode -json", reply: execError(1, "no credentials") });
+    await withLiveReadSession(async () => {
+      await expect(choudoufuLivePlanDocument({ root: "estate", cwd: dir })).rejects.toThrow("no credentials");
+      replies.shift();
+      const result = await choudoufuLivePlanDocument({ root: "estate", cwd: dir });
+      expect(result.json).toEqual(JSON.parse(LIVE_PLAN_DOCUMENT));
+    });
+    expect(runs("live-plan -detailed-exitcode -json")).toBe(2);
+  });
+
+  test("drift on the shared read is the same drift for every caller", async () => {
+    const dir = liveProject();
+    replies.unshift({
+      match: "live-plan -detailed-exitcode -json",
+      reply: execError(2, "", LIVE_PLAN_DOCUMENT),
+    });
+    await withLiveReadSession(async () => {
+      const first = await choudoufuLivePlanDocument({ root: "estate", cwd: dir });
+      const second = await choudoufuLivePlanDocument({ root: "estate", cwd: dir });
+      expect(first.drift).toBe(true);
+      expect(second.drift).toBe(true);
+    });
+    expect(runs("live-plan -detailed-exitcode -json")).toBe(1);
+  });
 });

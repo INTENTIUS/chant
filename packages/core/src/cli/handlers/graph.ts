@@ -10,6 +10,7 @@ import { buildDeclaredPerStack } from "../../graph-declared";
 import { mergeProjectOps } from "../../graph-ops";
 import { reconstructEdges, mergeCatalogs, containmentGroups, type ReferenceCatalog, type ContainmentPair } from "../../graph-refs";
 import { observeResources } from "../../lifecycle/observe";
+import { withLiveReadSession } from "../../live-read-session";
 import { replaySnapshots, hasSnapshot } from "../../lifecycle/replay";
 import { loadChantConfig, environmentNames, matchesDeclaredEnvironment, loadChantConfigUpward, type ChantConfig } from "../../config";
 import { applyLiveEndpoint } from "../../live-endpoint";
@@ -146,7 +147,17 @@ async function mergeGraphOps(
  * `--format` projects the component DAG itself into that format (nodes =
  * components, wave groups, `dependsOn` edges) — the graph behold renders.
  */
-export async function runGraph(ctx: CommandContext): Promise<number> {
+/**
+ * One `chant graph` is one read of the account (chant #2498): the live
+ * observation and the `--traffic` prediction are two plugin methods that
+ * each read a live root, and inside this session a read one of them made
+ * is the read the other gets.
+ */
+export function runGraph(ctx: CommandContext): Promise<number> {
+  return withLiveReadSession(() => runGraphCommand(ctx));
+}
+
+async function runGraphCommand(ctx: CommandContext): Promise<number> {
   const viewFormats = ["ir", "mermaid", "dot", "layout"] as const;
   const isViewFormat = (viewFormats as readonly string[]).includes(ctx.args.format);
   // `--projection <lexicon>` (#989) only means anything for the component

@@ -90,6 +90,8 @@ chant graph --format ir --live --env prod --overlay --traffic "100 rps, p50"    
 
 Which entities carry figures, which are declared unmapped and why, and what a type with no row is reported as: [Behaviour Coverage](/chant/reference/behaviour-coverage/), generated from the rows each lexicon contributes.
 
+On a live root, the graph's own read and the prediction's read are one read: the command shares each `live-plan` document and `live-ls` listing between them, so the statuses and the figures describe the same moment in the account.
+
 The level is passed to the engine verbatim. chant neither parses it nor supplies a default of its own. Every figure an engine returns is *at* a stated traffic, so inventing one would silently decide what every number on the graph means. That is why the flag is the trigger rather than the engine variable:
 
 | | `attrs._behaviour` | `meta._behaviour` |
