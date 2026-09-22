@@ -2,7 +2,8 @@ import { describe, test, expect, beforeAll } from "vitest";
 import { mkdtempSync, writeFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { parseTerraformDir, loadHcl2json, Hcl2JsonNotInstalled } from "./parse";
+import { parseTerraformDir, loadHcl2json, Hcl2JsonNotInstalled, HCL2JSON_RECORD_ENV } from "./parse";
+import { readFileSync } from "fs";
 
 /**
  * `@cdktf/hcl2json` is an optional (dev-only in this repo) dependency. These
@@ -25,6 +26,37 @@ describe("loadHcl2json", () => {
     expect(err.message).toContain("npm install -D @cdktf/hcl2json");
     expect(err.message).toContain("HCL parser");
     expect(err.name).toBe("Hcl2JsonNotInstalled");
+  });
+});
+
+describe("parser-input recording (#2483)", () => {
+  test("with the record variable set, every parse and expression call is appended as one JSON line", async () => {
+    if (!parserAvailable) return;
+    const dir = mkdtempSync(join(tmpdir(), "chant-tf-record-"));
+    const record = join(dir, "record.jsonl");
+    process.env[HCL2JSON_RECORD_ENV] = record;
+    try {
+      const parser = await loadHcl2json();
+      const tree = await parser.parse("main.tf", `locals {\n  a = var.x\n}\n`);
+      const refs = await parser.getReferencesInExpression("expression.tf", "${var.x}");
+      expect(tree).toEqual({ locals: [{ a: "${var.x}" }] });
+      expect(refs.map((r) => r.value)).toEqual(["var.x"]);
+      const lines = readFileSync(record, "utf-8").trim().split("\n").map((l) => JSON.parse(l));
+      expect(lines).toEqual([
+        { kind: "parse", filename: "main.tf", text: `locals {\n  a = var.x\n}\n` },
+        { kind: "refs", filename: "expression.tf", text: "${var.x}" },
+      ]);
+    } finally {
+      delete process.env[HCL2JSON_RECORD_ENV];
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("without the variable, the parser is handed back as is", async () => {
+    if (!parserAvailable) return;
+    delete process.env[HCL2JSON_RECORD_ENV];
+    const parser = await loadHcl2json();
+    expect(typeof (parser as unknown as { convertFiles?: unknown }).convertFiles).toBe("function");
   });
 });
 
