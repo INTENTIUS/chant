@@ -65,7 +65,7 @@ import type { EntityReference } from "@intentius/chant/graph-ir";
 import { indexLivePlan, readLiveLs, type TerraformReadDeps } from "../describe-resources";
 import type { TerraformConfig } from "../config";
 import { RESOURCE_TYPE } from "../hcl/parse";
-import { choudoufuLiveLs, choudoufuLivePlan } from "../op/activities/terraform";
+import { choudoufuLiveLs, choudoufuLivePlanDocument } from "../op/activities/terraform";
 import { terraformBehaviourKinds } from "./kinds";
 import {
   terraformBehaviourRequest,
@@ -141,7 +141,7 @@ export interface TerraformPredictOptions
  */
 const REAL_DEPS: TerraformBehaviourDeps = {
   liveLs: choudoufuLiveLs,
-  livePlan: choudoufuLivePlan,
+  livePlan: choudoufuLivePlanDocument,
   predict: createBehaviourPredict({ kinds: [terraformBehaviourKinds] }),
 };
 
