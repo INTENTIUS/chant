@@ -400,8 +400,13 @@ test_example() {
   fi
   pkg_install "${install_args[@]}"
 
-  # Copy example source files
+  # Copy example source files, and the config that declares the build
+  # parameters they read (#2486): without chant.config.ts no buildParams
+  # exist, so an example reading params.domain fails on `.split`.
   cp -r "/examples/$name/src" src/
+  if [ -f "/examples/$name/chant.config.ts" ]; then
+    cp "/examples/$name/chant.config.ts" chant.config.ts
+  fi
 
   # Copy .env.example if it exists (needed by k8s-eks-microservice)
   if [ -f "/examples/$name/.env.example" ]; then
