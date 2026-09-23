@@ -51,7 +51,7 @@ async function runGenerateComponents(ctx: CommandContext): Promise<number> {
   const result = await generateComponentsPipeline(
     args.path,
     lexicon,
-    { env: args.env },
+    { env: args.env, ...(args.promoteTo ? { promoteTo: args.promoteTo } : {}) },
     args.sandbox,
     paramsResolution.provenance,
   );

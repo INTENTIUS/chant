@@ -8,7 +8,7 @@ diataxis: reference
 
 ```
 chant build [path] [flags]
-chant build [path] --components --generate <lexicon> [--env <name>] [-o <file>]
+chant build [path] --components --generate <lexicon> [--env <name>] [--promote-to <env>] [-o <file>]
 ```
 
 ## Description
@@ -32,6 +32,7 @@ It reaches no network. Every schema it needs is generated into the lexicon packa
 | `--params-file <path>` | `string` | — | JSON file of `{ "name": value }` build-time parameter values; second precedence, after `--param` |
 | `--env <name>` | `string` | — | Active environment. Sets `CHANT_ENV` so env-aware source re-evaluates for that environment, and selects the organizational policy that applies. Must be declared under `environments` in `chant.config.ts` when that list exists |
 | `--components --generate <lexicon>` | `string` | — | Generate mode. Synthesize a CI pipeline from the discovered `*.component.ts` declarations instead of running a lexicon build. See [Generate mode](#generate-mode-ci-pipelines-from-components) |
+| `--promote-to <env>` | `string` | — | Generate mode only. Add a job that promotes the deployed releases to `<env>` after every component job succeeds. See [Promote job](#promote-job) |
 | `--fold-rank [path]` | `bool` or `string` | off | After a folded build, print the run-fallback blockers ranked by how many files each one keeps from folding. With a path, also write the ranking in collapsed-stack format to that file for a flame-graph viewer. No-op with `--no-fold` |
 
 ## Usage
@@ -124,6 +125,20 @@ The `--sandbox` flag always wins over `build.sandbox` when both are present.
 A components-only project need not declare a lexicon plugin at all. Lexicons are loaded best-effort here, so a project whose `chant.config.ts` lists none still generates.
 
 `--env <name>` is threaded into the generated pipeline as the environment it deploys, and `--param` / `--params-file` bind build-time parameters the same way they do for a resource build. With `--format json` the result is `{ stages, jobs, yaml, env }` on stdout, where `env` is the generator's own resolved environment (present whenever the generator returns one; omitted otherwise) rather than something a consumer has to re-derive by parsing the YAML back. The same stages, jobs and env are available as graph IR through [`chant graph --components --format ir --projection <lexicon>`](/chant/cli/graph/#--projection-lexicon--the-cipipeline-projection-989).
+
+### Promote job
+
+`--promote-to <env>` adds one job to the pipeline that runs [`chant components promote --from <env> --to <promote-to>`](/chant/cli/components/#components-promote) once every component job has succeeded. A promote publishes from the build archive on disk, and the promote job runs on its own runner, so the archive travels with the pipeline:
+
+- Each component job uploads the files its `docker-build`, `zip-package` and `jvm-build` steps wrote to `into`. On GitHub and Forgejo that is an `actions/upload-artifact` step named `<component>-archive`, and the promote job downloads each one back to the same path. On GitLab the files join the job's `artifacts:`, and the promote job, in a `promote` stage, receives them through `needs:`.
+- The `beforeScript` and `extraScript` options apply to the promote job as they do to the component jobs, and `promoteCommand` replaces its command.
+- An `into` the generator cannot read as a plain path, such as a wiring reference or an `$env.` value, fails generation and names the component, because the file it names is only known at run time.
+
+Without `--promote-to` the generated pipeline has no promote job and no archive uploads.
+
+```bash
+chant build --components --generate github --env staging --promote-to prod --output .github/workflows/components.yml
+```
 
 Scheduled Ops have their own generator command, [`chant run --generate <provider>`](/chant/cli/run/#run---generate-provider). It writes one pipeline file per Op, and each file carries the generated-file marker and the command that regenerates it:
 

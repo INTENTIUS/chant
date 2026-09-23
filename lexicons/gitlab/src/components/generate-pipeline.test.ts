@@ -257,3 +257,40 @@ describe("generateGitlabPipeline: options", () => {
     expect((job.script as string[])[0]).toContain("--env production");
   });
 });
+
+describe("generateGitlabPipeline: a promote job (#2575)", () => {
+  const components = (): DriverComponent[] => [
+    { name: "shared-alb", dependsOn: [], deploy: [] },
+    {
+      name: "api",
+      dependsOn: ["shared-alb"],
+      deploy: [
+        { phase: "Build", steps: [{ kind: "docker-build", context: ".", into: "dist/api.tar" }] },
+        { phase: "Publish", steps: [{ kind: "publish-image", from: "archive:dist/api.tar" }] },
+      ],
+    },
+  ];
+
+  test("without promoteTo the pipeline is unchanged", () => {
+    const yaml = generateGitlabPipeline(components(), { env: "staging" }).yaml;
+    expect(yaml).not.toContain("promote");
+    expect(yaml).not.toContain("dist/api.tar");
+  });
+
+  test("building jobs keep their archive as artifacts, and a promote stage job needs every component job", () => {
+    const result = generateGitlabPipeline(components(), { env: "staging", promoteTo: "prod" });
+    const parsed = parseYAML(result.yaml);
+
+    expect((parsed["api"] as Record<string, unknown>).artifacts).toEqual({ paths: ["dist/api.tar"] });
+    expect((parsed["shared-alb"] as Record<string, unknown>).artifacts).toEqual({ paths: ["shared-alb.outputs.json"] });
+
+    expect(parsed.stages).toEqual(["wave-1", "wave-2", "promote"]);
+    expect(result.stages).toEqual(["wave-1", "wave-2"]);
+    expect(parsed["promote-prod"]).toEqual({
+      stage: "promote",
+      image: "node:22-slim",
+      script: ["chant components promote --from staging --to prod"],
+      needs: ["api", "shared-alb"],
+    });
+  });
+});

@@ -34,6 +34,7 @@
 
 import { emitYAML } from "@intentius/chant/yaml";
 import { resolveComponentGraph, type DriverComponent } from "@intentius/chant/components/driver";
+import { promoteArchivePaths } from "@intentius/chant/components/promote";
 import type {
   ComponentPipelineJob as GeneratedJob,
   ComponentPipelineOptions as GenerateGitlabOptions,
@@ -82,6 +83,19 @@ export function generateGitlabPipeline(
   for (const c of components) for (const dep of c.dependsOn ?? []) dependedUpon.add(dep);
   const outputsFile = (name: string) => `${name}.outputs.json`;
 
+  // A promote job (#2575) runs apart from the deploy jobs, and a promote
+  // publishes from the build archive on disk, so each component job keeps the
+  // files its build steps wrote as artifacts. GitLab hands them to the promote
+  // job across its `needs:` edges.
+  const promoteTo = options.promoteTo;
+  const archives = new Map<string, string[]>();
+  if (promoteTo !== undefined) {
+    for (const c of components) {
+      const paths = promoteArchivePaths(c);
+      if (paths.length > 0) archives.set(c.name, paths);
+    }
+  }
+
   const stages = waves.map((_, i) => `wave-${i + 1}`);
   const jobs: GeneratedJob[] = [];
   const jobNameByComponent = new Map<string, string>();
@@ -125,10 +139,29 @@ export function generateGitlabPipeline(
       };
       if (needs.length > 0) jobProps.needs = needs;
       // Publish this component's dumped outputs so dependent jobs receive it.
-      if (dependedUpon.has(name)) jobProps.artifacts = { paths: [outputsFile(name)] };
+      const artifactPaths = [
+        ...(dependedUpon.has(name) ? [outputsFile(name)] : []),
+        ...(archives.get(name) ?? []),
+      ];
+      if (artifactPaths.length > 0) jobProps.artifacts = { paths: artifactPaths };
       doc[jobName] = jobProps;
     }
   });
+
+  let promoteJob: string | undefined;
+  if (promoteTo !== undefined) {
+    promoteJob = `promote-${toJobName(promoteTo)}`;
+    if (promoteJob in doc) {
+      throw new Error(`the promote job "${promoteJob}" has the same name as a component job; rename the component`);
+    }
+    const command = options.promoteCommand ?? ["chant", "components", "promote", "--from", env, "--to", promoteTo];
+    doc[promoteJob] = {
+      stage: "promote",
+      image,
+      script: [...beforeScript, command.join(" "), ...extraScript],
+      needs: [...jobNameByComponent.values()].sort(),
+    };
+  }
 
   const sections: string[] = [];
   // `emitYAML` returns a `\n`-led block for a non-empty sequence and an inline
@@ -137,12 +170,16 @@ export function generateGitlabPipeline(
   // when whitespace or the line's end follows it — which is how GitLab's own
   // reader takes it, and now how `parseYAML` does too (chant #2013).
   sections.push("workflow:" + emitYAML(doc.workflow, 1));
-  sections.push(stages.length > 0 ? "stages:" + emitYAML(stages, 1) : "stages: []");
+  // The promote stage is YAML only: `stages` in the result stays one entry
+  // per graph wave.
+  const yamlStages = promoteJob ? [...stages, "promote"] : stages;
+  sections.push(yamlStages.length > 0 ? "stages:" + emitYAML(yamlStages, 1) : "stages: []");
   if (doc.variables) sections.push("variables:" + emitYAML(doc.variables, 1));
   for (const job of jobs) {
     const props = doc[job.jobName] as Record<string, unknown>;
     sections.push(`${job.jobName}:` + emitYAML(props, 1));
   }
+  if (promoteJob) sections.push(`${promoteJob}:` + emitYAML(doc[promoteJob], 1));
 
   return { yaml: sections.join("\n\n") + "\n", stages, jobs, env };
 }

@@ -17,6 +17,7 @@ import {
   runPromotion,
   promotionRecord,
   gateApprover,
+  promoteArchivePaths,
   type PromotionPlan,
 } from "./promote";
 
@@ -334,5 +335,37 @@ describe("pinning the publish step for a rollback", () => {
       digest: "sha256:b",
       restores: { env: "prod", runId: "run-2", timestamp: "2026-01-02T00:00:00Z" },
     });
+  });
+});
+
+describe("the archive paths a generated promote job carries (#2575)", () => {
+  test("every build step's into, nested phases included, once each and in order", () => {
+    const component: DriverComponent = {
+      name: "api",
+      deploy: [
+        { phase: "Build", steps: [
+          { kind: "docker-build", context: ".", into: "dist/api.tar" },
+          { kind: "generate-sbom", artifactType: "image", path: "dist/api.tar", into: "dist/api.sbom.json" },
+          { phase: "Lambdas", parallel: true, steps: [{ kind: "zip-package", source: "fn", into: "dist/fn.zip" }] },
+        ] },
+        { phase: "Again", steps: [{ kind: "docker-build", context: ".", into: "dist/api.tar" }] },
+        { phase: "Publish", steps: [{ kind: "publish-image", from: "archive:dist/api.tar" }] },
+      ],
+    };
+    expect(promoteArchivePaths(component)).toEqual(["dist/api.tar", "dist/fn.zip"]);
+  });
+
+  test("a component that builds nothing carries nothing", () => {
+    expect(promoteArchivePaths({ name: "infra", deploy: [{ phase: "Apply", steps: [{ kind: "cfn-deploy" }] }] })).toEqual([]);
+  });
+
+  test("an into that is only known at run time is refused by name", () => {
+    for (const into of ["@Params.path", "$env.archive", undefined]) {
+      const component: DriverComponent = {
+        name: "api",
+        deploy: [{ phase: "Build", steps: [{ kind: "jvm-build", into }] }],
+      };
+      expect(() => promoteArchivePaths(component)).toThrow(/component "api": the jvm-build step in phase "Build".*not a literal path/);
+    }
   });
 });

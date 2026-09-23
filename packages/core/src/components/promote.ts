@@ -205,6 +205,44 @@ function isPhase(step: DriverStep | DriverGate | DriverPhase): step is DriverPha
   return typeof (step as { phase?: unknown }).phase === "string" && Array.isArray((step as DriverPhase).steps);
 }
 
+/**
+ * The build steps that write the archive a promote's publish step reads, each
+ * to its `into` path. The SBOM steps are left out: a promote refuses a step
+ * that reads their output, so it never needs it.
+ */
+export const ARCHIVE_STEP_KINDS: readonly string[] = ["docker-build", "zip-package", "jvm-build"];
+
+/**
+ * The paths `component`'s build steps write its archive to, in composition
+ * order without repeats (#2575). A generated pipeline carries these files from
+ * the job that deployed to the source environment to the job that promotes,
+ * since a promote publishes from the archive on disk. Throws when an `into` is
+ * not a literal path, such as a wiring reference or an `$env.` value, because
+ * a generator cannot name a file that is only known at run time.
+ */
+export function promoteArchivePaths(component: DriverComponent): string[] {
+  const paths: string[] = [];
+  const walk = (phases: DriverPhase[]): void => {
+    for (const phase of phases) {
+      for (const step of phase.steps) {
+        if (isPhase(step)) walk([step]);
+        else if (!isGate(step) && ARCHIVE_STEP_KINDS.includes(step.kind)) {
+          const into = step.into;
+          if (typeof into !== "string" || into === "" || into.startsWith("@") || into.startsWith("$")) {
+            throw new Error(
+              `component "${component.name}": the ${step.kind} step in phase "${phase.phase}" writes to ` +
+                `${JSON.stringify(into)}, which is not a literal path, so a generated promote job cannot carry its archive`,
+            );
+          }
+          if (!paths.includes(into)) paths.push(into);
+        }
+      }
+    }
+  };
+  walk(component.deploy);
+  return paths;
+}
+
 /** A component's composition with its build-time steps taken out. */
 export interface PromotableComponent {
   component: DriverComponent;

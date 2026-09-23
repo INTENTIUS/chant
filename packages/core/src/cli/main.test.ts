@@ -300,6 +300,12 @@ describe("parseArgs", () => {
 
   // ── --no-release-record (#597) ───────────────────────────────────────────
 
+  test("--promote-to <env> sets promoteTo, and a missing value is refused (#2575)", () => {
+    expect(parseArgs(["build", "--components", "--generate", "github", "--promote-to", "prod"]).promoteTo).toBe("prod");
+    expect(() => parseArgs(["build", "--components", "--generate", "github", "--promote-to"])).toThrow(/--promote-to needs an environment/);
+    expect(() => parseArgs(["build", "--promote-to", "--env", "x"])).toThrow(/--promote-to needs an environment/);
+  });
+
   test("parses --no-release-record for run --components", () => {
     const result = parseArgs(["run", "--components", "search-service", "--env", "staging", "--no-release-record"]);
     expect(result.components).toBe(true);
