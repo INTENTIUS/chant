@@ -196,11 +196,14 @@ export async function discoveryChanges(input: DiscoveryWalkInput): Promise<Chang
   const lintRootIgnored = lint ? lint.ignored.has(dirProbe(root)) || lint.ignored.has(dirProbe(input.root)) : false;
 
   const files = lint ? lint.raw : input.files;
-  for (const file of files) {
+  for (const given of files) {
+    // Walkers join onto the path they were given, which may be relative;
+    // lint's ignored set holds the paths exactly as it passed them to git.
+    const file = resolve(given);
     if (file.includes(GENERATED_TYPES)) continue;
     const skip = dirCause(file);
     if (lint) {
-      const ignoredToday = lint.ignored.has(file);
+      const ignoredToday = lint.ignored.has(given);
       if (ignoredToday && lintRootIgnored && !skip) {
         // Ignored only because the scan root itself is: today's filter drops
         // it, the converged rule (ignore rules below the root only) reads it.
