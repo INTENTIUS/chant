@@ -450,7 +450,7 @@ describe("runComponentDeploy — onFailure saga rollback", () => {
     );
   });
 
-  it("runs a component-level rollback (schema `rollback` field) after step rollback, matching the ALB/ECS pilot's explicit compensation", async () => {
+  it("runs a component-level rollback (schema `rollback` field) after step rollback", async () => {
     const registry = new CapabilityRegistry();
     registry.register(fakeCapability("docker-build", { run: () => ({ digest: "sha256:abc" }) }).capability);
     registry.register(
@@ -458,26 +458,29 @@ describe("runComponentDeploy — onFailure saga rollback", () => {
         .capability,
     );
     registry.register(fakeCapability("cfn-deploy", { run: () => ({ stackStatus: "UPDATE_COMPLETE", outputs: {} }) }).capability);
-    // ecs-update-service fails, and (per the pilot's comment) has no native
-    // rollback — the component's own `rollback` phase is what should fire.
+    // ecs-update-service fails; the component's own `rollback` phase is what
+    // should fire after the executed steps unwind.
     registry.register(fakeCapability("ecs-update-service", { failRun: true }).capability);
-    const { capability: rollbackPreviousCap, calls: rollbackPreviousCalls } = fakeCapability("rollback-previous", {
+    const { capability: restoreCap, calls: restoreCalls } = fakeCapability("restore-service", {
       run: () => ({ restored: true }),
     });
-    registry.register(rollbackPreviousCap);
+    registry.register(restoreCap);
     // Verify/rollback phases never reached since Apply fails first, but register
     // stubs anyway so a hypothetical reordering wouldn't crash the test on an
     // unregistered kind.
     registry.register(fakeCapability("wait-steady-state", { run: () => ({ runningCount: 1 }) }).capability);
     registry.register(fakeCapability("health-gate", { run: () => ({ healthy: true }) }).capability);
 
-    const json = projectToJson(searchService) as unknown as DriverComponent;
+    const json: DriverComponent = {
+      ...(projectToJson(searchService) as unknown as DriverComponent),
+      rollback: [{ phase: "Rollback", steps: [{ kind: "restore-service", service: "search" }] }],
+    };
     const result = await runComponentDeploy(json, { env: "dev", component: "search-service" }, registry, {});
 
     expect(result.ok).toBe(false);
-    expect(rollbackPreviousCalls).toHaveLength(1);
-    expect(rollbackPreviousCalls[0]!.input).toMatchObject({ service: "search" });
-    const rollbackRecord = result.records.find((r) => r.phase === "Rollback" && r.kind === "rollback-previous");
+    expect(restoreCalls).toHaveLength(1);
+    expect(restoreCalls[0]!.input).toMatchObject({ service: "search" });
+    const rollbackRecord = result.records.find((r) => r.phase === "Rollback" && r.kind === "restore-service");
     expect(rollbackRecord?.status).toBe("ok");
   });
 });
@@ -630,7 +633,6 @@ describe("runInterpretDriver — end to end", () => {
       "ecs-update-service",
       "wait-steady-state",
       "health-gate",
-      "rollback-previous",
       "wait-for-stack",
       "run-migration",
     ];
@@ -750,7 +752,6 @@ describe("runInterpretDriver — end to end", () => {
       "ecs-update-service",
       "wait-steady-state",
       "health-gate",
-      "rollback-previous",
       "wait-for-stack",
       "run-migration",
       "lambda-deploy",

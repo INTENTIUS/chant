@@ -259,8 +259,8 @@ export interface EcsUpdateServiceOutput {
  * capability-level compensation for the common case (recorded here so the
  * capability is never rollback-silent); a component whose service swap needs
  * a specific prior task definition/count restored (rather than a re-apply of
- * the same input) supplies its own explicit rollback phase instead, as the
- * ALB/ECS pilot does with `rollback-previous`.
+ * the same input) supplies its own explicit rollback phase instead, such as
+ * `rollback-previous` with that `taskDefinition`.
  */
 export function createEcsUpdateServiceCapability(
   executor: CloudExecutor = defaultCloudExecutor(),

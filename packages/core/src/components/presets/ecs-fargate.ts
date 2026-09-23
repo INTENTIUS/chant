@@ -4,10 +4,16 @@
  * The named-composition builder for the ALB/ECS shape
  * (`../pilots/alb-ecs.pilot.ts`): `docker-build` -> `publish-image` ->
  * `cfn-deploy` (importing a shared ALB's cross-stack outputs) ->
- * `ecs-update-service` -> `wait-steady-state` + `health-gate`, with the same
- * component-declared `rollback-previous` compensation phase the pilot uses
- * (no native rollback for an already-running service swap — see
- * ../pilots/alb-ecs.pilot.ts's docstring).
+ * `ecs-update-service` -> `wait-steady-state` + `health-gate`.
+ *
+ * There is no component-level `rollback` phase (#2576). The preset used to
+ * declare one holding a `rollback-previous` step with only `service` and
+ * `cluster`. The aws capability behind that kind rolls a service back to the
+ * `taskDefinition` it is given, and with none given it ran `aws ecs
+ * update-service` with no changes, so the phase restored nothing. The
+ * in-run unwind still calls each executed step's own rollback, and taking an
+ * environment back to an earlier recorded release is `chant components
+ * rollback <env> --component <name>` (#2531).
  *
  * This is Level 2 reuse over Level 1 raw capabilities: a component that looks
  * like this composes `EcsFargateComponent({ ... })` directly; the odd case
@@ -98,6 +104,5 @@ export function EcsFargateComponent(config: EcsFargateComponentConfig): Componen
         { kind: "health-gate", path: config.healthPath },
       ]),
     ],
-    rollback: [phase("Rollback", [{ kind: "rollback-previous", service, cluster }])],
   };
 }

@@ -39,13 +39,5 @@
         { "kind": "health-gate", "path": "/healthz" }
       ]
     }
-  ],
-  "rollback": [
-    {
-      "phase": "Rollback",
-      "steps": [
-        { "kind": "rollback-previous", "service": "search", "cluster": "$env.cluster" }
-      ]
-    }
   ]
 }

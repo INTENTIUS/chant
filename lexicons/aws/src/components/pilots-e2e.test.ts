@@ -48,8 +48,9 @@ import {
   createWaitJobCapability,
 } from "./wait-aws";
 import { createEmrStartJobRunCapability } from "./job-submission";
+import { createRollbackPreviousCapability } from "./safety";
 
-/** Build a fresh registry with every real #557/#558/#561 capability wired to one shared mock executor, plus the still-stubbed verbs the pilots also reference (run-migration, health-gate, rollback-previous — none of which #557/#558/#561 scopes). */
+/** Build a fresh registry with every real #557/#558/#561 capability wired to one shared mock executor, plus the still-stubbed verbs the pilots also reference (run-migration, health-gate — neither of which #557/#558/#561 scopes). */
 function buildRegistry(mock: MockCloudExecutor): CapabilityRegistry {
   const registry = new CapabilityRegistry();
   registry.register(createDockerBuildCapability(mock.executor));
@@ -79,10 +80,8 @@ function buildRegistry(mock: MockCloudExecutor): CapabilityRegistry {
   // Non-AWS-leaf / non-pilot-scoped verbs the pilots still reference — out of
   // #557/#558/#561's scope (still typed stubs in ../verbs/*.ts), so faked here
   // to succeed so the happy-path E2E run can reach completion.
-  // `rollback-previous` backs the ALB/ECS pilot's own compensation phase.
   registry.register({ kind: "run-migration", run: async () => ({ applied: true, version: "1" }) });
   registry.register({ kind: "health-gate", run: async () => ({ healthy: true }) });
-  registry.register({ kind: "rollback-previous", run: async () => ({ restored: true }) });
   return registry;
 }
 
@@ -447,11 +446,20 @@ describe("Every mutating #557 capability declares a rollback, or the pilot suppl
     expect(createWaitClusterHealthyCapability(mock.executor).rollback).toBeUndefined();
   });
 
-  it("the ALB/ECS pilot supplies its own explicit rollback phase (rollback-previous) precisely because ecs-update-service's own rollback is a best-effort re-apply, not a true prior-state restore", () => {
-    // Documents the pilot-level opt-out this issue's acceptance criteria asks
-    // for: the component, not the capability, owns the compensation here.
-    expect(searchService.rollback).toBeDefined();
-    expect(searchService.rollback![0]!.steps[0]).toMatchObject({ kind: "rollback-previous" });
+  it("the ALB/ECS pilot declares no rollback-previous phase (#2576): with no taskDefinition it restored nothing", async () => {
+    // The phase it used to declare passed only `service` and `cluster`. The
+    // real capability turns that into `rollbackService` with no task
+    // definition, which the real executor sends as an `aws ecs update-service`
+    // that changes nothing. An earlier release is `chant components rollback`.
+    expect(searchService.rollback).toBeUndefined();
+    const mock = createMockCloudExecutor();
+    await createRollbackPreviousCapability(mock.executor).run(
+      { env: "dev", component: "search-service" },
+      { service: "search", cluster: "prod" },
+    );
+    expect(mock.calls).toEqual([
+      { client: "ecs", method: "rollbackService", args: { cluster: "prod", service: "search", taskDefinition: undefined, desiredCount: undefined } },
+    ]);
   });
 
   it("the DynamoDB pilot declares no component-level rollback — a blocked replacement is a stop, not something to compensate (documented opt-out)", () => {

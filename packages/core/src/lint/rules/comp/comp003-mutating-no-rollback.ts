@@ -24,9 +24,8 @@
  * component.schema.json), a component may attach a `noRollback: "<reason>"`
  * string property directly on the step to declare the compensation gap is
  * intentional and understood, or supply its own explicit compensation via a
- * component-level `rollback` field (as the ALB/ECS pilot does with
- * `rollback-previous`) or a sibling `rollback-previous`/`snapshot-before` step
- * in the same phase.
+ * component-level `rollback` field or a sibling
+ * `rollback-previous`/`snapshot-before` step in the same phase.
  *
  * Triggers on: a bare `{ kind: "run-migration", ... }` step with no
  * `noRollback` reason, no component-level `rollback`, and no sibling
