@@ -118,4 +118,6 @@ exit: 0
   ]
 }
 
---- stderr (empty)
+--- stderr
+warning: chant audit under the current directory changes in the next release (chant#2527):
+  before/.gitlab-ci.yml is git-ignored. Every walker skips git-ignored files from the next release. To keep reading it, add "before/.gitlab-ci.yml" to include in chant.config.ts.
