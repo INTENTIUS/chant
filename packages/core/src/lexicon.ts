@@ -1938,7 +1938,13 @@ export interface ResourceMetadata {
   status: string;
   /** ISO timestamp of last update */
   lastUpdated?: string;
-  /** Cloud-assigned output properties */
+  /**
+   * Cloud-assigned output properties. Two keys are read by `components status
+   * --live` (#2513): `digest` (the artifact digest serving now) and `gitSha`
+   * (the commit it was built from). Set them when the live read knows them; a
+   * value that differs from the recorded release reports the component
+   * `drifted`. See `LIVE_IDENTITY_ATTRIBUTES` in lifecycle/status.ts.
+   */
   attributes?: Record<string, unknown>;
   /**
    * Live ownership verdict from the resource's marker (#119/#120). `owned` =

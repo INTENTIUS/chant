@@ -81,8 +81,16 @@ Without `--live`, every recorded component reports `unknown` reconciliation — 
 | `reconciled` | Recorded, and live evidence confirms the component is present and chant-owned. |
 | `unrecorded` | Live and owned, but no release record exists — deployed outside the recorded path. |
 | `stale` | Recorded, but nothing observed live now. |
-| `drifted` | Recorded, but live configuration has drifted since (mirrors `lifecycle plan`'s `update`). |
-| `unknown` | No live evidence requested. |
+| `drifted` | Recorded and live, but what was observed contradicts the release (see below). |
+| `unknown` | No live evidence requested, or live state could not be read. |
+
+A component is `drifted` when a resource it owns was read live and any of these hold:
+
+- the resource reports `attributes.digest` and it matches neither the recorded `digest` nor its `inputDigest`, or it reports `attributes.gitSha` and it differs from the recorded `gitSha` (an abbreviated sha of 7+ characters matches by prefix);
+- its configuration changed against the last [lifecycle snapshot](/chant/cli/lifecycle/), the same `update` verdict `lifecycle plan` gives, and that snapshot was taken at or after the release (a snapshot older than the release would count the release's own changes);
+- since that snapshot, chant's ownership marker disappeared (`owned` to `foreign`) or now names a different stack or environment.
+
+A resource that could not be read reports `unknown`, never `drifted`. A resource that reports no identity attribute, or `unknown` ownership, is no evidence either way. Lexicons opt in to the identity check by setting those two attributes.
 
 `--compare-to <env>` answers "which build is in `<env>`, and is it the one tested in `<compare-to>`" as a single query, per component:
 

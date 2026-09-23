@@ -7,9 +7,11 @@ import {
   mergeLiveEvidence,
   type LiveComponentEvidence,
   type LiveNameMapping,
+  type EntityLiveRead,
 } from "./status";
 import type { ReleaseRecord } from "./release-ledger";
-import type { ChangeSet } from "./change-set";
+import type { ChangeSet, ChangeSetEntry } from "./change-set";
+import type { ResourceMetadata } from "../lexicon";
 import type { BuildLedgerEntry, ComponentBomSummary } from "./build-ledger";
 
 function record(overrides?: Partial<ReleaseRecord>): ReleaseRecord {
@@ -629,5 +631,153 @@ describe("partial unit presence is said, not rounded down to nothing (#1528)", (
     const supplement = new Map<string, LiveComponentEvidence>([["operator", { live: false, partial }]]);
     const merged = mergeLiveEvidence(base, supplement);
     expect(merged.get("operator")!.partial).toEqual(partial);
+  });
+});
+
+// ── Live evidence that contradicts the recorded release (#2513) ─────────────
+
+describe("drifted: live evidence contradicts the recorded release (#2513)", () => {
+  const released = record({ component: "svc", digest: "sha256:released", gitSha: "1111111aaaaaaa", timestamp: "2026-02-01T00:00:00.000Z" });
+  const live = (meta: Partial<ResourceMetadata> = {}): ResourceMetadata => ({ type: "T", status: "ACTIVE", ownership: "owned", ...meta });
+  const entry = (overrides: Partial<ChangeSetEntry> = {}): ChangeSetEntry => ({
+    name: "svc",
+    type: "T",
+    action: "noop",
+    evidence: { declared: true, inSnapshot: true, live: true, observed: true },
+    ownership: "owned",
+    ...overrides,
+  });
+  const reconcile = (entries: ChangeSetEntry[], reads: Map<string, EntityLiveRead>, rec: ReleaseRecord = released) =>
+    reconcileStatus("prod", [rec], {
+      liveEvidence: liveEvidenceFromChangeSet({ env: "prod", entries }, undefined, { observations: reads }),
+    })[0];
+
+  test("reconciled: the reported identity matches digest and (abbreviated) git sha", () => {
+    const row = reconcile([entry()], new Map([["svc", { now: live({ attributes: { digest: "sha256:released", gitSha: "1111111" } }) }]]));
+    expect(row.reconciliation).toBe("reconciled");
+  });
+
+  test("reconciled: a bare hex digest names the same digest as its sha256: form", () => {
+    const row = reconcile([entry()], new Map([["svc", { now: live({ attributes: { digest: "released" } }) }]]));
+    expect(row.reconciliation).toBe("reconciled");
+  });
+
+  test("reconciled: a pinned record's inputDigest is an accepted identity", () => {
+    const row = reconcile(
+      [entry()],
+      new Map([["svc", { now: live({ attributes: { digest: "sha256:input" } }) }]]),
+      { ...released, inputDigest: "sha256:input" },
+    );
+    expect(row.reconciliation).toBe("reconciled");
+  });
+
+  test("drifted: a foreign digest", () => {
+    const row = reconcile([entry()], new Map([["svc", { now: live({ attributes: { digest: "sha256:other" } }) }]]));
+    expect(row.reconciliation).toBe("drifted");
+    expect(row.detail).toContain("sha256:other");
+    expect(row.live).toBe(true);
+  });
+
+  test("drifted: an unknown git sha", () => {
+    const row = reconcile([entry()], new Map([["svc", { now: live({ attributes: { gitSha: "2222222" } }) }]]));
+    expect(row.reconciliation).toBe("drifted");
+  });
+
+  test("drifted: an update against a snapshot taken at or after the release", () => {
+    const row = reconcile(
+      [entry({ action: "update", deltas: [{ path: "attributes.revision", oldValue: "6", newValue: "7" }] })],
+      new Map([["svc", { now: live(), then: live(), thenAt: "2026-02-01T00:00:00.000Z" }]]),
+    );
+    expect(row.reconciliation).toBe("drifted");
+    expect(row.detail).toContain("attributes.revision");
+  });
+
+  test("reconciled: an update against a snapshot older than the release is the release itself", () => {
+    const row = reconcile(
+      [entry({ action: "update", deltas: [{ path: "lastUpdated", oldValue: "a", newValue: "b" }] })],
+      new Map([["svc", { now: live(), then: live(), thenAt: "2026-01-31T23:59:59.000Z" }]]),
+    );
+    expect(row.reconciliation).toBe("reconciled");
+  });
+
+  test("drifted: owned at the snapshot, foreign now", () => {
+    const row = reconcile(
+      [entry({ ownership: "foreign" })],
+      new Map([["svc", { now: live({ ownership: "foreign" }), then: live({ ownership: "owned" }), thenAt: "2026-02-02T00:00:00.000Z" }]]),
+    );
+    expect(row.reconciliation).toBe("drifted");
+  });
+
+  test("drifted: the ownership marker now names a different stack", () => {
+    const row = reconcile(
+      [entry()],
+      new Map([["svc", {
+        now: live({ marker: { stack: "other", env: "prod" } }),
+        then: live({ marker: { stack: "app", env: "prod" } }),
+        thenAt: "2026-02-02T00:00:00.000Z",
+      }]]),
+    );
+    expect(row.reconciliation).toBe("drifted");
+    expect(row.detail).toContain("app/prod");
+  });
+
+  test("reconciled: ownership going to unknown is not a contradiction", () => {
+    const row = reconcile(
+      [entry({ ownership: "unknown" })],
+      new Map([["svc", { now: live({ ownership: "unknown" }), then: live({ ownership: "owned" }), thenAt: "2026-02-02T00:00:00.000Z" }]]),
+    );
+    expect(row.reconciliation).toBe("reconciled");
+  });
+
+  test("stale: confirmed absent, whatever the snapshot said", () => {
+    const row = reconcile(
+      [entry({ action: "create", evidence: { declared: true, inSnapshot: true, live: false, observed: true } })],
+      new Map([["svc", { then: live({ attributes: { digest: "sha256:other" } }), thenAt: "2026-02-02T00:00:00.000Z" }]]),
+    );
+    expect(row.reconciliation).toBe("stale");
+  });
+
+  test("unknown: not observed never becomes drifted", () => {
+    const row = reconcile(
+      [entry({ action: "unobserved", unobservedReason: "read-failed", evidence: { declared: true, inSnapshot: true, live: false, observed: false } })],
+      new Map([["svc", { then: live({ attributes: { digest: "sha256:other" } }), thenAt: "2026-02-02T00:00:00.000Z" }]]),
+    );
+    expect(row.reconciliation).toBe("unknown");
+    expect(row.live).toBeUndefined();
+  });
+
+  test("a mapped component drifts when any of its live resources contradicts the record", () => {
+    const evidence = liveEvidenceFromChangeSet(
+      { env: "prod", entries: [entry({ name: "svc-a" }), entry({ name: "svc-b" })] },
+      new Map([["svc", ["svc-a", "svc-b"]]]),
+      {
+        observations: new Map([
+          ["svc-a", { now: live({ attributes: { digest: "sha256:released" } }) }],
+          ["svc-b", { now: live({ attributes: { digest: "sha256:other" } }) }],
+        ]),
+      },
+    );
+    const row = reconcileStatus("prod", [released], { liveEvidence: evidence })[0];
+    expect(row.reconciliation).toBe("drifted");
+    expect(row.detail).toContain("svc-b");
+  });
+
+  test("identity and drift signals survive the stack-presence overlay", () => {
+    const base = liveEvidenceFromChangeSet({ env: "prod", entries: [entry()] }, undefined, {
+      observations: new Map([["svc", { now: live({ attributes: { digest: "sha256:other" } }) }]]),
+    });
+    const merged = mergeLiveEvidence(base, new Map([["svc", { live: true, ownership: "owned" }]]));
+    const row = reconcileStatus("prod", [released], { liveEvidence: merged })[0];
+    expect(row.reconciliation).toBe("drifted");
+  });
+
+  test("without per-entity reads the evidence is unchanged from before (no new fields)", () => {
+    const evidence = liveEvidenceFromChangeSet({ env: "prod", entries: [entry()] });
+    expect(evidence.get("svc")).toEqual({
+      live: true,
+      action: "noop",
+      ownership: "owned",
+      rollup: { total: 1, present: 1, absent: 0, unobserved: 0 },
+    });
   });
 });

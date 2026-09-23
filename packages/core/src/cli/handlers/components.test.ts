@@ -23,6 +23,7 @@ const awsEmulatorStub = {
 const getHeadCommitMock = vi.fn();
 const fetchLifecycleMock = vi.fn();
 const pushLifecycleMock = vi.fn();
+const readSnapshotMock = vi.fn();
 
 const appendReleaseRecordMock = vi.fn();
 const readReleaseLedgerMock = vi.fn();
@@ -38,6 +39,8 @@ vi.mock("../../lifecycle/git", () => ({
   getHeadCommit: (...args: unknown[]) => getHeadCommitMock(...args),
   fetchLifecycle: (...args: unknown[]) => fetchLifecycleMock(...args),
   pushLifecycle: (...args: unknown[]) => pushLifecycleMock(...args),
+  readSnapshot: (...args: unknown[]) => readSnapshotMock(...args),
+  snapshotStorageKey: (lexicon: string, stack?: string) => (stack ? `${stack}__${lexicon}` : lexicon),
   StaleLifecycleBranchError: class StaleLifecycleBranchError extends Error {},
 }));
 
@@ -125,6 +128,7 @@ describe("components handlers", () => {
     getHeadCommitMock.mockReset().mockResolvedValue("abc123headsha");
     fetchLifecycleMock.mockReset().mockResolvedValue(true);
     pushLifecycleMock.mockReset().mockResolvedValue(true);
+    readSnapshotMock.mockReset().mockResolvedValue(null);
     appendReleaseRecordMock.mockReset();
     readReleaseLedgerMock.mockReset().mockResolvedValue({ records: [], malformed: 0 });
     listReleaseEnvironmentsMock.mockReset().mockResolvedValue([]);
@@ -564,6 +568,129 @@ describe("components handlers", () => {
         totalPackageCount: 7,
         isAssembly: false,
         leaves: [{ path: "image.tar.sbom.json", bomKind: "software", subjectDigest: "sha256:image1", packageCount: 7, generator: "syft" }],
+      });
+    });
+
+    // #2513: `--live` could never report `drifted` — the change set was built
+    // with no prior observation, so a live, declared entity was always `noop`,
+    // and nothing compared the live identity with the recorded release. These
+    // go through the handler end to end with a fake lexicon.
+    describe("drifted (#2513)", () => {
+      const released = {
+        version: 1,
+        component: "svc",
+        env: "prod",
+        digest: "sha256:released",
+        gitSha: "1111111aaaaaaa",
+        runId: "run-1",
+        timestamp: "2026-02-01T00:00:00.000Z",
+        actor: "alice",
+      };
+
+      async function statusRow(
+        resources: Record<string, ResourceMetadata>,
+        opts: { snapshot?: { timestamp: string; resources: Record<string, ResourceMetadata> }; failRead?: boolean } = {},
+      ) {
+        readReleaseLedgerMock.mockResolvedValue({ records: [released], malformed: 0 });
+        buildMock.mockResolvedValue(makeBuildResult({ aws: ["svc"] }));
+        readSnapshotMock.mockImplementation(async (env: string, key: string) =>
+          opts.snapshot && env === "prod" && key === "aws"
+            ? JSON.stringify({ lexicon: "aws", environment: "prod", commit: "c", ...opts.snapshot })
+            : null,
+        );
+        const plugins: LexiconPlugin[] = [
+          createMockPlugin({
+            name: "aws",
+            emulator: awsEmulatorStub,
+            describeResources: opts.failRead
+              ? async () => { throw new Error("credentials expired"); }
+              : staticDescribeResources(resources),
+          }),
+        ];
+        stdoutBuf.length = 0;
+        const exit = await runComponentsStatus({
+          args: makeArgs({ extraPositional: "prod", live: true, json: true }),
+          plugins,
+          serializers: plugins.map((p) => p.serializer),
+        });
+        expect(exit).toBe(0);
+        return JSON.parse(stdoutBuf.join(""))[0];
+      }
+
+      test("reconciled: live identity matches the recorded digest and git sha", async () => {
+        const row = await statusRow({ svc: meta({ attributes: { digest: "sha256:released", gitSha: "1111111" } }) });
+        expect(row).toMatchObject({ component: "svc", reconciliation: "reconciled", live: true });
+      });
+
+      test("drifted: live resource reports a digest other than the recorded one", async () => {
+        const row = await statusRow({ svc: meta({ attributes: { digest: "sha256:foreign" } }) });
+        expect(row).toMatchObject({ component: "svc", reconciliation: "drifted", live: true });
+        expect(row.detail).toContain("sha256:foreign");
+      });
+
+      test("drifted: live resource reports a different git sha", async () => {
+        const row = await statusRow({ svc: meta({ attributes: { gitSha: "2222222bbbbbbb" } }) });
+        expect(row).toMatchObject({ reconciliation: "drifted" });
+        expect(row.detail).toContain("2222222bbbbbbb");
+      });
+
+      test("drifted: live attributes changed since a snapshot taken after the release", async () => {
+        const row = await statusRow(
+          { svc: meta({ attributes: { revision: "7" } }) },
+          { snapshot: { timestamp: "2026-02-01T00:05:00.000Z", resources: { svc: meta({ attributes: { revision: "6" } }) } } },
+        );
+        expect(row).toMatchObject({ reconciliation: "drifted" });
+        expect(row.detail).toContain("attributes.revision");
+      });
+
+      test("drifted: chant's ownership marker disappeared since a post-release snapshot", async () => {
+        const row = await statusRow(
+          { svc: meta({ ownership: "foreign" }) },
+          { snapshot: { timestamp: "2026-02-02T00:00:00.000Z", resources: { svc: meta({ ownership: "owned" }) } } },
+        );
+        expect(row).toMatchObject({ reconciliation: "drifted" });
+        expect(row.detail).toContain("ownership marker");
+      });
+
+      test("reconciled: a snapshot older than the release does not attribute the release's own change to drift", async () => {
+        const row = await statusRow(
+          { svc: meta({ attributes: { revision: "7" } }) },
+          { snapshot: { timestamp: "2026-01-15T00:00:00.000Z", resources: { svc: meta({ attributes: { revision: "6" } }) } } },
+        );
+        expect(row).toMatchObject({ reconciliation: "reconciled" });
+      });
+
+      test("reconciled: unchanged since the snapshot, and no identity reported (no identity is not drift)", async () => {
+        const row = await statusRow(
+          { svc: meta() },
+          { snapshot: { timestamp: "2026-02-01T00:05:00.000Z", resources: { svc: meta() } } },
+        );
+        expect(row).toMatchObject({ reconciliation: "reconciled" });
+      });
+
+      test("stale: recorded, and the provider confirmed nothing live", async () => {
+        const row = await statusRow(
+          {},
+          { snapshot: { timestamp: "2026-02-01T00:05:00.000Z", resources: { svc: meta({ attributes: { digest: "sha256:foreign" } }) } } },
+        );
+        expect(row).toMatchObject({ reconciliation: "stale", live: false });
+      });
+
+      test("unknown: a failed read is never drifted, whatever the snapshot says", async () => {
+        const row = await statusRow(
+          {},
+          {
+            failRead: true,
+            snapshot: { timestamp: "2026-02-01T00:05:00.000Z", resources: { svc: meta({ attributes: { digest: "sha256:foreign" } }) } },
+          },
+        );
+        expect(row).toMatchObject({ reconciliation: "unknown" });
+        expect(row).not.toHaveProperty("live");
+      });
+
+      test("reads the same unstacked snapshot `lifecycle plan` reads", async () => {
+        await statusRow({ svc: meta() });
+        expect(readSnapshotMock).toHaveBeenCalledWith("prod", "aws");
       });
     });
 

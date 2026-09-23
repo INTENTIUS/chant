@@ -15,10 +15,15 @@
  *    for it. Someone (or some pipeline) deployed outside the recorded path.
  *  - **stale** — a release record exists but nothing live corresponds to it
  *    anymore (the component disappeared from observation).
- *  - **drifted** — the environment's live/owned resources don't confirm the
- *    recorded digest one way or the other from this join alone (recorded,
- *    but live identity can't be read back to a digest) — surfaced as a
- *    lower-confidence signal rather than silently treated as "reconciled".
+ *  - **drifted** — a release record exists and the component is observed
+ *    live, but a positive live observation contradicts the record (#2513):
+ *    the live identity a lexicon reports (`attributes.digest` /
+ *    `attributes.gitSha`) differs from the recorded release's, the ownership
+ *    marker went from chant's to someone else's, or the live configuration
+ *    changed against a lifecycle snapshot taken at or after the release (the
+ *    `update` verdict `lifecycle plan` gives). Only things chant saw count:
+ *    a resource it could not read, or one that reports no identity, never
+ *    makes a component drifted.
  *  - **reconciled** — a release record exists and live evidence (via
  *    ownership) confirms the component is present and owned by chant.
  *  - **unknown** — live evidence was requested and could not be read (#1089),
@@ -37,6 +42,7 @@
  */
 
 import type { ChangeSet, ChangeAction } from "./change-set";
+import type { ResourceMetadata } from "../lexicon";
 import { latestPerComponent, type ReleaseRecord } from "./release-ledger";
 import type { BuildLedgerEntry, ComponentBomSummary } from "./build-ledger";
 import { unobservedReasonText, type UnobservedReason } from "../observation";
@@ -166,6 +172,99 @@ export interface LiveComponentEvidence {
    * configured.
    */
   rollup?: ComponentResourceRollup;
+  /**
+   * What the component's live resources say they are running (#2513), one
+   * entry per present resource that reported an identity attribute
+   * ({@link LIVE_IDENTITY_ATTRIBUTES}). A resource that reports none has no
+   * entry: no identity is no evidence, never a mismatch.
+   */
+  identities?: LiveIdentity[];
+  /**
+   * Positive live observations that changed against the last lifecycle
+   * snapshot (#2513), each stamped with that snapshot's timestamp so the
+   * status join can drop a change the release itself made (a snapshot taken
+   * before the release). When present, `reconcileStatus` reads these instead
+   * of the bare `action === "update"`.
+   */
+  driftSignals?: LiveDriftSignal[];
+}
+
+/**
+ * The `ResourceMetadata.attributes` keys a lexicon sets to report which build
+ * a live resource is running (#2513), and the release-record field each one is
+ * compared with. Opt-in: a lexicon that sets neither is reconciled on presence,
+ * ownership and snapshot drift alone, exactly as before.
+ *
+ * - `digest` — the artifact digest serving now (`sha256:...`). Matches the
+ *   record's `digest`, or its `inputDigest` when the record has one.
+ * - `gitSha` — the commit the live build came from. Matches the record's
+ *   `gitSha`; an abbreviated sha (7+ characters) matches by prefix.
+ */
+export const LIVE_IDENTITY_ATTRIBUTES = { digest: "digest", gitSha: "gitSha" } as const;
+
+/** One live resource's reported identity (#2513). */
+export interface LiveIdentity {
+  /** The live entity/resource name that reported it. */
+  entity: string;
+  digest?: string;
+  gitSha?: string;
+}
+
+/** One live change against the last snapshot (#2513). */
+export interface LiveDriftSignal {
+  entity: string;
+  /**
+   * `attributes` — the change set's `update` (status, physicalId, lastUpdated
+   * or an attribute changed). `ownership` — the snapshot read chant's marker
+   * and the live read now reads none (`owned` -> `foreign`), or the marker now
+   * names a different stack/env. `unknown` on either side is never a signal.
+   */
+  kind: "attributes" | "ownership";
+  /** The snapshot's timestamp. Absent when the caller did not say. */
+  since?: string;
+  /** Human-readable backing (the changed paths, the marker transition). */
+  detail?: string;
+}
+
+/**
+ * The per-entity observation `liveEvidenceFromChangeSet` reads identity and
+ * marker transitions from (#2513). `now` is the live read; `then`/`thenAt`
+ * are the last lifecycle snapshot's record for the same entity, when one
+ * exists.
+ */
+export interface EntityLiveRead {
+  now?: ResourceMetadata;
+  then?: ResourceMetadata;
+  thenAt?: string;
+}
+
+function identityOf(entity: string, meta: ResourceMetadata | undefined): LiveIdentity | undefined {
+  const attrs = meta?.attributes;
+  if (!attrs) return undefined;
+  const digest = attrs[LIVE_IDENTITY_ATTRIBUTES.digest];
+  const gitSha = attrs[LIVE_IDENTITY_ATTRIBUTES.gitSha];
+  const d = typeof digest === "string" && digest.length > 0 ? digest : undefined;
+  const g = typeof gitSha === "string" && gitSha.length > 0 ? gitSha : undefined;
+  if (!d && !g) return undefined;
+  return { entity, ...(d ? { digest: d } : {}), ...(g ? { gitSha: g } : {}) };
+}
+
+/**
+ * An ownership transition between the snapshot and now that contradicts a
+ * chant release. `unknown` on either side answers nothing and is skipped, the
+ * same way the change set never escalates `unknown` (#1089, #1168).
+ */
+function ownershipChange(then: ResourceMetadata | undefined, now: ResourceMetadata | undefined): string | undefined {
+  if (!then || !now) return undefined;
+  if (then.ownership === "owned" && now.ownership === "foreign") {
+    return "ownership marker was chant's at the last snapshot and is gone now";
+  }
+  const a = then.marker;
+  const b = now.marker;
+  if (a && b && (a.stack !== b.stack || (a.env !== undefined && b.env !== undefined && a.env !== b.env))) {
+    return `ownership marker changed from ${a.stack}${a.env ? `/${a.env}` : ""} to ${b.stack}${b.env ? `/${b.env}` : ""}`;
+  }
+  return undefined;
 }
 
 /**
@@ -211,6 +310,11 @@ export function mergeLiveEvidence(
       // Base first: the counts come from the change set, and a stack
       // observation has none to offer.
       ...(b?.rollup ?? sup.rollup ? { rollup: b?.rollup ?? sup.rollup } : {}),
+      // Identity and snapshot drift come from the per-resource reads; a stack
+      // observation carries neither, so dropping them here would make
+      // `drifted` unreachable again on every lexicon with a stack observer.
+      ...(b?.identities ? { identities: b.identities } : {}),
+      ...(b?.driftSignals ? { driftSignals: b.driftSignals } : {}),
     });
   }
   return merged;
@@ -299,7 +403,18 @@ function mergeEvidence(entries: LiveComponentEvidence[]): LiveComponentEvidence 
   // actually seen live, which already answers "is this deployed".
   const unobserved = live ? undefined : entries.find((e) => e.unobserved)?.unobserved;
 
-  return { live, ownership, action, ...(unobserved ? { unobserved } : {}), rollup: rollUp(entries) };
+  const identities = entries.flatMap((e) => e.identities ?? []);
+  const driftSignals = entries.flatMap((e) => e.driftSignals ?? []);
+
+  return {
+    live,
+    ownership,
+    action,
+    ...(unobserved ? { unobserved } : {}),
+    rollup: rollUp(entries),
+    ...(identities.length ? { identities } : {}),
+    ...(driftSignals.length ? { driftSignals } : {}),
+  };
 }
 
 /**
@@ -317,9 +432,41 @@ function mergeEvidence(entries: LiveComponentEvidence[]): LiveComponentEvidence 
 export function liveEvidenceFromChangeSet(
   cs: ChangeSet,
   nameMapping?: LiveNameMapping,
+  opts?: {
+    /**
+     * Per-entity live read and snapshot record (#2513). With it, the evidence
+     * carries the identity each live resource reports and the drift signals
+     * (stamped with the snapshot's time) `reconcileStatus` reads for
+     * `drifted`. Without it, the evidence is what it was before: the change
+     * set's `action` alone.
+     */
+    observations?: Map<string, EntityLiveRead>;
+  },
 ): Map<string, LiveComponentEvidence> {
   const evidenceByName = new Map<string, LiveComponentEvidence>();
   for (const entry of cs.entries) {
+    const obs = opts?.observations?.get(entry.name);
+    // Identity and marker transitions only from a resource that was actually
+    // read present. An unobserved or absent entity contributes nothing.
+    const identity = entry.evidence.live ? identityOf(entry.name, obs?.now) : undefined;
+    const driftSignals: LiveDriftSignal[] = [];
+    if (obs && entry.action === "update") {
+      driftSignals.push({
+        entity: entry.name,
+        kind: "attributes",
+        ...(obs.thenAt ? { since: obs.thenAt } : {}),
+        ...(entry.deltas?.length ? { detail: entry.deltas.map((d) => d.path).join(", ") } : {}),
+      });
+    }
+    const ownershipDetail = obs && entry.evidence.live ? ownershipChange(obs.then, obs.now) : undefined;
+    if (ownershipDetail) {
+      driftSignals.push({
+        entity: entry.name,
+        kind: "ownership",
+        ...(obs?.thenAt ? { since: obs.thenAt } : {}),
+        detail: ownershipDetail,
+      });
+    }
     evidenceByName.set(entry.name, {
       rollup: rollUp([
         {
@@ -342,6 +489,8 @@ export function liveEvidenceFromChangeSet(
             },
           }
         : {}),
+      ...(identity ? { identities: [identity] } : {}),
+      ...(driftSignals.length ? { driftSignals } : {}),
     });
   }
 
@@ -404,6 +553,7 @@ export function reconcileStatus(
 
     let reconciliation: ComponentStatusRow["reconciliation"];
     let detail: string;
+    let contradiction: string | undefined;
 
     if (!liveEvidence) {
       // No live evidence requested at all (digest-only / offline mode) — the
@@ -437,9 +587,9 @@ export function reconcileStatus(
       detail = evidence?.partial
         ? `recorded ${recorded.timestamp} (digest ${recorded.digest}), but only ${evidence.partial.present} of ${evidence.partial.total} deploy units observed live now (missing: ${evidence.partial.missing.join(", ")})`
         : `recorded ${recorded.timestamp} (digest ${recorded.digest}), but nothing observed live now`;
-    } else if (recorded && evidence?.action === "update") {
+    } else if (recorded && (contradiction = contradictsRecord(recorded, evidence!))) {
       reconciliation = "drifted";
-      detail = `recorded ${recorded.timestamp} (digest ${recorded.digest}), but live configuration has drifted since`;
+      detail = `recorded ${recorded.timestamp} (digest ${recorded.digest}), but ${contradiction}`;
     } else {
       reconciliation = "reconciled";
       detail = `recorded ${recorded!.timestamp} (digest ${recorded!.digest}), live and consistent`;
@@ -465,6 +615,66 @@ export function reconcileStatus(
   }
 
   return rows;
+}
+
+/** `sha256:abc` and `abc` name the same digest; anything else compares exactly. */
+function sameDigest(a: string, b: string): boolean {
+  const bare = (d: string) => d.replace(/^sha256:/, "");
+  return a === b || bare(a) === bare(b);
+}
+
+/** Full shas compare exactly; an abbreviated one (7+ chars) matches by prefix. */
+function sameGitSha(a: string, b: string): boolean {
+  if (a === b) return true;
+  const [short, long] = a.length <= b.length ? [a, b] : [b, a];
+  return short.length >= 7 && long.startsWith(short);
+}
+
+function notBefore(since: string, recordedAt: string): boolean {
+  const s = Date.parse(since);
+  const r = Date.parse(recordedAt);
+  // An unparseable timestamp cannot place the change after the release, so
+  // it is not attributed to drift since it.
+  return !Number.isNaN(s) && !Number.isNaN(r) && s >= r;
+}
+
+/**
+ * Does live evidence for a present, recorded component contradict its latest
+ * release record (#2513)? Returns why, or `undefined` when nothing seen says
+ * so. Every rule reads a positive observation; a missing identity, an
+ * `unknown` ownership or a resource nobody read is not a contradiction.
+ */
+function contradictsRecord(recorded: ReleaseRecord, evidence: LiveComponentEvidence): string | undefined {
+  for (const id of evidence.identities ?? []) {
+    if (id.digest !== undefined) {
+      const matches =
+        sameDigest(id.digest, recorded.digest) ||
+        (recorded.inputDigest !== undefined && sameDigest(id.digest, recorded.inputDigest));
+      if (!matches) return `live ${id.entity} reports digest ${id.digest}`;
+    }
+    if (id.gitSha !== undefined && !sameGitSha(id.gitSha, recorded.gitSha)) {
+      return `live ${id.entity} reports git sha ${id.gitSha}, recorded ${recorded.gitSha}`;
+    }
+  }
+
+  if (evidence.driftSignals) {
+    // A signal against a snapshot taken before the release may be the release
+    // itself, so only a change seen since the release counts. A signal with no
+    // `since` was produced by a caller that did not say, and counts.
+    const since = evidence.driftSignals.filter((d) => d.since === undefined || notBefore(d.since, recorded.timestamp));
+    const first = since[0];
+    if (first) {
+      const what = first.kind === "ownership" ? first.detail ?? "ownership marker changed" : `live configuration of ${first.entity} changed${first.detail ? ` (${first.detail})` : ""}`;
+      const more = since.length > 1 ? ` (+${since.length - 1} more)` : "";
+      return `${what} since the snapshot of ${first.since ?? "an earlier read"}${more}`;
+    }
+    return undefined;
+  }
+
+  // Evidence assembled without per-entity observations: the change set's own
+  // `update` verdict is the only drift signal there is.
+  if (evidence.action === "update") return "live configuration has drifted since";
+  return undefined;
 }
 
 /**
