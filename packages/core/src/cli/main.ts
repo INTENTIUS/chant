@@ -285,6 +285,8 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.components = true;
     } else if (arg === "--generate") {
       result.generate = args[++i];
+    } else if (arg === "--spec") {
+      result.opsSpec = args[++i];
     } else if (arg === "--dump-outputs") {
       result.dumpOutputs = args[++i];
     } else if (arg === "--seed-outputs") {
@@ -556,6 +558,11 @@ Ops:
   run approve <op> <gate>  Record a gate's resolution and wake the runtime
   run cancel <name>     Cancel the active run (requires --force)
   run log <name>        Show run history for an Op
+  run --generate <provider>  Write one CI pipeline file per scheduled Op for
+                        github, gitlab or forgejo (#2533), from every Op that
+                        declares a schedule or from --spec <file.json>.
+                        Files go to the forge's own directory unless
+                        --output <dir>; --format json prints them instead
   run --components <name|all>  Run discovered Component(s) through the interpret
                         driver on the local executor (--env <env>; #585).
                         On success, auto-emits a release-ledger record per
@@ -744,9 +751,11 @@ Options:
   --use-composites      Rewrite to composite calls when patterns match (migrate)
   --components          Target discovered Component declarations instead of
                         lexicon resources (list, describe, graph, build, run)
-  --generate <lexicon>  Generate mode (build --components only): synthesize CI
-                        YAML for <lexicon> instead of running a normal build.
-                        Only "gitlab" is implemented for v1.
+  --generate <lexicon>  Generate mode: synthesize CI YAML for <lexicon> instead
+                        of running. build --components: one pipeline for the
+                        components; run: one pipeline file per scheduled Op
+  --spec <file>         (run --generate) JSON Op specs: an array, or
+                        { ops, options }
   --no-release-record   Skip auto-emitting a release-ledger record after a
                         successful \`run --components\` deploy (default: on;
                         also settable via chant.config.ts's
@@ -800,6 +809,7 @@ Examples:
   chant build ./infra/ --fold
   chant build ./infra/ --components --generate gitlab
   chant build ./infra/ --components --generate gitlab --output .gitlab-ci.yml
+  chant run --generate github
   chant run --components search-service --env staging
   chant run --components all --env production
   chant components export prod --component search-service -o ./dist/search-service
