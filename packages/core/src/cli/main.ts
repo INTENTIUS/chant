@@ -508,10 +508,11 @@ Commands:
   init                  Initialize a new chant project
   init lexicon <name>   Scaffold a new lexicon plugin project
   build                 Build infrastructure from specification files
-                        (--components --generate gitlab: generate mode (#563) —
-                         synthesize a thin .gitlab-ci.yml that triggers each
-                         discovered component's own deploy in wave order,
-                         instead of a normal lexicon build)
+                        (--components --generate github|gitlab|forgejo:
+                         generate mode (#563), which synthesizes a thin CI
+                         pipeline that triggers each discovered component's
+                         own deploy in wave order, instead of a normal
+                         lexicon build)
   lint                  Check specifications for issues
   list                  List discovered entities
   describe              Show the effective config for one component
@@ -783,9 +784,10 @@ Options:
   --use-composites      Rewrite to composite calls when patterns match (migrate)
   --components          Target discovered Component declarations instead of
                         lexicon resources (list, describe, graph, build, run)
-  --generate <lexicon>  Generate mode: synthesize CI YAML for <lexicon> instead
-                        of running. build --components: one pipeline for the
-                        components; run: one pipeline file per scheduled Op
+  --generate <lexicon>  Generate mode: synthesize CI YAML for <lexicon> (github,
+                        gitlab or forgejo) instead of running. build
+                        --components: one pipeline for the components; run:
+                        one pipeline file per scheduled Op
   --spec <file>         (run --generate) JSON Op specs: an array, or
                         { ops, options }
   --promote-to <env>    (build --components --generate) Add a job that
