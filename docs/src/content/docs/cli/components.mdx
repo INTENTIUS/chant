@@ -17,6 +17,10 @@ chant components fan-out (--base <ref> [--head <ref>] [--include-dependents]
                                 [--env <env>] [--gate <name>] [--dry-run] [--json]
                                 [--resume <file>] [--seed-outputs <file>]
                                 [--dump-outputs <file>] [--progress-json]
+chant components promote --from <env> --to <env>
+                                [--component <name> [--digest <sha256:...>]]
+                                [--dry-run] [--json] [--seed-outputs <file>]
+                                [--run-id <id>] [--actor <name>]
 ```
 
 ## Description
@@ -241,13 +245,65 @@ A record whose digest does not match the fan-out derived now is refused with a w
 | `--dump-outputs <file>` | Write the outputs the run holds to this file afterwards. |
 | `--progress-json` | Stream one NDJSON progress record per line to stdout while the waves execute. |
 
+### `components promote`
+
+Deploy the artifact digests one environment's release ledger records to another environment, without a build.
+
+```bash
+chant components promote --from staging --to prod --dry-run
+chant components promote --from staging --to prod
+chant components promote --from staging --to prod --component search-service --digest sha256:9fae3d7c...
+```
+
+Without `--component`, every component this checkout declares that has a release in the `--from` ledger is promoted, each at its latest recorded digest. A recorded component the checkout no longer declares is listed as not promoted and left alone. `--component <name>` promotes that one component, and `--digest` picks an earlier release of it. A digest the `--from` ledger never recorded for the component fails before anything runs, and the error lists the digests it did record.
+
+A promote runs the component's `deploy` composition against the `--to` environment with its build-time steps taken out: `docker-build`, `zip-package`, `jvm-build`, `generate-sbom` and `extract-config-bom`. Everything else runs the way `chant run --components <name> --env <to>` would run it:
+
+- The publish step still runs. It moves the archived bytes to the target environment, which is how the [build archive](/chant/components/build-archive/) promotes by digest. Its output is checked against the recorded digest, and a publish that yields any other digest fails the component before the steps after it run. That happens when the archive on disk is not the one the source release was built from, so run a promote where that archive is present: the job that built it, or one that restored it.
+- Gates run. A gate in the composition stops the promote with exit 3 and the `chant approve` line, the same as any deploy to that environment, and running the same promote again after the approval continues past it.
+- The remaining steps run against the target environment as they are written in this checkout. The artifact comes from the source release but the deploy steps come from here, so the promote warns when this checkout is not the commit the artifact was built from.
+
+Some compositions cannot be pinned to one recorded digest, and a promote refuses them before anything runs: a component with no publish step (nothing in its deploy carries the digest), one with more than one publish step (a release record carries one digest), and one whose remaining steps read an output of a removed build step, such as `@Build.archivePath`.
+
+A `dependsOn` edge to a component outside the promotion is dropped, as a single-component `chant run --components` drops it. `--seed-outputs <file>` loads the outputs such a dependency produced, for `stackOutput()` references into it.
+
+The promote appends one record to the `--to` ledger for every component it deployed. The record carries the source release's digest, git sha and archive digests, a fresh run id and actor, the approver of any gate it passed, and `promotedFrom`, which names the source release:
+
+```json
+{
+  "component": "search-service",
+  "env": "prod",
+  "digest": "sha256:9fae3d...",
+  "gitSha": "a1b2c3d",
+  "runId": "4822",
+  "timestamp": "2026-07-03T09:12:40.000Z",
+  "actor": "octocat",
+  "promotedFrom": { "env": "staging", "runId": "4821", "timestamp": "2026-07-02T18:04:11.000Z" },
+  "version": 1
+}
+```
+
+A component that did not finish gets no record. The components that did deploy keep theirs. A ledger write that fails after a deploy exits 1 and says the deploy happened.
+
+| Flag | Meaning |
+|---|---|
+| `--from <env>` | Required. The environment whose release ledger holds the digests. |
+| `--to <env>` | Required. The environment to deploy them to. Must differ from `--from`. |
+| `--component <name>` | Promote only this component. |
+| `--digest <sha256:...>` | With `--component`, promote this recorded digest rather than the latest one. |
+| `--dry-run` | Print the plan (each component, its digest, the source release and the steps that will not run) and deploy nothing. |
+| `--json` | Emit the plan, the run result and the records written as one JSON document on stdout. |
+| `--seed-outputs <file>` | Load outputs from dependencies outside the promotion. Repeatable. |
+| `--run-id <id>` | Run id for the new records. Defaults as `components release` does. |
+| `--actor <name>` | Who ran the promote. Defaults as `components release` does, and must resolve before anything deploys. |
+
 ## Exit Codes
 
 | Code | Meaning |
 |------|---------|
 | 0 | Success (for `fan-out`, every selected component applied) |
-| 1 | Error (missing required flags, unresolvable actor, concurrent ledger write, no manifest found, an export entry missing on disk; for `fan-out`, a component failed, or the change signal was unusable) |
-| 3 | `fan-out` only: stopped at a gate nobody has approved. Nothing ran. |
+| 1 | Error (missing required flags, unresolvable actor, concurrent ledger write, no manifest found, an export entry missing on disk; for `fan-out`, a component failed, or the change signal was unusable; for `promote`, a digest missing from the source ledger, a composition that cannot be pinned, or a failed deploy) |
+| 3 | `fan-out` and `promote`: stopped at a gate nobody has approved. For `fan-out` nothing ran; for `promote` the steps before the gate ran, and only components that finished were recorded. |
 
 ## See Also
 
