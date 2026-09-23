@@ -25,6 +25,12 @@ A `gate` in a composition needs no hosted runtime. The run reads the gate ledger
 On a successful deploy, `chant run --components` auto-emits a [release-ledger](/chant/components/observability/) record, always as a CLI post-run step and never as a step of the composition itself. The run returns its final phase outputs so the CLI can read the published digest once the run reports success; a ledger write is a side effect on git and the network, and a composition that carried it would be re-running it on every retry.
 </Aside>
 
+### Gate approvals and environments
+
+A component gate approval is recorded under the component and the gate name, and nothing else. An approval given for a deploy to staging can therefore pass the same gate on a later deploy to prod, and so can a promote or a rollback ([#2574](https://github.com/INTENTIUS/chant/issues/2574)). The next release binds each approval to the environment and the plan digest it was given for, the way an [Op gate binds its plan](/chant/whats-new/#a-gate-approves-a-plan-not-the-next-run). An approval recorded before then will be refused, and the refusal names the `chant approve` command that records a new one.
+
+This release warns about it. When a component gate passes on an approval that records no plan, `chant run --components`, `chant components promote` and `chant components rollback` print one warning per component and gate. The gate still passes.
+
 ## Generate mode
 
 The same declarations synthesize plain CI YAML through the [GitHub](/chant/lexicons/github/), [GitLab](/chant/lexicons/gitlab/), or [Forgejo](/chant/lexicons/forgejo/) lexicon. Pipeline files still exist, but nobody maintains them by hand, and a cross-cutting change is one edit to the generator. The generated YAML is a thin trigger and runner; the deploy logic stays in the component, not the YAML.
