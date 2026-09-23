@@ -196,6 +196,7 @@ export default defineConfig({
 						{ label: 'Project Structure', slug: 'getting-started/project-structure' },
 						{ label: 'Network Egress', slug: 'reference/network-egress' },
 						{ label: 'Behaviour Coverage', slug: 'reference/behaviour-coverage' },
+						{ label: 'Level-0 Exceptions', slug: 'reference/level-0-exceptions' },
 						{
 							label: 'CLI',
 							items: [

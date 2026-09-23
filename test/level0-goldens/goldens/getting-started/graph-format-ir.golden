@@ -1,0 +1,175 @@
+# chant graph --format ir
+# on a copy of examples/getting-started; see test/level0-goldens/harness.ts for what is normalised
+exit: 0
+
+--- wrote (empty)
+
+--- stdout
+{
+  "nodes": [
+    {
+      "id": "apply",
+      "kind": "Chant::Op",
+      "lexicon": "chant",
+      "attrs": {
+        "name": "apply",
+        "overview": "Apply declared source to the local environment (code → cloud)"
+      },
+      "sourceLoc": {
+        "file": "apply.op.ts"
+      }
+    },
+    {
+      "id": "deploy",
+      "kind": "Chant::Op",
+      "lexicon": "chant",
+      "attrs": {
+        "name": "deploy",
+        "overview": "Build the getting-started manifests and apply them to the current kube context"
+      },
+      "sourceLoc": {
+        "file": "deploy.op.ts"
+      }
+    },
+    {
+      "id": "deploy-gated",
+      "kind": "Chant::Op",
+      "lexicon": "chant",
+      "attrs": {
+        "name": "deploy-gated",
+        "overview": "Build, pause for human approval, then apply"
+      },
+      "sourceLoc": {
+        "file": "deploy-gated.op.ts"
+      }
+    },
+    {
+      "id": "deployment",
+      "kind": "K8s::Apps::Deployment",
+      "lexicon": "k8s",
+      "attrs": {
+        "name": {
+          "$ref": "deployment.name"
+        },
+        "namespace": {
+          "$ref": "deployment.namespace"
+        },
+        "uid": {
+          "$ref": "deployment.uid"
+        }
+      },
+      "sourceLoc": {
+        "file": "src/web.ts"
+      }
+    },
+    {
+      "id": "observe",
+      "kind": "Chant::Op",
+      "lexicon": "chant",
+      "attrs": {
+        "name": "observe",
+        "overview": "Periodically snapshot and diff the local environment"
+      },
+      "sourceLoc": {
+        "file": "observe.op.ts"
+      }
+    },
+    {
+      "id": "op",
+      "kind": "Chant::Op",
+      "lexicon": "chant",
+      "attrs": {
+        "name": "observe",
+        "overview": "Periodically snapshot and diff the local environment"
+      },
+      "sourceLoc": {
+        "file": "observe.op.ts"
+      }
+    },
+    {
+      "id": "pdb",
+      "kind": "K8s::Policy::PodDisruptionBudget",
+      "lexicon": "k8s",
+      "attrs": {
+        "name": {
+          "$ref": "pdb.name"
+        },
+        "namespace": {
+          "$ref": "pdb.namespace"
+        },
+        "uid": {
+          "$ref": "pdb.uid"
+        }
+      },
+      "sourceLoc": {
+        "file": "src/web.ts"
+      }
+    },
+    {
+      "id": "reconcile",
+      "kind": "Chant::Op",
+      "lexicon": "chant",
+      "attrs": {
+        "name": "reconcile",
+        "overview": "Reconcile the local environment into source (cloud → code)"
+      },
+      "sourceLoc": {
+        "file": "reconcile.op.ts"
+      }
+    },
+    {
+      "id": "service",
+      "kind": "K8s::Core::Service",
+      "lexicon": "k8s",
+      "attrs": {
+        "name": {
+          "$ref": "service.name"
+        },
+        "namespace": {
+          "$ref": "service.namespace"
+        },
+        "uid": {
+          "$ref": "service.uid"
+        }
+      },
+      "sourceLoc": {
+        "file": "src/web.ts"
+      }
+    }
+  ],
+  "edges": [],
+  "groups": {
+    "byLexicon": {
+      "chant": [
+        "apply",
+        "deploy",
+        "deploy-gated",
+        "observe",
+        "op",
+        "reconcile"
+      ],
+      "k8s": [
+        "deployment",
+        "pdb",
+        "service"
+      ]
+    },
+    "byStack": {
+      "chant": [
+        "apply",
+        "deploy",
+        "deploy-gated",
+        "observe",
+        "op",
+        "reconcile"
+      ],
+      "k8s": [
+        "deployment",
+        "pdb",
+        "service"
+      ]
+    }
+  }
+}
+
+--- stderr (empty)

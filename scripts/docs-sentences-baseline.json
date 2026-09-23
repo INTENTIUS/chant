@@ -921,6 +921,11 @@
   "discourse/punchy-fragments": 1,
   "claude/colon-reveal": 5
  },
+ "docs/src/content/docs/reference/level-0-exceptions.mdx": {
+  "formatting/em-dash-density": 2,
+  "discourse/punchy-fragments": 1,
+  "claude/colon-reveal": 3
+ },
  "docs/src/content/docs/reference/network-egress.mdx": {
   "formatting/em-dash-density": 17,
   "claude/colon-reveal": 5,

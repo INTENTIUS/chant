@@ -1,0 +1,19 @@
+# chant lint --format json
+# on a copy of examples/local-op-quickstart; see test/level0-goldens/harness.ts for what is normalised
+exit: 0
+
+--- wrote (empty)
+
+--- stdout
+[
+  {
+    "file": "<project>/ops/azure-deploy.op.ts",
+    "line": 21,
+    "column": 45,
+    "ruleId": "AZR001",
+    "severity": "warning",
+    "message": "Hardcoded location \"eastus\" detected. Use Azure.ResourceGroupLocation instead."
+  }
+]
+
+--- stderr (empty)

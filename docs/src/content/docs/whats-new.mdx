@@ -7,6 +7,14 @@ A hand-curated rollup of capabilities shipped recently. If you learned chant bef
 
 For the day-to-day reference docs see [Lifecycle Models](/chant/concepts/lifecycle-models/), [`chant lifecycle`](/chant/cli/lifecycle/), [Live Import](/chant/guide/live-import/), [Reconciling Lifecycle](/chant/guide/reconciling-lifecycle/), [Drift Detection](/chant/concepts/drift-detection/), and [Implementing Observation](/chant/lexicon-authoring/observation/).
 
+## Level-0 output is pinned by golden tests
+
+Workspaces are coming in levels, and a project with no `chant.workspace.json` stays at level 0, where nothing changes. On every pull request, golden tests now run the five level-0 commands over copies of five example projects and compare each output with a committed file. A git fixture pins the ledger paths and ownership markers next to them. The few changes allowed to alter level-0 output are listed, with their issues and warning releases, on [Level-0 Exceptions](/chant/reference/level-0-exceptions/). None has shipped a warning yet.
+
+| # | Capability |
+|---|---|
+| [#2526](https://github.com/INTENTIUS/chant/issues/2526) | CLI goldens for level 0, the ledger and marker fixture, and a check that no workspace module loads |
+
 ## Ops run on the local runtime and on a fountain steward
 
 Temporal is gone. An Op no longer compiles to workflow code for an engine you have to run: `chant run <op>` executes the phases in this process, and `chant run <op> --on fountain` hands the same declaration to a [steward](/chant/lexicons/fountain/steward/), one teammate on a persistent sandbox whose thread becomes that environment's operational history. The `temporal` lexicon, the `--temporal` flag and the generated worker are all removed. The bridge that caught `--temporal` ahead of the parser and exited **2** with a line pointing at `--on fountain` shipped in 0.58.0 only, and [#2204](https://github.com/INTENTIUS/chant/issues/2204) took it back out for 0.59.0, so the flag now fails as an unknown flag like any other.

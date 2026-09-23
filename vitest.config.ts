@@ -113,6 +113,11 @@ export default defineConfig({
       "test/no-egress.test.ts",
       // chant #2404 — the behaviour coverage page against the contributed rows.
       "test/behaviour-coverage.test.ts",
+      // chant #2526 — the level-0 goldens (rule 2 of #2525): the real CLI over
+      // a few example copies in a temp dir, each command's output held against
+      // a committed golden, plus the no-workspace-module check on the same
+      // runs and the ledger-path fixture. No Docker, no network.
+      "test/level0-goldens/*.test.ts",
     ],
     // chant #1419 — a fresh clone has no lexicon src/generated/ or
     // dist/meta.json, and lexicon tests fail against their absence with

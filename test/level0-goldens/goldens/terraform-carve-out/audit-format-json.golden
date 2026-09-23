@@ -1,0 +1,98 @@
+# chant audit --format json
+# on a copy of examples/terraform-carve-out; see test/level0-goldens/harness.ts for what is normalised
+exit: 0
+
+--- wrote (empty)
+
+--- stdout
+{
+  "schemaVersion": "1.0",
+  "tool": {
+    "name": "chant-audit",
+    "version": "<chant-version>"
+  },
+  "status": "ok",
+  "snapshot": {
+    "target": ".",
+    "host": "local",
+    "files": [
+      "kubernetes",
+      "terraform"
+    ],
+    "generatedAt": "<timestamp>",
+    "toolVersion": "<chant-version>"
+  },
+  "summary": {
+    "total": 2,
+    "quickWin": 0,
+    "needsReview": 2,
+    "reportOnly": 0,
+    "errors": 2,
+    "warnings": 0,
+    "infos": 0,
+    "security": 2,
+    "correctness": 0,
+    "bestPractice": 0,
+    "efficiency": 0
+  },
+  "findings": [
+    {
+      "checkId": "TF023",
+      "severity": "error",
+      "message": "`kubernetes/terraform.tfstate` is committed to the repository. A state file records every attribute of every managed resource in plaintext, including the ones providers mark sensitive, so a committed state file is a committed secret store. Remove it from version control, add `*.tfstate` and `*.tfstate.backup` to .gitignore, move the state to a remote backend, and rotate anything it held.",
+      "file": "kubernetes/terraform.tfstate",
+      "entity": "terraform.tfstate",
+      "lexicon": "terraform",
+      "tier": "merge-worthy",
+      "fixKind": "guidance",
+      "category": "security",
+      "title": "Terraform state committed to the repository",
+      "remediation": "Delete the state file (or `.terraform/`) from version control, add it to .gitignore, move the state to a remote backend, and rotate every credential the file held.",
+      "authority": [
+        {
+          "name": "HashiCorp Terraform style guide — .gitignore",
+          "url": "https://developer.hashicorp.com/terraform/language/style#gitignore"
+        }
+      ],
+      "lineage": [
+        {
+          "tool": "hashicorp-style-guide",
+          "rule": ".gitignore: do not commit terraform.tfstate, terraform.tfstate.* backups, or the .terraform directory",
+          "url": "https://developer.hashicorp.com/terraform/language/style#gitignore",
+          "relation": "equivalent"
+        }
+      ],
+      "docUrl": "https://intentius.io/chant/lint-rules/audit-rules/#tf023"
+    },
+    {
+      "checkId": "TF023",
+      "severity": "error",
+      "message": "`terraform/terraform.tfstate` is committed to the repository. A state file records every attribute of every managed resource in plaintext, including the ones providers mark sensitive, so a committed state file is a committed secret store. Remove it from version control, add `*.tfstate` and `*.tfstate.backup` to .gitignore, move the state to a remote backend, and rotate anything it held.",
+      "file": "terraform/terraform.tfstate",
+      "entity": "terraform.tfstate",
+      "lexicon": "terraform",
+      "tier": "merge-worthy",
+      "fixKind": "guidance",
+      "category": "security",
+      "title": "Terraform state committed to the repository",
+      "remediation": "Delete the state file (or `.terraform/`) from version control, add it to .gitignore, move the state to a remote backend, and rotate every credential the file held.",
+      "authority": [
+        {
+          "name": "HashiCorp Terraform style guide — .gitignore",
+          "url": "https://developer.hashicorp.com/terraform/language/style#gitignore"
+        }
+      ],
+      "lineage": [
+        {
+          "tool": "hashicorp-style-guide",
+          "rule": ".gitignore: do not commit terraform.tfstate, terraform.tfstate.* backups, or the .terraform directory",
+          "url": "https://developer.hashicorp.com/terraform/language/style#gitignore",
+          "relation": "equivalent"
+        }
+      ],
+      "docUrl": "https://intentius.io/chant/lint-rules/audit-rules/#tf023"
+    }
+  ]
+}
+
+--- stderr (empty)

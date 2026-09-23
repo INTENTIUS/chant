@@ -1,0 +1,355 @@
+# chant lint --format json
+# on a copy of examples/fan-out-estate; see test/level0-goldens/harness.ts for what is normalised
+exit: 0
+
+--- wrote (empty)
+
+--- stdout
+[
+  {
+    "file": "<project>/src/app-01/resources.ts",
+    "line": 20,
+    "column": 1,
+    "ruleId": "COR004",
+    "severity": "warning",
+    "message": "Exported declarable 'app01LogGroup' is never referenced in this file — it may be dead infrastructure code."
+  },
+  {
+    "file": "<project>/src/app-01/resources.ts",
+    "line": 30,
+    "column": 1,
+    "ruleId": "COR004",
+    "severity": "warning",
+    "message": "Exported declarable 'app01Queue' is never referenced in this file — it may be dead infrastructure code."
+  },
+  {
+    "file": "<project>/src/app-02/resources.ts",
+    "line": 20,
+    "column": 1,
+    "ruleId": "COR004",
+    "severity": "warning",
+    "message": "Exported declarable 'app02LogGroup' is never referenced in this file — it may be dead infrastructure code."
+  },
+  {
+    "file": "<project>/src/app-02/resources.ts",
+    "line": 30,
+    "column": 1,
+    "ruleId": "COR004",
+    "severity": "warning",
+    "message": "Exported declarable 'app02Queue' is never referenced in this file — it may be dead infrastructure code."
+  },
+  {
+    "file": "<project>/src/app-03/resources.ts",
+    "line": 20,
+    "column": 1,
+    "ruleId": "COR004",
+    "severity": "warning",
+    "message": "Exported declarable 'app03LogGroup' is never referenced in this file — it may be dead infrastructure code."
+  },
+  {
+    "file": "<project>/src/app-03/resources.ts",
+    "line": 30,
+    "column": 1,
+    "ruleId": "COR004",
+    "severity": "warning",
+    "message": "Exported declarable 'app03Queue' is never referenced in this file — it may be dead infrastructure code."
+  },
+  {
+    "file": "<project>/src/app-04/resources.ts",
+    "line": 20,
+    "column": 1,
+    "ruleId": "COR004",
+    "severity": "warning",
+    "message": "Exported declarable 'app04LogGroup' is never referenced in this file — it may be dead infrastructure code."
+  },
+  {
+    "file": "<project>/src/app-04/resources.ts",
+    "line": 30,
+    "column": 1,
+    "ruleId": "COR004",
+    "severity": "warning",
+    "message": "Exported declarable 'app04Queue' is never referenced in this file — it may be dead infrastructure code."
+  },
+  {
+    "file": "<project>/src/app-05/resources.ts",
+    "line": 20,
+    "column": 1,
+    "ruleId": "COR004",
+    "severity": "warning",
+    "message": "Exported declarable 'app05LogGroup' is never referenced in this file — it may be dead infrastructure code."
+  },
+  {
+    "file": "<project>/src/app-05/resources.ts",
+    "line": 30,
+    "column": 1,
+    "ruleId": "COR004",
+    "severity": "warning",
+    "message": "Exported declarable 'app05Queue' is never referenced in this file — it may be dead infrastructure code."
+  },
+  {
+    "file": "<project>/src/app-06/resources.ts",
+    "line": 20,
+    "column": 1,
+    "ruleId": "COR004",
+    "severity": "warning",
+    "message": "Exported declarable 'app06LogGroup' is never referenced in this file — it may be dead infrastructure code."
+  },
+  {
+    "file": "<project>/src/app-06/resources.ts",
+    "line": 30,
+    "column": 1,
+    "ruleId": "COR004",
+    "severity": "warning",
+    "message": "Exported declarable 'app06Queue' is never referenced in this file — it may be dead infrastructure code."
+  },
+  {
+    "file": "<project>/src/app-07/resources.ts",
+    "line": 20,
+    "column": 1,
+    "ruleId": "COR004",
+    "severity": "warning",
+    "message": "Exported declarable 'app07LogGroup' is never referenced in this file — it may be dead infrastructure code."
+  },
+  {
+    "file": "<project>/src/app-07/resources.ts",
+    "line": 30,
+    "column": 1,
+    "ruleId": "COR004",
+    "severity": "warning",
+    "message": "Exported declarable 'app07Queue' is never referenced in this file — it may be dead infrastructure code."
+  },
+  {
+    "file": "<project>/src/app-08/resources.ts",
+    "line": 20,
+    "column": 1,
+    "ruleId": "COR004",
+    "severity": "warning",
+    "message": "Exported declarable 'app08LogGroup' is never referenced in this file — it may be dead infrastructure code."
+  },
+  {
+    "file": "<project>/src/app-08/resources.ts",
+    "line": 30,
+    "column": 1,
+    "ruleId": "COR004",
+    "severity": "warning",
+    "message": "Exported declarable 'app08Queue' is never referenced in this file — it may be dead infrastructure code."
+  },
+  {
+    "file": "<project>/src/app-09/resources.ts",
+    "line": 20,
+    "column": 1,
+    "ruleId": "COR004",
+    "severity": "warning",
+    "message": "Exported declarable 'app09LogGroup' is never referenced in this file — it may be dead infrastructure code."
+  },
+  {
+    "file": "<project>/src/app-09/resources.ts",
+    "line": 30,
+    "column": 1,
+    "ruleId": "COR004",
+    "severity": "warning",
+    "message": "Exported declarable 'app09Queue' is never referenced in this file — it may be dead infrastructure code."
+  },
+  {
+    "file": "<project>/src/app-10/resources.ts",
+    "line": 20,
+    "column": 1,
+    "ruleId": "COR004",
+    "severity": "warning",
+    "message": "Exported declarable 'app10LogGroup' is never referenced in this file — it may be dead infrastructure code."
+  },
+  {
+    "file": "<project>/src/app-10/resources.ts",
+    "line": 30,
+    "column": 1,
+    "ruleId": "COR004",
+    "severity": "warning",
+    "message": "Exported declarable 'app10Queue' is never referenced in this file — it may be dead infrastructure code."
+  },
+  {
+    "file": "<project>/src/app-11/resources.ts",
+    "line": 20,
+    "column": 1,
+    "ruleId": "COR004",
+    "severity": "warning",
+    "message": "Exported declarable 'app11LogGroup' is never referenced in this file — it may be dead infrastructure code."
+  },
+  {
+    "file": "<project>/src/app-11/resources.ts",
+    "line": 30,
+    "column": 1,
+    "ruleId": "COR004",
+    "severity": "warning",
+    "message": "Exported declarable 'app11Queue' is never referenced in this file — it may be dead infrastructure code."
+  },
+  {
+    "file": "<project>/src/app-12/resources.ts",
+    "line": 20,
+    "column": 1,
+    "ruleId": "COR004",
+    "severity": "warning",
+    "message": "Exported declarable 'app12LogGroup' is never referenced in this file — it may be dead infrastructure code."
+  },
+  {
+    "file": "<project>/src/app-12/resources.ts",
+    "line": 30,
+    "column": 1,
+    "ruleId": "COR004",
+    "severity": "warning",
+    "message": "Exported declarable 'app12Queue' is never referenced in this file — it may be dead infrastructure code."
+  },
+  {
+    "file": "<project>/src/cluster-a/resources.ts",
+    "line": 33,
+    "column": 1,
+    "ruleId": "COR004",
+    "severity": "warning",
+    "message": "Exported declarable 'clusterALogGroup' is never referenced in this file — it may be dead infrastructure code."
+  },
+  {
+    "file": "<project>/src/cluster-b/resources.ts",
+    "line": 33,
+    "column": 1,
+    "ruleId": "COR004",
+    "severity": "warning",
+    "message": "Exported declarable 'clusterBLogGroup' is never referenced in this file — it may be dead infrastructure code."
+  },
+  {
+    "file": "<project>/src/network/resources.ts",
+    "line": 16,
+    "column": 1,
+    "ruleId": "COR004",
+    "severity": "warning",
+    "message": "Exported declarable 'networkTopic' is never referenced in this file — it may be dead infrastructure code."
+  },
+  {
+    "file": "<project>/src/network/resources.ts",
+    "line": 25,
+    "column": 1,
+    "ruleId": "COR004",
+    "severity": "warning",
+    "message": "Exported declarable 'networkQueue' is never referenced in this file — it may be dead infrastructure code."
+  },
+  {
+    "file": "<project>/apps.component.ts",
+    "line": 1,
+    "column": 1,
+    "ruleId": "COMP007",
+    "severity": "warning",
+    "message": "Component \"app-01\" composes an identical phase/step shape to \"app-02\", \"app-03\", \"app-04\", \"app-05\", \"app-06\", \"app-07\", \"app-08\", \"app-09\", \"app-10\", \"app-11\", \"app-12\", \"cluster-a\", \"cluster-b\", \"network\" — consider extracting a shared preset (docs/components/capabilities.mdx#presets) instead of repeating the composition per component."
+  },
+  {
+    "file": "<project>/apps.component.ts",
+    "line": 1,
+    "column": 1,
+    "ruleId": "COMP007",
+    "severity": "warning",
+    "message": "Component \"app-02\" composes an identical phase/step shape to \"app-01\", \"app-03\", \"app-04\", \"app-05\", \"app-06\", \"app-07\", \"app-08\", \"app-09\", \"app-10\", \"app-11\", \"app-12\", \"cluster-a\", \"cluster-b\", \"network\" — consider extracting a shared preset (docs/components/capabilities.mdx#presets) instead of repeating the composition per component."
+  },
+  {
+    "file": "<project>/apps.component.ts",
+    "line": 1,
+    "column": 1,
+    "ruleId": "COMP007",
+    "severity": "warning",
+    "message": "Component \"app-03\" composes an identical phase/step shape to \"app-01\", \"app-02\", \"app-04\", \"app-05\", \"app-06\", \"app-07\", \"app-08\", \"app-09\", \"app-10\", \"app-11\", \"app-12\", \"cluster-a\", \"cluster-b\", \"network\" — consider extracting a shared preset (docs/components/capabilities.mdx#presets) instead of repeating the composition per component."
+  },
+  {
+    "file": "<project>/apps.component.ts",
+    "line": 1,
+    "column": 1,
+    "ruleId": "COMP007",
+    "severity": "warning",
+    "message": "Component \"app-04\" composes an identical phase/step shape to \"app-01\", \"app-02\", \"app-03\", \"app-05\", \"app-06\", \"app-07\", \"app-08\", \"app-09\", \"app-10\", \"app-11\", \"app-12\", \"cluster-a\", \"cluster-b\", \"network\" — consider extracting a shared preset (docs/components/capabilities.mdx#presets) instead of repeating the composition per component."
+  },
+  {
+    "file": "<project>/apps.component.ts",
+    "line": 1,
+    "column": 1,
+    "ruleId": "COMP007",
+    "severity": "warning",
+    "message": "Component \"app-05\" composes an identical phase/step shape to \"app-01\", \"app-02\", \"app-03\", \"app-04\", \"app-06\", \"app-07\", \"app-08\", \"app-09\", \"app-10\", \"app-11\", \"app-12\", \"cluster-a\", \"cluster-b\", \"network\" — consider extracting a shared preset (docs/components/capabilities.mdx#presets) instead of repeating the composition per component."
+  },
+  {
+    "file": "<project>/apps.component.ts",
+    "line": 1,
+    "column": 1,
+    "ruleId": "COMP007",
+    "severity": "warning",
+    "message": "Component \"app-06\" composes an identical phase/step shape to \"app-01\", \"app-02\", \"app-03\", \"app-04\", \"app-05\", \"app-07\", \"app-08\", \"app-09\", \"app-10\", \"app-11\", \"app-12\", \"cluster-a\", \"cluster-b\", \"network\" — consider extracting a shared preset (docs/components/capabilities.mdx#presets) instead of repeating the composition per component."
+  },
+  {
+    "file": "<project>/apps.component.ts",
+    "line": 1,
+    "column": 1,
+    "ruleId": "COMP007",
+    "severity": "warning",
+    "message": "Component \"app-07\" composes an identical phase/step shape to \"app-01\", \"app-02\", \"app-03\", \"app-04\", \"app-05\", \"app-06\", \"app-08\", \"app-09\", \"app-10\", \"app-11\", \"app-12\", \"cluster-a\", \"cluster-b\", \"network\" — consider extracting a shared preset (docs/components/capabilities.mdx#presets) instead of repeating the composition per component."
+  },
+  {
+    "file": "<project>/apps.component.ts",
+    "line": 1,
+    "column": 1,
+    "ruleId": "COMP007",
+    "severity": "warning",
+    "message": "Component \"app-08\" composes an identical phase/step shape to \"app-01\", \"app-02\", \"app-03\", \"app-04\", \"app-05\", \"app-06\", \"app-07\", \"app-09\", \"app-10\", \"app-11\", \"app-12\", \"cluster-a\", \"cluster-b\", \"network\" — consider extracting a shared preset (docs/components/capabilities.mdx#presets) instead of repeating the composition per component."
+  },
+  {
+    "file": "<project>/apps.component.ts",
+    "line": 1,
+    "column": 1,
+    "ruleId": "COMP007",
+    "severity": "warning",
+    "message": "Component \"app-09\" composes an identical phase/step shape to \"app-01\", \"app-02\", \"app-03\", \"app-04\", \"app-05\", \"app-06\", \"app-07\", \"app-08\", \"app-10\", \"app-11\", \"app-12\", \"cluster-a\", \"cluster-b\", \"network\" — consider extracting a shared preset (docs/components/capabilities.mdx#presets) instead of repeating the composition per component."
+  },
+  {
+    "file": "<project>/apps.component.ts",
+    "line": 1,
+    "column": 1,
+    "ruleId": "COMP007",
+    "severity": "warning",
+    "message": "Component \"app-10\" composes an identical phase/step shape to \"app-01\", \"app-02\", \"app-03\", \"app-04\", \"app-05\", \"app-06\", \"app-07\", \"app-08\", \"app-09\", \"app-11\", \"app-12\", \"cluster-a\", \"cluster-b\", \"network\" — consider extracting a shared preset (docs/components/capabilities.mdx#presets) instead of repeating the composition per component."
+  },
+  {
+    "file": "<project>/apps.component.ts",
+    "line": 1,
+    "column": 1,
+    "ruleId": "COMP007",
+    "severity": "warning",
+    "message": "Component \"app-11\" composes an identical phase/step shape to \"app-01\", \"app-02\", \"app-03\", \"app-04\", \"app-05\", \"app-06\", \"app-07\", \"app-08\", \"app-09\", \"app-10\", \"app-12\", \"cluster-a\", \"cluster-b\", \"network\" — consider extracting a shared preset (docs/components/capabilities.mdx#presets) instead of repeating the composition per component."
+  },
+  {
+    "file": "<project>/apps.component.ts",
+    "line": 1,
+    "column": 1,
+    "ruleId": "COMP007",
+    "severity": "warning",
+    "message": "Component \"app-12\" composes an identical phase/step shape to \"app-01\", \"app-02\", \"app-03\", \"app-04\", \"app-05\", \"app-06\", \"app-07\", \"app-08\", \"app-09\", \"app-10\", \"app-11\", \"cluster-a\", \"cluster-b\", \"network\" — consider extracting a shared preset (docs/components/capabilities.mdx#presets) instead of repeating the composition per component."
+  },
+  {
+    "file": "<project>/clusters.component.ts",
+    "line": 1,
+    "column": 1,
+    "ruleId": "COMP007",
+    "severity": "warning",
+    "message": "Component \"cluster-a\" composes an identical phase/step shape to \"app-01\", \"app-02\", \"app-03\", \"app-04\", \"app-05\", \"app-06\", \"app-07\", \"app-08\", \"app-09\", \"app-10\", \"app-11\", \"app-12\", \"cluster-b\", \"network\" — consider extracting a shared preset (docs/components/capabilities.mdx#presets) instead of repeating the composition per component."
+  },
+  {
+    "file": "<project>/clusters.component.ts",
+    "line": 1,
+    "column": 1,
+    "ruleId": "COMP007",
+    "severity": "warning",
+    "message": "Component \"cluster-b\" composes an identical phase/step shape to \"app-01\", \"app-02\", \"app-03\", \"app-04\", \"app-05\", \"app-06\", \"app-07\", \"app-08\", \"app-09\", \"app-10\", \"app-11\", \"app-12\", \"cluster-a\", \"network\" — consider extracting a shared preset (docs/components/capabilities.mdx#presets) instead of repeating the composition per component."
+  },
+  {
+    "file": "<project>/network.component.ts",
+    "line": 1,
+    "column": 1,
+    "ruleId": "COMP007",
+    "severity": "warning",
+    "message": "Component \"network\" composes an identical phase/step shape to \"app-01\", \"app-02\", \"app-03\", \"app-04\", \"app-05\", \"app-06\", \"app-07\", \"app-08\", \"app-09\", \"app-10\", \"app-11\", \"app-12\", \"cluster-a\", \"cluster-b\" — consider extracting a shared preset (docs/components/capabilities.mdx#presets) instead of repeating the composition per component."
+  }
+]
+
+--- stderr (empty)
