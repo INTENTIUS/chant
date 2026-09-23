@@ -785,8 +785,8 @@ Options:
                         project source; network egress is NOT blocked (see
                         docs). Default: off (also settable via
                         chant.config.ts's build.sandbox: true; #1045)
-  --param <name=value>  (build, graph, run --components, components fan-out)
-                        Bind a declared
+  --param <name=value>  (build, graph, run --components, components fan-out,
+                        components promote) Bind a declared
                         build-time parameter (chant.config.ts's buildParams)
                         to a value, for source to read as params.<name>
                         (#1064) instead of process.env — repeatable.
@@ -794,8 +794,8 @@ Options:
                         Parameter(): this resolves before synthesis, so it
                         can change which resources are produced at all.
                         Highest precedence.
-  --params-file <path>  (build, graph, run --components, components fan-out)
-                        JSON file of
+  --params-file <path>  (build, graph, run --components, components fan-out,
+                        components promote) JSON file of
                         { "name": value } build-time parameter values
                         (#1064). Second precedence, after --param.
 
