@@ -37,9 +37,9 @@ export default {
 } satisfies ChantConfig;
 ```
 
-The path is relative to the directory holding `chant.config.ts`. `chant build`, `chant lint`, `chant run` and the capability registry all load the lexicon from that module, so it needs no `@intentius/chant-lexicon-site` package, no `file:` dependency and no `.npmrc` setting.
+The path is relative to the directory holding `chant.config.ts`. Every command that loads lexicons reads this one from the module, so the project needs no `@intentius/chant-lexicon-site` package to install or link.
 
-A package-backed lexicon ships some parts at fixed subpaths. A lexicon loaded by path has only the one module, so each part comes from that module instead:
+Some parts of a package-backed lexicon sit at fixed subpaths of the package. When the lexicon is loaded by path there is only the one module, so each part comes from it instead:
 
 | Part | Package-backed lexicon | Lexicon loaded by path |
 |---|---|---|
@@ -49,7 +49,7 @@ A package-backed lexicon ships some parts at fixed subpaths. A lexicon loaded by
 | capabilities | a `CapabilityPlugin` export of the package | a `CapabilityPlugin` export of the module |
 | gate policy evaluator | `<package>/gate-policy` | an `evaluateGatePolicy` export of the module |
 
-The plugin has no package version, so the build manifest records none for it, and `chant update` and `chant doctor` skip it because there are no package types to copy.
+A lexicon loaded by path has no package version, so the build manifest records none for it. `chant update` and `chant doctor` skip it, since there are no package types to copy.
 
 ## Updating Versions
 
