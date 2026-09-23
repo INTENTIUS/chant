@@ -184,6 +184,8 @@ export const ChantConfigSchema = z.object({
   knowledge: z.object({
     dir: z.string().min(1).optional(),
   }).optional(),
+  exclude: z.array(z.string().min(1)).optional(),
+  include: z.array(z.string().min(1)).optional(),
 }).passthrough();
 
 /**
@@ -418,6 +420,27 @@ export interface ChantConfig {
     /** Bundle directory, relative to the project root. Defaults to `"knowledge"`. */
     dir?: string;
   };
+
+  /**
+   * Globs, relative to the directory holding this config, naming files that
+   * source discovery must skip (#2519): `build`, `lint`, `list`, `explain`
+   * and every other command that walks the project for declarations never
+   * import or lint a matching file. A pattern matches a file when it matches
+   * the file's path or the path of any directory above it, so `"ops"` and
+   * `"ops/**"` both skip everything under `ops/`. Matched with picomatch,
+   * dot files included. See `./discovery/files.ts`'s `compileDiscoveryFilter`.
+   */
+  exclude?: string[];
+
+  /**
+   * Globs that re-admit files {@link exclude} would skip. `include` always
+   * wins over `exclude`, and it never narrows discovery on its own: a file
+   * no `exclude` pattern matches is discovered whether or not it matches an
+   * `include`. It does not re-admit what discovery skips unconditionally
+   * (`node_modules`, test files, child projects, the generated and skip
+   * markers).
+   */
+  include?: string[];
 }
 
 /**
@@ -499,14 +522,53 @@ export async function loadChantConfig(dir: string): Promise<ResolvedConfig> {
  * config declaring any project-level key still wins where it stands.
  */
 export async function loadChantConfigUpward(startDir: string): Promise<ResolvedConfig> {
+  const { dir, configPath } = findProjectConfigPastFragments(startDir);
+  if (configPath) warnIfFragmentShadowsProjectConfig(configPath);
+  return loadChantConfig(dir);
+}
+
+/** The walk {@link loadChantConfigUpward} makes, lint-only fragments skipped, without its warning. */
+function findProjectConfigPastFragments(startDir: string): { dir: string; configPath?: string } {
   let { dir, configPath } = findProjectConfig(startDir);
   while (configPath && isLintOnlyFragment(configPath)) {
     const parent = dirname(dir);
     if (parent === dir) break;
     ({ dir, configPath } = findProjectConfig(parent));
   }
-  if (configPath) warnIfFragmentShadowsProjectConfig(configPath);
-  return loadChantConfig(dir);
+  return { dir, configPath };
+}
+
+/** A project's discovery globs (#2519) and the directory they are relative to. */
+export interface DiscoveryGlobs {
+  /** The directory holding the config that declared the globs. */
+  root: string;
+  exclude: string[];
+  include: string[];
+}
+
+/**
+ * The `exclude`/`include` globs of the project `startDir` belongs to, found by
+ * the same upward walk as {@link loadChantConfigUpward}. `undefined` when the
+ * project declares no `exclude`, which leaves discovery exactly as it was
+ * before the keys existed: `include` only ever re-admits what `exclude` skips.
+ *
+ * A config that fails to load is left to the command's own config load to
+ * report, so discovery keeps working where it did before, unless the failure
+ * is in `exclude` or `include` themselves: ignoring those would discover the
+ * very files the project asked to skip.
+ */
+export async function resolveDiscoveryGlobs(startDir: string): Promise<DiscoveryGlobs | undefined> {
+  const { dir, configPath } = findProjectConfigPastFragments(startDir);
+  if (!configPath) return undefined;
+  let config: ChantConfig;
+  try {
+    ({ config } = await loadChantConfig(dir));
+  } catch (err) {
+    if (err instanceof InvalidChantConfigError && (err.key === "exclude" || err.key === "include")) throw err;
+    return undefined;
+  }
+  if (!config.exclude || config.exclude.length === 0) return undefined;
+  return { root: dir, exclude: config.exclude, include: config.include ?? [] };
 }
 
 /**
@@ -814,6 +876,16 @@ export function resolveKnowledgeDir(config: ChantConfig, projectPath: string): s
 }
 
 /**
+ * A config that failed schema validation. `key` is the top-level key of the
+ * first problem. `name` stays `"Error"`, so the printed error reads as before.
+ */
+export class InvalidChantConfigError extends Error {
+  constructor(message: string, readonly key?: string) {
+    super(message);
+  }
+}
+
+/**
  * Validate and normalize a raw config object into ChantConfig shape.
  */
 function normalizeConfig(raw: Record<string, unknown>, source?: string): ChantConfig {
@@ -826,7 +898,10 @@ function normalizeConfig(raw: Record<string, unknown>, source?: string): ChantCo
     const issue = result.error.issues[0];
     const path = issue.path.length > 0 ? issue.path.join(".") : undefined;
     const loc = source ? ` in ${source}` : "";
-    throw new Error(`Invalid chant config${loc}: ${path ? `${path}: ` : ""}${issue.message}`);
+    throw new InvalidChantConfigError(
+      `Invalid chant config${loc}: ${path ? `${path}: ` : ""}${issue.message}`,
+      issue.path.length > 0 ? String(issue.path[0]) : undefined,
+    );
   }
 
   return raw as ChantConfig;

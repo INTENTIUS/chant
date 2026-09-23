@@ -49,6 +49,8 @@ import { isComponent, type Component } from "./component";
 import type { BuildParamProvenance } from "../provenance";
 import { buildParamValues } from "../build-params";
 import { setBuildParams } from "../params";
+import { compileDiscoveryFilter, hasDiscoveryMarker } from "../discovery/files";
+import { resolveDiscoveryGlobs } from "../config";
 
 /** One discovered component, paired with the file it was exported from. */
 export interface DiscoveredComponent {
@@ -118,11 +120,14 @@ export interface ImportedComponentModule {
  * Recursively find every `*.component.ts` file under `path`, the same
  * child-project boundary rule `findInfraFiles` (`../discovery/files.ts`)
  * uses: a subdirectory with its own `chant.config.ts` is a separate scope
- * once the outer project's own source root has been established.
+ * once the outer project's own source root has been established. The
+ * project's `exclude`/`include` globs and the skip marker apply here as they
+ * do there (#2519).
  */
 async function findComponentFiles(path: string): Promise<string[]> {
   const files: string[] = [];
   let sourceRoot: string | null = null;
+  const skip = compileDiscoveryFilter(await resolveDiscoveryGlobs(path));
 
   async function scanDirectory(dir: string): Promise<void> {
     let entries;
@@ -156,7 +161,9 @@ async function findComponentFiles(path: string): Promise<string[]> {
         entry.isFile() &&
         entry.name.endsWith(".component.ts") &&
         !entry.name.endsWith(".test.component.ts") &&
-        !entry.name.endsWith(".spec.component.ts")
+        !entry.name.endsWith(".spec.component.ts") &&
+        !skip?.(fullPath) &&
+        !(await hasDiscoveryMarker(fullPath))
       ) {
         files.push(fullPath);
       }
