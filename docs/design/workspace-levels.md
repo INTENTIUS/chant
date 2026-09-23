@@ -26,4 +26,4 @@ flowchart TB
 
 An arrow means the lower level is needed first. Levels depend on each other only where they must (the Order rule in D0), so level 4 has an edge from level 0 as well as from level 1.
 
-The rules every level is held to are in #2525: only the file creates a workspace, level 0 output stays identical apart from listed and warned changes, and project commands keep project meaning at a declared root.
+The rules every level is held to are in #2525. Only the file creates a workspace, and level 0 output stays identical apart from listed and warned changes.

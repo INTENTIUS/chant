@@ -74,7 +74,7 @@ Unknown fields are refused, except ones starting with `x-`.
 
 ## Values
 
-The front matter uses only what YAML and JSON share: strings, numbers, booleans, null, lists and maps. Every string is double-quoted with JSON escapes, dates included, so YAML's implicit typing never turns `no` into a boolean or `2026-09-23` into a timestamp. #2524 D4 requires this so a file can be hashed as JSON and sealed once it is ratified. Anchors, tags and multi-document streams are out.
+The front matter uses only the value types YAML and JSON share. Every string is double-quoted with JSON escapes. Quoting keeps YAML's implicit typing from reading `2026-09-23` as a timestamp. #2524 D4 requires this so a file can be hashed as JSON and sealed once it is ratified. Anchors, tags and multi-document streams are out.
 
 ## Revisions
 
@@ -101,7 +101,7 @@ node scripts/import-decisions.mjs --issue INTENTIUS/chant#2524 --prefix ws \
   --decided-by lex00 --decided-on 2026-09-23
 ```
 
-It reads the table under a `Decisions` heading (`--heading` changes that) with topic, chosen and rejected columns. Rejected cells split on `;`. The `(vN)` markers become `source.revision`, `chosen_in` and `supersedes` entries. The drafts leave the question, the reasons and each option's working and trade-off as `null`, for someone to write from the design text. The script never overwrites an existing file without `--force`.
+It reads the table under a `Decisions` heading, or the heading `--heading` names. The header row must name a topic column, and it must also have columns for the choice and for what was rejected. Rejected cells split on `;`. The `(vN)` markers become `source.revision`, `chosen_in` and `supersedes` entries. The drafts leave the question, the reasons and each option's working and trade-off as `null`, for someone to write from the design text. The script never overwrites an existing file without `--force`.
 
 Check every file against the schema, and the ids and option references across files:
 
