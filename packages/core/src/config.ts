@@ -471,9 +471,17 @@ export interface ChantConfig {
 /**
  * Resolved project configuration with metadata about how it was loaded.
  */
+/**
+ * A configuration as the loader returns it. `lexicons` holds names only: each
+ * `{ name, module }` entry has been replaced by its name and its path moved
+ * to `lexiconModules` (chant #2520), so a reader of a loaded config never
+ * sees the object form.
+ */
+export type LoadedChantConfig = Omit<ChantConfig, "lexicons"> & { lexicons?: string[] };
+
 export interface ResolvedConfig {
   /** The loaded configuration */
-  config: ChantConfig;
+  config: LoadedChantConfig;
 
   /** Path to the config file that was loaded, or undefined if defaults */
   configPath?: string;
@@ -482,7 +490,7 @@ export interface ResolvedConfig {
 /**
  * Default configuration when no config file exists.
  */
-export const DEFAULT_CHANT_CONFIG: ChantConfig = {};
+export const DEFAULT_CHANT_CONFIG: LoadedChantConfig = {};
 
 /**
  * Load project configuration from a directory.
@@ -913,7 +921,7 @@ export class InvalidChantConfigError extends Error {
 /**
  * Validate and normalize a raw config object into ChantConfig shape.
  */
-function normalizeConfig(raw: Record<string, unknown>, source?: string): ChantConfig {
+function normalizeConfig(raw: Record<string, unknown>, source?: string): LoadedChantConfig {
   if (typeof raw !== "object" || raw === null) {
     return DEFAULT_CHANT_CONFIG;
   }
@@ -933,12 +941,10 @@ function normalizeConfig(raw: Record<string, unknown>, source?: string): ChantCo
   // the loaders and the entry becomes its name, so every reader of `lexicons`
   // keeps seeing names. A config of plain names is returned untouched.
   const lexicons = (raw as ChantConfig).lexicons;
-  if (source !== undefined) {
-    const recorded = registerLexiconDeclarations(lexicons, dirname(source));
-    if (Object.keys(recorded).length > 0) {
-      return { ...(raw as ChantConfig), lexicons: lexiconNames(lexicons), lexiconModules: recorded };
-    }
+  const recorded = registerLexiconDeclarations(lexicons, source !== undefined ? dirname(source) : process.cwd());
+  if (Object.keys(recorded).length > 0) {
+    return { ...(raw as ChantConfig), lexicons: lexiconNames(lexicons), lexiconModules: recorded };
   }
 
-  return raw as ChantConfig;
+  return raw as LoadedChantConfig;
 }
