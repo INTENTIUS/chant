@@ -2,6 +2,7 @@ import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 import type { ParsedArgs } from "../registry";
 import { DECLARABLE_MARKER, type Declarable } from "../../declarable";
 import { AttrRef } from "../../attrref";
+import { GRAPH_IR_VERSION } from "../../graph-ir";
 
 /**
  * The aws emulator capability, as the real plugin declares it. `--live`
@@ -224,6 +225,25 @@ describe("runGraph", () => {
       const ir = JSON.parse(stdoutBuf.join("\n"));
       expect(ir.nodes.map((n: { id: string }) => n.id).sort()).toEqual(["pod", "subnet", "vpc"]);
       expect(ir.edges).toContainEqual({ from: "subnet", to: "vpc", kind: "ref", viaAttr: "network" });
+    });
+
+    // #2529 — the IR carries its version, as the first key, so a reader can
+    // decide how to read the rest before it reads anything else.
+    test("--format ir leads with the IR version", async () => {
+      lintClean(); discovered();
+      const exit = await runGraph({ args: makeArgs({ format: "ir" }), plugins: [], serializers: [] });
+      expect(exit).toBe(0);
+      const ir = JSON.parse(stdoutBuf.join("\n"));
+      expect(ir.version).toBe(GRAPH_IR_VERSION);
+      expect(GRAPH_IR_VERSION).toBe(1);
+      expect(Object.keys(ir)[0]).toBe("version");
+    });
+
+    test("the other view formats carry no version field", async () => {
+      lintClean(); discovered();
+      const exit = await runGraph({ args: makeArgs({ format: "mermaid" }), plugins: [], serializers: [] });
+      expect(exit).toBe(0);
+      expect(stdoutBuf.join("\n")).not.toContain("version");
     });
 
     // #1675 — discovery scans sourceDir, but ops live beside it (project root,

@@ -128,9 +128,15 @@ chant graph ./infra --format layout    # node positions (dagre by default — no
 | Format | Output | Needs |
 |--------|--------|-------|
 | `mermaid` | A Mermaid `flowchart` with one subgraph per lexicon. The **zero-install default** — renders in GitHub, docs, and browsers. | nothing |
-| `ir` | The graph IR as JSON: `nodes` (id, kind, lexicon, attrs, sourceLoc, composite info), `edges` (real references, labelled with the consumer property), and `groups`. The stable contract downstream diagram tools consume. | nothing |
+| `ir` | The graph IR as JSON: `version`, `nodes` (id, kind, lexicon, attrs, sourceLoc, composite info), `edges` (real references, labelled with the consumer property), and `groups`. The stable contract downstream diagram tools consume. | nothing |
 | `dot` | Graphviz DOT text, with lexicon clusters and labelled edges. Render directly with `dot -Tsvg`, or feed to a layout engine. | nothing to produce; `dot` to render |
 | `layout` | Node positions for a custom painter that does its own drawing: `{ width, height, nodes: [{id, x, y, w, h}] }` (y-up, origin bottom-left). | nothing (dagre); `dot` only with `--layout-engine graphviz` |
+
+### Versioning: additive changes only
+
+The IR's first field is `version`, currently `1`. Every `--format ir` output carries it, including `--live`, `--overlay` and `--components`. Output from a chant older than the field has no `version` and reads as version 1.
+
+The format changes only additively. A release may add a field, an edge kind or a group, and none of those moves the number. A consumer must ignore any field and any edge `kind` it does not recognise, and keep reading the rest of the document. `version` moves only for a change a consumer could not safely ignore, such as a removed or renamed field or a changed meaning, and a consumer that sees a version it does not know should stop rather than guess.
 
 ### Groups: the boxes a renderer draws
 

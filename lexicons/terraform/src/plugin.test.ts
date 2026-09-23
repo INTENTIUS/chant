@@ -8,6 +8,8 @@ import type { ChantConfig } from "@intentius/chant/config";
 import { isDeclarable, isResourceDeclarable, type Declarable } from "@intentius/chant/declarable";
 import { terraformPlugin } from "./plugin";
 import { terraformConfigSchema } from "./config";
+import { RESERVED_COMMAND_NAMES } from "@intentius/chant/cli/command-group";
+import { checkConflicts } from "@intentius/chant/cli/conflict-check";
 import {
   DATA_TYPE,
   LIVE_TYPE,
@@ -115,6 +117,17 @@ describe("terraform config schema", () => {
       },
     });
     expect(parsed.roots.app.workspace).toBe("prod");
+  });
+
+  // #2529 — core reserves `workspace` as a command name. That reserves a
+  // top-level command word, not the word itself: this lexicon's root field
+  // keeps its meaning, and the plugin loads with no conflict.
+  it("keeps its workspace field while core reserves the workspace command", () => {
+    expect(RESERVED_COMMAND_NAMES.has("workspace")).toBe(true);
+    expect(checkConflicts([terraformPlugin]).conflicts).toEqual([]);
+    expect(terraformConfigSchema.parse({ roots: { app: { dir: ".", workspace: "workspace" } } }).roots.app.workspace).toBe(
+      "workspace",
+    );
   });
 
   it("rejects an unknown key at the namespace level", () => {

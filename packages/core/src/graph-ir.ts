@@ -290,8 +290,22 @@ export interface IRPipeline {
   edges: IRPipelineEdge[];
 }
 
+/**
+ * The version `chant graph --format ir` writes on its output (#2529, #2524 D8).
+ * The format changes only additively: a new field or edge kind never bumps
+ * it, and a consumer ignores the fields and edge kinds it does not know. The
+ * number moves only for a change a consumer could not ignore.
+ */
+export const GRAPH_IR_VERSION = 1;
+
 /** The full graph IR for a project at the default (declarable) detail level. */
 export interface GraphIR {
+  /**
+   * {@link GRAPH_IR_VERSION}, stamped by `chant graph --format ir` when it
+   * writes the IR (#2529). Absent on an IR built in memory, and on output
+   * from a chant older than the field, which a reader treats as version 1.
+   */
+  version?: number;
   nodes: IRNode[];
   edges: IREdge[];
   groups: IRGroups;
