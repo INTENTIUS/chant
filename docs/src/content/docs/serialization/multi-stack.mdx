@@ -66,7 +66,7 @@ chant's core provides two primitives:
 - **`stackOutput(ref)`** — marks a value for cross-stack export. When the serializer encounters a `StackOutput` entity, it emits it into the template's `Outputs` section.
 - **`ChildProjectInstance`** — a `Declarable` representing a reference to a child project directory. The build pipeline detects these, recursively builds the child, and attaches the child's `BuildResult` for the serializer.
 
-Discovery stops at child project boundaries — `findInfraFiles()` does not recurse into child project subdirectories. Each child project is a separate project scope, only built when referenced by a `ChildProjectInstance`.
+Each child project is a separate project scope, only built when referenced by a `ChildProjectInstance`. Discovery does not yet stop at every child project: today `findInfraFiles()` reads the first child project it meets as the parent's own source, and `chant lint` reads every child project. From the next release discovery stops at all of them, and this release warns about each affected file. See [Discovery changes in the next release](/chant/architecture/discovery/#discovery-changes-in-the-next-release).
 
 When a serializer produces multiple files, it returns a `SerializerResult` with a primary template plus additional files:
 

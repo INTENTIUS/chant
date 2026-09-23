@@ -934,7 +934,7 @@
   "formatting/bold-first-bullet": 1
  },
  "docs/src/content/docs/serialization/multi-stack.mdx": {
-  "formatting/em-dash-density": 14,
+  "formatting/em-dash-density": 13,
   "discourse/punchy-fragments": 1,
   "claude/colon-reveal": 2,
   "tricolon/comma-series": 1,

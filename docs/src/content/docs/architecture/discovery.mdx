@@ -23,6 +23,30 @@ The function:
 - Returns absolute paths to `.ts` files
 - Excludes `node_modules/` directories
 - Excludes test files (`*.test.ts`, `*.spec.ts`)
+- Excludes files whose head carries chant's generated-file marker
+- Reads the first child directory it meets that holds its own `chant.config.ts` as the project's own source, and skips every later one
+
+### Discovery changes in the next release
+
+chant has five discovery walks, and today they disagree. Source discovery (`findInfraFiles`, behind `build`, `graph`, `list` and `explain`), `chant lint`, component discovery, Op discovery and `chant audit` each have their own rules for dot-directories, git-ignored files, `dist` and child projects. The next release gives them one set of rules ([#2527](https://github.com/INTENTIUS/chant/issues/2527)):
+
+| Rule | What changes |
+|---|---|
+| Dot-directories are skipped | source discovery stops reading `.ts` files under directories such as `.cache/`. `chant audit` still reads `.github/` and `.forgejo/` |
+| Git-ignored files are skipped | every walk honours `.gitignore`, nested files included. Rules are applied only below the directory being scanned, so building or linting a directory that is itself ignored still reads it |
+| `dist` is skipped | source and component discovery stop reading `dist/` |
+| Child projects are boundaries | when the scanned directory is inside a project, a subdirectory holding a project config is not read. A `chant.config.json` holding only lint keys is not a project config and does not count. When the scanned directory is outside any project, every child project is read |
+| Op discovery stops at child projects | the Op root is still found by walking up, but the walk down from it no longer enters child projects. A project with no config of its own, whose Op root is the git root, stops seeing its siblings' Ops |
+| The first-config quirk goes | the first child project the walk meets is treated like any other child project |
+
+This release reads exactly what it read before, and prints a warning on stderr for each file whose status will change. Each line of the warning names the affected files, grouped by directory when there are many, and ends with the glob that keeps today's behaviour:
+
+```
+warning: Source discovery (build, graph, list, explain) under the current directory changes in the next release (chant#2527):
+  12 files under src/: src/ is a child project with its own chant.config, read today as this project's own source because the walk met it first. From the next release discovery stops there, as at any child project. To keep reading them after the change, add "src" to include in chant.config.ts, which the next release honours.
+```
+
+The glob goes in `include` in the project config when the next release would drop the file, and in `exclude` when it would start reading one that today's walk skips. Both keys come from [#2519](https://github.com/INTENTIUS/chant/issues/2519). Globs are relative to the directory holding the config, and a glob naming a directory covers everything under it. The warning stops once the glob is in the config, and there is no flag to silence it. Generated type stubs under `.chant/types/` never produce a warning.
 
 ### importModule
 

@@ -51,6 +51,7 @@ import { buildParamValues } from "../build-params";
 import { setBuildParams } from "../params";
 import { compileDiscoveryFilter, hasDiscoveryMarker } from "../discovery/files";
 import { resolveDiscoveryGlobs } from "../config";
+import { warnDiscoveryChanges } from "../discovery/convergence";
 
 /** One discovered component, paired with the file it was exported from. */
 export interface DiscoveredComponent {
@@ -128,6 +129,7 @@ async function findComponentFiles(path: string): Promise<string[]> {
   const files: string[] = [];
   let sourceRoot: string | null = null;
   const skip = compileDiscoveryFilter(await resolveDiscoveryGlobs(path));
+  const skippedChildren: string[] = [];
 
   async function scanDirectory(dir: string): Promise<void> {
     let entries;
@@ -153,6 +155,7 @@ async function findComponentFiles(path: string): Promise<string[]> {
           if (sourceRoot === null) {
             sourceRoot = fullPath;
           } else {
+            skippedChildren.push(fullPath);
             continue;
           }
         }
@@ -171,6 +174,20 @@ async function findComponentFiles(path: string): Promise<string[]> {
   }
 
   await scanDirectory(path);
+  // #2527's warning release: the list returned is today's, unchanged.
+  await warnDiscoveryChanges({
+    walker: "components",
+    root: path,
+    files,
+    sourceRoot,
+    skippedChildren,
+    fileOk: async (name, full) =>
+      name.endsWith(".component.ts") &&
+      !name.endsWith(".test.component.ts") &&
+      !name.endsWith(".spec.component.ts") &&
+      !skip?.(full) &&
+      !(await hasDiscoveryMarker(full)),
+  });
   return files;
 }
 
