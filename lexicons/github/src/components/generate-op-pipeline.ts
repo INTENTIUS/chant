@@ -103,6 +103,12 @@ export interface GithubOpPipelineDoc {
    */
   header?: string[];
   /**
+   * The workflow's `name:` (#2580): the Op's name, so the Actions UI lists
+   * the workflow by its Op instead of its file name. The forgejo dialect
+   * does not copy it, so forgejo output is unchanged.
+   */
+  name?: string;
+  /**
    * The `on:` trigger mapping, per {@link ScheduledOpSpec}'s trigger kind
    * (#2084): `{ schedule, workflow_dispatch }` for cron, `{ pull_request }`
    * for `pull_request`, `{ push }` for `push`.
@@ -713,6 +719,7 @@ export function buildGithubOpPipelineDocs(
     for (const line of extraScript) steps.push({ run: line });
 
     const doc: GithubOpPipelineDoc = {
+      name: spec.name,
       on: onFor(trigger),
       ...(options.variables && Object.keys(options.variables).length > 0 ? { env: options.variables } : {}),
       // One run at a time per Op — a slow audit must not overlap its own next
@@ -771,6 +778,7 @@ export function emitOpPipelineYAML(doc: GithubOpPipelineDoc): string {
   // one. Absent on github, so an unannotated document is emitted exactly as
   // it was before the field existed.
   if (doc.header && doc.header.length > 0) sections.push(doc.header.join("\n"));
+  if (doc.name) sections.push("name: " + emitYAML(doc.name, 0));
   sections.push("on:" + emitYAML(doc.on, 1));
   if (doc.env && Object.keys(doc.env).length > 0) sections.push("env:" + emitYAML(doc.env, 1));
   sections.push("concurrency:" + emitYAML(doc.concurrency, 1));

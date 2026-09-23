@@ -597,10 +597,13 @@ describe("generateGithubOpPipeline: a deployment environment on the Op's job (#2
    * The exact document a spec with no `environment` emitted before the option
    * existed, produced by the generator at the commit this change branched
    * from. The claim the option makes is that it is additive; this is what
-   * makes that claim falsifiable rather than a sentence in a PR body.
+   * makes that claim falsifiable rather than a sentence in a PR body. The
+   * `name:` line came later, from #2580, for every spec alike.
    */
   const AUDIT_YAML_BEFORE_2257 =
     [
+      "name: actions-audit",
+      "",
       "on:",
       "  schedule:",
       "    - cron: '0 6 * * *'",

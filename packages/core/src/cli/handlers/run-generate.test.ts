@@ -86,6 +86,19 @@ describe("chant run --generate <provider>", () => {
     }
   });
 
+  test("each github workflow is named after its Op (#2580); forgejo workflows carry no name", async () => {
+    for (const provider of ["github", "forgejo"]) {
+      expect(await runOp(ctx(["run", "--generate", provider, "--output", join(dir, provider)]))).toBe(0);
+    }
+    const header = `# ${GENERATED_MARKER}. Regenerate with: chant run --generate github\n`;
+    for (const op of ["nightly-audit", "weekly-report"]) {
+      const github = readFileSync(join(dir, "github", `${op}.yml`), "utf-8");
+      expect(github.startsWith(`${header}name: ${op}\n\non:\n`)).toBe(true);
+      const forgejo = readFileSync(join(dir, "forgejo", `${op}.yml`), "utf-8");
+      expect(forgejo).not.toMatch(/^name:/m);
+    }
+  });
+
   test("--spec passes its ops and options to the generator unchanged", async () => {
     const specFile = join(dir, "ops.json");
     const spec = {
