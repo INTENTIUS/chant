@@ -10,6 +10,8 @@ import type { DriverComponent } from "./driver";
 import type { ReleaseRecord } from "../lifecycle/release-ledger";
 import {
   planPromotion,
+  planRollback,
+  rollbackRecord,
   selectRelease,
   withoutBuildSteps,
   runPromotion,
@@ -252,6 +254,85 @@ describe("the target record", () => {
       approver: "alice",
       manifestDigest: "sha256:manifest",
       promotedFrom: { env: "staging", runId: "run-7", timestamp: "2026-01-02T00:00:00Z" },
+    });
+  });
+});
+
+describe("choosing the release a rollback restores", () => {
+  const history = [
+    rec("api", "prod", "sha256:a", "2026-01-01T00:00:00Z"),
+    rec("api", "prod", "sha256:b", "2026-01-02T00:00:00Z"),
+    rec("api", "prod", "sha256:c", "2026-01-03T00:00:00Z"),
+  ];
+  const plan = (input: Partial<Parameters<typeof planRollback>[0]>) =>
+    planRollback({ env: "prod", records: history, declared: ["api"], component: "api", ...input });
+
+  test("the release before the current one by default", () => {
+    const p = plan({});
+    expect("items" in p && p.items[0].digest).toBe("sha256:b");
+    expect("items" in p && p.from).toBe("prod");
+  });
+
+  test("a redeploy of the current digest does not count as an earlier release", () => {
+    const p = plan({ records: [...history, rec("api", "prod", "sha256:c", "2026-01-04T00:00:00Z")] });
+    expect("items" in p && p.items[0].digest).toBe("sha256:b");
+  });
+
+  test("a chosen digest", () => {
+    const p = plan({ digest: "sha256:a" });
+    expect("items" in p && p.items[0].source.timestamp).toBe("2026-01-01T00:00:00Z");
+  });
+
+  test("a digest the environment never recorded is refused", () => {
+    const p = plan({ digest: "sha256:z" });
+    expect("error" in p && p.error).toMatch(/sha256:z is not recorded for "api" in "prod"/);
+  });
+
+  test("the current release is refused", () => {
+    const p = plan({ digest: "sha256:c" });
+    expect("error" in p && p.error).toMatch(/already the current release/);
+  });
+
+  test("a single release has nothing earlier", () => {
+    const p = plan({ records: [history[0]] });
+    expect("error" in p && p.error).toMatch(/no earlier release/);
+  });
+});
+
+describe("pinning the publish step for a rollback", () => {
+  test("the publish step is replaced by the recorded digest", () => {
+    const p = withoutBuildSteps(service("api"), { pinDigest: "sha256:b" });
+    if ("error" in p) throw new Error(p.error);
+    expect(p.removed).toEqual(["docker-build", "publish-image"]);
+    expect(p.component.deploy[0].steps[0]).toMatchObject({ kind: "recorded-digest", digest: "sha256:b", replaces: "publish-image" });
+  });
+
+  test("a step reading another publish output is refused", () => {
+    const c = service("api");
+    c.deploy[2].steps[0] = { kind: "apply", image: "@Publish.uri" };
+    const p = withoutBuildSteps(c, { pinDigest: "sha256:b" });
+    expect("error" in p && p.error).toMatch(/reads "@Publish.uri", but a rollback knows only the recorded digest/);
+  });
+
+  test("a rollback redeploys the recorded digest and publishes nothing", async () => {
+    const { registry, ran } = fakeRegistry({ api: "sha256:new" });
+    const p = withoutBuildSteps(service("api"), { pinDigest: "sha256:b" });
+    if ("error" in p) throw new Error(p.error);
+    const plan: PromotionPlan = {
+      from: "prod",
+      to: "prod",
+      items: [{ component: "api", digest: "sha256:b", source: rec("api", "prod", "sha256:b", "2026-01-02T00:00:00Z", "run-2") }],
+      notPromoted: [],
+    };
+    const run = await runPromotion({ plan, components: [p.component], registry, gates: memoryGateLedgerPort() });
+    expect(run.status).toBe("ok");
+    expect(ran).toEqual(["prod:api:apply"]);
+    expect(run.results[0].records.find((r) => r.kind === "apply")?.output).toEqual({ applied: "sha256:b" });
+
+    expect(rollbackRecord(plan.items[0], "prod", { runId: "run-5", actor: "bob", timestamp: "2026-01-05T00:00:00Z" })).toMatchObject({
+      env: "prod",
+      digest: "sha256:b",
+      restores: { env: "prod", runId: "run-2", timestamp: "2026-01-02T00:00:00Z" },
     });
   });
 });
