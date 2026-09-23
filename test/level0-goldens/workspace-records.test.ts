@@ -8,11 +8,12 @@
  * only a kind that cannot be read exits 1.
  */
 
+import { spawnSync } from "node:child_process";
 import { cpSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { beforeAll, describe, expect, test } from "vitest";
-import { git, makeScratch, REPO_ROOT, runChant, workspaceModules } from "./harness";
+import { chantEnv, git, makeScratch, REPO_ROOT, runChant, workspaceModules } from "./harness";
 
 const TIMEOUT_MS = 120_000;
 const DECISIONS = join(REPO_ROOT, "docs", "design", "decisions");
@@ -41,9 +42,15 @@ describe("chant #2546 — workspace records", () => {
   test(
     "reads every chant decision as valid",
     async () => {
-      const run = await runChant(REPO_ROOT, ["workspace", "records", "--kind", KIND, "--current", "--json"]);
+      // Spawned directly: runChant lists the directory's ignored files after the
+      // run, and at the repo root that walks all of node_modules.
+      const run = spawnSync(
+        process.execPath,
+        ["--import", pathToFileURL(join(REPO_ROOT, "node_modules/tsx/dist/loader.mjs")).href, join(REPO_ROOT, "packages/core/src/cli/main.ts"), "workspace", "records", "--kind", KIND, "--current", "--json"],
+        { cwd: REPO_ROOT, env: chantEnv(), encoding: "utf-8", timeout: TIMEOUT_MS },
+      );
       expect(run.stderr).toBe("");
-      expect(run.exit).toBe(0);
+      expect(run.status).toBe(0);
       const doc = JSON.parse(run.stdout) as RecordsDoc;
       expect(doc.contract).toBe(1);
       expect(doc.summary.invalid).toBe(0);
