@@ -90,9 +90,9 @@ Like the release record, manifest persistence runs in the CLI once the deploy se
 
 ### Digests made before real SHA-256
 
-Until now, the `sha256:` values chant computes itself (the digests of synthesized templates, SBOMs and config-BOMs, and every `manifestDigest`) came from a 32-bit string hash repeated to 64 hex characters, not from SHA-256 ([#2514](https://github.com/INTENTIUS/chant/issues/2514)). The next release computes real SHA-256, so each of those values changes once for the same content. Digests that came from an external tool, such as an image digest from `docker build`, are real already and do not change.
+The `sha256:` values chant computes itself, including every `manifestDigest` and the digests of synthesized templates and BOMs, come from a 32-bit string hash repeated to 64 hex characters ([#2514](https://github.com/INTENTIUS/chant/issues/2514)). The next release computes real SHA-256 instead, so each of those values changes once for the same content. An image digest from `docker build` or another external tool is already real SHA-256 and stays as it is.
 
-In this release, reading a release ledger or the persisted build manifests that hold values in the old form prints one warning per project. Nothing is rewritten. After the change, old entries are marked `legacy-digest` and still read.
+This release warns about it. When chant reads a release ledger or persisted build manifests holding values in the old form, it prints one warning per project and rewrites nothing. Once the change ships, old entries are marked `legacy-digest` and remain readable.
 
 ## Reconciling with live
 
