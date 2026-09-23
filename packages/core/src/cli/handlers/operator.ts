@@ -6,6 +6,7 @@
  * `run.ts`'s `runOpLocal` shape (SIGINT → AbortController, `loadActivities`/
  * `loadProfiles` from the project's configured lexicons).
  */
+import { lexiconNames } from "../../lexicon-module";
 import { loadChantConfig } from "../../config";
 import { build } from "../../build";
 import { isResourceDeclarable } from "../../declarable";
@@ -52,7 +53,7 @@ import type { CommandContext } from "../registry";
 async function loadOperatorActivities() {
   let lexicons: string[] = [];
   try {
-    lexicons = (await loadChantConfig(process.cwd())).config.lexicons ?? [];
+    lexicons = lexiconNames((await loadChantConfig(process.cwd())).config.lexicons ?? []);
   } catch {
     // No/invalid chant.config — fall back to base activities only.
   }

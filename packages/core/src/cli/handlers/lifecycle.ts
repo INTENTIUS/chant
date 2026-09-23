@@ -1,3 +1,4 @@
+import { lexiconNames } from "../../lexicon-module";
 import { resolve } from "node:path";
 import { commandBuildParams } from "../build-params-cli";
 import { build } from "../../build";
@@ -559,7 +560,7 @@ interface BetweenDiffArgs {
 async function runLifecycleDiffBetween(args: BetweenDiffArgs): Promise<number> {
   await fetchLifecycle();
   const { config } = await loadChantConfig(resolve("."));
-  const lexicons = args.lexiconFilter ? [args.lexiconFilter] : config.lexicons ?? [];
+  const lexicons = args.lexiconFilter ? [args.lexiconFilter] : lexiconNames(config.lexicons ?? []);
   if (lexicons.length === 0) {
     console.error(formatError({ message: "No lexicons to diff — pass a lexicon or declare `lexicons` in chant.config." }));
     return 1;

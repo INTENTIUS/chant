@@ -10,6 +10,7 @@ import type { BuildParamsConfig } from "./build-params";
 import type { BuildParamProvenance } from "./provenance";
 import { findProjectConfig } from "./project-root";
 import { evaluateProjectConfig } from "./config-sandbox";
+import { lexiconNames, registerLexiconDeclarations, type LexiconDeclaration } from "./lexicon-module";
 
 /**
  * One project-declared environment (chant #1166). Historically always a bare
@@ -125,8 +126,16 @@ const EnvironmentEntrySchema = z.union([
   }),
 ]);
 
+const LexiconEntrySchema = z.union([
+  z.string().min(1),
+  z.object({
+    name: z.string().min(1),
+    module: z.string().min(1),
+  }).strict(),
+]);
+
 export const ChantConfigSchema = z.object({
-  lexicons: z.array(z.string().min(1)).optional(),
+  lexicons: z.array(LexiconEntrySchema).optional(),
   capabilities: z.array(z.string().min(1)).optional(),
   environments: z.array(EnvironmentEntrySchema).optional(),
   sourceDir: z.string().min(1).optional(),
@@ -194,8 +203,24 @@ export const ChantConfigSchema = z.object({
  * Loaded from `chant.config.ts` (preferred) or `chant.config.json`.
  */
 export interface ChantConfig {
-  /** Lexicon package names to load (e.g. ["aws"]) */
-  lexicons?: string[];
+  /**
+   * Lexicons to load. A bare name (`"aws"`) loads the package
+   * `@intentius/chant-lexicon-aws`. `{ name, module }` (#2520) loads a
+   * project-local lexicon from a module path, resolved against the directory
+   * holding this config; see `./lexicon-module.ts`.
+   *
+   * Once loaded, this holds names only: the loader replaces each
+   * `{ name, module }` entry with its name and records the path in
+   * {@link ChantConfig.lexiconModules}.
+   */
+  lexicons?: LexiconDeclaration[];
+
+  /**
+   * Set by the config loader, never written by hand: each path-declared
+   * lexicon's name mapped to its absolute module path. Absent when every
+   * `lexicons` entry is a bare name.
+   */
+  lexiconModules?: Record<string, string>;
 
   /**
    * Capability plugin package names to load in addition to the built-in
@@ -446,9 +471,17 @@ export interface ChantConfig {
 /**
  * Resolved project configuration with metadata about how it was loaded.
  */
+/**
+ * A configuration as the loader returns it. `lexicons` holds names only: each
+ * `{ name, module }` entry has been replaced by its name and its path moved
+ * to `lexiconModules` (chant #2520), so a reader of a loaded config never
+ * sees the object form.
+ */
+export type LoadedChantConfig = Omit<ChantConfig, "lexicons"> & { lexicons?: string[] };
+
 export interface ResolvedConfig {
   /** The loaded configuration */
-  config: ChantConfig;
+  config: LoadedChantConfig;
 
   /** Path to the config file that was loaded, or undefined if defaults */
   configPath?: string;
@@ -457,7 +490,7 @@ export interface ResolvedConfig {
 /**
  * Default configuration when no config file exists.
  */
-export const DEFAULT_CHANT_CONFIG: ChantConfig = {};
+export const DEFAULT_CHANT_CONFIG: LoadedChantConfig = {};
 
 /**
  * Load project configuration from a directory.
@@ -888,7 +921,7 @@ export class InvalidChantConfigError extends Error {
 /**
  * Validate and normalize a raw config object into ChantConfig shape.
  */
-function normalizeConfig(raw: Record<string, unknown>, source?: string): ChantConfig {
+function normalizeConfig(raw: Record<string, unknown>, source?: string): LoadedChantConfig {
   if (typeof raw !== "object" || raw === null) {
     return DEFAULT_CHANT_CONFIG;
   }
@@ -904,5 +937,14 @@ function normalizeConfig(raw: Record<string, unknown>, source?: string): ChantCo
     );
   }
 
-  return raw as ChantConfig;
+  // chant #2520 — a lexicon declared by module path. The path is recorded for
+  // the loaders and the entry becomes its name, so every reader of `lexicons`
+  // keeps seeing names. A config of plain names is returned untouched.
+  const lexicons = (raw as ChantConfig).lexicons;
+  const recorded = registerLexiconDeclarations(lexicons, source !== undefined ? dirname(source) : process.cwd());
+  if (Object.keys(recorded).length > 0) {
+    return { ...(raw as ChantConfig), lexicons: lexiconNames(lexicons), lexiconModules: recorded };
+  }
+
+  return raw as LoadedChantConfig;
 }

@@ -22,7 +22,19 @@ chant uses a `chant.config.ts` file at the project root for configuration.
 
 ### `lexicons`
 
-An array of lexicon names the project uses.
+An array of the lexicons the project uses. A bare name loads the package `@intentius/chant-lexicon-<name>`:
+
+```typescript
+lexicons: ["aws", "k8s"],
+```
+
+An entry can instead name a module in the project, for a lexicon you write yourself:
+
+```typescript
+lexicons: ["fly", { name: "site", module: "./lexicon/index.ts" }],
+```
+
+The path is resolved against the directory holding `chant.config.ts`, and no package is needed. See [A lexicon in your own project](/chant/guide/managing-lexicons/#a-lexicon-in-your-own-project) for what the module has to export.
 
 ### `exclude` and `include`
 

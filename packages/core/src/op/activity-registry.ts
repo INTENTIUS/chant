@@ -12,6 +12,7 @@
 
 import * as baseActivities from "./activities";
 import { ACTIVITY_PROFILES, type ActivityProfile } from "./activity-profiles";
+import { importLexiconModule } from "../lexicon-module";
 
 export type { ActivityProfile } from "./activity-profiles";
 
@@ -52,6 +53,16 @@ export async function loadActivities(lexicons: string[] = []): Promise<Map<strin
 
   for (const name of lexicons) {
     try {
+      // chant #2520 — a lexicon declared by module path has no subpath to
+      // import; its plugin's `activities()` member stands in for it.
+      const local = await importLexiconModule(name);
+      if (local !== undefined) {
+        const plugin = Object.values(local).find((v) => isActivityContributor(v) && v.name === name) as
+          | ActivityContributor
+          | undefined;
+        if (plugin) collectActivities(await plugin.activities(), activities);
+        continue;
+      }
       const spec = `@intentius/chant-lexicon-${name}/op/activities`;
       collectActivities((await import(spec)) as Record<string, unknown>, activities);
     } catch {
@@ -60,6 +71,21 @@ export async function loadActivities(lexicons: string[] = []): Promise<Map<strin
   }
 
   return activities;
+}
+
+/** A plugin-shaped export with an `activities()` member (`LexiconPlugin.activities`). Structural, so this layer does not import `../lexicon.ts`. */
+interface ActivityContributor {
+  name: string;
+  activities(): Record<string, unknown> | Promise<Record<string, unknown>>;
+}
+
+function isActivityContributor(value: unknown): value is ActivityContributor {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { name?: unknown }).name === "string" &&
+    typeof (value as { activities?: unknown }).activities === "function"
+  );
 }
 
 /**

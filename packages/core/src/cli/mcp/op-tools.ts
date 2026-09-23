@@ -14,6 +14,7 @@
  * run.
  */
 
+import { lexiconNames } from "../../lexicon-module";
 import { resolve } from "node:path";
 import { discoverOps } from "../../op/discover";
 import { createLocalOpRuntime } from "../../op/runtimes/local";
@@ -39,7 +40,7 @@ async function runtimeFor(name: unknown): Promise<OpRuntimeProvider> {
   }
 
   const configured = await loadChantConfig(resolve("."))
-    .then(({ config }) => config.lexicons ?? [])
+    .then(({ config }) => lexiconNames(config.lexicons ?? []))
     .catch(() => [] as string[]);
   if (!configured.includes(wanted)) {
     throw new Error(
