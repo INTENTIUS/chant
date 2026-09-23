@@ -8,7 +8,7 @@
 import { existsSync, readFileSync, statSync, writeFileSync } from "fs";
 import { join } from "path";
 import { auditFiles, type AuditInput, type AuditFinding, type ChecksProvider, type SuppressionStats } from "../../audit/core";
-import { AUDIT_LEXICONS, classifyFiles, collectCandidates, loadAuditPlugins, unclaimedFiles, type DetectPlugin, type RepoFile, type UnclaimedFile } from "../../audit/discover";
+import { AUDIT_LEXICONS, classifyFiles, loadAuditPlugins, unclaimedFiles, walkCandidates, type CandidateWalk, type DetectPlugin, type RepoFile, type UnclaimedFile } from "../../audit/discover";
 import { RULE_CATALOG, resolveAuditCatalog, type RuleMeta } from "../../audit/catalog";
 import { scanForSecrets, parseSecretsConfig, type SecretsScanOptions } from "../../audit/secrets";
 import { auditWranglerConfigs } from "../../audit/wrangler";
@@ -21,6 +21,7 @@ import { fetchRepoFiles, resolveActionSha, resolveImageDigest, resolveRepoCommit
 import { extractUnpinnedActions, extractUnpinnedImages } from "../../audit/proof";
 import type { ProveOptions } from "../../audit/proof";
 import type { Severity } from "../../lint/rule";
+import { formatWarning } from "../format";
 
 export type AuditFormat = "stylish" | "json" | "sarif" | "markdown" | "html";
 export type AuditTier = "merge-worthy" | "all";
@@ -68,6 +69,23 @@ export interface AuditCommandOptions {
    * present (URL targets have no local config file to read).
    */
   secretsScan?: SecretsScanOptions;
+  /**
+   * Files the local walk takes before it stops, counting every file
+   * (`--max-files`, #2528). Defaults to 1000. Local paths only.
+   */
+  maxFiles?: number;
+}
+
+/**
+ * A diagnostic about the run rather than the repository. Printed on stderr by
+ * `printAuditResult`, never part of `output`, so the report on stdout is the
+ * same with or without one.
+ */
+export interface AuditWarning {
+  /** The path the warning is about, when there is one. */
+  file?: string;
+  message: string;
+  hint?: string;
 }
 
 export interface AuditCommandResult {
@@ -96,6 +114,8 @@ export interface AuditCommandResult {
    * summary line.
    */
   suppressedCount?: number;
+  /** Run diagnostics for stderr (#2528). */
+  warnings?: AuditWarning[];
 }
 
 /** Exit code when the audit had no lexicons to look with. Distinct from 1 (findings / failure). */
@@ -372,6 +392,34 @@ async function buildSnapshot(options: AuditCommandOptions, files: string[], isUr
   };
 }
 
+/**
+ * Warnings for the two level-0 changes #2528 makes in the next release, one
+ * release ahead of it (#2525). Neither changes today's report: a truncated walk
+ * is still reported as if it were whole, and TF023 still reads only the root
+ * `.gitignore`.
+ */
+export function walkWarnings(walk: CandidateWalk, target: string): AuditWarning[] {
+  const warnings: AuditWarning[] = [];
+  if (walk.truncated) {
+    warnings.push({
+      message:
+        `the scan of ${target} stopped at ${walk.maxFiles} files, so part of the tree was not audited. ` +
+        "The limit counts every file the walk reaches, not only the ones it audits.",
+      hint:
+        "Raise it with --max-files <n>. From the next release, text and JSON output will also report a truncated scan.",
+    });
+  }
+  for (const change of walk.nestedGitignore) {
+    warnings.push({
+      file: change.path,
+      message: `TF023 reports this path because chant audit reads only the root .gitignore, but ${change.gitignore} ignores it.`,
+      hint:
+        "From the next release chant audit reads every .gitignore between a file and the scan root, and TF023 will no longer report this path.",
+    });
+  }
+  return warnings;
+}
+
 /** Run the audit and produce a rendered result. */
 export async function auditCommand(options: AuditCommandOptions): Promise<AuditCommandResult> {
   const format = options.format ?? "stylish";
@@ -387,6 +435,7 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
   // render the same way (#1623).
   const plugins = options.plugins ?? (await loadAuditPlugins());
   let candidates: RepoFile[];
+  let warnings: AuditWarning[] = [];
   if (isUrl) {
     try {
       // Fetch the whole repo's candidate files (all lexicons, not just CI) and
@@ -406,8 +455,13 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
     // One walk, plugin-delegated detection. CI (path), Dockerfiles (name), and
     // Helm charts (bundle) are special-cased by the classifier since content
     // shape alone can't disambiguate them.
-    candidates = collectCandidates(options.path);
+    const walk = walkCandidates(options.path, { maxFiles: options.maxFiles });
+    candidates = walk.files;
+    warnings = walkWarnings(walk, options.path);
   }
+  // Only a non-empty list rides on the result, so a run with nothing to warn
+  // about returns exactly the object it did before #2528.
+  const withWarnings = warnings.length > 0 ? { warnings } : {};
   // A local target hands its directory to the classifier, so an input whose
   // path names a directory carries the directory itself (#2217): terraform's
   // parse-to-graph follows a root module's local `module` calls from there. A
@@ -439,14 +493,14 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
 
   if (plugins.length === 0) {
     const output = format === "json" ? renderNoLexiconsJson(options.path, unclaimed) : renderNoLexicons(options.path, unclaimed);
-    return { success: true, status: "no-lexicons", output, findings: [...secretsFindings, ...wranglerFindings, ...nginxFindings, ...terraformStateFindings], scanned: [], unclaimed, exitCode: NO_LEXICONS_EXIT_CODE, stream: format === "json" ? "stdout" : "stderr" };
+    return { success: true, status: "no-lexicons", output, findings: [...secretsFindings, ...wranglerFindings, ...nginxFindings, ...terraformStateFindings], scanned: [], unclaimed, exitCode: NO_LEXICONS_EXIT_CODE, stream: format === "json" ? "stdout" : "stderr", ...withWarnings };
   }
 
   const missingLexiconNote = missingLexiconHint(unclaimed);
 
   if (inputs.length === 0 && secretsFindings.length === 0 && wranglerFindings.length === 0 && nginxFindings.length === 0 && terraformStateFindings.length === 0) {
     const output = `No auditable files found under ${options.path}.${missingLexiconNote ? ` ${missingLexiconNote}` : ""}`;
-    return { success: true, status: "ok", output, findings: [], scanned: [], unclaimed, exitCode: 0 };
+    return { success: true, status: "ok", output, findings: [], scanned: [], unclaimed, exitCode: 0, ...withWarnings };
   }
 
   let findings: AuditFinding[] = [];
@@ -545,22 +599,20 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
     } catch (err) {
       return { success: false, output, findings, scanned, exitCode: 1, error: `Failed to write ${options.output}: ${err instanceof Error ? err.message : String(err)}` };
     }
-    return { success: true, status: "ok", output, findings, scanned, unclaimed, exitCode, wroteTo: options.output, suppressedCount: suppressionStats.count };
+    return { success: true, status: "ok", output, findings, scanned, unclaimed, exitCode, wroteTo: options.output, suppressedCount: suppressionStats.count, ...withWarnings };
   }
 
-  return { success: true, status: "ok", output, findings, scanned, unclaimed, exitCode, suppressedCount: suppressionStats.count };
+  return { success: true, status: "ok", output, findings, scanned, unclaimed, exitCode, suppressedCount: suppressionStats.count, ...withWarnings };
 }
 
-/** Print an audit result to stdout. */
+/** Print an audit result to stdout, and its warnings to stderr. */
 export function printAuditResult(result: AuditCommandResult): void {
   if (!result.success) {
     console.error(result.error ?? "Audit failed");
     return;
   }
-  if (result.wroteTo) {
-    console.error(`Wrote report to ${result.wroteTo}`);
-    return;
-  }
-  if (result.stream === "stderr") console.error(result.output);
+  if (result.wroteTo) console.error(`Wrote report to ${result.wroteTo}`);
+  else if (result.stream === "stderr") console.error(result.output);
   else console.log(result.output);
+  for (const w of result.warnings ?? []) console.error(formatWarning(w));
 }

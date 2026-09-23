@@ -937,6 +937,14 @@ on disk", since almost every Terraform working tree has an ignored
 tracked files. Nothing reads the contents of either: the finding is that the
 path is there.
 
+Only the root `.gitignore` is read today. A state file that a `.gitignore`
+further down the tree ignores, such as `infra/.gitignore` for
+`infra/terraform.tfstate`, is still reported, and `chant audit` prints a
+warning on stderr naming the file and that `.gitignore`. From the next release
+every `.gitignore` between the file and the scan root is read, and those paths
+are no longer reported ([#2528](https://github.com/INTENTIUS/chant/issues/2528);
+see [Coming in the next release](/chant/cli/audit/#coming-in-the-next-release)).
+
 **Why it matters.** A state file records every attribute of every managed
 resource in plaintext JSON, including the ones providers mark sensitive, so a
 committed state file is a committed secret store, readable by everyone with

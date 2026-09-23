@@ -114,6 +114,21 @@ export async function runAudit(ctx: CommandContext): Promise<number> {
     return result.exitCode;
   }
 
+  // `--max-files` (#2528) only means something to the local walk. A URL audit
+  // fetches through the host's tree API with its own caps, so the flag is
+  // refused there rather than silently ignored.
+  const maxFiles = args.maxFiles;
+  if (maxFiles !== undefined) {
+    if (!Number.isInteger(maxFiles) || maxFiles < 1) {
+      console.error(formatError({ message: `--max-files must be a positive integer (got "${maxFiles}")` }));
+      return 1;
+    }
+    if (/^https?:\/\//.test(args.path)) {
+      console.error(formatError({ message: "--max-files applies to a local path; a repository URL is fetched with its own limits." }));
+      return 1;
+    }
+  }
+
   // HTML report customization: --template <file> (full override) + --theme <file> (JSON knobs).
   let template: string | undefined;
   let theme: ReportTheme | undefined;
@@ -146,6 +161,7 @@ export async function runAudit(ctx: CommandContext): Promise<number> {
     template,
     theme,
     toolVersion: CHANT_VERSION,
+    maxFiles,
   });
   printAuditResult(result);
   return result.exitCode;

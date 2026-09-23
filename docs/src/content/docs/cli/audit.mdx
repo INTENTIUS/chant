@@ -90,6 +90,7 @@ The **expanded** (HTML) report renders the same findings with badges, cards, and
 | `--fail-on <level>` | Exit non-zero on `merge-worthy`, `warning`, `error`, or `none` (default `none`) |
 | `--template <file>` | `html` only: a full HTML template override (see below) |
 | `--theme <file>` | `html` only: a JSON file of theme knobs (`title`, `logo`, `accent`, `footer`) |
+| `--max-files <n>` | Local path only: how many files the walk takes before it stops (default `1000`). See [Scan limits](#scan-limits) |
 | `--agents` | Audit this machine's **agent configuration** instead of a repository (see below) |
 | `--scope <list>` | `--agents` only: comma-separated `system`, `user`, `project` (default: all) |
 | `--runtime <list>` | `--agents` only: comma-separated `claude`, `codex`, `gemini`, `opencode`, `cursor` (default: all) |
@@ -150,6 +151,39 @@ in the [audit rules reference](/chant/lint-rules/audit-rules/).
 
 To turn what it finds into chant code, see
 [`chant import --agents`](/chant/cli/import/).
+
+## Scan limits
+
+A local audit walks the tree once and stops after 1000 files. Every file the walk reaches counts toward that limit, including the ones it does not audit. A repository with a large `docs/` directory can therefore hit it early. Directories the walk skips (`node_modules`, `.git`, `dist`, and most dot-directories) are never counted.
+
+Pass `--max-files <n>` to raise the limit. A repository URL is fetched with its own limits, so the flag is refused there.
+
+When the walk stops with files left over, `chant audit` prints a warning on stderr:
+
+```
+warning: the scan of ./repo stopped at 1000 files, so part of the tree was not audited. The limit counts every file the walk reaches, not only the ones it audits.
+  Raise it with --max-files <n>. From the next release, text and JSON output will also report a truncated scan.
+```
+
+In this release the report is unchanged: a truncated scan still reads as a whole one on stdout, in every format. The warning goes to stderr, so `--format json` output stays byte-identical.
+
+### Coming in the next release
+
+Two changes to level-0 output are on the [exception list](https://github.com/INTENTIUS/chant/issues/2525) and are tracked in [#2528](https://github.com/INTENTIUS/chant/issues/2528). This release warns about both.
+
+| Change | This release | Next release |
+|---|---|---|
+| Truncated scans | A warning on stderr | Text and JSON output report the truncation, the limit and `--max-files` |
+| `.gitignore` for `TF023` | Only the root `.gitignore` decides whether a state file or `.terraform/` counts as committed. A warning on stderr names each path a nested `.gitignore` ignores | Every `.gitignore` between the file and the scan root is read, so those paths are no longer reported |
+
+The `TF023` warning names the file and the `.gitignore` responsible:
+
+```
+infra/terraform.tfstate - warning: TF023 reports this path because chant audit reads only the root .gitignore, but infra/.gitignore ignores it.
+  From the next release chant audit reads every .gitignore between a file and the scan root, and TF023 will no longer report this path.
+```
+
+Auditing from a subdirectory reads that directory's `.gitignore` as the root one, so today an audit from the repository root and one from `infra/` can disagree about `infra/terraform.tfstate`. After the change they agree whenever the `.gitignore` responsible is at or below the subdirectory.
 
 ## Report modes
 
