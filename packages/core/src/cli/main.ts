@@ -27,6 +27,7 @@ import { runCarveStatus } from "./handlers/carve-status";
 import { runLifecycleSnapshot, runLifecycleShow, runLifecycleDiff, runLifecycleRollback, runLifecyclePlan, runLifecycleAffected, runLifecycleLog, runLifecycleTeardown, runLifecycleWhoami, runLifecycleUnknown } from "./handlers/lifecycle";
 import { runComponentsStatus, runComponentsReleaseRecord, runComponentsExport, runComponentsUnknown } from "./handlers/components";
 import { runComponentsFanOut } from "./handlers/fan-out";
+import { runComponentsPromote } from "./handlers/promote";
 import { runScenarioCheck, runScenarioUnknown } from "./handlers/scenario";
 import { runGraph } from "./handlers/graph";
 import { runExplain } from "./handlers/explain";
@@ -205,8 +206,9 @@ export function parseArgs(args: string[]): ParsedArgs {
       if (v !== "source" && v !== "live") throw new Error(`--overlay-anchor must be 'source' or 'live', got '${v}'`);
       result.overlayAnchor = v;
     } else if (arg === "--from") {
-      // Shared by `migrate --from <lexicon>` and `import --from <env>`; the
-      // two commands never run together, so one field carries both.
+      // Shared by `migrate --from <lexicon>`, `import --from <env>` and
+      // `components promote --from <env>`; the commands never run together,
+      // so one field carries all three.
       result.migrateFrom = args[++i];
     } else if (arg === "--kustomize") {
       // `chant import --kustomize <dir>` (#1548): render the overlay, import
@@ -681,6 +683,11 @@ Component release ledger + status:
                             [--digest <manifestDigest>] -o <dir> [--json]);
                             copies every image/template/asset/sbom entry
                             byte-for-byte plus a self-describing manifest.json
+  components promote        Deploy the digests one environment's release
+                            ledger records to another, without a build
+                            (--from <env> --to <env> [--component <name>
+                             [--digest <sha256:...>]]; --dry-run prints the
+                             plan; the target's gates still apply)
 
 Lexicon development:
   dev generate          Generate lexicon artifacts (+ validate + coverage)
@@ -791,8 +798,8 @@ Options:
                         project source; network egress is NOT blocked (see
                         docs). Default: off (also settable via
                         chant.config.ts's build.sandbox: true; #1045)
-  --param <name=value>  (build, graph, run --components, components fan-out)
-                        Bind a declared
+  --param <name=value>  (build, graph, run --components, components fan-out,
+                        components promote) Bind a declared
                         build-time parameter (chant.config.ts's buildParams)
                         to a value, for source to read as params.<name>
                         (#1064) instead of process.env — repeatable.
@@ -800,8 +807,8 @@ Options:
                         Parameter(): this resolves before synthesis, so it
                         can change which resources are produced at all.
                         Highest precedence.
-  --params-file <path>  (build, graph, run --components, components fan-out)
-                        JSON file of
+  --params-file <path>  (build, graph, run --components, components fan-out,
+                        components promote) JSON file of
                         { "name": value } build-time parameter values
                         (#1064). Second precedence, after --param.
 
@@ -1029,6 +1036,7 @@ export const commandRegistry: CommandDef[] = [
   { name: "components status", requiresPlugins: true, handler: runComponentsStatus },
   { name: "components release", handler: runComponentsReleaseRecord },
   { name: "components export", handler: runComponentsExport },
+  { name: "components promote", handler: runComponentsPromote },
 
   // Local emulators of configured lexicons (#920). Compound so the action word
   // lands in args.path (not consumed as a project dir) and projectPath is forced ".".

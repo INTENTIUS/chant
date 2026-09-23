@@ -51,6 +51,20 @@ export interface RunOrigin {
 }
 
 /**
+ * Points at one earlier release record (#2530). A record has no id of its own,
+ * so it is named by the environment whose ledger holds it plus the run id and
+ * timestamp it was written with, which is enough to find the line again.
+ */
+export interface ReleaseRef {
+  /** The environment whose ledger holds the referenced record. */
+  env: string;
+  /** The referenced record's `runId`. */
+  runId: string;
+  /** The referenced record's `timestamp`. */
+  timestamp: string;
+}
+
+/**
  * One immutable deploy record: `(component, env, artifact digest, git sha,
  * run id, timestamp, actor)`, referencing the build archive by digest — the
  * exact shape epic #551 "Build & deploy observability" asks for.
@@ -128,6 +142,12 @@ export interface ReleaseRecord {
    * bytes each cluster got. Absent when `digest` is already input-side.
    */
   inputDigest?: string;
+  /**
+   * Optional: set when this release was a promotion (`chant components
+   * promote`, #2530). Names the source environment's release whose digest
+   * was deployed here without a build. Absent on every other record.
+   */
+  promotedFrom?: ReleaseRef;
 }
 
 /** Required, non-empty-string fields every `ReleaseRecord` must carry. */
