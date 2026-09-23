@@ -1,0 +1,989 @@
+# chant graph --format ir
+# on a copy of examples/fan-out-estate; see test/level0-goldens/harness.ts for what is normalised
+exit: 0
+
+--- wrote (empty)
+
+--- stdout
+{
+  "nodes": [
+    {
+      "id": "app01LogGroup",
+      "kind": "AWS::Logs::LogGroup",
+      "lexicon": "aws",
+      "attrs": {
+        "Arn": {
+          "$ref": "app01LogGroup.Arn"
+        },
+        "RetentionInDays": 14
+      },
+      "sourceLoc": {
+        "file": "src/app-01/resources.ts"
+      }
+    },
+    {
+      "id": "app01Queue",
+      "kind": "AWS::SQS::Queue",
+      "lexicon": "aws",
+      "attrs": {
+        "QueueUrl": {
+          "$ref": "app01Queue.QueueUrl"
+        },
+        "Arn": {
+          "$ref": "app01Queue.Arn"
+        },
+        "QueueName": "fan-out-estate-app-01",
+        "SqsManagedSseEnabled": true
+      },
+      "sourceLoc": {
+        "file": "src/app-01/resources.ts"
+      }
+    },
+    {
+      "id": "app01TableName",
+      "kind": "AWS::CloudFormation::Parameter",
+      "lexicon": "aws",
+      "attrs": {
+        "parameterType": "String",
+        "description": "The cluster-a stack's TableName output"
+      },
+      "sourceLoc": {
+        "file": "src/app-01/params.ts"
+      }
+    },
+    {
+      "id": "app02LogGroup",
+      "kind": "AWS::Logs::LogGroup",
+      "lexicon": "aws",
+      "attrs": {
+        "Arn": {
+          "$ref": "app02LogGroup.Arn"
+        },
+        "RetentionInDays": 14
+      },
+      "sourceLoc": {
+        "file": "src/app-02/resources.ts"
+      }
+    },
+    {
+      "id": "app02Queue",
+      "kind": "AWS::SQS::Queue",
+      "lexicon": "aws",
+      "attrs": {
+        "QueueUrl": {
+          "$ref": "app02Queue.QueueUrl"
+        },
+        "Arn": {
+          "$ref": "app02Queue.Arn"
+        },
+        "QueueName": "fan-out-estate-app-02",
+        "SqsManagedSseEnabled": true
+      },
+      "sourceLoc": {
+        "file": "src/app-02/resources.ts"
+      }
+    },
+    {
+      "id": "app02TableName",
+      "kind": "AWS::CloudFormation::Parameter",
+      "lexicon": "aws",
+      "attrs": {
+        "parameterType": "String",
+        "description": "The cluster-a stack's TableName output"
+      },
+      "sourceLoc": {
+        "file": "src/app-02/params.ts"
+      }
+    },
+    {
+      "id": "app03LogGroup",
+      "kind": "AWS::Logs::LogGroup",
+      "lexicon": "aws",
+      "attrs": {
+        "Arn": {
+          "$ref": "app03LogGroup.Arn"
+        },
+        "RetentionInDays": 14
+      },
+      "sourceLoc": {
+        "file": "src/app-03/resources.ts"
+      }
+    },
+    {
+      "id": "app03Queue",
+      "kind": "AWS::SQS::Queue",
+      "lexicon": "aws",
+      "attrs": {
+        "QueueUrl": {
+          "$ref": "app03Queue.QueueUrl"
+        },
+        "Arn": {
+          "$ref": "app03Queue.Arn"
+        },
+        "QueueName": "fan-out-estate-app-03",
+        "SqsManagedSseEnabled": true
+      },
+      "sourceLoc": {
+        "file": "src/app-03/resources.ts"
+      }
+    },
+    {
+      "id": "app03TableName",
+      "kind": "AWS::CloudFormation::Parameter",
+      "lexicon": "aws",
+      "attrs": {
+        "parameterType": "String",
+        "description": "The cluster-a stack's TableName output"
+      },
+      "sourceLoc": {
+        "file": "src/app-03/params.ts"
+      }
+    },
+    {
+      "id": "app04LogGroup",
+      "kind": "AWS::Logs::LogGroup",
+      "lexicon": "aws",
+      "attrs": {
+        "Arn": {
+          "$ref": "app04LogGroup.Arn"
+        },
+        "RetentionInDays": 14
+      },
+      "sourceLoc": {
+        "file": "src/app-04/resources.ts"
+      }
+    },
+    {
+      "id": "app04Queue",
+      "kind": "AWS::SQS::Queue",
+      "lexicon": "aws",
+      "attrs": {
+        "QueueUrl": {
+          "$ref": "app04Queue.QueueUrl"
+        },
+        "Arn": {
+          "$ref": "app04Queue.Arn"
+        },
+        "QueueName": "fan-out-estate-app-04",
+        "SqsManagedSseEnabled": true
+      },
+      "sourceLoc": {
+        "file": "src/app-04/resources.ts"
+      }
+    },
+    {
+      "id": "app04TableName",
+      "kind": "AWS::CloudFormation::Parameter",
+      "lexicon": "aws",
+      "attrs": {
+        "parameterType": "String",
+        "description": "The cluster-a stack's TableName output"
+      },
+      "sourceLoc": {
+        "file": "src/app-04/params.ts"
+      }
+    },
+    {
+      "id": "app05LogGroup",
+      "kind": "AWS::Logs::LogGroup",
+      "lexicon": "aws",
+      "attrs": {
+        "Arn": {
+          "$ref": "app05LogGroup.Arn"
+        },
+        "RetentionInDays": 14
+      },
+      "sourceLoc": {
+        "file": "src/app-05/resources.ts"
+      }
+    },
+    {
+      "id": "app05Queue",
+      "kind": "AWS::SQS::Queue",
+      "lexicon": "aws",
+      "attrs": {
+        "QueueUrl": {
+          "$ref": "app05Queue.QueueUrl"
+        },
+        "Arn": {
+          "$ref": "app05Queue.Arn"
+        },
+        "QueueName": "fan-out-estate-app-05",
+        "SqsManagedSseEnabled": true
+      },
+      "sourceLoc": {
+        "file": "src/app-05/resources.ts"
+      }
+    },
+    {
+      "id": "app05TableName",
+      "kind": "AWS::CloudFormation::Parameter",
+      "lexicon": "aws",
+      "attrs": {
+        "parameterType": "String",
+        "description": "The cluster-a stack's TableName output"
+      },
+      "sourceLoc": {
+        "file": "src/app-05/params.ts"
+      }
+    },
+    {
+      "id": "app06LogGroup",
+      "kind": "AWS::Logs::LogGroup",
+      "lexicon": "aws",
+      "attrs": {
+        "Arn": {
+          "$ref": "app06LogGroup.Arn"
+        },
+        "RetentionInDays": 14
+      },
+      "sourceLoc": {
+        "file": "src/app-06/resources.ts"
+      }
+    },
+    {
+      "id": "app06Queue",
+      "kind": "AWS::SQS::Queue",
+      "lexicon": "aws",
+      "attrs": {
+        "QueueUrl": {
+          "$ref": "app06Queue.QueueUrl"
+        },
+        "Arn": {
+          "$ref": "app06Queue.Arn"
+        },
+        "QueueName": "fan-out-estate-app-06",
+        "SqsManagedSseEnabled": true
+      },
+      "sourceLoc": {
+        "file": "src/app-06/resources.ts"
+      }
+    },
+    {
+      "id": "app06TableName",
+      "kind": "AWS::CloudFormation::Parameter",
+      "lexicon": "aws",
+      "attrs": {
+        "parameterType": "String",
+        "description": "The cluster-a stack's TableName output"
+      },
+      "sourceLoc": {
+        "file": "src/app-06/params.ts"
+      }
+    },
+    {
+      "id": "app07LogGroup",
+      "kind": "AWS::Logs::LogGroup",
+      "lexicon": "aws",
+      "attrs": {
+        "Arn": {
+          "$ref": "app07LogGroup.Arn"
+        },
+        "RetentionInDays": 14
+      },
+      "sourceLoc": {
+        "file": "src/app-07/resources.ts"
+      }
+    },
+    {
+      "id": "app07Queue",
+      "kind": "AWS::SQS::Queue",
+      "lexicon": "aws",
+      "attrs": {
+        "QueueUrl": {
+          "$ref": "app07Queue.QueueUrl"
+        },
+        "Arn": {
+          "$ref": "app07Queue.Arn"
+        },
+        "QueueName": "fan-out-estate-app-07",
+        "SqsManagedSseEnabled": true
+      },
+      "sourceLoc": {
+        "file": "src/app-07/resources.ts"
+      }
+    },
+    {
+      "id": "app07TableName",
+      "kind": "AWS::CloudFormation::Parameter",
+      "lexicon": "aws",
+      "attrs": {
+        "parameterType": "String",
+        "description": "The cluster-b stack's TableName output"
+      },
+      "sourceLoc": {
+        "file": "src/app-07/params.ts"
+      }
+    },
+    {
+      "id": "app08LogGroup",
+      "kind": "AWS::Logs::LogGroup",
+      "lexicon": "aws",
+      "attrs": {
+        "Arn": {
+          "$ref": "app08LogGroup.Arn"
+        },
+        "RetentionInDays": 14
+      },
+      "sourceLoc": {
+        "file": "src/app-08/resources.ts"
+      }
+    },
+    {
+      "id": "app08Queue",
+      "kind": "AWS::SQS::Queue",
+      "lexicon": "aws",
+      "attrs": {
+        "QueueUrl": {
+          "$ref": "app08Queue.QueueUrl"
+        },
+        "Arn": {
+          "$ref": "app08Queue.Arn"
+        },
+        "QueueName": "fan-out-estate-app-08",
+        "SqsManagedSseEnabled": true
+      },
+      "sourceLoc": {
+        "file": "src/app-08/resources.ts"
+      }
+    },
+    {
+      "id": "app08TableName",
+      "kind": "AWS::CloudFormation::Parameter",
+      "lexicon": "aws",
+      "attrs": {
+        "parameterType": "String",
+        "description": "The cluster-b stack's TableName output"
+      },
+      "sourceLoc": {
+        "file": "src/app-08/params.ts"
+      }
+    },
+    {
+      "id": "app09LogGroup",
+      "kind": "AWS::Logs::LogGroup",
+      "lexicon": "aws",
+      "attrs": {
+        "Arn": {
+          "$ref": "app09LogGroup.Arn"
+        },
+        "RetentionInDays": 14
+      },
+      "sourceLoc": {
+        "file": "src/app-09/resources.ts"
+      }
+    },
+    {
+      "id": "app09Queue",
+      "kind": "AWS::SQS::Queue",
+      "lexicon": "aws",
+      "attrs": {
+        "QueueUrl": {
+          "$ref": "app09Queue.QueueUrl"
+        },
+        "Arn": {
+          "$ref": "app09Queue.Arn"
+        },
+        "QueueName": "fan-out-estate-app-09",
+        "SqsManagedSseEnabled": true
+      },
+      "sourceLoc": {
+        "file": "src/app-09/resources.ts"
+      }
+    },
+    {
+      "id": "app09TableName",
+      "kind": "AWS::CloudFormation::Parameter",
+      "lexicon": "aws",
+      "attrs": {
+        "parameterType": "String",
+        "description": "The cluster-b stack's TableName output"
+      },
+      "sourceLoc": {
+        "file": "src/app-09/params.ts"
+      }
+    },
+    {
+      "id": "app10LogGroup",
+      "kind": "AWS::Logs::LogGroup",
+      "lexicon": "aws",
+      "attrs": {
+        "Arn": {
+          "$ref": "app10LogGroup.Arn"
+        },
+        "RetentionInDays": 14
+      },
+      "sourceLoc": {
+        "file": "src/app-10/resources.ts"
+      }
+    },
+    {
+      "id": "app10Queue",
+      "kind": "AWS::SQS::Queue",
+      "lexicon": "aws",
+      "attrs": {
+        "QueueUrl": {
+          "$ref": "app10Queue.QueueUrl"
+        },
+        "Arn": {
+          "$ref": "app10Queue.Arn"
+        },
+        "QueueName": "fan-out-estate-app-10",
+        "SqsManagedSseEnabled": true
+      },
+      "sourceLoc": {
+        "file": "src/app-10/resources.ts"
+      }
+    },
+    {
+      "id": "app10TableName",
+      "kind": "AWS::CloudFormation::Parameter",
+      "lexicon": "aws",
+      "attrs": {
+        "parameterType": "String",
+        "description": "The cluster-b stack's TableName output"
+      },
+      "sourceLoc": {
+        "file": "src/app-10/params.ts"
+      }
+    },
+    {
+      "id": "app11LogGroup",
+      "kind": "AWS::Logs::LogGroup",
+      "lexicon": "aws",
+      "attrs": {
+        "Arn": {
+          "$ref": "app11LogGroup.Arn"
+        },
+        "RetentionInDays": 14
+      },
+      "sourceLoc": {
+        "file": "src/app-11/resources.ts"
+      }
+    },
+    {
+      "id": "app11Queue",
+      "kind": "AWS::SQS::Queue",
+      "lexicon": "aws",
+      "attrs": {
+        "QueueUrl": {
+          "$ref": "app11Queue.QueueUrl"
+        },
+        "Arn": {
+          "$ref": "app11Queue.Arn"
+        },
+        "QueueName": "fan-out-estate-app-11",
+        "SqsManagedSseEnabled": true
+      },
+      "sourceLoc": {
+        "file": "src/app-11/resources.ts"
+      }
+    },
+    {
+      "id": "app11TableName",
+      "kind": "AWS::CloudFormation::Parameter",
+      "lexicon": "aws",
+      "attrs": {
+        "parameterType": "String",
+        "description": "The cluster-b stack's TableName output"
+      },
+      "sourceLoc": {
+        "file": "src/app-11/params.ts"
+      }
+    },
+    {
+      "id": "app12LogGroup",
+      "kind": "AWS::Logs::LogGroup",
+      "lexicon": "aws",
+      "attrs": {
+        "Arn": {
+          "$ref": "app12LogGroup.Arn"
+        },
+        "RetentionInDays": 14
+      },
+      "sourceLoc": {
+        "file": "src/app-12/resources.ts"
+      }
+    },
+    {
+      "id": "app12Queue",
+      "kind": "AWS::SQS::Queue",
+      "lexicon": "aws",
+      "attrs": {
+        "QueueUrl": {
+          "$ref": "app12Queue.QueueUrl"
+        },
+        "Arn": {
+          "$ref": "app12Queue.Arn"
+        },
+        "QueueName": "fan-out-estate-app-12",
+        "SqsManagedSseEnabled": true
+      },
+      "sourceLoc": {
+        "file": "src/app-12/resources.ts"
+      }
+    },
+    {
+      "id": "app12TableName",
+      "kind": "AWS::CloudFormation::Parameter",
+      "lexicon": "aws",
+      "attrs": {
+        "parameterType": "String",
+        "description": "The cluster-b stack's TableName output"
+      },
+      "sourceLoc": {
+        "file": "src/app-12/params.ts"
+      }
+    },
+    {
+      "id": "clusterALogGroup",
+      "kind": "AWS::Logs::LogGroup",
+      "lexicon": "aws",
+      "attrs": {
+        "Arn": {
+          "$ref": "clusterALogGroup.Arn"
+        },
+        "LogGroupName": "/chant/fan-out-estate/cluster-a",
+        "RetentionInDays": 14
+      },
+      "sourceLoc": {
+        "file": "src/cluster-a/resources.ts"
+      }
+    },
+    {
+      "id": "clusterAQueueUrl",
+      "kind": "AWS::CloudFormation::Parameter",
+      "lexicon": "aws",
+      "attrs": {
+        "parameterType": "String",
+        "description": "The network stack's QueueUrl output"
+      },
+      "sourceLoc": {
+        "file": "src/cluster-a/params.ts"
+      }
+    },
+    {
+      "id": "clusterATableTable",
+      "kind": "AWS::DynamoDB::Table",
+      "lexicon": "aws",
+      "attrs": {
+        "Arn": {
+          "$ref": "clusterATableTable.Arn"
+        },
+        "StreamArn": {
+          "$ref": "clusterATableTable.StreamArn"
+        },
+        "TableName": "fan-out-estate-cluster-a",
+        "BillingMode": "PAY_PER_REQUEST"
+      },
+      "compositeParent": "DynamoDBTable",
+      "compositeInstance": "clusterATable",
+      "sourceLoc": {
+        "file": "src/cluster-a/resources.ts"
+      }
+    },
+    {
+      "id": "clusterATopicArn",
+      "kind": "AWS::CloudFormation::Parameter",
+      "lexicon": "aws",
+      "attrs": {
+        "parameterType": "String",
+        "description": "The network stack's TopicArn output"
+      },
+      "sourceLoc": {
+        "file": "src/cluster-a/params.ts"
+      }
+    },
+    {
+      "id": "clusterBLogGroup",
+      "kind": "AWS::Logs::LogGroup",
+      "lexicon": "aws",
+      "attrs": {
+        "Arn": {
+          "$ref": "clusterBLogGroup.Arn"
+        },
+        "LogGroupName": "/chant/fan-out-estate/cluster-b",
+        "RetentionInDays": 14
+      },
+      "sourceLoc": {
+        "file": "src/cluster-b/resources.ts"
+      }
+    },
+    {
+      "id": "clusterBQueueUrl",
+      "kind": "AWS::CloudFormation::Parameter",
+      "lexicon": "aws",
+      "attrs": {
+        "parameterType": "String",
+        "description": "The network stack's QueueUrl output"
+      },
+      "sourceLoc": {
+        "file": "src/cluster-b/params.ts"
+      }
+    },
+    {
+      "id": "clusterBTableTable",
+      "kind": "AWS::DynamoDB::Table",
+      "lexicon": "aws",
+      "attrs": {
+        "Arn": {
+          "$ref": "clusterBTableTable.Arn"
+        },
+        "StreamArn": {
+          "$ref": "clusterBTableTable.StreamArn"
+        },
+        "TableName": "fan-out-estate-cluster-b",
+        "BillingMode": "PAY_PER_REQUEST"
+      },
+      "compositeParent": "DynamoDBTable",
+      "compositeInstance": "clusterBTable",
+      "sourceLoc": {
+        "file": "src/cluster-b/resources.ts"
+      }
+    },
+    {
+      "id": "clusterBTopicArn",
+      "kind": "AWS::CloudFormation::Parameter",
+      "lexicon": "aws",
+      "attrs": {
+        "parameterType": "String",
+        "description": "The network stack's TopicArn output"
+      },
+      "sourceLoc": {
+        "file": "src/cluster-b/params.ts"
+      }
+    },
+    {
+      "id": "networkQueue",
+      "kind": "AWS::SQS::Queue",
+      "lexicon": "aws",
+      "attrs": {
+        "QueueUrl": {
+          "$ref": "networkQueue.QueueUrl"
+        },
+        "Arn": {
+          "$ref": "networkQueue.Arn"
+        },
+        "QueueName": "fan-out-estate-network",
+        "SqsManagedSseEnabled": true
+      },
+      "sourceLoc": {
+        "file": "src/network/resources.ts"
+      }
+    },
+    {
+      "id": "networkTopic",
+      "kind": "AWS::SNS::Topic",
+      "lexicon": "aws",
+      "attrs": {
+        "TopicArn": {
+          "$ref": "networkTopic.TopicArn"
+        },
+        "TopicName": "fan-out-estate-network",
+        "DisplayName": "fan-out-estate network",
+        "KmsMasterKeyId": "alias/aws/sns"
+      },
+      "sourceLoc": {
+        "file": "src/network/resources.ts"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "app01Queue",
+      "to": "app01TableName",
+      "kind": "ref",
+      "viaAttr": "Tags"
+    },
+    {
+      "from": "app02Queue",
+      "to": "app02TableName",
+      "kind": "ref",
+      "viaAttr": "Tags"
+    },
+    {
+      "from": "app03Queue",
+      "to": "app03TableName",
+      "kind": "ref",
+      "viaAttr": "Tags"
+    },
+    {
+      "from": "app04Queue",
+      "to": "app04TableName",
+      "kind": "ref",
+      "viaAttr": "Tags"
+    },
+    {
+      "from": "app05Queue",
+      "to": "app05TableName",
+      "kind": "ref",
+      "viaAttr": "Tags"
+    },
+    {
+      "from": "app06Queue",
+      "to": "app06TableName",
+      "kind": "ref",
+      "viaAttr": "Tags"
+    },
+    {
+      "from": "app07Queue",
+      "to": "app07TableName",
+      "kind": "ref",
+      "viaAttr": "Tags"
+    },
+    {
+      "from": "app08Queue",
+      "to": "app08TableName",
+      "kind": "ref",
+      "viaAttr": "Tags"
+    },
+    {
+      "from": "app09Queue",
+      "to": "app09TableName",
+      "kind": "ref",
+      "viaAttr": "Tags"
+    },
+    {
+      "from": "app10Queue",
+      "to": "app10TableName",
+      "kind": "ref",
+      "viaAttr": "Tags"
+    },
+    {
+      "from": "app11Queue",
+      "to": "app11TableName",
+      "kind": "ref",
+      "viaAttr": "Tags"
+    },
+    {
+      "from": "app12Queue",
+      "to": "app12TableName",
+      "kind": "ref",
+      "viaAttr": "Tags"
+    },
+    {
+      "from": "clusterATableTable",
+      "to": "clusterAQueueUrl",
+      "kind": "ref",
+      "viaAttr": "Tags"
+    },
+    {
+      "from": "clusterATableTable",
+      "to": "clusterATopicArn",
+      "kind": "ref",
+      "viaAttr": "Tags"
+    },
+    {
+      "from": "clusterBTableTable",
+      "to": "clusterBQueueUrl",
+      "kind": "ref",
+      "viaAttr": "Tags"
+    },
+    {
+      "from": "clusterBTableTable",
+      "to": "clusterBTopicArn",
+      "kind": "ref",
+      "viaAttr": "Tags"
+    }
+  ],
+  "groups": {
+    "byLexicon": {
+      "aws": [
+        "app01LogGroup",
+        "app01Queue",
+        "app01TableName",
+        "app02LogGroup",
+        "app02Queue",
+        "app02TableName",
+        "app03LogGroup",
+        "app03Queue",
+        "app03TableName",
+        "app04LogGroup",
+        "app04Queue",
+        "app04TableName",
+        "app05LogGroup",
+        "app05Queue",
+        "app05TableName",
+        "app06LogGroup",
+        "app06Queue",
+        "app06TableName",
+        "app07LogGroup",
+        "app07Queue",
+        "app07TableName",
+        "app08LogGroup",
+        "app08Queue",
+        "app08TableName",
+        "app09LogGroup",
+        "app09Queue",
+        "app09TableName",
+        "app10LogGroup",
+        "app10Queue",
+        "app10TableName",
+        "app11LogGroup",
+        "app11Queue",
+        "app11TableName",
+        "app12LogGroup",
+        "app12Queue",
+        "app12TableName",
+        "clusterALogGroup",
+        "clusterAQueueUrl",
+        "clusterATableTable",
+        "clusterATopicArn",
+        "clusterBLogGroup",
+        "clusterBQueueUrl",
+        "clusterBTableTable",
+        "clusterBTopicArn",
+        "networkQueue",
+        "networkTopic"
+      ]
+    },
+    "byComposite": {
+      "DynamoDBTable": [
+        "clusterATableTable",
+        "clusterBTableTable"
+      ]
+    },
+    "byStack": {
+      "aws": [
+        "app01LogGroup",
+        "app01Queue",
+        "app01TableName",
+        "app02LogGroup",
+        "app02Queue",
+        "app02TableName",
+        "app03LogGroup",
+        "app03Queue",
+        "app03TableName",
+        "app04LogGroup",
+        "app04Queue",
+        "app04TableName",
+        "app05LogGroup",
+        "app05Queue",
+        "app05TableName",
+        "app06LogGroup",
+        "app06Queue",
+        "app06TableName",
+        "app07LogGroup",
+        "app07Queue",
+        "app07TableName",
+        "app08LogGroup",
+        "app08Queue",
+        "app08TableName",
+        "app09LogGroup",
+        "app09Queue",
+        "app09TableName",
+        "app10LogGroup",
+        "app10Queue",
+        "app10TableName",
+        "app11LogGroup",
+        "app11Queue",
+        "app11TableName",
+        "app12LogGroup",
+        "app12Queue",
+        "app12TableName",
+        "clusterALogGroup",
+        "clusterAQueueUrl",
+        "clusterATableTable",
+        "clusterATopicArn",
+        "clusterBLogGroup",
+        "clusterBQueueUrl",
+        "clusterBTableTable",
+        "clusterBTopicArn",
+        "networkQueue",
+        "networkTopic"
+      ]
+    }
+  },
+  "exports": [
+    {
+      "name": "LogGroupName"
+    },
+    {
+      "name": "LogGroupName"
+    },
+    {
+      "name": "QueueUrl",
+      "node": "networkQueue",
+      "attr": "QueueUrl"
+    },
+    {
+      "name": "TableName"
+    },
+    {
+      "name": "TableName"
+    },
+    {
+      "name": "TopicArn",
+      "node": "networkTopic",
+      "attr": "TopicArn"
+    }
+  ],
+  "imports": [
+    {
+      "name": "app01TableName",
+      "node": "app01TableName"
+    },
+    {
+      "name": "app02TableName",
+      "node": "app02TableName"
+    },
+    {
+      "name": "app03TableName",
+      "node": "app03TableName"
+    },
+    {
+      "name": "app04TableName",
+      "node": "app04TableName"
+    },
+    {
+      "name": "app05TableName",
+      "node": "app05TableName"
+    },
+    {
+      "name": "app06TableName",
+      "node": "app06TableName"
+    },
+    {
+      "name": "app07TableName",
+      "node": "app07TableName"
+    },
+    {
+      "name": "app08TableName",
+      "node": "app08TableName"
+    },
+    {
+      "name": "app09TableName",
+      "node": "app09TableName"
+    },
+    {
+      "name": "app10TableName",
+      "node": "app10TableName"
+    },
+    {
+      "name": "app11TableName",
+      "node": "app11TableName"
+    },
+    {
+      "name": "app12TableName",
+      "node": "app12TableName"
+    },
+    {
+      "name": "clusterAQueueUrl",
+      "node": "clusterAQueueUrl"
+    },
+    {
+      "name": "clusterATopicArn",
+      "node": "clusterATopicArn"
+    },
+    {
+      "name": "clusterBQueueUrl",
+      "node": "clusterBQueueUrl"
+    },
+    {
+      "name": "clusterBTopicArn",
+      "node": "clusterBTopicArn"
+    }
+  ]
+}
+
+--- stderr (empty)

@@ -1,0 +1,121 @@
+# chant audit --format json
+# on a copy of examples/adopt-alb-services; see test/level0-goldens/harness.ts for what is normalised
+exit: 0
+
+--- wrote
+!! before/.gitlab-ci.yml
+
+--- stdout
+{
+  "schemaVersion": "1.0",
+  "tool": {
+    "name": "chant-audit",
+    "version": "<chant-version>"
+  },
+  "status": "ok",
+  "snapshot": {
+    "target": ".",
+    "host": "local",
+    "files": [
+      "api/Dockerfile",
+      "ui/Dockerfile"
+    ],
+    "generatedAt": "<timestamp>",
+    "toolVersion": "<chant-version>"
+  },
+  "summary": {
+    "total": 2,
+    "quickWin": 0,
+    "needsReview": 2,
+    "reportOnly": 0,
+    "errors": 0,
+    "warnings": 2,
+    "infos": 0,
+    "security": 2,
+    "correctness": 0,
+    "bestPractice": 0,
+    "efficiency": 0
+  },
+  "findings": [
+    {
+      "checkId": "DKRD012",
+      "severity": "warning",
+      "message": "Dockerfile: No USER instruction found. The container will run as root. Add a USER instruction to improve security.",
+      "file": "api/Dockerfile",
+      "lexicon": "docker",
+      "tier": "merge-worthy",
+      "fixKind": "guidance",
+      "category": "security",
+      "title": "No USER instruction — container runs as root",
+      "remediation": "Add a non-root USER instruction.",
+      "authority": [
+        {
+          "name": "Docker — Security best practices",
+          "url": "https://docs.docker.com/develop/security-best-practices/"
+        }
+      ],
+      "lineage": [
+        {
+          "tool": "checkov",
+          "rule": "CKV_DOCKER_3",
+          "url": "https://www.checkov.io/5.Policy%20Index/dockerfile.html",
+          "relation": "equivalent"
+        },
+        {
+          "tool": "kics",
+          "rule": "missing_user_instruction",
+          "url": "https://docs.kics.io/latest/queries/dockerfile-queries/fd54f200-402c-4333-a5a4-36ef6709af2f/",
+          "relation": "equivalent"
+        },
+        {
+          "tool": "dockle",
+          "rule": "CIS-DI-0001",
+          "url": "https://github.com/goodwithtech/dockle/blob/master/CHECKPOINT.md#cis-di-0001",
+          "relation": "overlaps"
+        }
+      ],
+      "docUrl": "https://intentius.io/chant/lint-rules/audit-rules/#dkrd012"
+    },
+    {
+      "checkId": "DKRD012",
+      "severity": "warning",
+      "message": "Dockerfile: No USER instruction found. The container will run as root. Add a USER instruction to improve security.",
+      "file": "ui/Dockerfile",
+      "lexicon": "docker",
+      "tier": "merge-worthy",
+      "fixKind": "guidance",
+      "category": "security",
+      "title": "No USER instruction — container runs as root",
+      "remediation": "Add a non-root USER instruction.",
+      "authority": [
+        {
+          "name": "Docker — Security best practices",
+          "url": "https://docs.docker.com/develop/security-best-practices/"
+        }
+      ],
+      "lineage": [
+        {
+          "tool": "checkov",
+          "rule": "CKV_DOCKER_3",
+          "url": "https://www.checkov.io/5.Policy%20Index/dockerfile.html",
+          "relation": "equivalent"
+        },
+        {
+          "tool": "kics",
+          "rule": "missing_user_instruction",
+          "url": "https://docs.kics.io/latest/queries/dockerfile-queries/fd54f200-402c-4333-a5a4-36ef6709af2f/",
+          "relation": "equivalent"
+        },
+        {
+          "tool": "dockle",
+          "rule": "CIS-DI-0001",
+          "url": "https://github.com/goodwithtech/dockle/blob/master/CHECKPOINT.md#cis-di-0001",
+          "relation": "overlaps"
+        }
+      ],
+      "docUrl": "https://intentius.io/chant/lint-rules/audit-rules/#dkrd012"
+    }
+  ]
+}
+
+--- stderr (empty)

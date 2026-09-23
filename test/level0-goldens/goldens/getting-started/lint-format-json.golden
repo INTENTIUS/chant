@@ -1,0 +1,10 @@
+# chant lint --format json
+# on a copy of examples/getting-started; see test/level0-goldens/harness.ts for what is normalised
+exit: 0
+
+--- wrote (empty)
+
+--- stdout
+[]
+
+--- stderr (empty)

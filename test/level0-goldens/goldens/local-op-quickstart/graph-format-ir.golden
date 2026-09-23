@@ -1,0 +1,134 @@
+# chant graph --format ir
+# on a copy of examples/local-op-quickstart; see test/level0-goldens/harness.ts for what is normalised
+exit: 0
+
+--- wrote (empty)
+
+--- stdout
+{
+  "nodes": [
+    {
+      "id": "azure-deploy",
+      "kind": "Chant::Op",
+      "lexicon": "chant",
+      "attrs": {
+        "name": "azure-deploy",
+        "overview": "az group ensure → build → arm deploy → group delete: a first-class Azure deploy"
+      },
+      "sourceLoc": {
+        "file": "ops/azure-deploy.op.ts"
+      }
+    },
+    {
+      "id": "hello",
+      "kind": "Chant::Op",
+      "lexicon": "chant",
+      "attrs": {
+        "name": "hello",
+        "overview": "Minimal local Op — one shell step, 5m timeout"
+      },
+      "sourceLoc": {
+        "file": "ops/hello.op.ts"
+      }
+    },
+    {
+      "id": "local-aws",
+      "kind": "Chant::Op",
+      "lexicon": "chant",
+      "attrs": {
+        "name": "local-aws",
+        "overview": "Floci up → build → cfn deploy → Floci down: a no-account local AWS deploy"
+      },
+      "sourceLoc": {
+        "file": "ops/local-aws.op.ts"
+      }
+    },
+    {
+      "id": "local-aws-migrate",
+      "kind": "Chant::Op",
+      "lexicon": "chant",
+      "attrs": {
+        "name": "local-aws-migrate",
+        "overview": "Deploy locally, then a gated one-shot schema seed witnessed by an SSM effect receipt"
+      },
+      "sourceLoc": {
+        "file": "ops/local-aws-migrate.op.ts"
+      }
+    },
+    {
+      "id": "local-gcp",
+      "kind": "Chant::Op",
+      "lexicon": "chant",
+      "attrs": {
+        "name": "local-gcp",
+        "overview": "floci-gcp up → build bucket → gcpApply (REST) → verify → down"
+      },
+      "sourceLoc": {
+        "file": "ops/local-gcp.op.ts"
+      }
+    },
+    {
+      "id": "local-k8s",
+      "kind": "Chant::Op",
+      "lexicon": "chant",
+      "attrs": {
+        "name": "local-k8s",
+        "overview": "k3d up → apply → wait → k3d down: a no-account local Kubernetes deploy"
+      },
+      "sourceLoc": {
+        "file": "ops/local-k8s.op.ts"
+      }
+    },
+    {
+      "id": "schemaSeeded",
+      "kind": "AWS::SSM::Parameter",
+      "lexicon": "aws",
+      "attrs": {
+        "name": "schemaSeeded",
+        "effect": "demo-schema-seed",
+        "flavor": "hash",
+        "Type": "String"
+      },
+      "sourceLoc": {
+        "file": "ops/receipts.ts"
+      }
+    }
+  ],
+  "edges": [],
+  "groups": {
+    "byLexicon": {
+      "aws": [
+        "schemaSeeded"
+      ],
+      "chant": [
+        "azure-deploy",
+        "hello",
+        "local-aws",
+        "local-aws-migrate",
+        "local-gcp",
+        "local-k8s"
+      ]
+    },
+    "byStack": {
+      "aws": [
+        "schemaSeeded"
+      ],
+      "chant": [
+        "azure-deploy",
+        "hello",
+        "local-aws",
+        "local-aws-migrate",
+        "local-gcp",
+        "local-k8s"
+      ]
+    }
+  },
+  "imports": [
+    {
+      "name": "schemaSeeded",
+      "node": "schemaSeeded"
+    }
+  ]
+}
+
+--- stderr (empty)

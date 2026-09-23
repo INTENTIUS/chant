@@ -1,0 +1,41 @@
+---
+title: Level-0 Exceptions
+description: The changes allowed to alter what a project with no workspace file sees from chant, each with its issue and the release that warned about it, and the golden tests that hold everything else fixed.
+diataxis: reference
+---
+
+Workspaces ([#2524](https://github.com/INTENTIUS/chant/issues/2524)) come in levels, and level 0 is a plain project with no `chant.workspace.json`. The rule from [#2525](https://github.com/INTENTIUS/chant/issues/2525) is that level 0 never pays for workspaces. Its output stays the same across releases, apart from the changes listed on this page, and each of those is warned about one release before it ships.
+
+## What is held fixed
+
+| Surface | Held by |
+|---|---|
+| `chant build`, `chant graph` (the Op view, `--stacks` and `--format ir`), `chant lint --format json`, `chant audit --format json` and `chant run list` | CLI goldens in `test/level0-goldens/goldens/`, one file per command and example |
+| Files a command leaves in the project, such as `build` writing `dist/ops/<op>/op.json` | the `wrote` section of each golden |
+| Ledger paths on the `chant/lifecycle` branch: `<env>/runs__<op>.jsonl` and `_gates/<op>.jsonl` | `test/level0-goldens/level0-ledger.test.ts` |
+| Ownership markers: `app.kubernetes.io/managed-by`, `chant.intentius.io/stack` and `chant.intentius.io/env` | the same ledger fixture, plus the build goldens |
+| No workspace code loads | every golden run records the modules its process loaded and fails on any file under core's `workspace/` directory, or any chant module whose name starts with `workspace` |
+
+The goldens run the real CLI over copies of `getting-started`, `local-op-quickstart`, `fan-out-estate`, `adopt-alb-services` and `terraform-carve-out` from `examples/`, in a temp directory, on every pull request. Absolute paths, timestamps and chant's own version number are normalised, and so are durations and fold counts on stderr. `test/level0-goldens/harness.ts` lists exactly what is normalised.
+
+## The exceptions
+
+Nothing on this list has shipped a warning yet. An entry gets its warning release when that release goes out, and its change can land from the release after.
+
+| Change | Issue | Warning release |
+|---|---|---|
+| Real SHA-256 digests. `contentDigest` output changes, and so does every digest derived from it, such as the effect receipt value in a build | [#2514](https://github.com/INTENTIUS/chant/issues/2514) | not yet shipped |
+| One discovery walker for build, lint, Ops and audit, converged at once. Dot-directories, ignored files, `dist`, Op child-project boundaries, `.json` configs and the source-root quirk all change together | [#2527](https://github.com/INTENTIUS/chant/issues/2527), split from [#2519](https://github.com/INTENTIUS/chant/issues/2519) | not yet shipped |
+| `chant audit` reports a truncated scan, and TF023 reads a nested `.gitignore` | [#2528](https://github.com/INTENTIUS/chant/issues/2528) | not yet shipped |
+| An additive `version` field on `chant graph --format ir` output | [#2529](https://github.com/INTENTIUS/chant/issues/2529) ([#2524](https://github.com/INTENTIUS/chant/issues/2524) D8) | not yet shipped |
+
+## Landing a listed change
+
+A pull request that makes one of these changes regenerates the goldens in the same commit:
+
+```bash
+UPDATE_GOLDENS=1 npx vitest run test/level0-goldens
+git diff test/level0-goldens/goldens
+```
+
+The diff shows reviewers exactly what moved, and anything in it beyond the listed change is a level-0 regression. A golden that fails names the command, the example and the file, and points back to this page.
