@@ -20,6 +20,7 @@ import { rule } from "../../lint/declarative";
 import { watchDirectory, formatTimestamp, formatChangedFiles } from "../watch";
 import { formatError, formatInfo } from "../format";
 import { GENERATED_MARKER, hasSkipMarker, compileDiscoveryFilter } from "../../discovery/files";
+import { dirProbe, warnDiscoveryChanges } from "../../discovery/convergence";
 import { buildParamValues, resolveBuildParams } from "../../build-params";
 import { setBuildParams } from "../../params";
 import { isNoLexiconDetected } from "../../detectLexicon";
@@ -276,12 +277,14 @@ export interface LintResult {
  * `git check-ignore` for exact gitignore semantics (nesting, negation) in one
  * batched call; a non-git tree (or absent git) filters nothing.
  */
-function filterGitIgnored(files: string[], cwd: string): string[] {
+function filterGitIgnored(files: string[], cwd: string, ignoredOut?: Set<string>): string[] {
   if (files.length === 0) return files;
   try {
     const out = execFileSync("git", ["check-ignore", "--stdin"], {
       cwd,
-      input: files.join("\n"),
+      // The scan root rides along as one extra probe for #2527's warning
+      // release: whether it is itself ignored. It is never a file in `files`.
+      input: [...files, dirProbe(cwd)].join("\n"),
       encoding: "utf-8",
       // stdin piped (input), stdout captured, stderr silenced so a non-git tree's
       // "fatal: not a git repository" never leaks to the lint output.
@@ -290,6 +293,7 @@ function filterGitIgnored(files: string[], cwd: string): string[] {
       // catch handles it; exit 128 (not a repo) lands there too and filters none.
     });
     const ignored = new Set(out.split(/\r?\n/).filter(Boolean));
+    for (const p of ignored) ignoredOut?.add(p);
     return ignored.size === 0 ? files : files.filter((f) => !ignored.has(f));
   } catch {
     // No git, not a repo, or nothing ignored (exit 1) — keep every file.
@@ -297,11 +301,19 @@ function filterGitIgnored(files: string[], cwd: string): string[] {
   }
 }
 
+/** What {@link getTypeScriptFiles} saw before its git-ignore filter, for #2527's warning. */
+interface TypeScriptScan {
+  raw: string[];
+  ignored: Set<string>;
+}
+
 /**
  * Get all TypeScript files recursively, skipping git-ignored paths and the
- * files `skip` (the project's `exclude` globs, #2519) names.
+ * files `skip` (the project's `exclude` globs, #2519) names. `scanOut`, when
+ * given, receives the files found before the ignore filter and the paths git
+ * reported ignored.
  */
-function getTypeScriptFiles(dir: string, skip?: (file: string) => boolean): string[] {
+function getTypeScriptFiles(dir: string, skip?: (file: string) => boolean, scanOut?: TypeScriptScan): string[] {
   const files: string[] = [];
 
   function scan(currentDir: string): void {
@@ -330,7 +342,8 @@ function getTypeScriptFiles(dir: string, skip?: (file: string) => boolean): stri
   }
 
   scan(dir);
-  return filterGitIgnored(files, dir);
+  scanOut?.raw.push(...files);
+  return filterGitIgnored(files, dir, scanOut?.ignored);
 }
 
 /**
@@ -712,7 +725,11 @@ export async function lintCommand(options: LintOptions): Promise<LintResult> {
 
   // Get all TypeScript files (scan scoped to the lint arg, git-ignored trees
   // and the project's `exclude` globs dropped)
-  const files = getTypeScriptFiles(infraPath, compileDiscoveryFilter(await resolveDiscoveryGlobs(infraPath)));
+  const scanned: TypeScriptScan = { raw: [], ignored: new Set() };
+  const files = getTypeScriptFiles(infraPath, compileDiscoveryFilter(await resolveDiscoveryGlobs(infraPath)), scanned);
+  // #2527's warning release: which of these the converged walker reads
+  // differently. `files` is today's list, unchanged.
+  await warnDiscoveryChanges({ walker: "lint", root: infraPath, files, lintIgnored: scanned });
 
   // Run lint — use per-file rules when overrides are present
   let diagnostics: LintDiagnostic[];

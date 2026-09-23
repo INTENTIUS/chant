@@ -6,14 +6,15 @@
  */
 
 import { existsSync, readFileSync, statSync, writeFileSync } from "fs";
-import { join } from "path";
+import { join, resolve } from "path";
 import { auditFiles, type AuditInput, type AuditFinding, type ChecksProvider, type SuppressionStats } from "../../audit/core";
 import { AUDIT_LEXICONS, classifyFiles, loadAuditPlugins, unclaimedFiles, walkCandidates, type CandidateWalk, type DetectPlugin, type RepoFile, type UnclaimedFile } from "../../audit/discover";
 import { RULE_CATALOG, resolveAuditCatalog, type RuleMeta } from "../../audit/catalog";
 import { scanForSecrets, parseSecretsConfig, type SecretsScanOptions } from "../../audit/secrets";
 import { auditWranglerConfigs } from "../../audit/wrangler";
 import { auditNginxConfigs } from "../../audit/nginx";
-import { auditTerraformState } from "../../audit/terraform-state";
+import { auditTerraformState, isTerraformStatePath } from "../../audit/terraform-state";
+import { warnDiscoveryChanges } from "../../discovery/convergence";
 import { renderMarkdown } from "../../audit/report";
 import { renderHtml, type ReportTheme } from "../../audit/report-html";
 import { buildReportJson, REPORT_SCHEMA_VERSION, type AuditSnapshot } from "../../audit/report-model";
@@ -458,6 +459,14 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
     const walk = walkCandidates(options.path, { maxFiles: options.maxFiles });
     candidates = walk.files;
     warnings = walkWarnings(walk, options.path);
+    // #2527's warning release: the converged walk skips git-ignored files and,
+    // inside a project, child projects. Terraform state paths are TF023's own
+    // question and stay out of it. `candidates` is unchanged.
+    await warnDiscoveryChanges({
+      walker: "audit",
+      root: options.path,
+      files: candidates.filter((f) => !isTerraformStatePath(f.path)).map((f) => resolve(options.path, f.path)),
+    });
   }
   // Only a non-empty list rides on the result, so a run with nothing to warn
   // about returns exactly the object it did before #2528.

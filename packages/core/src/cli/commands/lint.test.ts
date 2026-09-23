@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach } from "vitest";
+import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
 import { lintCommand, isLintRule, loadPluginRules, LEXICON_RESOLUTION_RULE_ID, type LintOptions } from "./lint";
 import { loadPlugins, resolveProjectLexicons } from "../plugins";
 import { mkdir, rm, writeFile } from "node:fs/promises";
@@ -6,6 +6,7 @@ import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
 import { params, setBuildParams } from "../../params";
+import { resetDiscoveryWarnings } from "../../discovery/convergence";
 
 describe("lintCommand", () => {
   let testDir: string;
@@ -638,6 +639,62 @@ describe("lintCommand — git-ignored files are not linted", () => {
     );
     const result = await lintCommand({ path: testDir, format: "stylish" });
     expect(result.diagnostics.some((d) => d.file.includes("authored.ts") && d.ruleId === "EVL003")).toBe(true);
+  });
+});
+
+/**
+ * chant#2527's warning release for lint: a child project is linted today and
+ * stops the converged walk next release; a scan root that is itself ignored
+ * lints nothing today and is linted next release. Both still lint exactly
+ * what they did, with a warning naming the files and the glob.
+ */
+describe("lintCommand — files the converged walker reads differently (#2527)", () => {
+  let testDir: string;
+  let stderr: string[];
+  const EVL003 = `const t = { a: 1 };\nexport function g(k: string) { return t[k]; }\n`;
+
+  beforeEach(async () => {
+    testDir = join(tmpdir(), `chant-lint-2527-${Date.now()}-${Math.random()}`);
+    await mkdir(testDir, { recursive: true });
+    process.env.NO_COLOR = "1";
+    resetDiscoveryWarnings();
+    stderr = [];
+    vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => void stderr.push(args.join(" ")));
+  });
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await rm(testDir, { recursive: true, force: true });
+    delete process.env.NO_COLOR;
+  });
+
+  test("a nested child project is still linted, and named with its include glob", async () => {
+    await writeFile(join(testDir, "chant.config.json"), JSON.stringify({ knowledge: { dir: "knowledge" } }));
+    await writeFile(join(testDir, "index.ts"), `export const x = 1;\n`);
+    await mkdir(join(testDir, "stacks", "east"), { recursive: true });
+    await writeFile(join(testDir, "stacks", "east", "chant.config.ts"), `export default {};\n`);
+    await writeFile(join(testDir, "stacks", "east", "east.ts"), EVL003);
+
+    const result = await lintCommand({ path: testDir, format: "stylish" });
+    expect(result.diagnostics.some((d) => d.file.includes("east.ts") && d.ruleId === "EVL003")).toBe(true);
+    const warning = stderr.find((l) => l.startsWith("warning: chant lint under"));
+    expect(warning).toContain("  stacks/east/chant.config.ts, stacks/east/east.ts: stacks/east/ is a child project");
+    expect(warning).toContain('To keep reading them after the change, add "stacks/east" to include in');
+  });
+
+  test("an ignored scan root lints nothing today, and says it will be linted", async () => {
+    execFileSync("git", ["init", "-q"], { cwd: testDir });
+    await writeFile(join(testDir, ".gitignore"), "/carveout/\n");
+    await mkdir(join(testDir, "carveout", "src"), { recursive: true });
+    await writeFile(join(testDir, "carveout", "src", "main.ts"), EVL003);
+
+    const result = await lintCommand({ path: join(testDir, "carveout", "src"), format: "stylish" });
+    expect(result.diagnostics.filter((d) => d.file.includes("main.ts"))).toHaveLength(0);
+    const warning = stderr.find((l) => l.startsWith("warning: chant lint under"));
+    expect(warning).toContain("  main.ts: ");
+    expect(warning).toContain("is itself git-ignored, so today nothing under it is linted. ");
+    expect(warning).toContain("so the files under it are linted.");
+    expect(warning).toContain('To keep skipping it, add "**" to exclude in');
   });
 });
 

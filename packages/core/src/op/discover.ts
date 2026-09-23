@@ -3,6 +3,7 @@ import { readdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { OpConfig } from "./types";
+import { warnDiscoveryChanges } from "../discovery/convergence";
 
 export interface DiscoveredOp {
   config: OpConfig;
@@ -148,6 +149,9 @@ export async function discoverOps(opts?: { cwd?: string }): Promise<OpDiscoveryR
 
   const root = await findDiscoveryRoot(opts?.cwd);
   const files = await collectOpFiles(root);
+  // #2527's warning release: Op discovery stops at child projects below the
+  // root next release, and skips git-ignored files. `files` is unchanged.
+  await warnDiscoveryChanges({ walker: "ops", root, files });
 
   const nameToFile = new Map<string, string>();
 

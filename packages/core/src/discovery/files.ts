@@ -4,6 +4,7 @@ import { join, relative, sep, isAbsolute } from "node:path";
 // @ts-ignore — picomatch has no types declaration
 import picomatch from "picomatch";
 import { resolveDiscoveryGlobs, type DiscoveryGlobs } from "../config";
+import { warnDiscoveryChanges } from "./convergence";
 
 /**
  * Marker chant writes at the top of files it generates (a hosting lexicon's
@@ -100,6 +101,9 @@ export async function findInfraFiles(path: string, options?: FindInfraFilesOptio
     options?.globs === null ? undefined : (options?.globs ?? (await resolveDiscoveryGlobs(path))),
   );
   let sourceRoot: string | null = null;
+  // Child projects skipped because the source root was already set: the
+  // next release reads them when `path` is outside a project (#2527).
+  const skippedChildren: string[] = [];
 
   async function scanDirectory(dir: string): Promise<void> {
     let entries;
@@ -129,6 +133,7 @@ export async function findInfraFiles(path: string, options?: FindInfraFilesOptio
           if (sourceRoot === null) {
             sourceRoot = fullPath;
           } else {
+            skippedChildren.push(fullPath);
             continue;
           }
         }
@@ -150,5 +155,20 @@ export async function findInfraFiles(path: string, options?: FindInfraFilesOptio
   }
 
   await scanDirectory(path);
+  // The warning release for #2527: say which files the converged walker will
+  // read differently. The list returned is today's, unchanged.
+  await warnDiscoveryChanges({
+    walker: "source",
+    root: path,
+    files,
+    sourceRoot,
+    skippedChildren,
+    fileOk: async (name, full) =>
+      name.endsWith(".ts") &&
+      !name.endsWith(".test.ts") &&
+      !name.endsWith(".spec.ts") &&
+      !skip?.(full) &&
+      !(await hasDiscoveryMarker(full)),
+  });
   return files;
 }

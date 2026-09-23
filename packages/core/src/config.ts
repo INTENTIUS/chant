@@ -626,7 +626,7 @@ const LINT_FRAGMENT_KEYS = new Set(["$schema", "extends", "rules", "overrides", 
  */
 const isCommentKey = (k: string): boolean => k.startsWith("_");
 
-function isLintOnlyFragment(configPath: string): boolean {
+export function isLintOnlyFragment(configPath: string): boolean {
   if (!configPath.endsWith("chant.config.json")) return false;
   try {
     const parsed = JSON.parse(readFileSync(configPath, "utf-8")) as unknown;
