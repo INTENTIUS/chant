@@ -43,6 +43,7 @@
  */
 import { sortedJsonReplacer } from "../utils";
 import { currentGateOrigin, type GateOrigin } from "./gate-origin";
+import type { GateApprover, GatePolicyDecision, ResolvedGateApproval } from "../op/gate-approval";
 import { readBlobFromPath, readPathSha, readBlobBySha, writeBlobToPath, RefCASConflictError } from "./git";
 
 const DIR = "_gates";
@@ -160,6 +161,21 @@ export interface GateResolutionRecord {
    * later should see which approvals had a second party and which did not.
    */
   sameOriginOverride?: boolean;
+  /**
+   * Whether a person or an agent recorded this, and the roles they claimed
+   * (#2508). Only a human approval counts toward a gate's quorum; an agent
+   * passes a gate only through a policy permit in `enforce` mode.
+   *
+   * Absent on every resolution written before #2508, and read as a human with
+   * no roles. Roles are claimed, not verified, the same local trust boundary
+   * as `resolvedBy`.
+   */
+  approver?: GateApprover;
+  /**
+   * The gate policy's decision for this approval (#2508), evaluated when it
+   * was recorded. Present only when the gate declared a policy.
+   */
+  policyDecision?: GatePolicyDecision;
 }
 
 export type GateResolutionInput = Omit<GateResolutionRecord, "version" | "kind">;
@@ -212,6 +228,12 @@ export interface PendingGateRecord {
    * and resolved over MCP has one author, not two.
    */
   origin?: GateOrigin;
+  /**
+   * The gate's quorum and policy (#2508), with its context resolved against
+   * this run. `chant approve` reads it to evaluate the policy against the plan
+   * the run produced, and `chant operator status` to show quorum progress.
+   */
+  approval?: ResolvedGateApproval;
 }
 
 export type PendingGateInput = Omit<PendingGateRecord, "version" | "kind">;

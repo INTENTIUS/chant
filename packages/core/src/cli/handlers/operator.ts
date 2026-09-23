@@ -38,6 +38,11 @@ import {
   resolveApprovalUrl, isApprovalUrl,
 } from "../../lifecycle/gate-ledger";
 import { isPlanDigest } from "../../lifecycle/plan-digest";
+import {
+  gatePolicyRequest, loadGatePolicyEvaluator,
+  type GateApprover, type GatePolicyDecision, type GatePolicyEvaluator, type ResolvedGateApproval,
+} from "../../op/gate-approval";
+import { approverOf, tallyGateApprovals } from "../../op/gate";
 import { FAN_OUT_GATE_OP } from "../../op/gate-name";
 import { pushLifecycle, requireLifecycleLedger } from "../../lifecycle/git";
 import { formatError, formatWarning, formatSuccess, formatBold, formatInfo } from "../format";
@@ -698,6 +703,8 @@ export async function runApprove(ctx: CommandContext): Promise<number> {
     url: ctx.args.url,
     plan: ctx.args.plan,
     allowSameOrigin: ctx.args.allowSameOrigin,
+    ...(ctx.args.roles ? { roles: ctx.args.roles } : {}),
+    ...(ctx.args.agent ? { agent: true } : {}),
   });
   if (!outcome.ok) return 1;
 
@@ -739,6 +746,15 @@ export interface GateApprovalOptions {
    * stays one command: run, read what it planned, approve it.
    */
   plan?: string;
+  /** `--role` (#2508) — roles the approver claims. */
+  roles?: string[];
+  /**
+   * `--agent` (#2508) — record this as an agent's approval. On a
+   * model-authored channel it is one whether or not this is set.
+   */
+  agent?: boolean;
+  /** Replaces the lexicon evaluator a gate policy is loaded from. For tests. */
+  evaluator?: GatePolicyEvaluator;
 }
 
 export type GateApprovalOutcome =
@@ -841,7 +857,8 @@ export async function recordGateApproval(
   // resolved over the same one has no second party in it. Refused by default,
   // the way #2300 refuses a plan nobody approved.
   const origin = opts.origin ?? currentGateOrigin();
-  const standingForOrigin = latestPendingGate((await readGateLedger(opName)).pending, gate);
+  const ledger = await readGateLedger(opName);
+  const standingForOrigin = latestPendingGate(ledger.pending, gate);
   const refusal = sameOriginRefusal(standingForOrigin?.origin, origin);
   if (refusal && !opts.allowSameOrigin) {
     console.error(formatError({
@@ -862,11 +879,58 @@ export async function recordGateApproval(
       ? UNATTESTED_APPROVER
       : process.env.GITHUB_ACTOR ?? process.env.GITLAB_USER_LOGIN ?? process.env.USER ?? "unknown");
 
+  // #2508: who this is, as the gate's quorum and policy read it. A model on
+  // MCP or ACP is an agent whatever it claims, the same reasoning that gives
+  // it `UNATTESTED_APPROVER` for a name.
+  const approver: GateApprover = {
+    kind: opts.agent || isModelAuthored(origin) ? "agent" : "human",
+    ...(opts.roles && opts.roles.length > 0 ? { roles: [...new Set(opts.roles)] } : {}),
+  };
+
+  // #2508: a gate with a policy has it evaluated for this approval now, while
+  // the approver is known, against the context the gated run recorded. The
+  // decision is written next to the approval, so a pass can be traced to the
+  // rule that allowed it.
+  const approval = standingForOrigin?.approval;
+  let policyDecision: GatePolicyDecision | undefined;
+  if (approval?.policy) {
+    try {
+      const evaluator = opts.evaluator ?? (await loadGatePolicyEvaluator(approval.policy.lexicon));
+      const answer = await evaluator.evaluateGatePolicy(
+        approval.policy,
+        gatePolicyRequest({
+          op: opName,
+          gate,
+          resolvedBy,
+          approver,
+          ...(planDigest !== undefined ? { planDigest } : {}),
+          ...(approval.context ? { context: approval.context } : {}),
+        }),
+      );
+      policyDecision = {
+        policy: approval.policy.name,
+        version: approval.policy.version,
+        mode: approval.mode,
+        decision: answer.decision,
+        determining: answer.determining,
+        errors: answer.errors,
+      };
+    } catch (err) {
+      console.error(formatError({
+        message: `Gate "${gate}" on "${opName}" declares policy "${approval.policy.name}", which could not be evaluated: ${err instanceof Error ? err.message : String(err)}`,
+        hint: `Install the ${approval.policy.lexicon} lexicon in this project, or approve from a checkout that has it.`,
+      }));
+      return { ok: false };
+    }
+  }
+
   const { record } = await appendGateResolution({
     op: opName,
     gate,
     resolvedBy,
     timestamp: new Date().toISOString(),
+    approver,
+    ...(policyDecision ? { policyDecision } : {}),
     ...(opts.note ? { note: opts.note } : {}),
     ...(url ? { url } : {}),
     ...(planDigest !== undefined ? { planDigest } : {}),
@@ -889,5 +953,56 @@ export async function recordGateApproval(
         "differs refuses rather than applying it.",
     ));
   }
+  if (approval) {
+    for (const line of describeApprovalProgress(approval, record, ledger.resolutions, standingForOrigin)) {
+      console.error(formatInfo(line));
+    }
+  }
   return { ok: true, record };
+}
+
+/**
+ * What a just-recorded approval did to a gate with an `approval` block
+ * (#2508): the policy's decision and whether it binds, then the quorum count
+ * for this plan. The run decides the gate from the ledger; these lines only
+ * say what it will find.
+ */
+export function describeApprovalProgress(
+  approval: ResolvedGateApproval,
+  record: GateResolutionRecord,
+  prior: GateResolutionRecord[],
+  standing: PendingGateRecord | undefined,
+): string[] {
+  const lines: string[] = [];
+  const decision = record.policyDecision;
+  if (decision) {
+    const rules = decision.determining.length > 0 ? ` (${decision.determining.join(", ")})` : "";
+    const binds =
+      approval.mode === "enforce"
+        ? decision.decision === "allow"
+          ? "In enforce mode this permit passes the gate on its own."
+          : "In enforce mode only a permit passes the gate on its own, so this approval counts only toward the quorum."
+        : "The gate is in log-only mode, so the decision is recorded and does not change the outcome.";
+    lines.push(`Policy "${decision.policy}" ${decision.version}: ${decision.decision}${rules}. ${binds}`);
+    for (const error of decision.errors) lines.push(`Policy evaluation error: ${error}`);
+  }
+
+  const tally = tallyGateApprovals(
+    [...prior, record],
+    record.gate,
+    standing?.timestamp ?? new Date(0).toISOString(),
+    record.planDigest,
+    approval,
+  );
+  const roles = approval.quorum?.roles ? ` with role ${approval.quorum.roles.join(" or ")}` : "";
+  const who = tally.counted.map((r) => r.resolvedBy).join(", ") || "none yet";
+  lines.push(`Quorum: ${tally.counted.length} of ${tally.need} human approval(s)${roles} for this plan (${who}).`);
+  if (!tally.counted.includes(record)) {
+    lines.push(
+      approverOf(record).kind === "agent"
+        ? "An agent's approval does not count toward the quorum."
+        : `This approval does not count toward the quorum: the approver claims none of its roles (${approval.quorum?.roles?.join(", ")}).`,
+    );
+  }
+  return lines;
 }

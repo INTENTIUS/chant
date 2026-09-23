@@ -53,7 +53,15 @@ export { NonRetryableActivityError, nonRetryableFailure } from "./activity-failu
 export { runOpLocally, parseDuration, OpRunFailure } from "./local-executor";
 export type { StepRecord, OpRunResult, RunOpOptions } from "./local-executor";
 export { evaluateGate, gitGateLedgerPort, memoryGateLedgerPort, approveCommand, describeGateMismatch } from "./gate";
-export type { GateLedgerPort, GateCheck, GateCheckInput, PendingGatePush, GateDigestMismatch } from "./gate";
+export type { GateLedgerPort, GateCheck, GateCheckInput, PendingGatePush, GateDigestMismatch, GateQuorumProgress, GateTally } from "./gate";
+export { tallyGateApprovals, approverOf } from "./gate";
+export {
+  gateApprovalProblems, gatePolicyRequest, gatePolicyVersion, isGatePolicyRef, loadGatePolicyEvaluator, GATE_APPROVAL_MODES,
+} from "./gate-approval";
+export type {
+  GateApproval, GateApprovalMode, GateApprover, GateContextValue, GatePolicyAnswer, GatePolicyDecision,
+  GatePolicyEvaluator, GatePolicyRef, GatePolicyRequest, GateQuorum, ResolvedGateApproval,
+} from "./gate-approval";
 export {
   computePlanDigest, isPlanDigest, describePlanDigest, PLAN_DIGEST_ALGORITHM,
 } from "../lifecycle/plan-digest";

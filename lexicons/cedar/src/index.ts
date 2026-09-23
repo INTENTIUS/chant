@@ -4,6 +4,13 @@ export { cedarPlugin } from "./plugin";
 // Serializer
 export { cedarSerializer, policyIdFromLogicalName, resolvePolicyId, cedarPolicyRecords } from "./serializer";
 export { CEDAR_POLICY_TYPE, CEDAR_JSON_FILENAME } from "./serializer";
+
+// Gate approval policy (chant#2508) — a cedar policy set as a gate's `approval.policy`.
+export {
+  gatePolicy, evaluateGatePolicy,
+  GATE_HUMAN_TYPE, GATE_AGENT_TYPE, GATE_ROLE_TYPE, GATE_RESOURCE_TYPE, PASS_GATE_ACTION,
+} from "./gate-policy";
+export type { GatePolicies } from "./gate-policy";
 export type { CedarEffect, CedarScope, CedarPolicyProps, CedarPolicyRecord } from "./serializer";
 
 // AVP embedding (#1652) — the typed statement an `AWS::VerifiedPermissions::Policy`

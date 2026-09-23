@@ -841,7 +841,7 @@
  },
  "docs/src/content/docs/lint-rules/correctness.mdx": {
   "formatting/em-dash-density": 24,
-  "discourse/punchy-fragments": 7,
+  "discourse/punchy-fragments": 8,
   "claude/colon-reveal": 5,
   "repetition/near-duplicate": 3,
   "tricolon/comma-series": 2

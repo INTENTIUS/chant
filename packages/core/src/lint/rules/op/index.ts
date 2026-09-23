@@ -12,12 +12,14 @@ import type { PostSynthCheck } from "../../post-synth";
 import { ops012 } from "./ops012-activity-contract";
 import { ops013 } from "./ops013-step-output-ref";
 import { ops014 } from "./ops014-converge-rule-refusals";
+import { ops015 } from "./ops015-gate-approval";
 
 export { ops012 } from "./ops012-activity-contract";
 export { ops013 } from "./ops013-step-output-ref";
 export { ops014 } from "./ops014-converge-rule-refusals";
+export { ops015 } from "./ops015-gate-approval";
 
-/** Core's own post-synth checks over the Op model — OPS012, OPS013, OPS014. */
+/** Core's own post-synth checks over the Op model — OPS012, OPS013, OPS014, OPS015. */
 export function coreOpChecks(): PostSynthCheck[] {
-  return [ops012, ops013, ops014];
+  return [ops012, ops013, ops014, ops015];
 }
