@@ -82,7 +82,7 @@ describe("source discovery warns about files the converged walker reads differen
 
     expect(rel(await findInfraFiles(dir))).toHaveLength(5);
     expect(stderr[0]).toContain("  4 files under vendor/: vendor/ is git-ignored.");
-    expect(stderr[0]).toContain('add "vendor" to include in chant.config.json.');
+    expect(stderr[0]).toContain('add "vendor" to include in chant.config.json, which the next release honours.');
   });
 
   test("a .ts file under dist", async () => {
