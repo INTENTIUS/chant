@@ -277,6 +277,9 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.runtime = args[++i];
     } else if (arg === "--fail-on") {
       result.failOn = args[++i];
+    } else if (arg === "--max-files") {
+      // Validated by the audit handler, like `--limit` below.
+      result.maxFiles = Number(args[++i]);
     } else if (arg === "--theme") {
       result.theme = args[++i];
     } else if (arg === "--stacks") {
@@ -509,7 +512,8 @@ Commands:
   audit [path|url]      Audit a repo's CI YAML for security issues
                         (--format stylish|json|sarif|markdown|html, -o <file>,
                          --tier merge-worthy|all, --fail-on merge-worthy|warning|error|none,
-                         --template <file> / --theme <file> for the html report)
+                         --template <file> / --theme <file> for the html report,
+                         --max-files <n> to walk more than 1000 files)
                         --agents audits this machine's agent configuration —
                         instruction files, MCP servers, skills, plugins,
                         permissions — instead of a repository

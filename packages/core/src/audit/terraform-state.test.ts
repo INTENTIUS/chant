@@ -8,9 +8,10 @@ import {
   isTerraformStateFile,
   isTerraformStatePath,
   isTerraformWorkDir,
+  nestedGitignoreCovering,
   type ScannableFile,
 } from "./terraform-state";
-import { collectCandidates } from "./discover";
+import { collectCandidates, walkCandidates } from "./discover";
 import { RULE_CATALOG, RULE_CATEGORY } from "./catalog";
 
 const file = (path: string): ScannableFile => ({ path, content: "" });
@@ -139,6 +140,90 @@ describe("discovery hands TF023 its paths, and nothing else changes", () => {
     writeFileSync(join(dir, "terraform.tfstate"), "{}");
     mkdirSync(join(dir, ".terraform"), { recursive: true });
     expect(auditTerraformState(collectCandidates(dir))).toEqual([]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+describe("nestedGitignoreCovering (#2528)", () => {
+  const reader = (bodies: Record<string, string>) => (dir: string) => bodies[dir];
+
+  test("finds a .gitignore between the path and the root, matched relative to its own directory", () => {
+    expect(nestedGitignoreCovering("infra/prod/terraform.tfstate", reader({ infra: "*.tfstate\n" }))).toBe("infra");
+    expect(nestedGitignoreCovering("infra/.terraform", reader({ infra: ".terraform/\n" }))).toBe("infra");
+  });
+
+  test("prefers the nearest one, as git does", () => {
+    const bodies = reader({ infra: "*.tfstate\n", "infra/prod": "*.tfstate\n" });
+    expect(nestedGitignoreCovering("infra/prod/terraform.tfstate", bodies)).toBe("infra/prod");
+  });
+
+  test("never reads the root's own .gitignore, and ignores one that does not cover the path", () => {
+    const bodies = reader({ "": "*.tfstate\n", infra: "*.log\n", other: "*.tfstate\n" });
+    expect(nestedGitignoreCovering("infra/terraform.tfstate", bodies)).toBeUndefined();
+    expect(nestedGitignoreCovering("terraform.tfstate", bodies)).toBeUndefined();
+  });
+});
+
+describe("walkCandidates reports what the next release changes, and changes nothing now (#2528)", () => {
+  function writeFiles(dir: string, n: number): void {
+    mkdirSync(join(dir, "docs"), { recursive: true });
+    for (let i = 0; i < n; i++) writeFileSync(join(dir, "docs", `${String(i).padStart(3, "0")}.md`), "x");
+  }
+
+  test("a walk that reaches its limit with files left says it was truncated, and keeps the same first files", () => {
+    const dir = tmpRepo();
+    writeFiles(dir, 5);
+    writeFileSync(join(dir, "terraform.tfstate"), "{}");
+    const cut = walkCandidates(dir, { maxFiles: 5 });
+    expect(cut.truncated).toBe(true);
+    expect(cut.maxFiles).toBe(5);
+    // `docs/` sorts first, so the state file is the one left behind.
+    expect(cut.files).toEqual([]);
+    const whole = walkCandidates(dir);
+    expect(whole.truncated).toBe(false);
+    expect(whole.maxFiles).toBe(1000);
+    expect(whole.files.map((f) => f.path)).toEqual(["terraform.tfstate"]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("a tree of exactly the limit, or one whose remainder is skipped, is not truncated", () => {
+    const dir = tmpRepo();
+    writeFiles(dir, 5);
+    mkdirSync(join(dir, "node_modules", "x"), { recursive: true });
+    writeFileSync(join(dir, "node_modules", "x", "index.js"), "");
+    mkdirSync(join(dir, "empty"), { recursive: true });
+    expect(walkCandidates(dir, { maxFiles: 5 }).truncated).toBe(false);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("a state file a nested .gitignore ignores is still a candidate, and is named for the warning", () => {
+    const dir = tmpRepo();
+    mkdirSync(join(dir, "infra", ".terraform"), { recursive: true });
+    writeFileSync(join(dir, "infra", ".gitignore"), "*.tfstate\n.terraform/\n");
+    writeFileSync(join(dir, "infra", "terraform.tfstate"), "{}");
+    const walk = walkCandidates(dir);
+    expect(walk.files.map((f) => f.path).sort()).toEqual(["infra/.terraform", "infra/terraform.tfstate"]);
+    expect(auditTerraformState(walk.files)).toHaveLength(2);
+    expect(walk.nestedGitignore).toEqual([
+      { path: "infra/.terraform", gitignore: "infra/.gitignore" },
+      { path: "infra/terraform.tfstate", gitignore: "infra/.gitignore" },
+    ]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("nothing is named when the root .gitignore already drops the path, or no nested one covers it", () => {
+    const dir = tmpRepo();
+    mkdirSync(join(dir, "a"), { recursive: true });
+    mkdirSync(join(dir, "b"), { recursive: true });
+    writeFileSync(join(dir, ".gitignore"), "*.tfstate.backup\n");
+    writeFileSync(join(dir, "a", ".gitignore"), "*.tfstate.backup\n*.log\n");
+    writeFileSync(join(dir, "a", "terraform.tfstate"), "{}");
+    writeFileSync(join(dir, "a", "terraform.tfstate.backup"), "{}");
+    // A sibling's .gitignore is not between `a/` and the root.
+    writeFileSync(join(dir, "b", ".gitignore"), "*.tfstate\n");
+    const walk = walkCandidates(dir);
+    expect(walk.files.map((f) => f.path)).toEqual(["a/terraform.tfstate"]);
+    expect(walk.nestedGitignore).toEqual([]);
     rmSync(dir, { recursive: true, force: true });
   });
 });

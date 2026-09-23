@@ -242,6 +242,8 @@ export interface ParsedArgs {
   allProjects?: boolean;
   /** `chant audit --fail-on merge-worthy|warning|error|none` */
   failOn?: string;
+  /** `chant audit --max-files <n>` (#2528) — files the local walk takes before it stops (default 1000). */
+  maxFiles?: number;
   /** `chant audit --theme <file>` — JSON theme knobs for the HTML report */
   theme?: string;
   /** `chant dev surface-diff --update-snapshot` — write the fresh snapshot as the new baseline */
