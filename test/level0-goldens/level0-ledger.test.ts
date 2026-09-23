@@ -33,8 +33,15 @@ let hello: ChantRun;
 let hold: ChantRun;
 
 beforeAll(async () => {
+  // The fixtures are stored as `<name>.ts`, not `<name>.op.ts`: repo-wide Op
+  // discovery (op/discover.test.ts, generate-pipeline.test.ts) walks this
+  // checkout and would find them as Ops of its own. They become Ops only
+  // inside the copy.
   const ops = Object.fromEntries(
-    readdirSync(FIXTURE_OPS).map((file) => [join("ops", file), readFileSync(join(FIXTURE_OPS, file), "utf-8")]),
+    readdirSync(FIXTURE_OPS).map((file) => [
+      join("ops", file.replace(/\.ts$/, ".op.ts")),
+      readFileSync(join(FIXTURE_OPS, file), "utf-8"),
+    ]),
   );
   project = copyExample("getting-started", scratch, ops);
   // The two runs write the same branch, so they go one after the other. The
