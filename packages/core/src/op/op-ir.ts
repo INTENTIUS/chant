@@ -144,6 +144,8 @@ export interface OpIRGateStep {
    * Absent on a gate that binds no plan.
    */
   plan?: GateStep["plan"];
+  /** Quorum, roles and policy (#2508), carried as authored. Absent on a gate that passes on one approval. */
+  approval?: GateStep["approval"];
 }
 
 export interface OpIREffectStep {
@@ -240,6 +242,7 @@ function irGateStep(step: GateStep): OpIRGateStep {
     timeout: step.timeout ?? "48h",
     ...(step.description ? { description: step.description } : {}),
     ...(step.plan !== undefined ? { plan: step.plan } : {}),
+    ...(step.approval !== undefined ? { approval: step.approval } : {}),
   };
 }
 
@@ -389,6 +392,7 @@ function opStepFromIR(step: OpIRStep): StepDefinition {
       timeout: step.timeout,
       ...(step.description ? { description: step.description } : {}),
       ...(step.plan !== undefined ? { plan: step.plan } : {}),
+      ...(step.approval !== undefined ? { approval: step.approval } : {}),
     };
   }
   return {

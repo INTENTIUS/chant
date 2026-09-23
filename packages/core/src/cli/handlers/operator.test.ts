@@ -17,6 +17,7 @@ const readGateLedgerMock = vi.fn();
 const readRunLedgerMock = vi.fn();
 const pushLifecycleMock = vi.fn();
 const requireLifecycleLedgerMock = vi.fn();
+const loadGatePolicyEvaluatorMock = vi.fn();
 
 vi.mock("../../op/operator", async () => {
   const actual = await vi.importActual<typeof import("../../op/operator")>("../../op/operator");
@@ -67,6 +68,11 @@ vi.mock("../../lifecycle/git", async () => {
     // these tests run in the chant checkout itself (#2303).
     requireLifecycleLedger: (...args: unknown[]) => requireLifecycleLedgerMock(...args),
   };
+});
+
+vi.mock("../../op/gate-approval", async () => {
+  const actual = await vi.importActual<typeof import("../../op/gate-approval")>("../../op/gate-approval");
+  return { ...actual, loadGatePolicyEvaluator: (...args: unknown[]) => loadGatePolicyEvaluatorMock(...args) };
 });
 
 // Imported after the mocks above are registered.
@@ -976,6 +982,85 @@ describe("runApprove — a push that does not land is reported (#2309 review)", 
     await runApprove(ctx({ path: "fountain-apply", extraPositional: "rollout-gate", actor: "alex" }));
 
     expect(errSpy.mock.calls.map((c) => String(c[0])).join("\n")).toMatch(/No remote is configured/);
+    errSpy.mockRestore();
+  });
+});
+
+describe("runApprove — a gate with an approval policy (#2508)", () => {
+  const TEXT = "permit (principal is Chant::Agent, action, resource);\n";
+  const POLICY = { kind: "gate-policy" as const, lexicon: "cedar", name: "ship", version: "sha256:v1", text: TEXT };
+
+  function seedPolicyGate(mode: "log-only" | "enforce"): void {
+    readGateLedgerMock.mockResolvedValue({
+      resolutions: [],
+      pending: [{
+        version: 1, kind: "pending", op: "fountain-apply", gate: "rollout-gate",
+        timestamp: "2026-01-01T00:00:00.000Z", expiresAt: "2099-01-01T00:00:00.000Z", planDigest: PLAN_A,
+        approval: { quorum: { count: 2, roles: ["maintainer"] }, policy: POLICY, mode, context: { risk: "low" } },
+      }],
+      malformed: 0,
+    });
+    appendGateResolutionMock.mockImplementation(async (input: Record<string, unknown>) => ({
+      commit: "sha",
+      record: { version: 1, ...input },
+    }));
+  }
+
+  test("evaluates the policy for an agent's approval and records the decision next to it", async () => {
+    seedPolicyGate("enforce");
+    const evaluateGatePolicy = vi.fn().mockResolvedValue({ decision: "allow", determining: ["agent-low-risk"], errors: [] });
+    loadGatePolicyEvaluatorMock.mockResolvedValue({ evaluateGatePolicy });
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(await runApprove(ctx({ path: "fountain-apply", extraPositional: "rollout-gate", actor: "release-bot", agent: true }))).toBe(0);
+
+    expect(loadGatePolicyEvaluatorMock).toHaveBeenCalledWith("cedar");
+    expect(evaluateGatePolicy).toHaveBeenCalledWith(POLICY, {
+      principal: { kind: "agent", name: "release-bot", roles: [] },
+      action: "PassGate",
+      resource: { op: "fountain-apply", gate: "rollout-gate" },
+      context: { risk: "low", planDigest: PLAN_A },
+    });
+    expect(appendGateResolutionMock).toHaveBeenCalledWith(expect.objectContaining({
+      approver: { kind: "agent" },
+      policyDecision: {
+        policy: "ship", version: "sha256:v1", mode: "enforce",
+        decision: "allow", determining: ["agent-low-risk"], errors: [],
+      },
+    }));
+    const out = errSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(out).toContain("In enforce mode this permit passes the gate on its own");
+    expect(out).toContain("An agent's approval does not count toward the quorum");
+    errSpy.mockRestore();
+  });
+
+  test("records a human's roles, and reports quorum progress with a log-only decision", async () => {
+    seedPolicyGate("log-only");
+    loadGatePolicyEvaluatorMock.mockResolvedValue({
+      evaluateGatePolicy: async () => ({ decision: "deny", determining: [], errors: [] }),
+    });
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(await runApprove(ctx({ path: "fountain-apply", extraPositional: "rollout-gate", actor: "alex", roles: ["maintainer"] }))).toBe(0);
+
+    expect(appendGateResolutionMock).toHaveBeenCalledWith(expect.objectContaining({
+      approver: { kind: "human", roles: ["maintainer"] },
+    }));
+    const out = errSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(out).toContain("log-only mode, so the decision is recorded and does not change the outcome");
+    expect(out).toContain("Quorum: 1 of 2 human approval(s) with role maintainer for this plan (alex)");
+    errSpy.mockRestore();
+  });
+
+  test("refuses, and writes nothing, when the policy cannot be evaluated", async () => {
+    seedPolicyGate("enforce");
+    loadGatePolicyEvaluatorMock.mockRejectedValue(new Error("@intentius/chant-lexicon-cedar/gate-policy could not be loaded"));
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(await runApprove(ctx({ path: "fountain-apply", extraPositional: "rollout-gate", actor: "alex" }))).toBe(1);
+
+    expect(appendGateResolutionMock).not.toHaveBeenCalled();
+    expect(errSpy.mock.calls.map((c) => String(c[0])).join("\n")).toContain('declares policy "ship", which could not be evaluated');
     errSpy.mockRestore();
   });
 });

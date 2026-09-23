@@ -51,6 +51,7 @@ import type { LexiconPlugin } from "../lexicon";
 const BOOLEAN_FLAGS = new Set([
   "--help",
   "--agents",
+  "--agent",
   "--all-projects",
   "--force",
   "--fix",
@@ -419,6 +420,14 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.note = args[++i];
     } else if (arg === "--expire") {
       result.expire = true;
+    } else if (arg === "--role") {
+      // #2508 — a role the approver holds, for a gate whose quorum names
+      // roles. Repeatable, and a comma list works too.
+      const value = args[++i] ?? "";
+      result.roles = [...(result.roles ?? []), ...value.split(",").map((r) => r.trim()).filter(Boolean)];
+    } else if (arg === "--agent") {
+      // #2508 — record the approval as an agent's rather than a person's.
+      result.agent = true;
     } else if (arg === "--allow-same-origin") {
       // chant#2384 — record a resolution the same-origin rule would refuse,
       // deliberately. Flagged on the record, not just accepted quietly.

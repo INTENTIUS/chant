@@ -27,6 +27,7 @@ import { isStepOutputRef } from "./step-output-ref";
 import { parseDuration } from "./duration";
 import { describeGateMismatch, evaluateGate, gitGateLedgerPort, type GateCheck, type GateLedgerPort } from "./gate";
 import { gateName } from "./gate-name";
+import type { ResolvedGateApproval } from "./gate-approval";
 import type { PendingGateRecord } from "../lifecycle/gate-ledger";
 import { appendRunRecord, buildRunRecord } from "../lifecycle/run-ledger";
 import type { OpRunRecord } from "./runtime";
@@ -57,7 +58,16 @@ export interface StepRecord {
   outcomes?: Array<{ name: string; value: unknown }>;
   error?: string;
   /** Set on a `gate` step that passed (#2119): who resolved it, when, and at what address. */
-  approval?: { gate: string; resolvedBy: string; timestamp: string; url?: string };
+  approval?: {
+    gate: string;
+    resolvedBy: string;
+    timestamp: string;
+    url?: string;
+    /** On a gate with an `approval` block (#2508): whether a quorum or a policy permit passed it. */
+    via?: "quorum" | "policy";
+    /** On a gate with a quorum (#2508): every approver who counted toward it. */
+    approvers?: string[];
+  };
   /**
    * Why a step declined to proceed on something that is not a failure
    * (#2300): a gate holding a standing approval for a *different* plan. Names
@@ -395,6 +405,35 @@ function gateFn(step: GateStep): string {
 }
 
 /**
+ * A gate's `approval` block as this run resolves it (#2508): each context
+ * value that is a step-output reference is replaced by what that step
+ * returned, the same walk `plan` goes through. A reference that resolves to
+ * nothing is dropped rather than failing the run, so a policy reading it sees
+ * the attribute as absent.
+ */
+function resolveGateApproval(
+  step: GateStep,
+  resultsById: ReadonlyMap<string, unknown>,
+): ResolvedGateApproval | undefined {
+  const authored = step.approval;
+  if (!authored) return undefined;
+  let context: Record<string, unknown> | undefined;
+  if (authored.context) {
+    context = {};
+    for (const [key, value] of Object.entries(authored.context)) {
+      const resolved = resolveStepOutputRefs(value, resultsById);
+      if (resolved !== undefined && resolved !== null) context[key] = resolved;
+    }
+  }
+  return {
+    ...(authored.quorum ? { quorum: authored.quorum } : {}),
+    ...(authored.policy ? { policy: authored.policy } : {}),
+    mode: authored.mode ?? "log-only",
+    ...(context ? { context } : {}),
+  };
+}
+
+/**
  * Decide one gate against the ledger. A resolution newer than the gate's
  * newest pending fact passes it, and the approver lands on the step record; a
  * pending fact is recorded (or left standing) otherwise, and the caller stops
@@ -414,6 +453,7 @@ async function runGateStep(
   // a run over a missing digest.
   const resolvedPlan = resolveStepOutputRefs(step.plan, resultsById);
   const planDigest = typeof resolvedPlan === "string" && resolvedPlan !== "" ? resolvedPlan : undefined;
+  const approval = resolveGateApproval(step, resultsById);
   let check: GateCheck;
   try {
     check = await evaluateGate(gates.port, {
@@ -423,6 +463,7 @@ async function runGateStep(
       ...(step.timeout ? { timeout: step.timeout } : {}),
       ...(gates.runId ? { runId: gates.runId } : {}),
       ...(planDigest !== undefined ? { planDigest } : {}),
+      ...(approval ? { approval } : {}),
       ...(gates.now ? { now: gates.now } : {}),
     });
   } catch (err) {
@@ -460,6 +501,8 @@ async function runGateStep(
           resolvedBy: resolution.resolvedBy,
           timestamp: resolution.timestamp,
           ...(resolution.url ? { url: resolution.url } : {}),
+          ...(check.via ? { via: check.via } : {}),
+          ...(check.approvals ? { approvers: check.approvals.map((r) => r.resolvedBy) } : {}),
         },
       },
     };

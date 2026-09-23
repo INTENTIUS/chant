@@ -835,3 +835,69 @@ describe("runOpLocally — a gate approves a plan, not the next run (#2300)", ()
     expect(second.status).toBe("ok");
   });
 });
+
+/**
+ * #2508: a gate with an approval block. The run resolves the block's context
+ * from the Plan phase, the pending fact carries it for `chant approve`, and the
+ * gate passes only once the quorum is met.
+ */
+describe("runOpLocally — a gate with a quorum and a policy context (#2508)", () => {
+  const NOW = "2026-09-20T12:00:00.000Z";
+
+  test("records the resolved context on the pending fact, then passes on the second approver", async () => {
+    const resolutions: GateResolutionRecord[] = [];
+    const pending: PendingGateRecord[] = [];
+    const gates: GateLedgerPort = {
+      async read() {
+        return { resolutions: [...resolutions], pending: [...pending] };
+      },
+      async appendPending(input) {
+        const record: PendingGateRecord = { version: 1, kind: "pending", ...input };
+        pending.push(record);
+        return { record, pushed: true };
+      },
+    };
+    const applied: string[] = [];
+    const activities = new Map<string, ActivityFn>([
+      ["assess", async () => ({ risk: "low", paths: ["src/a.ts"] })],
+      ["ship", async () => { applied.push("ship"); return {}; }],
+    ]);
+    const config = op({
+      name: "release",
+      phases: [
+        { name: "Plan", steps: [{ kind: "activity", fn: "assess", id: "assess", args: {} }] },
+        {
+          name: "Gate",
+          steps: [{
+            kind: "gate",
+            gate: "ship",
+            approval: {
+              quorum: { count: 2 },
+              context: { risk: stepOutput("assess", "risk"), paths: stepOutput("assess", "paths"), missing: stepOutput("assess", "nope") },
+            },
+          }],
+        },
+        { name: "Apply", steps: [{ kind: "activity", fn: "ship", args: {} }] },
+      ],
+    });
+    const approve = (resolvedBy: string, at: string) =>
+      resolutions.push({ version: 1, op: "release", gate: "ship", resolvedBy, timestamp: at, approver: { kind: "human" } });
+
+    const first = await runOpLocally(config, activities, PROFILES, undefined, { gates, now: NOW });
+    expect(first.status).toBe("gated");
+    expect(first.gate?.approval).toEqual({ quorum: { count: 2 }, mode: "log-only", context: { risk: "low", paths: ["src/a.ts"] } });
+
+    approve("alex", "2026-09-20T12:05:00.000Z");
+    const second = await runOpLocally(config, activities, PROFILES, undefined, { gates, now: "2026-09-20T12:06:00.000Z" });
+    expect(second.status).toBe("gated");
+    expect(pending).toHaveLength(1);
+
+    approve("sam", "2026-09-20T12:07:00.000Z");
+    const third = await runOpLocally(config, activities, PROFILES, undefined, { gates, now: "2026-09-20T12:08:00.000Z" });
+    expect(third.status).toBe("ok");
+    expect(applied).toEqual(["ship"]);
+    expect(third.records.find((r) => r.fn === "gate:ship")?.approval).toMatchObject({
+      resolvedBy: "sam", via: "quorum", approvers: ["alex", "sam"],
+    });
+  });
+});

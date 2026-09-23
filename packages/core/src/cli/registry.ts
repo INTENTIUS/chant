@@ -364,6 +364,10 @@ export interface ParsedArgs {
    * on a model-authored channel.
    */
   allowSameOrigin?: boolean;
+  /** `chant approve --role <name>` (#2508) — roles the approver claims, for a gate whose quorum counts only some roles. Repeatable; a comma list also works. */
+  roles?: string[];
+  /** `chant approve --agent` (#2508) — record the approval as an agent's. An agent never counts toward a quorum; it passes a gate only through a policy permit in `enforce` mode. */
+  agent?: boolean;
   /** `chant approve <op> <gate> --plan <digest>` (#2300) — the plan this approval is for, as `sha256:<64 hex>`. Omitted, the digest is taken from the gate's standing pending fact, which is the plan the run that stopped at the gate actually produced; pass it to approve a plan explicitly, or to approve one before any run has recorded a pending fact. */
   plan?: string;
   /** `chant operator log --op <name>` (#2029) — restrict the tick history to one ConvergeOp by name. Omitted, every discovered ConvergeOp's ticks are merged into one timeline. */

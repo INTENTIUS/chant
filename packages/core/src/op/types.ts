@@ -8,6 +8,7 @@
 import type { EffectReceiptRef } from "./receipt-store";
 import type { ActivityProfileName } from "./activity-profiles";
 import type { StepOutputRef } from "./step-output-ref";
+import type { GateApproval } from "./gate-approval";
 
 export interface OpConfig {
   /** Kebab-case identifier. Names the Op's output directory (`dist/ops/<name>/`), and is the name `chant run <name>` and another Op's `depends` refer to. */
@@ -196,6 +197,12 @@ export interface GateStepBase {
    * phase publishes no digest is not thereby unrunnable.
    */
   plan?: string | StepOutputRef;
+  /**
+   * Quorum, roles and a policy for who may pass this gate (#2508). Absent,
+   * the gate passes on one approval, as every gate did before. See
+   * `./gate-approval.ts`.
+   */
+  approval?: GateApproval;
 }
 
 /**

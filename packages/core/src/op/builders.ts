@@ -2,6 +2,7 @@ import { OpResource } from "./resource";
 import type { OpConfig, PhaseDefinition, StepDefinition, ActivityStep, GateStep, EffectStep } from "./types";
 import { isEffectReceipt, type EffectReceiptDeclaration } from "../effect-receipt";
 import { receiptCheckInput } from "./receipt-store";
+import { gateApprovalProblems } from "./gate-approval";
 import { makeOutProxy, type StepOutputRef, type WithStepRefs } from "./step-output-ref";
 import type { ChantBuildArgs } from "./activities/build";
 import type { ShellCmdArgs } from "./activities/shell";
@@ -112,17 +113,25 @@ export function activity(
  * Plan phase's own digest, `plan.out.planDigest`. Then a resolution counts
  * only for that plan, and a run whose fresh plan differs is refused by name
  * instead of applying a change nobody approved. See {@link GateStep.plan}.
+ *
+ * Pass `approval` to require a quorum of human approvers, or to evaluate a
+ * policy for each approval (#2508). See {@link GateStep.approval}.
  */
 export function gate(
   name: string,
-  opts?: { timeout?: string; description?: string; plan?: GateStep["plan"] },
+  opts?: { timeout?: string; description?: string; plan?: GateStep["plan"]; approval?: GateStep["approval"] },
 ): GateStep {
+  if (opts?.approval !== undefined) {
+    const problems = gateApprovalProblems(opts.approval);
+    if (problems.length > 0) throw new Error(`gate(${JSON.stringify(name)}): ${problems[0]}`);
+  }
   return {
     kind: "gate",
     gate: name,
     ...(opts?.timeout ? { timeout: opts.timeout } : {}),
     ...(opts?.description ? { description: opts.description } : {}),
     ...(opts?.plan !== undefined ? { plan: opts.plan } : {}),
+    ...(opts?.approval !== undefined ? { approval: opts.approval } : {}),
   };
 }
 

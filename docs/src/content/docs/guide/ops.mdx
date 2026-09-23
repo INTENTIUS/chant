@@ -166,6 +166,61 @@ The digest covers the change set: the addresses, the actions and the values that
 
 `chant approve` refuses when the gate has no pending fact to take a digest from, naming `chant run <op>` as the fix; `--plan <digest>` approves one explicitly. Resolutions recorded before `#2300` carry no digest and do not satisfy a plan-bound gate: they prove somebody approved something and nothing about what. A gate standing open across that upgrade needs one more approval after its next run.
 
+### Quorum, roles and an approval policy
+
+A gate passes on one approval by default. Its `approval` block can ask for more ([#2508](https://github.com/INTENTIUS/chant/issues/2508)):
+
+```typescript
+import { gate } from "@intentius/chant/op";
+import { gatePolicy, GATE_AGENT_TYPE, PASS_GATE_ACTION } from "@intentius/chant-lexicon-cedar";
+import { Policy } from "@intentius/chant-lexicon-cedar";
+
+const shipPolicy = gatePolicy("ship", {
+  agentLowRisk: new Policy({
+    effect: "permit",
+    principal: { is: GATE_AGENT_TYPE },
+    action: { eq: PASS_GATE_ACTION },
+    when: ['context.risk == "low"'],
+  }),
+});
+
+gate("ship", {
+  plan: plan.out.planDigest,
+  approval: {
+    quorum: { count: 2, roles: ["maintainer"] },
+    policy: shipPolicy,
+    mode: "log-only",
+    context: { risk: assess.out.risk },
+  },
+});
+```
+
+The quorum counts distinct human approvers of the current plan. With `roles`, an approver counts only when they claim one of them:
+
+```bash
+chant approve release ship --approver alex --role maintainer
+chant approve release ship --approver sam --role maintainer
+```
+
+Each `chant approve` is its own line on the gate ledger. An approval counts only for the plan it names, so a new plan starts the count again. `chant approve` prints how far the quorum has got.
+
+The policy is a Cedar policy set that `gatePolicy()` renders when the Op is built. `chant approve` evaluates it once for each approval and records the decision, the determining policy ids and the policy's version on that approval. The request looks like this:
+
+| Position | Value |
+|---|---|
+| principal | `Chant::Human::"<approver>"` or `Chant::Agent::"<approver>"`, with one `Chant::Role` parent per `--role` |
+| action | `Chant::Action::"PassGate"` |
+| resource | `Chant::Gate::"<op>/<gate>"` |
+| context | `planDigest`, plus the gate's `approval.context` as this run resolved it |
+
+The typed `Policy` scopes accept only entity types and actions from the project's Cedar schema. Declare `Chant::Human`, `Chant::Agent`, `Chant::Role`, `Chant::Gate` and the `PassGate` action there before writing gate policies.
+
+`--agent` records an approval as an agent's. An approval sent over MCP or ACP is always recorded as an agent's. An agent never counts toward the quorum.
+
+`mode` decides what a decision does. The default mode is `log-only`, where the decision is recorded and only the quorum can pass the gate. That lets you check a new rule against real gate traffic before it binds. In `enforce`, a permit passes the gate by itself, which is how an agent passes a low-risk plan. A permit counts only while the gate still declares the policy version it was evaluated under, so editing the policy needs fresh approvals. A deny never cancels a human's approval, so a deny-by-default policy such as `DenyByDefaultSet` leaves the gate working as it did before: humans only.
+
+OPS015 rejects an `approval` block at build when it is malformed, for example a policy that is not a gate policy set or `enforce` with no policy.
+
 ## Compensation on failure
 
 `onFailure` phases run in order if the run terminates with an unhandled error:
