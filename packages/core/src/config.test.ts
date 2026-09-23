@@ -12,6 +12,7 @@ import {
   environmentEndpoint,
   matchesEnvironmentPattern,
   matchesDeclaredEnvironment,
+  resolveDiscoveryGlobs,
 } from "./config";
 import { writeFileSync, mkdirSync, rmSync } from "fs";
 import { join } from "path";
@@ -446,5 +447,44 @@ describe("resolveKnowledgeDir (#1864, design #1059)", () => {
 
   test("an empty knowledge object still falls back to the convention name", () => {
     expect(resolveKnowledgeDir({ knowledge: {} }, "/proj")).toBe(join("/proj", "knowledge"));
+  });
+});
+
+describe("exclude / include discovery globs (#2519)", () => {
+  test("loads string arrays", async () => {
+    writeFileSync(join(TEST_DIR, "chant.config.json"), JSON.stringify({ exclude: ["ops/**"], include: ["ops/keep.ts"] }));
+    const { config } = await loadChantConfig(TEST_DIR);
+    expect(config.exclude).toEqual(["ops/**"]);
+    expect(config.include).toEqual(["ops/keep.ts"]);
+  });
+
+  test.each([
+    ["a non-string entry", { exclude: ["ops/**", 42] }, /exclude\.1: .*expected string/],
+    ["a bare string", { exclude: "ops/**" }, /exclude: .*expected array/],
+    ["an empty pattern", { include: [""] }, /include\.0: /],
+  ])("rejects %s loudly", async (_label, raw, message) => {
+    writeFileSync(join(TEST_DIR, "chant.config.json"), JSON.stringify(raw));
+    await expect(loadChantConfig(TEST_DIR)).rejects.toThrow(message);
+    await expect(resolveDiscoveryGlobs(TEST_DIR)).rejects.toThrow(message);
+  });
+
+  test("resolveDiscoveryGlobs is undefined without exclude, so include alone changes nothing", async () => {
+    expect(await resolveDiscoveryGlobs(TEST_DIR)).toBeUndefined();
+    writeFileSync(join(TEST_DIR, "chant.config.json"), JSON.stringify({ include: ["ops/**"] }));
+    expect(await resolveDiscoveryGlobs(TEST_DIR)).toBeUndefined();
+  });
+
+  test("resolveDiscoveryGlobs anchors the globs at the project config's directory, past a lint fragment", async () => {
+    const src = join(TEST_DIR, "src");
+    mkdirSync(src, { recursive: true });
+    writeFileSync(join(src, "chant.config.json"), JSON.stringify({ rules: { COR001: "off" } }));
+    writeFileSync(join(TEST_DIR, "chant.config.json"), JSON.stringify({ exclude: ["ops"] }));
+    expect(await resolveDiscoveryGlobs(src)).toEqual({ root: TEST_DIR, exclude: ["ops"], include: [] });
+  });
+
+  test("resolveDiscoveryGlobs leaves an unrelated config error to the command's own load", async () => {
+    writeFileSync(join(TEST_DIR, "chant.config.json"), JSON.stringify({ lexicons: [7], exclude: ["ops"] }));
+    await expect(loadChantConfig(TEST_DIR)).rejects.toThrow(/lexicons\.0/);
+    expect(await resolveDiscoveryGlobs(TEST_DIR)).toBeUndefined();
   });
 });

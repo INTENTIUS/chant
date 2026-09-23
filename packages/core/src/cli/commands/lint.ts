@@ -19,14 +19,14 @@ import { runPostSynthChecks } from "../../lint/post-synth";
 import { rule } from "../../lint/declarative";
 import { watchDirectory, formatTimestamp, formatChangedFiles } from "../watch";
 import { formatError, formatInfo } from "../format";
-import { GENERATED_MARKER } from "../../discovery/files";
+import { GENERATED_MARKER, hasSkipMarker, compileDiscoveryFilter } from "../../discovery/files";
 import { buildParamValues, resolveBuildParams } from "../../build-params";
 import { setBuildParams } from "../../params";
 import { isNoLexiconDetected } from "../../detectLexicon";
 
 // Import config loader
 import { loadConfig, resolveRulesForFile, resolveConfiguredSeverity, findProjectRoot } from "../../lint/config";
-import { loadChantConfig, resolveKnowledgeDir } from "../../config";
+import { loadChantConfig, resolveKnowledgeDir, resolveDiscoveryGlobs } from "../../config";
 import { findProjectConfig } from "../../project-root";
 import type { LintProjectConfig } from "../../lint/rule";
 import { loadOkfBundle, type OkfBundle } from "../../okf-read";
@@ -298,9 +298,10 @@ function filterGitIgnored(files: string[], cwd: string): string[] {
 }
 
 /**
- * Get all TypeScript files recursively, skipping git-ignored paths.
+ * Get all TypeScript files recursively, skipping git-ignored paths and the
+ * files `skip` (the project's `exclude` globs, #2519) names.
  */
-function getTypeScriptFiles(dir: string): string[] {
+function getTypeScriptFiles(dir: string, skip?: (file: string) => boolean): string[] {
   const files: string[] = [];
 
   function scan(currentDir: string): void {
@@ -315,9 +316,12 @@ function getTypeScriptFiles(dir: string): string[] {
           scan(fullPath);
         }
       } else if (entry.endsWith(".ts") && !entry.endsWith(".test.ts") && !entry.endsWith(".spec.ts")) {
+        if (skip?.(fullPath)) continue;
         // Skip chant-generated files (worker/workflow/activities bootstrap): they
         // hold no authored source and use runtime patterns the EVL* rules forbid.
-        if (readFileSync(fullPath, "utf-8").slice(0, 256).includes(GENERATED_MARKER)) {
+        // A hand-written file opts out with the skip marker (#2519).
+        const head = readFileSync(fullPath, "utf-8").slice(0, 1024);
+        if (head.slice(0, 256).includes(GENERATED_MARKER) || hasSkipMarker(head)) {
           continue;
         }
         files.push(fullPath);
@@ -698,8 +702,9 @@ export async function lintCommand(options: LintOptions): Promise<LintResult> {
     allRules = new Map([...allRules, ...pluginRules]);
   }
 
-  // Get all TypeScript files (scan scoped to the lint arg, git-ignored trees dropped)
-  const files = getTypeScriptFiles(infraPath);
+  // Get all TypeScript files (scan scoped to the lint arg, git-ignored trees
+  // and the project's `exclude` globs dropped)
+  const files = getTypeScriptFiles(infraPath, compileDiscoveryFilter(await resolveDiscoveryGlobs(infraPath)));
 
   // Run lint — use per-file rules when overrides are present
   let diagnostics: LintDiagnostic[];
