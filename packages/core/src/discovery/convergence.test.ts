@@ -154,6 +154,29 @@ describe("source discovery warns about files the converged walker reads differen
     expect(stderr).toEqual([]);
   });
 
+  test("a project-local lexicon named by module path (#2520) prints nothing", async () => {
+    execFileSync("git", ["init", "-q"], { cwd: dir });
+    write("chant.config.json", JSON.stringify({ lexicons: [{ name: "local", module: "./lexicon/index.ts" }] }));
+    write("lexicon/index.ts");
+    write("lexicon/rules/r1.ts");
+    write("src/app.ts");
+
+    expect(rel(await findInfraFiles(dir))).toEqual(["lexicon/index.ts", "lexicon/rules/r1.ts", "src/app.ts"]);
+    expect(stderr).toEqual([]);
+  });
+
+  test("a project-local lexicon's config still yields the glob when something else warns", async () => {
+    write("chant.config.json", JSON.stringify({ lexicons: [{ name: "local", module: "./lexicon/index.ts" }], include: [".cache"] }));
+    write("lexicon/index.ts");
+    write(".cache/gen.ts");
+    write("dist/out.ts");
+
+    expect(rel(await findInfraFiles(dir))).toEqual([".cache/gen.ts", "dist/out.ts", "lexicon/index.ts"]);
+    expect(stderr).toHaveLength(1);
+    expect(stderr[0]).not.toContain(".cache");
+    expect(stderr[0]).toContain('add "dist" to include in chant.config.json');
+  });
+
   test("a warning prints once per process, however often the tree is walked", async () => {
     project();
     write(".cache/gen.ts");
