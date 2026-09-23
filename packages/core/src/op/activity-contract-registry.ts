@@ -36,6 +36,7 @@
 
 import * as coreContracts from "./activities/activity-contracts";
 import { collectActivityContracts, type ActivityContract } from "./activity-contract";
+import { importLexiconModule } from "../lexicon-module";
 
 /**
  * The shape {@link loadActivityContracts} reads off a plugin: an optional
@@ -74,16 +75,29 @@ export async function loadActivityContracts(
 
   for (const entry of lexicons) {
     const name = typeof entry === "string" ? entry : entry.name;
+    let contributor: LexiconActivityContractContributor | undefined = typeof entry === "string" ? undefined : entry;
     try {
-      const spec = `@intentius/chant-lexicon-${name}/op/activity-contracts`;
-      collectActivityContracts((await import(spec)) as Record<string, unknown>, contracts);
+      // chant #2520 — a lexicon declared by module path has no subpath to
+      // import. Its plugin's `activityContracts()` member stands in for it;
+      // given only the name, the plugin is read from the declared module.
+      const local = await importLexiconModule(name);
+      if (local !== undefined) {
+        contributor ??= Object.values(local).find(
+          (v): v is LexiconActivityContractContributor =>
+            typeof v === "object" && v !== null && (v as { name?: unknown }).name === name &&
+            typeof (v as { activityContracts?: unknown }).activityContracts === "function",
+        );
+      } else {
+        const spec = `@intentius/chant-lexicon-${name}/op/activity-contracts`;
+        collectActivityContracts((await import(spec)) as Record<string, unknown>, contracts);
+      }
     } catch {
       // Lexicon absent or declares no contracts at the conventional subpath.
     }
 
-    if (typeof entry !== "string" && typeof entry.activityContracts === "function") {
+    if (contributor !== undefined && typeof contributor.activityContracts === "function") {
       try {
-        for (const contract of entry.activityContracts()) contracts.set(contract.name, contract);
+        for (const contract of contributor.activityContracts()) contracts.set(contract.name, contract);
       } catch {
         // A plugin member that throws contributes nothing, the same as one that is absent.
       }

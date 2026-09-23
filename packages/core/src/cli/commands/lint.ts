@@ -141,7 +141,7 @@ function lexiconResolutionDiagnostic(projectRoot: string, error: Error): LintDia
  */
 async function loadAllPluginRules(
   projectPath: string,
-): Promise<{ rules: Map<string, LintRule>; intrinsics: IntrinsicDef[]; lexiconError?: Error }> {
+): Promise<{ rules: Map<string, LintRule>; intrinsics: IntrinsicDef[]; plugins: LexiconPlugin[]; lexiconError?: Error }> {
   const rules = new Map<string, LintRule>();
 
   // Load core COR/EVL rules directly
@@ -219,7 +219,7 @@ async function loadAllPluginRules(
     rules.set(r.id, r);
   }
 
-  return { rules, intrinsics, ...(lexiconError ? { lexiconError } : {}) };
+  return { rules, intrinsics, plugins, ...(lexiconError ? { lexiconError } : {}) };
 }
 
 /**
@@ -526,8 +526,10 @@ async function runComponentCheckDiagnostics(
  *
  * The project's configured lexicon NAMES are read, though (chant #2101), to
  * resolve the activity contracts each one declares at
- * `@intentius/chant-lexicon-<name>/op/activity-contracts` — one dynamic
- * import per lexicon, no plugin load. Without them a step calling a
+ * `@intentius/chant-lexicon-<name>/op/activity-contracts`. The plugins
+ * `lintCommand` already loaded are passed in (chant #2520), so a plugin's
+ * `activityContracts()` member counts here as it does in `chant build`, and
+ * a lexicon declared by module path is covered. Without them a step calling a
  * lexicon's activity is flagged for the absence of a contract that lexicon
  * does declare, which is the whole point of OPS013 firing outside a build.
  *
@@ -542,6 +544,7 @@ async function runOpCheckDiagnostics(
   infraPath: string,
   files: string[],
   buildParams?: BuildParamProvenance[],
+  plugins: readonly LexiconPlugin[] = [],
 ): Promise<{ diagnostics: LintDiagnostic[]; suppressed: Array<LintDiagnostic & { reason?: string }> }> {
   const config = loadConfig(findProjectRoot(infraPath));
   const opFiles = files.filter((f) => f.endsWith(".op.ts"));
@@ -577,8 +580,13 @@ async function runOpCheckDiagnostics(
 
   if (entities.size === 0) return { diagnostics: [], suppressed: [] };
 
-  const lexiconNames = await resolveProjectLexicons(infraPath).catch(() => [] as string[]);
-  const activityContracts = await loadActivityContracts(lexiconNames);
+  // chant #2520 — hand over the loaded plugin objects when there are any, as
+  // `chant build` does, so a plugin's `activityContracts()` member is read
+  // here too. Names alone are the fallback when no plugin loaded.
+  const activityContracts =
+    plugins.length > 0
+      ? await loadActivityContracts(plugins)
+      : await loadActivityContracts(await resolveProjectLexicons(infraPath).catch(() => [] as string[]));
 
   const raw = runPostSynthChecks(
     coreOpChecks(),
@@ -741,7 +749,7 @@ export async function lintCommand(options: LintOptions): Promise<LintResult> {
   // Run the OPS* Op-model post-synth checks (#2122) over every `*.op.ts`
   // file under the lint target — see runOpCheckDiagnostics's doc for why
   // this needs no lexicon or build to fire.
-  const opResult = await runOpCheckDiagnostics(infraPath, files, buildParams);
+  const opResult = await runOpCheckDiagnostics(infraPath, files, buildParams, loaded.plugins);
   diagnostics.push(...opResult.diagnostics);
   suppressed.push(...opResult.suppressed);
 
@@ -795,7 +803,7 @@ export async function lintCommand(options: LintOptions): Promise<LintResult> {
 
     // OPS* checks have no `.fix` either; re-run for the same consistency
     // reason as the COMP* re-run just above.
-    const postOpResult = await runOpCheckDiagnostics(infraPath, files, buildParams);
+    const postOpResult = await runOpCheckDiagnostics(infraPath, files, buildParams, loaded.plugins);
     diagnostics.push(...postOpResult.diagnostics);
     suppressed.push(...postOpResult.suppressed);
   }

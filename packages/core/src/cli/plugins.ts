@@ -1,3 +1,4 @@
+import { importLexiconModule, lexiconModulePath, lexiconNames } from "../lexicon-module";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
@@ -13,6 +14,23 @@ import { checkConflicts, describeConflict } from "./conflict-check";
  * LexiconPlugin export. Falls back to wrapping a raw Serializer export.
  */
 export async function loadPlugin(lexiconName: string): Promise<LexiconPlugin> {
+  // chant #2520 — a lexicon declared by module path loads from that module.
+  const modulePath = lexiconModulePath(lexiconName);
+  if (modulePath !== undefined) {
+    const mod = (await importLexiconModule(lexiconName))!;
+    for (const value of Object.values(mod)) {
+      if (isLexiconPlugin(value)) {
+        if (value.name !== lexiconName) {
+          throw new Error(
+            `lexicon "${lexiconName}" is declared with module ${modulePath}, but the plugin it exports is named "${value.name}"`,
+          );
+        }
+        return value;
+      }
+    }
+    throw new Error(`Module ${modulePath} (lexicon "${lexiconName}") does not export a LexiconPlugin`);
+  }
+
   const packageName = `@intentius/chant-lexicon-${lexiconName}`;
   const mod = await import(packageName);
 
@@ -67,6 +85,9 @@ export function resolveLexiconVersions(lexiconNames: readonly string[]): Record<
   const versions: Record<string, string> = {};
 
   for (const name of lexiconNames) {
+    // chant #2520 — a lexicon declared by module path is not an installed
+    // package, so it has no package version to report.
+    if (lexiconModulePath(name) !== undefined) continue;
     const packageName = `@intentius/chant-lexicon-${name}`;
     try {
       let dir = dirname(require_.resolve(packageName));
@@ -220,7 +241,7 @@ export async function resolveProjectLexicons(projectPath: string): Promise<strin
   const { config } = await loadChantConfigUpward(projectPath);
 
   if (config.lexicons && config.lexicons.length > 0) {
-    return config.lexicons;
+    return lexiconNames(config.lexicons);
   }
 
   // Fallback: detect from source imports — a pure text scan, no execution.

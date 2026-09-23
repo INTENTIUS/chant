@@ -95,6 +95,9 @@ export async function doctorCommand(path: string): Promise<DoctorReport> {
   const lexicons = config?.lexicons as string[] | undefined;
   if (lexicons && Array.isArray(lexicons)) {
     for (const lex of lexicons) {
+      // chant #2520 — a lexicon declared by module path is project source,
+      // not a package `chant update` copies types from.
+      if (typeof lex !== "string") continue;
       const lexDir = join(projectPath, ".chant", "types", `lexicon-${lex}`);
       if (!existsSync(lexDir)) {
         checks.push({ name: `lexicon-${lex}-types`, status: "fail", message: `.chant/types/lexicon-${lex}/ not found — run chant update` });

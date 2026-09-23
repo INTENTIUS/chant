@@ -25,6 +25,32 @@ export default {
 } satisfies ChantConfig;
 ```
 
+## A lexicon in your own project
+
+A lexicon you write for one project can live in that project's source. Name it with the module that exports it instead of a package name:
+
+```typescript
+import type { ChantConfig } from "@intentius/chant";
+
+export default {
+  lexicons: ["fly", { name: "site", module: "./lexicon/index.ts" }],
+} satisfies ChantConfig;
+```
+
+The path is relative to the directory holding `chant.config.ts`. `chant build`, `chant lint`, `chant run` and the capability registry all load the lexicon from that module, so it needs no `@intentius/chant-lexicon-site` package, no `file:` dependency and no `.npmrc` setting.
+
+A package-backed lexicon ships some parts at fixed subpaths. A lexicon loaded by path has only the one module, so each part comes from that module instead:
+
+| Part | Package-backed lexicon | Lexicon loaded by path |
+|---|---|---|
+| the plugin | a `LexiconPlugin` export of the package | a `LexiconPlugin` export of the module, whose `name` must equal the declared `name` |
+| Op activities | `<package>/op/activities` | the plugin's `activities()` member, returning `{ activityName: fn }` |
+| activity contracts | `<package>/op/activity-contracts` | the plugin's `activityContracts()` member |
+| capabilities | a `CapabilityPlugin` export of the package | a `CapabilityPlugin` export of the module |
+| gate policy evaluator | `<package>/gate-policy` | an `evaluateGatePolicy` export of the module |
+
+The plugin has no package version, so the build manifest records none for it, and `chant update` and `chant doctor` skip it because there are no package types to copy.
+
 ## Updating Versions
 
 Update the lexicon package version:

@@ -32,6 +32,7 @@
  */
 
 import { createHash } from "node:crypto";
+import { lexiconModulePath } from "../lexicon-module";
 import { isStepOutputRef, type StepOutputRef } from "./step-output-ref";
 
 /** What a policy's decision does to the gate. */
@@ -221,7 +222,8 @@ function isContextValue(value: unknown): boolean {
 
 /** Import `lexicon`'s evaluator. Throws a message that names the package when it is not installed or exports none. */
 export async function loadGatePolicyEvaluator(lexicon: string): Promise<GatePolicyEvaluator> {
-  const spec = `@intentius/chant-lexicon-${lexicon}/gate-policy`;
+  // chant #2520 — a lexicon declared by module path exports its evaluator from that module.
+  const spec = lexiconModulePath(lexicon) ?? `@intentius/chant-lexicon-${lexicon}/gate-policy`;
   let mod: Partial<GatePolicyEvaluator>;
   try {
     mod = (await import(spec)) as Partial<GatePolicyEvaluator>;

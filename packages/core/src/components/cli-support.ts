@@ -22,6 +22,7 @@
  *    executor, the CLI entrypoint the driver (#556) never had.
  */
 
+import { lexiconModulePath, lexiconNames } from "../lexicon-module";
 import { discoverComponents } from "./discover";
 import type { BuildParamProvenance } from "../provenance";
 import { projectToJson, type Archetype } from "./component";
@@ -237,7 +238,7 @@ export interface GenerateComponentsResult {
 async function loadLexiconPlugin(name: string): Promise<LexiconPlugin | null> {
   let mod: Record<string, unknown>;
   try {
-    mod = (await import(`@intentius/chant-lexicon-${name}`)) as Record<string, unknown>;
+    mod = (await import(lexiconModulePath(name) ?? `@intentius/chant-lexicon-${name}`)) as Record<string, unknown>;
   } catch {
     return null;
   }
@@ -550,7 +551,7 @@ export async function runComponents(
     options.registry ??
     (await buildCapabilityRegistry({
       plugins: options.capabilityPlugins ?? config.capabilities,
-      lexicons: config.lexicons,
+      lexicons: lexiconNames(config.lexicons),
     }));
   const env = options.env ?? "local";
   const selected = targets.map((c) => c.name);

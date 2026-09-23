@@ -940,6 +940,17 @@ export interface LexiconPlugin {
   activityContracts?(): ActivityContract[];
 
   /**
+   * Op activity implementations, keyed by the name a step's `fn` calls them
+   * by (chant #2520). Read only for a lexicon declared by module path
+   * (`{ name, module }` in `chant.config.ts`), which has no
+   * `@intentius/chant-lexicon-<name>/op/activities` subpath for
+   * `loadActivities` to import. A package-backed lexicon keeps using the
+   * subpath and leaves this out.
+   */
+  activities?(): Record<string, (args: Record<string, unknown>, signal?: AbortSignal) => Promise<unknown>>
+    | Promise<Record<string, (args: Record<string, unknown>, signal?: AbortSignal) => Promise<unknown>>>;
+
+  /**
    * Audit catalog metadata (title/tier/fix/authority/category) for this
    * lexicon's `postSynthChecks`, keyed by check id — the per-provider half of
    * `chant audit`'s rule catalog (#687, epic #350). Core aggregates these over

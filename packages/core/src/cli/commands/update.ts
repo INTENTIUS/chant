@@ -1,3 +1,4 @@
+import { lexiconModulePath, lexiconNames } from "../../lexicon-module";
 import { existsSync, mkdirSync, writeFileSync, cpSync, readdirSync, statSync, readFileSync } from "fs";
 import { join, resolve } from "path";
 import { createRequire } from "module";
@@ -105,7 +106,7 @@ export async function updateCommand(options: UpdateOptions): Promise<UpdateResul
 
   // Load config to get lexicons
   const { config } = await loadChantConfig(projectDir);
-  const lexicons = config.lexicons ?? [];
+  const lexicons = lexiconNames(config.lexicons ?? []);
 
   if (lexicons.length === 0) {
     return {
@@ -137,6 +138,9 @@ export async function updateCommand(options: UpdateOptions): Promise<UpdateResul
 
   // Sync each lexicon
   for (const lexicon of lexicons) {
+    // chant #2520 — a lexicon declared by module path is project source, with
+    // no package to copy types from.
+    if (lexiconModulePath(lexicon) !== undefined) continue;
     const pkgName = `@intentius/chant-lexicon-${lexicon}`;
     const pkgPath = resolvePackagePath(pkgName, projectDir);
 

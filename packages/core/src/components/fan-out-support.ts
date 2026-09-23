@@ -13,6 +13,7 @@
  * over.
  */
 
+import { lexiconNames } from "../lexicon-module";
 import { resolveComponentTargets } from "./cli-support";
 import { applyConfigDefaults } from "./config-defaults";
 import { buildCapabilityRegistry } from "./capability-plugin-loader";
@@ -91,5 +92,5 @@ export async function deriveFanOut(options: DeriveFanOutOptions): Promise<Derive
  */
 export async function fanOutRegistry(path: string, config?: ChantConfig): Promise<CapabilityRegistry> {
   const resolved = config ?? (await loadChantConfig(path)).config;
-  return buildCapabilityRegistry({ plugins: resolved.capabilities, lexicons: resolved.lexicons });
+  return buildCapabilityRegistry({ plugins: resolved.capabilities, lexicons: lexiconNames(resolved.lexicons) });
 }

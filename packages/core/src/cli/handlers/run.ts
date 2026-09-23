@@ -1,3 +1,4 @@
+import { lexiconNames } from "../../lexicon-module";
 import { resolve, dirname } from "node:path";
 import { writeFileSync, mkdirSync, readFileSync } from "node:fs";
 import { loadChantConfig, resolveAutoReleaseDisabled, type ChantConfig } from "../../config";
@@ -125,7 +126,7 @@ async function resolveOpRuntime(ctx: CommandContext): Promise<OpRuntimeProvider 
   // long wait to be told a name is wrong.
   let configured: string[] = [];
   try {
-    configured = (await loadChantConfig(resolve("."))).config.lexicons ?? [];
+    configured = lexiconNames((await loadChantConfig(resolve("."))).config.lexicons ?? []);
   } catch {
     // No/unreadable chant.config.ts — the error below says so by listing nothing.
   }

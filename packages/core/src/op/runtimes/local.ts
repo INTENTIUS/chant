@@ -18,6 +18,7 @@
  * answers.
  */
 
+import { lexiconNames } from "../../lexicon-module";
 import { loadChantConfig } from "../../config";
 import { loadActivities, loadProfiles } from "../activity-registry";
 import { runOpLocally, OpRunFailure, type OpRunResult } from "../local-executor";
@@ -129,7 +130,7 @@ export function createLocalOpRuntime(opts: { projectPath?: string } = {}): OpRun
       // unreadable config just yields the base activities.
       let lexicons: string[] = [];
       try {
-        lexicons = (await loadChantConfig(projectPath)).config.lexicons ?? [];
+        lexicons = lexiconNames((await loadChantConfig(projectPath)).config.lexicons ?? []);
       } catch {
         // No/invalid chant.config — base activities only.
       }

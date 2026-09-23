@@ -22,6 +22,7 @@
  */
 
 import { CapabilityRegistry } from "./capability";
+import { lexiconModulePath } from "../lexicon-module";
 import type { CapabilityPlugin } from "./capability-plugin";
 import { isCapabilityPlugin } from "./capability-plugin";
 import { starterCapabilityPlugin } from "./starter-plugin";
@@ -113,7 +114,8 @@ export async function loadCapabilityPlugins(names: string[]): Promise<Capability
  * where the package's whole reason to exist is the plugin.
  */
 export async function loadCapabilityPluginFromLexicon(name: string): Promise<CapabilityPlugin | null> {
-  const packageName = `@intentius/chant-lexicon-${name}`;
+  // chant #2520 — a lexicon declared by module path is imported from that path.
+  const packageName = lexiconModulePath(name) ?? `@intentius/chant-lexicon-${name}`;
   let mod: Record<string, unknown>;
   try {
     mod = (await import(packageName)) as Record<string, unknown>;
