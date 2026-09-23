@@ -213,6 +213,8 @@ The policy is a Cedar policy set that `gatePolicy()` renders when the Op is buil
 | resource | `Chant::Gate::"<op>/<gate>"` |
 | context | `planDigest`, plus the gate's `approval.context` as this run resolved it |
 
+The typed `Policy` scopes accept only entity types and actions from the project's Cedar schema. Declare `Chant::Human`, `Chant::Agent`, `Chant::Role`, `Chant::Gate` and the `PassGate` action there before writing gate policies.
+
 `--agent` records an approval as an agent's. An approval sent over MCP or ACP is always recorded as an agent's. An agent never counts toward the quorum.
 
 `mode` decides what a decision does. The default mode is `log-only`, where the decision is recorded and only the quorum can pass the gate. That lets you check a new rule against real gate traffic before it binds. In `enforce`, a permit passes the gate by itself, which is how an agent passes a low-risk plan. A permit counts only while the gate still declares the policy version it was evaluated under, so editing the policy needs fresh approvals. A deny never cancels a human's approval, so a deny-by-default policy such as `DenyByDefaultSet` leaves the gate working as it did before: humans only.

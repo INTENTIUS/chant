@@ -5,22 +5,29 @@
  */
 import { describe, test, expect } from "vitest";
 import { gatePolicyRequest, gatePolicyVersion, loadGatePolicyEvaluator, gateApprovalProblems } from "@intentius/chant/op";
-import { Policy } from "./generated/index";
+import { Policy, type EntityTypeName, type PolicyRef } from "./generated/index";
 import { DenyByDefaultSet } from "./composites/deny-by-default-set";
 import { evaluateGatePolicy, gatePolicy, GATE_AGENT_TYPE, PASS_GATE_ACTION } from "./gate-policy";
 
 const PLAN = `sha256:${"a".repeat(64)}`;
 
+// The generated scope types are narrowed to this package's sample `App::`
+// schema. A project writing gate policies declares the `Chant` namespace in
+// its own schema, and then these names type-check without a cast.
+const AGENT = GATE_AGENT_TYPE as EntityTypeName;
+const PASS_GATE = PASS_GATE_ACTION as unknown as PolicyRef;
+const MAINTAINER = 'Chant::Role::"maintainer"' as unknown as PolicyRef;
+
 const agentLowRisk = new Policy({
   effect: "permit",
-  principal: { is: GATE_AGENT_TYPE },
-  action: { eq: PASS_GATE_ACTION },
+  principal: { is: AGENT },
+  action: { eq: PASS_GATE },
   when: ['context.risk == "low"'],
 });
 const maintainers = new Policy({
   effect: "permit",
-  principal: { in: 'Chant::Role::"maintainer"' },
-  action: { eq: PASS_GATE_ACTION },
+  principal: { in: MAINTAINER },
+  action: { eq: PASS_GATE },
 });
 
 function ask(kind: "human" | "agent", name: string, context: Record<string, unknown>, roles: string[] = []) {
@@ -79,7 +86,7 @@ describe("evaluateGatePolicy (chant#2508)", () => {
   test("a DenyByDefaultSet floor overrides the agent permit, so only human approvals count", () => {
     const floored = gatePolicy("ship", DenyByDefaultSet({
       policies: [agentLowRisk],
-      principal: GATE_AGENT_TYPE,
+      principal: AGENT,
       when: ["true"],
     }).all);
     const answer = evaluateGatePolicy(floored, ask("agent", "release-bot", { risk: "low" }));
