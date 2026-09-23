@@ -58,8 +58,12 @@ export const READ_ERROR_CODES = [
   "schema-id-mismatch",
   /** The schema itself does not compile. */
   "schema-invalid",
-  /** The records directory does not exist. */
+  /** The records directory does not exist, in the tree or at the revision. */
   "location-missing",
+  /** `--at` was given outside a git repository. */
+  "not-a-git-repository",
+  /** `--at` names no commit. */
+  "revision-unknown",
 ] as const;
 export type ReadErrorCode = (typeof READ_ERROR_CODES)[number];
 

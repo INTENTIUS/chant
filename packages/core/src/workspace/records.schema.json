@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/records/v1/records.schema.json",
+  "title": "chant workspace records output",
+  "description": "What `chant workspace records --json` prints, version 1 of the read contract for records (#2536). This is the first-test slice (#2546): records are unsealed and there is no workspace declaration yet. Readers ignore fields they do not know; a field is only ever added within a version. The reason and error codes are closed lists: a new code is a new contract version.",
+  "oneOf": [{ "$ref": "#/$defs/result" }, { "$ref": "#/$defs/failure" }],
+  "$defs": {
+    "result": {
+      "description": "The read worked. Exit code 0, even when some records are invalid.",
+      "type": "object",
+      "required": ["$schema", "contract", "kind", "at", "current", "records", "summary"],
+      "properties": {
+        "$schema": { "const": "https://intentius.io/chant/schemas/workspace/records/v1/records.schema.json" },
+        "contract": { "const": 1 },
+        "kind": {
+          "type": "object",
+          "required": ["name", "schema", "file"],
+          "properties": {
+            "name": { "type": "string", "description": "The kind's name, such as \"decision\"." },
+            "schema": { "type": "string", "description": "The `$id` of the schema each record was validated against." },
+            "file": { "type": "string", "description": "The kind file, relative to the repository root, with / separators." }
+          }
+        },
+        "at": {
+          "description": "The full commit id the records were read at (--at), or null for the working tree.",
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-f]{40,64}$"
+        },
+        "error": false,
+        "current": { "type": "boolean", "description": "Whether superseded records were left out (--current)." },
+        "records": {
+          "description": "One entry per file the kind locates, sorted by path.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/record" }
+        },
+        "summary": {
+          "type": "object",
+          "required": ["total", "valid", "invalid", "superseded"],
+          "properties": {
+            "total": { "type": "integer", "minimum": 0, "description": "Entries in records." },
+            "valid": { "type": "integer", "minimum": 0 },
+            "invalid": { "type": "integer", "minimum": 0 },
+            "superseded": { "type": "integer", "minimum": 0, "description": "Records a closed record supersedes, counted before --current leaves them out." }
+          }
+        }
+      }
+    },
+    "record": {
+      "type": "object",
+      "required": ["id", "path", "state", "valid", "reasons", "supersededBy", "data"],
+      "properties": {
+        "id": { "type": ["string", "null"], "description": "Null when the front matter could not be parsed or has no string id." },
+        "path": { "type": "string", "description": "From the repository root, with / separators." },
+        "state": { "type": ["string", "null"], "description": "The state as the record writes it. Supersession is reported in supersededBy, not here." },
+        "valid": { "type": "boolean", "description": "True exactly when reasons is empty." },
+        "reasons": { "type": "array", "items": { "$ref": "#/$defs/reason" } },
+        "supersededBy": {
+          "type": ["string", "null"],
+          "description": "The id of the closed record whose supersedes link replaces this one. Derived from that record's link, never from this record's own fields."
+        },
+        "data": {
+          "type": ["object", "null"],
+          "description": "The front matter as JSON, following the kind's schema when valid is true. Null when it could not be parsed."
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "valid": { "const": true } } },
+          "then": { "properties": { "reasons": { "type": "array", "maxItems": 0 }, "data": { "type": "object" }, "id": { "type": "string" } } },
+          "else": { "properties": { "reasons": { "type": "array", "minItems": 1 } } }
+        }
+      ]
+    },
+    "reason": {
+      "type": "object",
+      "required": ["code", "message"],
+      "properties": {
+        "code": {
+          "enum": [
+            "record-unparseable",
+            "record-schema-invalid",
+            "record-id-duplicate",
+            "record-supersedes-unknown",
+            "record-supersedes-conflict"
+          ]
+        },
+        "message": { "type": "string" }
+      }
+    },
+    "failure": {
+      "description": "The read failed and returned no records. Exit code 1.",
+      "type": "object",
+      "required": ["$schema", "contract", "error"],
+      "properties": {
+        "$schema": { "const": "https://intentius.io/chant/schemas/workspace/records/v1/records.schema.json" },
+        "contract": { "const": 1 },
+        "error": {
+          "type": "object",
+          "required": ["code", "message"],
+          "properties": {
+            "code": {
+              "enum": [
+                "kind-unreadable",
+                "kind-invalid",
+                "schema-unreadable",
+                "schema-id-mismatch",
+                "schema-invalid",
+                "location-missing",
+                "not-a-git-repository",
+                "revision-unknown"
+              ]
+            },
+            "message": { "type": "string" }
+          }
+        },
+        "records": false
+      }
+    }
+  }
+}

@@ -1,0 +1,128 @@
+---
+title: "chant workspace records"
+description: Print the files a record kind locates after checking each against its JSON Schema
+diataxis: reference
+---
+
+:::note[First-test slice]
+This command is the first slice of workspace records ([#2546](https://github.com/INTENTIUS/chant/issues/2546)) and the read contract ([#2536](https://github.com/INTENTIUS/chant/issues/2536)). It exists so a hosted design studio built on hud can show the workspace design's decision files for review ([#2555](https://github.com/INTENTIUS/chant/issues/2555)). Seals and attestation come later. So does `chant.workspace.json`, and once it exists the command will find kinds from the declaration instead of `--kind`.
+:::
+
+## Synopsis
+
+```
+chant workspace records --kind <kind file> [--current] [--at <rev>] [--json]
+```
+
+## Description
+
+`chant workspace records` reads every file that a record kind locates and prints what it found. Each file's front matter is parsed and then checked against the kind's JSON Schema. The command also works out which entries a later one supersedes. It never writes a file, and it needs no `chant.workspace.json`. The kind file is named on the command line, so nothing is inferred.
+
+The command loads only when it runs. A project without workspace files never loads any of its code.
+
+## Options
+
+| Option | Effect |
+|---|---|
+| `--kind <kind file>` | The record kind to read through. Required. The path is resolved against the current directory. |
+| `--current` | Leave out records that a closed record supersedes. |
+| `--at <rev>` | Read the records as they were at a commit, from the local git object store. No checkout or network is needed. The kind file and its schema still come from the working tree. |
+| `--json` | Print the result as JSON (see [Output](#output)). Without it, one line per record and a summary. |
+
+## Record kinds
+
+A kind file is a data-only ES module that exports `recordKind`. The chant repo's decision kind is `docs/design/decisions/decision.kind.mjs`:
+
+```js
+export const recordKind = {
+  name: "decision",
+  location: { dir: ".", match: "^[a-z][a-z0-9]{0,15}-[0-9]{3,}-.+\\.md$" },
+  format: "markdown-front-matter",
+  schema: { id: "urn:intentius:chant:decision:1", path: "decision.schema.json" },
+  idField: "id",
+  stateField: "state",
+  states: ["proposed", "decided", "ratified", "superseded", "withdrawn"],
+  closedStates: ["ratified", "superseded"],
+  supersedes: { field: "supersedes", key: "decision" },
+};
+```
+
+`location.dir` and `schema.path` are relative to the kind's own directory. Subdirectories are skipped, and a name has to match `location.match` to be read. The `$id` inside the schema must equal `schema.id`.
+
+Front matter is read as the part of YAML that JSON can also express. Line endings are normalised first. A file with a YAML alias or a duplicate key is unparseable, and so is one holding a value JSON cannot hold.
+
+## Supersession
+
+An entry is superseded when another entry in a closed state lists its id under `supersedes`. A link from an entry that is still `decided` has no effect yet, so the old decision stays current until its replacement is ratified. The old file's own `state` field plays no part. Each id can be superseded once, and a second closed claim gets `record-supersedes-conflict`.
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | The read worked. Some entries may be invalid, and each invalid one carries reason codes. |
+| 1 | The read failed, or `--kind` is missing. Nothing is returned. |
+
+An invalid entry doesn't fail the command. Failing closed on one is the job of `chant workspace check`, which comes later.
+
+## Output
+
+With `--json`, the output follows the schema `https://intentius.io/chant/schemas/workspace/records/v1/records.schema.json`, shipped in `@intentius/chant` at `src/workspace/records.schema.json`. Readers ignore fields they don't know. Fields are only added within a contract version, and the code lists are closed.
+
+```json
+{
+  "$schema": "https://intentius.io/chant/schemas/workspace/records/v1/records.schema.json",
+  "contract": 1,
+  "kind": { "name": "decision", "schema": "urn:intentius:chant:decision:1", "file": "docs/design/decisions/decision.kind.mjs" },
+  "at": null,
+  "current": true,
+  "records": [
+    {
+      "id": "ws-003",
+      "path": "docs/design/decisions/ws-003-seal-scope.md",
+      "state": "decided",
+      "valid": true,
+      "reasons": [],
+      "supersededBy": null,
+      "data": { "id": "ws-003", "title": "Seal scope", "state": "decided" }
+    }
+  ],
+  "summary": { "total": 50, "valid": 50, "invalid": 0, "superseded": 0 }
+}
+```
+
+`data` holds the whole front matter; the example shortens it. `at` is the full commit id when `--at` is given.
+
+A failed read prints `{ "$schema", "contract", "error": { "code", "message" } }` instead.
+
+### Reason codes
+
+| Code | The record |
+|---|---|
+| `record-unparseable` | has no front matter, invalid YAML, or a value outside the JSON subset |
+| `record-schema-invalid` | doesn't match the kind's schema |
+| `record-id-duplicate` | repeats an id an earlier file in path order already has |
+| `record-supersedes-unknown` | names an id in `supersedes` that no record has |
+| `record-supersedes-conflict` | supersedes a record another closed record already supersedes |
+
+### Error codes
+
+| Code | Cause |
+|---|---|
+| `kind-unreadable` | the kind file is missing or can't be imported |
+| `kind-invalid` | the module exports no `recordKind`, or its shape is wrong |
+| `schema-unreadable` | the schema file is missing or isn't JSON |
+| `schema-id-mismatch` | the schema's `$id` differs from the kind's `schema.id` |
+| `schema-invalid` | the schema doesn't compile |
+| `location-missing` | the records directory doesn't exist, in the tree or at the revision |
+| `not-a-git-repository` | `--at` was given outside a git repository |
+| `revision-unknown` | `--at` names no commit |
+
+## Examples
+
+```bash
+# Every current decision in the chant repo
+chant workspace records --kind docs/design/decisions/decision.kind.mjs --current --json
+
+# The same decisions as they were at a commit
+chant workspace records --kind docs/design/decisions/decision.kind.mjs --current --json --at 91c7547e
+```

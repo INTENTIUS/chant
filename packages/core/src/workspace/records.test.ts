@@ -1,9 +1,10 @@
+import { execFileSync } from "node:child_process";
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { lexiconModulePath } from "../lexicon-module";
-import { gitRoot, workingTreeSource } from "./record-source";
+import { gitRevisionSource, gitRoot, resolveRevision, workingTreeSource } from "./record-source";
 import { loadRecordKind, parseFrontMatter, readRecords, RecordReadError, type LoadedRecordKind } from "./records";
 
 const REPO = join(import.meta.dirname, "..", "..", "..", "..");
@@ -192,8 +193,51 @@ describe("loadRecordKind", () => {
   });
 });
 
-describe("gitRoot", () => {
-  test("outside a repository there is none", () => {
+describe("reading at a revision", () => {
+  const git = (...args: string[]) =>
+    execFileSync("git", args, {
+      cwd: dir,
+      encoding: "utf-8",
+      env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@example.com", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@example.com" },
+    }).trim();
+
+  test("reads the committed files, not the working tree", async () => {
+    write("ws-001-a.md", decision("ws-001"));
+    git("init", "-q", "-b", "main");
+    git("add", "-A");
+    git("commit", "-q", "-m", "one");
+    const first = git("rev-parse", "HEAD");
+    write("ws-002-b.md", decision("ws-002"));
+    write("ws-001-a.md", "broken now\n");
+
+    expect(gitRoot(join(dir, "decisions"))).toBe(dir);
+    const loaded = await loadRecordKind(join(dir, "decisions", "decision.kind.mjs"));
+    const at = await readRecords(loaded, { root: dir, source: gitRevisionSource(dir, resolveRevision(dir, "main")) });
+    expect(at.records.map((r) => [r.id, r.valid])).toEqual([["ws-001", true]]);
+    expect(resolveRevision(dir, first.slice(0, 8))).toBe(first);
+
+    const tree = await readRecords(loaded, { root: dir, source: workingTreeSource(dir) });
+    expect(tree.records.map((r) => [r.path, r.valid])).toEqual([
+      ["decisions/ws-001-a.md", false],
+      ["decisions/ws-002-b.md", true],
+    ]);
+  });
+
+  test("an unknown revision is revision-unknown, and a directory missing at the revision is location-missing", async () => {
+    write("ws-001-a.md", decision("ws-001"));
+    writeFileSync(join(dir, "other.txt"), "x\n");
+    git("init", "-q", "-b", "main");
+    git("add", "other.txt");
+    git("commit", "-q", "-m", "no records yet");
+    expect(() => resolveRevision(dir, "no-such-ref")).toThrow(expect.objectContaining({ code: "revision-unknown" }));
+    expect(() => resolveRevision(dir, "--all")).toThrow(expect.objectContaining({ code: "revision-unknown" }));
+    const loaded = await loadRecordKind(join(dir, "decisions", "decision.kind.mjs"));
+    await expect(
+      readRecords(loaded, { root: dir, source: gitRevisionSource(dir, resolveRevision(dir, "HEAD")) }),
+    ).rejects.toMatchObject({ code: "location-missing" });
+  });
+
+  test("outside a repository there is no git root", () => {
     expect(gitRoot(dir)).toBeUndefined();
   });
 });

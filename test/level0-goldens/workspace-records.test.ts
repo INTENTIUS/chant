@@ -5,7 +5,7 @@
  * level-0 command. This file is the other side: the workspace command does load
  * one, on first use, and reads the chant repo's own decision files. It also
  * holds the exit-code contract: invalid records exit 0 with reason codes, and
- * only a kind that cannot be read exits 1.
+ * only a kind or revision that cannot be read exits 1.
  */
 
 import { spawnSync } from "node:child_process";
@@ -21,6 +21,7 @@ const KIND = "docs/design/decisions/decision.kind.mjs";
 
 interface RecordsDoc {
   contract: number;
+  at: string | null;
   current: boolean;
   records: Array<{ id: string | null; path: string; valid: boolean; reasons: Array<{ code: string }>; supersededBy: string | null }>;
   summary: { total: number; valid: number; invalid: number; superseded: number };
@@ -74,6 +75,30 @@ describe("chant #2546 — workspace records", () => {
   );
 
   test(
+    "--at reads the committed files and matches a clean working tree",
+    async () => {
+      const root = decisionRepo("records-at");
+      const tree = await runChant(root, ["workspace", "records", "--kind", KIND, "--current", "--json"]);
+      const head = git(root, ["rev-parse", "HEAD"]).trim();
+      const at = await runChant(root, ["workspace", "records", "--kind", KIND, "--current", "--json", "--at", "HEAD"]);
+      expect(at.exit).toBe(0);
+      const a = JSON.parse(tree.stdout) as RecordsDoc;
+      const b = JSON.parse(at.stdout) as RecordsDoc;
+      expect(a.at).toBeNull();
+      expect(b.at).toBe(head);
+      expect(b.records).toEqual(a.records);
+
+      // An edit to the working tree changes the tree read, not the read at HEAD.
+      writeFileSync(join(root, "docs/design/decisions/ws-001-trust-root.md"), "not a record any more\n");
+      const edited = JSON.parse((await runChant(root, ["workspace", "records", "--kind", KIND, "--json"])).stdout) as RecordsDoc;
+      const still = JSON.parse((await runChant(root, ["workspace", "records", "--kind", KIND, "--json", "--at", head])).stdout) as RecordsDoc;
+      expect(edited.summary.invalid).toBe(1);
+      expect(still.summary.invalid).toBe(0);
+    },
+    TIMEOUT_MS,
+  );
+
+  test(
     "a malformed file, a schema violation and a broken supersedes link each get a reason code, and the command exits 0",
     async () => {
       const root = decisionRepo("records-invalid");
@@ -100,12 +125,15 @@ describe("chant #2546 — workspace records", () => {
   );
 
   test(
-    "a kind that cannot be read exits 1 with an error code",
+    "a kind that cannot be read or an unknown revision exits 1 with an error code",
     async () => {
       const root = decisionRepo("records-errors");
       const missing = await runChant(root, ["workspace", "records", "--kind", "nope.kind.mjs", "--json"]);
       expect(missing.exit).toBe(1);
       expect((JSON.parse(missing.stdout) as RecordsDoc).error?.code).toBe("kind-unreadable");
+      const badRev = await runChant(root, ["workspace", "records", "--kind", KIND, "--json", "--at", "no-such-rev"]);
+      expect(badRev.exit).toBe(1);
+      expect((JSON.parse(badRev.stdout) as RecordsDoc).error?.code).toBe("revision-unknown");
       const noKind = await runChant(root, ["workspace", "records", "--json"]);
       expect(noKind.exit).toBe(1);
       expect(noKind.stderr).toMatch(/--kind/);

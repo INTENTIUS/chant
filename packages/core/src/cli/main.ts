@@ -636,11 +636,11 @@ Ops:
                         verbatim; without the flag nothing is asked (#2377)
 
 Workspace (first-test slice, #2546):
-  workspace records --kind <kind file> [--current] [--json]
+  workspace records --kind <kind file> [--current] [--at <rev>] [--json]
                         Read the records a record kind locates, validated
                         against its schema, with reason codes for invalid
-                        ones. --current leaves out superseded records.
-                        Needs no workspace file
+                        ones. --current leaves out superseded records; --at
+                        reads a commit's git objects. Needs no workspace file
 
 Lifecycle (alias: lc):
   lifecycle snapshot <env>  Query API, save metadata to orphan branch
