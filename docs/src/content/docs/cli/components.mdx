@@ -21,6 +21,9 @@ chant components promote --from <env> --to <env>
                                 [--component <name> [--digest <sha256:...>]]
                                 [--dry-run] [--json] [--seed-outputs <file>]
                                 [--run-id <id>] [--actor <name>]
+chant components rollback <env> --component <name> [--digest <sha256:...>]
+                                [--dry-run] [--json] [--seed-outputs <file>]
+                                [--run-id <id>] [--actor <name>]
 ```
 
 ## Description
@@ -297,13 +300,52 @@ A component that did not finish gets no record. The components that did deploy k
 | `--run-id <id>` | Run id for the new records. Defaults as `components release` does. |
 | `--actor <name>` | Who ran the promote. Defaults as `components release` does, and must resolve before anything deploys. |
 
+### `components rollback <env>`
+
+Redeploy an earlier release of one component in `<env>` from the digest its release record carries.
+
+```bash
+chant components rollback prod --component search-service --dry-run
+chant components rollback prod --component search-service
+chant components rollback prod --component search-service --digest sha256:4c1e0b...
+```
+
+By default the rollback restores the newest release in `<env>`'s ledger with a digest other than the current one. A redeploy of the current digest therefore does not count as an earlier release. With `--digest`, it restores the latest release that recorded that digest instead. Naming the digest that is already current, or one the ledger never recorded for the component, is refused before anything runs.
+
+The rollback runs the component's composition against `<env>` with its build steps taken out, as a promote does, and it also replaces the publish step with a `recorded-digest` step that returns the recorded digest. The environment received that artifact when the release was first deployed, and the build archive it came from is usually gone by now. The recorded digest has to still be where that release put it, so a registry that has expired the image will fail the apply. Only the digest is known, so a composition whose steps read another publish output, such as `@Publish.uri`, is refused. The other refusals are the ones `promote` makes: no publish step, more than one, or a step reading a removed build step's output.
+
+Gates in the composition apply to a rollback exactly as they do to a deploy, including exit 3 and the `chant approve` line.
+
+When the rollback succeeds, `<env>`'s ledger gains a record with the restored release's artifact identities and a `restores` field naming that release. Run id, actor and approver are filled in as a promote fills them:
+
+```json
+{
+  "component": "search-service",
+  "env": "prod",
+  "digest": "sha256:4c1e0b...",
+  "restores": { "env": "prod", "runId": "4790", "timestamp": "2026-06-28T11:20:05.000Z" }
+}
+```
+
+This is a different mechanism from the saga unwind inside a single run, which undoes that run's own steps when it fails. See [Rolling back to an earlier release](/chant/components/orchestration/#rolling-back-to-an-earlier-release) for how the two relate.
+
+| Flag | Meaning |
+|---|---|
+| `--component <name>` | Required. The component to roll back. |
+| `--digest <sha256:...>` | Restore the release that recorded this digest, rather than the one before the current release. |
+| `--dry-run` | Print the release that would be restored and the steps that will not run, and deploy nothing. |
+| `--json` | Emit the plan, the run result and the record written as one JSON document on stdout. |
+| `--seed-outputs <file>` | Load outputs from dependencies. Repeatable. |
+| `--run-id <id>` | Run id for the new record. Defaults as `components release` does. |
+| `--actor <name>` | Who ran the rollback. Defaults as `components release` does, and must resolve before anything deploys. |
+
 ## Exit Codes
 
 | Code | Meaning |
 |------|---------|
 | 0 | Success (for `fan-out`, every selected component applied) |
-| 1 | Error (missing required flags, unresolvable actor, concurrent ledger write, no manifest found, an export entry missing on disk; for `fan-out`, a component failed, or the change signal was unusable; for `promote`, a digest missing from the source ledger, a composition that cannot be pinned, or a failed deploy) |
-| 3 | `fan-out` and `promote`: stopped at a gate nobody has approved. For `fan-out` nothing ran; for `promote` the steps before the gate ran, and only components that finished were recorded. |
+| 1 | Error (missing required flags, unresolvable actor, concurrent ledger write, no manifest found, an export entry missing on disk; for `fan-out`, a component failed, or the change signal was unusable; for `promote` and `rollback`, a digest missing from the ledger, a composition that cannot be pinned, or a failed deploy) |
+| 3 | `fan-out`, `promote` and `rollback`: stopped at a gate nobody has approved. For `fan-out` nothing ran; for the other two the steps before the gate ran, and only components that finished were recorded. |
 
 ## See Also
 

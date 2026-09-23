@@ -66,7 +66,7 @@ vi.mock("../../op/gate", async () => {
 // The run handler pulls in every runtime; the promote needs only its exit code.
 vi.mock("./run", () => ({ GATED_EXIT_CODE: 3 }));
 
-const { runComponentsPromote } = await import("./promote");
+const { runComponentsPromote, runComponentsRollback } = await import("./promote");
 
 const api: DriverComponent = {
   name: "api",
@@ -205,5 +205,57 @@ describe("chant components promote", () => {
     expect(await runComponentsPromote(ctx({}))).toBe(1);
     expect(errors.join("\n")).toMatch(/no publish step/);
     expect(ran).toEqual([]);
+  });
+});
+
+describe("chant components rollback", () => {
+  const prod = (digest: string, timestamp: string, runId: string): ReleaseRecord =>
+    ({ ...staging, env: "prod", digest, timestamp, runId });
+
+  beforeEach(() => {
+    readReleaseLedgerMock.mockResolvedValue({
+      records: [prod("sha256:old", "2026-01-01T00:00:00.000Z", "run-1"), prod("sha256:new", "2026-01-02T00:00:00.000Z", "run-2")],
+      malformed: 0,
+    });
+  });
+
+  const rb = (a: Partial<ParsedArgs>) => ctx({ migrateFrom: undefined, migrateTo: undefined, path: "rollback", extraPositional: "prod", component: "api", ...a });
+
+  test("an environment and --component are required", async () => {
+    expect(await runComponentsRollback(rb({ component: undefined }))).toBe(1);
+    expect(errors.join("\n")).toMatch(/--component <name> are required/);
+  });
+
+  test("redeploys the previous release from its recorded digest and records what it restored", async () => {
+    expect(await runComponentsRollback(rb({}))).toBe(0);
+    expect(readReleaseLedgerMock).toHaveBeenCalledWith("prod");
+    // Neither a build nor a publish: the environment already has the artifact.
+    expect(ran).toEqual(["prod:apply"]);
+    expect(appendReleaseRecordMock.mock.calls[0][0]).toMatchObject({
+      component: "api",
+      env: "prod",
+      digest: "sha256:old",
+      restores: { env: "prod", runId: "run-1", timestamp: "2026-01-01T00:00:00.000Z" },
+    });
+    expect(appendReleaseRecordMock.mock.calls[0][0]).not.toHaveProperty("promotedFrom");
+  });
+
+  test("a digest the environment never recorded fails clearly", async () => {
+    expect(await runComponentsRollback(rb({ digest: "sha256:elsewhere" }))).toBe(1);
+    expect(errors.join("\n")).toMatch(/sha256:elsewhere is not recorded for "api" in "prod"/);
+    expect(ran).toEqual([]);
+  });
+
+  test("the environment's gate applies to a rollback", async () => {
+    const gated: DriverComponent = {
+      ...api,
+      name: "api",
+      deploy: [...api.deploy.slice(0, 2), { phase: "Apply", steps: [{ kind: "gate", gate: "rollback-ok" }, { kind: "apply" }] }],
+    };
+    resolveTargetsMock.mockResolvedValue({ success: true, targets: [gated] });
+    expect(await runComponentsRollback(rb({}))).toBe(3);
+    expect(ran).not.toContain("prod:apply");
+    expect(appendReleaseRecordMock).not.toHaveBeenCalled();
+    expect(errors.join("\n")).toMatch(/chant approve api rollback-ok/);
   });
 });

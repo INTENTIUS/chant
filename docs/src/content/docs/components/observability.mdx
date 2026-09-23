@@ -44,7 +44,7 @@ A release record is never edited or replaced in place. Recording a new deploy ap
 
 The binding key is the **digest** — the same identity [`publish-image`/`load-image-on-host`](/chant/components/build-archive/) promote by. Because publish never rebuilds, that identity threads build -> dev -> staging -> prod unchanged, so comparing environments is a digest comparison, never a guess through CI logs.
 
-[`chant components promote --from staging --to prod`](/chant/cli/components/#components-promote) uses that identity to deploy what the staging ledger records to prod without building it again. The prod record it writes carries `promotedFrom`, which names the staging release it came from. Whether a prod release was promoted, and from where, is then on the ledger line itself.
+[`chant components promote --from staging --to prod`](/chant/cli/components/#components-promote) uses that identity to deploy what the staging ledger records to prod without building it again. The prod record it writes carries `promotedFrom`, which names the staging release it came from. Whether a prod release was promoted, and from where, is then on the ledger line itself. [`chant components rollback`](/chant/cli/components/#components-rollback) redeploys an earlier release of one environment the same way, and its record carries `restores`, naming the release it brought back.
 
 ## Build ledger: SBOM and referrer discovery
 

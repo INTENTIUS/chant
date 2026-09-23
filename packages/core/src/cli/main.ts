@@ -27,7 +27,7 @@ import { runCarveStatus } from "./handlers/carve-status";
 import { runLifecycleSnapshot, runLifecycleShow, runLifecycleDiff, runLifecycleRollback, runLifecyclePlan, runLifecycleAffected, runLifecycleLog, runLifecycleTeardown, runLifecycleWhoami, runLifecycleUnknown } from "./handlers/lifecycle";
 import { runComponentsStatus, runComponentsReleaseRecord, runComponentsExport, runComponentsUnknown } from "./handlers/components";
 import { runComponentsFanOut } from "./handlers/fan-out";
-import { runComponentsPromote } from "./handlers/promote";
+import { runComponentsPromote, runComponentsRollback } from "./handlers/promote";
 import { runScenarioCheck, runScenarioUnknown } from "./handlers/scenario";
 import { runGraph } from "./handlers/graph";
 import { runExplain } from "./handlers/explain";
@@ -688,6 +688,10 @@ Component release ledger + status:
                             (--from <env> --to <env> [--component <name>
                              [--digest <sha256:...>]]; --dry-run prints the
                              plan; the target's gates still apply)
+  components rollback <env> Redeploy an earlier release of an environment
+                            from its recorded digest (--component <name>
+                            [--digest <sha256:...>]; defaults to the release
+                            before the current one; --dry-run prints the plan)
 
 Lexicon development:
   dev generate          Generate lexicon artifacts (+ validate + coverage)
@@ -1037,6 +1041,7 @@ export const commandRegistry: CommandDef[] = [
   { name: "components release", handler: runComponentsReleaseRecord },
   { name: "components export", handler: runComponentsExport },
   { name: "components promote", handler: runComponentsPromote },
+  { name: "components rollback", handler: runComponentsRollback },
 
   // Local emulators of configured lexicons (#920). Compound so the action word
   // lands in args.path (not consumed as a project dir) and projectPath is forced ".".
