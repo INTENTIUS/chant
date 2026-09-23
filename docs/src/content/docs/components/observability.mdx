@@ -88,6 +88,12 @@ Like the release record, manifest persistence runs in the CLI once the deploy se
 
 `chant components status` resolves `build`/`componentBom` for a recorded digest by calling `findBuildManifestByArtifactDigest` and deriving both from the result via `buildLedgerEntries`/`componentBomSummary` — the same functions covered above, now fed a real manifest instead of one built by hand. A digest with no persisted manifest (it predates this wiring, or was recorded via the standalone `chant components release` command with no corresponding build) simply reports `null` for both fields, exactly as before.
 
+### Digests made before real SHA-256
+
+Until now, the `sha256:` values chant computes itself (the digests of synthesized templates, SBOMs and config-BOMs, and every `manifestDigest`) came from a 32-bit string hash repeated to 64 hex characters, not from SHA-256 ([#2514](https://github.com/INTENTIUS/chant/issues/2514)). The next release computes real SHA-256, so each of those values changes once for the same content. Digests that came from an external tool, such as an image digest from `docker build`, are real already and do not change.
+
+In this release, reading a release ledger or the persisted build manifests that hold values in the old form prints one warning per project. Nothing is rewritten. After the change, old entries are marked `legacy-digest` and still read.
+
 ## Reconciling with live
 
 `chant components status` doesn't recompute drift logic — it reuses the same ownership-aware classification [`lifecycle plan`](/chant/cli/lifecycle/) already trusts (`buildChangeSet`), then joins it against the release ledger by component name and digest. Four reconciliation outcomes, plus `unknown` when `--live` is omitted:

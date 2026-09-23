@@ -29,6 +29,7 @@
  */
 
 import { sortedJsonReplacer } from "../utils";
+import { warnOnLegacyDigests } from "./legacy-digest";
 import { appendReleaseRecordLine, readReleaseLedgerLines, listLedgerEnvironments as gitListLedgerEnvironments } from "./git";
 
 /**
@@ -278,6 +279,13 @@ export async function readReleaseLedger(
       malformed++;
     }
   }
+  // chant #2514 — a release ahead of real SHA-256 digests, say once that
+  // this ledger holds values in the old form.
+  warnOnLegacyDigests(
+    records.flatMap((r) => [r.digest, r.manifestDigest, r.inputDigest]),
+    "release ledger",
+    opts?.cwd,
+  );
   return { records, malformed };
 }
 
