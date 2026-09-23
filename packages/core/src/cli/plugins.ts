@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { isLexiconPlugin, type LexiconPlugin } from "../lexicon";
 import { loadChantConfigUpward } from "../config";
 import { findInfraFiles, detectLexicons } from "../index";
-import { checkConflicts } from "./conflict-check";
+import { checkConflicts, describeConflict } from "./conflict-check";
 
 /**
  * Load a single lexicon plugin by lexicon name.
@@ -177,9 +177,7 @@ export async function loadPlugins(lexiconNames: string[]): Promise<LexiconPlugin
   }
 
   if (report.conflicts.length > 0) {
-    const details = report.conflicts
-      .map((c) => `  ${c.type} "${c.key}" from: ${c.plugins.join(", ")}`)
-      .join("\n");
+    const details = report.conflicts.map(describeConflict).join("\n");
     throw new Error(
       `Cross-lexicon conflicts detected:\n${details}`,
     );

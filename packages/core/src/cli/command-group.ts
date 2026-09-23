@@ -81,11 +81,18 @@ export interface CommandGroup {
  * (./conflict-check.ts) treats a collision as a hard, loud failure at
  * plugin-load time rather than a silently-ignored command group. Hand
  * maintained alongside the registry; update both together.
+ *
+ * `workspace` is reserved before core has the command (#2529, #2524 D12), so
+ * no lexicon can claim the word first and later be shadowed by it. Only a
+ * command-group name is reserved: a lexicon's own config field or flag
+ * called `workspace` (the terraform lexicon's root config has one) is
+ * untouched.
  */
 export const RESERVED_COMMAND_NAMES: ReadonlySet<string> = new Set([
   "build", "lint", "list", "describe", "import", "audit", "migrate", "carve",
   "init", "update", "doctor", "dev", "run", "graph", "vendor", "lifecycle",
   "lc", "components", "emulator", "serve", "operator", "approve",
+  "workspace",
 ]);
 
 /**

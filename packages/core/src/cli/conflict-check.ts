@@ -108,3 +108,16 @@ export function checkConflicts(plugins: LexiconPlugin[]): ConflictReport {
 
   return { conflicts, warnings };
 }
+
+/**
+ * One line of the load-time error for a conflict. A command-group name that
+ * core reserves says so and says what to do, since the lexicon author reading
+ * it may not know the word is core's (#2529).
+ */
+export function describeConflict(c: ConflictEntry): string {
+  const line = `  ${c.type} "${c.key}" from: ${c.plugins.join(", ")}`;
+  if (c.type === "command-group-name" && RESERVED_COMMAND_NAMES.has(c.key)) {
+    return `${line} — "${c.key}" is a reserved chant command name, so no lexicon can register a command group with it. Rename the group.`;
+  }
+  return line;
+}

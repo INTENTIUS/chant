@@ -140,7 +140,7 @@ best-known readers.
 | `docs()` | `Promise<void>` | Generate documentation pages |
 | `mcpTools()` | `McpToolContribution[]` | MCP tool contributions — see [LSP & MCP Providers](/chant/lexicon-authoring/lsp-mcp/) |
 | `mcpResources()` | `McpResourceContribution[]` | MCP resource contributions |
-| `commands()` | `CommandGroup` | A CLI verb group mounted under `chant <name> <verb>` — core dispatches to it wholesale and knows nothing about what's inside |
+| `commands()` | `CommandGroup` | A CLI verb group mounted under `chant <name> <verb>` — core dispatches to it wholesale and knows nothing about what's inside. `<name>` cannot be one of core's own command words or `workspace`, which core reserves; a plugin that tries fails to load with an error naming the word |
 | `emulator` | `EmulatorCapability` or a list of them | Local emulator(s) `chant emulator` boots — see [Declaring a Local Emulator](/chant/lexicon-authoring/emulator/) |
 | `generateComponentPipeline()` | `ComponentPipelineResult` | Turn the component graph into CI YAML. CI-provider lexicons only (gitlab, github, forgejo) |
 | `generateOpPipeline()` | `OpPipelineResult` | Turn a set of scheduled Ops into cron-triggered CI YAML, one file per Op. CI-provider lexicons only (gitlab, github, forgejo) |

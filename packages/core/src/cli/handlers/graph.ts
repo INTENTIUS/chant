@@ -2,7 +2,7 @@ import { dirname, resolve } from "node:path";
 import { discoverOps } from "../../op/discover";
 import { discover } from "../../discovery/index";
 import { partitionByLexicon, computeStackGraph, build, mergeBuildRootEntities } from "../../build";
-import { buildGraphIr, buildLiveGraphIr, collectUnobserved, overlayGraphs, sourceOverlayGraphs, type GraphIR, type IRPipeline, type LiveObservation } from "../../graph-ir";
+import { buildGraphIr, buildLiveGraphIr, collectUnobserved, overlayGraphs, sourceOverlayGraphs, GRAPH_IR_VERSION, type GraphIR, type IRPipeline, type LiveObservation } from "../../graph-ir";
 import { behaviourOverlay } from "../../behaviour-overlay";
 import type { SerializerResult } from "../../serializer";
 import { applyBehaviourOverlay, behaviourRequestFromIr } from "../../behaviour-graph";
@@ -886,7 +886,9 @@ async function emitIr(
       }
     case "ir":
     default:
-      console.log(JSON.stringify(ir, null, 2));
+      // The version leads the document (#2529), so a reader sees it before
+      // anything it might not understand.
+      console.log(JSON.stringify({ version: GRAPH_IR_VERSION, ...ir }, null, 2));
       return 0;
   }
 }
