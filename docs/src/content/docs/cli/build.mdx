@@ -125,6 +125,13 @@ A components-only project need not declare a lexicon plugin at all. Lexicons are
 
 `--env <name>` is threaded into the generated pipeline as the environment it deploys, and `--param` / `--params-file` bind build-time parameters the same way they do for a resource build. With `--format json` the result is `{ stages, jobs, yaml, env }` on stdout, where `env` is the generator's own resolved environment (present whenever the generator returns one; omitted otherwise) rather than something a consumer has to re-derive by parsing the YAML back. The same stages, jobs and env are available as graph IR through [`chant graph --components --format ir --projection <lexicon>`](/chant/cli/graph/#--projection-lexicon--the-cipipeline-projection-989).
 
+Scheduled Ops have their own generator command, [`chant run --generate <provider>`](/chant/cli/run/#run---generate-provider). It writes one pipeline file per Op, and each file carries the generated-file marker and the command that regenerates it:
+
+```bash
+chant build --components --generate github --env staging --output .github/workflows/components.yml
+chant run --generate github
+```
+
 ## Build-time parameters
 
 `--param name=value` (repeatable) and `--params-file <path>` bind declared build-time parameters — `chant.config.ts`'s `buildParams` — so source can read `params.<name>` (`import { params } from "@intentius/chant/params"`) instead of `process.env`. Unlike the AWS lexicon's deploy-time `Parameter()`, a build-time parameter resolves before synthesis, so its value can change which resources are produced at all. An unknown name, a missing required value, or a value outside a declared `enum` is reported as a build error naming the parameter — never a thrown error from inside project source. The resolution is summarized on one line (`23 build parameters resolved (4 from env, 19 default)`), listed one per line as `[param] name = value (source)` under `--verbose`, and recorded on the build result for provenance. See [Build-Time Parameters](/chant/concepts/build-time-parameters/) for the full picture, including precedence and why it folds to a literal.

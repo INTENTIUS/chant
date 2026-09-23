@@ -20,6 +20,7 @@ import { ndjsonProgressSink } from "../../components/run-progress";
 import { maybeRecordAutoRelease } from "../../components/auto-release";
 import { maybePersistBuildManifest } from "../../components/manifest-persistence";
 import type { DriverComponentResult } from "../../components/driver";
+import { runOpGenerate } from "./run-generate";
 
 /**
  * The exit code a run that stopped at an unapproved gate uses (#2119).
@@ -524,6 +525,16 @@ function refusesPolicyGateUnderSandbox(ctx: CommandContext, config: OpConfig, op
 }
 
 export async function runOp(ctx: CommandContext): Promise<number> {
+  if (ctx.args.generate) {
+    if (ctx.args.components) {
+      console.error(formatError({
+        message: "`chant run --components --generate` is not a command",
+        hint: "Generate a component pipeline with `chant build --components --generate <lexicon>`, or Op pipelines with `chant run --generate <provider>`.",
+      }));
+      return 1;
+    }
+    return runOpGenerate(ctx);
+  }
   if (ctx.args.components && ctx.args.report) {
     console.error(formatError({
       message: "--report is not supported with --components",

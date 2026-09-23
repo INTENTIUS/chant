@@ -175,8 +175,13 @@ export interface ParsedArgs {
   components?: boolean;
   /** `chant build --components --generate <lexicon>` — generate mode (#563):
    * synthesize CI YAML from discovered components instead of running a normal
-   * lexicon build. Only "gitlab" is implemented for v1. */
+   * lexicon build. Also `chant run --generate <provider>` (#2533): one CI
+   * pipeline file per scheduled Op, through `generateOpsPipeline`. */
   generate?: string;
+  /** `chant run --generate <provider> --spec <file>` (#2533): a JSON file of
+   * `ScheduledOpSpec`s (or `{ ops, options }`) to generate instead of every
+   * discovered Op that declares a `schedule`. */
+  opsSpec?: string;
   /** `chant graph --format ir --detail <0..3>` — graph IR detail tier */
   detail?: number;
   /** `chant graph --lens <kind>:<target>` — focus the graph IR on a slice */
