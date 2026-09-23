@@ -1,6 +1,8 @@
 import { describe, test, expect } from "vitest";
 import { EventEmitter } from "node:events";
-import { parseArgs, waitForStreamDrain } from "./main";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { commandRegistry, parseArgs, waitForStreamDrain } from "./main";
 import { resolveCommand, type CommandDef, type ParsedArgs } from "./registry";
 
 describe("parseArgs", () => {
@@ -630,6 +632,30 @@ describe("parseArgs — run flags", () => {
     expect(result.path).toBe("signal");
     expect(result.extraPositional).toBe("alb-deploy");
     expect(result.extraPositional2).toBe("gate-dns");
+  });
+});
+
+describe("workspace records (#2546)", () => {
+  test("parses --kind, --current, --at and --json", () => {
+    const args = parseArgs(["workspace", "records", "--kind", "docs/k.kind.mjs", "--current", "--at", "HEAD~1", "--json"]);
+    expect(args).toMatchObject({ command: "workspace", path: "records", kind: "docs/k.kind.mjs", current: true, at: "HEAD~1", json: true });
+    expect(parseArgs(["workspace", "records", "--kind=docs/k.kind.mjs"]).kind).toBe("docs/k.kind.mjs");
+    expect(parseArgs(["workspace", "records"]).current).toBeUndefined();
+    expect(() => parseArgs(["workspace", "records", "--kind"])).toThrow(/--kind needs a kind file/);
+    expect(() => parseArgs(["workspace", "records", "--kind", "--json"])).toThrow(/--kind needs a kind file/);
+  });
+
+  test("resolves to the records command, and anything else under workspace to its fallback", () => {
+    expect(resolveCommand(parseArgs(["workspace", "records", "--kind", "k.mjs"]), commandRegistry)?.def.name).toBe("workspace records");
+    expect(resolveCommand(parseArgs(["workspace", "ls"]), commandRegistry)?.def.name).toBe("workspace");
+  });
+
+  // #2525 rule 5: the workspace code loads only when a workspace command runs.
+  // The level-0 goldens catch it at run time; this catches it in review.
+  test("main.ts never imports workspace code statically", () => {
+    const source = readFileSync(join(import.meta.dirname, "main.ts"), "utf-8");
+    expect(source).not.toMatch(/^import[^;]*from\s+["'][^"']*workspace/m);
+    expect(source).toMatch(/await import\("\.\.\/workspace\/records-cli"\)/);
   });
 });
 

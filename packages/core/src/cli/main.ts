@@ -94,6 +94,7 @@ const BOOLEAN_FLAGS = new Set([
   "--fail-on-drift",
   "--durable-requests",
   "--skip-mcp",
+  "--current",
 ]);
 
 /**
@@ -349,6 +350,12 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.deep = true;
     } else if (arg === "--at") {
       result.at = args[++i];
+    } else if (arg === "--kind") {
+      // `chant workspace records --kind <kind file>` (#2546)
+      result.kind = args[++i];
+      if (!result.kind || result.kind.startsWith("-")) throw new Error("--kind needs a kind file: --kind <path>");
+    } else if (arg === "--current") {
+      result.current = true;
     } else if (arg === "--ambient") {
       result.ambient = true;
     } else if (arg === "--check-live") {
@@ -627,6 +634,13 @@ Ops:
                         declared graph it predicts the file; with --live it
                         predicts the account. The level reaches the engine
                         verbatim; without the flag nothing is asked (#2377)
+
+Workspace (first-test slice, #2546):
+  workspace records --kind <kind file> [--current] [--json]
+                        Read the records a record kind locates, validated
+                        against its schema, with reason codes for invalid
+                        ones. --current leaves out superseded records.
+                        Needs no workspace file
 
 Lifecycle (alias: lc):
   lifecycle snapshot <env>  Query API, save metadata to orphan branch
@@ -1019,6 +1033,10 @@ export const commandRegistry: CommandDef[] = [
   { name: "graph", handler: runGraph },
   { name: "vendor", handler: runVendor },
 
+  // Workspace reads (#2524). Imported on first use, so a level-0 command never
+  // loads anything under workspace/ (#2525 rule 5, pinned by #2526's goldens).
+  { name: "workspace records", handler: async (ctx) => (await import("../workspace/records-cli")).runWorkspaceRecords(ctx) },
+
   // State subcommands
   { name: "lifecycle snapshot", requiresPlugins: true, handler: runLifecycleSnapshot },
   { name: "lifecycle show", handler: runLifecycleShow },
@@ -1061,6 +1079,7 @@ export const commandRegistry: CommandDef[] = [
   { name: "dev", handler: runDevUnknown },
   { name: "serve", handler: runServeUnknown },
   { name: "components", handler: runComponentsUnknown },
+  { name: "workspace", handler: async (ctx) => (await import("../workspace/records-cli")).runWorkspaceUnknown(ctx) },
 ];
 
 /**
