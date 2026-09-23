@@ -28,8 +28,9 @@ import { SKIP_MARKER } from "../discovery/files";
 const thisDir = dirname(fileURLToPath(import.meta.url));
 const mainTsPath = resolve(thisDir, "main.ts");
 const repoRoot = resolve(thisDir, "../../../..");
-/** Each test spawns the CLI up to five times. */
-const TIMEOUT = 180_000;
+/** One CLI run can take a minute on a loaded CI runner, and a test makes up to three. */
+const SPAWN_TIMEOUT = 150_000;
+const TIMEOUT = 3 * SPAWN_TIMEOUT + 30_000;
 
 describe("CLI end-to-end — discovery skips a side-effecting script (#2519)", () => {
   let testDir: string;
@@ -92,7 +93,7 @@ describe("CLI end-to-end — discovery skips a side-effecting script (#2519)", (
     const result = spawnSync("npx", ["tsx", mainTsPath, ...args], {
       cwd: repoRoot,
       encoding: "utf-8",
-      timeout: 60_000,
+      timeout: SPAWN_TIMEOUT,
     });
     return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
   }
@@ -108,7 +109,7 @@ describe("CLI end-to-end — discovery skips a side-effecting script (#2519)", (
     expect(existsSync(ranPath)).toBe(true);
   }, TIMEOUT);
 
-  test("an `exclude` glob keeps build, lint, list and explain out of the script", async () => {
+  test("an `exclude` glob keeps build and lint out of the script", async () => {
     await writeConfig(', exclude: ["ops/**"]');
     await writeRunner();
 
@@ -122,6 +123,13 @@ describe("CLI end-to-end — discovery skips a side-effecting script (#2519)", (
     const diagnostics = JSON.parse(lint.stdout) as Array<{ file: string }>;
     expect(diagnostics.some((d) => d.file.endsWith("infra.ts"))).toBe(true);
     expect(diagnostics.filter((d) => d.file.includes("ops"))).toEqual([]);
+
+    expect(existsSync(ranPath), "the script was imported").toBe(false);
+  }, TIMEOUT);
+
+  test("an `exclude` glob keeps list and explain out of the script", async () => {
+    await writeConfig(', exclude: ["ops/**"]');
+    await writeRunner();
 
     for (const command of ["list", "explain"]) {
       const { status, stdout, stderr } = runCli([command, testDir]);
