@@ -205,6 +205,14 @@ Each file is written exactly as `generateOpsPipeline` returns it, with one line 
 
 That line is the generated-file marker chant uses elsewhere, and it names the command, `--spec` included, that rewrites the file. Run the command from the repository root. GitHub files go to `.github/workflows/` and Forgejo files to `.forgejo/workflows/`, each with a `name:` that is its Op's name, so the Actions tab lists workflows by Op. GitLab's single `ops.gitlab-ci.yml` (one job per Op) to the root, where the project's `.gitlab-ci.yml` includes it. `--output <dir>` writes somewhere else. `--format json` prints `{ files: [{ name, path, content }], jobs }` and writes nothing. An unknown Op name, a provider with no Op generator, or no scheduled Op and no `--spec` exits 1.
 
+#### Inside a workspace member
+
+When the command runs in a member of a [workspace](/chant/cli/workspace-init/), the files it writes are that member's. They go to the forge's directory at the repository root, not the member's. A GitHub or Forgejo file is named `<member>-<op>.yml`, and GitLab's is `.gitlab/ci/<member>-ops.gitlab-ci.yml`. The workflow's `name:` is `<member>/<op>`, and GitHub concurrency groups and GitLab job names start with the member's name.
+
+Each Op keeps the trigger its spec gives it, and no trigger is added. A `push` or `pull_request` trigger gets a path filter listing the member's directory and the file itself. On GitLab the filter is a `changes:` rule. A cron trigger has no paths to filter. The Op's job runs in the member's directory. GitHub and Forgejo get there through `defaults.run.working-directory`, and GitLab through a leading `cd`.
+
+The marker line names the command to run from the member's directory, and the member records each file in `.chant/generated.json` there, until [#2541](https://github.com/INTENTIUS/chant/issues/2541) moves that list into `chant.workspace.json`. `--format json` adds `member` and gives each file's path relative to the repository root.
+
 ## Auto-recorded releases
 
 Auto-recording is **on by default** — no flag needed. It writes exactly one record per component whose `deploy` composition actually published a digest-bearing artifact (via `publish-image`, `publish-artifact`, or `load-image-on-host`); a component with no publish step, or a failed deploy, writes nothing. A ledger-write failure (e.g. a concurrent push, or no git remote configured) is reported as a warning and never turns an otherwise-successful deploy into a nonzero exit.

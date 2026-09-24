@@ -44,6 +44,9 @@
  *    it back as `--digest <component>=<digest>` (#2602), so it promotes the
  *    release this run built rather than whatever is latest in the source
  *    environment.
+ *  - For a workspace member (`options.member`, #2542) the workflow keeps its
+ *    triggers, and its `run:` steps start in the member's directory. See
+ *    `scopeToMember`.
  *
  * Cross-cutting changes (e.g. "sign every image before deploy") are made by
  * editing `GenerateGithubOptions.extraScript`/`beforeScript` (or the
@@ -56,10 +59,12 @@
 import { emitYAML } from "@intentius/chant/yaml";
 import { resolveComponentGraph, type DriverComponent } from "@intentius/chant/components/driver";
 import { hasPublishStep, promoteArchivePaths } from "@intentius/chant/components/promote";
+import { memberRepoPath } from "@intentius/chant/lexicon";
 import type {
   ComponentPipelineJob as GeneratedJob,
   ComponentPipelineOptions as GenerateGithubOptions,
   ComponentPipelineResult as GenerateGithubResult,
+  PipelineMember,
 } from "@intentius/chant/lexicon";
 
 export type { GeneratedJob, GenerateGithubOptions, GenerateGithubResult };
@@ -83,6 +88,8 @@ export interface GithubPipelineDoc {
   environment: string;
   /** The `on:` trigger mapping (a bare `workflow_dispatch`). */
   on: Record<string, unknown>;
+  /** The workflow's `defaults:`, set only for a workspace member: its jobs' `run:` steps start in the member's directory (#2542). */
+  defaults?: Record<string, unknown>;
   /**
    * The `env:` mapping: the caller's `variables`, plus `CHANT_ENV` naming the
    * deployed environment (#2046) — the machine-readable identity on the
@@ -309,7 +316,7 @@ export function buildGithubPipelineDoc(
     };
   }
 
-  return {
+  const doc: GithubPipelineDoc = {
     name: `chant-components-${env}`,
     environment: env,
     on: { workflow_dispatch: {} },
@@ -318,6 +325,49 @@ export function buildGithubPipelineDoc(
     stages,
     jobs,
   };
+  return options.member ? scopeToMember(doc, options.member) : doc;
+}
+
+/**
+ * Scope a pipeline to one workspace member (#2542, #2524 D19). Its name
+ * carries the member's name, and every `run:` step starts in the member's
+ * directory through `defaults.run.working-directory`.
+ *
+ * The triggers stay exactly the plain pipeline's. A deploy pipeline gains no
+ * `push` or `pull_request` trigger for a member, and its only trigger,
+ * `workflow_dispatch`, takes no `paths:` filter.
+ *
+ * `working-directory` applies to `run:` steps only. The artifact actions
+ * resolve `path` against the repository root, so each upload and download
+ * path moves under the member's directory, where the `run:` steps read and
+ * write the files.
+ */
+function scopeToMember(doc: GithubPipelineDoc, member: PipelineMember): GithubPipelineDoc {
+  const rooted = member.dir === "." || member.dir === "";
+  const jobsDoc: Record<string, unknown> = {};
+  for (const [name, job] of Object.entries(doc.jobsDoc)) {
+    const props = job as { steps?: Array<Record<string, unknown>> };
+    jobsDoc[name] = rooted || !props.steps ? job : { ...props, steps: props.steps.map((step) => memberArtifactStep(step, member)) };
+  }
+  return {
+    ...doc,
+    name: `chant-components-${member.name}-${doc.environment}`,
+    ...(rooted ? {} : { defaults: { run: { "working-directory": member.dir } } }),
+    jobsDoc,
+  };
+}
+
+/** An `actions/upload-artifact` or `download-artifact` step with its `path` moved under the member's directory. */
+function memberArtifactStep(step: Record<string, unknown>, member: PipelineMember): Record<string, unknown> {
+  const uses = typeof step.uses === "string" ? step.uses : "";
+  if (!/^actions\/(upload|download)-artifact@/.test(uses)) return step;
+  const withProps = step.with as Record<string, unknown> | undefined;
+  if (!withProps || typeof withProps.path !== "string") return step;
+  const path = withProps.path
+    .split("\n")
+    .map((line) => memberRepoPath(member, line))
+    .join("\n");
+  return { ...step, with: { ...withProps, path } };
 }
 
 /**
@@ -331,6 +381,7 @@ export function emitPipelineYAML(doc: GithubPipelineDoc): string {
   if (doc.env && Object.keys(doc.env).length > 0) {
     sections.push("env:" + emitYAML(doc.env, 1));
   }
+  if (doc.defaults) sections.push("defaults:" + emitYAML(doc.defaults, 1));
   sections.push("jobs:" + emitYAML(doc.jobsDoc, 1));
   return sections.join("\n\n") + "\n";
 }

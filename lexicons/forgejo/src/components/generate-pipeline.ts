@@ -62,6 +62,8 @@ export function generateForgejoPipeline(
     environment: doc.environment,
     on: forgejoize(doc.on, dialectOptions),
     ...(doc.env ? { env: forgejoize(doc.env, dialectOptions) } : {}),
+    // A workspace member's working directory (#2542) reads the same on Forgejo.
+    ...(doc.defaults ? { defaults: doc.defaults } : {}),
     jobsDoc: forgejoize(doc.jobsDoc, dialectOptions),
     stages: doc.stages,
     jobs: doc.jobs,

@@ -1,0 +1,38 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`a project outside any workspace (level 0) > the pipeline is the generator's output, unchanged 1`] = `
+"name: chant-components-staging
+
+on:
+  workflow_dispatch: {}
+
+env:
+  CHANT_ENV: staging
+
+jobs:
+  shared-alb:
+    runs-on: ubuntu-latest
+    container: node:22-slim
+    steps:
+      - uses: actions/checkout@v4
+      - run: chant run --components shared-alb --env staging --dump-outputs shared-alb.outputs.json
+      - name: Upload shared-alb outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: shared-alb-outputs
+          path: shared-alb.outputs.json
+  api:
+    runs-on: ubuntu-latest
+    needs:
+      - shared-alb
+    container: node:22-slim
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download shared-alb outputs
+        uses: actions/download-artifact@v4
+        with:
+          name: shared-alb-outputs
+          path: .
+      - run: chant run --components api --env staging --seed-outputs shared-alb.outputs.json
+"
+`;

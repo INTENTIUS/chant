@@ -35,10 +35,12 @@
 import { emitYAML } from "@intentius/chant/yaml";
 import { resolveComponentGraph, type DriverComponent } from "@intentius/chant/components/driver";
 import { hasPublishStep, promoteArchivePaths } from "@intentius/chant/components/promote";
+import { memberGitlabChanges, memberRepoPath, memberShellDir } from "@intentius/chant/lexicon";
 import type {
   ComponentPipelineJob as GeneratedJob,
   ComponentPipelineOptions as GenerateGitlabOptions,
   ComponentPipelineResult as GenerateGitlabResult,
+  PipelineMember,
 } from "@intentius/chant/lexicon";
 
 export type { GeneratedJob, GenerateGitlabOptions, GenerateGitlabResult };
@@ -180,6 +182,10 @@ export function generateGitlabPipeline(
     };
   }
 
+  if (options.member) {
+    promoteJob = scopeToMember(doc, jobs, promoteJob, options.member, env);
+  }
+
   const sections: string[] = [];
   // `emitYAML` returns a `\n`-led block for a non-empty sequence and an inline
   // `[]` for an empty one, so the header needs a space in the second case.
@@ -199,4 +205,49 @@ export function generateGitlabPipeline(
   if (promoteJob) sections.push(`${promoteJob}:` + emitYAML(doc[promoteJob], 1));
 
   return { yaml: sections.join("\n\n") + "\n", stages, jobs, env };
+}
+
+/**
+ * Scope a pipeline to one workspace member (#2542, #2524 D19), in place on
+ * `doc` and `jobs`. Returns the promote job's new name.
+ *
+ * GitLab reads one `.gitlab-ci.yml`, so a member's pipeline is a file that
+ * the root file includes, and job names share one namespace across every
+ * included file. Each job therefore takes the member's name as a prefix. A
+ * `rules: changes:` entry limits each job to changes under the member's
+ * directory or to the pipeline file; for a member at `"."` there is no such
+ * rule, since `changes` has no exclusions. Each job's script starts with a
+ * `cd` into the member's directory, and artifact paths, which GitLab resolves
+ * against the repository root, move under it.
+ */
+function scopeToMember(
+  doc: Record<string, unknown>,
+  jobs: GeneratedJob[],
+  promoteJob: string | undefined,
+  member: PipelineMember,
+  env: string,
+): string | undefined {
+  const rooted = member.dir === "." || member.dir === "";
+  const changes = memberGitlabChanges(member);
+  const renamed = new Map<string, string>();
+  for (const job of jobs) renamed.set(job.jobName, `${member.name}-${job.jobName}`);
+  if (promoteJob) renamed.set(promoteJob, `${member.name}-${promoteJob}`);
+
+  for (const [from, to] of renamed) {
+    const props = doc[from] as Record<string, unknown>;
+    delete doc[from];
+    const next: Record<string, unknown> = { ...props };
+    if (!rooted) next.script = [`cd ${memberShellDir(member)}`, ...(props.script as string[])];
+    if (Array.isArray(props.needs)) next.needs = (props.needs as string[]).map((n) => renamed.get(n) ?? n);
+    const artifacts = props.artifacts as { paths?: string[] } | undefined;
+    if (artifacts?.paths) next.artifacts = { ...artifacts, paths: artifacts.paths.map((p) => memberRepoPath(member, p)) };
+    if (changes) next.rules = [{ changes }];
+    doc[to] = next;
+  }
+  for (const job of jobs) {
+    job.jobName = renamed.get(job.jobName)!;
+    job.needs = job.needs.map((n) => renamed.get(n) ?? n);
+  }
+  doc.workflow = { name: `chant-components-${member.name}-${env}` };
+  return promoteJob ? renamed.get(promoteJob) : undefined;
 }

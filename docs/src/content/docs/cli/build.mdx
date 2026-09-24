@@ -148,6 +148,32 @@ Without `--promote-to` the generated pipeline has no promote job. It uploads no 
 chant build --components --generate github --env staging --promote-to prod --output .github/workflows/components.yml
 ```
 
+### Inside a workspace member
+
+When the project sits in a member of a [workspace](/chant/cli/workspace-init/), the pipeline belongs to that member. chant finds the member from the `chant.workspace.json` above the project. The pipeline keeps the triggers it has outside a workspace, and a deploy pipeline never gains a `push` or `pull_request` trigger. What changes is where its jobs run and what they are called:
+
+- On GitHub and Forgejo, `run:` steps start in the member's directory through `defaults.run.working-directory`. Artifact upload and download paths move under that directory to match. The only trigger is `workflow_dispatch`, which takes no `paths:` filter.
+- On GitLab each job name starts with the member's name, and each script starts with `cd <member dir>`. Each job also gets a `rules: changes:` entry for the member's directory and the pipeline file, so a pipeline that the forge starts for a change in another member skips it. GitLab's `changes` has no exclusions, so a member at the workspace root (`.`) gets no `changes` rule.
+- The workflow's name is `chant-components-<member>-<env>`.
+
+Without `--output` the pipeline is written to the forge's directory at the repository root, in a file named after the member and the environment, so two members never write the same file:
+
+| Lexicon | File |
+|---|---|
+| `github` | `.github/workflows/chant-<member>-<env>.yml` |
+| `forgejo` | `.forgejo/workflows/chant-<member>-<env>.yml` |
+| `gitlab` | `.gitlab/ci/chant-<member>-<env>.gitlab-ci.yml`, which the root `.gitlab-ci.yml` includes with `include: local: .gitlab/ci/*.gitlab-ci.yml` |
+
+Its first line is chant's generated-file marker. The marker names the command that rewrites the file, which runs in the member's directory. The member lists the file in `.chant/generated.json` in its own directory, and each entry holds that command and the environment. This list is interim, and moves into the member's `generated` list in `chant.workspace.json` with [#2541](https://github.com/INTENTIUS/chant/issues/2541). Forge files at the repository root are the one kind of generated file a member may own outside its own directory, and only one member may own each of them.
+
+With `--format json` the result also carries `member` and `file`, and nothing is written. A project in an example group, or in a directory no member holds, gets the plain pipeline. So does every project outside a workspace, whose output is unchanged.
+
+```bash
+cd services/api
+chant build --components --generate github --env staging
+# wrote .github/workflows/chant-api-staging.yml for member api
+```
+
 Scheduled Ops have their own generator command, [`chant run --generate <provider>`](/chant/cli/run/#run---generate-provider). It writes one pipeline file per Op, and each file carries the generated-file marker and the command that regenerates it:
 
 ```bash
