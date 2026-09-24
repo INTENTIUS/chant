@@ -751,6 +751,11 @@ Workspace (level 1, #2524):
                         --require attested exits 2 if any record is not
                         attested. A pinned file that changed is a warning,
                         asset-drift or asset-missing
+  workspace records --kind <kind file> --since <rev> [--at <rev>] [--json]
+                        What changed in the records between <rev> and --at
+                        (default: the working tree): new and removed records,
+                        state transitions, new verdicts, new supersessions
+                        and changed pins
   workspace records pin <path>
                         Print the path from the workspace root and the
                         sha256 of a file, for a decision's evidence pin

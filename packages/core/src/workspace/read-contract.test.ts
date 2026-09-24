@@ -6,9 +6,9 @@
  * `chant` member (`delivery`), three `other` members and decision records.
  * Each read-contract command reads it here, and its output must validate
  * against the command's schema: `ls`, `graph` (running delivery's real
- * `chant graph`), `graph --composites`, `check`, `status` and `records`, in
- * the working tree and, for `ls`, `graph` and `check`, at `HEAD` through
- * `--at`.
+ * `chant graph`), `graph --composites`, `check`, `status`, `records` and
+ * `records --since`, in the working tree and, for `ls`, `graph` and `check`,
+ * at `HEAD` through `--at`.
  *
  * The schemas themselves are checked here too: each is a draft 2020-12
  * document under `https://intentius.io/chant/schemas/workspace/<command>/v1/`,
@@ -34,13 +34,15 @@ import { readerBin, type Toolchain } from "./member-commands";
 import { READ_CONTRACT_FLOOR, READ_CONTRACT_VERSION } from "./reason-codes";
 import { queryRecords } from "./records-cli";
 import recordsSchema from "./records.schema.json";
+import { queryRecordsSince } from "./records-since";
+import recordsSinceSchema from "./records-since.schema.json";
 import { workspaceStatus } from "./status";
 import statusSchema from "./status.schema.json";
 
 const FIXTURE = join(REPO, "reference-workspace");
 const TIMEOUT = 240_000;
 
-const SCHEMAS = { ls: lsSchema, graph: graphSchema, check: checkSchema, status: statusSchema, records: recordsSchema, intent: intentSchema, composites: compositesSchema };
+const SCHEMAS = { ls: lsSchema, graph: graphSchema, check: checkSchema, status: statusSchema, records: recordsSchema, "records-since": recordsSinceSchema, intent: intentSchema, composites: compositesSchema };
 
 /** This checkout's chant, started the way the CLI starts it, for members with no toolchain of their own. */
 const reader: Toolchain = {
@@ -172,6 +174,20 @@ describe("every schema against the reference workspace (#2543)", () => {
       if ("error" in doc) throw new Error(doc.error.message);
       expect(doc.summary.invalid).toBe(0);
       expect(doc.records.map((r) => r.id)).toContain("ref-001");
+    }
+    const sessions = await queryRecords({ kind: "design/sessions/session.kind.mjs", cwd: FIXTURE });
+    expectValid(sessions);
+    if ("error" in sessions) throw new Error(sessions.error.message);
+    expect(sessions.summary.invalid).toBe(0);
+  });
+
+  test("records --since HEAD, for decisions and sessions (#2673)", async () => {
+    const { expectValid } = contract(recordsSinceSchema);
+    for (const kind of ["decisions/decision.kind.mjs", "design/sessions/session.kind.mjs"]) {
+      const doc = await queryRecordsSince({ kind, since: "HEAD", cwd: FIXTURE });
+      expectValid(doc);
+      if ("error" in doc) throw new Error(doc.error.message);
+      expect(doc.since).toBe(head);
     }
   });
 });

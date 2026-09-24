@@ -86,6 +86,11 @@
         "quorum": {
           "description": "Added in contract 1 by #2671, on every record of a kind with a reviews list. Null when the front matter could not be parsed.",
           "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/quorum" }]
+        },
+        "citedBy": {
+          "description": "Added in contract 1 by #2673, on every record of a session kind and on no other. The review entries of the records the session kind names as its subjects (decisions, for the reference session kind) whose session field names this record's id, in path order and then list order.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/citation" }
         }
       },
       "allOf": [
@@ -172,6 +177,17 @@
         "proposes": { "type": "string", "description": "The proposed decision the dissent opened, when it names one." }
       }
     },
+    "citation": {
+      "type": "object",
+      "required": ["id", "path", "index", "reviewer", "verdict"],
+      "properties": {
+        "id": { "type": "string", "description": "The subject record's id." },
+        "path": { "type": "string", "description": "The subject record's path from the repository root, with / separators." },
+        "index": { "type": "integer", "minimum": 0, "description": "The entry's position in the subject's reviews list, from 0." },
+        "reviewer": { "type": ["string", "null"], "description": "The reviewer as the entry writes it, or null when it names none." },
+        "verdict": { "type": ["string", "null"], "description": "The verdict as the entry writes it, or null when it names none." }
+      }
+    },
     "trust": {
       "description": "Added in contract 1 by #2547. Where provenance was judged from: the policy read at the base revision, never the tree read.",
       "type": "object",
@@ -210,7 +226,9 @@
             "record-schema-invalid",
             "record-id-duplicate",
             "record-supersedes-unknown",
-            "record-supersedes-conflict"
+            "record-supersedes-conflict",
+            "session-seal-mismatch",
+            "session-verdict-unknown-record"
           ]
         },
         "message": { "type": "string" }

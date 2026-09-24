@@ -149,7 +149,9 @@
                 "record-schema-invalid",
                 "record-id-duplicate",
                 "record-supersedes-unknown",
-                "record-supersedes-conflict"
+                "record-supersedes-conflict",
+                "session-seal-mismatch",
+                "session-verdict-unknown-record"
               ]
             },
             "message": {

@@ -426,7 +426,7 @@ export interface ParsedArgs {
   plan?: string;
   /** `chant operator log --op <name>` (#2029) — restrict the tick history to one ConvergeOp by name. Omitted, every discovered ConvergeOp's ticks are merged into one timeline. */
   op?: string;
-  /** `chant operator log --since <iso>` (#2029) — only entries at or after this ISO-8601 instant. */
+  /** `chant operator log --since <iso>` (#2029) — only entries at or after this ISO-8601 instant. `chant workspace records --since <rev>` (#2673) — the revision to compare the records with. */
   since?: string;
   /** `chant operator log --limit <n>` (#2029) — keep only the newest n entries (still printed oldest-first). */
   limit?: number;

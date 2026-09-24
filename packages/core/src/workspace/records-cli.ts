@@ -10,6 +10,9 @@
  *
  * It needs no `chant.workspace.json`. The kind is passed explicitly, so
  * nothing is inferred (#2525 rule 1).
+ *
+ * With `--since <rev>` it prints what changed between two revisions instead,
+ * through `records-since.ts` (#2673).
  */
 
 import { execFileSync } from "node:child_process";
@@ -46,7 +49,7 @@ export const RECORDS_CONTRACT_VERSION = 1;
 export const RECORDS_OUTPUT_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace/records/v1/records.schema.json";
 
 const USAGE =
-  "chant workspace records --kind <kind file> [--current] [--at <rev>] [--base <rev>] [--require attested] [--json] | chant workspace records pin <path> | chant workspace records new|amend|review (#2670)";
+  "chant workspace records --kind <kind file> [--current] [--at <rev>] [--base <rev>] [--require attested] [--json] | chant workspace records --kind <kind file> --since <rev> [--at <rev>] [--json] | chant workspace records pin <path> | chant workspace records new|amend|review (#2670)";
 
 /** Exit code when the read worked and a record falls below `--require`. */
 export const EXIT_BELOW_REQUIRED = 2;
@@ -184,7 +187,13 @@ export async function readRecordsFor(query: Omit<RecordsQuery, "base">): Promise
     assets = gitTree(top, at, workspaceRoot === "." ? "" : workspaceRoot);
   }
   const history = top ? gitHistory(top, at ?? "HEAD", workspaceRoot) : undefined;
-  const result = await readRecords(loaded, { root, source, current: !!query.current, assets, ...(history ? { history } : {}) });
+  // A session kind's verdicts name records of another kind, read from the same tree (#2673).
+  let subjects: { records: RecordEntry[]; reviews: string } | undefined;
+  if (loaded.kind.session) {
+    const subjectKind = await loadRecordKind(resolve(dirname(loaded.file), loaded.kind.session.subjects.kind), cwd);
+    subjects = { records: (await readRecords(subjectKind, { root, source })).records, reviews: subjectKind.kind.reviews?.field ?? "reviews" };
+  }
+  const result = await readRecords(loaded, { root, source, current: !!query.current, assets, ...(history ? { history } : {}), ...(subjects ? { subjects } : {}) });
   return { loaded, root, top, at, workspaceRoot, tree: assets, result };
 }
 
@@ -282,6 +291,19 @@ export async function runWorkspaceRecords(ctx: CommandContext): Promise<number> 
   if (args.require !== undefined && args.require !== "attested") {
     console.error(formatError({ message: `--require takes one level, attested, not ${JSON.stringify(args.require)}`, hint: USAGE }));
     return 1;
+  }
+  if (args.since !== undefined) {
+    if (args.current || args.require !== undefined || args.base !== undefined) {
+      console.error(formatError({ message: "--since compares two revisions and takes no --current, --require or --base", hint: USAGE }));
+      return 1;
+    }
+    // Loaded here, so a plain records read never loads it (#2673).
+    const { formatSince, queryRecordsSince } = await import("./records-since");
+    const since = await queryRecordsSince({ kind: args.kind, since: args.since, at: args.at, cwd: process.cwd() });
+    if (args.json) console.log(JSON.stringify(since, null, 2));
+    else if ("error" in since) console.error(formatError({ message: `${since.error.code}: ${since.error.message}`, hint: USAGE }));
+    else console.log(formatSince(since));
+    return "error" in since ? 1 : 0;
   }
   const doc = await queryRecords({ kind: args.kind, current: args.current, at: args.at, base: args.base, cwd: process.cwd() });
   if (args.json) {

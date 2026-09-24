@@ -12,6 +12,7 @@ This command is the first slice of workspace records ([#2546](https://github.com
 
 ```
 chant workspace records --kind <kind file> [--current] [--at <rev>] [--base <rev>] [--require attested] [--json]
+chant workspace records --kind <kind file> --since <rev> [--at <rev>] [--json]
 chant workspace records pin <path>
 chant workspace records new <kind file> --from <file|-> [--prefix <prefix>] [--dry-run]
 chant workspace records amend <id> --kind <kind file> --set <file|-> [--dry-run]
@@ -33,6 +34,7 @@ The command loads only when it runs. A project without workspace files never loa
 | `--at <rev>` | Read the records as they were at a commit, from the local git object store, and check their pins against the files at that commit. No checkout or network is needed. The kind file and its schema still come from the working tree. |
 | `--base <rev>` | The revision the trust policy is read from (see [Provenance](#provenance)). Defaults to the target branch: `origin/HEAD`, then `main`, then `master`. |
 | `--require attested` | Exit 2 unless every record printed is `attested`. |
+| `--since <rev>` | Compare the records at `<rev>` with the records at `--at`, or in the working tree without it, and print what changed (see [What changed between two revisions](#what-changed-between-two-revisions)). It takes no `--current`, `--base` or `--require`. |
 | `--json` | Print the result as JSON (see [Output](#output)). Without it, one line per record and a summary. |
 
 ## Record kinds
@@ -59,7 +61,7 @@ export const recordKind = {
 
 `location.dir` and `schema.path` are relative to the kind's own directory. Subdirectories are skipped, and a name has to match `location.match` to be read. The `$id` inside the schema must equal `schema.id`.
 
-`approval`, `pins`, `constrains` and `reviews` are optional, and `approval` ranks the states for [supersession](#supersession). `pins.field` names the list whose entries may pin a workspace file (see [Asset pins](#asset-pins)). `constrains.field` names the list of what a record governs, whose `member:<name>` and `path:<path>` entries become the record's links in [`chant workspace graph --kind`](/chant/cli/workspace-graph/#record-links). For `reviews`, `field` is the list of review verdicts and `decider` is the field holding the decider, and with them each record gets a digest and a quorum (see [Reviews and quorum](#reviews-and-quorum)). chant 0.82.0 and older refuse a kind file that has `approval`, `pins` or `constrains`.
+`approval`, `pins`, `constrains`, `reviews` and `session` are optional, and `approval` ranks the states for [supersession](#supersession). `pins.field` names the list whose entries may pin a workspace file (see [Asset pins](#asset-pins)). `constrains.field` names the list of what a record governs, whose `member:<name>` and `path:<path>` entries become the record's links in [`chant workspace graph --kind`](/chant/cli/workspace-graph/#record-links). For `reviews`, `field` is the list of review verdicts and `decider` is the field holding the decider, and with them each record gets a digest and a quorum (see [Reviews and quorum](#reviews-and-quorum)). chant 0.82.0 and older refuse a kind file that has `approval`, `pins` or `constrains`. `session` makes the kind a [review-session kind](#review-sessions), and chant 0.81.0 and older refuse it too.
 
 Front matter is read as the part of YAML that JSON can also express. Line endings are normalised first. A file with a YAML alias or a duplicate key is unparseable, and so is one holding a value JSON cannot hold.
 
@@ -68,6 +70,83 @@ Front matter is read as the part of YAML that JSON can also express. Line ending
 An entry is superseded when another entry lists its id under `supersedes` and the link takes effect. It takes effect under an equal or stricter approval rule (D4 of [#2524](https://github.com/INTENTIUS/chant/issues/2524)): the new entry's rank in the kind's `approval` is above 0 and at least the old entry's. For decisions that means a `decided` record supersedes a `decided` or `proposed` one, a `ratified` record supersedes any, and a `proposed` or `withdrawn` record supersedes nothing. A link that doesn't take effect leaves the old entry current, and the new entry gets the warning `record-supersedes-pending`, which leaves it valid. A kind without `approval` keeps the earlier rule: a link takes effect only from an entry in a closed state.
 
 The old file's own `state` field plays no part. Each id can be superseded once, and a second claim that takes effect gets `record-supersedes-conflict`.
+
+## Review sessions
+
+A review session is a group walking an agenda of records together, such as the decisions picked from a review queue ([#2673](https://github.com/INTENTIUS/chant/issues/2673), C10 of [#2650](https://github.com/INTENTIUS/chant/issues/2650)). The reference workspace's session kind is `reference-workspace/design/sessions/session.kind.mjs`, with its schema beside it. Its `session` declaration names three things:
+
+```js
+session: {
+  verdicts: "verdicts",
+  seal: "closed_digest",
+  subjects: { kind: "../../decisions/decision.kind.mjs" },
+},
+```
+
+`verdicts` is the list of verdicts the session produced, each `{record, principal, verdict}` with an optional `digest`. `seal` is the field that seals a closed session. `subjects.kind` is the kind file of the records the verdicts name, relative to the session kind's directory. The entries of that kind's `reviews` list (the field its `reviews` declaration names, or `reviews` without one) may name a session in `session`. The same verdict is written twice: once in the session, and once as a review entry on the decision it judged.
+
+A session file's front matter holds the agenda (each item `{record: <id>}` or `{text: <free text>}`), the attendance (each `{principal, class}`, where `class` is `person` or `agent`, with optional `roles`), `opened`, `closed` (null while open), `verdicts`, `state` (`open` or `closed`) and, once closed, the seal. chud's session files, such as `design/sessions/S-0001.json`, are the shape it started from. Sessions are Markdown front matter for now, because that is the only format records reads ([#2664](https://github.com/INTENTIUS/chant/issues/2664)).
+
+```yaml
+---
+schema: 1
+id: "S-0001"
+title: "First walk of the reference decisions"
+state: "closed"
+agenda:
+  - record: "ref-001"
+  - text: "Which decisions the design member's files still need"
+attendance:
+  - principal: "lex00"
+    class: "person"
+  - principal: "facilitator"
+    class: "agent"
+opened: "2026-09-24T18:00:00Z"
+closed: "2026-09-24T18:40:00Z"
+verdicts: []
+closed_digest: "0b33bd62..."
+---
+```
+
+The seal is the lowercase hex SHA-256 of the file's text with LF line endings and without the front-matter line that holds the seal field. Everything else, the `---` lines and the body included, is kept. It is the rule of a record's [`digest`](#reviews-and-quorum) applied to the seal field in place of the reviews list, and since the seal is one line, only that line is removed. This shell recipe computes it:
+
+```bash
+awk 'NR==1&&/^---$/{f=1;print;next} f&&/^---$/{f=0} f&&/^closed_digest:/{next} {print}' S-0001.md | shasum -a 256
+```
+
+The recipe assumes the file already uses LF and ends in one. Reading a session kind also reads its subject records from the same tree, the working tree or the commit under `--at`. A closed session whose text no longer hashes to its seal gets `session-seal-mismatch`, and a verdict naming a record the subjects don't have gets `session-verdict-unknown-record`. Both make the session invalid. Each session record in the output also carries `citedBy`: the subjects' review entries whose `session` names it, each as `{id, path, index, reviewer, verdict}`.
+
+## What changed between two revisions
+
+`--since <rev>` reads the kind's records at `<rev>` and at `--at` (the working tree without it) and lists what changed ([#2673](https://github.com/INTENTIUS/chant/issues/2673), C11 of [#2650](https://github.com/INTENTIUS/chant/issues/2650)). Given a session's open and close commits, the session kind shows it closing and the verdicts it produced, and the decision kind shows the reviews it added and the states it moved.
+
+| Change | Fields | When |
+|---|---|---|
+| `new` | `id`, `path`, `state` | an id no record had at `<rev>`. A records directory that didn't exist at `<rev>` held no records, so everything in it is new |
+| `removed` | `id`, `path`, `state` | an id no record has any more |
+| `state` | `id`, `from`, `to` | the record's state changed, such as `decided` to `ratified` |
+| `verdict` | `id`, `principal`, `verdict`, `index`, and `session` or `record` | a verdict the record did not have, including every verdict on a new record. On a session it is an entry of the verdict list, with the record it judged in `record`. On any other record it is an entry of the list the kind's `reviews` declaration names (`reviews` without one), with `session` when the entry names one |
+| `supersession` | `id`, `supersedes` | a supersession that took effect, derived by the rule in [Supersession](#supersession), so a pending link that has since been approved counts |
+| `pin` | `id`, `path`, `from`, `to` | a pinned hash changed on a record present at both revisions. `from` is null for a pin added, `to` for a pin removed |
+
+Records are matched by id, and a record whose id can't be read is left out of the comparison. Two verdict entries are the same verdict when they name the same principal, verdict, date, session and record, so a dissent that later gains `addressed_by` isn't counted again. The kind file and its schema come from the working tree for both revisions.
+
+```json
+{
+  "$schema": "https://intentius.io/chant/schemas/workspace/records-since/v1/records-since.schema.json",
+  "contract": 1,
+  "kind": { "name": "session", "schema": "urn:intentius:chant:session:1", "file": "design/sessions/session.kind.mjs" },
+  "since": "<full commit id>",
+  "at": "<full commit id>",
+  "changes": [
+    { "change": "state", "id": "S-0002", "from": "open", "to": "closed" },
+    { "change": "verdict", "id": "S-0002", "principal": "alice", "verdict": "agree", "index": 0, "record": "ref-001" }
+  ],
+  "summary": { "new": 0, "removed": 0, "state": 1, "verdict": 1, "supersession": 0, "pin": 0 }
+}
+```
+
+The document follows `https://intentius.io/chant/schemas/workspace/records-since/v1/records-since.schema.json`, shipped at `src/workspace/records-since.schema.json`. A failure prints `{ "$schema", "contract", "error": { "code", "message" } }` and exits 1, with any of the [error codes](#error-codes) below. A `<rev>` that names no commit is `since-rev-unknown`, and an `--at` that names none is `revision-unknown`. Without `--json`, each change is one line, followed by a summary.
 
 ## Asset pins
 
@@ -229,7 +308,7 @@ The output is part of the workspace [read contract](/chant/reference/workspace-r
 }
 ```
 
-`data` holds the whole front matter; the example shortens it. `at` is the full commit id when `--at` is given. `trust` and `provenance` were added within contract 1 by [#2547](https://github.com/INTENTIUS/chant/issues/2547), and `workspaceRoot`, `assets` and `warnings` by [#2549](https://github.com/INTENTIUS/chant/issues/2549). `digest` and `quorum` were added by [#2672](https://github.com/INTENTIUS/chant/issues/2672) and [#2671](https://github.com/INTENTIUS/chant/issues/2671), and only a kind with `reviews` has `quorum`.
+`data` holds the whole front matter; the example shortens it. `at` is the full commit id when `--at` is given. `trust` and `provenance` were added within contract 1 by [#2547](https://github.com/INTENTIUS/chant/issues/2547), and `workspaceRoot`, `assets` and `warnings` by [#2549](https://github.com/INTENTIUS/chant/issues/2549). `digest` and `quorum` were added by [#2672](https://github.com/INTENTIUS/chant/issues/2672) and [#2671](https://github.com/INTENTIUS/chant/issues/2671), and only a kind with `reviews` has `quorum`. `citedBy`, on a session kind's records only, was added by [#2673](https://github.com/INTENTIUS/chant/issues/2673).
 
 A failed read prints `{ "$schema", "contract", "error": { "code", "message" } }` instead.
 
@@ -242,6 +321,8 @@ A failed read prints `{ "$schema", "contract", "error": { "code", "message" } }`
 | `record-id-duplicate` | repeats an id an earlier file in path order already has |
 | `record-supersedes-unknown` | names an id in `supersedes` that no record has |
 | `record-supersedes-conflict` | supersedes a record another closed record already supersedes |
+| `session-seal-mismatch` | is a closed session whose text no longer hashes to its seal, so it changed after it closed |
+| `session-verdict-unknown-record` | is a session with a verdict naming a record that none of the kind's subject records has |
 
 ### Warning codes
 
@@ -266,6 +347,7 @@ A failed read prints `{ "$schema", "contract", "error": { "code", "message" } }`
 | `location-missing` | the records directory doesn't exist, in the tree or at the revision |
 | `not-a-git-repository` | `--at` was given outside a git repository |
 | `revision-unknown` | `--at` names no commit |
+| `since-rev-unknown` | `--since` names no commit (only with `--since`) |
 
 ## Writing records
 
@@ -320,6 +402,10 @@ chant workspace records --kind docs/design/decisions/decision.kind.mjs --current
 
 # The same decisions as they were at a commit
 chant workspace records --kind docs/design/decisions/decision.kind.mjs --current --json --at 91c7547e
+
+# What a review session did, between its open and close commits
+chant workspace records --kind design/sessions/session.kind.mjs --since <open> --at <close> --json
+chant workspace records --kind decisions/decision.kind.mjs --since <open> --at <close> --json
 
 # The path and hash for a new evidence pin
 chant workspace records pin design/screens/home.json

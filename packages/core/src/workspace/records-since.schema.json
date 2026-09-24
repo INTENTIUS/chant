@@ -1,0 +1,157 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/records-since/v1/records-since.schema.json",
+  "title": "chant workspace records --since output",
+  "description": "What `chant workspace records --kind <kind file> --since <rev> --json` prints (#2673, #2650 C11): what changed in a kind's records between the commit --since names and the tree --at names, or the working tree without it. Records are matched by id; a record whose id could not be read is not compared. Between a review session's open and close commits, the changes are what the session did. Readers ignore fields they do not know; a field is only ever added within a version. The change kinds and the error codes are closed lists. Contract version 1 is written by chant 0.81.0 and newer, and this document was added to it by #2673; a chant without --since on records refuses the flag. Every code is in the one closed list of `reason-codes.ts`.",
+  "oneOf": [{ "$ref": "#/$defs/result" }, { "$ref": "#/$defs/failure" }],
+  "$defs": {
+    "result": {
+      "description": "Both revisions were read. Exit code 0, whatever changed.",
+      "type": "object",
+      "required": ["$schema", "contract", "kind", "since", "at", "changes", "summary"],
+      "properties": {
+        "$schema": { "const": "https://intentius.io/chant/schemas/workspace/records-since/v1/records-since.schema.json" },
+        "contract": { "const": 1 },
+        "kind": {
+          "type": "object",
+          "required": ["name", "schema", "file"],
+          "properties": {
+            "name": { "type": "string", "description": "The kind's name, such as \"decision\" or \"session\"." },
+            "schema": { "type": "string", "description": "The `$id` of the kind's record schema." },
+            "file": { "type": "string", "description": "The kind file, relative to the repository root, with / separators. It is read from the working tree for both revisions." }
+          }
+        },
+        "since": { "type": "string", "pattern": "^[0-9a-f]{40,64}$", "description": "The full commit id --since names." },
+        "at": { "type": ["string", "null"], "pattern": "^[0-9a-f]{40,64}$", "description": "The full commit id --at names, or null for the working tree." },
+        "error": false,
+        "changes": {
+          "description": "In the order new, removed, state, verdict, supersession, pin, and by id within each.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/change" }
+        },
+        "summary": {
+          "description": "How many changes of each kind.",
+          "type": "object",
+          "required": ["new", "removed", "state", "verdict", "supersession", "pin"],
+          "properties": {
+            "new": { "type": "integer", "minimum": 0 },
+            "removed": { "type": "integer", "minimum": 0 },
+            "state": { "type": "integer", "minimum": 0 },
+            "verdict": { "type": "integer", "minimum": 0 },
+            "supersession": { "type": "integer", "minimum": 0 },
+            "pin": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "change": {
+      "oneOf": [
+        { "$ref": "#/$defs/new" },
+        { "$ref": "#/$defs/removed" },
+        { "$ref": "#/$defs/state" },
+        { "$ref": "#/$defs/verdict" },
+        { "$ref": "#/$defs/supersession" },
+        { "$ref": "#/$defs/pin" }
+      ]
+    },
+    "new": {
+      "description": "A record with an id no record had at --since. A directory that did not exist at --since held no records, so every record in it is new.",
+      "type": "object",
+      "required": ["change", "id", "path", "state"],
+      "properties": {
+        "change": { "const": "new" },
+        "id": { "type": "string" },
+        "path": { "type": "string", "description": "From the repository root, with / separators." },
+        "state": { "type": ["string", "null"] }
+      }
+    },
+    "removed": {
+      "description": "A record whose id no record has any more.",
+      "type": "object",
+      "required": ["change", "id", "path", "state"],
+      "properties": {
+        "change": { "const": "removed" },
+        "id": { "type": "string" },
+        "path": { "type": "string", "description": "Where it was at --since." },
+        "state": { "type": ["string", "null"], "description": "Its state at --since." }
+      }
+    },
+    "state": {
+      "description": "A state transition, such as decided to ratified, or a session open to closed.",
+      "type": "object",
+      "required": ["change", "id", "from", "to"],
+      "properties": {
+        "change": { "const": "state" },
+        "id": { "type": "string" },
+        "from": { "type": ["string", "null"] },
+        "to": { "type": ["string", "null"] }
+      }
+    },
+    "verdict": {
+      "description": "A verdict the record did not have at --since, including every verdict on a new record. On a session it is an entry of the session's verdict list, with the record it judged in record; on any other record, an entry of its reviews list, with the session it was given in when it names one. Two entries are the same verdict when they name the same principal, verdict, date, session and record, so a dissent that later gains addressed_by is not a new one.",
+      "type": "object",
+      "required": ["change", "id", "principal", "verdict", "index"],
+      "properties": {
+        "change": { "const": "verdict" },
+        "id": { "type": "string", "description": "The record holding the verdict." },
+        "principal": { "type": ["string", "null"], "description": "Who gave it, as written: a review's reviewer, or a session verdict's principal." },
+        "verdict": { "type": ["string", "null"], "description": "agree, dissent or abstain, as written." },
+        "index": { "type": "integer", "minimum": 0, "description": "Its position in the list, from 0." },
+        "record": { "type": "string", "description": "On a session's verdict, the record it judged." },
+        "session": { "type": "string", "description": "On a review entry, the session it names." }
+      }
+    },
+    "supersession": {
+      "description": "A supersession that took effect since --since, derived by the same rule as records' supersededBy, so a pending link that is now approved counts.",
+      "type": "object",
+      "required": ["change", "id", "supersedes"],
+      "properties": {
+        "change": { "const": "supersession" },
+        "id": { "type": "string", "description": "The superseding record." },
+        "supersedes": { "type": "string", "description": "The record it now supersedes." }
+      }
+    },
+    "pin": {
+      "description": "A pinned file whose pinned sha256 changed on a record that exists at both revisions: from is null for a pin added, and to is null for a pin removed.",
+      "type": "object",
+      "required": ["change", "id", "path", "from", "to"],
+      "properties": {
+        "change": { "const": "pin" },
+        "id": { "type": "string" },
+        "path": { "type": "string", "description": "From the workspace root, as the pin writes it." },
+        "from": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
+        "to": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "failure": {
+      "description": "A revision or the kind could not be read. Exit code 1.",
+      "type": "object",
+      "required": ["$schema", "contract", "error"],
+      "properties": {
+        "$schema": { "const": "https://intentius.io/chant/schemas/workspace/records-since/v1/records-since.schema.json" },
+        "contract": { "const": 1 },
+        "error": {
+          "type": "object",
+          "required": ["code", "message"],
+          "properties": {
+            "code": {
+              "enum": [
+                "kind-unreadable",
+                "kind-invalid",
+                "schema-unreadable",
+                "schema-id-mismatch",
+                "schema-invalid",
+                "location-missing",
+                "not-a-git-repository",
+                "revision-unknown",
+                "since-rev-unknown"
+              ]
+            },
+            "message": { "type": "string" }
+          }
+        },
+        "changes": false
+      }
+    }
+  }
+}

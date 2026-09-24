@@ -21,7 +21,7 @@
  */
 
 import { readdirSync, readFileSync, existsSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { describe, expect, test } from "vitest";
 import { commandRegistry } from "../packages/core/src/cli/main";
 import { WORKSPACE_CHECKS } from "../packages/core/src/workspace/checks";
@@ -182,8 +182,14 @@ describe("the boundary roster (#2657)", () => {
   test("every schema a row names exists", () => {
     const missing: string[] = [];
     for (const r of rows) {
+      // A record kind's schema may sit beside the kind file the same row names.
+      const kindDirs = r.carrier
+        .split(/,\s*/)
+        .filter((t) => t.endsWith(".kind.mjs"))
+        .map((t) => dirname(join(repoRoot, t)));
       for (const [name] of r.carrier.matchAll(/[\w.-]+\.schema\.json/g)) {
-        if (!existsSync(join(workspaceSrc, name)) && !existsSync(join(repoRoot, "docs", "design", "decisions", name))) missing.push(`${r.category} ${r.concept}: ${name}`);
+        const dirs = [workspaceSrc, join(repoRoot, "docs", "design", "decisions"), ...kindDirs];
+        if (!dirs.some((d) => existsSync(join(d, name)))) missing.push(`${r.category} ${r.concept}: ${name}`);
       }
     }
     expect(missing).toEqual([]);
