@@ -486,6 +486,21 @@ export interface ComponentPipelineOptions {
    * this too when the file should land under some other name than its stage.
    */
   opsFileName?: string;
+  /**
+   * An environment to promote to after the deploy (#2575). The component
+   * generators add one job that needs every component job and runs
+   * `chant components promote --from <env> --to <promoteTo>`. Each component
+   * job also uploads the files its build steps wrote (see
+   * `promoteArchivePaths` in `components/promote.ts`), and the promote job
+   * downloads them, since a promote publishes from the archive on disk.
+   * Unset, the pipeline has no promote job and is unchanged.
+   */
+  promoteTo?: string;
+  /**
+   * The promote job's command as argv, when `promoteTo` is set. Default
+   * `["chant", "components", "promote", "--from", <env>, "--to", <promoteTo>]`.
+   */
+  promoteCommand?: string[];
 }
 
 /** The synthesized CI pipeline for a component graph (generate mode). */

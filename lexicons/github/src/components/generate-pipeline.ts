@@ -35,6 +35,10 @@
  *    uses, and matches gitlab's artifact-passing 1:1 in intent — only the
  *    transport differs (explicit upload/download steps vs. GitLab's implicit
  *    `needs:` artifact passing).
+ *  - With `options.promoteTo` (#2575), one more job needs every component
+ *    job and runs `chant components promote`. A promote publishes from the
+ *    build archive on disk, so each component job uploads the files its
+ *    build steps wrote and the promote job downloads them to the same paths.
  *
  * Cross-cutting changes (e.g. "sign every image before deploy") are made by
  * editing `GenerateGithubOptions.extraScript`/`beforeScript` (or the
@@ -46,6 +50,7 @@
 
 import { emitYAML } from "@intentius/chant/yaml";
 import { resolveComponentGraph, type DriverComponent } from "@intentius/chant/components/driver";
+import { promoteArchivePaths } from "@intentius/chant/components/promote";
 import type {
   ComponentPipelineJob as GeneratedJob,
   ComponentPipelineOptions as GenerateGithubOptions,
@@ -106,6 +111,29 @@ function artifactName(name: string): string {
   return `${name}-outputs`;
 }
 
+/** The workflow artifact name a component's build archive is uploaded under, for the promote job (#2575). */
+function archiveArtifactName(name: string): string {
+  return `${name}-archive`;
+}
+
+/**
+ * The directory `actions/upload-artifact` roots a set of files at: the
+ * deepest directory that holds all of them. Downloading into it puts each
+ * file back at the path it was uploaded from.
+ */
+export function artifactRoot(paths: string[]): string {
+  const dirs = paths.map((p) => {
+    const parts = p.replace(/\/+$/, "").split("/");
+    parts.pop();
+    return parts.filter((part) => part !== "" && part !== ".");
+  });
+  const common: string[] = [];
+  for (let i = 0; dirs.every((d) => i < d.length && d[i] === dirs[0][i]); i++) common.push(dirs[0][i]);
+  const absolute = paths.every((p) => p.startsWith("/"));
+  if (common.length === 0) return absolute ? "/" : ".";
+  return (absolute ? "/" : "") + common.join("/");
+}
+
 /**
  * Synthesize a `.github/workflows/*.yml` pipeline from a set of components:
  * one job per component, `needs:` expressing the wave-ordered dependency DAG
@@ -138,6 +166,18 @@ export function buildGithubPipelineDoc(
   // dependencies — see epic #551 / the adopt-alb-services example.
   const dependedUpon = new Set<string>();
   for (const c of components) for (const dep of c.dependsOn ?? []) dependedUpon.add(dep);
+
+  // A promote job (#2575) runs on its own runner, and a promote publishes from
+  // the build archive on disk, so each component job uploads the files its
+  // build steps wrote and the promote job downloads them.
+  const promoteTo = options.promoteTo;
+  const archives = new Map<string, string[]>();
+  if (promoteTo !== undefined) {
+    for (const c of components) {
+      const paths = promoteArchivePaths(c);
+      if (paths.length > 0) archives.set(c.name, paths);
+    }
+  }
 
   const stages = waves.map((_, i) => `wave-${i + 1}`);
   const jobs: GeneratedJob[] = [];
@@ -189,6 +229,20 @@ export function buildGithubPipelineDoc(
         });
       }
 
+      const archive = archives.get(name);
+      if (archive) {
+        steps.push({
+          name: `Upload ${name} build archive`,
+          uses: "actions/upload-artifact@v4",
+          with: {
+            name: archiveArtifactName(name),
+            path: archive.join("\n"),
+            "if-no-files-found": "error",
+            "include-hidden-files": true,
+          },
+        });
+      }
+
       const jobProps: Record<string, unknown> = {
         "runs-on": "ubuntu-latest",
         ...(needs.length > 0 ? { needs } : {}),
@@ -198,6 +252,31 @@ export function buildGithubPipelineDoc(
       jobsDoc[jobName] = jobProps;
     }
   });
+
+  if (promoteTo !== undefined) {
+    const promoteJob = `promote-${toJobName(promoteTo)}`;
+    if (promoteJob in jobsDoc) {
+      throw new Error(`the promote job "${promoteJob}" has the same name as a component job; rename the component`);
+    }
+    const command = options.promoteCommand ?? ["chant", "components", "promote", "--from", env, "--to", promoteTo];
+    const steps: Array<Record<string, unknown>> = [{ uses: "actions/checkout@v4" }];
+    for (const [name, paths] of archives) {
+      steps.push({
+        name: `Download ${name} build archive`,
+        uses: "actions/download-artifact@v4",
+        with: { name: archiveArtifactName(name), path: artifactRoot(paths) },
+      });
+    }
+    for (const line of beforeScript) steps.push({ run: line });
+    steps.push({ run: command.join(" ") });
+    for (const line of extraScript) steps.push({ run: line });
+    jobsDoc[promoteJob] = {
+      "runs-on": "ubuntu-latest",
+      needs: [...jobNameByComponent.values()].sort(),
+      container: image,
+      steps,
+    };
+  }
 
   return {
     name: `chant-components-${env}`,

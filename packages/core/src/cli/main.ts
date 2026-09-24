@@ -268,6 +268,9 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.src = args[++i];
     } else if (arg === "--env") {
       result.env = args[++i];
+    } else if (arg === "--promote-to") {
+      result.promoteTo = args[++i];
+      if (!result.promoteTo || result.promoteTo.startsWith("-")) throw new Error("--promote-to needs an environment: --promote-to <env>");
     } else if (arg === "--tier") {
       result.tier = args[++i];
     } else if (arg === "--agents") {
@@ -785,6 +788,8 @@ Options:
                         components; run: one pipeline file per scheduled Op
   --spec <file>         (run --generate) JSON Op specs: an array, or
                         { ops, options }
+  --promote-to <env>    (build --components --generate) Add a job that
+                        promotes the deployed releases to <env>
   --no-release-record   Skip auto-emitting a release-ledger record after a
                         successful \`run --components\` deploy (default: on;
                         also settable via chant.config.ts's

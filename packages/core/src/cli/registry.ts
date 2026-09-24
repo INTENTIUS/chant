@@ -145,6 +145,8 @@ export interface ParsedArgs {
   /** `--env <name>` — active environment: sets CHANT_ENV so env-aware source
    * re-evaluates for that environment (`build` + `graph`), and drives policy. */
   env?: string;
+  /** `chant build --components --generate <lexicon> --promote-to <env>` (#2575) — add a promote job to the generated pipeline. */
+  promoteTo?: string;
   /** `chant graph --stacks` — render the cross-stack apply-ordering graph */
   stacks?: boolean;
   /** `chant graph --live --overlay` — classify the provisioned graph against

@@ -111,3 +111,23 @@ describe("generateForgejoPipeline: dialect applied", () => {
     expect(all.some((r) => r === "https://code.forgejo.org/actions/checkout@v4")).toBe(true);
   });
 });
+
+describe("generateForgejoPipeline: a promote job (#2575)", () => {
+  test("carries the github promote job and archive upload through the dialect", () => {
+    const components: DriverComponent[] = [
+      {
+        name: "api",
+        deploy: [
+          { phase: "Build", steps: [{ kind: "docker-build", context: ".", into: "dist/api.tar" }] },
+          { phase: "Publish", steps: [{ kind: "publish-image", from: "archive:dist/api.tar" }] },
+        ],
+      },
+    ];
+    const jobs = parsedJobs(generateForgejoPipeline(components, { env: "staging", promoteTo: "prod" }).yaml);
+    expect(jobs["api"].steps.some((s) => s.name === "Upload api build archive")).toBe(true);
+    const promote = jobs["promote-prod"];
+    expect(promote.needs).toEqual(["api"]);
+    expect(promote.steps.find((s) => s.name === "Download api build archive")?.with).toEqual({ name: "api-archive", path: "dist" });
+    expect(promote.steps.some((s) => s.run === "chant components promote --from staging --to prod")).toBe(true);
+  });
+});

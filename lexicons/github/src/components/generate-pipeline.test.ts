@@ -19,7 +19,7 @@
 
 import { describe, test, expect } from "vitest";
 import { parseYAML } from "@intentius/chant/yaml";
-import { generateGithubPipeline } from "./generate-pipeline";
+import { artifactRoot, generateGithubPipeline } from "./generate-pipeline";
 import { resolveComponentGraph, DependencyCycleError, UnknownDependencyError, type DriverComponent } from "@intentius/chant/components/driver";
 import { searchService } from "@intentius/chant/components/pilots/alb-ecs.pilot";
 import { ordersTable } from "@intentius/chant/components/pilots/dynamodb.pilot";
@@ -293,5 +293,95 @@ describe("generateGithubPipeline: options", () => {
     const result = generateGithubPipeline(pilotComponents());
     const jobs = parsedJobs(result.yaml);
     expect(runLines(jobs["shared-alb"])[0]).toContain("--env production");
+  });
+});
+
+/** Two services that build and publish, one depending on the other, plus infra that builds nothing. */
+function promotableComponents(): DriverComponent[] {
+  const service = (name: string, into: string, dependsOn: string[] = []): DriverComponent => ({
+    name,
+    dependsOn,
+    deploy: [
+      { phase: "Build", steps: [{ kind: "docker-build", context: ".", into }] },
+      { phase: "Publish", steps: [{ kind: "publish-image", from: `archive:${into}`, to: "$env.registry" }] },
+    ],
+  });
+  return [
+    { name: "shared-alb", dependsOn: [], deploy: [] },
+    service("api", "dist/images/api.tar", ["shared-alb"]),
+    service("worker", "worker.tar"),
+  ];
+}
+
+describe("generateGithubPipeline: a promote job (#2575)", () => {
+  test("without promoteTo the pipeline is unchanged: no archive upload, no promote job", () => {
+    const yaml = generateGithubPipeline(promotableComponents(), { env: "staging" }).yaml;
+    expect(yaml).not.toContain("promote");
+    expect(yaml).not.toContain("build archive");
+  });
+
+  test("each building job uploads its archive, and the promote job downloads it back to the same path", () => {
+    const result = generateGithubPipeline(promotableComponents(), { env: "staging", promoteTo: "prod" });
+    const jobs = parsedJobs(result.yaml);
+
+    const upload = jobs["api"].steps.find((s) => s.name === "Upload api build archive")!;
+    expect(upload.uses).toBe("actions/upload-artifact@v4");
+    expect(upload.with).toEqual({
+      name: "api-archive",
+      path: "dist/images/api.tar",
+      "if-no-files-found": "error",
+      "include-hidden-files": true,
+    });
+    expect(jobs["shared-alb"].steps.some((s) => s.name?.includes("build archive"))).toBe(false);
+
+    const promote = jobs["promote-prod"];
+    expect(promote.needs).toEqual(["api", "shared-alb", "worker"]);
+    expect(promote.container).toBe("node:22-slim");
+    const downloads = promote.steps.filter((s) => s.uses === "actions/download-artifact@v4");
+    expect(downloads.map((s) => s.with)).toEqual([
+      { name: "api-archive", path: "dist/images" },
+      { name: "worker-archive", path: "." },
+    ]);
+    expect(runLines(promote)).toEqual(["chant components promote --from staging --to prod"]);
+
+    // The machine-readable views stay one entry per component.
+    expect(result.jobs.map((j) => j.component).sort()).toEqual(["api", "shared-alb", "worker"]);
+  });
+
+  test("the promote job runs the same beforeScript and extraScript, and promoteCommand replaces its command", () => {
+    const result = generateGithubPipeline(promotableComponents(), {
+      env: "staging",
+      promoteTo: "prod",
+      beforeScript: ["npm ci"],
+      extraScript: ["echo done"],
+      promoteCommand: ["npx", "chant", "components", "promote", "--from", "staging", "--to", "prod"],
+    });
+    expect(runLines(parsedJobs(result.yaml)["promote-prod"])).toEqual([
+      "npm ci",
+      "npx chant components promote --from staging --to prod",
+      "echo done",
+    ]);
+  });
+
+  test("a build step writing to a path known only at run time is refused", () => {
+    const components: DriverComponent[] = [
+      { name: "api", deploy: [{ phase: "Build", steps: [{ kind: "docker-build", into: "$env.archive" }] }] },
+    ];
+    expect(() => generateGithubPipeline(components, { promoteTo: "prod" })).toThrow(/not a literal path/);
+    expect(() => generateGithubPipeline(components)).not.toThrow();
+  });
+
+  test("a component whose job name is the promote job's is refused", () => {
+    const components: DriverComponent[] = [{ name: "promote-prod", deploy: [] }];
+    expect(() => generateGithubPipeline(components, { promoteTo: "prod" })).toThrow(/same name as a component job/);
+  });
+
+  test("artifactRoot is the deepest directory holding every file", () => {
+    expect(artifactRoot(["archive"])).toBe(".");
+    expect(artifactRoot(["dist/a.tar"])).toBe("dist");
+    expect(artifactRoot(["dist/a/x.tar", "dist/b/y.zip"])).toBe("dist");
+    expect(artifactRoot(["dist/a.tar", "b.zip"])).toBe(".");
+    expect(artifactRoot(["./dist/a.tar"])).toBe("dist");
+    expect(artifactRoot(["/tmp/out/a.tar", "/tmp/out/b.tar"])).toBe("/tmp/out");
   });
 });
