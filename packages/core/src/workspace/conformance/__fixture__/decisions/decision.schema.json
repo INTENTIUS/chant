@@ -1,0 +1,364 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "urn:intentius:chant:decision:1",
+  "title": "Decision file front matter",
+  "description": "The front matter of one decision file in docs/design/decisions/. The format is described in README.md beside this file. Values stay within what YAML and JSON share, so a file can be sealed later (#2524 D4).",
+  "type": "object",
+  "additionalProperties": false,
+  "patternProperties": {
+    "^x-": {}
+  },
+  "required": [
+    "schema",
+    "id",
+    "title",
+    "state",
+    "area",
+    "source",
+    "question",
+    "options",
+    "choice",
+    "rejected",
+    "supersedes",
+    "evidence",
+    "decided_by",
+    "decided_on",
+    "reviews",
+    "constrains"
+  ],
+  "properties": {
+    "schema": {
+      "description": "Format version of this file. Bumped only by a change to this schema.",
+      "const": 1
+    },
+    "id": {
+      "description": "Stable id: a lowercase prefix per epic, a dash and three or more digits. Never reused, never renumbered.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]{0,15}-[0-9]{3,}$"
+    },
+    "title": {
+      "description": "Short topic, as the source table names it, without revision markers.",
+      "type": "string",
+      "minLength": 1
+    },
+    "state": {
+      "description": "Lifecycle state, from #2555.",
+      "enum": ["proposed", "decided", "ratified", "superseded", "withdrawn"]
+    },
+    "area": {
+      "description": "The design section the decision belongs to, such as \"D5\". Groups the review queue. Null only in an importer draft.",
+      "type": ["string", "null"]
+    },
+    "source": {
+      "description": "Where the decision was first recorded: a row of an issue's decisions table, or the workspace itself when no issue holds the decision (#2654).",
+      "oneOf": [{ "$ref": "#/definitions/sourceIssue" }, { "$ref": "#/definitions/sourceWorkspace" }]
+    },
+    "question": {
+      "description": "One sentence. Null only in an importer draft.",
+      "type": ["string", "null"]
+    },
+    "options": {
+      "description": "Every option considered, the chosen one included.",
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/definitions/option" }
+    },
+    "choice": {
+      "description": "The chosen option and why. Null in state proposed or withdrawn.",
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["option", "reason"],
+          "properties": {
+            "option": { "$ref": "#/definitions/optionId" },
+            "reason": { "type": ["string", "null"] }
+          }
+        }
+      ]
+    },
+    "rejected": {
+      "description": "The options not chosen, kept on the record.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["option", "why"],
+        "properties": {
+          "option": { "$ref": "#/definitions/optionId" },
+          "why": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "supersedes": {
+      "description": "Earlier choices this decision replaced: another decision file, or an option chosen in an earlier revision of the same design before decision files existed.",
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["decision"],
+            "properties": {
+              "decision": { "$ref": "#/definitions/decisionId" }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["revision", "option"],
+            "properties": {
+              "revision": { "type": "string", "pattern": "^v[0-9]+$" },
+              "option": { "$ref": "#/definitions/optionId" }
+            }
+          }
+        ]
+      }
+    },
+    "evidence": {
+      "description": "The research, audits, design sections and workspace files behind the decision. A public link carries a url; a file in the workspace carries a path and the hash of its bytes (#2549). May be empty when the decision cites nothing; chant workspace records then warns decision-no-evidence (#2654).",
+      "type": "array",
+      "items": {
+        "oneOf": [{ "$ref": "#/definitions/evidenceLink" }, { "$ref": "#/definitions/evidencePin" }]
+      }
+    },
+    "decided_by": {
+      "description": "Who chose. A forge login. Null in state proposed or withdrawn.",
+      "type": ["string", "null"]
+    },
+    "decided_on": {
+      "description": "When the choice was made, as YYYY-MM-DD. Quoted, so YAML reads it as a string.",
+      "type": ["string", "null"],
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+    },
+    "reviews": {
+      "description": "Each reviewer's verdict. Empty until a review happens.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["reviewer", "verdict", "on"],
+        "properties": {
+          "reviewer": { "type": "string", "minLength": 1 },
+          "verdict": { "enum": ["agree", "dissent", "abstain"] },
+          "note": { "type": ["string", "null"] },
+          "on": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+          "digest": {
+            "description": "The digest of the record text the verdict judged: the lowercase hex SHA-256 of the file with LF line endings and without its reviews block (#2672). A verdict whose digest is not the record's digest now stops counting toward the quorum. A verdict without one still counts, with the warning review-undigested.",
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "session": {
+            "description": "The id of the review session the verdict was given in, as the session names it (#2650 C10). chant workspace records review --session writes it (#2670).",
+            "type": "string",
+            "minLength": 1
+          },
+          "proposes": {
+            "description": "With a dissent, the id of a new proposed decision the reviewer opened.",
+            "$ref": "#/definitions/decisionId"
+          },
+          "addressed_by": {
+            "description": "With a dissent, where the decider or the group answered the concern: a decision id, an issue or pull request (owner/repo#n) or an https link. An answer addresses a concern without necessarily accommodating it (RFC 7282, section 3).",
+            "anyOf": [
+              { "$ref": "#/definitions/decisionId" },
+              { "$ref": "#/definitions/issueRef" },
+              { "type": "string", "pattern": "^https://" }
+            ]
+          },
+          "withdrawn_on": {
+            "description": "With a dissent, the date its author withdrew the concern. Only the reviewer who raised a concern withdraws it.",
+            "type": "string",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+          }
+        },
+        "if": {
+          "required": ["verdict"],
+          "properties": { "verdict": { "const": "dissent" } }
+        },
+        "then": {
+          "description": "A dissent needs a reason: the dissent by {reviewer} has no note.",
+          "required": ["note"],
+          "properties": { "note": { "type": "string", "pattern": "\\S" } }
+        },
+        "else": {
+          "description": "Only a dissent is a concern: the {verdict} by {reviewer} cannot carry addressed_by or withdrawn_on.",
+          "properties": { "addressed_by": false, "withdrawn_on": false }
+        }
+      }
+    },
+    "constrains": {
+      "description": "What this decision governs: issues (owner/repo#n), other decisions (their ids), workspace members (member:<name>) or files and directories in the workspace (path:<path>, the grammar of an evidence path, #2549). At least one entry: a decision that governs nothing is refused.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "pattern": "^([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[0-9]+|[a-z][a-z0-9]{0,15}-[0-9]{3,}|member:[a-z0-9][a-z0-9-]{0,39}|path:(?!/)(?!(?:[^/]*/)*\\.{1,2}(?:/|$))(?!.*//)[^\\\\\\u0000-\\u001f]*[^/\\\\\\u0000-\\u001f])$"
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "state": { "enum": ["decided", "ratified", "superseded"] } }
+      },
+      "then": {
+        "properties": {
+          "area": { "type": "string" },
+          "question": { "type": "string", "minLength": 1 },
+          "choice": {
+            "type": "object",
+            "properties": { "reason": { "type": "string", "minLength": 1 } }
+          },
+          "rejected": {
+            "items": { "properties": { "why": { "type": "string", "minLength": 1 } } }
+          },
+          "options": {
+            "items": {
+              "properties": {
+                "how": { "type": "string", "minLength": 1 },
+                "tradeoff": { "type": "string", "minLength": 1 }
+              }
+            }
+          },
+          "decided_by": { "type": "string" },
+          "decided_on": { "type": "string" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "state": { "enum": ["proposed", "withdrawn"] } }
+      },
+      "then": {
+        "properties": { "choice": { "type": "null" } }
+      }
+    }
+  ],
+  "definitions": {
+    "workspacePath": {
+      "description": "A path from the workspace root, with / separators: no leading /, no . or .. segment, no empty segment, no backslash and no trailing /.",
+      "type": "string",
+      "pattern": "^(?!/)(?!(?:[^/]*/)*\\.{1,2}(?:/|$))(?!.*//)[^\\\\\\u0000-\\u001f]*[^/\\\\\\u0000-\\u001f]$"
+    },
+    "evidenceLink": {
+      "description": "A public link.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "url"],
+      "properties": {
+        "title": { "type": "string", "minLength": 1 },
+        "url": { "type": "string", "pattern": "^https://" },
+        "as_of": {
+          "description": "When the linked text was read, as an ISO 8601 timestamp. Lets a reader flag evidence that changed afterwards.",
+          "type": ["string", "null"]
+        },
+        "sha256": {
+          "description": "Hex SHA-256 of the linked content, once evidence is pinned by hash (#2555). Null until then.",
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "evidencePin": {
+      "description": "A file in the workspace, pinned by the hash of its bytes (#2524 D18, #2549). chant workspace records reports a file that changed or went missing since.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "path", "sha256"],
+      "properties": {
+        "title": { "type": "string", "minLength": 1 },
+        "path": {
+          "description": "The file, from the workspace root. It sits inside a member, such as design/screens/home.json.",
+          "$ref": "#/definitions/workspacePath"
+        },
+        "sha256": {
+          "description": "Hex SHA-256 of the file's bytes when the decision was written. chant workspace records pin <path> prints it.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "as_of": {
+          "description": "When the file was read, as an ISO 8601 timestamp.",
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "sourceIssue": {
+      "description": "A row of the decisions table in an issue.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["issue", "row"],
+      "properties": {
+        "issue": { "$ref": "#/definitions/issueRef" },
+        "row": {
+          "description": "The row's topic cell, verbatim, including any revision marker.",
+          "type": "string"
+        },
+        "revision": {
+          "description": "The design revision that last changed this row, such as \"v8\". Null when the row carries no marker.",
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "sourceWorkspace": {
+      "description": "A decision made in the workspace, such as in a product's own design flow, with no issue behind it (#2654).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "member"],
+      "properties": {
+        "kind": { "const": "workspace" },
+        "member": {
+          "description": "The workspace member the decision was made in, by its name in the declaration.",
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]{0,39}$"
+        },
+        "session": {
+          "description": "The id of the session the decision was made in, as the member names it. Null or absent when there was none.",
+          "type": ["string", "null"],
+          "minLength": 1
+        },
+        "issue": {
+          "description": "An issue the decision relates to, when there is one.",
+          "$ref": "#/definitions/issueRef"
+        }
+      }
+    },
+    "issueRef": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[0-9]+$"
+    },
+    "decisionId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]{0,15}-[0-9]{3,}$"
+    },
+    "optionId": {
+      "type": "string",
+      "pattern": "^[a-z]$"
+    },
+    "option": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label", "how", "tradeoff"],
+      "properties": {
+        "id": { "$ref": "#/definitions/optionId" },
+        "label": {
+          "description": "The option as the source table words it, without revision markers.",
+          "type": "string",
+          "minLength": 1
+        },
+        "how": {
+          "description": "How the option works.",
+          "type": ["string", "null"]
+        },
+        "tradeoff": {
+          "description": "What choosing it costs or gains.",
+          "type": ["string", "null"]
+        },
+        "chosen_in": {
+          "description": "The earlier design revision that had chosen this option, when a later revision replaced it.",
+          "type": "string",
+          "pattern": "^v[0-9]+$"
+        }
+      }
+    }
+  }
+}

@@ -14,6 +14,7 @@ function minimalReader(chant: ChantTransport) {
     status: ["--json"],
     records: ["--json"],
     "graph --intent": ["--json"],
+    "graph --composites": ["--json"],
   };
   return {
     async read(command: ReadContractCommand, args: string[]) {
