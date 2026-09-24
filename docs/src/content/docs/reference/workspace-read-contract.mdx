@@ -99,6 +99,9 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `ir-version-unsupported` | member, `graph` | The member's IR has a version this chant can't read. |
 | `ledger-unreadable` | ledger, `status` | Reading the ledger failed, so nothing from it is listed. |
 | `ledger-malformed` | ledger, `status` | Some ledger lines aren't release records, and the rest are listed. |
+| `gates-no-ledger` | gate ledger, `status` | The checkout has no `chant/lifecycle` branch, so there is no gate ledger to read. |
+| `gates-no-gate-ledger` | gate ledger, `status` | The branch has no gate ledger for the member, because no run of it has reached a gate. |
+| `gates-ledger-unreadable` | gate ledger, `status` | Reading the member's gate ledger failed, so no gate is listed. |
 | `record-unparseable` | record, `records` | No front matter, a YAML error, or a value outside the JSON subset of YAML. |
 | `record-schema-invalid` | record, `records` | The front matter doesn't match the kind's schema. |
 | `record-id-duplicate` | record, `records` | An earlier record in path order has the same id. |
@@ -139,6 +142,8 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `composites-no-chant-member` | reason, `graph --composites` | No member of kind `chant` was read, so nothing declares a composite instance or a component. |
 | `composites-none-declared` | reason, `graph --composites` | The members read declare no composite instance. |
 | `composites-no-component` | reason, `graph --composites` | The members read declare no component, so no composite instance has one. |
+| `runtimes-config-unreadable` | member, `graph --composites` | The member's `chant.config.ts` couldn't be read, so its components list only the built-in `local` runtime. |
+| `runtimes-lexicon-unreadable` | member, `graph --composites` | A lexicon the member's config lists couldn't be loaded, so it isn't listed as a runtime. |
 | `lock-invalid` | finding, `check` | The lineage lock can't be read. |
 | `manual-step-open` | finding, `check` | A scope in the lineage lock has an open manual step. |
 
@@ -236,6 +241,21 @@ An instance's `id` is the composed graph's `compositeInstance`, `<member>/<insta
 
 An instance no component matches has an empty `components`. When the whole list is empty, or no instance has a component, `reasons` holds a code from the closed list that says why.
 
+Each component also lists the runtimes that can host its deploy in `runtimes` ([#2674](https://github.com/INTENTIUS/chant/issues/2674)). The list starts with the built-in `local` runtime and adds each lexicon in the member's `chant.config.ts` whose `opRuntime` hosts component runs, which is the list `chant run --components <name> --on <runtime>` accepts in that member. Each entry has `name`, `lexicon` (`null` for `local`), `default` and `command`, the exact command line to run in the member's directory. A reader offers only these runtimes and never guesses one. When the member's config or one of its lexicons can't be read, the member's `runtimeReasons` says so.
+
+## Gates
+
+`chant workspace status --json` lists each member's gates in `gates`, read from the member's gate ledger on `chant/lifecycle` ([#2674](https://github.com/INTENTIUS/chant/issues/2674)). That is the ledger `chant approve` writes to. A reader shows who has approved what, and how many approvals are still needed, without running `git show` on the branch. Each gate has its `component`, `name`, `env` and `planDigest`, a `state`, the `approvals` that count with `principal`, `channel` and `at`, the number `needed`, and `approve`, the exact `chant approve` line to run in the member's directory. The state is read the way a run reads the ledger, and nothing is written.
+
+| `state` | Meaning |
+|---|---|
+| `approved` | The approvals recorded since the gate was reached, for its plan, pass it. |
+| `pending` | The gate is waiting for approvals. |
+| `expired` | The gate isn't approved and its pending fact has expired, so the next run records a fresh one. |
+| `superseded` | The gate isn't approved, and an approval recorded since it was reached names a different plan, so that approval doesn't count. |
+
+`gateLedger` names the directory the gates were read from. Its `reason` holds a code from the closed list when there is no ledger branch, no gate ledger for the member, or a gate ledger that can't be read.
+
 ## Joining the documents
 
 A reader such as behold or hud builds one view from several commands. The join keys are the same in every document.
@@ -247,7 +267,7 @@ A reader such as behold or hud builds one view from several commands. The join k
 | a member's directory | `members[].dir` | `members[].dir` | none | `members[].dir` |
 | a record | none | `records[].id`, and `record` on a record link | the record's file on a `WSP111`, `WSP112` or `WSP113` finding | none |
 
-A reader starts with `ls`, which lists every member whether it can be read or not. It then reads `graph` for the nodes in `groups.byMember`, and matches each graph entry to the `ls` member of the same name. `check` findings attach to a member through `entity`, and `status` releases attach through the member name. Node ids in `graph` are `<member>/<id>`, so a node never collides with another member's.
+A reader starts with `ls`, which lists every member whether it can be read or not. It then reads `graph` for the nodes in `groups.byMember`, and matches each graph entry to the `ls` member of the same name. `check` findings attach to a member through `entity`, and `status` releases and gates attach through the member name. A gate's `component`, or a `status` release's, matches a `graph --composites` component's `name` in the same member. Node ids in `graph` are `<member>/<id>`, so a node never collides with another member's.
 
 Documents read at the same `at` belong together. Mixing a working-tree `ls` with a `graph --at` of an older commit can list members the graph doesn't have, and each document names its own `at` so a reader can tell.
 

@@ -47,6 +47,21 @@ The command reads the branch as it is in the checkout and never fetches it, so i
 
 A member whose ledger can't be read is still listed, with a reason code, and the command still exits 0 ([ws-020](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-020-unreadable.md)).
 
+### Gates
+
+With `--json`, each member also lists its gates, read from the same branch ([#2674](https://github.com/INTENTIUS/chant/issues/2674)). A run that reaches a gate writes a pending fact there, and [`chant approve`](/chant/cli/operator/#approve-op-gate) writes approvals beside it. A member's gate files are in `_members/<member>/_gates/` or the flat `_gates/`, and the choice between them follows its releases. The text view doesn't list gates.
+
+A gate is listed for each environment the command shows, once a run has reached it there. A gate an Op run reached records no environment and is always listed. Its state is read from the newest pending fact for the gate in that environment, the way the next run reads it. Only approvals recorded since that fact, for the plan it names, count ([#2300](https://github.com/INTENTIUS/chant/issues/2300), [#2574](https://github.com/INTENTIUS/chant/issues/2574)). A gate with a quorum counts human approvals only, as `chant approve` reports after each approval.
+
+| State | Meaning |
+|---|---|
+| `approved` | The approvals that count pass the gate: its quorum, or a policy permit in `enforce` mode. |
+| `pending` | The gate is waiting for approvals. `approvals` lists those it has so far, and `needed` how many it needs. |
+| `expired` | Not approved, and the pending fact is past `expiresAt`. The next run records a fresh one. |
+| `superseded` | Not approved, and an approval recorded since the gate was reached names a different plan, so it doesn't count. |
+
+Each gate carries `approve`, the exact command that approves it, to run in the member's directory: `chant approve <component> <gate> --env <env>`, without `--env` for a gate that records no environment.
+
 The command doesn't read live state. `--compare-to --live` is refused with a pointer to `chant components status <env> --live`, which reads one member's live state from that member's directory.
 
 ## Options
@@ -112,7 +127,22 @@ The output is part of the workspace [read contract](/chant/reference/workspace-r
         "differs": true,
         "components": [{ "component": "api", "state": "only-env", "digest": "sha256:bbbb...", "compareDigest": null }]
       },
-      "readable": true
+      "readable": true,
+      "gateLedger": { "layout": "members", "path": "_members/api/_gates", "shared": false, "malformed": 0, "reason": null },
+      "gates": [
+        {
+          "component": "api",
+          "name": "deploy",
+          "env": "prod",
+          "planDigest": "sha256:7c1e...",
+          "state": "pending",
+          "recordedAt": "2026-09-21T09:00:00.000Z",
+          "expiresAt": "2026-09-23T09:00:00.000Z",
+          "approvals": [{ "principal": "alice", "channel": "cli", "at": "2026-09-21T09:30:00.000Z" }],
+          "needed": 2,
+          "approve": "chant approve api deploy --env prod"
+        }
+      ]
     }
   ],
   "summary": { "members": 3, "released": 2, "unreadable": 0, "differing": 1 }
@@ -120,6 +150,8 @@ The output is part of the workspace [read contract](/chant/reference/workspace-r
 ```
 
 The example shortens the lists and the digests. `commit` is the local branch tip, or `null` when the checkout has no `chant/lifecycle` branch, in which case every member has no release. `layout` is `members` or `flat`, as described above. A compare `state` is `same`, `differs`, `only-env` or `only-compare`. `compare` and `summary.differing` are `null` without `--compare-to`. `flags` carries `legacy-digest` for a digest recorded before chant used SHA-256 ([#2514](https://github.com/INTENTIUS/chant/issues/2514)).
+
+In `gateLedger`, `path` is the directory of gate files, and `malformed` counts the lines in them that were skipped. An Op gate has `env: null`, and `planDigest` is `null` when the run bound no plan to the gate. An approval's `channel` is `cli`, `mcp` or `acp`, or `null` for an approval recorded before chant recorded the channel.
 
 A failed read prints `{ "$schema", "contract", "chant", "error": { "code", "message", "location" } }` instead, with the location of a parse or schema error in the declaration, or `null`.
 
@@ -131,6 +163,14 @@ A reason belongs to one environment of one member, and makes that member's `read
 |---|---|
 | `ledger-unreadable` | couldn't be read, so nothing from it is listed |
 | `ledger-malformed` | has lines that aren't release records; they are skipped and the rest are listed |
+
+Gates have a reason of their own, in `gateLedger.reason`. It doesn't change `readable` or the summary, and `gates` is empty when there is one.
+
+| Code | The member's gate files |
+|---|---|
+| `gates-no-ledger` | aren't there, because the checkout has no `chant/lifecycle` branch |
+| `gates-no-gate-ledger` | don't exist on the branch, because no run of the member has reached a gate |
+| `gates-ledger-unreadable` | couldn't be read, so no gate is listed |
 
 ### Error codes
 
@@ -164,4 +204,7 @@ chant workspace status prod --compare-to staging
 
 # The same, for a tool to read
 chant workspace status prod --compare-to staging --json
+
+# The prod gates still waiting for an approval, with the command for each
+chant workspace status prod --json | jq -r '.members[].gates[] | select(.state == "pending") | .approve'
 ```

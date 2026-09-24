@@ -28,6 +28,10 @@
  *
  * Each member runs under its own toolchain, as for `workspace graph`, and at
  * the same revision with `--at`. Nothing is written and no listener starts.
+ *
+ * Each component also lists the runtimes it can deploy on (#2674,
+ * `runtimes.ts`): `local`, and each lexicon its member configures that hosts
+ * `chant run --components`, with the command line for each.
  */
 
 import { formatError } from "../cli/format";
@@ -40,6 +44,7 @@ import type { LinkRow } from "./links";
 import { emitDocument, type UnitResult } from "./member-commands";
 import { readerVersion, type ErrorLocation, type WorkspaceErrorCode } from "./declaration";
 import type { ReasonCode } from "./reason-codes";
+import { componentRuntimes, readRuntimesIn, RUNTIME_REASON_CODES, type ComponentRuntime, type MemberRuntimes, type PluginLoader, type RuntimeReason } from "./runtimes";
 
 /** `$id` of the JSON Schema for the document, shipped beside this file. */
 export const COMPOSITES_OUTPUT_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace/composites/v1/composites.schema.json";
@@ -61,6 +66,9 @@ export const COMPOSITES_REASON_CODES = [
 ] as const satisfies readonly ReasonCode[];
 export type CompositesReasonCode = (typeof COMPOSITES_REASON_CODES)[number];
 
+/** Why a member's runtimes are only `local`, or leave out a lexicon its config lists (#2674). Closed. */
+export const COMPOSITES_RUNTIME_REASON_CODES = RUNTIME_REASON_CODES;
+
 export interface CompositesMember {
   name: string;
   dir: string;
@@ -69,6 +77,8 @@ export interface CompositesMember {
   status: "read" | "skipped" | "failed";
   reason: MemberReason | null;
   chant: string | null;
+  /** Why its components' runtimes leave something out: its config, or a lexicon, couldn't be read. Empty for a member not of kind chant. */
+  runtimeReasons: RuntimeReason[];
 }
 
 export interface ComponentEntry {
@@ -82,6 +92,8 @@ export interface ComponentEntry {
   composites: string[] | null;
   /** The component's file from the workspace root, when the member's chant names it. */
   file: string | null;
+  /** The runtimes it can deploy on: `local` first, then each hosting lexicon its member configures. */
+  runtimes: ComponentRuntime[];
 }
 
 export interface ComponentMatch {
@@ -133,7 +145,7 @@ export interface CompositesResult {
 }
 
 /** Read one member's component graph run into components, or the reason it can't be read. */
-function readComponents(member: string, dir: string, run: UnitResult): { components: ComponentEntry[] } | { reason: MemberReason } {
+function readComponents(member: string, dir: string, run: UnitResult, runtimes: MemberRuntimes | undefined): { components: ComponentEntry[] } | { reason: MemberReason } {
   if (run.exitCode !== 0) {
     const tail = run.stderr.trim().split("\n").slice(-5).join("\n");
     return { reason: { code: "command-failed", message: `chant graph --components exited ${run.exitCode}${tail ? `: ${tail}` : ""}` } };
@@ -153,6 +165,7 @@ function readComponents(member: string, dir: string, run: UnitResult): { compone
       archetype: typeof attrs.archetype === "string" ? attrs.archetype : null,
       composites: composites && composites.length > 0 ? composites : null,
       file: file ? (dir === "." ? file : `${dir}/${file}`) : null,
+      runtimes: componentRuntimes(n.id, runtimes),
     });
   }
   return { components };
@@ -220,16 +233,24 @@ export function joinComponents(instances: CompositeInstanceRow[], components: Co
   });
 }
 
-function memberEntry(m: ComposedMember, componentReason: MemberReason | null): CompositesMember {
+function memberEntry(m: ComposedMember, componentReason: MemberReason | null, runtimes: MemberRuntimes | undefined): CompositesMember {
   const reason = m.reason ?? componentReason;
   const status = m.status === "composed" ? (componentReason ? "failed" : "read") : m.status;
-  return { name: m.name, dir: m.dir, kind: m.kind, status, reason, chant: m.chant };
+  return { name: m.name, dir: m.dir, kind: m.kind, status, reason, chant: m.chant, runtimeReasons: runtimes?.reasons ?? [] };
 }
 
 /** Read the workspace's composites and components, and build the document. Never throws a `WorkspaceReadError`. */
-export async function workspaceComposites(query: Omit<GraphQuery, "kind" | "components">): Promise<CompositesResult> {
+export async function workspaceComposites(query: Omit<GraphQuery, "kind" | "components" | "inTree"> & { loadPlugin?: PluginLoader }): Promise<CompositesResult> {
   const head: Head = { $schema: COMPOSITES_OUTPUT_SCHEMA_ID, contract: COMPOSITES_CONTRACT_VERSION, chant: readerVersion() };
-  const { doc: graph, failed, components: runs } = await workspaceGraph({ ...query, components: true });
+  let runtimes = new Map<string, MemberRuntimes>();
+  const { loadPlugin, ...graphQuery } = query;
+  const { doc: graph, failed, components: runs } = await workspaceGraph({
+    ...graphQuery,
+    components: true,
+    inTree: async (root, members) => {
+      runtimes = await readRuntimesIn(root, members, loadPlugin);
+    },
+  });
   if ("error" in graph) return { doc: { ...head, error: graph.error }, failed: true };
 
   const byMember = new Map((runs ?? []).map((r) => [r.unit.member, r]));
@@ -240,13 +261,13 @@ export async function workspaceComposites(query: Omit<GraphQuery, "kind" | "comp
     const run = m.status === "composed" ? byMember.get(m.name) : undefined;
     let reason: MemberReason | null = null;
     if (run) {
-      const read = readComponents(m.name, m.dir, run);
+      const read = readComponents(m.name, m.dir, run, runtimes.get(m.name));
       if ("reason" in read) {
         reason = read.reason;
         componentsFailed = true;
       } else components.push(...read.components);
     }
-    members.push(memberEntry(m, reason));
+    members.push(memberEntry(m, reason, runtimes.get(m.name)));
   }
   components.sort((a, b) => a.id.localeCompare(b.id));
 

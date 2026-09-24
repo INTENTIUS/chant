@@ -85,6 +85,13 @@ export interface GraphQuery {
    * in {@link GraphResult.components}. The document is unchanged.
    */
   components?: boolean;
+  /**
+   * Called once the members have run, with the directory they were read from
+   * (the exported tree for `--at`, before it is removed) and the declared
+   * members the read covers. `--composites` reads each member's runtimes
+   * here (#2674).
+   */
+  inTree?: (root: string, members: readonly { name: string; dir: string; kind: string }[]) => Promise<void>;
 }
 
 export interface GraphResult {
@@ -198,6 +205,7 @@ export async function workspaceGraph(query: GraphQuery): Promise<GraphResult> {
       executePlan(plan, args),
       query.components ? executePlan(plan, args, () => componentGraphArgv(args)) : Promise.resolve(undefined),
     ]);
+    if (query.inTree) await query.inTree(exported ?? located.rootOnDisk, declaration.members.filter((m) => !query.members?.length || query.members.includes(m.name)));
     for (const r of components ?? []) if (r.stderr.trim() && query.onStderr) query.onStderr(r.stderr.endsWith("\n") ? r.stderr : `${r.stderr}\n`);
     for (const r of results) if (r.stderr.trim() && query.onStderr) query.onStderr(r.stderr.endsWith("\n") ? r.stderr : `${r.stderr}\n`);
     const { inputs, failed } = compose(plan, results, query.members, declaration.members);

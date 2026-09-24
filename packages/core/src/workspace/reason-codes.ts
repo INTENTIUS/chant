@@ -53,6 +53,10 @@ export const REASONS = {
   // A ledger status can't fully read.
   "ledger-unreadable": "Reading the ledger failed, so nothing from it is listed.",
   "ledger-malformed": "Some lines of the ledger aren't release records; the rest are listed.",
+  // A member's gates status can't list (status, #2674).
+  "gates-no-ledger": "The checkout has no chant/lifecycle branch, so there is no gate ledger to read.",
+  "gates-no-gate-ledger": "The branch has no gate ledger for the member: no run of it has reached a gate.",
+  "gates-ledger-unreadable": "Reading the member's gate ledger failed, so no gate is listed.",
   // A record that isn't valid (records).
   "record-unparseable": "No front matter, a YAML error, or a value outside the JSON subset of YAML.",
   "record-schema-invalid": "The front matter does not match the kind's schema.",
@@ -101,6 +105,9 @@ export const REASONS = {
   "composites-no-chant-member": "No member of kind chant was read, so nothing declares a composite instance or a component.",
   "composites-none-declared": "The members read declare no composite instance.",
   "composites-no-component": "The members read declare no component, so no composite instance has one.",
+  // The runtimes a member's components can deploy on (graph --composites, #2674).
+  "runtimes-config-unreadable": "The member's chant.config.ts could not be read, so only the built-in local runtime is listed.",
+  "runtimes-lexicon-unreadable": "A lexicon the member's config lists could not be loaded, so it is not listed as a runtime.",
   // The lineage lock (check).
   "lock-invalid": "The lineage lock can't be read.",
   "manual-step-open": "A scope in the lineage lock has an open manual step.",

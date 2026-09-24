@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://intentius.io/chant/schemas/workspace/composites/v1/composites.schema.json",
   "title": "chant workspace graph --composites output",
-  "description": "What `chant workspace graph --composites` prints: each composite instance the workspace's members declare, joined to the components whose contract can deploy it (#2662). Each member of kind chant is read through its own `chant graph --format ir` and `chant graph --components --format ir`, under its own toolchain. An instance with no component is listed with an empty `components` array. chant supplies the rows and never picks one: each match says how it was made and how it crosses members. Readers ignore fields they do not know; a field is only ever added within a version. The reason and error codes are closed lists. Contract version 1 is written by chant 0.81.0 and newer, and this document was added to it by #2662; a chant without --composites refuses the flag. Every code is in the one closed list of `reason-codes.ts`.",
+  "description": "What `chant workspace graph --composites` prints: each composite instance the workspace's members declare, joined to the components whose contract can deploy it (#2662). Each member of kind chant is read through its own `chant graph --format ir` and `chant graph --components --format ir`, under its own toolchain. An instance with no component is listed with an empty `components` array. chant supplies the rows and never picks one: each match says how it was made and how it crosses members. Readers ignore fields they do not know; a field is only ever added within a version. The reason and error codes are closed lists. Contract version 1 is written by chant 0.81.0 and newer, and this document was added to it by #2662; a chant without --composites refuses the flag. Each component lists the runtimes it can deploy on, read from its member's chant.config.ts (#2674). Every code is in the one closed list of `reason-codes.ts`.",
   "oneOf": [
     {
       "$ref": "#/$defs/result"
@@ -130,7 +130,8 @@
         "kind",
         "status",
         "reason",
-        "chant"
+        "chant",
+        "runtimeReasons"
       ],
       "properties": {
         "name": {
@@ -187,6 +188,28 @@
             "null"
           ],
           "description": "The chant version the member's toolchain reported, or null when a chant older than member-run read it."
+        },
+        "runtimeReasons": {
+          "description": "Why the runtimes of the member's components leave something out: its chant.config.ts, or a lexicon it lists, could not be read. Empty for a member not of kind chant, and when nothing was left out.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "code",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "enum": [
+                  "runtimes-config-unreadable",
+                  "runtimes-lexicon-unreadable"
+                ]
+              },
+              "message": {
+                "type": "string"
+              }
+            }
+          }
         }
       },
       "if": {
@@ -327,7 +350,8 @@
         "member",
         "archetype",
         "composites",
-        "file"
+        "file",
+        "runtimes"
       ],
       "properties": {
         "id": {
@@ -368,6 +392,14 @@
             "null"
           ],
           "description": "The component's file from the workspace root, when the member's chant names it."
+        },
+        "runtimes": {
+          "description": "The runtimes the component can deploy on, the list chant run --components --on accepts in its member: local first, then each lexicon the member's chant.config.ts lists whose opRuntime hosts component runs, in config order.",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/runtime"
+          }
         }
       }
     },
@@ -465,6 +497,36 @@
           }
         },
         "composites": false
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "required": [
+        "name",
+        "lexicon",
+        "default",
+        "command"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "What --on takes: local, or the lexicon's name."
+        },
+        "lexicon": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The lexicon that hosts the runtime, or null for local."
+        },
+        "default": {
+          "type": "boolean",
+          "description": "True for the runtime chant run --components uses without --on. That is local until chant.config.ts can name a default."
+        },
+        "command": {
+          "type": "string",
+          "description": "The command that deploys the component on this runtime, run in the member's directory: chant run --components <name>, with --on <runtime> for any runtime but local."
+        }
       }
     }
   }
