@@ -1,6 +1,14 @@
 {
   "name": "chant",
   "schema": 1,
+  "pins": [
+    {
+      "path": "lexicons/terraform"
+    },
+    {
+      "path": "packages/workspace-kind-choudoufu"
+    }
+  ],
   "members": [
     {
       "name": "docs",
@@ -383,9 +391,20 @@
       "because": "an npm workspace package with no chant project"
     },
     {
+      "name": "workspace-kind-choudoufu",
+      "dir": "packages/workspace-kind-choudoufu",
+      "kind": "other",
+      "because": "an npm workspace package with no chant project"
+    },
+    {
       "name": "reference-workspace",
       "dir": "reference-workspace",
       "kind": "workspace"
+    },
+    {
+      "name": "terraform-carve-out-estate",
+      "dir": "examples/terraform-carve-out/terraform",
+      "kind": "terraform"
     },
     {
       "name": "examples",

@@ -70,23 +70,53 @@
     },
     "probe": {
       "type": "object",
-      "description": "What the probe checks in a member's directory. It runs no code.",
-      "required": [
-        "anyFile"
-      ],
+      "description": "What the probe checks in a member's directory. It runs no code. It passes when any of its clauses does, and it needs at least one.",
+      "minProperties": 1,
       "properties": {
         "anyFile": {
           "type": "array",
           "minItems": 1,
           "uniqueItems": true,
-          "description": "The directory passes when one of these files sits directly in it.",
+          "description": "The directory passes when a file matching one of these names sits directly in it. A * in a name matches any run of characters, so *.tf matches every Terraform file.",
           "items": {
-            "type": "string",
-            "pattern": "^(?!\\.\\.?$)[^/\\\\]+$"
+            "$ref": "#/$defs/fileName"
           }
+        },
+        "anyBlock": {
+          "type": "object",
+          "description": "The directory passes when a file directly in it, whose name matches one of in, has a line opening an unlabelled block named in blocks: leading space, the name, optional space, then {. No file is parsed.",
+          "required": [
+            "in",
+            "blocks"
+          ],
+          "properties": {
+            "in": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "$ref": "#/$defs/fileName"
+              }
+            },
+            "blocks": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z_][A-Za-z0-9_-]{0,63}$"
+              }
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false
+    },
+    "fileName": {
+      "type": "string",
+      "description": "A file name, with no directory part. A * matches any run of characters.",
+      "pattern": "^(?!\\.\\.?$)[^/\\\\]+$"
     }
   }
 }

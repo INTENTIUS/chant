@@ -29,10 +29,27 @@ export const KINDS_SCHEMA_ID = schema.$id;
 /** The subpath a package publishes its kinds at. */
 export const KINDS_SUBPATH = "./workspace-kinds";
 
+/**
+ * The probe a package's kind carries (#2535, #2545). It passes when any of
+ * its clauses does. A name in either clause may use `*`, which matches any
+ * run of characters in one file name, so `*.tf` is every Terraform file.
+ */
+export interface FileProbe {
+  /** A file matching one of these names sits directly in the directory. */
+  anyFile?: string[];
+  /**
+   * A file directly in the directory whose name matches one of `in` has a
+   * line that opens an unlabelled block named in `blocks`: leading space,
+   * the name, optional space, then `{`. This is how a choudoufu root's
+   * `live {` block is found without parsing HCL (#2545).
+   */
+  anyBlock?: { in: string[]; blocks: string[] };
+}
+
 /** What a kind's probe checks in a directory. */
 export type KindProbe =
-  /** One of these files sits directly in the directory. */
-  | { anyFile: string[] }
+  /** Files, or blocks in files, sit directly in the directory. */
+  | FileProbe
   /** The directory exists; nothing else is checked (`other`). */
   | { directory: true }
   /** The directory holds a chant project, as {@link holdsChantProject} says (`examples`). */
@@ -125,7 +142,48 @@ export function builtinKindRegistry(): KindRegistry {
 export function probeKind(kind: MemberKind, tree: WorkspaceTree, dir: string): boolean {
   if ("directory" in kind.probe) return true;
   if ("chantProject" in kind.probe) return holdsChantProject(tree, dir);
-  return kind.probe.anyFile.some((name) => tree.stat(joinPath(dir, name)) === "file");
+  const { anyFile, anyBlock } = kind.probe;
+  if (anyFile && filesMatching(tree, dir, anyFile).length > 0) return true;
+  if (anyBlock) {
+    const opener = new RegExp(`^\\s*(?:${anyBlock.blocks.map(escapeRegExp).join("|")})\\s*\\{`, "m");
+    for (const file of filesMatching(tree, dir, anyBlock.in)) {
+      try {
+        if (opener.test(tree.read(file))) return true;
+      } catch {
+        // An unreadable file is no evidence either way.
+      }
+    }
+  }
+  return false;
+}
+
+/** Whether a probe looks at the directory's files, and so can claim it. */
+function isFileProbe(probe: KindProbe): probe is FileProbe {
+  return !("directory" in probe) && !("chantProject" in probe);
+}
+
+/**
+ * The files directly in `dir` (tree-relative paths) whose names match one of
+ * `names`. A name without `*` is looked up directly, so the common case needs
+ * no listing.
+ */
+function filesMatching(tree: WorkspaceTree, dir: string, names: readonly string[]): string[] {
+  const out: string[] = [];
+  const globs = names.filter((n) => n.includes("*"));
+  for (const name of names) {
+    if (!name.includes("*") && tree.stat(joinPath(dir, name)) === "file") out.push(joinPath(dir, name));
+  }
+  if (globs.length > 0) {
+    const patterns = globs.map((g) => new RegExp(`^${g.split("*").map(escapeRegExp).join("[^/]*")}$`));
+    for (const e of tree.list(dir) ?? []) {
+      if (e.type === "file" && patterns.some((p) => p.test(e.name))) out.push(joinPath(dir, e.name));
+    }
+  }
+  return out.sort();
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 export interface KindResolution {
@@ -147,7 +205,7 @@ export interface KindResolution {
 export function resolveKind(kinds: KindRegistry, tree: WorkspaceTree, dir: string, exclude: readonly string[] = []): KindResolution {
   const claims = kinds
     .all()
-    .filter((k) => k.shape === "member" && "anyFile" in k.probe && !exclude.includes(k.name) && probeKind(k, tree, dir))
+    .filter((k) => k.shape === "member" && isFileProbe(k.probe) && !exclude.includes(k.name) && probeKind(k, tree, dir))
     .sort((a, b) => b.precedence - a.precedence || (a.name < b.name ? -1 : 1));
   const top = claims.filter((k) => k.precedence === claims[0]?.precedence);
   return { claims, winner: top.length === 1 ? top[0] : undefined, tie: top.length > 1 ? top : [] };
@@ -234,7 +292,7 @@ export function parseKindData(text: string, source: string): KindData {
   const problems: string[] = [];
   const kinds: MemberKind[] = [];
   const seen = new Set<string>();
-  for (const k of (raw as { kinds: { name: string; description: string; precedence: number; probe: { anyFile: string[] } }[] }).kinds) {
+  for (const k of (raw as { kinds: { name: string; description: string; precedence: number; probe: FileProbe }[] }).kinds) {
     if (BUILTIN_KIND_NAMES.includes(k.name)) {
       problems.push(`${source}: kind ${k.name} is built in and can't be supplied by a package`);
       continue;
@@ -247,7 +305,10 @@ export function parseKindData(text: string, source: string): KindData {
     kinds.push({
       name: k.name,
       description: k.description,
-      probe: { anyFile: [...k.probe.anyFile] },
+      probe: {
+        ...(k.probe.anyFile ? { anyFile: [...k.probe.anyFile] } : {}),
+        ...(k.probe.anyBlock ? { anyBlock: { in: [...k.probe.anyBlock.in], blocks: [...k.probe.anyBlock.blocks] } } : {}),
+      },
       precedence: k.precedence,
       shape: "member",
       source,

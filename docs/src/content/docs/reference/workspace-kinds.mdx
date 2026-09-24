@@ -59,7 +59,10 @@ chant reads the key `./workspace-kinds` literally. A `./*` pattern in `exports` 
 | `kinds[].name` | `^[a-z][a-z0-9-]{0,39}$`. It can't be `chant`, `workspace`, `other` or `examples`, and a package lists each name once |
 | `kinds[].description` | One line saying what the directory holds, shown in listings and messages |
 | `kinds[].precedence` | An integer from 1 to 999 |
-| `kinds[].probe.anyFile` | File names. The probe passes when one of them sits directly in the member's directory |
+| `kinds[].probe.anyFile` | File names. The probe passes when a file matching one of them sits directly in the member's directory. A `*` matches any run of characters in a name, so `*.tf` matches every `.tf` file |
+| `kinds[].probe.anyBlock` | `in`, file names as in `anyFile`, and `blocks`, block names. The probe passes when a file directly in the directory whose name matches `in` has a line that opens one of those blocks with no label, such as `live {`. Leading space is allowed, and no file is parsed |
+
+A probe needs at least one of `anyFile` and `anyBlock`, and it passes when either one does. Both only look at files directly in the directory, never below it.
 
 Fields whose names start with `x-` are allowed on the file and on each kind. Anything else is refused. The JSON Schema ships in `@intentius/chant` at `src/workspace/workspace-kinds.schema.json`, with the `$id` `https://intentius.io/chant/schemas/workspace/kinds/v1/workspace-kinds.schema.json`.
 
@@ -75,6 +78,32 @@ Kinds come only from the declaration's [`pins`](/chant/reference/workspace-decla
 A pin that isn't installed, is installed at another version, or publishes a kinds file that doesn't validate is a `WSP002` error. Its kinds are left out, so members of those kinds also fail with `WSP003`. A pin on a package with no subpath (`@intentius/chant` itself, for one) supplies no kinds and is no error. A kind name that two pins both supply is an error, and neither package's version of it is used.
 
 `chant workspace ls --at <rev>` reads kinds from the packages installed in the working tree, not from the revision.
+
+## Terraform and choudoufu
+
+Two kinds ship from chant's own packages. behold used to keep both in its closed list of member kinds ([#2545](https://github.com/INTENTIUS/chant/issues/2545)), and each keeps behold's probe, narrowed to the member's own directory, and behold's order: a chant project first, then choudoufu, then terraform.
+
+| Kind | Package | Precedence | Probe |
+|---|---|---|---|
+| `choudoufu` | `@intentius/workspace-kind-choudoufu`, a kinds-only package | 450 | `anyFile: ["estate.chdf.hcl"]`, or `anyBlock` for a `live` block in a `*.tf` file |
+| `terraform` | `@intentius/chant-lexicon-terraform` | 400 | `anyFile: ["*.tf"]` |
+
+A choudoufu root also passes the `terraform` probe, and the higher precedence makes it a `choudoufu` member. A workspace that uses either kind pins its package.
+
+```json
+{
+  "pins": [
+    { "package": "@intentius/chant-lexicon-terraform", "version": "0.80.0" },
+    { "package": "@intentius/workspace-kind-choudoufu", "version": "1.0.0" }
+  ],
+  "members": [
+    { "name": "network", "dir": "estates/network", "kind": "terraform" },
+    { "name": "prod", "dir": "estates/prod", "kind": "choudoufu" }
+  ]
+}
+```
+
+The chant repo pins both by path and declares `examples/terraform-carve-out/terraform` as a `terraform` member.
 
 ## Overlapping probes
 
