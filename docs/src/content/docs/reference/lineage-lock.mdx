@@ -131,8 +131,10 @@ Each entry has a `class` and a `sha256`. The hash is the file's content when cha
 | Class | Update rule | Default for |
 |---|---|---|
 | `owned` | Replaced when unedited. When edited and changed by the source too, merged by `chant workspace upgrade` if every hunk is clean, and otherwise kept with a manual step. | every file not listed below |
-| `generated` | Rebuilt by `command`, never written or merged by an update. Edits and absence are not reported. | `skills/*/SKILL.md`, rebuilt by `chant update` |
+| `generated` | Rebuilt by `command`, never written or merged by an update. Edits and absence are not reported. | `skills/*/SKILL.md`, rebuilt by `chant update`, and each path a member lists in its declaration's `generated` entries, rebuilt by its `generator` |
 | `seed` | Written once at init and never updated. | `.mcp.json` |
+
+The classes come from the same list that [`chant workspace check`](/chant/cli/workspace-check/#generated-files) checks for drift ([#2541](https://github.com/INTENTIUS/chant/issues/2541)). When a `chant.workspace.json` sits above the scope, each path a member lists in its [`generated`](/chant/reference/workspace-declaration/#generated-files) entries is `generated`, with the entry's `generator` as its `command`. An entry marked `handWritten` makes the path `owned`. A plain project has no declaration, so only the implicit rules in the table apply. An update reads the declaration again, so a path listed after the lock was written is rebuilt instead of merged from then on. A declaration that can't be read stops the command with its error instead of being read as empty.
 
 `.chant/types/` is gitignored and never listed. A file that existed before init (kept with `--force`) was not written from the template and is not listed either.
 

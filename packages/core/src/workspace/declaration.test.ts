@@ -299,3 +299,49 @@ describe("example groups on a tree (ws-051)", () => {
     expect(() => resolveGroups(d, workingTree(root))).toThrow(/sits inside the nested workspace inner/);
   });
 });
+
+describe("generated files (#2541)", () => {
+  const member = (generated: unknown[], extra: Record<string, unknown> = {}) => ({ name: "app", dir: "app", kind: "chant", generated, ...extra });
+
+  test("a member lists each generated file with its generator, sources and an optional hand-written reason", () => {
+    const d = parse(
+      base([
+        member([
+          { path: ".github/workflows/ci.yml", generator: "chant build ci --lexicon github -o .github/workflows/ci.yml", sources: ["app/src/ci.ts"] },
+          { path: "docs/api.md", generator: "npm run docs", handWritten: { because: "the generator drops the examples" } },
+        ]),
+      ]),
+    );
+    expect(d.members[0].generated).toEqual([
+      { path: ".github/workflows/ci.yml", generator: "chant build ci --lexicon github -o .github/workflows/ci.yml", sources: ["app/src/ci.ts"], handWritten: null, pointer: "/members/0/generated/0" },
+      { path: "docs/api.md", generator: "npm run docs", sources: [], handWritten: { because: "the generator drops the examples" }, pointer: "/members/0/generated/1" },
+    ]);
+    expect(parse(base([{ name: "x", dir: "x", kind: "chant" }])).members[0].generated).toEqual([]);
+  });
+
+  test("an entry needs a path and a generator, and a hand-written one needs its reason", () => {
+    expect(failure(base([member([{ path: "a.txt" }])])).message).toContain('missing required field "generator"');
+    expect(failure(base([member([{ generator: "x" }])])).message).toContain('missing required field "path"');
+    expect(failure(base([member([{ path: "a.txt", generator: "x", handWritten: {} }])])).message).toContain("a hand-written generated file needs \"because\"");
+    expect(failure(base([member([{ path: "a.txt", generator: "" }])])).code).toBe("declaration-invalid");
+  });
+
+  test("paths stay inside the member and sources inside the workspace", () => {
+    expect(failure(base([member([{ path: "../a.txt", generator: "x" }])])).message).toContain("is not a path inside the member or workspace");
+    expect(failure(base([member([{ path: ".", generator: "x" }])])).code).toBe("declaration-invalid");
+    expect(failure(base([member([{ path: "a.txt", generator: "x", sources: ["/etc/passwd"] }])])).code).toBe("declaration-invalid");
+  });
+
+  test("a member lists a file once, and never one inside another member", () => {
+    const twice = failure(base([member([{ path: "a.txt", generator: "x" }, { path: "a.txt", generator: "y" }])]));
+    expect(twice.message).toContain("lists the generated file a.txt twice");
+    expect(twice.location?.line).toBeGreaterThan(1);
+    const inner = failure(base([{ name: "root", dir: ".", kind: "chant", generated: [{ path: "app/a.txt", generator: "x" }] }, member([])]));
+    expect(inner.code).toBe("placement-invalid");
+    expect(inner.message).toContain("sits inside member app (app); list it there");
+  });
+
+  test("a group has no generated files", () => {
+    expect(failure(base([{ name: "g", kind: "examples", glob: "examples/*", generated: [] }])).message).toContain('unknown field "generated"');
+  });
+});

@@ -27,6 +27,8 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, posix } from "node:path";
 import { z } from "zod";
+import { WorkspaceReadError } from "./declaration";
+import { classifyFile, declaredFilesFor, type DeclaredFiles } from "./generated-files";
 
 /** Where the lock lives, relative to the project (or workspace) root. */
 export const LOCK_FILE = ".chant/workspace.lock.json";
@@ -257,21 +259,38 @@ export function writeLock(root: string, lock: LineageLock): void {
 // ── Building a lineage ───────────────────────────────────────────────────────
 
 /**
- * The class a file gets when no template says otherwise (D14): skills that
- * `chant update` rewrites are generated, `.mcp.json` is a seed, the rest is
- * owned.
+ * The class a file gets (D14), from the same list the drift check reads
+ * (`generated-files.ts`): a member's declared generated files, passed as
+ * `declared`, then the implicit rules. Skills that `chant update` rewrites
+ * are generated, `.mcp.json` is a seed, a hand-written entry and the rest are
+ * owned. `.chant/types/` is ignored, and {@link fileEntries} leaves it out.
  */
-export function defaultFileClass(path: string): { class: FileClass; command?: string } {
-  if (/^skills\/[^/]+\/SKILL\.md$/.test(path)) return { class: "generated", command: "chant update" };
-  if (path === ".mcp.json") return { class: "seed" };
-  return { class: "owned" };
+export function defaultFileClass(path: string, declared?: DeclaredFiles): { class: FileClass; command?: string } {
+  const c = classifyFile(path, declared);
+  if (c.class === "generated") return { class: "generated", command: c.command };
+  return { class: c.class === "ignored" ? "owned" : c.class };
 }
 
-/** Per-file entries for a file set, each with its default class. */
-export function fileEntries(files: Map<string, Buffer>): Lineage["files"] {
+/**
+ * The declared generated files for the scope directory `absDir`, from the
+ * workspace declaration above it, if any (#2541). A declaration that can't
+ * be read is a {@link LockError}, never an empty list.
+ */
+export function declaredFilesAt(absDir: string): DeclaredFiles {
+  try {
+    return declaredFilesFor(absDir);
+  } catch (err) {
+    if (err instanceof WorkspaceReadError) throw new LockError(`${err.code}: ${err.describe()}`);
+    throw err;
+  }
+}
+
+/** Per-file entries for a file set, each with its default class. Ignored paths (`.chant/types/`) are left out. */
+export function fileEntries(files: Map<string, Buffer>, declared?: DeclaredFiles): Lineage["files"] {
   const out: Lineage["files"] = {};
   for (const path of [...files.keys()].sort()) {
-    out[path] = { ...defaultFileClass(path), sha256: fileHash(files.get(path)!) };
+    if (classifyFile(path, declared).class === "ignored") continue;
+    out[path] = { ...defaultFileClass(path, declared), sha256: fileHash(files.get(path)!) };
   }
   return out;
 }

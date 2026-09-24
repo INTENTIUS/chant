@@ -66,6 +66,7 @@ A member is an object with `name`, `dir` and `kind`.
 | `dir` | yes | Its directory relative to the workspace root, with `/` separators. `"."` is the root member. |
 | `kind` | yes | How to read it: `chant`, `workspace`, `other`, or a kind a plugin supplies. |
 | `roles` | no | Roles the member plays. Each is a role name, or `{ "name": "...", "path": "..." }` with a path inside the member. |
+| `generated` | no | The files a command writes in the member, with the command that writes each (see [Generated files](#generated-files)). |
 | `upstream` | no | Where an embedded member's files come from. Versions live in the lock, not here. |
 | `because` | for `other` | Why the member is there. |
 
@@ -102,6 +103,49 @@ A group has no ledger, no releases and no links, and its matches are never membe
 | `[...]` | one character from a set |
 
 A wildcard never enters `node_modules` or a directory whose name starts with `.`.
+
+## Generated files
+
+A member lists the files a command writes in its `generated` array ([#2541](https://github.com/INTENTIUS/chant/issues/2541), D14 of [#2524](https://github.com/INTENTIUS/chant/issues/2524)). Each entry names the file, the command that regenerates it and, optionally, what the command reads. [`chant workspace check`](/chant/cli/workspace-check/#generated-files) fails when a listed file differs from what its generator writes, and the [lineage lock](/chant/reference/lineage-lock/#files) classes the same files `generated`.
+
+```json
+{
+  "name": "api",
+  "dir": "services/api",
+  "kind": "chant",
+  "generated": [
+    {
+      "path": "ci/pipeline.yml",
+      "generator": "chant build ci --lexicon github -o ci/pipeline.yml",
+      "sources": ["services/api/src/pipeline.ts"]
+    },
+    {
+      "path": "skills/chant-aws/SKILL.md",
+      "generator": "chant update",
+      "handWritten": { "because": "we trim the skill for this service" }
+    }
+  ]
+}
+```
+
+| Field | Required | Value |
+|---|---|---|
+| `path` | yes | The file, relative to the member's directory. It may not sit inside another member's directory, and a member lists a path once. |
+| `generator` | yes | The command line that writes the file. It runs in the member's directory with no shell, so pipes and redirections are refused. |
+| `sources` | no | Files or directories the generator reads, relative to the workspace root, since a generator often reads other members. Each must exist. |
+| `handWritten` | no | `{ "because": "..." }` marks a file kept by hand. The check reports it with the reason and never runs its generator, and the lock classes it `owned`. |
+
+When the generator passes `-o` or `--output` with the entry's path, the check points that flag at a temporary file. Otherwise the generator writes in place, and the check puts the git working tree back afterwards.
+
+chant registers some files without an entry. The files `chant update` rewrites are implicit generated entries of every `chant` member, and an entry for the same path takes their place, which is how a member keeps a skill by hand.
+
+| File | Class |
+|---|---|
+| `skills/*/SKILL.md` | generated, by `chant update` |
+| `.mcp.json` | seed, written once at init |
+| `.chant/types/` | ignored, since it is gitignored |
+
+Root CI files that forges read from fixed paths, such as `.github/workflows/`, sit outside the member that generates them. Their exemption comes with [#2542](https://github.com/INTENTIUS/chant/issues/2542) ([ws-042](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-042-root-ci-files.md)). Until then an entry's path stays inside its member.
 
 ## Names
 

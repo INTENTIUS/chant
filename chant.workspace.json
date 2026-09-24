@@ -6,7 +6,51 @@
       "name": "docs",
       "dir": "docs",
       "kind": "other",
-      "because": "an npm package with no chant project"
+      "because": "an npm package with no chant project",
+      "generated": [
+        {
+          "path": "src/content/docs/lint-rules/audit-rules.mdx",
+          "generator": "npx tsx ../scripts/generate-audit-rules-doc.ts",
+          "sources": [
+            "scripts/generate-audit-rules-doc.ts",
+            "packages/core/src/audit/rules-doc.ts"
+          ]
+        },
+        {
+          "path": "src/content/docs/reference/network-egress.mdx",
+          "generator": "npx tsx ../scripts/generate-egress-catalogue.ts",
+          "sources": [
+            "scripts/generate-egress-catalogue.ts",
+            "test/egress-catalogue.ts"
+          ]
+        },
+        {
+          "path": "src/content/docs/reference/behaviour-coverage.mdx",
+          "generator": "npx tsx ../scripts/generate-behaviour-coverage.ts",
+          "sources": [
+            "scripts/generate-behaviour-coverage.ts",
+            "test/behaviour-coverage.ts"
+          ]
+        },
+        {
+          "path": "src/content/docs/concepts/typescript-as-data.mdx",
+          "generator": "npx tsx ../scripts/generate-fold-coverage.ts",
+          "sources": [
+            "scripts/generate-fold-coverage.ts",
+            "examples/fold-coverage.ts",
+            "examples/differential-corpus.ts"
+          ]
+        },
+        {
+          "path": "src/content/docs/architecture/sandbox.mdx",
+          "generator": "npx tsx ../scripts/generate-fold-coverage.ts",
+          "sources": [
+            "scripts/generate-fold-coverage.ts",
+            "examples/fold-coverage.ts",
+            "examples/differential-corpus.ts"
+          ]
+        }
+      ]
     },
     {
       "name": "vscode",
@@ -18,109 +62,307 @@
       "name": "lexicon-aws",
       "dir": "lexicons/aws",
       "kind": "other",
-      "because": "an npm workspace package with no chant project"
+      "because": "an npm workspace package with no chant project",
+      "generated": [
+        {
+          "path": "src/lint/post-synth/index.ts",
+          "generator": "npx tsx ../../scripts/generate-post-synth-barrels.ts",
+          "sources": [
+            "scripts/generate-post-synth-barrels.ts",
+            "packages/core/src/codegen/generate-post-synth-barrel.ts",
+            "lexicons/aws/src/lint/post-synth"
+          ]
+        }
+      ]
     },
     {
       "name": "lexicon-azure",
       "dir": "lexicons/azure",
       "kind": "other",
-      "because": "an npm workspace package with no chant project"
+      "because": "an npm workspace package with no chant project",
+      "generated": [
+        {
+          "path": "src/lint/post-synth/index.ts",
+          "generator": "npx tsx ../../scripts/generate-post-synth-barrels.ts",
+          "sources": [
+            "scripts/generate-post-synth-barrels.ts",
+            "packages/core/src/codegen/generate-post-synth-barrel.ts",
+            "lexicons/azure/src/lint/post-synth"
+          ]
+        }
+      ]
     },
     {
       "name": "lexicon-cedar",
       "dir": "lexicons/cedar",
       "kind": "other",
-      "because": "an npm workspace package with no chant project"
+      "because": "an npm workspace package with no chant project",
+      "generated": [
+        {
+          "path": "src/lint/post-synth/index.ts",
+          "generator": "npx tsx ../../scripts/generate-post-synth-barrels.ts",
+          "sources": [
+            "scripts/generate-post-synth-barrels.ts",
+            "packages/core/src/codegen/generate-post-synth-barrel.ts",
+            "lexicons/cedar/src/lint/post-synth"
+          ]
+        }
+      ]
     },
     {
       "name": "lexicon-cpln",
       "dir": "lexicons/cpln",
       "kind": "other",
-      "because": "an npm workspace package with no chant project"
+      "because": "an npm workspace package with no chant project",
+      "generated": [
+        {
+          "path": "src/lint/post-synth/index.ts",
+          "generator": "npx tsx ../../scripts/generate-post-synth-barrels.ts",
+          "sources": [
+            "scripts/generate-post-synth-barrels.ts",
+            "packages/core/src/codegen/generate-post-synth-barrel.ts",
+            "lexicons/cpln/src/lint/post-synth"
+          ]
+        }
+      ]
     },
     {
       "name": "lexicon-docker",
       "dir": "lexicons/docker",
       "kind": "other",
-      "because": "an npm workspace package with no chant project"
+      "because": "an npm workspace package with no chant project",
+      "generated": [
+        {
+          "path": "src/lint/post-synth/index.ts",
+          "generator": "npx tsx ../../scripts/generate-post-synth-barrels.ts",
+          "sources": [
+            "scripts/generate-post-synth-barrels.ts",
+            "packages/core/src/codegen/generate-post-synth-barrel.ts",
+            "lexicons/docker/src/lint/post-synth"
+          ]
+        }
+      ]
     },
     {
       "name": "lexicon-fly",
       "dir": "lexicons/fly",
       "kind": "other",
-      "because": "an npm workspace package with no chant project"
+      "because": "an npm workspace package with no chant project",
+      "generated": [
+        {
+          "path": "src/lint/post-synth/index.ts",
+          "generator": "npx tsx ../../scripts/generate-post-synth-barrels.ts",
+          "sources": [
+            "scripts/generate-post-synth-barrels.ts",
+            "packages/core/src/codegen/generate-post-synth-barrel.ts",
+            "lexicons/fly/src/lint/post-synth"
+          ]
+        }
+      ]
     },
     {
       "name": "lexicon-forgejo",
       "dir": "lexicons/forgejo",
       "kind": "other",
-      "because": "an npm workspace package with no chant project"
+      "because": "an npm workspace package with no chant project",
+      "generated": [
+        {
+          "path": "src/lint/post-synth/index.ts",
+          "generator": "npx tsx ../../scripts/generate-post-synth-barrels.ts",
+          "sources": [
+            "scripts/generate-post-synth-barrels.ts",
+            "packages/core/src/codegen/generate-post-synth-barrel.ts",
+            "lexicons/forgejo/src/lint/post-synth"
+          ]
+        }
+      ]
     },
     {
       "name": "lexicon-fountain",
       "dir": "lexicons/fountain",
       "kind": "other",
-      "because": "an npm workspace package with no chant project"
+      "because": "an npm workspace package with no chant project",
+      "generated": [
+        {
+          "path": "src/lint/post-synth/index.ts",
+          "generator": "npx tsx ../../scripts/generate-post-synth-barrels.ts",
+          "sources": [
+            "scripts/generate-post-synth-barrels.ts",
+            "packages/core/src/codegen/generate-post-synth-barrel.ts",
+            "lexicons/fountain/src/lint/post-synth"
+          ]
+        }
+      ]
     },
     {
       "name": "lexicon-gcp",
       "dir": "lexicons/gcp",
       "kind": "other",
-      "because": "an npm workspace package with no chant project"
+      "because": "an npm workspace package with no chant project",
+      "generated": [
+        {
+          "path": "src/lint/post-synth/index.ts",
+          "generator": "npx tsx ../../scripts/generate-post-synth-barrels.ts",
+          "sources": [
+            "scripts/generate-post-synth-barrels.ts",
+            "packages/core/src/codegen/generate-post-synth-barrel.ts",
+            "lexicons/gcp/src/lint/post-synth"
+          ]
+        }
+      ]
     },
     {
       "name": "lexicon-github",
       "dir": "lexicons/github",
       "kind": "other",
-      "because": "an npm workspace package with no chant project"
+      "because": "an npm workspace package with no chant project",
+      "generated": [
+        {
+          "path": "src/lint/post-synth/index.ts",
+          "generator": "npx tsx ../../scripts/generate-post-synth-barrels.ts",
+          "sources": [
+            "scripts/generate-post-synth-barrels.ts",
+            "packages/core/src/codegen/generate-post-synth-barrel.ts",
+            "lexicons/github/src/lint/post-synth"
+          ]
+        }
+      ]
     },
     {
       "name": "lexicon-gitlab",
       "dir": "lexicons/gitlab",
       "kind": "other",
-      "because": "an npm workspace package with no chant project"
+      "because": "an npm workspace package with no chant project",
+      "generated": [
+        {
+          "path": "src/lint/post-synth/index.ts",
+          "generator": "npx tsx ../../scripts/generate-post-synth-barrels.ts",
+          "sources": [
+            "scripts/generate-post-synth-barrels.ts",
+            "packages/core/src/codegen/generate-post-synth-barrel.ts",
+            "lexicons/gitlab/src/lint/post-synth"
+          ]
+        }
+      ]
     },
     {
       "name": "lexicon-helm",
       "dir": "lexicons/helm",
       "kind": "other",
-      "because": "an npm workspace package with no chant project"
+      "because": "an npm workspace package with no chant project",
+      "generated": [
+        {
+          "path": "src/lint/post-synth/index.ts",
+          "generator": "npx tsx ../../scripts/generate-post-synth-barrels.ts",
+          "sources": [
+            "scripts/generate-post-synth-barrels.ts",
+            "packages/core/src/codegen/generate-post-synth-barrel.ts",
+            "lexicons/helm/src/lint/post-synth"
+          ]
+        }
+      ]
     },
     {
       "name": "lexicon-k3d",
       "dir": "lexicons/k3d",
       "kind": "other",
-      "because": "an npm workspace package with no chant project"
+      "because": "an npm workspace package with no chant project",
+      "generated": [
+        {
+          "path": "src/lint/post-synth/index.ts",
+          "generator": "npx tsx ../../scripts/generate-post-synth-barrels.ts",
+          "sources": [
+            "scripts/generate-post-synth-barrels.ts",
+            "packages/core/src/codegen/generate-post-synth-barrel.ts",
+            "lexicons/k3d/src/lint/post-synth"
+          ]
+        }
+      ]
     },
     {
       "name": "lexicon-k3s",
       "dir": "lexicons/k3s",
       "kind": "other",
-      "because": "an npm workspace package with no chant project"
+      "because": "an npm workspace package with no chant project",
+      "generated": [
+        {
+          "path": "src/lint/post-synth/index.ts",
+          "generator": "npx tsx ../../scripts/generate-post-synth-barrels.ts",
+          "sources": [
+            "scripts/generate-post-synth-barrels.ts",
+            "packages/core/src/codegen/generate-post-synth-barrel.ts",
+            "lexicons/k3s/src/lint/post-synth"
+          ]
+        }
+      ]
     },
     {
       "name": "lexicon-k8s",
       "dir": "lexicons/k8s",
       "kind": "other",
-      "because": "an npm workspace package with no chant project"
+      "because": "an npm workspace package with no chant project",
+      "generated": [
+        {
+          "path": "src/lint/post-synth/index.ts",
+          "generator": "npx tsx ../../scripts/generate-post-synth-barrels.ts",
+          "sources": [
+            "scripts/generate-post-synth-barrels.ts",
+            "packages/core/src/codegen/generate-post-synth-barrel.ts",
+            "lexicons/k8s/src/lint/post-synth"
+          ]
+        }
+      ]
     },
     {
       "name": "lexicon-otel",
       "dir": "lexicons/otel",
       "kind": "other",
-      "because": "an npm workspace package with no chant project"
+      "because": "an npm workspace package with no chant project",
+      "generated": [
+        {
+          "path": "src/lint/post-synth/index.ts",
+          "generator": "npx tsx ../../scripts/generate-post-synth-barrels.ts",
+          "sources": [
+            "scripts/generate-post-synth-barrels.ts",
+            "packages/core/src/codegen/generate-post-synth-barrel.ts",
+            "lexicons/otel/src/lint/post-synth"
+          ]
+        }
+      ]
     },
     {
       "name": "lexicon-render",
       "dir": "lexicons/render",
       "kind": "other",
-      "because": "an npm workspace package with no chant project"
+      "because": "an npm workspace package with no chant project",
+      "generated": [
+        {
+          "path": "src/lint/post-synth/index.ts",
+          "generator": "npx tsx ../../scripts/generate-post-synth-barrels.ts",
+          "sources": [
+            "scripts/generate-post-synth-barrels.ts",
+            "packages/core/src/codegen/generate-post-synth-barrel.ts",
+            "lexicons/render/src/lint/post-synth"
+          ]
+        }
+      ]
     },
     {
       "name": "lexicon-terraform",
       "dir": "lexicons/terraform",
       "kind": "other",
-      "because": "an npm workspace package with no chant project"
+      "because": "an npm workspace package with no chant project",
+      "generated": [
+        {
+          "path": "src/lint/post-synth/index.ts",
+          "generator": "npx tsx ../../scripts/generate-post-synth-barrels.ts",
+          "sources": [
+            "scripts/generate-post-synth-barrels.ts",
+            "packages/core/src/codegen/generate-post-synth-barrel.ts",
+            "lexicons/terraform/src/lint/post-synth"
+          ]
+        }
+      ]
     },
     {
       "name": "core",

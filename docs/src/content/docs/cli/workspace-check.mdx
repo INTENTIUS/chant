@@ -16,7 +16,7 @@ chant workspace check [--json]
 
 It needs no `chant.workspace.json`. A directory with no lock has nothing to check and passes.
 
-For now, `check` covers the lineage lock only. The generated-file drift checks ([#2541](https://github.com/INTENTIUS/chant/issues/2541)) and the per-member checks ([#2537](https://github.com/INTENTIUS/chant/issues/2537)) will add their findings to the same report.
+For now, `check` covers the lineage lock only. The [generated-file checks](#generated-files) of [#2541](https://github.com/INTENTIUS/chant/issues/2541) are written and join the report once the check contract of [#2535](https://github.com/INTENTIUS/chant/issues/2535) lands. The per-member checks ([#2537](https://github.com/INTENTIUS/chant/issues/2537)) will add their findings to the same report.
 
 [`chant workspace upgrade`](/chant/cli/workspace-upgrade/) runs the same checks in its staging worktree before it records its gate. There, a finding already present at HEAD does not stop the upgrade, and neither do the manual steps the upgrade itself records, since those are part of what the gate approves.
 
@@ -24,6 +24,28 @@ For now, `check` covers the lineage lock only. The generated-file drift checks (
 $ chant workspace check
   src/config.ts: manual step open (changed-locally): merge by hand, then `chant workspace lineage resolve src/config.ts`
 ✗ 1 check(s) failed
+```
+
+## Generated files
+
+A member lists the files a command writes in its [`generated`](/chant/reference/workspace-declaration/#generated-files) entries, each with the command that writes it (D14 of [#2524](https://github.com/INTENTIUS/chant/issues/2524)). Core adds the files `chant update` rewrites, `skills/*/SKILL.md`, as implicit entries of every `chant` member. The checks live in `packages/core/src/workspace/checks/generated.ts`, and `chant workspace check` reports them once [#2535](https://github.com/INTENTIUS/chant/issues/2535) lands.
+
+| Id | Severity | Reported when |
+|---|---|---|
+| `WSP081` | error | a generated file differs from what its generator writes |
+| `WSP082` | error | a declared generated file does not exist |
+| `WSP083` | error | a generator can't be run, exits non-zero, or writes nothing |
+| `WSP084` | info | an entry is kept by hand. The finding carries the entry's reason, and the generator is not run |
+| `WSP085` | info | an entry was not compared with its generator's output, and the message says why |
+| `WSP086` | error | an entry names a source that does not exist |
+
+By default the check runs no member code. It checks that each declared file and its sources exist. It also renders each implicit `SKILL.md` from the lexicons the member's config names, read statically as `chant audit` reads them, and compares it with the file in the tree. A skill the tree doesn't have is not drift, since projects often ignore `skills/` in git. When the config's lexicons can't be read without running it, or a lexicon is declared by module path, the skills get a `WSP085` instead.
+
+Declared generators run member code and take seconds each, so they run only with `--generated`, which arrives with that wiring. On the chant repository all of them together take about six minutes. Each generator runs in the member's directory with no shell, with the member's own `node_modules/.bin` first on `PATH`, so `chant` in a generator is the member's own chant. When the command passes `-o` or `--output` with the entry's path, that flag gets a temporary path and the tree is never written. Any other generator writes in place. The check then puts the git working tree back as it was: files that were clean are checked out again, new untracked files are removed, and files that already had changes get their earlier bytes back. Outside a git checkout an in-place generator is not run, and that is a `WSP083`. A command with pipes, redirections or shell expansions is refused, not run.
+
+```
+error  WSP081  docs/src/content/docs/lint-rules/audit-rules.mdx differs from what `npx tsx ../scripts/generate-audit-rules-doc.ts` writes; run `npx tsx ../scripts/generate-audit-rules-doc.ts` in docs and commit the result, or mark the entry handWritten with a reason
+info   WSP084  services/api/skills/chant-aws/SKILL.md is kept by hand, so `chant update` is not run for it: we trim the skill for this service
 ```
 
 ## Options
