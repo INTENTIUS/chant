@@ -1,0 +1,308 @@
+/**
+ * The read contract for `chant workspace status --json` (#2544, #2524 D15,
+ * D19): the output schema is a valid draft 2020-12 document, its closed code
+ * lists match the code, and real output validates against it, for workspaces
+ * built here with a `chant/lifecycle` branch holding member ledgers in both
+ * layouts, and for the chant repo's own declaration (#2557).
+ */
+
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import Ajv2020 from "ajv/dist/2020";
+import { afterAll, describe, expect, test, vi } from "vitest";
+import type { CommandContext } from "../cli/registry";
+import { listWorkspace } from "./ls";
+import {
+  formatStatus,
+  runWorkspaceStatus,
+  STATUS_CONTRACT_VERSION,
+  STATUS_ERROR_CODES,
+  STATUS_OUTPUT_SCHEMA_ID,
+  STATUS_REASON_CODES,
+  workspaceStatus,
+  type StatusDocument,
+} from "./status";
+import schema from "./status.schema.json";
+
+const REPO = join(import.meta.dirname, "..", "..", "..", "..");
+
+const ajv = new Ajv2020({ strict: true, allErrors: true });
+const validate = ajv.compile(schema);
+
+function expectValid(doc: StatusDocument): void {
+  const ok = validate(doc);
+  expect(ok, JSON.stringify(validate.errors, null, 2)).toBe(true);
+}
+
+function result(doc: StatusDocument): Extract<StatusDocument, { members: unknown }> {
+  if ("error" in doc) throw new Error(`${doc.error.code}: ${doc.error.message}`);
+  return doc;
+}
+
+const scratch: string[] = [];
+afterAll(() => {
+  for (const d of scratch) rmSync(d, { recursive: true, force: true });
+});
+
+function git(cwd: string, args: string[], env?: NodeJS.ProcessEnv, input?: string): string {
+  return execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", ...args], {
+    cwd,
+    encoding: "utf-8",
+    input,
+    env: { ...process.env, ...env },
+    stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
+  }).trim();
+}
+
+/** A git repository holding `files`, committed. */
+function repo(files: Record<string, string>): string {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "chant-status-")));
+  scratch.push(root);
+  for (const [path, text] of Object.entries(files)) {
+    mkdirSync(dirname(join(root, path)), { recursive: true });
+    writeFileSync(join(root, path), text);
+  }
+  git(root, ["init", "-q", "-b", "main"]);
+  git(root, ["add", "-A"]);
+  git(root, ["commit", "-q", "--allow-empty", "-m", "init"]);
+  return root;
+}
+
+/**
+ * Write `files` as the whole tree of a `chant/lifecycle` commit, the way the
+ * lifecycle code stores ledgers, without touching the working tree or index.
+ */
+function lifecycle(root: string, files: Record<string, string>): string {
+  const index = join(root, ".git", "status-test-index");
+  const env = { GIT_INDEX_FILE: index };
+  rmSync(index, { force: true });
+  for (const [path, text] of Object.entries(files)) {
+    const blob = git(root, ["hash-object", "-w", "--stdin"], env, text);
+    git(root, ["update-index", "--add", "--cacheinfo", `100644,${blob},${path}`], env);
+  }
+  const tree = git(root, ["write-tree"], env);
+  const commit = git(root, ["commit-tree", tree, "-m", "ledger"], env);
+  git(root, ["update-ref", "refs/heads/chant/lifecycle", commit]);
+  rmSync(index, { force: true });
+  return commit;
+}
+
+let n = 0;
+/** One ledger line. */
+function release(component: string, env: string, digest: string, gitSha: string, extra: Record<string, string> = {}): string {
+  n++;
+  return JSON.stringify({
+    version: 1,
+    component,
+    env,
+    digest,
+    gitSha,
+    runId: `run-${n}`,
+    timestamp: `2026-09-${String(10 + n).padStart(2, "0")}T00:00:00.000Z`,
+    actor: "ci",
+    ...extra,
+  });
+}
+const jsonl = (...lines: string[]) => lines.join("\n") + "\n";
+
+const D = (c: string) => `sha256:${c.repeat(64)}`;
+
+const declaration = (members: unknown[]) => JSON.stringify({ name: "acme", schema: 1, members }, null, 2);
+
+/** web has moved to _members/ (#2538); api and the root member still read the flat ledger. */
+function twoLayouts(): string {
+  const root = repo({
+    "chant.workspace.json": declaration([
+      { name: "site", dir: ".", kind: "other", because: "the root project" },
+      { name: "web", dir: "apps/web", kind: "chant" },
+      { name: "api", dir: "apps/api", kind: "chant" },
+      { name: "examples", kind: "examples", glob: "examples/*" },
+    ]),
+    "apps/web/chant.config.ts": "",
+    "apps/api/chant.config.ts": "",
+  });
+  lifecycle(root, {
+    "_members/web/staging/releases.jsonl": jsonl(release("web", "staging", D("0"), "0".repeat(40)), release("web", "staging", D("a"), "a".repeat(40))),
+    "_members/web/prod/releases.jsonl": jsonl(release("web", "prod", D("a"), "a".repeat(40))),
+    "staging/releases.jsonl": jsonl(
+      release("api", "staging", D("b"), "b".repeat(40)),
+      release("worker", "staging", D("d"), "d".repeat(40)),
+    ),
+    "prod/releases.jsonl": jsonl(release("api", "prod", D("c"), "c".repeat(40))),
+  });
+  return root;
+}
+
+describe("status output schema", () => {
+  test("is a valid draft 2020-12 document with the published $id", () => {
+    expect(schema.$schema).toBe("https://json-schema.org/draft/2020-12/schema");
+    expect(ajv.validateSchema(schema)).toBe(true);
+    expect(schema.$id).toBe(STATUS_OUTPUT_SCHEMA_ID);
+    expect(STATUS_CONTRACT_VERSION).toBe(1);
+  });
+
+  test("lists exactly the reason and error codes the code can return", () => {
+    expect(schema.$defs.environment.properties.reason.oneOf[1].properties!.code.enum).toEqual([...STATUS_REASON_CODES]);
+    expect(schema.$defs.failure.properties.error.properties.code.enum).toEqual([...STATUS_ERROR_CODES]);
+  });
+});
+
+describe("chant workspace status on built workspaces", () => {
+  test("lists each member's latest release per environment, from _members/ and from the flat layout", async () => {
+    const root = twoLayouts();
+    const doc = result(await workspaceStatus({ cwd: join(root, "apps", "web"), env: "staging" }));
+    expectValid(doc);
+    expect(doc.lifecycle.commit).toBe(git(root, ["rev-parse", "chant/lifecycle"]));
+    expect(doc.members.map((m) => m.name)).toEqual(["site", "web", "api"]);
+    const [site, web, api] = doc.members;
+    expect(web.environments).toHaveLength(1);
+    expect(web.environments[0].ledger).toEqual({ layout: "members", path: "_members/web/staging/releases.jsonl", shared: false });
+    // The later of the two records wins.
+    expect(web.environments[0].releases.map((r) => [r.component, r.digest, r.gitSha])).toEqual([["web", D("a"), "a".repeat(40)]]);
+    // api has no _members/api/ yet, so it falls back to the flat ledger, which the root member reads too.
+    expect(api.environments[0].ledger).toEqual({ layout: "flat", path: "staging/releases.jsonl", shared: true });
+    expect(site.environments[0].ledger).toEqual({ layout: "flat", path: "staging/releases.jsonl", shared: true });
+    expect(api.environments[0].releases.map((r) => r.component)).toEqual(["api", "worker"]);
+    expect(web.compare).toBeNull();
+    expect(doc.summary).toEqual({ members: 3, released: 3, unreadable: 0, differing: null });
+  });
+
+  test("--compare-to shows both environments and marks the members whose digests differ", async () => {
+    const root = twoLayouts();
+    const doc = result(await workspaceStatus({ cwd: root, env: "staging", compareTo: "prod" }));
+    expectValid(doc);
+    const web = doc.members.find((m) => m.name === "web")!;
+    const api = doc.members.find((m) => m.name === "api")!;
+    expect(web.environments.map((e) => [e.env, e.ledger.path])).toEqual([
+      ["staging", "_members/web/staging/releases.jsonl"],
+      ["prod", "_members/web/prod/releases.jsonl"],
+    ]);
+    expect(web.compare).toEqual({ differs: false, components: [{ component: "web", state: "same", digest: D("a"), compareDigest: D("a") }] });
+    expect(api.compare).toEqual({
+      differs: true,
+      components: [
+        { component: "api", state: "differs", digest: D("b"), compareDigest: D("c") },
+        { component: "worker", state: "only-env", digest: D("d"), compareDigest: null },
+      ],
+    });
+    expect(doc.summary).toEqual({ members: 3, released: 3, unreadable: 0, differing: 2 });
+
+    const text = formatStatus(doc);
+    expect(text).toContain("acme  staging compared to prod  (chant/lifecycle at ");
+    expect(text).toMatch(/web\s+web\s+sha256:aaaaaaaaaaaa aaaaaaaa\s+sha256:aaaaaaaaaaaa aaaaaaaa\n/);
+    expect(text).toMatch(/api\s+api\s+sha256:bbbbbbbbbbbb bbbbbbbb\s+sha256:cccccccccccc cccccccc\s+differs/);
+    expect(text).toMatch(/api\s+worker\s+sha256:dddddddddddd dddddddd\s+-\s+only-env/);
+    expect(text).toContain("3 members, 3 with a release in staging, 2 differ from prod, 0 unreadable");
+  });
+
+  test("compares on the input digest when a release has one", async () => {
+    const root = repo({ "chant.workspace.json": declaration([{ name: "chart", dir: "chart", kind: "other", because: "helm" }]) });
+    lifecycle(root, {
+      "staging/releases.jsonl": jsonl(release("chart", "staging", D("1"), "1".repeat(40), { inputDigest: D("9") })),
+      "prod/releases.jsonl": jsonl(release("chart", "prod", D("2"), "1".repeat(40), { inputDigest: D("9") })),
+    });
+    const doc = result(await workspaceStatus({ cwd: root, env: "staging", compareTo: "prod" }));
+    expectValid(doc);
+    expect(doc.members[0].compare?.components[0]).toMatchObject({ state: "same", digest: D("1"), compareDigest: D("2") });
+    expect(doc.members[0].environments[0].ledger.shared).toBe(false);
+  });
+
+  test("a member whose ledger can't be read is listed with a reason code, and the read still succeeds", async () => {
+    const root = twoLayouts();
+    lifecycle(root, {
+      "_members/web/staging/releases.jsonl": jsonl(release("web", "staging", D("a"), "a".repeat(40)), "{not json", JSON.stringify({ component: "web" })),
+      "staging/releases.jsonl": jsonl(release("api", "staging", D("b"), "b".repeat(40))),
+    });
+    const doc = result(
+      await workspaceStatus({
+        cwd: root,
+        env: "staging",
+        compareTo: "prod",
+        readLedger: async (path, cwd) => {
+          if (path === "prod/releases.jsonl") throw new Error("fatal: bad object\nmore");
+          const { readReleaseLedger } = await import("../lifecycle/release-ledger");
+          return readReleaseLedger(path.slice(0, -"/releases.jsonl".length), { cwd });
+        },
+      }),
+    );
+    expectValid(doc);
+    const web = doc.members.find((m) => m.name === "web")!;
+    const api = doc.members.find((m) => m.name === "api")!;
+    expect(web.readable).toBe(false);
+    expect(web.environments[0].reason).toEqual({
+      code: "ledger-malformed",
+      message: "_members/web/staging/releases.jsonl: 2 lines are not a release record and were skipped",
+    });
+    expect(web.environments[0].releases.map((r) => r.digest)).toEqual([D("a")]);
+    expect(api.environments[1].reason).toEqual({ code: "ledger-unreadable", message: "prod/releases.jsonl: fatal: bad object" });
+    expect(api.environments[1].releases).toEqual([]);
+    expect(doc.summary.unreadable).toBe(3);
+    expect(formatStatus(doc)).toContain("  ledger-unreadable: prod/releases.jsonl: fatal: bad object");
+  });
+
+  test("a checkout with no chant/lifecycle branch lists every member with no release", async () => {
+    const root = repo({ "chant.workspace.json": declaration([{ name: "web", dir: "web", kind: "chant" }]) });
+    const doc = result(await workspaceStatus({ cwd: root, env: "prod" }));
+    expectValid(doc);
+    expect(doc.lifecycle.commit).toBeNull();
+    expect(doc.members[0].environments[0]).toMatchObject({ releases: [], reason: null, ledger: { layout: "flat", shared: false } });
+    expect(formatStatus(doc)).toContain("web     -          no release");
+  });
+
+  test("every failure validates with its code", async () => {
+    const empty = repo({});
+    const outside = realpathSync(mkdtempSync(join(tmpdir(), "chant-status-nogit-")));
+    scratch.push(outside);
+    writeFileSync(join(outside, "chant.workspace.json"), declaration([]));
+    const broken = repo({ "chant.workspace.json": '{ "name": "acme", "schema": 1 "members": [] }' });
+    const ok = repo({ "chant.workspace.json": declaration([]) });
+    const docs = [
+      await workspaceStatus({ cwd: empty, env: "prod" }),
+      await workspaceStatus({ cwd: outside, env: "prod" }),
+      await workspaceStatus({ cwd: broken, env: "prod" }),
+      await workspaceStatus({ cwd: ok, env: "_members" }),
+      await workspaceStatus({ cwd: ok, env: "prod", compareTo: "../x" }),
+    ];
+    for (const doc of docs) expectValid(doc);
+    expect(docs.map((d) => ("error" in d ? d.error.code : "ok"))).toEqual([
+      "declaration-missing",
+      "not-a-git-repository",
+      "declaration-unparseable",
+      "environment-invalid",
+      "environment-invalid",
+    ]);
+  });
+
+  test("the command needs an environment, refuses --live, and exits 0 with unreadable members", async () => {
+    const root = twoLayouts();
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const run = (args: Record<string, unknown>) => runWorkspaceStatus({ args: { extraPositional2: root, ...args } } as unknown as CommandContext);
+      expect(await run({})).toBe(1);
+      expect(String(err.mock.calls.at(-1)?.[0])).toContain("needs an environment");
+      expect(await run({ extraPositional: "prod", compareTo: "--live" })).toBe(1);
+      expect(String(err.mock.calls.at(-1)?.[0])).toContain("doesn't read live state yet");
+      expect(await run({ extraPositional: "prod", compareTo: "staging", json: true })).toBe(0);
+      const printed = JSON.parse(String(log.mock.calls.at(-1)?.[0])) as StatusDocument;
+      expectValid(printed);
+      expect(await run({ extraPositional: "../prod", json: true })).toBe(1);
+    } finally {
+      err.mockRestore();
+      log.mockRestore();
+    }
+  });
+});
+
+describe("chant workspace status on the chant repo (#2557)", () => {
+  test("validates and lists every declared member", async () => {
+    const doc = result(await workspaceStatus({ cwd: join(REPO, "packages", "core"), env: "prod", compareTo: "staging" }));
+    expectValid(doc);
+    expect(doc.workspace).toMatchObject({ name: "chant", root: ".", file: "chant.workspace.json" });
+    const ls = listWorkspace({ cwd: REPO });
+    if ("error" in ls) throw new Error(ls.error.message);
+    expect(doc.members.map((m) => m.name)).toEqual(ls.members.map((m) => m.name));
+  });
+});

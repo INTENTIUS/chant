@@ -1,0 +1,209 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/status/v1/status.schema.json",
+  "title": "chant workspace status output",
+  "description": "What `chant workspace status <env> --json` prints, version 1 of the read contract for releases across members (#2524 D15, D19, #2544). Readers ignore fields they do not know; a field is only ever added within a version. The reason and error codes are closed lists: a new code is a new contract version.",
+  "oneOf": [{ "$ref": "#/$defs/result" }, { "$ref": "#/$defs/failure" }],
+  "$defs": {
+    "result": {
+      "description": "The declaration was read. Exit code 0, even when some ledgers can't be read or members differ.",
+      "type": "object",
+      "required": ["$schema", "contract", "chant", "env", "compareTo", "lifecycle", "workspace", "members", "summary"],
+      "properties": {
+        "$schema": { "const": "https://intentius.io/chant/schemas/workspace/status/v1/status.schema.json" },
+        "contract": { "const": 1 },
+        "chant": { "type": "string", "description": "The version of the chant that read the ledgers." },
+        "env": { "$ref": "#/$defs/env" },
+        "compareTo": {
+          "description": "The environment given to --compare-to, or null.",
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/env" }]
+        },
+        "error": false,
+        "lifecycle": {
+          "type": "object",
+          "required": ["ref", "commit"],
+          "properties": {
+            "ref": { "const": "chant/lifecycle" },
+            "commit": {
+              "description": "The local branch tip the ledgers were read at, or null when the checkout has no such branch. The command never fetches it.",
+              "type": ["string", "null"],
+              "pattern": "^[0-9a-f]{40,64}$"
+            }
+          }
+        },
+        "workspace": {
+          "type": "object",
+          "required": ["name", "root", "file"],
+          "properties": {
+            "name": { "type": "string" },
+            "root": { "type": "string", "description": "The workspace root relative to the git root, with / separators, \".\" for the git root itself." },
+            "file": { "enum": ["chant.workspace.json", "chant.workspace.jsonc"] }
+          }
+        },
+        "members": {
+          "description": "Every member, in declaration order. Example groups have no ledger and are not listed.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/member" }
+        },
+        "summary": {
+          "type": "object",
+          "required": ["members", "released", "unreadable", "differing"],
+          "properties": {
+            "members": { "type": "integer", "minimum": 0 },
+            "released": { "type": "integer", "minimum": 0, "description": "Members with at least one release in env." },
+            "unreadable": { "type": "integer", "minimum": 0, "description": "Members with a reason in any environment." },
+            "differing": {
+              "type": ["integer", "null"],
+              "minimum": 0,
+              "description": "Members whose compare differs, or null without --compare-to."
+            }
+          }
+        }
+      }
+    },
+    "env": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$"
+    },
+    "member": {
+      "type": "object",
+      "required": ["name", "dir", "kind", "environments", "compare", "readable"],
+      "properties": {
+        "name": { "type": "string" },
+        "dir": { "type": "string", "description": "Relative to the workspace root, with / separators; \".\" is the root member." },
+        "kind": { "type": "string" },
+        "environments": {
+          "description": "env first, then compareTo when it is given and differs from env.",
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 2,
+          "items": { "$ref": "#/$defs/environment" }
+        },
+        "compare": {
+          "description": "Null without --compare-to.",
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/compare" }]
+        },
+        "readable": { "type": "boolean", "description": "True exactly when no environment has a reason." }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "required": ["env", "ledger", "releases", "reason"],
+      "properties": {
+        "env": { "$ref": "#/$defs/env" },
+        "ledger": {
+          "type": "object",
+          "required": ["layout", "path", "shared"],
+          "properties": {
+            "layout": {
+              "enum": ["members", "flat"],
+              "description": "members: _members/<member>/<env>/releases.jsonl (#2538). flat: <env>/releases.jsonl, for the root member and for a member with no _members/<member>/ directory yet."
+            },
+            "path": { "type": "string", "description": "The ledger's path on chant/lifecycle." },
+            "shared": { "type": "boolean", "description": "True when more than one member in this output reads the same flat ledger, so they list the same records." }
+          }
+        },
+        "releases": {
+          "description": "The latest release of each component in the ledger, sorted by component. Empty when the ledger has none.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/release" }
+        },
+        "reason": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["code", "message"],
+              "properties": {
+                "code": { "enum": ["ledger-unreadable", "ledger-malformed"] },
+                "message": { "type": "string" }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "release": {
+      "type": "object",
+      "required": ["component", "digest", "gitSha", "inputDigest", "runId", "timestamp", "actor", "flags"],
+      "properties": {
+        "component": { "type": "string" },
+        "digest": { "type": "string", "description": "The artifact digest the release deployed." },
+        "gitSha": { "type": "string", "description": "The commit the artifact was built from." },
+        "inputDigest": { "type": ["string", "null"], "description": "The input-side digest when digest is a rendered one. Compare joins on it when present." },
+        "runId": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "actor": { "type": "string" },
+        "flags": { "type": "array", "items": { "enum": ["legacy-digest"] } }
+      }
+    },
+    "compare": {
+      "type": "object",
+      "required": ["differs", "components"],
+      "properties": {
+        "differs": { "type": "boolean", "description": "True when any component is not same." },
+        "components": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["component", "state", "digest", "compareDigest"],
+            "properties": {
+              "component": { "type": "string" },
+              "state": {
+                "enum": ["same", "differs", "only-env", "only-compare"],
+                "description": "same: both environments have the same digest (the input digest when there is one). only-env and only-compare: the component has a release in one of them."
+              },
+              "digest": { "type": ["string", "null"] },
+              "compareDigest": { "type": ["string", "null"] }
+            }
+          }
+        }
+      }
+    },
+    "failure": {
+      "description": "The declaration could not be read, or an environment name can't be one. Exit code 1.",
+      "type": "object",
+      "required": ["$schema", "contract", "chant", "error"],
+      "properties": {
+        "$schema": { "const": "https://intentius.io/chant/schemas/workspace/status/v1/status.schema.json" },
+        "contract": { "const": 1 },
+        "chant": { "type": "string" },
+        "error": {
+          "type": "object",
+          "required": ["code", "message", "location"],
+          "properties": {
+            "code": {
+              "enum": [
+                "declaration-missing",
+                "declaration-ambiguous",
+                "declaration-unparseable",
+                "declaration-invalid",
+                "placement-invalid",
+                "reader-too-old",
+                "not-a-git-repository",
+                "environment-invalid"
+              ]
+            },
+            "message": { "type": "string" },
+            "location": {
+              "oneOf": [
+                { "type": "null" },
+                {
+                  "type": "object",
+                  "required": ["file", "line", "column"],
+                  "properties": {
+                    "file": { "type": "string" },
+                    "line": { "type": "integer", "minimum": 1 },
+                    "column": { "type": "integer", "minimum": 1 }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "members": false,
+        "workspace": false
+      }
+    }
+  }
+}

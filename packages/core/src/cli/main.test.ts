@@ -703,6 +703,7 @@ describe("workspace init and ls (#2534)", () => {
       "workspace lineage",
       "workspace ls",
       "workspace records",
+      "workspace status",
       "workspace upgrade",
     ]);
   });
@@ -711,6 +712,21 @@ describe("workspace init and ls (#2534)", () => {
     const source = readFileSync(join(import.meta.dirname, "main.ts"), "utf-8");
     expect(source).toMatch(/await import\("\.\.\/workspace\/init"\)/);
     expect(source).toMatch(/await import\("\.\.\/workspace\/ls"\)/);
+  });
+});
+
+describe("workspace status (#2544)", () => {
+  test("takes the environment as extra positional, a directory after it, and --compare-to", () => {
+    const status = parseArgs(["workspace", "status", "staging", "apps", "--compare-to", "prod", "--json"]);
+    expect(status).toMatchObject({ command: "workspace", path: "status", extraPositional: "staging", extraPositional2: "apps", compareTo: "prod", json: true });
+    expect(resolveCommand(status, commandRegistry)?.def.name).toBe("workspace status");
+    // --compare-to --live parses, so the command can say live isn't read yet.
+    expect(parseArgs(["workspace", "status", "prod", "--compare-to", "--live"]).compareTo).toBe("--live");
+  });
+
+  test("loads its module only when it runs", () => {
+    const source = readFileSync(join(import.meta.dirname, "main.ts"), "utf-8");
+    expect(source).toMatch(/await import\("\.\.\/workspace\/status"\)/);
   });
 });
 

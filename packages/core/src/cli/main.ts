@@ -677,6 +677,14 @@ Workspace (level 1, #2524):
                         A member that can't be read is listed with a reason
                         code and still exits 0. --at <rev> reads a commit's
                         git objects; --json prints the read-contract document
+  workspace status <env> [dir] [--compare-to <env>] [--json]
+                        Each member's latest release in <env>, as digest and
+                        git SHA, read from its ledger on the local
+                        chant/lifecycle branch (_members/<member>/ or the flat
+                        layout). --compare-to <env> shows a second environment
+                        beside it and marks the members whose digests differ.
+                        Read only; never fetches. --json prints the
+                        read-contract document
   workspace records --kind <kind file> [--current] [--at <rev>] [--json]
                         Read the records a record kind locates, validated
                         against its schema, with reason codes for invalid
@@ -1109,6 +1117,7 @@ export const commandRegistry: CommandDef[] = [
   { name: "workspace records", handler: async (ctx) => (await import("../workspace/records-cli")).runWorkspaceRecords(ctx) },
   { name: "workspace init", handler: async (ctx) => (await import("../workspace/init")).runWorkspaceInit(ctx) },
   { name: "workspace ls", handler: async (ctx) => (await import("../workspace/ls")).runWorkspaceLs(ctx) },
+  { name: "workspace status", handler: async (ctx) => (await import("../workspace/status")).runWorkspaceStatus(ctx) },
   { name: "workspace lineage", handler: async (ctx) => (await import("../workspace/lineage-cli")).runWorkspaceLineage(ctx) },
   { name: "workspace upgrade", handler: async (ctx) => (await import("../workspace/lineage-upgrade-cli")).runWorkspaceUpgrade(ctx) },
   { name: "workspace check", handler: async (ctx) => (await import("../workspace/lineage-check")).runWorkspaceCheck(ctx) },
