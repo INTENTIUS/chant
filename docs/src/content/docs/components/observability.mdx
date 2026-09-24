@@ -90,9 +90,17 @@ Like the release record, manifest persistence runs in the CLI once the deploy se
 
 ### Digests made before real SHA-256
 
-The `sha256:` values chant computes itself, including every `manifestDigest` and the digests of synthesized templates and BOMs, come from a 32-bit string hash repeated to 64 hex characters ([#2514](https://github.com/INTENTIUS/chant/issues/2514)). The next release computes real SHA-256 instead, so each of those values changes once for the same content. An image digest from `docker build` or another external tool is already real SHA-256 and stays as it is.
+Up to chant 0.80.0, the `sha256:` values chant computed itself came from a 32-bit string hash repeated to 64 hex characters ([#2514](https://github.com/INTENTIUS/chant/issues/2514)). That covered every `manifestDigest` and the digests of synthesized templates and BOMs. chant now computes `"sha256:" + sha256(utf8(content))` with `node:crypto`, so each of those values changed once for the same content. An image digest from `docker build` or another external tool was already real SHA-256 and is unchanged. A `manifestDigest` is now taken over the canonical JSON of its entries' kind, path and digest, sorted by path.
 
-This release warns about it. When chant reads a release ledger or persisted build manifests holding values in the old form, it prints one warning per project and rewrites nothing. Once the change ships, old entries are marked `legacy-digest` and remain readable.
+Records written before the change are kept as they are:
+
+- An old value is recognised by its shape: one 8-hex block repeated eight times.
+- A release record or build manifest holding one reads back with `flags: ["legacy-digest"]`. The flag is added on read and never written, and the old digest is never re-keyed or rewritten, because other records point at it.
+- Lookups by an old digest still work: `readBuildManifest`, `findBuildManifestByArtifactDigest`, `--digest` on `chant components export`, promote and rollback.
+- `chant components status` shows the flag, in its JSON output and after the detail column. When a cross-check compares an old digest with a new one, it says it cannot tell whether the builds match, since the same content hashes differently in the two forms.
+- chant prints one warning per project, per process, the first time it reads such a record.
+
+Readers accept both forms through the 0.89.x releases. A release from 0.90.0 on may stop accepting old values, and it will warn a release ahead, as every [level-0 exception](/chant/reference/level-0-exceptions/) does. To stop seeing the flag for a component, deploy it again: the new record carries a real SHA-256 digest.
 
 ## Reconciling with live
 

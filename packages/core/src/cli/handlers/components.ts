@@ -56,6 +56,7 @@ import { normalizeObservation, mergeObservations, unobservedAll, type Normalized
 import type { Phase, Component } from "../../components/component";
 import { deployUnits } from "../../components/deploy-units";
 import { sortedJsonReplacer } from "../../utils";
+import { withoutReadFlags } from "../../lifecycle/legacy-digest";
 
 /**
  * chant components release <env> --component <name> --digest <sha256:...>
@@ -276,7 +277,8 @@ export async function runComponentsExport(ctx: CommandContext): Promise<number> 
     }
   }
 
-  await writeFile(join(targetDir, "manifest.json"), JSON.stringify(manifest, sortedJsonReplacer, 2));
+  // The exported manifest is the recorded one; read-side flags (#2514) stay out of it.
+  await writeFile(join(targetDir, "manifest.json"), JSON.stringify(withoutReadFlags(manifest), sortedJsonReplacer, 2));
 
   const missing = results.filter((r) => r.status === "missing");
 
@@ -284,6 +286,7 @@ export async function runComponentsExport(ctx: CommandContext): Promise<number> 
     console.log(JSON.stringify({
       component: manifest.component,
       manifestDigest: manifest.manifestDigest,
+      ...(manifest.flags ? { flags: manifest.flags } : {}),
       outDir: targetDir,
       entries: results,
     }, null, 2));
@@ -318,6 +321,7 @@ interface StatusJsonRow {
     runId: string;
     timestamp: string;
     actor: string;
+    flags?: string[];
   } | null;
   build: {
     manifestDigest: string;
@@ -652,6 +656,7 @@ export async function runComponentsStatus(ctx: CommandContext): Promise<number> 
               runId: row.recorded.runId,
               timestamp: row.recorded.timestamp,
               actor: row.recorded.actor,
+              ...(row.recorded.flags ? { flags: row.recorded.flags } : {}),
             }
           : null,
         build: row.build
@@ -729,14 +734,19 @@ export async function runComponentsStatus(ctx: CommandContext): Promise<number> 
       row.env.padEnd(12) +
       digestShort.padEnd(20) +
       row.reconciliation.padEnd(14) +
-      row.detail,
+      row.detail +
+      (row.recorded?.flags?.length ? ` [${row.recorded.flags.join(", ")}]` : ""),
     );
   }
 
   if (comparisons) {
     console.log(`\n${formatBold(`Cross-check: ${requestedEnv} vs ${args.compareTo}`)}`);
     for (const c of comparisons) {
-      const verdict = c.same ? "same build" : "DIFFERENT builds";
+      const verdict = c.same
+        ? "same build"
+        : c.mixedDigestForms
+          ? "different digests, one recorded before real SHA-256 (legacy-digest), so this cannot tell"
+          : "DIFFERENT builds";
       console.log(`  ${c.component}: ${c.digestA ?? "(none)"} vs ${c.digestB ?? "(none)"} — ${verdict}`);
     }
   }

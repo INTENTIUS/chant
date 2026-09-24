@@ -36,8 +36,8 @@
  * The identity is therefore a claim about consequence, not about provenance.
  * That is the claim an approver is actually making.
  */
-import { sortedJsonReplacer } from "../utils";
-import { getRuntime } from "../runtime-adapter";
+import { canonicalJson } from "../effect-receipt";
+import { contentDigest } from "../content-digest";
 
 /** The hash a plan digest is taken with, and the prefix every digest carries. */
 export const PLAN_DIGEST_ALGORITHM = "sha256";
@@ -54,15 +54,15 @@ const PLAN_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/;
  * to a terraform plan must not be satisfiable by a lifecycle diff that
  * happened to serialize identically.
  *
- * `subject` is canonicalised by {@link sortedJsonReplacer}, so object key
- * order — which neither terraform's JSON writer nor `JSON.parse` guarantees
- * across versions — does not change the answer. It is the caller's job to
+ * `subject` is put in canonical form by `canonicalJson` (../effect-receipt.ts)
+ * and hashed by `contentDigest` (../content-digest.ts), so object key order,
+ * which neither terraform's JSON writer nor `JSON.parse` guarantees across
+ * versions, does not change the answer. It is the caller's job to
  * hand in a projection that already excludes the volatile fields this
  * module's doc comment lists.
  */
 export function computePlanDigest(kind: string, subject: unknown): string {
-  const canonical = JSON.stringify({ kind, subject }, sortedJsonReplacer);
-  return `${PLAN_DIGEST_ALGORITHM}:${getRuntime().hash(canonical)}`;
+  return contentDigest(canonicalJson({ kind, subject }));
 }
 
 /**

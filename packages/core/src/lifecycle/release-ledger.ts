@@ -29,7 +29,7 @@
  */
 
 import { sortedJsonReplacer } from "../utils";
-import { warnOnLegacyDigests } from "./legacy-digest";
+import { flagLegacyDigest, warnOnLegacyDigests, withoutReadFlags, type LegacyDigestFlag } from "./legacy-digest";
 import { appendReleaseRecordLine, readReleaseLedgerLines, listLedgerEnvironments as gitListLedgerEnvironments } from "./git";
 
 /**
@@ -155,6 +155,14 @@ export interface ReleaseRecord {
    * whose digest was deployed again. Absent on every other record.
    */
   restores?: ReleaseRef;
+  /**
+   * Set on read, never written. `["legacy-digest"]` when `digest`,
+   * `manifestDigest` or `inputDigest` was recorded by the 32-bit hash chant
+   * used before real SHA-256 (#2514). Such a record is kept exactly as it
+   * was written, never re-keyed, and is accepted through
+   * `LEGACY_DIGEST_ACCEPTED_THROUGH` (./legacy-digest.ts).
+   */
+  flags?: LegacyDigestFlag[];
 }
 
 /** Required, non-empty-string fields every `ReleaseRecord` must carry. */
@@ -187,7 +195,7 @@ export function validateReleaseRecord(record: Partial<ReleaseRecord>): string[] 
 }
 
 /** Input a caller supplies to record one deploy — `version` is filled in, everything else is required (see `ReleaseRecord`). */
-export type ReleaseRecordInput = Omit<ReleaseRecord, "version">;
+export type ReleaseRecordInput = Omit<ReleaseRecord, "version" | "flags">;
 
 /**
  * Resolve a run id and its origin from the same environment, in one step, so
@@ -254,7 +262,8 @@ export async function appendReleaseRecord(
   const missing = validateReleaseRecord(input);
   if (missing.length > 0) throw new InvalidReleaseRecordError(missing);
 
-  const record: ReleaseRecord = { version: 1, ...input };
+  // `flags` are read-side only (#2514); a record passed back in never persists them.
+  const record: ReleaseRecord = { version: 1, ...withoutReadFlags(input as ReleaseRecordInput & { flags?: unknown }) };
   const json = JSON.stringify(record, sortedJsonReplacer);
   const commit = await appendReleaseRecordLine(record.env, json, opts);
   return { commit, record };
@@ -280,13 +289,13 @@ export async function readReleaseLedger(
         malformed++;
         continue;
       }
-      records.push(parsed);
+      // chant #2514 — a digest from before real SHA-256 is flagged, never re-keyed.
+      records.push(flagLegacyDigest(parsed, [parsed.digest, parsed.manifestDigest, parsed.inputDigest]));
     } catch {
       malformed++;
     }
   }
-  // chant #2514 — a release ahead of real SHA-256 digests, say once that
-  // this ledger holds values in the old form.
+  // chant #2514 — say once that this ledger holds values in the old form.
   warnOnLegacyDigests(
     records.flatMap((r) => [r.digest, r.manifestDigest, r.inputDigest]),
     "release ledger",
