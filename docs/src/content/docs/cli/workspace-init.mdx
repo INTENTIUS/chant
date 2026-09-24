@@ -49,7 +49,7 @@ Before it asks, init prints every member directory and example-group match that 
   2 directories        fixtures           10
 ```
 
-These directories stop being read by root-level `chant build`, `lint`, `run` and `audit` once per-member commands ship ([#2537](https://github.com/INTENTIUS/chant/issues/2537)).
+Once the file is written, root-level `chant build`, `lint`, `run` and `audit` stop reading these directories ([#2527](https://github.com/INTENTIUS/chant/issues/2527)). [`chant workspace build`](/chant/cli/workspace-build/) and its siblings cover them, each member with its own chant ([#2537](https://github.com/INTENTIUS/chant/issues/2537)).
 
 ## Ownership stacks
 

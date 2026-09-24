@@ -38,7 +38,7 @@ The path is resolved against the directory holding `chant.config.ts`, and no pac
 
 ### `exclude` and `include`
 
-Glob lists that change which files source discovery reads. Every command that walks the project for declarations honours them (`build` and `lint` among them), so a file `exclude` names is never imported or linted. For a single hand-written file, the [skip marker comment](/chant/cli/overview/#keeping-a-script-out-of-discovery) does the same without touching the config.
+Glob lists that change which files discovery reads. Every command that walks the project honours them. A file `exclude` names is never imported or linted, and Op discovery skips it too. For a single hand-written file, the [skip marker comment](/chant/cli/overview/#keeping-a-script-out-of-discovery) does the same without touching the config.
 
 ```typescript
 exclude: ["ops/**", "scripts"],
@@ -48,10 +48,11 @@ include: ["ops/stack.ts"],
 - Patterns are relative to the directory holding `chant.config.ts`, use forward slashes, and are matched with [picomatch](https://github.com/micromatch/picomatch). `*` and `**` match dot files and dot directories too.
 - A pattern matches a file when it matches the file's path or the path of any directory above it, so `ops`, `ops/**` and `ops/*.ts` all skip `ops/run.ts`.
 - A file is skipped when an `exclude` pattern matches it and no `include` pattern does. `include` always wins over `exclude`.
-- `include` never narrows discovery by itself. With no `exclude`, every file is discovered as before. To read only `src/`, write `exclude: ["**"], include: ["src"]`.
-- Neither key reaches past the rules discovery always applies. Files under `node_modules`, test files and child projects with their own config stay skipped, and so do files carrying the generated or skip marker.
+- `include` never narrows discovery by itself. A file nothing skips is discovered whether or not `include` names it. To read only `src/`, write `exclude: ["**"], include: ["src"]`.
+- `include` also re-admits what the [discovery walk](/chant/architecture/discovery/#one-walk-for-every-command) skips by default, such as a child project: `include: ["src"]` reads a `src/` that holds its own `chant.config.ts`.
+- Neither key reaches into `node_modules` or `.git`. Test files and workspace members stay skipped, as do files carrying a marker.
 - Each entry must be a non-empty string. Anything else fails the config load with an error naming the key.
-- Ops are still found by the separate walk over `*.op.ts` files that `chant run` makes, which does not read these keys yet.
+- `chant audit` reads the keys from a `chant.config.json` only. It never runs a `chant.config.ts` from the repository it audits.
 
 ### `ownership`
 

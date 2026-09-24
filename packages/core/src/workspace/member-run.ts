@@ -18,8 +18,6 @@
  * the caller, which is always a chant of the same or a newer release.
  */
 
-import { realpathSync } from "node:fs";
-import { excludeFromRootDiscovery } from "../config";
 import { ENV_VAR } from "../env";
 import type { CommandContext } from "../cli/registry";
 import { readerVersion } from "./declaration";
@@ -42,7 +40,9 @@ export interface MemberRunUnit {
   argv: string[];
   /**
    * Directories (relative to `dir`) to leave out of discovery. Set for member
-   * `.`, whose project is the root minus every other member.
+   * `.`, whose project is the root minus every other member. Kept in the
+   * protocol for a member-run from before #2527, which applied it itself;
+   * from #2527 on, discovery reads the same set from the declaration.
    */
   exclude?: string[];
 }
@@ -118,12 +118,10 @@ export async function runMemberUnits(request: MemberRunRequest, run: (argv: stri
   for (const unit of request.units) {
     const result = await captureRun(async () => {
       process.chdir(unit.dir);
-      // `chant build .` resolves "." through process.cwd(), which is the real
-      // path, so the exclusions are keyed on the real path too.
-      if (unit.exclude?.length) excludeFromRootDiscovery(realpathSync(unit.dir), unit.exclude);
+      // `unit.exclude` needs no action here: discovery reads the declaration
+      // itself and leaves member `.`'s exclusions out of every walk (#2527).
       return run(unit.argv);
     });
-    excludeFromRootDiscovery("", []);
     if (startEnv === undefined) delete process.env[ENV_VAR];
     else process.env[ENV_VAR] = startEnv;
     process.chdir(startDir);

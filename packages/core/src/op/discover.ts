@@ -1,9 +1,10 @@
 import { getRuntime } from "../runtime-adapter";
-import { readdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { OpConfig } from "./types";
-import { warnDiscoveryChanges } from "../discovery/convergence";
+import { walkDiscovery, workspaceMemberDirs } from "../discovery/walk";
+import { hasDiscoveryMarkerSync } from "../discovery/files";
+import { resolveDiscoveryGlobs } from "../config";
 
 export interface DiscoveredOp {
   config: OpConfig;
@@ -53,28 +54,22 @@ async function findDiscoveryRoot(cwd?: string): Promise<string> {
   return gitRoot;
 }
 
-async function collectOpFiles(dir: string): Promise<string[]> {
-  const files: string[] = [];
-  let entries;
-  try {
-    entries = await readdir(dir, { withFileTypes: true });
-  } catch {
-    return files;
-  }
-  for (const entry of entries) {
-    const fullPath = join(dir, entry.name);
-    if (entry.isDirectory() && !entry.name.startsWith(".") && entry.name !== "node_modules" && entry.name !== "dist") {
-      files.push(...await collectOpFiles(fullPath));
-    } else if (
-      entry.isFile() &&
-      entry.name.endsWith(".op.ts") &&
-      !entry.name.endsWith(".test.ts") &&
-      !entry.name.endsWith(".spec.ts")
-    ) {
-      files.push(fullPath);
-    }
-  }
-  return files;
+/**
+ * Every `*.op.ts` file below the Op root, through the one discovery walk
+ * (`../discovery/walk.ts`, #2527). The walk down stops at child projects
+ * whatever the root is, so a configless layout whose Op root is the git root
+ * no longer collects its sibling projects' Ops. The project's
+ * `exclude`/`include` globs and the skip marker apply.
+ */
+async function collectOpFiles(root: string): Promise<string[]> {
+  return walkDiscovery({
+    walker: "ops",
+    root,
+    globs: await resolveDiscoveryGlobs(root),
+    excludeDirs: await workspaceMemberDirs(root),
+    accept: (name, full) =>
+      name.endsWith(".op.ts") && !name.endsWith(".test.ts") && !name.endsWith(".spec.ts") && !hasDiscoveryMarkerSync(full),
+  });
 }
 
 /** The `OpConfig` behind an exported value, or `undefined` when the value is not an Op. An Op entity carries its config on `.props` (`./resource.ts`); `name` and `phases` are what every consumer of a discovered Op reads. */
@@ -149,9 +144,6 @@ export async function discoverOps(opts?: { cwd?: string }): Promise<OpDiscoveryR
 
   const root = await findDiscoveryRoot(opts?.cwd);
   const files = await collectOpFiles(root);
-  // #2527's warning release: Op discovery stops at child projects below the
-  // root next release, and skips git-ignored files. `files` is unchanged.
-  await warnDiscoveryChanges({ walker: "ops", root, files });
 
   const nameToFile = new Map<string, string>();
 

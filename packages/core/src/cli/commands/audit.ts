@@ -13,8 +13,8 @@ import { RULE_CATALOG, resolveAuditCatalog, type RuleMeta } from "../../audit/ca
 import { scanForSecrets, parseSecretsConfig, type SecretsScanOptions } from "../../audit/secrets";
 import { auditWranglerConfigs } from "../../audit/wrangler";
 import { auditNginxConfigs } from "../../audit/nginx";
-import { auditTerraformState, isTerraformStatePath } from "../../audit/terraform-state";
-import { warnDiscoveryChanges } from "../../discovery/convergence";
+import { auditTerraformState } from "../../audit/terraform-state";
+import { workspaceMemberDirs } from "../../discovery/walk";
 import { renderMarkdown } from "../../audit/report";
 import { renderHtml, type ReportTheme } from "../../audit/report-html";
 import { buildReportJson, REPORT_SCHEMA_VERSION, type AuditSnapshot } from "../../audit/report-model";
@@ -495,17 +495,12 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
     // One walk, plugin-delegated detection. CI (path), Dockerfiles (name), and
     // Helm charts (bundle) are special-cased by the classifier since content
     // shape alone can't disambiguate them.
-    const walk = walkCandidates(options.path, { maxFiles: options.maxFiles });
+    // Workspace members leave the root's audit only when a declaration exists
+    // (#2525 rule 3); without one this is a few existsSync calls (#2527).
+    const excludeDirs = await workspaceMemberDirs(options.path);
+    const walk = walkCandidates(options.path, { maxFiles: options.maxFiles, excludeDirs });
     candidates = walk.files;
     truncated = walkTruncation(walk);
-    // #2527's warning release: the converged walk skips git-ignored files and,
-    // inside a project, child projects. Terraform state paths are TF023's own
-    // question and stay out of it. `candidates` is unchanged.
-    await warnDiscoveryChanges({
-      walker: "audit",
-      root: options.path,
-      files: candidates.filter((f) => !isTerraformStatePath(f.path)).map((f) => resolve(options.path, f.path)),
-    });
   }
   // Every format but SARIF states a truncated scan in the report itself
   // (#2528). SARIF has no slot chant fills for it, so there it goes to stderr.
