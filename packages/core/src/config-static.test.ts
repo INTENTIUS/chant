@@ -6,7 +6,7 @@ import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readLexiconDeclarationsStatically, unknownPathLexiconsNotice } from "./config-static";
+import { readConfigFieldsStatically, readLexiconDeclarationsStatically, unknownPathLexiconsNotice } from "./config-static";
 
 let dir: string;
 
@@ -101,5 +101,36 @@ describe("unreadable configs are reported, never run", () => {
 
   test("a readable config has no notice", () => {
     expect(unknownPathLexiconsNotice(readTs(`export default { lexicons: ["aws"] };`))).toBeUndefined();
+  });
+});
+
+describe("readConfigFieldsStatically (#2641)", () => {
+  test("reads the asked-for fields of a default export, a named config or named exports, and leaves unset ones out", () => {
+    writeFileSync(join(dir, "chant.config.ts"), `const env = "prod";\nexport default { environments: [env, { name: "staging" }], ownership: { stack: "shop", env }, lexicons: ["aws"] };`);
+    expect(readConfigFieldsStatically(dir, ["ownership", "environments", "sourceDir"])).toEqual({
+      status: "read",
+      configPath: join(dir, "chant.config.ts"),
+      fields: { ownership: { stack: "shop", env: "prod" }, environments: ["prod", { name: "staging" }] },
+    });
+    writeFileSync(join(dir, "chant.config.ts"), `export const ownership = { stack: "named" };`);
+    expect(readConfigFieldsStatically(dir, ["ownership"])).toMatchObject({ status: "read", fields: { ownership: { stack: "named" } } });
+  });
+
+  test("a value it can't fold is unknown, with the reason, and the config is not run", () => {
+    const marker = join(dir, "ran");
+    writeFileSync(
+      join(dir, "chant.config.ts"),
+      `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(marker)}, "x");\nexport default { ownership: { stack: process.env.STACK } };`,
+    );
+    const read = readConfigFieldsStatically(dir, ["ownership"]);
+    expect(read.status).toBe("unknown");
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  test("reads chant.config.json, and only in the directory itself", () => {
+    writeFileSync(join(dir, "chant.config.json"), JSON.stringify({ environments: ["prod"] }));
+    expect(readConfigFieldsStatically(dir, ["environments"])).toMatchObject({ status: "read", fields: { environments: ["prod"] } });
+    mkdirSync(join(dir, "sub"));
+    expect(readConfigFieldsStatically(join(dir, "sub"), ["environments"])).toEqual({ status: "no-config" });
   });
 });

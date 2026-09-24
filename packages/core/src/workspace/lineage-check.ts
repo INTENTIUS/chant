@@ -1,15 +1,16 @@
 /**
- * `chant workspace check [--json] [--format stylish|json|sarif]`: the lineage
- * checks (#2550, D9), and the declaration checks (#2535, D16) when a
- * declaration sits between the current directory and the git root.
+ * `chant workspace check [--json] [--format stylish|json|sarif] [--generated]`:
+ * the lineage checks (#2550, D9), and the declaration checks (#2535, D16)
+ * when a declaration sits between the current directory and the git root.
  *
  * D9 says open manual steps fail `check`. So far, `check` checks the
  * lineage lock only: the lock must be readable, and no scope may have an open
  * manual step. It needs no `chant.workspace.json`, the way `chant workspace
  * lineage` needs none, and a directory without a lock passes with nothing to
- * check. The generated-file drift checks of D14 (#2541) and the per-member
- * checks (#2537) add their findings to the same list. The declaration checks
- * report `WSP` findings through lint's reporters (`./checks.ts`).
+ * check. The declaration checks report `WSP` findings through lint's
+ * reporters (`./checks.ts`), and cover member ledgers (#2538), recorded
+ * pipelines (#2542) and generated files (#2541) as well as the declaration
+ * itself (#2641). `--generated` runs each declared generator too.
  *
  * `chant workspace upgrade` runs the same checks in its staging worktree
  * before it reaches its gate.
@@ -72,7 +73,7 @@ export function findingKey(f: CheckFinding): string {
   return `${f.code}\0${f.scope ?? ""}\0${f.path ?? ""}`;
 }
 
-const USAGE = "chant workspace check [--json] [--format stylish|json|sarif]";
+const USAGE = "chant workspace check [--json] [--format stylish|json|sarif] [--generated]";
 const FORMATS = ["stylish", "json", "sarif"] as const;
 
 /** A lock finding as a lint diagnostic, for `--format json` and `--format sarif`. */
@@ -118,7 +119,9 @@ export async function runWorkspaceCheck(ctx: CommandContext): Promise<number> {
   let declaration: DeclarationCheckReport | undefined;
   if (found) {
     const { runDeclarationChecks } = await import("./checks");
-    declaration = runDeclarationChecks(found.dir, (file) => relative(root, join(found.dir, file)).split(sep).join("/"));
+    declaration = await runDeclarationChecks(found.dir, (file) => relative(root, join(found.dir, file)).split(sep).join("/"), {
+      runGenerators: ctx.args.generated === true,
+    });
   }
   const ok = report.ok && (declaration?.ok ?? true);
 

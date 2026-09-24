@@ -20,9 +20,13 @@
  * the module's named exports (`export const lexicons`).
  *
  * `chant.config.json` is data and is simply parsed.
+ *
+ * {@link readConfigFieldsStatically} reads other top-level fields the same
+ * way. `chant workspace check` reads a member's `ownership` and
+ * `environments` with it for the ledger checks (#2641).
  */
-import { readFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import * as ts from "typescript";
 import { ChantConfigSchema, findProjectConfigPastFragments } from "./config";
 import { collectConsts, fold, propName, FoldError } from "./fold/fold";
@@ -48,7 +52,7 @@ export function readLexiconDeclarationsStatically(startDir: string): StaticLexic
   const { configPath } = findProjectConfigPastFragments(startDir);
   if (configPath === undefined) return { status: "no-config" };
   try {
-    const value = configPath.endsWith(".json") ? readJsonLexicons(configPath) : readTsLexicons(configPath);
+    const value = readFields(configPath, ["lexicons"]).lexicons;
     if (value === undefined) return { status: "read", configPath, entries: [] };
     const parsed = ChantConfigSchema.shape.lexicons.safeParse(value);
     if (!parsed.success) {
@@ -56,14 +60,47 @@ export function readLexiconDeclarationsStatically(startDir: string): StaticLexic
     }
     return { status: "read", configPath, entries: (parsed.data ?? []) as LexiconDeclaration[] };
   } catch (err) {
-    const reason =
-      err instanceof FoldError
-        ? `line ${err.line}: ${err.message}`
-        : err instanceof Unreadable
-          ? err.message
-          : `the file could not be read (${err instanceof Error ? err.message : String(err)})`;
-    return { status: "unknown", configPath, reason };
+    return { status: "unknown", configPath, reason: unreadableReason(err) };
   }
+}
+
+function unreadableReason(err: unknown): string {
+  return err instanceof FoldError
+    ? `line ${err.line}: ${err.message}`
+    : err instanceof Unreadable
+      ? err.message
+      : `the file could not be read (${err instanceof Error ? err.message : String(err)})`;
+}
+
+/** What {@link readConfigFieldsStatically} found. */
+export type StaticFieldsRead =
+  /** No `chant.config.ts` or `chant.config.json` in the directory. */
+  | { status: "no-config" }
+  /** Each asked-for field the config sets, folded to a value. A field it doesn't set is absent. */
+  | { status: "read"; configPath: string; fields: Record<string, unknown> }
+  /** The config exists, but a field could not be read without running it. */
+  | { status: "unknown"; configPath: string; reason: string };
+
+/**
+ * Read top-level `fields` of the config in `dir` itself, as
+ * `loadChantConfig(dir)` finds it (`chant.config.ts`, else
+ * `chant.config.json`), without evaluating it. The values are not checked
+ * against the config schema; the caller does that for the fields it reads.
+ */
+export function readConfigFieldsStatically(dir: string, fields: readonly string[]): StaticFieldsRead {
+  const configPath = ["chant.config.ts", "chant.config.json"].map((f) => join(dir, f)).find((f) => existsSync(f));
+  if (configPath === undefined) return { status: "no-config" };
+  try {
+    return { status: "read", configPath, fields: readFields(configPath, fields) };
+  } catch (err) {
+    return { status: "unknown", configPath, reason: unreadableReason(err) };
+  }
+}
+
+function readFields(configPath: string, fields: readonly string[]): Record<string, unknown> {
+  const values = configPath.endsWith(".json") ? readJsonFields(configPath, fields) : readTsFields(configPath, fields);
+  // Absent fields are left out rather than set to undefined.
+  return Object.fromEntries(Object.entries(values).filter(([, v]) => v !== undefined));
 }
 
 /** The directory a read config's relative module paths resolve against. */
@@ -83,15 +120,15 @@ export function unknownPathLexiconsNotice(read: StaticLexiconRead): string | und
   );
 }
 
-function readJsonLexicons(configPath: string): unknown {
+function readJsonFields(configPath: string, fields: readonly string[]): Record<string, unknown> {
   const parsed = JSON.parse(readFileSync(configPath, "utf-8")) as unknown;
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
     throw new Unreadable("the config is not a JSON object");
   }
-  return (parsed as Record<string, unknown>).lexicons;
+  return Object.fromEntries(fields.map((f) => [f, (parsed as Record<string, unknown>)[f]]));
 }
 
-function readTsLexicons(configPath: string): unknown {
+function readTsFields(configPath: string, fields: readonly string[]): Record<string, unknown> {
   const source = ts.createSourceFile(configPath, readFileSync(configPath, "utf-8"), ts.ScriptTarget.Latest, true);
   const consts = collectConsts(source);
 
@@ -121,10 +158,15 @@ function readTsLexicons(configPath: string): unknown {
   const configExpr = defaultExport ?? named.get("config");
   if (configExpr === undefined) {
     // The module's named exports are the config.
-    const lexicons = named.get("lexicons");
-    return lexicons === undefined ? undefined : fold(lexicons, consts);
+    return Object.fromEntries(
+      fields.map((f) => {
+        const expr = named.get(f);
+        return [f, expr === undefined ? undefined : fold(expr, consts)];
+      }),
+    );
   }
-  return lexiconsOfObject(configObject(configExpr, consts, new Set()), consts);
+  const obj = configObject(configExpr, consts, new Set());
+  return Object.fromEntries(fields.map((f) => [f, fieldOfObject(obj, f, consts)]));
 }
 
 /** The object literal a config export reduces to, following `const` aliases. */
@@ -146,23 +188,23 @@ function configObject(
   throw new Unreadable("the exported config is not an object literal");
 }
 
-/** The value `lexicons` takes in a config object literal, or `undefined` when it sets none. */
-function lexiconsOfObject(obj: ts.ObjectLiteralExpression, consts: Map<string, ts.Expression>): unknown {
+/** The value `field` takes in a config object literal, or `undefined` when it sets none. */
+function fieldOfObject(obj: ts.ObjectLiteralExpression, field: string, consts: Map<string, ts.Expression>): unknown {
   let value: unknown = undefined;
   for (const prop of obj.properties) {
     if (ts.isSpreadAssignment(prop)) {
       const spread = fold(prop.expression, consts);
-      if (spread !== null && typeof spread === "object" && Object.prototype.hasOwnProperty.call(spread, "lexicons")) {
-        value = (spread as Record<string, unknown>).lexicons;
+      if (spread !== null && typeof spread === "object" && Object.prototype.hasOwnProperty.call(spread, field)) {
+        value = (spread as Record<string, unknown>)[field];
       }
       continue;
     }
     if (prop.name === undefined) continue;
     const name = propName(prop.name);
-    if (name !== "lexicons") continue;
+    if (name !== field) continue;
     if (ts.isPropertyAssignment(prop)) value = fold(prop.initializer, consts);
     else if (ts.isShorthandPropertyAssignment(prop)) value = fold(prop.name, consts);
-    else throw new Unreadable("`lexicons` is a method or accessor");
+    else throw new Unreadable(`\`${field}\` is a method or accessor`);
   }
   return value;
 }

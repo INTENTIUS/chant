@@ -98,6 +98,7 @@ const BOOLEAN_FLAGS = new Set([
   "--current",
   "--allow-code",
   "--root-only",
+  "--generated",
 ]);
 
 /**
@@ -459,6 +460,10 @@ export function parseArgs(args: string[]): ParsedArgs {
       // #2537 — `chant build` and `chant lint` at a declared workspace root
       // run on the root project alone instead of refusing with WSP000.
       result.rootOnly = true;
+    } else if (arg === "--generated") {
+      // #2641 — `chant workspace check --generated` runs each declared
+      // generator and compares its output with the file in the tree.
+      result.generated = true;
     } else if (arg === "--member") {
       // #2537 — `chant workspace build|lint|audit|graph --member <name>`.
       // Repeatable, and a comma list works too.
@@ -717,10 +722,12 @@ Workspace (level 1, #2524):
                         lint and workspace check there, then gate on the digest
                         of the patch (chant approve workspace-upgrade <scope>).
                         A second run with the approval applies the patch
-  workspace check [--json] [--format stylish|json|sarif]
+  workspace check [--json] [--format stylish|json|sarif] [--generated]
                         Fail on an unreadable lineage lock or an open manual
-                        step, and, in a declared workspace, on a WSP
-                        declaration check. Needs no workspace file
+                        step, and, in a declared workspace, on a WSP check of
+                        the declaration, member ledgers, pipelines or
+                        generated files. --generated runs declared generators
+                        and compares their output. Needs no workspace file
   workspace build [dir] [--member <name>] [-o <dir>] [--dry-run]
                         Build every chant member and example project, each with
                         its own chant, one process per toolchain. -o <dir>
@@ -1184,7 +1191,8 @@ export const commandRegistry: CommandDef[] = [
   { name: "workspace status", handler: async (ctx) => (await import("../workspace/status")).runWorkspaceStatus(ctx) },
   { name: "workspace lineage", handler: async (ctx) => (await import("../workspace/lineage-cli")).runWorkspaceLineage(ctx) },
   { name: "workspace upgrade", handler: async (ctx) => (await import("../workspace/lineage-upgrade-cli")).runWorkspaceUpgrade(ctx) },
-  { name: "workspace check", handler: async (ctx) => (await import("../workspace/lineage-check")).runWorkspaceCheck(ctx) },
+  // #2641 — workspace check reads member configs statically and never runs one.
+  { name: "workspace check", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/lineage-check")).runWorkspaceCheck(ctx) },
   // #2537 — per-member commands. Each member runs under its own chant, one
   // process per toolchain identity; `member-run` is that process's entry.
   { name: "workspace build", handler: async (ctx) => (await import("../workspace/member-commands")).runWorkspaceMembers(ctx, "build") },

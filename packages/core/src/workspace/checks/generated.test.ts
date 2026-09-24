@@ -164,7 +164,7 @@ describe("generated-file checks (#2541)", () => {
     expect(await findings(root)).toEqual([]);
   });
 
-  test("a generator that fails is WSP083 with the end of its output", async () => {
+  test("a generator that fails is WSP103 with the end of its output", async () => {
     const root = workspace({
       "chant.workspace.json": JSON.stringify({
         name: "acme",
