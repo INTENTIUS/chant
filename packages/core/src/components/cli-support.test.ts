@@ -389,6 +389,22 @@ export const backup =
     expect(result.composites?.["aws-plane"]).toEqual(["ArtifactBucket", "OperatorRole"]);
     expect(result.composites?.plain).toBeUndefined();
   });
+
+  test("carries each component's archetype, declared or inferred (#2662)", async () => {
+    await writeFile(
+      join(testDir, "lib.component.ts"),
+      `export const lib = { name: "lib", archetype: "service", dependsOn: [], deploy: [{ phase: "Apply", steps: [{ kind: "shell", reason: "test" }] }] };`,
+    );
+    await writeFile(
+      join(testDir, "plain.component.ts"),
+      `export const plain = { name: "plain", dependsOn: [], deploy: [{ phase: "Apply", steps: [{ kind: "shell", reason: "test" }] }] };`,
+    );
+
+    const result = await computeComponentGraph(testDir);
+
+    expect(result.success).toBe(true);
+    expect(result.archetypes).toEqual({ lib: "service", plain: "infra" });
+  });
 });
 
 // ── runComponents (#585) ─────────────────────────────────────────────────────

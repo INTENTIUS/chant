@@ -285,6 +285,8 @@ export interface ParsedArgs {
   kind?: string;
   /** Every `--kind` given, in order: `chant workspace graph --intent` reads each (#2651). */
   kinds?: string[];
+  /** `chant workspace graph --composites` (#2662): print each composite instance with the components that can deploy it. */
+  composites?: boolean;
   /** `chant workspace graph --intent <path[:start-end]>` (#2651): the region the intent graph is over. */
   intent?: string;
   /** `chant workspace records --current` (#2546): leave out records a closed record supersedes. */

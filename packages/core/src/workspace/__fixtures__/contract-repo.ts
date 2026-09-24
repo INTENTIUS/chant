@@ -98,3 +98,20 @@ case "$1" in
   *) echo "Error: Unknown command: $1" >&2; exit 1 ;;
 esac
 `;
+
+/**
+ * A chant older than `workspace member-run` that answers from files (#2662):
+ * `chant graph --components` prints the member's `components.json`, or an
+ * empty IR when there is none, and plain `chant graph` prints `ir.json`. A
+ * `components.json` holding `FAIL` makes the component graph exit 1.
+ */
+export const FAKE_FILE_GRAPH_CHANT = `#!/bin/sh
+[ "$1" = graph ] || { echo "Error: Unknown command: $1" >&2; exit 1; }
+case " $* " in
+  *" --components "*)
+    if [ ! -f components.json ]; then printf '{"version":1,"nodes":[],"edges":[],"groups":{}}\\n'
+    elif grep -q FAIL components.json; then echo "Error: component discovery failed" >&2; exit 1
+    else cat components.json; fi ;;
+  *) cat ir.json ;;
+esac
+`;

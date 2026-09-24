@@ -619,6 +619,10 @@ async function runComponentGraphView(
         wave: waveOf.get(name) ?? null,
         liveNames: graph.liveNames?.[name] ?? [name],
         ...(graph.composites?.[name] ? { composites: graph.composites[name] } : {}),
+        // The archetype (#2662), declared or inferred, so a reader such as
+        // `chant workspace graph --composites` labels a component without
+        // importing its source.
+        ...(graph.archetypes?.[name] ? { archetype: graph.archetypes[name] } : {}),
       },
       // Deep-link the node to its `*.component.ts` (behold's inspect panel).
       ...(graph.files?.[name] ? { sourceLoc: { file: graph.files[name] } } : {}),

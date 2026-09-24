@@ -7,7 +7,8 @@
  *
  * With `--intent <path[:start-end]>` it prints the intent graph over one
  * region instead (#2651, `intent.ts`), a document of its own in the read
- * contract.
+ * contract. With `--composites` it prints each composite instance with the
+ * components that can deploy it (#2662, `composites.ts`), another.
  *
  * The document is part of the read contract, described by `graph.schema.json`
  * beside this file. It is printed for a failure too, with the error's reason
@@ -48,7 +49,7 @@ export const GRAPH_OUTPUT_SCHEMA_ID = "https://intentius.io/chant/schemas/worksp
 export const GRAPH_ERROR_CODES = WORKSPACE_ERROR_CODES;
 
 const USAGE =
-  "chant workspace graph [dir] [--at <rev>] [--member <name>] [--kind <kind file>] [-o <file>] [--env <env>] [--dry-run] | chant workspace graph --intent <path[:start-end]> [--at <rev>] [--kind <kind file>...] [--json]";
+  "chant workspace graph [dir] [--at <rev>] [--member <name>] [--kind <kind file>] [-o <file>] [--env <env>] [--dry-run] | chant workspace graph --composites [--at <rev>] [--member <name>] [-o <file>] | chant workspace graph --intent <path[:start-end]> [--at <rev>] [--kind <kind file>...] [--json]";
 
 interface Head {
   $schema: string;
@@ -78,12 +79,25 @@ export interface GraphQuery {
    * rows of `links`.
    */
   kind?: string;
+  /**
+   * Also run each member's `chant graph --components --format ir` (#2662),
+   * under the same toolchain and at the same revision, and return the answers
+   * in {@link GraphResult.components}. The document is unchanged.
+   */
+  components?: boolean;
 }
 
 export interface GraphResult {
   doc: GraphDocument;
   /** A member failed or couldn't be read, or the declaration couldn't be read. */
   failed: boolean;
+  /** With {@link GraphQuery.components}: each member's component graph run, in plan order. */
+  components?: UnitResult[];
+}
+
+/** The command line a member runs for its component graph (#2662). */
+export function componentGraphArgv(args: Partial<ParsedArgs>): string[] {
+  return ["graph", ".", "--components", "--format", "ir", ...(args.env ? ["--env", args.env] : [])];
 }
 
 /**
@@ -179,7 +193,12 @@ export async function workspaceGraph(query: GraphQuery): Promise<GraphResult> {
       exported = exportRevision(located, plan.groups.flatMap((g) => g.units.map((u) => u.dir)));
       plan = planMembers("graph", exported, { only: query.members, reader: query.reader, tree: workingTree(exported) });
     }
-    const results = await executePlan(plan, (query.args ?? {}) as ParsedArgs);
+    const args = (query.args ?? {}) as ParsedArgs;
+    const [results, components] = await Promise.all([
+      executePlan(plan, args),
+      query.components ? executePlan(plan, args, () => componentGraphArgv(args)) : Promise.resolve(undefined),
+    ]);
+    for (const r of components ?? []) if (r.stderr.trim() && query.onStderr) query.onStderr(r.stderr.endsWith("\n") ? r.stderr : `${r.stderr}\n`);
     for (const r of results) if (r.stderr.trim() && query.onStderr) query.onStderr(r.stderr.endsWith("\n") ? r.stderr : `${r.stderr}\n`);
     const { inputs, failed } = compose(plan, results, query.members, declaration.members);
     // Links (#2539) resolve against the declaration that was read, the revision's for --at, and the kinds installed now.
@@ -201,7 +220,7 @@ export async function workspaceGraph(query: GraphQuery): Promise<GraphResult> {
         query.onStderr?.(`${formatError({ message: `--kind ${query.kind}: ${err.code}: ${err.message}`, hint: USAGE })}\n`);
       }
     }
-    return { doc: { ...head, at: located.at, ...graph }, failed: failed || recordsFailed };
+    return { doc: { ...head, at: located.at, ...graph }, failed: failed || recordsFailed, ...(components ? { components } : {}) };
   } catch (err) {
     if (!(err instanceof WorkspaceReadError)) throw err;
     return { doc: { ...head, error: { code: err.code, message: err.message, location: err.location ?? null } }, failed: true };
@@ -220,6 +239,15 @@ export async function runWorkspaceGraph(ctx: CommandContext): Promise<number> {
   // The root's chant reads the declaration (ws-021).
   const handed = await handToRootChant(cwd, args.at);
   if (handed !== undefined) return handed;
+
+  // Composite instances joined to components (#2662) are their own document.
+  if (args.composites) {
+    if (args.intent !== undefined || args.kind !== undefined) {
+      console.error(formatError({ message: "--composites takes neither --intent nor --kind", hint: USAGE }));
+      return 1;
+    }
+    if (!args.dryRun) return (await import("./composites")).runWorkspaceComposites(ctx, cwd);
+  }
 
   // The intent graph over one region (#2651) is its own document.
   if (args.intent !== undefined) return (await import("./intent-cli")).runWorkspaceIntent(ctx, cwd);

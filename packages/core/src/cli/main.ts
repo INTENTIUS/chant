@@ -69,6 +69,7 @@ const BOOLEAN_FLAGS = new Set([
   "--strict",
   "--validate",
   "--use-composites",
+  "--composites",
   "--stacks",
   "--components",
   "--up",
@@ -365,6 +366,9 @@ export function parseArgs(args: string[]): ParsedArgs {
       if (!result.kind || result.kind.startsWith("-")) throw new Error("--kind needs a kind file: --kind <path>");
       // Repeatable for `workspace graph --intent` (#2651); the others read the last one.
       (result.kinds ??= []).push(result.kind);
+    } else if (arg === "--composites") {
+      // `chant workspace graph --composites` (#2662)
+      result.composites = true;
     } else if (arg === "--intent") {
       // `chant workspace graph --intent <path[:start-end]>` (#2651)
       result.intent = args[++i];
@@ -773,6 +777,10 @@ Workspace (level 1, #2524):
                         read-contract document. --at <rev> runs each member's
                         source as it was at that commit; --kind adds the
                         records' asset and constrains links
+  workspace graph --composites [--at <rev>] [--member <name>] [-o <file>]
+                        Each composite instance the members declare, with the
+                        components whose contract can deploy it; an instance
+                        with none lists an empty set
   workspace graph --intent <path[:start-end]> [--at <rev>] [--kind <kind file>...] [--json]
                         The intent graph over one region: the commits that
                         touched it, the decisions whose constrains cover it,
