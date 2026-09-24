@@ -160,12 +160,22 @@ jobs:
             echo "${message}" >> "$GITHUB_STEP_SUMMARY"
           fi
 
-  test:
+  # The suite runs as four vitest shards in parallel. vitest assigns each test
+  # file to exactly one shard (sorted by a hash of its path), so the four
+  # together run the same files a single `npx vitest run` does. The required
+  # `test` check is the aggregate job below, not these.
+  test-shard:
+    name: test-shard (${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
-    # The suite lands at 9m46s-9m56s, so a 10 minute ceiling cancelled runs on
-    # runner variance rather than on anything in the change (#1993). Matches the
-    # other jobs in this workflow.
-    timeout-minutes: 20
+    # The unsharded suite needed a 20 minute ceiling (#1993). A shard runs a
+    # quarter of the files after the same setup, so 15 leaves room for the
+    # setup plus runner variance.
+    timeout-minutes: 15
+    strategy:
+      # Let every shard finish so one failing shard does not hide another's.
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       # Recorded first so the timeout-report step below (#2076) can compute
       # how long the job actually ran before a job-level timeout cancelled it.
@@ -230,8 +240,8 @@ jobs:
       # vitest.config.ts's `include`), gated here like everything else in
       # this step; `just fold-differential` runs it alone with its
       # per-source report.
-      - name: Run tests
-        run: npx vitest run
+      - name: Run tests (shard ${{ matrix.shard }}/4)
+        run: npx vitest run --shard=${{ matrix.shard }}/4
 
       # #2076, a job-level timeout-minutes cancels the job rather than
       # failing it (GitHub Actions docs, "expressions": cancelled() is true
@@ -243,10 +253,30 @@ jobs:
         if: cancelled()
         run: |
           elapsed=$(( ($(date +%s) - ${{ steps.start-time.outputs.epoch }}) / 60 ))
-          message="test job timed out after ~${elapsed}m against its 20 minute ceiling. This is a CI timeout, not a test failure."
+          message="test shard ${{ matrix.shard }}/4 timed out after ~${elapsed}m against its 15 minute ceiling. This is a CI timeout, not a test failure."
           echo "::error::${message}"
           if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
             echo "${message}" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  # The required status check. Branch protection requires a check named
+  # `test`; this job reports it and passes only when every shard passed. It
+  # runs with always() so a failed or cancelled shard still produces a red
+  # `test` rather than a skipped one.
+  test:
+    needs: test-shard
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every test shard to pass
+        env:
+          SHARDS: ${{ needs.test-shard.result }}
+        run: |
+          echo "test-shard result: ${SHARDS}"
+          if [ "${SHARDS}" != "success" ]; then
+            echo "::error::One or more test shards did not succeed (result: ${SHARDS})."
+            exit 1
           fi
 
   validate:
