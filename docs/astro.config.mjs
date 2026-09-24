@@ -226,6 +226,7 @@ export default defineConfig({
 								{ label: 'workspace ls', slug: 'cli/workspace-ls' },
 								{ label: 'workspace status', slug: 'cli/workspace-status' },
 								{ label: 'workspace records', slug: 'cli/workspace-records' },
+								{ label: 'workspace verify', slug: 'cli/workspace-verify' },
 								{ label: 'workspace lineage', slug: 'cli/workspace-lineage' },
 								{ label: 'workspace upgrade', slug: 'cli/workspace-upgrade' },
 								{ label: 'workspace check', slug: 'cli/workspace-check' },

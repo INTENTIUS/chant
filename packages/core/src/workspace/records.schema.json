@@ -28,6 +28,7 @@
         },
         "error": false,
         "current": { "type": "boolean", "description": "Whether superseded records were left out (--current)." },
+        "trust": { "$ref": "#/$defs/trust" },
         "records": {
           "description": "One entry per file the kind locates, sorted by path.",
           "type": "array",
@@ -61,7 +62,8 @@
         "data": {
           "type": ["object", "null"],
           "description": "The front matter as JSON, following the kind's schema when valid is true. Null when it could not be parsed."
-        }
+        },
+        "provenance": { "$ref": "#/$defs/provenance" }
       },
       "allOf": [
         {
@@ -70,6 +72,34 @@
           "else": { "properties": { "reasons": { "type": "array", "minItems": 1 } } }
         }
       ]
+    },
+    "trust": {
+      "description": "Added in contract 1 by #2547. Where provenance was judged from: the policy read at the base revision, never the tree read.",
+      "type": "object",
+      "required": ["base", "baseFrom", "active", "signersPath", "problems"],
+      "properties": {
+        "base": { "type": ["string", "null"], "pattern": "^[0-9a-f]{40,64}$", "description": "The full commit id the policy was read at, or null when there is no base." },
+        "baseFrom": { "enum": ["flag", "origin/HEAD", "main", "master", null], "description": "flag when --base was given; otherwise the target branch that was found." },
+        "active": { "type": "boolean", "description": "Whether a signers file exists at base. False means attestation is off and every record is unattested." },
+        "signersPath": { "type": "string", "description": "The signers file, relative to the repository root." },
+        "problems": { "type": "array", "items": { "type": "string" }, "description": "Why the policy could not be read. Nothing is attested when this is not empty." }
+      }
+    },
+    "provenance": {
+      "description": "Added in contract 1 by #2547. How far the record's authorship is established, judged by the signers at base.",
+      "type": "object",
+      "required": ["level", "commit", "reason"],
+      "properties": {
+        "level": {
+          "enum": ["attested", "attested-unverifiable-here", "adopted", "unattested"],
+          "description": "attested: the last commit to change the file is signed by a signer the policy at base lists. attested-unverifiable-here: it carries a signature nothing here can check. adopted: it lies in a commit range the policy adopts. unattested: none of these, including uncommitted content."
+        },
+        "commit": { "type": ["string", "null"], "pattern": "^[0-9a-f]{40,64}$", "description": "The commit the record's content comes from, or null for uncommitted content." },
+        "attestor": { "type": "string", "description": "The attestor that answered, such as ssh-commit." },
+        "principal": { "type": "string", "description": "The signer, when attested." },
+        "key": { "type": "string", "description": "The signing key's fingerprint, when known." },
+        "reason": { "type": "string" }
+      }
     },
     "reason": {
       "type": "object",

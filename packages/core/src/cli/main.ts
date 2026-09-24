@@ -364,6 +364,10 @@ export function parseArgs(args: string[]): ParsedArgs {
       if (!result.kind || result.kind.startsWith("-")) throw new Error("--kind needs a kind file: --kind <path>");
     } else if (arg === "--current") {
       result.current = true;
+    } else if (arg === "--require") {
+      // `chant workspace records|verify --require attested` (#2547)
+      result.require = args[++i];
+      if (!result.require || result.require.startsWith("-")) throw new Error("--require needs a provenance level: --require attested");
     } else if (arg === "--ambient") {
       result.ambient = true;
     } else if (arg === "--check-live") {
@@ -700,11 +704,20 @@ Workspace (level 1, #2524):
                         beside it and marks the members whose digests differ.
                         Read only; never fetches. --json prints the
                         read-contract document
-  workspace records --kind <kind file> [--current] [--at <rev>] [--json]
+  workspace records --kind <kind file> [--current] [--at <rev>] [--base <rev>] [--require attested] [--json]
                         Read the records a record kind locates, validated
                         against its schema, with reason codes for invalid
                         ones. --current leaves out superseded records; --at
-                        reads a commit's git objects. Needs no workspace file
+                        reads a commit's git objects. Needs no workspace file.
+                        Each record reports its provenance level, judged by
+                        the signers at --base (default: the target branch);
+                        --require attested exits 2 if any record is not
+                        attested
+  workspace verify [--base <rev>] [--head <rev>] [--require attested]
+                        Check the commits in base..head against the signers
+                        and roles read from base. A change to the signers file
+                        or .chant/trust.json needs a signature by a signer
+                        trusted at base. Does nothing without a signers file
   workspace lineage [--json]
                         Show each scope in .chant/workspace.lock.json: its
                         template and pin, locally edited files and open
@@ -1192,6 +1205,7 @@ export const commandRegistry: CommandDef[] = [
   { name: "workspace audit", handler: async (ctx) => (await import("../workspace/member-commands")).runWorkspaceMembers(ctx, "audit") },
   { name: "workspace graph", handler: async (ctx) => (await import("../workspace/member-commands")).runWorkspaceMembers(ctx, "graph") },
   { name: "workspace member-run", handler: async (ctx) => (await import("../workspace/member-run")).runWorkspaceMemberRun(ctx, runCommandInProcess) },
+  { name: "workspace verify", handler: async (ctx) => (await import("../workspace/trust/verify-cli")).runWorkspaceVerify(ctx) },
 
   // State subcommands
   { name: "lifecycle snapshot", requiresPlugins: true, handler: runLifecycleSnapshot },

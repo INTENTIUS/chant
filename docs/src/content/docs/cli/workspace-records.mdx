@@ -5,13 +5,13 @@ diataxis: reference
 ---
 
 :::note[First-test slice]
-This command is the first slice of workspace records ([#2546](https://github.com/INTENTIUS/chant/issues/2546)) and the read contract ([#2536](https://github.com/INTENTIUS/chant/issues/2536)). It exists so a hosted design studio built on hud can show the workspace design's decision files for review ([#2555](https://github.com/INTENTIUS/chant/issues/2555)). Seals and attestation come later. Kinds are named with `--kind` for now; once they come from plugins, [`chant.workspace.json`](/chant/reference/workspace-declaration/) will name them instead.
+This command is the first slice of workspace records ([#2546](https://github.com/INTENTIUS/chant/issues/2546)) and the read contract ([#2536](https://github.com/INTENTIUS/chant/issues/2536)). It exists so a hosted design studio built on hud can show the workspace design's decision files for review ([#2555](https://github.com/INTENTIUS/chant/issues/2555)). Each record reports its provenance level ([#2547](https://github.com/INTENTIUS/chant/issues/2547)). Seals come later. Kinds are named with `--kind` for now; once they come from plugins, [`chant.workspace.json`](/chant/reference/workspace-declaration/) will name them instead.
 :::
 
 ## Synopsis
 
 ```
-chant workspace records --kind <kind file> [--current] [--at <rev>] [--json]
+chant workspace records --kind <kind file> [--current] [--at <rev>] [--base <rev>] [--require attested] [--json]
 ```
 
 ## Description
@@ -27,6 +27,8 @@ The command loads only when it runs. A project without workspace files never loa
 | `--kind <kind file>` | The record kind to read through. Required. The path is resolved against the current directory. |
 | `--current` | Leave out records that a closed record supersedes. |
 | `--at <rev>` | Read the records as they were at a commit, from the local git object store. No checkout or network is needed. The kind file and its schema still come from the working tree. |
+| `--base <rev>` | The revision the trust policy is read from (see [Provenance](#provenance)). Defaults to the target branch: `origin/HEAD`, then `main`, then `master`. |
+| `--require attested` | Exit 2 unless every record printed is `attested`. |
 | `--json` | Print the result as JSON (see [Output](#output)). Without it, one line per record and a summary. |
 
 ## Record kinds
@@ -55,12 +57,28 @@ Front matter is read as the part of YAML that JSON can also express. Line ending
 
 An entry is superseded when another entry in a closed state lists its id under `supersedes`. A link from an entry that is still `decided` has no effect yet, so the old decision stays current until its replacement is ratified. The old file's own `state` field plays no part. Each id can be superseded once, and a second closed claim gets `record-supersedes-conflict`.
 
+## Provenance
+
+Every record carries a `provenance` object whose `level` is one of four values:
+
+| Level | The record |
+|---|---|
+| `attested` | was last changed by a commit whose ssh signature verifies against a signer listed at base |
+| `attested-unverifiable-here` | was last changed by a signed commit that this machine can't check, such as an OpenPGP signature or one checked without `ssh-keygen` installed |
+| `adopted` | wasn't attested, but its commit falls in a range that `.chant/trust.json` at base adopts |
+| `unattested` | none of the above, including a file with uncommitted changes |
+
+Signers and role grants are read from the base revision, never from the tree being read, so a change can't vouch for itself. The files and their rules are described in [`chant workspace verify`](/chant/cli/workspace-verify/). Attestation is opt-in. With no signers file at base, nothing is checked and every record is `unattested`. `trust.active` in the output says which case applies.
+
+On a developer machine this detects problems. It doesn't enforce anything, because an agent running as you can sign with your unlocked key or skip the check. Enforcement is CI running `chant workspace verify` and `records --require attested` against the target branch.
+
 ## Exit codes
 
 | Code | Meaning |
 |---|---|
 | 0 | The read worked. Some entries may be invalid, and each invalid one carries reason codes. |
 | 1 | The read failed, or `--kind` is missing. Nothing is returned. |
+| 2 | The read worked, and `--require attested` was given, but at least one record isn't attested. |
 
 An invalid entry doesn't fail the command. Failing closed on one is the job of `chant workspace check`, which comes later.
 
@@ -75,6 +93,7 @@ With `--json`, the output follows the schema `https://intentius.io/chant/schemas
   "kind": { "name": "decision", "schema": "urn:intentius:chant:decision:1", "file": "docs/design/decisions/decision.kind.mjs" },
   "at": null,
   "current": true,
+  "trust": { "base": "<full commit id>", "baseFrom": "origin/HEAD", "active": false, "signersPath": ".chant/allowed_signers", "problems": [] },
   "records": [
     {
       "id": "ws-003",
@@ -83,14 +102,15 @@ With `--json`, the output follows the schema `https://intentius.io/chant/schemas
       "valid": true,
       "reasons": [],
       "supersededBy": null,
-      "data": { "id": "ws-003", "title": "Seal scope", "state": "decided" }
+      "data": { "id": "ws-003", "title": "Seal scope", "state": "decided" },
+      "provenance": { "level": "unattested", "commit": null, "reason": "no signers file (.chant/allowed_signers) at base 5b30a8fb; attestation is off" }
     }
   ],
   "summary": { "total": 50, "valid": 50, "invalid": 0, "superseded": 0 }
 }
 ```
 
-`data` holds the whole front matter; the example shortens it. `at` is the full commit id when `--at` is given.
+`data` holds the whole front matter; the example shortens it. `at` is the full commit id when `--at` is given. `trust` and `provenance` were added within contract 1 by [#2547](https://github.com/INTENTIUS/chant/issues/2547).
 
 A failed read prints `{ "$schema", "contract", "error": { "code", "message" } }` instead.
 
