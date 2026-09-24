@@ -30,8 +30,10 @@ export {
   probeEchoesCoverage,
 } from "./behaviour-conformance";
 export { describeApplyConformance } from "./apply-conformance";
+export { describeWorkspaceKindConformance } from "./workspace-kind-conformance";
 export type { ObservationConformanceConfig, ObservationScenario } from "./observation-conformance";
 export type { BehaviourConformanceConfig, BehaviourScenario } from "./behaviour-conformance";
+export type { WorkspaceKindConformanceConfig, WorkspaceKindScenario } from "./workspace-kind-conformance";
 export type {
   ApplyConformanceConfig,
   ApplyScenario,

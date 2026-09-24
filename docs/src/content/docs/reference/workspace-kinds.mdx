@@ -1,0 +1,107 @@
+---
+title: Workspace Kinds
+description: The member kinds chant knows, how a plugin supplies more as data, and how overlapping probes are decided.
+diataxis: reference
+---
+
+A member's `kind` in [`chant.workspace.json`](/chant/reference/workspace-declaration/) says how chant reads its directory ([#2524](https://github.com/INTENTIUS/chant/issues/2524) D3). The list of kinds is closed, since each one is either built in or supplied by a package the declaration pins, and a member of any other kind fails [`chant workspace check`](/chant/cli/workspace-check/) with `WSP003`, which lists the known kinds.
+
+Kinds are plain data. Besides its name and description, each kind carries a probe that looks for files in the member's directory and a precedence that settles overlaps between probes. Probes run no code, and reading a package's kinds never imports the package, so listing a workspace never loads a lexicon.
+
+## Built-in kinds
+
+| Kind | Precedence | The directory holds |
+|---|---|---|
+| `workspace` | 1000 | a nested workspace, with its own `chant.workspace.json` or `.jsonc` |
+| `chant` | 500 | a chant project, with `chant.config.ts` or `chant.config.json` directly in it |
+| `other` | never claims a directory | anything chant does not read. The member needs `because` |
+| `examples` | never claims a directory | the kind of an [example group](/chant/reference/workspace-declaration/#example-groups), not of a member |
+
+The probe of `other` only checks that the directory exists, and it never claims a directory from another kind. `chant workspace check` reports every `other` member as a `WSP009` warning, and `chant doctor` shows the same warning. The check fails with `WSP008` when a registered kind's probe claims an `other` member's directory, since that member should be declared as the kind that claims it.
+
+## Kinds from a package
+
+A package supplies kinds by exporting a JSON file at its `./workspace-kinds` subpath. This follows the slim `./detect` entry every lexicon exports ([#426](https://github.com/INTENTIUS/chant/issues/426)), with one difference. The target is a data file, not a module.
+
+```json
+{
+  "exports": {
+    ".": "./src/index.ts",
+    "./workspace-kinds": "./workspace-kinds.json"
+  },
+  "files": ["src/", "dist/", "workspace-kinds.json"]
+}
+```
+
+The subpath may also be a conditions object, in which case chant reads its `default` condition. A lexicon can export the subpath from its own package, or a kinds-only package can carry nothing but `package.json` and the kinds file.
+
+chant reads the key `./workspace-kinds` literally. A `./*` pattern in `exports` maps the subpath to code, so chant ignores it. A target that isn't a `.json` file inside the package is refused and never run.
+
+### The kinds file
+
+```json
+{
+  "schema": 1,
+  "kinds": [
+    {
+      "name": "terraform",
+      "description": "a Terraform root module, with a main.tf in its directory",
+      "precedence": 400,
+      "probe": { "anyFile": ["main.tf", "versions.tf"] }
+    }
+  ]
+}
+```
+
+| Field | Value |
+|---|---|
+| `schema` | `1` |
+| `kinds[].name` | `^[a-z][a-z0-9-]{0,39}$`. It can't be `chant`, `workspace`, `other` or `examples`, and a package lists each name once |
+| `kinds[].description` | One line saying what the directory holds, shown in listings and messages |
+| `kinds[].precedence` | An integer from 1 to 999 |
+| `kinds[].probe.anyFile` | File names. The probe passes when one of them sits directly in the member's directory |
+
+Fields whose names start with `x-` are allowed on the file and on each kind. Anything else is refused. The JSON Schema ships in `@intentius/chant` at `src/workspace/workspace-kinds.schema.json`, with the `$id` `https://intentius.io/chant/schemas/workspace/kinds/v1/workspace-kinds.schema.json`.
+
+### Which packages are read
+
+Kinds come only from the declaration's [`pins`](/chant/reference/workspace-declaration/#pins). chant does not look at other installed packages.
+
+| Pin | Where chant looks |
+|---|---|
+| `{ "package": "...", "version": "..." }` | `node_modules/<package>` in the workspace root or the nearest directory above it that has one, the way Node resolves a bare import. The installed version must equal the pinned one |
+| `{ "path": "..." }` | That directory inside the workspace |
+
+A pin that isn't installed, is installed at another version, or publishes a kinds file that doesn't validate is a `WSP002` error. Its kinds are left out, so members of those kinds also fail with `WSP003`. A pin on a package with no subpath (`@intentius/chant` itself, for one) supplies no kinds and is no error. A kind name that two pins both supply is an error, and neither package's version of it is used.
+
+`chant workspace ls --at <rev>` reads kinds from the packages installed in the working tree, not from the revision.
+
+## Overlapping probes
+
+Several kinds can claim one directory. A chant project that also holds a `main.tf` passes the probes of `chant` and `terraform`. The highest precedence decides.
+
+| Situation | Result |
+|---|---|
+| One kind has the highest precedence among those that claim the directory | That kind is the directory's kind. A member declared as another kind fails with `WSP007` |
+| Two or more claiming kinds share the highest precedence | A tie. The member fails with `WSP006`, and one of the kinds needs a different precedence |
+| No kind's probe claims the directory | Only `other` fits |
+
+The root member `"."` always holds the workspace's own declaration, so the `workspace` kind never claims it.
+
+## Testing a package's kinds
+
+`@intentius/chant-test-utils` exports `describeWorkspaceKindConformance`. It checks the export and the file, runs each kind's probe over directories you describe, and fails on a tie.
+
+```ts
+import { describeWorkspaceKindConformance } from "@intentius/chant-test-utils";
+
+describeWorkspaceKindConformance({
+  packageDir: import.meta.dirname + "/..",
+  scenarios: [
+    { name: "a root module", kind: "terraform", files: { "main.tf": "" }, claims: true },
+    { name: "a nested module only", kind: "terraform", files: { "modules/net/main.tf": "" }, claims: false },
+  ],
+});
+```
+
+Every kind needs one scenario it claims and one it does not. For a lexicon, [`chant dev check-lexicon`](/chant/lexicon-authoring/completeness-checklist/) also checks that any `./workspace-kinds` subpath holds valid kind data that ships in the package.

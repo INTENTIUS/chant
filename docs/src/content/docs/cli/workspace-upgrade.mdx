@@ -22,7 +22,7 @@ The upgrade is a core command. A template never ships its own upgrader, so an up
 | 2. Merge base | Rebuilt offline. Each recorded file's content at the old commit is kept when it has the hash the lock recorded. A file the project never edited serves as its own base. |
 | 3. Migrate | A git worktree is checked out at HEAD under `.chant/upgrade/`. The template's [migrations](/chant/reference/template-migrations/) run there, in version order. A gap in the chain refuses the upgrade. |
 | 4. Merge | Each file follows the [update rules](/chant/reference/lineage-lock/#update-rules). An edited file that the template also changed takes the change only when every hunk merges cleanly. Otherwise it stays as it was, and the lock records one manual step for it. |
-| 5. Check | In the worktree: `chant build` and `chant lint` when the project has a `chant.config`, and the checks of [`chant workspace check`](/chant/cli/workspace-check/). A failure stops the upgrade before its gate. |
+| 5. Check | In the worktree: `chant build` and `chant lint` when the project has a `chant.config`, and the lineage checks of [`chant workspace check`](/chant/cli/workspace-check/). A failure stops the upgrade before its gate. |
 | 6. Gate | The gate `workspace-upgrade` / `<scope>` on the gate ledger binds the digest of the patch the steps produced. |
 
 The project's tree is untouched until the gate is approved. Before that, everything happens in the worktree, which is removed when the command ends.

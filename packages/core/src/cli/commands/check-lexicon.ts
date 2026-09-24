@@ -106,6 +106,28 @@ export async function coverageReportCheck(plugin: LexiconPlugin | undefined): Pr
   };
 }
 
+/**
+ * #2535 — a lexicon that supplies member kinds publishes them as data at a
+ * `./workspace-kinds` subpath (ws-031). The file must be JSON, validate as
+ * kind data, and ship in the package. A lexicon without the subpath passes
+ * vacuously, like `coverageReport()` above. The workspace module loads only
+ * here, when the check runs.
+ */
+export async function workspaceKindsCheck(dir: string): Promise<CheckItem> {
+  const { readPackageKinds, kindsFileShips } = await import("../../workspace/kinds");
+  const read = readPackageKinds(dir);
+  const problems = [...read.problems];
+  if (read.file && problems.length === 0 && !kindsFileShips(dir, read.file)) {
+    problems.push(`${basename(read.file)} is not covered by package.json "files", so the published package would not carry it`);
+  }
+  return {
+    name: "Any ./workspace-kinds subpath holds valid kind data",
+    tier: 1,
+    pass: problems.length === 0,
+    detail: problems.length > 0 ? problems.join("; ") : read.file ? `${read.kinds.length} kind(s): ${read.kinds.map((k) => k.name).join(", ")}` : undefined,
+  };
+}
+
 // ── Check runner ─────────────────────────────────────────────────────
 
 /**
@@ -433,6 +455,8 @@ export async function checkLexicon(dir: string): Promise<CheckResult> {
   // assertion, a convention rather than a check-lexicon contract. The plugin
   // now states the fact directly via `coverageReport()`.
   items.push(await coverageReportCheck(plugin));
+
+  items.push(await workspaceKindsCheck(dir));
 
   // ── Tier 2: Recommended ────────────────────────────────────────
 

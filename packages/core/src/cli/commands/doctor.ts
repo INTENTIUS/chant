@@ -8,6 +8,7 @@ import { loadPlugins, resolveProjectLexicons } from "../plugins";
 import { MCP_CONFIG_FILENAME, MCP_SETUP_COMMAND, mcpConfigPath } from "../mcp-config";
 import { loadCapabilityPlugin } from "../../components/capability-plugin-loader";
 import { isCapabilityPlugin } from "../../components/capability-plugin";
+import { findWorkspaceRoot } from "../../project-root";
 
 export interface DoctorCheck {
   name: string;
@@ -320,6 +321,21 @@ export async function doctorCommand(path: string): Promise<DoctorReport> {
         });
       }
     }
+  }
+
+  // #2535: in a declared workspace, doctor shows the declaration checks, so
+  // a member of kind other shows as a warning. The walk up only tests
+  // whether files exist; nothing under workspace/ loads without a
+  // declaration, so level 0 is unchanged (#2525).
+  const workspace = findWorkspaceRoot(projectPath);
+  if (workspace) {
+    const { runDeclarationChecks } = await import("../../workspace/checks");
+    const report = runDeclarationChecks(workspace.dir, (file) => join(workspace.dir, file));
+    const shown = report.diagnostics.filter((d) => d.severity !== "info");
+    for (const d of shown) {
+      checks.push({ name: `workspace-${d.ruleId}`, status: d.severity === "error" ? "fail" : "warn", message: `${d.message} (${d.file}:${d.line})` });
+    }
+    if (shown.length === 0) checks.push({ name: "workspace-declaration", status: "pass", message: report.file });
   }
 
   return {

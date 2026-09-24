@@ -11,7 +11,7 @@
  */
 
 import { existsSync, realpathSync } from "node:fs";
-import { relative, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { formatError } from "../cli/format";
 import type { CommandContext } from "../cli/registry";
 import { findWorkspaceRoot } from "../project-root";
@@ -26,7 +26,7 @@ import {
   type Member,
   type WorkspaceErrorCode,
 } from "./declaration";
-import { builtinKindRegistry, probeKind, type KindRegistry } from "./kinds";
+import { loadKindRegistry, probeKind, type KindRegistry } from "./kinds";
 import { gitTop, gitTree, resolveCommit, workingTree, type WorkspaceTree } from "./tree";
 
 /** The version of the `ls` output this chant writes. */
@@ -44,7 +44,7 @@ const USAGE = "chant workspace ls [dir] [--at <rev>] [--json]";
 export const MEMBER_REASON_CODES = [
   /** The member's directory does not exist. */
   "dir-missing",
-  /** No installed kind has the member's kind name. */
+  /** No built-in kind or pinned package supplies the member's kind. */
   "unknown-kind",
   /** The directory is not what its kind reads, such as a `chant` member with no chant config. */
   "kind-probe-failed",
@@ -118,7 +118,7 @@ export function memberReason(member: Member, tree: WorkspaceTree, kinds: KindReg
   }
   const kind = kinds.get(member.kind);
   if (!kind) {
-    return { code: "unknown-kind", message: `no installed kind is named ${member.kind}; known kinds: ${kinds.names().join(", ")}` };
+    return { code: "unknown-kind", message: `no built-in kind or pinned package supplies kind ${member.kind}; known kinds: ${kinds.names().join(", ")}` };
   }
   if (!probeKind(kind, tree, member.dir === "." ? "" : member.dir)) {
     return { code: "kind-probe-failed", message: `${member.dir} is not ${kind.description}` };
@@ -134,6 +134,8 @@ export function listWorkspace(query: LsQuery): LsDocument {
   try {
     let tree: WorkspaceTree;
     let rootDir: string;
+    /** The workspace root on disk, where pinned packages are installed. */
+    let rootOnDisk: string;
     let at: string | null = null;
     if (query.at !== undefined) {
       if (!top) throw new WorkspaceReadError("not-a-git-repository", "--at reads git objects, and this directory is not in a git repository");
@@ -148,6 +150,7 @@ export function listWorkspace(query: LsQuery): LsDocument {
       }
       rootDir = found;
       tree = found === "" ? whole : gitTree(top, commit, found);
+      rootOnDisk = join(top, ...found.split("/"));
     } else {
       const found = findWorkspaceRoot(query.cwd);
       if (!found) {
@@ -159,11 +162,14 @@ export function listWorkspace(query: LsQuery): LsDocument {
         );
       }
       tree = workingTree(found.dir);
+      rootOnDisk = found.dir;
       // git reports the top with symlinks resolved (/private/var on macOS), so compare like with like.
       rootDir = top ? relative(top, realpathSync(found.dir)).split("\\").join("/") : found.dir;
     }
     const declaration = readDeclaration(tree);
-    const kinds = query.kinds ?? builtinKindRegistry();
+    // Kinds come from the pinned packages installed in the working tree, also
+    // for --at: they are read as data, never run (#2535).
+    const kinds = query.kinds ?? loadKindRegistry(declaration.pins, rootOnDisk).registry;
     const groups = resolveGroups(declaration, tree);
     const members: LsMember[] = declaration.members.map((m) => {
       const reason = memberReason(m, tree, kinds);

@@ -717,9 +717,10 @@ Workspace (level 1, #2524):
                         lint and workspace check there, then gate on the digest
                         of the patch (chant approve workspace-upgrade <scope>).
                         A second run with the approval applies the patch
-  workspace check [--json]
+  workspace check [--json] [--format stylish|json|sarif]
                         Fail on an unreadable lineage lock or an open manual
-                        step. Needs no workspace file
+                        step, and, in a declared workspace, on a WSP
+                        declaration check. Needs no workspace file
   workspace build [dir] [--member <name>] [-o <dir>] [--dry-run]
                         Build every chant member and example project, each with
                         its own chant, one process per toolchain. -o <dir>

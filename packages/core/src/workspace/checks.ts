@@ -1,0 +1,358 @@
+/**
+ * Declaration checks (#2535; #2524 D16, ws-028).
+ *
+ * A {@link WorkspaceCheck} looks at the declaration, the tree it describes
+ * and the kinds the workspace can read, and returns findings in the
+ * post-synth diagnostic shape with a `WSP` id. `chant workspace check` runs
+ * them and prints the findings through lint's reporters, so `--format json`
+ * and `--format sarif` come for free. `chant lint` never loads this module.
+ *
+ * The declaration sets the severity of a check through `checks`, and
+ * suppresses a check for one entry through that entry's `suppress`. Some
+ * checks are fixed: an unknown kind, a tie between probes and a probe that
+ * claims an `other` directory always fail (#2524 D3), and a declaration that
+ * can't be read has no settings to apply.
+ */
+
+import type { LintDiagnostic, LintRule, Severity } from "../lint/rule";
+import type { PostSynthDiagnostic } from "../lint/post-synth";
+import { readDeclaration, resolveGroups, WorkspaceReadError, type Declaration, type Entry, type ErrorLocation, type ResolvedGroup } from "./declaration";
+import { parseJsonText, pointerToken, type TextLocation } from "./jsonc";
+import { loadKindRegistry, probeKind, resolveKind, type KindLoadProblem, type KindRegistry } from "./kinds";
+import { workingTree, type WorkspaceTree } from "./tree";
+
+/** What every declaration check reads. */
+export interface WorkspaceCheckContext {
+  declaration: Declaration;
+  tree: WorkspaceTree;
+  groups: ResolvedGroup[];
+  kinds: KindRegistry;
+  /** Why some pinned kinds could not be read. */
+  kindProblems: KindLoadProblem[];
+}
+
+/**
+ * A finding from a declaration check: the post-synth diagnostic shape, with
+ * `entity` naming the entry it is about and `pointer` the place in the
+ * declaration to show.
+ */
+export interface WorkspaceDiagnostic extends PostSynthDiagnostic {
+  /** A JSON Pointer into the declaration. */
+  pointer: string;
+}
+
+export interface WorkspaceCheck {
+  /** `WSP` and three digits. Public once shipped. */
+  id: string;
+  /** A short name, for listings. */
+  name: string;
+  description: string;
+  severity: Severity;
+  /** False when the declaration may neither change the severity nor suppress it. */
+  configurable: boolean;
+  check(ctx: WorkspaceCheckContext): WorkspaceDiagnostic[];
+}
+
+/** A diagnostic ready for lint's reporters, with the entry it is about. */
+export interface WorkspaceFinding extends LintDiagnostic {
+  entity?: string;
+}
+
+export interface SuppressedFinding extends WorkspaceFinding {
+  reason: string;
+}
+
+export interface DeclarationCheckReport {
+  /** The declaration file, relative to the directory the report was made for. */
+  file: string;
+  diagnostics: WorkspaceFinding[];
+  suppressed: SuppressedFinding[];
+  /** Whether an error-severity finding is active. */
+  ok: boolean;
+}
+
+const HELP = "https://intentius.io/chant/cli/workspace-check/#declaration-checks";
+
+const memberDir = (dir: string) => (dir === "." ? "" : dir);
+
+function entryFinding(check: WorkspaceCheck, entry: Entry, field: string | null, message: string): WorkspaceDiagnostic {
+  return {
+    checkId: check.id,
+    severity: check.severity,
+    message,
+    entity: entry.name,
+    pointer: field ? `${entry.pointer}/${field}` : entry.pointer,
+  };
+}
+
+/** The dir exists and the kind is known: the members every probe check reads. */
+function readableMembers(ctx: WorkspaceCheckContext) {
+  return ctx.declaration.members.filter((m) => ctx.tree.stat(memberDir(m.dir)) === "dir" && ctx.kinds.get(m.kind) !== undefined);
+}
+
+/** The first id of the read failure, used by {@link runDeclarationChecks} when the declaration can't be read. */
+export const UNREADABLE_CHECK_ID = "WSP001";
+
+export const WORKSPACE_CHECKS: readonly WorkspaceCheck[] = [
+  {
+    id: "WSP001",
+    name: "declaration-unreadable",
+    description: "The declaration can be read: it parses, matches the schema and keeps the placement rules.",
+    severity: "error",
+    configurable: false,
+    // Reported by runDeclarationChecks, since a declaration that can't be read gives no context.
+    check: () => [],
+  },
+  {
+    id: "WSP002",
+    name: "kinds-unreadable",
+    description: "Every pinned package's kinds can be read: it is installed at the pinned version, and its ./workspace-kinds file is valid kind data.",
+    severity: "error",
+    configurable: false,
+    check(ctx) {
+      return ctx.kindProblems.map((p) => ({ checkId: this.id, severity: this.severity, message: p.message, pointer: `/pins/${p.pin}` }));
+    },
+  },
+  {
+    id: "WSP003",
+    name: "kind-unknown",
+    description: "Every member's kind is built in or supplied by a pinned package. Unknown kinds fail closed.",
+    severity: "error",
+    configurable: false,
+    check(ctx) {
+      return ctx.declaration.members
+        .filter((m) => ctx.kinds.get(m.kind) === undefined)
+        .map((m) => entryFinding(this, m, "kind", `member ${m.name} has kind ${m.kind}, which no built-in kind or pinned package supplies; known kinds: ${ctx.kinds.names().join(", ")}`));
+    },
+  },
+  {
+    id: "WSP004",
+    name: "member-dir-missing",
+    description: "Every member's directory exists.",
+    severity: "error",
+    configurable: true,
+    check(ctx) {
+      return ctx.declaration.members
+        .filter((m) => ctx.tree.stat(memberDir(m.dir)) !== "dir")
+        .map((m) => entryFinding(this, m, "dir", `member ${m.name}'s directory ${m.dir} does not exist${ctx.tree.label}`));
+    },
+  },
+  {
+    id: "WSP005",
+    name: "kind-probe-failed",
+    description: "Every member's directory is what its kind reads, such as a chant config for a chant member.",
+    severity: "error",
+    configurable: true,
+    check(ctx) {
+      return readableMembers(ctx)
+        .filter((m) => !probeKind(ctx.kinds.get(m.kind)!, ctx.tree, memberDir(m.dir)))
+        .map((m) => entryFinding(this, m, "kind", `member ${m.name} (${m.dir}) is not ${ctx.kinds.get(m.kind)!.description}`));
+    },
+  },
+  {
+    id: "WSP006",
+    name: "kind-probe-tie",
+    description: "No directory is claimed by two kinds of the same highest precedence. Ties fail.",
+    severity: "error",
+    configurable: false,
+    check(ctx) {
+      const out: WorkspaceDiagnostic[] = [];
+      for (const m of readableMembers(ctx)) {
+        const { tie } = resolveKind(ctx.kinds, ctx.tree, memberDir(m.dir), m.dir === "." ? ["workspace"] : []);
+        if (tie.length === 0) continue;
+        const names = tie.map((k) => `${k.name} (${k.source})`).join(" and ");
+        out.push(entryFinding(this, m, "kind", `the probes of ${names} all claim ${m.dir} with precedence ${tie[0].precedence}; a tie fails, so one of those kinds needs a different precedence`));
+      }
+      return out;
+    },
+  },
+  {
+    id: "WSP007",
+    name: "kind-outranked",
+    description: "When several kinds claim a member's directory, the declared kind is the one the precedence order picks.",
+    severity: "error",
+    configurable: true,
+    check(ctx) {
+      const out: WorkspaceDiagnostic[] = [];
+      for (const m of readableMembers(ctx)) {
+        if (m.kind === "other") continue;
+        const { winner } = resolveKind(ctx.kinds, ctx.tree, memberDir(m.dir), m.dir === "." ? ["workspace"] : []);
+        if (!winner || winner.name === m.kind) continue;
+        out.push(entryFinding(this, m, "kind", `member ${m.name} is declared ${m.kind}, and kind ${winner.name} (precedence ${winner.precedence}) claims ${m.dir} first; declare it as ${winner.name}`));
+      }
+      return out;
+    },
+  },
+  {
+    id: "WSP008",
+    name: "other-claimed",
+    description: "No other member's directory is claimed by a registered kind's probe.",
+    severity: "error",
+    configurable: false,
+    check(ctx) {
+      const out: WorkspaceDiagnostic[] = [];
+      for (const m of readableMembers(ctx)) {
+        if (m.kind !== "other") continue;
+        const { claims } = resolveKind(ctx.kinds, ctx.tree, memberDir(m.dir), m.dir === "." ? ["workspace"] : []);
+        if (claims.length === 0) continue;
+        out.push(entryFinding(this, m, "kind", `member ${m.name} is declared other, and kind ${claims[0].name} claims ${m.dir}: it is ${claims[0].description}; declare it as ${claims[0].name}`));
+      }
+      return out;
+    },
+  },
+  {
+    id: "WSP009",
+    name: "other-member",
+    description: "A member of kind other is one chant does not read. It is reported so that it stays a decision.",
+    severity: "warning",
+    configurable: true,
+    check(ctx) {
+      return ctx.declaration.members
+        .filter((m) => m.kind === "other")
+        .map((m) => entryFinding(this, m, null, `member ${m.name} (${m.dir}) is kind other, which chant does not read: ${m.because}`));
+    },
+  },
+  {
+    id: "WSP010",
+    name: "group-empty",
+    description: "Every example group matches at least one chant project.",
+    severity: "warning",
+    configurable: true,
+    check(ctx) {
+      return ctx.groups
+        .filter((g) => g.matches.length === 0)
+        .map((g) => entryFinding(this, g.group, "glob", `example group ${g.group.name} matches no chant project${ctx.tree.label}`));
+    },
+  },
+  {
+    id: "WSP011",
+    name: "check-settings-invalid",
+    description: "The declaration's checks and suppress settings name known, configurable WSP ids.",
+    severity: "error",
+    configurable: false,
+    check(ctx) {
+      const out: WorkspaceDiagnostic[] = [];
+      for (const id of Object.keys(ctx.declaration.checks)) {
+        const problem = settingProblem(id);
+        if (problem) out.push({ checkId: this.id, severity: this.severity, message: `checks sets ${id}, which ${problem}`, pointer: `/checks/${pointerToken(id)}` });
+      }
+      for (const e of ctx.declaration.entries) {
+        e.suppress.forEach((s, i) => {
+          const problem = settingProblem(s.check);
+          if (problem) out.push(entryFinding(this, e, `suppress/${i}/check`, `${e.name} suppresses ${s.check}, which ${problem}`));
+        });
+      }
+      return out;
+    },
+  },
+];
+
+const BY_ID = new Map(WORKSPACE_CHECKS.map((c) => [c.id, c]));
+
+function settingProblem(id: string): string | undefined {
+  const check = BY_ID.get(id);
+  if (!check) return `is not a declaration check; known checks: ${WORKSPACE_CHECKS.map((c) => c.id).join(", ")}`;
+  if (!check.configurable) return `is fixed: it can't be turned down or suppressed`;
+  return undefined;
+}
+
+/**
+ * The checks' metadata as lint rules, for the SARIF reporter's rule list.
+ * They are never run as lint rules.
+ */
+export function workspaceCheckRules(): LintRule[] {
+  return WORKSPACE_CHECKS.map((c) => ({
+    id: c.id,
+    severity: c.severity,
+    category: "correctness",
+    description: `${c.name}: ${c.description}`,
+    helpUri: HELP,
+    check: () => [],
+  }));
+}
+
+/** Run every check over a readable declaration. The settings are not applied yet. */
+export function runWorkspaceChecks(ctx: WorkspaceCheckContext): WorkspaceDiagnostic[] {
+  return WORKSPACE_CHECKS.flatMap((c) => c.check(ctx));
+}
+
+/**
+ * Apply the declaration's `checks` severities and entries' `suppress` to the
+ * findings. Fixed checks keep their severity and can't be suppressed; a
+ * setting that tries is itself a WSP011 finding.
+ */
+export function applyCheckSettings(
+  declaration: Declaration,
+  findings: WorkspaceDiagnostic[],
+): { active: WorkspaceDiagnostic[]; suppressed: (WorkspaceDiagnostic & { reason: string })[] } {
+  const active: WorkspaceDiagnostic[] = [];
+  const suppressed: (WorkspaceDiagnostic & { reason: string })[] = [];
+  const byName = new Map(declaration.entries.map((e) => [e.name, e]));
+  for (const f of findings) {
+    const check = BY_ID.get(f.checkId);
+    if (!check?.configurable) {
+      active.push(f);
+      continue;
+    }
+    const setting = declaration.checks[f.checkId];
+    if (setting === "off") continue;
+    const finding = setting ? { ...f, severity: setting } : f;
+    const suppression = f.entity !== undefined ? byName.get(f.entity)?.suppress.find((s) => s.check === f.checkId) : undefined;
+    if (suppression) suppressed.push({ ...finding, reason: suppression.because });
+    else active.push(finding);
+  }
+  return { active, suppressed };
+}
+
+/**
+ * Read the declaration in `root` (an absolute directory holding one), load
+ * the kinds its pins supply, run every check and apply the declaration's
+ * settings. `file` in the findings is the declaration's path as `display`
+ * says, relative to where the command runs. Never throws a
+ * {@link WorkspaceReadError}: a declaration that can't be read is one WSP001
+ * finding.
+ */
+export function runDeclarationChecks(root: string, display: (file: string) => string = (f) => f): DeclarationCheckReport {
+  const tree = workingTree(root);
+  let declaration: Declaration;
+  let groups: ResolvedGroup[];
+  try {
+    declaration = readDeclaration(tree);
+    groups = resolveGroups(declaration, tree);
+  } catch (err) {
+    if (!(err instanceof WorkspaceReadError)) throw err;
+    const location: ErrorLocation = err.location ?? { file: "chant.workspace.json", line: 1, column: 1 };
+    const diagnostic: WorkspaceFinding = {
+      file: display(location.file),
+      line: location.line,
+      column: location.column,
+      ruleId: UNREADABLE_CHECK_ID,
+      severity: "error",
+      message: `${err.code}: ${err.message}`,
+    };
+    return { file: display(location.file), diagnostics: [diagnostic], suppressed: [], ok: false };
+  }
+  const { registry, problems } = loadKindRegistry(declaration.pins, root);
+  const findings = runWorkspaceChecks({ declaration, tree, groups, kinds: registry, kindProblems: problems });
+  const { active, suppressed } = applyCheckSettings(declaration, findings);
+
+  const parsed = parseJsonText(tree.read(declaration.file), { jsonc: declaration.file.endsWith(".jsonc") });
+  const locate = (pointer: string): TextLocation => (parsed.ok ? parsed.locate(pointer) : { line: 1, column: 1 });
+  const file = display(declaration.file);
+  const toFinding = (d: WorkspaceDiagnostic): WorkspaceFinding => ({
+    file,
+    ...locate(d.pointer),
+    ruleId: d.checkId,
+    severity: d.severity,
+    message: d.message,
+    ...(d.entity !== undefined ? { entity: d.entity } : {}),
+  });
+  const order = (a: LintDiagnostic, b: LintDiagnostic) => a.line - b.line || a.column - b.column || (a.ruleId < b.ruleId ? -1 : a.ruleId > b.ruleId ? 1 : 0);
+  const diagnostics = active.map(toFinding).sort(order);
+  return {
+    file,
+    diagnostics,
+    suppressed: suppressed.map((s) => ({ ...toFinding(s), reason: s.reason })).sort(order),
+    ok: !diagnostics.some((d) => d.severity === "error"),
+  };
+}
