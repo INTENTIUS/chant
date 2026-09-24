@@ -136,7 +136,7 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `lock-invalid` | finding, `check` | The lineage lock can't be read. |
 | `manual-step-open` | finding, `check` | A scope in the lineage lock has an open manual step. |
 
-`graph --intent` may also carry findings a plugin contributes through its [`commitJoins`](/chant/cli/workspace-graph/#commit-joins) ([#2656](https://github.com/INTENTIUS/chant/issues/2656)). Their codes are outside the list. Each is `plugin:<name>:<code>`, where `<name>` is the kind's name in the document's `kinds` and `<code>` is lower case words joined by dashes. The plugin owns its namespace, and chant only carries the finding. A reader that switches on codes can tell the two apart by the `plugin:` prefix.
+`graph --intent` may also carry findings a plugin contributes through its [`commitJoins`](/chant/cli/workspace-graph/#commit-joins) ([#2656](https://github.com/INTENTIUS/chant/issues/2656)). Their codes are outside the list. Each is `plugin:<name>:<code>`, where `<name>` is the kind's name in the document's `kinds` (the kind file's `commitJoinsName` when it has one) and `<code>` is lower case words joined by dashes. The plugin owns its namespace, and chant only carries the finding. A reader that switches on codes can tell the two apart by the `plugin:` prefix.
 
 `check` also reports `WSP` ids, the [declaration check catalog](/chant/cli/workspace-check/#declaration-checks). That catalog is closed too, and it is versioned with the check contract.
 

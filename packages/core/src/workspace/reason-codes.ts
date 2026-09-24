@@ -111,14 +111,15 @@ export function isReasonCode(value: unknown): value is ReasonCode {
 /**
  * A finding code a plugin contributes to the intent graph through its
  * `commitJoins` (#2656): `plugin:<name>:<code>`, where `<name>` is the kind's
- * name and `<code>` is lower case words joined by dashes. These are outside the
+ * name, or the kind file's `commitJoinsName` when it has one (#2663), and
+ * `<code>` is lower case words joined by dashes. These are outside the
  * closed list: the plugin owns its namespace, and core only carries them.
  */
 export type PluginCode = `plugin:${string}:${string}`;
 
 export const PLUGIN_CODE = /^plugin:([^:\s]+):([a-z0-9]+(?:-[a-z0-9]+)*)$/;
 
-/** Whether `value` is a plugin code, and, given `name`, one in that kind's namespace. */
+/** Whether `value` is a plugin code, and, given `name` (a kind's name or its `commitJoinsName`), one in that namespace. */
 export function isPluginCode(value: unknown, name?: string): value is PluginCode {
   if (typeof value !== "string") return false;
   const m = value.match(PLUGIN_CODE);

@@ -81,6 +81,22 @@ chant workspace graph --intent app/src/server.mjs --kind decisions/decision.kind
 
 Each commit then lists the unit that produced it and the contract it served, and a commit whose unit names the decision it carries out shows as that decision's own work. [Commit joins](/chant/cli/workspace-graph/#commit-joins) describes the export.
 
+A plugin doesn't need trailers either. The `context` its `commitJoins` gets has `read(path)` for a file and `list(dir)` for a directory's entries, both from the workspace root in the tree the graph reads ([#2663](https://github.com/INTENTIUS/chant/issues/2663)). So it can list its unit records and pick the one that names the sha:
+
+```js
+export function commitJoins(commit, context) {
+  for (const path of context.list("design/units") ?? []) {
+    if (!path.endsWith(".json")) continue;
+    const unit = JSON.parse(context.read(path));
+    if (unit.result?.commit === commit.sha) return { unit: { id: unit.id, contract: unit.contract }, contract: { id: unit.contract } };
+  }
+}
+```
+
+`list` returns sorted paths from the workspace root, and a directory's path ends in `/`. The tree is the one `--at` names, or the working tree. A unit record that names a sha is written after the change it describes, so the change's own tree wouldn't have it.
+
+A plugin's findings are named after its kind: the record kind's name, or the file's name without `.kind.mjs`. Joins kept beside the decision kind therefore report `plugin:decision:<code>`. Moving the joins into a kind file of their own, such as `chud.kind.mjs`, gives them that file's name. You can also leave them where they are and add `export const commitJoinsName = "chud"`, which makes the codes `plugin:chud:<code>`.
+
 ## Hand the graph to another tool
 
 Add `--json` to print the document hud and other readers draw. It follows the schema `https://intentius.io/chant/schemas/workspace/intent/v1/intent.schema.json`. The findings are nodes in it, so a reader draws each one beside the nodes it concerns.

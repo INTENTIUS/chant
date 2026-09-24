@@ -116,7 +116,7 @@
               },
               "name": {
                 "type": "string",
-                "description": "The kind's name: the record kind's name, or the file's name without .kind.mjs for a plugin with no records. A plugin's findings use it as their namespace, plugin:<name>:<code> (#2656). Added within version 1, so an older document may lack it."
+                "description": "The kind's name: the file's commitJoinsName export when it has one (#2663), else the record kind's name, or the file's name without .kind.mjs for a plugin with no records. A plugin's findings use it as their namespace, plugin:<name>:<code> (#2656). Added within version 1, so an older document may lack it."
               },
               "records": {
                 "type": [
@@ -126,6 +126,7 @@
                 "description": "The record kind's name, or null for a plugin with no records."
               },
               "joins": {
+                "description": "The form of the file's commitJoins export: a function commitJoins(commit, context), whose context has read(path) for a file and list(dir) for a directory's entries, both from the workspace root in the tree read (#2663); data, naming the trailers and record paths core reads, with every value of the evidence trailer read; or null when it has none.",
                 "enum": [
                   "function",
                   "data",

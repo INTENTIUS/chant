@@ -564,3 +564,100 @@ describe("reads that fail, and parts that can't be read (#2651)", () => {
     expect(parseRegion("a/b.ts:0")).toHaveProperty("error");
   });
 });
+
+describe("commitJoins lists records and names its findings (#2663)", () => {
+  test("a plugin joins commits by listing its records, with no trailer at all (#2663)", async () => {
+    const SCAN = `
+export function commitJoins(commit, context) {
+  const walk = (dir) => (context.list(dir) ?? []).flatMap((p) => (p.endsWith("/") ? walk(p) : [p]));
+  for (const path of walk("unit-records")) {
+    const id = path.split("/").at(-1).replace(/\\.(json|md)$/, "");
+    const text = context.read(path);
+    if (path.endsWith(".json")) {
+      const record = JSON.parse(text);
+      if (record.result?.commit !== commit.sha) continue;
+      const probe = { missing: context.list("nope"), escape: context.list(".."), file: context.list(path), root: context.list(".").includes("unit-records/") };
+      return { unit: { id, path, probe }, contract: { id: record.contract } };
+    }
+    if (text.includes(commit.sha)) return { unit: { id, path } };
+  }
+  return undefined;
+}
+`;
+    writeFiles(root, {
+      "plugins/scan.kind.mjs": SCAN,
+      "unit-records/U-0100.json": JSON.stringify({ contract: "C-100", result: { commit: sha.c2 } }),
+      "unit-records/archive/U-0104.md": `---\nid: U-0104\n---\n\nLanded as ${sha.c4}.\n`,
+    });
+    commit(["record the units after their commits"]);
+    try {
+      const doc = await walk("app/server.mjs", { kinds: [KIND, "plugins/scan.kind.mjs"] });
+      // c4 carries no trailer; the markdown record in a subdirectory names it.
+      expect(node(doc, `commit:${sha.c4}`)).toMatchObject({ trailers: {} });
+      expect(doc.edges).toContainEqual({ kind: "produced-by", from: `commit:${sha.c4}`, to: "unit:U-0104" });
+      expect(node(doc, "unit:U-0104")).toMatchObject({ data: { path: "unit-records/archive/U-0104.md" } });
+      expect(doc.edges).toContainEqual({ kind: "produced-by", from: `commit:${sha.c2}`, to: "unit:U-0100" });
+      expect(doc.edges).toContainEqual({ kind: "serves", from: "unit:U-0100", to: "contract:C-100" });
+      expect(node(doc, "unit:U-0100")).toMatchObject({ data: { path: "unit-records/U-0100.json", probe: { root: true } } });
+      // Not a directory there, or outside the workspace: undefined.
+      expect((node(doc, "unit:U-0100") as { data: unknown }).data).toMatchObject({ probe: { missing: undefined, escape: undefined, file: undefined, root: true } });
+      expect(node(doc, `commit:${sha.c2b}`) && doc.edges.some((e) => e.kind === "produced-by" && e.from === `commit:${sha.c2b}`)).toBe(false);
+      expect(doc.reasons).toEqual([]);
+
+      // At c4 the records were not written yet: list answers from the tree read, so nothing joins.
+      const before = await walk("app/server.mjs", { kinds: [KIND, "plugins/scan.kind.mjs"], at: sha.c4 });
+      expect(before.nodes.filter((n) => n.kind === "unit")).toEqual([]);
+      expect(before.reasons).toEqual([]);
+    } finally {
+      git(root, "reset", "-q", "--hard", sha.c4);
+    }
+  });
+
+  test("commitJoinsName names a plugin's findings apart from its record kind's name (#2663)", async () => {
+    const NAMED = (name: string) => `
+export { recordKind } from "./decision.kind.mjs";
+export const commitJoinsName = ${JSON.stringify(name)};
+export function commitJoins(commit) {
+  if (commit.trailers["Unit"]?.[0] !== "U-0002") return undefined;
+  return { findings: [{ code: "plugin:studio:contract-moved", message: "moved", refs: [commit.sha] }] };
+}
+`;
+    writeFiles(root, { "decisions/studio.kind.mjs": NAMED("studio"), "decisions/other.kind.mjs": NAMED("other") });
+    commit(["name the findings"]);
+    try {
+      const doc = await walk("app/server.mjs", { kinds: ["decisions/studio.kind.mjs"] });
+      expect(doc.kinds).toEqual([{ file: "decisions/studio.kind.mjs", name: "studio", records: "decision", joins: "function" }]);
+      expect(doc.reasons).toEqual([]);
+      expect(doc.nodes).toContainEqual(expect.objectContaining({ kind: "finding", code: "plugin:studio:contract-moved", concerns: [`commit:${sha.c2b}`] }));
+      // The decisions still come from the record kind called decision.
+      expect(node(doc, "record:decision/dec-001")).toBeDefined();
+
+      // Under another name, the same code is outside the namespace, and the record kind's name is no longer it either.
+      const { doc: other, failed } = await intentGraph({ cwd: root, region: "app/server.mjs", kinds: [join(root, "decisions/other.kind.mjs")] });
+      expectValid(other);
+      if ("error" in other) throw new Error(other.error.message);
+      expect(failed).toBe(true);
+      expect(other.reasons).toEqual([{ code: "intent-plugin-failed", message: expect.stringContaining("plugin:other:<code>") }]);
+    } finally {
+      git(root, "reset", "-q", "--hard", sha.c4);
+    }
+  });
+
+  test("a malformed commitJoinsName is kind-invalid (#2663)", async () => {
+    writeFiles(root, { "plugins/badname.kind.mjs": `export const commitJoinsName = "a:b";\nexport function commitJoins() {}\n`, "plugins/nameonly.kind.mjs": `export const commitJoinsName = "x";\n` });
+    commit(["malformed names"]);
+    try {
+      for (const [file, text] of [
+        ["plugins/badname.kind.mjs", "no colon or space"],
+        ["plugins/nameonly.kind.mjs", "no commitJoins"],
+      ]) {
+        const { doc } = await intentGraph({ cwd: root, region: "app/server.mjs", kinds: [join(root, file)] });
+        expectValid(doc);
+        expect("error" in doc && doc.error.code).toBe("kind-invalid");
+        expect("error" in doc && doc.error.message).toContain(text);
+      }
+    } finally {
+      git(root, "reset", "-q", "--hard", sha.c4);
+    }
+  });
+});
