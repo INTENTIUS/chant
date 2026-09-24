@@ -1,19 +1,26 @@
 /**
- * `chant workspace check [--json]`: the lineage checks (#2550, D9).
+ * `chant workspace check [--json] [--format stylish|json|sarif]`: the lineage
+ * checks (#2550, D9), and the declaration checks (#2535, D16) when a
+ * declaration sits between the current directory and the git root.
  *
  * D9 says open manual steps fail `check`. So far, `check` checks the
  * lineage lock only: the lock must be readable, and no scope may have an open
  * manual step. It needs no `chant.workspace.json`, the way `chant workspace
  * lineage` needs none, and a directory without a lock passes with nothing to
  * check. The generated-file drift checks of D14 (#2541) and the per-member
- * checks (#2537) add their findings to the same list.
+ * checks (#2537) add their findings to the same list. The declaration checks
+ * report `WSP` findings through lint's reporters (`./checks.ts`).
  *
  * `chant workspace upgrade` runs the same checks in its staging worktree
  * before it reaches its gate.
  */
 
+import { join, relative, sep } from "node:path";
 import { formatError, formatSuccess } from "../cli/format";
 import type { CommandContext } from "../cli/registry";
+import type { LintDiagnostic, LintRule } from "../lint/rule";
+import { findWorkspaceRoot } from "../project-root";
+import type { DeclarationCheckReport } from "./checks";
 import { LOCK_FILE, LockError, readLock } from "./lineage-lock";
 
 /** Closed: a reader may switch on it. */
@@ -65,22 +72,87 @@ export function findingKey(f: CheckFinding): string {
   return `${f.code}\0${f.scope ?? ""}\0${f.path ?? ""}`;
 }
 
+const USAGE = "chant workspace check [--json] [--format stylish|json|sarif]";
+const FORMATS = ["stylish", "json", "sarif"] as const;
+
+/** A lock finding as a lint diagnostic, for `--format json` and `--format sarif`. */
+function lockDiagnostic(f: CheckFinding): LintDiagnostic {
+  return { file: f.path ?? LOCK_FILE, line: 1, column: 1, ruleId: f.code, severity: "error", message: f.message };
+}
+
+const LOCK_RULES: LintRule[] = [
+  { id: "lock-invalid", severity: "error", category: "correctness", description: "The lineage lock can be read.", helpUri: "https://intentius.io/chant/cli/workspace-check/", check: () => [] },
+  {
+    id: "manual-step-open",
+    severity: "error",
+    category: "correctness",
+    description: "No scope in the lineage lock has an open manual step.",
+    helpUri: "https://intentius.io/chant/cli/workspace-check/",
+    check: () => [],
+  },
+];
+
+/** SARIF says `inSource` for a comment in the code; a declaration's `suppress` is `external`. */
+function markExternalSuppressions(sarif: string): string {
+  const doc = JSON.parse(sarif) as { runs: { results: { suppressions?: { kind: string }[] }[] }[] };
+  for (const run of doc.runs) for (const r of run.results) for (const s of r.suppressions ?? []) s.kind = "external";
+  return JSON.stringify(doc, null, 2);
+}
+
 export async function runWorkspaceCheck(ctx: CommandContext): Promise<number> {
   const root = process.cwd();
   if (ctx.args.extraPositional) {
-    console.error(formatError({ message: `chant workspace check takes no argument (got ${ctx.args.extraPositional})`, hint: "chant workspace check [--json]" }));
+    console.error(formatError({ message: `chant workspace check takes no argument (got ${ctx.args.extraPositional})`, hint: USAGE }));
+    return 1;
+  }
+  const format = (ctx.args.format || "stylish") as (typeof FORMATS)[number];
+  if (!FORMATS.includes(format)) {
+    console.error(formatError({ message: `--format ${format} is not a check format; use stylish, json or sarif`, hint: USAGE }));
     return 1;
   }
   const report = checkLineage(root);
+  // Declaration checks run when a declaration sits between here and the git
+  // root (#2535). Without one the command stays what it was, a lock check,
+  // and loads nothing more.
+  const found = findWorkspaceRoot(root);
+  let declaration: DeclarationCheckReport | undefined;
+  if (found) {
+    const { runDeclarationChecks } = await import("./checks");
+    declaration = runDeclarationChecks(found.dir, (file) => relative(root, join(found.dir, file)).split(sep).join("/"));
+  }
+  const ok = report.ok && (declaration?.ok ?? true);
+
   if (ctx.args.json) {
-    console.log(JSON.stringify(report, null, 2));
-  } else if (!report.lock) {
-    console.error(formatSuccess(`no ${LOCK_FILE}: nothing to check`));
+    console.log(JSON.stringify({ ...report, ok, ...(declaration ? { declaration } : {}) }, null, 2));
+    return ok ? 0 : 1;
+  }
+  // The reporters load only when there is something to report through them,
+  // so a plain lock check loads what it did before.
+  if (format !== "stylish") {
+    const { formatJson, formatSarif } = await import("../cli/reporters/stylish");
+    const diagnostics = [...report.findings.map(lockDiagnostic), ...(declaration?.diagnostics ?? [])];
+    const suppressed = declaration?.suppressed ?? [];
+    if (format === "json") {
+      console.log(formatJson(diagnostics));
+    } else {
+      const { workspaceCheckRules } = await import("./checks");
+      const { readerVersion } = await import("./declaration");
+      console.log(markExternalSuppressions(formatSarif(diagnostics, [...LOCK_RULES, ...workspaceCheckRules()], suppressed, readerVersion())));
+    }
+    return ok ? 0 : 1;
+  }
+
+  if (!report.lock) {
+    if (!declaration) console.error(formatSuccess(`no ${LOCK_FILE}: nothing to check`));
   } else if (report.ok) {
     console.error(formatSuccess(`${LOCK_FILE}: no open manual steps`));
   } else {
     for (const f of report.findings) console.error(`  ${f.path ?? f.scope ?? ""}: ${f.message}`);
     console.error(formatError({ message: `${report.findings.length} check(s) failed` }));
   }
-  return report.ok ? 0 : 1;
+  if (declaration) {
+    const { formatStylish } = await import("../cli/reporters/stylish");
+    console.log(formatStylish(declaration.diagnostics, declaration.suppressed));
+  }
+  return ok ? 0 : 1;
 }

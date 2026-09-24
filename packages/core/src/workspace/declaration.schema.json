@@ -39,9 +39,19 @@
     },
     "pins": {
       "type": "array",
-      "description": "The toolchain and plugins that read this workspace, pinned (#2524 D3, threat model). chant records them; which of them load kind plugins is #2535's.",
+      "description": "The toolchain and plugins that read this workspace, pinned (#2524 D3, threat model). Member kinds come only from pinned packages, read as data from their ./workspace-kinds subpath (#2535).",
       "items": {
         "$ref": "#/$defs/pin"
+      }
+    },
+    "checks": {
+      "type": "object",
+      "description": "Severity for the declaration checks that allow it, keyed by WSP id (#2535, ws-028): error, warning, info or off. chant workspace check refuses an id it does not know, and one whose severity is fixed.",
+      "propertyNames": {
+        "pattern": "^WSP[0-9]{3}$"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/severity"
       }
     }
   },
@@ -72,6 +82,39 @@
       "type": "string",
       "description": "A glob over directories, relative to the workspace root: * and ? within one segment, ** across segments, [...] classes. No leading /, no . or .. segments.",
       "pattern": "^(?!\\.\\.?(/|$))[^/\\\\]+(/(?!\\.\\.?(/|$))[^/\\\\]+)*$"
+    },
+    "severity": {
+      "enum": [
+        "error",
+        "warning",
+        "info",
+        "off"
+      ]
+    },
+    "suppress": {
+      "type": "array",
+      "description": "Declaration checks suppressed for this entry (#2535). Each names a WSP id and says why. A suppressed finding is still reported, as suppressed, and never fails check.",
+      "items": {
+        "type": "object",
+        "required": [
+          "check",
+          "because"
+        ],
+        "properties": {
+          "check": {
+            "type": "string",
+            "pattern": "^WSP[0-9]{3}$"
+          },
+          "because": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "patternProperties": {
+          "^x-": true
+        },
+        "additionalProperties": false
+      }
     },
     "entry": {
       "description": "A member, or an example group when kind is examples (ws-051).",
@@ -120,7 +163,7 @@
         },
         "kind": {
           "$ref": "#/$defs/kindName",
-          "description": "How to read the member: chant, workspace, other, or a kind a plugin supplies (#2535)."
+          "description": "How to read the member: chant, workspace, other, or a kind a pinned plugin supplies (#2535)."
         },
         "roles": {
           "type": "array",
@@ -168,6 +211,9 @@
           "type": "string",
           "minLength": 1,
           "description": "Why the member is there. Required for kind other."
+        },
+        "suppress": {
+          "$ref": "#/$defs/suppress"
         }
       },
       "patternProperties": {
@@ -226,6 +272,9 @@
               }
             }
           ]
+        },
+        "suppress": {
+          "$ref": "#/$defs/suppress"
         }
       },
       "patternProperties": {

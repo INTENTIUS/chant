@@ -7,7 +7,7 @@ diataxis: reference
 A `chant.workspace.json` at the top of a repository makes it a workspace: a directory of members of declared kinds ([#2524](https://github.com/INTENTIUS/chant/issues/2524) D1, D2). Only this file creates a workspace. chant never infers one, and a project without it stays at level 0, where nothing changes ([#2525](https://github.com/INTENTIUS/chant/issues/2525)). [`chant workspace init`](/chant/cli/workspace-init/) proposes one from the projects already in the repository, and [`chant workspace ls`](/chant/cli/workspace-ls/) lists what it declares.
 
 :::note[What ships so far]
-chant reads, validates and lists the declaration, and each member writes its lifecycle ledger under its own path on `chant/lifecycle` ([#2538](https://github.com/INTENTIUS/chant/issues/2538), see [Ledgers](#ledgers)). Per-member build and lint, and the refusal of root-level `chant build` and `chant lint` at a declared root, come with [#2537](https://github.com/INTENTIUS/chant/issues/2537). Until then the file changes nothing else about other chant commands.
+chant reads, validates and lists the declaration. [`chant workspace check`](/chant/cli/workspace-check/) runs the declaration checks. Each member writes its lifecycle ledger under its own path on `chant/lifecycle` ([#2538](https://github.com/INTENTIUS/chant/issues/2538), see [Ledgers](#ledgers)). Per-member build and lint, and the refusal of root-level `chant build` and `chant lint` at a declared root, come with [#2537](https://github.com/INTENTIUS/chant/issues/2537). Until then the file changes nothing about any other chant command.
 :::
 
 The format is JSON so that any reader can list the members without running TypeScript. The JSON Schema ships in `@intentius/chant` at `src/workspace/declaration.schema.json`, with the `$id` `https://intentius.io/chant/schemas/workspace/declaration/v1/chant.workspace.schema.json`. chant validates the file against it on every read.
@@ -51,6 +51,7 @@ chant finds the file by walking up from the current directory to the git root, t
 | `members` | yes | An array of [members](#members) and [example groups](#example-groups), in the order readers list them. |
 | `minReader` | no | The oldest chant version that may read the file, such as `"0.81.0"`. An older chant refuses it with `reader-too-old`. |
 | `pins` | no | An array of [pins](#pins). |
+| `checks` | no | Severities for the [declaration checks](/chant/cli/workspace-check/#severity-and-suppression), keyed by `WSP` id: `error`, `warning`, `info` or `off`. |
 | `$schema`, `$comment` | no | Editor hints and notes. chant ignores them. |
 | `x-...` | no | Any field whose name starts with `x-`, for people and other tools. Allowed on every object in the file. |
 
@@ -64,11 +65,12 @@ A member is an object with `name`, `dir` and `kind`.
 |---|---|---|
 | `name` | yes | The member's name, in the [name grammar](#names). Frozen once the member deploys. |
 | `dir` | yes | Its directory relative to the workspace root, with `/` separators. `"."` is the root member. |
-| `kind` | yes | How to read it: `chant`, `workspace`, `other`, or a kind a plugin supplies. |
+| `kind` | yes | How to read it: `chant`, `workspace`, `other`, or a kind a pinned package supplies. |
 | `roles` | no | Roles the member plays. Each is a role name, or `{ "name": "...", "path": "..." }` with a path inside the member. |
 | `generated` | no | The files a command writes in the member, with the command that writes each (see [Generated files](#generated-files)). |
 | `upstream` | no | Where an embedded member's files come from. Versions live in the lock, not here. |
 | `because` | for `other` | Why the member is there. |
+| `suppress` | no | Declaration checks turned off for this member, each `{ "check": "WSP009", "because": "..." }`. See [severity and suppression](/chant/cli/workspace-check/#severity-and-suppression). |
 
 Three kinds are built in.
 
@@ -78,7 +80,7 @@ Three kinds are built in.
 | `workspace` | a nested workspace with its own declaration. The outer workspace treats it as opaque and never writes inside it |
 | `other` | anything chant does not read. `because` is required |
 
-Kinds from lexicons and other plugins are coming ([#2535](https://github.com/INTENTIUS/chant/issues/2535)). Until then a member of another kind is listed with the reason `unknown-kind`.
+A pinned package can supply more kinds, as data at its `./workspace-kinds` subpath. [Workspace Kinds](/chant/reference/workspace-kinds/) describes the format, which packages are read, and how chant decides when several kinds' probes claim one directory. A member whose kind no built-in or pinned package supplies is listed with the reason `unknown-kind`, and `chant workspace check` fails on it.
 
 A member's directory leaves the root project. Once [#2537](https://github.com/INTENTIUS/chant/issues/2537) ships, discovery at the root skips it and the member's own commands cover it. `chant workspace init` lists these directories before it writes.
 
@@ -91,6 +93,7 @@ An entry with `"kind": "examples"` is an example group ([ws-051](https://github.
 | `name` | yes | The group's name, in the [name grammar](#names). |
 | `kind` | yes | `examples` |
 | `glob` | yes | A glob, or an array of globs, over directories relative to the workspace root |
+| `suppress` | no | Declaration checks turned off for this group, as for a member |
 
 Each directory a glob matches that holds a chant project is built and linted by the workspace commands. A match holds a project when a `chant.config.ts` or `chant.config.json` sits in it or up to four levels below it, or when its own `package.json` depends on `@intentius/chant` or a chant lexicon. Matches that hold none are left alone.
 
@@ -181,7 +184,7 @@ A pin names the toolchain or a plugin that reads the workspace.
 | an npm package | `package` and `version` (an exact version), optional `integrity` |
 | a local plugin | `path` inside the workspace, optional `integrity` |
 
-`integrity` is a Subresource Integrity digest such as `sha512-...`. chant records pins and lists them in `chant workspace ls --json`; which of them load kinds comes with [#2535](https://github.com/INTENTIUS/chant/issues/2535).
+`integrity` is a Subresource Integrity digest such as `sha512-...`. chant records pins and lists them in `chant workspace ls --json`. Member kinds come only from pinned packages, which chant reads as data and never imports ([Workspace Kinds](/chant/reference/workspace-kinds/#which-packages-are-read)). chant doesn't verify `integrity` yet.
 
 ## Ledgers
 

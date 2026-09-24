@@ -238,7 +238,8 @@
  },
  "docs/src/content/docs/cli/workspace-check.mdx": {
   "formatting/em-dash-density": 2,
-  "claude/colon-reveal": 2
+  "claude/colon-reveal": 2,
+  "dead-metaphor/rare-lemma": 1
  },
  "docs/src/content/docs/cli/workspace-graph.mdx": {
   "formatting/em-dash-density": 2
@@ -988,6 +989,11 @@
   "discourse/punchy-fragments": 1,
   "claude/colon-reveal": 2,
   "anaphora/repeated-opening": 1
+ },
+ "docs/src/content/docs/reference/workspace-kinds.mdx": {
+  "formatting/em-dash-density": 2,
+  "discourse/punchy-fragments": 1,
+  "claude/colon-reveal": 3
  },
  "docs/src/content/docs/serialization/multi-stack.mdx": {
   "formatting/em-dash-density": 13,

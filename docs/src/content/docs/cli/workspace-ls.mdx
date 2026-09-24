@@ -14,7 +14,7 @@ chant workspace ls [dir] [--at <rev>] [--json]
 
 `chant workspace ls` finds the [workspace declaration](/chant/reference/workspace-declaration/) by walking up from `dir` (default: the current directory) to the git root, validates it and lists what it declares. Each member is shown with its kind, directory and roles, and each example group with its globs and how many projects they match.
 
-A member that can't be read is still listed, with a reason code, and the command still exits 0 ([ws-020](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-020-unreadable.md)). A reader can then show the rest of the workspace and explain the gap. Failing on an unreadable member is the job of `chant workspace check`, once it checks the declaration ([#2535](https://github.com/INTENTIUS/chant/issues/2535)). Only a declaration that can't be read exits 1.
+A member that can't be read is still listed, with a reason code, and the command still exits 0 ([ws-020](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-020-unreadable.md)). A reader can then show the rest of the workspace and explain the gap. Failing on an unreadable member is the job of [`chant workspace check`](/chant/cli/workspace-check/#declaration-checks). Only a declaration that can't be read exits 1.
 
 ```
 chant  (chant.workspace.json)
@@ -95,7 +95,7 @@ A failed read prints `{ "$schema", "contract", "chant", "error": { "code", "mess
 | Code | The member |
 |---|---|
 | `dir-missing` | has no directory at its `dir` |
-| `unknown-kind` | has a kind no installed kind has; the message lists the known ones |
+| `unknown-kind` | has a kind that is neither built in nor supplied by a [pinned package](/chant/reference/workspace-kinds/#which-packages-are-read); the message lists the known ones |
 | `kind-probe-failed` | isn't what its kind reads, such as a `chant` member with no chant config |
 
 A group whose globs match no chant project has the reason `no-matches`.

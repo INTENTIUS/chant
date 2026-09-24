@@ -81,6 +81,16 @@ export class WorkspaceReadError extends Error {
 
 // ── The shape ────────────────────────────────────────────────────────────────
 
+/** A declaration check suppressed for one entry (#2535). */
+export interface Suppression {
+  /** A `WSP` id. */
+  check: string;
+  because: string;
+}
+
+/** What `checks` may set a declaration check's severity to. */
+export type CheckSeverity = "error" | "warning" | "info" | "off";
+
 export interface MemberRole {
   name: string;
   /** Relative to the member's directory, or null for the whole member. */
@@ -112,6 +122,7 @@ export interface Member {
   generated: GeneratedFile[];
   upstream: string | null;
   because: string | null;
+  suppress: Suppression[];
   /** The entry's JSON Pointer in the file, for messages. */
   pointer: string;
 }
@@ -121,6 +132,7 @@ export interface Group {
   name: string;
   kind: typeof EXAMPLES_KIND;
   globs: string[];
+  suppress: Suppression[];
   pointer: string;
   /** Where the entry's `glob` sits in the file, for placement errors. */
   globLocation: TextLocation;
@@ -144,6 +156,8 @@ export interface Declaration {
   members: Member[];
   groups: Group[];
   pins: Pin[];
+  /** Severities set for declaration checks, keyed by `WSP` id (#2535). */
+  checks: Record<string, CheckSeverity>;
   /** The file, relative to the workspace root's tree (`chant.workspace.json` or `.jsonc`). */
   file: string;
 }
@@ -278,6 +292,7 @@ export function parseDeclaration(text: string, file: string, reader: string = re
 
   const entries: Entry[] = (obj.members as Record<string, unknown>[]).map((e, i): Entry => {
     const pointer = `/members/${i}`;
+    const suppress = ((e.suppress as Suppression[] | undefined) ?? []).map((x) => ({ check: x.check, because: x.because }));
     if (e.kind === EXAMPLES_KIND) {
       const glob = e.glob as string | string[];
       return {
@@ -285,6 +300,7 @@ export function parseDeclaration(text: string, file: string, reader: string = re
         name: e.name as string,
         kind: EXAMPLES_KIND,
         globs: typeof glob === "string" ? [glob] : [...glob],
+        suppress,
         pointer,
         globLocation: parsed.locate(`${pointer}/glob`),
       };
@@ -308,6 +324,7 @@ export function parseDeclaration(text: string, file: string, reader: string = re
       generated,
       upstream: (e.upstream as string | undefined) ?? null,
       because: (e.because as string | undefined) ?? null,
+      suppress,
       pointer,
     };
   });
@@ -389,6 +406,7 @@ export function parseDeclaration(text: string, file: string, reader: string = re
     members,
     groups: entries.filter((e): e is Group => e.type === "group"),
     pins,
+    checks: { ...((obj.checks as Record<string, CheckSeverity> | undefined) ?? {}) },
     file,
   };
 }

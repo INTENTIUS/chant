@@ -1,30 +1,87 @@
 ---
 title: "chant workspace check"
-description: Fail when the lineage lock cannot be read or a manual step is open
+description: Fail when the lineage lock cannot be read, a manual step is open, or a declaration check fails
 diataxis: reference
 ---
 
 ## Synopsis
 
 ```
-chant workspace check [--json]
+chant workspace check [--json] [--format stylish|json|sarif]
 ```
 
 ## Description
 
-`chant workspace check` reads [`.chant/workspace.lock.json`](/chant/reference/lineage-lock/) in the current directory and fails when the lock cannot be read or any scope has an open manual step. D9 of [#2524](https://github.com/INTENTIUS/chant/issues/2524) says open manual steps fail `check`: a file that did not merge during an update stays a failure until someone merges it by hand and runs [`chant workspace lineage resolve <path>`](/chant/cli/workspace-lineage/).
+`chant workspace check` runs two sets of checks.
 
-It needs no `chant.workspace.json`. A directory with no lock has nothing to check and passes.
+The lineage checks read [`.chant/workspace.lock.json`](/chant/reference/lineage-lock/) in the current directory and fail when the lock cannot be read or any scope has an open manual step. D9 of [#2524](https://github.com/INTENTIUS/chant/issues/2524) says open manual steps fail `check`. A file that did not merge during an update stays a failure until someone merges it by hand and runs [`chant workspace lineage resolve <path>`](/chant/cli/workspace-lineage/). A directory with no lock has nothing to check here and passes.
 
-For now, `check` covers the lineage lock only. The [generated-file checks](#generated-files) of [#2541](https://github.com/INTENTIUS/chant/issues/2541) are written and join the report once the check contract of [#2535](https://github.com/INTENTIUS/chant/issues/2535) lands. The per-member checks ([#2537](https://github.com/INTENTIUS/chant/issues/2537)) will add their findings to the same report.
+The [declaration checks](#declaration-checks) run when a [`chant.workspace.json`](/chant/reference/workspace-declaration/) sits in the current directory or above it, up to the git root ([#2535](https://github.com/INTENTIUS/chant/issues/2535)). Their findings carry `WSP` ids and print through the same reporters as `chant lint`, so `--format sarif` works as it does there. Without a declaration the command checks the lock alone and needs no workspace file.
 
-[`chant workspace upgrade`](/chant/cli/workspace-upgrade/) runs the same checks in its staging worktree before it records its gate. There, a finding already present at HEAD does not stop the upgrade, and neither do the manual steps the upgrade itself records, since those are part of what the gate approves.
+The [generated-file checks](#generated-files) of [#2541](https://github.com/INTENTIUS/chant/issues/2541) are written and join the report once they are wired into the declaration checks.
+
+The generated-file drift checks ([#2541](https://github.com/INTENTIUS/chant/issues/2541)) and the per-member checks ([#2537](https://github.com/INTENTIUS/chant/issues/2537)) will add their findings to the same report.
+
+[`chant workspace upgrade`](/chant/cli/workspace-upgrade/) runs the lineage checks in its staging worktree before it records its gate. There, a finding already present at HEAD does not stop the upgrade, and neither do the manual steps the upgrade itself records, since those are part of what the gate approves.
 
 ```
 $ chant workspace check
   src/config.ts: manual step open (changed-locally): merge by hand, then `chant workspace lineage resolve src/config.ts`
 ✗ 1 check(s) failed
 ```
+
+```
+$ chant workspace check
+
+chant.workspace.json
+    5:5    warning  member docs (docs) is kind other, which chant does not read: an npm package with no chant project  WSP009
+   17:15   error    member infra has kind terraform, which no built-in kind or pinned package supplies; known kinds: chant, other, workspace  WSP003
+
+✖ 1 error, 1 warning
+```
+
+## Declaration checks
+
+| Id | Name | Default | Settable | Fails when |
+|---|---|---|---|---|
+| `WSP001` | declaration-unreadable | error | no | The declaration can't be read. The message starts with the [error code](/chant/reference/workspace-declaration/#errors) |
+| `WSP002` | kinds-unreadable | error | no | A pinned package isn't installed, is installed at another version, or publishes kind data that doesn't validate ([kinds](/chant/reference/workspace-kinds/#which-packages-are-read)) |
+| `WSP003` | kind-unknown | error | no | A member's kind is neither built in nor supplied by a pinned package. The message lists the known kinds |
+| `WSP004` | member-dir-missing | error | yes | A member's directory does not exist |
+| `WSP005` | kind-probe-failed | error | yes | A member's directory is not what its kind reads, such as a `chant` member with no chant config |
+| `WSP006` | kind-probe-tie | error | no | Two kinds with the same highest precedence both claim a member's directory |
+| `WSP007` | kind-outranked | error | yes | A kind of higher precedence than the declared one claims the member's directory |
+| `WSP008` | other-claimed | error | no | A registered kind's probe claims the directory of an `other` member |
+| `WSP009` | other-member | warning | yes | A member is kind `other`. `chant doctor` shows it too |
+| `WSP010` | group-empty | warning | yes | An example group matches no chant project |
+| `WSP011` | check-settings-invalid | error | no | `checks` or a `suppress` entry names an unknown id or one that can't be set |
+
+A finding's location is the entry it is about, or the pin for `WSP002`.
+
+### Severity and suppression
+
+The declaration sets the severity of a settable check in its top-level `checks` field. The value is `error`, `warning`, `info` or `off`.
+
+```json
+{
+  "name": "acme",
+  "schema": 1,
+  "checks": { "WSP010": "off", "WSP009": "info" },
+  "members": [
+    {
+      "name": "docs",
+      "dir": "docs",
+      "kind": "other",
+      "because": "a static site",
+      "suppress": [{ "check": "WSP009", "because": "the site moves to its own repository in Q3" }]
+    }
+  ]
+}
+```
+
+An entry's `suppress` turns one check off for that member or group, with a reason. A suppressed finding never fails the command, but it is still reported. The stylish output lists it under "Suppressed" and `--json` puts it in `suppressed`. In SARIF it is a result with an `external` suppression whose justification is the reason.
+
+The checks marked "no" in the table always report at their default severity. D3 of [#2524](https://github.com/INTENTIUS/chant/issues/2524) says unknown kinds fail closed, ties fail, and a probe that claims an `other` directory fails, so the declaration can't turn those down. Trying to is a `WSP011` error.
 
 ## Generated files
 
@@ -47,16 +104,18 @@ Declared generators run member code and take seconds each, so they run only with
 error  WSP081  docs/src/content/docs/lint-rules/audit-rules.mdx differs from what `npx tsx ../scripts/generate-audit-rules-doc.ts` writes; run `npx tsx ../scripts/generate-audit-rules-doc.ts` in docs and commit the result, or mark the entry handWritten with a reason
 info   WSP084  services/api/skills/chant-aws/SKILL.md is kept by hand, so `chant update` is not run for it: we trim the skill for this service
 ```
-
 ## Options
 
 | Option | Effect |
 |---|---|
-| `--json` | Print `{ lock, ok, findings }`. Each finding has `code`, `scope`, `path` and `message`. `code` is one of `lock-invalid` and `manual-step-open`. `lock` is `null` when there is no lock. |
+| `--json` | Print `{ lock, ok, findings }`, plus `declaration` when there is one. Each lock finding has `code`, `scope`, `path` and `message`, and `code` is one of `lock-invalid` and `manual-step-open`. `lock` is `null` when there is no lock. `declaration` holds `file`, `ok`, `diagnostics` and `suppressed`, whose entries have the shape `chant lint --format json` prints, plus `entity` naming the entry and `reason` for a suppressed one. `ok` covers both |
+| `--format stylish` | The default. Lock findings print as above, and declaration findings print as `chant lint` prints its own |
+| `--format json` | Print the active findings as `chant lint --format json` does. Lock findings use their code as the rule id |
+| `--format sarif` | Print SARIF 2.1.0 through lint's SARIF reporter, with the suppressed findings as suppressed results |
 
 ## Exit codes
 
 | Code | Meaning |
 |---|---|
-| 0 | No lock, or no finding |
-| 1 | The lock cannot be read, or a manual step is open |
+| 0 | No lock finding and no declaration finding of error severity |
+| 1 | The lock cannot be read, a manual step is open, or a declaration check reports an error |
