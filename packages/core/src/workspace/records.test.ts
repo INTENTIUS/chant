@@ -93,6 +93,49 @@ describe("readRecords", () => {
     expect(r.data).not.toBeNull();
   });
 
+  describe("a dissent needs a reason (#2652)", () => {
+    const withReviews = (reviews: string) => decision("ws-001").replace(/^reviews: \[\]$/m, `reviews:\n${reviews}`);
+    const review = (verdict: string, extra = "") => `  - reviewer: "ana"\n    verdict: "${verdict}"\n    on: "2026-09-24"\n${extra}`;
+
+    for (const [label, note] of [
+      ["null", "    note: null\n"],
+      ["empty", '    note: ""\n'],
+      ["blank", '    note: "  "\n'],
+      ["missing", ""],
+    ] as const) {
+      test(`a dissent with a ${label} note is record-schema-invalid, naming the reviewer`, async () => {
+        write("ws-001-a.md", withReviews(review("dissent", note)));
+        const [r] = (await read()).records;
+        expect(r.valid).toBe(false);
+        expect(codes(r)).toEqual(["record-schema-invalid"]);
+        expect(r.reasons[0].message).toBe("/reviews/0 A dissent needs a reason: the dissent by ana has no note.");
+      });
+    }
+
+    test("a dissent with a note is valid, and so are agree and abstain without one", async () => {
+      write(
+        "ws-001-a.md",
+        withReviews(
+          review("dissent", '    note: "the seal should cover the lockfile too"\n') +
+            review("agree") +
+            review("abstain", "    note: null\n"),
+        ),
+      );
+      const [r] = (await read()).records;
+      expect(r.reasons).toEqual([]);
+      expect(r.valid).toBe(true);
+    });
+
+    test("a dissent carries its concern's lifecycle; another verdict cannot", async () => {
+      write("ws-001-a.md", withReviews(review("dissent", '    note: "why"\n    addressed_by: "INTENTIUS/chant#2652"\n    withdrawn_on: "2026-09-25"\n')));
+      expect((await read()).records[0].valid).toBe(true);
+      write("ws-001-a.md", withReviews(review("agree", '    addressed_by: "ws-002"\n')));
+      const [r] = (await read()).records;
+      expect(codes(r)).toEqual(["record-schema-invalid"]);
+      expect(r.reasons[0].message).toBe("/reviews/0 Only a dissent is a concern: the agree by ana cannot carry addressed_by or withdrawn_on.");
+    });
+  });
+
   test("a supersedes link to a missing id is record-supersedes-unknown", async () => {
     write("ws-002-b.md", decision("ws-002", "decided", ["ws-404"]));
     const [r] = (await read()).records;
