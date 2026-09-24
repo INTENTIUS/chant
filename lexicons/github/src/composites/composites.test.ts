@@ -19,7 +19,7 @@ describe("Checkout", () => {
   test("returns step with checkout action", () => {
     const result = Checkout({});
     expect(result.step).toBeDefined();
-    expect(result.step.props.uses).toBe("actions/checkout@v4");
+    expect(result.step.props.uses).toBe("actions/checkout@v7");
     expect(result.step.props.name).toBe("Checkout");
   });
 
@@ -45,7 +45,7 @@ describe("Checkout", () => {
 describe("SetupNode", () => {
   test("returns step with setup-node action", () => {
     const result = SetupNode({});
-    expect(result.step.props.uses).toBe("actions/setup-node@v4");
+    expect(result.step.props.uses).toBe("actions/setup-node@v7");
     expect(result.step.props.name).toBe("Setup Node.js");
   });
 
@@ -540,7 +540,7 @@ describe("DeployEnvironment", () => {
     const result = DeployEnvironment({ name: "staging", deployScript: "npm run deploy" });
     const steps = result.deployJob.props.steps as Array<{ props: Record<string, unknown> }>;
     expect(steps.length).toBe(2);
-    expect(steps[0].props.uses).toBe("actions/checkout@v4");
+    expect(steps[0].props.uses).toBe("actions/checkout@v7");
     expect(steps[1].props.run).toBe("npm run deploy");
   });
 
@@ -683,7 +683,7 @@ describe("defaults overrides", () => {
       defaults: { step: { id: "my-checkout" } },
     });
     expect(result.step.props.id).toBe("my-checkout");
-    expect(result.step.props.uses).toBe("actions/checkout@v4");
+    expect(result.step.props.uses).toBe("actions/checkout@v7");
   });
 
   test("SetupNode defaults override step props", () => {

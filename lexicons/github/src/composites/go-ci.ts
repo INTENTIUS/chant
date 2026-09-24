@@ -1,5 +1,6 @@
 import { Composite, mergeDefaults } from "@intentius/chant";
 import { Job, Step, Workflow } from "../generated/index";
+import { actionRef } from "../action-pins";
 
 export interface GoCIProps {
   /** Go version. Default: "1.22" */
@@ -34,7 +35,7 @@ export const GoCI = Composite((props: GoCIProps) => {
   const buildJob = new Job(mergeDefaults({
     "runs-on": runsOn,
     steps: [
-      new Step({ name: "Checkout", uses: "actions/checkout@v4" }),
+      new Step({ name: "Checkout", uses: actionRef("actions/checkout") }),
       new Step({
         name: "Setup Go",
         uses: "actions/setup-go@v5",
@@ -48,7 +49,7 @@ export const GoCI = Composite((props: GoCIProps) => {
   const testJob = new Job(mergeDefaults({
     "runs-on": runsOn,
     steps: [
-      new Step({ name: "Checkout", uses: "actions/checkout@v4" }),
+      new Step({ name: "Checkout", uses: actionRef("actions/checkout") }),
       new Step({
         name: "Setup Go",
         uses: "actions/setup-go@v5",
@@ -64,7 +65,7 @@ export const GoCI = Composite((props: GoCIProps) => {
       ? new Job(mergeDefaults({
           "runs-on": runsOn,
           steps: [
-            new Step({ name: "Checkout", uses: "actions/checkout@v4" }),
+            new Step({ name: "Checkout", uses: actionRef("actions/checkout") }),
             new Step({
               name: "Setup Go",
               uses: "actions/setup-go@v5",
