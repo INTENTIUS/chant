@@ -17,6 +17,8 @@ Today it is at level 0. There is no `chant.workspace.json`, only [`chant.workspa
 
 The app does not embed the design client, so it declares no `depends-on` link to it (D18).
 
+The root also holds [`chant.template.json`](chant.template.json), the template manifest for `chant init --from` ([#2627](https://github.com/INTENTIUS/chant/issues/2627)). It declares one parameter, `name`, with the default `Reference app`. In this directory the files it lists carry the placeholder `{{chant:name}}`, so the app run from here shows that text as its title. A copy made with `chant init --from` shows the value.
+
 The root holds this README and [`decisions/`](decisions), the workspace's own decision records in the format of [`docs/design/decisions/`](../docs/design/decisions/README.md), with ids `ref-001` onwards. The kind file and schema beside them are copies of chant's, so a workspace made from this one can read them on its own:
 
 ```sh
@@ -39,10 +41,11 @@ chant workspace records --kind decisions/decision.kind.mjs --current
 | [#2546](https://github.com/INTENTIUS/chant/issues/2546) | the decisions become sealed records, read by the spec query |
 | [#2549](https://github.com/INTENTIUS/chant/issues/2549) | records link to `design/` by anchor and pin its files' hashes |
 | [#2550](https://github.com/INTENTIUS/chant/issues/2550) | `chant workspace upgrade` from an older tag of this workspace |
+| [#2627](https://github.com/INTENTIUS/chant/issues/2627) | landed: [`chant.template.json`](chant.template.json) declares a `name` parameter, the app's display name. `chant init --from ... --param name="Untitled app"` puts it in the home page and the screen spec, and the lock records it |
 
 ## Tests
 
-[`test/reference-workspace.test.ts`](../test/reference-workspace.test.ts) runs in chant's test job. It checks that the draft's members are on disk and no live declaration is, runs the app's test, builds and lints delivery with no findings, validates the decision files against chant's schema and reads them with `chant workspace records`. It also runs `chant init --from` on this directory at `HEAD` and checks that the copy has a lock and reads its own decisions. The copy is not a working workspace until the declaration lands (#2534), and the workspace commands and their contract tests join the test as their issues land.
+[`test/reference-workspace.test.ts`](../test/reference-workspace.test.ts) runs in chant's test job. It checks that the draft's members are on disk and no live declaration is, runs the app's test, builds and lints delivery with no findings, validates the decision files against chant's schema and reads them with `chant workspace records`. It also runs `chant init --from` on this directory at `HEAD` and checks that the copy has a lock and reads its own decisions. A second run passes `--param name="Untitled app"` and checks that the value reaches every file the manifest lists and the lock, and that the copy's app test passes with it. The copy is not a working workspace until the declaration lands (#2534), and the workspace commands and their contract tests join the test as their issues land.
 
 ## Ownership and support
 

@@ -528,7 +528,9 @@ Usage:
 Commands:
   init                  Initialize a new chant project
                         (--from <repo>@<ref>[#<member>] copies a template
-                        repository and records its lineage)
+                        repository and records its lineage; --param
+                        <name>=<value> sets a parameter the template's
+                        chant.template.json declares, repeatable)
   init lexicon <name>   Scaffold a new lexicon plugin project
   build                 Build infrastructure from specification files
                         (--components --generate github|gitlab|forgejo:
@@ -887,12 +889,15 @@ Options:
                         Distinct from the AWS lexicon's deploy-time
                         Parameter(): this resolves before synthesis, so it
                         can change which resources are produced at all.
-                        Highest precedence.
+                        Highest precedence. With init --from, it sets a
+                        template parameter that the template's
+                        chant.template.json declares instead (#2627).
   --params-file <path>  (build, graph, run --components, components fan-out,
                         components promote, components rollback,
                         components redeploy) JSON file
                         of { "name": value } build-time parameter values
                         (#1064). Second precedence, after --param.
+                        init --from refuses it: pass --param instead.
 
 Examples:
   chant build ./infra/

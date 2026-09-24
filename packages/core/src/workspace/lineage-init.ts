@@ -29,6 +29,7 @@ import {
   type Lineage,
 } from "./lineage-lock";
 import { MIGRATIONS_DIR } from "./lineage-migrations";
+import { TEMPLATE_MANIFEST, readManifest, resolveParameters, substituteParameters } from "./template-manifest";
 
 // ── The template spec ────────────────────────────────────────────────────────
 
@@ -186,6 +187,8 @@ export interface InitFromOptions {
   /** Target directory (defaults to cwd). */
   path?: string;
   force?: boolean;
+  /** `--param name=value` values, parsed. Checked against the template's `chant.template.json` (#2627). */
+  params?: Record<string, string>;
 }
 
 export interface InitFromResult {
@@ -195,6 +198,8 @@ export interface InitFromResult {
   error?: string;
   spec?: TemplateSpec;
   commit?: string;
+  /** The parameter values used, recorded in the lock. */
+  parameters?: Record<string, string>;
 }
 
 /** `chant init --from <repo>@<ref>[#<member>] [path]`. */
@@ -231,20 +236,34 @@ export async function initFromCommand(options: InitFromOptions): Promise<InitFro
     if (s.path !== LOCK_FILE) warnings.push(`${s.path} is ${s.reason}, not copied`);
   }
 
+  // Parameters (#2627): checked and substituted before anything is written,
+  // so a refused --param leaves the target untouched.
+  let parameters: Record<string, string>;
+  let contents: Map<string, Buffer>;
+  try {
+    const raw = new Map([...fetched.files].map(([path, f]) => [path, f.data]));
+    const manifest = readManifest(raw);
+    parameters = resolveParameters(manifest, options.params ?? {});
+    contents = substituteParameters(raw, manifest, parameters);
+  } catch (err) {
+    return { success: false, createdFiles, warnings, error: (err as Error).message };
+  }
+
   mkdirSync(targetDir, { recursive: true });
   const written = new Map<string, Buffer>();
   for (const [path, file] of [...fetched.files].sort(([a], [b]) => a.localeCompare(b))) {
-    // The template's migrations (#2550) are for `chant workspace upgrade`, not part of a project.
-    if (path.startsWith(`${MIGRATIONS_DIR}/`)) continue;
+    // The template's migrations (#2550) and its manifest (#2627) are for chant, not part of a project.
+    if (path.startsWith(`${MIGRATIONS_DIR}/`) || path === TEMPLATE_MANIFEST) continue;
+    const data = contents.get(path)!;
     const abs = join(targetDir, path);
     if (existsSync(abs)) {
       warnings.push(`${path} already exists, skipping`);
       continue;
     }
     mkdirSync(dirname(abs), { recursive: true });
-    writeFileSync(abs, file.data);
+    writeFileSync(abs, data);
     if (file.executable) chmodSync(abs, 0o755);
-    written.set(path, file.data);
+    written.set(path, data);
     createdFiles.push(path);
   }
 
@@ -254,7 +273,7 @@ export async function initFromCommand(options: InitFromOptions): Promise<InitFro
     source: { type: "git", repo: spec.repo, url: portableUrl(spec.url, targetDir), ...(spec.member ? { path: spec.member } : {}) },
     ref: spec.ref,
     address: { digest: contentDigest(written), commit: fetched.commit, tree: fetched.tree },
-    parameters: {},
+    parameters,
     migrations: [],
     files: fileEntries(written),
     manualSteps: [],
@@ -264,7 +283,7 @@ export async function initFromCommand(options: InitFromOptions): Promise<InitFro
   writeLock(targetDir, lock);
   createdFiles.push(LOCK_FILE);
 
-  return { success: true, createdFiles, warnings, spec, commit: fetched.commit };
+  return { success: true, createdFiles, warnings, spec, commit: fetched.commit, parameters };
 }
 
 /** A local repository is recorded relative to the project, so the lock does not name this machine's paths. */

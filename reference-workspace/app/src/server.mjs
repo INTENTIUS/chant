@@ -5,11 +5,17 @@
 import { createServer } from "node:http";
 import { pathToFileURL } from "node:url";
 
+/**
+ * The app's display name. `chant init --from` replaces the placeholder with
+ * the `name` parameter declared in ../../chant.template.json (#2627).
+ */
+export const APP_NAME = "{{chant:name}}";
+
 const HOME = `<!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><title>Reference app</title></head>
+<head><meta charset="utf-8"><title>${APP_NAME}</title></head>
 <body>
-<header><h1>Reference app</h1></header>
+<header><h1>${APP_NAME}</h1></header>
 <main><p id="status">Running.</p></main>
 </body>
 </html>

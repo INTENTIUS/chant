@@ -19,7 +19,7 @@ Commit the lock. The generated `.gitignore` ignores `.chant/types/`, `.chant/met
 
 ## Example
 
-A project made with `chant init --from acme/starter@v1.4.0#service` that also vendors one pattern:
+A project made with `chant init --from acme/starter@v1.4.0#service --param name=billing` that also vendors one pattern:
 
 ```json
 {
@@ -40,7 +40,7 @@ A project made with `chant init --from acme/starter@v1.4.0#service` that also ve
         "commit": "4624a0b6ca83bf3a2776b2d29d269e989d8b560f",
         "tree": "89aa2215293af8364e8832176cc75b9b846889d1"
       },
-      "parameters": {},
+      "parameters": { "name": "billing" },
       "migrations": [],
       "files": {
         ".mcp.json": { "class": "seed", "sha256": "sha256:ca3d163b…" },
@@ -90,7 +90,7 @@ chant writes the file with sorted keys and two-space indentation, so it diffs cl
 | `source` | Where the files are fetched from (see [Sources](#sources)). |
 | `ref` | The pin as written: a git ref, a tag or a version label. `chant workspace upgrade --to` replaces it. When it names a version (`v1.4.0`, `chant-v0.80.0`), migrations are planned from it. |
 | `address` | The content address the files came from, or `null` for a vendor scope that has never been pulled. |
-| `parameters` | The parameter values the template was instantiated with. Empty for vendor scopes, which take no parameters, and for templates that declare none. |
+| `parameters` | The value of every parameter the template's [`chant.template.json`](/chant/cli/init/#template-manifest) declares, from `--param` or the default, keyed by name. Empty for vendor scopes, which take no parameters, for `chant init --template` scopes, and for templates that declare none. `chant workspace upgrade` substitutes these values into both versions it compares, keeps them, and adds the default of any parameter the new version declares. |
 | `migrations` | The ids of the [template migrations](/chant/reference/template-migrations/) `chant workspace upgrade` has applied since the scope was instantiated, in the order they ran. An id listed here never runs again. |
 | `files` | Every file chant wrote into the scope, keyed by its path relative to the scope directory. |
 | `manualSteps` | Paths an update left alone because the project had its own version (see [Manual steps](#manual-steps)). |
@@ -172,11 +172,11 @@ Files in a scope directory that the lineage does not list are never touched.
 
 | Command | Effect on the lock |
 |---|---|
-| [`chant init --from <repo>@<ref>[#<member>]`](/chant/cli/init/#from-a-template-repository) | Writes a new lock with scope `"."` |
+| [`chant init --from <repo>@<ref>[#<member>]`](/chant/cli/init/#from-a-template-repository) | Writes a new lock with scope `"."`, and its `parameters` from `--param` and the template's defaults |
 | [`chant init --template <name>`](/chant/cli/init/#lineage) | Writes a new lock with scope `"."` |
 | [`chant vendor migrate`](/chant/cli/vendor/#chant-vendor-migrate) | Adds a vendor scope per `vendor.json` entry, creating the lock if needed |
 | [`chant vendor pull`](/chant/cli/vendor/#chant-vendor-pull-name) | Updates vendor scopes file by file |
 | [`chant workspace lineage`](/chant/cli/workspace-lineage/) | Reads it |
 | [`chant workspace lineage resolve <path>`](/chant/cli/workspace-lineage/) | Closes a manual step |
-| [`chant workspace upgrade <scope>`](/chant/cli/workspace-upgrade/) | Writes the scope's new `ref`, `address`, `migrations`, `files` and `manualSteps`, through the approved patch |
+| [`chant workspace upgrade <scope>`](/chant/cli/workspace-upgrade/) | Writes the scope's new `ref`, `address`, `parameters`, `migrations`, `files` and `manualSteps`, through the approved patch |
 | [`chant workspace check`](/chant/cli/workspace-check/) | Reads it, and fails on open manual steps |

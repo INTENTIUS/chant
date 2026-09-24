@@ -10,7 +10,7 @@ Scaffold a new chant project with the standard directory structure and configura
 
 ```
 chant init <path> --lexicon <name> [flags]
-chant init <path> --from <repo>@<ref>[#<member>] [--force]
+chant init <path> --from <repo>@<ref>[#<member>] [--param <name>=<value>]... [--force]
 ```
 
 ## Flags
@@ -20,6 +20,7 @@ chant init <path> --from <repo>@<ref>[#<member>] [--force]
 | `-d, --lexicon <name>` | Select lexicon (**required**) |
 | `-t, --template <name>` | Init template (e.g. `node-pipeline`, `docker-build`). Also writes the [lineage lock](#lineage) |
 | `--from <repo>@<ref>[#<member>]` | Copy a template repository instead of a lexicon's templates (see [below](#from-a-template-repository)) |
+| `--param <name>=<value>` | With `--from`, set a parameter the template declares. Repeatable (see [Template parameters](#template-parameters)) |
 | `--force` | Overwrite existing files |
 
 ## Description
@@ -74,6 +75,55 @@ chant init my-service --from ../starter@4624a0b6ca83bf3a2776b2d29d269e989d8b560f
 chant fetches the one commit with `git fetch --depth 1`, the only network step in `chant init`, listed on the [network egress](/chant/reference/network-egress/#starting-a-project-from-a-template) page. It copies every tracked file under the chosen directory, keeping the executable bit, and skips submodules, symbolic links and the template's own lineage lock with a warning. It then writes `.chant/workspace.lock.json` with the commit and tree as the content address.
 
 The template brings its own `chant.config.ts` and lexicons, so `--from` cannot be combined with `--lexicon` or `--template`. A non-empty directory needs `--force`, and files that already exist are kept and left out of the lineage. A directory that already has a lock is refused. `--from` does not install dependencies.
+
+### Template parameters
+
+A template can declare parameters in a `chant.template.json` at its root, with the files each one is substituted into (see [Template manifest](#template-manifest) for the format). `--param` sets one and can be repeated. This names the reference workspace's app:
+
+```bash
+chant init ws --from INTENTIUS/chant@<tag>#reference-workspace --param name="Untitled app"
+```
+
+In each listed file, `{{chant:name}}` becomes `Untitled app`. Parameters that `--param` does not set take their defaults. The text up to the first `=` is the name, and giving one name twice is refused. chant also refuses a name the template does not declare, and its message lists the names the template does declare. A declared parameter with no value and no default is refused, and so is a value that does not match the parameter's `pattern`. Nothing is written until every value checks.
+
+The values used, defaults included, are recorded under `parameters` in `.chant/workspace.lock.json`. [`chant workspace upgrade`](/chant/cli/workspace-upgrade/) substitutes the same values into the template's newer version and into the merge base, so a file that carries a value upgrades like any other. A template without a manifest takes no `--param`.
+
+### Template manifest
+
+The manifest sits at the root of the directory a project is made from, which is the repository root or the `#<member>` directory. chant reads it as JSON and runs no template code to find it. Like `.chant/migrations/`, the manifest is template metadata. It is not copied into the project, and the lock does not list it. The reference workspace declares one parameter in `reference-workspace/chant.template.json`.
+
+```json
+{
+  "parameters": {
+    "name": {
+      "type": "string",
+      "default": "Reference app",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9 ._-]*$",
+      "description": "The app's display name: the home page's title and heading, and the screen spec's"
+    }
+  },
+  "files": ["app/src/server.mjs", "design/screens/home.json", "design/screens/home.svg"]
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `parameters` | The declared parameters, keyed by name. A name is a letter or `_` followed by letters, digits or `_`. |
+| `parameters.<name>.type` | `"string"`, the only type so far. |
+| `parameters.<name>.default` | Optional. The value used when `--param` does not set one. A parameter with no default must be given at init. |
+| `parameters.<name>.pattern` | Optional. A regular expression every value must match, the default included. Values are inserted as written, so a pattern is how a template keeps a value from breaking the file around it, for example a quote inside a JSON string. |
+| `parameters.<name>.hostBound` | Optional. Marks a value that differs per host. #2524 D9 records such values per host, and that part belongs to export and import ([#2552](https://github.com/INTENTIUS/chant/issues/2552)). Until it lands, a host-bound value goes into `parameters` like any other. |
+| `parameters.<name>.description` | Optional. For people reading the manifest. |
+| `files` | The paths, relative to the manifest's directory, whose placeholders are substituted. Each must be a file in the template. Files not listed are copied byte for byte. |
+| `$comment` | Optional. Ignored. |
+
+Any other key is refused.
+
+A listed file marks each place a value goes with `{{chant:<name>}}`. The `chant:` prefix keeps the placeholder apart from the syntax a template file may already hold. TypeScript template literals (`${x}`) and workflow expressions (`${{ x }}`) are left alone, and so is Handlebars or Mustache (`{{x}}`). In the reference workspace, `app/src/server.mjs` holds `export const APP_NAME = "{{chant:name}}";`.
+
+There is no escape syntax. A file that needs the literal text `{{chant:` can be left out of `files`. A placeholder naming an undeclared parameter is an error in the template, reported at init. Substitution is one pass, so a value that looks like a placeholder is inserted as written.
+
+When the template's newer version declares a parameter the lock does not have, `chant workspace upgrade` uses its default and records it. If that parameter has no default, the upgrade is refused. A recorded parameter the newer version no longer declares is dropped from the lock.
 
 ## Lexicon scaffold mode
 

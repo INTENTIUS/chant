@@ -44,6 +44,7 @@ import { LOCK_FILE, LockError, fileHash, readLock, renderLock, scopeKey, writeLo
 import { mergeFile } from "./lineage-merge";
 import { assertCodeAllowed, planMigrations, runMigration, splitMigrations, type LoadedMigration } from "./lineage-migrations";
 import { applyUpstream, type UpdateResult } from "./lineage-update";
+import { carryParameters, readManifest, substituteParameters } from "./template-manifest";
 
 /** The kind the patch digest is taken under, so it never collides with another kind of plan. */
 export const UPGRADE_PLAN_KIND = "workspace-upgrade";
@@ -162,6 +163,23 @@ interface Upstream {
   modules: Map<string, Buffer>;
   commit?: string;
   tree?: string;
+  /** The parameter values substituted into `files` (#2627), for a git source. */
+  parameters?: Record<string, string>;
+}
+
+/**
+ * The template's files as the project would have them (#2627): the manifest
+ * removed and the parameters substituted, with the recorded values and the
+ * defaults of parameters this version adds.
+ */
+function instantiate(raw: Map<string, Buffer>, recorded: Record<string, unknown>, label: string): { files: Map<string, Buffer>; parameters: Record<string, string> } {
+  try {
+    const manifest = readManifest(raw);
+    const parameters = carryParameters(manifest, recorded);
+    return { files: substituteParameters(raw, manifest, parameters), parameters };
+  } catch (err) {
+    throw new UpgradeError(`${label}: ${(err as Error).message.replace(/; pass --param .*$/, "")}`);
+  }
 }
 
 /**
@@ -188,28 +206,44 @@ function fetchGit(root: string, lineage: Lineage, ref: string): Upstream {
     const commit = git(scratch, ["rev-parse", "FETCH_HEAD^{commit}"]);
     const target = readTemplateTree(scratch, commit, source.path, label);
 
-    const base = new Map<string, Buffer>();
-    const baseCommit = lineage.address?.commit;
-    if (baseCommit && baseCommit !== commit) {
-      try {
-        git(scratch, ["fetch", "-q", "--depth", "1", url, baseCommit]);
-        const old = readTemplateTree(scratch, baseCommit, source.path, `${source.repo}@${baseCommit.slice(0, 12)}`);
-        for (const [path, f] of old.files) base.set(path, f.data);
-      } catch {
-        // No base from the source; the tree still supplies it for unedited files.
-      }
-    } else if (baseCommit) {
-      for (const [path, f] of target.files) base.set(path, f.data);
-    }
-
     const raw = new Map<string, Buffer>();
     const executable = new Set<string>();
     for (const [path, f] of target.files) {
       raw.set(path, f.data);
       if (f.executable) executable.add(path);
     }
-    const split = splitMigrations(raw);
-    return { files: split.files, executable, base, migrations: split.migrations, modules: split.modules, commit, tree: target.tree };
+    // The target with the scope's parameters substituted (#2627), so an
+    // unedited file that carries a value compares equal to its base.
+    const instantiated = instantiate(raw, lineage.parameters, label);
+
+    let base = new Map<string, Buffer>();
+    const baseCommit = lineage.address?.commit;
+    if (baseCommit && baseCommit !== commit) {
+      try {
+        git(scratch, ["fetch", "-q", "--depth", "1", url, baseCommit]);
+        const oldLabel = `${source.repo}@${baseCommit.slice(0, 12)}`;
+        const old = readTemplateTree(scratch, baseCommit, source.path, oldLabel);
+        // The base is rebuilt the way init wrote it: the old version's
+        // manifest, with the values the lock recorded.
+        base = instantiate(new Map([...old.files].map(([path, f]) => [path, f.data])), lineage.parameters, oldLabel).files;
+      } catch {
+        // No base from the source; the tree still supplies it for unedited files.
+      }
+    } else if (baseCommit) {
+      base = new Map(instantiated.files);
+    }
+
+    const split = splitMigrations(instantiated.files);
+    return {
+      files: split.files,
+      executable,
+      base,
+      migrations: split.migrations,
+      modules: split.modules,
+      commit,
+      tree: target.tree,
+      parameters: instantiated.parameters,
+    };
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
@@ -433,6 +467,7 @@ export async function stageUpgrade(options: UpgradeOptions): Promise<StagedUpgra
     const result = applyUpstream(scopeDir, staged, upstream.files, { base, merge: mergeFile });
     for (const path of result.written) if (upstream.executable.has(path)) chmodSync(join(scopeDir, path), 0o755);
     if (ref !== undefined) staged.ref = ref;
+    if (upstream.parameters) staged.parameters = upstream.parameters;
     if (upstream.commit) staged.address = { ...staged.address!, commit: upstream.commit, tree: upstream.tree };
     writeLock(worktreeProject, next);
     const lockText = renderLock(next);
