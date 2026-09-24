@@ -79,6 +79,8 @@ A `chant.workspace.json` makes a repository a workspace of members ([Workspace D
 | [`workspace records --kind <file>`](/chant/cli/workspace-records/) | Print the records a record kind locates, with reason codes for invalid ones |
 | [`workspace pin`](/chant/cli/workspace-pin/) | Print the integrity value that pins a plugin loaded by path |
 | [`workspace verify`](/chant/cli/workspace-verify/) | Check a change's commits against the signers and roles read from its base revision |
+| [`workspace signers`](/chant/cli/workspace-signers/) | Show the signer history at base, and rotate the signer set with a threshold of the current signers |
+| [`workspace evidence`](/chant/cli/workspace-evidence/) | Sign runner evidence over record hashes in a DSSE envelope, and verify it offline |
 | [`workspace lineage`](/chant/cli/workspace-lineage/) | Show where a project's files came from and which manual steps are open |
 | [`workspace upgrade [<scope>] --to <ref>`](/chant/cli/workspace-upgrade/) | Bring a scope to a newer template version, gated on the digest of the patch |
 | [`workspace check`](/chant/cli/workspace-check/) | Fail on an unreadable lock, an open manual step or a failed declaration check (`WSP` ids, SARIF output) |

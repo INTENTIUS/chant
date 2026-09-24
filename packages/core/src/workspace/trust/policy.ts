@@ -219,6 +219,22 @@ export const trustConfigSchema = z
      * the commits `from..to`.
      */
     adopted: z.array(z.object({ from: fullCommit.optional(), to: fullCommit, note: z.string().optional() }).strict()).optional(),
+    /**
+     * Keys that sign runner evidence (#2553). Each belongs to a service or a CI
+     * identity, never to a person: a key or principal the signers file lists
+     * is refused here.
+     */
+    runners: z
+      .array(
+        z
+          .object({
+            principal: z.string().min(1),
+            class: z.enum(["runner", "service"]),
+            key: z.string().regex(/^ssh-ed25519 [A-Za-z0-9+/]+={0,2}$/, "an ssh-ed25519 public key, with no comment"),
+          })
+          .strict(),
+      )
+      .optional(),
   })
   .strict();
 
@@ -226,6 +242,14 @@ export type TrustConfig = z.infer<typeof trustConfigSchema>;
 
 /** The role whose holders may change the policy. Without any grant of it, every signer may. */
 export const ADMIN_ROLE = "admin";
+
+/** A key that signs runner evidence: a service or CI identity. */
+export interface RunnerKey {
+  principal: string;
+  class: "runner" | "service";
+  /** `ssh-ed25519 <base64>`. */
+  key: string;
+}
 
 /** The policy a check applies, as read at base. */
 export interface TrustPolicy {
@@ -239,13 +263,23 @@ export interface TrustPolicy {
   excluded: ExcludedSigner[];
   roles: Record<string, string[]>;
   adopted: Array<{ from?: string; to: string }>;
+  /** Runner and service keys that may sign runner evidence (#2553). */
+  runners: RunnerKey[];
+  /** Runner entries that are not used, and why. */
+  excludedRunners: Array<{ principal: string; reason: string }>;
   /** Why the policy could not be read, when it could not. Nothing verifies then. */
   problems: string[];
+  /**
+   * The signer set in effect at a commit's position in the base's history
+   * (#2553). Absent, every commit is judged by `signers`.
+   */
+  signersAt?: (commit: string) => { version: number; signers: Signer[] } | null;
 }
 
-/** Paths whose change is a protected write under `policy`. */
+/** Paths whose change is a protected write under `policy`: the config, the signers file and its rotation file (#2553). */
 export function protectedPaths(policy: TrustPolicy): string[] {
-  return [...new Set([TRUST_CONFIG_PATH, policy.signersPath])].sort();
+  const s = policy.signersPath;
+  return [...new Set([TRUST_CONFIG_PATH, s, posix.join(posix.dirname(s), `${posix.basename(s)}.rotation.json`)])].sort();
 }
 
 /** Principals allowed to change the policy: the admins when any are granted, otherwise every signer. */
@@ -257,7 +291,7 @@ export function policyWriters(policy: TrustPolicy): Set<string> {
 
 /** A policy with nothing in it: attestation off. */
 export function emptyPolicy(base: string | null, problems: string[] = []): TrustPolicy {
-  return { base, signersPath: DEFAULT_SIGNERS_PATH, active: false, signers: [], excluded: [], roles: {}, adopted: [], problems };
+  return { base, signersPath: DEFAULT_SIGNERS_PATH, active: false, signers: [], excluded: [], roles: {}, adopted: [], runners: [], excludedRunners: [], problems };
 }
 
 /**
@@ -285,6 +319,18 @@ export function readTrustPolicy(source: RecordSource, base: string | null): Trus
   const signersPath = config.signers ?? DEFAULT_SIGNERS_PATH;
   const text = readOptional(source, signersPath);
   const set = text === undefined ? { signers: [], excluded: [] } : parseAllowedSigners(text);
+  // A runner key is a machine's, never a person's (#2553).
+  const humanKeys = new Set(set.signers.map((s) => s.key));
+  const humanNames = new Set(set.signers.map((s) => s.principal));
+  const runners: RunnerKey[] = [];
+  const excludedRunners: Array<{ principal: string; reason: string }> = [];
+  for (const r of config.runners ?? []) {
+    if (humanKeys.has(r.key) || humanNames.has(r.principal)) {
+      excludedRunners.push({ principal: r.principal, reason: `${signersPath} lists this ${humanKeys.has(r.key) ? "key" : "principal"}; runner keys belong to a service or CI identity, never to a signer` });
+    } else {
+      runners.push(r);
+    }
+  }
   return {
     base,
     signersPath,
@@ -293,6 +339,8 @@ export function readTrustPolicy(source: RecordSource, base: string | null): Trus
     excluded: set.excluded,
     roles: config.roles ?? {},
     adopted: config.adopted ?? [],
+    runners,
+    excludedRunners,
     problems: [],
   };
 }

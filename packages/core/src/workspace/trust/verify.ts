@@ -16,6 +16,7 @@ import { execFileSync } from "node:child_process";
 import { type CommitAttestor, type ProvenanceLevel } from "./attestor";
 import { policyAtBase, commitProvenance, resolveBase, type BaseSource, type RecordProvenance } from "./provenance";
 import { policyWriters, protectedPaths, type ExcludedSigner, type TrustPolicy } from "./policy";
+import { fileAt, nextVersion, rotationPath, signerHistory } from "./rotation";
 
 export interface CommitVerdict extends RecordProvenance {
   commit: string;
@@ -51,6 +52,8 @@ export interface ChangeReport {
   /** Protected paths whose content differs between the merge base and head. */
   protectedChanged: string[];
   protectedWrites: ProtectedWrite[];
+  /** When the change edits the signer set: the version it proposes and who signed it (#2553). */
+  rotation: { from: number; to: number; signedBy: string[] } | null;
   notes: string[];
   failures: string[];
   ok: boolean;
@@ -111,6 +114,7 @@ export function verifyChange(opts: VerifyOptions): ChangeReport {
     protectedPaths: protectedPaths(policy),
     protectedChanged: [],
     protectedWrites: [],
+    rotation: null,
     notes: [],
     failures: [],
     ok: false,
@@ -180,6 +184,18 @@ export function verifyChange(opts: VerifyOptions): ChangeReport {
           : `${paths.join(", ")} is protected and needs a signature by ${who}: ${v.reason}`;
       report.protectedWrites.push({ commit, paths, level: v.level, ...(v.principal ? { principal: v.principal } : {}), allowed, reason });
       if (!allowed) report.failures.push(`${commit.slice(0, 8)} changes ${paths.join(", ")}: ${reason}`);
+    }
+  }
+
+  // A new signer set must be signed by a threshold of the set at base (#2553).
+  const rotation = rotationPath(policy.signersPath);
+  if (changedPaths.includes(policy.signersPath) || changedPaths.includes(rotation)) {
+    const next = { signers: fileAt(repo, head, policy.signersPath), rotation: fileAt(repo, head, rotation) };
+    const latest = signerHistory(repo, base.commit, policy.signersPath).versions.at(-1);
+    if (next.signers !== undefined && latest && latest.version > 0) {
+      const v = nextVersion(latest, next, null);
+      if ("reason" in v) report.failures.push(`the signer set at head is not a valid rotation of the set at base: ${v.reason}`);
+      else if (v !== latest) report.rotation = { from: latest.version, to: v.version, signedBy: v.signedBy };
     }
   }
 

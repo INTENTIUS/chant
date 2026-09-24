@@ -1,0 +1,63 @@
+---
+title: "chant workspace signers"
+description: Show the signer history at base, and rotate the signer set with a threshold of the current signers
+diataxis: reference
+---
+
+## Synopsis
+
+```
+chant workspace signers [--base <rev>]
+chant workspace signers rotate [--threshold <n>]
+chant workspace signers sign --key <ssh private key>
+```
+
+## Description
+
+The signer set is the signers file (`.chant/allowed_signers` by default) together with a threshold. A new set is valid only when a threshold of the previous set has signed it. This is how TUF rotates its root keys. The signatures live beside the signers file, in `.chant/allowed_signers.rotation.json`:
+
+```json
+{
+  "schema": 1,
+  "version": 2,
+  "previous": "sha256:<digest of version 1's signers file>",
+  "threshold": 2,
+  "signatures": [{ "principal": "alice@example.com", "signature": "-----BEGIN SSH SIGNATURE-----\n..." }]
+}
+```
+
+Each signature is made with `ssh-keygen -Y sign -n chant-signers` over a canonical JSON statement. The statement names the new version and its threshold. It also carries two digests, one of the previous signers file and one of the new file. The version number and the previous digest stop anyone replaying an older set that was once valid. The `chant-signers` namespace stops a commit signature from standing in for a rotation signature. A key listed twice, under two names, counts once toward the threshold.
+
+The first signer set is version 1 and needs no signatures. Without a rotation file, its threshold is 1. The commit that adds it attests nothing itself, because no signer set was in effect before it.
+
+## Revocation by position
+
+Commit dates prove nothing, because whoever makes a commit sets its date. So chant judges a commit by where it sits in the base's history, never by its date.
+
+`chant workspace verify` and `chant workspace records` walk the base's first-parent line from its oldest commit. Each commit that changes the signer set starts a new version, and each version must be signed by a threshold of the version before it. If any version isn't, the history is broken and nothing verifies.
+
+A commit already in the base's history is judged by the version that was in effect just before the first-parent commit that brought it in. A key removed at version N still vouches for what was merged before N. It vouches for nothing merged after N, even from a branch that was forked earlier or a commit dated years back. A commit that isn't in the base's history yet, such as one in the change under review, is judged by the latest version.
+
+Removing the signers file is a protected write. Once it's gone, nothing verifies. A signers file added later starts a new history at version 1.
+
+## Rotating
+
+1. Edit `.chant/allowed_signers` on a branch.
+2. Run `chant workspace signers rotate`. It writes the rotation file for the next version, with no signatures. `--threshold <n>` sets the new set's threshold; otherwise the current one carries over.
+3. A threshold of the current signers each run `chant workspace signers sign --key <their private key>`. Each signature is checked before it is added.
+4. Commit, signed by a current signer (or an admin, when one is granted). `chant workspace verify` in CI checks the new version against the set at base.
+
+## Options
+
+| Option | Effect |
+|---|---|
+| `--base <rev>` | The revision whose history is read. Defaults to `origin/HEAD`, then `main`, then `master`. |
+| `--threshold <n>` | With `rotate`: the new set's threshold, at least 1 and at most the number of keys in the new set. |
+| `--key <file>` | With `sign`: your ssh private key. It must be in the current version of the signer set. |
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | The history is unbroken, or the rotation file was written or signed. |
+| 1 | The history is broken, there is no signers file at base, or the rotation couldn't be written or signed. |

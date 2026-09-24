@@ -15,7 +15,7 @@ import { queryRecords, type RecordsDocument, type RecordView } from "../records-
 import { activeAttestors } from "./attestor";
 import { parseAllowedSigners } from "./policy";
 import { verifyChange } from "./verify";
-import { hasSshKeygen, note, TestRepo, writeRecordKind, type Key } from "./test-repo";
+import { hasSshKeygen, note, TestRepo, writeRecordKind, writeRotation, type Key } from "./test-repo";
 
 const repos: TestRepo[] = [];
 function repo(label: string): TestRepo {
@@ -90,8 +90,11 @@ describe.skipIf(!hasSshKeygen)("the ssh-commit attestor, against the policy at b
     const kind = writeRecordKind(r);
     r.write(".chant/allowed_signers", signers(["alice@example.test", alice], ["bob@example.test", bob]));
     if (opts.admin) r.write(".chant/trust.json", JSON.stringify({ schema: 1, roles: { admin: ["alice@example.test"] } }));
+    r.commit("policy", alice);
+    // A separate commit: the one that adds the signers file is judged by the
+    // set before it, which is none (#2553), so it attests nothing itself.
     r.write("records/n1.md", note("n1"));
-    r.commit("policy and first record", alice);
+    r.commit("first record", alice);
     r.git(["checkout", "-q", "-b", "change"]);
     return { r, alice, bob, mallory, kind };
   }
@@ -181,7 +184,9 @@ describe.skipIf(!hasSshKeygen)("the ssh-commit attestor, against the policy at b
   test("attack: a backdated commit by a key removed from the signers before base", async () => {
     const { r, alice, bob, kind } = baseline("backdated-revoked");
     r.git(["checkout", "-q", "main"]);
+    const v1 = r.git(["show", "main:.chant/allowed_signers"]);
     r.write(".chant/allowed_signers", signers(["alice@example.test", alice]));
+    writeRotation(r, { previousText: v1, version: 2, by: [["alice@example.test", alice]] });
     r.commit("remove bob", alice);
     r.git(["checkout", "-q", "-b", "late"]);
     r.write("records/n2.md", note("n2"));
@@ -299,6 +304,7 @@ describe.skipIf(!hasSshKeygen)("the ssh-commit attestor, against the policy at b
 
     r.git(["reset", "-q", "--hard", "main"]);
     r.write(".chant/allowed_signers", signers(["alice@example.test", alice], ["bob@example.test", bob], ["carol@example.test", r.key("carol2")]));
+    writeRotation(r, { previousText: r.git(["show", "main:.chant/allowed_signers"]), version: 2, by: [["alice@example.test", alice]] });
     r.commit("add carol", alice);
     report = await verify(r);
     expect(report.ok).toBe(true);
