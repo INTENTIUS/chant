@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync, existsSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { formatSuccess, formatError, formatWarning } from "../format";
+import { lexiconModulePath, lexiconSourceLabel } from "../../lexicon-module";
 
 export interface OnboardOptions {
   name: string;
@@ -331,6 +332,20 @@ export function patchDockerfile(filePath: string, name: string): PatchResult {
  * Execute the onboard command — patches monorepo infrastructure for a new lexicon.
  */
 export function onboardCommand(options: OnboardOptions): OnboardResult {
+  // chant#2578 — onboard wires a lexicon package into the chant monorepo. A
+  // lexicon declared by path has no package, so there is nothing to wire and
+  // no install step to print; say where it loads from instead.
+  if (lexiconModulePath(options.name) !== undefined) {
+    return {
+      success: false,
+      patched: [],
+      skipped: [],
+      error:
+        `lexicon "${options.name}" is declared by path in chant.config.ts and loads from ${lexiconSourceLabel(options.name)}. ` +
+        "onboard adds a lexicon package to the chant monorepo, and a lexicon loaded by path has no package to add.",
+    };
+  }
+
   const root = options.root ?? findRepoRoot();
   const patched: string[] = [];
   const skipped: string[] = [];

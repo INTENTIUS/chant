@@ -3,7 +3,8 @@ import { join, resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 import { createInterface } from "readline";
 import { formatSuccess, formatWarning } from "../format";
-import { loadPlugin } from "../plugins";
+import { loadPlugin, recordProjectLexicons } from "../plugins";
+import { lexiconModulePath, lexiconSourceLabel } from "../../lexicon-module";
 import { MCP_CONFIG_FILENAME, detectPackageManager, generateMcpConfig, mcpConfigPath } from "../mcp-config";
 
 /** Read the current chant package version from our own package.json. */
@@ -53,16 +54,27 @@ export interface InitResult {
   warnings: string[];
   /** Error message if failed */
   error?: string;
+  /**
+   * chant#2578 — where the lexicon loads from when the directory's existing
+   * chant.config declares it by path. There is no package to depend on or
+   * install for it.
+   */
+  lexiconModule?: string;
 }
 
 /**
  * Generate package.json content
  */
-function generatePackageJson(lexicon: string, extraScripts?: Record<string, string>): string {
+function generatePackageJson(
+  lexicon: string,
+  extraScripts?: Record<string, string>,
+  lexiconIsPackage = true,
+): string {
   const ver = getChantVersion();
   const dependencies: Record<string, string> = {
     "@intentius/chant": `^${ver}`,
-    [`@intentius/chant-lexicon-${lexicon}`]: `^${ver}`,
+    // chant#2578 — a lexicon declared by path is not a package to depend on.
+    ...(lexiconIsPackage ? { [`@intentius/chant-lexicon-${lexicon}`]: `^${ver}` } : {}),
   };
 
   const pkg = {
@@ -252,6 +264,17 @@ export async function initCommand(options: InitOptions): Promise<InitResult> {
     mkdirSync(targetDir, { recursive: true });
   }
 
+  // chant#2578 — `--force` into an existing project keeps its chant.config.
+  // When that config declares the lexicon by path, it loads from the module
+  // and there is no package to depend on or install.
+  let lexiconModule: string | undefined;
+  if (existsSync(join(targetDir, "chant.config.ts")) || existsSync(join(targetDir, "chant.config.json"))) {
+    await recordProjectLexicons(targetDir);
+    if (lexiconModulePath(options.lexicon) !== undefined) {
+      lexiconModule = lexiconSourceLabel(options.lexicon, targetDir);
+    }
+  }
+
   // Load plugin early to get template set (used for scripts + source files)
   let templateSet: import("../../lexicon").InitTemplateSet | undefined;
   try {
@@ -272,7 +295,7 @@ export async function initCommand(options: InitOptions): Promise<InitResult> {
   // Generate package.json
   writeIfNotExists(
     join(targetDir, "package.json"),
-    generatePackageJson(options.lexicon, templateSet?.scripts),
+    generatePackageJson(options.lexicon, templateSet?.scripts, lexiconModule === undefined),
     "package.json",
     createdFiles,
     warnings,
@@ -361,29 +384,32 @@ export async function initCommand(options: InitOptions): Promise<InitResult> {
     warnings,
   );
 
-  // Scaffold .chant/types/lexicon-{lexicon}/ stub
-  const lexiconTypesDir = join(targetDir, ".chant", "types", `lexicon-${options.lexicon}`);
-  mkdirSync(lexiconTypesDir, { recursive: true });
+  // Scaffold .chant/types/lexicon-{lexicon}/ stub. A lexicon declared by path
+  // is imported by its path, so it has no package name to stub (chant#2578).
+  if (lexiconModule === undefined) {
+    const lexiconTypesDir = join(targetDir, ".chant", "types", `lexicon-${options.lexicon}`);
+    mkdirSync(lexiconTypesDir, { recursive: true });
 
-  writeIfNotExists(
-    join(lexiconTypesDir, "package.json"),
-    JSON.stringify(
-      { name: `@intentius/chant-lexicon-${options.lexicon}`, version: "0.0.0", types: "./index.d.ts" },
-      null,
-      2,
-    ),
-    `.chant/types/lexicon-${options.lexicon}/package.json`,
-    createdFiles,
-    warnings,
-  );
+    writeIfNotExists(
+      join(lexiconTypesDir, "package.json"),
+      JSON.stringify(
+        { name: `@intentius/chant-lexicon-${options.lexicon}`, version: "0.0.0", types: "./index.d.ts" },
+        null,
+        2,
+      ),
+      `.chant/types/lexicon-${options.lexicon}/package.json`,
+      createdFiles,
+      warnings,
+    );
 
-  writeIfNotExists(
-    join(lexiconTypesDir, "index.d.ts"),
-    `// Lexicon type stubs — run "chant update" to sync full types\nexport {};\n`,
-    `.chant/types/lexicon-${options.lexicon}/index.d.ts`,
-    createdFiles,
-    warnings,
-  );
+    writeIfNotExists(
+      join(lexiconTypesDir, "index.d.ts"),
+      `// Lexicon type stubs — run "chant update" to sync full types\nexport {};\n`,
+      `.chant/types/lexicon-${options.lexicon}/index.d.ts`,
+      createdFiles,
+      warnings,
+    );
+  }
 
   // Generate the project's MCP config. It lands in the directory init was
   // pointed at, like everything else init produces, and at the path
@@ -425,6 +451,7 @@ export async function initCommand(options: InitOptions): Promise<InitResult> {
     success: true,
     createdFiles,
     warnings,
+    ...(lexiconModule !== undefined ? { lexiconModule } : {}),
   };
 }
 
@@ -452,6 +479,11 @@ export async function printInitResult(
   }
 
   console.log("");
+
+  if (result.lexiconModule !== undefined) {
+    console.log(`The lexicon loads from ${result.lexiconModule}, as chant.config.ts declares. It has no package to install.`);
+    console.log("");
+  }
 
   const pm = detectPackageManager(options?.cwd);
 

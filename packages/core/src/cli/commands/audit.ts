@@ -23,6 +23,7 @@ import { extractUnpinnedActions, extractUnpinnedImages } from "../../audit/proof
 import type { ProveOptions } from "../../audit/proof";
 import type { Severity } from "../../lint/rule";
 import { formatWarning } from "../format";
+import { lexiconModulePath, lexiconPackagesToInstall, lexiconSourceLabel } from "../../lexicon-module";
 
 export type AuditFormat = "stylish" | "json" | "sarif" | "markdown" | "html";
 export type AuditTier = "merge-worthy" | "all";
@@ -122,9 +123,20 @@ export interface AuditCommandResult {
 /** Exit code when the audit had no lexicons to look with. Distinct from 1 (findings / failure). */
 export const NO_LEXICONS_EXIT_CODE = 2;
 
-/** The npm package that provides an audit lexicon's detection and checks. */
-function lexiconPackage(name: string): string {
-  return `@intentius/chant-lexicon-${name}`;
+/**
+ * What to tell the user about lexicons that did not load: an `npm i` line for
+ * the package-backed ones, and the declared path for any lexicon
+ * `chant.config.ts` names by path (#2520), which has no package to install
+ * (chant#2578).
+ */
+function missingLexiconRemedy(names: readonly string[]): string {
+  const parts: string[] = [];
+  const pkgs = lexiconPackagesToInstall(names);
+  if (pkgs.length > 0) parts.push(`npm i ${pkgs.join(" ")}`);
+  for (const name of names) {
+    if (lexiconModulePath(name) !== undefined) parts.push(`${name} is declared by path: ${lexiconSourceLabel(name)}`);
+  }
+  return parts.join("; ");
 }
 
 /** Missing audit lexicons the unclaimed files pointed at, in first-seen order. */
@@ -138,7 +150,8 @@ function wantedLexicons(unclaimed: UnclaimedFile[]): string[] {
  * them on the same resolution path.
  */
 export function installLine(lexicons: string[], target: string): string {
-  const pkgs = ["@intentius/chant", ...lexicons.map(lexiconPackage)];
+  // chant#2578 — a lexicon declared by path has no package for npx to fetch.
+  const pkgs = ["@intentius/chant", ...lexiconPackagesToInstall(lexicons)];
   return `npx ${pkgs.map((p) => `-p ${p}`).join(" ")} chant audit ${target}`;
 }
 
@@ -148,7 +161,7 @@ function missingLexiconHint(unclaimed: UnclaimedFile[]): string | undefined {
   if (wanted.length === 0) return undefined;
   const n = unclaimed.length;
   return `${n} file${n === 1 ? " looks" : "s look"} like ${wanted.join("/")} but ${wanted.length === 1 ? "that lexicon is" : "those lexicons are"} not installed, so ${n === 1 ? "it was" : "they were"} skipped` +
-    ` (npm i ${wanted.map(lexiconPackage).join(" ")}).`;
+    ` (${missingLexiconRemedy(wanted)}).`;
 }
 
 /** Human-readable diagnostic for the zero-lexicon case. */

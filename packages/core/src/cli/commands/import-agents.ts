@@ -23,7 +23,8 @@ import { scanAgentConfigs } from "../../agents/discover";
 import type { AgentRuntime, AgentScope } from "../../agents/types";
 import type { AgentImportOutcome } from "../../agents/importer";
 import type { LexiconPlugin } from "../../lexicon";
-import { loadPlugin } from "../plugins";
+import { loadPlugin, recordProjectLexicons } from "../plugins";
+import { lexiconModulePath, lexiconSourceLabel } from "../../lexicon-module";
 
 /** The lexicon used when `--lexicon` isn't given: the one that models agent workloads. */
 export const DEFAULT_AGENT_LEXICON = "fountain";
@@ -91,18 +92,24 @@ export async function importAgentsCommand(opts: ImportAgentsOptions = {}): Promi
     };
   }
 
+  // chant#2578 — a lexicon the project's chant.config declares by path loads
+  // from that module, so read the declarations before loading the plugin.
+  if (!opts.pluginLoader) await recordProjectLexicons(process.cwd());
+
   let plugin: LexiconPlugin;
   try {
     plugin = await (opts.pluginLoader ?? loadPlugin)(lexiconName);
   } catch (err) {
+    const remedy =
+      lexiconModulePath(lexiconName) !== undefined
+        ? `The ${lexiconName} lexicon is declared by path in chant.config.ts: ${lexiconSourceLabel(lexiconName)}`
+        : `Install it with: npm i @intentius/chant-lexicon-${lexiconName}`;
     return {
       success: false,
       generatedFiles: [],
       summary: { discovered: scan.sites.length, mapped: 0 },
       warnings,
-      error:
-        `Could not load the ${lexiconName} lexicon: ${err instanceof Error ? err.message : String(err)}\n` +
-        `Install it with: npm i @intentius/chant-lexicon-${lexiconName}`,
+      error: `Could not load the ${lexiconName} lexicon: ${err instanceof Error ? err.message : String(err)}\n${remedy}`,
     };
   }
 
