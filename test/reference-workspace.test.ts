@@ -14,8 +14,12 @@
  *   `chant workspace records` reads them through the fixture's own kind file,
  *   which must stay the same as chant's.
  *
+ * - `chant init --from <this repo>@HEAD#reference-workspace` copies it with a
+ *   lineage lock (#2540), and the copy reads its decisions on its own.
+ *
  * The workspace commands and their contract tests join here as each phase
- * lands (#2537, #2536), and so does `chant init --from` on the fixture (#2540).
+ * lands (#2537, #2536). The copy is not yet a working workspace in #2543's
+ * sense: that needs the declaration (#2534).
  */
 
 import { describe, expect, test } from "vitest";
@@ -29,6 +33,7 @@ import { lintCommand } from "@intentius/chant/cli/commands/lint";
 import { loadPlugins, resolveProjectLexicons } from "@intentius/chant/cli";
 import { parseFrontMatter } from "@intentius/chant/workspace/records";
 import { queryRecords } from "@intentius/chant/workspace/records-cli";
+import { initFromCommand } from "@intentius/chant/workspace/lineage-init";
 
 const repoRoot = resolve(import.meta.dirname, "..");
 const fixture = join(repoRoot, "reference-workspace");
@@ -211,5 +216,32 @@ describe("decision files", () => {
     expect(doc.records.map((r) => r.id)).toEqual(files.map((f) => f.slice(0, "ref-000".length)));
     expect(doc.summary.invalid, JSON.stringify(doc.records.flatMap((r) => r.reasons))).toBe(0);
     for (const r of doc.records) expect(dirname(r.path)).toBe("reference-workspace/decisions");
+  });
+});
+
+describe("chant init --from on the fixture", () => {
+  // Reads the committed tree at HEAD, not the working tree, as any consumer would.
+  test("copies it with a lineage lock, and the copy reads its own decisions", async () => {
+    const target = join(mkdtempSync(join(tmpdir(), "chant-2543-init-")), "ws");
+    try {
+      const result = await initFromCommand({ from: `${repoRoot}@HEAD#reference-workspace`, path: target });
+      expect(result.success, result.error).toBe(true);
+
+      const lock = JSON.parse(readFileSync(join(target, ".chant", "workspace.lock.json"), "utf-8")) as {
+        scopes: Record<string, { kind: string; source: { path?: string }; files: Record<string, { class: string }> }>;
+      };
+      const scope = lock.scopes["."];
+      expect(scope.kind).toBe("template");
+      expect(scope.source.path).toBe("reference-workspace");
+      expect(Object.keys(scope.files)).toContain("delivery/src/app.ts");
+      expect(existsSync(join(target, "chant.workspace.draft.json"))).toBe(true);
+
+      const doc = await queryRecords({ kind: "decisions/decision.kind.mjs", current: true, cwd: target });
+      if ("error" in doc) throw new Error(`${doc.error.code}: ${doc.error.message}`);
+      expect(doc.summary.invalid).toBe(0);
+      expect(doc.records.map((r) => r.id)).toContain("ref-001");
+    } finally {
+      rmSync(dirname(target), { recursive: true, force: true });
+    }
   });
 });

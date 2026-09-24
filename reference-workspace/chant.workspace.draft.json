@@ -22,7 +22,7 @@
       "kind": "other",
       "roles": ["design-app"],
       "because": "a placeholder until a hud client package is published to vendor; the kind and upstream come with it",
-      "x-note": "has its own lineage; the lineage lock records its upstream once #2540 lands, and upgrades write only inside this directory"
+      "x-note": "has its own lineage; the lineage lock (#2540) records its upstream as its own scope once there is a client to vendor, and upgrades write only inside this directory"
     },
     {
       "name": "design",

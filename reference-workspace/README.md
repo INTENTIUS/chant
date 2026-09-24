@@ -34,7 +34,7 @@ chant workspace records --kind decisions/decision.kind.mjs --current
 | [#2537](https://github.com/INTENTIUS/chant/issues/2537) | `chant workspace build`, `lint`, `audit` and `graph` run per member |
 | [#2538](https://github.com/INTENTIUS/chant/issues/2538) | delivery gets a per-member ledger |
 | [#2539](https://github.com/INTENTIUS/chant/issues/2539) | delivery states its link to the app instead of a build-context path |
-| [#2540](https://github.com/INTENTIUS/chant/issues/2540) | `chant init --from` on this directory writes a lineage lock; the design client's upstream is recorded in it |
+| [#2540](https://github.com/INTENTIUS/chant/issues/2540) | landed: `chant init --from INTENTIUS/chant@<tag>#reference-workspace` copies this directory and writes `.chant/workspace.lock.json`. The design client gets a lineage scope of its own once there is a client to vendor |
 | [#2542](https://github.com/INTENTIUS/chant/issues/2542) | per-member CI pipelines with path filters |
 | [#2546](https://github.com/INTENTIUS/chant/issues/2546) | the decisions become sealed records, read by the spec query |
 | [#2549](https://github.com/INTENTIUS/chant/issues/2549) | records link to `design/` by anchor and pin its files' hashes |
@@ -42,7 +42,7 @@ chant workspace records --kind decisions/decision.kind.mjs --current
 
 ## Tests
 
-[`test/reference-workspace.test.ts`](../test/reference-workspace.test.ts) runs in chant's test job. It checks that the draft's members are on disk and no live declaration is, runs the app's test, builds and lints delivery with no findings, validates the decision files against chant's schema and reads them with `chant workspace records`. The workspace commands, their contract tests and `chant init --from` join it as their issues land.
+[`test/reference-workspace.test.ts`](../test/reference-workspace.test.ts) runs in chant's test job. It checks that the draft's members are on disk and no live declaration is, runs the app's test, builds and lints delivery with no findings, validates the decision files against chant's schema and reads them with `chant workspace records`. It also runs `chant init --from` on this directory at `HEAD` and checks that the copy has a lock and reads its own decisions. The copy is not a working workspace until the declaration lands (#2534), and the workspace commands and their contract tests join the test as their issues land.
 
 ## Ownership and support
 
