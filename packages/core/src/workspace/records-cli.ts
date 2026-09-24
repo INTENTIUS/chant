@@ -40,6 +40,7 @@ import {
   type ReadErrorCode,
   type ReadRecordsResult,
   type RecordEntry,
+  type RecordFormat,
   type RecordHistory,
 } from "./records";
 import { gitTree, workingTree, type WorkspaceTree } from "./tree";
@@ -93,7 +94,7 @@ export type RecordsDocument =
   | {
       $schema: string;
       contract: number;
-      kind: { name: string; schema: string; file: string };
+      kind: { name: string; schema: string; file: string; format: RecordFormat };
       at: string | null;
       /** The directory pinned paths resolve in, from the repository root: the workspace holding the kind file, or the repository root (#2549). */
       workspaceRoot: string;
@@ -244,7 +245,7 @@ export async function readRecordsFor(query: Omit<RecordsQuery, "base">): Promise
     const subjectKind = await loadRecordKind(resolve(dirname(loaded.file), loaded.kind.session.subjects.kind), cwd);
     subjects = { records: (await readRecords(subjectKind, { root, source })).records, reviews: subjectKind.kind.reviews?.field ?? "reviews" };
   }
-  const result = await readRecords(loaded, { root, source, current: !!query.current, assets, ...(history ? { history } : {}), ...(subjects ? { subjects } : {}) });
+  const result = await readRecords(loaded, { root, source, current: !!query.current, assets, workspaceRoot, ...(history ? { history } : {}), ...(subjects ? { subjects } : {}) });
   return { loaded, root, top, at, workspaceRoot, tree: assets, result };
 }
 
@@ -278,6 +279,7 @@ export async function queryRecords(query: RecordsQuery): Promise<RecordsDocument
         name: loaded.kind.name,
         schema: loaded.kind.schema.id,
         file: relative(root, loaded.file).split("\\").join("/"),
+        format: loaded.kind.format,
       },
       at,
       workspaceRoot,

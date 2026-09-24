@@ -2,7 +2,7 @@
 schema: 1
 id: "ws-053"
 title: "Record formats beyond markdown front matter"
-state: "proposed"
+state: "decided"
 area: "D4"
 source:
   issue: "INTENTIUS/chant#2664"
@@ -30,7 +30,9 @@ options:
     label: "(a) and (c) together, with state and supersedes optional"
     how: "The kind contract gains `format: \"json\"` as in (a) and `idFrom: \"sha256\"` as in (c). `stateField`, `states` and `closedStates` become optional together, for kinds whose records have no lifecycle, such as evidence and driver closures; their records carry `state: null`, which `records.schema.json` already allows. `supersedes` becomes optional, and so does its `key`: without `key` the field holds one id or a list of ids, as chud's contract `supersedes: \"C-001\"` does. A kind with `supersedes` must have states, because a link takes effect only from a closed or ranked state. A kind may also name the schema files its schema references (`schema.refs`), because chud's schemas `$ref` a shared `defs.schema.json`. `records.schema.json` keeps contract 1: no reason, warning or error code is added, `kind` gains an optional `format`, and `data` is described as the structured core."
     tradeoff: "chud's unit, evidence, session and driver-closure kinds, and its Markdown contracts with their single-id `supersedes`, become kind files with no reader code, and the decision kind's output does not change. It is four small changes to one module and its kind schema rather than one. HTML driver documents stay outside until (b) and an HTML core format are proposed."
-choice: null
+choice:
+  option: "e"
+  reason: "It is the smallest change that makes every chud JSON kind a kind file with no reader code, and it keeps parsing, validation and ids in core, where seals and the spec query need them. It adds no code to the read contract, so contract 1 and its readers hold, and nothing loads at level 0."
 rejected:
   - option: "a"
     why: "Alone it leaves evidence unreadable, since an evidence file holds no id, and leaves units, sessions and closures unreadable until state and supersedes are optional. It is kept as part of (e)."
@@ -65,8 +67,11 @@ evidence:
     url: "https://github.com/INTENTIUS/chant/blob/0241e2eb4c9bec1bcb8e072f4eca72eecf42f4b1/packages/core/src/workspace/records.schema.json"
     as_of: "2026-09-24T20:27:48Z"
     sha256: "400a3ae406089d17a651663dc35676efc9547b00754e27fd195c110981129b2e"
-decided_by: null
-decided_on: null
+  - title: "The design note: the options compared, chud's kinds under (e) and the implementation issues"
+    path: "docs/design/workspace/record-formats.md"
+    sha256: "438c8944fb65544c73cf345e2e2df82e2546bf92a183acdce1a8e67e46114faf"
+decided_by: "lex00"
+decided_on: "2026-09-24"
 reviews: []
 constrains:
   - "INTENTIUS/chant#2546"
@@ -74,11 +79,8 @@ constrains:
   - "member:core"
   - "path:packages/core/src/workspace/records.ts"
   - "path:packages/core/src/workspace/records.schema.json"
-x-recommendation:
-  option: "e"
-  reason: "It is the smallest change that makes every chud JSON kind a kind file with no reader code, and it keeps parsing, validation and ids in core, where seals and the spec query need them. It adds no code to the read contract, so contract 1 and its readers hold, and nothing loads at level 0."
 ---
 
 # Record formats beyond markdown front matter
 
-Proposed, not decided. The comparison of the options, chud's kinds written against the recommendation, and the implementation issues in landing order are in [record-formats.md](../workspace/record-formats.md).
+The comparison of the options, chud's kinds written against the choice, and the implementation issues in landing order are in [record-formats.md](../workspace/record-formats.md).

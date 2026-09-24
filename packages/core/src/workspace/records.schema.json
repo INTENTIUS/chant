@@ -54,7 +54,11 @@
           "properties": {
             "name": { "type": "string", "description": "The kind's name, such as \"decision\"." },
             "schema": { "type": "string", "description": "The `$id` of the schema each record was validated against." },
-            "file": { "type": "string", "description": "The kind file, relative to the repository root, with / separators." }
+            "file": { "type": "string", "description": "The kind file, relative to the repository root, with / separators." },
+            "format": {
+              "enum": ["markdown-front-matter", "json"],
+              "description": "Added in contract 1 by #2664 (ws-053). How each record file holds its structured core: the YAML front matter of a Markdown file, or the whole file as one JSON object, read as I-JSON (no repeated member name)."
+            }
           }
         },
         "at": {
@@ -90,9 +94,9 @@
       "type": "object",
       "required": ["id", "path", "state", "valid", "reasons", "supersededBy", "data"],
       "properties": {
-        "id": { "type": ["string", "null"], "description": "Null when the front matter could not be parsed or has no string id." },
+        "id": { "type": ["string", "null"], "description": "Null when the record could not be parsed or has no string id. For a content-addressed kind (idFrom sha256, added by #2664), the lowercase hex SHA-256 of the file's bytes, the same string a pin of the file carries." },
         "path": { "type": "string", "description": "From the repository root, with / separators." },
-        "state": { "type": ["string", "null"], "description": "The state as the record writes it. Supersession is reported in supersededBy, not here." },
+        "state": { "type": ["string", "null"], "description": "The state as the record writes it. Supersession is reported in supersededBy, not here. Null for every record of a kind without states (#2664)." },
         "valid": { "type": "boolean", "description": "True exactly when reasons is empty." },
         "reasons": { "type": "array", "items": { "$ref": "#/$defs/reason" } },
         "supersededBy": {
@@ -101,11 +105,11 @@
         },
         "data": {
           "type": ["object", "null"],
-          "description": "The front matter as JSON, following the kind's schema when valid is true. Null when it could not be parsed."
+          "description": "The record's structured core as JSON: the front matter, or for a kind of format json the whole file (#2664). It follows the kind's schema when valid is true. Null when it could not be parsed."
         },
         "provenance": { "$ref": "#/$defs/provenance" },
         "assets": {
-          "description": "Added in contract 1 by #2549. Each workspace file the record pins by hash, checked against the tree read: the working tree, or the revision under --at. Empty for a kind that pins nothing.",
+          "description": "Added in contract 1 by #2549. Each workspace file the record pins by hash, checked against the tree read: the working tree, or the revision under --at. Empty for a kind that pins nothing. A record of a content-addressed kind (#2664) whose file name claims a hash other than its bytes' lists itself here as drifted, with sha256 the hash the name claims and actual its id.",
           "type": "array",
           "items": { "$ref": "#/$defs/asset" }
         },
@@ -115,7 +119,7 @@
           "items": { "$ref": "#/$defs/warning" }
         },
         "digest": {
-          "description": "Added in contract 1 by #2672. The lowercase hex SHA-256 of the record file's text, with LF line endings and without the kind's reviews block in the front matter. A review verdict names it in its digest field, and stops counting once the record's digest moves on. For a kind with no reviews list, the digest of the whole text.",
+          "description": "Added in contract 1 by #2672. The lowercase hex SHA-256 of the record file's text, with LF line endings and without the kind's reviews block in the front matter, or for a kind of format json without the top-level reviews member and one comma beside it (#2664). A review verdict names it in its digest field, and stops counting once the record's digest moves on. For a kind with no reviews list, the digest of the whole text.",
           "type": "string",
           "pattern": "^[0-9a-f]{64}$"
         },

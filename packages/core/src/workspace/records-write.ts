@@ -269,6 +269,12 @@ async function open(kind: string, cwd: string): Promise<Opened> {
   const real = realpathOr(cwd);
   const root = gitRoot(real) ?? real;
   const loaded = await loadRecordKind(kind, real);
+  // The writers write Markdown front matter with an id field. A JSON or
+  // content-addressed kind (ws-053) is read by records, and written by its own tool.
+  if (loaded.kind.format !== "markdown-front-matter" || loaded.kind.idField === undefined) {
+    const what = loaded.kind.format !== "markdown-front-matter" ? `format ${loaded.kind.format}` : `ids from ${loaded.kind.idFrom}`;
+    throw new RecordWriteError("write-usage-invalid", `the ${loaded.kind.name} kind has ${what}, and records new, amend and review write only Markdown front matter records with an idField`);
+  }
   const dirRel = relative(root, loaded.dir).split("\\").join("/") || ".";
   return {
     loaded,
@@ -298,6 +304,9 @@ function overlay(base: RecordSource, path: string, text: string): RecordSource {
     },
     read(p) {
       return p === path ? text : base.read(p);
+    },
+    bytes(p) {
+      return p === path ? Buffer.from(text, "utf-8") : base.bytes(p);
     },
   };
 }
@@ -429,18 +438,19 @@ export async function newRecord(opts: NewRecordOptions): Promise<NewDocument> {
     const fields = parseFields(opts.fields, "--from");
     const o = await open(opts.kind, opts.cwd);
     const { kind, schema } = o.loaded;
+    const idField = kind.idField!;
     const before = await readAll(o, o.source);
-    const given = fields[kind.idField];
+    const given = fields[idField];
     let id: string;
     if (given === undefined) {
       id = allocateId(before, opts.prefix, kind.name);
     } else {
-      if (typeof given !== "string" || given === "") throw new RecordWriteError("write-input-invalid", `${kind.idField} must be a non-empty string when it is given`);
+      if (typeof given !== "string" || given === "") throw new RecordWriteError("write-input-invalid", `${idField} must be a non-empty string when it is given`);
       const taken = before.find((e) => e.id === given || posix.basename(e.path).startsWith(`${given}-`) || posix.basename(e.path) === `${given}.md`);
-      if (taken) throw new RecordWriteError("record-id-taken", `id ${given} is already used by ${taken.path}; ids are never reused, so leave ${kind.idField} out to have the next one allocated`);
+      if (taken) throw new RecordWriteError("record-id-taken", `id ${given} is already used by ${taken.path}; ids are never reused, so leave ${idField} out to have the next one allocated`);
       id = given;
     }
-    const data = pick({ ...fields, [kind.idField]: id }, schemaOrder({ ...fields, [kind.idField]: id }, schema));
+    const data = pick({ ...fields, [idField]: id }, schemaOrder({ ...fields, [idField]: id }, schema));
     const title = typeof data.title === "string" ? data.title : "";
     const match = new RegExp(kind.location.match);
     const names = [slug(title) ? `${id}-${slug(title)}.md` : null, `${id}.md`].filter((n): n is string => n !== null);
@@ -495,18 +505,19 @@ export async function amendRecord(opts: AmendRecordOptions): Promise<AmendDocume
     const added = Object.keys(patch).filter((k) => !(k in old));
     const merged = pick({ ...old, ...patch }, [...Object.keys(old), ...schemaOrder(pick(patch, added), o.loaded.schema)]);
     const changed = Object.keys(merged).filter((k) => stableJson(old[k]) !== stableJson(merged[k]));
-    if (changed.includes(kind.idField)) {
-      throw new RecordWriteError("amend-id-immutable", `${kind.idField} never changes: ids are never renumbered. Write a new record that supersedes ${opts.id} instead`);
+    if (changed.includes(kind.idField!)) {
+      throw new RecordWriteError("amend-id-immutable", `${kind.idField!} never changes: ids are never renumbered. Write a new record that supersedes ${opts.id} instead`);
     }
     const state = target.state;
-    const supersede = `chant workspace records new with ${kind.supersedes.field}: [{"${kind.supersedes.key}": "${opts.id}"}]`;
-    if (changed.length > 0 && state !== null && kind.closedStates.includes(state)) {
+    const link = kind.supersedes?.key === undefined ? JSON.stringify(opts.id) : `[{"${kind.supersedes.key}": "${opts.id}"}]`;
+    const supersede = kind.supersedes ? `chant workspace records new with ${kind.supersedes.field}: ${link}` : `chant workspace records new`;
+    if (changed.length > 0 && state !== null && (kind.closedStates ?? []).includes(state)) {
       throw new RecordWriteError("record-closed", `${opts.id} is ${state}, a closed state, so nothing in it changes. Write a new record that supersedes it: ${supersede}`);
     }
     const rank = (s: unknown): number => (typeof s === "string" ? (kind.approval?.[s] ?? 0) : 0);
     if (changed.length > 0 && kind.approval && rank(state) > 0) {
       const allowed = [kind.stateField, kind.pins?.field, kind.reviews?.field].filter((f): f is string => typeof f === "string");
-      const stronger = kind.states.filter((s) => rank(s) >= rank(state));
+      const stronger = (kind.states ?? []).filter((s) => rank(s) >= rank(state));
       const bad = changed.filter((k) => !allowed.includes(k));
       if (bad.length > 0) {
         throw new RecordWriteError(
@@ -514,10 +525,10 @@ export async function amendRecord(opts: AmendRecordOptions): Promise<AmendDocume
           `${opts.id} is ${state}, so ${bad.join(", ")} can't change in place: only ${allowed.join(", ")} may. Write the change as a new record that supersedes it (${supersede}); it replaces ${opts.id} once it is ${stronger.filter((s) => rank(s) > 0).join(" or ")}`,
         );
       }
-      if (changed.includes(kind.stateField) && rank(merged[kind.stateField]) < rank(state)) {
+      if (kind.stateField !== undefined && changed.includes(kind.stateField) && rank(merged[kind.stateField]) < rank(state)) {
         throw new RecordWriteError(
           "amend-supersede-instead",
-          `${opts.id} is ${state}, and ${JSON.stringify(merged[kind.stateField])} is approved less strongly: a state only moves to ${stronger.join(", ")}. Write a new record that supersedes it (${supersede})`,
+          `${opts.id} is ${state}, and ${JSON.stringify(merged[kind.stateField!])} is approved less strongly: a state only moves to ${stronger.join(", ")}. Write a new record that supersedes it (${supersede})`,
         );
       }
     }
@@ -578,7 +589,7 @@ export async function reviewRecord(opts: ReviewRecordOptions): Promise<ReviewDoc
     const field = kind.reviews.field;
     const before = await readAll(o, o.source);
     const target = findRecord(before, opts.id, kind.name);
-    if (target.state !== null && kind.closedStates.includes(target.state)) {
+    if (target.state !== null && (kind.closedStates ?? []).includes(target.state)) {
       throw new RecordWriteError("record-closed", `${opts.id} is ${target.state}, a closed state, so it takes no more reviews`);
     }
     if (opts.verdict === "dissent" && !(opts.note ?? "").trim()) {

@@ -1,6 +1,6 @@
 # Record formats beyond markdown front matter
 
-The design note behind [ws-053](../decisions/ws-053-record-formats.md), for [#2664](https://github.com/INTENTIUS/chant/issues/2664) under [#2546](https://github.com/INTENTIUS/chant/issues/2546). The decision is `proposed`: it records the options and a recommendation, and its `choice` stays null until the maintainer decides.
+The design note behind [ws-053](../decisions/ws-053-record-formats.md), for [#2664](https://github.com/INTENTIUS/chant/issues/2664) under [#2546](https://github.com/INTENTIUS/chant/issues/2546). The maintainer decided (e) on 2026-09-24, and [ws-053](../decisions/ws-053-record-formats.md) records the choice. Issues 1 to 4 below landed with that decision in [#2664](https://github.com/INTENTIUS/chant/issues/2664); issue 5 is not built yet.
 
 ## What the reader does today
 
@@ -84,6 +84,8 @@ A new reason code such as `record-content-mismatch` would say the same thing mor
 (e) is (a) and (c) plus the three loosenings chud's kinds need. `stateField`, `states` and `closedStates` become optional as a group, and a stateless kind's records have `state: null`. `supersedes` becomes optional; `key` becomes optional, and without it the field holds one id or a list of ids. The kind schema refuses `supersedes` on a stateless kind, because a link takes effect only from a closed or ranked state. `schema.refs` lists further schema files, each checked for its own `$id` and added to ajv before the kind's schema compiles. Every row above for (a) and (c) holds, and none of these adds a code or changes what the decision kind prints.
 
 ## Recommendation
+
+Decided: [ws-053](../decisions/ws-053-record-formats.md) chose (e), as recommended here, with `decided_by: "lex00"` on 2026-09-24. The recommendation as it was written follows.
 
 (e). It is the smallest change that makes each of chud's JSON kinds a kind file with no reader code, and it keeps parsing, validation and ids in core, where seals and the spec query need them. It adds no code to the read contract, so contract 1 and its readers hold, and nothing loads at level 0. (a) and (c) lost only as standalone options. (b) waits until someone proposes an HTML core format, since that is the one layout it would serve. (d) lost because a plugin reader is the second parser that ws-052 rejected for hud, run inside chant.
 
