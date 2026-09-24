@@ -28,6 +28,7 @@ import { parseDuration } from "./duration";
 import { describeGateMismatch, evaluateGate, gitGateLedgerPort, type GateCheck, type GateLedgerPort } from "./gate";
 import { gateName } from "./gate-name";
 import type { ResolvedGateApproval } from "./gate-approval";
+import { withOpRunContext, type OpRunContext, type PassedGate } from "./run-context";
 import type { PendingGateRecord } from "../lifecycle/gate-ledger";
 import { appendRunRecord, buildRunRecord } from "../lifecycle/run-ledger";
 import type { OpRunRecord } from "./runtime";
@@ -391,6 +392,8 @@ interface GateContext {
   runId?: string;
   /** Called once per settled step, in production order (#2121) — what `--progress-json` streams from. */
   onRecord?: (record: StepRecord) => void;
+  /** The run context's list of passed gates (#2522). A gate that passes is appended here. */
+  passed?: PassedGate[];
 }
 
 /** Collect records and hand each to the caller's progress sink in one move. */
@@ -489,6 +492,17 @@ async function runGateStep(
 
   if (check.satisfied) {
     const { resolution } = check;
+    const passedApproval: NonNullable<StepRecord["approval"]> = {
+      gate: gateName(step),
+      resolvedBy: resolution.resolvedBy,
+      timestamp: resolution.timestamp,
+      ...(resolution.url ? { url: resolution.url } : {}),
+      ...(check.via ? { via: check.via } : {}),
+      ...(check.approvals ? { approvers: check.approvals.map((r) => r.resolvedBy) } : {}),
+    };
+    // #2522: a later step reads this gate's approval from the run context
+    // rather than re-tallying the ledger, so it sees the decision this run made.
+    gates.passed?.push({ gate: gateName(step), approval: passedApproval });
     return {
       record: {
         phase: phaseName,
@@ -496,14 +510,7 @@ async function runGateStep(
         args: {},
         status: "ok",
         durationMs: Date.now() - start,
-        approval: {
-          gate: gateName(step),
-          resolvedBy: resolution.resolvedBy,
-          timestamp: resolution.timestamp,
-          ...(resolution.url ? { url: resolution.url } : {}),
-          ...(check.via ? { via: check.via } : {}),
-          ...(check.approvals ? { approvers: check.approvals.map((r) => r.resolvedBy) } : {}),
-        },
+        approval: passedApproval,
       },
     };
   }
@@ -769,6 +776,12 @@ export interface RunOpOptions {
   /** Identifies this run on any pending fact it records. */
   runId?: string;
   /**
+   * The environment the run was started for (`--env`, #2522). The executor
+   * only hands it to activities through the run context (`./run-context.ts`).
+   * The run ledger path still comes from the Op's `labels.Env`.
+   */
+  env?: string;
+  /**
    * Called once per settled step, in the order the records are produced
    * (#2121) — what the local op runtime (./runtimes/local.ts) feeds
    * `--progress-json` from. Side-effect free when omitted.
@@ -818,6 +831,25 @@ export async function runOpLocally(
   // The run id is the gate ledger's and the run ledger's alike: a pending gate
   // fact and the record naming that gate carry the same string.
   const runId = options.runId ?? randomUUID();
+  // #2522: every activity in this run can read the run it is in.
+  const run: OpRunContext = {
+    op: config.name,
+    runId,
+    ...(options.env !== undefined ? { env: options.env } : {}),
+    passedGates: [],
+  };
+  return withOpRunContext(run, () => executeOp(config, activities, profiles, signal, options, run));
+}
+
+async function executeOp(
+  config: OpConfig,
+  activities: Map<string, ActivityFn>,
+  profiles: Record<string, ActivityProfile>,
+  signal: AbortSignal | undefined,
+  options: RunOpOptions,
+  run: OpRunContext,
+): Promise<OpRunResult> {
+  const runId = run.runId;
 
   const gates: GateContext = {
     op: config.name,
@@ -825,6 +857,7 @@ export async function runOpLocally(
     ...(options.now ? { now: options.now } : {}),
     runId,
     ...(options.onRecord ? { onRecord: options.onRecord } : {}),
+    passed: run.passedGates,
   };
 
   // Effect steps are ordered (read-compare-run-write): refuse them in a

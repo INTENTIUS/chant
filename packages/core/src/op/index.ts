@@ -52,6 +52,8 @@ export type { ActivityProfile, ActivityProfileName } from "./activity-profiles";
 export { NonRetryableActivityError, nonRetryableFailure } from "./activity-failure";
 export { runOpLocally, parseDuration, OpRunFailure } from "./local-executor";
 export type { StepRecord, OpRunResult, RunOpOptions } from "./local-executor";
+export { currentOpRun, withOpRunContext } from "./run-context";
+export type { OpRunContext, PassedGate } from "./run-context";
 export { evaluateGate, gitGateLedgerPort, memoryGateLedgerPort, approveCommand, describeGateMismatch } from "./gate";
 export type { GateLedgerPort, GateCheck, GateCheckInput, PendingGatePush, GateDigestMismatch, GateQuorumProgress, GateTally } from "./gate";
 export { tallyGateApprovals, approverOf } from "./gate";

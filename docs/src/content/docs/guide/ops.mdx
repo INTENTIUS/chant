@@ -166,6 +166,28 @@ The digest covers the change set: the addresses, the actions and the values that
 
 `chant approve` refuses when the gate has no pending fact to take a digest from, naming `chant run <op>` as the fix; `--plan <digest>` approves one explicitly. Resolutions recorded before `#2300` carry no digest and do not satisfy a plan-bound gate: they prove somebody approved something and nothing about what. A gate standing open across that upgrade needs one more approval after its next run.
 
+### What an activity knows about its run
+
+An activity is called with its arguments and an abort signal. `currentOpRun()` from `@intentius/chant/op` returns the run around it ([#2522](https://github.com/INTENTIUS/chant/issues/2522)):
+
+```typescript
+import { currentOpRun } from "@intentius/chant/op";
+
+export async function recordRelease(args: { digest: string }) {
+  const run = currentOpRun();
+  // run.op, run.runId, run.env, run.passedGates
+}
+```
+
+| Field | Value |
+|---|---|
+| `op` | The Op's name |
+| `runId` | The id the run ledger record carries, so a record the activity writes can name the run that made it |
+| `env` | The `--env` the run was started with. Absent when none was given |
+| `passedGates` | Each gate this run has passed so far, with the approval the gate step recorded |
+
+`passedGates` holds the decision the gate made in this run. A step reads it there instead of tallying the gate ledger again, which could disagree with the gate when the Op's `approval` block has changed since the pending fact was recorded. Outside a run, `currentOpRun()` returns `undefined`. The local runtime sets it for every run. A lexicon's `opRuntime` that calls activities through `runOpLocally` gets it too, and one that calls them some other way can set it with `withOpRunContext`.
+
 ### Quorum, roles and an approval policy
 
 A gate passes on one approval by default. Its `approval` block can ask for more ([#2508](https://github.com/INTENTIUS/chant/issues/2508)):
