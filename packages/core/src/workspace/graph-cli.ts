@@ -5,6 +5,10 @@
  * document (`compose-graph.ts`). With `--kind`, the records of that kind and
  * their asset and constrains links join it (#2549, `record-assets.ts`).
  *
+ * With `--intent <path[:start-end]>` it prints the intent graph over one
+ * region instead (#2651, `intent.ts`), a document of its own in the read
+ * contract.
+ *
  * The document is part of the read contract, described by `graph.schema.json`
  * beside this file. It is printed for a failure too, with the error's reason
  * code, so a reader always has JSON to parse.
@@ -43,7 +47,8 @@ export const GRAPH_OUTPUT_SCHEMA_ID = "https://intentius.io/chant/schemas/worksp
 /** Why the graph couldn't be read at all: the declaration's codes, `--at`'s included. */
 export const GRAPH_ERROR_CODES = WORKSPACE_ERROR_CODES;
 
-const USAGE = "chant workspace graph [dir] [--at <rev>] [--member <name>] [--kind <kind file>] [-o <file>] [--env <env>] [--dry-run]";
+const USAGE =
+  "chant workspace graph [dir] [--at <rev>] [--member <name>] [--kind <kind file>] [-o <file>] [--env <env>] [--dry-run] | chant workspace graph --intent <path[:start-end]> [--at <rev>] [--kind <kind file>...] [--json]";
 
 interface Head {
   $schema: string;
@@ -215,6 +220,9 @@ export async function runWorkspaceGraph(ctx: CommandContext): Promise<number> {
   // The root's chant reads the declaration (ws-021).
   const handed = await handToRootChant(cwd, args.at);
   if (handed !== undefined) return handed;
+
+  // The intent graph over one region (#2651) is its own document.
+  if (args.intent !== undefined) return (await import("./intent-cli")).runWorkspaceIntent(ctx, cwd);
 
   if (args.dryRun) {
     let plan: MemberPlan;

@@ -12,6 +12,7 @@ import { REPO } from "./__fixtures__/contract-repo";
 import { MEMBER_RUN_REASON_CODES } from "./compose-graph";
 import { WORKSPACE_ERROR_CODES } from "./declaration";
 import { GRAPH_ERROR_CODES } from "./graph-cli";
+import { INTENT_ERROR_CODES, INTENT_FINDING_CODES, INTENT_REASON_CODES } from "./intent";
 import { CHECK_CODES, CHECK_ERROR_CODES } from "./lineage-check";
 import { GROUP_REASON_CODES, MEMBER_REASON_CODES } from "./ls";
 import { isReasonCode, REASON_CODES, REASONS } from "./reason-codes";
@@ -33,6 +34,9 @@ const PER_COMMAND: Record<string, readonly string[]> = {
   RECORD_REASON_CODES,
   RECORD_WARNING_CODES,
   READ_ERROR_CODES,
+  INTENT_ERROR_CODES,
+  INTENT_FINDING_CODES,
+  INTENT_REASON_CODES,
 };
 
 /** Every string in an `enum` under a property named `code`, anywhere in a schema. */
@@ -94,7 +98,7 @@ describe("the closed list of reason codes", () => {
   });
 
   test("no source file emits a code outside the list", () => {
-    const emitted = /(?:\bcode:\s*|(?:WorkspaceReadError|RecordReadError|StatusError)\(\s*)"([a-z0-9-]+)"/g;
+    const emitted = /(?:\bcode:\s*|(?:WorkspaceReadError|RecordReadError|StatusError|IntentError)\(\s*)"([a-z0-9-]+)"/g;
     let seen = 0;
     for (const file of sourceFiles(HERE)) {
       const text = readFileSync(file, "utf-8");

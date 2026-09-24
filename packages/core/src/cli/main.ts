@@ -363,6 +363,12 @@ export function parseArgs(args: string[]): ParsedArgs {
       // `chant workspace records|graph|check --kind <kind file>` (#2546, #2549)
       result.kind = args[++i];
       if (!result.kind || result.kind.startsWith("-")) throw new Error("--kind needs a kind file: --kind <path>");
+      // Repeatable for `workspace graph --intent` (#2651); the others read the last one.
+      (result.kinds ??= []).push(result.kind);
+    } else if (arg === "--intent") {
+      // `chant workspace graph --intent <path[:start-end]>` (#2651)
+      result.intent = args[++i];
+      if (!result.intent || result.intent.startsWith("-")) throw new Error("--intent needs a region: --intent <path[:start-end]>");
     } else if (arg === "--current") {
       result.current = true;
     } else if (arg === "--require") {
@@ -767,6 +773,10 @@ Workspace (level 1, #2524):
                         read-contract document. --at <rev> runs each member's
                         source as it was at that commit; --kind adds the
                         records' asset and constrains links
+  workspace graph --intent <path[:start-end]> [--at <rev>] [--kind <kind file>...] [--json]
+                        The intent graph over one region: the commits that
+                        touched it, the decisions whose constrains cover it,
+                        the artifacts they pin, and findings with closed codes
 
 Lifecycle (alias: lc):
   lifecycle snapshot <env>  Query API, save metadata to orphan branch

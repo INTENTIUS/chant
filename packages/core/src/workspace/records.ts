@@ -187,7 +187,7 @@ export interface LoadedRecordKind {
  * The kind is registered under a name no lexicon package can have (npm names
  * hold no `:`), imported and unregistered again, so no lexicon lookup sees it.
  */
-async function importKindModule(path: string): Promise<Record<string, unknown>> {
+export async function importKindModule(path: string): Promise<Record<string, unknown>> {
   const name = `record-kind:${path}`;
   registerLexiconDeclarations([{ name, module: path }], dirname(path));
   try {

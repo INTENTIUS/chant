@@ -138,6 +138,12 @@ export default defineConfig({
 							],
 						},
 						{
+							label: 'Workspaces',
+							items: [
+								{ label: 'Asking How a File Got This Way', slug: 'guide/tracing-intent' },
+							],
+						},
+						{
 							label: 'Local testing',
 							items: [
 								{ label: 'Overview', slug: 'local-testing/overview' },

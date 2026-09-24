@@ -10,7 +10,7 @@ Tools that show a workspace read it through one contract ([#2536](https://github
 
 | Contract | chant floor | Declaration | Output schemas |
 |---|---|---|---|
-| 1 | 0.81.0 | schema 1 | `ls`, `graph`, `check`, `status` and `records`, each at `v1` |
+| 1 | 0.81.0 | schema 1 | `ls`, `graph`, `check`, `status`, `records` and `intent`, each at `v1` |
 
 Every document carries `contract`, the version it follows, and `$schema`, its schema's `$id`. Most also carry `chant`, the version of the chant that wrote it. A reader that knows contract 1 refuses a document with any other `contract` value. Given a chant older than the floor, the reader can say so and name the version to install, since that chant doesn't write the contract at all.
 
@@ -27,6 +27,7 @@ Each schema ships in `@intentius/chant` at `src/workspace/<command>.schema.json`
 | [`chant workspace check`](/chant/cli/workspace-check/#options) | `--format json` | `https://intentius.io/chant/schemas/workspace/check/v1/check.schema.json` |
 | [`chant workspace status`](/chant/cli/workspace-status/#output) | `--json` | `https://intentius.io/chant/schemas/workspace/status/v1/status.schema.json` |
 | [`chant workspace records`](/chant/cli/workspace-records/#output) | `--json` | `https://intentius.io/chant/schemas/workspace/records/v1/records.schema.json` |
+| [`chant workspace graph --intent`](/chant/cli/workspace-graph/#the-intent-graph) | `--json` | `https://intentius.io/chant/schemas/workspace/intent/v1/intent.schema.json` |
 
 Each schema is a `oneOf` of a result and a failure. A failure has `error: { code, message }`, plus `location` for the commands that read the declaration, and exits 1. A result may still hold entries that couldn't be read, each with a `reason: { code, message }`. Only `check` fails on those ([ws-020](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-020-unreadable.md)). In `check`, a declaration that can't be read is the finding `WSP001` with the same `code`, not a failure.
 
@@ -42,6 +43,7 @@ A workspace is identified by its declared `name` and a git revision ([ws-016](ht
 | `check` | the declaration and the lineage lock at the revision, and runs the declaration and kind checks (`WSP001` to `WSP011`) on that tree. The ledger, pipeline and generated-file checks read the checkout, so they are left out |
 | `records` | the records at the revision, and the files their pins name, as committed at the revision |
 | `graph` | the declaration at the revision, and each member's graph from its source at the revision. With `--kind`, the records and the files they pin or constrain at the revision too |
+| `graph --intent` | the declaration, the region, the records and the files they pin at the revision, and the history reachable from it |
 
 A member's graph comes from running its chant config, so `graph --at` exports the workspace root's tree at the revision to a temporary directory with `git archive`, links the `node_modules` directories installed in the working tree into it, runs each member there and removes the directory. When no member runs, nothing is exported.
 
@@ -111,6 +113,21 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `schema-id-mismatch` | error, `records` | The schema's `$id` differs from the id the kind names. |
 | `schema-invalid` | error, `records` | The record schema doesn't compile. |
 | `location-missing` | error, `records` | The records directory does not exist, in the tree or at the revision. |
+| `intent-region-invalid` | error, `graph --intent` | The region's path, or its line range, does not exist in the tree read. |
+| `intent-history-shallow` | reason, `graph --intent` | The repository is a shallow clone, so the region's history stops at the clone's boundary. |
+| `intent-plugin-failed` | reason, `graph --intent` | A kind file's `commitJoins` failed for a commit. |
+| `intent-commit-undecided` | finding, `graph --intent` | A commit changed the region when no decision constrained it at path granularity. |
+| `intent-commit-bare` | finding, `graph --intent` | A commit names no unit, no pull request and no decision covering the region at its time. |
+| `intent-pin-drifted` | finding, `graph --intent` | A decision's pinned artifact no longer hashes to the pin. |
+| `intent-pin-missing` | finding, `graph --intent` | A decision's pinned artifact does not exist in the tree read. |
+| `intent-artifact-unpinned` | finding, `graph --intent` | Decisions in the graph pinned the artifact, and no current decision pins it. |
+| `intent-decision-superseded-live` | finding, `graph --intent` | Every decision constraining the region is superseded. |
+| `intent-decision-provisional` | finding, `graph --intent` | The current decisions constraining the region are all in states their kind does not close, such as `decided`. |
+| `intent-constraint-coarse` | finding, `graph --intent` | The region is constrained only through its member, not by path. |
+| `intent-constraint-lost` | finding, `graph --intent` | A decision's `path:` constraint names a path that does not exist in the tree read. |
+| `intent-evidence-unpinned` | finding, `graph --intent` | A decision's evidence has no hash: a URL, or a path with no `sha256`. |
+| `intent-trailer-unverified` | finding, `graph --intent` | A commit carries a trailer a plugin says claims authorship, and the commit is not `attested`. |
+| `intent-region-unconstrained` | finding, `graph --intent` | No decision constrains the region at any granularity. |
 | `lock-invalid` | finding, `check` | The lineage lock can't be read. |
 | `manual-step-open` | finding, `check` | A scope in the lineage lock has an open manual step. |
 
@@ -139,6 +156,48 @@ Artifact relationships are derived from decisions ([#2549](https://github.com/IN
 | `sha256`, `actual` | the pinned hash, and the file's hash in the tree read or `null` | not present |
 
 To find the artifacts behind a file, a reader walks through the decisions. It takes the `constrains` rows whose target covers the file: `path:<p>` covers `p` and everything below it, and `member:<name>` covers the member's directory. From each of those records it takes the `asset` rows. A drifted asset row means the artifact changed after the decision that governs the file was made, and a stale one means the decision was replaced while the artifact stayed as it was. The walk the other way, from an artifact to what it shapes, starts from the `asset` rows whose `target` is the artifact.
+
+## The intent graph
+
+`chant workspace graph --intent <region> --json` prints the intent graph over one region ([#2651](https://github.com/INTENTIUS/chant/issues/2651)). It encodes the walk from a piece of code back to the decisions, artifacts and commits behind it, as [#2650](https://github.com/INTENTIUS/chant/issues/2650) section B describes it. chant emits the graph and a reader such as hud draws it (D8 and D15 of [#2524](https://github.com/INTENTIUS/chant/issues/2524)).
+
+A result has `$schema`, `contract`, `chant`, `at` and `workspace` like the other documents. `region` is the id of the region node. `history` names the commit the history was read from (`rev`), how the region was followed (`line-range`, `file` or `directory`) and whether the clone is `shallow`. `kinds` lists each `--kind` file with the record kind it reads and the form of its `commitJoins`. `nodes` and `edges` hold the graph, and `reasons` holds parts of the walk that could not be read. A failure has `error: { code, message }` with a declaration code, a record kind code or `intent-region-invalid`.
+
+The walk runs in this order, and the nodes are listed in it:
+
+1. The region, the files under a directory region, and the region's member.
+2. The commits that touched the region, newest first. A line range is followed with `git log -L`, a file with `git log --follow`, and a directory with `git log`. For the working tree the history is read from `HEAD`. Each commit may be joined to a unit, a contract and evidence by a kind file's [`commitJoins`](/chant/cli/workspace-graph/#commit-joins).
+3. The decisions whose `constrains` cover the region, and the decisions in their supersession chains.
+4. The artifacts those decisions pin, and the URL evidence they cite.
+5. The member links of the region's member, declared in the declaration and resolved in source as `check` resolves them.
+6. The findings.
+
+| Node kind | Id | Fields |
+|---|---|---|
+| `region` | `region:<path>` or `region:<path>:<start>-<end>` | `path` from the workspace root, `lines` or `null`, `member`, `at`, `type` (`file` or `dir`), `generated` for a file, and `node` when the region was given as a graph node id |
+| `file` | `file:<path>` | `path`, `member`, `generated` |
+| `member` | `member:<name>` | `name`, `dir`, `memberKind` |
+| `commit` | `commit:<sha>` | `sha`, `subject`, `author`, `date`, `trailers`, `pullRequest`, `signature` (the provenance level, judged by the signers at base as `records` judges a record) and `lines`, the ranges it changed in a line-range region |
+| `unit`, `contract`, `evidence` | `<kind>:<id>` | `ref`, the plugin's own id, `plugin`, the kind file that supplied it, and `data`, its other fields. A decision's URL evidence is an `evidence` node with `plugin: null` and `data` holding `title`, `url`, `as_of` and `sha256` |
+| `decision` | `record:<kind>/<id>` | `recordKind`, `record`, `path`, `title`, `state`, `closed`, `valid`, `reasons`, `provenance`, `decided_by`, `decided_on`, `reviews` (agree, dissent, abstain and open concerns), `supersededBy`, `supersedes`, and `constrains`, the entries that cover the region with their granularity |
+| `artifact` | `artifact:<path>` | `path`, `anchor`, `pinnedSha256`, `currentSha256` and `pinState`: the state of a current decision's pin, or `unpinned` when only superseded decisions pin it |
+| `link` | `link:<n>` | `row`, the member link row |
+| `finding` | `finding:<code>:<n>` | `code`, `message`, and `concerns`, the ids of the nodes it is about |
+
+| Edge kind | From, to | Fields |
+|---|---|---|
+| `constrains` | decision to region, file or contract | `granularity` (`path`, `member`, `contract` or `issue`) and `entry`, as written |
+| `pins` | decision to artifact | `pinnedSha256` and `pinState` for that decision's pin |
+| `touched-by` | region to commit | `lines` |
+| `produced-by` | commit to unit | |
+| `serves` | unit to contract | |
+| `supersedes` | the newer decision to the one it replaces, derived as `records` derives it | |
+| `cites-evidence` | unit, contract or decision to evidence | |
+| `links` | consumer member to producer member | |
+
+A decision covers a commit from the commit that added its record until the commit that added the record superseding it. A commit outside every path-granularity window is `intent-commit-undecided`. A decision that constrains a path below a directory region has a `constrains` edge to each file under that path, and it does not count as constraining the whole region.
+
+The document joins the others by the member name (`member` on region and file nodes, and `member:<name>` nodes), by the record id (`record` on a decision node, `records[].id` in `graph --kind` and `records`), and by the commit id (`at` and `provenance.commit`).
 
 ## Joining the documents
 

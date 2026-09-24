@@ -22,6 +22,8 @@ import { contract, git, REPO, validSchema } from "./__fixtures__/contract-repo";
 import checkSchema from "./check.schema.json";
 import { workspaceGraph } from "./graph-cli";
 import graphSchema from "./graph.schema.json";
+import { intentGraph } from "./intent";
+import intentSchema from "./intent.schema.json";
 import { runChecks } from "./lineage-check";
 import { listWorkspace } from "./ls";
 import lsSchema from "./ls.schema.json";
@@ -35,7 +37,7 @@ import statusSchema from "./status.schema.json";
 const FIXTURE = join(REPO, "reference-workspace");
 const TIMEOUT = 240_000;
 
-const SCHEMAS = { ls: lsSchema, graph: graphSchema, check: checkSchema, status: statusSchema, records: recordsSchema };
+const SCHEMAS = { ls: lsSchema, graph: graphSchema, check: checkSchema, status: statusSchema, records: recordsSchema, intent: intentSchema };
 
 /** This checkout's chant, started the way the CLI starts it, for members with no toolchain of their own. */
 const reader: Toolchain = {
@@ -114,6 +116,19 @@ describe("every schema against the reference workspace (#2543)", () => {
     if ("error" in doc) throw new Error(doc.error.message);
     expect(doc.workspace).toMatchObject({ name: "reference", root: "reference-workspace" });
     expect(doc.members.map((m) => m.name)).toEqual(["app", "delivery", "design-client", "design"]);
+  });
+
+  test("graph --intent, in the working tree and at HEAD (#2651)", async () => {
+    const { expectValid } = contract(intentSchema);
+    for (const at of [undefined, "HEAD"]) {
+      const { doc, failed } = await intentGraph({ cwd: FIXTURE, region: "app/src/server.mjs:19", at, kinds: ["decisions/decision.kind.mjs"] });
+      expectValid(doc);
+      if ("error" in doc) throw new Error(doc.error.message);
+      expect(failed).toBe(false);
+      expect(doc.workspace).toEqual({ name: "reference", root: "reference-workspace" });
+      expect(doc.at).toBe(at ? head : null);
+      expect(doc.region).toBe("region:app/src/server.mjs:19");
+    }
   });
 
   test("records, in the working tree and at HEAD", async () => {
