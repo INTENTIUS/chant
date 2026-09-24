@@ -223,6 +223,7 @@ export default defineConfig({
 								{ label: 'graph', slug: 'cli/graph' },
 								{ label: 'workspace init', slug: 'cli/workspace-init' },
 								{ label: 'workspace ls', slug: 'cli/workspace-ls' },
+								{ label: 'workspace status', slug: 'cli/workspace-status' },
 								{ label: 'workspace records', slug: 'cli/workspace-records' },
 								{ label: 'workspace lineage', slug: 'cli/workspace-lineage' },
 								{ label: 'workspace upgrade', slug: 'cli/workspace-upgrade' },

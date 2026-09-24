@@ -1,0 +1,167 @@
+---
+title: "chant workspace status"
+description: Each member's latest release in an environment, read from its ledger, and optionally a second environment beside it with the members whose digests differ marked
+diataxis: reference
+---
+
+## Synopsis
+
+```
+chant workspace status <env> [dir] [--compare-to <env>] [--json]
+```
+
+## Description
+
+`chant workspace status` shows which release each member of a [workspace](/chant/reference/workspace-declaration/) has in an environment. Each one is an artifact digest and the git SHA it was built from, as `chant components release` records it. They stay per member, and this command only reads them ([ws-043](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-043-releases.md)). Moving several members together as a train waits for workspace Ops ([#2554](https://github.com/INTENTIUS/chant/issues/2554)).
+
+The command finds the declaration by walking up from `dir` (default: the current directory), as [`chant workspace ls`](/chant/cli/workspace-ls/) does. For each member it lists the latest release of every component in that member's ledger for `<env>`. With `--compare-to <env>`, it lists the second environment beside the first and marks each component whose digest differs, or that has a release in only one of them.
+
+```
+acme  staging compared to prod  (chant/lifecycle at 3f2a91c0)
+
+MEMBER  COMPONENT  STAGING                        PROD
+site    -          no release                     no release
+web     web        sha256:aaaaaaaaaaaa aaaaaaaa   sha256:aaaaaaaaaaaa aaaaaaaa
+api     api        sha256:bbbbbbbbbbbb bbbbbbbb   sha256:cccccccccccc cccccccc   differs
+api     worker     sha256:dddddddddddd dddddddd   -                              only-env
+
+3 members, 2 with a release in staging, 1 differs from prod, 0 unreadable
+```
+
+Each compared component gets one of four states.
+
+| State | Meaning |
+|---|---|
+| `same` | Both environments have the same digest. |
+| `differs` | Both environments have a release of the component, with different digests. |
+| `only-env` | Only the first environment has a release of the component. |
+| `only-compare` | Only the environment given to `--compare-to` has one. |
+
+A release whose ledger records an input digest, such as a pinned Helm deploy, is compared on that digest. Two clusters may render the same input to different bytes, and the input digest is what says they run the same release. The table still shows the digest each cluster received.
+
+### Where the ledgers are read from
+
+Every ledger is on the `chant/lifecycle` branch. A member's releases for an environment are in `_members/<member>/<env>/releases.jsonl` ([#2538](https://github.com/INTENTIUS/chant/issues/2538)). The root member `.` keeps the flat `<env>/releases.jsonl` that a project without a workspace uses. A member with no `_members/<member>/` directory on the branch is read from the flat ledger too, because that is where a chant from before #2538 writes it. When more than one member reads the same flat ledger, they list the same records, and the output says the ledger is shared.
+
+The command reads the branch as it is in the checkout and never fetches it, so it makes no network calls. The output names the branch tip it read. To see what the remote has, fetch the branch first with `git fetch origin chant/lifecycle:chant/lifecycle`.
+
+A member whose ledger can't be read is still listed, with a reason code, and the command still exits 0 ([ws-020](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-020-unreadable.md)).
+
+The command doesn't read live state. `--compare-to --live` is refused with a pointer to `chant components status <env> --live`, which reads one member's live state from that member's directory.
+
+## Options
+
+| Option | Effect |
+|---|---|
+| `env` | The environment to show. Required. |
+| `dir` | Where the walk up to the declaration starts. |
+| `--compare-to <env>` | Show a second environment beside the first and mark the members whose digests differ. |
+| `--json` | Print the result as JSON (see [Output](#output)). |
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | The declaration was read. Some ledgers may be unreadable, and each carries a reason code. Differences between environments don't change the exit code. |
+| 1 | No environment was given, `--live` was asked for, the declaration couldn't be read, or an environment name can't be one. |
+
+## Output
+
+With `--json`, the output follows the schema `https://intentius.io/chant/schemas/workspace/status/v1/status.schema.json`, shipped in `@intentius/chant` at `src/workspace/status.schema.json`. Readers ignore fields they don't know. Fields are only added within a contract version, and the code lists are closed.
+
+```json
+{
+  "$schema": "https://intentius.io/chant/schemas/workspace/status/v1/status.schema.json",
+  "contract": 1,
+  "chant": "0.80.0",
+  "env": "staging",
+  "compareTo": "prod",
+  "lifecycle": { "ref": "chant/lifecycle", "commit": "3f2a91c0..." },
+  "workspace": { "name": "acme", "root": ".", "file": "chant.workspace.json" },
+  "members": [
+    {
+      "name": "api",
+      "dir": "apps/api",
+      "kind": "chant",
+      "environments": [
+        {
+          "env": "staging",
+          "ledger": { "layout": "members", "path": "_members/api/staging/releases.jsonl", "shared": false },
+          "releases": [
+            {
+              "component": "api",
+              "digest": "sha256:bbbb...",
+              "gitSha": "bbbbbbbb...",
+              "inputDigest": null,
+              "runId": "1234",
+              "timestamp": "2026-09-20T10:00:00.000Z",
+              "actor": "ci",
+              "flags": []
+            }
+          ],
+          "reason": null
+        },
+        {
+          "env": "prod",
+          "ledger": { "layout": "members", "path": "_members/api/prod/releases.jsonl", "shared": false },
+          "releases": [],
+          "reason": null
+        }
+      ],
+      "compare": {
+        "differs": true,
+        "components": [{ "component": "api", "state": "only-env", "digest": "sha256:bbbb...", "compareDigest": null }]
+      },
+      "readable": true
+    }
+  ],
+  "summary": { "members": 3, "released": 2, "unreadable": 0, "differing": 1 }
+}
+```
+
+The example shortens the lists and the digests. `commit` is the local branch tip, or `null` when the checkout has no `chant/lifecycle` branch, in which case every member has no release. `layout` is `members` or `flat`, as described above. A compare `state` is `same`, `differs`, `only-env` or `only-compare`. `compare` and `summary.differing` are `null` without `--compare-to`. `flags` carries `legacy-digest` for a digest recorded before chant used SHA-256 ([#2514](https://github.com/INTENTIUS/chant/issues/2514)).
+
+A failed read prints `{ "$schema", "contract", "chant", "error": { "code", "message", "location" } }` instead, with the location of a parse or schema error in the declaration, or `null`.
+
+### Reason codes
+
+A reason belongs to one environment of one member, and makes that member's `readable` false.
+
+| Code | The ledger |
+|---|---|
+| `ledger-unreadable` | couldn't be read, so nothing from it is listed |
+| `ledger-malformed` | has lines that aren't release records; they are skipped and the rest are listed |
+
+### Error codes
+
+The declaration's codes are listed on [`chant workspace ls`](/chant/cli/workspace-ls/#error-codes). This command returns them except the two that only `--at` causes, plus two of its own.
+
+| Code | Cause |
+|---|---|
+| `not-a-git-repository` | the workspace isn't in a git repository, so there is no ledger branch |
+| `environment-invalid` | an environment name has a character other than letters, digits, `.`, `_` and `-`, or starts with `.` or `_` |
+
+## Use in a pipeline
+
+The exit code doesn't change when environments differ, so a job that should stop on a difference reads the JSON. This one fails when any member in prod runs something other than what staging tested, and prints the members that do.
+
+```bash
+chant workspace status prod --compare-to staging --json > status.json
+jq -r '.members[] | select(.compare.differs) | .name' status.json
+jq -e 'all(.members[]; .compare.differs | not)' status.json > /dev/null
+```
+
+Fetch `chant/lifecycle` in the job before this runs. A CI checkout usually fetches only the ref it builds, and without the ledger branch every member shows no release.
+
+## Examples
+
+```bash
+# Which release each member has in prod
+chant workspace status prod
+
+# Is prod running what staging tested?
+chant workspace status prod --compare-to staging
+
+# The same, for a tool to read
+chant workspace status prod --compare-to staging --json
+```
