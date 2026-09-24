@@ -285,6 +285,18 @@ export interface ParsedArgs {
   current?: boolean;
   /** `chant workspace records|verify --require attested` (#2547): the provenance level a gate requires. */
   require?: string;
+  /** `chant workspace evidence sign --key` (a runner's Ed25519 PEM) and `signers sign --key` (an ssh private key) (#2553). */
+  key?: string;
+  /** `chant workspace evidence sign --check-id <id>` (#2553): the check the evidence is for. */
+  checkId?: string;
+  /** `chant workspace evidence sign --claim <file>` (#2553): hashed into the evidence. */
+  claim?: string;
+  /** `chant workspace evidence sign --environment <file>` (#2553): the runner environment, hashed into the evidence. */
+  environment?: string;
+  /** `chant workspace evidence verify --envelope <file>` (#2553). */
+  envelope?: string;
+  /** `chant workspace signers rotate --threshold <n>` (#2553). */
+  threshold?: string;
   /**
    * `chant search "<q>" --ambient --live --env <name>` (#1278) — also report
    * resources of a kind this estate manages that exist in the account without

@@ -15,6 +15,7 @@ import { execFileSync } from "node:child_process";
 import { gitRevisionSource } from "../record-source";
 import { attestCommit, type CommitAttestor, type ProvenanceLevel } from "./attestor";
 import { emptyPolicy, readTrustPolicy, type TrustPolicy } from "./policy";
+import { SignerPositions, signerHistory } from "./rotation";
 
 /** What `records` reports for one record. */
 export interface RecordProvenance {
@@ -70,10 +71,22 @@ export function resolveBase(repo: string, explicit?: string): ResolvedBase {
   return { commit: null, from: null, problem: "no base revision: pass --base <rev> (there is no origin/HEAD, main or master)" };
 }
 
-/** The policy at `base`, or an inactive one when there is no base. */
+/**
+ * The policy at `base`, or an inactive one when there is no base. With a
+ * signers file, its history is verified too (#2553): every version must be
+ * signed by a threshold of the one before, or nothing verifies.
+ */
 export function policyAtBase(repo: string, base: ResolvedBase): TrustPolicy {
   if (!base.commit) return emptyPolicy(null, base.problem ? [base.problem] : []);
-  return readTrustPolicy(gitRevisionSource(repo, base.commit), base.commit);
+  const policy = readTrustPolicy(gitRevisionSource(repo, base.commit), base.commit);
+  if (!policy.active || policy.problems.length > 0) return policy;
+  const history = signerHistory(repo, base.commit, policy.signersPath);
+  if (history.broken) {
+    const at = history.broken.commit ? ` at ${history.broken.commit.slice(0, 8)}` : "";
+    return { ...policy, problems: [`the signer history of ${policy.signersPath} is broken${at}: ${history.broken.reason}`] };
+  }
+  const positions = new SignerPositions(repo, base.commit, history);
+  return { ...policy, signersAt: (commit) => positions.versionFor(commit) };
 }
 
 /**
@@ -126,7 +139,18 @@ export function isAdopted(repo: string, policy: TrustPolicy, commit: string): bo
 
 /** A commit's provenance level under `policy`. */
 export function commitProvenance(repo: string, policy: TrustPolicy, commit: string, attestors: readonly CommitAttestor[]): RecordProvenance {
-  const a = attestCommit({ repo, policy }, commit, attestors);
+  // Judge the commit by the signer set in effect where it entered the base's history (#2553).
+  let judged = policy;
+  if (policy.signersAt) {
+    const v = policy.signersAt(commit);
+    judged = { ...policy, signers: v?.signers ?? [] };
+    if (!v || v.version === 0) {
+      const none = "no signer set was in effect where this commit entered the base's history";
+      if (isAdopted(repo, policy, commit)) return { level: "adopted", commit, reason: `in a commit range the policy at base adopts; ${none}` };
+      return { level: "unattested", commit, reason: none };
+    }
+  }
+  const a = attestCommit({ repo, policy: judged }, commit, attestors);
   if (a.level === "unattested" && isAdopted(repo, policy, commit)) {
     return { level: "adopted", commit, attestor: a.attestor, reason: `in a commit range the policy at base adopts; ${a.reason}` };
   }

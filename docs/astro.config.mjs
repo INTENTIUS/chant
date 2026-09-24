@@ -221,6 +221,8 @@ export default defineConfig({
 								{ label: 'graph', slug: 'cli/graph' },
 								{ label: 'workspace records', slug: 'cli/workspace-records' },
 								{ label: 'workspace verify', slug: 'cli/workspace-verify' },
+								{ label: 'workspace signers', slug: 'cli/workspace-signers' },
+								{ label: 'workspace evidence', slug: 'cli/workspace-evidence' },
 								{ label: 'workspace lineage', slug: 'cli/workspace-lineage' },
 								{ label: 'lifecycle', slug: 'cli/lifecycle' },
 								{ label: 'scenario', slug: 'cli/scenario' },

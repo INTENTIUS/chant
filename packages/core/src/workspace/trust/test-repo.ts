@@ -8,6 +8,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { ROTATION_NAMESPACE, rotationStatement, signersDigest } from "./rotation";
 
 export const hasSshKeygen = spawnSync("ssh-keygen", ["-Y"], { stdio: "ignore" }).error === undefined;
 
@@ -107,6 +108,23 @@ export class TestRepo {
   cleanup(): void {
     rmSync(this.scratch, { recursive: true, force: true });
   }
+}
+
+/**
+ * Write `<signers>.rotation.json` for the signers file now in the working
+ * tree, as the next version after `previousText`, signed by `by` in the
+ * rotation namespace (#2553).
+ */
+export function writeRotation(
+  repo: TestRepo,
+  opts: { previousText: string; version: number; threshold?: number; by: Array<[string, Key]>; namespace?: string; signersPath?: string },
+): void {
+  const path = opts.signersPath ?? ".chant/allowed_signers";
+  const text = readFileSync(join(repo.dir, path), "utf-8");
+  const rotation = { version: opts.version, previous: signersDigest(opts.previousText), threshold: opts.threshold ?? 1 };
+  const statement = rotationStatement(rotation, signersDigest(text));
+  const signatures = opts.by.map(([principal, key]) => ({ principal, signature: repo.sshSign(key, statement, opts.namespace ?? ROTATION_NAMESPACE) }));
+  repo.write(`${path}.rotation.json`, JSON.stringify({ schema: 1, ...rotation, signatures }, null, 2));
 }
 
 /** A record kind reading `records/*.md`, and its schema, written into `repo`. */

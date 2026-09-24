@@ -27,7 +27,8 @@ Two files hold the policy. Both are optional, and both are read at base.
 | File | Holds |
 |---|---|
 | `.chant/allowed_signers` | The signers, in ssh-keygen's [allowed signers format](https://man.openbsd.org/ssh-keygen#ALLOWED_SIGNERS). It's the same file `git log --show-signature` can use. |
-| `.chant/trust.json` | Where the signers file is, if not at the default path; the role grants; and any adopted commit ranges. |
+| `.chant/allowed_signers.rotation.json` | The current version of the signer set, its threshold, and the signatures that admitted it. See [`chant workspace signers`](/chant/cli/workspace-signers/). |
+| `.chant/trust.json` | Where the signers file is, if not at the default path; the role grants; any adopted commit ranges; and the runner keys that sign [evidence](/chant/cli/workspace-evidence/). |
 
 ```json
 {
@@ -53,7 +54,9 @@ Some signer lines are never used, and the command reports each one with the reas
 | Check | Rule |
 |---|---|
 | Attestation | A commit is `attested` when its ssh signature, in the `git` namespace, verifies against a key listed at base. Trailers, author names and environment variables count for nothing. |
-| Protected writes | A commit that changes the signers file or `.chant/trust.json` needs a signature from someone the base policy trusts. If an admin role is granted, only an admin's signature counts. Deleting the signers file is a protected write too. |
+| Protected writes | A commit that changes the signers file, its rotation file or `.chant/trust.json` needs a signature from someone the base policy trusts. If an admin role is granted, only an admin's signature counts. Deleting the signers file is a protected write too. |
+| Rotation | A change to the signer set must be the next version, signed by a threshold of the set at base. See [`chant workspace signers`](/chant/cli/workspace-signers/). |
+| History | The signer history at base must be unbroken. Every version has to be signed by a threshold of the one before it. If it isn't, nothing verifies. |
 | `--require attested` | Every commit in the change must be `attested`. A merge with no changes of its own is skipped, and the commits it brings in are checked instead. |
 
 The command doesn't call `git verify-commit`, because that reads its signing program and signers file from git config. It takes the signature and the signed bytes out of the commit object and passes them to `ssh-keygen -Y verify`, along with a signers file built from the base policy.
@@ -88,4 +91,4 @@ The base has to be a revision the change can't move, which is the target branch 
 
 ## See also
 
-[`chant workspace records`](/chant/cli/workspace-records/) reports each record's provenance level, and can require `attested` too.
+[`chant workspace records`](/chant/cli/workspace-records/) reports each record's provenance level, and can require `attested` too. [`chant workspace signers`](/chant/cli/workspace-signers/) rotates the signer set. [`chant workspace evidence`](/chant/cli/workspace-evidence/) signs and checks runner evidence.

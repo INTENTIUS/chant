@@ -230,6 +230,10 @@
   "tricolon/density": 1,
   "anaphora/repeated-opening": 1
  },
+ "docs/src/content/docs/cli/workspace-evidence.mdx": {
+  "formatting/em-dash-density": 2,
+  "claude/colon-reveal": 2
+ },
  "docs/src/content/docs/cli/workspace-lineage.mdx": {
   "formatting/em-dash-density": 2,
   "claude/colon-reveal": 2
@@ -237,6 +241,11 @@
  "docs/src/content/docs/cli/workspace-records.mdx": {
   "formatting/em-dash-density": 2,
   "claude/colon-reveal": 2
+ },
+ "docs/src/content/docs/cli/workspace-signers.mdx": {
+  "formatting/em-dash-density": 2,
+  "claude/colon-reveal": 2,
+  "dead-metaphor/rare-lemma": 1
  },
  "docs/src/content/docs/cli/workspace-verify.mdx": {
   "formatting/em-dash-density": 2,

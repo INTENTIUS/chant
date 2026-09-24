@@ -1,0 +1,69 @@
+---
+title: "chant workspace evidence"
+description: Sign runner evidence over record hashes in a DSSE envelope, and verify it offline
+diataxis: reference
+---
+
+## Synopsis
+
+```
+chant workspace evidence sign --kind <kind file> --key <runner key.pem> --check-id <id>
+    [--claim <file>] [--environment <file>] [--at <rev>] [--base <rev>] [--output <file>]
+chant workspace evidence verify --envelope <file> [--at <rev>] [--base <rev>] [--json]
+```
+
+## Description
+
+Runner evidence is a statement by a CI job or a service that a check ran over a set of records at a given commit. chant writes it as an [in-toto Statement v1](https://github.com/in-toto/attestation/blob/main/spec/v1/statement.md), with the predicate type `https://intentius.io/chant/runner-evidence/v1`, and wraps it in a [DSSE](https://github.com/secure-systems-lab/dsse) envelope signed with the runner's Ed25519 key.
+
+| Part | Holds |
+|---|---|
+| `subject` | Each record the kind locates at the commit: its path, and the SHA-256 of its text with line endings normalised |
+| `predicate.runner` | The runner's principal, which must be the principal of the key that signed |
+| `predicate.commit`, `predicate.tree` | The commit the check ran at, and its tree |
+| `predicate.check` | `--check-id` |
+| `predicate.claim`, `predicate.environment` | SHA-256 of `--claim` and `--environment`, when given |
+
+Verifying needs the envelope, the repository's objects and the runner keys in the policy at base, and nothing else. It works offline.
+
+Evidence is never reused on trust. `verify` hashes each record again at `--at` (default `HEAD`). If every record still matches, the evidence is `current`. If any record changed or is gone, it's `stale`, and the command exits 1.
+
+## Runner keys
+
+Runner keys belong to a service or a CI identity, never to a person. They're listed in `.chant/trust.json` at base:
+
+```json
+{
+  "schema": 1,
+  "runners": [{ "principal": "ci@github-actions", "class": "runner", "key": "ssh-ed25519 AAAA..." }]
+}
+```
+
+`class` is `runner` for a CI job and `service` for a hosted service. A runner entry that uses a key or a principal listed in the signers file is refused, and so is a key the change adds. `sign` refuses a signer's key and any key the policy at base doesn't list, and it prints the public half of the key so you can add it. Adding or removing a runner key changes `.chant/trust.json`, which is a protected write.
+
+A runner key is an Ed25519 private key in PEM. Keep it in the CI system's secret store:
+
+```bash
+openssl genpkey -algorithm ed25519 -out runner.pem
+```
+
+## Options
+
+| Option | Effect |
+|---|---|
+| `--kind <kind file>` | The record kind whose records the evidence covers. |
+| `--key <file>` | The runner's private key. |
+| `--check-id <id>` | The check the evidence is for. |
+| `--claim <file>` | A file whose hash is bound into the evidence, such as the check's report. |
+| `--environment <file>` | A description of the runner's environment, hashed into the evidence. |
+| `--at <rev>` | With `sign`, the commit the records are read at. With `verify`, the commit they're compared against. Defaults to `HEAD`. |
+| `--base <rev>` | Where the runner keys are read. Defaults to `origin/HEAD`, then `main`, then `master`. |
+| `--output <file>` | Write the envelope to a file instead of standard output. |
+| `--envelope <file>` | The envelope to verify. |
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | `sign` wrote the envelope, or `verify` found it valid and current. |
+| 1 | The key was refused, the envelope doesn't verify against a runner key at base, or the evidence is stale. |
