@@ -493,6 +493,19 @@ export function parseArgs(args: string[]): ParsedArgs {
     i++;
   }
 
+  // #2603 — `--promote-to` (#2575) adds a job to the pipeline that generate
+  // mode synthesizes; no other command or mode reads it. Checked here, once
+  // the whole command line is known, rather than in the build handler, so
+  // `chant build --promote-to prod` and `chant run --promote-to prod` both
+  // fail instead of running as if the flag were absent. A lexicon-mounted
+  // command that takes its own `--promote-to` still gets it: `main` tries the
+  // plugin commands before rethrowing a parse error.
+  if (result.promoteTo && !(result.command === "build" && result.components && result.generate)) {
+    throw new Error(
+      "--promote-to needs build --components --generate <lexicon>: it adds a promote job to the generated CI pipeline, and only generate mode emits one.",
+    );
+  }
+
   return result;
 }
 
