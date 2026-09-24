@@ -3,7 +3,9 @@
  * (#2651): the intent graph over one region (`intent.ts`), printed as JSON
  * with `--json` or as a walk, one line per node, in the order of #2650
  * section B: the region, its decisions, their artifacts, the commits, and the
- * findings.
+ * findings. Under each decision come the commits made inside its window, and
+ * when any of them is not the decision's own work, the question #2650 B puts
+ * to the person about it (#2656).
  */
 
 import { resolve } from "node:path";
@@ -24,6 +26,28 @@ function ofKind<K extends IntentNode["kind"]>(doc: Result, kind: K): Extract<Int
 }
 
 const short = (sha: string | null | undefined) => (sha ? sha.slice(0, 8) : "none");
+
+/** What the walk asks about a commit made inside a decision's window that is not the decision's own work (#2650 B4, step 5). */
+export const IN_WINDOW_QUESTION = "is this drift, a superseding decision nobody wrote down, or the decision being wrong?";
+
+/** The commits inside a decision's window, under its line, then the question once when any is not its own work. */
+function withinLines(doc: Result, d: DecisionNode): string[] {
+  const within = doc.edges.filter((e): e is Extract<IntentEdge, { kind: "within" }> => e.kind === "within" && e.to === d.id);
+  const out: string[] = [];
+  for (const e of within) {
+    const c = doc.nodes.find((n): n is CommitNode => n.kind === "commit" && n.id === e.from);
+    if (!c) continue;
+    const unit = edgesFrom(doc, c.id, "produced-by")
+      .map((p) => doc.nodes.find((n) => n.id === p.to))
+      .map((n) => (n && "ref" in n ? n.ref : undefined))
+      .filter(Boolean);
+    const by = unit.length > 0 ? `unit ${unit.join(", ")}` : "no unit";
+    const label = e.state === "decided" ? "decided " : "within  ";
+    out.push(`  ${label}  ${short(c.sha)} ${c.subject}; ${by}${e.state === "decided" ? `, ${d.record}'s own work` : `, in ${d.record}'s window and not its work`}`);
+  }
+  if (within.some((e) => e.state === "decided-by-window")) out.push(`  ask       ${IN_WINDOW_QUESTION}`);
+  return out;
+}
 
 function decisionLine(d: DecisionNode): string {
   const via = d.constrains.length > 0 ? d.constrains.map((c) => `${c.entry} (${c.granularity})`).join(", ") : "through supersession only";
@@ -63,7 +87,7 @@ export function formatIntent(doc: Result): string {
   }
   const files = ofKind(doc, "file");
   if (files.length > 0) out.push(`files     ${files.length} under the region, ${files.filter((f) => f.generated).length} generated`);
-  for (const d of ofKind(doc, "decision")) out.push(decisionLine(d));
+  for (const d of ofKind(doc, "decision")) out.push(decisionLine(d), ...withinLines(doc, d));
   for (const a of ofKind(doc, "artifact")) out.push(artifactLine(doc, a));
   for (const c of ofKind(doc, "commit")) out.push(...commitLine(doc, c));
   for (const l of ofKind(doc, "link")) {

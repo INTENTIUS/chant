@@ -133,9 +133,20 @@ The walk gathers three sources before it relates any of them:
 2. The decisions whose `constrains` cover the region, read through each `--kind` record kind. A `path:` entry covers the region when it is the region or a directory above it, and `member:<name>` covers the region's member. An issue entry covers it when one of the region's commits names that issue in the `origin` repository, and a contract id covers it when a plugin joined that contract to one of the commits. Decisions in the supersession chain of a covering decision come along.
 3. The artifacts those decisions pin. Artifacts relate to code only through decisions, so a file is in the graph because a decision in the graph pins it.
 
-Each gap is a `finding` node with a closed code. For example, a commit made while no decision constrained the region by path is `intent-commit-undecided`, and a region constrained only through its member is `intent-constraint-coarse`. The [read contract](/chant/reference/workspace-read-contract/#the-intent-graph) lists every node kind, edge kind and code.
+Each gap is a `finding` node with a closed code. For example, a commit made while no decision constrained the region by path is `intent-commit-undecided`, and a region constrained only through its member is `intent-constraint-coarse`.
 
-Without `--json` the walk prints as text with one line per node. The region comes first and the findings last, in the order the walk runs.
+A decision's window runs from the commit that added its record to the commit that added the record superseding it. A commit made inside the window is not taken to carry the decision out ([#2656](https://github.com/INTENTIUS/chant/issues/2656)). It has a `within` edge to the decision and the state `decided-by-window`, unless it is the decision's own work, which is `decided`. A commit is a decision's own work when a [commit join](#commit-joins) gives it a unit, and either the unit or its contract names the decision in `decisions`, or the decision constrains that contract. The [read contract](/chant/reference/workspace-read-contract/#the-intent-graph) lists every node kind, edge kind and code.
+
+Without `--json` the walk prints as text with one line per node. The region comes first and the findings last, in the order the walk runs. Under each decision come the commits made inside its window, and when any of them is not the decision's own work, the question the person has to answer about it:
+
+```
+decision  dec-001 decided: The notes list is sorted newest first; constrains path:app/notes.mjs (path), ...
+  within    9c1e04aa sort the notes alphabetically; unit U-0002, in dec-001's window and not its work
+  decided   3f2b7d10 add the notes list; unit U-0001, dec-001's own work
+  ask       is this drift, a superseding decision nobody wrote down, or the decision being wrong?
+```
+
+The walk over the reference workspace has no such lines, because its decisions constrain `app` only as a member:
 
 ```
 $ chant workspace graph --intent app/src/server.mjs:19 --kind decisions/decision.kind.mjs
@@ -154,7 +165,7 @@ finding   intent-constraint-coarse: app/src/server.mjs is constrained only throu
 
 Units of work, contracts and evidence come from a plugin, because core has no model of them. A kind file given with `--kind` supplies them through its `commitJoins` export. The file may also export a `recordKind`, or only `commitJoins`.
 
-The export is either a function or data. A function gets each commit that touched the region (`sha`, `subject`, `body`, `author`, `date` and `trailers`) and a context whose `read(path)` returns a file from the workspace root in the tree read. It returns any of `unit`, `contract` and `evidence`, each an object with a string `id`, and `authorship`, the trailer keys on the commit that claim who wrote it.
+The export is either a function or data. A function gets each commit that touched the region (`sha`, `subject`, `body`, `author`, `date` and `trailers`) and a context whose `read(path)` returns a file from the workspace root in the tree read. It returns any of `unit`, `contract` and `evidence`, each an object with a string `id`, and `authorship`, the trailer keys on the commit that claim who wrote it. A unit or contract may list `decisions`, the ids of the decision records it carries out, which makes the commit those decisions' own work.
 
 ```js
 export function commitJoins(commit, context) {
@@ -175,7 +186,20 @@ export const commitJoins = {
 };
 ```
 
-Core reads trailers as git parses them and gives no key a meaning of its own. A commit that carries an authorship trailer and is not `attested` is the finding `intent-trailer-unverified`. A join that throws leaves that commit without its unit, adds the reason `intent-plugin-failed`, and makes the command exit 1 with the document still printed.
+The function may also return `findings`, each with a `code`, a `message` and `refs`, the things it is about. This is how a plugin reports what it knows and core doesn't, such as a contract whose criteria changed in a commit that names no decision. The code must be `plugin:<name>:<code>`, where `<name>` is the kind's name: its record kind's name, or the file's name without `.kind.mjs`. The graph carries each as a finding node about the commit, and resolves the `refs` that name nodes in the graph to their ids.
+
+```js
+export function commitJoins(commit, context) {
+  // ...
+  return {
+    unit: { id, contract: unit.contract },
+    contract: { id: unit.contract },
+    findings: criteriaChanged ? [{ code: "plugin:units:criteria-changed", message: `${unit.contract} changed its criteria with no decision`, refs: [unit.contract] }] : [],
+  };
+}
+```
+
+Core reads trailers as git parses them and gives no key a meaning of its own. A commit that carries an authorship trailer and is not `attested` is the finding `intent-trailer-unverified`. A join that throws leaves that commit without its unit, adds the reason `intent-plugin-failed`, and makes the command exit 1 with the document still printed. A finding code outside the kind's namespace counts as a throw.
 
 ## Options
 

@@ -18,9 +18,19 @@
  * Either way core never parses a plugin's own trailer or record format: it
  * reads the trailers git reports and hands them over, and a key means
  * something only because a kind file said so.
+ *
+ * Two parts of a join's answer carry meaning core acts on (#2656). A unit or
+ * contract may list `decisions`, the ids of the decision records it carries
+ * out; a commit whose unit or contract names a decision is that decision's own
+ * work. The function form may also return `findings`, each a code in the
+ * kind's own namespace (`plugin:<name>:<code>`), a message and the refs it is
+ * about, which the graph carries as finding nodes. That is how a plugin says
+ * what it knows and core does not, such as a contract whose criteria changed
+ * in a commit that names no decision.
  */
 
 import { z } from "zod";
+import { isPluginCode } from "./reason-codes";
 
 /** A commit as the hook sees it. */
 export interface IntentCommit {
@@ -41,10 +51,23 @@ export interface CommitJoinContext {
   at: string | null;
 }
 
-/** A plugin's unit, contract or evidence: an id and whatever fields the plugin records. */
+/**
+ * A plugin's unit, contract or evidence: an id and whatever fields the plugin
+ * records. On a unit or contract, `decisions`, a list of record ids, names the
+ * decisions it carries out (#2656).
+ */
 export interface JoinedEntity {
   id: string;
   [field: string]: unknown;
+}
+
+/** A finding a plugin contributes for one commit (#2656). */
+export interface PluginFinding {
+  /** `plugin:<name>:<code>`, where `<name>` is the kind's name. */
+  code: string;
+  message: string;
+  /** What the finding is about: node ids, commit shas, record ids, unit, contract or evidence ids, or paths. */
+  refs?: string[];
 }
 
 /** What a join says about one commit. Every part is optional. */
@@ -57,6 +80,8 @@ export interface CommitJoin {
   evidence?: JoinedEntity | JoinedEntity[];
   /** Trailer keys on this commit that claim who wrote it, which the plugin vouches for. */
   authorship?: string[];
+  /** Findings about this commit, in the kind's own code namespace. Function form only. */
+  findings?: PluginFinding[];
 }
 
 export type CommitJoinsFunction = (commit: IntentCommit, context: CommitJoinContext) => CommitJoin | null | undefined | Promise<CommitJoin | null | undefined>;
@@ -135,8 +160,17 @@ export function joinByData(data: CommitJoinsData, commit: IntentCommit, context:
   return out;
 }
 
-/** Run a kind's joins for one commit, checking what a function returns. */
-export async function runCommitJoins(joins: CommitJoins, commit: IntentCommit, context: CommitJoinContext): Promise<CommitJoin> {
+/** The record ids a unit or contract says it carries out: its `decisions` field, when that is a list of strings. */
+export function entityDecisions(entity: JoinedEntity | undefined): string[] {
+  const list = entity?.decisions;
+  return Array.isArray(list) ? list.filter((d): d is string => typeof d === "string" && d !== "") : [];
+}
+
+/**
+ * Run a kind's joins for one commit, checking what a function returns.
+ * `name` is the kind's name, the namespace its findings' codes must use.
+ */
+export async function runCommitJoins(joins: CommitJoins, commit: IntentCommit, context: CommitJoinContext, name: string): Promise<CommitJoin> {
   if (joins.form === "data") return joinByData(joins.data, commit, context);
   const result = await joins.join(commit, context);
   if (result === null || result === undefined) return {};
@@ -160,6 +194,17 @@ export async function runCommitJoins(joins: CommitJoins, commit: IntentCommit, c
   if (result.authorship !== undefined) {
     if (!Array.isArray(result.authorship) || !result.authorship.every((k) => typeof k === "string")) throw new Error("commitJoins returned authorship that is not a list of trailer keys");
     out.authorship = result.authorship;
+  }
+  if (result.findings !== undefined && result.findings !== null) {
+    if (!Array.isArray(result.findings)) throw new Error("commitJoins returned findings that are not a list");
+    out.findings = result.findings.map((f: unknown) => {
+      if (f === null || typeof f !== "object" || Array.isArray(f)) throw new Error("commitJoins returned a finding that is not an object");
+      const { code, message, refs } = f as Record<string, unknown>;
+      if (!isPluginCode(code, name)) throw new Error(`commitJoins returned the finding code ${JSON.stringify(code)}, and a plugin's codes are plugin:${name}:<code>, with <code> in lower case words joined by dashes`);
+      if (typeof message !== "string" || message === "") throw new Error(`commitJoins returned the finding ${code} with no message`);
+      if (refs !== undefined && (!Array.isArray(refs) || !refs.every((r) => typeof r === "string"))) throw new Error(`commitJoins returned the finding ${code} with refs that are not a list of strings`);
+      return { code, message, refs: (refs as string[] | undefined) ?? [] };
+    });
   }
   return out;
 }

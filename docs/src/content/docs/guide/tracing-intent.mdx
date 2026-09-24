@@ -48,6 +48,19 @@ Each finding marks a place where the record is thin. None of them says the code 
 
 The [read contract](/chant/reference/workspace-read-contract/#reason-codes) lists every code.
 
+Code can move away from a decision while the decision is still in force. chant can't tell when that happened, so it lists every commit made inside the decision's window under the decision ([#2656](https://github.com/INTENTIUS/chant/issues/2656)):
+
+```
+decision  dec-001 decided: The notes list is sorted newest first; constrains path:app/notes.mjs (path), ...
+  within    9c1e04aa sort the notes alphabetically; unit U-0002, in dec-001's window and not its work
+  decided   3f2b7d10 add the notes list; unit U-0001, dec-001's own work
+  ask       is this drift, a superseding decision nobody wrote down, or the decision being wrong?
+```
+
+The `decided` line is the decision's own work, because a plugin joined it to a unit whose record, or whose contract, names the decision. Only timing ties a `within` line to the decision. For each one, decide which of the three it is. Drift means the code should go back. A superseding decision nobody wrote down means a new record is needed. If the decision was wrong, reopen it. Without a plugin that joins units, every commit inside a window is a `within` commit.
+
+A plugin can add its own findings about a commit, with codes such as `plugin:units:criteria-changed`. They print with the other findings and often point at the commit you most need to judge.
+
 ## Look at an older state
 
 Add `--at <rev>` to walk the tree, the records and the history as they were at a commit. Nothing is checked out and nothing is fetched.
@@ -66,7 +79,7 @@ When the workspace records units of work and contracts, a kind file with a `comm
 chant workspace graph --intent app/src/server.mjs --kind decisions/decision.kind.mjs --kind plugins/units.kind.mjs
 ```
 
-Each commit then lists the unit that produced it and the contract it served. [Commit joins](/chant/cli/workspace-graph/#commit-joins) describes the export.
+Each commit then lists the unit that produced it and the contract it served, and a commit whose unit names the decision it carries out shows as that decision's own work. [Commit joins](/chant/cli/workspace-graph/#commit-joins) describes the export.
 
 ## Hand the graph to another tool
 

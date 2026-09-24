@@ -15,7 +15,9 @@ import { GRAPH_ERROR_CODES } from "./graph-cli";
 import { INTENT_ERROR_CODES, INTENT_FINDING_CODES, INTENT_REASON_CODES } from "./intent";
 import { CHECK_CODES, CHECK_ERROR_CODES } from "./lineage-check";
 import { GROUP_REASON_CODES, MEMBER_REASON_CODES } from "./ls";
-import { isReasonCode, REASON_CODES, REASONS } from "./reason-codes";
+import intentSchema from "./intent.schema.json";
+import { isPluginCode, isReasonCode, REASON_CODES, REASONS } from "./reason-codes";
+import { contract } from "./__fixtures__/contract-repo";
 import { READ_ERROR_CODES, RECORD_REASON_CODES, RECORD_WARNING_CODES } from "./records";
 import { STATUS_ERROR_CODES, STATUS_REASON_CODES } from "./status";
 
@@ -109,6 +111,34 @@ describe("the closed list of reason codes", () => {
       }
     }
     expect(seen).toBeGreaterThan(30);
+  });
+
+  test("a plugin's finding codes are in its own namespace, outside the list, and the intent schema accepts them (#2656)", () => {
+    expect(isPluginCode("plugin:chud:contract-criteria-changed")).toBe(true);
+    expect(isPluginCode("plugin:chud:contract-criteria-changed", "chud")).toBe(true);
+    expect(isPluginCode("plugin:chud:contract-criteria-changed", "units")).toBe(false);
+    for (const bad of ["plugin:chud", "plugin::x", "plugin:chud:Upper", "plugin:chud:a:b", "intent-commit-bare", 7]) expect(isPluginCode(bad), String(bad)).toBe(false);
+    expect(isReasonCode("plugin:chud:contract-criteria-changed")).toBe(false);
+    const { validate } = contract(intentSchema);
+    const finding = (code: string) => ({ id: `finding:${code}:1`, kind: "finding", code, message: "m", concerns: [] });
+    const doc = (code: string) => ({
+      $schema: intentSchema.$id,
+      contract: 1,
+      chant: "0.0.0",
+      at: null,
+      workspace: { name: "w", root: "." },
+      region: "region:.",
+      history: { rev: null, follows: "directory", shallow: false },
+      kinds: [],
+      nodes: [finding(code)],
+      edges: [],
+      reasons: [],
+      summary: { commits: 0, decisions: 0, artifacts: 0, findings: 1 },
+    });
+    expect(validate(doc("plugin:chud:contract-criteria-changed"))).toBe(true);
+    expect(validate(doc("intent-commit-bare"))).toBe(true);
+    expect(validate(doc("plugin:chud:Nope"))).toBe(false);
+    expect(validate(doc("made-up-code"))).toBe(false);
   });
 
   test("the read-contract page documents every code", () => {
