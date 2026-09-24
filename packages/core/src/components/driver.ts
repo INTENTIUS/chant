@@ -49,6 +49,7 @@
 import { topoSort } from "../codegen/topo-sort";
 import { evaluateGate, gitGateLedgerPort, type GateLedgerPort } from "../op/gate";
 import { gateName } from "../op/gate-name";
+import { warnOnUnboundComponentApproval } from "./unbound-gate-approval";
 import type { PendingGateRecord } from "../lifecycle/gate-ledger";
 import type { CapabilityRegistry, DeployContext } from "./capability";
 import type { RunProgressEvent, RunProgressStatus } from "./run-progress";
@@ -479,6 +480,7 @@ async function runPhase(
         }
         throw new GateStop(gateRecords, [], check.pending, check.pushed, check.pushWarning);
       }
+      warnOnUnboundComponentApproval(ctx.component, gateName(gate), ctx.env, check.resolution);
       gateRecords.push({
         ...base,
         status: "ok" as const,
