@@ -141,9 +141,9 @@ describe("behold's member kinds from their packages (#2545)", () => {
     expect(resolveKind(registry, tree, "estates/inline").claims.map((k) => k.name)).toEqual(["choudoufu", "terraform"]);
   });
 
-  test("chant workspace check passes with no error: no member is outranked, and no probes tie", () => {
+  test("chant workspace check passes with no error: no member is outranked, and no probes tie", async () => {
     const { root } = workspace();
-    const report = runDeclarationChecks(root);
+    const report = await runDeclarationChecks(root);
     expect(report.diagnostics.filter((d) => d.severity === "error")).toEqual([]);
     expect(report.ok).toBe(true);
   });

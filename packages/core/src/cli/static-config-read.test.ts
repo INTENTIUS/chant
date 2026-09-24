@@ -16,7 +16,9 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { auditCommand } from "./commands/audit";
+import { runCommandInProcess } from "./main";
 import { resetLexiconModules } from "../lexicon-module";
+import { captureRun } from "../workspace/member-run";
 
 const thisDir = dirname(fileURLToPath(import.meta.url));
 const mainTs = resolve(thisDir, "main.ts");
@@ -149,4 +151,58 @@ describe("audit names a path lexicon by its path and leaves it out of the instal
     expect(existsSync(marker)).toBe(false);
     expect(existsSync(moduleMarker)).toBe(false);
   });
+});
+
+/**
+ * chant#2618 — the other ways into `audit`: main's dispatch run in-process
+ * (what `workspace member-run` calls once per member), and `workspace audit`
+ * through the CLI, which reaches it through that member-run process.
+ */
+describe("chant audit never evaluates the audited repository's config (chant#2618)", () => {
+  test("main's in-process dispatch runs neither the config nor the path lexicon's module", async () => {
+    const run = await captureRun(() => runCommandInProcess(["audit", project]));
+    expect(run.exitCode).toBe(0);
+    expect(existsSync(marker)).toBe(false);
+    expect(existsSync(moduleMarker)).toBe(false);
+  }, 90_000);
+
+  test("workspace audit runs no member's config and no path lexicon's module", () => {
+    // The project becomes the root member of a workspace, with a second
+    // member whose config and path lexicon leave markers of their own.
+    const apiMarker = join(root, "api-config-ran");
+    const apiModuleMarker = join(root, "api-module-ran");
+    const api = join(project, "api");
+    mkdirSync(join(api, ".github", "workflows"), { recursive: true });
+    mkdirSync(join(api, "gh"), { recursive: true });
+    writeFileSync(
+      join(api, "chant.config.ts"),
+      `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(apiMarker)}, "ran");\n` +
+        `export default { lexicons: [{ name: "github", module: "./gh/index.ts" }] };\n`,
+    );
+    writeFileSync(
+      join(api, "gh", "index.ts"),
+      `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(apiModuleMarker)}, "ran");\nexport {};\n`,
+    );
+    writeFileSync(
+      join(api, ".github", "workflows", "ci.yml"),
+      "on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n",
+    );
+    writeFileSync(
+      join(project, "chant.workspace.json"),
+      JSON.stringify({
+        name: "acme",
+        schema: 1,
+        members: [
+          { name: "root", dir: ".", kind: "chant" },
+          { name: "api", dir: "api", kind: "chant" },
+        ],
+      }),
+    );
+    const output = chant(["workspace", "audit", "--json"], project);
+    expect(output).toContain('"api"');
+    expect(existsSync(marker)).toBe(false);
+    expect(existsSync(moduleMarker)).toBe(false);
+    expect(existsSync(apiMarker)).toBe(false);
+    expect(existsSync(apiModuleMarker)).toBe(false);
+  }, 180_000);
 });
