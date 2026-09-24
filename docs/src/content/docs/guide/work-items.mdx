@@ -1,0 +1,162 @@
+---
+title: Work Items
+description: Keep a queue of work as records in the workspace, with needs and implements links, and read which ones are ready with chant workspace records and chant workspace graph --intent.
+diataxis: how-to
+---
+
+A work item is a gap between what the workspace decided and what it holds, given an id, an owner and a lifecycle.
+
+The intent graph already reports those gaps as findings: a decision nobody has carried out, a commit no decision covers, an artifact that drifted from the decision that pinned it. Writing one of them down as a file in the workspace, tracked in git like a decision, makes it work someone can take. People and agents read the same files, so the queue needs no server ([#2683](https://github.com/INTENTIUS/chant/issues/2683)).
+
+## Write one
+
+They live in `work/` beside the kind file `work/work.kind.mjs` and its schema `work/work.schema.json`. The reference workspace names that kind file in the top-level `records` of its `chant.workspace.json`, so `records` and `graph --intent` read it without `--kind`. Each is a Markdown file named `W-NNN-<slug>.md`, with front matter and a description in the body. This is `W-001` in the reference workspace:
+
+```markdown
+---
+schema: 1
+id: "W-001"
+title: "The app renders the home screen from its spec"
+state: "in-progress"
+implements:
+  - "ref-002"
+needs: []
+constrains:
+  - "path:design/screens/home.json"
+  - "member:app"
+evidence: []
+owner: "lex00"
+opened_on: "2026-09-24"
+source:
+  finding: "intent-decision-unimplemented"
+  region: "design/screens/home.json"
+  decision: "ref-002"
+supersedes: []
+---
+
+# The app renders the home screen from its spec
+
+ref-002 puts the home screen's spec in the design member, and the app is to implement it. ...
+```
+
+| Field | What it holds |
+|---|---|
+| `id` | `W-` and three or more digits. Never reused. |
+| `title` | What the work is, in a few words. |
+| `state` | `open`, `in-progress`, `done` or `dropped`. `done` and `dropped` are closed. |
+| `implements` | The decisions the work carries out, by id. May be empty. |
+| `needs` | The work that must be done first, by id. May be empty. |
+| `constrains` | What the work touches, in the grammar decisions use: `path:<path>`, `member:<name>`, `owner/repo#n` or a decision id. At least one entry. |
+| `evidence` | The proof of done: links, or workspace files pinned by hash. Empty while the work is open. |
+| `owner` | Who has taken the work, a forge login or an agent's name. Optional. |
+| `opened_on`, `closed_on` | Dates as `YYYY-MM-DD`. `closed_on` is set on `done` or `dropped`. |
+| `source` | Where the work came from: a gap, an issue (`issue`), or the workspace (`kind: workspace` with a `member`). |
+| `supersedes` | Earlier work this one replaces, as `{ work: <id> }`. |
+
+To write one without an editor, pass its fields as JSON to `records new` and leave out `id`. The command picks the next id (`W-003` after `W-002`) and writes the file once the schema accepts it:
+
+```bash
+chant workspace records new work --from fields.json
+chant workspace records amend W-003 --kind work --set - <<< '{"state": "in-progress", "owner": "lex00"}'
+```
+
+A work kind declares no reviews, so `records review` on W-003 is refused with `review-unsupported`.
+
+Fields that start with `x-` are free for your own use. W-001 keeps its id while its state changes, so the file is edited in place rather than written once under a content hash. A kind may read JSON files since [ws-053](https://github.com/INTENTIUS/chant/issues/2664), but `records new` and `records amend` write Markdown only, so the work kind stays Markdown until they write JSON.
+
+## Start from a gap
+
+`source` names the gap the work closes:
+
+```yaml
+source:
+  finding: "intent-decision-unimplemented"
+  region: "design/screens/home.json"
+  decision: "ref-002"
+```
+
+`finding` is one of the intent graph's finding codes, or a plugin's `plugin:<name>:<code>`. `region` is the path, or `path:start-end`, the finding fired on. `decision` and `artifact` name what the finding concerned, when it concerned one. To find gaps worth taking on, walk a region and read its findings:
+
+```bash
+chant workspace graph --intent design/screens/home.json
+```
+
+A finding somebody has taken ends with `addressed by W-001 (in-progress)`, and the rest are the queue nobody has picked from yet. Work that didn't come from a finding uses the `issue` or `workspace` source that decisions use.
+
+## Ready and blocked
+
+`chant workspace records` reads the work kind, and the decision kind it names in `work.decisions`, at the same revision:
+
+```bash
+cd reference-workspace
+chant workspace records --kind work/work.kind.mjs
+```
+
+```
+W-001  in-progress  The app renders the home screen from its spec
+       implements ref-002 (decided)
+W-002  open         The app's test checks the home page against the spec
+       blocked by W-001 (in-progress)
+2 records: 2 valid, 0 invalid, 0 superseded
+```
+
+With `--json`, each record has three more fields:
+
+- `ready` is true when the record is valid, not superseded, `open`, and every id in its `needs` is `done`.
+- `blockedBy` lists each need that is not done, with its state.
+- `implements` lists each decision the record carries out, with the decision's state.
+
+The document also lists every decision as `decisions[]`, each with `implementedBy`. A decided decision with an empty `implementedBy` has nobody working on it.
+
+The read warns about links it can't follow. The warnings leave the record valid:
+
+| Warning | The record |
+|---|---|
+| `work-needs-unknown` | needs an id no record has, so it stays blocked |
+| `work-implements-unknown` | implements an id no decision has |
+| `work-needs-cycle` | needs itself through its `needs` links, so it can never be ready |
+| `work-implements-undecided` | implements a decision that is still `proposed` or was `withdrawn` |
+| `work-done-unpinned` | is done with an empty evidence list |
+| `work-closed-without-date` | is done or dropped with no `closed_on` |
+
+## Pick ready work as an agent
+
+An agent asks for the ready records and takes one by writing its name into `owner` and moving `state` to `in-progress` in a pull request:
+
+```bash
+chant workspace records --kind work/work.kind.mjs --json \
+  | jq '.records[] | select(.ready) | {id, title: .data.title, implements}'
+```
+
+The decisions nobody has started are one query away too:
+
+```bash
+chant workspace records --kind work/work.kind.mjs --json \
+  | jq '.decisions[] | select(.state == "decided" and (.implementedBy | length) == 0) | .id'
+```
+
+Two agents that take the same record change the same lines of the same file, so the second pull request conflicts and one of them picks again.
+
+## The window and the three findings
+
+The window of W-001 runs from the commit that added its record to the commit that moved it to `done` or `dropped`. While it is open, the window runs to the revision the walk reads. A commit that changes the region inside the window has a `within` edge to W-001 with the state `worked`. The commit's own state still comes from the decisions, because a work record says who is doing something, and a decision says what was chosen.
+
+The work kind adds three findings to `graph --intent`:
+
+| Finding | What to ask |
+|---|---|
+| `intent-decision-unimplemented` | A decided decision constrains the region, and no work record and no commit carries it out. Should someone open one for it? |
+| `intent-work-blocked` | Commits landed under a work record while work it needs was not done. Was the need wrong, or did the work start too early? |
+| `intent-work-open-decided-code` | Commits in the region are a decision's own work, and the work record implementing that decision is still open. Is the work done, or is part of it still missing? |
+
+## Close one
+
+Work that came from a gap is done when the finding stops firing on its region. Walk the region again before you close it. If the finding still fires on a record marked `done`, the walk warns `work-done-gap-open` on that record. Only `graph --intent` walks a region, so `records` doesn't raise this warning.
+
+Some gaps can't be walked again, such as one that came from an issue. For those, the evidence is the proof. Pin the file the work produced by its hash:
+
+```bash
+chant workspace records pin design/screens/home.json
+```
+
+Copy the `path` and `sha256` it prints into `evidence` with a `title`, set `state: "done"` and `closed_on`, and open the pull request. `records` then reports drift if the file changes after the work was closed, as it does for a decision's pins.

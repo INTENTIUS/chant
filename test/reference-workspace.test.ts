@@ -37,6 +37,10 @@
  *   ref-001 and ref-002 by member, the commit that wrote line 19, and the
  *   findings #2651's acceptance names. No decision constrains the line by
  *   path, so no commit is inside a decision's window (#2656).
+ * - the work items W-001 and W-002 (#2683) validate against the work schema
+ *   beside them, `records` reads W-002 as blocked by W-001, and
+ *   `graph --intent design/screens/home.json` with the work kind shows both,
+ *   with the implements and needs edges. `init --from` carries them.
  *
  * The per-member workspace commands and their contract tests join here as
  * each phase lands (#2537, #2536).
@@ -318,15 +322,19 @@ describe("decision files", () => {
     for (const r of doc.records) expect(dirname(r.path)).toBe("reference-workspace/decisions");
   });
 
-  test("the declaration names the decision and session kinds, so ls lists them and records reads them without --kind (#2680)", async () => {
+  test("the declaration names the decision, work and session kinds, so ls lists them and records reads them without --kind (#2680, #2683)", async () => {
     const ls = lsJson(fixture) as unknown as { workspace: { records: unknown[] }; members: { name: string; records: unknown[] }[] };
-    expect(ls.workspace.records).toEqual([{ name: "decision", path: "decisions/decision.kind.mjs", kind: "decision", reason: null }]);
+    expect(ls.workspace.records).toEqual([
+      { name: "decision", path: "decisions/decision.kind.mjs", kind: "decision", reason: null },
+      { name: "work", path: "work/work.kind.mjs", kind: "work", reason: null },
+    ]);
     expect(ls.members.find((m) => m.name === "design")!.records).toEqual([{ name: "session", path: "design/sessions/session.kind.mjs", kind: "session", reason: null }]);
     const run = chant(fixture, "workspace", "records", "--current", "--json");
     expect(run.status, run.stderr).toBe(0);
     const set = JSON.parse(run.stdout) as { kinds: { kind: { name: string }; declared: unknown; records: { id: string }[] }[] };
     expect(set.kinds.map((k) => [k.kind.name, k.declared])).toEqual([
       ["decision", { member: null, path: "decisions/decision.kind.mjs", name: null }],
+      ["work", { member: null, path: "work/work.kind.mjs", name: null }],
       ["session", { member: "design", path: "design/sessions/session.kind.mjs", name: null }],
     ]);
     expect(set.kinds[0].records.map((r) => r.id)).toEqual(files.map((f) => f.slice(0, "ref-000".length)));
@@ -434,6 +442,39 @@ describe("the composite graph on the fixture (#2662)", () => {
   });
 });
 
+describe("work items (#2683)", () => {
+  const workDir = join(fixture, "work");
+  const files = readdirSync(workDir)
+    .filter((f) => /^W-[0-9]{3,}-.+\.md$/.test(f))
+    .sort();
+
+  test("each validates against the work schema beside it", () => {
+    expect(files).toEqual(["W-001-the-app-renders-the-home-screen-spec.md", "W-002-the-app-test-checks-the-home-page-against-the-spec.md"]);
+    const mod = createRequire(join(repoRoot, "packages", "core", "package.json"))("ajv") as { default?: unknown };
+    const Ajv = (mod.default ?? mod) as new (opts: object) => { compile(s: object): Validate };
+    const validate = new Ajv({ allErrors: true, strict: false }).compile(JSON.parse(readFileSync(join(workDir, "work.schema.json"), "utf-8")) as object);
+    for (const f of files) {
+      const fm = parseFrontMatter(readFileSync(join(workDir, f), "utf-8"));
+      if (!fm.ok) throw new Error(`${f}: ${fm.message}`);
+      expect(validate(fm.value), `${f}: ${JSON.stringify(validate.errors)}`).toBe(true);
+    }
+  });
+
+  test("records reads them: W-001 implements ref-002, and W-002 is blocked by W-001", async () => {
+    const doc = await queryRecords({ kind: "work/work.kind.mjs", cwd: fixture });
+    if ("error" in doc) throw new Error(`${doc.error.code}: ${doc.error.message}`);
+    expect(doc.kind.name).toBe("work");
+    expect(doc.summary).toEqual({ total: 2, valid: 2, invalid: 0, superseded: 0 });
+    const [w1, w2] = doc.records;
+    expect(w1).toMatchObject({ id: "W-001", state: "in-progress", ready: false, blockedBy: [], implements: [{ id: "ref-002", state: "decided" }], warnings: [] });
+    expect(w2).toMatchObject({ id: "W-002", state: "open", ready: false, blockedBy: [{ id: "W-001", state: "in-progress" }], implements: [], warnings: [] });
+    expect(doc.decisions!.map((d) => [d.id, d.implementedBy])).toEqual([
+      ["ref-001", []],
+      ["ref-002", [{ id: "W-001", state: "in-progress" }]],
+    ]);
+  });
+});
+
 describe("the intent graph on the fixture (#2651)", () => {
   const intentSchema = JSON.parse(readFileSync(join(workspaceSrc, "intent.schema.json"), "utf-8")) as object;
 
@@ -470,6 +511,49 @@ describe("the intent graph on the fixture (#2651)", () => {
     // Decisions reach artifacts, and ref-002 pins the screen spec.
     expect(doc.edges).toContainEqual({ kind: "pins", from: "record:decision/ref-002", to: "artifact:design/screens/home.json", pinnedSha256: expect.any(String), pinState: "pinned" });
   });
+
+  test("graph --intent design/screens/home.json with the work kind shows W-001 and W-002, the implements edge and the needs edge (#2683)", () => {
+    const run = chant(fixture, "workspace", "graph", "--intent", "design/screens/home.json", "--kind", "decisions/decision.kind.mjs", "--kind", "work/work.kind.mjs", "--json");
+    expect(run.status, run.stderr).toBe(0);
+    const doc = JSON.parse(run.stdout) as {
+      region: string;
+      nodes: { id: string; kind: string; code?: string; state?: string | null; ready?: boolean; blockedBy?: unknown[]; addressed?: boolean }[];
+      edges: { kind: string; from: string; to: string; granularity?: string }[];
+    };
+    const validate = compile2020(intentSchema);
+    expect(validate(doc), JSON.stringify(validate.errors, null, 2)).toBe(true);
+    const work = doc.nodes.filter((n) => n.kind === "work");
+    expect(work.map((n) => [n.id, n.state, n.ready, n.blockedBy])).toEqual([
+      ["record:work/W-001", "in-progress", false, []],
+      ["record:work/W-002", "open", false, [{ id: "W-001", state: "in-progress" }]],
+    ]);
+    expect(doc.edges).toContainEqual({ kind: "constrains", from: "record:work/W-001", to: doc.region, granularity: "path", entry: "path:design/screens/home.json" });
+    expect(doc.edges).toContainEqual({ kind: "implements", from: "record:work/W-001", to: "record:decision/ref-002" });
+    expect(doc.edges).toContainEqual({ kind: "needs", from: "record:work/W-002", to: "record:work/W-001" });
+    // ref-002 has a work item, so the gap W-001 came from no longer fires.
+    // (The declared-kinds test below walks the same kinds without --kind.)
+    const codes = doc.nodes.filter((n) => n.kind === "finding").map((n) => n.code);
+    expect(codes).not.toContain("intent-decision-unimplemented");
+    for (const f of doc.nodes.filter((n) => n.kind === "finding")) expect(typeof f.addressed).toBe("boolean");
+  });
+
+  test("graph --intent app/src/server.mjs with no --kind reads the declared kinds and shows the work nodes (#2680, #2683)", () => {
+    const run = chant(fixture, "workspace", "graph", "--intent", "app/src/server.mjs", "--json");
+    expect(run.status, run.stderr).toBe(0);
+    const doc = JSON.parse(run.stdout) as {
+      region: string;
+      kinds: { file: string; records: string | null }[];
+      nodes: { id: string; kind: string }[];
+      edges: { kind: string; from: string; to: string; granularity?: string }[];
+    };
+    const validate = compile2020(intentSchema);
+    expect(validate(doc), JSON.stringify(validate.errors, null, 2)).toBe(true);
+    expect(doc.kinds.map((k) => k.records)).toEqual(["decision", "work", "session"]);
+    // W-001 constrains member:app. W-002 constrains paths outside this file and only needs W-001, so it stays out.
+    expect(doc.nodes.filter((n) => n.kind === "work").map((n) => n.id)).toEqual(["record:work/W-001"]);
+    expect(doc.edges).toContainEqual({ kind: "constrains", from: "record:work/W-001", to: doc.region, granularity: "member", entry: "member:app" });
+    expect(doc.edges).toContainEqual({ kind: "implements", from: "record:work/W-001", to: "record:decision/ref-002" });
+  });
 });
 
 describe("chant init --from on the fixture", () => {
@@ -497,6 +581,14 @@ describe("chant init --from on the fixture", () => {
       if ("error" in doc) throw new Error(`${doc.error.code}: ${doc.error.message}`);
       expect(doc.summary.invalid).toBe(0);
       expect(doc.records.map((r) => r.id)).toContain("ref-001");
+      // The work items come along, and read against the copy's decisions (#2683).
+      const work = await queryRecords({ kind: "work/work.kind.mjs", cwd: target });
+      if ("error" in work) throw new Error(`${work.error.code}: ${work.error.message}`);
+      expect(work.records.map((r) => [r.id, r.valid, r.ready])).toEqual([
+        ["W-001", true, false],
+        ["W-002", true, false],
+      ]);
+      expect(Object.keys(scope.files)).toContain("work/W-001-the-app-renders-the-home-screen-spec.md");
 
       // The copy is a workspace of its own, outside any git repository.
       const ls = lsJson(target);

@@ -73,6 +73,14 @@ export const REASONS = {
   "record-supersedes-pending": "A supersedes link from a record whose state is weaker than the record it names, so the link has no effect yet.",
   "record-no-evidence": "The record's evidence list is empty: it cites nothing and pins no file. Information for a reviewer, never an error.",
   "review-undigested": "A verdict names no digest of the text it judged. It still counts, and an amendment does not stop it counting.",
+  // A work record that is valid but warned about (records and graph --intent, #2683).
+  "work-needs-unknown": "A work record's needs list names a work id no record has, so the item stays blocked.",
+  "work-implements-unknown": "A work record's implements list names a decision id no decision has.",
+  "work-needs-cycle": "A work record needs itself through its needs links, so it can never be ready.",
+  "work-implements-undecided": "A work record implements a decision whose state is not approved, such as proposed.",
+  "work-done-unpinned": "A work record is done and its evidence list is empty: nothing shows the work was done.",
+  "work-closed-without-date": "A work record is done or dropped and has no closing date.",
+  "work-done-gap-open": "A work record is done, and the finding it came from still fires on its region. Only graph --intent raises it.",
   // A verdict the quorum does not count (records, #2671, #2672).
   "review-decider": "The verdict is the decider's own, and the quorum counts verdicts besides the decider's.",
   "review-agent": "The reviewer holds the agent role in the trust policy at base.",
@@ -118,6 +126,9 @@ export const REASONS = {
   "intent-evidence-unpinned": "A decision's evidence has no hash: a URL, or a path with no sha256.",
   "intent-trailer-unverified": "A commit carries a trailer a plugin says claims authorship, and the commit is not attested.",
   "intent-region-unconstrained": "No decision constrains the region at any granularity.",
+  "intent-decision-unimplemented": "A decided decision constrains the region, no work item that is not dropped implements it, and no commit falls in its window.",
+  "intent-work-blocked": "A work item constraining the region has commits in its window while a work item it needs is not done.",
+  "intent-work-open-decided-code": "Commits in the region are a decision's own work while the work item implementing that decision is still open.",
   // Composite instances joined to components (graph --composites, #2662): why the list is empty or has no component.
   "composites-no-chant-member": "No member of kind chant was read, so nothing declares a composite instance or a component.",
   "composites-none-declared": "The members read declare no composite instance.",

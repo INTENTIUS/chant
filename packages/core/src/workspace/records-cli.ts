@@ -44,6 +44,7 @@ import {
   type RecordHistory,
 } from "./records";
 import { gitTree, workingTree, type WorkspaceTree } from "./tree";
+import type { DecisionWork } from "./work";
 import { activeAttestors, type ProvenanceLevel } from "./trust/attestor";
 import { policyAtBase, recordProvenance, resolveBase, type BaseSource, type RecordProvenance } from "./trust/provenance";
 
@@ -102,6 +103,8 @@ export type RecordsDocument =
       trust: TrustView;
       records: RecordView[];
       summary: { total: number; valid: number; invalid: number; superseded: number };
+      /** For a work kind (#2683): each decision its decision kind reads, with the work records implementing it. */
+      decisions?: DecisionWork[];
     }
   | { $schema: string; contract: number; error: { code: ReadErrorCode; message: string } };
 
@@ -291,6 +294,7 @@ export async function queryRecords(query: RecordsQuery): Promise<RecordsDocument
         ...(quorumOptions ? { quorum: computeQuorum(loaded.kind, r, quorumOptions) } : {}),
       })),
       summary: result.summary,
+      ...(result.decisions ? { decisions: result.decisions } : {}),
     };
   } catch (err) {
     if (!(err instanceof RecordReadError)) throw err;
@@ -490,6 +494,12 @@ function formatRecords(records: RecordView[], summary: { total: number; valid: n
     const superseded = r.supersededBy ? `  superseded by ${r.supersededBy}` : "";
     const attested = r.provenance.level === "attested" ? `  attested by ${r.provenance.principal}` : "";
     lines.push(`${(r.id ?? "-").padEnd(idWidth)}  ${(r.state ?? "-").padEnd(stateWidth)}  ${title}${superseded}${attested}${flag}`);
+    if (r.ready !== undefined) {
+      const blocked = (r.blockedBy ?? []).map((b) => `${b.id} (${b.state ?? "unknown"})`).join(", ");
+      const implemented = (r.implements ?? []).map((d) => `${d.id} (${d.state ?? "unknown"})`).join(", ");
+      const status = [r.ready ? "ready" : blocked ? `blocked by ${blocked}` : "", implemented ? `implements ${implemented}` : ""].filter(Boolean).join("; ");
+      if (status) lines.push(`${" ".repeat(idWidth + 2)}${status}`);
+    }
     for (const reason of r.reasons) lines.push(`${" ".repeat(idWidth + 2)}${reason.code}: ${reason.message} (${r.path})`);
     for (const warning of r.warnings) lines.push(`${" ".repeat(idWidth + 2)}warning ${warning.code}: ${warning.message} (${r.path})`);
     const q = r.quorum;

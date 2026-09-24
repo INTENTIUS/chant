@@ -45,6 +45,9 @@ Each finding marks a place where the record is thin. None of them says the code 
 | `intent-artifact-unpinned` | Only a superseded decision pinned this artifact. Should the decision that replaced it pin it too? |
 | `intent-decision-superseded-live` | The decision covering this code was replaced, and nothing newer covers it. Does the replacement apply here? |
 | `intent-region-unconstrained` | No decision covers this code. Is one needed? |
+| `intent-decision-unimplemented` | This decision was made, and no work item or commit carries it out. Should someone open a work item for it? |
+| `intent-work-blocked` | Commits landed under this work item while an item it needs was unfinished. Was the need wrong, or did the work start too early? |
+| `intent-work-open-decided-code` | The code carries out the decision, and its work item is still open. Is the item done, or is part of the work still missing? |
 
 The [read contract](/chant/reference/workspace-read-contract/#reason-codes) lists every code.
 
@@ -60,6 +63,22 @@ decision  dec-001 decided: The notes list is sorted newest first; constrains pat
 The `decided` line is the decision's own work, because a plugin joined it to a unit whose record, or whose contract, names the decision. Only timing ties a `within` line to the decision. For each one, decide which of the three it is. Drift means the code should go back. A superseding decision nobody wrote down means a new record is needed. If the decision was wrong, reopen it. Without a plugin that joins units, every commit inside a window is a `within` commit.
 
 A plugin can add its own findings about a commit, with codes such as `plugin:units:criteria-changed`. They print with the other findings and often point at the commit you most need to judge.
+
+## See the work queue beside the code
+
+When the declaration names a work kind, as the reference workspace's does, the walk also shows the work items that touch the region. With `--kind`, pass the work kind beside the decision kind:
+
+```bash
+cd reference-workspace
+chant workspace graph --intent design/screens/home.json
+```
+
+```
+work      W-001 in-progress, owned by lex00: The app renders the home screen from its spec; constrains path:design/screens/home.json (path); implements ref-002 (decided); from intent-decision-unimplemented on design/screens/home.json
+work      W-002 open: The app's test checks the home page against the spec; constrains path:design/screens/home.json (path); blocked by W-001 (in-progress)
+```
+
+A `work` node is a work item whose `constrains` cover the region, with its state, `ready` and `blockedBy`. It points to the decision it carries out through `implements`, and to each item it waits on through `needs`. Changes made while an item was open reach it through `within`, with the state `worked`. A finding the item came from points to it through `addressed-by`, and the text ends that finding with `addressed by W-001`. A finding nobody has taken shows no such suffix. [Work items](/chant/guide/work-items/) covers the three findings the work kind adds.
 
 ## Look at an older state
 

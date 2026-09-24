@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://intentius.io/chant/schemas/workspace/intent/v1/intent.schema.json",
   "title": "chant workspace graph --intent output",
-  "description": "What `chant workspace graph --intent <region> --json` prints: the intent graph over one region of a workspace (#2651, #2650 section C1, #2524 D8 and D15). The region, the commits that touched it, the decisions whose constrains cover it and their supersession chains, the artifacts those decisions pin, the units, contracts and evidence a plugin joins to the commits, the member links of the region's member, and findings as nodes with closed codes. chant emits it and a reader such as hud draws it. Readers ignore fields and node or edge kinds they do not know; a field is only ever added within a version. The finding, reason and error codes are closed lists. Contract version 1 is written by chant 0.81.0 and newer, and this document was added to it by #2651; a chant without --intent refuses the flag. Every code is in the one closed list of `reason-codes.ts`.",
+  "description": "What `chant workspace graph --intent <region> --json` prints: the intent graph over one region of a workspace (#2651, #2650 section C1, #2524 D8 and D15). The region, the commits that touched it, the decisions whose constrains cover it and their supersession chains, the work items whose constrains cover it (#2683), the artifacts those decisions pin, the units, contracts and evidence a plugin joins to the commits, the member links of the region's member, and findings as nodes with closed codes. chant emits it and a reader such as hud draws it. Readers ignore fields and node or edge kinds they do not know; a field is only ever added within a version. The finding, reason and error codes are closed lists. Contract version 1 is written by chant 0.81.0 and newer, and this document was added to it by #2651; a chant without --intent refuses the flag. Every code is in the one closed list of `reason-codes.ts`.",
   "oneOf": [
     {
       "$ref": "#/$defs/result"
@@ -204,6 +204,9 @@
         },
         {
           "$ref": "#/$defs/decision"
+        },
+        {
+          "$ref": "#/$defs/work"
         },
         {
           "$ref": "#/$defs/artifact"
@@ -714,6 +717,240 @@
         }
       }
     },
+    "work": {
+      "description": "A work item (#2683), a record of a kind with a work block: in the graph when its constrains cover the region as a decision's would, or when a work item there implements, needs or addresses it. Read only when a work kind is passed with --kind.",
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "recordKind",
+        "record",
+        "path",
+        "title",
+        "state",
+        "closed",
+        "valid",
+        "reasons",
+        "provenance",
+        "owner",
+        "ready",
+        "blockedBy",
+        "implements",
+        "needs",
+        "source",
+        "supersededBy",
+        "constrains",
+        "warnings"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^record:"
+        },
+        "kind": {
+          "const": "work"
+        },
+        "recordKind": {
+          "type": "string"
+        },
+        "record": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string",
+          "description": "The record file, from the repository root."
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "state": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "closed": {
+          "type": "boolean",
+          "description": "Whether the kind counts the state as closed, such as done or dropped."
+        },
+        "valid": {
+          "type": "boolean"
+        },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "code",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "enum": [
+                  "record-unparseable",
+                  "record-schema-invalid",
+                  "record-id-duplicate",
+                  "record-supersedes-unknown",
+                  "record-supersedes-conflict"
+                ]
+              },
+              "message": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "provenance": {
+          "type": "object",
+          "required": [
+            "level",
+            "commit",
+            "reason"
+          ],
+          "properties": {
+            "level": {
+              "enum": [
+                "attested",
+                "attested-unverifiable-here",
+                "adopted",
+                "unattested"
+              ]
+            },
+            "commit": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "pattern": "^[0-9a-f]{40,64}$"
+            },
+            "reason": {
+              "type": "string"
+            }
+          }
+        },
+        "owner": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The principal the record names as its owner, or null."
+        },
+        "ready": {
+          "type": "boolean",
+          "description": "As records reports it: valid, not superseded, in the kind's open state, and every need done."
+        },
+        "blockedBy": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/workLink"
+          },
+          "description": "Each need that is not done, with its state."
+        },
+        "implements": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/workLink"
+          },
+          "description": "Each decision the item implements, with its state."
+        },
+        "needs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The work ids the item's needs list names."
+        },
+        "source": {
+          "description": "The gap the item came from, when its source names one: a finding code, the region it fired on, and optionally the decision and artifact it concerned. Null for an item whose source is an issue or the workspace.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "finding",
+                "region"
+              ],
+              "properties": {
+                "finding": {
+                  "type": "string"
+                },
+                "region": {
+                  "type": "string"
+                },
+                "decision": {
+                  "type": "string"
+                },
+                "artifact": {
+                  "type": "string"
+                }
+              }
+            }
+          ]
+        },
+        "supersededBy": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "constrains": {
+          "type": "array",
+          "description": "The entries that cover the region, with their granularity, matched as a decision's are. Empty for an item in the graph only through a link.",
+          "items": {
+            "type": "object",
+            "required": [
+              "entry",
+              "granularity"
+            ],
+            "properties": {
+              "entry": {
+                "type": "string"
+              },
+              "granularity": {
+                "enum": [
+                  "path",
+                  "member",
+                  "contract",
+                  "issue"
+                ]
+              }
+            }
+          }
+        },
+        "warnings": {
+          "type": "array",
+          "description": "The item's work warnings as records reports them, and work-done-gap-open, which only this walk raises: the item is done and the finding in its source still fires on its region.",
+          "items": {
+            "type": "object",
+            "required": [
+              "code",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "enum": [
+                  "work-needs-unknown",
+                  "work-implements-unknown",
+                  "work-needs-cycle",
+                  "work-implements-undecided",
+                  "work-done-unpinned",
+                  "work-closed-without-date",
+                  "work-done-gap-open"
+                ]
+              },
+              "message": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
     "artifact": {
       "description": "A workspace file a decision in the graph pins. Artifacts reach the region only through decisions (#2549).",
       "type": "object",
@@ -858,7 +1095,10 @@
                 "intent-constraint-lost",
                 "intent-evidence-unpinned",
                 "intent-trailer-unverified",
-                "intent-region-unconstrained"
+                "intent-region-unconstrained",
+                "intent-decision-unimplemented",
+                "intent-work-blocked",
+                "intent-work-open-decided-code"
               ]
             },
             {
@@ -888,11 +1128,22 @@
             "type": "string"
           },
           "description": "For a plugin's finding: the refs as the plugin gave them. Those that name a node in the graph are resolved to its id in concerns, after the commit the finding was returned for."
+        },
+        "addressed": {
+          "type": "boolean",
+          "description": "Added by #2683, present when a work kind was read: whether a work item addresses the finding, because the item's source names this finding code on a region that contains or is contained by this one, or because the item implements a decision the finding concerns. A finding with addressed false is work nobody has taken yet."
+        },
+        "addressedBy": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/workLink"
+          },
+          "description": "Added by #2683, present when a work kind was read: the work items addressing the finding, each with its state. Each has an addressed-by edge from the finding."
         }
       }
     },
     "edge": {
-      "description": "constrains: decision to region, file or contract. pins: decision to artifact. touched-by: region to commit. produced-by: commit to unit. serves: unit to contract. supersedes: the newer decision to the one it replaces. cites-evidence: unit, contract or decision to evidence. links: consumer member to producer member. within: commit to a decision whose path window it falls in.",
+      "description": "constrains: decision or work item to region, file or contract. pins: decision to artifact. touched-by: region to commit. produced-by: commit to unit. serves: unit to contract. supersedes: the newer decision to the one it replaces. cites-evidence: unit, contract or decision to evidence. links: consumer member to producer member. within: commit to a decision whose path window it falls in, or to a work item whose window it falls in. implements: work item to the decision it carries out. needs: work item to a work item it waits on. addressed-by: finding to a work item that addresses it.",
       "oneOf": [
         {
           "$ref": "#/$defs/constrainsEdge"
@@ -1106,13 +1357,16 @@
             "serves",
             "supersedes",
             "cites-evidence",
-            "links"
+            "links",
+            "implements",
+            "needs",
+            "addressed-by"
           ]
         }
       }
     },
     "withinEdge": {
-      "description": "A commit made inside a decision's window, from the commit that added the decision's record until the one that added its successor (#2656). state is decided when the decision's own unit made the commit, and decided-by-window otherwise.",
+      "description": "A commit made inside a decision's window, from the commit that added the decision's record until the one that added its successor (#2656). state is decided when the decision's own unit made the commit, and decided-by-window otherwise. Added by #2683: a commit made inside a work item's window, from the commit that added the record to the commit that closed it, that commit included, or to the revision read while it is open, has state worked. A worked edge leaves the commit's own state as the decisions set it.",
       "type": "object",
       "required": [
         "kind",
@@ -1133,8 +1387,28 @@
         "state": {
           "enum": [
             "decided",
-            "decided-by-window"
+            "decided-by-window",
+            "worked"
           ]
+        }
+      }
+    },
+    "workLink": {
+      "type": "object",
+      "required": [
+        "id",
+        "state"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "state": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The linked record's state, or null when no record has the id."
         }
       }
     }

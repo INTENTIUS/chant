@@ -17,7 +17,7 @@
  * document and the text it would write, and writes nothing.
  */
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, posix, relative, resolve } from "node:path";
 import type { CommandContext } from "../cli/registry";
 import type { ReasonCode } from "./reason-codes";
@@ -384,19 +384,22 @@ function failure<C>(schema: string, err: unknown): WriteFailure<C> {
 
 // ── records new ──────────────────────────────────────────────────────────────
 
-const ALLOCATABLE = /^([a-z][a-z0-9]*)-([0-9]+)$/;
+const ALLOCATABLE = /^([A-Za-z][A-Za-z0-9]*)-([0-9]+)$/;
 
 /**
  * The next id: `<prefix>-<n>`, one above the highest number any record in the
- * directory has with that prefix, padded to at least three digits. Ids come
- * from the records' own id field and, for a file that can't be read, from its
- * name, so an id in use is never handed out again. Without `prefix`, every
- * record must share one prefix.
+ * directory has with that prefix, padded to at least three digits, or to the
+ * widest number those records use. Ids come from the records' own id field
+ * and, for a file that can't be read, from its name, so an id in use is never
+ * handed out again. The shape is derived from the records, with the prefix's
+ * case kept: a work kind's `W-001` and `W-002` give `W-003` (#2683), and a
+ * decision's `ws-052` gives `ws-053`. The kind's schema still judges the id
+ * written. Without `prefix`, every record must share one prefix.
  */
 export function allocateId(entries: RecordEntry[], prefix: string | undefined, kind: string): string {
   const seen: Array<{ prefix: string; digits: string }> = [];
   for (const e of entries) {
-    const stem = e.id ?? posix.basename(e.path).match(/^([a-z][a-z0-9]*-[0-9]+)/)?.[1] ?? null;
+    const stem = e.id ?? posix.basename(e.path).match(/^([A-Za-z][A-Za-z0-9]*-[0-9]+)/)?.[1] ?? null;
     const m = stem?.match(ALLOCATABLE);
     if (m) seen.push({ prefix: m[1], digits: m[2] });
   }
@@ -432,8 +435,8 @@ export interface NewRecordOptions {
 /** `records new`: write one new record from validated fields. */
 export async function newRecord(opts: NewRecordOptions): Promise<NewDocument> {
   try {
-    if (opts.prefix !== undefined && !/^[a-z][a-z0-9]*$/.test(opts.prefix)) {
-      throw new RecordWriteError("write-usage-invalid", `--prefix takes lowercase letters and digits, starting with a letter, not ${JSON.stringify(opts.prefix)}`);
+    if (opts.prefix !== undefined && !/^[A-Za-z][A-Za-z0-9]*$/.test(opts.prefix)) {
+      throw new RecordWriteError("write-usage-invalid", `--prefix takes letters and digits, starting with a letter, not ${JSON.stringify(opts.prefix)}`);
     }
     const fields = parseFields(opts.fields, "--from");
     const o = await open(opts.kind, opts.cwd);
@@ -631,7 +634,7 @@ export async function reviewRecord(opts: ReviewRecordOptions): Promise<ReviewDoc
 // ── The command ──────────────────────────────────────────────────────────────
 
 export const WRITE_USAGE = [
-  "chant workspace records new [<kind file>] --from <file|-> [--prefix <prefix>] [--dry-run]",
+  "chant workspace records new [<kind file or declared kind>] --from <file|-> [--prefix <prefix>] [--dry-run]",
   "chant workspace records amend <id> [--kind <kind file>] --set <file|-> [--dry-run]",
   "chant workspace records review <id> [--kind <kind file>] --verdict agree|dissent|abstain --by <principal> [--note <text>] [--session <id>] [--dry-run]",
 ].join("\n");
@@ -661,6 +664,29 @@ function declaredWriteKind(schema: string, cwd: string, missing: string): string
   return kinds[0].file;
 }
 
+/**
+ * The kind file a write names: `arg` itself when it is a file, or else the
+ * declared record kind it names (#2683), by the name the declaration gives it
+ * or its file's name without `.kind.mjs`, so `records new work` finds
+ * `work/work.kind.mjs`. Anything else is returned as given, and loading it
+ * fails with kind-unreadable.
+ */
+export function resolveWriteKind(arg: string, cwd: string): string {
+  try {
+    if (statSync(resolve(cwd, arg)).isFile()) return arg;
+  } catch {
+    // Not a file: try the declared kinds.
+  }
+  let kinds: ReturnType<typeof declaredKindFiles>;
+  try {
+    kinds = declaredKindFiles(cwd);
+  } catch {
+    return arg;
+  }
+  const hit = kinds.filter((k) => (k.declared.name ?? posix.basename(k.declared.path).replace(/(?:\.kind)?\.[cm]?[jt]s$/, "")) === arg);
+  return hit.length === 1 ? hit[0].file : arg;
+}
+
 /** The text of `--from` or `--set`: a file, or standard input for `-`. */
 function readInput(schema: string, flag: string, value: string | undefined, cwd: string): string | WriteFailure<"write-usage-invalid" | "write-input-invalid"> {
   if (value === undefined || value === "") return usage(schema, `${flag} <file|-> is required`);
@@ -685,7 +711,8 @@ export async function runRecordsWrite(ctx: CommandContext): Promise<number> {
     return "error" in doc ? 1 : 0;
   };
   if (verb === "new") {
-    const kind = args.extraPositional2 ?? args.kind ?? declaredWriteKind(RECORDS_NEW_SCHEMA_ID, cwd, "new needs the kind file");
+    const named = args.extraPositional2 ?? args.kind;
+    const kind = named !== undefined ? resolveWriteKind(named, cwd) : declaredWriteKind(RECORDS_NEW_SCHEMA_ID, cwd, "new needs the kind file");
     if (typeof kind !== "string") return print(kind);
     const input = readInput(RECORDS_NEW_SCHEMA_ID, "--from", args.migrateFrom, cwd);
     if (typeof input !== "string") return print(input);
@@ -694,7 +721,7 @@ export async function runRecordsWrite(ctx: CommandContext): Promise<number> {
   const schema = verb === "amend" ? RECORDS_AMEND_SCHEMA_ID : RECORDS_REVIEW_SCHEMA_ID;
   const id = args.extraPositional2;
   if (!id) return print(usage(schema, `${verb} needs the record's id`));
-  const kind = args.kind ?? declaredWriteKind(schema, cwd, "--kind <kind file> is required");
+  const kind = args.kind !== undefined ? resolveWriteKind(args.kind, cwd) : declaredWriteKind(schema, cwd, "--kind <kind file> is required");
   if (typeof kind !== "string") return print(kind);
   if (verb === "amend") {
     const input = readInput(schema, "--set", args.set, cwd);

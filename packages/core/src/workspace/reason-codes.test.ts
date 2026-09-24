@@ -23,6 +23,7 @@ import { READ_ERROR_CODES, RECORD_REASON_CODES, RECORD_WARNING_CODES, REVIEW_REA
 import { AMEND_ERROR_CODES, NEW_ERROR_CODES, REVIEW_ERROR_CODES } from "./records-write";
 import { RECORDS_SINCE_ERROR_CODES } from "./records-since";
 import { STATUS_ERROR_CODES, STATUS_GATE_REASON_CODES, STATUS_REASON_CODES } from "./status";
+import { WORK_WARNING_CODES } from "./work";
 
 const HERE = import.meta.dirname;
 
@@ -40,6 +41,7 @@ const PER_COMMAND: Record<string, readonly string[]> = {
   RECORD_REASON_CODES,
   RECORD_WARNING_CODES,
   REVIEW_REASON_CODES,
+  WORK_WARNING_CODES,
   READ_ERROR_CODES,
   NEW_ERROR_CODES,
   AMEND_ERROR_CODES,

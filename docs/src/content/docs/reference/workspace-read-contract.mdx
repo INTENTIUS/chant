@@ -117,6 +117,13 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `record-supersedes-pending` | warning, `records` | A `supersedes` link from a record whose state is weaker than the record it names, so the link has no effect yet. The record stays valid. |
 | `record-no-evidence` | warning, `records` | The record's evidence list is empty: it cites nothing and pins no file, as a decision made in a product's own design flow may. Information for a reviewer. The record stays valid and `--current` lists it. |
 | `review-undigested` | warning, `records` | A verdict in the record's reviews names no `digest` of the text it judged. It still counts, and an amendment won't stop it counting. The record stays valid. |
+| `work-needs-unknown` | warning, `records` and `graph --intent` | A work record's `needs` names a work id no record has, so the item stays blocked. The record stays valid. |
+| `work-implements-unknown` | warning, `records` and `graph --intent` | A work record's `implements` names a decision id no decision has. The record stays valid. |
+| `work-needs-cycle` | warning, `records` and `graph --intent` | A work record needs itself through its `needs` links, so it can never be ready. The record stays valid. |
+| `work-implements-undecided` | warning, `records` and `graph --intent` | A work record implements a decision whose state is not approved, such as `proposed`. The record stays valid. |
+| `work-done-unpinned` | warning, `records` and `graph --intent` | A work record is done and its evidence list is empty, so nothing shows the work was done. A work record never carries `record-no-evidence`. |
+| `work-closed-without-date` | warning, `records` and `graph --intent` | A work record is done or dropped and has no `closed_on`. |
+| `work-done-gap-open` | warning, `graph --intent` | A work record is done, and the finding its `source` names still fires on its region. Only `graph --intent` walks a region, so only it raises this. |
 | `review-decider` | verdict, `records` | The verdict is the decider's own, and the quorum counts verdicts besides the decider's. |
 | `review-agent` | verdict, `records` | The reviewer holds the `agent` role in `.chant/trust.json` at base. |
 | `review-duplicate` | verdict, `records` | A later verdict by the same principal replaces this one. Names are compared after NFKC, trimming and lower-casing. |
@@ -155,6 +162,9 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `intent-evidence-unpinned` | finding, `graph --intent` | A decision's evidence has no hash: a URL, or a path with no `sha256`. |
 | `intent-trailer-unverified` | finding, `graph --intent` | A commit carries a trailer a plugin says claims authorship, and the commit is not `attested`. |
 | `intent-region-unconstrained` | finding, `graph --intent` | No decision constrains the region at any granularity. |
+| `intent-decision-unimplemented` | finding, `graph --intent` | A decided decision constrains the region, no work item that is not dropped implements it, and no commit falls in its window. Only with a work kind read. |
+| `intent-work-blocked` | finding, `graph --intent` | A work item constraining the region has commits in its window while a work item it needs is not done. |
+| `intent-work-open-decided-code` | finding, `graph --intent` | Commits in the region are a decision's own work while the work item implementing that decision is still open. |
 | `composites-no-chant-member` | reason, `graph --composites` | No member of kind `chant` was read, so nothing declares a composite instance or a component. |
 | `composites-none-declared` | reason, `graph --composites` | The members read declare no composite instance. |
 | `composites-no-component` | reason, `graph --composites` | The members read declare no component, so no composite instance has one. |
@@ -199,6 +209,19 @@ Artifact relationships are derived from decisions ([#2549](https://github.com/IN
 
 To find the artifacts behind a file, a reader walks through the decisions. It takes the `constrains` rows whose target covers the file: `path:<p>` covers `p` and everything below it, and `member:<name>` covers the member's directory. From each of those records it takes the `asset` rows. A drifted asset row means the artifact changed after the decision that governs the file was made, and a stale one means the decision was replaced while the artifact stayed as it was. The walk the other way, from an artifact to what it shapes, starts from the `asset` rows whose `target` is the artifact.
 
+## Work items
+
+A record kind with a `work` block is a work kind ([#2683](https://github.com/INTENTIUS/chant/issues/2683)). The reference workspace's is `work/work.kind.mjs`, and [Work items](/chant/guide/work-items/) describes its records. `records --json` on a work kind adds these fields, all within contract 1:
+
+| Field | On | Meaning |
+|---|---|---|
+| `ready` | each parsed record | The record is valid, not superseded, in the kind's open state, not in a `needs` cycle, and every work id its `needs` names is done. |
+| `blockedBy` | each parsed record | Each need that is not done, as `{ id, state }`, with `state: null` for an id no record has. |
+| `implements` | each parsed record | Each decision the record names, as `{ id, state }`, with the decision's state now. |
+| `decisions` | the document | Every decision the work kind's decision kind reads, as `{ id, path, state, supersededBy, implementedBy }`. `implementedBy` lists the work records naming it as `{ id, state }`. An empty one means the decision has no work item yet. |
+
+The decision kind is the file the work kind's `work.decisions` names, read at the same revision as the work records. A work record's `warnings` hold the `work-` codes above in place of `record-no-evidence`.
+
 ## The intent graph
 
 `chant workspace graph --intent <region> --json` prints the intent graph over one region ([#2651](https://github.com/INTENTIUS/chant/issues/2651)). It encodes the walk from a piece of code back to the decisions, artifacts and commits behind it, as [#2650](https://github.com/INTENTIUS/chant/issues/2650) section B describes it. chant emits the graph and a reader such as hud draws it (D8 and D15 of [#2524](https://github.com/INTENTIUS/chant/issues/2524)).
@@ -211,8 +234,9 @@ The walk runs in this order, and the nodes are listed in it:
 2. The commits that touched the region, newest first. A line range is followed with `git log -L`, a file with `git log --follow`, and a directory with `git log`. For the working tree the history is read from `HEAD`. Each commit may be joined to a unit, a contract and evidence by a kind file's [`commitJoins`](/chant/cli/workspace-graph/#commit-joins).
 3. The decisions whose `constrains` cover the region, and the decisions in their supersession chains.
 4. The artifacts those decisions pin, and the URL evidence they cite.
-5. The member links of the region's member, declared in the declaration and resolved in source as `check` resolves them.
-6. The findings.
+5. With a work kind passed as `--kind`, the work items whose `constrains` cover the region, matched as a decision's are.
+6. The member links of the region's member, declared in the declaration and resolved in source as `check` resolves them.
+7. The findings.
 
 | Node kind | Id | Fields |
 |---|---|---|
@@ -221,14 +245,15 @@ The walk runs in this order, and the nodes are listed in it:
 | `member` | `member:<name>` | `name`, `dir`, `memberKind` |
 | `commit` | `commit:<sha>` | `sha`, `subject`, `author`, `date`, `trailers`, `pullRequest`, `signature` (the provenance level, judged by the signers at base as `records` judges a record), `lines`, the ranges it changed in a line-range region, and `state`: `decided`, `decided-by-window`, `undecided`, or `null` when no record kind was read |
 | `unit`, `contract`, `evidence` | `<kind>:<id>` | `ref`, the plugin's own id, `plugin`, the kind file that supplied it, and `data`, its other fields. A decision's URL evidence is an `evidence` node with `plugin: null` and `data` holding `title`, `url`, `as_of` and `sha256` |
+| `work` | `record:<kind>/<id>` | `recordKind`, `record`, `path`, `title`, `state`, `closed`, `valid`, `reasons`, `provenance`, `owner`, `ready`, `blockedBy`, `implements`, `needs`, `source` (the gap it came from as `{ finding, region, decision?, artifact? }`, or `null`), `supersededBy`, `constrains` and `warnings`, the `work-` warnings. Read only with a work kind passed as `--kind` |
 | `decision` | `record:<kind>/<id>` | `recordKind`, `record`, `path`, `title`, `state`, `closed`, `valid`, `reasons`, `provenance`, `decided_by`, `decided_on`, `reviews` (agree, dissent, abstain and open concerns, the dissents with neither `addressed_by` nor `withdrawn_on`), `supersededBy`, `supersedes`, and `constrains`, the entries that cover the region with their granularity |
 | `artifact` | `artifact:<path>` | `path`, `anchor`, `pinnedSha256`, `currentSha256` and `pinState`: the state of a current decision's pin, or `unpinned` when only superseded decisions pin it |
 | `link` | `link:<n>` | `row`, the member link row |
-| `finding` | `finding:<code>:<n>` | `code`, `message`, and `concerns`, the ids of the nodes it is about. A plugin's finding also has `plugin`, the kind file that returned it, and `refs`, as the plugin gave them |
+| `finding` | `finding:<code>:<n>` | `code`, `message`, and `concerns`, the ids of the nodes it is about. A plugin's finding also has `plugin`, the kind file that returned it, and `refs`, as the plugin gave them. With a work kind read, every finding has `addressed` and `addressedBy`, the work items addressing it as `{ id, state }` |
 
 | Edge kind | From, to | Fields |
 |---|---|---|
-| `constrains` | decision to region, file or contract | `granularity` (`path`, `member`, `contract` or `issue`) and `entry`, as written |
+| `constrains` | decision or work item to region, file or contract | `granularity` (`path`, `member`, `contract` or `issue`) and `entry`, as written |
 | `pins` | decision to artifact | `pinnedSha256` and `pinState` for that decision's pin |
 | `touched-by` | region to commit | `lines` |
 | `produced-by` | commit to unit | |
@@ -236,11 +261,16 @@ The walk runs in this order, and the nodes are listed in it:
 | `supersedes` | the newer decision to the one it replaces, derived as `records` derives it | |
 | `cites-evidence` | unit, contract or decision to evidence | |
 | `links` | consumer member to producer member | |
-| `within` | commit to a decision whose path window it falls in | `state`: `decided` when the decision's own unit made the commit, `decided-by-window` otherwise |
+| `within` | commit to a decision whose path window it falls in, or to a work item whose path window it falls in | `state`: `decided` when the decision's own unit made the commit, `decided-by-window` otherwise, and `worked` for a work item |
+| `implements` | work item to the decision it carries out | |
+| `needs` | work item to a work item it waits on | |
+| `addressed-by` | finding to a work item that addresses it | |
 
 A decision covers a commit from the commit that added its record until the commit that added the record superseding it. A commit outside every path-granularity window is `intent-commit-undecided`, and its `state` is `undecided`.
 
 A commit inside a window can still depart from the decision, and chant can't tell whether it does ([#2656](https://github.com/INTENTIUS/chant/issues/2656)). So each commit inside a path-granularity window has a `within` edge to the decision, and the edge says whether the commit is the decision's own work. It is when a plugin's `commitJoins` joins the commit to a unit and one of these holds: the unit or its contract lists the decision in `decisions`, by record id or as `<kind>/<id>`, or the decision constrains the contract the unit served. The commit's `state` is `decided` when it is the own work of at least one decision whose window holds it, and `decided-by-window` when it only falls in windows. A `decided-by-window` commit is something for the person to judge. The text walk lists it under its decision and asks whether it is drift, a superseding decision nobody wrote down, or the decision being wrong.
+
+A work item's window runs from the commit that added its record to the commit that moved it into a closed state, `done` or `dropped`, that commit included. While the item is open, the window runs to the revision read. A commit inside the window of a work item that constrains the region by path has a `within` edge to the item with `state: "worked"`. The commit's own `state` still comes from the decisions. A work item addresses a finding when its `source.finding` is the finding's code and its `source.region` contains the region or lies inside it, with overlapping lines when both name the same file. It also addresses an `intent-pin-drifted`, `intent-pin-missing` or plugin finding that concerns a decision the item implements. The walk brings in a work item that addresses a finding, and the decisions and work items that a work item in the graph implements or needs, one link deep.
 
 A plugin's finding is about the commit it was returned for, so that commit's id comes first in `concerns`. Each of its `refs` that names a node in the graph follows as that node's id. chant first tries a ref as a node id, and then behind each node kind's prefix, such as `commit:` or `artifact:`. After that it tries the ref as a decision's record id or the start of a commit sha. A ref that names nothing in the graph stays in `refs` only. Plugin findings come after chant's own, in commit order. A decision that constrains a path below a directory region has a `constrains` edge to each file under that path, and it does not count as constraining the whole region.
 

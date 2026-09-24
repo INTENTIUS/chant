@@ -87,7 +87,31 @@
             "invalid": { "type": "integer", "minimum": 0 },
             "superseded": { "type": "integer", "minimum": 0, "description": "Records a closed record supersedes, counted before --current leaves them out." }
           }
+        },
+        "decisions": {
+          "description": "Added in contract 1 by #2683, for a work kind only. Every decision the kind file named in the work kind's work.decisions reads at the same revision, whether or not a work record names it, each with the work records implementing it. A decision with an empty implementedBy has no work item yet.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/decisionWork" }
         }
+      }
+    },
+    "workLink": {
+      "type": "object",
+      "required": ["id", "state"],
+      "properties": {
+        "id": { "type": "string" },
+        "state": { "type": ["string", "null"], "description": "The linked record's state as it writes it, or null when no record has the id." }
+      }
+    },
+    "decisionWork": {
+      "type": "object",
+      "required": ["id", "path", "state", "supersededBy", "implementedBy"],
+      "properties": {
+        "id": { "type": "string" },
+        "path": { "type": "string", "description": "From the repository root, with / separators." },
+        "state": { "type": ["string", "null"] },
+        "supersededBy": { "type": ["string", "null"] },
+        "implementedBy": { "type": "array", "items": { "$ref": "#/$defs/workLink" }, "description": "The work records whose implements list names the decision, in path order." }
       }
     },
     "record": {
@@ -114,7 +138,7 @@
           "items": { "$ref": "#/$defs/asset" }
         },
         "warnings": {
-          "description": "Added in contract 1 by #2549. Findings that leave the record valid: a pinned file that changed, went missing or did not follow a superseding decision, a supersedes link that has no effect yet, (added by #2654) an evidence list that is empty, or (added by #2672) a verdict that names no digest. valid and --current do not look at them.",
+          "description": "Added in contract 1 by #2549. Findings that leave the record valid: a pinned file that changed, went missing or did not follow a superseding decision, a supersedes link that has no effect yet, (added by #2654) an evidence list that is empty, (added by #2672) a verdict that names no digest, or (added by #2683) a work record's links and dates. A work record never carries record-no-evidence; a done one with no evidence carries work-done-unpinned. valid and --current do not look at them.",
           "type": "array",
           "items": { "$ref": "#/$defs/warning" }
         },
@@ -131,6 +155,20 @@
           "description": "Added in contract 1 by #2673, on every record of a session kind and on no other. The review entries of the records the session kind names as its subjects (decisions, for the reference session kind) whose session field names this record's id, in path order and then list order.",
           "type": "array",
           "items": { "$ref": "#/$defs/citation" }
+        },
+        "ready": {
+          "description": "Added in contract 1 by #2683, on every parsed record of a work kind. True when the record is valid, not superseded, in the kind's open state, not in a needs cycle, and every work id its needs list names is done.",
+          "type": "boolean"
+        },
+        "blockedBy": {
+          "description": "Added in contract 1 by #2683, on every parsed record of a work kind. Each need that is not done, with its state now; null for an id no record has.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/workLink" }
+        },
+        "implements": {
+          "description": "Added in contract 1 by #2683, on every parsed record of a work kind. Each decision the record implements, with its state now; null for an id no decision has.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/workLink" }
         }
       },
       "allOf": [
@@ -155,7 +193,22 @@
       "type": "object",
       "required": ["code", "message"],
       "properties": {
-        "code": { "enum": ["asset-drift", "asset-missing", "asset-stale", "record-supersedes-pending", "record-no-evidence", "review-undigested"] },
+        "code": {
+          "enum": [
+            "asset-drift",
+            "asset-missing",
+            "asset-stale",
+            "record-supersedes-pending",
+            "record-no-evidence",
+            "review-undigested",
+            "work-needs-unknown",
+            "work-implements-unknown",
+            "work-needs-cycle",
+            "work-implements-undecided",
+            "work-done-unpinned",
+            "work-closed-without-date"
+          ]
+        },
         "message": { "type": "string" }
       }
     },
