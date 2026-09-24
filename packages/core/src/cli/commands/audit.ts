@@ -116,7 +116,7 @@ export interface AuditCommandResult {
    * summary line.
    */
   suppressedCount?: number;
-  /** Run diagnostics for stderr (#2528). */
+  /** Run diagnostics for stderr: a truncated scan in a format that cannot carry it (#2528). */
   warnings?: AuditWarning[];
 }
 
@@ -165,10 +165,11 @@ function missingLexiconHint(unclaimed: UnclaimedFile[]): string | undefined {
 }
 
 /** Human-readable diagnostic for the zero-lexicon case. */
-function renderNoLexicons(target: string, unclaimed: UnclaimedFile[]): string {
+function renderNoLexicons(target: string, unclaimed: UnclaimedFile[], truncated?: AuditTruncation): string {
   const lines: string[] = [];
   lines.push(`chant audit had nothing to look with: no audit lexicon is installed, so nothing under ${target} was inspected.`);
   lines.push("This is not a clean result. Detection and checks live in the lexicon packages.");
+  if (truncated) lines.push("", `Note: ${truncationNote(truncated, target)}`);
   const wanted = wantedLexicons(unclaimed);
   if (unclaimed.length > 0) {
     lines.push("", "Files that wanted a lexicon:");
@@ -184,7 +185,7 @@ function renderNoLexicons(target: string, unclaimed: UnclaimedFile[]): string {
 }
 
 /** Machine-readable form of the zero-lexicon diagnostic (`status: "no-lexicons"`). */
-function renderNoLexiconsJson(target: string, unclaimed: UnclaimedFile[]): string {
+function renderNoLexiconsJson(target: string, unclaimed: UnclaimedFile[], truncated?: AuditTruncation): string {
   const wanted = wantedLexicons(unclaimed);
   return JSON.stringify(
     {
@@ -197,6 +198,7 @@ function renderNoLexiconsJson(target: string, unclaimed: UnclaimedFile[]): strin
       unclaimed,
       missingLexicons: wanted,
       install: installLine(wanted.length > 0 ? wanted : [...AUDIT_LEXICONS], target),
+      truncated,
     },
     null,
     2,
@@ -406,32 +408,26 @@ async function buildSnapshot(options: AuditCommandOptions, files: string[], isUr
   };
 }
 
-/**
- * Warnings for the two level-0 changes #2528 makes in the next release, one
- * release ahead of it (#2525). Neither changes today's report: a truncated walk
- * is still reported as if it were whole, and TF023 still reads only the root
- * `.gitignore`.
- */
-export function walkWarnings(walk: CandidateWalk, target: string): AuditWarning[] {
-  const warnings: AuditWarning[] = [];
-  if (walk.truncated) {
-    warnings.push({
-      message:
-        `the scan of ${target} stopped at ${walk.maxFiles} files, so part of the tree was not audited. ` +
-        "The limit counts every file the walk reaches, not only the ones it audits.",
-      hint:
-        "Raise it with --max-files <n>. From the next release, text and JSON output will also report a truncated scan.",
-    });
-  }
-  for (const change of walk.nestedGitignore) {
-    warnings.push({
-      file: change.path,
-      message: `TF023 reports this path because chant audit reads only the root .gitignore, but ${change.gitignore} ignores it.`,
-      hint:
-        "From the next release chant audit reads every .gitignore between a file and the scan root, and TF023 will no longer report this path.",
-    });
-  }
-  return warnings;
+/** The flag that raises the local walk's file limit, named wherever a truncated scan is reported. */
+export const MAX_FILES_FLAG = "--max-files";
+
+/** How a report states that the local walk stopped at its limit (#2528). JSON carries it as `truncated`. */
+export interface AuditTruncation {
+  limit: number;
+  flag: typeof MAX_FILES_FLAG;
+}
+
+/** The truncation a walk reports, or undefined for a whole scan. */
+export function walkTruncation(walk: CandidateWalk): AuditTruncation | undefined {
+  return walk.truncated ? { limit: walk.maxFiles, flag: MAX_FILES_FLAG } : undefined;
+}
+
+/** The text-report note for a truncated scan. */
+export function truncationNote(t: AuditTruncation, target: string): string {
+  return (
+    `The scan of ${target} stopped at ${t.limit} files, so part of the tree was not audited. ` +
+    `The limit counts every file the walk reaches, not only the ones it audits. Raise it with ${t.flag} <n>.`
+  );
 }
 
 /** Run the audit and produce a rendered result. */
@@ -449,7 +445,7 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
   // render the same way (#1623).
   const plugins = options.plugins ?? (await loadAuditPlugins());
   let candidates: RepoFile[];
-  let warnings: AuditWarning[] = [];
+  let truncated: AuditTruncation | undefined;
   if (isUrl) {
     try {
       // Fetch the whole repo's candidate files (all lexicons, not just CI) and
@@ -471,7 +467,7 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
     // shape alone can't disambiguate them.
     const walk = walkCandidates(options.path, { maxFiles: options.maxFiles });
     candidates = walk.files;
-    warnings = walkWarnings(walk, options.path);
+    truncated = walkTruncation(walk);
     // #2527's warning release: the converged walk skips git-ignored files and,
     // inside a project, child projects. Terraform state paths are TF023's own
     // question and stay out of it. `candidates` is unchanged.
@@ -481,8 +477,10 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
       files: candidates.filter((f) => !isTerraformStatePath(f.path)).map((f) => resolve(options.path, f.path)),
     });
   }
-  // Only a non-empty list rides on the result, so a run with nothing to warn
-  // about returns exactly the object it did before #2528.
+  // Every format but SARIF states a truncated scan in the report itself
+  // (#2528). SARIF has no slot chant fills for it, so there it goes to stderr.
+  const warnings: AuditWarning[] =
+    truncated && format === "sarif" ? [{ message: truncationNote(truncated, options.path) }] : [];
   const withWarnings = warnings.length > 0 ? { warnings } : {};
   // A local target hands its directory to the classifier, so an input whose
   // path names a directory carries the directory itself (#2217): terraform's
@@ -514,14 +512,15 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
   const terraformStateFindings = auditTerraformState(candidates);
 
   if (plugins.length === 0) {
-    const output = format === "json" ? renderNoLexiconsJson(options.path, unclaimed) : renderNoLexicons(options.path, unclaimed);
+    const output = format === "json" ? renderNoLexiconsJson(options.path, unclaimed, truncated) : renderNoLexicons(options.path, unclaimed, truncated);
     return { success: true, status: "no-lexicons", output, findings: [...secretsFindings, ...wranglerFindings, ...nginxFindings, ...terraformStateFindings], scanned: [], unclaimed, exitCode: NO_LEXICONS_EXIT_CODE, stream: format === "json" ? "stdout" : "stderr", ...withWarnings };
   }
 
   const missingLexiconNote = missingLexiconHint(unclaimed);
 
   if (inputs.length === 0 && secretsFindings.length === 0 && wranglerFindings.length === 0 && nginxFindings.length === 0 && terraformStateFindings.length === 0) {
-    const output = `No auditable files found under ${options.path}.${missingLexiconNote ? ` ${missingLexiconNote}` : ""}`;
+    let output = `No auditable files found under ${options.path}.${missingLexiconNote ? ` ${missingLexiconNote}` : ""}`;
+    if (truncated) output += `\n\nNote: ${truncationNote(truncated, options.path)}`;
     return { success: true, status: "ok", output, findings: [], scanned: [], unclaimed, exitCode: 0, ...withWarnings };
   }
 
@@ -548,6 +547,7 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
 
   if (tier === "merge-worthy") findings = findings.filter((f) => isMergeWorthy(f, catalog));
   const notes = coverageNotes(inputs);
+  if (truncated) notes.unshift(truncationNote(truncated, options.path));
   if (missingLexiconNote) notes.push(missingLexiconNote);
   if (suppressionStats.count > 0) {
     notes.push(
@@ -596,7 +596,7 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
   switch (format) {
     case "json": {
       const snapshot = await buildSnapshot(options, scanned, isUrl);
-      output = JSON.stringify(buildReportJson(findings, { snapshot, toolVersion: options.toolVersion, catalog, unclaimed }), null, 2);
+      output = JSON.stringify(buildReportJson(findings, { snapshot, toolVersion: options.toolVersion, catalog, unclaimed, truncated }), null, 2);
       break;
     }
     case "sarif":
@@ -607,7 +607,7 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
       break;
     case "html": {
       const snapshot = await buildSnapshot(options, scanned, isUrl);
-      output = renderHtml(findings, { files, resolveSha, resolveDigest, notes, snapshot, theme: options.theme, template: options.template, catalog });
+      output = renderHtml(findings, { files, resolveSha, resolveDigest, notes, snapshot, theme: options.theme, template: options.template, catalog, truncated });
       break;
     }
     default:

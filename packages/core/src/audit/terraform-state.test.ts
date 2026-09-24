@@ -196,22 +196,18 @@ describe("walkCandidates reports what the next release changes, and changes noth
     rmSync(dir, { recursive: true, force: true });
   });
 
-  test("a state file a nested .gitignore ignores is still a candidate, and is named for the warning", () => {
+  test("a state file a nested .gitignore ignores is not a candidate (#2528)", () => {
     const dir = tmpRepo();
     mkdirSync(join(dir, "infra", ".terraform"), { recursive: true });
     writeFileSync(join(dir, "infra", ".gitignore"), "*.tfstate\n.terraform/\n");
     writeFileSync(join(dir, "infra", "terraform.tfstate"), "{}");
     const walk = walkCandidates(dir);
-    expect(walk.files.map((f) => f.path).sort()).toEqual(["infra/.terraform", "infra/terraform.tfstate"]);
-    expect(auditTerraformState(walk.files)).toHaveLength(2);
-    expect(walk.nestedGitignore).toEqual([
-      { path: "infra/.terraform", gitignore: "infra/.gitignore" },
-      { path: "infra/terraform.tfstate", gitignore: "infra/.gitignore" },
-    ]);
+    expect(walk.files.map((f) => f.path)).toEqual([]);
+    expect(auditTerraformState(walk.files)).toHaveLength(0);
     rmSync(dir, { recursive: true, force: true });
   });
 
-  test("nothing is named when the root .gitignore already drops the path, or no nested one covers it", () => {
+  test("only the .gitignore files between the path and the root apply, not a sibling's", () => {
     const dir = tmpRepo();
     mkdirSync(join(dir, "a"), { recursive: true });
     mkdirSync(join(dir, "b"), { recursive: true });
@@ -223,7 +219,6 @@ describe("walkCandidates reports what the next release changes, and changes noth
     writeFileSync(join(dir, "b", ".gitignore"), "*.tfstate\n");
     const walk = walkCandidates(dir);
     expect(walk.files.map((f) => f.path)).toEqual(["a/terraform.tfstate"]);
-    expect(walk.nestedGitignore).toEqual([]);
     rmSync(dir, { recursive: true, force: true });
   });
 });

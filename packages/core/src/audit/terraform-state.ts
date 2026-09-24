@@ -22,8 +22,8 @@
  * walk that decides which paths reach here is `discover.ts`'s
  * `collectCandidates`, which is also where a locally ignored path is dropped:
  * see `isTerraformStatePath` there and `gitignoreCoversTerraformState` below.
- * Only the root `.gitignore` drops a path today; `nestedGitignoreCovering`
- * finds the ones a nested `.gitignore` would drop from the next release.
+ * The root `.gitignore` and every nested one on the way to the path can drop
+ * it (`nestedGitignoreCovering`, #2528).
  */
 
 import type { AuditFinding } from "./core";
@@ -92,9 +92,8 @@ export function gitignoreCoversTerraformState(gitignore: string, path: string): 
  * the same narrow matcher as the root one. `readGitignore` takes a directory
  * relative to the scan root and returns its `.gitignore` body, if any.
  *
- * The walk does not act on this yet: today only the root `.gitignore` decides
- * TF023, and the audit CLI uses this to warn about the findings that go away
- * once every `.gitignore` is read (#2528).
+ * The local walk drops a TF023 path this returns a directory for, as it drops
+ * one the root `.gitignore` covers (#2528).
  */
 export function nestedGitignoreCovering(
   path: string,
