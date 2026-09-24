@@ -230,9 +230,18 @@
   "tricolon/density": 1,
   "anaphora/repeated-opening": 1
  },
+ "docs/src/content/docs/cli/workspace-audit.mdx": {
+  "formatting/em-dash-density": 2
+ },
+ "docs/src/content/docs/cli/workspace-build.mdx": {
+  "formatting/em-dash-density": 2
+ },
  "docs/src/content/docs/cli/workspace-check.mdx": {
   "formatting/em-dash-density": 2,
   "claude/colon-reveal": 2
+ },
+ "docs/src/content/docs/cli/workspace-graph.mdx": {
+  "formatting/em-dash-density": 2
  },
  "docs/src/content/docs/cli/workspace-init.mdx": {
   "formatting/em-dash-density": 2,
@@ -241,6 +250,9 @@
  "docs/src/content/docs/cli/workspace-lineage.mdx": {
   "formatting/em-dash-density": 2,
   "claude/colon-reveal": 2
+ },
+ "docs/src/content/docs/cli/workspace-lint.mdx": {
+  "formatting/em-dash-density": 2
  },
  "docs/src/content/docs/cli/workspace-ls.mdx": {
   "formatting/em-dash-density": 2,

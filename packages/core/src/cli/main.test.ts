@@ -698,10 +698,15 @@ describe("workspace init and ls (#2534)", () => {
     expect(resolveCommand(init, commandRegistry)?.def.name).toBe("workspace init");
     expect(commandRegistry.filter((c) => c.name === "workspace" || c.name.startsWith("workspace ")).map((c) => c.name).sort()).toEqual([
       "workspace",
+      "workspace audit",
+      "workspace build",
       "workspace check",
+      "workspace graph",
       "workspace init",
       "workspace lineage",
+      "workspace lint",
       "workspace ls",
+      "workspace member-run",
       "workspace records",
       "workspace status",
       "workspace upgrade",
@@ -774,5 +779,29 @@ describe("waitForStreamDrain", () => {
     const p = waitForStreamDrain(s);
     s.emit("close");
     await expect(p).resolves.toBeUndefined();
+  });
+});
+
+describe("per-member commands and the root refusal (#2537)", () => {
+  test("--root-only is a boolean, and --member repeats and splits on commas", () => {
+    expect(parseArgs(["build", "--root-only"]).rootOnly).toBe(true);
+    expect(parseArgs(["lint", "src"]).rootOnly).toBeUndefined();
+    expect(() => parseArgs(["build", "--root-only=yes"])).toThrow();
+    const args = parseArgs(["workspace", "lint", "--member", "api,web", "--member", "examples", "--format", "sarif"]);
+    expect(args).toMatchObject({ command: "workspace", path: "lint", members: ["api", "web", "examples"], format: "sarif" });
+    expect(() => parseArgs(["workspace", "build", "--member"])).toThrow(/--member needs a member or group name/);
+  });
+
+  test("workspace build, lint, audit and graph resolve to their commands", () => {
+    for (const verb of ["build", "lint", "audit", "graph"]) {
+      expect(resolveCommand(parseArgs(["workspace", verb, "some/dir"]), commandRegistry)?.def.name).toBe(`workspace ${verb}`);
+    }
+  });
+
+  test("the refusal and the per-member code load only when used", () => {
+    const source = readFileSync(join(import.meta.dirname, "main.ts"), "utf-8");
+    expect(source).toMatch(/await import\("\.\.\/workspace\/root-refusal"\)/);
+    expect(source).toMatch(/await import\("\.\.\/workspace\/member-commands"\)/);
+    expect(source).toMatch(/await import\("\.\.\/workspace\/member-run"\)/);
   });
 });

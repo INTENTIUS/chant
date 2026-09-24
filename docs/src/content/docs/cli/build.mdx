@@ -33,6 +33,7 @@ It reaches no network. Every schema it needs is generated into the lexicon packa
 | `--env <name>` | `string` | — | Active environment. Sets `CHANT_ENV` so env-aware source re-evaluates for that environment, and selects the organizational policy that applies. Must be declared under `environments` in `chant.config.ts` when that list exists |
 | `--components --generate <lexicon>` | `string` | — | Generate mode. Synthesize a CI pipeline from the discovered `*.component.ts` declarations instead of running a lexicon build. See [Generate mode](#generate-mode-ci-pipelines-from-components) |
 | `--promote-to <env>` | `string` | — | Generate mode only. Add a job that promotes the deployed releases to `<env>` after every component job succeeds. Without `--components --generate <lexicon>` the command fails rather than ignoring the flag. See [Promote job](#promote-job) |
+| `--root-only` | `bool` | `false` | At the root of a declared workspace, build the root project alone instead of refusing. See [At a workspace root](#at-a-workspace-root) |
 | `--fold-rank [path]` | `bool` or `string` | off | After a folded build, print the run-fallback blockers ranked by how many files each one keeps from folding. With a path, also write the ranking in collapsed-stack format to that file for a flame-graph viewer. No-op with `--no-fold` |
 
 ## Usage
@@ -159,9 +160,19 @@ chant run --generate github
 
 `--param name=value` (repeatable) and `--params-file <path>` bind declared build-time parameters — `chant.config.ts`'s `buildParams` — so source can read `params.<name>` (`import { params } from "@intentius/chant/params"`) instead of `process.env`. Unlike the AWS lexicon's deploy-time `Parameter()`, a build-time parameter resolves before synthesis, so its value can change which resources are produced at all. An unknown name, a missing required value, or a value outside a declared `enum` is reported as a build error naming the parameter — never a thrown error from inside project source. The resolution is summarized on one line (`23 build parameters resolved (4 from env, 19 default)`), listed one per line as `[param] name = value (source)` under `--verbose`, and recorded on the build result for provenance. See [Build-Time Parameters](/chant/concepts/build-time-parameters/) for the full picture, including precedence and why it folds to a literal.
 
+## At a workspace root
+
+When the project `chant build` acts on is the root of a [declared workspace](/chant/reference/workspace-declaration/), the build refuses with the code `WSP000` and exits 1 ([#2537](https://github.com/INTENTIUS/chant/issues/2537), [ws-023](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-023-root-shrink.md)). The declaration moves its members out of the root project, so a root build would quietly cover less than it did before the file existed. The message says how many members and example projects left, and points to [`chant workspace build`](/chant/cli/workspace-build/), which builds each member with its own chant.
+
+```
+error: WSP000: this is the root of workspace acme (chant.workspace.json), which moves 3 members and 1 example project out of the root project. Run chant workspace build to build each member with its own toolchain, or pass --root-only (or set rootOnly: true in chant.config) to build the root project alone.
+```
+
+`--root-only`, or `rootOnly: true` in the root's `chant.config.ts`, builds the root project on its own. Member directories and example-group matches are left out of discovery, on top of the project's own `exclude` globs. A build inside a member's directory or an example project is never refused, and a project with no `chant.workspace.json` is unaffected.
+
 ## Exit Codes
 
 | Code | Meaning |
 |------|---------|
 | 0 | Success |
-| 1 | Errors found |
+| 1 | Errors found, or `WSP000` at a workspace root |
