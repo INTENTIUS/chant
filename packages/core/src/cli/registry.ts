@@ -277,6 +277,10 @@ export interface ParsedArgs {
    * should win.
    */
   at?: string;
+  /** `chant workspace records --kind <path>` (#2546): the record kind file to read records through. */
+  kind?: string;
+  /** `chant workspace records --current` (#2546): leave out records a closed record supersedes. */
+  current?: boolean;
   /**
    * `chant search "<q>" --ambient --live --env <name>` (#1278) — also report
    * resources of a kind this estate manages that exist in the account without
