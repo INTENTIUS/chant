@@ -134,29 +134,28 @@
       "dir": "ops",
       "kind": "chant",
       "x-note": "holds Op files only, with no chant.config; chant run discovers them from the repo root today, so the kind is a guess for #2534 and #2535 to settle"
+    },
+    {
+      "name": "examples",
+      "kind": "examples",
+      "glob": "examples/*",
+      "x-note": "54 chant projects, built and linted, never deployed (ws-051)"
+    },
+    {
+      "name": "lexicon-examples",
+      "kind": "examples",
+      "glob": "lexicons/*/examples/*",
+      "x-note": "114 chant projects inside the lexicon members' directories (ws-051)"
+    },
+    {
+      "name": "fixtures",
+      "kind": "examples",
+      "glob": [
+        "test/leftness",
+        "test/forgejo-preview-e2e"
+      ],
+      "x-note": "test fixtures that are chant projects (ws-051)"
     }
   ],
-  "pins": [],
-  "x-pending": {
-    "issue": "INTENTIUS/chant#2556",
-    "note": "How examples and fixtures are declared is undecided. These chant projects stay undeclared until #2556 is ratified.",
-    "projects": [
-      {
-        "glob": "lexicons/*/examples/*",
-        "count": 114
-      },
-      {
-        "glob": "examples/**",
-        "count": 54
-      },
-      {
-        "glob": "test/leftness",
-        "count": 1
-      },
-      {
-        "glob": "test/forgejo-preview-e2e",
-        "count": 1
-      }
-    ]
-  }
+  "pins": []
 }
