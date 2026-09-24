@@ -1,0 +1,91 @@
+---
+title: "chant workspace verify"
+description: Check the commits in a change against the signers and roles read from its base revision
+diataxis: reference
+---
+
+:::caution[Detection on your machine, enforcement in CI]
+On a developer machine this check detects problems. It can't stop them, because an agent running as you can sign with your unlocked key or edit chant in `node_modules`, and it can skip the check entirely. Enforcement comes from CI running the same check on a protected branch, where the policy is read from the base revision and the change can't edit it. This is the promise in [#2524 D5](https://github.com/INTENTIUS/chant/issues/2524) and decision ws-002.
+:::
+
+## Synopsis
+
+```
+chant workspace verify [--base <rev>] [--head <rev>] [--require attested] [--json]
+```
+
+## Description
+
+`chant workspace verify` reads the trust policy at the base revision and uses it to judge every commit in `base..head`. The change under review can edit its own copy of the policy, but those edits don't count until they're merged.
+
+Attestation is opt-in. With no signers file at base, the command checks nothing and passes. It says so, unless `--require attested` asks for more. A project without these files sees no change in any other command.
+
+## The policy
+
+Two files hold the policy. Both are optional, and both are read at base.
+
+| File | Holds |
+|---|---|
+| `.chant/allowed_signers` | The signers, in ssh-keygen's [allowed signers format](https://man.openbsd.org/ssh-keygen#ALLOWED_SIGNERS). It's the same file `git log --show-signature` can use. |
+| `.chant/trust.json` | Where the signers file is, if not at the default path; the role grants; and any adopted commit ranges. |
+
+```json
+{
+  "schema": 1,
+  "signers": ".chant/allowed_signers",
+  "roles": { "admin": ["alice@example.com"] },
+  "adopted": [{ "to": "<full commit id>", "note": "history before signing" }]
+}
+```
+
+Role grants live in `trust.json` for now. Once `chant.workspace.json` exists ([#2534](https://github.com/INTENTIUS/chant/issues/2534)), they move into the declaration.
+
+Some signer lines are never used, and the command reports each one with the reason:
+
+| Line | Why it isn't used |
+|---|---|
+| `valid-after` or `valid-before` | git checks these against the commit's own date, which whoever makes the commit sets, so a backdated commit would pass. Revoke a key by removing it. |
+| `cert-authority` | A certificate's validity is also a date the signer controls. |
+| A principal pattern (`*`, `?`, `!`) | Role grants name signers, so each signer needs one exact name. |
+
+## What passes
+
+| Check | Rule |
+|---|---|
+| Attestation | A commit is `attested` when its ssh signature, in the `git` namespace, verifies against a key listed at base. Trailers, author names and environment variables count for nothing. |
+| Protected writes | A commit that changes the signers file or `.chant/trust.json` needs a signature from someone the base policy trusts. If an admin role is granted, only an admin's signature counts. Deleting the signers file is a protected write too. |
+| `--require attested` | Every commit in the change must be `attested`. A merge with no changes of its own is skipped, and the commits it brings in are checked instead. |
+
+The command doesn't call `git verify-commit`, because that reads its signing program and signers file from git config. It takes the signature and the signed bytes out of the commit object and passes them to `ssh-keygen -Y verify`, along with a signers file built from the base policy.
+
+A signature this machine can't check is reported as `attested-unverifiable-here`. That covers an OpenPGP signature, such as the one a forge adds to a squash merge, and any signature when `ssh-keygen` is missing. It doesn't satisfy `--require attested`.
+
+## Options
+
+| Option | Effect |
+|---|---|
+| `--base <rev>` | The revision the policy is read from. Defaults to the target branch: `origin/HEAD`, then `main`, then `master`. Never `HEAD`. |
+| `--head <rev>` | The tip of the change. Defaults to `HEAD`. |
+| `--require attested` | Fail unless every commit in the change is attested. |
+| `--json` | Print the report as JSON. |
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | The change passes, or attestation is off and nothing was required. |
+| 1 | The change fails, the base or head can't be found, or the policy at base can't be read. |
+
+## In CI
+
+```yaml
+- uses: actions/checkout@v4
+  with: { fetch-depth: 0 }
+- run: npx chant workspace verify --base origin/${{ github.base_ref }} --require attested
+```
+
+The base has to be a revision the change can't move, which is the target branch tip. With squash merges, the commit that lands is signed by the forge rather than the author. Records then read as `attested-unverifiable-here` on the target branch, so merge commits or rebase merges keep attestation.
+
+## See also
+
+[`chant workspace records`](/chant/cli/workspace-records/) reports each record's provenance level, and can require `attested` too.

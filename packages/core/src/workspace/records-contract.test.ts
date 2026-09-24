@@ -13,6 +13,7 @@ import { afterAll, describe, expect, test } from "vitest";
 import { queryRecords, RECORDS_CONTRACT_VERSION, RECORDS_OUTPUT_SCHEMA_ID, type RecordsDocument } from "./records-cli";
 import { READ_ERROR_CODES, RECORD_REASON_CODES } from "./records";
 import schema from "./records.schema.json";
+import { PROVENANCE_LEVELS } from "./trust/attestor";
 
 const REPO = join(import.meta.dirname, "..", "..", "..", "..");
 const KIND = "docs/design/decisions/decision.kind.mjs";
@@ -50,6 +51,10 @@ describe("records output schema", () => {
   test("lists exactly the reason and error codes the code can return", () => {
     expect(schema.$defs.reason.properties.code.enum).toEqual([...RECORD_REASON_CODES]);
     expect(schema.$defs.failure.properties.error.properties.code.enum).toEqual([...READ_ERROR_CODES]);
+  });
+
+  test("lists exactly the provenance levels (#2547)", () => {
+    expect(schema.$defs.provenance.properties.level.enum).toEqual([...PROVENANCE_LEVELS]);
   });
 
   test("the chant repo's decisions validate, current and not", async () => {

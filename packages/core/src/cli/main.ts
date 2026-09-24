@@ -359,6 +359,10 @@ export function parseArgs(args: string[]): ParsedArgs {
       if (!result.kind || result.kind.startsWith("-")) throw new Error("--kind needs a kind file: --kind <path>");
     } else if (arg === "--current") {
       result.current = true;
+    } else if (arg === "--require") {
+      // `chant workspace records|verify --require attested` (#2547)
+      result.require = args[++i];
+      if (!result.require || result.require.startsWith("-")) throw new Error("--require needs a provenance level: --require attested");
     } else if (arg === "--ambient") {
       result.ambient = true;
     } else if (arg === "--check-live") {
@@ -648,7 +652,15 @@ Workspace (first-test slice, #2546):
                         Read the records a record kind locates, validated
                         against its schema, with reason codes for invalid
                         ones. --current leaves out superseded records; --at
-                        reads a commit's git objects. Needs no workspace file
+                        reads a commit's git objects. Needs no workspace file.
+                        Each record reports its provenance level, judged by
+                        the signers at --base (default: the target branch);
+                        --require attested exits 2 if any record is not
+  workspace verify [--base <rev>] [--head <rev>] [--require attested]
+                        Check the commits in base..head against the signers
+                        and roles read from base. A change to the signers file
+                        or .chant/trust.json needs a signature by a signer
+                        trusted at base. Does nothing without a signers file
   workspace lineage [--json]
                         Show each scope in .chant/workspace.lock.json: its
                         template and pin, locally edited files and open
@@ -1055,6 +1067,7 @@ export const commandRegistry: CommandDef[] = [
   // loads anything under workspace/ (#2525 rule 5, pinned by #2526's goldens).
   { name: "workspace records", handler: async (ctx) => (await import("../workspace/records-cli")).runWorkspaceRecords(ctx) },
   { name: "workspace lineage", handler: async (ctx) => (await import("../workspace/lineage-cli")).runWorkspaceLineage(ctx) },
+  { name: "workspace verify", handler: async (ctx) => (await import("../workspace/trust/verify-cli")).runWorkspaceVerify(ctx) },
 
   // State subcommands
   { name: "lifecycle snapshot", requiresPlugins: true, handler: runLifecycleSnapshot },

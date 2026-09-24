@@ -220,6 +220,7 @@ export default defineConfig({
 								{ label: 'operator', slug: 'cli/operator' },
 								{ label: 'graph', slug: 'cli/graph' },
 								{ label: 'workspace records', slug: 'cli/workspace-records' },
+								{ label: 'workspace verify', slug: 'cli/workspace-verify' },
 								{ label: 'workspace lineage', slug: 'cli/workspace-lineage' },
 								{ label: 'lifecycle', slug: 'cli/lifecycle' },
 								{ label: 'scenario', slug: 'cli/scenario' },

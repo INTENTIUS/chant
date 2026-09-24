@@ -283,6 +283,8 @@ export interface ParsedArgs {
   kind?: string;
   /** `chant workspace records --current` (#2546): leave out records a closed record supersedes. */
   current?: boolean;
+  /** `chant workspace records|verify --require attested` (#2547): the provenance level a gate requires. */
+  require?: string;
   /**
    * `chant search "<q>" --ambient --live --env <name>` (#1278) — also report
    * resources of a kind this estate manages that exist in the account without
