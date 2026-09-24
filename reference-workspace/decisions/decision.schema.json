@@ -149,6 +149,11 @@
             "type": "string",
             "pattern": "^[0-9a-f]{64}$"
           },
+          "session": {
+            "description": "The id of the review session the verdict was given in, as the session names it (#2650 C10). chant workspace records review --session writes it (#2670).",
+            "type": "string",
+            "minLength": 1
+          },
           "proposes": {
             "description": "With a dissent, the id of a new proposed decision the reviewer opened.",
             "$ref": "#/definitions/decisionId"

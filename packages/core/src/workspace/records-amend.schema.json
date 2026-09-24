@@ -1,0 +1,165 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/records-amend/v1/records-amend.schema.json",
+  "title": "chant workspace records amend output",
+  "description": "What `chant workspace records amend <id> --kind <kind file> --set <file|->` prints (#2670): the record's path and id and the top-level fields the amendment changed, or the reason it wrote nothing. Version 1 of the write contract for records. The command writes one file or none and never commits. Readers ignore fields they do not know; a field is only ever added within a version. The error codes are a closed list, each in the one closed list of `reason-codes.ts`. Contract version 1 of this document is written by chant 0.86.0 and newer.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/result"
+    },
+    {
+      "$ref": "#/$defs/failure"
+    }
+  ],
+  "$defs": {
+    "result": {
+      "description": "The record was written, or would be with --dry-run. Exit code 0.",
+      "type": "object",
+      "required": [
+        "$schema",
+        "contract",
+        "kind",
+        "path",
+        "id",
+        "changed",
+        "dryRun",
+        "warnings"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/records-amend/v1/records-amend.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "kind": {
+          "type": "object",
+          "required": [
+            "name",
+            "schema",
+            "file"
+          ],
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "The kind's name, such as \"decision\"."
+            },
+            "schema": {
+              "type": "string",
+              "description": "The `$id` of the schema the record was validated against."
+            },
+            "file": {
+              "type": "string",
+              "description": "The kind file, relative to the repository root, with / separators."
+            }
+          }
+        },
+        "path": {
+          "type": "string",
+          "description": "The record file, relative to the repository root (the working directory outside git), with / separators."
+        },
+        "id": {
+          "type": "string",
+          "description": "The record's id."
+        },
+        "changed": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The top-level fields whose value differs from the record as it was, in the record's order. Empty when the fields set change nothing, and then nothing is written."
+        },
+        "dryRun": {
+          "type": "boolean",
+          "description": "True when --dry-run was given and nothing was written."
+        },
+        "warnings": {
+          "type": "array",
+          "description": "The written record's warnings, as chant workspace records reports them. A warning never refuses a write.",
+          "items": {
+            "$ref": "#/$defs/warning"
+          }
+        },
+        "text": {
+          "type": "string",
+          "description": "With --dry-run only: the whole text of the file the command would write."
+        },
+        "error": false
+      }
+    },
+    "warning": {
+      "type": "object",
+      "required": [
+        "code",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "enum": [
+            "asset-drift",
+            "asset-missing",
+            "asset-stale",
+            "record-supersedes-pending",
+            "record-no-evidence",
+            "review-undigested"
+          ]
+        },
+        "message": {
+          "type": "string"
+        }
+      }
+    },
+    "failure": {
+      "description": "Nothing was written. Exit code 1.",
+      "type": "object",
+      "required": [
+        "$schema",
+        "contract",
+        "error"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/records-amend/v1/records-amend.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "enum": [
+                "kind-unreadable",
+                "kind-invalid",
+                "schema-unreadable",
+                "schema-id-mismatch",
+                "schema-invalid",
+                "location-missing",
+                "write-usage-invalid",
+                "write-input-invalid",
+                "record-not-found",
+                "amend-id-immutable",
+                "record-closed",
+                "amend-supersede-instead",
+                "record-unparseable",
+                "record-schema-invalid",
+                "record-id-duplicate",
+                "record-supersedes-unknown",
+                "record-supersedes-conflict"
+              ]
+            },
+            "message": {
+              "type": "string",
+              "description": "What was wrong, and what to do instead when there is something, such as writing a new record that supersedes this one."
+            }
+          }
+        },
+        "path": false
+      }
+    }
+  }
+}

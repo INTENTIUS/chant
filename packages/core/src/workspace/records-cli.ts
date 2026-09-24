@@ -45,7 +45,8 @@ export const RECORDS_CONTRACT_VERSION = 1;
 /** `$id` of the JSON Schema for the `--json` output, shipped beside this file. */
 export const RECORDS_OUTPUT_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace/records/v1/records.schema.json";
 
-const USAGE = "chant workspace records --kind <kind file> [--current] [--at <rev>] [--base <rev>] [--require attested] [--json] | chant workspace records pin <path>";
+const USAGE =
+  "chant workspace records --kind <kind file> [--current] [--at <rev>] [--base <rev>] [--require attested] [--json] | chant workspace records pin <path> | chant workspace records new|amend|review (#2670)";
 
 /** Exit code when the read worked and a record falls below `--require`. */
 export const EXIT_BELOW_REQUIRED = 2;
@@ -131,7 +132,7 @@ function declaredQuorum(tree: WorkspaceTree): { need: number; needFrom: "declara
  * nearest above the kind file, when it is inside the repository, or else the
  * repository root. Relative to `root`, with / separators.
  */
-function pinRoot(kindFile: string, root: string): string {
+export function pinRoot(kindFile: string, root: string): string {
   const found = findWorkspaceRoot(dirname(kindFile));
   if (!found) return ".";
   const rel = relative(root, realpathOr(found.dir)).split(sep).join("/");
@@ -254,6 +255,9 @@ export function pinFile(file: string, cwd: string): { path: string; sha256: stri
 
 export async function runWorkspaceRecords(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
+  if (args.extraPositional === "new" || args.extraPositional === "amend" || args.extraPositional === "review") {
+    return (await import("./records-write")).runRecordsWrite(ctx);
+  }
   if (args.extraPositional === "pin") {
     if (!args.extraPositional2) {
       console.error(formatError({ message: "pin needs the path of a file", hint: USAGE }));
@@ -268,7 +272,7 @@ export async function runWorkspaceRecords(ctx: CommandContext): Promise<number> 
     return 0;
   }
   if (args.extraPositional) {
-    console.error(formatError({ message: `chant workspace records takes no argument but pin (got ${args.extraPositional})`, hint: USAGE }));
+    console.error(formatError({ message: `chant workspace records takes no argument but pin, new, amend or review (got ${args.extraPositional})`, hint: USAGE }));
     return 1;
   }
   if (!args.kind) {
@@ -306,7 +310,7 @@ export async function runWorkspaceRecords(ctx: CommandContext): Promise<number> 
   return 0;
 }
 
-function realpathOr(dir: string): string {
+export function realpathOr(dir: string): string {
   try {
     return realpathSync(dir);
   } catch {

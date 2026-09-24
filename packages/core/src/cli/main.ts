@@ -375,6 +375,26 @@ export function parseArgs(args: string[]): ParsedArgs {
       if (!result.intent || result.intent.startsWith("-")) throw new Error("--intent needs a region: --intent <path[:start-end]>");
     } else if (arg === "--current") {
       result.current = true;
+    } else if (arg === "--set") {
+      // `chant workspace records amend <id> --set <file|->` (#2670)
+      result.set = args[++i];
+      if (!result.set || (result.set.startsWith("-") && result.set !== "-")) throw new Error("--set needs a JSON file, or - for standard input: --set <file|->");
+    } else if (arg === "--verdict") {
+      // `chant workspace records review <id> --verdict agree|dissent|abstain` (#2670)
+      result.verdict = args[++i];
+      if (!result.verdict || result.verdict.startsWith("-")) throw new Error("--verdict needs agree, dissent or abstain");
+    } else if (arg === "--by") {
+      // `chant workspace records review <id> --by <principal>` (#2670): whoever the caller says.
+      result.by = args[++i];
+      if (!result.by || result.by.startsWith("-")) throw new Error("--by needs the reviewer: --by <principal>");
+    } else if (arg === "--session") {
+      // `chant workspace records review <id> --session <id>` (#2670)
+      result.session = args[++i];
+      if (!result.session || result.session.startsWith("-")) throw new Error("--session needs a session id: --session <id>");
+    } else if (arg === "--prefix") {
+      // `chant workspace records new <kind> --prefix <prefix>` (#2670): the id prefix to allocate under.
+      result.prefix = args[++i];
+      if (!result.prefix || result.prefix.startsWith("-")) throw new Error("--prefix needs an id prefix: --prefix <prefix>");
     } else if (arg === "--require") {
       // `chant workspace records|verify --require attested` (#2547)
       result.require = args[++i];
@@ -734,6 +754,23 @@ Workspace (level 1, #2524):
   workspace records pin <path>
                         Print the path from the workspace root and the
                         sha256 of a file, for a decision's evidence pin
+  workspace records new <kind file> --from <file|-> [--prefix <prefix>] [--dry-run]
+                        Write one new record in the kind's directory from
+                        the JSON fields given, after validating them as
+                        records would read them. Allocates the next id when
+                        the fields hold none. Prints {path, id} as JSON and
+                        never commits
+  workspace records amend <id> --kind <kind file> --set <file|-> [--dry-run]
+                        Set top-level fields of one record. A closed record
+                        never changes, and an approved one changes only its
+                        state (upward), pins and reviews; anything else is
+                        refused with amend-supersede-instead. Prints
+                        {path, id, changed}
+  workspace records review <id> --kind <kind file> --verdict agree|dissent|abstain --by <principal> [--note <text>] [--session <id>] [--dry-run]
+                        Append a review to one record, dated and bound to
+                        the digest of the record text. A dissent needs
+                        --note. The principal is not checked; attestation is
+                        the seal's job. Prints {path, id, review}
   workspace verify [--base <rev>] [--head <rev>] [--require attested]
                         Check the commits in base..head against the signers
                         and roles read from base. A change to the signers file
