@@ -116,7 +116,7 @@ export function registerLexiconDeclarations(
       moduleRoots.delete(entry);
       continue;
     }
-    const path = isAbsolute(entry.module) ? entry.module : resolve(baseDir, entry.module);
+    const path = declaredModulePath(entry, baseDir);
     modulePaths.set(entry.name, path);
     recorded[entry.name] = path;
     const { root } = pathLexiconRoot(entry, baseDir, sourceDir);
@@ -124,6 +124,28 @@ export function registerLexiconDeclarations(
     else moduleRoots.set(entry.name, root);
   }
   return recorded;
+}
+
+function declaredModulePath(entry: { module: string }, baseDir: string): string {
+  return isAbsolute(entry.module) ? entry.module : resolve(baseDir, entry.module);
+}
+
+/**
+ * chant#2589 — the name-to-path map `entries` declare, without recording it.
+ * For a caller that must name path lexicons in its messages but must never
+ * let a loader import one (`chant audit` runs no project code).
+ */
+export function pathLexiconMap(entries: readonly LexiconDeclaration[], baseDir: string): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const entry of entries) {
+    if (typeof entry !== "string") map.set(entry.name, declaredModulePath(entry, baseDir));
+  }
+  return map;
+}
+
+/** A copy of the paths recorded so far in this process. */
+export function recordedLexiconModules(): Map<string, string> {
+  return new Map(modulePaths);
 }
 
 /** The absolute module path `name` was declared with, or `undefined` for a package-backed lexicon. */
@@ -167,16 +189,27 @@ export async function importLexiconModule(name: string): Promise<Record<string, 
 /**
  * chant#2578 — how a message should name a lexicon. A package-backed name is
  * its npm package; a lexicon declared by path is that path, relative to
- * `fromDir` when it sits under it.
+ * `fromDir` when it sits under it. `paths` defaults to the paths recorded in
+ * this process; see {@link pathLexiconMap} for a map that is not recorded.
  */
-export function lexiconSourceLabel(name: string, fromDir: string = process.cwd()): string {
-  const path = modulePaths.get(name);
+export function lexiconSourceLabel(
+  name: string,
+  fromDir: string = process.cwd(),
+  paths: ReadonlyMap<string, string> = modulePaths,
+): string {
+  const path = paths.get(name);
   if (path === undefined) return `@intentius/chant-lexicon-${name}`;
   const rel = relative(fromDir, path);
   return rel === "" || rel.startsWith("..") || isAbsolute(rel) ? path : `./${rel.split(sep).join("/")}`;
 }
 
-/** The npm packages that provide `names`, leaving out every lexicon declared by path: those have nothing to install. */
-export function lexiconPackagesToInstall(names: readonly string[]): string[] {
-  return names.filter((name) => !modulePaths.has(name)).map((name) => `@intentius/chant-lexicon-${name}`);
+/**
+ * The npm packages that provide `names`, leaving out every lexicon declared by
+ * path: those have nothing to install. `paths` as in {@link lexiconSourceLabel}.
+ */
+export function lexiconPackagesToInstall(
+  names: readonly string[],
+  paths: ReadonlyMap<string, string> = modulePaths,
+): string[] {
+  return names.filter((name) => !paths.has(name)).map((name) => `@intentius/chant-lexicon-${name}`);
 }

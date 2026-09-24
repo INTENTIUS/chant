@@ -6,7 +6,7 @@
  */
 
 import { existsSync, readFileSync, statSync, writeFileSync } from "fs";
-import { join, resolve } from "path";
+import { dirname, join, resolve } from "path";
 import { auditFiles, type AuditInput, type AuditFinding, type ChecksProvider, type SuppressionStats } from "../../audit/core";
 import { AUDIT_LEXICONS, classifyFiles, loadAuditPlugins, unclaimedFiles, walkCandidates, type CandidateWalk, type DetectPlugin, type RepoFile, type UnclaimedFile } from "../../audit/discover";
 import { RULE_CATALOG, resolveAuditCatalog, type RuleMeta } from "../../audit/catalog";
@@ -23,7 +23,8 @@ import { extractUnpinnedActions, extractUnpinnedImages } from "../../audit/proof
 import type { ProveOptions } from "../../audit/proof";
 import type { Severity } from "../../lint/rule";
 import { formatWarning } from "../format";
-import { lexiconModulePath, lexiconPackagesToInstall, lexiconSourceLabel } from "../../lexicon-module";
+import { lexiconPackagesToInstall, lexiconSourceLabel, pathLexiconMap, recordedLexiconModules } from "../../lexicon-module";
+import { readLexiconDeclarationsStatically, unknownPathLexiconsNotice } from "../../config-static";
 
 export type AuditFormat = "stylish" | "json" | "sarif" | "markdown" | "html";
 export type AuditTier = "merge-worthy" | "all";
@@ -129,14 +130,32 @@ export const NO_LEXICONS_EXIT_CODE = 2;
  * `chant.config.ts` names by path (#2520), which has no package to install
  * (chant#2578).
  */
-function missingLexiconRemedy(names: readonly string[]): string {
+function missingLexiconRemedy(names: readonly string[], paths: ReadonlyMap<string, string>): string {
   const parts: string[] = [];
-  const pkgs = lexiconPackagesToInstall(names);
+  const pkgs = lexiconPackagesToInstall(names, paths);
   if (pkgs.length > 0) parts.push(`npm i ${pkgs.join(" ")}`);
   for (const name of names) {
-    if (lexiconModulePath(name) !== undefined) parts.push(`${name} is declared by path: ${lexiconSourceLabel(name)}`);
+    if (paths.has(name)) parts.push(`${name} is declared by path: ${lexiconSourceLabel(name, process.cwd(), paths)}`);
   }
   return parts.join("; ");
+}
+
+/**
+ * chant#2589 — the lexicons a local target's chant.config declares by path,
+ * with any recorded earlier in this process. The config is read statically
+ * (../../config-static.ts) and never evaluated, and the paths are not
+ * recorded for the loaders: audit names them in its messages, but never
+ * imports a project's lexicon module. `notice` is set when the config's
+ * `lexicons` could not be read that way.
+ */
+export function auditPathLexicons(target: string, isUrl: boolean): { paths: Map<string, string>; notice?: string } {
+  const paths = recordedLexiconModules();
+  if (isUrl) return { paths };
+  const read = readLexiconDeclarationsStatically(resolve(target));
+  if (read.status === "read") {
+    for (const [name, path] of pathLexiconMap(read.entries, dirname(read.configPath))) paths.set(name, path);
+  }
+  return { paths, notice: unknownPathLexiconsNotice(read) };
 }
 
 /** Missing audit lexicons the unclaimed files pointed at, in first-seen order. */
@@ -149,23 +168,27 @@ function wantedLexicons(unclaimed: UnclaimedFile[]): string[] {
  * lexicons it needs. Every wanted lexicon is a `-p` package so npx puts all of
  * them on the same resolution path.
  */
-export function installLine(lexicons: string[], target: string): string {
+export function installLine(
+  lexicons: string[],
+  target: string,
+  paths: ReadonlyMap<string, string> = recordedLexiconModules(),
+): string {
   // chant#2578 — a lexicon declared by path has no package for npx to fetch.
-  const pkgs = ["@intentius/chant", ...lexiconPackagesToInstall(lexicons)];
+  const pkgs = ["@intentius/chant", ...lexiconPackagesToInstall(lexicons, paths)];
   return `npx ${pkgs.map((p) => `-p ${p}`).join(" ")} chant audit ${target}`;
 }
 
 /** One-line coverage hint for the partial case: some lexicons loaded, others wanted by files on disk. */
-function missingLexiconHint(unclaimed: UnclaimedFile[]): string | undefined {
+function missingLexiconHint(unclaimed: UnclaimedFile[], paths: ReadonlyMap<string, string>): string | undefined {
   const wanted = wantedLexicons(unclaimed);
   if (wanted.length === 0) return undefined;
   const n = unclaimed.length;
   return `${n} file${n === 1 ? " looks" : "s look"} like ${wanted.join("/")} but ${wanted.length === 1 ? "that lexicon is" : "those lexicons are"} not installed, so ${n === 1 ? "it was" : "they were"} skipped` +
-    ` (${missingLexiconRemedy(wanted)}).`;
+    ` (${missingLexiconRemedy(wanted, paths)}).`;
 }
 
 /** Human-readable diagnostic for the zero-lexicon case. */
-function renderNoLexicons(target: string, unclaimed: UnclaimedFile[], truncated?: AuditTruncation): string {
+function renderNoLexicons(target: string, unclaimed: UnclaimedFile[], paths: ReadonlyMap<string, string>, truncated?: AuditTruncation): string {
   const lines: string[] = [];
   lines.push(`chant audit had nothing to look with: no audit lexicon is installed, so nothing under ${target} was inspected.`);
   lines.push("This is not a clean result. Detection and checks live in the lexicon packages.");
@@ -180,12 +203,17 @@ function renderNoLexicons(target: string, unclaimed: UnclaimedFile[], truncated?
     lines.push("", "No file under the target looked like CI, Kubernetes, Helm, Docker, CloudFormation, ARM, Config Connector, fountain, or Terraform either.");
   }
   lines.push("", "Run it with the lexicons those files need:");
-  lines.push(`  ${installLine(wanted.length > 0 ? wanted : [...AUDIT_LEXICONS], target)}`);
+  const lexicons = wanted.length > 0 ? wanted : [...AUDIT_LEXICONS];
+  lines.push(`  ${installLine(lexicons, target, paths)}`);
+  // chant#2589 — a lexicon declared by path is left out of the line above.
+  for (const name of lexicons) {
+    if (paths.has(name)) lines.push(`  (${name} is declared by path: ${lexiconSourceLabel(name, process.cwd(), paths)})`);
+  }
   return lines.join("\n");
 }
 
 /** Machine-readable form of the zero-lexicon diagnostic (`status: "no-lexicons"`). */
-function renderNoLexiconsJson(target: string, unclaimed: UnclaimedFile[], truncated?: AuditTruncation): string {
+function renderNoLexiconsJson(target: string, unclaimed: UnclaimedFile[], paths: ReadonlyMap<string, string>, truncated?: AuditTruncation): string {
   const wanted = wantedLexicons(unclaimed);
   return JSON.stringify(
     {
@@ -197,7 +225,7 @@ function renderNoLexiconsJson(target: string, unclaimed: UnclaimedFile[], trunca
       findings: [],
       unclaimed,
       missingLexicons: wanted,
-      install: installLine(wanted.length > 0 ? wanted : [...AUDIT_LEXICONS], target),
+      install: installLine(wanted.length > 0 ? wanted : [...AUDIT_LEXICONS], target, paths),
       truncated,
     },
     null,
@@ -437,6 +465,8 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
   const failOn = options.failOn ?? "none";
 
   const isUrl = /^https?:\/\//.test(options.path);
+  // chant#2589 — path lexicons the target declares, read without running its config.
+  const pathLexicons = auditPathLexicons(options.path, isUrl);
 
   // Detection lives in the lexicon plugins (each one's `detectTemplate`), so a
   // lexicon that isn't installed can't claim its files. Every branch below
@@ -481,6 +511,7 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
   // (#2528). SARIF has no slot chant fills for it, so there it goes to stderr.
   const warnings: AuditWarning[] =
     truncated && format === "sarif" ? [{ message: truncationNote(truncated, options.path) }] : [];
+  if (pathLexicons.notice !== undefined) warnings.push({ message: pathLexicons.notice });
   const withWarnings = warnings.length > 0 ? { warnings } : {};
   // A local target hands its directory to the classifier, so an input whose
   // path names a directory carries the directory itself (#2217): terraform's
@@ -512,11 +543,14 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
   const terraformStateFindings = auditTerraformState(candidates);
 
   if (plugins.length === 0) {
-    const output = format === "json" ? renderNoLexiconsJson(options.path, unclaimed, truncated) : renderNoLexicons(options.path, unclaimed, truncated);
+    const output =
+      format === "json"
+        ? renderNoLexiconsJson(options.path, unclaimed, pathLexicons.paths, truncated)
+        : renderNoLexicons(options.path, unclaimed, pathLexicons.paths, truncated);
     return { success: true, status: "no-lexicons", output, findings: [...secretsFindings, ...wranglerFindings, ...nginxFindings, ...terraformStateFindings], scanned: [], unclaimed, exitCode: NO_LEXICONS_EXIT_CODE, stream: format === "json" ? "stdout" : "stderr", ...withWarnings };
   }
 
-  const missingLexiconNote = missingLexiconHint(unclaimed);
+  const missingLexiconNote = missingLexiconHint(unclaimed, pathLexicons.paths);
 
   if (inputs.length === 0 && secretsFindings.length === 0 && wranglerFindings.length === 0 && nginxFindings.length === 0 && terraformStateFindings.length === 0) {
     let output = `No auditable files found under ${options.path}.${missingLexiconNote ? ` ${missingLexiconNote}` : ""}`;

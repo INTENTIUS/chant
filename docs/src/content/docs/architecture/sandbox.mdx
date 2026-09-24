@@ -88,15 +88,16 @@ One residual remains, pre-existing and not closed by this flag:
 
 ## Commands that read `chant.config.ts` without running it
 
-Most commands evaluate `chant.config.ts` before they do anything else, in the sandboxed child when `--sandbox` is given and in the CLI's process otherwise. Three commands never evaluate it, with or without `--sandbox`:
+Most commands evaluate `chant.config.ts` before they do anything else, in the sandboxed child when `--sandbox` is given and in the CLI's process otherwise. Four commands never evaluate it, with or without `--sandbox`:
 
 | Command | Why it reads the config |
 |---|---|
+| `chant audit` | to name a lexicon the audited project declares by path, and leave it out of the install line |
 | `chant init --force` into a directory with a config | to see whether the lexicon it scaffolds is declared by path |
 | `chant dev onboard` | to refuse a lexicon declared by path, naming its path |
 | `chant import --agents` | to load the target lexicon from its path when the project declares it that way |
 
-These commands only need the `lexicons` list, so they read it statically (chant #2591). The file is parsed and the `lexicons` value is reduced by the same folder that folds source files, given the file's own top-level `const`s and nothing else. No module is imported. The reader follows the export shapes the loader accepts: `export default`, `export const config`, or a named `export const lexicons`. What it can read is what fold can reduce without imports: literal values and the `const`s declared in the file, including a `const` holding the whole config. A call to a function declared in the same file also reads, when its body is inside the fold subset.
+These commands only need the `lexicons` list, so they read it statically (chant #2591, #2589). The file is parsed and the `lexicons` value is reduced by the same folder that folds source files, given the file's own top-level `const`s and nothing else. No module is imported. The reader follows the export shapes the loader accepts: `export default`, `export const config`, or a named `export const lexicons`. What it can read is what fold can reduce without imports: literal values and the `const`s declared in the file, including a `const` holding the whole config. A call to a function declared in the same file also reads, when its body is inside the fold subset.
 
 Anything that needs another module or the environment is unreadable:
 
@@ -107,7 +108,7 @@ Anything that needs another module or the environment is unreadable:
 
 When the `lexicons` value cannot be read, the command prints a note with the file and the reason. Every lexicon is then treated as a package. The command does not fall back to evaluating the config.
 
-`chant import --agents` does load a lexicon declared by path from its module, which is project code, the same way `chant build` does.
+`chant audit` also never records what it reads for the lexicon loaders. A lexicon the audited project declares by path is named in audit's messages, but its module is never imported: audit's checks come only from installed lexicon packages. `chant import --agents` does load a lexicon declared by path from its module, which is project code, the same way `chant build` does.
 
 `lint.plugins` — declarative lint rules, the other project-authored module list in the config — is **not** part of this. `chant build` never loads it; only `chant lint` does, and `chant lint` has no `--sandbox`. It is a different command with a different (unsandboxed) trust model, not a hole in this one.
 
