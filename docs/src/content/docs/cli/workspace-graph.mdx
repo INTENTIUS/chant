@@ -218,7 +218,7 @@ finding   intent-constraint-coarse: app/src/server.mjs is constrained only throu
 
 Units of work, contracts and evidence come from a plugin, because core has no model of them. A kind file given with `--kind` supplies them through its `commitJoins` export. The file may also export a `recordKind`, or only `commitJoins`.
 
-The export is either a function or data. A function gets each commit that touched the region (`sha`, `subject`, `body`, `author`, `date` and `trailers`) and a context whose `read(path)` returns a file from the workspace root in the tree read. It returns any of `unit`, `contract` and `evidence`, each an object with a string `id`, and `authorship`, the trailer keys on the commit that claim who wrote it. A unit or contract may list `decisions`, the ids of the decision records it carries out, which makes the commit those decisions' own work.
+The export is either a function or data. A function gets each commit that touched the region (`sha`, `subject`, `body`, `author`, `date` and `trailers`) and a context whose `read(path)` returns a file from the workspace root in the tree read, and whose `list(dir)` returns the entries directly inside a directory there: paths from the workspace root, sorted, with a directory's ending in `/`. Either returns `undefined` for a path that isn't a file or a directory in that tree. With `list` a plugin can find the record that names a commit, so the commit needs no trailer ([#2663](https://github.com/INTENTIUS/chant/issues/2663)). It returns any of `unit`, `contract` and `evidence`, each an object with a string `id`, and `authorship`, the trailer keys on the commit that claim who wrote it. A unit or contract may list `decisions`, the ids of the decision records it carries out, which makes the commit those decisions' own work.
 
 ```js
 export function commitJoins(commit, context) {
@@ -229,7 +229,7 @@ export function commitJoins(commit, context) {
 }
 ```
 
-The data form needs no code. `trailers` names the trailer that holds each id, and `records` the file to read for each, with `{id}` for the id. `authorship` lists the trailers that claim who wrote a commit.
+The data form needs no code. `trailers` names the trailer that holds each id, and `records` the file to read for each, with `{id}` for the id. Every value of the evidence trailer is one piece of evidence. A commit has one unit and one contract, so their trailers give their first value. `authorship` lists the trailers that claim who wrote a commit.
 
 ```js
 export const commitJoins = {
@@ -239,7 +239,7 @@ export const commitJoins = {
 };
 ```
 
-The function may also return `findings`, each with a `code`, a `message` and `refs`, the things it is about. This is how a plugin reports what it knows and core doesn't, such as a contract whose criteria changed in a commit that names no decision. The code must be `plugin:<name>:<code>`, where `<name>` is the kind's name: its record kind's name, or the file's name without `.kind.mjs`. The graph carries each as a finding node about the commit, and resolves the `refs` that name nodes in the graph to their ids.
+The function may also return `findings`, each with a `code`, a `message` and `refs`, the things it is about. This is how a plugin reports what it knows and core doesn't, such as a contract whose criteria changed in a commit that names no decision. The code must be `plugin:<name>:<code>`, where `<name>` is the kind's name: its record kind's name, or the file's name without `.kind.mjs`. A kind file can name its findings itself with a second export, `export const commitJoinsName = "chud"`, so joins kept beside a record kind called `decision` report `plugin:chud:<code>` ([#2663](https://github.com/INTENTIUS/chant/issues/2663)). The name is its own export because the data form's object holds only joins, and a function's `name` is already the function's own name. The graph carries each as a finding node about the commit, and resolves the `refs` that name nodes in the graph to their ids.
 
 ```js
 export function commitJoins(commit, context) {

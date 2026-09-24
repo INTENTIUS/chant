@@ -506,7 +506,7 @@ interface LoadedKind {
   file: string;
   /** Relative to the repository root, for the document. */
   display: string;
-  /** The record kind's name, or the file's name without `.kind.mjs`: the namespace of its plugin findings. */
+  /** The namespace of its plugin findings: its `commitJoinsName`, the record kind's name, or the file's name without `.kind.mjs`. */
   name: string;
   records?: { loaded: LoadedRecordKind; views: RecordView[]; workspaceRoot: string };
   joins?: CommitJoins;
@@ -525,13 +525,13 @@ async function loadKinds(query: IntentQuery, top: string): Promise<LoadedKind[]>
     }
     const joins = readCommitJoins(mod);
     if (typeof joins === "string") throw new IntentError("kind-invalid", `kind file ${k} has a commitJoins export that can't be read: ${joins}`);
-    const kind: LoadedKind = { file, display, name: basename(file).replace(/(?:\.kind)?\.[cm]?[jt]s$/, ""), ...(joins ? { joins } : {}) };
+    const kind: LoadedKind = { file, display, name: joins?.name ?? basename(file).replace(/(?:\.kind)?\.[cm]?[jt]s$/, ""), ...(joins ? { joins } : {}) };
     if (mod.recordKind !== undefined) {
       const doc = await queryRecords({ kind: file, at: query.at, cwd: query.cwd });
       if ("error" in doc) throw new IntentError(doc.error.code, doc.error.message);
       try {
         kind.records = { loaded: await loadRecordKind(file), views: doc.records, workspaceRoot: doc.workspaceRoot };
-        kind.name = kind.records.loaded.kind.name;
+        kind.name = joins?.name ?? kind.records.loaded.kind.name;
       } catch (err) {
         if (err instanceof RecordReadError) throw new IntentError(err.code as IntentErrorCode, err.message);
         throw err;
@@ -634,6 +634,13 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
     if (!isWorkspacePath(path) || located.tree.stat(path) !== "file") return undefined;
     return located.tree.read(path);
   };
+  // The same tree as readAt (#2663): entries directly inside dir, from the workspace root, a directory's with a trailing slash.
+  const listAt = (dir: string): string[] | undefined => {
+    const d = dir === "." ? "" : dir.replace(/\/+$/, "");
+    if (d !== "" && (!isWorkspacePath(d) || located.tree.stat(d) !== "dir")) return undefined;
+    const entries = located.tree.list(d);
+    return entries?.map((e) => `${joinPath(d, e.name)}${e.type === "dir" ? "/" : ""}`).sort();
+  };
   interface Joined {
     unit?: string;
     contracts: string[];
@@ -665,7 +672,7 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
       if (!k.joins) continue;
       let result;
       try {
-        result = await runCommitJoins(k.joins, c, { read: readAt, at: located.at }, k.name);
+        result = await runCommitJoins(k.joins, c, { read: readAt, list: listAt, at: located.at }, k.name);
       } catch (err) {
         const message = `${k.display}: commitJoins failed for ${c.sha.slice(0, 8)}: ${err instanceof Error ? err.message : String(err)}`;
         if (!failedPlugins.has(message)) reasons.push({ code: "intent-plugin-failed", message });
