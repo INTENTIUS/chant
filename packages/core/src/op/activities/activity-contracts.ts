@@ -146,6 +146,7 @@ export const proposeWorkspaceUpgradeContract = activityContract(
     base: z.string().optional(),
     remote: z.string().optional(),
     allowCode: z.boolean().optional(),
+    source: z.string().optional(),
     cwd: z.string().optional(),
   }),
   z.object({

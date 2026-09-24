@@ -7,7 +7,7 @@ diataxis: reference
 ## Synopsis
 
 ```
-chant workspace upgrade [<scope>] [--to <ref>] [--allow-code] [--dry-run] [--output <patch file>] [--json]
+chant workspace upgrade [<scope>] [--to <ref>] [--source <repo>[#<member>]] [--allow-code] [--dry-run] [--output <patch file>] [--json]
 ```
 
 ## Description
@@ -63,6 +63,24 @@ A file that did not merge is left whole, and the lock gains a manual step for it
 
 An upgrade updates or merges `owned` files only. It never touches a `seed` file again, and it leaves each `generated` file for its command to rebuild, naming that command in its output.
 
+### Moving to another template
+
+`--source <repo>[#<member>]` moves the scope to another template while it upgrades, at the version `--to` names. This brings a fork-born workspace forward: adopt its lineage against the fork with [`chant workspace adopt-lineage`](/chant/cli/workspace-adopt-lineage/), then move it onto the template the fork came from.
+
+```
+$ chant workspace upgrade . --source acme/starter --to v2.0.0
+.  github.com/someone/starter-fork  v1.1.0 -> v2.0.0
+  template: github.com/someone/starter-fork -> github.com/acme/starter
+  migration: from-fork
+  updated: README.md
+  merged: src/main.ts
+  ...
+```
+
+The chain starts with a [bridge migration](/chant/reference/template-migrations/#bridge-migrations) that the new template ships for the old one. Its `from.template` names the scope's current template, and its `from.versions` accepts the scope's version. The new template's own migrations then run from the version the bridge lands on. The merge base still comes from the scope's recorded source, so edits the workspace made since then merge as in any other upgrade. Once the upgrade applies, the lock names the new template and its source, pinned at the new ref.
+
+When no bridge accepts the scope's version and the new template has migrations of its own, the move is refused, because the scope's place in the new template's history is unknown. Only a git scope can move, and the move needs `--to`.
+
 ### Scheduled upgrades
 
 An Op schedules upgrades with the `proposeWorkspaceUpgrade` activity rather than by running this command. The activity stages the same upgrade and proposes it as a branch or a pull request. It never writes the default branch. See [Scheduling upgrades from an Op](#scheduling-upgrades-from-an-op).
@@ -72,6 +90,7 @@ An Op schedules upgrades with the `proposeWorkspaceUpgrade` activity rather than
 | Option | Effect |
 |---|---|
 | `--to <ref>` | The template version to upgrade to: a git ref, usually a tag. Defaults to the scope's current ref, which follows a moving ref such as a branch. For a vendor scope it only relabels `ref`. |
+| `--source <repo>[#<member>]` | Move the scope to this template, through its bridge migration. Needs `--to`. See [Moving to another template](#moving-to-another-template). |
 | `--allow-code` | Run migrations whose body is code. Without it, a chain holding a code migration is refused. |
 | `--dry-run` | Stage and check, then stop. No gate is recorded. |
 | `--output <file>` | Write the patch to a file for review. |
@@ -109,6 +128,7 @@ export default Op({
 | `base` | The pull request's base, default the remote's default branch |
 | `remote` | Default `origin` |
 | `allowCode` | Run code migrations, default false |
+| `source` | Move the scope to this template, as `--source` does. Needs `to`. |
 | `cwd` | The directory holding the lock, default the working directory |
 
 It returns `scope`, `mode`, `changed`, `proposed`, `checksOk`, `from`, `to`, `digest`, `manualSteps` (a count), `governance`, and, when written, `branch`, `commit`, `pushed` and `prUrl`. A failed check leaves `proposed` false. The pull request body names the patch digest, the same value the command's gate binds.
@@ -118,5 +138,5 @@ It returns `scope`, `mode`, `changed`, `proposed`, `checksOk`, `from`, `to`, `di
 | Code | Meaning |
 |---|---|
 | 0 | Applied, already up to date, or `--dry-run` |
-| 1 | Refused (no lock, no such scope, uncommitted changes, open manual steps, a gap in the migration chain, a failed post-condition, a code migration without `--allow-code`), or a check failed in the worktree |
+| 1 | Refused (no lock, no such scope, uncommitted changes, open manual steps, a gap in the migration chain, a move with no bridge, a failed post-condition, a code migration without `--allow-code`), or a check failed in the worktree |
 | 3 | Gated: the patch waits for `chant approve workspace-upgrade <scope>` |

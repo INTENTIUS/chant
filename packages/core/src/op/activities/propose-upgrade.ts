@@ -45,6 +45,8 @@ export interface ProposeWorkspaceUpgradeArgs {
   remote?: string;
   /** Run code migrations. Default false. */
   allowCode?: boolean;
+  /** `<repo>[#<member>]`: move the scope to this template through its bridge migration (#2551). Needs `to`. */
+  source?: string;
   /** The directory holding the lineage lock. Default: the working directory. */
   cwd?: string;
   /** Replaces the git and gh child processes. For tests. */
@@ -131,6 +133,7 @@ export async function proposeWorkspaceUpgrade(args: ProposeWorkspaceUpgradeArgs)
     scope: args.scope,
     to: args.to,
     allowCode: args.allowCode,
+    ...(args.source !== undefined ? { source: args.source } : {}),
     ...(args._runChant ? { runChant: args._runChant } : {}),
   });
   try {

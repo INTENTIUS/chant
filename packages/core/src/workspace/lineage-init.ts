@@ -49,22 +49,36 @@ export interface TemplateSpec {
  * `git@host:path`, a local path, or `owner/name` for a GitHub repository.
  */
 export function parseTemplateSpec(spec: string, cwd: string = process.cwd()): TemplateSpec {
+  const parsed = parseTemplateSource(spec, cwd, "--from");
+  if (parsed.ref === undefined) throw new LockError(`--from ${spec}: expected <repo>@<ref>[#<member>], e.g. acme/starter@v1.2.0`);
+  return parsed as TemplateSpec;
+}
+
+/**
+ * Parse `<repo>[@<ref>][#<member>]`, where the ref may be left out: the form
+ * `chant workspace adopt-lineage --from`, `hash-index` and `upgrade --source`
+ * take (#2551). `flag` names the option in error messages.
+ */
+export function parseTemplateSource(spec: string, cwd: string = process.cwd(), flag = "--from"): Omit<TemplateSpec, "ref"> & { ref?: string } {
   let rest = spec.trim();
   let member: string | undefined;
   const hash = rest.lastIndexOf("#");
   if (hash >= 0) {
     member = rest.slice(hash + 1).replace(/^\/+|\/+$/g, "");
     rest = rest.slice(0, hash);
-    if (!member || posix.normalize(member).startsWith("..")) throw new LockError(`--from ${spec}: "#${member}" is not a directory in the repository`);
+    if (!member || posix.normalize(member).startsWith("..")) throw new LockError(`${flag} ${spec}: "#${member}" is not a directory in the repository`);
     member = posix.normalize(member);
   }
+  let ref: string | undefined;
   const at = rest.lastIndexOf("@");
   const lastSep = Math.max(rest.lastIndexOf("/"), rest.lastIndexOf(":"));
-  if (at <= 0 || at < lastSep || at === rest.length - 1) {
-    throw new LockError(`--from ${spec}: expected <repo>@<ref>[#<member>], e.g. acme/starter@v1.2.0`);
+  if (at > 0 && at > lastSep) {
+    if (at === rest.length - 1) throw new LockError(`${flag} ${spec}: the ref after "@" is empty; expected <repo>@<ref>[#<member>]`);
+    ref = rest.slice(at + 1);
+    rest = rest.slice(0, at);
   }
-  const repo = rest.slice(0, at);
-  const ref = rest.slice(at + 1);
+  const repo = rest;
+  if (!repo) throw new LockError(`${flag} ${spec}: no repository`);
 
   let url: string;
   let repoId: string;
@@ -85,9 +99,9 @@ export function parseTemplateSpec(spec: string, cwd: string = process.cwd()): Te
     url = `https://${repo}${repo.endsWith(".git") ? "" : ".git"}`;
     repoId = repo.replace(/\.git$/, "");
   } else {
-    throw new LockError(`--from ${spec}: "${repo}" is not a URL, a local repository or owner/name`);
+    throw new LockError(`${flag} ${spec}: "${repo}" is not a URL, a local repository or owner/name`);
   }
-  return { repo, url, ref, member, id: member ? `${repoId}#${member}` : repoId };
+  return { repo, url, ...(ref !== undefined ? { ref } : {}), member, id: member ? `${repoId}#${member}` : repoId };
 }
 
 // ── Fetch ────────────────────────────────────────────────────────────────────
@@ -268,7 +282,7 @@ export async function initFromCommand(options: InitFromOptions): Promise<InitFro
 }
 
 /** A local repository is recorded relative to the project, so the lock does not name this machine's paths. */
-function portableUrl(url: string, targetDir: string): string {
+export function portableUrl(url: string, targetDir: string): string {
   if (!isAbsolute(url)) return url;
   const rel = relative(targetDir, url).split(sep).join("/");
   return rel.startsWith(".") ? rel : `./${rel}`;

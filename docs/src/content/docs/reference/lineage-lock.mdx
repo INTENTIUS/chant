@@ -4,7 +4,7 @@ description: The format of .chant/workspace.lock.json, the file that records whe
 diataxis: reference
 ---
 
-The lineage lock records where a project's files came from. `chant init --from`, `chant init --template` and `chant vendor migrate` write it, and `chant vendor pull` keeps it current. [`chant workspace upgrade`](/chant/cli/workspace-upgrade/) reads it to bring a scope forward to a newer template version, and writes the new version into it. The design is D9 of [#2524](https://github.com/INTENTIUS/chant/issues/2524). Decision ws-038 makes vendor a lineage scope, ws-047 writes the lock at init, and ws-005 sets how an upgrade merges.
+The lineage lock records where a project's files came from. `chant init --from`, `chant init --template`, `chant vendor migrate` and `chant workspace adopt-lineage` write it, and `chant vendor pull` keeps it current. [`chant workspace upgrade`](/chant/cli/workspace-upgrade/) reads it to bring a scope forward to a newer template version, and writes the new version into it. The design is D9 of [#2524](https://github.com/INTENTIUS/chant/issues/2524). Decision ws-038 makes vendor a lineage scope, ws-047 writes the lock at init, and ws-005 sets how an upgrade merges.
 
 Lineage works for a plain project. The lock needs no `chant.workspace.json`, and chant loads its code only when a lock exists or a command that writes one runs. A project that never uses `--from`, `--template` or `chant vendor migrate` has no lock and sees no change.
 
@@ -94,12 +94,13 @@ chant writes the file with sorted keys and two-space indentation, so it diffs cl
 | `migrations` | The ids of the [template migrations](/chant/reference/template-migrations/) `chant workspace upgrade` has applied since the scope was instantiated, in the order they ran. An id listed here never runs again. |
 | `files` | Every file chant wrote into the scope, keyed by its path relative to the scope directory. |
 | `manualSteps` | Paths an update left alone because the project had its own version (see [Manual steps](#manual-steps)). |
+| `adoption` | Present only when [`chant workspace adopt-lineage`](/chant/cli/workspace-adopt-lineage/) recorded the lineage (see [Adoption](#adoption)). |
 
 ### Sources
 
 | `type` | Fields | Written by |
 |---|---|---|
-| `git` | `repo` as given, `url` that git fetches (a local repository is stored relative to the project), `path` for `#<member>` | `chant init --from` |
+| `git` | `repo` as given, `url` that git fetches (a local repository is stored relative to the project), `path` for `#<member>` | `chant init --from`, `chant workspace adopt-lineage` |
 | `lexicon` | `lexicon`, `template` | `chant init --template` |
 | `local` | `path`, relative to the lock's directory | `chant vendor` |
 | `archive` | `url`, optional `subpath` | `chant vendor` |
@@ -123,6 +124,34 @@ chant writes the file with sorted keys and two-space indentation, so it diffs cl
 | `tree` | `git` | The git tree of the scope's directory at that commit. |
 | `package`, `version` | `lexicon` | The lexicon package and its installed version. For a lexicon the config declares by path, `package` is that path and `version` is `null`, as it is when chant cannot find the package. |
 | `chant` | `lexicon` | The chant version that rendered core's part of the scaffold, such as `package.json`. |
+
+### Adoption
+
+A scope that had no lock and got one from `chant workspace adopt-lineage` carries an `adoption`. D5 of #2524 has an adoption cover an exact commit range and show as `adopted`, which is requirement P7.
+
+```json
+"adoption": {
+  "provenance": "adopted",
+  "commits": {
+    "first": "51c3f0e9a2d4c8b1e07a6f35d2c9b4e81a07f6d3",
+    "last": "e07ab4c1d9f35a2b6c8d1e4f7a9b0c3d5e6f8a1b",
+    "count": 37
+  },
+  "match": { "files": 14, "identical": 10, "edited": 3, "missing": 1 },
+  "index": "computed",
+  "attestation": null
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `provenance` | Always `adopted`. A lineage without `adoption` reads as `unattested`. |
+| `commits` | The history the adoption covers: the commits `git rev-list <last> -- <scope>` lists, from `first`, the oldest, to `last`, HEAD when the scope was adopted. `count` pins the range, so a rewritten history no longer matches it. |
+| `match` | How the chosen template version matched: the files it has, and how many of them the scope held byte for byte, held with other content, or no longer held. |
+| `index` | `computed` when every tag's hashes came from the template, `cache` when a cached hash index chose the version. chant re-checks the chosen version against the template either way. |
+| `attestation` | Always `null` for now. D5 has an admin at the base revision sign the adoption. That signature needs the attestors of [#2547](https://github.com/INTENTIUS/chant/issues/2547), and `attestation` is reserved for it. |
+
+An adopted lineage behaves like any other: `chant workspace upgrade` upgrades it, and the files it records use the template's hashes at the adopted tag as their merge base. An upgrade keeps `adoption`, since it describes the history before the lock.
 
 ## Files
 
@@ -176,7 +205,9 @@ Files in a scope directory that the lineage does not list are never touched.
 | [`chant init --template <name>`](/chant/cli/init/#lineage) | Writes a new lock with scope `"."` |
 | [`chant vendor migrate`](/chant/cli/vendor/#chant-vendor-migrate) | Adds a vendor scope per `vendor.json` entry, creating the lock if needed |
 | [`chant vendor pull`](/chant/cli/vendor/#chant-vendor-pull-name) | Updates vendor scopes file by file |
+| [`chant workspace adopt-lineage`](/chant/cli/workspace-adopt-lineage/) | Adds a scope that had no lineage, with an `adoption`, creating the lock if needed |
 | [`chant workspace lineage`](/chant/cli/workspace-lineage/) | Reads it |
 | [`chant workspace lineage resolve <path>`](/chant/cli/workspace-lineage/) | Closes a manual step |
-| [`chant workspace upgrade <scope>`](/chant/cli/workspace-upgrade/) | Writes the scope's new `ref`, `address`, `migrations`, `files` and `manualSteps`, through the approved patch |
+| [`chant workspace upgrade <scope>`](/chant/cli/workspace-upgrade/) | Writes the scope's new `ref`, `address`, `migrations`, `files` and `manualSteps`, through the approved patch. With `--source`, also its `template` and `source` |
+| [`chant workspace versions`](/chant/cli/workspace-versions/) | Reads every lock under a directory |
 | [`chant workspace check`](/chant/cli/workspace-check/) | Reads it, and fails on open manual steps |

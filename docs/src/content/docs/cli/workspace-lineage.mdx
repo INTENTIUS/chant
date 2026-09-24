@@ -27,6 +27,14 @@ vendor/web-app  vendor web-app  local:../shared/web-app@v1.2.0
 2 scope(s), 1 manual step(s) open
 ```
 
+A scope that [`chant workspace adopt-lineage`](/chant/cli/workspace-adopt-lineage/) recorded is marked `adopted`, with the commit range the adoption covers:
+
+```
+.  template  github.com/acme/starter#service@v1.1.0 (9e1d04c2b7aa)  adopted
+  adopted over 51c3f0e9a2d4..e07ab4c1d9f3 (37 commit(s)), unsigned
+  12 file(s), 3 edited, 1 deleted
+```
+
 ## `resolve <path>`
 
 Closes the manual step for `<path>`, given relative to the lock's directory. Run it after merging the source's changes into the file by hand. The file as it stands is kept, and the source's version becomes its new merge base. For a file the source removed, the file leaves the lineage and stays as the project's own. The command exits 1 when `<path>` has no open step.
@@ -35,7 +43,7 @@ Closes the manual step for `<path>`, given relative to the lock's directory. Run
 
 | Option | Effect |
 |---|---|
-| `--json` | Print `{ lock, scopes }`, where each scope has `scope`, `kind`, `name` (vendor only), `template`, `ref`, `address`, `files` (a count), `edited`, `missing` and `manualSteps`. |
+| `--json` | Print `{ lock, scopes }`, where each scope has `scope`, `kind`, `name` (vendor only), `template`, `ref`, `address`, `files` (a count), `edited`, `missing`, `manualSteps` and `provenance` (`adopted` or `unattested`), plus `adoption` for an adopted scope. |
 
 ## Exit codes
 

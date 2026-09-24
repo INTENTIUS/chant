@@ -1,0 +1,54 @@
+---
+title: "chant workspace versions"
+description: Report the template, chant and lexicon versions of every workspace with a lineage lock under a directory, grouped into families by template
+diataxis: reference
+---
+
+## Synopsis
+
+```
+chant workspace versions [<dir>] [--template <id>] [--json]
+```
+
+## Description
+
+`chant workspace versions` compares a family of workspaces: the workspaces made from one template. It finds every [`.chant/workspace.lock.json`](/chant/reference/lineage-lock/) under `<dir>`, the current directory by default, up to eight levels down. It skips `node_modules`, `dist` and hidden directories. Pointing it at a directory of checkouts compares them all. The design is D9 of [#2524](https://github.com/INTENTIUS/chant/issues/2524), requirement T9.
+
+For each workspace it reports:
+
+- each lineage scope's template and ref, with its commit;
+- the scope's provenance (`adopted` or `unattested`) and its applied migrations;
+- the chant and lexicon packages its `package.json` declares (`@intentius/chant` and `@intentius/chant-lexicon-*`), with the version installed where node would resolve it from the workspace.
+
+Scopes are then grouped by template id. Each family names its newest version. A member on an older version is reported as `behind`, not as drift, since that word already has its own meanings in chant. When members of one family have a chant or lexicon package installed at different versions, the report names them too.
+
+```
+$ chant workspace versions ~/checkouts
+billing
+  .  github.com/acme/starter@v2.0.0 (4624a0b6ca83)  unattested, 1 migration(s)
+  plugins: @intentius/chant 0.80.0, @intentius/chant-lexicon-aws 0.80.0
+search
+  .  github.com/acme/starter@v1.4.0 (9e1d04c2b7aa)  adopted
+  plugins: @intentius/chant 0.79.0, @intentius/chant-lexicon-aws 0.79.0
+family github.com/acme/starter: 2 scope(s), newest 2.0.0; behind: search (v1.4.0)
+  @intentius/chant differs: 0.80.0 in billing; 0.79.0 in search
+  @intentius/chant-lexicon-aws differs: 0.80.0 in billing; 0.79.0 in search
+```
+
+The command reads files only. It fetches nothing and runs no project code, so it works offline and on checkouts whose dependencies are not installed. A package that is not installed shows as `not installed` with its declared range. A lock that cannot be read is listed with the reason, and the rest of the report still prints.
+
+It needs no `chant.workspace.json`, and it reads the locks it finds without changing them. Nested workspaces are listed as separate workspaces.
+
+## Options
+
+| Option | Effect |
+|---|---|
+| `--template <id>` | Report only the family of this template id, as the lock writes it, such as `github.com/acme/starter`. |
+| `--json` | Print `{ root, workspaces, families, pluginSpread }`. Each workspace has `path`, `scopes` (`scope`, `kind`, `template`, `ref`, `version`, `commit`, `migrations`, `provenance`) and `plugins` (`name`, `declared`, `installed`), plus `error` when its lock is unreadable. Each family has `template`, `newest` and `members` (`path`, `scope`, `ref`, `version`, `behind`). |
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | The report was printed, including an empty one |
+| 1 | `<dir>` is not a directory |

@@ -11,7 +11,7 @@
 
 import { formatError, formatSuccess } from "../cli/format";
 import type { CommandContext } from "../cli/registry";
-import { LOCK_FILE, LockError, readLock, resolveManualStep, scopeStatus, writeLock, type ManualStep } from "./lineage-lock";
+import { LOCK_FILE, LockError, lineageProvenance, readLock, resolveManualStep, scopeStatus, writeLock, type Adoption, type ManualStep } from "./lineage-lock";
 
 const USAGE = "chant workspace lineage [--json] | chant workspace lineage resolve <path>";
 
@@ -26,6 +26,9 @@ export interface LineageScopeView {
   edited: string[];
   missing: string[];
   manualSteps: ManualStep[];
+  /** D5's provenance level: `adopted` for a lineage adopt-lineage recorded (#2551), `unattested` otherwise. */
+  provenance: "adopted" | "unattested";
+  adoption?: Adoption;
 }
 
 /** The lock as `--json` prints it: one view per scope, with its state in the tree. */
@@ -45,6 +48,8 @@ export function lineageView(root: string): { lock: string; scopes: LineageScopeV
       edited: st.customised,
       missing: st.missing,
       manualSteps: lineage.manualSteps,
+      provenance: lineageProvenance(lineage),
+      ...(lineage.adoption ? { adoption: lineage.adoption } : {}),
     };
   });
   return { lock: LOCK_FILE, scopes };
@@ -72,7 +77,11 @@ export async function runWorkspaceLineage(ctx: CommandContext): Promise<number> 
     for (const s of view.scopes) {
       const pin = s.ref ? `@${s.ref}` : "";
       const at = typeof s.address?.commit === "string" ? ` (${s.address.commit.slice(0, 12)})` : "";
-      lines.push(`${s.scope}  ${s.kind}${s.name ? ` ${s.name}` : ""}  ${s.template}${pin}${at}`);
+      lines.push(`${s.scope}  ${s.kind}${s.name ? ` ${s.name}` : ""}  ${s.template}${pin}${at}${s.adoption ? "  adopted" : ""}`);
+      if (s.adoption) {
+        const c = s.adoption.commits;
+        lines.push(`  adopted over ${c.first.slice(0, 12)}..${c.last.slice(0, 12)} (${c.count} commit(s)), unsigned`);
+      }
       lines.push(`  ${s.files} file(s), ${s.edited.length} edited, ${s.missing.length} deleted`);
       for (const m of s.manualSteps) lines.push(`  manual step: ${s.scope === "." ? "" : `${s.scope}/`}${m.path} (${m.reason})`);
     }

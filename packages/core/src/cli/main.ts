@@ -450,6 +450,18 @@ export function parseArgs(args: string[]): ParsedArgs {
       // #2550 — `chant workspace upgrade` runs a template's code migrations
       // only when asked to.
       result.allowCode = true;
+    } else if (arg === "--source") {
+      // #2551 — `chant workspace upgrade --source <repo>[#<member>]`.
+      result.source = args[++i];
+      if (!result.source || result.source.startsWith("-")) throw new Error("--source needs a template: --source <repo>[#<member>]");
+    } else if (arg === "--tags") {
+      // #2551 — `chant workspace adopt-lineage --tags <glob>`.
+      result.tags = args[++i];
+      if (!result.tags || result.tags.startsWith("-")) throw new Error("--tags needs a tag glob: --tags 'v*'");
+    } else if (arg === "--index") {
+      // #2551 — `chant workspace adopt-lineage --index <file>`.
+      result.index = args[++i];
+      if (!result.index || result.index.startsWith("-")) throw new Error("--index needs a hash index file: --index <file>");
     } else if (arg === "--allow-same-origin") {
       // chant#2384 — record a resolution the same-origin rule would refuse,
       // deliberately. Flagged on the record, not just accepted quietly.
@@ -665,7 +677,21 @@ Workspace (first-test slice, #2546):
                         it, migrate and merge per file in a worktree, run build,
                         lint and workspace check there, then gate on the digest
                         of the patch (chant approve workspace-upgrade <scope>).
-                        A second run with the approval applies the patch
+                        A second run with the approval applies the patch.
+                        --source <repo>[#<member>] moves the scope to another
+                        template through that template's bridge migration
+  workspace adopt-lineage [<scope>] --from <repo>[@<tag>][#<member>] [--tags <glob>]
+                        [--index <file>] [--dry-run] [--json]
+                        Give a scope with no lineage one: match its files
+                        against the template's tagged versions and record the
+                        best one in the lock as adopted
+  workspace hash-index --from <repo>[#<member>] [--tags <glob>] [--output <file>]
+                        Compute the per-version file hashes adopt-lineage
+                        matches against, for a template's CI to publish
+  workspace versions [<dir>] [--template <id>] [--json]
+                        Report the template, chant and lexicon versions of
+                        every workspace with a lineage lock under <dir>,
+                        grouped into families by template
   workspace check [--json]
                         Fail on an unreadable lineage lock or an open manual
                         step. Needs no workspace file
@@ -1071,6 +1097,9 @@ export const commandRegistry: CommandDef[] = [
   { name: "workspace lineage", handler: async (ctx) => (await import("../workspace/lineage-cli")).runWorkspaceLineage(ctx) },
   { name: "workspace upgrade", handler: async (ctx) => (await import("../workspace/lineage-upgrade-cli")).runWorkspaceUpgrade(ctx) },
   { name: "workspace check", handler: async (ctx) => (await import("../workspace/lineage-check")).runWorkspaceCheck(ctx) },
+  { name: "workspace adopt-lineage", handler: async (ctx) => (await import("../workspace/lineage-adopt-cli")).runWorkspaceAdoptLineage(ctx) },
+  { name: "workspace hash-index", handler: async (ctx) => (await import("../workspace/lineage-adopt-cli")).runWorkspaceHashIndex(ctx) },
+  { name: "workspace versions", handler: async (ctx) => (await import("../workspace/lineage-versions")).runWorkspaceVersions(ctx) },
 
   // State subcommands
   { name: "lifecycle snapshot", requiresPlugins: true, handler: runLifecycleSnapshot },

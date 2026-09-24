@@ -119,7 +119,7 @@ export async function runWorkspaceUnknown(ctx: CommandContext): Promise<number> 
   console.error(
     formatError({
       message: sub ? `Unknown workspace subcommand: ${sub}` : "chant workspace needs a subcommand",
-      hint: `Available: ${USAGE}, chant workspace lineage [--json], chant workspace lineage resolve <path>, chant workspace upgrade [<scope>] [--to <ref>], chant workspace check [--json]`,
+      hint: `Available: ${USAGE}, chant workspace lineage [--json], chant workspace lineage resolve <path>, chant workspace upgrade [<scope>] [--to <ref>] [--source <repo>], chant workspace check [--json], chant workspace adopt-lineage [<scope>] --from <repo>, chant workspace hash-index --from <repo>, chant workspace versions [<dir>]`,
     }),
   );
   return 1;

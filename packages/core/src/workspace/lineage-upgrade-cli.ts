@@ -20,7 +20,7 @@ import { WORKSPACE_UPGRADE_GATE_OP } from "../op/gate-name";
 import { LockError } from "./lineage-lock";
 import { applyStagedUpgrade, describeStaged, stageUpgrade, type ChantRunner, type StagedUpgrade } from "./lineage-upgrade";
 
-const USAGE = "chant workspace upgrade [<scope>] [--to <ref>] [--allow-code] [--dry-run] [--output <patch file>] [--json]";
+const USAGE = "chant workspace upgrade [<scope>] [--to <ref>] [--source <repo>[#<member>]] [--allow-code] [--dry-run] [--output <patch file>] [--json]";
 
 /** The exit code of a gated upgrade: the same as `chant run`'s gated run. */
 export const UPGRADE_GATED_EXIT = 3;
@@ -29,6 +29,8 @@ export interface UpgradeCommandOptions {
   root: string;
   scope?: string;
   to?: string;
+  /** Move the scope to another template (#2551). */
+  source?: string;
   allowCode?: boolean;
   dryRun?: boolean;
   output?: string;
@@ -53,6 +55,7 @@ export async function upgradeCommand(opts: UpgradeCommandOptions): Promise<Upgra
     root: opts.root,
     scope: opts.scope,
     to: opts.to,
+    ...(opts.source !== undefined ? { source: opts.source } : {}),
     allowCode: opts.allowCode,
     runChant: opts.runChant,
   });
@@ -137,6 +140,7 @@ export async function runWorkspaceUpgrade(ctx: CommandContext): Promise<number> 
       root: process.cwd(),
       scope: args.extraPositional,
       to: args.migrateTo,
+      source: args.source,
       allowCode: args.allowCode,
       dryRun: args.dryRun,
       output: args.output,

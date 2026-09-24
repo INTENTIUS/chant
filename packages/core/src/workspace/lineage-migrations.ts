@@ -161,39 +161,69 @@ export interface MigrationPlan {
 /**
  * The migrations that take `lineage` from its version to `targetRef`, in order.
  *
+ * With `switchTo`, the upgrade also moves the scope to another template, the
+ * one with that id (#2551). The chain then starts with a bridge migration: one
+ * the new template ships whose `from.template` names the scope's current
+ * template and whose `from.versions` accepts the scope's version. Its `to` is a
+ * version of the new template, and the new template's own migrations carry on
+ * from there. This is how a fork-born scope, adopted against the fork, comes
+ * forward onto the template the fork came from.
+ *
  * Refused, with a {@link MigrationError}:
- * - a target below the scope's version;
+ * - a target below the scope's version (without a switch: versions of two
+ *   templates do not compare);
  * - a pending migration when either end of the upgrade is not a version, so
  *   no chain can be computed;
  * - a gap: a migration in range whose `from` does not accept the version the
- *   scope has reached by then.
+ *   scope has reached by then;
+ * - a switch with no bridge from the scope's version, when the new template
+ *   has migrations of its own, since the scope's place in its history is
+ *   then unknown.
  */
-export function planMigrations(lineage: Lineage, targetRef: string | undefined, available: LoadedMigration[]): MigrationPlan {
+export function planMigrations(lineage: Lineage, targetRef: string | undefined, available: LoadedMigration[], switchTo?: string): MigrationPlan {
   const from = parseVersion(lineage.ref);
   const to = parseVersion(targetRef);
-  if (from && to && compareVersions(to, from) < 0) {
+  const applied = new Set(lineage.migrations);
+  const switching = switchTo !== undefined && switchTo !== lineage.template;
+  if (!switching && from && to && compareVersions(to, from) < 0) {
     throw new MigrationError(`the target ${targetRef} (${formatVersion(to)}) is older than the scope's ${lineage.ref} (${formatVersion(from)}); an upgrade only goes forward`);
   }
-  const applied = new Set(lineage.migrations);
-  const mine = available.filter(
-    ({ migration: m }) => (m.from.template === undefined || m.from.template === lineage.template) && !applied.has(m.id),
-  );
-  if (mine.length === 0) return { chain: [], from, to };
+  const target = switching ? switchTo : lineage.template;
+  const own = available.filter(({ migration: m }) => (m.from.template === undefined || m.from.template === target) && !applied.has(m.id));
+  const bridges = switching ? available.filter(({ migration: m }) => m.from.template === lineage.template && !applied.has(m.id)) : [];
+  if (own.length === 0 && bridges.length === 0) return { chain: [], from, to };
 
   if (!from || !to) {
+    const pending = [...bridges, ...own];
     const which = !from ? `the scope's ref ${lineage.ref ?? "(none)"}` : `the target ${targetRef ?? "(none)"}`;
     throw new MigrationError(
-      `the template has ${mine.length} migration(s) not yet applied (${mine.map((m) => m.migration.id).join(", ")}), but ${which} is not a version, so no chain can be planned. Pin tagged versions, such as v1.2.0.`,
+      `the template has ${pending.length} migration(s) not yet applied (${pending.map((m) => m.migration.id).join(", ")}), but ${which} is not a version, so no chain can be planned. Pin tagged versions, such as v1.2.0.`,
     );
   }
 
-  const inRange = mine
+  let at = from;
+  const chain: LoadedMigration[] = [];
+  if (switching) {
+    // The bridge: the one that accepts the scope's version and lands furthest without passing the target.
+    const fits = bridges
+      .map((m) => ({ ...m, target: parseVersion(m.migration.to)! }))
+      .filter((m) => satisfies(from, m.migration.from.versions) && compareVersions(m.target, to) <= 0)
+      .sort((a, b) => compareVersions(b.target, a.target) || a.migration.id.localeCompare(b.migration.id));
+    if (fits.length === 0) {
+      if (own.length === 0) return { chain: [], from, to };
+      throw new MigrationError(
+        `moving scope from ${lineage.template} to ${switchTo} needs a bridge migration: one in ${switchTo} with from.template "${lineage.template}" whose from.versions accepts ${formatVersion(from)}${bridges.length > 0 ? ` (found ${bridges.map((m) => `${m.migration.id}: ${m.migration.from.versions}`).join(", ")})` : ""}. Without it the scope's place in ${switchTo}'s history is unknown, so the upgrade is refused.`,
+      );
+    }
+    chain.push({ migration: fits[0].migration, file: fits[0].file });
+    at = fits[0].target;
+  }
+
+  const inRange = own
     .map((m) => ({ ...m, target: parseVersion(m.migration.to)! }))
-    .filter((m) => compareVersions(m.target, from) > 0 && compareVersions(m.target, to) <= 0)
+    .filter((m) => compareVersions(m.target, at) > 0 && compareVersions(m.target, to) <= 0)
     .sort((a, b) => compareVersions(a.target, b.target) || a.migration.id.localeCompare(b.migration.id));
 
-  const chain: LoadedMigration[] = [];
-  let at = from;
   let i = 0;
   while (i < inRange.length) {
     const step = inRange[i].target;

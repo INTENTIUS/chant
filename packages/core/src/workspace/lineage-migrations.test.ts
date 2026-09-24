@@ -85,6 +85,33 @@ describe("planMigrations", () => {
     // With nothing to run, no version is needed.
     expect(planMigrations(lineage("main"), "main", []).chain).toEqual([]);
   });
+
+  // #2551 — moving a scope to another template starts the chain with a bridge.
+  test("a switch starts with the bridge from the scope's template, then the new template's own migrations", () => {
+    const upstream = "github.com/acme/upstream";
+    const plan = planMigrations(lineage("v1.4.0"), "v3.0.0", [
+      migration("bridge-old", "<1.0.0", "1.0.0", "github.com/acme/starter"),
+      migration("bridge", ">=1.0.0 <2.0.0", "2.0.0", "github.com/acme/starter"),
+      migration("own-2", ">=1.0.0 <2.0.0", "2.0.0"),
+      migration("own-3", "2.x", "3.0.0"),
+      migration("other-bridge", "1.x", "2.0.0", "github.com/someone/else"),
+    ], upstream);
+    // own-2 lands where the bridge already did, so it does not run; the fork's version 1.4.0 means nothing to upstream.
+    expect(plan.chain.map((m) => m.migration.id)).toEqual(["bridge", "own-3"]);
+    // No downgrade check across templates: the fork's v5 can bridge to upstream's v3.
+    expect(planMigrations(lineage("v5.0.0"), "v3.0.0", [migration("b", ">=5.0.0", "3.0.0", "github.com/acme/starter")], upstream).chain.map((m) => m.migration.id)).toEqual(["b"]);
+  });
+
+  test("a switch without a bridge is refused when the new template has migrations, and allowed when it has none", () => {
+    const upstream = "github.com/acme/upstream";
+    expect(() => planMigrations(lineage("v1.0.0"), "v2.0.0", [migration("own", "1.x", "2.0.0")], upstream)).toThrow(/needs a bridge migration/);
+    expect(() => planMigrations(lineage("v1.0.0"), "v2.0.0", [migration("b", ">=3.0.0", "2.0.0", "github.com/acme/starter"), migration("own", "1.x", "2.0.0")], upstream)).toThrow(
+      /needs a bridge migration.*found b: >=3\.0\.0/,
+    );
+    expect(planMigrations(lineage("v1.0.0"), "v2.0.0", [], upstream).chain).toEqual([]);
+    // The same id is no switch.
+    expect(planMigrations(lineage("v1.0.0"), "v2.0.0", [migration("a", "1.x", "2.0.0")], "github.com/acme/starter").chain.map((m) => m.migration.id)).toEqual(["a"]);
+  });
 });
 
 describe("migration files", () => {

@@ -230,6 +230,10 @@
   "tricolon/density": 1,
   "anaphora/repeated-opening": 1
  },
+ "docs/src/content/docs/cli/workspace-adopt-lineage.mdx": {
+  "formatting/em-dash-density": 2,
+  "claude/colon-reveal": 2
+ },
  "docs/src/content/docs/cli/workspace-check.mdx": {
   "formatting/em-dash-density": 2,
   "claude/colon-reveal": 2
@@ -243,6 +247,9 @@
   "claude/colon-reveal": 2
  },
  "docs/src/content/docs/cli/workspace-upgrade.mdx": {
+  "claude/colon-reveal": 2
+ },
+ "docs/src/content/docs/cli/workspace-versions.mdx": {
   "formatting/em-dash-density": 2,
   "claude/colon-reveal": 2
  },
@@ -955,7 +962,6 @@
   "formatting/bold-first-bullet": 1
  },
  "docs/src/content/docs/reference/template-migrations.mdx": {
-  "formatting/em-dash-density": 2,
   "discourse/punchy-fragments": 1,
   "claude/colon-reveal": 3
  },

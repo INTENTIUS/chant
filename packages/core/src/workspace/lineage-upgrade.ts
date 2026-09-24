@@ -39,7 +39,7 @@ import { basename, join, relative, resolve, sep } from "node:path";
 import { computePlanDigest } from "../lifecycle/plan-digest";
 import type { ResolvedGateApproval } from "../op/gate-approval";
 import { checkLineage, findingKey, type CheckFinding } from "./lineage-check";
-import { git, readTemplateTree } from "./lineage-init";
+import { git, parseTemplateSource, portableUrl, readTemplateTree } from "./lineage-init";
 import { LOCK_FILE, LockError, fileHash, readLock, renderLock, scopeKey, writeLock, type Lineage, type LineageLock, type ManualStep } from "./lineage-lock";
 import { mergeFile } from "./lineage-merge";
 import { assertCodeAllowed, planMigrations, runMigration, splitMigrations, type LoadedMigration } from "./lineage-migrations";
@@ -98,6 +98,12 @@ export interface UpgradeOptions {
   to?: string;
   /** Run migrations whose body is code. */
   allowCode?: boolean;
+  /**
+   * `<repo>[#<member>]`: move the scope to this template (#2551). The chain
+   * starts with the new template's bridge migration from the scope's current
+   * template. Needs `to`, and a git scope.
+   */
+  source?: string;
   /** Replaces the child-process build and lint. For tests. */
   runChant?: ChantRunner;
 }
@@ -114,6 +120,8 @@ export interface GovernanceChange {
 export interface StagedUpgrade {
   scope: string;
   template: string;
+  /** Set when the upgrade moves the scope to another template (`--source`): its id. */
+  switchedTo?: string;
   kind: Lineage["kind"];
   /** The pin before and after. */
   from: string | null;
@@ -170,11 +178,13 @@ interface Upstream {
  * fail (a server that refuses fetches by commit); the base is then left empty,
  * and every edited file the template changed becomes a manual step.
  */
-function fetchGit(root: string, lineage: Lineage, ref: string): Upstream {
+function fetchGit(root: string, lineage: Lineage, ref: string, onto?: { url: string; repo: string; path?: string }): Upstream {
   const source = lineage.source;
   if (source.type !== "git") throw new UpgradeError("not a git source");
-  const url = source.url.startsWith(".") ? resolve(root, source.url) : source.url;
-  const label = `${source.repo}@${ref}`;
+  const baseUrl = source.url.startsWith(".") ? resolve(root, source.url) : source.url;
+  const url = onto ? onto.url : baseUrl;
+  const path = onto ? onto.path : source.path;
+  const label = `${onto ? onto.repo : source.repo}@${ref}`;
   const scratch = mkdtempSync(join(tmpdir(), "chant-upgrade-"));
   try {
     git(scratch, ["init", "-q"]);
@@ -186,13 +196,14 @@ function fetchGit(root: string, lineage: Lineage, ref: string): Upstream {
       throw new UpgradeError(`could not fetch ${label}${stderr ? `: ${stderr}` : ""}`);
     }
     const commit = git(scratch, ["rev-parse", "FETCH_HEAD^{commit}"]);
-    const target = readTemplateTree(scratch, commit, source.path, label);
+    const target = readTemplateTree(scratch, commit, path, label);
 
     const base = new Map<string, Buffer>();
     const baseCommit = lineage.address?.commit;
     if (baseCommit && baseCommit !== commit) {
       try {
-        git(scratch, ["fetch", "-q", "--depth", "1", url, baseCommit]);
+        // The base comes from the scope's own source, even when the upgrade moves it to another template.
+        git(scratch, ["fetch", "-q", "--depth", "1", baseUrl, baseCommit]);
         const old = readTemplateTree(scratch, baseCommit, source.path, `${source.repo}@${baseCommit.slice(0, 12)}`);
         for (const [path, f] of old.files) base.set(path, f.data);
       } catch {
@@ -215,11 +226,11 @@ function fetchGit(root: string, lineage: Lineage, ref: string): Upstream {
   }
 }
 
-async function fetchUpstream(root: string, lineage: Lineage, ref: string | undefined): Promise<Upstream> {
+async function fetchUpstream(root: string, lineage: Lineage, ref: string | undefined, onto?: { url: string; repo: string; path?: string }): Promise<Upstream> {
   const source = lineage.source;
   if (source.type === "git") {
     if (!ref) throw new UpgradeError("the scope records no ref; pass --to <ref>");
-    return fetchGit(root, lineage, ref);
+    return fetchGit(root, lineage, ref, onto);
   }
   if (source.type === "local" || source.type === "archive") {
     const { resolveVendorSource } = await import("../cli/commands/vendor");
@@ -370,15 +381,26 @@ export async function stageUpgrade(options: UpgradeOptions): Promise<StagedUpgra
     );
   }
 
+  // A move to another template (#2551): a git scope only, and to a named ref.
+  let onto: { url: string; repo: string; path?: string; id: string } | undefined;
+  if (options.source !== undefined) {
+    const spec = parseTemplateSource(options.source, root, "--source");
+    if (spec.ref !== undefined) throw new UpgradeError(`--source ${options.source}: name the version with --to, not "@${spec.ref}"`);
+    if (options.to === undefined) throw new UpgradeError("--source moves the scope to another template, so it needs --to <ref>: a version of that template");
+    if (lineage.source.type !== "git") throw new UpgradeError(`scope "${scope}" is a ${lineage.source.type} scope; only a git scope can move to another template`);
+    onto = { url: spec.url, repo: spec.repo, ...(spec.member ? { path: spec.member } : {}), id: spec.id };
+  }
+  const switching = onto !== undefined && onto.id !== lineage.template;
+
   // 1. Fetch.
   const ref = options.to ?? lineage.ref;
-  const upstream = await fetchUpstream(root, lineage, ref);
+  const upstream = await fetchUpstream(root, lineage, ref, onto);
 
   // 2. The merge base, offline from here on.
   const base = rebuildBase(join(root, scope), lineage, upstream.base);
 
   // Plan the chain before anything is staged, so a gap refuses early.
-  const plan = lineage.kind === "template" ? planMigrations(lineage, ref, upstream.migrations) : { chain: [] };
+  const plan = lineage.kind === "template" ? planMigrations(lineage, ref, upstream.migrations, onto?.id) : { chain: [] };
   assertCodeAllowed(plan.chain, !!options.allowCode);
 
   // 3. The worktree, inside the project so the project's packages resolve.
@@ -434,6 +456,10 @@ export async function stageUpgrade(options: UpgradeOptions): Promise<StagedUpgra
     for (const path of result.written) if (upstream.executable.has(path)) chmodSync(join(scopeDir, path), 0o755);
     if (ref !== undefined) staged.ref = ref;
     if (upstream.commit) staged.address = { ...staged.address!, commit: upstream.commit, tree: upstream.tree };
+    if (onto) {
+      staged.template = onto.id;
+      staged.source = { type: "git", repo: onto.repo, url: portableUrl(onto.url, root), ...(onto.path ? { path: onto.path } : {}) };
+    }
     writeLock(worktreeProject, next);
     const lockText = renderLock(next);
 
@@ -476,6 +502,7 @@ export async function stageUpgrade(options: UpgradeOptions): Promise<StagedUpgra
     return {
       scope,
       template: lineage.template,
+      ...(switching ? { switchedTo: onto!.id } : {}),
       kind: lineage.kind,
       from: lineage.ref ?? null,
       to: staged.ref ?? null,
@@ -569,6 +596,7 @@ export function describeStaged(staged: StagedUpgrade): string[] {
   const lines: string[] = [];
   const at = (p: string) => (staged.scope === "." ? p : `${staged.scope}/${p}`);
   lines.push(`${staged.scope}  ${staged.template}  ${staged.from ?? "(no ref)"} -> ${staged.to ?? "(no ref)"}`);
+  if (staged.switchedTo) lines.push(`  template: ${staged.template} -> ${staged.switchedTo}`);
   for (const id of staged.migrations) lines.push(`  migration: ${id}`);
   for (const p of staged.written) lines.push(`  updated: ${at(p)}`);
   for (const p of staged.merged) lines.push(`  merged: ${at(p)}`);

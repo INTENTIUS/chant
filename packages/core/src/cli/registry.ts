@@ -131,6 +131,12 @@ export interface ParsedArgs {
   namespace?: string;
   /** `chant workspace upgrade --allow-code` (#2550) — run migrations whose body is the template's own code. */
   allowCode?: boolean;
+  /** `chant workspace upgrade --source <repo>[#<member>]` (#2551): move the scope to another template. */
+  source?: string;
+  /** `chant workspace adopt-lineage --tags <glob>` and `hash-index --tags` (#2551): the tags to compare. */
+  tags?: string;
+  /** `chant workspace adopt-lineage --index <file>` (#2551): a cached hash index. */
+  index?: string;
   /** `chant lifecycle rollback --dry-run` — compute the rollback delta and print it; open no PR, push nothing, leave no branch. */
   dryRun?: boolean;
   /** `chant lifecycle teardown <env> --yes` — execute the planned deletion

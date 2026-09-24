@@ -110,6 +110,46 @@ const ManualStepSchema = z
   .strict();
 export type ManualStep = z.infer<typeof ManualStepSchema>;
 
+const CommitId = z.string().regex(/^[0-9a-f]{40,64}$/);
+
+/**
+ * How a scope that had no lock got one: `chant workspace adopt-lineage`
+ * (#2551, D5 and D9, requirement P7). An adoption covers an exact commit
+ * range, the scope's history up to the commit it was adopted at, and is shown
+ * with provenance `adopted`. D5 also has an admin at the base revision sign
+ * it; that needs the attestors of #2547, so `attestation` is null until they
+ * exist, and a reader treats an unsigned adoption as `adopted` all the same.
+ */
+const AdoptionSchema = z
+  .object({
+    provenance: z.literal("adopted"),
+    /**
+     * The history the adoption vouches for: every commit `git rev-list <last>
+     * -- <scope>` lists, from `first` (the oldest) to `last` (HEAD when adopted).
+     * `count` pins the range, so a rewritten history no longer matches it.
+     */
+    commits: z.object({ first: CommitId, last: CommitId, count: z.number().int().positive() }).strict(),
+    /** How well the chosen template version matched the scope's files. */
+    match: z
+      .object({
+        /** Files the template has at that version. */
+        files: z.number().int().nonnegative(),
+        /** Of those, the ones the scope holds byte for byte. */
+        identical: z.number().int().nonnegative(),
+        /** The ones the scope holds with other content: edited since. */
+        edited: z.number().int().nonnegative(),
+        /** The ones the scope no longer has. */
+        missing: z.number().int().nonnegative(),
+      })
+      .strict(),
+    /** Where the hash index came from: computed from the template's tags, or a cached copy that chant re-checked. */
+    index: z.enum(["computed", "cache"]),
+    /** Reserved for the admin's signature at base (D5), once attestors exist (#2547). */
+    attestation: z.null(),
+  })
+  .strict();
+export type Adoption = z.infer<typeof AdoptionSchema>;
+
 const LineageSchema = z
   .object({
     kind: z.enum(["template", "vendor"]),
@@ -128,6 +168,8 @@ const LineageSchema = z
     /** Per file, relative to the scope directory, in sorted order. */
     files: z.record(z.string(), LockFileEntrySchema),
     manualSteps: z.array(ManualStepSchema),
+    /** Present when the lineage was adopted rather than written at init (#2551). */
+    adoption: AdoptionSchema.optional(),
   })
   .strict();
 export type Lineage = z.infer<typeof LineageSchema>;
@@ -237,6 +279,7 @@ function canonical(lock: LineageLock): LineageLock {
       migrations: s.migrations,
       files,
       manualSteps: [...s.manualSteps].sort((a, b) => a.path.localeCompare(b.path)),
+      ...(s.adoption !== undefined ? { adoption: s.adoption } : {}),
     };
   }
   return { lockVersion: lock.lockVersion, scopes };
@@ -252,6 +295,15 @@ export function writeLock(root: string, lock: LineageLock): void {
   const path = lockPath(root);
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, renderLock(checked));
+}
+
+/**
+ * A scope's provenance level, in D5's words: `adopted` for a lineage that
+ * adopt-lineage recorded, `unattested` for one chant wrote at init, vendor or
+ * upgrade time. No lineage is `attested` until attestors exist (#2547).
+ */
+export function lineageProvenance(lineage: Lineage): "adopted" | "unattested" {
+  return lineage.adoption ? "adopted" : "unattested";
 }
 
 // ── Building a lineage ───────────────────────────────────────────────────────

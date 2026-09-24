@@ -1,0 +1,119 @@
+---
+title: "chant workspace adopt-lineage"
+description: Give a project or scope with no lineage lock one, matched against the tagged versions of the template it came from, and record it as adopted
+diataxis: reference
+---
+
+## Synopsis
+
+```
+chant workspace adopt-lineage [<scope>] --from <repo>[@<tag>][#<member>] [--tags <glob>] [--index <file>] [--dry-run] [--json]
+chant workspace hash-index --from <repo>[#<member>] [--tags <glob>] [--output <file>]
+```
+
+## Description
+
+`chant workspace adopt-lineage` records a lineage for a scope that has none, so that [`chant workspace upgrade`](/chant/cli/workspace-upgrade/) can bring it forward. Two kinds of project need it: one made before `chant init --from` wrote a [lineage lock](/chant/reference/lineage-lock/), and one copied from a template, or from a fork of one, by hand. `<scope>` is the scope's directory relative to the current directory, `.` by default. The command needs no `chant.workspace.json`. The design is D9 of [#2524](https://github.com/INTENTIUS/chant/issues/2524), with decision ws-006 (the hash index is computed from tags) and requirement P7 (adoption).
+
+It works in these steps:
+
+| Step | What happens |
+|---|---|
+| 1. Index | chant lists the template's tags and computes a hash index from them: for each tag that reads as a version, the SHA-256 of every file the template has there. No registry is involved. `--index` supplies a cached copy (see [The hash index](#the-hash-index)). |
+| 2. Match | Each version is scored against the scope by how many of its files the scope holds byte for byte. The most such files wins. A tie goes to the version whose files the scope accounts for best, then to the oldest (see [Versions that match equally](#versions-that-match-equally)). |
+| 3. Re-check | The chosen tag's files are read from the template and hashed again. When they disagree with a cached index, chant drops the cache and computes every tag. |
+| 4. Propose | The lineage pins the chosen tag. Every file the template has at the tag is recorded with the template's hash as its merge base. A file the scope edited then shows as edited, and an upgrade merges it. Files only the scope has are its own and are not recorded. |
+| 5. Record | The lineage gets an [`adoption`](/chant/reference/lineage-lock/#adoption), which names the exact commit range it covers and reads as provenance `adopted`. |
+
+```
+$ chant workspace adopt-lineage --from someone/starter-fork
+.  github.com/someone/starter-fork@v1.1.0 (9e1d04c2b7aa)  adopted
+  matched 3 of 5 template file(s); 1 edited, 1 not in the scope; 3 version(s) compared
+  next: v1.0.0, 2 of 3 identical, 1 edited, 0 missing
+  next: v1.2.0, 2 of 5 identical, 2 edited, 1 missing
+  edited: src/app.ts
+  not in the scope: docs.md
+  commits: 51c3f0e9a2d4..e07ab4c1d9f3 (2), unsigned until attestors exist (#2547)
+  index: computed from the template's tags
+✓ recorded the lineage of "." in .chant/workspace.lock.json as adopted. Review and commit it.
+```
+
+A tag in `--from` (`--from acme/starter@v1.4.0`) restricts the comparison to that version. Review the proposal before committing the lock. The chosen version is where the next upgrade starts, and a wrong one shows up as many edited files.
+
+### Versions that match equally
+
+A template directory that stays the same across several releases gives the same score at each of them, and the scope fits any of them. chant adopts the oldest and names the others. An upgrade from the oldest replays every migration since. One that no longer applies then refuses the upgrade, where adopting a later version would skip it silently. When you know the version the scope was made from, name it with `--from <repo>@<tag>`.
+
+On a project copied from `examples/getting-started` in this repository at `chant-v0.70.0`, with one file edited, the directory is unchanged from `chant-v0.60.0` through `chant-v0.77.0`:
+
+```
+$ chant workspace adopt-lineage --from 'INTENTIUS/chant#examples/getting-started' --tags 'chant-v*' --dry-run
+.  github.com/INTENTIUS/chant#examples/getting-started@chant-v0.60.0 (fd2b5550f86a)  adopted
+  matched 16 of 17 template file(s); 1 edited, 0 not in the scope; 176 version(s) compared
+  27 later version(s) match equally (chant-v0.61.0 to chant-v0.77.0); adopting the oldest. Name one with --from <repo>@<tag> if the scope came from it.
+  ...
+```
+
+### Adoption and signing
+
+D5 of #2524 has an adoption cover an exact commit range and be signed by an admin at the base revision. chant records the range as the commits `git rev-list HEAD -- <scope>` lists, pinned by the oldest one and HEAD together with their number. That is why the scope must have no uncommitted changes. The signature needs the attestors of [#2547](https://github.com/INTENTIUS/chant/issues/2547). Until they exist, the adoption's `attestation` is `null` and the scope reads as `adopted`, unsigned. Nothing fails because of it unless a gate asks for more.
+
+### Fork-born workspaces
+
+A workspace copied from a fork of a template adopts its lineage against the fork, the template it actually came from. [`chant workspace upgrade --source`](/chant/cli/workspace-upgrade/#moving-to-another-template) then moves it onto the original template through that template's [bridge migration](/chant/reference/template-migrations/#bridge-migrations).
+
+## The hash index
+
+For each version tag, the index records the tag's commit and the tree of the template directory. It also records the SHA-256 of each file in that directory. It leaves out what a project never receives from a template: the template's own `.chant/workspace.lock.json` and `.chant/migrations/`. Blobs shared between tags are hashed once. Templates declare no parameters yet, so each file is hashed as the tag holds it. Parameter masking, which ws-006 also names, arrives with template parameters.
+
+`chant workspace hash-index` computes the index and prints it, or writes it to `--output`. A template's CI can publish that file with each release, and an adopter can pass it to `adopt-lineage --index` to skip computing most tags:
+
+```
+$ chant workspace hash-index --from acme/starter --tags 'v*' --output hash-index.json
+✓ wrote the hash index of github.com/acme/starter (12 version(s)) to hash-index.json
+```
+
+The copy is a cache. chant reuses an entry only while its tag still names the commit the entry records, computes the rest from the template, and re-checks the version it adopts. The lock records `index: "cache"` when the cache chose the version.
+
+```json
+{
+  "indexVersion": 1,
+  "template": "github.com/acme/starter",
+  "tags": [
+    {
+      "tag": "v1.0.0",
+      "commit": "4624a0b6ca83bf3a2776b2d29d269e989d8b560f",
+      "tree": "89aa2215293af8364e8832176cc75b9b846889d1",
+      "files": { "README.md": "sha256:1b2c…", "src/main.ts": "sha256:037e…" }
+    }
+  ]
+}
+```
+
+## Options
+
+| Option | Effect |
+|---|---|
+| `--from <repo>[@<tag>][#<member>]` | The template: a git URL, `git@host:path`, a local path, or `owner/name` for GitHub, with `#<member>` for a directory inside it. A tag restricts adoption to that version. Required. |
+| `--tags <glob>` | Compare only tags matching the glob (`*` and `?`), such as `chant-v*` in a repository that tags several things. Without it, every tag that reads as a version is a candidate. |
+| `--index <file>` | A cached hash index, as `chant workspace hash-index` writes it. It must be for the same template id. |
+| `--dry-run` | Print the proposal and write nothing. |
+| `--json` | Print the proposal as JSON: `scope`, `template`, `chosen`, `alternatives`, `ties`, `compared`, `identical`, `edited`, `missing`, `index`, `lineage`, `written` and `lockIgnored`. |
+| `--output <file>` | `hash-index` only: write the index there instead of to stdout. |
+
+## What it needs
+
+- The scope is in a git repository with at least one commit, and has no uncommitted changes.
+- The lock has no lineage for the scope yet.
+- The template tags its releases, and at least one tagged version shares a file with the scope.
+
+## Network
+
+`adopt-lineage` and `hash-index` run `git ls-remote --tags` against the template, then one `git fetch` of the tags they compute, one commit deep each. A local repository reaches nothing. Both are listed in [Network Egress](/chant/reference/network-egress/).
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | Proposed, and recorded unless `--dry-run`; or the index was written |
+| 1 | Refused: no `--from`, a scope that already has a lineage, uncommitted changes, no tag that shares a file with the scope, a cache for another template, or a template that could not be read |
