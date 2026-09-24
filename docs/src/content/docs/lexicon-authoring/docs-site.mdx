@@ -4,7 +4,7 @@ description: Setting up a Starlight documentation site for your lexicon
 diataxis: how-to
 ---
 
-Each lexicon includes a documentation site built with [Astro Starlight](https://starlight.astro.build/), living in `lexicons/<name>/docs/`. All seventeen lexicons have one.
+Each lexicon includes a documentation site built with [Astro Starlight](https://starlight.astro.build/), living in `lexicons/<name>/docs/`. All eighteen lexicons have one.
 
 ## The pipeline owns the site files
 
@@ -188,7 +188,7 @@ Add a `docs` script to your lexicon's `package.json`, pointing at the
 
 ## Cross-Site Links
 
-The 18 docs sites (main plus 17 lexicons) build independently and stitch into a single tree at `.docs-dist/chant/`. `scripts/build-docs.sh` derives the lexicon list from the filesystem, so any directory with a `docs/` subdirectory is built. It used to carry one hardcoded block per lexicon. k3d and k3s were simply absent from that list, so both published as 404s and lychee failed every page linking to them (chant #1720). `scripts/build-docs.test.ts` now fails if a lexicon with docs is left out.
+The 19 docs sites (main plus 18 lexicons) build independently and stitch into a single tree at `.docs-dist/chant/`. `scripts/build-docs.sh` derives the lexicon list from the filesystem, so any directory with a `docs/` subdirectory is built. It used to carry one hardcoded block per lexicon. k3d and k3s were simply absent from that list, so both published as 404s and lychee failed every page linking to them (chant #1720). `scripts/build-docs.test.ts` now fails if a lexicon with docs is left out.
 
 The `ORDER` constant in that script is a known-good build order, not decoration: forgejo and gitlab import `lexicons/github/src/generated`, so github must be generated first. A lexicon not named in `ORDER` is appended, which is where a new one lands.
 

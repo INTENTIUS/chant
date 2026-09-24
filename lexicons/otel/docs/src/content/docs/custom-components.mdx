@@ -1,0 +1,124 @@
+---
+title: "Custom Components"
+description: "Add a collector component chant doesn't ship with defineComponent, and pin the schema its type follows"
+diataxis: how-to
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-otel` — DO NOT EDIT.
+    Edit lexicons/otel/docs/pages/custom-components.mdx instead; changes here are overwritten. */}
+
+
+chant ships a core set of components. A team or a plugin package adds any other component with `defineComponent`, and the result behaves like a built-in: the same serializer emits it, the same checks run over it, and `collectorTopology()` reports it.
+
+## Define the component
+
+```ts title="src/vendor-exporter.ts"
+```typescript title="vendor-exporter.ts"
+/**
+ * A component chant doesn't ship, defined once by the team that uses it.
+ *
+ * In real use this file lives in a package (say `@acme/otel-components`), and
+ * the package version is what pins the definition for every project that
+ * imports it. `pin` records which schema the config type follows; it is
+ * written above the emitted config and returned by `collectorTopology()`.
+ */
+import { defineComponent } from "@intentius/chant-lexicon-otel";
+
+export interface SplunkHecExporterConfig {
+  token: string;
+  endpoint: string;
+  source?: string;
+  sourcetype?: string;
+  index?: string;
+  tls?: { insecure_skip_verify?: boolean; ca_file?: string };
+}
+
+export const SplunkHecExporter = defineComponent<SplunkHecExporterConfig>()({
+  kind: "exporter",
+  type: "splunk_hec",
+  pin: {
+    source: "github.com/open-telemetry/opentelemetry-collector-contrib/exporter/splunkhecexporter",
+    version: "v0.130.0",
+  },
+  description: "Sends logs, metrics and traces to a Splunk HTTP Event Collector",
+  validate: (c) => {
+    const problems: string[] = [];
+    if (!c.token.includes("${")) problems.push("token must be an ${env:...} or ${file:...} reference");
+    if (!c.endpoint.startsWith("https://")) problems.push("endpoint should be https://");
+    return problems;
+  },
+  endpoints: (c) => [c.endpoint],
+});
+```
+```
+
+`defineComponent<Config>()` is curried so you name the config type while `kind` and `type` are still inferred from the literal.
+
+| Option | Required | Meaning |
+|---|---|---|
+| `kind` | yes | `receiver`, `processor`, `exporter` or `extension` |
+| `type` | yes | the collector type, the part of the id before `/`; letters, digits and `_` |
+| `pin` | yes | `{ source, version, digest? }`, see below |
+| `validate` | no | a function returning a list of problems, or any schema with `safeParse` (a zod schema works); failures are OTEL107 |
+| `endpoints` | no | a function returning where the component sends or listens, for `collectorTopology()` |
+| `description` | no | one line for docs and hover |
+
+## Use it
+
+```ts title="src/collector.ts"
+```typescript title="collector.ts"
+/**
+ * The custom exporter used next to built-ins: same constructor shape, same
+ * pipeline references, same checks.
+ */
+import { OtlpReceiver, BatchProcessor, Pipeline, type OtlpReceiverConfig } from "@intentius/chant-lexicon-otel";
+import { SplunkHecExporter } from "./vendor-exporter";
+
+const protocols: OtlpReceiverConfig["protocols"] = { http: { endpoint: "0.0.0.0:4318" } };
+const otlp = new OtlpReceiver({ protocols });
+
+const batch = new BatchProcessor({ timeout: "5s" });
+
+const splunk = new SplunkHecExporter({
+  name: "security",
+  token: "${env:SPLUNK_HEC_TOKEN}",
+  endpoint: "https://hec.splunk.example:8088/services/collector",
+  index: "otel",
+  sourcetype: "otel",
+});
+
+const logs = new Pipeline({
+  signal: "logs",
+  receivers: [otlp],
+  processors: [batch],
+  exporters: [splunk],
+});
+
+export { otlp, batch, splunk, logs };
+```
+```
+
+## How the schema is pinned
+
+A pin names the source a component's config type was written against and the version of that source:
+
+| Field | Example | Meaning |
+|---|---|---|
+| `source` | `github.com/open-telemetry/opentelemetry-collector-contrib/exporter/splunkhecexporter` | the Go module, npm package or URL that defines the config |
+| `version` | `v0.130.0` | the release of `source` the TypeScript type follows |
+| `digest` | `sha256:...` | optional; a digest of the schema document, recorded as given |
+
+Built-ins all share `COLLECTOR_PIN`, so the otel package version pins them. A custom definition carries its own pin, and when the definition ships in a package, that package's version pins the definition for every project that imports it.
+
+The pin is recorded in three places:
+
+1. The emitted YAML starts with one comment line per custom component, for example `# chant: exporter splunk_hec/security schema github.com/.../splunkhecexporter@v0.130.0`. The collector ignores comments, so the file runs unchanged, and anyone reading it can see which schema each non-built-in component was checked against. Built-ins add no line.
+2. `collectorTopology()` returns the pin as `schema` on every component whose definition is loaded, built-in or custom.
+3. OTEL109 fails the build when a custom definition has no usable pin (an empty source or version, for instance after an untyped call).
+
+chant records the pin. It does not fetch the schema or verify the digest.
+
+## Limits
+
+- A built-in type can't be redefined. Declare a named instance instead, such as `new OtlpExporter({ name: "vendor", ... })`.
+- A definition registers when its module loads. A config parsed from YAML that uses a type no loaded definition covers is still checked for references (OTEL101 to OTEL106) and still appears in the topology, with `builtin: false`, no `schema`, and its `endpoint` key as its endpoint when it has one.

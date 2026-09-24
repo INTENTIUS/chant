@@ -1,0 +1,132 @@
+---
+title: "Examples"
+description: "The otel lexicon's example projects"
+diataxis: how-to
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-otel` — DO NOT EDIT.
+    Edit lexicons/otel/docs/pages/examples.mdx instead; changes here are overwritten. */}
+
+
+Each example lives under `lexicons/otel/examples/` and builds with `chant build src --lexicon otel`. The lexicon's tests build every one, lint it with no warnings, and check the emitted config with `validateCollectorConfig`.
+
+## getting-started
+
+OTLP in on gRPC and HTTP, `memory_limiter` then `batch`, traces to `otlp/tempo` and logs to `debug`, with a `health_check` extension.
+
+```ts title="src/collector.ts"
+```typescript title="collector.ts"
+/**
+ * The smallest useful collector: OTLP in, batched, OTLP out to a tracing
+ * backend, with a debug copy of every log line. `chant build` writes the
+ * config `otelcol --config` reads.
+ *
+ * Nested settings are named consts typed with the lexicon's config types, so
+ * each constructor stays flat.
+ */
+import {
+  OtlpReceiver,
+  MemoryLimiterProcessor,
+  BatchProcessor,
+  OtlpExporter,
+  DebugExporter,
+  HealthCheckExtension,
+  Pipeline,
+  type OtlpReceiverConfig,
+  type TLSClientSettings,
+  type QueueSettings,
+} from "@intentius/chant-lexicon-otel";
+
+const protocols: OtlpReceiverConfig["protocols"] = {
+  grpc: { endpoint: "0.0.0.0:4317" },
+  http: { endpoint: "0.0.0.0:4318" },
+};
+
+const otlp = new OtlpReceiver({ protocols });
+
+const memoryLimiter = new MemoryLimiterProcessor({
+  check_interval: "1s",
+  limit_percentage: 80,
+  spike_limit_percentage: 20,
+});
+
+const batch = new BatchProcessor({ timeout: "5s", send_batch_size: 1024 });
+
+const plaintext: TLSClientSettings = { insecure: true };
+const queue: QueueSettings = { enabled: true, queue_size: 5000 };
+
+/** `otlp/tempo`: the instance name leaves room for a second otlp exporter. */
+const tempo = new OtlpExporter({
+  name: "tempo",
+  endpoint: "tempo.observability.svc:4317",
+  tls: plaintext,
+  sending_queue: queue,
+});
+
+const debug = new DebugExporter({ verbosity: "basic" });
+
+const health = new HealthCheckExtension({ endpoint: "0.0.0.0:13133" });
+
+const traces = new Pipeline({
+  signal: "traces",
+  receivers: [otlp],
+  processors: [memoryLimiter, batch],
+  exporters: [tempo],
+});
+
+const logs = new Pipeline({
+  signal: "logs",
+  receivers: [otlp],
+  processors: [memoryLimiter, batch],
+  exporters: [debug],
+});
+
+export { otlp, memoryLimiter, batch, tempo, debug, health, traces, logs };
+```
+```
+
+## k8s-node-agent
+
+A per-node agent config: `hostmetrics`, container logs through `filelog`, OTLP from pods, `k8sattributes`, `resourcedetection`, `resource` and `attributes` processors, metrics served for Prometheus and traces and logs sent to a gateway. The files are split by concern, and a `Service` fixes extension start order and sets collector telemetry.
+
+```ts title="src/pipelines.ts"
+```typescript title="pipelines.ts"
+/**
+ * A per-node agent config for Kubernetes, one file per concern: host metrics
+ * and container logs from the node, OTLP from pods, Kubernetes metadata on
+ * everything, metrics served for Prometheus to scrape, and traces and logs
+ * forwarded to a gateway. This file: the pipelines.
+ */
+import { Pipeline } from "@intentius/chant-lexicon-otel";
+import { otlp, hostMetrics, containerLogs } from "./receivers";
+import { memoryLimiter, k8sMetadata, detect, cluster, redact, batch } from "./processors";
+import { gateway, prometheus } from "./exporters";
+
+const metrics = new Pipeline({
+  signal: "metrics",
+  receivers: [otlp, hostMetrics],
+  processors: [memoryLimiter, k8sMetadata, detect, cluster, batch],
+  exporters: [prometheus],
+});
+
+const traces = new Pipeline({
+  signal: "traces",
+  receivers: [otlp],
+  processors: [memoryLimiter, k8sMetadata, detect, cluster, redact, batch],
+  exporters: [gateway],
+});
+
+const logs = new Pipeline({
+  signal: "logs",
+  receivers: [containerLogs, otlp],
+  processors: [memoryLimiter, k8sMetadata, cluster, batch],
+  exporters: [gateway],
+});
+
+export { metrics, traces, logs };
+```
+```
+
+## custom-component
+
+A Splunk HEC exporter defined with `defineComponent`, with a schema pin and its own validation, used next to built-ins. See [Custom components](../custom-components/).

@@ -1,0 +1,28 @@
+---
+title: "Examples"
+description: "The otel lexicon's example projects"
+diataxis: how-to
+order: 8
+---
+
+Each example lives under `lexicons/otel/examples/` and builds with `chant build src --lexicon otel`. The lexicon's tests build every one, lint it with no warnings, and check the emitted config with `validateCollectorConfig`.
+
+## getting-started
+
+OTLP in on gRPC and HTTP, `memory_limiter` then `batch`, traces to `otlp/tempo` and logs to `debug`, with a `health_check` extension.
+
+```ts title="src/collector.ts"
+{{file:getting-started/src/collector.ts}}
+```
+
+## k8s-node-agent
+
+A per-node agent config: `hostmetrics`, container logs through `filelog`, OTLP from pods, `k8sattributes`, `resourcedetection`, `resource` and `attributes` processors, metrics served for Prometheus and traces and logs sent to a gateway. The files are split by concern, and a `Service` fixes extension start order and sets collector telemetry.
+
+```ts title="src/pipelines.ts"
+{{file:k8s-node-agent/src/pipelines.ts}}
+```
+
+## custom-component
+
+A Splunk HEC exporter defined with `defineComponent`, with a schema pin and its own validation, used next to built-ins. See [Custom components](../custom-components/).

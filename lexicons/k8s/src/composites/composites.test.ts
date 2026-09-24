@@ -2955,6 +2955,64 @@ describe("GkeOtelCollector", () => {
       expect((p(resource).metadata as any).labels["app.kubernetes.io/managed-by"]).toBe("chant");
     }
   });
+
+  // #2559 moved the collector config onto the otel lexicon. This is the
+  // hand-written template the composite carried before, verbatim; the
+  // lexicon-rendered config must match it byte for byte.
+  const handWrittenConfig = (projectId: string, clusterName: string) => `receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 30s
+    send_batch_size: 8192
+  resourcedetection:
+    detectors: [gcp]
+    timeout: 10s
+
+exporters:
+  googlecloud:
+    project: ${projectId}
+    metric:
+      prefix: custom.googleapis.com/${clusterName}
+    trace:
+      attribute_mappings:
+        - key: service.name
+          replacement: g.co/r/service/name
+
+service:
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      processors: [batch, resourcedetection]
+      exporters: [googlecloud]
+    traces:
+      receivers: [otlp]
+      processors: [batch, resourcedetection]
+      exporters: [googlecloud]
+`;
+
+  test.each([
+    ["test-project", "test-cluster"],
+    ["my-project", "gke-microservice"],
+    ["p-123456", "c1"],
+  ])("config.yaml is byte-identical to the pre-lexicon template (%s, %s)", (projectId, clusterName) => {
+    const result = GkeOtelCollector({ clusterName, projectId });
+    expect((p(result.configMap).data as any)["config.yaml"]).toBe(handWrittenConfig(projectId, clusterName));
+  });
+
+  test("the rendered config passes the otel lexicon's checks", async () => {
+    const { validateCollectorConfig } = await import("@intentius/chant-lexicon-otel");
+    const { load } = await import("js-yaml");
+    const result = GkeOtelCollector(minProps);
+    const config = load((p(result.configMap).data as any)["config.yaml"]) as any;
+    expect(validateCollectorConfig(config)).toEqual([]);
+  });
 });
 
 // ── GkeExternalDnsAgent ──────────────────────────────────────────────

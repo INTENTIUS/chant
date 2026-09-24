@@ -322,6 +322,7 @@ export default defineConfig({
 								{ label: 'GitLab CI/CD', link: '/lexicons/gitlab/' },
 								{ label: 'Forgejo Actions', link: '/lexicons/forgejo/' },
 								{ label: 'Docker', link: '/lexicons/docker/' },
+								{ label: 'OpenTelemetry Collector', link: '/lexicons/otel/' },
 								{ label: 'Render', link: '/lexicons/render/' },
 								{ label: 'Terraform', link: '/lexicons/terraform/' },
 								{ label: 'augur (behaviour)', link: '/lexicons/augur/' },

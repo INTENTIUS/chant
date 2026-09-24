@@ -1,0 +1,25 @@
+---
+title: "Serialization"
+description: "Output format for the OpenTelemetry Collector lexicon"
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-otel` — DO NOT EDIT.
+    Edit lexicons/otel/src/codegen/docs.ts instead; changes here are overwritten. */}
+
+The otel lexicon serializes every otel entity in a build into **one
+collector config file** in YAML, the file `otelcol --config` reads.
+
+- Sections come out as receivers, processors, exporters, extensions, service,
+  separated by a blank line. Empty sections are left out.
+- A component's id is its collector type, or `type/name` when its `name` is
+  set. The export name in source never appears in the output.
+- A list of scalars is written in flow style (`receivers: [otlp]`), any
+  other list in block style. Strings are plain where YAML reads them back
+  unchanged and double-quoted otherwise.
+- Declared extensions are enabled in declaration order unless a `Service`
+  lists `extensions`.
+- Each custom component adds a `# chant:` comment line above the config
+  naming its schema pin. Built-ins add none.
+- A collector config has no metadata channel, so no ownership marker is
+  stamped.
+
