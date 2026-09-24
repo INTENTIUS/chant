@@ -7,6 +7,7 @@ import { describe, expect, test } from "vitest";
 import { GRAPH_IR_VERSION, type GraphIR } from "../graph-ir";
 import { parseDeclaration } from "./declaration";
 import { composeWorkspaceGraph, readMemberIr, WORKSPACE_GRAPH_VERSION, type ComposedMember } from "./compose-graph";
+import type { LinkTableRow } from "./links";
 
 const member = (name: string, dir: string): ComposedMember => ({
   name,
@@ -136,7 +137,7 @@ describe("the links section (#2539)", () => {
     ];
     const doc = composeWorkspaceGraph({ name: "acme", root: "/w" }, inputs, { declaration });
     expect(
-      doc.links.map((r) => (r.status === "ambiguous" ? "" : `${r.origin} ${r.label} ${r.from ?? r.consumer} -> ${r.to}`)),
+      (doc.links as LinkTableRow[]).map((r) => (r.status === "ambiguous" ? "" : `${r.origin} ${r.label} ${r.from ?? r.consumer} -> ${r.to}`)),
     ).toEqual([
       "declared exact app -> web/Bucket",
       "inferred:joinKey folded jobs/BUCKET_ARN -> web/Bucket",

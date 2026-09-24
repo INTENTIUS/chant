@@ -19,3 +19,8 @@ import { createHash } from "node:crypto";
 export function contentDigest(input: string): string {
   return `sha256:${createHash("sha256").update(input, "utf8").digest("hex")}`;
 }
+
+/** Lowercase hex SHA-256 of `bytes`, with no prefix: the form a decision's evidence pin holds (#2549). */
+export function sha256Hex(bytes: Uint8Array): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}

@@ -32,7 +32,8 @@
 
 import { describe, expect, test } from "vitest";
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createRequire } from "node:module";
@@ -302,6 +303,33 @@ describe("decision files", () => {
     expect(doc.summary.invalid, JSON.stringify(doc.records.flatMap((r) => r.reasons))).toBe(0);
     for (const r of doc.records) expect(dirname(r.path)).toBe("reference-workspace/decisions");
   });
+
+  test("ref-002 pins design/screens/home.json by hash, and the pin holds (#2549)", async () => {
+    const doc = await queryRecords({ kind: "decisions/decision.kind.mjs", current: true, cwd: fixture });
+    if ("error" in doc) throw new Error(`${doc.error.code}: ${doc.error.message}`);
+    expect(doc.workspaceRoot).toBe("reference-workspace");
+    const ref002 = doc.records.find((r) => r.id === "ref-002")!;
+    expect(ref002.assets.map((a) => [a.path, a.state])).toEqual([["design/screens/home.json", "pinned"]]);
+    expect(ref002.assets[0].sha256).toBe(createHash("sha256").update(readFileSync(join(fixture, "design", "screens", "home.json"))).digest("hex"));
+    expect(doc.records.flatMap((r) => r.warnings)).toEqual([]);
+  });
+
+  test("editing the pinned file makes records report asset-drift, and the decision stays valid (#2549)", async () => {
+    const copy = mkdtempSync(join(tmpdir(), "chant-2549-ref-"));
+    try {
+      for (const d of ["decisions", "design"]) cpSync(join(fixture, d), join(copy, d), { recursive: true });
+      cpSync(join(fixture, "chant.workspace.json"), join(copy, "chant.workspace.json"));
+      writeFileSync(join(copy, "design", "screens", "home.json"), readFileSync(join(fixture, "design", "screens", "home.json"), "utf-8").replace('"route": "/"', '"route": "/home"'));
+      const doc = await queryRecords({ kind: "decisions/decision.kind.mjs", current: true, cwd: copy });
+      if ("error" in doc) throw new Error(`${doc.error.code}: ${doc.error.message}`);
+      const ref002 = doc.records.find((r) => r.id === "ref-002")!;
+      expect(ref002.valid).toBe(true);
+      expect(ref002.assets.map((a) => a.state)).toEqual(["drifted"]);
+      expect(ref002.warnings.map((w) => w.code)).toEqual(["asset-drift"]);
+    } finally {
+      rmSync(copy, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("workspace commands on the fixture", () => {
@@ -423,6 +451,16 @@ describe("chant init --from on the fixture", () => {
       const screen = JSON.parse(readFileSync(join(target, "design", "screens", "home.json"), "utf-8")) as { title: string };
       expect(screen.title).toBe("Untitled app");
       expect(readFileSync(join(target, "design", "screens", "home.svg"), "utf-8")).toContain(">Untitled app</text>");
+
+      // ref-002 pinned the template's home.json; init re-pins it to the copy's bytes, so the pin holds (#2549).
+      const records = await queryRecords({ kind: "decisions/decision.kind.mjs", current: true, cwd: target });
+      if ("error" in records) throw new Error(`${records.error.code}: ${records.error.message}`);
+      const ref002 = records.records.find((r) => r.id === "ref-002")!;
+      expect(ref002.assets.map((a) => [a.path, a.state])).toEqual([["design/screens/home.json", "pinned"]]);
+      expect(ref002.assets[0].sha256).toBe(createHash("sha256").update(readFileSync(join(target, "design", "screens", "home.json"))).digest("hex"));
+      expect((lock.scopes["."] as { repinned?: unknown }).repinned).toEqual([
+        { record: "decisions/ref-002-where-the-screen-design-lives.md", paths: ["design/screens/home.json"] },
+      ]);
 
       const app = join(target, "app");
       const out = execFileSync(process.execPath, ["--test", join("test", "server.test.mjs")], { cwd: app, stdio: "pipe", encoding: "utf-8" });

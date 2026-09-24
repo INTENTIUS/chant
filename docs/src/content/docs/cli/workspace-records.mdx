@@ -12,6 +12,7 @@ This command is the first slice of workspace records ([#2546](https://github.com
 
 ```
 chant workspace records --kind <kind file> [--current] [--at <rev>] [--base <rev>] [--require attested] [--json]
+chant workspace records pin <path>
 ```
 
 ## Description
@@ -26,7 +27,7 @@ The command loads only when it runs. A project without workspace files never loa
 |---|---|
 | `--kind <kind file>` | The record kind to read through. Required. The path is resolved against the current directory. |
 | `--current` | Leave out records that a closed record supersedes. |
-| `--at <rev>` | Read the records as they were at a commit, from the local git object store. No checkout or network is needed. The kind file and its schema still come from the working tree. |
+| `--at <rev>` | Read the records as they were at a commit, from the local git object store, and check their pins against the files at that commit. No checkout or network is needed. The kind file and its schema still come from the working tree. |
 | `--base <rev>` | The revision the trust policy is read from (see [Provenance](#provenance)). Defaults to the target branch: `origin/HEAD`, then `main`, then `master`. |
 | `--require attested` | Exit 2 unless every record printed is `attested`. |
 | `--json` | Print the result as JSON (see [Output](#output)). Without it, one line per record and a summary. |
@@ -46,16 +47,60 @@ export const recordKind = {
   states: ["proposed", "decided", "ratified", "superseded", "withdrawn"],
   closedStates: ["ratified", "superseded"],
   supersedes: { field: "supersedes", key: "decision" },
+  approval: { proposed: 0, withdrawn: 0, decided: 1, ratified: 2, superseded: 2 },
+  pins: { field: "evidence" },
+  constrains: { field: "constrains" },
 };
 ```
 
 `location.dir` and `schema.path` are relative to the kind's own directory. Subdirectories are skipped, and a name has to match `location.match` to be read. The `$id` inside the schema must equal `schema.id`.
 
+`approval`, `pins` and `constrains` are optional. `approval` ranks the states for [supersession](#supersession). `pins.field` names the list whose entries may pin a workspace file (see [Asset pins](#asset-pins)). `constrains.field` names the list of what a record governs, whose `member:<name>` and `path:<path>` entries become the record's links in [`chant workspace graph --kind`](/chant/cli/workspace-graph/#record-links). chant 0.82.0 and older refuse a kind file that has them.
+
 Front matter is read as the part of YAML that JSON can also express. Line endings are normalised first. A file with a YAML alias or a duplicate key is unparseable, and so is one holding a value JSON cannot hold.
 
 ## Supersession
 
-An entry is superseded when another entry in a closed state lists its id under `supersedes`. A link from an entry that is still `decided` has no effect yet, so the old decision stays current until its replacement is ratified. The old file's own `state` field plays no part. Each id can be superseded once, and a second closed claim gets `record-supersedes-conflict`.
+An entry is superseded when another entry lists its id under `supersedes` and the link takes effect. It takes effect under an equal or stricter approval rule (D4 of [#2524](https://github.com/INTENTIUS/chant/issues/2524)): the new entry's rank in the kind's `approval` is above 0 and at least the old entry's. For decisions that means a `decided` record supersedes a `decided` or `proposed` one, a `ratified` record supersedes any, and a `proposed` or `withdrawn` record supersedes nothing. A link that doesn't take effect leaves the old entry current, and the new entry gets the warning `record-supersedes-pending`, which leaves it valid. A kind without `approval` keeps the earlier rule: a link takes effect only from an entry in a closed state.
+
+The old file's own `state` field plays no part. Each id can be superseded once, and a second claim that takes effect gets `record-supersedes-conflict`.
+
+## Asset pins
+
+A decision can rest on a file in the workspace, such as a screen spec in the design member. Its `evidence` entry then carries `path` instead of `url`, and `sha256` is required:
+
+```yaml
+evidence:
+  - title: "The home screen spec"
+    path: "design/screens/home.json"
+    sha256: "074e55f524703fe65ecba4cf0e2cd3200e21f969a1f789618e22ff9537dd99e0"
+    as_of: "2026-09-24T12:00:00Z"
+```
+
+`path` starts at the workspace root, the directory of the `chant.workspace.json` nearest above the kind file (the repository root when there is none), and it sits inside a member. It has `/` separators and no leading `/`, `.` or `..` segment, or trailing `/`. `sha256` is the lowercase hex SHA-256 of the file's bytes. `chant workspace records pin <path>` prints both for a file, with the path taken from the current directory and printed from the workspace root:
+
+```bash
+$ chant workspace records pin design/screens/home.json
+{
+  "path": "design/screens/home.json",
+  "sha256": "074e55f524703fe65ecba4cf0e2cd3200e21f969a1f789618e22ff9537dd99e0"
+}
+```
+
+`sha256sum design/screens/home.json` (or `shasum -a 256` on macOS), run from the workspace root, gives the same hash.
+
+Every read checks each pin against the tree it reads: the working tree, or the commit under `--at`. The result is on the record in `assets`, one entry per pin with its `state`:
+
+| State | The file | Warning |
+|---|---|---|
+| `pinned` | hashes to the pinned `sha256` | none |
+| `drifted` | has changed since it was pinned | `asset-drift` |
+| `missing` | does not exist | `asset-missing` |
+| `stale` | hashes to the pin, but a record this one supersedes pinned the same hash, and the file has not changed since this record was recorded | `asset-stale` |
+
+`stale` means the decision changed and the artifact did not follow. It looks at git history: the file's last commit in the revision read has to be older than the commit that added this record, and a record not committed yet counts as recorded now. Outside a git repository only the hashes are compared.
+
+A warning is listed in the record's `warnings`, not in `reasons`. The record stays valid and `--current` still lists it, since the decision stands until someone revisits it. To accept the new file, update the pin's `sha256` in a pull request, which is itself a reviewable change to the decision. A copy made from a template with `chant init --from` has its pins on substituted files re-pinned to the copy's content, so they hold from the start. [`chant workspace check --kind`](/chant/cli/workspace-check/#record-checks) reports the same states as `WSP111`, `WSP112` and `WSP113`.
 
 ## Provenance
 
@@ -92,6 +137,7 @@ The output is part of the workspace [read contract](/chant/reference/workspace-r
   "contract": 1,
   "kind": { "name": "decision", "schema": "urn:intentius:chant:decision:1", "file": "docs/design/decisions/decision.kind.mjs" },
   "at": null,
+  "workspaceRoot": ".",
   "current": true,
   "trust": { "base": "<full commit id>", "baseFrom": "origin/HEAD", "active": false, "signersPath": ".chant/allowed_signers", "problems": [] },
   "records": [
@@ -103,14 +149,16 @@ The output is part of the workspace [read contract](/chant/reference/workspace-r
       "reasons": [],
       "supersededBy": null,
       "data": { "id": "ws-003", "title": "Seal scope", "state": "decided" },
-      "provenance": { "level": "unattested", "commit": null, "reason": "no signers file (.chant/allowed_signers) at base 5b30a8fb; attestation is off" }
+      "provenance": { "level": "unattested", "commit": null, "reason": "no signers file (.chant/allowed_signers) at base 5b30a8fb; attestation is off" },
+      "assets": [],
+      "warnings": []
     }
   ],
   "summary": { "total": 50, "valid": 50, "invalid": 0, "superseded": 0 }
 }
 ```
 
-`data` holds the whole front matter; the example shortens it. `at` is the full commit id when `--at` is given. `trust` and `provenance` were added within contract 1 by [#2547](https://github.com/INTENTIUS/chant/issues/2547).
+`data` holds the whole front matter; the example shortens it. `at` is the full commit id when `--at` is given. `trust` and `provenance` were added within contract 1 by [#2547](https://github.com/INTENTIUS/chant/issues/2547), and `workspaceRoot`, `assets` and `warnings` by [#2549](https://github.com/INTENTIUS/chant/issues/2549).
 
 A failed read prints `{ "$schema", "contract", "error": { "code", "message" } }` instead.
 
@@ -123,6 +171,15 @@ A failed read prints `{ "$schema", "contract", "error": { "code", "message" } }`
 | `record-id-duplicate` | repeats an id an earlier file in path order already has |
 | `record-supersedes-unknown` | names an id in `supersedes` that no record has |
 | `record-supersedes-conflict` | supersedes a record another closed record already supersedes |
+
+### Warning codes
+
+| Code | The record |
+|---|---|
+| `asset-drift` | pins a file whose bytes no longer hash to the pinned `sha256` |
+| `asset-missing` | pins a file that does not exist in the tree read |
+| `asset-stale` | pins a file at the hash a record it supersedes pinned, and the file has not changed since |
+| `record-supersedes-pending` | names a record in `supersedes` whose state is stronger than its own, so the link has no effect yet |
 
 ### Error codes
 
@@ -145,4 +202,7 @@ chant workspace records --kind docs/design/decisions/decision.kind.mjs --current
 
 # The same decisions as they were at a commit
 chant workspace records --kind docs/design/decisions/decision.kind.mjs --current --json --at 91c7547e
+
+# The path and hash for a new evidence pin
+chant workspace records pin design/screens/home.json
 ```

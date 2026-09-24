@@ -14,7 +14,16 @@ export const recordKind = {
   idField: "id",
   stateField: "state",
   states: ["proposed", "decided", "ratified", "superseded", "withdrawn"],
-  // Sealed once reached (#2555). A supersedes link takes effect only from one.
+  // Sealed once reached (#2555).
   closedStates: ["ratified", "superseded"],
   supersedes: { field: "supersedes", key: "decision" },
+  // A supersedes link takes effect under an equal or stricter approval rule
+  // (#2524 D4): from a record ranked above 0 and at least as high as the one it
+  // names. A decided record supersedes a decided or proposed one, a ratified
+  // record supersedes any, and a proposed or withdrawn record none.
+  approval: { proposed: 0, withdrawn: 0, decided: 1, ratified: 2, superseded: 2 },
+  // Evidence entries with a path pin a workspace file by the hash of its bytes (#2549).
+  pins: { field: "evidence" },
+  // member:<name> and path:<path> entries are the record's links in workspace graph (#2549).
+  constrains: { field: "constrains" },
 };

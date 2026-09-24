@@ -22,7 +22,9 @@ import yaml from "js-yaml";
 import { z } from "zod";
 import { importLexiconModule, registerLexiconDeclarations } from "../lexicon-module";
 import type { ReasonCode } from "./reason-codes";
+import { checkPins, pinEntries, type AssetPin } from "./record-assets";
 import type { RecordSource } from "./record-source";
+import type { WorkspaceTree } from "./tree";
 
 // ── Reason codes ─────────────────────────────────────────────────────────────
 
@@ -43,6 +45,30 @@ export const RECORD_REASON_CODES = [
   "record-supersedes-conflict",
 ] as const satisfies readonly ReasonCode[];
 export type RecordReasonCode = (typeof RECORD_REASON_CODES)[number];
+
+/**
+ * Why a record carries a warning. Closed, like the reason codes. A warning
+ * never makes a record invalid, and `--current` still lists the record.
+ */
+export const RECORD_WARNING_CODES = [
+  /** A pinned file's bytes no longer hash to the pinned sha256 (#2549). */
+  "asset-drift",
+  /** A pinned file does not exist in the tree read (#2549). */
+  "asset-missing",
+  /**
+   * A pinned file is unchanged since a record this one supersedes pinned it at
+   * the same hash: the decision changed and the artifact did not follow (#2549).
+   */
+  "asset-stale",
+  /** A supersedes link from a record whose state is weaker than the one it names, so it has no effect yet (#2524 D4). */
+  "record-supersedes-pending",
+] as const satisfies readonly ReasonCode[];
+export type RecordWarningCode = (typeof RECORD_WARNING_CODES)[number];
+
+export interface RecordWarning {
+  code: RecordWarningCode;
+  message: string;
+}
 
 /**
  * Why the read as a whole failed. Also closed. The command exits 1 with one of
@@ -114,11 +140,34 @@ export const recordKindSchema = z
     closedStates: z.array(z.string().min(1)),
     /** The front-matter list of links to superseded records, and the key in each entry that holds the target id. */
     supersedes: z.object({ field: z.string().min(1), key: z.string().min(1) }).strict(),
+    /**
+     * How strongly each state is approved (#2524 D4). With it, a supersedes
+     * link takes effect when the new record's rank is above 0 and at least the
+     * old record's, "under an equal or stricter approval rule". A state it
+     * leaves out ranks 0. Without it, a link takes effect only from a record
+     * in a closed state.
+     */
+    approval: z.record(z.string(), z.number().int().min(0)).optional(),
+    /**
+     * The front-matter list whose entries may pin a workspace file, as
+     * `{path, sha256}` (#2549). Optional: a kind without it pins nothing.
+     */
+    pins: z.object({ field: z.string().min(1) }).strict().optional(),
+    /**
+     * The front-matter list of what a record governs. Its `member:<name>` and
+     * `path:<path>` entries are the record's links in `chant workspace graph`
+     * (#2549). Optional.
+     */
+    constrains: z.object({ field: z.string().min(1) }).strict().optional(),
   })
   .strict()
   .refine((k) => k.closedStates.every((s) => k.states.includes(s)), {
     message: "every closed state must be listed in states",
     path: ["closedStates"],
+  })
+  .refine((k) => Object.keys(k.approval ?? {}).every((s) => k.states.includes(s)), {
+    message: "every state approval ranks must be listed in states",
+    path: ["approval"],
   });
 
 export type RecordKind = z.infer<typeof recordKindSchema>;
@@ -255,6 +304,10 @@ export interface RecordEntry {
   supersededBy: string | null;
   /** The front matter as JSON, or null when it could not be parsed. */
   data: Record<string, unknown> | null;
+  /** Each workspace file the record pins, checked against the tree read (#2549). Empty when nothing was checked. */
+  assets: AssetPin[];
+  /** Findings that leave the record valid, such as a pinned file that changed (#2549). */
+  warnings: RecordWarning[];
 }
 
 export interface ReadRecordsOptions {
@@ -263,6 +316,25 @@ export interface ReadRecordsOptions {
   source: RecordSource;
   /** Leave out records a closed record supersedes. */
   current?: boolean;
+  /**
+   * The workspace root the kind's pins resolve in: the working tree, or the
+   * revision read (#2549). Without it no pin is checked.
+   */
+  assets?: WorkspaceTree;
+  /**
+   * When files last changed and records were recorded, in the history of the
+   * revision read, for `asset-stale` (#2549). Without it only the hashes are
+   * compared.
+   */
+  history?: RecordHistory;
+}
+
+/** Commit times, in seconds since the epoch, read from git. */
+export interface RecordHistory {
+  /** The last commit that changed `path` (from the workspace root), or null when unknown. */
+  fileChanged(path: string): number | null;
+  /** The commit that added the record at `path` (from the repository root), or null when it is not committed. */
+  recorded(path: string): number | null;
 }
 
 export interface ReadRecordsResult {
@@ -304,7 +376,7 @@ export async function readRecords(loaded: LoadedRecordKind, options: ReadRecords
   const entries: RecordEntry[] = [];
   for (const name of names.filter((n) => match.test(n)).sort()) {
     const path = dirRel === "." ? name : `${dirRel}/${name}`;
-    const entry: RecordEntry = { id: null, path, state: null, valid: true, reasons: [], supersededBy: null, data: null };
+    const entry: RecordEntry = { id: null, path, state: null, valid: true, reasons: [], supersededBy: null, data: null, assets: [], warnings: [] };
     entries.push(entry);
     const fm = parseFrontMatter(options.source.read(path));
     if (!fm.ok) {
@@ -320,6 +392,11 @@ export async function readRecords(loaded: LoadedRecordKind, options: ReadRecords
     if (!result.ok) {
       entry.reasons.push({ code: "record-schema-invalid", message: result.errors.join("; ") });
     }
+    if (kind.pins && options.assets) {
+      const checked = checkPins(pinEntries(fm.value, kind.pins.field), options.assets);
+      entry.assets = checked.assets;
+      entry.warnings = checked.warnings;
+    }
   }
 
   // Ids: the first file in path order keeps an id; later ones are flagged.
@@ -332,10 +409,14 @@ export async function readRecords(loaded: LoadedRecordKind, options: ReadRecords
   }
 
   // Supersession comes from the new record's links, never from the old record.
-  // A link takes effect only from a closed record (#2555: a later ratified
-  // decision replaces an earlier one), and a record is superseded at most once
-  // (#2524 D4).
+  // With approval ranks, a link takes effect under an equal or stricter
+  // approval rule: from a record ranked above 0 and at least as high as the
+  // one it names (#2524 D4). Without them, only from a closed record (#2555).
+  // A record is superseded at most once.
   const closed = new Set(kind.closedStates);
+  const rank = (state: string | null): number => (state === null ? 0 : (kind.approval?.[state] ?? 0));
+  const takesEffect = (from: RecordEntry, to: RecordEntry): boolean =>
+    kind.approval ? rank(from.state) > 0 && rank(from.state) >= rank(to.state) : from.state !== null && closed.has(from.state);
   for (const e of entries) {
     const links = e.data?.[kind.supersedes.field];
     if (!Array.isArray(links)) continue;
@@ -348,7 +429,16 @@ export async function readRecords(loaded: LoadedRecordKind, options: ReadRecords
         e.reasons.push({ code: "record-supersedes-unknown", message: `supersedes ${target}, which no record has` });
         continue;
       }
-      if (e.state === null || !closed.has(e.state) || old === e) continue;
+      if (old === e) continue;
+      if (!takesEffect(e, old)) {
+        if (kind.approval) {
+          e.warnings.push({
+            code: "record-supersedes-pending",
+            message: `supersedes ${target}, which is ${old.state ?? "stateless"}; a ${e.state ?? "stateless"} record can't supersede it, so the link takes effect once this record is approved at least as strongly`,
+          });
+        }
+        continue;
+      }
       if (old.supersededBy !== null && old.supersededBy !== e.id) {
         e.reasons.push({
           code: "record-supersedes-conflict",
@@ -357,6 +447,26 @@ export async function readRecords(loaded: LoadedRecordKind, options: ReadRecords
         continue;
       }
       old.supersededBy = e.id;
+    }
+  }
+
+  // A pin that still matches, at the hash a record this one supersedes
+  // pinned, while the file has not changed since this record was recorded:
+  // the decision moved on and the artifact did not (#2549).
+  for (const e of entries) {
+    for (const a of e.assets) {
+      if (a.state !== "pinned") continue;
+      const old = entries.find((o) => o.supersededBy !== null && o.supersededBy === e.id && o.assets.some((p) => p.path === a.path && p.sha256 === a.sha256));
+      if (!old) continue;
+      const changed = options.history?.fileChanged(a.path) ?? null;
+      const recorded = options.history ? options.history.recorded(e.path) : null;
+      // A record not yet committed is recorded now, after every commit.
+      if (changed !== null && recorded !== null && changed > recorded) continue;
+      a.state = "stale";
+      e.warnings.push({
+        code: "asset-stale",
+        message: `${a.path} is pinned at the hash ${old.id} pinned, and it has not changed since: ${e.id} supersedes ${old.id}, and the artifact did not follow`,
+      });
     }
   }
 

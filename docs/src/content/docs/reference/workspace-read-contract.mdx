@@ -40,8 +40,8 @@ A workspace is identified by its declared `name` and a git revision ([ws-016](ht
 |---|---|
 | `ls` | the declaration, and the member and group directories, at the revision |
 | `check` | the declaration and the lineage lock at the revision, and runs the declaration and kind checks (`WSP001` to `WSP011`) on that tree. The ledger, pipeline and generated-file checks read the checkout, so they are left out |
-| `records` | the records at the revision |
-| `graph` | the declaration at the revision, and each member's graph from its source at the revision |
+| `records` | the records at the revision, and the files their pins name, as committed at the revision |
+| `graph` | the declaration at the revision, and each member's graph from its source at the revision. With `--kind`, the records and the files they pin or constrain at the revision too |
 
 A member's graph comes from running its chant config, so `graph --at` exports the workspace root's tree at the revision to a temporary directory with `git archive`, links the `node_modules` directories installed in the working tree into it, runs each member there and removes the directory. When no member runs, nothing is exported.
 
@@ -101,6 +101,10 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `record-id-duplicate` | record, `records` | An earlier record in path order has the same id. |
 | `record-supersedes-unknown` | record, `records` | A `supersedes` link names an id no record has. |
 | `record-supersedes-conflict` | record, `records` | A second closed record supersedes one another record already superseded. |
+| `asset-drift` | warning, `records` | A file the record pins by hash has changed: its bytes no longer hash to the pinned `sha256`. The record stays valid. |
+| `asset-missing` | warning, `records` | A file the record pins by hash does not exist in the tree read. The record stays valid. |
+| `asset-stale` | warning, `records` | A file the record pins is unchanged at the hash a record it supersedes pinned: the decision changed and the artifact did not follow. The record stays valid. |
+| `record-supersedes-pending` | warning, `records` | A `supersedes` link from a record whose state is weaker than the record it names, so the link has no effect yet. The record stays valid. |
 | `kind-unreadable` | error, `records` | The record kind file is missing or could not be imported. |
 | `kind-invalid` | error, `records` | The record kind file exports no `recordKind`, or its shape is wrong. |
 | `schema-unreadable` | error, `records` | The schema file the kind names is missing or isn't JSON. |
@@ -112,6 +116,30 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 
 `check` also reports `WSP` ids, the [declaration check catalog](/chant/cli/workspace-check/#declaration-checks). That catalog is closed too, and it is versioned with the check contract.
 
+## Record links and artifacts
+
+Artifact relationships are derived from decisions ([#2549](https://github.com/INTENTIUS/chant/issues/2549), D18 of [#2524](https://github.com/INTENTIUS/chant/issues/2524)). No artifact links to code or to another artifact directly. A decision record says both halves of the relationship:
+
+- Its `evidence` pins the artifacts it rests on. Each pin names a file from the workspace root in `path` and holds the SHA-256 of the file's bytes in `sha256`.
+- Its `constrains` names what it governs: a member as `member:<name>`, or a file or directory as `path:<path>`.
+
+`chant workspace records` checks every pin against the tree it reads. A pin whose file still hashes to `sha256` is `pinned`. One whose file changed is `drifted` and carries the warning `asset-drift`. One whose file is gone is `missing` and carries `asset-missing`. A matching pin is `stale` and carries `asset-stale` when a record this one supersedes pinned the same hash and the file's last commit is older than the commit that added this record. The decision changed and the artifact did not follow. Each record carries its pins in `assets` and those warnings in `warnings`. A warning never makes the record invalid, and `--current` still lists it: the decision is still what was decided, and the drift asks for it to be looked at again. The paths resolve in `workspaceRoot`, the workspace whose declaration sits nearest above the kind file.
+
+`chant workspace graph --kind <kind file>` fills `records` with the records it reads and adds their links to `links`, after the member links. A superseded record has no link rows.
+
+| Field | `asset` row | `constrains` row |
+|---|---|---|
+| `kind` | `asset` | `constrains` |
+| `origin`, `resolves` | `declared`, `source` | `declared`, `source` |
+| `recordKind`, `record`, `recordPath` | the record's kind, id and file | the same |
+| `target` | the pinned path | the entry as written, `member:<name>` or `path:<path>` |
+| `member` | the member that holds the path, or `null` | the member named, or the one that holds the path, or `null` |
+| `status` | `pinned`, `drifted`, `missing` or `stale` | `resolved`, or `missing` when no member has the name or the path does not exist |
+| `reason` | why the pin is not `pinned`, or `null` | why the row is `missing`, or `null` |
+| `sha256`, `actual` | the pinned hash, and the file's hash in the tree read or `null` | not present |
+
+To find the artifacts behind a file, a reader walks through the decisions. It takes the `constrains` rows whose target covers the file: `path:<p>` covers `p` and everything below it, and `member:<name>` covers the member's directory. From each of those records it takes the `asset` rows. A drifted asset row means the artifact changed after the decision that governs the file was made, and a stale one means the decision was replaced while the artifact stayed as it was. The walk the other way, from an artifact to what it shapes, starts from the `asset` rows whose `target` is the artifact.
+
 ## Joining the documents
 
 A reader such as behold or hud builds one view from several commands. The join keys are the same in every document.
@@ -121,6 +149,7 @@ A reader such as behold or hud builds one view from several commands. The join k
 | the workspace | `workspace.name`, `at` | `workspace.name`, `at` | `workspace.name`, `at` | `workspace.name` and `lifecycle.commit` |
 | a member | `members[].name` | `members[].name`, and `member` on every node and edge | `entity` on a declaration finding | `members[].name` |
 | a member's directory | `members[].dir` | `members[].dir` | none | `members[].dir` |
+| a record | none | `records[].id`, and `record` on a record link | the record's file on a `WSP111`, `WSP112` or `WSP113` finding | none |
 
 A reader starts with `ls`, which lists every member whether it can be read or not. It then reads `graph` for the nodes in `groups.byMember`, and matches each graph entry to the `ls` member of the same name. `check` findings attach to a member through `entity`, and `status` releases attach through the member name. Node ids in `graph` are `<member>/<id>`, so a node never collides with another member's.
 

@@ -7,7 +7,7 @@ diataxis: reference
 ## Synopsis
 
 ```
-chant workspace check [--at <rev>] [--json] [--format stylish|json|sarif] [--generated]
+chant workspace check [--at <rev>] [--json] [--format stylish|json|sarif] [--generated] [--kind <kind file>]
 ```
 
 ## Description
@@ -72,6 +72,10 @@ chant.workspace.json
 | `WSP104` | generated-hand-written | info | yes | An entry is kept by hand. The finding carries the entry's reason, and the generator is not run |
 | `WSP105` | generated-not-compared | info | yes | An entry was not compared with its generator's output, and the message says why |
 | `WSP106` | generated-source-missing | error | yes | An entry names a source that does not exist |
+| `WSP111` | record-asset-drift | warning | yes | A current [record](#record-checks) pins a file whose bytes no longer hash to the pinned `sha256` |
+| `WSP112` | record-asset-missing | warning | yes | A current record pins a file that does not exist |
+| `WSP113` | record-asset-stale | warning | yes | A current record pins a file at the hash a record it supersedes pinned, and the file has not changed since: the artifact did not follow the decision |
+| `WSP114` | records-unreadable | error | no | The records of the kind named with `--kind` can't be read |
 
 A finding's location is the entry it is about, the link for `WSP091` to `WSP094` and `WSP096`, or the pin for `WSP002`. A finding about two or more members sits at the first of them in the declaration, and that member's entry is where a `suppress` for it goes.
 
@@ -140,6 +144,14 @@ Declared generators run member code and take seconds each, so they run only with
 error  WSP101  docs/src/content/docs/lint-rules/audit-rules.mdx differs from what `npx tsx ../scripts/generate-audit-rules-doc.ts` writes; run `npx tsx ../scripts/generate-audit-rules-doc.ts` in docs and commit the result, or mark the entry handWritten with a reason
 info   WSP104  services/api/skills/chant-aws/SKILL.md is kept by hand, so `chant update` is not run for it: we trim the skill for this service
 ```
+## Record checks
+
+With `--kind <kind file>`, the command reads the records that kind locates, as [`chant workspace records`](/chant/cli/workspace-records/#asset-pins) does, in the tree it checks. A current record that pins a file that has changed gets a `WSP111`, one that pins a missing file gets a `WSP112`, and one whose pin is [stale](/chant/cli/workspace-records/#asset-pins) gets a `WSP113` ([#2549](https://github.com/INTENTIUS/chant/issues/2549)). The finding sits on the record's file, not on the declaration. All three are warnings, since the decision stays valid until someone revisits it. A workspace that wants drift to fail CI sets `"checks": { "WSP111": "error" }` in its declaration. Without `--kind` no record is read.
+
+```
+warning  WSP111  ref-002: design/screens/home.json changed since it was pinned: sha256 074e55f52470 is pinned, the file hashes to 9874903227b3
+```
+
 ## Options
 
 | Option | Effect |
@@ -150,6 +162,7 @@ info   WSP104  services/api/skills/chant-aws/SKILL.md is kept by hand, so `chant
 | `--format json` | Print the [read contract](/chant/reference/workspace-read-contract/) document, which follows `https://intentius.io/chant/schemas/workspace/check/v1/check.schema.json`. It holds what `--json` prints, with `$schema`, `contract`, `chant`, `at` and `workspace` (the declaration's `name` and `root`, or `null` without one) added. A `WSP001` finding also has `code`, the reason code the declaration couldn't be read with. `--at` outside a git repository or at an unknown revision prints `{ "$schema", "contract", "chant", "error" }` instead |
 | `--format sarif` | Print SARIF 2.1.0 through lint's SARIF reporter, with the suppressed findings as suppressed results |
 | `--generated` | Run each declared generator and compare its output with the file in the tree, as described under [generated files](#generated-files). Off by default, since generators run member code |
+| `--kind <kind file>` | Read the records of this record kind and run the [record checks](#record-checks). The path is resolved against the current directory. With `--at`, the records and the files they pin are read at the revision |
 
 ## Exit codes
 

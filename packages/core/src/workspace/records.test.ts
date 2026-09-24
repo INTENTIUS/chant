@@ -133,6 +133,56 @@ describe("readRecords", () => {
     ]);
   });
 
+  test("a decided record supersedes a decided one, under an equal approval rule (#2524 D4)", async () => {
+    write("ws-001-a.md", decision("ws-001", "decided"));
+    write("ws-002-b.md", decision("ws-002", "decided", ["ws-001"]));
+    const all = await read();
+    expect(all.records.map((r) => [r.id, r.supersededBy, r.valid, r.warnings])).toEqual([
+      ["ws-001", "ws-002", true, []],
+      ["ws-002", null, true, []],
+    ]);
+    const current = await read({ current: true });
+    expect(current.records.map((r) => r.id)).toEqual(["ws-002"]);
+  });
+
+  test("a proposed record supersedes nothing: the link is pending, as a warning on the new record", async () => {
+    write("ws-001-a.md", decision("ws-001", "decided"));
+    write("ws-002-b.md", decision("ws-002", "proposed", ["ws-001"]).replace(/^choice:\n  option: .*\n  reason: .*\n/m, "choice: null\n"));
+    const all = await read();
+    expect(all.records.map((r) => [r.id, r.supersededBy, r.valid])).toEqual([
+      ["ws-001", null, true],
+      ["ws-002", null, true],
+    ]);
+    expect(all.records[1].warnings.map((w) => w.code)).toEqual(["record-supersedes-pending"]);
+    expect((await read({ current: true })).records.map((r) => r.id)).toEqual(["ws-001", "ws-002"]);
+  });
+
+  test("a decided record can't supersede a ratified one; a ratified record supersedes any", async () => {
+    write("ws-001-a.md", decision("ws-001", "ratified"));
+    write("ws-002-b.md", decision("ws-002", "decided", ["ws-001"]));
+    write("ws-003-c.md", decision("ws-003", "decided"));
+    write("ws-004-d.md", decision("ws-004", "ratified", ["ws-003"]));
+    const all = await read();
+    expect(all.records.map((r) => [r.id, r.supersededBy, r.warnings.map((w) => w.code)])).toEqual([
+      ["ws-001", null, []],
+      ["ws-002", null, ["record-supersedes-pending"]],
+      ["ws-003", "ws-004", []],
+      ["ws-004", null, []],
+    ]);
+  });
+
+  test("a kind without approval ranks keeps the closed-state rule", async () => {
+    const kind = readFileSync(join(dir, "decisions", "decision.kind.mjs"), "utf-8").replace(/^  approval: .*\n/m, "");
+    writeFileSync(join(dir, "decisions", "decision.kind.mjs"), kind);
+    write("ws-001-a.md", decision("ws-001", "decided"));
+    write("ws-002-b.md", decision("ws-002", "decided", ["ws-001"]));
+    const all = await read();
+    expect(all.records.map((r) => [r.id, r.supersededBy, r.warnings])).toEqual([
+      ["ws-001", null, []],
+      ["ws-002", null, []],
+    ]);
+  });
+
   test("a record superseded twice keeps the first and flags the second", async () => {
     write("ws-001-a.md", decision("ws-001", "ratified"));
     write("ws-002-b.md", decision("ws-002", "ratified", ["ws-001"]));

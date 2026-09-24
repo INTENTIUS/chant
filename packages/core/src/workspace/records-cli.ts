@@ -12,12 +12,16 @@
  * nothing is inferred (#2525 rule 1).
  */
 
+import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
-import { relative } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { formatError } from "../cli/format";
 import type { CommandContext } from "../cli/registry";
+import { findWorkspaceRoot } from "../project-root";
+import { fileDigest, isWorkspacePath } from "./record-assets";
 import { gitRevisionSource, gitRoot, resolveRevision, workingTreeSource } from "./record-source";
-import { loadRecordKind, readRecords, RecordReadError, type ReadErrorCode, type RecordEntry } from "./records";
+import { loadRecordKind, readRecords, RecordReadError, type LoadedRecordKind, type ReadErrorCode, type ReadRecordsResult, type RecordEntry, type RecordHistory } from "./records";
+import { gitTree, workingTree } from "./tree";
 import { activeAttestors, type ProvenanceLevel } from "./trust/attestor";
 import { policyAtBase, recordProvenance, resolveBase, type BaseSource, type RecordProvenance } from "./trust/provenance";
 
@@ -27,7 +31,7 @@ export const RECORDS_CONTRACT_VERSION = 1;
 /** `$id` of the JSON Schema for the `--json` output, shipped beside this file. */
 export const RECORDS_OUTPUT_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace/records/v1/records.schema.json";
 
-const USAGE = "chant workspace records --kind <kind file> [--current] [--at <rev>] [--base <rev>] [--require attested] [--json]";
+const USAGE = "chant workspace records --kind <kind file> [--current] [--at <rev>] [--base <rev>] [--require attested] [--json] | chant workspace records pin <path>";
 
 /** Exit code when the read worked and a record falls below `--require`. */
 export const EXIT_BELOW_REQUIRED = 2;
@@ -63,6 +67,8 @@ export type RecordsDocument =
       contract: number;
       kind: { name: string; schema: string; file: string };
       at: string | null;
+      /** The directory pinned paths resolve in, from the repository root: the workspace holding the kind file, or the repository root (#2549). */
+      workspaceRoot: string;
       current: boolean;
       trust: TrustView;
       records: RecordView[];
@@ -70,23 +76,84 @@ export type RecordsDocument =
     }
   | { $schema: string; contract: number; error: { code: ReadErrorCode; message: string } };
 
-/** Run the query and build the document `--json` prints. Never throws a {@link RecordReadError}. */
-export async function queryRecords(query: RecordsQuery): Promise<RecordsDocument> {
+/** A records read, before provenance. */
+export interface RecordsRead {
+  loaded: LoadedRecordKind;
+  /** The repository root, or the working directory outside git. Record paths are relative to it. */
+  root: string;
+  /** The git top, or undefined outside git. */
+  top: string | undefined;
+  at: string | null;
+  /** Where pinned paths resolve, relative to `root` ("." for the root itself). */
+  workspaceRoot: string;
+  result: ReadRecordsResult;
+}
+
+/**
+ * Where a kind's pinned paths resolve: the workspace whose declaration sits
+ * nearest above the kind file, when it is inside the repository, or else the
+ * repository root. Relative to `root`, with / separators.
+ */
+function pinRoot(kindFile: string, root: string): string {
+  const found = findWorkspaceRoot(dirname(kindFile));
+  if (!found) return ".";
+  const rel = relative(root, realpathOr(found.dir)).split(sep).join("/");
+  return rel === "" || rel.startsWith("..") ? "." : rel;
+}
+
+/**
+ * Commit times from the history of `rev` in the repository at `top`, asked
+ * only for a pin that might be stale. `prefix` is the workspace root from the
+ * repository root.
+ */
+function gitHistory(top: string, rev: string, prefix: string): RecordHistory {
+  const times = (args: string[]): number[] => {
+    try {
+      const out = execFileSync("git", args, { cwd: top, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] });
+      return out.split("\n").filter(Boolean).map(Number);
+    } catch {
+      // No commits yet, or a path git doesn't know.
+      return [];
+    }
+  };
+  return {
+    fileChanged: (path) => times(["log", "-1", "--format=%ct", rev, "--", prefix === "." ? path : `${prefix}/${path}`])[0] ?? null,
+    // The latest commit that added the file: a record deleted and written again counts from the second time.
+    recorded: (path) => times(["log", "--diff-filter=A", "--format=%ct", rev, "--", path])[0] ?? null,
+  };
+}
+
+/**
+ * Load the kind and read its records, in the working tree or at `query.at`,
+ * with each pin checked in the same tree. Throws a {@link RecordReadError}.
+ * `chant workspace graph` and `check` read records through this too.
+ */
+export async function readRecordsFor(query: Omit<RecordsQuery, "base">): Promise<RecordsRead> {
   // git reports its top through symlinks resolved (/var is /private/var on
   // macOS), so the directory has to be too, or record paths leave the repository.
   const cwd = realpathOr(query.cwd);
   const top = gitRoot(cwd);
   const root = top ?? cwd;
+  const loaded = await loadRecordKind(query.kind, cwd);
+  const workspaceRoot = pinRoot(loaded.file, root);
+  let at: string | null = null;
+  let source = workingTreeSource(root);
+  let assets = workingTree(workspaceRoot === "." ? root : join(root, ...workspaceRoot.split("/")));
+  if (query.at !== undefined) {
+    if (!top) throw new RecordReadError("not-a-git-repository", "--at reads git objects, and this directory is not in a git repository");
+    at = resolveRevision(top, query.at);
+    source = gitRevisionSource(top, at);
+    assets = gitTree(top, at, workspaceRoot === "." ? "" : workspaceRoot);
+  }
+  const history = top ? gitHistory(top, at ?? "HEAD", workspaceRoot) : undefined;
+  const result = await readRecords(loaded, { root, source, current: !!query.current, assets, ...(history ? { history } : {}) });
+  return { loaded, root, top, at, workspaceRoot, result };
+}
+
+/** Run the query and build the document `--json` prints. Never throws a {@link RecordReadError}. */
+export async function queryRecords(query: RecordsQuery): Promise<RecordsDocument> {
   try {
-    const loaded = await loadRecordKind(query.kind, cwd);
-    let at: string | null = null;
-    let source = workingTreeSource(root);
-    if (query.at !== undefined) {
-      if (!top) throw new RecordReadError("not-a-git-repository", "--at reads git objects, and this directory is not in a git repository");
-      at = resolveRevision(top, query.at);
-      source = gitRevisionSource(top, at);
-    }
-    const result = await readRecords(loaded, { root, source, current: !!query.current });
+    const { loaded, root, top, at, workspaceRoot, result } = await readRecordsFor(query);
     // Provenance, judged by the policy at base and never by the tree read (#2547).
     const base = top ? resolveBase(top, query.base) : { commit: null, from: null };
     const policy = top ? policyAtBase(top, base) : policyAtBase(root, base);
@@ -106,6 +173,7 @@ export async function queryRecords(query: RecordsQuery): Promise<RecordsDocument
         file: relative(root, loaded.file).split("\\").join("/"),
       },
       at,
+      workspaceRoot,
       current: !!query.current,
       trust: { base: base.commit, baseFrom: base.from, active: policy.active, signersPath: policy.signersPath, problems: policy.problems },
       records: result.records.map((r) => ({ ...r, provenance: provenance.get(r.path)! })),
@@ -117,8 +185,42 @@ export async function queryRecords(query: RecordsQuery): Promise<RecordsDocument
   }
 }
 
+/**
+ * `chant workspace records pin <path>`: the `{path, sha256}` a decision's
+ * evidence entry holds for a file, with the path from the workspace root
+ * (the nearest declaration above the file, or the repository root).
+ */
+export function pinFile(file: string, cwd: string): { path: string; sha256: string } | { error: string } {
+  const abs = realpathOr(resolve(cwd, file));
+  const top = gitRoot(dirname(abs));
+  const ws = findWorkspaceRoot(dirname(abs));
+  const base = ws ? realpathOr(ws.dir) : top ? realpathOr(top) : realpathOr(cwd);
+  const path = relative(base, abs).split(sep).join("/");
+  if (path.startsWith("..") || !isWorkspacePath(path)) return { error: `${file} is not a file path inside the workspace at ${base}` };
+  const sha256 = fileDigest(workingTree(base), path);
+  if (sha256 === undefined) return { error: `${file} is not a file` };
+  return { path, sha256 };
+}
+
 export async function runWorkspaceRecords(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
+  if (args.extraPositional === "pin") {
+    if (!args.extraPositional2) {
+      console.error(formatError({ message: "pin needs the path of a file", hint: USAGE }));
+      return 1;
+    }
+    const pin = pinFile(args.extraPositional2, process.cwd());
+    if ("error" in pin) {
+      console.error(formatError({ message: pin.error, hint: USAGE }));
+      return 1;
+    }
+    console.log(JSON.stringify(pin, null, 2));
+    return 0;
+  }
+  if (args.extraPositional) {
+    console.error(formatError({ message: `chant workspace records takes no argument but pin (got ${args.extraPositional})`, hint: USAGE }));
+    return 1;
+  }
   if (!args.kind) {
     console.error(formatError({ message: "--kind <kind file> is required", hint: USAGE }));
     return 1;
@@ -178,6 +280,7 @@ function formatRecords(records: RecordView[], summary: { total: number; valid: n
     const attested = r.provenance.level === "attested" ? `  attested by ${r.provenance.principal}` : "";
     lines.push(`${(r.id ?? "-").padEnd(idWidth)}  ${(r.state ?? "-").padEnd(stateWidth)}  ${title}${superseded}${attested}${flag}`);
     for (const reason of r.reasons) lines.push(`${" ".repeat(idWidth + 2)}${reason.code}: ${reason.message} (${r.path})`);
+    for (const warning of r.warnings) lines.push(`${" ".repeat(idWidth + 2)}warning ${warning.code}: ${warning.message} (${r.path})`);
   }
   lines.push(
     `${summary.total} records${at ? ` at ${at.slice(0, 8)}` : ""}: ${summary.valid} valid, ${summary.invalid} invalid, ${summary.superseded} superseded`,

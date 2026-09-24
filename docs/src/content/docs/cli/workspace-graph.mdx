@@ -7,7 +7,7 @@ title: "chant workspace graph"
 ## Synopsis
 
 ```
-chant workspace graph [dir] [--at <rev>] [-o <file>] [--member <name>] [--env <name>] [--dry-run]
+chant workspace graph [dir] [--at <rev>] [-o <file>] [--member <name>] [--kind <kind file>] [--env <name>] [--dry-run]
 ```
 
 ## Description
@@ -24,7 +24,7 @@ Every node id becomes `<member>/<id>`. Member names can't contain `/`, and `::` 
 
 `groups.byMember` maps each member to its node ids. A lexicon or a composite type means the same thing in every member, so `byLexicon` and `byComposite` keep their keys and merge the ids across members. The keys of `byStack`, `byContainer` and `byWave` name things inside one member, and they are prefixed with the member too.
 
-The `links` section holds the [member links](#links). The `records` section is where record kinds will go, and it is empty in this release.
+The `links` section holds the [member links](#links), followed by the [record links](#record-links) when `--kind` names a record kind. The `records` section lists the records of that kind, and it is empty without `--kind`.
 
 A member's IR with no `version` field comes from a chant older than that field. It is read as version 1 and upgraded in place, and the member's entry has `irVersion: null`. An IR with a version newer than this chant reads is left out with the reason code `ir-version-unsupported`.
 
@@ -90,6 +90,26 @@ A declared link replaces the inferred edge it covers, so the same join never app
 
 [`chant workspace check`](/chant/cli/workspace-check/#member-links) resolves the same links from source without running any member, and fails on a link whose output is missing.
 
+## Record links
+
+The `--kind <kind file>` option reads the records of that kind at the revision the declaration is read at. It reads them the way [`chant workspace records`](/chant/cli/workspace-records/) does. The records are listed in `records`. Each current record, one that no other record supersedes, adds rows to `links` ([#2549](https://github.com/INTENTIUS/chant/issues/2549)):
+
+- An `asset` row for each file the record pins by hash in its evidence, with the pin's state: `pinned`, `drifted`, `missing` or `stale`.
+- A `constrains` row for each `member:<name>` or `path:<path>` the record governs, `resolved` when the member is declared or the path exists and `missing` otherwise.
+
+```json
+{
+  "kind": "asset", "origin": "declared", "resolves": "source",
+  "recordKind": "decision", "record": "ref-002",
+  "recordPath": "reference-workspace/decisions/ref-002-where-the-screen-design-lives.md",
+  "target": "design/screens/home.json", "member": "design",
+  "status": "pinned", "reason": null,
+  "sha256": "074e55f5...", "actual": "074e55f5..."
+}
+```
+
+A record link has `record` and `target` where a member link has `consumer` and `producer`. The [read contract](/chant/reference/workspace-read-contract/#record-links-and-artifacts) lists its fields and describes how a reader walks from a file to the artifacts behind it through these rows. A kind that can't be read leaves `records` empty, prints its error code on stderr, and exits 1.
+
 ### Reason codes
 
 | Code | The member |
@@ -108,6 +128,7 @@ A declared link replaces the inferred edge it covers, so the same join never app
 | `--at <rev>` | Read the declaration at a commit, and each member's graph from its source at that commit. The tree is exported to a temporary directory and each member runs there under the toolchain installed now. See [what `--at` reads](/chant/reference/workspace-read-contract/#identity-and-revisions). |
 | `-o, --output <file>` | Write the document to a file. |
 | `--member <name>` | Compose only these members. Repeatable, and a comma list works too. |
+| `--kind <kind file>` | Read the records of this record kind and add their [record links](#record-links). The path is resolved against the current directory. |
 | `--env <name>` | Passed to each member's `chant graph`. |
 | `--dry-run` | Print the plan and read nothing. |
 
@@ -116,4 +137,4 @@ A declared link replaces the inferred edge it covers, so the same join never app
 | Code | Meaning |
 |---|---|
 | 0 | Every `chant` member was composed. |
-| 1 | A member failed or couldn't be read, or the declaration couldn't be read. The document is still printed, with the failed members listed. |
+| 1 | A member failed or couldn't be read, the declaration couldn't be read, or the `--kind` records couldn't be read. The document is still printed, with the failed members listed. |

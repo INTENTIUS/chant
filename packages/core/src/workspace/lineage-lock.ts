@@ -133,6 +133,12 @@ const LineageSchema = z
     address: AddressSchema.nullable(),
     /** The parameter values the template was instantiated with. Always empty for vendor scopes. */
     parameters: z.record(z.string(), z.unknown()),
+    /**
+     * Records whose evidence pins were re-pinned to the substituted content
+     * of a parameterised file (#2549): each record's path in the scope, and the
+     * pinned paths. An upgrade re-pins the base and the target the same way.
+     */
+    repinned: z.array(z.object({ record: z.string().min(1), paths: z.array(z.string().min(1)) }).strict()).optional(),
     /** Migrations applied since instantiation (#2550). */
     migrations: z.array(z.string()),
     /** Per file, relative to the scope directory, in sorted order. */
@@ -249,6 +255,7 @@ function canonical(lock: LineageLock): LineageLock {
       ...(s.ref !== undefined ? { ref: s.ref } : {}),
       address: s.address,
       parameters: s.parameters,
+      ...(s.repinned !== undefined ? { repinned: s.repinned } : {}),
       migrations: s.migrations,
       files,
       manualSteps: [...s.manualSteps].sort((a, b) => a.path.localeCompare(b.path)),

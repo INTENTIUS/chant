@@ -18,6 +18,7 @@ import { cleanScratch, commitAll, contract, declaration, declaration as declarat
 import type { GraphIR } from "../graph-ir";
 import { composeWorkspaceGraph, MEMBER_RUN_REASON_CODES } from "./compose-graph";
 import { parseDeclaration, WORKSPACE_ERROR_CODES } from "./declaration";
+import type { LinkTableRow } from "./links";
 import { GRAPH_CONTRACT_VERSION, GRAPH_ERROR_CODES, GRAPH_OUTPUT_SCHEMA_ID, workspaceGraph, type GraphDocument } from "./graph-cli";
 import schema from "./graph.schema.json";
 
@@ -101,7 +102,7 @@ describe("the links section (#2539)", () => {
     );
     const doc = { $schema: GRAPH_OUTPUT_SCHEMA_ID, contract: 1, chant: "0.81.0", at: null, ...graph };
     expectValid(doc);
-    expect(doc.links.map((r) => `${r.consumer} ${r.origin} ${r.status}`)).toEqual(["app declared resolved", "app declared missing", "jobs inferred:joinKey ambiguous"]);
+    expect((doc.links as LinkTableRow[]).map((r) => `${r.consumer} ${r.origin} ${r.status}`)).toEqual(["app declared resolved", "app declared missing", "jobs inferred:joinKey ambiguous"]);
   });
 });
 

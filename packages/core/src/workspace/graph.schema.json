@@ -218,14 +218,17 @@
         },
         "links": {
           "type": "array",
-          "description": "Member links (#2524 D6, #2539): the ones declared on a consumer and the ones inferred from join keys, resolved against the composed graph. A reader draws a row from its `from` node to its `to` node when both are set.",
+          "description": "Member links (#2524 D6, #2539): the ones declared on a consumer and the ones inferred from join keys, resolved against the composed graph. A reader draws a row from its `from` node to its `to` node when both are set. With --kind, the links of the records read follow (#2549): an `asset` row for each file a record pins by hash, and a `constrains` row for each member or path it governs. These rows have `record` and `target` instead of `consumer` and `producer`.",
           "items": {
             "$ref": "#/$defs/link"
           }
         },
         "records": {
           "type": "array",
-          "description": "Record sections (#2524 D4). Empty until record kinds join the graph."
+          "description": "The records read with --kind (#2524 D4, #2549), sorted by path; empty without it. A record link in `links` names its record by id.",
+          "items": {
+            "$ref": "#/$defs/record"
+          }
         }
       }
     },
@@ -655,8 +658,134 @@
               }
             }
           }
+        },
+        {
+          "type": "object",
+          "description": "A record link (#2549): from a current record to a file it pins (kind asset) or to a member or path it constrains (kind constrains). Superseded records have none. A reader finds the artifacts behind a file by taking the decisions whose constrains cover it and then their asset rows.",
+          "required": [
+            "kind",
+            "origin",
+            "resolves",
+            "recordKind",
+            "record",
+            "recordPath",
+            "target",
+            "member",
+            "status",
+            "reason"
+          ],
+          "properties": {
+            "kind": {
+              "enum": [
+                "asset",
+                "constrains"
+              ]
+            },
+            "origin": {
+              "const": "declared"
+            },
+            "resolves": {
+              "const": "source"
+            },
+            "recordKind": {
+              "type": "string",
+              "description": "The record's kind, such as decision."
+            },
+            "record": {
+              "type": "string",
+              "description": "The record's id."
+            },
+            "recordPath": {
+              "type": "string",
+              "description": "The record file, from the repository root."
+            },
+            "target": {
+              "type": "string",
+              "description": "For asset, the pinned path from the workspace root. For constrains, the entry as written: member:<name> or path:<path>."
+            },
+            "member": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "The member the target names or sits in; null when no member does."
+            },
+            "status": {
+              "enum": [
+                "pinned",
+                "drifted",
+                "missing",
+                "stale",
+                "resolved"
+              ],
+              "description": "For asset: pinned, drifted, missing or stale, as records reports the pin. For constrains: resolved, or missing when the member is not declared or the path does not exist."
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Why the row is not pinned or resolved, or null."
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "description": "For asset: the pinned hash."
+            },
+            "actual": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "pattern": "^[0-9a-f]{64}$",
+              "description": "For asset: the hash of the file in the tree read, or null when it is missing."
+            }
+          }
         }
       ]
+    },
+    "record": {
+      "type": "object",
+      "required": [
+        "kind",
+        "id",
+        "path",
+        "state",
+        "valid",
+        "supersededBy"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "description": "The record kind's name, such as decision."
+        },
+        "id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "type": "string",
+          "description": "The record file, from the repository root, with / separators."
+        },
+        "state": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "valid": {
+          "type": "boolean",
+          "description": "As chant workspace records reports it."
+        },
+        "supersededBy": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
     }
   }
 }

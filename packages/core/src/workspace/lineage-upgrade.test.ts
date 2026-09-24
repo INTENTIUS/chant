@@ -7,6 +7,7 @@
 
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -450,6 +451,34 @@ describe("chant workspace upgrade with template parameters (#2627)", () => {
       expect(lineage.parameters).toEqual({ name: "Acme", owner: "platform" });
       expect(lineage.files["README.md"].sha256).toBe(fileHash("# Acme v2\n"));
       expect(lineage.files["chant.template.json"]).toBeUndefined();
+    } finally {
+      staged.dispose();
+    }
+  });
+
+  test("a record that pins a substituted file is re-pinned on the base and the target, so it updates with no manual step (#2549)", async () => {
+    const sha = (s: string) => createHash("sha256").update(s).digest("hex");
+    const record = (hash: string) => `---\nschema: 1\nid: "tpl-001"\nevidence:\n  - title: "readme"\n    path: "README.md"\n    sha256: "${hash}"\n---\n`;
+    // A second project, from a v1 whose record pins the template's README.
+    tpl = join(root, "rtpl");
+    proj = join(root, "rproj");
+    mkdirSync(tpl);
+    git(tpl, ["init", "-q", "-b", "main"]);
+    const manifest = JSON.stringify({ parameters: { name: { type: "string", default: "Starter" } }, files: ["README.md"] });
+    release("v1.0.0", { "chant.template.json": manifest, "README.md": "# {{chant:name}}\n", "decisions/tpl-001-x.md": record(sha("# {{chant:name}}\n")) });
+    const made = await initFromCommand({ from: `${tpl}@v1.0.0`, path: proj, params: { name: "Acme" } });
+    expect(made.error).toBeUndefined();
+    expect(read(proj, "decisions/tpl-001-x.md")).toBe(record(sha("# Acme\n")));
+    expect(readLock(proj)!.scopes["."].repinned).toEqual([{ record: "decisions/tpl-001-x.md", paths: ["README.md"] }]);
+    git(proj, ["init", "-q", "-b", "main"]);
+    commitProject("init");
+
+    release("v2.0.0", { "README.md": "# {{chant:name}} v2\n", "decisions/tpl-001-x.md": record(sha("# {{chant:name}} v2\n")) });
+    const staged = await stageUpgrade({ root: proj, to: "v2.0.0", runChant: passing });
+    try {
+      expect(staged.manualSteps).toEqual([]);
+      expect(read(staged.worktreeProject, "decisions/tpl-001-x.md")).toBe(record(sha("# Acme v2\n")));
+      expect(readLock(staged.worktreeProject)!.scopes["."].repinned).toEqual([{ record: "decisions/tpl-001-x.md", paths: ["README.md"] }]);
     } finally {
       staged.dispose();
     }

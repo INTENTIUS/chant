@@ -59,6 +59,7 @@ import { mergeFile } from "./lineage-merge";
 import { assertCodeAllowed, planMigrations, runMigration, splitMigrations, type LoadedMigration } from "./lineage-migrations";
 import { applyUpstream, type UpdateResult } from "./lineage-update";
 import { carryParameters, readManifest, substituteParameters } from "./template-manifest";
+import { repinSubstituted, type RepinnedRecord } from "./template-pins";
 
 /** The kind the patch digest is taken under, so it never collides with another kind of plan. */
 export const UPGRADE_PLAN_KIND = "workspace-upgrade";
@@ -184,6 +185,8 @@ interface Upstream {
   tree?: string;
   /** The parameter values substituted into `files` (#2627), for a git or directory source. */
   parameters?: Record<string, string>;
+  /** The records re-pinned to substituted files (#2549). */
+  repinned?: RepinnedRecord[];
   /** The source the lock records after the upgrade, when it moves (a directory source). */
   source?: LineageSource;
 }
@@ -191,13 +194,20 @@ interface Upstream {
 /**
  * The template's files as the project would have them (#2627): the manifest
  * removed and the parameters substituted, with the recorded values and the
- * defaults of parameters this version adds.
+ * defaults of parameters this version adds. Records that pin a substituted
+ * file are re-pinned as init re-pinned them (#2549), for the base and the
+ * target alike, so an unedited record compares equal to its base.
  */
-function instantiate(raw: Map<string, Buffer>, recorded: Record<string, unknown>, label: string): { files: Map<string, Buffer>; parameters: Record<string, string> } {
+function instantiate(
+  raw: Map<string, Buffer>,
+  recorded: Record<string, unknown>,
+  label: string,
+): { files: Map<string, Buffer>; parameters: Record<string, string>; repinned: RepinnedRecord[] } {
   try {
     const manifest = readManifest(raw);
     const parameters = carryParameters(manifest, recorded);
-    return { files: substituteParameters(raw, manifest, parameters), parameters };
+    const { files, repinned } = repinSubstituted(raw, substituteParameters(raw, manifest, parameters), manifest?.files ?? []);
+    return { files, parameters, repinned };
   } catch (err) {
     throw new UpgradeError(`${label}: ${(err as Error).message.replace(/; pass --param .*$/, "")}`);
   }
@@ -264,6 +274,7 @@ function fetchGit(root: string, lineage: Lineage, ref: string): Upstream {
       commit,
       tree: target.tree,
       parameters: instantiated.parameters,
+      repinned: instantiated.repinned,
     };
   } finally {
     rmSync(scratch, { recursive: true, force: true });
@@ -336,6 +347,7 @@ function readDir(root: string, lineage: Lineage, to: string | undefined): Upstre
     migrations: split.migrations,
     modules: split.modules,
     parameters: instantiated.parameters,
+    repinned: instantiated.repinned,
     source: { type: "dir", path: recordedDirPath(target.path, target.abs, root), ...(member ? { member } : {}) },
   };
 }
@@ -561,6 +573,12 @@ export async function stageUpgrade(options: UpgradeOptions): Promise<StagedUpgra
     for (const path of result.written) if (upstream.executable.has(path)) chmodSync(join(scopeDir, path), 0o755);
     if (ref !== undefined) staged.ref = ref;
     if (upstream.parameters) staged.parameters = upstream.parameters;
+    if (upstream.repinned) {
+      // The records this version re-pins, among the files the scope keeps (#2549).
+      const kept = upstream.repinned.filter((r) => staged.files[r.record] !== undefined || existsSync(join(scopeDir, r.record)));
+      if (kept.length > 0) staged.repinned = kept;
+      else delete staged.repinned;
+    }
     if (upstream.commit) staged.address = { ...staged.address!, commit: upstream.commit, tree: upstream.tree };
     if (upstream.source) staged.source = upstream.source;
     writeLock(worktreeProject, next);

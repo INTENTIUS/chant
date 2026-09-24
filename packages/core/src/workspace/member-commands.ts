@@ -379,7 +379,7 @@ const USAGE: Record<WorkspaceVerb, string> = {
   build: "chant workspace build [dir] [--member <name>] [-o <dir>] [--format json|yaml] [--env <env>] [--param k=v] [--dry-run]",
   lint: "chant workspace lint [dir] [--member <name>] [--format stylish|json|sarif] [-o <file>] [--fix] [--dry-run]",
   audit: "chant workspace audit [dir] [--member <name>] [--format stylish|json] [-o <file>] [--tier <tier>] [--fail-on <level>] [--dry-run]",
-  graph: "chant workspace graph [dir] [--member <name>] [-o <file>] [--env <env>] [--dry-run]",
+  graph: "chant workspace graph [dir] [--member <name>] [--kind <kind file>] [-o <file>] [--env <env>] [--dry-run]",
 };
 
 export function describePlan(plan: MemberPlan): string {

@@ -59,6 +59,11 @@ export const REASONS = {
   "record-id-duplicate": "Another record earlier in path order has the same id.",
   "record-supersedes-unknown": "A supersedes link names an id no record has.",
   "record-supersedes-conflict": "A second closed record supersedes a record another one already superseded.",
+  // A record that is valid but warned about (records, #2549).
+  "asset-drift": "A file the record pins by hash has changed: its bytes no longer hash to the pinned sha256.",
+  "asset-missing": "A file the record pins by hash does not exist in the tree read.",
+  "asset-stale": "A file the record pins is unchanged at the hash a record it supersedes pinned: the decision changed and the artifact did not follow.",
+  "record-supersedes-pending": "A supersedes link from a record whose state is weaker than the record it names, so the link has no effect yet.",
   // A records read that fails (records).
   "kind-unreadable": "The record kind file is missing or could not be imported.",
   "kind-invalid": "The record kind file exports no recordKind, or its shape is wrong.",
