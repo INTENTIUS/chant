@@ -59,18 +59,40 @@ constrains:
 | `title` | the topic as the source table names it |
 | `state` | `proposed`, `decided`, `ratified`, `superseded` or `withdrawn` |
 | `area` | the design section, such as `D4`; the review queue groups by it |
-| `source` | the issue, the table row verbatim and the revision marker on that row, if any |
+| `source` | where the decision was first recorded: an issue's table row, or the workspace member it was made in (see [Source](#source)) |
 | `question` | one sentence |
 | `options` | every option, the chosen one included, each with a letter id, the table's label, how it works (`how`) and its trade-off (`tradeoff`) |
 | `choice` | the chosen option's id and the reason |
 | `rejected` | each option not chosen, with why it lost |
 | `supersedes` | earlier choices this decision replaced |
-| `evidence` | the design sections, issues, audits and workspace files behind it: each a public link or a file pinned by hash (see [Evidence](#evidence)) |
+| `evidence` | the design sections, issues, audits and workspace files behind it: each a public link or a file pinned by hash (see [Evidence](#evidence)); may be empty |
 | `decided_by`, `decided_on` | the forge login and the date |
 | `reviews` | each reviewer's verdict (`agree`, `dissent` or `abstain`), a note and a date; empty until a review happens |
-| `constrains` | the issues (`owner/repo#n`), decisions (their ids), members (`member:<name>`) or workspace files and directories (`path:<path>`) the decision governs |
+| `constrains` | the issues (`owner/repo#n`), decisions (their ids), members (`member:<name>`) or workspace files and directories (`path:<path>`) the decision governs; at least one, since a decision that governs nothing is refused |
 
 Unknown fields are refused, except ones starting with `x-`.
+
+## Source
+
+`source` takes one of two forms. A decision taken from an issue's decisions table names the issue, the row's topic cell verbatim and the revision marker on that row, as the `ws-` decisions do:
+
+```yaml
+source:
+  issue: "INTENTIUS/chant#2524"
+  row: "Seal scope"
+  revision: null
+```
+
+A decision made in the workspace itself, such as one a product's design app records while someone works on a screen, often has no issue behind it ([#2654](https://github.com/INTENTIUS/chant/issues/2654)). Its source names the member it was made in, with `kind: "workspace"`:
+
+```yaml
+source:
+  kind: "workspace"
+  member: "app"
+  session: "S-0001"
+```
+
+`member` is the member's name in the workspace declaration. `session` is the id of the session the decision came from, in whatever form the member gives it, and it may be `null` or left out. `issue` may be added when an issue does relate to the decision, and it is never required in this form. The form takes no other fields, so a `row` or `revision` belongs to the issue form only.
 
 ## Evidence
 
@@ -93,6 +115,8 @@ A file in the workspace, such as a screen spec in the design member, has `title`
 `path` starts at the workspace root and sits inside a member. It uses `/` and has no leading `/`, no `.` or `..` segment and no trailing `/`. `sha256` is the lowercase hex SHA-256 of the file's bytes, and it is required. `chant workspace records pin <path>` prints both, and `sha256sum <path>` from the workspace root gives the same hash. An entry never has both `url` and `path`.
 
 `chant workspace records` checks each pin against the files it reads. A file that changed is reported as `asset-drift` and one that is gone as `asset-missing`. When a decision supersedes another and pins a file at the hash the old one pinned, while the file has not changed since, it is `asset-stale`: the decision changed and the artifact did not follow. All three are warnings: the decision stays valid, and the finding asks for it or the artifact to be revisited. Accepting the new file means updating `sha256` in a pull request.
+
+`evidence` may be an empty list, for a decision that cites nothing and pins no file, such as a choice made in a design session with no research behind it. The record is still valid, and `chant workspace records` gives it the warning `record-no-evidence` so a reviewer sees that nothing backs it. A decision that constrains nothing is different: an empty `constrains` fails the schema, and the record is invalid.
 
 `constrains` takes `path:<path>` with the same grammar as an evidence path, for a decision that governs a file or directory rather than a whole member, such as `path:app/src/server.mjs`. Relationships between artifacts and the code they shape come from decisions only: a reader goes from a file to the decisions whose `constrains` cover it, and from those to the files their evidence pins. The [read contract](https://intentius.io/chant/reference/workspace-read-contract/#record-links-and-artifacts) describes that walk.
 

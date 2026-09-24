@@ -64,6 +64,7 @@ export const REASONS = {
   "asset-missing": "A file the record pins by hash does not exist in the tree read.",
   "asset-stale": "A file the record pins is unchanged at the hash a record it supersedes pinned: the decision changed and the artifact did not follow.",
   "record-supersedes-pending": "A supersedes link from a record whose state is weaker than the record it names, so the link has no effect yet.",
+  "record-no-evidence": "The record's evidence list is empty: it cites nothing and pins no file. Information for a reviewer, never an error.",
   // A records read that fails (records).
   "kind-unreadable": "The record kind file is missing or could not be imported.",
   "kind-invalid": "The record kind file exports no recordKind, or its shape is wrong.",

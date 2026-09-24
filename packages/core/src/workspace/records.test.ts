@@ -199,6 +199,56 @@ describe("readRecords", () => {
   });
 });
 
+/**
+ * A decision made in the workspace (#2654): the workspace source form with no
+ * issue, and no evidence. `constrains` replaces ws-003's.
+ */
+function workspaceDecision(id: string, constrains: string[] = ["member:app"]): string {
+  const list = constrains.length === 0 ? "constrains: []\n" : `constrains:\n${constrains.map((c) => `  - "${c}"\n`).join("")}`;
+  return decision(id)
+    .replace(/^source:\n(?:  .*\n)*/m, 'source:\n  kind: "workspace"\n  member: "app"\n')
+    .replace(/^evidence:\n(?:  .*\n)*/m, "evidence: []\n")
+    .replace(/^constrains:\n(?:  .*\n)*/m, list);
+}
+
+describe("a decision that originates in the workspace (#2654)", () => {
+  test("validates with no issue and no evidence, is current, and carries record-no-evidence", async () => {
+    write("ws-001-a.md", workspaceDecision("ws-001"));
+    const current = await read({ current: true });
+    expect(current.records.map((r) => [r.id, r.valid, r.reasons, r.warnings.map((w) => w.code)])).toEqual([
+      ["ws-001", true, [], ["record-no-evidence"]],
+    ]);
+    expect(current.records[0].data?.source).toEqual({ kind: "workspace", member: "app" });
+  });
+
+  test("takes a session and an issue, and nothing else", async () => {
+    const base = workspaceDecision("ws-001");
+    write("ws-001-a.md", base.replace('  member: "app"\n', '  member: "app"\n  session: "S-0001"\n  issue: "jhgaylor/chud#77"\n'));
+    write("ws-002-b.md", base.replace('id: "ws-001"', 'id: "ws-002"').replace('  member: "app"\n', '  member: "app"\n  session: null\n'));
+    write("ws-003-c.md", base.replace('id: "ws-001"', 'id: "ws-003"').replace('  member: "app"\n', '  member: "app"\n  row: "Sort order"\n'));
+    write("ws-004-d.md", base.replace('id: "ws-001"', 'id: "ws-004"').replace('  member: "app"\n', ""));
+    const records = (await read()).records;
+    expect(records.map((r) => [r.id, codes(r)])).toEqual([
+      ["ws-001", []],
+      ["ws-002", []],
+      ["ws-003", ["record-schema-invalid"]],
+      ["ws-004", ["record-schema-invalid"]],
+    ]);
+  });
+
+  test("a record with evidence carries no record-no-evidence warning", async () => {
+    write("ws-001-a.md", decision("ws-001"));
+    expect((await read()).records[0].warnings).toEqual([]);
+  });
+
+  test("a record that constrains nothing is refused", async () => {
+    write("ws-001-a.md", workspaceDecision("ws-001", []));
+    const [r] = (await read()).records;
+    expect(codes(r)).toEqual(["record-schema-invalid"]);
+    expect(r.reasons[0].message).toMatch(/constrains/);
+  });
+});
+
 describe("loadRecordKind", () => {
   const load = () => loadRecordKind(join(dir, "decisions", "decision.kind.mjs"));
 

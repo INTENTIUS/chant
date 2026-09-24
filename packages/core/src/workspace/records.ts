@@ -62,6 +62,12 @@ export const RECORD_WARNING_CODES = [
   "asset-stale",
   /** A supersedes link from a record whose state is weaker than the one it names, so it has no effect yet (#2524 D4). */
   "record-supersedes-pending",
+  /**
+   * The kind's pins field is an empty list: the record cites no evidence and
+   * pins no file. Information for a reviewer, such as a decision made in a
+   * product's own design flow with nothing to cite (#2654).
+   */
+  "record-no-evidence",
 ] as const satisfies readonly ReasonCode[];
 export type RecordWarningCode = (typeof RECORD_WARNING_CODES)[number];
 
@@ -392,10 +398,16 @@ export async function readRecords(loaded: LoadedRecordKind, options: ReadRecords
     if (!result.ok) {
       entry.reasons.push({ code: "record-schema-invalid", message: result.errors.join("; ") });
     }
-    if (kind.pins && options.assets) {
-      const checked = checkPins(pinEntries(fm.value, kind.pins.field), options.assets);
-      entry.assets = checked.assets;
-      entry.warnings = checked.warnings;
+    if (kind.pins) {
+      const cited = fm.value[kind.pins.field];
+      if (Array.isArray(cited) && cited.length === 0) {
+        entry.warnings.push({ code: "record-no-evidence", message: `${kind.pins.field} is empty: the record cites nothing and pins no file` });
+      }
+      if (options.assets) {
+        const checked = checkPins(pinEntries(fm.value, kind.pins.field), options.assets);
+        entry.assets = checked.assets;
+        entry.warnings.push(...checked.warnings);
+      }
     }
   }
 

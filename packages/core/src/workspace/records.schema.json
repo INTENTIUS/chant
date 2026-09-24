@@ -74,7 +74,7 @@
           "items": { "$ref": "#/$defs/asset" }
         },
         "warnings": {
-          "description": "Added in contract 1 by #2549. Findings that leave the record valid: a pinned file that changed, went missing or did not follow a superseding decision, or a supersedes link that has no effect yet. valid and --current do not look at them.",
+          "description": "Added in contract 1 by #2549. Findings that leave the record valid: a pinned file that changed, went missing or did not follow a superseding decision, a supersedes link that has no effect yet, or (added by #2654) an evidence list that is empty. valid and --current do not look at them.",
           "type": "array",
           "items": { "$ref": "#/$defs/warning" }
         }
@@ -101,7 +101,7 @@
       "type": "object",
       "required": ["code", "message"],
       "properties": {
-        "code": { "enum": ["asset-drift", "asset-missing", "asset-stale", "record-supersedes-pending"] },
+        "code": { "enum": ["asset-drift", "asset-missing", "asset-stale", "record-supersedes-pending", "record-no-evidence"] },
         "message": { "type": "string" }
       }
     },
