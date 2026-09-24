@@ -27,6 +27,7 @@ import {
   type FoldedCompositeStepCall,
 } from "../fold/fold";
 import { isChantOwnedSpecifier, isFoldableHelperName } from "../fold/foldable-helpers";
+import { lexiconModulePath } from "../lexicon-module";
 import {
   briefNodeText,
   callExpressionMessage,
@@ -248,6 +249,21 @@ export interface FoldSession {
    */
   readonly lexiconPackages: ReadonlySet<string>;
   /**
+   * chant#2577 — the absolute module paths of this build's lexicons that
+   * `chant.config.ts` declares by path (#2520), each resolved to the file an
+   * import of it reaches. Such a lexicon has no package specifier, so a
+   * project imports it by a relative or absolute path. A binding whose path
+   * resolves to one of these is treated exactly like a binding of a
+   * {@link lexiconPackages} entry: its data exports resolve as values, and
+   * under `--sandbox` it is on {@link isTrustedExecutableBinding}'s allowlist,
+   * because `loadPlugins` has already imported and run it in this process.
+   *
+   * Only the declared module itself is in the set. A package has a root that
+   * bounds its subpaths, and a module path has none, so other files beside it
+   * stay project files.
+   */
+  readonly lexiconModules: ReadonlySet<string>;
+  /**
    * chant #1093 — this build asked for the #1045 sandbox
    * (`DiscoveryOptions.sandbox`, `chant build --sandbox`), so fold must not
    * import or invoke a module the CLI process isn't already trusted to
@@ -327,6 +343,15 @@ export function createFoldSession(
   /** chant#2455 — `ι = executing`. Mutually exclusive with `sandbox`. */
   executing = false,
 ): FoldSession {
+  // chant#2577 — a lexicon declared by path is that module and no package, so
+  // its name contributes the module path and not `@intentius/chant-lexicon-<name>`.
+  const packages = new Set(lexiconPackages);
+  const modules = new Set<string>();
+  for (const name of lexicons) {
+    const modulePath = lexiconModulePath(name);
+    if (modulePath === undefined) packages.add(lexiconPackageName(name));
+    else modules.add(resolveModulePath(modulePath, modulePath));
+  }
   return {
     intrinsics,
     cache: new Map(),
@@ -334,7 +359,8 @@ export function createFoldSession(
     importCache: new Map(),
     resolvePathCache: new Map(),
     buildParams,
-    lexiconPackages: new Set([...lexicons.map(lexiconPackageName), ...lexiconPackages]),
+    lexiconPackages: packages,
+    lexiconModules: modules,
     sandbox,
     executing,
     factoryModules: new Map(),
@@ -1105,6 +1131,29 @@ function activeLexiconPackage(specifier: string, lexiconPackages: ReadonlySet<st
 }
 
 /**
+ * chant#2577 — the path-declared counterpart of {@link activeLexiconPackage}:
+ * the resolved module path when a relative or absolute `specifier` reaches
+ * one of this build's {@link FoldSession.lexiconModules}, `undefined`
+ * otherwise. A bare specifier is never resolved here, and a build with no
+ * path-declared lexicon resolves nothing.
+ */
+function activeLexiconModule(
+  specifier: string,
+  fromFile: string,
+  lexiconModules: ReadonlySet<string>,
+  resolvePathCache: Map<string, string>,
+): string | undefined {
+  if (lexiconModules.size === 0 || !isProjectFileSpecifier(specifier)) return undefined;
+  let modulePath: string;
+  try {
+    modulePath = resolveModulePathMemoized(specifier, fromFile, resolvePathCache);
+  } catch {
+    return undefined;
+  }
+  return lexiconModules.has(modulePath) ? modulePath : undefined;
+}
+
+/**
  * chant #1995 — the package-ROOT portion of a bare subpath specifier
  * (`@intentius/chant-lexicon-azure/generated/index` ->
  * `@intentius/chant-lexicon-azure`), or `undefined` when `specifier` is a
@@ -1168,13 +1217,17 @@ async function resolveActiveLexiconExport(
   fromFile: string,
   session: FoldSession,
 ): Promise<{ value: unknown } | undefined> {
-  if (!activeLexiconPackage(binding.specifier, session.lexiconPackages)) return undefined;
-
-  let modulePath: string;
-  try {
-    modulePath = resolveModulePathMemoized(binding.specifier, fromFile, session.resolvePathCache);
-  } catch {
-    return undefined;
+  let modulePath: string | undefined;
+  if (activeLexiconPackage(binding.specifier, session.lexiconPackages)) {
+    try {
+      modulePath = resolveModulePathMemoized(binding.specifier, fromFile, session.resolvePathCache);
+    } catch {
+      return undefined;
+    }
+  } else {
+    // chant#2577 — a lexicon declared by path, imported by its path.
+    modulePath = activeLexiconModule(binding.specifier, fromFile, session.lexiconModules, session.resolvePathCache);
+    if (modulePath === undefined) return undefined;
   }
 
   let mod: Record<string, unknown>;
@@ -1278,6 +1331,8 @@ interface ResolveCtx {
    * site that imports and executes a module.
    */
   lexiconPackages: ReadonlySet<string>;
+  /** chant#2577 — see {@link FoldSession.lexiconModules}. */
+  lexiconModules: ReadonlySet<string>;
   /** chant #1093 — see {@link FoldSession.sandbox}. */
   sandbox: boolean;
   /** chant#2455 — see {@link FoldSession.executing}. */
@@ -2053,7 +2108,10 @@ function findCompositeDefinition(
       // chant build the set holds only `@intentius/chant-lexicon-*`, and no
       // lexicon exports a `Composite`, so nothing about a chant project moves.
       const chantOwned = isChantOwnedHelperBinding(compositeBinding, { ...ctx, file: scope.file });
-      const hostOwned = activeLexiconPackage(compositeBinding.specifier, ctx.lexiconPackages) !== undefined;
+      const hostOwned =
+        activeLexiconPackage(compositeBinding.specifier, ctx.lexiconPackages) !== undefined ||
+        activeLexiconModule(compositeBinding.specifier, scope.file, ctx.lexiconModules, ctx.resolvePathCache) !==
+          undefined;
       if (!chantOwned && !hostOwned) return undefined;
 
       const [fnArg, nameArg] = init.arguments;
@@ -2425,6 +2483,7 @@ async function interpretCompositeFactory(
     importCache: ctx.importCache,
     resolvePathCache: ctx.resolvePathCache,
     lexiconPackages: ctx.lexiconPackages,
+    lexiconModules: ctx.lexiconModules,
     sandbox: ctx.sandbox,
     executing: ctx.executing,
     session: ctx.session,
@@ -3048,6 +3107,9 @@ function isTrustedExecutableBinding(binding: ImportBinding, ctx: ResolveCtx): bo
   } catch {
     return false;
   }
+  // chant#2577 — arm 1 for a lexicon declared by path: the module
+  // `loadPlugins` already imported, reached by the path the project imports it by.
+  if (ctx.lexiconModules.has(targetPath)) return true;
   const root = chantCoreRoot();
   return targetPath === root || targetPath.startsWith(root + sep);
 }
@@ -3607,6 +3669,14 @@ async function buildExternals(
     } catch {
       continue;
     }
+    // chant#2577 — a path-declared lexicon is a lexicon, not a project file:
+    // resolve its data export the way the bare-specifier branch above does,
+    // with no `liveSources` edge for the same reason.
+    if (session.lexiconModules.has(targetPath)) {
+      const lexiconExport = await resolveActiveLexiconExport(binding, file, session);
+      if (lexiconExport) externals.set(localName, lexiconExport.value);
+      continue;
+    }
     const result = await foldFileMemoized(targetPath, session);
     if (!result.ok) {
       failures.set(localName, locatedMessage(binding.specifierNode, result.reason));
@@ -3632,6 +3702,9 @@ async function buildExternals(
     } catch {
       continue;
     }
+    // chant#2577 — a namespace import of a lexicon is left alone, as the
+    // bare-specifier check above leaves a package's alone.
+    if (session.lexiconModules.has(targetPath)) continue;
     const result = await foldFileMemoized(targetPath, session);
     if (!result.ok) {
       failures.set(localName, locatedMessage(binding.specifierNode, result.reason));
@@ -3738,6 +3811,7 @@ async function tryFoldFileCore(file: string, session: FoldSession): Promise<Fold
       importCache: session.importCache,
       resolvePathCache: session.resolvePathCache,
       lexiconPackages: session.lexiconPackages,
+      lexiconModules: session.lexiconModules,
       sandbox: session.sandbox,
       executing: session.executing,
       session,

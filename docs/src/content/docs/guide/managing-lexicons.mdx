@@ -51,6 +51,8 @@ Some parts of a package-backed lexicon sit at fixed subpaths of the package. Whe
 
 A lexicon loaded by path has no package version, so the build manifest records none for it. `chant update` and `chant doctor` skip it, since there are no package types to copy.
 
+Project files import a lexicon loaded by path by its path, for example `import { Page } from "../lexicon"`. Fold treats an import that resolves to the declared module the same way it treats an import of a lexicon package, with or without `--sandbox`. Other files in the lexicon's directory are project files to fold, since a module path has no package boundary around it.
+
 ## Updating Versions
 
 Update the lexicon package version:
