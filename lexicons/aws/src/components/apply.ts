@@ -257,7 +257,9 @@ export interface EcsUpdateServiceOutput {
  * Roll a new task definition/image out to an ECS service via `UpdateService`.
  * Rollback re-invokes `updateService` with the same input — a best-effort
  * capability-level compensation for the common case (recorded here so the
- * capability is never rollback-silent); a component whose service swap needs
+ * capability is never rollback-silent). Without an `imageRef` that re-apply has
+ * no task definition to send, so the rollback fails rather than report a
+ * restore that changed nothing (#2605). A component whose service swap needs
  * a specific prior task definition/count restored (rather than a re-apply of
  * the same input) supplies its own explicit rollback phase instead, such as
  * `rollback-previous` with that `taskDefinition`.
@@ -278,6 +280,12 @@ export function createEcsUpdateServiceCapability(
       return { deploymentId };
     },
     async rollback(_ctx, input) {
+      if (!input.imageRef) {
+        throw new Error(
+          `ecs-update-service rollback: service "${input.service}" has no imageRef to roll back to; ` +
+            `give the step an imageRef, or give the component a rollback phase that names the taskDefinition`,
+        );
+      }
       await executor.ecs.rollbackService({
         cluster: input.cluster,
         service: input.service,
