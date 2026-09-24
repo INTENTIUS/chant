@@ -24,10 +24,14 @@
  * a project that names lexicons by package takes exactly the path it always did.
  */
 
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 
-/** One `lexicons` entry: a package-backed name, or a name plus the module that implements it. */
-export type LexiconDeclaration = string | { name: string; module: string };
+/**
+ * One `lexicons` entry: a package-backed name, or a name plus the module that
+ * implements it. `root` (chant#2590) names the directory the lexicon's files
+ * live in, for fold's trust; see {@link pathLexiconRoot}.
+ */
+export type LexiconDeclaration = string | { name: string; module: string; root?: string };
 
 /** The lexicon name an entry declares, whichever form it takes. */
 export function lexiconDeclarationName(entry: LexiconDeclaration): string {
@@ -44,6 +48,52 @@ export function lexiconNames(entries: readonly LexiconDeclaration[] | undefined)
 /** Name to absolute module path, for the lexicons declared by path in the configs loaded so far. */
 const modulePaths = new Map<string, string>();
 
+/** Name to the absolute directory fold trusts for that lexicon (chant#2590). Absent: only the module is trusted. */
+const moduleRoots = new Map<string, string>();
+
+/** True when `path` is `dir` itself or lies under it. Both are absolute. */
+function isWithin(path: string, dir: string): boolean {
+  const rel = relative(dir, path);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
+/**
+ * chant#2590 — the directory fold trusts for a lexicon declared by path.
+ *
+ * A package has a root that bounds its subpaths. A module path has none, so
+ * the directory is either the one `root` names, resolved like `module`, or the
+ * module's own directory. It must lie inside the project (`baseDir`, the
+ * directory holding `chant.config.ts`) and must not contain the project's
+ * source directory (`sourceDir`, relative to `baseDir`, default `.`). The
+ * module must lie inside it.
+ *
+ * Returns the directory, or `undefined` when only the module file is trusted.
+ * A declared `root` that breaks a rule returns a `problem` to report; the
+ * module's own directory breaking one (a module at the project root, say)
+ * just leaves the lexicon with its module file.
+ */
+export function pathLexiconRoot(
+  entry: { module: string; root?: string },
+  baseDir: string,
+  sourceDir = ".",
+): { root?: string; problem?: string } {
+  const modulePath = isAbsolute(entry.module) ? entry.module : resolve(baseDir, entry.module);
+  const declared = entry.root !== undefined;
+  const candidate = declared
+    ? isAbsolute(entry.root!)
+      ? resolve(entry.root!)
+      : resolve(baseDir, entry.root!)
+    : dirname(modulePath);
+  const project = resolve(baseDir);
+  const source = resolve(baseDir, sourceDir);
+  let problem: string | undefined;
+  if (!isWithin(candidate, project)) problem = `${candidate} is outside the project (${project})`;
+  else if (isWithin(source, candidate)) problem = `${candidate} contains the project's source directory (${source})`;
+  else if (!isWithin(modulePath, candidate)) problem = `the module ${modulePath} is not inside ${candidate}`;
+  if (problem === undefined) return { root: candidate };
+  return declared ? { problem } : {};
+}
+
 /**
  * Record the path-declared entries of one loaded config. `baseDir` is the
  * directory the config file sits in. A plain-string entry for a name removes
@@ -57,16 +107,21 @@ const modulePaths = new Map<string, string>();
 export function registerLexiconDeclarations(
   entries: readonly LexiconDeclaration[] | undefined,
   baseDir: string,
+  sourceDir?: string,
 ): Record<string, string> {
   const recorded: Record<string, string> = {};
   for (const entry of entries ?? []) {
     if (typeof entry === "string") {
       modulePaths.delete(entry);
+      moduleRoots.delete(entry);
       continue;
     }
     const path = isAbsolute(entry.module) ? entry.module : resolve(baseDir, entry.module);
     modulePaths.set(entry.name, path);
     recorded[entry.name] = path;
+    const { root } = pathLexiconRoot(entry, baseDir, sourceDir);
+    if (root === undefined) moduleRoots.delete(entry.name);
+    else moduleRoots.set(entry.name, root);
   }
   return recorded;
 }
@@ -76,9 +131,19 @@ export function lexiconModulePath(name: string): string | undefined {
   return modulePaths.get(name);
 }
 
+/**
+ * chant#2590 — the directory fold trusts for a path-declared lexicon, or
+ * `undefined` when only its module file is trusted (or `name` is package-backed).
+ * See {@link pathLexiconRoot}.
+ */
+export function lexiconModuleRoot(name: string): string | undefined {
+  return moduleRoots.get(name);
+}
+
 /** Forget every recorded path. For tests. */
 export function resetLexiconModules(): void {
   modulePaths.clear();
+  moduleRoots.clear();
 }
 
 /**
