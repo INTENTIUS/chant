@@ -94,6 +94,8 @@ The command reports every lossy step: a site it could not map (Cursor has no
 fountain `runtime` value), a model it had to default because the local config
 pinned none, and any site where a credential was redacted.
 
+When the current project's `chant.config.ts` declares the target lexicon by path, it is loaded from that module. The config is read without running it, and a note is printed when its `lexicons` cannot be read that way. See [Commands that read `chant.config.ts` without running it](/chant/architecture/sandbox/#commands-that-read-chantconfigts-without-running-it).
+
 A lexicon opts into being an `--agents` target by implementing
 `agentConfigImporter()` — see
 [lexicon authoring](/chant/lexicon-authoring/overview/).

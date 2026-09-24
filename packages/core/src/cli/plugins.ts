@@ -1,29 +1,29 @@
-import { importLexiconModule, lexiconModulePath, lexiconNames } from "../lexicon-module";
+import { importLexiconModule, lexiconModulePath, lexiconNames, registerLexiconDeclarations } from "../lexicon-module";
+import { readLexiconDeclarationsStatically, type StaticLexiconRead } from "../config-static";
+export { unknownPathLexiconsNotice } from "../config-static";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import { isLexiconPlugin, type LexiconPlugin } from "../lexicon";
-import { loadChantConfig, loadChantConfigUpward } from "../config";
-import { findProjectConfig } from "../project-root";
+import { loadChantConfigUpward } from "../config";
 import { findInfraFiles, detectLexicons } from "../index";
 import { checkConflicts, describeConflict } from "./conflict-check";
 
 /**
- * chant#2578 — load the chant.config nearest `dir` (walking up) so the
- * lexicons it declares by path are recorded (../lexicon-module.ts), for a
- * command that does not otherwise read the config. With no config there is
- * nothing to record. A config that fails to load records nothing either, and
- * the command keeps its package behaviour; the commands that need a valid
- * config report its errors themselves.
+ * chant#2591 — record the lexicons the chant.config nearest `dir` declares by
+ * path (../lexicon-module.ts), for a command that does not otherwise read the
+ * config: `init --force`, `dev onboard` and `import --agents`.
+ *
+ * The config is read statically (../config-static.ts) and never evaluated,
+ * so these commands run no project code to learn it. When the `lexicons`
+ * value cannot be read that way, nothing is recorded, every lexicon keeps its
+ * package behaviour, and the returned read carries the reason; the caller
+ * prints {@link unknownPathLexiconsNotice} for it.
  */
-export async function recordProjectLexicons(dir: string): Promise<void> {
-  const { dir: projectDir, configPath } = findProjectConfig(dir);
-  if (configPath === undefined) return;
-  try {
-    await loadChantConfig(projectDir);
-  } catch {
-    // See above: an unloadable config changes nothing here.
-  }
+export function recordProjectLexicons(dir: string): StaticLexiconRead {
+  const read = readLexiconDeclarationsStatically(dir);
+  if (read.status === "read") registerLexiconDeclarations(read.entries, dirname(read.configPath));
+  return read;
 }
 
 /**

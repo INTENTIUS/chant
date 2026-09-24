@@ -403,6 +403,13 @@ export interface CommandDef {
   name: string;
   /** If true, load lexicon plugins before calling handler */
   requiresPlugins?: boolean;
+  /**
+   * chant#2591 — the command never evaluates the project's
+   * `chant.config.ts`, so `main` does not load it before dispatch either. Such
+   * a command reads what it needs from the config statically
+   * (../config-static.ts). A function decides per invocation.
+   */
+  runsNoConfig?: boolean | ((args: ParsedArgs) => boolean);
   /** Command handler — returns exit code */
   handler: (ctx: CommandContext) => Promise<number>;
 }
