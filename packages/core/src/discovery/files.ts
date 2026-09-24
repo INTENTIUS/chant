@@ -1,10 +1,9 @@
-import { readdir, stat, open } from "node:fs/promises";
-import { existsSync } from "node:fs";
-import { join, relative, sep, isAbsolute } from "node:path";
+import { open } from "node:fs/promises";
+import { relative, sep, isAbsolute } from "node:path";
 // @ts-ignore — picomatch has no types declaration
 import picomatch from "picomatch";
 import { resolveDiscoveryGlobs, type DiscoveryGlobs } from "../config";
-import { warnDiscoveryChanges } from "./convergence";
+import { readHead, walkDiscovery, workspaceMemberDirs } from "./walk";
 
 /**
  * Marker chant writes at the top of files it generates (a hosting lexicon's
@@ -55,6 +54,12 @@ export async function hasDiscoveryMarker(file: string): Promise<boolean> {
   }
 }
 
+/** Whether a file's head carries the {@link GENERATED_MARKER} or the {@link SKIP_MARKER}. The synchronous form of {@link hasDiscoveryMarker}. */
+export function hasDiscoveryMarkerSync(file: string): boolean {
+  const head = readHead(file, SKIP_MARKER_HEAD_BYTES);
+  return head.slice(0, 256).includes(GENERATED_MARKER) || hasSkipMarker(head);
+}
+
 /**
  * Compile a project's `exclude`/`include` globs (#2519) into a predicate that
  * is true for a file discovery must skip, or `undefined` when there is nothing
@@ -65,7 +70,8 @@ export async function hasDiscoveryMarker(file: string): Promise<boolean> {
  * of every directory above it, so a pattern naming a directory covers
  * everything under it. A file is skipped when some `exclude` pattern matches
  * and no `include` pattern does: `include` always wins. Files outside
- * `globs.root` are never skipped.
+ * `globs.root` are never skipped. The discovery walk (`./walk.ts`) applies the
+ * same rule, and also lets `include` re-admit what its default rules skip.
  */
 export function compileDiscoveryFilter(globs: DiscoveryGlobs | undefined): ((file: string) => boolean) | undefined {
   if (!globs || globs.exclude.length === 0) return undefined;
@@ -89,86 +95,24 @@ export interface FindInfraFilesOptions {
   globs?: DiscoveryGlobs | null;
 }
 
+/** A TypeScript source file by name: `.ts`, not a test or spec. */
+export function isSourceFileName(name: string): boolean {
+  return name.endsWith(".ts") && !name.endsWith(".test.ts") && !name.endsWith(".spec.ts");
+}
+
 /**
- * Recursively find all TypeScript infrastructure files in a directory
- * @param path - The directory path to search
- * @returns Array of file paths to .ts files (excluding test files, chant-generated
- *   files, files carrying the skip marker, and files the project's `exclude` globs name)
+ * Find every TypeScript infrastructure file under `path`, through the one
+ * discovery walk (`./walk.ts`, #2527): test and spec files, chant-generated
+ * files, skip-marked files and whatever the walk's rules and the project's
+ * globs skip are left out.
  */
 export async function findInfraFiles(path: string, options?: FindInfraFilesOptions): Promise<string[]> {
-  const files: string[] = [];
-  const skip = compileDiscoveryFilter(
-    options?.globs === null ? undefined : (options?.globs ?? (await resolveDiscoveryGlobs(path))),
-  );
-  let sourceRoot: string | null = null;
-  // Child projects skipped because the source root was already set: the
-  // next release reads them when `path` is outside a project (#2527).
-  const skippedChildren: string[] = [];
-
-  async function scanDirectory(dir: string): Promise<void> {
-    let entries;
-
-    try {
-      entries = await readdir(dir, { withFileTypes: true });
-    } catch (error) {
-      // Skip directories we can't read
-      return;
-    }
-
-    for (const entry of entries) {
-      const fullPath = join(dir, entry.name);
-
-      // Skip node_modules
-      if (entry.isDirectory() && entry.name === "node_modules") {
-        continue;
-      }
-
-      if (entry.isDirectory()) {
-        // Child project boundary — a directory with its own chant.config.ts
-        // is a separate scope, but only if we've already found the project's
-        // own source root. The first config directory is the source root, not
-        // a child project.
-        const configPath = join(fullPath, "chant.config.ts");
-        if (existsSync(configPath)) {
-          if (sourceRoot === null) {
-            sourceRoot = fullPath;
-          } else {
-            skippedChildren.push(fullPath);
-            continue;
-          }
-        }
-        await scanDirectory(fullPath);
-      } else if (entry.isFile()) {
-        // Include only .ts files, exclude test files, files the project's
-        // globs exclude, and chant-generated or skip-marked files
-        if (
-          entry.name.endsWith(".ts") &&
-          !entry.name.endsWith(".test.ts") &&
-          !entry.name.endsWith(".spec.ts") &&
-          !skip?.(fullPath) &&
-          !(await hasDiscoveryMarker(fullPath))
-        ) {
-          files.push(fullPath);
-        }
-      }
-    }
-  }
-
-  await scanDirectory(path);
-  // The warning release for #2527: say which files the converged walker will
-  // read differently. The list returned is today's, unchanged.
-  await warnDiscoveryChanges({
+  const globs = options?.globs === null ? undefined : (options?.globs ?? (await resolveDiscoveryGlobs(path)));
+  return walkDiscovery({
     walker: "source",
     root: path,
-    files,
-    sourceRoot,
-    skippedChildren,
-    fileOk: async (name, full) =>
-      name.endsWith(".ts") &&
-      !name.endsWith(".test.ts") &&
-      !name.endsWith(".spec.ts") &&
-      !skip?.(full) &&
-      !(await hasDiscoveryMarker(full)),
+    globs,
+    excludeDirs: await workspaceMemberDirs(path),
+    accept: (name, full) => isSourceFileName(name) && !hasDiscoveryMarkerSync(full),
   });
-  return files;
 }

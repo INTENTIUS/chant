@@ -7,7 +7,7 @@ diataxis: reference
 A `chant.workspace.json` at the top of a repository makes it a workspace: a directory of members of declared kinds ([#2524](https://github.com/INTENTIUS/chant/issues/2524) D1, D2). Only this file creates a workspace. chant never infers one, and a project without it stays at level 0, where nothing changes ([#2525](https://github.com/INTENTIUS/chant/issues/2525)). [`chant workspace init`](/chant/cli/workspace-init/) proposes one from the projects already in the repository, and [`chant workspace ls`](/chant/cli/workspace-ls/) lists what it declares.
 
 :::note[What ships so far]
-chant reads, validates and lists the declaration. [`chant workspace check`](/chant/cli/workspace-check/) runs the declaration checks. Each member writes its lifecycle ledger under its own path on `chant/lifecycle` ([#2538](https://github.com/INTENTIUS/chant/issues/2538), see [Ledgers](#ledgers)). Per-member build and lint, and the refusal of root-level `chant build` and `chant lint` at a declared root, come with [#2537](https://github.com/INTENTIUS/chant/issues/2537). Until then the file changes nothing about any other chant command.
+chant reads, validates and lists the declaration. [`chant workspace check`](/chant/cli/workspace-check/) runs the declaration checks. Each member writes its lifecycle ledger under its own path on `chant/lifecycle` ([#2538](https://github.com/INTENTIUS/chant/issues/2538), see [Ledgers](#ledgers)). Discovery at the root leaves member directories and example-group matches out ([#2527](https://github.com/INTENTIUS/chant/issues/2527)). [`chant workspace build`](/chant/cli/workspace-build/) and its siblings run each member, and root-level `chant build` and `chant lint` refuse at a declared root unless `--root-only` is given ([#2537](https://github.com/INTENTIUS/chant/issues/2537)).
 :::
 
 The format is JSON so that any reader can list the members without running TypeScript. The JSON Schema ships in `@intentius/chant` at `src/workspace/declaration.schema.json`, with the `$id` `https://intentius.io/chant/schemas/workspace/declaration/v1/chant.workspace.schema.json`. chant validates the file against it on every read.
@@ -82,7 +82,7 @@ Three kinds are built in.
 
 A pinned package can supply more kinds, as data at its `./workspace-kinds` subpath. [Workspace Kinds](/chant/reference/workspace-kinds/) describes the format, which packages are read, and how chant decides when several kinds' probes claim one directory. A member whose kind no built-in or pinned package supplies is listed with the reason `unknown-kind`, and `chant workspace check` fails on it.
 
-A member's directory leaves the root project. Once [#2537](https://github.com/INTENTIUS/chant/issues/2537) ships, discovery at the root skips it and the member's own commands cover it. `chant workspace init` lists these directories before it writes.
+A member's directory leaves the root project, and discovery at the root skips it ([#2527](https://github.com/INTENTIUS/chant/issues/2527)). The member's own commands cover it, and [`chant workspace build`](/chant/cli/workspace-build/) runs them for every member ([#2537](https://github.com/INTENTIUS/chant/issues/2537)). `chant workspace init` lists these directories before it writes.
 
 ## Example groups
 

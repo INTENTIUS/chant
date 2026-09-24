@@ -16,7 +16,6 @@
  */
 
 import { relative } from "node:path";
-import { excludeFromRootDiscovery } from "../config";
 import { formatError } from "../cli/format";
 import { ownerOf, readDeclaration, resolveGroups, rootExclusions, WorkspaceReadError } from "./declaration";
 import { workingTree } from "./tree";
@@ -82,8 +81,11 @@ export function decideRootCommand(input: RootGuardInput): RootGuardResult {
 }
 
 /**
- * Apply {@link decideRootCommand}: print the refusal and return 1, or set the
- * root-only exclusions and return undefined so the command goes on.
+ * Apply {@link decideRootCommand}: print the refusal and return 1, or return
+ * undefined so the command goes on. A root-only run needs nothing set up:
+ * every discovery walk under a declaration already leaves the member
+ * directories and group matches out (#2527, `workspaceMemberDirs` in
+ * `../discovery/walk.ts`), and `excluded` names the same directories.
  */
 export function guardRootCommand(input: RootGuardInput): number | undefined {
   const result = decideRootCommand(input);
@@ -91,6 +93,5 @@ export function guardRootCommand(input: RootGuardInput): number | undefined {
     console.error(formatError({ message: result.message }));
     return 1;
   }
-  if (result.action === "root-only") excludeFromRootDiscovery(input.workspaceDir, result.excluded);
   return undefined;
 }

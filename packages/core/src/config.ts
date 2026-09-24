@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, realpathSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { dirname, join } from "path";
 import { z } from "zod";
 import type { LintConfig } from "./lint/config";
@@ -456,17 +456,19 @@ export interface ChantConfig {
    * import or lint a matching file. A pattern matches a file when it matches
    * the file's path or the path of any directory above it, so `"ops"` and
    * `"ops/**"` both skip everything under `ops/`. Matched with picomatch,
-   * dot files included. See `./discovery/files.ts`'s `compileDiscoveryFilter`.
+   * dot files included. Op discovery and component discovery honour it too
+   * (#2527). See `./discovery/walk.ts`.
    */
   exclude?: string[];
 
   /**
-   * Globs that re-admit files {@link exclude} would skip. `include` always
-   * wins over `exclude`, and it never narrows discovery on its own: a file
-   * no `exclude` pattern matches is discovered whether or not it matches an
-   * `include`. It does not re-admit what discovery skips unconditionally
-   * (`node_modules`, test files, child projects, the generated and skip
-   * markers).
+   * Globs that re-admit files {@link exclude} would skip, and, since #2527,
+   * files the discovery walk skips by default: dot-directories, `dist`,
+   * git-ignored paths and child projects. `include` always wins over
+   * `exclude`, and it never narrows discovery on its own: a file nothing
+   * skips is discovered whether or not it matches an `include`. It never
+   * re-admits `node_modules`, `.git`, test files, workspace members, or
+   * files carrying the generated or skip marker.
    */
   include?: string[];
 
@@ -475,8 +477,10 @@ export interface ChantConfig {
    * root of a declared workspace (#2537, #2524 D0). Without it, or the
    * `--root-only` flag, both commands refuse there with `WSP000` and point to
    * `chant workspace build` and `lint`. With it they act on the root project
-   * alone: member directories and example-group matches are left out of
-   * discovery. It means nothing in a project with no `chant.workspace.json`.
+   * alone. Member directories and example-group matches are left out of
+   * discovery either way, as they are for every walk under a declaration
+   * (#2527, `workspaceMemberDirs` in `./discovery/walk.ts`). It means nothing
+   * in a project with no `chant.workspace.json`.
    */
   rootOnly?: boolean;
 }
@@ -595,8 +599,9 @@ export interface DiscoveryGlobs {
 /**
  * The `exclude`/`include` globs of the project `startDir` belongs to, found by
  * the same upward walk as {@link loadChantConfigUpward}. `undefined` when the
- * project declares no `exclude`, which leaves discovery exactly as it was
- * before the keys existed: `include` only ever re-admits what `exclude` skips.
+ * project declares neither. `include` re-admits what `exclude` skips, and
+ * also what the discovery walk skips by default (#2527), so it means
+ * something on its own.
  *
  * A config that fails to load is left to the command's own config load to
  * report, so discovery keeps working where it did before, unless the failure
@@ -604,41 +609,6 @@ export interface DiscoveryGlobs {
  * very files the project asked to skip.
  */
 export async function resolveDiscoveryGlobs(startDir: string): Promise<DiscoveryGlobs | undefined> {
-  const own = await projectDiscoveryGlobs(startDir);
-  const ws = rootDiscoveryExclusions;
-  if (!ws) return own;
-  if (!own) return ws;
-  if (!samePath(own.root, ws.root)) return own;
-  return { root: own.root, exclude: [...own.exclude, ...ws.exclude], include: own.include };
-}
-
-function samePath(a: string, b: string): boolean {
-  if (a === b) return true;
-  try {
-    return realpathSync(a) === realpathSync(b);
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Directories the root project of a declared workspace leaves to its members
- * (#2537, #2524 D2), set by `chant build --root-only` and `chant lint
- * --root-only` at the root and by `chant workspace build` and `lint` for
- * member `.`. Unset, which is every level-0 run, discovery is unchanged.
- */
-let rootDiscoveryExclusions: DiscoveryGlobs | undefined;
-
-/**
- * Leave `dirs` (relative to `root`, `/`-separated) out of discovery for the
- * project whose config sits in `root`, on top of its own `exclude` globs.
- * Pass an empty list to clear it.
- */
-export function excludeFromRootDiscovery(root: string, dirs: string[]): void {
-  rootDiscoveryExclusions = dirs.length > 0 ? { root, exclude: [...dirs], include: [] } : undefined;
-}
-
-async function projectDiscoveryGlobs(startDir: string): Promise<DiscoveryGlobs | undefined> {
   const { dir, configPath } = findProjectConfigPastFragments(startDir);
   if (!configPath) return undefined;
   let config: ChantConfig;
@@ -648,8 +618,10 @@ async function projectDiscoveryGlobs(startDir: string): Promise<DiscoveryGlobs |
     if (err instanceof InvalidChantConfigError && (err.key === "exclude" || err.key === "include")) throw err;
     return undefined;
   }
-  if (!config.exclude || config.exclude.length === 0) return undefined;
-  return { root: dir, exclude: config.exclude, include: config.include ?? [] };
+  const exclude = config.exclude ?? [];
+  const include = config.include ?? [];
+  if (exclude.length === 0 && include.length === 0) return undefined;
+  return { root: dir, exclude, include };
 }
 
 /**

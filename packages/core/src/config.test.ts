@@ -468,10 +468,10 @@ describe("exclude / include discovery globs (#2519)", () => {
     await expect(resolveDiscoveryGlobs(TEST_DIR)).rejects.toThrow(message);
   });
 
-  test("resolveDiscoveryGlobs is undefined without exclude, so include alone changes nothing", async () => {
+  test("resolveDiscoveryGlobs returns include alone, since it re-admits the walk's default skips (#2527)", async () => {
     expect(await resolveDiscoveryGlobs(TEST_DIR)).toBeUndefined();
     writeFileSync(join(TEST_DIR, "chant.config.json"), JSON.stringify({ include: ["ops/**"] }));
-    expect(await resolveDiscoveryGlobs(TEST_DIR)).toBeUndefined();
+    expect(await resolveDiscoveryGlobs(TEST_DIR)).toEqual({ root: TEST_DIR, exclude: [], include: ["ops/**"] });
   });
 
   test("resolveDiscoveryGlobs anchors the globs at the project config's directory, past a lint fragment", async () => {

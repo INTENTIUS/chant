@@ -16,7 +16,9 @@
  * runs. The level-0 goldens (#2526) fail if a level-0 command loads it.
  */
 
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 import schema from "./declaration.schema.json";
 import { expandGlob } from "./glob";
 import { EXAMPLES_KIND, holdsChantProject } from "./kinds";
@@ -164,9 +166,20 @@ export interface Declaration {
 
 // ── This chant ───────────────────────────────────────────────────────────────
 
-/** The version of the chant doing the reading. */
+let readerVersionCache: string | undefined;
+
+/**
+ * The version of the chant doing the reading. Read as a file, not through
+ * `require`: discovery reads the declaration on every walk under a workspace
+ * root (#2527), and a CJS require of `package.json` took about a minute per
+ * call in a vitest worker once a build had run in it, where a file read takes
+ * well under a millisecond.
+ */
 export function readerVersion(): string {
-  return (createRequire(import.meta.url)("../../package.json") as { version: string }).version;
+  readerVersionCache ??= (
+    JSON.parse(readFileSync(fileURLToPath(new URL("../../package.json", import.meta.url)), "utf-8")) as { version: string }
+  ).version;
+  return readerVersionCache;
 }
 
 const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z.-]+))?$/;
