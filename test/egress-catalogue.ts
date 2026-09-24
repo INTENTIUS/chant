@@ -76,13 +76,13 @@ export const EGRESS_PHASES: readonly EgressPhase[] = [
     id: "template",
     label: "Starting a project from a template",
     summary:
-      "`chant init --from <repo>@<ref>` fetches one commit of a template repository, and nothing else in `chant init` reaches a network. `chant init --template <name>` renders a lexicon's templates from the installed package and reaches nothing. The fetch is a `git` child process, so it is listed below as a shell-out rather than as a module.",
+      "`chant init --from <repo>@<ref>` fetches one commit of a template repository, and nothing else in `chant init` reaches a network. `chant init --template <name>` renders a lexicon's templates from the installed package and reaches nothing, and `chant init --from <dir>` copies a template directory already on disk and reaches nothing (#2647). The fetch is a `git` child process, so it is listed below as a shell-out rather than as a module.",
   },
   {
     id: "upgrade",
     label: "Upgrading a project from its template",
     summary:
-      "`chant workspace upgrade <scope>` fetches the target version of a git template, and the commit the scope was made from, to rebuild the merge base. Everything after the fetch runs offline in a local worktree. A vendor scope is read from its source as `chant vendor pull` reads it. The `proposeWorkspaceUpgrade` activity stages the same upgrade, then pushes a proposal branch and opens or edits a pull request. Every step is a `git` or `gh` child process, listed below as shell-outs.",
+      "`chant workspace upgrade <scope>` fetches the target version of a git template, and the commit the scope was made from, to rebuild the merge base. Everything after the fetch runs offline in a local worktree. A vendor scope is read from its source as `chant vendor pull` reads it, and a scope made from a directory reads the `--to` directory from disk and reaches nothing. The `proposeWorkspaceUpgrade` activity stages the same upgrade, then pushes a proposal branch and opens or edits a pull request. Every step is a `git` or `gh` child process, listed below as shell-outs.",
   },
   {
     id: "audit",

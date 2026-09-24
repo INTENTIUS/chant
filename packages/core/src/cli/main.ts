@@ -549,7 +549,9 @@ Usage:
 Commands:
   init                  Initialize a new chant project
                         (--from <repo>@<ref>[#<member>] copies a template
-                        repository and records its lineage; --param
+                        repository and records its lineage, and --from
+                        <dir>[#<member>] copies a template directory on
+                        disk; --param
                         <name>=<value> sets a parameter the template's
                         chant.template.json declares, repeatable)
   init lexicon <name>   Scaffold a new lexicon plugin project
@@ -729,7 +731,7 @@ Workspace (level 1, #2524):
                         manual steps. Needs no workspace file
   workspace lineage resolve <path>
                         Close a manual step once the file is merged by hand
-  workspace upgrade [<scope>] [--to <ref>] [--allow-code] [--dry-run] [--output <file>]
+  workspace upgrade [<scope>] [--to <ref|dir>] [--allow-code] [--dry-run] [--output <file>]
                         Bring a lineage scope to a newer template version: fetch
                         it, migrate and merge per file in a worktree, run build,
                         lint and workspace check there, then gate on the digest

@@ -4,8 +4,9 @@
  * The lock records where a project's files came from. It holds one lineage per
  * scope, keyed by the scope's directory relative to the lock's root:
  *
- * - a project made by `chant init --from <repo>@<ref>` or
- *   `chant init --template <name>` has one scope, `"."`;
+ * - a project made by `chant init --from <repo>@<ref>`,
+ *   `chant init --from <dir>` or `chant init --template <name>` has one
+ *   scope, `"."`;
  * - each `chant vendor` target is a scope of kind `vendor` (copied, no
  *   parameters), which replaces its entry in `vendor.json` (ws-038).
  *
@@ -65,6 +66,12 @@ const LockFileEntrySchema = z
 const SourceSchema = z.discriminatedUnion("type", [
   /** A git repository at a ref, optionally one directory of it (`#<member>`). */
   z.object({ type: z.literal("git"), repo: z.string().min(1), url: z.string().min(1), path: z.string().optional() }).strict(),
+  /**
+   * A directory on disk (#2647): `path` as given when absolute, otherwise
+   * relative to the lock's directory, and `member` for `#<member>`. It has no
+   * history, so its address is the digest alone.
+   */
+  z.object({ type: z.literal("dir"), path: z.string().min(1), member: z.string().optional() }).strict(),
   /** A lexicon's `initTemplates`, as `chant init --lexicon <lexicon> --template <template>` renders them. */
   z.object({ type: z.literal("lexicon"), lexicon: z.string().min(1), template: z.string().min(1) }).strict(),
   /** `chant vendor` sources, unchanged from `vendor.json`. */
@@ -78,7 +85,8 @@ export type LineageSource = z.infer<typeof SourceSchema>;
  * `digest` is always present: the content hash of the file set as chant wrote
  * it (the same hash `vendor.json` called `checksum`). A git source adds the
  * commit and the tree of the scope's directory; a lexicon template adds the
- * package and chant versions that rendered it.
+ * package and chant versions that rendered it. A directory source has the
+ * digest only.
  */
 const AddressSchema = z
   .object({

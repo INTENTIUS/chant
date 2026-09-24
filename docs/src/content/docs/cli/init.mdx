@@ -11,6 +11,7 @@ Scaffold a new chant project with the standard directory structure and configura
 ```
 chant init <path> --lexicon <name> [flags]
 chant init <path> --from <repo>@<ref>[#<member>] [--param <name>=<value>]... [--force]
+chant init <path> --from <dir>[#<member>] [--param <name>=<value>]... [--force]
 ```
 
 ## Flags
@@ -20,6 +21,7 @@ chant init <path> --from <repo>@<ref>[#<member>] [--param <name>=<value>]... [--
 | `-d, --lexicon <name>` | Select lexicon (**required**) |
 | `-t, --template <name>` | Init template (e.g. `node-pipeline`, `docker-build`). Also writes the [lineage lock](#lineage) |
 | `--from <repo>@<ref>[#<member>]` | Copy a template repository instead of a lexicon's templates (see [below](#from-a-template-repository)) |
+| `--from <dir>[#<member>]` | Copy a template directory on disk (see [From a directory](#from-a-directory)) |
 | `--param <name>=<value>` | With `--from`, set a parameter the template declares. Repeatable (see [Template parameters](#template-parameters)) |
 | `--force` | Overwrite existing files |
 
@@ -75,6 +77,21 @@ chant init my-service --from ../starter@4624a0b6ca83bf3a2776b2d29d269e989d8b560f
 chant fetches the one commit with `git fetch --depth 1`, the only network step in `chant init`, listed on the [network egress](/chant/reference/network-egress/#starting-a-project-from-a-template) page. It copies every tracked file under the chosen directory, keeping the executable bit, and skips submodules, symbolic links and the template's own lineage lock with a warning. It then writes `.chant/workspace.lock.json` with the commit and tree as the content address.
 
 The template brings its own `chant.config.ts` and lexicons, so `--from` cannot be combined with `--lexicon` or `--template`. A non-empty directory needs `--force`, and files that already exist are kept and left out of the lineage. A directory that already has a lock is refused. `--from` does not install dependencies.
+
+### From a directory
+
+When the template is already on disk and its repository cannot be reached, `--from` takes the directory instead. A host that bundles a template as plain files, without `.git`, instantiates it this way:
+
+```bash
+chant init my-app --from /opt/studio/tool#template --param name=billing
+chant init my-app --from ../starter#service
+```
+
+chant reads `--from` as a directory when it has no `@` and names a directory on disk. A directory whose name contains `@` is still a directory when it exists, since what is on disk wins. Anything else is read as `<repo>@<ref>`, and a value with no `@` that names no directory is refused. `#<member>` picks a directory inside it, as in the git form.
+
+Inside a git checkout, chant copies the files git would commit and leaves out what `.gitignore` ignores. Untracked files are copied too. Outside one, or when git is not installed, it copies every file. Either way it skips symbolic links, `node_modules`, `.git` and the template's own lineage lock, and keeps the executable bit. Parameters work the same way, so the same directory gives the same files as the git form of the same tree. This form reaches no network.
+
+The lock's `source` has type `dir`, with the directory and member, and its address is the digest of the copied files alone, with no `commit` or `tree`. An absolute path is recorded as given, and a relative one is recorded relative to the project. A directory has no history, so [`chant workspace upgrade`](/chant/cli/workspace-upgrade/#scopes-made-from-a-directory) can only rebuild the merge base while that directory still holds the files the project was made from.
 
 ### Template parameters
 

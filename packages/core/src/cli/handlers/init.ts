@@ -54,14 +54,15 @@ export async function runInitLexicon(ctx: CommandContext): Promise<number> {
  * `chant init --from <repo>@<ref>[#<member>] [--param <name>=<value>]... [path]`
  * (#2540, #2627): copy a template repository at a ref, substitute the
  * parameters its `chant.template.json` declares, and record its lineage.
+ * `--from <dir>[#<member>]` copies a template directory on disk instead (#2647).
  * The template brings its own lexicons and configuration, so `--lexicon` and
  * `--template` do not apply.
  */
 async function runInitFrom(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
-  const usage = "Usage: chant init --from <repo>@<ref>[#<member>] [--param <name>=<value>]... [path]";
+  const usage = "Usage: chant init --from <repo>@<ref>[#<member>] | <dir>[#<member>] [--param <name>=<value>]... [path]";
   if (!args.migrateFrom) {
-    console.error(formatError({ message: "--from needs a template: <repo>@<ref>[#<member>]", hint: usage }));
+    console.error(formatError({ message: "--from needs a template: <repo>@<ref>[#<member>] or <dir>[#<member>]", hint: usage }));
     return 1;
   }
   if (args.lexicon || args.template) {
@@ -95,7 +96,10 @@ async function runInitFrom(ctx: CommandContext): Promise<number> {
   console.log(formatSuccess("Created:"));
   for (const file of result.createdFiles) console.log(`  ${file}`);
   console.log("");
-  console.log(`Lineage: ${result.spec!.id} at ${result.spec!.ref} (${result.commit!.slice(0, 12)}), recorded in .chant/workspace.lock.json`);
+  const from = result.spec
+    ? `${result.spec.id} at ${result.spec.ref} (${result.commit!.slice(0, 12)})`
+    : `${result.template} (a directory, recorded by digest only)`;
+  console.log(`Lineage: ${from}, recorded in .chant/workspace.lock.json`);
   const parameters = Object.entries(result.parameters ?? {});
   if (parameters.length > 0) console.log(`Parameters: ${parameters.map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(", ")}`);
   return 0;

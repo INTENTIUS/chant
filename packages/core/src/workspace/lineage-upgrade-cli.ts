@@ -1,5 +1,5 @@
 /**
- * `chant workspace upgrade [<scope>] [--to <ref>] [--allow-code] [--dry-run]
+ * `chant workspace upgrade [<scope>] [--to <ref|dir>] [--allow-code] [--dry-run]
  * [--output <file>] [--json]` (#2550).
  *
  * Stages the upgrade in a worktree (see ./lineage-upgrade.ts), then decides
@@ -20,7 +20,7 @@ import { WORKSPACE_UPGRADE_GATE_OP } from "../op/gate-name";
 import { LockError } from "./lineage-lock";
 import { applyStagedUpgrade, describeStaged, stageUpgrade, type ChantRunner, type StagedUpgrade } from "./lineage-upgrade";
 
-const USAGE = "chant workspace upgrade [<scope>] [--to <ref>] [--allow-code] [--dry-run] [--output <patch file>] [--json]";
+const USAGE = "chant workspace upgrade [<scope>] [--to <ref|dir>] [--allow-code] [--dry-run] [--output <patch file>] [--json]";
 
 /** The exit code of a gated upgrade: the same as `chant run`'s gated run. */
 export const UPGRADE_GATED_EXIT = 3;

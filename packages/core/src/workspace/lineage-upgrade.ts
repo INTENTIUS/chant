@@ -9,7 +9,8 @@
  * 1. Fetch the target version of the template. For a git source that is one
  *    `git fetch` of the target ref, plus the commit the scope was made from.
  *    This is the command's only network step, catalogued in
- *    `test/egress-catalogue.ts`. A local repository reaches nothing.
+ *    `test/egress-catalogue.ts`. A local repository reaches nothing, and
+ *    neither does a directory source (#2647), which reads `--to <dir>`.
  * 2. Rebuild the merge base offline: each recorded file's content at the base
  *    commit, kept only when it has the hash the lock recorded. A file the
  *    project never edited is its own merge base. Vendor sources keep no
@@ -39,8 +40,21 @@ import { basename, join, relative, resolve, sep } from "node:path";
 import { computePlanDigest } from "../lifecycle/plan-digest";
 import type { ResolvedGateApproval } from "../op/gate-approval";
 import { checkLineage, findingKey, type CheckFinding } from "./lineage-check";
-import { git, readTemplateTree } from "./lineage-init";
-import { LOCK_FILE, LockError, fileHash, readLock, renderLock, scopeKey, writeLock, type Lineage, type LineageLock, type ManualStep } from "./lineage-lock";
+import { dirLabel, git, parseDirSpec, readTemplateDir, readTemplateTree, recordedDirPath } from "./lineage-init";
+import {
+  LOCK_FILE,
+  LockError,
+  contentDigest,
+  fileHash,
+  readLock,
+  renderLock,
+  scopeKey,
+  writeLock,
+  type Lineage,
+  type LineageLock,
+  type LineageSource,
+  type ManualStep,
+} from "./lineage-lock";
 import { mergeFile } from "./lineage-merge";
 import { assertCodeAllowed, planMigrations, runMigration, splitMigrations, type LoadedMigration } from "./lineage-migrations";
 import { applyUpstream, type UpdateResult } from "./lineage-update";
@@ -95,7 +109,12 @@ export interface UpgradeOptions {
   root: string;
   /** The scope to upgrade: `"."` or a vendor scope's directory. */
   scope?: string;
-  /** The target ref (git) or label (vendor). Defaults to the ref the scope is pinned at. */
+  /**
+   * The target ref (git) or label (vendor). Defaults to the ref the scope is
+   * pinned at. For a directory source, the directory holding the new version,
+   * as `<dir>[#<member>]`, resolved from the current directory; the member
+   * defaults to the recorded one.
+   */
   to?: string;
   /** Run migrations whose body is code. */
   allowCode?: boolean;
@@ -163,8 +182,10 @@ interface Upstream {
   modules: Map<string, Buffer>;
   commit?: string;
   tree?: string;
-  /** The parameter values substituted into `files` (#2627), for a git source. */
+  /** The parameter values substituted into `files` (#2627), for a git or directory source. */
   parameters?: Record<string, string>;
+  /** The source the lock records after the upgrade, when it moves (a directory source). */
+  source?: LineageSource;
 }
 
 /**
@@ -249,6 +270,76 @@ function fetchGit(root: string, lineage: Lineage, ref: string): Upstream {
   }
 }
 
+/**
+ * Why a directory scope cannot be upgraded, with the way out. A directory
+ * has no history, so the merge base exists only while the files the scope
+ * was made from are still on disk.
+ */
+function dirRefusal(lineage: Lineage, why: string): UpgradeError {
+  const source = lineage.source as Extract<LineageSource, { type: "dir" }>;
+  return new UpgradeError(
+    `${why}. The scope was made from the directory ${dirLabel(source.path, source.member)}, which has no git history to rebuild a merge base from. ` +
+      `Upgrade with --to <dir> while ${source.path} still holds the files the scope was made from, or adopt the scope into a git lineage with \`chant workspace adopt-lineage\` (#2551).`,
+  );
+}
+
+/**
+ * The upstream of a directory source (#2647): the new version from the
+ * directory `to` names, and the merge base from the recorded directory, used
+ * only when its files, instantiated with the recorded parameters, still have
+ * the recorded digest. Anything else is refused: a base that is not the one
+ * the scope was made from would turn the project's edits into upstream
+ * changes. Reaches no network.
+ */
+function readDir(root: string, lineage: Lineage, to: string | undefined): Upstream {
+  const source = lineage.source;
+  if (source.type !== "dir") throw new UpgradeError("not a directory source");
+  if (!to) throw dirRefusal(lineage, "no --to directory");
+
+  let target;
+  try {
+    target = parseDirSpec(to);
+  } catch {
+    target = null;
+  }
+  if (!target) throw new UpgradeError(`--to ${to}: a scope made from a directory upgrades from a directory, and ${to} is not one`);
+  const member = to.includes("#") ? target.member : source.member;
+  const label = dirLabel(target.path, member);
+  const read = readTemplateDir(target.abs, member, label);
+  const raw = new Map<string, Buffer>();
+  const executable = new Set<string>();
+  for (const [path, f] of read.files) {
+    raw.set(path, f.data);
+    if (f.executable) executable.add(path);
+  }
+  const instantiated = instantiate(raw, lineage.parameters, label);
+
+  // The merge base: the recorded directory, only while it holds exactly what the scope was made from.
+  const original = resolve(root, source.path);
+  const originalLabel = dirLabel(source.path, source.member);
+  let base: Map<string, Buffer>;
+  try {
+    const old = readTemplateDir(original, source.member, originalLabel);
+    base = splitMigrations(instantiate(new Map([...old.files].map(([path, f]) => [path, f.data])), lineage.parameters, originalLabel).files).files;
+  } catch {
+    throw dirRefusal(lineage, `${originalLabel} is gone`);
+  }
+  if (!lineage.address || contentDigest(base) !== lineage.address.digest) {
+    throw dirRefusal(lineage, `${originalLabel} no longer holds the files the scope was made from (its digest is not ${lineage.address?.digest ?? "recorded"})`);
+  }
+
+  const split = splitMigrations(instantiated.files);
+  return {
+    files: split.files,
+    executable,
+    base,
+    migrations: split.migrations,
+    modules: split.modules,
+    parameters: instantiated.parameters,
+    source: { type: "dir", path: recordedDirPath(target.path, target.abs, root), ...(member ? { member } : {}) },
+  };
+}
+
 async function fetchUpstream(root: string, lineage: Lineage, ref: string | undefined): Promise<Upstream> {
   const source = lineage.source;
   if (source.type === "git") {
@@ -260,6 +351,7 @@ async function fetchUpstream(root: string, lineage: Lineage, ref: string | undef
     const files = await resolveVendorSource(source, root);
     return { files, executable: new Set(), base: new Map(), migrations: [], modules: new Map() };
   }
+  if (source.type === "dir") return readDir(root, lineage, ref);
   throw new UpgradeError(
     `scope made by \`chant init --template\` (${lineage.template}) cannot be upgraded yet: its merge base is the older lexicon's render, which is not available offline. Upgrade git-sourced and vendor scopes for now.`,
   );
@@ -404,9 +496,10 @@ export async function stageUpgrade(options: UpgradeOptions): Promise<StagedUpgra
     );
   }
 
-  // 1. Fetch.
-  const ref = options.to ?? lineage.ref;
-  const upstream = await fetchUpstream(root, lineage, ref);
+  // 1. Fetch. A directory source has no ref: `--to` names the directory.
+  const fromDir = lineage.source.type === "dir";
+  const ref = fromDir ? undefined : options.to ?? lineage.ref;
+  const upstream = await fetchUpstream(root, lineage, fromDir ? options.to : ref);
 
   // 2. The merge base, offline from here on.
   const base = rebuildBase(join(root, scope), lineage, upstream.base);
@@ -469,6 +562,7 @@ export async function stageUpgrade(options: UpgradeOptions): Promise<StagedUpgra
     if (ref !== undefined) staged.ref = ref;
     if (upstream.parameters) staged.parameters = upstream.parameters;
     if (upstream.commit) staged.address = { ...staged.address!, commit: upstream.commit, tree: upstream.tree };
+    if (upstream.source) staged.source = upstream.source;
     writeLock(worktreeProject, next);
     const lockText = renderLock(next);
 
@@ -512,8 +606,8 @@ export async function stageUpgrade(options: UpgradeOptions): Promise<StagedUpgra
       scope,
       template: lineage.template,
       kind: lineage.kind,
-      from: lineage.ref ?? null,
-      to: staged.ref ?? null,
+      from: fromDir ? sourcePin(lineage.source) : lineage.ref ?? null,
+      to: fromDir ? sourcePin(staged.source) : staged.ref ?? null,
       ...(upstream.commit ? { commit: { ...(lineage.address?.commit ? { from: lineage.address.commit } : {}), to: upstream.commit } } : {}),
       migrations: plan.chain.map((m) => m.migration.id),
       written: result.written,
@@ -540,6 +634,11 @@ export async function stageUpgrade(options: UpgradeOptions): Promise<StagedUpgra
     dispose();
     throw err;
   }
+}
+
+/** A directory source's pin, for the summary: the directory it reads. */
+function sourcePin(source: LineageSource): string | null {
+  return source.type === "dir" ? dirLabel(source.path, source.member) : null;
 }
 
 /**

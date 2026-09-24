@@ -7,7 +7,7 @@ diataxis: reference
 ## Synopsis
 
 ```
-chant workspace upgrade [<scope>] [--to <ref>] [--allow-code] [--dry-run] [--output <patch file>] [--json]
+chant workspace upgrade [<scope>] [--to <ref|dir>] [--allow-code] [--dry-run] [--output <patch file>] [--json]
 ```
 
 ## Description
@@ -18,7 +18,7 @@ The upgrade is a core command. A template never ships its own upgrader, so an up
 
 | Step | What happens |
 |---|---|
-| 1. Fetch | For a git scope, one `git fetch` of the `--to` ref, and one of the commit the scope was made from. For a vendor scope, the source is read again. This is the command's only network step (see [Network Egress](/chant/reference/network-egress/)). |
+| 1. Fetch | For a git scope, one `git fetch` of the `--to` ref, and one of the commit the scope was made from. For a vendor scope, the source is read again. For a scope made from a directory, the `--to` directory is read from disk. This is the command's only network step (see [Network Egress](/chant/reference/network-egress/)). |
 | 2. Merge base | Rebuilt offline. Each recorded file's content at the old commit is kept when it has the hash the lock recorded. A file the project never edited serves as its own base. |
 | 3. Migrate | A git worktree is checked out at HEAD under `.chant/upgrade/`. The template's [migrations](/chant/reference/template-migrations/) run there, in version order. A gap in the chain refuses the upgrade. |
 | 4. Merge | Each file follows the [update rules](/chant/reference/lineage-lock/#update-rules). An edited file that the template also changed takes the change only when every hunk merges cleanly. Otherwise it stays as it was, and the lock records one manual step for it. |
@@ -63,6 +63,16 @@ A file that did not merge is left whole, and the lock gains a manual step for it
 
 An upgrade updates or merges `owned` files only. It never touches a `seed` file again, and it leaves each `generated` file for its command to rebuild, naming that command in its output.
 
+### Scopes made from a directory
+
+A scope made by `chant init --from <dir>` has no git history, so the merge base can come only from the directory it was made from. `--to <dir>[#<member>]` names the directory that holds the new version, and the member defaults to the recorded one. chant reads the recorded directory again, substitutes the recorded parameters, and uses it as the merge base only when its digest still equals `address.digest`. The upgrade then moves the lock's `source` to the new directory.
+
+```bash
+chant workspace upgrade . --to /opt/studio/tool-v2#template
+```
+
+Without `--to`, or when the recorded directory is gone or holds different files, the upgrade is refused. The message says the scope can later be adopted into a git lineage with `chant workspace adopt-lineage` ([#2551](https://github.com/INTENTIUS/chant/issues/2551)). A directory has no version, so a template whose migrations have not all been applied cannot be upgraded from one.
+
 ### Scheduled upgrades
 
 An Op schedules upgrades with the `proposeWorkspaceUpgrade` activity rather than by running this command. The activity stages the same upgrade and proposes it as a branch or a pull request. It never writes the default branch. See [Scheduling upgrades from an Op](#scheduling-upgrades-from-an-op).
@@ -71,7 +81,7 @@ An Op schedules upgrades with the `proposeWorkspaceUpgrade` activity rather than
 
 | Option | Effect |
 |---|---|
-| `--to <ref>` | The template version to upgrade to: a git ref, usually a tag. Defaults to the scope's current ref, which follows a moving ref such as a branch. For a vendor scope it only relabels `ref`. |
+| `--to <ref>`, `--to <dir>` | The template version to upgrade to: a git ref, usually a tag. Defaults to the scope's current ref, which follows a moving ref such as a branch. For a vendor scope it only relabels `ref`. For a scope made from a directory it is required, and names the directory that holds the new version (see [Scopes made from a directory](#scopes-made-from-a-directory)). |
 | `--allow-code` | Run migrations whose body is code. Without it, a chain holding a code migration is refused. |
 | `--dry-run` | Stage and check, then stop. No gate is recorded. |
 | `--output <file>` | Write the patch to a file for review. |
