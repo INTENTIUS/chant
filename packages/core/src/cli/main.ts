@@ -1089,6 +1089,11 @@ async function loadPluginsOrExit(path: string): Promise<import("../lexicon").Lex
   return plugins;
 }
 
+/** Whether `def` must run without evaluating the project's `chant.config.ts` (chant#2591). */
+function commandRunsNoConfig(def: CommandDef, args: ParsedArgs): boolean {
+  return typeof def.runsNoConfig === "function" ? def.runsNoConfig(args) : def.runsNoConfig === true;
+}
+
 /**
  * Run one level-0 command line in this process and return its exit code
  * (#2537). `chant workspace member-run` calls it once per member, from inside
@@ -1110,7 +1115,9 @@ export async function runCommandInProcess(argv: string[]): Promise<number> {
   if (args.env) process.env[ENV_VAR] = args.env;
   let loadedConfig;
   try {
-    loadedConfig = await loadChantConfigUpward(resolve(args.path));
+    // chant#2618 — `workspace audit` reaches `audit` through here, once per
+    // member. A `runsNoConfig` command skips the load, as it does in main().
+    if (!commandRunsNoConfig(match.def, args)) loadedConfig = await loadChantConfigUpward(resolve(args.path));
   } catch {
     // A project with no config is the handler's to report, as in main().
   }
@@ -1210,9 +1217,11 @@ export const commandRegistry: CommandDef[] = [
   // process per toolchain identity; `member-run` is that process's entry.
   { name: "workspace build", handler: async (ctx) => (await import("../workspace/member-commands")).runWorkspaceMembers(ctx, "build") },
   { name: "workspace lint", handler: async (ctx) => (await import("../workspace/member-commands")).runWorkspaceMembers(ctx, "lint") },
-  { name: "workspace audit", handler: async (ctx) => (await import("../workspace/member-commands")).runWorkspaceMembers(ctx, "audit") },
+  // chant#2618 — audit runs no project code, at the workspace level too.
+  { name: "workspace audit", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/member-commands")).runWorkspaceMembers(ctx, "audit") },
   { name: "workspace graph", handler: async (ctx) => (await import("../workspace/member-commands")).runWorkspaceMembers(ctx, "graph") },
-  { name: "workspace member-run", handler: async (ctx) => (await import("../workspace/member-run")).runWorkspaceMemberRun(ctx, runCommandInProcess) },
+  // Each unit decides for itself whether its config is loaded (runCommandInProcess).
+  { name: "workspace member-run", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/member-run")).runWorkspaceMemberRun(ctx, runCommandInProcess) },
   { name: "workspace verify", handler: async (ctx) => (await import("../workspace/trust/verify-cli")).runWorkspaceVerify(ctx) },
 
   // State subcommands
@@ -1324,8 +1333,7 @@ async function main(): Promise<void> {
   // run the project's `chant.config.ts` (see `CommandDef.runsNoConfig`). Such a
   // command gets no `--env` check against the declared environments either.
   const earlyMatch = resolveCommand(args, commandRegistry);
-  const runsNoConfig =
-    typeof earlyMatch?.def.runsNoConfig === "function" ? earlyMatch.def.runsNoConfig(args) : earlyMatch?.def.runsNoConfig === true;
+  const runsNoConfig = earlyMatch != null && commandRunsNoConfig(earlyMatch.def, args);
   const projectPath0 = resolve(args.path === "." ? "." : args.path);
   let loadedConfig;
   try {
