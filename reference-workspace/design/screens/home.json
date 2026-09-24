@@ -1,0 +1,11 @@
+{
+  "$comment": "Screen spec for the app's home page. The app member implements it in app/src/server.mjs. Once record links land (#2549), a decision that closes pins this file's hash.",
+  "screen": "home",
+  "route": "/",
+  "title": "Reference app",
+  "regions": [
+    { "id": "header", "element": "header", "contains": [{ "element": "h1", "text": "Reference app" }] },
+    { "id": "status", "element": "main", "contains": [{ "element": "p", "id": "status", "text": "Running." }] }
+  ],
+  "wireframe": "home.svg"
+}

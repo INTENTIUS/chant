@@ -118,6 +118,10 @@ export default defineConfig({
       // a committed golden, plus the no-workspace-module check on the same
       // runs and the ledger-path fixture. No Docker, no network.
       "test/level0-goldens/*.test.ts",
+      // chant #2543 — the reference workspace, chant's integration fixture:
+      // its members' build, lint and test, and its decision files read by
+      // `chant workspace records`. No Docker, no network.
+      "test/reference-workspace.test.ts",
     ],
     // chant #1419 — a fresh clone has no lexicon src/generated/ or
     // dist/meta.json, and lexicon tests fail against their absence with
