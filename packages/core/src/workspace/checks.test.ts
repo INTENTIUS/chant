@@ -1,7 +1,8 @@
-import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterAll, afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { parseArgs } from "../cli/main";
 import { runDeclarationChecks, WORKSPACE_CHECKS, workspaceCheckRules } from "./checks";
@@ -31,28 +32,43 @@ const kindsPackage = (dir: string, kinds: unknown[]) => ({
 });
 const tf = { name: "terraform", description: "a Terraform root module, with a main.tf", precedence: 400, probe: { anyFile: ["main.tf"] } };
 
-const ids = (root: string) => runDeclarationChecks(root).diagnostics.map((d) => `${d.ruleId}:${d.entity ?? ""}`);
+const ids = async (root: string) => (await runDeclarationChecks(root)).diagnostics.map((d) => `${d.ruleId}:${d.entity ?? ""}`);
 
 describe("the WSP catalog", () => {
-  test("ids are WSP and three digits, unique and in order", () => {
+  test("ids are WSP and three digits, unique and in order", async () => {
     const list = WORKSPACE_CHECKS.map((c) => c.id);
     expect(list.every((id) => /^WSP\d{3}$/.test(id))).toBe(true);
     expect([...list].sort()).toEqual(list);
     expect(new Set(list).size).toBe(list.length);
   });
 
-  test("the checks D3 says always fail are fixed", () => {
+  test("the checks D3 says always fail are fixed, and so are the ledger checks", async () => {
     const fixed = WORKSPACE_CHECKS.filter((c) => !c.configurable).map((c) => c.name);
-    expect(fixed).toEqual(["declaration-unreadable", "kinds-unreadable", "kind-unknown", "kind-probe-tie", "other-claimed", "check-settings-invalid"]);
+    expect(fixed).toEqual([
+      "declaration-unreadable",
+      "kinds-unreadable",
+      "kind-unknown",
+      "kind-probe-tie",
+      "other-claimed",
+      "check-settings-invalid",
+      // A member that ignores either writes its records or marks its resources as another's (#2538).
+      "ownership-stack-shared",
+      "flat-ledger-environment-shared",
+    ]);
   });
 
-  test("each check is also a rule for the SARIF reporter's metadata", () => {
+  test("no two modules share an id: ledgers, pipelines and generated files each have their own range (#2641)", async () => {
+    const list = WORKSPACE_CHECKS.map((c) => c.id);
+    expect(list.filter((id) => /^WSP(07|08|10)\d$/.test(id))).toEqual(["WSP071", "WSP072", "WSP073", "WSP081", "WSP082", "WSP083", "WSP101", "WSP102", "WSP103", "WSP104", "WSP105", "WSP106"]);
+  });
+
+  test("each check is also a rule for the SARIF reporter's metadata", async () => {
     expect(workspaceCheckRules().map((r) => r.id)).toEqual(WORKSPACE_CHECKS.map((c) => c.id));
   });
 });
 
 describe("declaration checks (#2535)", () => {
-  test("a clean workspace has no finding", () => {
+  test("a clean workspace has no finding", async () => {
     const root = repo({
       "chant.workspace.json": declaration([
         { name: "root", dir: ".", kind: "chant" },
@@ -63,12 +79,12 @@ describe("declaration checks (#2535)", () => {
       "api/chant.config.ts": "",
       "examples/one/chant.config.ts": "",
     });
-    expect(runDeclarationChecks(root)).toEqual({ file: "chant.workspace.json", diagnostics: [], suppressed: [], ok: true });
+    expect(await runDeclarationChecks(root)).toEqual({ file: "chant.workspace.json", diagnostics: [], suppressed: [], ok: true });
   });
 
-  test("an unknown kind fails closed and lists the known kinds", () => {
+  test("an unknown kind fails closed and lists the known kinds", async () => {
     const root = repo({ "chant.workspace.json": declaration([{ name: "infra", dir: "infra", kind: "terraform" }]), "infra/main.tf": "" });
-    const report = runDeclarationChecks(root);
+    const report = await runDeclarationChecks(root);
     expect(report.ok).toBe(false);
     expect(report.diagnostics).toEqual([
       {
@@ -83,25 +99,25 @@ describe("declaration checks (#2535)", () => {
     ]);
   });
 
-  test("a pinned package supplies a kind, read as data", () => {
+  test("a pinned package supplies a kind, read as data", async () => {
     const root = repo({
       "chant.workspace.json": declaration([{ name: "infra", dir: "infra", kind: "terraform" }], { pins: [{ path: "plugins/tf" }] }),
       ...kindsPackage("plugins/tf", [tf]),
       "infra/main.tf": "",
     });
-    expect(ids(root)).toEqual([]);
+    expect(await ids(root)).toEqual([]);
   });
 
-  test("a pin whose kinds can't be read is WSP002, and its kinds are unknown", () => {
+  test("a pin whose kinds can't be read is WSP002, and its kinds are unknown", async () => {
     const root = repo({
       "chant.workspace.json": declaration([{ name: "infra", dir: "infra", kind: "terraform" }], { pins: [{ package: "tf-kinds", version: "1.0.0" }] }),
       "infra/main.tf": "",
     });
     // Ordered by where they sit in the file: the member comes before pins.
-    expect(ids(root)).toEqual(["WSP003:infra", "WSP002:"]);
+    expect(await ids(root)).toEqual(["WSP003:infra", "WSP002:"]);
   });
 
-  test("an other member needs because, is a warning, and fails when a registered probe claims it", () => {
+  test("an other member needs because, is a warning, and fails when a registered probe claims it", async () => {
     const root = repo({
       "chant.workspace.json": declaration([
         { name: "docs", dir: "docs", kind: "other", because: "an npm package" },
@@ -110,7 +126,7 @@ describe("declaration checks (#2535)", () => {
       "docs/package.json": "{}",
       "legacy/chant.config.ts": "",
     });
-    const report = runDeclarationChecks(root);
+    const report = await runDeclarationChecks(root);
     expect(report.diagnostics.map((d) => `${d.ruleId}:${d.entity}:${d.severity}`)).toEqual([
       "WSP009:docs:warning",
       "WSP009:legacy:warning",
@@ -120,16 +136,16 @@ describe("declaration checks (#2535)", () => {
     expect(report.ok).toBe(false);
   });
 
-  test("a plugin kind's probe also claims an other directory", () => {
+  test("a plugin kind's probe also claims an other directory", async () => {
     const root = repo({
       "chant.workspace.json": declaration([{ name: "infra", dir: "infra", kind: "other", because: "not ours" }], { pins: [{ path: "plugins/tf" }] }),
       ...kindsPackage("plugins/tf", [tf]),
       "infra/main.tf": "",
     });
-    expect(ids(root)).toEqual(["WSP009:infra", "WSP008:infra"]);
+    expect(await ids(root)).toEqual(["WSP009:infra", "WSP008:infra"]);
   });
 
-  test("overlapping probes: the precedence decides, and a tie fails", () => {
+  test("overlapping probes: the precedence decides, and a tie fails", async () => {
     const tofu = { ...tf, name: "opentofu" };
     const root = repo({
       "chant.workspace.json": declaration(
@@ -145,7 +161,7 @@ describe("declaration checks (#2535)", () => {
       "app/main.tf": "",
       "app/chant.config.ts": "",
     });
-    const report = runDeclarationChecks(root);
+    const report = await runDeclarationChecks(root);
     const infra = report.diagnostics.find((d) => d.entity === "infra");
     const app = report.diagnostics.find((d) => d.entity === "app");
     expect(infra).toMatchObject({ ruleId: "WSP006", message: expect.stringMatching(/opentofu \(plugins\/tofu\) and terraform \(plugins\/tf\) all claim infra with precedence 400; a tie fails/) });
@@ -153,12 +169,12 @@ describe("declaration checks (#2535)", () => {
     expect(app).toMatchObject({ ruleId: "WSP007", message: expect.stringMatching(/declared terraform, and kind chant \(precedence 500\) claims app first/) });
   });
 
-  test("the root member is not outranked by the workspace's own declaration", () => {
+  test("the root member is not outranked by the workspace's own declaration", async () => {
     const root = repo({ "chant.workspace.json": declaration([{ name: "root", dir: ".", kind: "chant" }]), "chant.config.ts": "" });
-    expect(ids(root)).toEqual([]);
+    expect(await ids(root)).toEqual([]);
   });
 
-  test("a missing directory, a failed probe and an empty group", () => {
+  test("a missing directory, a failed probe and an empty group", async () => {
     const root = repo({
       "chant.workspace.json": declaration([
         { name: "gone", dir: "gone", kind: "chant" },
@@ -167,12 +183,12 @@ describe("declaration checks (#2535)", () => {
       ]),
       "empty/README.md": "",
     });
-    expect(ids(root)).toEqual(["WSP004:gone", "WSP005:empty", "WSP010:samples"]);
+    expect(await ids(root)).toEqual(["WSP004:gone", "WSP005:empty", "WSP010:samples"]);
   });
 
-  test("a declaration that can't be read is one WSP001 finding, with its location", () => {
+  test("a declaration that can't be read is one WSP001 finding, with its location", async () => {
     const root = repo({ "chant.workspace.json": declaration([{ name: "a", dir: "a", kind: "chant", dependsOn: [] }]) });
-    const report = runDeclarationChecks(root);
+    const report = await runDeclarationChecks(root);
     expect(report.ok).toBe(false);
     expect(report.diagnostics).toHaveLength(1);
     expect(report.diagnostics[0]).toMatchObject({ ruleId: "WSP001", line: 9, message: expect.stringMatching(/^declaration-invalid: unknown field "dependsOn"/) });
@@ -182,25 +198,25 @@ describe("declaration checks (#2535)", () => {
 describe("severity and suppression from the declaration", () => {
   const other = { name: "docs", dir: "docs", kind: "other", because: "an npm package" };
 
-  test("checks sets a configurable check's severity, or turns it off", () => {
+  test("checks sets a configurable check's severity, or turns it off", async () => {
     const files = { "docs/x": "", "samples/.keep": "" };
     const group = { name: "samples", kind: "examples", glob: "samples/*" };
-    const error = runDeclarationChecks(repo({ ...files, "chant.workspace.json": declaration([other, group], { checks: { WSP009: "error" } }) }));
+    const error = await runDeclarationChecks(repo({ ...files, "chant.workspace.json": declaration([other, group], { checks: { WSP009: "error" } }) }));
     expect(error.diagnostics.map((d) => `${d.ruleId}:${d.severity}`)).toEqual(["WSP009:error", "WSP010:warning"]);
     expect(error.ok).toBe(false);
-    const off = runDeclarationChecks(repo({ ...files, "chant.workspace.json": declaration([other, group], { checks: { WSP009: "off", WSP010: "info" } }) }));
+    const off = await runDeclarationChecks(repo({ ...files, "chant.workspace.json": declaration([other, group], { checks: { WSP009: "off", WSP010: "info" } }) }));
     expect(off.diagnostics.map((d) => `${d.ruleId}:${d.severity}`)).toEqual(["WSP010:info"]);
   });
 
-  test("an entry's suppress moves the finding to suppressed, with its reason", () => {
+  test("an entry's suppress moves the finding to suppressed, with its reason", async () => {
     const root = repo({ "docs/x": "", "chant.workspace.json": declaration([{ ...other, suppress: [{ check: "WSP009", because: "decided in #2557" }] }]) });
-    const report = runDeclarationChecks(root);
+    const report = await runDeclarationChecks(root);
     expect(report.diagnostics).toEqual([]);
     expect(report.suppressed).toEqual([expect.objectContaining({ ruleId: "WSP009", entity: "docs", reason: "decided in #2557" })]);
     expect(report.ok).toBe(true);
   });
 
-  test("a fixed check can't be turned down or suppressed, and an unknown id is refused", () => {
+  test("a fixed check can't be turned down or suppressed, and an unknown id is refused", async () => {
     const root = repo({
       "legacy/chant.config.ts": "",
       "chant.workspace.json": declaration(
@@ -208,7 +224,7 @@ describe("severity and suppression from the declaration", () => {
         { checks: { WSP003: "off" } },
       ),
     });
-    const report = runDeclarationChecks(root);
+    const report = await runDeclarationChecks(root);
     expect(report.suppressed).toEqual([]);
     expect(report.diagnostics.map((d) => d.ruleId).sort()).toEqual(["WSP008", "WSP009", "WSP011", "WSP011", "WSP011"]);
     const settings = report.diagnostics.filter((d) => d.ruleId === "WSP011").map((d) => d.message);
@@ -219,9 +235,9 @@ describe("severity and suppression from the declaration", () => {
     ]);
   });
 
-  test("the schema refuses a checks key that isn't a WSP id and a suppression without because", () => {
-    expect(ids(repo({ "chant.workspace.json": declaration([], { checks: { lint: "off" } }) }))).toEqual(["WSP001:"]);
-    expect(ids(repo({ "docs/x": "", "chant.workspace.json": declaration([{ ...other, suppress: [{ check: "WSP009" }] }]) }))).toEqual(["WSP001:"]);
+  test("the schema refuses a checks key that isn't a WSP id and a suppression without because", async () => {
+    expect(await ids(repo({ "chant.workspace.json": declaration([], { checks: { lint: "off" } }) }))).toEqual(["WSP001:"]);
+    expect(await ids(repo({ "docs/x": "", "chant.workspace.json": declaration([{ ...other, suppress: [{ check: "WSP009" }] }]) }))).toEqual(["WSP001:"]);
   });
 });
 
@@ -296,5 +312,130 @@ describe("chant workspace check with a declaration", () => {
   test("an unknown --format is refused", async () => {
     expect(await run(repo({}), "--format", "xml")).toBe(1);
     expect(err.join("\n")).toMatch(/--format xml is not a check format/);
+  });
+});
+
+describe("member checks from chant workspace check (#2641)", () => {
+  let out: string[];
+  beforeEach(() => {
+    out = [];
+    vi.spyOn(console, "log").mockImplementation((...a: unknown[]) => void out.push(a.join(" ")));
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  const run = (cwd: string, ...argv: string[]) => {
+    vi.spyOn(process, "cwd").mockReturnValue(cwd);
+    return runWorkspaceCheck({ args: parseArgs(["workspace", "check", ...argv]), plugins: [] } as never);
+  };
+
+  /** A generator that writes "fresh" to its -o path. */
+  const writer = `const i = process.argv.indexOf("-o"); require("node:fs").writeFileSync(process.argv[i + 1], "fresh\\n");`;
+  const deploy = JSON.stringify({ schema: 1, files: [{ path: ".github/workflows/deploy.yml", command: "chant build --components --generate github" }] });
+
+  /**
+   * The root member and api both write the flat ledger layout (api runs a
+   * chant below the member-ledger floor) and share prod; api and web both
+   * record deploy.yml; tools' out.txt differs from what its generator writes.
+   */
+  const files = {
+    "chant.workspace.json": declaration([
+      { name: "root", dir: ".", kind: "chant" },
+      { name: "api", dir: "api", kind: "chant" },
+      { name: "web", dir: "web", kind: "chant" },
+      { name: "tools", dir: "tools", kind: "other", because: "scripts", generated: [{ path: "out.txt", generator: "node ../gen.cjs -o out.txt" }] },
+    ]),
+    "chant.config.json": JSON.stringify({ environments: ["prod"] }),
+    "api/chant.config.json": JSON.stringify({ environments: ["prod", "staging"] }),
+    "api/node_modules/@intentius/chant/package.json": JSON.stringify({ name: "@intentius/chant", version: "0.70.0" }),
+    "api/.chant/generated.json": deploy,
+    "web/chant.config.json": JSON.stringify({ environments: ["prod"] }),
+    "web/.chant/generated.json": deploy,
+    "gen.cjs": writer,
+    "tools/out.txt": "edited by hand\n",
+  };
+
+  test("a ledger collision, a pipeline collision and a drifted generated file are WSP072, WSP081 and WSP101", async () => {
+    const root = repo(files);
+    expect(await run(root, "--json", "--generated")).toBe(1);
+    const doc = JSON.parse(out.join("\n"));
+    const found = doc.declaration.diagnostics.map((d: { ruleId: string; entity: string; severity: string }) => `${d.ruleId}:${d.entity}:${d.severity}`);
+    expect(found).toEqual(["WSP072:root:error", "WSP081:api:error", "WSP009:tools:warning", "WSP101:tools:error"]);
+    const message = (id: string) => doc.declaration.diagnostics.find((d: { ruleId: string }) => d.ruleId === id).message;
+    expect(message("WSP072")).toMatch(/members root, api both write the flat ledger layout and share the environment "prod"/);
+    expect(message("WSP081")).toMatch(/members api, web all declare \.github\/workflows\/deploy\.yml/);
+    expect(message("WSP101")).toMatch(/tools\/out\.txt differs from what `node \.\.\/gen\.cjs -o out\.txt` writes/);
+  });
+
+  test("without --generated the declared generator is not run: WSP105, not WSP101", async () => {
+    const root = repo(files);
+    expect(await run(root, "--json")).toBe(1);
+    const found = JSON.parse(out.join("\n")).declaration.diagnostics.map((d: { ruleId: string }) => d.ruleId);
+    expect(found).toContain("WSP105");
+    expect(found).not.toContain("WSP101");
+  });
+
+  test("a settable member check follows checks and suppress; a fixed one does not", async () => {
+    const decl = JSON.parse(files["chant.workspace.json"]) as { members: Record<string, unknown>[]; checks?: Record<string, string> };
+    decl.members[0].suppress = [{ check: "WSP072", because: "please" }];
+    decl.members[1].suppress = [{ check: "WSP081", because: "web's copy goes away in the next release" }];
+    decl.checks = { WSP105: "off" };
+    const report = await runDeclarationChecks(repo({ ...files, "chant.workspace.json": JSON.stringify(decl, null, 2) }));
+    expect(report.suppressed.map((d) => `${d.ruleId}:${d.entity}`)).toEqual(["WSP081:api"]);
+    expect(report.diagnostics.map((d) => d.ruleId).sort()).toEqual(["WSP009", "WSP011", "WSP072"]);
+  });
+
+  test("gather: false runs the declaration checks alone, as chant doctor does", async () => {
+    const report = await runDeclarationChecks(repo(files), undefined, { gather: false });
+    expect(report.diagnostics.map((d) => d.ruleId)).toEqual(["WSP009"]);
+  });
+});
+
+describe("chant workspace check runs no member config (#2641)", () => {
+  const repoRoot = resolve(import.meta.dirname, "../../../..");
+
+  /**
+   * Both chant members' configs write a marker file when they run. Their
+   * ownership and environments are literals, so they are read statically;
+   * web's stack comes from the environment, so it can't be.
+   */
+  const files = (marker: string) => {
+    const sideEffect = `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(marker)}, "ran");\n`;
+    return {
+      "chant.workspace.json": declaration([
+        { name: "root", dir: ".", kind: "chant" },
+        { name: "api", dir: "api", kind: "chant" },
+        { name: "web", dir: "web", kind: "chant" },
+      ]),
+      "chant.config.ts": `${sideEffect}export default { environments: ["prod"], ownership: { stack: "shop" } };\n`,
+      "api/chant.config.ts": `${sideEffect}export default { environments: ["prod"], ownership: { stack: "shop" } };\n`,
+      "web/chant.config.ts": `${sideEffect}export default { ownership: { stack: process.env.WEB_STACK ?? "web" } };\n`,
+    };
+  };
+
+  test("configs with a side effect are read statically and never run", async () => {
+    const marker = join(realpathSync(mkdtempSync(join(tmpdir(), "chant-2641-marker-"))), "ran");
+    scratch.push(dirname(marker));
+    const report = await runDeclarationChecks(repo(files(marker)));
+    expect(existsSync(marker)).toBe(false);
+    expect(report.diagnostics.map((d) => `${d.ruleId}:${d.entity}:${d.severity}`)).toEqual([
+      "WSP071:root:error",
+      "WSP073:web:info",
+    ]);
+    expect(report.diagnostics[1].message).toMatch(/web\/chant\.config\.ts can't be read without running it/);
+  });
+
+  test("the CLI loads no config before dispatch either", () => {
+    const marker = join(realpathSync(mkdtempSync(join(tmpdir(), "chant-2641-marker-"))), "ran");
+    scratch.push(dirname(marker));
+    const root = repo(files(marker));
+    const run = spawnSync(
+      process.execPath,
+      ["--import", pathToFileURL(join(repoRoot, "node_modules/tsx/dist/loader.mjs")).href, join(repoRoot, "packages/core/src/cli/main.ts"), "workspace", "check", "--json"],
+      { cwd: root, encoding: "utf-8", timeout: 60_000, env: { ...process.env, NO_COLOR: "1", TSX_DISABLE_CACHE: "1" } },
+    );
+    expect(run.status, run.stderr).toBe(1);
+    expect(JSON.parse(run.stdout).declaration.diagnostics.map((d: { ruleId: string }) => d.ruleId)).toEqual(["WSP071", "WSP073"]);
+    expect(existsSync(marker)).toBe(false);
   });
 });

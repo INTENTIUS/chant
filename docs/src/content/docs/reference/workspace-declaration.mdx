@@ -217,7 +217,7 @@ Receipts written by an `effect()` step are not on the branch. They live wherever
 
 Declaring a project as a member changes where it writes from then on. chant does not copy the records the project already wrote at the top of the branch. A project with history that becomes the root member `"."` keeps reading it.
 
-The first chant that writes member paths is `0.81.0`. A member whose own toolchain resolves an older chant keeps writing the top of the branch. Two checks in `packages/core/src/workspace/checks/ledgers.ts` cover this, and `chant workspace check` reports them once the check contract of [#2535](https://github.com/INTENTIUS/chant/issues/2535) lands.
+The first chant that writes member paths is `0.81.0`. A member whose own toolchain resolves an older chant keeps writing the top of the branch. Two checks cover this, and [`chant workspace check`](/chant/cli/workspace-check/#declaration-checks) reports them. Neither can be turned down or suppressed.
 
 | Id | Fails when |
 |---|---|

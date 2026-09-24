@@ -12,14 +12,47 @@
  * checks are fixed: an unknown kind, a tie between probes and a probe that
  * claims an `other` directory always fail (#2524 D3), and a declaration that
  * can't be read has no settings to apply.
+ *
+ * Checks that need more than the declaration and the tree read facts
+ * gathered before any check runs ({@link WorkspaceFacts}): member ledgers
+ * (./checks/ledgers.ts), recorded pipelines (./checks/pipelines.ts) and
+ * generated files (./checks/generated.ts). All of them share one id range
+ * (#2641):
+ *
+ * | Ids | Checks |
+ * |---|---|
+ * | WSP001 to WSP011 | the declaration and member kinds (this file) |
+ * | WSP071, WSP072 | member ledgers |
+ * | WSP081 to WSP083 | recorded pipelines |
+ * | WSP091 to WSP097 | member links (#2539) |
+ * | WSP101 to WSP106 | generated files |
  */
 
+import { realpathSync } from "node:fs";
+import { relative, sep } from "node:path";
 import type { LintDiagnostic, LintRule, Severity } from "../lint/rule";
 import type { PostSynthDiagnostic } from "../lint/post-synth";
 import { readDeclaration, resolveGroups, WorkspaceReadError, type Declaration, type Entry, type ErrorLocation, type ResolvedGroup } from "./declaration";
 import { parseJsonText, pointerToken, type TextLocation } from "./jsonc";
 import { loadKindRegistry, probeKind, resolveKind, type KindLoadProblem, type KindRegistry } from "./kinds";
-import { workingTree, type WorkspaceTree } from "./tree";
+import { gitTop, workingTree, type WorkspaceTree } from "./tree";
+import { gatherGeneratedFacts, GENERATED_CHECKS, type GeneratedFileFacts } from "./checks/generated";
+import { gatherLedgerFacts, LEDGER_CHECKS, type MemberLedgerFacts } from "./checks/ledgers";
+import { gatherPipelineFacts, PIPELINE_CHECKS, type MemberPipelineFacts } from "./checks/pipelines";
+
+/**
+ * What the checks beyond the declaration read, gathered from the checkout
+ * before any check runs. A field left out was not gathered, and the checks
+ * that read it find nothing.
+ */
+export interface WorkspaceFacts {
+  /** Each `chant` member's ownership stack, environments and chant version. */
+  ledgers?: readonly MemberLedgerFacts[];
+  /** Each member's recorded generated files and the environments they deploy. */
+  pipelines?: readonly MemberPipelineFacts[];
+  /** Each declared or implicit generated file, with what its generator produced. */
+  generated?: readonly GeneratedFileFacts[];
+}
 
 /** What every declaration check reads. */
 export interface WorkspaceCheckContext {
@@ -29,6 +62,8 @@ export interface WorkspaceCheckContext {
   kinds: KindRegistry;
   /** Why some pinned kinds could not be read. */
   kindProblems: KindLoadProblem[];
+  /** The facts gathered before the checks ran. */
+  facts?: WorkspaceFacts;
 }
 
 /**
@@ -245,6 +280,13 @@ export const WORKSPACE_CHECKS: readonly WorkspaceCheck[] = [
       return out;
     },
   },
+  // Member ledgers (#2538).
+  ...LEDGER_CHECKS,
+  // Recorded pipelines (#2542).
+  ...PIPELINE_CHECKS,
+  // Member links (#2539), WSP091 to WSP097, go here, so the ids stay in order.
+  // Generated files (#2541).
+  ...GENERATED_CHECKS,
 ];
 
 const BY_ID = new Map(WORKSPACE_CHECKS.map((c) => [c.id, c]));
@@ -304,15 +346,56 @@ export function applyCheckSettings(
   return { active, suppressed };
 }
 
+export interface DeclarationCheckOptions {
+  /**
+   * Gather the facts the ledger, pipeline and generated-file checks read.
+   * On by default. Off, only the declaration and kind checks find anything,
+   * and no member config is read.
+   */
+  gather?: boolean;
+  /** Run each declared generator and compare its output (`--generated`). Off by default: generators run member code. */
+  runGenerators?: boolean;
+}
+
+/**
+ * Gather {@link WorkspaceFacts} for the declaration in `root`. Member
+ * configs are read statically, never run: the ledger facts read `ownership`
+ * and `environments`, and the generated-file facts read `lexicons`. Declared
+ * generators run only when `runGenerators` says so, and they are the only
+ * member code this runs.
+ */
+export async function gatherWorkspaceFacts(root: string, declaration: Declaration, options: { runGenerators?: boolean } = {}): Promise<WorkspaceFacts> {
+  // Pipeline records hold paths relative to the repository root.
+  const top = gitTop(root);
+  const prefix = top ? relative(realpath(top), realpath(root)).split(sep).join("/") || "." : ".";
+  return {
+    ledgers: await gatherLedgerFacts(root, declaration),
+    pipelines: gatherPipelineFacts(root, declaration, prefix),
+    generated: await gatherGeneratedFacts(root, declaration, { runGenerators: options.runGenerators === true }),
+  };
+}
+
+function realpath(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+}
+
 /**
  * Read the declaration in `root` (an absolute directory holding one), load
- * the kinds its pins supply, run every check and apply the declaration's
- * settings. `file` in the findings is the declaration's path as `display`
- * says, relative to where the command runs. Never throws a
- * {@link WorkspaceReadError}: a declaration that can't be read is one WSP001
- * finding.
+ * the kinds its pins supply, gather the facts the member checks read, run
+ * every check and apply the declaration's settings. `file` in the findings
+ * is the declaration's path as `display` says, relative to where the
+ * command runs. Never throws a {@link WorkspaceReadError}: a declaration that
+ * can't be read is one WSP001 finding.
  */
-export function runDeclarationChecks(root: string, display: (file: string) => string = (f) => f): DeclarationCheckReport {
+export async function runDeclarationChecks(
+  root: string,
+  display: (file: string) => string = (f) => f,
+  options: DeclarationCheckOptions = {},
+): Promise<DeclarationCheckReport> {
   const tree = workingTree(root);
   let declaration: Declaration;
   let groups: ResolvedGroup[];
@@ -333,7 +416,8 @@ export function runDeclarationChecks(root: string, display: (file: string) => st
     return { file: display(location.file), diagnostics: [diagnostic], suppressed: [], ok: false };
   }
   const { registry, problems } = loadKindRegistry(declaration.pins, root);
-  const findings = runWorkspaceChecks({ declaration, tree, groups, kinds: registry, kindProblems: problems });
+  const facts = options.gather === false ? {} : await gatherWorkspaceFacts(root, declaration, options);
+  const findings = runWorkspaceChecks({ declaration, tree, groups, kinds: registry, kindProblems: problems, facts });
   const { active, suppressed } = applyCheckSettings(declaration, findings);
 
   const parsed = parseJsonText(tree.read(declaration.file), { jsonc: declaration.file.endsWith(".jsonc") });

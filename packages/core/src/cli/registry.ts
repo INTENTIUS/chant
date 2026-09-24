@@ -294,6 +294,12 @@ export interface ParsedArgs {
    */
   rootOnly?: boolean;
   /**
+   * `chant workspace check --generated` (#2641): run each declared generator
+   * and compare its output with the file in the tree. Off by default, since
+   * generators run member code.
+   */
+  generated?: boolean;
+  /**
    * `chant workspace build|lint|audit|graph --member <name>` (#2537): run only
    * the named members or example groups. Repeatable, and a comma list works too.
    */

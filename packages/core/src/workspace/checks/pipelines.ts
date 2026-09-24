@@ -14,12 +14,13 @@
  *
  * The checks are pure functions over {@link MemberPipelineFacts}.
  * {@link gatherPipelineFacts} collects those facts from a checkout, reading
- * each member's generated-file record (../member-pipeline.ts). Wiring into
- * `WorkspaceCheck` (#2535) is left to that issue, which owns the reporter
- * and the id registry.
+ * each member's generated-file record (../member-pipeline.ts), and
+ * `chant workspace check` gathers them before it runs {@link PIPELINE_CHECKS}
+ * (#2641).
  */
 
 import { join } from "node:path";
+import type { WorkspaceCheck, WorkspaceCheckContext, WorkspaceDiagnostic } from "../checks";
 import type { Declaration } from "../declaration";
 import { readGeneratedRecord } from "../member-pipeline";
 
@@ -166,8 +167,62 @@ export function gatherPipelineFacts(workspaceRoot: string, declaration: Declarat
 /**
  * Run the three checks. `links` defaults to none: member links are declared
  * by #2539, which has not landed, so `WSP083` has nothing to read yet.
- * TODO(#2539): read the declared member links here.
  */
 export function checkPipelines(facts: readonly MemberPipelineFacts[], links: readonly MemberLink[] = []): PipelineFinding[] {
   return [...checkOneDeclarer(facts), ...checkGeneratedPlacement(facts), ...checkLinkedEnvironments(facts, links)];
 }
+
+// ── As workspace checks ──────────────────────────────────────────────────────
+
+/**
+ * A finding as a workspace diagnostic. It sits at the first member it names,
+ * in declaration order, and that member's entry is the one that can carry a
+ * `suppress`.
+ */
+function toDiagnostic(check: WorkspaceCheck, ctx: WorkspaceCheckContext, f: PipelineFinding): WorkspaceDiagnostic {
+  const member = ctx.declaration.members.find((m) => m.name === f.members[0]);
+  return { checkId: check.id, severity: check.severity, message: f.message, entity: f.members[0], pointer: member?.pointer ?? "" };
+}
+
+/**
+ * The member links `WSP083` compares. None yet.
+ * TODO(#2539): return `declaredMemberLinks(ctx.declaration)` from ../links.ts
+ * once member links land.
+ */
+function declaredLinks(_ctx: WorkspaceCheckContext): MemberLink[] {
+  return [];
+}
+
+/** The pipeline checks, which read `ctx.facts.pipelines`. They find nothing when the facts were not gathered. */
+export const PIPELINE_CHECKS: readonly WorkspaceCheck[] = [
+  {
+    id: WSP_ONE_DECLARER,
+    name: "generated-declared-twice",
+    description: "No two members record the same generated file, so no member's regeneration overwrites another's pipeline.",
+    severity: "error",
+    configurable: true,
+    check(ctx) {
+      return checkOneDeclarer(ctx.facts?.pipelines ?? []).map((f) => toDiagnostic(this, ctx, f));
+    },
+  },
+  {
+    id: WSP_GENERATED_PLACEMENT,
+    name: "generated-outside-member",
+    description: "A member's recorded generated files sit in its own directory, or are forge CI files at the fixed paths forges read.",
+    severity: "error",
+    configurable: true,
+    check(ctx) {
+      return checkGeneratedPlacement(ctx.facts?.pipelines ?? []).map((f) => toDiagnostic(this, ctx, f));
+    },
+  },
+  {
+    id: WSP_LINKED_ENVIRONMENTS,
+    name: "linked-environments-disjoint",
+    description: "Linked members share at least one environment name, matched exactly, when both name any.",
+    severity: "warning",
+    configurable: true,
+    check(ctx) {
+      return checkLinkedEnvironments(ctx.facts?.pipelines ?? [], declaredLinks(ctx)).map((f) => toDiagnostic(this, ctx, f));
+    },
+  },
+];

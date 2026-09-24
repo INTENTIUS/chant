@@ -330,7 +330,9 @@ export async function doctorCommand(path: string): Promise<DoctorReport> {
   const workspace = findWorkspaceRoot(projectPath);
   if (workspace) {
     const { runDeclarationChecks } = await import("../../workspace/checks");
-    const report = runDeclarationChecks(workspace.dir, (file) => join(workspace.dir, file));
+    // The declaration and kind checks only: `chant workspace check` runs the
+    // member checks, which read every member's files.
+    const report = await runDeclarationChecks(workspace.dir, (file) => join(workspace.dir, file), { gather: false });
     const shown = report.diagnostics.filter((d) => d.severity !== "info");
     for (const d of shown) {
       checks.push({ name: `workspace-${d.ruleId}`, status: d.severity === "error" ? "fail" : "warn", message: `${d.message} (${d.file}:${d.line})` });

@@ -7,25 +7,28 @@
  * of every `chant` member (`../generated-files.ts` holds that list, and the
  * lineage lock classes files from the same list).
  *
- * - `WSP081`: a generated file differs from what its generator writes.
- * - `WSP082`: a declared generated file does not exist.
- * - `WSP083`: a generator could not be run, failed, or wrote nothing.
- * - `WSP084` (info): an entry is kept by hand, with the reason it gives.
- * - `WSP085` (info): an entry was not compared, because its generator runs
+ * - `WSP101`: a generated file differs from what its generator writes.
+ * - `WSP102`: a declared generated file does not exist.
+ * - `WSP103`: a generator could not be run, failed, or wrote nothing.
+ * - `WSP104` (info): an entry is kept by hand, with the reason it gives.
+ * - `WSP105` (info): an entry was not compared, because its generator runs
  *   only on request or its output can't be produced without running code.
- * - `WSP086`: an entry names a source that does not exist.
+ * - `WSP106`: an entry names a source that does not exist.
+ *
+ * They were WSP081 to WSP086 until #2641 moved them, since the pipeline
+ * checks of #2542 hold WSP081 to WSP083.
  *
  * What runs by default is what needs no member code: the file and its
  * sources exist, and each implicit `SKILL.md` matches what the member's
  * lexicons render, with the lexicons read from its config statically.
  * Declared generators are commands that load member code and take seconds
  * each, so they run only when asked ({@link GatherOptions.runGenerators},
- * `chant workspace check --generated` once this is wired in).
+ * `chant workspace check --generated`).
  *
  * The checks are a pure function over {@link GeneratedFileFacts};
- * {@link gatherGeneratedFacts} collects those facts from a checkout. Wiring
- * into `WorkspaceCheck` (#2535) is left to that issue, which owns the reporter
- * and the id registry.
+ * {@link gatherGeneratedFacts} collects those facts from a checkout, and
+ * `chant workspace check` gathers them before it runs
+ * {@link GENERATED_CHECKS} (#2641).
  */
 
 import { execFileSync, spawnSync } from "node:child_process";
@@ -33,15 +36,16 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, join, relative, resolve, sep } from "node:path";
+import type { WorkspaceCheck } from "../checks";
 import type { Declaration, Member } from "../declaration";
 import { gitTop } from "../tree";
 
-export const WSP_GENERATED_DRIFT = "WSP081";
-export const WSP_GENERATED_MISSING = "WSP082";
-export const WSP_GENERATOR_FAILED = "WSP083";
-export const WSP_GENERATED_HAND_WRITTEN = "WSP084";
-export const WSP_GENERATED_NOT_COMPARED = "WSP085";
-export const WSP_GENERATED_SOURCE_MISSING = "WSP086";
+export const WSP_GENERATED_DRIFT = "WSP101";
+export const WSP_GENERATED_MISSING = "WSP102";
+export const WSP_GENERATOR_FAILED = "WSP103";
+export const WSP_GENERATED_HAND_WRITTEN = "WSP104";
+export const WSP_GENERATED_NOT_COMPARED = "WSP105";
+export const WSP_GENERATED_SOURCE_MISSING = "WSP106";
 
 export type GeneratedCheckId =
   | typeof WSP_GENERATED_DRIFT
@@ -126,6 +130,33 @@ export function checkGenerated(facts: readonly GeneratedFileFacts[]): GeneratedF
   }
   return out;
 }
+
+// ── As workspace checks ──────────────────────────────────────────────────────
+
+function generatedCheck(id: GeneratedCheckId, name: string, severity: GeneratedFinding["severity"], description: string): WorkspaceCheck {
+  return {
+    id,
+    name,
+    description,
+    severity,
+    configurable: true,
+    check(ctx) {
+      return checkGenerated(ctx.facts?.generated ?? [])
+        .filter((f) => f.id === id)
+        .map((f) => ({ checkId: id, severity: this.severity, message: f.message, entity: f.member, pointer: f.pointer }));
+    },
+  };
+}
+
+/** The generated-file checks, which read `ctx.facts.generated`. They find nothing when the facts were not gathered. */
+export const GENERATED_CHECKS: readonly WorkspaceCheck[] = [
+  generatedCheck(WSP_GENERATED_DRIFT, "generated-drift", "error", "A generated file is what its generator writes. Declared generators run only with --generated."),
+  generatedCheck(WSP_GENERATED_MISSING, "generated-missing", "error", "Every declared generated file exists."),
+  generatedCheck(WSP_GENERATOR_FAILED, "generator-failed", "error", "A declared generator runs, exits 0 and writes the file."),
+  generatedCheck(WSP_GENERATED_HAND_WRITTEN, "generated-hand-written", "info", "An entry kept by hand is reported with its reason, and its generator is not run."),
+  generatedCheck(WSP_GENERATED_NOT_COMPARED, "generated-not-compared", "info", "An entry not compared with its generator's output is reported with the reason."),
+  generatedCheck(WSP_GENERATED_SOURCE_MISSING, "generated-source-missing", "error", "Every source a generated entry names exists."),
+];
 
 // ── Facts from a checkout ────────────────────────────────────────────────────
 

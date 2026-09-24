@@ -806,3 +806,12 @@ describe("per-member commands and the root refusal (#2537)", () => {
     expect(source).toMatch(/await import\("\.\.\/workspace\/member-run"\)/);
   });
 });
+
+describe("chant workspace check --generated (#2641)", () => {
+  test("is a boolean flag, distinct from --generate <lexicon>", () => {
+    expect(parseArgs(["workspace", "check", "--generated", "--json"])).toMatchObject({ command: "workspace", path: "check", generated: true, json: true });
+    expect(parseArgs(["workspace", "check"]).generated).toBeUndefined();
+    expect(parseArgs(["build", "--generate", "github"]).generated).toBeUndefined();
+    expect(() => parseArgs(["workspace", "check", "--generated=yes"])).toThrow();
+  });
+});
