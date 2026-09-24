@@ -26,6 +26,11 @@
  *   (#2647), copies the same files with the same parameters and digest as
  *   the git form, with a lock that records the digest alone.
  *
+ * - `chant workspace graph --composites` (#2662) lists one composite
+ *   instance, delivery's `app` (a docker `DockerWebService`), with the `app`
+ *   component that names that kind in its `composites`, matched in the same
+ *   member, and no reason.
+ *
  * - `chant workspace graph --intent app/src/server.mjs:19` (#2651) lists
  *   ref-001 and ref-002 by member, the commit that wrote line 19, and the
  *   findings #2651's acceptance names. No decision constrains the line by
@@ -220,7 +225,9 @@ describe("delivery member", () => {
       const compose = yaml.load(readFileSync(output, "utf-8")) as {
         services: Record<string, { build?: { context: string; dockerfile: string } }>;
       };
-      const build = compose.services.app?.build;
+      // DockerWebService keys the service by the export name plus `Service` (#2662).
+      expect(Object.keys(compose.services)).toEqual(["appService"]);
+      const build = compose.services.appService?.build;
       expect(build).toBeDefined();
       // The package.json build script writes the file to delivery/dist/, and
       // Compose resolves the context from the file's own directory.
@@ -354,6 +361,39 @@ describe("workspace commands on the fixture", () => {
     const run = chant(fixture, "workspace", "check", "--json");
     expect(run.status, run.stderr + run.stdout).toBe(0);
     expect((JSON.parse(run.stdout) as { ok: boolean }).ok).toBe(true);
+  });
+});
+
+describe("the composite graph on the fixture (#2662)", () => {
+  const compositesSchema = JSON.parse(readFileSync(join(workspaceSrc, "composites.schema.json"), "utf-8")) as object;
+
+  test("graph --composites lists delivery's app, of kind DockerWebService, with the app component via member", () => {
+    const run = chant(fixture, "workspace", "graph", "--composites", "--json");
+    expect(run.status, run.stderr).toBe(0);
+    const doc = JSON.parse(run.stdout) as {
+      composites: { id: string; member: string; instance: string; kinds: string[]; lexicons: string[]; nodes: string[]; components: unknown[] }[];
+      components: { id: string; archetype: string | null; composites: string[] | null; file: string | null }[];
+      reasons: unknown[];
+      summary: unknown;
+    };
+    const validate = compile2020(compositesSchema);
+    expect(validate(doc), JSON.stringify(validate.errors, null, 2)).toBe(true);
+    expect(doc.composites).toEqual([
+      {
+        id: "delivery/app",
+        member: "delivery",
+        instance: "app",
+        kinds: ["DockerWebService"],
+        lexicons: ["docker"],
+        nodes: ["delivery/appService"],
+        components: [{ component: "delivery/app", by: "composites", against: "kind", value: "DockerWebService", label: "exact", via: "member" }],
+      },
+    ]);
+    expect(doc.components).toEqual([
+      { id: "delivery/app", name: "app", member: "delivery", archetype: "service", composites: ["DockerWebService"], file: "delivery/src/app.component.ts" },
+    ]);
+    expect(doc.reasons).toEqual([]);
+    expect(doc.summary).toEqual({ composites: 1, withComponent: 1, withoutComponent: 0, components: 1 });
   });
 });
 

@@ -135,7 +135,7 @@ describe("every schema against the reference workspace (#2543)", () => {
   });
 
   test(
-    "graph --composites runs delivery's own component graph, and says why the list is empty (#2662)",
+    "graph --composites runs delivery's own component graph, and lists its app with the component that deploys it (#2662)",
     async () => {
       const { expectValid } = contract(compositesSchema);
       for (const at of [undefined, "HEAD"]) {
@@ -150,10 +150,12 @@ describe("every schema against the reference workspace (#2543)", () => {
           ["design-client", "skipped"],
           ["design", "skipped"],
         ]);
-        // delivery has a docker Service and no composite or component.
-        expect(doc.composites).toEqual([]);
-        expect(doc.components).toEqual([]);
-        expect(doc.reasons.map((r) => r.code)).toEqual(["composites-none-declared", "composites-no-component"]);
+        // delivery declares the app as a DockerWebService, and its app component names that kind.
+        expect(doc.composites.map((c) => [c.id, c.kinds, c.components.map((m) => [m.component, m.by, m.via])])).toEqual([
+          ["delivery/app", ["DockerWebService"], [["delivery/app", "composites", "member"]]],
+        ]);
+        expect(doc.components.map((c) => [c.id, c.archetype])).toEqual([["delivery/app", "service"]]);
+        expect(doc.reasons).toEqual([]);
       }
     },
     TIMEOUT,

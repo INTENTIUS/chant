@@ -56,5 +56,63 @@ export const compositeCatalog: CompositeEntry[] = [
         "description": "Per-member defaults for fine-grained overrides."
       }
     ]
+  },
+  {
+    "name": "DockerWebService",
+    "lexicon": "docker",
+    "description": "One HTTP service as a Compose service, with a published port and an HTTP health check.",
+    "bundles": [
+      "Service"
+    ],
+    "params": [
+      {
+        "name": "build",
+        "type": "{ context: string; dockerfile?: string }",
+        "required": false,
+        "description": "Build the image from a Dockerfile: the context, and the Dockerfile's path in it (default: \"Dockerfile\")."
+      },
+      {
+        "name": "image",
+        "type": "string",
+        "required": false,
+        "description": "The image to run, or the tag to give the built one."
+      },
+      {
+        "name": "port",
+        "type": "number",
+        "required": true,
+        "description": "The port the app listens on in the container."
+      },
+      {
+        "name": "hostPort",
+        "type": "number",
+        "required": false,
+        "description": "The port published on the host (default: `port`)."
+      },
+      {
+        "name": "environment",
+        "type": "Record<string, string>",
+        "required": false,
+        "description": "More environment variables."
+      },
+      {
+        "name": "healthPath",
+        "type": "string",
+        "required": false,
+        "description": "An HTTP path the health check fetches with `wget` inside the container (default: no health check)."
+      },
+      {
+        "name": "restart",
+        "type": "string",
+        "required": false,
+        "description": "Restart policy (default: \"unless-stopped\")."
+      },
+      {
+        "name": "defaults",
+        "type": "{ service?: Partial<Record<string, unknown>>; }",
+        "required": false,
+        "description": "Per-member defaults for fine-grained overrides."
+      }
+    ]
   }
 ];
