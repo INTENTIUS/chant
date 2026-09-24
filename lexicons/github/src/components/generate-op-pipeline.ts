@@ -104,8 +104,8 @@ export interface GithubOpPipelineDoc {
   header?: string[];
   /**
    * The workflow's `name:` (#2580): the Op's name, so the Actions UI lists
-   * the workflow by its Op instead of its file name. The forgejo dialect
-   * does not copy it, so forgejo output is unchanged.
+   * the workflow by its Op instead of its file name. The forgejo generator
+   * copies it too (#2601), since Forgejo Actions reads the key the same way.
    */
   name?: string;
   /**
