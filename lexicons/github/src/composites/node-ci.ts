@@ -1,5 +1,6 @@
 import { Composite, mergeDefaults } from "@intentius/chant";
 import { Job, Step, Workflow } from "../generated/index";
+import { actionRef } from "../action-pins";
 
 export interface NodeCIProps {
   nodeVersion?: string;
@@ -28,12 +29,12 @@ export const NodeCI = Composite((props: NodeCIProps) => {
 
   const checkoutStep = new Step({
     name: "Checkout",
-    uses: "actions/checkout@v4",
+    uses: actionRef("actions/checkout"),
   });
 
   const setupNodeStep = new Step({
     name: "Setup Node.js",
-    uses: "actions/setup-node@v4",
+    uses: actionRef("actions/setup-node"),
     with: {
       "node-version": nodeVersion,
       cache: packageManager === "bun" ? undefined : packageManager,

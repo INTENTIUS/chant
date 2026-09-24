@@ -140,7 +140,7 @@ Detects cycles in the `needs:` dependency graph. If job A needs B and B needs A 
 
 **Severity:** warning
 
-Flags `actions/checkout` referenced by a tag (e.g. `@v4`) instead of a pinned commit SHA. The narrower precursor to GHA029, kept because checkout is the most common unpinned action.
+Flags `actions/checkout` referenced by a tag (e.g. `@v4`) instead of a pinned commit SHA. The narrower precursor to GHA029, kept because checkout is the most common unpinned action. A trailing version comment (`actions/checkout@<sha> # v7.0.1`) is allowed. The warning names the exact pinned `uses:` value, which `Checkout({ pin: "sha" })` emits.
 
 ### GHA022 — Job without timeout-minutes
 

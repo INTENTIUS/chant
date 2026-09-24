@@ -6,7 +6,8 @@
  */
 
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
-import { getPrimaryOutput, extractJobs } from "./yaml-helpers";
+import { getPrimaryOutput, extractJobs, stripUsesComment } from "./yaml-helpers";
+import { pinFixHint } from "../../action-pins";
 
 export const gha021: PostSynthCheck = {
   id: "GHA021",
@@ -25,7 +26,9 @@ export const gha021: PostSynthCheck = {
         for (const step of job.steps) {
           if (!step.uses) continue;
 
-          const match = step.uses.match(/^actions\/checkout@(.+)$/);
+          // A pinned ref carries its version as a trailing comment
+          // (`actions/checkout@<sha> # v7.0.1`); only the ref is judged.
+          const match = stripUsesComment(step.uses).match(/^actions\/checkout@(.+)$/);
           if (!match) continue;
 
           const ref = match[1];
@@ -35,7 +38,7 @@ export const gha021: PostSynthCheck = {
           diagnostics.push({
             checkId: "GHA021",
             severity: "warning",
-            message: `Job "${jobName}" uses actions/checkout@${ref} — pin to a full commit SHA for supply-chain security.`,
+            message: `Job "${jobName}" uses actions/checkout@${ref} — pin to a full commit SHA for supply-chain security.${pinFixHint("actions/checkout")}`,
             entity: jobName,
             lexicon: "github",
           });
