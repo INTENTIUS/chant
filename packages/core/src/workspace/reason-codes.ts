@@ -65,6 +65,13 @@ export const REASONS = {
   "asset-stale": "A file the record pins is unchanged at the hash a record it supersedes pinned: the decision changed and the artifact did not follow.",
   "record-supersedes-pending": "A supersedes link from a record whose state is weaker than the record it names, so the link has no effect yet.",
   "record-no-evidence": "The record's evidence list is empty: it cites nothing and pins no file. Information for a reviewer, never an error.",
+  "review-undigested": "A verdict names no digest of the text it judged. It still counts, and an amendment does not stop it counting.",
+  // A verdict the quorum does not count (records, #2671, #2672).
+  "review-decider": "The verdict is the decider's own, and the quorum counts verdicts besides the decider's.",
+  "review-agent": "The reviewer holds the agent role in the trust policy at base.",
+  "review-duplicate": "A later verdict by the same principal replaces this one. Names are compared after NFKC, trimming and lower-casing.",
+  "review-older-digest": "The verdict names a digest other than the record's text now: the record changed after the verdict.",
+  "review-unattested": "An attestation policy is active at base, and the verdict carries no seal.",
   // A records read that fails (records).
   "kind-unreadable": "The record kind file is missing or could not be imported.",
   "kind-invalid": "The record kind file exports no recordKind, or its shape is wrong.",

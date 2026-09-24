@@ -16,6 +16,7 @@
  * runs. The level-0 goldens (#2526) fail if a level-0 command loads it.
  */
 
+import { createHash } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
 import { dirname, posix, relative, resolve, sep } from "node:path";
 import yaml from "js-yaml";
@@ -68,8 +69,32 @@ export const RECORD_WARNING_CODES = [
    * product's own design flow with nothing to cite (#2654).
    */
   "record-no-evidence",
+  /**
+   * A verdict in the kind's reviews list names no `digest`, so it is not bound
+   * to the text it judged. It still counts toward the quorum, and an
+   * amendment does not stop it counting (#2672).
+   */
+  "review-undigested",
 ] as const satisfies readonly ReasonCode[];
 export type RecordWarningCode = (typeof RECORD_WARNING_CODES)[number];
+
+/**
+ * Why a verdict does not count toward a record's quorum (#2671). Closed, like
+ * the reason codes. A verdict with none of these counts.
+ */
+export const REVIEW_REASON_CODES = [
+  /** The reviewer is the record's decider. */
+  "review-decider",
+  /** The reviewer holds the agent role in the trust policy at base. */
+  "review-agent",
+  /** A later verdict by the same principal, after normalising, replaces this one. */
+  "review-duplicate",
+  /** The verdict's digest is not the digest of the record's text now: the record changed after the verdict (#2672). */
+  "review-older-digest",
+  /** An attestation policy is active at base, and the verdict carries no seal. */
+  "review-unattested",
+] as const satisfies readonly ReasonCode[];
+export type ReviewReasonCode = (typeof REVIEW_REASON_CODES)[number];
 
 export interface RecordWarning {
   code: RecordWarningCode;
@@ -165,6 +190,15 @@ export const recordKindSchema = z
      * (#2549). Optional.
      */
     constrains: z.object({ field: z.string().min(1) }).strict().optional(),
+    /**
+     * The front-matter list of review verdicts and the field naming the
+     * decider (#2671, #2672). With it, each record gets a digest of its text
+     * without that list, and `records --json` computes its quorum. Each
+     * entry holds `reviewer`, `verdict` (agree, dissent or abstain) and
+     * optionally `digest`, `note`, `proposes`, `addressed_by` and
+     * `withdrawn_on`. Optional.
+     */
+    reviews: z.object({ field: z.string().min(1), decider: z.string().min(1) }).strict().optional(),
   })
   .strict()
   .refine((k) => k.closedStates.every((s) => k.states.includes(s)), {
@@ -290,6 +324,194 @@ function nonJson(v: unknown, at: string, seen: Set<object>): string | undefined 
   return undefined;
 }
 
+// ── Record digest ────────────────────────────────────────────────────────────
+
+/**
+ * The digest a review verdict names: the lowercase hex SHA-256 of the record
+ * file's text with its reviews block taken out of the front matter (#2672).
+ * Adding, changing or removing a verdict leaves it as it was; any other edit
+ * to the file changes it, so a verdict given before an amendment stops
+ * counting.
+ *
+ * The rule, which a hand-editor can follow with a text editor and
+ * `sha256sum`:
+ *
+ * 1. Line endings become LF (CRLF and a lone CR each become one LF).
+ * 2. When the text starts with a `---` line and a later line is exactly
+ *    `---`, the lines between them are the front matter. In it, the line
+ *    that starts, at column 0, with the key `field` (bare, or in single or
+ *    double quotes), optional spaces or tabs and a `:`, is removed, and so
+ *    is every line after it, up to the closing `---`, that is empty or
+ *    starts with a space, a tab, `#` or `-`. Removal stops at the first
+ *    other line. Everything else, the `---` lines and the body included, is
+ *    kept byte for byte.
+ * 3. The digest is the SHA-256 of the result's UTF-8 bytes.
+ *
+ * Text with no front matter, or no such key, is hashed after step 1 alone.
+ * A writer that adds a verdict must change only the reviews block: a
+ * reformatted front matter is a new digest, and every earlier verdict stops
+ * counting.
+ */
+export function recordTextDigest(text: string, field: string | null = "reviews"): string {
+  const lf = text.replace(/\r\n?/g, "\n");
+  return createHash("sha256").update(field === null ? lf : withoutBlock(lf, field), "utf8").digest("hex");
+}
+
+/** `text` with the top-level `field` block removed from its front matter, by the rule {@link recordTextDigest} states. */
+function withoutBlock(text: string, field: string): string {
+  const lines = text.split("\n");
+  if (lines[0] !== "---") return text;
+  const close = lines.indexOf("---", 1);
+  if (close < 0) return text;
+  const key = field.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const starts = new RegExp(`^(?:${key}|"${key}"|'${key}')[ \\t]*:(?:[ \\t]|$)`);
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (i > 0 && i < close && starts.test(lines[i])) {
+      while (i + 1 < close && /^(?:$|[ \t#-])/.test(lines[i + 1])) i++;
+      continue;
+    }
+    out.push(lines[i]);
+  }
+  return out.join("\n");
+}
+
+// ── Quorum ───────────────────────────────────────────────────────────────────
+
+/** The quorum a workspace sets when its declaration names none: two verdicts besides the decider's (#2555). */
+export const DEFAULT_QUORUM = 2;
+
+/** A principal as the quorum compares it: NFKC, trimmed and lower-cased, so `alice` and `Alice ` are one reviewer (#2671). */
+export function normalisePrincipal(name: string): string {
+  return name.normalize("NFKC").trim().toLowerCase();
+}
+
+/** One verdict as the quorum reads it. */
+export interface QuorumVerdict {
+  /** The entry's position in the record's reviews list, from 0. */
+  index: number;
+  /** The reviewer, normalised. */
+  principal: string;
+  /** The reviewer as written. */
+  reviewer: string;
+  verdict: "agree" | "dissent" | "abstain";
+  /** The digest the verdict names, or null when it names none. */
+  digest: string | null;
+  /** Why it does not count. Absent on a counted verdict. */
+  reason?: { code: ReviewReasonCode; message: string };
+}
+
+/** A dissent that is neither addressed nor withdrawn. */
+export interface OpenConcern {
+  index: number;
+  principal: string;
+  reviewer: string;
+  note: string | null;
+  /** The proposed decision the dissent opened, when it names one. */
+  proposes?: string;
+}
+
+export interface Quorum {
+  /** How many counted agree verdicts, besides the decider's, the record needs. */
+  need: number;
+  /** Whether `need` comes from the workspace declaration or is the default. */
+  needFrom: "declaration" | "default";
+  /** Counted verdicts that agree. */
+  agreed: number;
+  /** Verdicts that count: one per principal, the latest, after the exclusions. */
+  counted: QuorumVerdict[];
+  /** Verdicts that don't, each with its reason. */
+  notCounted: QuorumVerdict[];
+  openConcerns: OpenConcern[];
+  /** `agreed` reaches `need`. */
+  met: boolean;
+  /** `met`, with at least one open concern. A met quorum with an open concern is never consensus (RFC 7282). */
+  metWithObjections: boolean;
+}
+
+export interface QuorumOptions {
+  need: number;
+  needFrom: "declaration" | "default";
+  /** Normalised principals that hold the agent role. */
+  agents: ReadonlySet<string>;
+  /** Whether an attestation policy is active, so a verdict needs a seal to count. */
+  attestation: boolean;
+}
+
+const VERDICTS = new Set(["agree", "dissent", "abstain"]);
+
+/**
+ * The quorum of one record, read from its reviews list, or null when the
+ * kind has no reviews list or the front matter could not be read (#2671).
+ * Malformed entries are skipped; the schema reports them.
+ *
+ * A verdict is not counted when its reviewer is the decider, holds the agent
+ * role, names a digest other than the record's own now, or carries no seal
+ * under an active attestation policy, in that order. Of the rest, the latest
+ * verdict per principal counts and each earlier one is a duplicate. No
+ * verdict carries a seal yet (#2546), so under an active policy none counts.
+ */
+export function computeQuorum(kind: RecordKind, entry: Pick<RecordEntry, "data" | "digest">, options: QuorumOptions): Quorum | null {
+  if (!kind.reviews || entry.data === null) return null;
+  const list = entry.data[kind.reviews.field];
+  const decidedBy = entry.data[kind.reviews.decider];
+  const decider = typeof decidedBy === "string" ? normalisePrincipal(decidedBy) : null;
+  const verdicts: QuorumVerdict[] = [];
+  const openConcerns: OpenConcern[] = [];
+  (Array.isArray(list) ? list : []).forEach((raw, index) => {
+    if (raw === null || typeof raw !== "object") return;
+    const r = raw as Record<string, unknown>;
+    if (typeof r.reviewer !== "string" || typeof r.verdict !== "string" || !VERDICTS.has(r.verdict)) return;
+    const v: QuorumVerdict = {
+      index,
+      principal: normalisePrincipal(r.reviewer),
+      reviewer: r.reviewer,
+      verdict: r.verdict as QuorumVerdict["verdict"],
+      digest: typeof r.digest === "string" ? r.digest : null,
+    };
+    if (v.principal === decider) {
+      v.reason = { code: "review-decider", message: `${v.reviewer} decided this record, and the quorum counts verdicts besides the decider's` };
+    } else if (options.agents.has(v.principal)) {
+      v.reason = { code: "review-agent", message: `${v.reviewer} holds the agent role in the trust policy at base, and an agent's verdict does not count` };
+    } else if (v.digest !== null && v.digest !== entry.digest) {
+      v.reason = { code: "review-older-digest", message: `${v.reviewer} judged the text at digest ${v.digest.slice(0, 12)}, and the record's text is now at ${entry.digest.slice(0, 12)}` };
+    } else if (options.attestation) {
+      v.reason = { code: "review-unattested", message: `an attestation policy is active at base, and the verdict by ${v.reviewer} carries no seal` };
+    }
+    verdicts.push(v);
+    if (v.verdict === "dissent" && r.addressed_by == null && r.withdrawn_on == null) {
+      openConcerns.push({
+        index,
+        principal: v.principal,
+        reviewer: v.reviewer,
+        note: typeof r.note === "string" ? r.note : null,
+        ...(typeof r.proposes === "string" ? { proposes: r.proposes } : {}),
+      });
+    }
+  });
+  // The latest verdict per principal stands; earlier ones are duplicates.
+  const latest = new Map<string, QuorumVerdict>();
+  for (const v of verdicts) if (!v.reason) latest.set(v.principal, v);
+  for (const v of verdicts) {
+    if (v.reason || latest.get(v.principal) === v) continue;
+    const later = latest.get(v.principal)!;
+    v.reason = { code: "review-duplicate", message: `the later verdict by ${JSON.stringify(later.reviewer)} (entry ${later.index}) replaces this one, and a principal counts once` };
+  }
+  const counted = verdicts.filter((v) => !v.reason);
+  const agreed = counted.filter((v) => v.verdict === "agree").length;
+  const met = agreed >= options.need;
+  return {
+    need: options.need,
+    needFrom: options.needFrom,
+    agreed,
+    counted,
+    notCounted: verdicts.filter((v) => v.reason),
+    openConcerns,
+    met,
+    metWithObjections: met && openConcerns.length > 0,
+  };
+}
+
 // ── Reading ──────────────────────────────────────────────────────────────────
 
 export interface RecordReason {
@@ -314,6 +536,8 @@ export interface RecordEntry {
   assets: AssetPin[];
   /** Findings that leave the record valid, such as a pinned file that changed (#2549). */
   warnings: RecordWarning[];
+  /** {@link recordTextDigest} of the file's text, without the kind's reviews list when it has one (#2672). */
+  digest: string;
 }
 
 export interface ReadRecordsOptions {
@@ -414,9 +638,21 @@ export async function readRecords(loaded: LoadedRecordKind, options: ReadRecords
   const entries: RecordEntry[] = [];
   for (const name of names.filter((n) => match.test(n)).sort()) {
     const path = dirRel === "." ? name : `${dirRel}/${name}`;
-    const entry: RecordEntry = { id: null, path, state: null, valid: true, reasons: [], supersededBy: null, data: null, assets: [], warnings: [] };
+    const text = options.source.read(path);
+    const entry: RecordEntry = {
+      id: null,
+      path,
+      state: null,
+      valid: true,
+      reasons: [],
+      supersededBy: null,
+      data: null,
+      assets: [],
+      warnings: [],
+      digest: recordTextDigest(text, kind.reviews?.field ?? null),
+    };
     entries.push(entry);
-    const fm = parseFrontMatter(options.source.read(path));
+    const fm = parseFrontMatter(text);
     if (!fm.ok) {
       entry.reasons.push({ code: "record-unparseable", message: fm.message });
       continue;
@@ -439,6 +675,18 @@ export async function readRecords(loaded: LoadedRecordKind, options: ReadRecords
         const checked = checkPins(pinEntries(fm.value, kind.pins.field), options.assets);
         entry.assets = checked.assets;
         entry.warnings.push(...checked.warnings);
+      }
+    }
+    if (kind.reviews) {
+      const list = fm.value[kind.reviews.field];
+      const undigested = (Array.isArray(list) ? list : [])
+        .filter((r): r is Record<string, unknown> => r !== null && typeof r === "object" && !Array.isArray(r) && (r as Record<string, unknown>).digest === undefined)
+        .map((r) => (typeof r.reviewer === "string" ? r.reviewer : "an unnamed reviewer"));
+      if (undigested.length > 0) {
+        entry.warnings.push({
+          code: "review-undigested",
+          message: `the ${undigested.length === 1 ? "verdict" : "verdicts"} by ${undigested.join(", ")} name no digest: ${undigested.length === 1 ? "it counts" : "they count"}, and an amendment will not stop ${undigested.length === 1 ? "it" : "them"} counting`,
+        });
       }
     }
   }

@@ -50,12 +50,13 @@ export const recordKind = {
   approval: { proposed: 0, withdrawn: 0, decided: 1, ratified: 2, superseded: 2 },
   pins: { field: "evidence" },
   constrains: { field: "constrains" },
+  reviews: { field: "reviews", decider: "decided_by" },
 };
 ```
 
 `location.dir` and `schema.path` are relative to the kind's own directory. Subdirectories are skipped, and a name has to match `location.match` to be read. The `$id` inside the schema must equal `schema.id`.
 
-`approval`, `pins` and `constrains` are optional. `approval` ranks the states for [supersession](#supersession). `pins.field` names the list whose entries may pin a workspace file (see [Asset pins](#asset-pins)). `constrains.field` names the list of what a record governs, whose `member:<name>` and `path:<path>` entries become the record's links in [`chant workspace graph --kind`](/chant/cli/workspace-graph/#record-links). chant 0.82.0 and older refuse a kind file that has them.
+`approval`, `pins`, `constrains` and `reviews` are optional, and `approval` ranks the states for [supersession](#supersession). `pins.field` names the list whose entries may pin a workspace file (see [Asset pins](#asset-pins)). `constrains.field` names the list of what a record governs, whose `member:<name>` and `path:<path>` entries become the record's links in [`chant workspace graph --kind`](/chant/cli/workspace-graph/#record-links). For `reviews`, `field` is the list of review verdicts and `decider` is the field holding the decider, and with them each record gets a digest and a quorum (see [Reviews and quorum](#reviews-and-quorum)). chant 0.82.0 and older refuse a kind file that has `approval`, `pins` or `constrains`.
 
 Front matter is read as the part of YAML that JSON can also express. Line endings are normalised first. A file with a YAML alias or a duplicate key is unparseable, and so is one holding a value JSON cannot hold.
 
@@ -117,6 +118,53 @@ Signers and role grants are read from the base revision, never from the tree bei
 
 On a developer machine this detects problems. It doesn't enforce anything, because an agent running as you can sign with your unlocked key or skip the check. Enforcement is CI running `chant workspace verify` and `records --require attested` against the target branch.
 
+## Reviews and quorum
+
+A kind with `reviews`, which chant reads from 0.86.0 on, gives every record two more fields ([#2671](https://github.com/INTENTIUS/chant/issues/2671), [#2672](https://github.com/INTENTIUS/chant/issues/2672)). They are `digest`, a hash of the record's text, and `quorum`, which says which verdicts count. Each verdict is an entry in the reviews list with `reviewer`, `verdict` (`agree`, `dissent` or `abstain`) and `on`, and it should also carry `digest`, the record's digest when the reviewer read it:
+
+```yaml
+reviews:
+  - reviewer: "alice"
+    verdict: "agree"
+    on: "2026-09-24"
+    digest: "00c53dedf2e2c1923c0ea24cba7895c0904beebe7d5be059b1d5fe839009728f"
+```
+
+### Digest rule
+
+`digest` is the lowercase hex SHA-256 of the record file after two changes:
+
+1. Line endings become LF. A CRLF or a lone CR becomes one LF.
+2. The reviews block is removed from the front matter. The front matter is the lines between a first line `---` and the next line that is exactly `---`. The block starts at the line whose first characters are the key (`reviews`, bare or quoted), optional spaces or tabs, and `:`. It runs on through every following line that is empty or starts with a space, a tab, `#` or `-`, and it ends at the first line that doesn't, or at the closing `---`. Every other byte stays, including the `---` lines and the body.
+
+Text with no front matter or no reviews key is hashed after step 1 only. So adding, editing or removing a verdict leaves the digest unchanged, while any other edit to the file changes it. A verdict given before an amendment then names an older digest and stops counting. It follows that a tool which adds a verdict must change only the reviews block. If it reformats the rest of the front matter, every earlier verdict stops counting.
+
+`records --json` prints each record's `digest`, which is the value to copy into a new verdict. To check one by hand, for a file with LF line endings that ends in a newline, run this from the file's directory:
+
+```bash
+awk 'NR==1&&$0=="---"{fm=1;print;next} fm&&$0=="---"{fm=0;skip=0;print;next} fm&&/^reviews[ \t]*:/{skip=1;next} fm&&skip&&/^([ \t#-]|$)/{next} {skip=0;print}' ws-003-seal-scope.md | shasum -a 256
+```
+
+The digest in the example above is `ws-003`'s in the chant repo at the time of writing. A verdict with no `digest` still counts, which keeps records written before digests working. The record gets the warning `review-undigested`, which names the reviewers, since an amendment won't stop those verdicts counting.
+
+### The quorum
+
+`quorum.need` comes from the [`quorum`](/chant/reference/workspace-declaration/#top-level-fields) that the declaration in the tree read sets, and `needFrom` is then `declaration`. When no declaration sets it, `need` is 2 and `needFrom` is `default`. Each verdict is then checked in this order, and the first rule it meets puts it in `notCounted` with that code:
+
+| Code | The verdict |
+|---|---|
+| `review-decider` | is by the record's decider (the `decider` field of the kind's `reviews`, `decided_by` for decisions) |
+| `review-agent` | is by a principal the `agent` role lists in `.chant/trust.json` at base |
+| `review-older-digest` | names a `digest` that isn't the record's `digest` now |
+| `review-unattested` | was given while an attestation policy is active (a signers file exists at base), and it carries no seal. Verdicts carry no seal yet, so under an active policy no verdict counts |
+| `review-duplicate` | has a later verdict by the same principal that passed the rules above, and only that later one counts |
+
+Names are compared in NFKC form with surrounding spaces trimmed and letters lower-cased. So `alice` and `Alice ` are one reviewer, just as `Lex00` is the decider `lex00`. Every other verdict goes in `counted`. `agreed` counts the ones whose verdict is `agree`, and `met` is true when `agreed` is at least `need`.
+
+`openConcerns` lists every dissent that has neither `addressed_by` nor `withdrawn_on`, counted or not. `metWithObjections` is true when `met` is true and `openConcerns` isn't empty. A met count with an open concern is never consensus (RFC 7282), so a reader should show consensus only when `met` is true and `metWithObjections` is false.
+
+Without `--json`, a record with any verdict gets one more line, such as `quorum 2 of 2 agreed, met with objections; 1 not counted, 1 open concern`.
+
 ## Exit codes
 
 | Code | Meaning |
@@ -151,14 +199,34 @@ The output is part of the workspace [read contract](/chant/reference/workspace-r
       "data": { "id": "ws-003", "title": "Seal scope", "state": "decided" },
       "provenance": { "level": "unattested", "commit": null, "reason": "no signers file (.chant/allowed_signers) at base 5b30a8fb; attestation is off" },
       "assets": [],
-      "warnings": []
+      "warnings": [],
+      "digest": "<sha256 of the text without its reviews>",
+      "quorum": {
+        "need": 2,
+        "needFrom": "default",
+        "agreed": 1,
+        "counted": [{ "index": 1, "principal": "alice", "reviewer": "Alice ", "verdict": "agree", "digest": "<the same sha256>" }],
+        "notCounted": [
+          {
+            "index": 0,
+            "principal": "alice",
+            "reviewer": "alice",
+            "verdict": "agree",
+            "digest": "<the same sha256>",
+            "reason": { "code": "review-duplicate", "message": "the later verdict by \"Alice \" (entry 1) replaces this one, and a principal counts once" }
+          }
+        ],
+        "openConcerns": [],
+        "met": false,
+        "metWithObjections": false
+      }
     }
   ],
   "summary": { "total": 50, "valid": 50, "invalid": 0, "superseded": 0 }
 }
 ```
 
-`data` holds the whole front matter; the example shortens it. `at` is the full commit id when `--at` is given. `trust` and `provenance` were added within contract 1 by [#2547](https://github.com/INTENTIUS/chant/issues/2547), and `workspaceRoot`, `assets` and `warnings` by [#2549](https://github.com/INTENTIUS/chant/issues/2549).
+`data` holds the whole front matter; the example shortens it. `at` is the full commit id when `--at` is given. `trust` and `provenance` were added within contract 1 by [#2547](https://github.com/INTENTIUS/chant/issues/2547), and `workspaceRoot`, `assets` and `warnings` by [#2549](https://github.com/INTENTIUS/chant/issues/2549). `digest` and `quorum` were added by [#2672](https://github.com/INTENTIUS/chant/issues/2672) and [#2671](https://github.com/INTENTIUS/chant/issues/2671), and only a kind with `reviews` has `quorum`.
 
 A failed read prints `{ "$schema", "contract", "error": { "code", "message" } }` instead.
 
@@ -181,6 +249,7 @@ A failed read prints `{ "$schema", "contract", "error": { "code", "message" } }`
 | `asset-stale` | pins a file at the hash a record it supersedes pinned, and the file has not changed since |
 | `record-supersedes-pending` | names a record in `supersedes` whose state is stronger than its own, so the link has no effect yet |
 | `record-no-evidence` | has an empty evidence list (the kind's `pins` field), so it cites nothing and pins no file. This is information for a reviewer, and the record stays valid |
+| `review-undigested` | has a verdict with no `digest`. The verdict still counts, and an amendment won't stop it counting |
 
 ### Error codes
 

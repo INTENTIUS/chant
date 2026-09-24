@@ -11,7 +11,7 @@ import { join } from "node:path";
 import Ajv2020 from "ajv/dist/2020";
 import { afterAll, describe, expect, test } from "vitest";
 import { queryRecords, RECORDS_CONTRACT_VERSION, RECORDS_OUTPUT_SCHEMA_ID, type RecordsDocument } from "./records-cli";
-import { READ_ERROR_CODES, RECORD_REASON_CODES, RECORD_WARNING_CODES } from "./records";
+import { READ_ERROR_CODES, RECORD_REASON_CODES, RECORD_WARNING_CODES, recordTextDigest, REVIEW_REASON_CODES } from "./records";
 import schema from "./records.schema.json";
 import { PROVENANCE_LEVELS } from "./trust/attestor";
 
@@ -91,6 +91,59 @@ describe("records output schema", () => {
     const r = doc.records.find((x) => x.id === "ws-900");
     expect(r?.valid).toBe(true);
     expect(r?.warnings?.map((w) => w.code)).toEqual(["record-no-evidence"]);
+  });
+
+  test("lists exactly the codes a verdict is not counted for (#2671)", () => {
+    expect(schema.$defs.verdict.properties.reason.properties.code.enum).toEqual([...REVIEW_REASON_CODES]);
+  });
+
+  test("every record carries its digest and quorum, and the chant repo's decisions need the default two (#2671, #2672)", async () => {
+    const doc = await queryRecords({ kind: KIND, current: true, cwd: REPO });
+    if ("error" in doc) throw new Error(doc.error.message);
+    for (const r of doc.records) {
+      expect(r.digest).toMatch(/^[0-9a-f]{64}$/);
+      expect(r.quorum).toMatchObject({ need: 2, needFrom: "default", agreed: 0, met: false, metWithObjections: false });
+    }
+  });
+
+  test("a decision with verdicts validates, with each verdict counted or not and why (#2671, #2672)", async () => {
+    const root = copyDecisions();
+    const dir = join(root, "docs", "design", "decisions");
+    writeFileSync(
+      join(root, "chant.workspace.json"),
+      JSON.stringify({ name: "w", schema: 1, quorum: 1, members: [{ name: "docs", dir: "docs", kind: "other", because: "decisions only" }] }),
+    );
+    const base = readFileSync(join(dir, "ws-003-seal-scope.md"), "utf-8").replace(/^id: .*$/m, 'id: "ws-900"');
+    const digest = recordTextDigest(base);
+    const entry = (reviewer: string, verdict: string, extra = "") => `  - reviewer: "${reviewer}"\n    verdict: "${verdict}"\n    on: "2026-09-24"${extra}`;
+    const reviews = [
+      entry("alice", "agree", `\n    digest: "${digest}"`),
+      entry("Alice ", "agree", `\n    digest: "${digest}"`),
+      entry("lex00", "agree"),
+      entry("bob", "dissent", `\n    note: "a case is missing"\n    digest: "${"0".repeat(64)}"`),
+    ];
+    writeFileSync(join(dir, "ws-900-extra.md"), base.replace(/^reviews: \[\]$/m, `reviews:\n${reviews.join("\n")}`));
+    const doc = await queryRecords({ kind: KIND, current: true, cwd: root });
+    expectValid(doc);
+    if ("error" in doc) throw new Error(doc.error.message);
+    const r = doc.records.find((x) => x.id === "ws-900")!;
+    expect(r.valid).toBe(true);
+    expect(r.digest).toBe(digest);
+    expect(r.warnings.map((w) => w.code)).toEqual(["review-undigested"]);
+    const q = r.quorum!;
+    expect(q).toMatchObject({ need: 1, needFrom: "declaration", agreed: 1, met: true, metWithObjections: true });
+    expect(q.counted.map((v) => v.reviewer)).toEqual(["Alice "]);
+    expect(q.notCounted.map((v) => [v.reviewer, v.reason?.code])).toEqual([
+      ["alice", "review-duplicate"],
+      ["lex00", "review-decider"],
+      ["bob", "review-older-digest"],
+    ]);
+    expect(q.openConcerns.map((c) => c.reviewer)).toEqual(["bob"]);
+    // A counted verdict with a reason, or a not-counted one without, is refused.
+    const bad = structuredClone(doc);
+    const record = bad.records.find((x) => x.id === "ws-900")!;
+    record.quorum!.counted[0].reason = { code: "review-duplicate", message: "x" };
+    expect(validate(bad)).toBe(false);
   });
 
   test("lists exactly the warning codes the code can return", () => {

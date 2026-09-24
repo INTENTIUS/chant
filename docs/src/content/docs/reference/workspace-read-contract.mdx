@@ -109,6 +109,12 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `asset-stale` | warning, `records` | A file the record pins is unchanged at the hash a record it supersedes pinned: the decision changed and the artifact did not follow. The record stays valid. |
 | `record-supersedes-pending` | warning, `records` | A `supersedes` link from a record whose state is weaker than the record it names, so the link has no effect yet. The record stays valid. |
 | `record-no-evidence` | warning, `records` | The record's evidence list is empty: it cites nothing and pins no file, as a decision made in a product's own design flow may. Information for a reviewer. The record stays valid and `--current` lists it. |
+| `review-undigested` | warning, `records` | A verdict in the record's reviews names no `digest` of the text it judged. It still counts, and an amendment won't stop it counting. The record stays valid. |
+| `review-decider` | verdict, `records` | The verdict is the decider's own, and the quorum counts verdicts besides the decider's. |
+| `review-agent` | verdict, `records` | The reviewer holds the `agent` role in `.chant/trust.json` at base. |
+| `review-duplicate` | verdict, `records` | A later verdict by the same principal replaces this one. Names are compared after NFKC, trimming and lower-casing. |
+| `review-older-digest` | verdict, `records` | The verdict's `digest` is not the record's digest now, so the record changed after the verdict. |
+| `review-unattested` | verdict, `records` | An attestation policy is active at base, and the verdict carries no seal. No verdict carries one yet. |
 | `kind-unreadable` | error, `records` | The record kind file is missing or could not be imported. |
 | `kind-invalid` | error, `records` | The record kind file exports no `recordKind`, or its shape is wrong. |
 | `schema-unreadable` | error, `records` | The schema file the kind names is missing or isn't JSON. |
@@ -139,6 +145,10 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 `graph --intent` may also carry findings a plugin contributes through its [`commitJoins`](/chant/cli/workspace-graph/#commit-joins) ([#2656](https://github.com/INTENTIUS/chant/issues/2656)). Their codes are outside the list. Each is `plugin:<name>:<code>`, where `<name>` is the kind's name in the document's `kinds` (the kind file's `commitJoinsName` when it has one) and `<code>` is lower case words joined by dashes. The plugin owns its namespace, and chant only carries the finding. A reader that switches on codes can tell the two apart by the `plugin:` prefix.
 
 `check` also reports `WSP` ids, the [declaration check catalog](/chant/cli/workspace-check/#declaration-checks). That catalog is closed too, and it is versioned with the check contract.
+
+## Review verdicts and the quorum
+
+A record kind with a reviews list gives each record in `records --json` a `digest` and a `quorum` ([#2671](https://github.com/INTENTIUS/chant/issues/2671), [#2672](https://github.com/INTENTIUS/chant/issues/2672)). The digest is the SHA-256 of the record's text with its reviews block taken out, and a verdict names it in its own `digest`, so an amendment leaves earlier verdicts on an older digest. The quorum lists every verdict in `counted` or in `notCounted`, and each one in `notCounted` has a `review-` reason code. `need` comes from the declaration's `quorum`, or is 2. `met` says the counted agree verdicts reach `need`. When `met` is true and a dissent is still open, `metWithObjections` is true too, and a reader shows that as met with objections, not as consensus. The rule for the digest and the order the reasons are checked in are on the [`records` page](/chant/cli/workspace-records/#reviews-and-quorum). A reader never computes a digest itself: it reads `digest` from `records --json`.
 
 ## Record links and artifacts
 

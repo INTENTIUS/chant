@@ -74,9 +74,18 @@
           "items": { "$ref": "#/$defs/asset" }
         },
         "warnings": {
-          "description": "Added in contract 1 by #2549. Findings that leave the record valid: a pinned file that changed, went missing or did not follow a superseding decision, a supersedes link that has no effect yet, or (added by #2654) an evidence list that is empty. valid and --current do not look at them.",
+          "description": "Added in contract 1 by #2549. Findings that leave the record valid: a pinned file that changed, went missing or did not follow a superseding decision, a supersedes link that has no effect yet, (added by #2654) an evidence list that is empty, or (added by #2672) a verdict that names no digest. valid and --current do not look at them.",
           "type": "array",
           "items": { "$ref": "#/$defs/warning" }
+        },
+        "digest": {
+          "description": "Added in contract 1 by #2672. The lowercase hex SHA-256 of the record file's text, with LF line endings and without the kind's reviews block in the front matter. A review verdict names it in its digest field, and stops counting once the record's digest moves on. For a kind with no reviews list, the digest of the whole text.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "quorum": {
+          "description": "Added in contract 1 by #2671, on every record of a kind with a reviews list. Null when the front matter could not be parsed.",
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/quorum" }]
         }
       },
       "allOf": [
@@ -101,8 +110,66 @@
       "type": "object",
       "required": ["code", "message"],
       "properties": {
-        "code": { "enum": ["asset-drift", "asset-missing", "asset-stale", "record-supersedes-pending", "record-no-evidence"] },
+        "code": { "enum": ["asset-drift", "asset-missing", "asset-stale", "record-supersedes-pending", "record-no-evidence", "review-undigested"] },
         "message": { "type": "string" }
+      }
+    },
+    "quorum": {
+      "description": "Added in contract 1 by #2671. The record's review verdicts counted against the quorum the workspace declares. A met quorum with an open concern is met with objections, never consensus: a reader shows consensus only when met is true and metWithObjections is false.",
+      "type": "object",
+      "required": ["need", "needFrom", "agreed", "counted", "notCounted", "openConcerns", "met", "metWithObjections"],
+      "properties": {
+        "need": { "type": "integer", "minimum": 0, "description": "How many counted agree verdicts, besides the decider's, the record needs: the declaration's quorum, or 2." },
+        "needFrom": { "enum": ["declaration", "default"], "description": "declaration when the workspace declaration in the tree read sets quorum; default otherwise, including when there is no declaration or it can't be read." },
+        "agreed": { "type": "integer", "minimum": 0, "description": "Counted verdicts whose verdict is agree." },
+        "counted": {
+          "description": "The verdicts that count: at most one per principal, the latest, in the order of the reviews list.",
+          "type": "array",
+          "items": { "allOf": [{ "$ref": "#/$defs/verdict" }, { "type": "object", "properties": { "reason": false } }] }
+        },
+        "notCounted": {
+          "description": "The verdicts that don't count, each with a reason.",
+          "type": "array",
+          "items": { "allOf": [{ "$ref": "#/$defs/verdict" }, { "type": "object", "required": ["reason"] }] }
+        },
+        "openConcerns": {
+          "description": "Every dissent with neither addressed_by nor withdrawn_on, counted or not.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/concern" }
+        },
+        "met": { "type": "boolean", "description": "agreed is at least need." },
+        "metWithObjections": { "type": "boolean", "description": "met, and openConcerns is not empty." }
+      }
+    },
+    "verdict": {
+      "type": "object",
+      "required": ["index", "principal", "reviewer", "verdict", "digest"],
+      "properties": {
+        "index": { "type": "integer", "minimum": 0, "description": "The entry's position in the record's reviews list, from 0." },
+        "principal": { "type": "string", "description": "The reviewer after NFKC normalisation, trimming and lower-casing, so alice and \"Alice \" are one principal." },
+        "reviewer": { "type": "string", "description": "The reviewer as the record writes it." },
+        "verdict": { "enum": ["agree", "dissent", "abstain"] },
+        "digest": { "type": ["string", "null"], "description": "The digest the verdict names, or null when it names none (a warning review-undigested on the record)." },
+        "reason": {
+          "description": "Why the verdict does not count. Present exactly on the entries in notCounted.",
+          "type": "object",
+          "required": ["code", "message"],
+          "properties": {
+            "code": { "enum": ["review-decider", "review-agent", "review-duplicate", "review-older-digest", "review-unattested"] },
+            "message": { "type": "string" }
+          }
+        }
+      }
+    },
+    "concern": {
+      "type": "object",
+      "required": ["index", "principal", "reviewer", "note"],
+      "properties": {
+        "index": { "type": "integer", "minimum": 0 },
+        "principal": { "type": "string" },
+        "reviewer": { "type": "string" },
+        "note": { "type": ["string", "null"], "description": "The dissent's reason." },
+        "proposes": { "type": "string", "description": "The proposed decision the dissent opened, when it names one." }
       }
     },
     "trust": {
