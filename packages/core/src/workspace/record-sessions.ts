@@ -12,7 +12,7 @@
  * `citedBy`. This module only reads; nothing here writes a seal into a file.
  */
 
-import { recordTextDigest, type RecordEntry, type RecordKind } from "./records";
+import { recordTextDigest, type RecordEntry, type RecordFormat, type RecordKind } from "./records";
 
 /** A subject record's review entry that names a session in its `session` field. */
 export interface SessionCitation {
@@ -37,9 +37,11 @@ export interface SessionCitation {
  *
  * `awk 'NR==1&&/^---$/{f=1;print;next} f&&/^---$/{f=0} f&&/^closed_digest:/{next} {print}' S-0001.md | shasum -a 256`
  * gives the same value for a file with LF line endings that ends in one.
+ * For a session kind of format json (ws-053), the seal member is removed by
+ * the JSON rule of {@link recordTextDigest} instead.
  */
-export function sessionSeal(text: string, field: string): string {
-  return recordTextDigest(text, field);
+export function sessionSeal(text: string, field: string, format: RecordFormat = "markdown-front-matter"): string {
+  return recordTextDigest(text, field, format);
 }
 
 /**
@@ -80,7 +82,7 @@ export function joinSessions(kind: RecordKind, entries: RecordEntry[], texts: Ma
       const seal = e.data[decl.seal];
       const text = texts.get(e.path);
       if (typeof seal === "string" && text !== undefined) {
-        const actual = sessionSeal(text, decl.seal);
+        const actual = sessionSeal(text, decl.seal, kind.format);
         if (actual !== seal) {
           e.reasons.push({
             code: "session-seal-mismatch",

@@ -3,7 +3,8 @@
  *
  * A record kind is data. It says where its records live, which JSON Schema
  * they follow and which of their states are closed. This module reads every
- * record a kind locates, parses its front matter as the JSON subset of YAML,
+ * record a kind locates, parses its structured core (the front matter, as the
+ * JSON subset of YAML, or the whole file as one I-JSON object, ws-053),
  * validates it against the kind's schema and derives supersession from the
  * records' own `supersedes` links. It never writes a record; `records-write.ts`
  * does, through the rules here (#2670).
@@ -18,6 +19,7 @@
  */
 
 import { createHash } from "node:crypto";
+import { sha256Hex } from "../content-digest";
 import { readFileSync, statSync } from "node:fs";
 import { dirname, posix, relative, resolve, sep } from "node:path";
 import yaml from "js-yaml";
@@ -36,9 +38,9 @@ import type { WorkspaceTree } from "./tree";
  * and a new code is a contract change (#2536).
  */
 export const RECORD_REASON_CODES = [
-  /** No front matter, a YAML error, or a value outside the JSON subset of YAML. */
+  /** No front matter, a YAML error or a value outside the JSON subset of YAML, or for a JSON kind a file that is not one object or repeats a member name. */
   "record-unparseable",
-  /** The front matter does not match the kind's schema. */
+  /** The record's front matter, or its JSON object, does not match the kind's schema. */
   "record-schema-invalid",
   /** Another record earlier in path order has the same id. */
   "record-id-duplicate",
@@ -145,6 +147,10 @@ export class RecordReadError extends Error {
 
 const idPattern = /^[a-z][a-z0-9-]*$/;
 
+/** The formats a kind file may name. Closed. */
+export const RECORD_FORMATS = ["markdown-front-matter", "json"] as const;
+export type RecordFormat = (typeof RECORD_FORMATS)[number];
+
 /** The data a kind file exports as `recordKind`. */
 export const recordKindSchema = z
   .object({
@@ -158,25 +164,49 @@ export const recordKindSchema = z
         match: z.string().min(1),
       })
       .strict(),
-    /** Only Markdown with YAML front matter for now. */
-    format: z.literal("markdown-front-matter"),
+    /**
+     * How a file holds its record's structured core: `markdown-front-matter`,
+     * the YAML front matter of a Markdown file, or `json`, the whole file as
+     * one JSON object (ws-053).
+     */
+    format: z.enum(RECORD_FORMATS),
     schema: z
       .object({
         /** The schema's `$id`. A schema file with a different `$id` is refused. */
         id: z.string().min(1),
         /** The schema file, relative to the kind file's directory. */
         path: z.string().min(1),
+        /**
+         * Schema files the schema `$ref`s, each by its `$id` and path relative
+         * to the kind file's directory (ws-053). Each is checked for its `$id`
+         * and added to the validator before the schema compiles. Optional.
+         */
+        refs: z.array(z.object({ id: z.string().min(1), path: z.string().min(1) }).strict()).optional(),
       })
       .strict(),
-    /** The front-matter field holding the record's id. */
-    idField: z.string().min(1),
-    /** The front-matter field holding the record's state. */
-    stateField: z.string().min(1),
-    states: z.array(z.string().min(1)).min(1),
+    /** The field holding the record's id. A kind has this or `idFrom`, never both. */
+    idField: z.string().min(1).optional(),
+    /**
+     * `sha256`: the record's id is the lowercase hex SHA-256 of the file's
+     * bytes, and the file name's stem (up to its first `.`) is the hash the
+     * name claims (ws-053). In place of `idField`.
+     */
+    idFrom: z.literal("sha256").optional(),
+    /**
+     * The field holding the record's state. `stateField`, `states` and
+     * `closedStates` are given together or not at all; a kind without them
+     * has no lifecycle, and its records have state null (ws-053).
+     */
+    stateField: z.string().min(1).optional(),
+    states: z.array(z.string().min(1)).min(1).optional(),
     /** States whose records are final. A `supersedes` link takes effect only from a record in one of them. */
-    closedStates: z.array(z.string().min(1)),
-    /** The front-matter list of links to superseded records, and the key in each entry that holds the target id. */
-    supersedes: z.object({ field: z.string().min(1), key: z.string().min(1) }).strict(),
+    closedStates: z.array(z.string().min(1)).optional(),
+    /**
+     * The field of links to superseded records. With `key`, a list of objects
+     * whose `key` holds the target id; without it, one id or a list of ids
+     * (ws-053). Optional, and only on a kind with states.
+     */
+    supersedes: z.object({ field: z.string().min(1), key: z.string().min(1).optional() }).strict().optional(),
     /**
      * How strongly each state is approved (#2524 D4). With it, a supersedes
      * link takes effect when the new record's rank is above 0 and at least the
@@ -223,11 +253,31 @@ export const recordKindSchema = z
       .optional(),
   })
   .strict()
-  .refine((k) => k.closedStates.every((s) => k.states.includes(s)), {
+  .refine((k) => (k.idField === undefined) !== (k.idFrom === undefined), {
+    message: "a kind names its id with exactly one of idField and idFrom",
+    path: ["idField"],
+  })
+  .refine((k) => new Set([k.stateField === undefined, k.states === undefined, k.closedStates === undefined]).size === 1, {
+    message: "stateField, states and closedStates are given together or not at all",
+    path: ["states"],
+  })
+  .refine((k) => k.states !== undefined || k.supersedes === undefined, {
+    message: "a kind without states cannot have supersedes: a link takes effect only from a closed or ranked state",
+    path: ["supersedes"],
+  })
+  .refine((k) => k.states !== undefined || k.session === undefined, {
+    message: "a session kind must have states: a session is sealed when it reaches a closed state",
+    path: ["session"],
+  })
+  .refine((k) => k.states !== undefined || k.approval === undefined, {
+    message: "a kind without states cannot have approval ranks",
+    path: ["approval"],
+  })
+  .refine((k) => (k.closedStates ?? []).every((s) => (k.states ?? []).includes(s)), {
     message: "every closed state must be listed in states",
     path: ["closedStates"],
   })
-  .refine((k) => Object.keys(k.approval ?? {}).every((s) => k.states.includes(s)), {
+  .refine((k) => Object.keys(k.approval ?? {}).every((s) => (k.states ?? []).includes(s)), {
     message: "every state approval ranks must be listed in states",
     path: ["approval"],
   });
@@ -242,6 +292,8 @@ export interface LoadedRecordKind {
   /** Absolute path of the records directory in the working tree. */
   dir: string;
   schema: Record<string, unknown>;
+  /** The schema files `schema.refs` names, in order (ws-053). Empty without it. */
+  refs: Record<string, unknown>[];
 }
 
 /**
@@ -281,20 +333,26 @@ export async function loadRecordKind(path: string, cwd: string = process.cwd()):
   }
   const kind = parsed.data;
   const base = dirname(file);
-  const schemaFile = resolve(base, kind.schema.path);
+  const schema = readSchemaFile(kind, base, path, kind.schema);
+  const refs = (kind.schema.refs ?? []).map((ref) => readSchemaFile(kind, base, path, ref));
+  return { kind, file, dir: resolve(base, kind.location.dir), schema, refs };
+}
+
+/** A schema file a kind names, refused when it can't be read or its `$id` is not the one the kind names. */
+function readSchemaFile(kind: RecordKind, base: string, kindPath: string, named: { id: string; path: string }): Record<string, unknown> {
   let schema: Record<string, unknown>;
   try {
-    schema = JSON.parse(readFileSync(schemaFile, "utf-8")) as Record<string, unknown>;
+    schema = JSON.parse(readFileSync(resolve(base, named.path), "utf-8")) as Record<string, unknown>;
   } catch (err) {
-    throw new RecordReadError("schema-unreadable", `schema ${kind.schema.path} named by ${path} could not be read: ${message(err)}`);
+    throw new RecordReadError("schema-unreadable", `schema ${named.path} named by ${kindPath} could not be read: ${message(err)}`);
   }
-  if (schema.$id !== kind.schema.id) {
+  if (schema === null || typeof schema !== "object" || schema.$id !== named.id) {
     throw new RecordReadError(
       "schema-id-mismatch",
-      `kind ${kind.name} names schema ${kind.schema.id}, but ${kind.schema.path} has $id ${JSON.stringify(schema.$id)}`,
+      `kind ${kind.name} names schema ${named.id}, but ${named.path} has $id ${JSON.stringify(schema?.$id)}`,
     );
   }
-  return { kind, file, dir: resolve(base, kind.location.dir), schema };
+  return schema;
 }
 
 // ── Front matter ─────────────────────────────────────────────────────────────
@@ -324,6 +382,120 @@ export function parseFrontMatter(text: string): FrontMatter {
   return { ok: true, value: value as Record<string, unknown> };
 }
 
+// ── JSON records ─────────────────────────────────────────────────────────────
+
+/**
+ * A JSON record: the whole file is one object, read as I-JSON (RFC 7493)
+ * requires on the two points JSON.parse lets through (ws-053). A top-level
+ * value other than an object is refused, and so is a member name that repeats
+ * within one object, at any depth, which JSON.parse accepts by keeping the
+ * last value. Names compare after their escapes are decoded, so `"a"` and
+ * `"\u0061"` are the same name. A number too large for a double is refused as
+ * front matter's is.
+ */
+export function parseJsonRecord(text: string): FrontMatter {
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch (err) {
+    return { ok: false, message: `not valid JSON: ${message(err).split("\n")[0]}` };
+  }
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return { ok: false, message: "a JSON record must be one object at the top level" };
+  }
+  const scan = scanJson(text);
+  if (scan.duplicate) return { ok: false, message: `${scan.duplicate.at || "/"}: member name ${JSON.stringify(scan.duplicate.name)} repeats, which I-JSON refuses` };
+  const problem = nonJson(value, "", new Set());
+  if (problem) return { ok: false, message: problem };
+  return { ok: true, value: value as Record<string, unknown> };
+}
+
+/** A record's structured core, parsed as the kind's format says. */
+export function parseRecord(format: RecordFormat, text: string): FrontMatter {
+  return format === "json" ? parseJsonRecord(text) : parseFrontMatter(text);
+}
+
+/** Where one top-level member of a JSON object sits in its text. */
+interface JsonMember {
+  name: string;
+  /** Index of the opening quote of the member's name. */
+  start: number;
+  /** Index just past the last character of the member's value. */
+  end: number;
+}
+
+/**
+ * One pass over text JSON.parse accepted: the top-level object's members, with
+ * where each starts and ends, and the first member name that repeats within
+ * one object at any depth.
+ */
+function scanJson(text: string): { members: JsonMember[]; duplicate?: { name: string; at: string } } {
+  const members: JsonMember[] = [];
+  // One frame per open object or array: an object's names so far, or null for an array.
+  const stack: { names: Set<string> | null; path: string; key?: string; index: number }[] = [];
+  let pendingTop: { name: string; start: number } | undefined;
+  let valueStart = -1;
+  const closeValue = (end: number): void => {
+    // A value just ended at `end`; if it is a top-level member's value, record the member.
+    if (stack.length === 1 && pendingTop) {
+      members.push({ ...pendingTop, end });
+      pendingTop = undefined;
+    }
+  };
+  let i = 0;
+  while (i < text.length) {
+    const c = text[i];
+    if (c === '"') {
+      let j = i + 1;
+      while (text[j] !== '"') j += text[j] === "\\" ? 2 : 1;
+      const raw = text.slice(i, j + 1);
+      let k = j + 1;
+      while (k < text.length && /[ \t\n\r]/.test(text[k])) k++;
+      const top = stack[stack.length - 1];
+      if (text[k] === ":" && top?.names) {
+        const name = JSON.parse(raw) as string;
+        if (top.names.has(name)) return { members, duplicate: { name, at: top.path } };
+        top.names.add(name);
+        top.key = name;
+        if (stack.length === 1) pendingTop = { name, start: i };
+        i = k + 1;
+        continue;
+      }
+      closeValue(j + 1);
+      i = j + 1;
+      continue;
+    }
+    if (c === "{" || c === "[") {
+      const parent = stack[stack.length - 1];
+      const at = parent ? `${parent.path}/${parent.names ? parent.key : parent.index}` : "";
+      stack.push({ names: c === "{" ? new Set() : null, path: at, index: 0 });
+      i++;
+      continue;
+    }
+    if (c === "}" || c === "]") {
+      stack.pop();
+      closeValue(i + 1);
+      i++;
+      continue;
+    }
+    if (c === ",") {
+      const top = stack[stack.length - 1];
+      if (top && !top.names) top.index++;
+      i++;
+      continue;
+    }
+    if (/[ \t\n\r:]/.test(c)) {
+      i++;
+      continue;
+    }
+    // A number, true, false or null.
+    valueStart = i;
+    while (i < text.length && !/[ \t\n\r,\]}]/.test(text[i])) i++;
+    if (valueStart < i) closeValue(i);
+  }
+  return { members };
+}
+
 /** The first thing in `v` that JSON cannot say, or that only an alias can produce. */
 function nonJson(v: unknown, at: string, seen: Set<object>): string | undefined {
   if (v === null || typeof v === "string" || typeof v === "boolean") return undefined;
@@ -350,7 +522,8 @@ function nonJson(v: unknown, at: string, seen: Set<object>): string | undefined 
 
 /**
  * The digest a review verdict names: the lowercase hex SHA-256 of the record
- * file's text with its reviews block taken out of the front matter (#2672).
+ * file's text with its reviews block taken out of the front matter (#2672), or
+ * for a JSON record its reviews member taken out of the object (ws-053).
  * Adding, changing or removing a verdict leaves it as it was; any other edit
  * to the file changes it, so a verdict given before an amendment stops
  * counting.
@@ -374,9 +547,55 @@ function nonJson(v: unknown, at: string, seen: Set<object>): string | undefined 
  * reformatted front matter is a new digest, and every earlier verdict stops
  * counting.
  */
-export function recordTextDigest(text: string, field: string | null = "reviews"): string {
+export function recordTextDigest(text: string, field: string | null = "reviews", format: RecordFormat = "markdown-front-matter"): string {
   const lf = text.replace(/\r\n?/g, "\n");
-  return createHash("sha256").update(field === null ? lf : withoutBlock(lf, field), "utf8").digest("hex");
+  const kept = field === null ? lf : format === "json" ? withoutMember(lf, field) : withoutBlock(lf, field);
+  return createHash("sha256").update(kept, "utf8").digest("hex");
+}
+
+/**
+ * `text` with the top-level member `field` removed from a JSON record, by the
+ * rule a hand-editor follows for a JSON record (ws-053):
+ *
+ * 1. Line endings become LF, as for Markdown.
+ * 2. When the text is a JSON record (one object, no repeated member name) and
+ *    its top-level object has a member named `field`, that member is deleted:
+ *    the whitespace right before its name, the name, the colon, the value,
+ *    and one comma with the whitespace right before that comma. The comma is
+ *    the one after the value when another member follows, or else the one
+ *    before the member, when a member precedes it. Nothing else changes: other
+ *    members, their order, the indentation and the final newline stay byte
+ *    for byte.
+ * 3. The digest is the SHA-256 of the result's UTF-8 bytes.
+ *
+ * So in a pretty-printed file, deleting the `"reviews": [...]` lines and the
+ * comma that separated the member from its neighbour gives the text to hash.
+ * Text that is not a JSON record, or has no such member, is hashed after step 1
+ * alone. A writer that adds a verdict changes only that member's value.
+ */
+function withoutMember(text: string, field: string): string {
+  const parsed = parseJsonRecord(text);
+  if (!parsed.ok) return text;
+  const { members } = scanJson(text);
+  const at = members.findIndex((m) => m.name === field);
+  if (at < 0) return text;
+  const m = members[at];
+  let start = m.start;
+  while (start > 0 && /[ \t\n]/.test(text[start - 1])) start--;
+  let end = m.end;
+  if (at + 1 < members.length) {
+    // The comma after the value, and the whitespace before it.
+    let k = end;
+    while (/[ \t\n]/.test(text[k])) k++;
+    end = k + 1;
+  } else if (at > 0) {
+    // The comma before the member, and the whitespace between it and the previous value.
+    let k = start - 1;
+    while (k > 0 && text[k] !== ",") k--;
+    while (k > 0 && /[ \t\n]/.test(text[k - 1])) k--;
+    start = k;
+  }
+  return text.slice(0, start) + text.slice(end);
 }
 
 /** `text` with the top-level `field` block removed from its front matter, by the rule {@link recordTextDigest} states. */
@@ -552,9 +771,13 @@ export interface RecordEntry {
   reasons: RecordReason[];
   /** The id of the closed record whose `supersedes` link replaces this one, or null. */
   supersededBy: string | null;
-  /** The front matter as JSON, or null when it could not be parsed. */
+  /** The record's structured core as JSON (the front matter, or the whole JSON file), or null when it could not be parsed. */
   data: Record<string, unknown> | null;
-  /** Each workspace file the record pins, checked against the tree read (#2549). Empty when nothing was checked. */
+  /**
+   * Each workspace file the record pins, checked against the tree read
+   * (#2549). Empty when nothing was checked. A content-addressed record whose
+   * name claims a hash other than its bytes' lists itself, drifted (ws-053).
+   */
   assets: AssetPin[];
   /** Findings that leave the record valid, such as a pinned file that changed (#2549). */
   warnings: RecordWarning[];
@@ -587,6 +810,12 @@ export interface ReadRecordsOptions {
    * session is cited.
    */
   subjects?: { records: RecordEntry[]; reviews: string };
+  /**
+   * The workspace root, from `root` with / separators ("." for `root`
+   * itself): where a content-addressed record's own path is reported from
+   * when it lists itself in `assets` (ws-053). Defaults to ".".
+   */
+  workspaceRoot?: string;
 }
 
 /** Commit times, in seconds since the epoch, read from git. */
@@ -639,20 +868,48 @@ function renderSchemaErrors(errors: readonly SchemaError[]): string[] {
     .map((e) => `${e.instancePath || "/"} ${described.get(e) ?? e.message ?? "is invalid"}`);
 }
 
-async function compileSchema(schema: Record<string, unknown>): Promise<Validator> {
+async function compileSchema(schema: Record<string, unknown>, refs: readonly Record<string, unknown>[] = []): Promise<Validator> {
   const mod = (await import("ajv")) as unknown as { default: unknown };
   // ajv is CommonJS; its class is the default export, or that export's own default.
   const Ajv = ((mod.default as { default?: unknown }).default ?? mod.default) as new (opts: object) => {
+    addSchema(s: object): unknown;
     compile(s: object): ((d: unknown) => boolean) & { errors?: SchemaError[] | null };
   };
   let validate: ReturnType<InstanceType<typeof Ajv>["compile"]>;
   try {
-    validate = new Ajv({ allErrors: true, strict: false, verbose: true }).compile(schema);
+    const ajv = new Ajv({ allErrors: true, strict: false, verbose: true });
+    // The files the schema $refs, registered by their $id first (ws-053).
+    for (const ref of refs) ajv.addSchema(ref);
+    validate = ajv.compile(schema);
   } catch (err) {
     throw new RecordReadError("schema-invalid", `the kind's schema does not compile: ${message(err)}`);
   }
   return (data) => (validate(data) ? { ok: true } : { ok: false, errors: renderSchemaErrors(validate.errors ?? []) });
 }
+
+/**
+ * The ids a record's supersedes field names (ws-053). With the kind's `key`,
+ * the field is a list of objects and each one's `key` holds an id; without
+ * it, the field holds one id or a list of ids. Anything else names none.
+ */
+export function supersedesTargets(kind: Pick<RecordKind, "supersedes">, data: Record<string, unknown> | null): string[] {
+  if (!kind.supersedes || data === null) return [];
+  const { field, key } = kind.supersedes;
+  const value = data[field];
+  if (key === undefined && typeof value === "string") return [value];
+  if (!Array.isArray(value)) return [];
+  const ids = key === undefined ? value : value.map((l) => (l !== null && typeof l === "object" ? (l as Record<string, unknown>)[key] : undefined));
+  return ids.filter((x): x is string => typeof x === "string");
+}
+
+/** The stem of a file name: the name up to its first `.`, the hash a content-addressed record's name claims (ws-053). */
+function nameStem(path: string): string {
+  const name = path.slice(path.lastIndexOf("/") + 1);
+  const dot = name.indexOf(".");
+  return dot < 0 ? name : name.slice(0, dot);
+}
+
+const SHA256_HEX = /^[0-9a-f]{64}$/;
 
 /** Read every record `loaded` locates, through `options.source`. */
 export async function readRecords(loaded: LoadedRecordKind, options: ReadRecordsOptions): Promise<ReadRecordsResult> {
@@ -663,7 +920,8 @@ export async function readRecords(loaded: LoadedRecordKind, options: ReadRecords
     throw new RecordReadError("location-missing", `records directory ${dirRel} does not exist${options.source.label}`);
   }
   const match = new RegExp(kind.location.match);
-  const validate = await compileSchema(loaded.schema);
+  const validate = await compileSchema(loaded.schema, loaded.refs);
+  const workspaceRoot = options.workspaceRoot ?? ".";
 
   const entries: RecordEntry[] = [];
   const texts = new Map<string, string>();
@@ -680,19 +938,36 @@ export async function readRecords(loaded: LoadedRecordKind, options: ReadRecords
       data: null,
       assets: [],
       warnings: [],
-      digest: recordTextDigest(text, kind.reviews?.field ?? null),
+      digest: recordTextDigest(text, kind.reviews?.field ?? null, kind.format),
     };
     entries.push(entry);
     if (kind.session) texts.set(path, text);
-    const fm = parseFrontMatter(text);
+    const fm = parseRecord(kind.format, text);
     if (!fm.ok) {
       entry.reasons.push({ code: "record-unparseable", message: fm.message });
       continue;
     }
     entry.data = fm.value;
-    const id = fm.value[kind.idField];
-    const state = fm.value[kind.stateField];
-    if (typeof id === "string") entry.id = id;
+    if (kind.idFrom === "sha256") {
+      // The id is the hash of the bytes; the name's stem is the hash it claims.
+      // A name that claims another is the record pinning itself, drifted (ws-053).
+      entry.id = sha256Hex(options.source.bytes(path));
+      const stem = nameStem(path);
+      if (stem !== entry.id) {
+        const self = workspaceRoot === "." ? path : path.startsWith(`${workspaceRoot}/`) ? path.slice(workspaceRoot.length + 1) : path;
+        if (SHA256_HEX.test(stem)) entry.assets.push({ path: self, sha256: stem, actual: entry.id, state: "drifted" });
+        entry.warnings.push({
+          code: "asset-drift",
+          message: SHA256_HEX.test(stem)
+            ? `${self} is named for sha256 ${stem.slice(0, 12)}, and its bytes${options.source.label} hash to ${entry.id.slice(0, 12)}`
+            : `${self} is content-addressed, and its name claims no sha256: its bytes${options.source.label} hash to ${entry.id.slice(0, 12)}`,
+        });
+      }
+    } else {
+      const id = fm.value[kind.idField!];
+      if (typeof id === "string") entry.id = id;
+    }
+    const state = kind.stateField === undefined ? undefined : fm.value[kind.stateField];
     if (typeof state === "string") entry.state = state;
     const result = validate(fm.value);
     if (!result.ok) {
@@ -705,7 +980,7 @@ export async function readRecords(loaded: LoadedRecordKind, options: ReadRecords
       }
       if (options.assets) {
         const checked = checkPins(pinEntries(fm.value, kind.pins.field), options.assets);
-        entry.assets = checked.assets;
+        entry.assets.push(...checked.assets);
         entry.warnings.push(...checked.warnings);
       }
     }
@@ -737,17 +1012,12 @@ export async function readRecords(loaded: LoadedRecordKind, options: ReadRecords
   // approval rule: from a record ranked above 0 and at least as high as the
   // one it names (#2524 D4). Without them, only from a closed record (#2555).
   // A record is superseded at most once.
-  const closed = new Set(kind.closedStates);
+  const closed = new Set(kind.closedStates ?? []);
   const rank = (state: string | null): number => (state === null ? 0 : (kind.approval?.[state] ?? 0));
   const takesEffect = (from: RecordEntry, to: RecordEntry): boolean =>
     kind.approval ? rank(from.state) > 0 && rank(from.state) >= rank(to.state) : from.state !== null && closed.has(from.state);
   for (const e of entries) {
-    const links = e.data?.[kind.supersedes.field];
-    if (!Array.isArray(links)) continue;
-    for (const link of links) {
-      if (link === null || typeof link !== "object") continue;
-      const target = (link as Record<string, unknown>)[kind.supersedes.key];
-      if (typeof target !== "string") continue;
+    for (const target of supersedesTargets(kind, e.data)) {
       const old = byId.get(target);
       if (!old) {
         e.reasons.push({ code: "record-supersedes-unknown", message: `supersedes ${target}, which no record has` });

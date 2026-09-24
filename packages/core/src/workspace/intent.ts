@@ -44,7 +44,7 @@ import { loadKindRegistry } from "./kinds";
 import { resolveLinks, type LinkTableRow } from "./links";
 import { sourceMemberHandles } from "./member-handles";
 import { constraintCovers, isWorkspacePath, memberHolding } from "./record-assets";
-import { importKindModule, loadRecordKind, RecordReadError, type LoadedRecordKind } from "./records";
+import { importKindModule, loadRecordKind, RecordReadError, supersedesTargets, type LoadedRecordKind } from "./records";
 import { queryRecords, type RecordView } from "./records-cli";
 import type { PluginCode, ReasonCode } from "./reason-codes";
 import { joinPath, skippedDir, type WorkspaceTree } from "./tree";
@@ -724,10 +724,7 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
   const decisionId = (k: LoadedKind, id: string) => `record:${k.records!.loaded.kind.name}/${id}`;
   const decisionNode = (k: LoadedKind, v: RecordView): DecisionNode => {
     const kind = k.records!.loaded.kind;
-    const links = v.data?.[kind.supersedes.field];
-    const supersedes = Array.isArray(links)
-      ? links.map((l) => (l && typeof l === "object" ? (l as Record<string, unknown>)[kind.supersedes.key] : undefined)).filter((x): x is string => typeof x === "string")
-      : [];
+    const supersedes = supersedesTargets(kind, v.data);
     return add<DecisionNode>({
       id: decisionId(k, v.id!),
       kind: "decision",
@@ -736,7 +733,7 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
       path: v.path,
       title: stringOr(v.data?.title),
       state: v.state,
-      closed: v.state !== null && kind.closedStates.includes(v.state),
+      closed: v.state !== null && (kind.closedStates ?? []).includes(v.state),
       valid: v.valid,
       reasons: v.reasons,
       provenance: { level: v.provenance.level, commit: v.provenance.commit, reason: v.provenance.reason },

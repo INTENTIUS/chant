@@ -28,11 +28,15 @@ interface RecordsDoc {
   error?: { code: string; message: string };
 }
 
-/** A git repo holding a copy of the chant repo's decisions, kind and schema. */
+/**
+ * A git repo holding a copy of the chant repo's decisions, kind and schema,
+ * and the design notes a decision pins by hash (ws-053 pins its note).
+ */
 function decisionRepo(label: string): string {
   const root = makeScratch(label);
   mkdirSync(join(root, "docs", "design"), { recursive: true });
   cpSync(DECISIONS, join(root, "docs", "design", "decisions"), { recursive: true });
+  cpSync(join(REPO_ROOT, "docs", "design", "workspace"), join(root, "docs", "design", "workspace"), { recursive: true });
   git(root, ["init", "-q", "-b", "main"]);
   git(root, ["add", "-A"]);
   git(root, ["commit", "-q", "-m", "decisions"]);

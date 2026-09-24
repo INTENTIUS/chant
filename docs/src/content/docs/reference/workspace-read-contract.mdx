@@ -104,8 +104,8 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `gates-no-ledger` | gate ledger, `status` | The checkout has no `chant/lifecycle` branch, so there is no gate ledger to read. |
 | `gates-no-gate-ledger` | gate ledger, `status` | The branch has no gate ledger for the member, because no run of it has reached a gate. |
 | `gates-ledger-unreadable` | gate ledger, `status` | Reading the member's gate ledger failed, so no gate is listed. |
-| `record-unparseable` | record, `records` | No front matter, a YAML error, or a value outside the JSON subset of YAML. |
-| `record-schema-invalid` | record, `records` | The front matter doesn't match the kind's schema. |
+| `record-unparseable` | record, `records` | No front matter, a YAML error or a value outside the JSON subset of YAML, or for a JSON kind a file that is not one object or repeats a member name. |
+| `record-schema-invalid` | record, `records` | The record's front matter, or its JSON object, doesn't match the kind's schema. |
 | `record-id-duplicate` | record, `records` | An earlier record in path order has the same id. |
 | `record-supersedes-unknown` | record, `records` | A `supersedes` link names an id no record has. |
 | `record-supersedes-conflict` | record, `records` | A second closed record supersedes one another record already superseded. |
@@ -166,6 +166,10 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 `graph --intent` may also carry findings a plugin contributes through its [`commitJoins`](/chant/cli/workspace-graph/#commit-joins) ([#2656](https://github.com/INTENTIUS/chant/issues/2656)). Their codes are outside the list. Each is `plugin:<name>:<code>`, where `<name>` is the kind's name in the document's `kinds` (the kind file's `commitJoinsName` when it has one) and `<code>` is lower case words joined by dashes. The plugin owns its namespace, and chant only carries the finding. A reader that switches on codes can tell the two apart by the `plugin:` prefix.
 
 `check` also reports `WSP` ids, the [declaration check catalog](/chant/cli/workspace-check/#declaration-checks). That catalog is closed too, and it is versioned with the check contract.
+
+## Record formats
+
+A record kind says how its files hold their records, and `records --json` names it in `kind.format` ([#2664](https://github.com/INTENTIUS/chant/issues/2664), [ws-053](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-053-record-formats.md)). For `markdown-front-matter`, a record's `data` is its front matter. For `json`, the whole file is one object, and `data` is that object. The rest of the entry has the same shape either way, so a reader that knows decisions needs nothing new to read a JSON kind. Two other kind options change what a reader sees in a record. A kind without states gives every record `state: null`. A content-addressed kind (`idFrom: "sha256"`) gives each record the SHA-256 of its file's bytes as its `id`, a 64-character hex string equal to the `sha256` of any pin of that file. When the file's name claims a different hash, the record lists itself in `assets` as `drifted` and carries `asset-drift`. None of this adds a code, so contract 1 holds. The kind file options are on the [`records` page](/chant/cli/workspace-records/#record-kinds).
 
 ## Review verdicts and the quorum
 

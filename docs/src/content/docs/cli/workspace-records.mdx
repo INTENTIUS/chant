@@ -21,7 +21,7 @@ chant workspace records review <id> [--kind <kind file>] --verdict agree|dissent
 
 ## Description
 
-`chant workspace records` reads every file that a record kind locates and prints what it found. Each file's front matter is parsed and then checked against the kind's JSON Schema. The command also works out which entries a later one supersedes. The read never writes a file, and it needs no `chant.workspace.json`. The kind file is named on the command line or by the declaration, so nothing is inferred. Its `new`, `amend` and `review` verbs are the only ones that write, as [Writing records](#writing-records) describes.
+`chant workspace records` reads every file that a record kind locates and prints what it found. It parses each file's structured core and checks it against the kind's JSON Schema. For a Markdown kind the core is the front matter, and for a JSON kind it is the whole file. The command also works out which entries a later one supersedes. The read never writes a file, and it needs no `chant.workspace.json`. The kind file is named on the command line or by the declaration, so nothing is inferred. Its `new`, `amend` and `review` verbs are the only ones that write, as [Writing records](#writing-records) describes.
 
 The command loads only when it runs. A project without workspace files never loads any of its code.
 
@@ -64,6 +64,36 @@ export const recordKind = {
 `approval`, `pins`, `constrains`, `reviews` and `session` are optional, and `approval` ranks the states for [supersession](#supersession). `pins.field` names the list whose entries may pin a workspace file (see [Asset pins](#asset-pins)). `constrains.field` names the list of what a record governs, whose `member:<name>` and `path:<path>` entries become the record's links in [`chant workspace graph --kind`](/chant/cli/workspace-graph/#record-links). For `reviews`, `field` is the list of review verdicts and `decider` is the field holding the decider, and with them each record gets a digest and a quorum (see [Reviews and quorum](#reviews-and-quorum)). chant 0.82.0 and older refuse a kind file that has `approval`, `pins` or `constrains`. `session` makes the kind a [review-session kind](#review-sessions), and chant 0.81.0 and older refuse it too.
 
 Front matter is read as the part of YAML that JSON can also express. Line endings are normalised first. A file with a YAML alias or a duplicate key is unparseable, and so is one holding a value JSON cannot hold.
+
+A kind file can also use the four options described below, which chant reads from 0.86.0 on and which [ws-053](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-053-record-formats.md) decided for [#2664](https://github.com/INTENTIUS/chant/issues/2664) so that a plugin such as chud can declare its JSON records in kind files without writing any reader code. The options add no reason, warning or error code, and a Markdown kind reads exactly as it did before.
+
+### JSON records
+
+`format: "json"` makes the whole file the record. The file must hold one JSON object, parsed as I-JSON (RFC 7493) requires on two points that `JSON.parse` alone lets through. A top-level value that is not an object is refused. So is a member name that repeats within one object at any depth, compared after escapes are decoded, so `"a"` and `"\u0061"` are the same name. A file that is not JSON, or breaks either rule, is `record-unparseable`. Everything that follows parsing then works on the parsed object the way it works on front matter.
+
+### Kinds without states or supersession
+
+`stateField`, `states` and `closedStates` are given together or not at all. A kind without them has no lifecycle, as chud's evidence and driver closures have none, and each of its records has `state: null`. `supersedes` is optional as well. With `key`, the field is a list of objects, and each one's `key` holds the id it replaces, as in the decision kind. Without `key`, the field holds one id or a list of ids, as a chud contract's `supersedes: "C-001"` does. Each id is a link under the same [supersession](#supersession) rule. A kind that has `supersedes` or `approval` but no states is `kind-invalid`, because a link takes effect only from a closed or ranked state.
+
+### Schema references
+
+`schema.refs` lists the schema files the kind's schema `$ref`s, each as `{ id, path }` with the path relative to the kind file:
+
+```js
+schema: {
+  id: "https://schemas.intentius.dev/chud-runtime/v0/unit.schema.json",
+  path: "schemas/unit.schema.json",
+  refs: [{ id: "https://schemas.intentius.dev/chud-runtime/v0/defs.schema.json", path: "schemas/defs.schema.json" }],
+},
+```
+
+Each file is checked like the main schema: a file that can't be read is `schema-unreadable` and one whose `$id` differs is `schema-id-mismatch`, and the message names the file. Each is then registered by its `$id` before the kind's schema compiles, so a `$ref` of `defs.schema.json#/definitions/unitId` resolves against it. Without `refs`, a `$ref` that resolves nowhere is still `schema-invalid`.
+
+### Content-addressed ids
+
+`idFrom: "sha256"` takes the place of `idField`, and a kind has exactly one of the two. The id is the hash `sha256sum` prints for the file, the same string a pin of it holds. So a unit that pins `{ "path": "design/evidence/<h>.json", "sha256": "<h>" }` names the evidence record's id. The file name's stem, up to its first `.`, is the hash the name claims. A record whose stem differs from its id stays valid. It lists itself in `assets` as `drifted`, where `sha256` is the stem and `actual` is the id, and it carries the warning `asset-drift`. A pin of the old hash in another record drifts too. A stem that is not a 64-character hex hash claims nothing, and the record gets `asset-drift` with no `assets` entry. A reader that has to refuse a misnamed file, as chud's does, reads `warnings`.
+
+Under `--at` the bytes come from the commit, so the id is the hash of the file as committed.
 
 ## Declared kinds
 
@@ -112,7 +142,7 @@ session: {
 
 `verdicts` is the list of verdicts the session produced, each `{record, principal, verdict}` with an optional `digest`. `seal` is the field that seals a closed session. `subjects.kind` is the kind file of the records the verdicts name, relative to the session kind's directory. The entries of that kind's `reviews` list (the field its `reviews` declaration names, or `reviews` without one) may name a session in `session`. The same verdict is written twice: once in the session, and once as a review entry on the decision it judged.
 
-A session file's front matter holds the agenda (each item `{record: <id>}` or `{text: <free text>}`), the attendance (each `{principal, class}`, where `class` is `person` or `agent`, with optional `roles`), `opened`, `closed` (null while open), `verdicts`, `state` (`open` or `closed`) and, once closed, the seal. chud's session files, such as `design/sessions/S-0001.json`, are the shape it started from. Sessions are Markdown front matter for now, because that is the only format records reads ([#2664](https://github.com/INTENTIUS/chant/issues/2664)).
+A session file's front matter holds the agenda (each item `{record: <id>}` or `{text: <free text>}`), the attendance (each `{principal, class}`, where `class` is `person` or `agent`, with optional `roles`), `opened`, `closed` (null while open), `verdicts`, `state` (`open` or `closed`) and, once closed, the seal. chud's session files, such as `design/sessions/S-0001.json`, are the shape it started from. A session kind may also use `format: "json"` ([#2664](https://github.com/INTENTIUS/chant/issues/2664)), as chud's files do. A session kind must declare states, because a session is sealed when it closes, and a `session` block on a kind without states is `kind-invalid`.
 
 ```yaml
 ---
@@ -135,7 +165,7 @@ closed_digest: "0b33bd62..."
 ---
 ```
 
-The seal is the lowercase hex SHA-256 of the file's text with LF line endings and without the front-matter line that holds the seal field. Everything else, the `---` lines and the body included, is kept. It is the rule of a record's [`digest`](#reviews-and-quorum) applied to the seal field in place of the reviews list, and since the seal is one line, only that line is removed. This shell recipe computes it:
+The seal is the lowercase hex SHA-256 of the file's text with LF line endings and without the front-matter line that holds the seal field. Everything else, the `---` lines and the body included, is kept. It is the rule of a record's [`digest`](#reviews-and-quorum) applied to the seal field in place of the reviews list, and since the seal is one line, only that line is removed. For a JSON session kind the seal member is removed by the JSON rule of the digest instead. This shell recipe computes it:
 
 ```bash
 awk 'NR==1&&/^---$/{f=1;print;next} f&&/^---$/{f=0} f&&/^closed_digest:/{next} {print}' S-0001.md | shasum -a 256
@@ -248,6 +278,8 @@ reviews:
 1. Line endings become LF. A CRLF or a lone CR becomes one LF.
 2. The reviews block is removed from the front matter. The front matter is the lines between a first line `---` and the next line that is exactly `---`. The block starts at the line whose first characters are the key (`reviews`, bare or quoted), optional spaces or tabs, and `:`. It runs on through every following line that is empty or starts with a space, a tab, `#` or `-`, and it ends at the first line that doesn't, or at the closing `---`. Every other byte stays, including the `---` lines and the body.
 
+For a kind with `format: "json"`, step 2 removes the top-level reviews member instead. The removed text runs from the whitespace right before the member's name to the end of its value. One comma goes with it, along with the whitespace right before that comma. The comma is the one after the value when another member follows, and otherwise the one before the member. In a file written with one member per line, that is deleting the member's lines and the comma that separated it from its neighbour. Everything else stays byte for byte, the final newline included. A file that is not a JSON record, or has no top-level reviews member, is hashed after step 1 only.
+
 Text with no front matter or no reviews key is hashed after step 1 only. So adding, editing or removing a verdict leaves the digest unchanged, while any other edit to the file changes it. A verdict given before an amendment then names an older digest and stops counting. It follows that a tool which adds a verdict must change only the reviews block. If it reformats the rest of the front matter, every earlier verdict stops counting.
 
 `records --json` prints each record's `digest`, which is the value to copy into a new verdict. To check one by hand, for a file with LF line endings that ends in a newline, run this from the file's directory:
@@ -294,7 +326,7 @@ The output is part of the workspace [read contract](/chant/reference/workspace-r
 {
   "$schema": "https://intentius.io/chant/schemas/workspace/records/v1/records.schema.json",
   "contract": 1,
-  "kind": { "name": "decision", "schema": "urn:intentius:chant:decision:1", "file": "docs/design/decisions/decision.kind.mjs" },
+  "kind": { "name": "decision", "schema": "urn:intentius:chant:decision:1", "file": "docs/design/decisions/decision.kind.mjs", "format": "markdown-front-matter" },
   "at": null,
   "workspaceRoot": ".",
   "current": true,
@@ -337,7 +369,7 @@ The output is part of the workspace [read contract](/chant/reference/workspace-r
 }
 ```
 
-`data` holds the whole front matter; the example shortens it. `at` is the full commit id when `--at` is given. `trust` and `provenance` were added within contract 1 by [#2547](https://github.com/INTENTIUS/chant/issues/2547), and `workspaceRoot`, `assets` and `warnings` by [#2549](https://github.com/INTENTIUS/chant/issues/2549). `digest` and `quorum` were added by [#2672](https://github.com/INTENTIUS/chant/issues/2672) and [#2671](https://github.com/INTENTIUS/chant/issues/2671), and only a kind with `reviews` has `quorum`. `citedBy`, on a session kind's records only, was added by [#2673](https://github.com/INTENTIUS/chant/issues/2673).
+`data` holds the whole front matter, or the whole object for a JSON kind; the example shortens it. `at` is the full commit id when `--at` is given. `trust` and `provenance` were added within contract 1 by [#2547](https://github.com/INTENTIUS/chant/issues/2547), and `workspaceRoot`, `assets` and `warnings` by [#2549](https://github.com/INTENTIUS/chant/issues/2549). `digest` and `quorum` were added by [#2672](https://github.com/INTENTIUS/chant/issues/2672) and [#2671](https://github.com/INTENTIUS/chant/issues/2671), and only a kind with `reviews` has `quorum`. `citedBy`, on a session kind's records only, was added by [#2673](https://github.com/INTENTIUS/chant/issues/2673). `kind.format` was added by [#2664](https://github.com/INTENTIUS/chant/issues/2664).
 
 A failed read prints `{ "$schema", "contract", "error": { "code", "message" } }` instead. Without `--kind`, the output is the set of [Declared kinds](#declared-kinds), added within contract 1 by [#2680](https://github.com/INTENTIUS/chant/issues/2680).
 
@@ -345,7 +377,7 @@ A failed read prints `{ "$schema", "contract", "error": { "code", "message" } }`
 
 | Code | The record |
 |---|---|
-| `record-unparseable` | has no front matter, invalid YAML, or a value outside the JSON subset |
+| `record-unparseable` | has no front matter, invalid YAML, or a value outside the JSON subset; for a JSON kind, is not one JSON object or repeats a member name |
 | `record-schema-invalid` | doesn't match the kind's schema |
 | `record-id-duplicate` | repeats an id an earlier file in path order already has |
 | `record-supersedes-unknown` | names an id in `supersedes` that no record has |
@@ -390,7 +422,7 @@ A UI such as hud never writes a record file itself ([ws-052](https://github.com/
 
 Without a kind file, each command writes through the one [record kind the declaration names](#declared-kinds) ([#2680](https://github.com/INTENTIUS/chant/issues/2680)). When the declaration names several, the command is refused with `write-usage-invalid` and a message that lists them, so name the kind to write. With no declared kind it fails as before.
 
-`-` reads the JSON from standard input. Each command reads the records first, builds the one file it would write, and reads the records again with that file in place. The write happens only when the written record comes back valid and no other record gains a reason code, so a write is refused for anything a later read would report. Warnings such as `record-no-evidence` never refuse a write, and the result lists them. Each command writes one file or none, and it never runs git: the caller commits, so the pull request stays the unit of review. `--dry-run` prints the result with `text`, the whole file it would write, and writes nothing.
+`-` reads the JSON from standard input. Each command reads the records first, builds the one file it would write, and reads the records again with that file in place. The write happens only when the written record comes back valid and no other record gains a reason code, so a write is refused for anything a later read would report. Warnings such as `record-no-evidence` never refuse a write, and the result lists them. Each command writes one file or none, and it never runs git: the caller commits, so the pull request stays the unit of review. `--dry-run` prints the result with `text`, the whole file it would write, and writes nothing. The commands write Markdown front matter with an `idField` only. A kind with `format: "json"` or `idFrom` is refused with `write-usage-invalid`, whether it is named with `--kind` or is the declared kind, and its records are written by the tool that owns the kind.
 
 `new` allocates the id when the fields hold none. The new id is the prefix every record in the directory shares, a dash, and one more than the highest number with that prefix, padded to at least three digits: `ws-054` after `ws-053`. A file that can't be read still holds its id through its name, so an id is never handed out twice. When the records use more than one prefix, or there are none yet, `--prefix <prefix>` names it. A caller may give the id in the fields instead, and an id already in use is refused with `record-id-taken`. The file is named `<id>-<slug>.md`, with the slug made from `title` as the decision README describes, and it must match the kind's `location.match`. The front matter is laid out in the schema's field order, with every string double-quoted, and the body is the title as a heading.
 

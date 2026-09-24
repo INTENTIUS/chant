@@ -58,8 +58,8 @@ export const REASONS = {
   "gates-no-gate-ledger": "The branch has no gate ledger for the member: no run of it has reached a gate.",
   "gates-ledger-unreadable": "Reading the member's gate ledger failed, so no gate is listed.",
   // A record that isn't valid (records).
-  "record-unparseable": "No front matter, a YAML error, or a value outside the JSON subset of YAML.",
-  "record-schema-invalid": "The front matter does not match the kind's schema.",
+  "record-unparseable": "No front matter, a YAML error or a value outside the JSON subset of YAML, or for a JSON kind a file that is not one object or repeats a member name.",
+  "record-schema-invalid": "The record's front matter, or its JSON object, does not match the kind's schema.",
   "record-id-duplicate": "Another record earlier in path order has the same id.",
   "record-supersedes-unknown": "A supersedes link names an id no record has.",
   "record-supersedes-conflict": "A second closed record supersedes a record another one already superseded.",
