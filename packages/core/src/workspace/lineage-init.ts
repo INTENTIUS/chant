@@ -22,6 +22,7 @@ import {
   LOCK_FILE,
   LockError,
   contentDigest,
+  declaredFilesAt,
   emptyLock,
   fileEntries,
   readLock,
@@ -256,7 +257,7 @@ export async function initFromCommand(options: InitFromOptions): Promise<InitFro
     address: { digest: contentDigest(written), commit: fetched.commit, tree: fetched.tree },
     parameters: {},
     migrations: [],
-    files: fileEntries(written),
+    files: fileEntries(written, declaredFilesAt(targetDir)),
     manualSteps: [],
   };
   const lock = emptyLock();
@@ -337,7 +338,7 @@ export function writeTemplateLock(input: TemplateLockInput): string | null {
     },
     parameters: {},
     migrations: [],
-    files: fileEntries(files),
+    files: fileEntries(files, declaredFilesAt(input.targetDir)),
     manualSteps: [],
   };
   writeLock(input.targetDir, lock);

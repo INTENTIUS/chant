@@ -152,6 +152,13 @@
             ]
           }
         },
+        "generated": {
+          "type": "array",
+          "description": "Files in the member's directory that a command writes (#2524 D14, #2541). chant workspace check fails when one differs from what its generator writes, unless the entry is marked handWritten with a reason. The lineage lock classes the same files as generated. skills/*/SKILL.md, which chant update writes, is listed implicitly for a chant member.",
+          "items": {
+            "$ref": "#/$defs/generatedFile"
+          }
+        },
         "upstream": {
           "type": "string",
           "minLength": 1,
@@ -219,6 +226,58 @@
               }
             }
           ]
+        }
+      },
+      "patternProperties": {
+        "^x-": true
+      },
+      "additionalProperties": false
+    },
+    "path": {
+      "type": "string",
+      "description": "A file or directory path with / separators: no leading /, no . or .. segments and no trailing /.",
+      "pattern": "^(?!\\.\\.?(/|$))[^/\\\\]+(/(?!\\.\\.?(/|$))[^/\\\\]+)*$"
+    },
+    "generatedFile": {
+      "type": "object",
+      "description": "One generated file of a member (#2524 D14, #2541).",
+      "required": [
+        "path",
+        "generator"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/path",
+          "description": "The file, relative to the member's directory."
+        },
+        "generator": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The command line that writes the file, run in the member's directory with the member's own node_modules/.bin first on PATH, such as chant build ci --lexicon github -o ci.yml. When it passes -o or --output with this file's path, chant workspace check --generated points that flag at a temporary file. Otherwise the generator writes in place and check restores the tree afterwards."
+        },
+        "sources": {
+          "type": "array",
+          "description": "The files or directories the generator reads, relative to the workspace root, since a generator often reads other members.",
+          "items": {
+            "$ref": "#/$defs/path"
+          }
+        },
+        "handWritten": {
+          "type": "object",
+          "description": "The file is kept by hand instead of regenerated. chant workspace check reports it with the reason and never runs its generator, and the lock classes it owned.",
+          "required": [
+            "because"
+          ],
+          "properties": {
+            "because": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "patternProperties": {
+            "^x-": true
+          },
+          "additionalProperties": false
         }
       },
       "patternProperties": {

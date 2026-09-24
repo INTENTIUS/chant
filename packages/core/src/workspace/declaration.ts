@@ -87,6 +87,20 @@ export interface MemberRole {
   path: string | null;
 }
 
+/** A file a member lists as written by a command (#2524 D14, #2541). */
+export interface GeneratedFile {
+  /** Relative to the member's directory. */
+  path: string;
+  /** The command line that writes the file, run in the member's directory. */
+  generator: string;
+  /** What the generator reads, relative to the workspace root. */
+  sources: string[];
+  /** Set when the file is kept by hand instead of regenerated. */
+  handWritten: { because: string } | null;
+  /** The entry's JSON Pointer in the file, for messages. */
+  pointer: string;
+}
+
 export interface Member {
   type: "member";
   name: string;
@@ -94,6 +108,8 @@ export interface Member {
   dir: string;
   kind: string;
   roles: MemberRole[];
+  /** Declared generated files, in file order. The implicit ones are not listed here (see `generated-files.ts`). */
+  generated: GeneratedFile[];
   upstream: string | null;
   because: string | null;
   /** The entry's JSON Pointer in the file, for messages. */
@@ -189,6 +205,7 @@ function explain(e: AjvError, value: unknown): string {
     if (def === "name") return `${shown} is not a valid name: use lowercase letters, digits and hyphens, starting with a letter or digit, at most 40 characters`;
     if (def === "kindName") return `${shown} is not a valid kind or role name`;
     if (def === "dir") return `${shown} is not a directory inside the workspace: use a relative path with / separators, and no . or .. segments`;
+    if (def === "path") return `${shown} is not a path inside the member or workspace: use a relative path with / separators, and no . or .. segments`;
     if (def === "glob") return `${shown} is not a glob inside the workspace: use a relative pattern with / separators, and no . or .. segments`;
     if (def === "version") return `${shown} is not a version such as 1.2.3`;
     return `${shown} is not allowed here`;
@@ -198,6 +215,7 @@ function explain(e: AjvError, value: unknown): string {
   }
   if (e.keyword === "required") {
     const missing = String(e.params.missingProperty);
+    if (missing === "because" && e.instancePath.endsWith("/handWritten")) return `a hand-written generated file needs "because", saying why it is kept by hand`;
     if (missing === "because") return `a member of kind other needs "because", saying why it is there`;
     return `missing required field ${JSON.stringify(missing)}`;
   }
@@ -274,12 +292,20 @@ export function parseDeclaration(text: string, file: string, reader: string = re
     const roles = ((e.roles as (string | { name: string; path?: string })[] | undefined) ?? []).map((r) =>
       typeof r === "string" ? { name: r, path: null } : { name: r.name, path: r.path ?? null },
     );
+    const generated = ((e.generated as Record<string, unknown>[] | undefined) ?? []).map((g, j): GeneratedFile => ({
+      path: g.path as string,
+      generator: g.generator as string,
+      sources: [...((g.sources as string[] | undefined) ?? [])],
+      handWritten: g.handWritten ? { because: (g.handWritten as { because: string }).because } : null,
+      pointer: `${pointer}/generated/${j}`,
+    }));
     return {
       type: "member",
       name: e.name as string,
       dir: e.dir as string,
       kind: e.kind as string,
       roles,
+      generated,
       upstream: (e.upstream as string | undefined) ?? null,
       because: (e.because as string | undefined) ?? null,
       pointer,
@@ -323,6 +349,28 @@ export function parseDeclaration(text: string, file: string, reader: string = re
         `member ${m.name} (${m.dir}) sits inside member ${outer.name} (${outer.dir}); only the root member "." may contain other members`,
         at(`${m.pointer}/dir`),
       );
+    }
+  }
+
+  // A member lists a generated file once, and never one inside another
+  // member's directory: that member owns the file and lists it (#2541).
+  for (const m of members) {
+    const seen = new Map<string, GeneratedFile>();
+    for (const g of m.generated) {
+      const first = seen.get(g.path);
+      if (first) {
+        throw new WorkspaceReadError("declaration-invalid", `member ${m.name} lists the generated file ${g.path} twice; the first is at ${first.pointer}`, at(`${g.pointer}/path`));
+      }
+      seen.set(g.path, g);
+      const full = m.dir === "." ? g.path : `${m.dir}/${g.path}`;
+      const inner = members.find((o) => o !== m && o.dir !== "." && isInside(o.dir, m.dir) && isInside(full, o.dir));
+      if (inner) {
+        throw new WorkspaceReadError(
+          "placement-invalid",
+          `member ${m.name} lists the generated file ${g.path}, which sits inside member ${inner.name} (${inner.dir}); list it there`,
+          at(`${g.pointer}/path`),
+        );
+      }
     }
   }
 
