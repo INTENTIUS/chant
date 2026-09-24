@@ -47,7 +47,7 @@ import {
 } from "../../components/promote";
 import type { DriverComponent } from "../../components/driver";
 import { summaryLedgerPrefix, writeGatedRunSummary } from "../../op/gate-summary";
-import { approveCommand } from "../../op/gate";
+import { approveCommand, describeGateMismatch } from "../../op/gate";
 import { resolveCliBuildParams, parseParamFlags } from "../build-params-cli";
 import { formatError, formatWarning, formatSuccess, formatBold, formatInfo } from "../format";
 import { GATED_EXIT_CODE } from "./run";
@@ -247,7 +247,11 @@ async function deployPlan(
   if (run.status === "gated" && run.gate) {
     const pending = run.gate;
     console.error(formatWarning({ message: `component "${run.gatedComponent}" is gated on "${pending.gate}" — pending approval` }));
-    console.error(formatInfo(`approve : ${approveCommand(pending.op, pending.gate)}`));
+    // #2574: an approval stands, but for another environment, plan or none.
+    if (run.gateMismatch) {
+      console.error(formatWarning({ message: describeGateMismatch(pending.op, pending.gate, run.gateMismatch) }));
+    }
+    console.error(formatInfo(`approve : ${approveCommand(pending.op, pending.gate, pending.environment)}`));
     console.error(formatInfo(`then run the same ${verb} again`));
     writeGatedRunSummary({
       op: pending.op,
@@ -257,6 +261,7 @@ async function deployPlan(
       ...(pending.url ? { url: pending.url } : {}),
       ...(pending.planDigest ? { planDigest: pending.planDigest } : {}),
       ...(await summaryLedgerPrefix()),
+      ...(pending.environment ? { environment: pending.environment } : {}),
     });
     return GATED_EXIT_CODE;
   }

@@ -141,6 +141,13 @@ export interface GateResolutionRecord {
    */
   planDigest?: string;
   /**
+   * The environment this approval is for (#2574), copied off the pending fact
+   * it answers. Set for a component gate, whose ledger is keyed by component
+   * rather than by environment. A component gate counts only a resolution
+   * recorded for its own environment and plan.
+   */
+  environment?: string;
+  /**
    * The channel this resolution was authored on (chant#2384) — set by the
    * writer, never by the caller. `chant approve` records `"cli"`, the
    * `op-approve` MCP tool records `"mcp"`, an ACP-driven approve records
@@ -217,10 +224,18 @@ export interface PendingGateRecord {
    * resolution by default, so approving the standing fact approves the plan
    * the approver was shown rather than the next run's.
    *
-   * Absent when the gate binds no plan (a component gate, an authored `gate`
-   * step with no `plan`), which is the shape every gate had before #2300.
+   * Absent when the gate binds no plan (an authored Op `gate` step with no
+   * `plan`), which is the shape every gate had before #2300. A component gate
+   * binds one since #2574.
    */
   planDigest?: string;
+  /**
+   * The environment the run reached this gate in (#2574). Set by the
+   * component driver, whose gate ledger is keyed by component, so pending
+   * facts for staging and prod stand side by side and `chant approve --env`
+   * can pick one.
+   */
+  environment?: string;
   /**
    * The channel the run that reached this gate was driven from (chant#2384).
    *
@@ -361,6 +376,13 @@ export async function readGateLedger(
         malformed++;
         continue;
       }
+      // #2574: the same reasoning for the environment a component gate
+      // approval is bound to.
+      const rawEnv: unknown = (parsed as { environment?: unknown }).environment;
+      if (rawEnv !== undefined && typeof rawEnv !== "string") {
+        malformed++;
+        continue;
+      }
       if (parsed.kind === "pending") {
         if (typeof parsed.expiresAt !== "string") {
           malformed++;
@@ -442,8 +464,8 @@ export interface PlanBoundResolution {
  * which a run answers yes to no matter what has changed since, and this asks
  * "is there an approval of *this*".
  *
- * - `planDigest` `undefined` — the gate binds no plan (a component gate, a
- *   `gate` step authored with no `plan`). Falls straight through to
+ * - `planDigest` `undefined` — the gate binds no plan (an Op `gate` step
+ *   authored with no `plan`). Falls straight through to
  *   {@link latestResolutionSince}: gates that never claimed to bind a plan
  *   behave exactly as they did before #2300.
  * - A resolution whose `planDigest` equals `planDigest` answers the gate.

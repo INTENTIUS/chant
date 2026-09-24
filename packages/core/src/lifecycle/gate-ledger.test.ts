@@ -253,6 +253,26 @@ describe("lifecycle/gate-ledger — pending facts (#2119)", () => {
       expect(resolutions).toEqual([]);
     });
   });
+
+  // #2574: an environment that is present but not a string would read as an
+  // approval bound to no environment, which a component gate treats differently.
+  test("a line whose environment is not a string is malformed", async () => {
+    await withTestDir(async (dir) => {
+      await initRepo(dir);
+      await writeBlobToPath(
+        "_gates", "search-service.jsonl",
+        [
+          JSON.stringify({ version: 1, op: "search-service", gate: "g", resolvedBy: "alex", timestamp: "2026-01-01T00:00:00.000Z", environment: 7 }),
+          JSON.stringify({ version: 1, op: "search-service", gate: "g", resolvedBy: "alex", timestamp: "2026-01-01T00:00:00.000Z", environment: "prod" }),
+        ].join("\n"),
+        "hand-written",
+        { cwd: dir },
+      );
+      const { resolutions, malformed } = await readGateLedger("search-service", { cwd: dir });
+      expect(malformed).toBe(1);
+      expect(resolutions.map((r) => r.environment)).toEqual(["prod"]);
+    });
+  });
 });
 
 /**

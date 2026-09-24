@@ -39,7 +39,7 @@ import {
   type DriverRunResult,
 } from "./driver";
 import type { PendingGateRecord } from "../lifecycle/gate-ledger";
-import type { GateLedgerPort } from "../op/gate";
+import type { GateDigestMismatch, GateLedgerPort } from "../op/gate";
 import { gateName } from "../op/gate-name";
 import { isLexiconPlugin, type LexiconPlugin, type ComponentPipelineOptions } from "../lexicon";
 import type { RunProgressEvent } from "./run-progress";
@@ -432,6 +432,8 @@ export interface RunComponentsResult {
     /** Whether this run's own append reached the remote (#2310); absent when the pending fact was already standing. */
     pushed?: boolean;
     pushWarning?: string;
+    /** Set when an approval stands for this gate, but for another plan or none (#2574). */
+    mismatch?: GateDigestMismatch;
   };
   /** This run's resolved build-time parameters (chant #1108) — the component-driver counterpart of `../cli/commands/build.ts`'s `BuildResult.buildParams`. Present only once the run actually reached dispatch (mirrors `BuildResult.buildParams`, which is likewise absent on an early-error return). */
   buildParams?: BuildParamProvenance[];
@@ -584,6 +586,7 @@ export async function runComponents(
                 gate: run.gate,
                 ...(run.gatePushed !== undefined ? { pushed: run.gatePushed } : {}),
                 ...(run.gatePushWarning ? { pushWarning: run.gatePushWarning } : {}),
+                ...(run.gateMismatch ? { mismatch: run.gateMismatch } : {}),
               },
             }
           : {}),
@@ -632,6 +635,7 @@ export async function runComponents(
             gate: componentResult.gate,
             ...(componentResult.gatePushed !== undefined ? { gatePushed: componentResult.gatePushed } : {}),
             ...(componentResult.gatePushWarning ? { gatePushWarning: componentResult.gatePushWarning } : {}),
+            ...(componentResult.gateMismatch ? { gateMismatch: componentResult.gateMismatch } : {}),
           }
         : {}),
       componentOutputs,
@@ -648,6 +652,7 @@ export async function runComponents(
               gate: componentResult.gate,
               ...(componentResult.gatePushed !== undefined ? { pushed: componentResult.gatePushed } : {}),
               ...(componentResult.gatePushWarning ? { pushWarning: componentResult.gatePushWarning } : {}),
+              ...(componentResult.gateMismatch ? { mismatch: componentResult.gateMismatch } : {}),
             },
           }
         : {}),

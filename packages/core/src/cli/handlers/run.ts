@@ -6,7 +6,7 @@ import { discoverOps } from "../../op/discover";
 import type { OpConfig } from "../../op/types";
 import { loadActivities, loadProfiles } from "../../op/activity-registry";
 import { runOpLocally, findPolicyGateStep, OpRunFailure, type StepRecord } from "../../op/local-executor";
-import { approveCommand } from "../../op/gate";
+import { approveCommand, describeGateMismatch } from "../../op/gate";
 import { summaryLedgerPrefix, writeGatedRunSummary, type GatedRunSummary } from "../../op/gate-summary";
 import { createLocalOpRuntime } from "../../op/runtimes/local";
 import type { OpRuntimeProvider, OpRunStatus } from "../../op/runtime";
@@ -766,7 +766,12 @@ export async function runOpComponents(ctx: CommandContext): Promise<number> {
     console.error(formatWarning({
       message: `component "${result.gated.component}" is gated on "${gate.gate}" — pending approval`,
     }));
-    console.error(formatInfo(`approve : ${approveCommand(gate.op, gate.gate)}`));
+    // #2574: an approval stands, but for another plan or for none. Say so,
+    // with the command that replaces it.
+    if (result.gated.mismatch) {
+      console.error(formatWarning({ message: describeGateMismatch(gate.op, gate.gate, result.gated.mismatch) }));
+    }
+    console.error(formatInfo(`approve : ${approveCommand(gate.op, gate.gate, gate.environment)}`));
     if (gate.url) console.error(formatInfo(`approve at: ${gate.url}`));
     console.error(formatInfo(`expires : ${gate.expiresAt}`));
     // #2310: this run's own append reached only the local chant/lifecycle
@@ -789,6 +794,7 @@ export async function runOpComponents(ctx: CommandContext): Promise<number> {
         ...(result.gated.pushed === false ? { pushed: false, pushWarning: result.gated.pushWarning } : {}),
         ...(gate.planDigest ? { planDigest: gate.planDigest } : {}),
         ...(await summaryLedgerPrefix()),
+        ...(gate.environment ? { environment: gate.environment } : {}),
       },
       gatedExit,
     );

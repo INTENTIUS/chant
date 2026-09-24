@@ -705,6 +705,7 @@ export async function runApprove(ctx: CommandContext): Promise<number> {
     note: ctx.args.note,
     url: ctx.args.url,
     plan: ctx.args.plan,
+    ...(ctx.args.env !== undefined ? { environment: ctx.args.env } : {}),
     allowSameOrigin: ctx.args.allowSameOrigin,
     ...(ctx.args.roles ? { roles: ctx.args.roles } : {}),
     ...(ctx.args.agent ? { agent: true } : {}),
@@ -751,6 +752,13 @@ export interface GateApprovalOptions {
    * stays one command: run, read what it planned, approve it.
    */
   plan?: string;
+  /**
+   * `--env <env>` (#2574) — which environment's pending fact a component gate
+   * approval answers. A component's gate ledger holds every environment's
+   * facts, so without it the newest one is approved. Ignored for a gate whose
+   * pending facts record no environment (every Op gate).
+   */
+  environment?: string;
   /** `--role` (#2508) — roles the approver claims. */
   roles?: string[];
   /**
@@ -830,6 +838,18 @@ export async function recordGateApproval(
   // third fallback: approving with no plan in sight is the behaviour
   // INTENTIUS/choudoufu#1026 measured, where the resolution authorised the
   // next run rather than anything anyone had seen.
+  // #2574: a component gate's pending facts carry the environment they were
+  // recorded in, and an approval answers one environment. `--env` picks it;
+  // without it, the newest standing fact decides, and the success line below
+  // names the environment it chose.
+  const ledgerBefore = await readGateLedger(opName);
+  const pendingFor = (all: PendingGateRecord[]): PendingGateRecord[] => {
+    const bound = all.some((p) => p.gate === gate && p.environment !== undefined);
+    return bound && opts.environment !== undefined ? all.filter((p) => p.environment === opts.environment) : all;
+  };
+  const standing = latestPendingGate(pendingFor(ledgerBefore.pending), gate);
+  const environment = standing?.environment;
+
   let planDigest: string | undefined;
   if (opts.plan !== undefined) {
     if (!isPlanDigest(opts.plan)) {
@@ -841,10 +861,12 @@ export async function recordGateApproval(
     }
     planDigest = opts.plan;
   } else {
-    const standing = latestPendingGate((await readGateLedger(opName)).pending, gate);
     if (!standing) {
       console.error(formatError({
-        message: `Gate "${gate}" on "${opName}" has no pending fact, so there is no plan to approve`,
+        message:
+          opts.environment !== undefined && ledgerBefore.pending.some((p) => p.gate === gate && p.environment !== undefined)
+            ? `Gate "${gate}" on "${opName}" has no pending fact in environment "${opts.environment}", so there is no plan to approve`
+            : `Gate "${gate}" on "${opName}" has no pending fact, so there is no plan to approve`,
         hint:
           `Run \`chant run ${opName}\` first — it plans, stops at the gate, and records the plan this ` +
           `approval would be for. To approve a plan you already have the digest for, pass ` +
@@ -863,7 +885,7 @@ export async function recordGateApproval(
   // the way #2300 refuses a plan nobody approved.
   const origin = opts.origin ?? currentGateOrigin();
   const ledger = await readGateLedger(opName);
-  const standingForOrigin = latestPendingGate(ledger.pending, gate);
+  const standingForOrigin = latestPendingGate(pendingFor(ledger.pending), gate);
   const refusal = sameOriginRefusal(standingForOrigin?.origin, origin);
   if (refusal && !opts.allowSameOrigin) {
     console.error(formatError({
@@ -939,6 +961,7 @@ export async function recordGateApproval(
     ...(opts.note ? { note: opts.note } : {}),
     ...(url ? { url } : {}),
     ...(planDigest !== undefined ? { planDigest } : {}),
+    ...(environment !== undefined ? { environment } : {}),
     origin,
     ...(refusal && opts.allowSameOrigin ? { sameOriginOverride: true } : {}),
   });
@@ -954,8 +977,9 @@ export async function recordGateApproval(
   ));
   if (record.planDigest) {
     console.error(formatInfo(
-      `This approves the plan ${record.planDigest}, and only that plan. A run whose fresh plan ` +
-        "differs refuses rather than applying it.",
+      `This approves the plan ${record.planDigest}` +
+        (record.environment !== undefined ? ` in environment "${record.environment}"` : "") +
+        ", and only that plan. A run whose fresh plan differs refuses rather than applying it.",
     ));
   }
   if (approval) {

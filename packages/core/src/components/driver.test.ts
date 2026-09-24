@@ -13,7 +13,8 @@
 import { describe, expect, it } from "vitest";
 import { CapabilityRegistry, type DeployContext } from "./capability";
 import { stubCapability } from "./verbs/stub";
-import { memoryGateLedgerPort } from "../op/gate";
+import { describeGateMismatch, memoryGateLedgerPort } from "../op/gate";
+import { componentPlanDigest } from "./gate-plan";
 import type { PendingGateInput } from "../lifecycle/gate-ledger";
 import {
   DependencyCycleError,
@@ -311,14 +312,17 @@ describe("runComponentDeploy — gate as fact (#2119)", () => {
 
   it("a resolution newer than the pending fact passes the gate and carries the approver", async () => {
     const { registry, calls } = registryWithCalls();
+    const planDigest = componentPlanDigest({ environment: "dev", component: gatedComponent() });
     const port = memoryGateLedgerPort({
       pending: [{
         version: 1, kind: "pending", op: "neo4j-cluster", gate: "approve-node-1",
         timestamp: "2026-09-05T10:00:00.000Z", expiresAt: "2026-09-07T10:00:00.000Z",
+        planDigest, environment: "dev",
       }],
       resolutions: [{
         version: 1, op: "neo4j-cluster", gate: "approve-node-1",
         resolvedBy: "alex", timestamp: "2026-09-05T11:00:00.000Z",
+        planDigest, environment: "dev",
       }],
     });
     const result = await runComponentDeploy(
@@ -330,6 +334,79 @@ describe("runComponentDeploy — gate as fact (#2119)", () => {
     expect(calls).toEqual(["cfn-deploy", "code-deploy"]);
     expect(result.records.find((r) => r.kind === "gate:approve-node-1")?.approval)
       .toEqual({ gate: "approve-node-1", resolvedBy: "alex", timestamp: "2026-09-05T11:00:00.000Z" });
+  });
+
+  // #2574: a component gate approval is bound to the environment and the plan.
+  describe("approvals bound to environment and plan (#2574)", () => {
+    const run = (port: ReturnType<typeof memoryGateLedgerPort>, env: string, component = gatedComponent()) =>
+      runComponentDeploy(component, { env, component: "neo4j-cluster" }, registryWithCalls().registry, {}, undefined, { port, now: NOW });
+
+    it("the pending fact records the environment and the plan", async () => {
+      const port = memoryGateLedgerPort();
+      const result = await run(port, "staging");
+      expect(result.gate).toMatchObject({
+        environment: "staging",
+        planDigest: componentPlanDigest({ environment: "staging", component: gatedComponent() }),
+      });
+    });
+
+    it("an approval given for another environment does not pass the gate", async () => {
+      const port = memoryGateLedgerPort();
+      const staging = await run(port, "staging");
+      const approval = {
+        version: 1 as const, op: "neo4j-cluster", gate: "approve-node-1", resolvedBy: "alex",
+        timestamp: "2026-09-05T12:30:00.000Z",
+        planDigest: staging.gate!.planDigest!, environment: "staging",
+      };
+      const withApproval = memoryGateLedgerPort({ pending: [staging.gate!], resolutions: [approval] });
+
+      expect((await run(withApproval, "staging")).status).toBe("ok");
+      const prod = await run(withApproval, "prod");
+      expect(prod.status).toBe("gated");
+      expect(prod.gate).toMatchObject({ environment: "prod" });
+      // The staging approval is not this run's business, so it is not reported as a mismatch either.
+      expect(prod.gateMismatch).toBeUndefined();
+    });
+
+    it("an approval given for another plan in the same environment is refused and named", async () => {
+      const port = memoryGateLedgerPort();
+      const before = await run(port, "prod");
+      const approval = {
+        version: 1 as const, op: "neo4j-cluster", gate: "approve-node-1", resolvedBy: "alex",
+        timestamp: "2026-09-05T12:30:00.000Z",
+        planDigest: before.gate!.planDigest!, environment: "prod",
+      };
+      const changed = gatedComponent();
+      changed.deploy[1]!.steps.push({ kind: "cfn-deploy", stack: "extra" });
+      const result = await run(memoryGateLedgerPort({ pending: [before.gate!], resolutions: [approval] }), "prod", changed);
+
+      expect(result.status).toBe("gated");
+      expect(result.gateMismatch).toMatchObject({
+        approved: before.gate!.planDigest, planned: result.gate!.planDigest, environment: "prod", resolvedBy: "alex",
+      });
+      expect(result.gate!.planDigest).not.toBe(before.gate!.planDigest);
+    });
+
+    it("an approval recorded before the binding is refused, with the command that replaces it", async () => {
+      const legacyPending = {
+        version: 1 as const, kind: "pending" as const, op: "neo4j-cluster", gate: "approve-node-1",
+        timestamp: "2026-09-05T10:00:00.000Z", expiresAt: "2026-09-07T10:00:00.000Z",
+      };
+      const legacy = {
+        version: 1 as const, op: "neo4j-cluster", gate: "approve-node-1",
+        resolvedBy: "alex", timestamp: "2026-09-05T11:00:00.000Z",
+      };
+      const port = memoryGateLedgerPort({ pending: [legacyPending], resolutions: [legacy] });
+      const result = await run(port, "prod");
+
+      expect(result.status).toBe("gated");
+      expect(port.appended).toHaveLength(1);
+      expect(result.gateMismatch).toMatchObject({ resolvedBy: "alex", environment: "prod" });
+      expect(result.gateMismatch!.approved).toBeUndefined();
+      const message = describeGateMismatch("neo4j-cluster", "approve-node-1", result.gateMismatch!);
+      expect(message).toContain("predates environment- and plan-bound component gates (#2574)");
+      expect(message).toContain("chant approve neo4j-cluster approve-node-1 --env prod");
+    });
   });
 
   it("the neo4j pilot's gated Node 1 phase ends the run pending approval", async () => {

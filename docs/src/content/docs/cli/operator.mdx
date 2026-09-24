@@ -99,6 +99,7 @@ chant approve fountain-apply rollout-gate --note "paged on-call first; see the i
 | `--actor <name>` | `$GITHUB_ACTOR` / `$GITLAB_USER_LOGIN` / `$USER` | Who resolved the gate — recorded on the resolution fact |
 | `--url <url>` | the surrounding CI job's PR/MR, when there is one | The address this resolution happened at, typically the PR or MR that carried the change. Recorded typed on the resolution fact so a reader is not sniffing free text for a link. Must be an absolute http or https URL |
 | `--note <text>` | — | Free-text context recorded alongside the resolution. The link belongs in `--url`; this is for everything else |
+| `--env <env>` | the newest pending fact's environment | For a component gate: which environment's pending fact to approve. The resolution records that environment and its plan digest ([#2574](https://github.com/INTENTIUS/chant/issues/2574)). Ignored for an Op gate |
 
 Recording a resolution does not resume a run that already stopped. Nothing is parked waiting for it. The run read the ledger, found nothing standing, and exited 3 after writing the pending fact. Run the Op again and it reads the resolution you just wrote and walks through the gate, or let the merged PR the note points at carry the change itself.
 
