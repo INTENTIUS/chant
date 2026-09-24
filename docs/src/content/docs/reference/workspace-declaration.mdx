@@ -1,0 +1,159 @@
+---
+title: Workspace Declaration
+description: The chant.workspace.json format, schema 1, and how chant finds and validates the file.
+diataxis: reference
+---
+
+A `chant.workspace.json` at the top of a repository makes it a workspace: a directory of members of declared kinds ([#2524](https://github.com/INTENTIUS/chant/issues/2524) D1, D2). Only this file creates a workspace. chant never infers one, and a project without it stays at level 0, where nothing changes ([#2525](https://github.com/INTENTIUS/chant/issues/2525)). [`chant workspace init`](/chant/cli/workspace-init/) proposes one from the projects already in the repository, and [`chant workspace ls`](/chant/cli/workspace-ls/) lists what it declares.
+
+:::note[What ships so far]
+chant reads, validates and lists the declaration. Per-member build and lint, and the refusal of root-level `chant build` and `chant lint` at a declared root, come with [#2537](https://github.com/INTENTIUS/chant/issues/2537). Until then the file changes nothing about any other chant command.
+:::
+
+The format is JSON so that any reader can list the members without running TypeScript. The JSON Schema ships in `@intentius/chant` at `src/workspace/declaration.schema.json`, with the `$id` `https://intentius.io/chant/schemas/workspace/declaration/v1/chant.workspace.schema.json`. chant validates the file against it on every read.
+
+## Example
+
+This is the declaration the chant repository commits, shortened:
+
+```json
+{
+  "name": "chant",
+  "schema": 1,
+  "members": [
+    { "name": "docs", "dir": "docs", "kind": "other", "because": "an npm package with no chant project" },
+    { "name": "lexicon-aws", "dir": "lexicons/aws", "kind": "other", "because": "an npm workspace package with no chant project" },
+    { "name": "core", "dir": "packages/core", "kind": "other", "because": "an npm workspace package with no chant project" },
+    { "name": "examples", "kind": "examples", "glob": "examples/*" },
+    { "name": "lexicon-examples", "kind": "examples", "glob": "lexicons/*/examples/*" },
+    { "name": "fixtures", "kind": "examples", "glob": ["test/forgejo-preview-e2e", "test/leftness"] }
+  ]
+}
+```
+
+## The file
+
+| Name | Dialect |
+|---|---|
+| `chant.workspace.json` | strict JSON |
+| `chant.workspace.jsonc` | JSON with `//` and `/* */` comments and trailing commas |
+
+Having both in one directory is an error (`declaration-ambiguous`). Duplicate keys are an error in either dialect.
+
+chant finds the file by walking up from the current directory to the git root, the first directory holding `.git`, and it checks the git root too. The nearest declaration wins, so a command inside a nested workspace reads the inner one. Outside a git repository only the current directory is checked. The walk that finds a project's `chant.config.ts` is unchanged and never looks at the declaration.
+
+## Top-level fields
+
+| Field | Required | Value |
+|---|---|---|
+| `name` | yes | The workspace's name, in the [name grammar](#names). With a git revision it identifies the workspace to readers. |
+| `schema` | yes | `1`, the only format version so far. |
+| `members` | yes | An array of [members](#members) and [example groups](#example-groups), in the order readers list them. |
+| `minReader` | no | The oldest chant version that may read the file, such as `"0.81.0"`. An older chant refuses it with `reader-too-old`. |
+| `pins` | no | An array of [pins](#pins). |
+| `$schema`, `$comment` | no | Editor hints and notes. chant ignores them. |
+| `x-...` | no | Any field whose name starts with `x-`, for people and other tools. Allowed on every object in the file. |
+
+Any other field is refused. A field added later within schema 1 is optional. A declaration that uses one should set `minReader` to the first chant that knows it, so an older chant reports `reader-too-old` and doesn't misread the file.
+
+## Members
+
+A member is an object with `name`, `dir` and `kind`.
+
+| Field | Required | Value |
+|---|---|---|
+| `name` | yes | The member's name, in the [name grammar](#names). Frozen once the member deploys. |
+| `dir` | yes | Its directory relative to the workspace root, with `/` separators. `"."` is the root member. |
+| `kind` | yes | How to read it: `chant`, `workspace`, `other`, or a kind a plugin supplies. |
+| `roles` | no | Roles the member plays. Each is a role name, or `{ "name": "...", "path": "..." }` with a path inside the member. |
+| `upstream` | no | Where an embedded member's files come from. Versions live in the lock, not here. |
+| `because` | for `other` | Why the member is there. |
+
+Three kinds are built in.
+
+| Kind | The directory holds |
+|---|---|
+| `chant` | a chant project, with `chant.config.ts` or `chant.config.json` directly in it |
+| `workspace` | a nested workspace with its own declaration. The outer workspace treats it as opaque and never writes inside it |
+| `other` | anything chant does not read. `because` is required |
+
+Kinds from lexicons and other plugins are coming ([#2535](https://github.com/INTENTIUS/chant/issues/2535)). Until then a member of another kind is listed with the reason `unknown-kind`.
+
+A member's directory leaves the root project. Once [#2537](https://github.com/INTENTIUS/chant/issues/2537) ships, discovery at the root skips it and the member's own commands cover it. `chant workspace init` lists these directories before it writes.
+
+## Example groups
+
+An entry with `"kind": "examples"` is an example group ([ws-051](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-051-example-projects.md)). It covers projects that exist as examples or test fixtures in one line.
+
+| Field | Required | Value |
+|---|---|---|
+| `name` | yes | The group's name, in the [name grammar](#names). |
+| `kind` | yes | `examples` |
+| `glob` | yes | A glob, or an array of globs, over directories relative to the workspace root |
+
+Each directory a glob matches that holds a chant project is built and linted by the workspace commands. A match holds a project when a `chant.config.ts` or `chant.config.json` sits in it or up to four levels below it, or when its own `package.json` depends on `@intentius/chant` or a chant lexicon. Matches that hold none are left alone.
+
+A group has no ledger, no releases and no links, and its matches are never members of their own. A match may sit inside a member's directory, as `lexicons/aws/examples/lambda-api` sits inside the `lexicon-aws` member. That member's build and lint then leave the match to the group.
+
+| Glob syntax | Matches |
+|---|---|
+| `*`, `?` | within one path segment |
+| `**` | any number of directories |
+| `[...]` | one character from a set |
+
+A wildcard never enters `node_modules` or a directory whose name starts with `.`.
+
+## Names
+
+The workspace, its members and its groups are all named the same way.
+
+| Rule | Detail |
+|---|---|
+| Grammar | `^[a-z0-9][a-z0-9-]{0,39}$`, for member names, group names and the workspace name |
+| Unique | across every entry in `members`, members and groups together |
+| Reserved | `_workspace` and `_members`, which ledger paths use; the grammar already rules them out |
+
+## Placement
+
+These rules keep every directory owned by one entry at most.
+
+| Rule | Error |
+|---|---|
+| A `dir` or glob stays inside the workspace: no leading `/`, no `.` or `..` segments, no `\` | `declaration-invalid` |
+| No two members share a directory | `placement-invalid` |
+| Only the root member `"."` contains other members | `placement-invalid` |
+| A group match is never a member's directory and never contains one | `placement-invalid` |
+| A group match never sits inside a nested `workspace` member | `placement-invalid` |
+| No two groups match the same directory | `placement-invalid` |
+
+The last three depend on what the globs match, so they are checked when the groups are expanded, on every `chant workspace ls`.
+
+## Pins
+
+A pin names the toolchain or a plugin that reads the workspace.
+
+| Shape | Fields |
+|---|---|
+| an npm package | `package` and `version` (an exact version), optional `integrity` |
+| a local plugin | `path` inside the workspace, optional `integrity` |
+
+`integrity` is a Subresource Integrity digest such as `sha512-...`. chant records pins and lists them in `chant workspace ls --json`; which of them load kinds comes with [#2535](https://github.com/INTENTIUS/chant/issues/2535).
+
+## Errors
+
+A declaration that can't be read is never treated as empty. Every error names the file, and a parse or schema error names its line and column.
+
+```
+declaration-invalid: chant.workspace.json:9:7: unknown field "dependsOn"; only fields named x-... may be added
+```
+
+| Code | Cause |
+|---|---|
+| `declaration-missing` | no declaration between the directory and the git root |
+| `declaration-ambiguous` | both `chant.workspace.json` and `chant.workspace.jsonc` exist |
+| `declaration-unparseable` | not valid JSON, or not valid JSONC for `.jsonc` |
+| `declaration-invalid` | doesn't match the schema, or repeats a name |
+| `placement-invalid` | breaks a placement rule |
+| `reader-too-old` | `minReader` is newer than this chant |
+
+`chant workspace ls --json` reports the same codes with the location ([Output](/chant/cli/workspace-ls/#output)).

@@ -1,0 +1,78 @@
+---
+title: "chant workspace init"
+description: Propose a chant.workspace.json from the projects and packages already in a repository, show what would leave the root project, and write it only on confirmation
+diataxis: reference
+---
+
+## Synopsis
+
+```
+chant workspace init [dir] [--name <name>] [--yes] [--verbose]
+```
+
+## Description
+
+`chant workspace init` looks at a repository and proposes a [workspace declaration](/chant/reference/workspace-declaration/) for it. It prints the proposal and the directories that would leave the root project, then asks before it writes `chant.workspace.json`. Without a terminal to ask on, it writes nothing unless `--yes` is given. Only the file creates a workspace, so nothing changes until you write it ([#2525](https://github.com/INTENTIUS/chant/issues/2525) rule 1).
+
+The root is `dir` when it's given, otherwise the top of the git repository holding the current directory. The command refuses to run where a `chant.workspace.json` or `.jsonc` already exists.
+
+It runs no project code, and only reads file names and `package.json` files. In a git repository the file names come from git, which leaves out ignored files and `node_modules`.
+
+## What it proposes
+
+| Found | Proposed entry |
+|---|---|
+| a `chant.config.ts` or `chant.config.json` at the root | a `chant` member with directory `"."`, named `root` |
+| any other outermost chant project | a `chant` member |
+| a directory with its own `chant.workspace.json` | a `workspace` member; nothing inside it is looked at |
+| an npm workspace package, or any other `package.json` outside those, with no chant project | an `other` member, with a `because` |
+| chant projects under an `examples`, `example`, `samples`, `test`, `tests` or `fixtures` directory | an [example group](/chant/reference/workspace-declaration/#example-groups) |
+
+Projects inside a test runner's directory, such as `__fixtures__`, stay with the package around them.
+
+An example tree whose subdirectories are mostly projects gets one glob, such as `examples/*`. Trees that differ in one path segment merge, as `lexicons/aws/examples/*` and `lexicons/gcp/examples/*` become `lexicons/*/examples/*`, when the merged glob claims no member. A tree that is mostly something else lists its projects one by one. Groups are named after the tree: `examples`, `fixtures`, or with a prefix such as `lexicon-examples`.
+
+Member names come from `package.json` without the npm scope and without a leading `<workspace>-`, so `@intentius/chant-lexicon-aws` in the `chant` workspace becomes `lexicon-aws`. Without a usable package name, the directory's name is used. The workspace's name is `--name`, else the repository name from the `origin` remote, else the root package's name, else the directory's name.
+
+The proposal is a starting point to review. It is read back through the same validation as any declaration before it is shown.
+
+## What leaves the root project
+
+Before it asks, init prints every member directory and example-group match that would leave the root project, with the number of `.ts` source files each holds (tests left out). A group's matches are summed on one line, and a match inside a member's directory leaves with that member. `--verbose` prints each directory and file.
+
+```
+  DIRECTORY            OWNER              .TS FILES
+  docs                 docs               2
+  33 directories       examples           294
+  lexicons/aws         lexicon-aws        337
+  packages/core        core               562
+  2 directories        fixtures           10
+```
+
+These directories stop being read by root-level `chant build`, `lint`, `run` and `audit` once per-member commands ship ([#2537](https://github.com/INTENTIUS/chant/issues/2537)).
+
+## Options
+
+| Option | Effect |
+|---|---|
+| `dir` | The directory to propose a workspace for. Defaults to the git root. |
+| `--name <name>` | The workspace's name, in the [name grammar](/chant/reference/workspace-declaration/#names). |
+| `--yes` | Write the file without asking. |
+| `--verbose` | List every directory and file leaving the root project. |
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | The proposal was shown, and written if confirmed. Declining writes nothing and still exits 0. |
+| 1 | A declaration already exists, `--name` is invalid, or `dir` doesn't exist. |
+
+## Examples
+
+```bash
+# See what a declaration for this repository would look like
+chant workspace init
+
+# Write it without a prompt, for a script
+chant workspace init --yes --name acme
+```

@@ -1,0 +1,278 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/declaration/v1/chant.workspace.schema.json",
+  "title": "chant.workspace.json",
+  "description": "A workspace declaration, schema 1 (#2524 D1, D2; ws-051). Only this file makes a directory a workspace. It may also be named chant.workspace.jsonc, which allows comments and trailing commas; having both is an error. Unknown fields are refused, except fields whose names start with x-. A field added later within schema 1 is optional, and a declaration that uses one sets minReader to the first chant that knows it, so an older chant says so instead of misreading the file. Uniqueness of names and the placement rules are checked in code, since JSON Schema cannot say them.",
+  "type": "object",
+  "required": [
+    "name",
+    "schema",
+    "members"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "An editor hint. chant ignores it."
+    },
+    "$comment": {
+      "type": "string",
+      "description": "A note for people. chant ignores it."
+    },
+    "name": {
+      "$ref": "#/$defs/name",
+      "description": "The workspace's name. With a git revision it identifies the workspace to readers (#2524 D15)."
+    },
+    "schema": {
+      "const": 1,
+      "description": "The declaration format version."
+    },
+    "minReader": {
+      "$ref": "#/$defs/version",
+      "description": "The oldest chant that may read this declaration. An older chant refuses it with reader-too-old."
+    },
+    "members": {
+      "type": "array",
+      "description": "Members and example groups, in the order readers list them.",
+      "items": {
+        "$ref": "#/$defs/entry"
+      }
+    },
+    "pins": {
+      "type": "array",
+      "description": "The toolchain and plugins that read this workspace, pinned (#2524 D3, threat model). chant records them; which of them load kind plugins is #2535's.",
+      "items": {
+        "$ref": "#/$defs/pin"
+      }
+    }
+  },
+  "patternProperties": {
+    "^x-": true
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,39}$",
+      "description": "Lowercase letters, digits and hyphens, starting with a letter or digit, at most 40 characters. _workspace and _members are reserved; the pattern already rules them out."
+    },
+    "kindName": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,39}$"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$"
+    },
+    "dir": {
+      "type": "string",
+      "description": "A directory relative to the workspace root, with / separators: \".\" for the root itself, otherwise no leading /, no . or .. segments and no trailing /.",
+      "pattern": "^(\\.|(?!\\.\\.?(/|$))[^/\\\\]+(/(?!\\.\\.?(/|$))[^/\\\\]+)*)$"
+    },
+    "glob": {
+      "type": "string",
+      "description": "A glob over directories, relative to the workspace root: * and ? within one segment, ** across segments, [...] classes. No leading /, no . or .. segments.",
+      "pattern": "^(?!\\.\\.?(/|$))[^/\\\\]+(/(?!\\.\\.?(/|$))[^/\\\\]+)*$"
+    },
+    "entry": {
+      "description": "A member, or an example group when kind is examples (ws-051).",
+      "type": "object",
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/kindName"
+        }
+      },
+      "if": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "const": "examples"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "$ref": "#/$defs/group"
+      },
+      "else": {
+        "$ref": "#/$defs/member"
+      }
+    },
+    "member": {
+      "type": "object",
+      "description": "A member (#2524 D2). Its directory leaves the root project, and it gets its own build, lint and ledger.",
+      "required": [
+        "name",
+        "dir",
+        "kind"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/name",
+          "description": "Frozen once the member deploys; a rename is an alias record."
+        },
+        "dir": {
+          "$ref": "#/$defs/dir"
+        },
+        "kind": {
+          "$ref": "#/$defs/kindName",
+          "description": "How to read the member: chant, workspace, other, or a kind a plugin supplies (#2535)."
+        },
+        "roles": {
+          "type": "array",
+          "description": "Roles the member plays. A role may point at a path inside the member.",
+          "items": {
+            "oneOf": [
+              {
+                "$ref": "#/$defs/kindName"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "name"
+                ],
+                "properties": {
+                  "name": {
+                    "$ref": "#/$defs/kindName"
+                  },
+                  "path": {
+                    "$ref": "#/$defs/dir",
+                    "description": "Relative to the member's directory."
+                  }
+                },
+                "patternProperties": {
+                  "^x-": true
+                },
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "upstream": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Where an embedded member's files come from. Versions live in the lock."
+        },
+        "because": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Why the member is there. Required for kind other."
+        }
+      },
+      "patternProperties": {
+        "^x-": true
+      },
+      "additionalProperties": false,
+      "if": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "const": "other"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "type": "object",
+        "properties": {
+          "because": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "because"
+        ]
+      }
+    },
+    "group": {
+      "type": "object",
+      "description": "An example group (ws-051): every directory the glob matches that holds a chant project is built and linted. A group has no ledger, releases or links, and its matches are never members. A match may sit inside a member's directory; that member leaves it to the group.",
+      "required": [
+        "name",
+        "kind",
+        "glob"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/name"
+        },
+        "kind": {
+          "const": "examples"
+        },
+        "glob": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/glob"
+            },
+            {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "$ref": "#/$defs/glob"
+              }
+            }
+          ]
+        }
+      },
+      "patternProperties": {
+        "^x-": true
+      },
+      "additionalProperties": false
+    },
+    "pin": {
+      "description": "An npm package at an exact version, or a local plugin by path. integrity is a Subresource Integrity digest.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "package",
+            "version"
+          ],
+          "properties": {
+            "package": {
+              "type": "string",
+              "pattern": "^(@[a-z0-9-~][a-z0-9-._~]*/)?[a-z0-9-~][a-z0-9-._~]*$"
+            },
+            "version": {
+              "$ref": "#/$defs/version"
+            },
+            "integrity": {
+              "type": "string",
+              "pattern": "^sha(256|384|512)-[A-Za-z0-9+/]+={0,2}$"
+            }
+          },
+          "patternProperties": {
+            "^x-": true
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "path"
+          ],
+          "properties": {
+            "path": {
+              "$ref": "#/$defs/dir"
+            },
+            "integrity": {
+              "type": "string",
+              "pattern": "^sha(256|384|512)-[A-Za-z0-9+/]+={0,2}$"
+            }
+          },
+          "patternProperties": {
+            "^x-": true
+          },
+          "additionalProperties": false
+        }
+      ]
+    }
+  }
+}

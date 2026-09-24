@@ -113,13 +113,13 @@ function formatRecords(records: RecordEntry[], summary: { total: number; valid: 
   return lines.join("\n");
 }
 
-/** `chant workspace <anything else>`: only `records`, `lineage`, `upgrade` and `check` exist so far. */
+/** `chant workspace <anything else>`. */
 export async function runWorkspaceUnknown(ctx: CommandContext): Promise<number> {
   const sub = ctx.args.path && ctx.args.path !== "." ? ctx.args.path : "";
   console.error(
     formatError({
       message: sub ? `Unknown workspace subcommand: ${sub}` : "chant workspace needs a subcommand",
-      hint: `Available: ${USAGE}, chant workspace lineage [--json], chant workspace lineage resolve <path>, chant workspace upgrade [<scope>] [--to <ref>], chant workspace check [--json]`,
+      hint: `Workspace subcommands: check, init, lineage, ls, records, upgrade. Run "chant --help" for their options.`,
     }),
   );
   return 1;

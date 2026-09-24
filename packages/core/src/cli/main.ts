@@ -661,7 +661,17 @@ Ops:
                         predicts the account. The level reaches the engine
                         verbatim; without the flag nothing is asked (#2377)
 
-Workspace (first-test slice, #2546):
+Workspace (level 1, #2524):
+  workspace init [dir]  Propose a chant.workspace.json from the projects and
+                        packages already in the repository, print it with the
+                        directories that would leave the root project, and
+                        write it only on confirmation (--yes writes without
+                        asking; --name <name> names the workspace; --verbose
+                        lists every file leaving the root project)
+  workspace ls [dir]    List the declaration's members and example groups.
+                        A member that can't be read is listed with a reason
+                        code and still exits 0. --at <rev> reads a commit's
+                        git objects; --json prints the read-contract document
   workspace records --kind <kind file> [--current] [--at <rev>] [--json]
                         Read the records a record kind locates, validated
                         against its schema, with reason codes for invalid
@@ -1082,6 +1092,8 @@ export const commandRegistry: CommandDef[] = [
   // Workspace reads (#2524). Imported on first use, so a level-0 command never
   // loads anything under workspace/ (#2525 rule 5, pinned by #2526's goldens).
   { name: "workspace records", handler: async (ctx) => (await import("../workspace/records-cli")).runWorkspaceRecords(ctx) },
+  { name: "workspace init", handler: async (ctx) => (await import("../workspace/init")).runWorkspaceInit(ctx) },
+  { name: "workspace ls", handler: async (ctx) => (await import("../workspace/ls")).runWorkspaceLs(ctx) },
   { name: "workspace lineage", handler: async (ctx) => (await import("../workspace/lineage-cli")).runWorkspaceLineage(ctx) },
   { name: "workspace upgrade", handler: async (ctx) => (await import("../workspace/lineage-upgrade-cli")).runWorkspaceUpgrade(ctx) },
   { name: "workspace check", handler: async (ctx) => (await import("../workspace/lineage-check")).runWorkspaceCheck(ctx) },

@@ -199,6 +199,7 @@ export default defineConfig({
 						{ label: 'Level-0 Exceptions', slug: 'reference/level-0-exceptions' },
 						{ label: 'Lineage Lock', slug: 'reference/lineage-lock' },
 						{ label: 'Template Migrations', slug: 'reference/template-migrations' },
+						{ label: 'Workspace Declaration', slug: 'reference/workspace-declaration' },
 						{
 							label: 'CLI',
 							items: [
@@ -220,6 +221,8 @@ export default defineConfig({
 								{ label: 'run', slug: 'cli/run' },
 								{ label: 'operator', slug: 'cli/operator' },
 								{ label: 'graph', slug: 'cli/graph' },
+								{ label: 'workspace init', slug: 'cli/workspace-init' },
+								{ label: 'workspace ls', slug: 'cli/workspace-ls' },
 								{ label: 'workspace records', slug: 'cli/workspace-records' },
 								{ label: 'workspace lineage', slug: 'cli/workspace-lineage' },
 								{ label: 'workspace upgrade', slug: 'cli/workspace-upgrade' },

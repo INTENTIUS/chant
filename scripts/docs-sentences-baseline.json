@@ -234,7 +234,15 @@
   "formatting/em-dash-density": 2,
   "claude/colon-reveal": 2
  },
+ "docs/src/content/docs/cli/workspace-init.mdx": {
+  "formatting/em-dash-density": 2,
+  "claude/colon-reveal": 2
+ },
  "docs/src/content/docs/cli/workspace-lineage.mdx": {
+  "formatting/em-dash-density": 2,
+  "claude/colon-reveal": 2
+ },
+ "docs/src/content/docs/cli/workspace-ls.mdx": {
   "formatting/em-dash-density": 2,
   "claude/colon-reveal": 2
  },
@@ -958,6 +966,12 @@
   "formatting/em-dash-density": 2,
   "discourse/punchy-fragments": 1,
   "claude/colon-reveal": 3
+ },
+ "docs/src/content/docs/reference/workspace-declaration.mdx": {
+  "formatting/em-dash-density": 2,
+  "discourse/punchy-fragments": 1,
+  "claude/colon-reveal": 2,
+  "anaphora/repeated-opening": 1
  },
  "docs/src/content/docs/serialization/multi-stack.mdx": {
   "formatting/em-dash-density": 13,
