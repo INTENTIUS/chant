@@ -35,6 +35,16 @@ chant run status alb-deploy --on fountain
 
 A name that is not a configured lexicon is refused with the list of lexicons that are. A configured lexicon that hosts nothing is refused by name. Core ships only the `local` runtime and never imports a hosting lexicon, so a project gets the hosted path by declaring the lexicon, not by upgrading chant.
 
+A project whose Ops always run on one lexicon's runtime can set it once in `chant.config.ts`. `run.on` is the default for `chant run` and every subcommand. `--on` overrides it, and `--on local` selects the built-in runtime. A `run.on` that names an unconfigured lexicon, or one with no `opRuntime`, is refused with the same message `--on` gives.
+
+```ts
+// chant.config.ts
+export default {
+  lexicons: ["aws", "mylexicon"],
+  run: { on: "mylexicon" },
+};
+```
+
 ### `--on fountain`
 
 The [fountain](/chant/lexicons/fountain/profiles/) lexicon hosts a run on a teammate's thread. `chant run <op> --on fountain` posts the command line `chant run <op>` to the steward as a prompt, tails the conversation's event stream, and exits with the status the run reached. The Op executes in fountain's sandbox, so the run record lands on the ledger from there rather than from this process.
@@ -220,7 +230,7 @@ The `--no-release-record` flag always wins over config for that one invocation. 
 | Flag | Description |
 |------|-------------|
 | `--local` | Run with the local in-process executor — the default (`run <name>`, `run --components`) |
-| `--on <lexicon>` | Which runtime hosts the run: a configured lexicon with an `opRuntime`, or the built-in local runtime when omitted (every `run` subcommand) |
+| `--on <lexicon>` | Which runtime hosts the run: a configured lexicon with an `opRuntime`, or `local`. When omitted, `run.on` in `chant.config.ts` decides, and the built-in local runtime runs the Op when that is unset too (every `run` subcommand) |
 | `--components` | Target a component instead of an Op (`run --components`) |
 | `--generate <provider>` | Write one CI pipeline file per scheduled Op for `github`, `gitlab` or `forgejo` (`run --generate`) |
 | `--spec <file>` | JSON Op specs to generate instead of every Op with a `schedule` (`run --generate`) |

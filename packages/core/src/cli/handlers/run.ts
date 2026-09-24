@@ -101,10 +101,12 @@ function refuseDurableComponentSubcommand(what: string, hint: string): number {
 /**
  * Resolve the one runtime this invocation talks to.
  *
- * `--on <name>` picks the named lexicon's `opRuntime` (`../../lexicon.ts`);
- * without it, core's built-in `local` provider runs the Op in this process.
- * Every `chant run` subcommand goes through whichever comes back, so there is
- * one dispatch path rather than a branch per runtime.
+ * `--on <name>` picks the named lexicon's `opRuntime` (`../../lexicon.ts`).
+ * Without it, `run.on` in `chant.config.ts` does (#2523), and without either,
+ * core's built-in `local` provider runs the Op in this process. `local`, from
+ * either place, names the built-in provider. Every `chant run` subcommand goes
+ * through whichever comes back, so there is one dispatch path rather than a
+ * branch per runtime.
  *
  * A lexicon already loaded into the command context wins the lookup — that is
  * how a test hands in a stub, and how a command that loaded plugins for its
@@ -114,22 +116,32 @@ function refuseDurableComponentSubcommand(what: string, hint: string): number {
  *
  * Returns `undefined` after printing an actionable error — an unconfigured
  * name is answered with the configured list, a configured lexicon that hosts
- * nothing is named outright.
+ * nothing is named outright. A `run.on` default gets the same messages as
+ * `--on`, with the hint naming where the name came from.
  */
 async function resolveOpRuntime(ctx: CommandContext): Promise<OpRuntimeProvider | undefined> {
-  const on = ctx.args.on;
-  if (!on || on === "local") return createLocalOpRuntime({ projectPath: resolve(".") });
+  const flag = ctx.args.on;
+  if (flag === "local") return createLocalOpRuntime({ projectPath: resolve(".") });
 
   // Read the configured list straight from `chant.config.ts` rather than
   // through `resolveProjectLexicons`: `--on` names a *configured* lexicon, and
   // that helper's fallback is a source scan of the whole project, which is a
   // long wait to be told a name is wrong.
   let configured: string[] = [];
+  let configuredOn: string | undefined;
   try {
-    configured = lexiconNames((await loadChantConfig(resolve("."))).config.lexicons ?? []);
+    const { config } = await loadChantConfig(resolve("."));
+    configured = lexiconNames(config.lexicons ?? []);
+    configuredOn = config.run?.on;
   } catch {
     // No/unreadable chant.config.ts — the error below says so by listing nothing.
   }
+
+  const on = flag || configuredOn;
+  if (!on || on === "local") return createLocalOpRuntime({ projectPath: resolve(".") });
+  const fallback = flag
+    ? "Omit --on to run on the built-in local runtime."
+    : `The name comes from \`run.on\` in chant.config.ts. Pass --on local, or change \`run.on\`, to run on the built-in local runtime.`;
 
   let plugin = ctx.plugins.find((p) => p.name === on);
   if (!plugin && configured.includes(on)) {
@@ -141,8 +153,8 @@ async function resolveOpRuntime(ctx: CommandContext): Promise<OpRuntimeProvider 
     console.error(formatError({
       message: `--on ${on}: "${on}" is not a configured lexicon`,
       hint: known.length > 0
-        ? `Configured lexicons: ${known.join(", ")}. Omit --on to run on the built-in local runtime.`
-        : "chant.config.ts configures no lexicons. Omit --on to run on the built-in local runtime.",
+        ? `Configured lexicons: ${known.join(", ")}. ${fallback}`
+        : `chant.config.ts configures no lexicons. ${fallback}`,
     }));
     return undefined;
   }
@@ -150,7 +162,7 @@ async function resolveOpRuntime(ctx: CommandContext): Promise<OpRuntimeProvider 
   if (!plugin.opRuntime) {
     console.error(formatError({
       message: `--on ${on}: lexicon "${on}" does not host Op runs`,
-      hint: "It declares no opRuntime. Omit --on to run on the built-in local runtime.",
+      hint: `It declares no opRuntime. ${fallback}`,
     }));
     return undefined;
   }
