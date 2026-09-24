@@ -2,6 +2,10 @@
 
 This file records changes to what chant prints or writes for a plain project, the level-0 changes listed in [#2525](https://github.com/INTENTIUS/chant/issues/2525). The full list, with the release that warned about each one, is on the [level-0 exceptions](docs/src/content/docs/reference/level-0-exceptions.mdx) page.
 
+## Unreleased
+
+- [#2514](https://github.com/INTENTIUS/chant/issues/2514) real SHA-256 digests: `contentDigest` returns `"sha256:" + sha256(utf8(x))`, so every `manifestDigest` and every digest of a synthesized template or SBOM changes once for the same content. Release records and build manifests that hold old digests are never rewritten or re-keyed. They read back flagged `legacy-digest`, still resolve by their old digest, and are accepted through `0.89.x`. Plan digests and snapshot props hashes now sort keys by code unit rather than by locale, so a plan whose keys mix case can digest differently once, and a gate approved for it before the upgrade asks for approval again. No level-0 golden moves ([#2606](https://github.com/INTENTIUS/chant/pull/2606)).
+
 ## 0.80.0
 
 Warning release for four listed level-0 changes. Nothing chant prints on stdout or writes changes in this release; each warning goes to stderr, and the change it warns about can land from the next release.
