@@ -57,6 +57,8 @@ export interface GatedRunSummary {
    * Absent at level 0 and for the root member.
    */
   ledgerPrefix?: string;
+  /** The environment a component gate's pending fact was recorded in (#2574). The `chant approve` line names it. */
+  environment?: string;
 }
 
 /**
@@ -99,7 +101,7 @@ export function gatedRunSummaryMarkdown(summary: GatedRunSummary): string {
     "Approve it, then re-run this workflow:",
     "",
     "```",
-    `${approveCommand(summary.op, summary.gate)} --approver <you>`,
+    `${approveCommand(summary.op, summary.gate, summary.environment)} --approver <you>`,
     "```",
     "",
     `Ledger: \`${gateLedgerPath(summary.op, summary.ledgerPrefix)}\` on the \`chant/lifecycle\` branch.`,

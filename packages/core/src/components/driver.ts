@@ -47,9 +47,9 @@
  */
 
 import { topoSort } from "../codegen/topo-sort";
-import { evaluateGate, gitGateLedgerPort, type GateLedgerPort } from "../op/gate";
+import { evaluateGate, gitGateLedgerPort, type GateDigestMismatch, type GateLedgerPort } from "../op/gate";
 import { gateName } from "../op/gate-name";
-import { warnOnUnboundComponentApproval } from "./unbound-gate-approval";
+import { componentPlanDigest } from "./gate-plan";
 import type { PendingGateRecord } from "../lifecycle/gate-ledger";
 import type { CapabilityRegistry, DeployContext } from "./capability";
 import type { RunProgressEvent, RunProgressStatus } from "./run-progress";
@@ -168,6 +168,8 @@ export interface DriverComponentResult {
   gatePushed?: boolean;
   /** Set when `gatePushed` is false: why, in one line. */
   gatePushWarning?: string;
+  /** Present when `status === "gated"` because an approval stands for this gate, but for another plan or none (#2574). */
+  gateMismatch?: GateDigestMismatch;
 }
 
 export interface DriverRunResult {
@@ -189,6 +191,8 @@ export interface DriverRunResult {
   gatePushed?: boolean;
   /** Set when `gatePushed` is false: why, in one line. */
   gatePushWarning?: string;
+  /** Present when `status === "gated"` because an approval stands for another plan or none (#2574). */
+  gateMismatch?: GateDigestMismatch;
   /**
    * The accumulated cross-component/cross-stack outputs after the run — each
    * component's `publish` output and, for an applied stack, its `cfn-deploy`
@@ -371,6 +375,8 @@ class GateStop extends Error {
     /** Whether this run's own append reached the remote — see {@link DriverComponentResult.gatePushed} (#2310). */
     public readonly pushed?: boolean,
     public readonly pushWarning?: string,
+    /** Set when an approval stands for this gate but not for this plan (#2574). */
+    public readonly mismatch?: GateDigestMismatch,
   ) {
     super(`gate "${pending.gate}" is pending approval`);
     this.name = "GateStop";
@@ -386,6 +392,14 @@ function progressStatus(status: DriverComponentResult["status"]): RunProgressSta
 export interface GateContext {
   port: GateLedgerPort;
   now?: string;
+  /**
+   * The recorded digest each component is deployed at, for a promote or a
+   * rollback (#2574). It goes into the plan digest a gate approval is bound
+   * to, keyed by component name.
+   */
+  releases?: ReadonlyMap<string, string>;
+  /** This component's plan digest. Set by {@link runComponentDeploy}, never by a caller. */
+  planDigest?: string;
 }
 
 /** Run a single capability step. Never throws for a capability-run failure; returns a fail record instead. */
@@ -468,6 +482,9 @@ async function runPhase(
       const check = await evaluateGate(gates.port, {
         op: ctx.component,
         gate: gateName(gate),
+        // #2574: an approval counts only for this environment and this plan.
+        environment: ctx.env,
+        ...(gates.planDigest !== undefined ? { planDigest: gates.planDigest } : {}),
         ...(gate.description ? { description: gate.description } : {}),
         ...(gate.timeout ? { timeout: gate.timeout } : {}),
         ...(gates.now ? { now: gates.now } : {}),
@@ -478,9 +495,8 @@ async function runPhase(
         for (const skipped of phaseDef.steps.filter((s): s is DriverStep | DriverPhase => !isGateStep(s))) {
           gateRecords.push(skippedRecord(skipped));
         }
-        throw new GateStop(gateRecords, [], check.pending, check.pushed, check.pushWarning);
+        throw new GateStop(gateRecords, [], check.pending, check.pushed, check.pushWarning, check.mismatch);
       }
-      warnOnUnboundComponentApproval(ctx.component, gateName(gate), ctx.env, check.resolution);
       gateRecords.push({
         ...base,
         status: "ok" as const,
@@ -507,6 +523,7 @@ async function runPhase(
     pending?: PendingGateRecord;
     pushed?: boolean;
     pushWarning?: string;
+    mismatch?: GateDigestMismatch;
   }> => {
     if (isPhaseStep(entry)) {
       try {
@@ -524,6 +541,7 @@ async function runPhase(
             pending: err.pending,
             pushed: err.pushed,
             pushWarning: err.pushWarning,
+            mismatch: err.mismatch,
           };
         }
         throw err;
@@ -572,7 +590,7 @@ async function runPhase(
       const executed = results.flatMap((r) => r.executed);
       const withPending = results.find((r) => r.pending);
       if (withPending?.pending) {
-        throw new GateStop(records, executed, withPending.pending, withPending.pushed, withPending.pushWarning);
+        throw new GateStop(records, executed, withPending.pending, withPending.pushed, withPending.pushWarning, withPending.mismatch);
       }
       if (results.some((r) => r.failed)) throw new StepFailure(records, executed);
       return { records, executed };
@@ -586,7 +604,7 @@ async function runPhase(
       executed.push(...result.executed);
       if (result.pending) {
         for (const skipped of entries.slice(i + 1)) records.push(skippedRecord(skipped));
-        throw new GateStop(records, executed, result.pending, result.pushed, result.pushWarning);
+        throw new GateStop(records, executed, result.pending, result.pushed, result.pushWarning, result.mismatch);
       }
       if (result.failed) {
         for (const skipped of entries.slice(i + 1)) records.push(skippedRecord(skipped));
@@ -695,9 +713,22 @@ export async function runComponentDeploy(
   registry: CapabilityRegistry,
   componentOutputs: Record<string, Record<string, unknown>>,
   onProgress?: (event: RunProgressEvent) => void,
-  gates: GateContext = { port: gitGateLedgerPort() },
+  gateContext: GateContext = { port: gitGateLedgerPort() },
 ): Promise<DriverComponentResult> {
   const phaseOutputs: Record<string, Record<string, unknown>> = {};
+  // #2574: every gate this component reaches binds its approval to this
+  // environment and this composition, so an approval for staging or for last
+  // week's deploy cannot pass it.
+  const release = gateContext.releases?.get(component.name);
+  const gates: GateContext = {
+    ...gateContext,
+    planDigest: componentPlanDigest({
+      environment: ctx.env,
+      component,
+      ...(ctx.vars ? { vars: ctx.vars } : {}),
+      ...(release !== undefined ? { release } : {}),
+    }),
+  };
   const records: DriverStepRecord[] = [];
   const allExecuted: ExecutedStep[] = [];
 
@@ -722,6 +753,7 @@ export async function runComponentDeploy(
         gate: err.pending,
         ...(err.pushed !== undefined ? { gatePushed: err.pushed } : {}),
         ...(err.pushWarning ? { gatePushWarning: err.pushWarning } : {}),
+        ...(err.mismatch ? { gateMismatch: err.mismatch } : {}),
       };
     }
 
@@ -875,6 +907,8 @@ export interface InterpretRunOptions {
   gates?: GateLedgerPort;
   /** ISO-8601 "now" for gate decisions, so a test is deterministic. */
   now?: string;
+  /** The recorded digest a promote or rollback deploys, per component (#2574). Part of the plan a gate approval is bound to. */
+  releases?: ReadonlyMap<string, string>;
 }
 
 /**
@@ -908,6 +942,7 @@ export async function runInterpretDriver(
   const gates: GateContext = {
     port: options.gates ?? gitGateLedgerPort(),
     ...(options.now ? { now: options.now } : {}),
+    ...(options.releases ? { releases: options.releases } : {}),
   };
 
   onProgress?.({ type: "run-start", waves });
@@ -959,6 +994,7 @@ export async function runInterpretDriver(
           gate: gated.gate,
           ...(gated.gatePushed !== undefined ? { gatePushed: gated.gatePushed } : {}),
           ...(gated.gatePushWarning ? { gatePushWarning: gated.gatePushWarning } : {}),
+          ...(gated.gateMismatch ? { gateMismatch: gated.gateMismatch } : {}),
         }
       : {}),
   };

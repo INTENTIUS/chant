@@ -17,6 +17,9 @@
  *    before anything after it runs;
  *  - gates, apply, verify and every other step run exactly as a normal deploy
  *    to the target environment would run them, so the target's gates apply.
+ *    A gate approval is bound to the target environment, the transformed
+ *    composition and the digest being deployed (#2574), so an approval for a
+ *    plain deploy or for another release does not pass it.
  *
  * A composition the transform cannot pin to one recorded digest is refused
  * before anything runs: one with no publish step (nothing would carry the
@@ -554,6 +557,9 @@ export async function runPromotion(options: RunPromotionOptions): Promise<Driver
     return await runInterpretDriver(targets, checkPublishedDigest(options.registry, expected), {
       env: plan.to,
       componentOutputs: options.componentOutputs ?? {},
+      // #2574: a gate approval for this promote or rollback is bound to the
+      // release it deploys, as well as the environment and composition.
+      releases: expected,
       ...(options.onProgress ? { onProgress: options.onProgress } : {}),
       ...(options.gates ? { gates: options.gates } : {}),
       ...(options.now ? { now: options.now } : {}),

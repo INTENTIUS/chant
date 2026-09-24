@@ -58,6 +58,20 @@ describe("gatedRunSummaryMarkdown (#2243)", () => {
     expect(md).toContain("and not the next run");
   });
 
+  // #2574 with #2538: a component gate in a workspace member names both its
+  // environment in the approve line and the member's gate ledger path.
+  test("a member's component gate names its environment and its member ledger path", () => {
+    const md = gatedRunSummaryMarkdown({
+      op: "search-service",
+      gate: "release",
+      expiresAt: "2026-09-08T00:00:00Z",
+      environment: "prod",
+      ledgerPrefix: "_members/services/search/",
+    });
+    expect(md).toContain("chant approve search-service release --env prod --approver <you>");
+    expect(md).toContain("`_members/services/search/_gates/search-service.jsonl`");
+  });
+
   test("a gate that binds no plan says nothing about one", () => {
     expect(gatedRunSummaryMarkdown(summary)).not.toContain("and not the next run");
   });

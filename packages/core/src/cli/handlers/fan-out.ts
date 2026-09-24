@@ -44,6 +44,7 @@ import { runFanOut } from "../../components/fan-out-run";
 import { renderFanOutHuman, renderFanOutJson, renderFanOutPlan } from "../../components/fan-out-output";
 import { ndjsonProgressSink } from "../../components/run-progress";
 import { summaryLedgerPrefix, writeGatedRunSummary } from "../../op/gate-summary";
+import { approveCommand } from "../../op/gate";
 import { remainingFanOut, type ChangedUnits, type FanOutProgress } from "../../components/fan-out";
 import { resolveCliBuildParams, parseParamFlags } from "../build-params-cli";
 import { formatError, formatInfo, formatWarning } from "../format";
@@ -320,7 +321,11 @@ export async function runComponentsFanOut(ctx: CommandContext): Promise<number> 
 
   if (result.status === "gated" && result.gate) {
     const pending = result.gate;
-    console.error(formatInfo(`approve : chant approve ${pending.op} ${pending.gate} --plan ${result.plan.digest}`));
+    // The pending fact's own plan: the fan-out's digest for the gate over the
+    // set, or a component's plan and environment for a gate inside one (#2574).
+    console.error(formatInfo(
+      `approve : ${approveCommand(pending.op, pending.gate, pending.environment)} --plan ${pending.planDigest ?? result.plan.digest}`,
+    ));
     writeGatedRunSummary({
       op: pending.op,
       gate: pending.gate,
@@ -329,6 +334,7 @@ export async function runComponentsFanOut(ctx: CommandContext): Promise<number> 
       ...(pending.url ? { url: pending.url } : {}),
       ...(pending.planDigest ? { planDigest: pending.planDigest } : {}),
       ...(await summaryLedgerPrefix()),
+      ...(pending.environment ? { environment: pending.environment } : {}),
     });
     return GATED_EXIT_CODE;
   }

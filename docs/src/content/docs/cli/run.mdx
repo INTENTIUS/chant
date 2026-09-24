@@ -148,7 +148,7 @@ chant run --components search-service --env staging
 chant run --components all --env production
 ```
 
-A `gate` anywhere in a component's composition stops that component pending `chant approve <component> <gate>`, exit 3, with no saga unwind and no `rollback` phase. The steps that ran before the gate are the steps the author meant to run before the approval.
+A `gate` anywhere in a component's composition stops that component pending `chant approve <component> <gate> --env <env>`, exit 3, with no saga unwind and no `rollback` phase. The steps that ran before the gate are the steps the author meant to run before the approval. The approval counts only for that environment and that plan, as [Gate approvals and environments](/chant/components/orchestration/#gate-approvals-and-environments) explains.
 
 `--param name=value` and `--params-file <path>` bind declared build-time parameters for the component build, with the same precedence as [`chant build`](/chant/cli/build/#build-time-parameters). `--sandbox` runs any project source the driver has to execute in one isolated child process; an Op with a `policyGate` step is refused under `--sandbox`, since that gate builds the project in the chant process.
 

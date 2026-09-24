@@ -4,7 +4,8 @@
 
 import { describe, test, expect } from "vitest";
 import { CapabilityRegistry, type DeployContext } from "./capability";
-import { memoryGateLedgerPort, type GateLedgerPort } from "../op/gate";
+import { describeGateMismatch, memoryGateLedgerPort, type GateLedgerPort } from "../op/gate";
+import { componentPlanDigest } from "./gate-plan";
 import type { GateResolutionRecord } from "../lifecycle/gate-ledger";
 import type { DriverComponent } from "./driver";
 import type { ReleaseRecord } from "../lifecycle/release-ledger";
@@ -286,10 +287,24 @@ describe("running a promotion", () => {
     expect(first.gate?.gate).toBe("prod-release");
     expect(ran).not.toContain("prod:api:apply");
 
-    resolutions.push({ version: 1, kind: "resolution", op: "api", gate: "prod-release", resolvedBy: "alice", timestamp: "2026-01-03T00:01:00Z" });
+    // `chant approve` copies the pending fact's environment and plan (#2574).
+    const bound = { planDigest: first.gate!.planDigest!, environment: first.gate!.environment! };
+    expect(bound.environment).toBe("prod");
+    resolutions.push({ version: 1, kind: "resolution", op: "api", gate: "prod-release", resolvedBy: "alice", timestamp: "2026-01-03T00:01:00Z", ...bound });
     const second = await runPromotion({ ...opts, now: "2026-01-03T00:02:00Z" });
     expect(second.status).toBe("ok");
     expect(gateApprover(second.results[0])).toBe("alice");
+
+    // The same approval does not pass a promote of another release (#2574).
+    const other = await runPromotion({
+      ...opts,
+      plan: planFor("api", "sha256:other"),
+      registry: fakeRegistry({ api: "sha256:other" }).registry,
+      now: "2026-01-03T00:03:00Z",
+    });
+    expect(other.status).toBe("gated");
+    expect(other.gateMismatch).toMatchObject({ approved: bound.planDigest, resolvedBy: "alice", environment: "prod" });
+    expect(other.gate?.planDigest).not.toBe(bound.planDigest);
   });
 
   test("dependencies outside the promotion do not block it", async () => {
@@ -425,6 +440,137 @@ describe("choosing the release a redeploy puts back (#2604)", () => {
     c.deploy[2].steps[0] = { kind: "apply", image: "@Publish.uri" };
     const p = withoutBuildSteps(c, { pinDigest: "sha256:b", verb: "a redeploy" });
     expect("error" in p && p.error).toMatch(/but a redeploy knows only the recorded digest/);
+  });
+});
+
+describe("a redeploy's gate approval is bound like a rollback's (#2574, #2604)", () => {
+  /** A gated service, pinned the way `chant components redeploy` pins it. */
+  const gatedService = (): DriverComponent => {
+    const c = service("api");
+    c.deploy[2].steps.unshift({ kind: "gate", gate: "prod-release" });
+    return c;
+  };
+  const pinned = (digest: string): DriverComponent => {
+    const p = withoutBuildSteps(gatedService(), { pinDigest: digest, verb: "a redeploy" });
+    if ("error" in p) throw new Error(p.error);
+    return p.component;
+  };
+  const redeployOf = (records: ReleaseRecord[]): PromotionPlan => {
+    const p = planRedeploy({ env: "prod", records, declared: ["api"], component: "api" });
+    if ("error" in p) throw new Error(p.error);
+    return p;
+  };
+  /** A ledger port whose resolutions the test writes, as `chant approve` would. */
+  const ledger = () => {
+    const resolutions: GateResolutionRecord[] = [];
+    const memory = memoryGateLedgerPort();
+    const gates: GateLedgerPort = {
+      async read(op) {
+        const read = await memory.read(op);
+        return { ...read, resolutions: [...resolutions] };
+      },
+      appendPending: (input) => memory.appendPending(input),
+    };
+    return { resolutions, gates };
+  };
+  const approval = (bound: Partial<GateResolutionRecord>, timestamp: string): GateResolutionRecord => ({
+    version: 1,
+    kind: "resolution",
+    op: "api",
+    gate: "prod-release",
+    resolvedBy: "alice",
+    timestamp,
+    ...bound,
+  });
+
+  test("the pending fact records prod and the redeploy's plan, and an approval of it lets the same redeploy through", async () => {
+    const { resolutions, gates } = ledger();
+    const { registry, ran } = fakeRegistry({ api: "sha256:unused" });
+    const plan = redeployOf([rec("api", "prod", "sha256:b", "2026-01-02T00:00:00Z", "run-2")]);
+    const opts = { plan, components: [pinned("sha256:b")], registry, gates };
+
+    const first = await runPromotion({ ...opts, now: "2026-01-05T00:00:00Z" });
+    expect(first.status).toBe("gated");
+    expect(first.gate?.environment).toBe("prod");
+    expect(first.gate?.planDigest).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(ran).toEqual([]);
+
+    resolutions.push(approval({ planDigest: first.gate!.planDigest!, environment: "prod" }, "2026-01-05T00:01:00Z"));
+    const second = await runPromotion({ ...opts, now: "2026-01-05T00:02:00Z" });
+    expect(second.status).toBe("ok");
+    expect(gateApprover(second.results[0])).toBe("alice");
+    expect(ran).toEqual(["prod:api:apply"]);
+  });
+
+  test("an approval for another environment, for a plain deploy, or from before #2574 does not pass it", async () => {
+    const { resolutions, gates } = ledger();
+    const { registry, ran } = fakeRegistry({ api: "sha256:unused" });
+    const plan = redeployOf([rec("api", "prod", "sha256:b", "2026-01-02T00:00:00Z", "run-2")]);
+    const opts = { plan, components: [pinned("sha256:b")], registry, gates };
+    const first = await runPromotion({ ...opts, now: "2026-01-05T00:00:00Z" });
+    const planned = first.gate!.planDigest!;
+
+    // The same plan approved for staging is not read at all in prod.
+    resolutions.push(approval({ planDigest: planned, environment: "staging" }, "2026-01-05T00:01:00Z"));
+    const staging = await runPromotion({ ...opts, now: "2026-01-05T00:02:00Z" });
+    expect(staging.status).toBe("gated");
+    expect(staging.gateMismatch).toBeUndefined();
+
+    // An approval of a plain deploy to prod is for another plan.
+    const deployPlan = componentPlanDigest({ environment: "prod", component: gatedService() });
+    resolutions.push(approval({ planDigest: deployPlan, environment: "prod" }, "2026-01-05T00:03:00Z"));
+    const plain = await runPromotion({ ...opts, now: "2026-01-05T00:04:00Z" });
+    expect(plain.status).toBe("gated");
+    expect(plain.gateMismatch).toMatchObject({ approved: deployPlan, planned, environment: "prod" });
+
+    // One recorded before #2574 names neither, and the refusal says how to approve again.
+    resolutions.push(approval({}, "2026-01-05T00:05:00Z"));
+    const old = await runPromotion({ ...opts, now: "2026-01-05T00:06:00Z" });
+    expect(old.status).toBe("gated");
+    expect(old.gateMismatch).toMatchObject({ planned, environment: "prod" });
+    expect(old.gateMismatch?.approved).toBeUndefined();
+    expect(describeGateMismatch("api", "prod-release", old.gateMismatch!)).toMatch(
+      /predates environment- and plan-bound component gates \(#2574\).*chant approve api prod-release --env prod$/,
+    );
+    expect(ran).toEqual([]);
+  });
+
+  test("an approval of one redeploy does not pass a redeploy of a release recorded since", async () => {
+    const { resolutions, gates } = ledger();
+    const { registry } = fakeRegistry({ api: "sha256:unused" });
+    const b = rec("api", "prod", "sha256:b", "2026-01-02T00:00:00Z", "run-2");
+    const first = await runPromotion({ plan: redeployOf([b]), components: [pinned("sha256:b")], registry, gates, now: "2026-01-05T00:00:00Z" });
+    const approved = first.gate!.planDigest!;
+    resolutions.push(approval({ planDigest: approved, environment: "prod" }, "2026-01-05T00:01:00Z"));
+
+    const c = rec("api", "prod", "sha256:c", "2026-01-06T00:00:00Z", "run-3");
+    const next = await runPromotion({ plan: redeployOf([b, c]), components: [pinned("sha256:c")], registry, gates, now: "2026-01-06T00:01:00Z" });
+    expect(next.status).toBe("gated");
+    expect(next.gateMismatch).toMatchObject({ approved, resolvedBy: "alice", environment: "prod" });
+    expect(next.gate?.planDigest).not.toBe(approved);
+  });
+
+  test("a current release recorded with a legacy digest (#2514) binds the approval to that digest as recorded", async () => {
+    const legacy = `sha256:${"0a1b2c3d".repeat(8)}`;
+    const { resolutions, gates } = ledger();
+    const { registry, ran } = fakeRegistry({ api: "sha256:unused" });
+    const opts = {
+      plan: redeployOf([rec("api", "prod", legacy, "2026-01-02T00:00:00Z", "run-2")]),
+      components: [pinned(legacy)],
+      registry,
+      gates,
+    };
+    const first = await runPromotion({ ...opts, now: "2026-01-05T00:00:00Z" });
+    expect(first.status).toBe("gated");
+    const planned = first.gate!.planDigest!;
+    expect(planned).toBe(componentPlanDigest({ environment: "prod", component: pinned(legacy), release: legacy }));
+    expect(planned).not.toBe(legacy);
+
+    resolutions.push(approval({ planDigest: planned, environment: "prod" }, "2026-01-05T00:01:00Z"));
+    const second = await runPromotion({ ...opts, now: "2026-01-05T00:02:00Z" });
+    expect(second.status).toBe("ok");
+    expect(second.results[0].records.find((r) => r.kind === "apply")?.output).toEqual({ applied: legacy });
+    expect(ran).toEqual(["prod:api:apply"]);
   });
 });
 

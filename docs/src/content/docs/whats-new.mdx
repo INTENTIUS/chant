@@ -7,6 +7,16 @@ A hand-curated rollup of capabilities shipped recently. If you learned chant bef
 
 For the day-to-day reference docs see [Lifecycle Models](/chant/concepts/lifecycle-models/), [`chant lifecycle`](/chant/cli/lifecycle/), [Live Import](/chant/guide/live-import/), [Reconciling Lifecycle](/chant/guide/reconciling-lifecycle/), [Drift Detection](/chant/concepts/drift-detection/), and [Implementing Observation](/chant/lexicon-authoring/observation/).
 
+## A component gate approval is bound to its environment and plan
+
+A component gate approval used to be recorded under the component and the gate name only. An approval given for a deploy to staging could pass the same gate on a later deploy to prod, and so could a promote or a rollback. Each approval now records the environment and the plan digest it was given for, and `chant run --components`, `chant components promote`, `chant components rollback` and `chant components redeploy` accept only an approval for their own. The plan covers the composition as the run executes it, the environment and, for a promote, rollback or redeploy, the digest being deployed. `chant approve --env <env>` picks which environment's pending fact to approve.
+
+This is a listed [level-0 exception](/chant/reference/level-0-exceptions/). Approvals recorded before it are refused, and the refusal prints the `chant approve` command that replaces them. `v0.80.0` warned whenever a component gate passed on such an approval.
+
+| # | Capability |
+|---|---|
+| [#2574](https://github.com/INTENTIUS/chant/issues/2574) | Component gate approvals bound to environment and plan digest, and `chant approve --env` |
+
 ## Digests chant computes are real SHA-256
 
 `contentDigest` labelled its output `sha256:` but computed a 32-bit string hash repeated to 64 hex characters. It now returns `"sha256:" + sha256(utf8(content))`, so every `manifestDigest` and every digest of a synthesized template or BOM changes once for the same content. Image digests from `docker build` and other tools were already real and are unchanged. chant 0.80.0 warned about this a release ahead, as the [level-0 exceptions](/chant/reference/level-0-exceptions/) require.

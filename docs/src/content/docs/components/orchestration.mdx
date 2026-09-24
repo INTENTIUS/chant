@@ -27,9 +27,29 @@ On a successful deploy, `chant run --components` auto-emits a [release-ledger](/
 
 ### Gate approvals and environments
 
-A component gate approval is recorded under the component and the gate name, and nothing else. An approval given for a deploy to staging can therefore pass the same gate on a later deploy to prod, and so can a promote or a rollback ([#2574](https://github.com/INTENTIUS/chant/issues/2574)). The next release binds each approval to the environment and the plan digest it was given for, the way an [Op gate binds its plan](/chant/whats-new/#a-gate-approves-a-plan-not-the-next-run). An approval recorded before then will be refused, and the refusal names the `chant approve` command that records a new one.
+A component's gate ledger is keyed by the component, so it holds the facts for every environment. Each approval is bound to the environment and the plan digest it was given for ([#2574](https://github.com/INTENTIUS/chant/issues/2574)), the way an [Op gate binds its plan](/chant/whats-new/#a-gate-approves-a-plan-not-the-next-run). A run that reaches a gate records a pending fact with both, and `chant approve <component> <gate> --env <env>` copies them onto the resolution. Without `--env`, the newest pending fact is approved.
 
-This release warns about it. When a component gate passes on an approval that records no plan, `chant run --components`, `chant components promote`, `chant components rollback` and `chant components redeploy` print one warning per component and gate. The gate still passes.
+A component has no Plan phase, so its plan digest is taken over what the run will execute in that environment:
+
+| Covered | Left out |
+|---|---|
+| the environment | outputs of earlier phases in the run, such as a fresh build's digest |
+| the `deploy` and `rollback` phases, with every step's authored input | outputs of upstream components |
+| the recorded digest a promote, rollback or redeploy deploys | the run id and the time |
+| environment config passed as `vars` | |
+
+A release recorded before real SHA-256 digests ([#2514](https://github.com/INTENTIUS/chant/issues/2514)) keeps its `legacy-digest` value, and the plan takes that value as recorded. The plan digest itself is always real SHA-256.
+
+A deploy to prod does not accept an approval given for staging. A promote does not accept one given for a plain deploy or for another digest, and an edited composition does not accept one given before the edit. `chant run --components`, `chant components promote`, `chant components rollback`, `chant components redeploy` and the components inside `chant components fan-out` all decide gates this way.
+
+An approval recorded before this change records neither an environment nor a plan, and is refused. The run stops at the gate, names the old approval, and prints the command that replaces it:
+
+```
+Gate "release" is approved, but not for this plan. approved: (none — recorded before plan-bound gates) (by alex at 2026-09-20T10:00:00.000Z); planned: sha256:4c1e0b...
+That approval predates environment- and plan-bound component gates (#2574) and records neither, so it cannot answer for this one. Approving again binds it: chant approve search-service release --env prod
+```
+
+`v0.80.0` warned about it. It printed one warning per component and gate when a gate passed on an approval that recorded no plan.
 
 ## Generate mode
 
