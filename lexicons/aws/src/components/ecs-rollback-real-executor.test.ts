@@ -33,10 +33,16 @@ const { createEcsUpdateServiceCapability } = await import("./apply");
 
 const ctx = { env: "dev", component: "search-service" };
 const updateServiceReply = { stdout: JSON.stringify({ service: { deployments: [{ id: "ecs-svc/1" }] } }), stderr: "" };
+const describeServicesReply = {
+  stdout: JSON.stringify({
+    services: [{ runningCount: 2, desiredCount: 2, deployments: [{}], taskDefinition: "arn:aws:ecs:us-east-1:1:task-definition/search:6" }],
+  }),
+  stderr: "",
+};
 
 beforeEach(() => {
   execMock.mockReset();
-  execMock.mockReturnValue(updateServiceReply);
+  execMock.mockImplementation((cmd) => (cmd.includes("describe-services") ? describeServicesReply : updateServiceReply));
 });
 
 describe("real ECS executor argument checks (#2605)", () => {
@@ -53,8 +59,10 @@ describe("real ECS executor argument checks (#2605)", () => {
     // cfn-deploy that already changed the task definition; that forward step
     // is unchanged here.
     const out = await createEcsUpdateServiceCapability(realCloudExecutor()).run(ctx, { cluster: "prod", service: "search" });
-    expect(out).toEqual({ deploymentId: "ecs-svc/1" });
-    expect(execMock).toHaveBeenCalledTimes(1);
+    expect(out.deploymentId).toBe("ecs-svc/1");
+    expect(execMock).toHaveBeenCalledTimes(2);
+    expect(execMock.mock.calls[1]![0]).toMatch(/ecs update-service /);
+    expect(execMock.mock.calls[1]![0]).not.toMatch(/--task-definition/);
   });
 });
 
@@ -76,19 +84,52 @@ describe("rollback-previous on the real executor (#2605)", () => {
   });
 });
 
-describe("ecs-update-service rollback on the real executor (#2605)", () => {
-  it("without an imageRef it fails and changes nothing", async () => {
+describe("ecs-update-service rollback on the real executor (#2605, #2609)", () => {
+  it("run reads the running task definition before update-service, and rollback sends that one, not the imageRef", async () => {
     const cap = createEcsUpdateServiceCapability(realCloudExecutor());
-    await expect(cap.rollback!(ctx, { cluster: "prod", service: "search", desiredCount: 2 })).rejects.toThrow(
-      /no imageRef to roll back to/,
+    const input = { cluster: "prod", service: "search", imageRef: "search:7" };
+    const out = await cap.run(ctx, input);
+    expect(execMock.mock.calls.map((c) => c[0].split(" ").slice(0, 3).join(" "))).toEqual([
+      "aws ecs describe-services",
+      "aws ecs update-service",
+    ]);
+    expect(execMock.mock.calls[1]![0]).toMatch(/--task-definition '?search:7'?/);
+    expect(out.previousTaskDefinition).toBe("arn:aws:ecs:us-east-1:1:task-definition/search:6");
+
+    execMock.mockClear();
+    await cap.rollback!(ctx, input, out);
+    expect(execMock).toHaveBeenCalledTimes(1);
+    const sent = execMock.mock.calls[0]![0];
+    expect(sent).toMatch(/ecs update-service .*--task-definition '?arn:aws:ecs:us-east-1:1:task-definition\/search:6'?/);
+    expect(sent).not.toMatch(/search:7/);
+  });
+
+  it("when describe-services fails, the update still runs and the rollback fails naming the service", async () => {
+    execMock.mockImplementation((cmd) => {
+      if (cmd.includes("describe-services")) throw new Error("AccessDeniedException: ecs:DescribeServices");
+      return updateServiceReply;
+    });
+    const cap = createEcsUpdateServiceCapability(realCloudExecutor());
+    const input = { cluster: "prod", service: "search", imageRef: "search:7" };
+    const out = await cap.run(ctx, input);
+    expect(out).toEqual({ deploymentId: "ecs-svc/1" });
+
+    execMock.mockClear();
+    await expect(cap.rollback!(ctx, input, out)).rejects.toThrow(
+      /ecs-update-service rollback: the task definition service "search" ran before the step was not recorded/,
     );
     expect(execMock).not.toHaveBeenCalled();
   });
 
-  it("with an imageRef it re-applies that task definition", async () => {
+  it("when describe-services reports no task definition, the rollback fails and runs no aws command", async () => {
+    execMock.mockImplementation((cmd) =>
+      cmd.includes("describe-services") ? { stdout: JSON.stringify({ services: [] }), stderr: "" } : updateServiceReply,
+    );
     const cap = createEcsUpdateServiceCapability(realCloudExecutor());
-    await cap.rollback!(ctx, { cluster: "prod", service: "search", imageRef: "search:7" });
-    expect(execMock).toHaveBeenCalledTimes(1);
-    expect(execMock.mock.calls[0]![0]).toMatch(/ecs update-service .*--task-definition '?search:7'?/);
+    const input = { cluster: "prod", service: "search", imageRef: "search:7" };
+    const out = await cap.run(ctx, input);
+    execMock.mockClear();
+    await expect(cap.rollback!(ctx, input, out)).rejects.toThrow(/service "search" ran before the step was not recorded/);
+    expect(execMock).not.toHaveBeenCalled();
   });
 });

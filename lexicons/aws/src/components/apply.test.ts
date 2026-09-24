@@ -246,20 +246,29 @@ describe("ecs-update-service (#557)", () => {
     expect(updateCall.args).toMatchObject({ cluster: "prod", service: "search", taskDefinition: "sha256:abc" });
   });
 
-  it("declares a capability-level rollback that re-invokes updateService (best-effort)", async () => {
-    const mock = createMockCloudExecutor();
+  it("run records the task definition the service ran before the update, and rollback sends it (#2609)", async () => {
+    const mock = createMockCloudExecutor({
+      ecsServices: { "prod/search": { runningCount: 2, desiredCount: 2, stable: true, taskDefinition: "search:6" } },
+    });
     const capability = createEcsUpdateServiceCapability(mock.executor);
-    expect(typeof capability.rollback).toBe("function");
-    await capability.rollback!(svcCtx, { cluster: "prod", service: "search", imageRef: "search:7" });
-    expect(mock.calls.map((c) => c.method)).toEqual(["rollbackService"]);
-    expect(mock.calls[0]!.args).toMatchObject({ taskDefinition: "search:7" });
+    const input = { cluster: "prod", service: "search", imageRef: "search:7", desiredCount: 4 };
+    const output = await capability.run(svcCtx, input);
+    expect(output).toMatchObject({ previousTaskDefinition: "search:6", previousDesiredCount: 2 });
+    expect(mock.calls.map((c) => c.method)).toEqual(["describeService", "updateService"]);
+
+    await capability.rollback!(svcCtx, input, output);
+    const rollbackCall = mock.calls.find((c) => c.method === "rollbackService")!;
+    expect(rollbackCall.args).toMatchObject({ taskDefinition: "search:6", desiredCount: 2 });
   });
 
-  it("rollback without an imageRef fails instead of reporting success (#2605)", async () => {
+  it("rollback without a recorded previous task definition fails instead of re-sending the imageRef (#2605, #2609)", async () => {
     const mock = createMockCloudExecutor();
     const capability = createEcsUpdateServiceCapability(mock.executor);
-    await expect(capability.rollback!(svcCtx, { cluster: "prod", service: "search", desiredCount: 2 })).rejects.toThrow(
-      /no imageRef to roll back to/,
+    await expect(capability.rollback!(svcCtx, { cluster: "prod", service: "search", imageRef: "search:7" })).rejects.toThrow(
+      /service "search" ran before the step was not recorded/,
+    );
+    await expect(capability.rollback!(svcCtx, { cluster: "prod", service: "search", desiredCount: 2 }, { deploymentId: "d" })).rejects.toThrow(
+      /service "search" ran before the step was not recorded/,
     );
     expect(mock.calls).toEqual([]);
   });
