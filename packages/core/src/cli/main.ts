@@ -27,7 +27,7 @@ import { runCarveStatus } from "./handlers/carve-status";
 import { runLifecycleSnapshot, runLifecycleShow, runLifecycleDiff, runLifecycleRollback, runLifecyclePlan, runLifecycleAffected, runLifecycleLog, runLifecycleTeardown, runLifecycleWhoami, runLifecycleUnknown } from "./handlers/lifecycle";
 import { runComponentsStatus, runComponentsReleaseRecord, runComponentsExport, runComponentsUnknown } from "./handlers/components";
 import { runComponentsFanOut } from "./handlers/fan-out";
-import { runComponentsPromote, runComponentsRollback } from "./handlers/promote";
+import { runComponentsPromote, runComponentsRollback, runComponentsRedeploy } from "./handlers/promote";
 import { runScenarioCheck, runScenarioUnknown } from "./handlers/scenario";
 import { runGraph } from "./handlers/graph";
 import { runExplain } from "./handlers/explain";
@@ -750,6 +750,10 @@ Component release ledger + status:
                             from its recorded digest (--component <name>
                             [--digest <sha256:...>]; defaults to the release
                             before the current one; --dry-run prints the plan)
+  components redeploy <env> Redeploy the release an environment's ledger
+                            records as current, after a deploy that failed
+                            partway (--component <name> [--digest <sha256:...>];
+                            --dry-run prints the plan; gates still apply)
 
 Lexicon development:
   dev generate          Generate lexicon artifacts (+ validate + coverage)
@@ -865,7 +869,8 @@ Options:
                         docs). Default: off (also settable via
                         chant.config.ts's build.sandbox: true; #1045)
   --param <name=value>  (build, graph, run --components, components fan-out,
-                        components promote, components rollback) Bind a
+                        components promote, components rollback,
+                        components redeploy) Bind a
                         declared build-time parameter (chant.config.ts's buildParams)
                         to a value, for source to read as params.<name>
                         (#1064) instead of process.env — repeatable.
@@ -874,7 +879,8 @@ Options:
                         can change which resources are produced at all.
                         Highest precedence.
   --params-file <path>  (build, graph, run --components, components fan-out,
-                        components promote, components rollback) JSON file
+                        components promote, components rollback,
+                        components redeploy) JSON file
                         of { "name": value } build-time parameter values
                         (#1064). Second precedence, after --param.
 
@@ -1112,6 +1118,7 @@ export const commandRegistry: CommandDef[] = [
   { name: "components export", handler: runComponentsExport },
   { name: "components promote", handler: runComponentsPromote },
   { name: "components rollback", handler: runComponentsRollback },
+  { name: "components redeploy", handler: runComponentsRedeploy },
 
   // Local emulators of configured lexicons (#920). Compound so the action word
   // lands in args.path (not consumed as a project dir) and projectPath is forced ".".

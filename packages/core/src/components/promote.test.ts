@@ -11,7 +11,9 @@ import type { ReleaseRecord } from "../lifecycle/release-ledger";
 import {
   planPromotion,
   planRollback,
+  planRedeploy,
   rollbackRecord,
+  redeployRecord,
   selectRelease,
   withoutBuildSteps,
   runPromotion,
@@ -365,6 +367,64 @@ describe("choosing the release a rollback restores", () => {
   test("a single release has nothing earlier", () => {
     const p = plan({ records: [history[0]] });
     expect("error" in p && p.error).toMatch(/no earlier release/);
+  });
+});
+
+describe("choosing the release a redeploy puts back (#2604)", () => {
+  const history = [
+    rec("api", "prod", "sha256:a", "2026-01-01T00:00:00Z"),
+    rec("api", "prod", "sha256:b", "2026-01-02T00:00:00Z", "run-2"),
+  ];
+  const plan = (input: Partial<Parameters<typeof planRedeploy>[0]>) =>
+    planRedeploy({ env: "prod", records: history, declared: ["api"], component: "api", ...input });
+
+  test("the release the ledger records as current", () => {
+    const p = plan({});
+    if ("error" in p) throw new Error(p.error);
+    expect(p.from).toBe("prod");
+    expect(p.to).toBe("prod");
+    expect(p.items).toEqual([{ component: "api", digest: "sha256:b", source: history[1] }]);
+  });
+
+  test("a --digest naming the current release is accepted", () => {
+    const p = plan({ digest: "sha256:b" });
+    expect("items" in p && p.items[0].digest).toBe("sha256:b");
+  });
+
+  test("a --digest naming any other release is refused and points at rollback", () => {
+    const p = plan({ digest: "sha256:a" });
+    expect("error" in p && p.error).toMatch(/sha256:a is not the current release of "api" in "prod" \(that is sha256:b\)/);
+    expect("error" in p && p.error).toMatch(/chant components rollback prod --component api --digest sha256:a/);
+  });
+
+  test("a component with no release in the environment is refused", () => {
+    const p = plan({ records: [] });
+    expect("error" in p && p.error).toMatch(/no release of "api" is recorded in "prod"/);
+  });
+
+  test("a component this checkout does not declare is refused", () => {
+    const p = plan({ declared: ["web"] });
+    expect("error" in p && p.error).toMatch(/not declared in this checkout/);
+  });
+
+  test("the record names the release it put back", () => {
+    const p = plan({});
+    if ("error" in p) throw new Error(p.error);
+    const record = redeployRecord(p.items[0], "prod", { runId: "run-5", actor: "bob", timestamp: "2026-01-05T00:00:00Z" });
+    expect(record).toMatchObject({
+      env: "prod",
+      digest: "sha256:b",
+      redeploys: { env: "prod", runId: "run-2", timestamp: "2026-01-02T00:00:00Z" },
+    });
+    expect(record).not.toHaveProperty("restores");
+    expect(record).not.toHaveProperty("promotedFrom");
+  });
+
+  test("a refusal from the pinned composition names the redeploy", () => {
+    const c = service("api");
+    c.deploy[2].steps[0] = { kind: "apply", image: "@Publish.uri" };
+    const p = withoutBuildSteps(c, { pinDigest: "sha256:b", verb: "a redeploy" });
+    expect("error" in p && p.error).toMatch(/but a redeploy knows only the recorded digest/);
   });
 });
 

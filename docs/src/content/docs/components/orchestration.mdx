@@ -29,7 +29,7 @@ On a successful deploy, `chant run --components` auto-emits a [release-ledger](/
 
 A component gate approval is recorded under the component and the gate name, and nothing else. An approval given for a deploy to staging can therefore pass the same gate on a later deploy to prod, and so can a promote or a rollback ([#2574](https://github.com/INTENTIUS/chant/issues/2574)). The next release binds each approval to the environment and the plan digest it was given for, the way an [Op gate binds its plan](/chant/whats-new/#a-gate-approves-a-plan-not-the-next-run). An approval recorded before then will be refused, and the refusal names the `chant approve` command that records a new one.
 
-This release warns about it. When a component gate passes on an approval that records no plan, `chant run --components`, `chant components promote` and `chant components rollback` print one warning per component and gate. The gate still passes.
+This release warns about it. When a component gate passes on an approval that records no plan, `chant run --components`, `chant components promote`, `chant components rollback` and `chant components redeploy` print one warning per component and gate. The gate still passes.
 
 ## Generate mode
 
@@ -56,6 +56,12 @@ The unwind above belongs to one run: when that run fails, the steps it executed 
 [`chant components rollback <env> --component <name>`](/chant/cli/components/#components-rollback) covers that case. It reads the environment's release ledger, picks an earlier release (the one before the current digest, or the one `--digest` names), and deploys that release's recorded digest through the component's own composition as a new, forward run. Build steps do not run, and the publish step is replaced by the recorded digest, since the environment received that artifact when the release was first deployed. Gates in the composition apply to the rollback as they do to any deploy. A successful rollback appends a release record whose `restores` field names the release it brought back, so the ledger shows it as a rollback rather than as an unexplained return to an old digest.
 
 The two also differ in what survives. A rollback is an ordinary run with its record on the ledger, so a crash partway through leaves the ledger saying what was last recorded, and running the command again starts it over. If the rollback run itself fails, its own unwind runs as usual.
+
+### Recovering from a failed deploy
+
+A deploy writes its release record only once it succeeds. When one fails partway, whether it came from `chant run --components` or from a promote or rollback, the ledger still names the last good release as current. The environment may meanwhile be running part of the failed one, if the unwind's compensations were best-effort or the process died during it. Here `chant components rollback` is no help, since it always moves to a release other than the current one.
+
+[`chant components redeploy <env> --component <name>`](/chant/cli/components/#components-redeploy-env) deploys the release the ledger records as current, by the same forward run a rollback uses and with the same gates. Its record carries a `redeploys` field naming that release.
 
 ## Fanning a change out
 

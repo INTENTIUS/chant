@@ -27,7 +27,9 @@
  * A rollback (#2531) is the same run against one environment's own earlier
  * release. There the publish step is replaced by the recorded digest rather
  * than run, since the environment already received that artifact when the
- * release was first deployed (see `withoutBuildSteps`'s `pinDigest`).
+ * release was first deployed (see `withoutBuildSteps`'s `pinDigest`). A
+ * redeploy (#2604) is a rollback to the release the ledger already records as
+ * current, for an environment a failed deploy left running something else.
  *
  * The driver stays capability-agnostic. The two kind lists below are data, in
  * the same spirit as `DEPLOY_UNIT_RULES` (./deploy-units.ts).
@@ -242,6 +244,36 @@ export function planRollback(input: {
   return { from: env, to: env, items: [{ component, digest: target.digest, source: target }], notPromoted: [] };
 }
 
+/**
+ * Decide what a redeploy deploys: the release of `component` the ledger in
+ * `env` records as current. A deploy that fails partway records nothing, so
+ * after one the ledger still names the last good release while the
+ * environment may be running part of the failed one. `digest`, when given,
+ * has to be that current digest. It guards against a deploy recorded since
+ * the caller last looked; any earlier release is a rollback.
+ */
+export function planRedeploy(input: {
+  env: string;
+  records: ReleaseRecord[];
+  declared: string[];
+  component: string;
+  digest?: string;
+}): PromotionPlan | { error: string } {
+  const { env, records, declared, component, digest } = input;
+  if (!declared.includes(component)) {
+    return { error: `component "${component}" is not declared in this checkout` };
+  }
+  const current = latestPerComponent(records.filter((r) => r.component === component)).get(component);
+  if (!current) return { error: `no release of "${component}" is recorded in "${env}"` };
+  if (digest !== undefined && digest !== current.digest) {
+    return {
+      error: `${digest} is not the current release of "${component}" in "${env}" (that is ${current.digest}); ` +
+        `use \`chant components rollback ${env} --component ${component} --digest ${digest}\` to restore an earlier release`,
+    };
+  }
+  return { from: env, to: env, items: [{ component, digest: current.digest, source: current }], notPromoted: [] };
+}
+
 function isGate(step: DriverStep | DriverGate | DriverPhase): step is DriverGate {
   return (step as { kind?: unknown }).kind === "gate";
 }
@@ -326,7 +358,7 @@ export const recordedDigestCapability: Capability<{ digest: string }, { digest: 
  * check that what is left can be pinned to one recorded digest. A phase left
  * with nothing to run is dropped. `rollback` phases are untouched.
  *
- * With `pinDigest` (a rollback, #2531), the publish step is replaced too, by a
+ * With `pinDigest` (a rollback, #2531, or a redeploy, #2604), the publish step is replaced too, by a
  * {@link RECORDED_DIGEST_KIND} step carrying that digest: the environment
  * already received the artifact when the release being restored was
  * deployed, and the archive it came from is usually long gone. Only the
@@ -335,9 +367,9 @@ export const recordedDigestCapability: Capability<{ digest: string }, { digest: 
  */
 export function withoutBuildSteps(
   component: DriverComponent,
-  opts: { pinDigest?: string } = {},
+  opts: { pinDigest?: string; verb?: string } = {},
 ): PromotableComponent | { error: string } {
-  const verb = opts.pinDigest === undefined ? "a promote" : "a rollback";
+  const verb = opts.verb ?? (opts.pinDigest === undefined ? "a promote" : "a rollback");
   const removed: string[] = [];
   /** Phases a build step was removed from, and whether anything else is left in them. */
   const emptied = new Map<string, boolean>();
@@ -541,7 +573,7 @@ export function gateApprover(result: DriverComponentResult | undefined): string 
   return approver;
 }
 
-/** What a promote or rollback knows about its own run, for the records it writes. */
+/** What a promote, rollback or redeploy knows about its own run, for the records it writes. */
 export interface DeployRunInfo {
   runId: string;
   runOrigin?: RunOrigin;
@@ -550,8 +582,8 @@ export interface DeployRunInfo {
   approver?: string;
 }
 
-/** The fields a promote and a rollback record share: the artifact is the earlier release's own. */
-function redeployRecord(item: PromotionItem, env: string, run: DeployRunInfo): ReleaseRecordInput {
+/** The fields a promote, a rollback and a redeploy record share: the artifact is the earlier release's own. */
+function sharedRecord(item: PromotionItem, env: string, run: DeployRunInfo): ReleaseRecordInput {
   const { source } = item;
   return {
     component: item.component,
@@ -568,7 +600,7 @@ function redeployRecord(item: PromotionItem, env: string, run: DeployRunInfo): R
   };
 }
 
-/** Name an earlier record the way `promotedFrom` and `restores` do. */
+/** Name an earlier record the way `promotedFrom`, `restores` and `redeploys` do. */
 function refTo(record: ReleaseRecord) {
   return { env: record.env, runId: record.runId, timestamp: record.timestamp };
 }
@@ -580,7 +612,7 @@ function refTo(record: ReleaseRecord) {
  * release.
  */
 export function promotionRecord(item: PromotionItem, to: string, run: DeployRunInfo): ReleaseRecordInput {
-  return { ...redeployRecord(item, to, run), promotedFrom: refTo(item.source) };
+  return { ...sharedRecord(item, to, run), promotedFrom: refTo(item.source) };
 }
 
 /**
@@ -589,5 +621,15 @@ export function promotionRecord(item: PromotionItem, to: string, run: DeployRunI
  * release.
  */
 export function rollbackRecord(item: PromotionItem, env: string, run: DeployRunInfo): ReleaseRecordInput {
-  return { ...redeployRecord(item, env, run), restores: refTo(item.source) };
+  return { ...sharedRecord(item, env, run), restores: refTo(item.source) };
+}
+
+/**
+ * The release record a successful redeploy appends. It carries the current
+ * release's artifact identities, as a rollback's carries the restored one's;
+ * `redeploys` names that release. The environment's current digest does not
+ * change, and the record says when it was last put back.
+ */
+export function redeployRecord(item: PromotionItem, env: string, run: DeployRunInfo): ReleaseRecordInput {
+  return { ...sharedRecord(item, env, run), redeploys: refTo(item.source) };
 }
