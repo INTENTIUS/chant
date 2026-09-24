@@ -32,6 +32,10 @@ export default defineConfig({
                               "slug": "serialization"
                         },
                         {
+                              "label": "OpenTelemetry Collector",
+                              "slug": "otel-collector"
+                        },
+                        {
                               "label": "Pseudo-parameters",
                               "slug": "pseudo-params"
                         },

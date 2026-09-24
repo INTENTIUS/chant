@@ -20,8 +20,8 @@ export type { DefaultLabels, DefaultAnnotations } from "./default-labels";
 // Generated entities — populated by `npm run generate`
 export * from "./generated/index";
 
-// Composites (to be added in Tier 2)
-// export * from "./composites/index";
+// Composites
+export * from "./composites/index";
 
 // Codegen pipeline (for external tooling)
 export { generate, writeGeneratedFiles } from "./codegen/generate";

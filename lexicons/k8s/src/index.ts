@@ -69,7 +69,7 @@ export * from "./generated/index";
 export {
   WebApp, StatefulApp, CronWorkload, AutoscaledService, WorkerPool, NamespaceEnv, NodeAgent,
   BatchJob, SecureIngress, ConfiguredApp, SidecarApp, MonitoredService, NetworkIsolatedApp,
-  IrsaServiceAccount, AlbIngress, EbsStorageClass, EfsStorageClass, FluentBitAgent, ExternalDnsAgent, AdotCollector,
+  IrsaServiceAccount, AlbIngress, EbsStorageClass, EfsStorageClass, FluentBitAgent, ExternalDnsAgent, AdotCollector, OtelCollector,
   MetricsServer, WorkloadIdentityServiceAccount, GcePdStorageClass, FilestoreStorageClass, GkeGateway, ConfigConnectorContext,
   GceIngress, CockroachDbCluster, CockroachDbRegionStack,
   RayCluster, RayJob, RayService,
@@ -92,6 +92,7 @@ export type {
   EbsStorageClassProps, EbsStorageClassResult, EfsStorageClassProps, EfsStorageClassResult,
   FluentBitAgentProps, FluentBitAgentResult, ExternalDnsAgentProps, ExternalDnsAgentResult,
   AdotCollectorProps, AdotCollectorResult,
+  OtelCollectorProps, OtelCollectorResult,
   MetricsServerProps, MetricsServerResult,
   WorkloadIdentityServiceAccountProps, WorkloadIdentityServiceAccountResult,
   GcePdStorageClassProps, GcePdStorageClassResult,

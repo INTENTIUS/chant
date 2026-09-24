@@ -22,6 +22,10 @@ export { FLY_METADATA_OWNERSHIP_KEYS } from "./ownership";
 export { flyDeploy, flapsUp, flapsDown, flyApplyStep, LOCAL_FLAPS_ENDPOINT } from "./composites/fly-deploy";
 export type { FlyDeployOpts, FlyApplyStepOpts, FlapsStepOpts } from "./composites/fly-deploy";
 
+// OpenTelemetry Collector on a Machine, its config declared with the otel lexicon (#2613).
+export { FlyOtelCollector } from "./composites/fly-otel-collector";
+export type { FlyOtelCollectorProps } from "./composites/fly-otel-collector";
+
 // Sprite Op step builders. chant #1288 Stage 2: these author
 // `activity("spriteCreate", ...)` steps with authoring-time types derived
 // from this lexicon's own `Sprite*Args` interfaces (`./op/builders.ts`),

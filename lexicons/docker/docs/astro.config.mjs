@@ -82,6 +82,10 @@ export default defineConfig({
                               "slug": "lint-rules"
                         },
                         {
+                              "label": "OpenTelemetry Collector",
+                              "slug": "otel-collector"
+                        },
+                        {
                               "label": "Variable Interpolation",
                               "slug": "interpolation"
                         }

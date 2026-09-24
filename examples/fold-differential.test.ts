@@ -395,7 +395,9 @@ const EXPECTED_FOLD: readonly string[] = [
   "lexicons/cpln/examples/basic-service",
   "lexicons/cpln/examples/stateful-postgres",
   "lexicons/docker/examples/basic-app",
+  "lexicons/docker/examples/otel-collector",
   "lexicons/fly/examples/getting-started",
+  "lexicons/fly/examples/otel-collector",
   "lexicons/forgejo/examples/ci-workflow",
   "lexicons/gcp/examples/basic-bucket",
   "lexicons/gcp/examples/cloud-function",
@@ -435,6 +437,7 @@ const EXPECTED_FOLD: readonly string[] = [
   "lexicons/k8s/examples/namespace-rbac",
   "lexicons/k8s/examples/operator-stack",
   "lexicons/k8s/examples/org-policy",
+  "lexicons/k8s/examples/otel-collector",
   "lexicons/k8s/examples/statefulset",
   "lexicons/k8s/examples/web-platform",
 ];

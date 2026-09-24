@@ -1,0 +1,84 @@
+---
+title: "OpenTelemetry Collector"
+description: "OtelCollector runs a collector agent on any cluster, its config declared with the otel lexicon"
+diataxis: reference
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-k8s` — DO NOT EDIT.
+    Edit lexicons/k8s/docs/pages/otel-collector.mdx instead; changes here are overwritten. */}
+
+
+`OtelCollector` deploys an OpenTelemetry Collector agent on any Kubernetes cluster. It needs nothing from a cloud provider. On GKE, [`GkeOtelCollector`](../gke-composites/#gkeotelcollector) builds the same agent with a Google Cloud exporter and Workload Identity.
+
+The collector config is declared with the [otel lexicon](/chant/lexicons/otel/) and rendered with `collectorYaml()` into the `config.yaml` key of a ConfigMap. The container ports, the Service ports and the probes are read back from that config, so they follow whatever config is passed in.
+
+```typescript
+import { OtelCollector } from "@intentius/chant-lexicon-k8s";
+import { OtlpExporter, type TLSClientSettings } from "@intentius/chant-lexicon-otel";
+
+const plaintext: TLSClientSettings = { insecure: true };
+
+export const collector = OtelCollector({
+  exporters: [new OtlpExporter({ name: "tempo", endpoint: "tempo.observability.svc:4317", tls: plaintext })],
+});
+```
+
+## Resources
+
+| Member | Kind | Notes |
+|--------|------|-------|
+| `daemonSet` | DaemonSet | One collector per node, the config mounted at `/etc/otel/config.yaml` |
+| `service` | Service | `internalTrafficPolicy: Local`, so each pod's traffic stays on its own node |
+| `serviceAccount` | ServiceAccount | Named `<name>-sa` |
+| `clusterRole` | ClusterRole | Read access to pods, nodes, endpoints, replica sets and jobs, the same rules `GkeOtelCollector` grants |
+| `clusterRoleBinding` | ClusterRoleBinding | Binds the role to the service account |
+| `configMap` | ConfigMap | The rendered collector config, named `<name>-config` |
+
+Pods send OTLP to `otel-collector.observability.svc:4317` (gRPC) or `:4318` (HTTP) with the default name and namespace.
+
+## Props
+
+| Prop | Default | Meaning |
+|------|---------|---------|
+| `name` | `otel-collector` | Name of the agent and its resources |
+| `namespace` | `observability` | Namespace |
+| `exporters` | one `debug` exporter | Where the default config sends telemetry |
+| `signals` | traces, metrics and logs | Which signals get a pipeline in the default config |
+| `config` | none | A full config as otel entities; replaces the default, and `exporters` and `signals` are ignored |
+| `image` | the contrib image at the otel lexicon's pinned version | Collector image |
+| `labels` | none | Extra labels on every resource |
+| `cpuRequest`, `memoryRequest` | `100m`, `256Mi` | Container requests |
+| `cpuLimit`, `memoryLimit` | `500m`, `512Mi` | Container limits |
+| `defaults` | none | Per-member overrides for each member above |
+
+## The default config
+
+Without `config`, the composite uses `otlpCollector()` from the otel lexicon. It has an `otlp` receiver on 4317 and 4318, `memory_limiter` then `batch`, the given exporters, and a `health_check` extension on 13133, with one pipeline per signal.
+
+## A full config
+
+Pass `config` to declare every component yourself. The composite renders exactly the entities it is given.
+
+```typescript
+import { OtelCollector } from "@intentius/chant-lexicon-k8s";
+import { Pipeline } from "@intentius/chant-lexicon-otel";
+import { otlp, memoryLimiter, batch, tempo, debug, health } from "./components";
+
+const processors = [memoryLimiter, batch];
+
+export const collector = OtelCollector({
+  config: [
+    health,
+    new Pipeline({ signal: "traces", receivers: [otlp], processors, exporters: [tempo] }),
+    new Pipeline({ signal: "logs", receivers: [otlp], processors, exporters: [debug] }),
+  ],
+});
+```
+
+## Ports and probes
+
+Each receiver endpoint becomes a container port and a Service port, named after the receiver and its protocol (`otlp-grpc`, `otlp-http`). When the service enables a `health_check` extension that listens on an address other than localhost, its port is added to the container as `health`, and the liveness and readiness probes call it. A config without one gets no probes.
+
+The container runs as user 10001 with a read-only root filesystem and every capability dropped.
+
+The example project is `lexicons/k8s/examples/otel-collector`.

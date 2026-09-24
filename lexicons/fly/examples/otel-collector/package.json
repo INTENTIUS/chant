@@ -1,0 +1,18 @@
+{
+  "name": "fly-otel-collector-example",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "chant build src --lexicon fly -o dist/fly.json",
+    "lint": "chant lint src"
+  },
+  "dependencies": {
+    "@intentius/chant": "*",
+    "@intentius/chant-lexicon-fly": "*",
+    "@intentius/chant-lexicon-otel": "*"
+  },
+  "devDependencies": {
+    "typescript": "*"
+  }
+}

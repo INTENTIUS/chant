@@ -1,6 +1,6 @@
 ---
 title: "Composites"
-description: "Run a declared collector config on a platform, and how the GKE composite is built on this lexicon"
+description: "Run a declared collector config on a platform: the shared helpers, and the Docker, Kubernetes, Fly and GKE composites built on them"
 diataxis: reference
 order: 6
 ---
@@ -20,6 +20,36 @@ const yaml = collectorYaml([new Pipeline({ signal: "traces", receivers: [otlp], 
 ```
 
 `buildCollectorConfig(entities)` returns the same config as a plain object, before it is printed.
+
+## Helpers for platform composites
+
+The platform composites share a few helpers from this lexicon, and a composite for another platform can use them the same way.
+
+`otlpCollector({ exporters, signals, healthCheck })` returns the entities of a small OTLP collector: an `otlp` receiver on 4317 (gRPC) and 4318 (HTTP), `memory_limiter` then `batch`, the given exporters (one `debug` exporter by default), a `health_check` extension on 13133 unless `healthCheck` is `false`, and one pipeline per signal (traces, metrics and logs by default). Pass the result to `collectorYaml`.
+
+`collectorEndpoints(config)` reads a built config and returns the ports its receivers listen on, each with a name usable as a Kubernetes port name (`otlp-grpc`, `otlp-http`), and the `health_check` port and path when the service enables one on an address other than localhost. The composites publish ports and set up health checks from this, so both follow whatever config the caller declares.
+
+`COLLECTOR_IMAGE` is the contrib collector image at the version the built-in components are typed against, and `COLLECTOR_CONFIG_PATH` is `/etc/otel/config.yaml`, where every platform composite puts the rendered config.
+
+```ts
+import { buildCollectorConfig, collectorEndpoints, collectorYaml, otlpCollector } from "@intentius/chant-lexicon-otel";
+
+const entities = otlpCollector({ signals: ["traces"] });
+const yaml = collectorYaml(entities);
+const { ports, healthCheck } = collectorEndpoints(buildCollectorConfig(entities).config);
+// ports: otlp-grpc 4317, otlp-http 4318; healthCheck: port 13133, path "/"
+```
+
+## Platform composites
+
+Each composite takes either `exporters` and `signals` for the default config, or `config` with the full set of entities.
+
+| Composite | Lexicon | What it runs |
+|-----------|---------|--------------|
+| [`DockerOtelCollector`](/chant/lexicons/docker/otel-collector/) | docker | A Compose service, with the config inline in a top-level Compose config |
+| [`OtelCollector`](/chant/lexicons/k8s/otel-collector/) | k8s | A DaemonSet agent on any cluster, with a node-local Service |
+| [`FlyOtelCollector`](/chant/lexicons/fly/otel-collector/) | fly | A Fly Machine, with the config written in as a file |
+| `GkeOtelCollector` | k8s | A DaemonSet agent on GKE that exports to Google Cloud |
 
 ## `GkeOtelCollector` (k8s lexicon)
 

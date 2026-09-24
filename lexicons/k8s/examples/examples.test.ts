@@ -2,6 +2,8 @@ import { describe, test, expect } from "vitest";
 import { describeAllExamples } from "@intentius/chant-test-utils/example-harness";
 import { buildCommand } from "@intentius/chant/cli/commands/build";
 import { k8sSerializer, k8sPlugin } from "@intentius/chant-lexicon-k8s";
+import { validateCollectorConfig, type CollectorConfig } from "@intentius/chant-lexicon-otel";
+import { loadAll, load } from "js-yaml";
 import { resolve, join } from "path";
 import { tmpdir } from "os";
 
@@ -30,6 +32,27 @@ describeAllExamples(
         expect(output).toContain("acme.io/tier: critical");
         // Only prod/staging declare an ingress host (dev inherits no ingress).
         expect(output).toContain("acme.example");
+      },
+    },
+    "otel-collector": {
+      checks: (output) => {
+        const docs = loadAll(output) as Array<{ kind: string; metadata: { name: string }; [k: string]: any }>;
+        const byKind = new Map(docs.map((d) => [d.kind, d]));
+        for (const kind of ["DaemonSet", "Service", "ServiceAccount", "ClusterRole", "ClusterRoleBinding", "ConfigMap"]) {
+          expect(byKind.has(kind), kind).toBe(true);
+        }
+
+        const container = byKind.get("DaemonSet")!.spec.template.spec.containers[0];
+        expect(container.ports.map((p: { containerPort: number }) => p.containerPort)).toEqual([4317, 4318, 13133]);
+        expect(container.livenessProbe).toEqual({ httpGet: { path: "/", port: "health" } });
+        expect(byKind.get("Service")!.spec.internalTrafficPolicy).toBe("Local");
+
+        // The ConfigMap carries exactly the components the example declares.
+        const config = load(byKind.get("ConfigMap")!.data["config.yaml"]) as CollectorConfig;
+        expect(validateCollectorConfig(config)).toEqual([]);
+        expect(Object.keys(config.exporters ?? {}).sort()).toEqual(["debug", "otlp/tempo"]);
+        expect(config.service?.pipelines?.logs?.exporters).toEqual(["debug"]);
+        expect(config.service?.pipelines?.traces?.exporters).toEqual(["otlp/tempo"]);
       },
     },
     "statefulset": {
