@@ -26,6 +26,7 @@
  * | WSP081 to WSP083 | recorded pipelines |
  * | WSP091 to WSP097 | member links (#2539) |
  * | WSP101 to WSP106 | generated files |
+ * | WSP111 to WSP114 | records read with `--kind` (#2549) |
  */
 
 import { realpathSync } from "node:fs";
@@ -42,6 +43,7 @@ import type { LinkTableRow } from "./links";
 import { gatherGeneratedFacts, GENERATED_CHECKS, type GeneratedFileFacts } from "./checks/generated";
 import { gatherLedgerFacts, LEDGER_CHECKS, type MemberLedgerFacts } from "./checks/ledgers";
 import { gatherPipelineFacts, PIPELINE_CHECKS, type MemberPipelineFacts } from "./checks/pipelines";
+import { RECORD_CHECKS, type RecordFacts } from "./checks/records";
 
 /**
  * What the checks beyond the declaration read, gathered from the checkout
@@ -55,6 +57,8 @@ export interface WorkspaceFacts {
   pipelines?: readonly MemberPipelineFacts[];
   /** Each declared or implicit generated file, with what its generator produced. */
   generated?: readonly GeneratedFileFacts[];
+  /** The records of the kind named with `--kind`, with their pins checked (#2549). */
+  records?: RecordFacts;
 }
 
 /** What every declaration check reads. */
@@ -77,6 +81,8 @@ export interface WorkspaceCheckContext {
 export interface WorkspaceDiagnostic extends PostSynthDiagnostic {
   /** A JSON Pointer into the declaration. */
   pointer: string;
+  /** An absolute path, for a finding about a file other than the declaration, such as a record (#2549). It is reported at its first line. */
+  file?: string;
 }
 
 export interface WorkspaceCheck {
@@ -295,6 +301,8 @@ export const WORKSPACE_CHECKS: readonly WorkspaceCheck[] = [
   ...LINK_CHECKS,
   // Generated files (#2541).
   ...GENERATED_CHECKS,
+  // Records read with --kind (#2549).
+  ...RECORD_CHECKS,
 ];
 
 const BY_ID = new Map(WORKSPACE_CHECKS.map((c) => [c.id, c]));
@@ -370,6 +378,8 @@ export interface DeclarationCheckOptions {
    * gathered: they describe the working tree, not the revision.
    */
   tree?: WorkspaceTree;
+  /** The records read with `--kind`, in the same tree (#2549). Given with or without `tree`. */
+  records?: RecordFacts;
 }
 
 /**
@@ -433,7 +443,8 @@ export async function runDeclarationChecks(
     return { file: display(location.file), diagnostics: [diagnostic], suppressed: [], links: [], ok: false };
   }
   const { registry, problems } = loadKindRegistry(declaration.pins, root);
-  const facts = options.gather === false || options.tree ? {} : await gatherWorkspaceFacts(root, declaration, options);
+  const gathered = options.gather === false || options.tree ? {} : await gatherWorkspaceFacts(root, declaration, options);
+  const facts: WorkspaceFacts = options.records ? { ...gathered, records: options.records } : gathered;
   const ctx: WorkspaceCheckContext = { declaration, tree, groups, kinds: registry, kindProblems: problems, facts };
   const findings = runWorkspaceChecks(ctx);
   const { active, suppressed } = applyCheckSettings(declaration, findings);
@@ -442,8 +453,7 @@ export async function runDeclarationChecks(
   const locate = (pointer: string): TextLocation => (parsed.ok ? parsed.locate(pointer) : { line: 1, column: 1 });
   const file = display(declaration.file);
   const toFinding = (d: WorkspaceDiagnostic): WorkspaceFinding => ({
-    file,
-    ...locate(d.pointer),
+    ...(d.file !== undefined ? { file: display(relative(root, d.file).split(sep).join("/")), line: 1, column: 1 } : { file, ...locate(d.pointer) }),
     ruleId: d.checkId,
     severity: d.severity,
     message: d.message,

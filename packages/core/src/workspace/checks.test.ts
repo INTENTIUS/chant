@@ -56,6 +56,8 @@ describe("the WSP catalog", () => {
       "flat-ledger-environment-shared",
       "link-target-unknown",
       "link-kind-unknown",
+      // --kind names a record kind, and records that can't be read check nothing (#2549).
+      "records-unreadable",
     ]);
   });
 

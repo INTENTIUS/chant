@@ -1,8 +1,9 @@
 /**
- * `chant workspace graph [dir] [--at <rev>] [--member <name>] [-o <file>]
- * [--env <env>] [--dry-run]` (#2537, #2536): every `chant` member's IR, read
- * through the member's own toolchain and composed into one document
- * (`compose-graph.ts`).
+ * `chant workspace graph [dir] [--at <rev>] [--member <name>] [--kind <kind file>]
+ * [-o <file>] [--env <env>] [--dry-run]` (#2537, #2536): every `chant`
+ * member's IR, read through the member's own toolchain and composed into one
+ * document (`compose-graph.ts`). With `--kind`, the records of that kind and
+ * their asset and constrains links join it (#2549, `record-assets.ts`).
  *
  * The document is part of the read contract, described by `graph.schema.json`
  * beside this file. It is printed for a failure too, with the error's reason
@@ -28,6 +29,8 @@ import { composeWorkspaceGraph, readMemberIr, type ComposeInput, type WorkspaceG
 import { readDeclaration, readerVersion, WORKSPACE_ERROR_CODES, WorkspaceReadError, type ErrorLocation, type WorkspaceErrorCode } from "./declaration";
 import { describePlan, emitDocument, executePlan, memberStatus, planJson, planMembers, type MemberPlan, type Toolchain, type UnitResult } from "./member-commands";
 import { loadKindRegistry } from "./kinds";
+import { recordLinkRows } from "./record-assets";
+import { RecordReadError } from "./records";
 import { workingTree } from "./tree";
 import { handToRootChant, locateWorkspace, type LocatedWorkspace } from "./which-chant";
 
@@ -40,7 +43,7 @@ export const GRAPH_OUTPUT_SCHEMA_ID = "https://intentius.io/chant/schemas/worksp
 /** Why the graph couldn't be read at all: the declaration's codes, `--at`'s included. */
 export const GRAPH_ERROR_CODES = WORKSPACE_ERROR_CODES;
 
-const USAGE = "chant workspace graph [dir] [--at <rev>] [--member <name>] [-o <file>] [--env <env>] [--dry-run]";
+const USAGE = "chant workspace graph [dir] [--at <rev>] [--member <name>] [--kind <kind file>] [-o <file>] [--env <env>] [--dry-run]";
 
 interface Head {
   $schema: string;
@@ -64,6 +67,12 @@ export interface GraphQuery {
   reader?: Toolchain;
   /** Called with each member's stderr, so the command can pass it on. */
   onStderr?: (text: string) => void;
+  /**
+   * A record kind file, absolute or relative to `cwd` (#2549). Its records
+   * fill `records`, and their asset pins and `constrains` entries become
+   * rows of `links`.
+   */
+  kind?: string;
 }
 
 export interface GraphResult {
@@ -171,7 +180,23 @@ export async function workspaceGraph(query: GraphQuery): Promise<GraphResult> {
     // Links (#2539) resolve against the declaration that was read, the revision's for --at, and the kinds installed now.
     const kinds = loadKindRegistry(declaration.pins, located.rootOnDisk).registry;
     const graph = composeWorkspaceGraph({ name: declaration.name, root: located.root }, inputs, { declaration, kinds });
-    return { doc: { ...head, at: located.at, ...graph }, failed };
+    let recordsFailed = false;
+    if (query.kind !== undefined) {
+      // Artifact relationships come from records (#2549): a record's pins and
+      // what it constrains, read at the same revision as the declaration.
+      const { readRecordsFor } = await import("./records-cli");
+      try {
+        const read = await readRecordsFor({ kind: query.kind, cwd: query.cwd, at: query.at });
+        const name = read.loaded.kind.name;
+        graph.records = read.result.records.map((r) => ({ kind: name, id: r.id, path: r.path, state: r.state, valid: r.valid, supersededBy: r.supersededBy }));
+        graph.links.push(...recordLinkRows(name, read.result.records, read.loaded.kind.constrains?.field, located.tree, declaration.members));
+      } catch (err) {
+        if (!(err instanceof RecordReadError)) throw err;
+        recordsFailed = true;
+        query.onStderr?.(`${formatError({ message: `--kind ${query.kind}: ${err.code}: ${err.message}`, hint: USAGE })}\n`);
+      }
+    }
+    return { doc: { ...head, at: located.at, ...graph }, failed: failed || recordsFailed };
   } catch (err) {
     if (!(err instanceof WorkspaceReadError)) throw err;
     return { doc: { ...head, error: { code: err.code, message: err.message, location: err.location ?? null } }, failed: true };
@@ -209,6 +234,7 @@ export async function runWorkspaceGraph(ctx: CommandContext): Promise<number> {
     at: args.at,
     members: args.members,
     args,
+    ...(args.kind !== undefined ? { kind: resolve(args.kind) } : {}),
     onStderr: (text) => process.stderr.write(text),
   });
   emitDocument(doc, args.output);

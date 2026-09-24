@@ -19,6 +19,11 @@ export interface WorkspaceTree {
   list(path: string): { name: string; type: "file" | "dir" }[] | undefined;
   /** The text of the file at `path`. Throws when it can't be read. */
   read(path: string): string;
+  /**
+   * The bytes of the file at `path`, for hashing (#2549). Throws when it can't
+   * be read. A tree without it is read as UTF-8 text.
+   */
+  bytes?(path: string): Uint8Array;
 }
 
 /** Join tree-relative path parts, leaving out `""` and `"."`. */
@@ -62,6 +67,9 @@ export function workingTree(root: string): WorkspaceTree {
     },
     read(path) {
       return readFileSync(join(root, path), "utf-8");
+    },
+    bytes(path) {
+      return readFileSync(join(root, path));
     },
   };
 }
@@ -122,6 +130,10 @@ export function gitTree(top: string, commit: string, prefix = ""): WorkspaceTree
     read(path) {
       if (entries.get(path) !== "file") throw new Error(`${path} is not a file${` at ${commit.slice(0, 8)}`}`);
       return git(top, ["cat-file", "blob", `${commit}:${joinPath(prefix, path)}`]);
+    },
+    bytes(path) {
+      if (entries.get(path) !== "file") throw new Error(`${path} is not a file${` at ${commit.slice(0, 8)}`}`);
+      return execFileSync("git", ["cat-file", "blob", `${commit}:${joinPath(prefix, path)}`], { cwd: top, stdio: ["ignore", "pipe", "pipe"], maxBuffer: 512 * 1024 * 1024 });
     },
   };
 }

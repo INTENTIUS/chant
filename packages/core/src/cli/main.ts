@@ -360,7 +360,7 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--at") {
       result.at = args[++i];
     } else if (arg === "--kind") {
-      // `chant workspace records --kind <kind file>` (#2546)
+      // `chant workspace records|graph|check --kind <kind file>` (#2546, #2549)
       result.kind = args[++i];
       if (!result.kind || result.kind.startsWith("-")) throw new Error("--kind needs a kind file: --kind <path>");
     } else if (arg === "--current") {
@@ -719,7 +719,11 @@ Workspace (level 1, #2524):
                         Each record reports its provenance level, judged by
                         the signers at --base (default: the target branch);
                         --require attested exits 2 if any record is not
-                        attested
+                        attested. A pinned file that changed is a warning,
+                        asset-drift or asset-missing
+  workspace records pin <path>
+                        Print the path from the workspace root and the
+                        sha256 of a file, for a decision's evidence pin
   workspace verify [--base <rev>] [--head <rev>] [--require attested]
                         Check the commits in base..head against the signers
                         and roles read from base. A change to the signers file
@@ -737,12 +741,13 @@ Workspace (level 1, #2524):
                         lint and workspace check there, then gate on the digest
                         of the patch (chant approve workspace-upgrade <scope>).
                         A second run with the approval applies the patch
-  workspace check [--at <rev>] [--json] [--format stylish|json|sarif] [--generated]
+  workspace check [--at <rev>] [--json] [--format stylish|json|sarif] [--generated] [--kind <kind file>]
                         Fail on an unreadable lineage lock or an open manual
                         step, and, in a declared workspace, on a WSP check of
                         the declaration, member ledgers, pipelines or
                         generated files. --generated runs declared generators
-                        and compares their output. Needs no workspace file.
+                        and compares their output. --kind warns on records
+                        whose pinned files changed. Needs no workspace file.
                         --at reads a commit's git objects; --format json
                         prints the read-contract document
   workspace build [dir] [--member <name>] [-o <dir>] [--dry-run]
@@ -756,11 +761,12 @@ Workspace (level 1, #2524):
   workspace audit [dir] [--json] [--member <name>]
                         Audit each chant member with its own .chant-audit.json;
                         every finding carries a member field
-  workspace graph [dir] [--at <rev>] [--member <name>] [-o <file>]
+  workspace graph [dir] [--at <rev>] [--member <name>] [--kind <kind file>] [-o <file>]
                         Compose each chant member's chant graph into one IR,
                         with <member>/<id> ids and groups.byMember: the
                         read-contract document. --at <rev> runs each member's
-                        source as it was at that commit
+                        source as it was at that commit; --kind adds the
+                        records' asset and constrains links
 
 Lifecycle (alias: lc):
   lifecycle snapshot <env>  Query API, save metadata to orphan branch

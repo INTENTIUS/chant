@@ -16,8 +16,9 @@
  * - `links` holds the member links (#2524 D6, #2539): the declared links and
  *   the joins inferred from members' `imports` and `exports` with the core
  *   `joinKey()`, labelled `exact` or `folded` (`./links.ts`). A declared link
- *   suppresses the inferred edge it covers. `records` is the section record
- *   kinds fill (#2524 D4), empty so far.
+ *   suppresses the inferred edge it covers. `records` holds the records
+ *   read through a record kind (`--kind`, #2549), and their `asset` and
+ *   `constrains` links follow the member links in `links`.
  *
  * A member's IR with no `version` field comes from a chant older than #2529.
  * It is version 1, and it is upgraded in place by stamping that version. An IR
@@ -31,6 +32,7 @@
 import type { Declaration } from "./declaration";
 import type { KindRegistry } from "./kinds";
 import { graphLinks, type LinkTableRow } from "./links";
+import type { RecordLinkRow } from "./record-assets";
 import type { ReasonCode } from "./reason-codes";
 import { GRAPH_IR_VERSION, type GraphIR, type IRExport, type IRGroups, type IRImport, type IREdge, type IRNode } from "../graph-ir";
 
@@ -92,10 +94,25 @@ export interface WorkspaceGraph {
   exports: (IRExport & { member: string })[];
   imports: (IRImport & { member: string })[];
   derivedAttrs?: Record<string, string[]>;
-  /** Member links (#2524 D6, #2539), declared and inferred. Empty when no declaration is given. */
-  links: LinkTableRow[];
-  /** Record sections (#2524 D4). Empty until record kinds join the graph. */
-  records: unknown[];
+  /**
+   * Member links (#2524 D6, #2539), declared and inferred, then the links of
+   * the records read with `--kind` (#2549). Empty when no declaration is given.
+   */
+  links: (LinkTableRow | RecordLinkRow)[];
+  /** The records read with `--kind` (#2524 D4, #2549). Empty without it. */
+  records: GraphRecord[];
+}
+
+/** A record in the composed graph: enough to name it from a link row. */
+export interface GraphRecord {
+  /** The record kind's name, such as `decision`. */
+  kind: string;
+  id: string | null;
+  /** From the repository root. */
+  path: string;
+  state: string | null;
+  valid: boolean;
+  supersededBy: string | null;
 }
 
 /** Read one member's `chant graph --format ir` output, upgrading an unversioned (v1) IR in place. */

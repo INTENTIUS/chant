@@ -48,7 +48,7 @@ chant workspace records --kind decisions/decision.kind.mjs --current
 | [#2540](https://github.com/INTENTIUS/chant/issues/2540) | landed: `chant init --from INTENTIUS/chant@<tag>#reference-workspace` copies this directory and writes `.chant/workspace.lock.json`. The design client gets a lineage scope of its own once there is a client to vendor |
 | [#2542](https://github.com/INTENTIUS/chant/issues/2542) | per-member CI pipelines with path filters |
 | [#2546](https://github.com/INTENTIUS/chant/issues/2546) | the decisions become sealed records, read by the spec query |
-| [#2549](https://github.com/INTENTIUS/chant/issues/2549) | records link to `design/` by anchor and pin its files' hashes |
+| [#2549](https://github.com/INTENTIUS/chant/issues/2549) | partly landed: `ref-002` pins `design/screens/home.json` by hash, and `chant workspace records` reports an edit to it as drift. The design member's kind and `check --live` come later |
 | [#2550](https://github.com/INTENTIUS/chant/issues/2550) | `chant workspace upgrade` from an older tag of this workspace |
 | [#2627](https://github.com/INTENTIUS/chant/issues/2627) | landed: [`chant.template.json`](chant.template.json) declares a `name` parameter, the app's display name. `chant init --from ... --param name="Untitled app"` puts it in the home page and the screen spec, and the lock records it |
 

@@ -15,7 +15,7 @@ import { GRAPH_ERROR_CODES } from "./graph-cli";
 import { CHECK_CODES, CHECK_ERROR_CODES } from "./lineage-check";
 import { GROUP_REASON_CODES, MEMBER_REASON_CODES } from "./ls";
 import { isReasonCode, REASON_CODES, REASONS } from "./reason-codes";
-import { READ_ERROR_CODES, RECORD_REASON_CODES } from "./records";
+import { READ_ERROR_CODES, RECORD_REASON_CODES, RECORD_WARNING_CODES } from "./records";
 import { STATUS_ERROR_CODES, STATUS_REASON_CODES } from "./status";
 
 const HERE = import.meta.dirname;
@@ -31,6 +31,7 @@ const PER_COMMAND: Record<string, readonly string[]> = {
   STATUS_REASON_CODES,
   STATUS_ERROR_CODES,
   RECORD_REASON_CODES,
+  RECORD_WARNING_CODES,
   READ_ERROR_CODES,
 };
 

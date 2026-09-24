@@ -65,12 +65,36 @@ constrains:
 | `choice` | the chosen option's id and the reason |
 | `rejected` | each option not chosen, with why it lost |
 | `supersedes` | earlier choices this decision replaced |
-| `evidence` | public links to the design sections, issues and audits behind it |
+| `evidence` | the design sections, issues, audits and workspace files behind it: each a public link or a file pinned by hash (see [Evidence](#evidence)) |
 | `decided_by`, `decided_on` | the forge login and the date |
 | `reviews` | each reviewer's verdict (`agree`, `dissent` or `abstain`), a note and a date; empty until a review happens |
-| `constrains` | the issues (`owner/repo#n`), decisions (their ids) or members (`member:<name>`) the decision governs |
+| `constrains` | the issues (`owner/repo#n`), decisions (their ids), members (`member:<name>`) or workspace files and directories (`path:<path>`) the decision governs |
 
 Unknown fields are refused, except ones starting with `x-`.
+
+## Evidence
+
+An `evidence` entry takes one of two forms. A public link has `title` and `url`, with `as_of` and `sha256` optional:
+
+```yaml
+  - title: "#2524 D4. Records"
+    url: "https://github.com/INTENTIUS/chant/issues/2524#d4-records"
+    as_of: "2026-09-23T20:56:42Z"
+```
+
+A file in the workspace, such as a screen spec in the design member, has `title`, `path` and `sha256`, with `as_of` optional (#2549):
+
+```yaml
+  - title: "The home screen spec"
+    path: "design/screens/home.json"
+    sha256: "074e55f524703fe65ecba4cf0e2cd3200e21f969a1f789618e22ff9537dd99e0"
+```
+
+`path` starts at the workspace root and sits inside a member. It uses `/` and has no leading `/`, no `.` or `..` segment and no trailing `/`. `sha256` is the lowercase hex SHA-256 of the file's bytes, and it is required. `chant workspace records pin <path>` prints both, and `sha256sum <path>` from the workspace root gives the same hash. An entry never has both `url` and `path`.
+
+`chant workspace records` checks each pin against the files it reads. A file that changed is reported as `asset-drift` and one that is gone as `asset-missing`. When a decision supersedes another and pins a file at the hash the old one pinned, while the file has not changed since, it is `asset-stale`: the decision changed and the artifact did not follow. All three are warnings: the decision stays valid, and the finding asks for it or the artifact to be revisited. Accepting the new file means updating `sha256` in a pull request.
+
+`constrains` takes `path:<path>` with the same grammar as an evidence path, for a decision that governs a file or directory rather than a whole member, such as `path:app/src/server.mjs`. Relationships between artifacts and the code they shape come from decisions only: a reader goes from a file to the decisions whose `constrains` cover it, and from those to the files their evidence pins. The [read contract](https://intentius.io/chant/reference/workspace-read-contract/#record-links-and-artifacts) describes that walk.
 
 ## Values
 
@@ -86,7 +110,7 @@ supersedes:
     option: "b"
 ```
 
-`choice.reason` then says that the choice was revised and why. Once decision files exist, a new decision that replaces an older file names it instead, as `- decision: "ws-012"`. The old file is never edited to point forward. A reader derives that link from the new file, as #2524 D4 does for records.
+`choice.reason` then says that the choice was revised and why. Once decision files exist, a new decision that replaces an older file names it instead, as `- decision: "ws-012"`. The old file is never edited to point forward. A reader derives that link from the new file, as #2524 D4 does for records. The link takes effect under an equal or stricter approval rule: a `decided` decision replaces a `decided` or `proposed` one, a `ratified` one replaces any, and a `proposed` one replaces nothing until it is decided.
 
 ## Reviews
 

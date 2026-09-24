@@ -38,6 +38,10 @@ evidence:
   - title: "ws-024, Design app"
     url: "https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-024-design-app.md"
     as_of: "2026-09-24T01:50:08Z"
+  - title: "The home screen spec"
+    path: "design/screens/home.json"
+    sha256: "074e55f524703fe65ecba4cf0e2cd3200e21f969a1f789618e22ff9537dd99e0"
+    as_of: "2026-09-24T12:00:00Z"
 decided_by: "lex00"
 decided_on: "2026-09-23"
 reviews: []

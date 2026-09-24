@@ -130,25 +130,10 @@
       }
     },
     "evidence": {
-      "description": "Public links to the research, audits and design sections behind the decision.",
+      "description": "The research, audits, design sections and workspace files behind the decision. A public link carries a url; a file in the workspace carries a path and the hash of its bytes (#2549).",
       "type": "array",
       "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["title", "url"],
-        "properties": {
-          "title": { "type": "string", "minLength": 1 },
-          "url": { "type": "string", "pattern": "^https://" },
-          "as_of": {
-            "description": "When the linked text was read, as an ISO 8601 timestamp. Lets a reader flag evidence that changed afterwards.",
-            "type": ["string", "null"]
-          },
-          "sha256": {
-            "description": "Hex SHA-256 of the linked content, once evidence is pinned by hash (#2555). Null until then.",
-            "type": ["string", "null"],
-            "pattern": "^[0-9a-f]{64}$"
-          }
-        }
+        "oneOf": [{ "$ref": "#/definitions/evidenceLink" }, { "$ref": "#/definitions/evidencePin" }]
       }
     },
     "decided_by": {
@@ -180,11 +165,11 @@
       }
     },
     "constrains": {
-      "description": "What this decision governs: issues (owner/repo#n), other decisions (their ids) or workspace members (member:<name>).",
+      "description": "What this decision governs: issues (owner/repo#n), other decisions (their ids), workspace members (member:<name>) or files and directories in the workspace (path:<path>, the grammar of an evidence path, #2549).",
       "type": "array",
       "items": {
         "type": "string",
-        "pattern": "^([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[0-9]+|[a-z][a-z0-9]{0,15}-[0-9]{3,}|member:[a-z0-9][a-z0-9-]{0,39})$"
+        "pattern": "^([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[0-9]+|[a-z][a-z0-9]{0,15}-[0-9]{3,}|member:[a-z0-9][a-z0-9-]{0,39}|path:(?!/)(?!(?:[^/]*/)*\\.{1,2}(?:/|$))(?!.*//)[^\\\\\\u0000-\\u001f]*[^/\\\\\\u0000-\\u001f])$"
       }
     }
   },
@@ -228,6 +213,52 @@
     }
   ],
   "definitions": {
+    "workspacePath": {
+      "description": "A path from the workspace root, with / separators: no leading /, no . or .. segment, no empty segment, no backslash and no trailing /.",
+      "type": "string",
+      "pattern": "^(?!/)(?!(?:[^/]*/)*\\.{1,2}(?:/|$))(?!.*//)[^\\\\\\u0000-\\u001f]*[^/\\\\\\u0000-\\u001f]$"
+    },
+    "evidenceLink": {
+      "description": "A public link.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "url"],
+      "properties": {
+        "title": { "type": "string", "minLength": 1 },
+        "url": { "type": "string", "pattern": "^https://" },
+        "as_of": {
+          "description": "When the linked text was read, as an ISO 8601 timestamp. Lets a reader flag evidence that changed afterwards.",
+          "type": ["string", "null"]
+        },
+        "sha256": {
+          "description": "Hex SHA-256 of the linked content, once evidence is pinned by hash (#2555). Null until then.",
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "evidencePin": {
+      "description": "A file in the workspace, pinned by the hash of its bytes (#2524 D18, #2549). chant workspace records reports a file that changed or went missing since.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "path", "sha256"],
+      "properties": {
+        "title": { "type": "string", "minLength": 1 },
+        "path": {
+          "description": "The file, from the workspace root. It sits inside a member, such as design/screens/home.json.",
+          "$ref": "#/definitions/workspacePath"
+        },
+        "sha256": {
+          "description": "Hex SHA-256 of the file's bytes when the decision was written. chant workspace records pin <path> prints it.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "as_of": {
+          "description": "When the file was read, as an ISO 8601 timestamp.",
+          "type": ["string", "null"]
+        }
+      }
+    },
     "issueRef": {
       "type": "string",
       "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[0-9]+$"

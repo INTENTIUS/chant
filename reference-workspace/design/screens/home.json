@@ -1,5 +1,5 @@
 {
-  "$comment": "Screen spec for the app's home page. The app member implements it in app/src/server.mjs. Once record links land (#2549), a decision that closes pins this file's hash.",
+  "$comment": "Screen spec for the app's home page. The app member implements it in app/src/server.mjs. Decision ref-002 pins this file by hash, so an edit shows as drift in chant workspace records until the decision is revisited and re-pinned.",
   "screen": "home",
   "route": "/",
   "title": "{{chant:name}}",

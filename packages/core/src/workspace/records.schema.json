@@ -26,6 +26,10 @@
           "type": ["string", "null"],
           "pattern": "^[0-9a-f]{40,64}$"
         },
+        "workspaceRoot": {
+          "type": "string",
+          "description": "Added in contract 1 by #2549. The directory a record's pinned paths resolve in, from the repository root with / separators: the workspace whose declaration sits nearest above the kind file, or \".\" for the repository root."
+        },
         "error": false,
         "current": { "type": "boolean", "description": "Whether superseded records were left out (--current)." },
         "trust": { "$ref": "#/$defs/trust" },
@@ -63,7 +67,17 @@
           "type": ["object", "null"],
           "description": "The front matter as JSON, following the kind's schema when valid is true. Null when it could not be parsed."
         },
-        "provenance": { "$ref": "#/$defs/provenance" }
+        "provenance": { "$ref": "#/$defs/provenance" },
+        "assets": {
+          "description": "Added in contract 1 by #2549. Each workspace file the record pins by hash, checked against the tree read: the working tree, or the revision under --at. Empty for a kind that pins nothing.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/asset" }
+        },
+        "warnings": {
+          "description": "Added in contract 1 by #2549. Findings that leave the record valid: a pinned file that changed, went missing or did not follow a superseding decision, or a supersedes link that has no effect yet. valid and --current do not look at them.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/warning" }
+        }
       },
       "allOf": [
         {
@@ -72,6 +86,24 @@
           "else": { "properties": { "reasons": { "type": "array", "minItems": 1 } } }
         }
       ]
+    },
+    "asset": {
+      "type": "object",
+      "required": ["path", "sha256", "actual", "state"],
+      "properties": {
+        "path": { "type": "string", "description": "From the workspace root (workspaceRoot), with / separators." },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "The hash the record pins." },
+        "actual": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$", "description": "The hash of the file's bytes in the tree read, or null when the file is missing." },
+        "state": { "enum": ["pinned", "drifted", "missing", "stale"], "description": "pinned when the hashes match; drifted when they differ (a warning asset-drift); missing when the file is not there (a warning asset-missing); stale when the hashes match and a record this one supersedes pinned the same hash, with the file unchanged since this record was recorded (a warning asset-stale)." }
+      }
+    },
+    "warning": {
+      "type": "object",
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "enum": ["asset-drift", "asset-missing", "asset-stale", "record-supersedes-pending"] },
+        "message": { "type": "string" }
+      }
     },
     "trust": {
       "description": "Added in contract 1 by #2547. Where provenance was judged from: the policy read at the base revision, never the tree read.",
