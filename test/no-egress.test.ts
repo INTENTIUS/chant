@@ -89,9 +89,9 @@
 
 import { describe, expect, test, vi, afterAll } from "vitest";
 import { Socket } from "node:net";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 
 // ── The shell-out recorder ───────────────────────────────────────────────────
 //
@@ -145,6 +145,7 @@ const { buildCommand } = await import("@intentius/chant/cli/commands/build");
 const { lintCommand } = await import("@intentius/chant/cli/commands/lint");
 const { runSearch } = await import("../packages/core/src/cli/handlers/search");
 const { runScenarioCheck } = await import("../packages/core/src/cli/handlers/scenario");
+const { runWorkspaceCheck } = await import("../packages/core/src/workspace/lineage-check");
 const { discoverCorpus, entryBuildParams, ALL_SERIALIZERS, ALL_PLUGINS, buildErrorFiles, expectedBuildErrorFiles } =
   await import("../examples/differential-corpus");
 const {
@@ -455,6 +456,51 @@ describe("chant #1984 — the phases an adopter runs reach no network", () => {
     expect(code, "the fixture scenario did not pass — the guard would be measuring a failed run").toBe(0);
     report.push({ phase: "chant scenario check", projects: 1, violations: attemptsSince(mark).length });
     expect(attemptsSince(mark), "chant scenario check reached the network").toEqual([]);
+  });
+
+  test("chant workspace check: member links resolve in source and reach nothing (#2539)", async () => {
+    const root = mkdtempSync(join(tmpdir(), "chant-egress-links-"));
+    const files: Record<string, string> = {
+      ".git/HEAD": "ref: refs/heads/main\n",
+      "chant.workspace.json": JSON.stringify({
+        name: "egress",
+        schema: 1,
+        members: [
+          { name: "shared", dir: "shared", kind: "chant" },
+          { name: "web", dir: "web", kind: "chant", links: [{ member: "shared", output: "ClusterArn" }] },
+        ],
+      }),
+      "shared/chant.config.ts": "",
+      "shared/src/outputs.ts": `import { output } from "@intentius/chant-lexicon-aws";\nexport const clusterArn = output(cluster.Arn, "ClusterArn");\n`,
+      "web/chant.config.ts": "",
+      "web/src/params.ts": `import { Parameter } from "@intentius/chant-lexicon-aws";\nexport const clusterArn = new Parameter("String");\n`,
+    };
+    for (const [path, text] of Object.entries(files)) {
+      mkdirSync(dirname(join(root, path)), { recursive: true });
+      writeFileSync(join(root, path), text);
+    }
+    const printed: string[] = [];
+    const log = vi.spyOn(console, "log").mockImplementation((...a: unknown[]) => void printed.push(a.join(" ")));
+    const mark = attempts.length;
+    try {
+      const code = await inDirectory(root, () =>
+        withoutEgress("workspace check", () =>
+          runWorkspaceCheck({
+            args: { command: "workspace", path: "check", format: "", fix: false, watch: false, verbose: false, help: false, json: true },
+            plugins: [],
+            serializers: [],
+          } as never),
+        ),
+      );
+      expect(code, "chant workspace check failed on the fixture workspace").toBe(0);
+    } finally {
+      log.mockRestore();
+      rmSync(root, { recursive: true, force: true });
+    }
+    const links = (JSON.parse(printed.join("\n")) as { declaration: { links: { status: string }[] } }).declaration.links;
+    expect(links.map((l) => l.status), "the declared link did not resolve, so the guard would be measuring nothing").toEqual(["resolved"]);
+    report.push({ phase: "chant workspace check", projects: 1, violations: attemptsSince(mark).length });
+    expect(attemptsSince(mark), "chant workspace check reached the network").toEqual([]);
   });
 });
 

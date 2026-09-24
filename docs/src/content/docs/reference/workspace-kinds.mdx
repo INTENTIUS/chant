@@ -17,6 +17,8 @@ Kinds are plain data. Besides its name and description, each kind carries a prob
 | `other` | never claims a directory | anything chant does not read. The member needs `because` |
 | `examples` | never claims a directory | the kind of an [example group](/chant/reference/workspace-declaration/#example-groups), not of a member |
 
+Each kind also says which outputs its members expose to [member links](/chant/reference/workspace-declaration/#member-links). A `chant` member exposes the outputs its source declares, a nested `workspace` exposes none, and an `other` member exposes what its entry lists.
+
 The probe of `other` only checks that the directory exists, and it never claims a directory from another kind. `chant workspace check` reports every `other` member as a `WSP009` warning, and `chant doctor` shows the same warning. The check fails with `WSP008` when a registered kind's probe claims an `other` member's directory, since that member should be declared as the kind that claims it.
 
 ## Kinds from a package
@@ -61,6 +63,7 @@ chant reads the key `./workspace-kinds` literally. A `./*` pattern in `exports` 
 | `kinds[].precedence` | An integer from 1 to 999 |
 | `kinds[].probe.anyFile` | File names. The probe passes when a file matching one of them sits directly in the member's directory. A `*` matches any run of characters in a name, so `*.tf` matches every `.tf` file |
 | `kinds[].probe.anyBlock` | `in`, file names as in `anyFile`, and `blocks`, block names. The probe passes when a file directly in the directory whose name matches `in` has a line that opens one of those blocks with no label, such as `live {`. Leading space is allowed, and no file is parsed |
+| `kinds[].outputs` | Optional. Output names every member of the kind exposes to [member links](/chant/reference/workspace-declaration/#member-links). A member entry of the kind can list more in its own `outputs` |
 
 A probe needs at least one of `anyFile` and `anyBlock`, and it passes when either one does. Both only look at files directly in the directory, never below it.
 

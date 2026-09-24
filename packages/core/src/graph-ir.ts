@@ -230,7 +230,10 @@ export interface IRExport {
 /** A cross-stack import this stack consumes — a `Parameter` fed from another
  * stack's output at deploy time. A viewer matches an import `name` to another
  * stack's export `name` to draw the cross-stack edge; the parameter's in-stack
- * consumers are ordinary `$ref` edges to `node` (#513). */
+ * consumers are ordinary `$ref` edges to `node` (#513). A reader that infers
+ * that match by name uses `joinKey()` from `./join-key.ts` and labels the edge
+ * `exact` or `folded`, the way `chant workspace graph` labels joins across
+ * members (#2539, ws-008). */
 export interface IRImport {
   /** Parameter name — the cross-stack handle (e.g. "clusterArn"). */
   name: string;

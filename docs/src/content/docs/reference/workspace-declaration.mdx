@@ -68,6 +68,8 @@ A member is an object with `name`, `dir` and `kind`.
 | `kind` | yes | How to read it: `chant`, `workspace`, `other`, or a kind a pinned package supplies. |
 | `roles` | no | Roles the member plays. Each is a role name, or `{ "name": "...", "path": "..." }` with a path inside the member. |
 | `generated` | no | The files a command writes in the member, with the command that writes each (see [Generated files](#generated-files)). |
+| `links` | no | The [member links](#member-links) this member reads, each `{ "member": "...", "output": "..." }`. |
+| `outputs` | no | For a member of kind `other` or a kind from a package, the outputs it exposes to [links](#member-links). A `chant` member's outputs are read from its source instead. |
 | `upstream` | no | Where an embedded member's files come from. Versions live in the lock, not here. |
 | `because` | for `other` | Why the member is there. |
 | `suppress` | no | Declaration checks turned off for this member, each `{ "check": "WSP009", "because": "..." }`. See [severity and suppression](/chant/cli/workspace-check/#severity-and-suppression). |
@@ -83,6 +85,41 @@ Three kinds are built in.
 A pinned package can supply more kinds, as data at its `./workspace-kinds` subpath. [Workspace Kinds](/chant/reference/workspace-kinds/) describes the format, which packages are read, and how chant decides when several kinds' probes claim one directory. A member whose kind no built-in or pinned package supplies is listed with the reason `unknown-kind`, and `chant workspace check` fails on it.
 
 A member's directory leaves the root project, and discovery at the root skips it ([#2527](https://github.com/INTENTIUS/chant/issues/2527)). The member's own commands cover it, and [`chant workspace build`](/chant/cli/workspace-build/) runs them for every member ([#2537](https://github.com/INTENTIUS/chant/issues/2537)). `chant workspace init` lists these directories before it writes.
+
+## Member links
+
+A member link says that one member reads an output of another ([#2524](https://github.com/INTENTIUS/chant/issues/2524) D6, [#2539](https://github.com/INTENTIUS/chant/issues/2539), [ws-008](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-008-joins.md)). The consumer states it once and names the producer and the output.
+
+```json
+{
+  "name": "acme",
+  "schema": 1,
+  "members": [
+    { "name": "shared", "dir": "infra/shared", "kind": "chant" },
+    { "name": "web", "dir": "services/web", "kind": "chant", "links": [{ "member": "shared", "output": "ClusterArn" }] },
+    { "name": "legacy", "dir": "legacy", "kind": "other", "because": "a queue created by hand", "outputs": ["QueueUrl"] }
+  ]
+}
+```
+
+| Field | Required | Value |
+|---|---|---|
+| `member` | yes | The producer, another member of this workspace. An example group can't be one. |
+| `output` | yes | The producer's output. It is matched exactly, the way deploy matches it. |
+| `kind` | no | The link kind. `output`, the default, is the only one so far, and any other value fails closed. |
+
+The outputs a producer exposes depend on its kind.
+
+| Kind | Exposes |
+|---|---|
+| `chant` | The names its source passes to `output(ref, "Name")`, and each `export const name = stackOutput(ref)`. chant reads the TypeScript without running it. |
+| `workspace` | Nothing. A nested workspace is opaque to the outer one. |
+| `other` | What the entry lists in `outputs`. |
+| a kind from a package | What the kind lists in its [`outputs`](/chant/reference/workspace-kinds/#the-kinds-file), plus what the entry lists. |
+
+[`chant workspace check`](/chant/cli/workspace-check/#member-links) resolves every link in source and never reaches the network. A link whose output the producer no longer exposes fails, so renaming an output fails the check for every consumer that links to it. When chant can't read all of a `chant` producer's outputs without running its code, such as an output whose name is computed, a link to a name it didn't find is kept and reported as unresolved.
+
+Joins nobody wrote down are inferred. Each parameter of a `chant` member, written `export const name = new Parameter(...)`, is matched to the other members' outputs by the core function `joinKey()`. That function ignores case and punctuation. An inferred join is labelled `exact` when the names are equal and `folded` when they differ only in case or punctuation, so `clusterArn` joins `ClusterArn` as `folded`. A parameter that matches outputs of two producers is reported as ambiguous and joins neither. A declared link from the same consumer to one of the matched outputs replaces the inferred join, and writing one down is how an inferred join becomes declared.
 
 ## Example groups
 

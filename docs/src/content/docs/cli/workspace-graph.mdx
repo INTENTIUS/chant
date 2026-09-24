@@ -22,7 +22,7 @@ Every node id becomes `<member>/<id>`. Member names can't contain `/`, and `::` 
 
 `groups.byMember` maps each member to its node ids. A lexicon or a composite type means the same thing in every member, so `byLexicon` and `byComposite` keep their keys and merge the ids across members. The keys of `byStack`, `byContainer` and `byWave` name things inside one member, and they are prefixed with the member too.
 
-The `links` and `records` sections are where member links and record kinds will go. They are empty in this release.
+The `links` section holds the [member links](#links). The `records` section is where record kinds will go, and it is empty in this release.
 
 A member's IR with no `version` field comes from a chant older than that field. It is read as version 1 and upgraded in place, and the member's entry has `irVersion: null`. An IR with a version newer than this chant reads is left out with the reason code `ir-version-unsupported`.
 
@@ -45,12 +45,40 @@ A member's IR with no `version` field comes from a chant older than that field. 
   },
   "exports": [],
   "imports": [],
-  "links": [],
+  "links": [
+    {
+      "consumer": "legacy", "producer": "api", "output": "QueueUrl", "kind": "output",
+      "origin": "inferred:joinKey", "label": "folded", "input": "queueUrl",
+      "resolves": "source", "status": "resolved", "reason": null,
+      "from": "legacy/queueUrl", "to": "api/Queue"
+    }
+  ],
   "records": []
 }
 ```
 
 `version` is the version of the composed document. A member's `chant` is the version its toolchain reported, or `null` when the member was read by a chant older than `member-run`. A member's `meta` and `pipeline`, when its IR has them, stay on the member's entry.
+
+## Links
+
+`links` lists the [member links](/chant/reference/workspace-declaration/#member-links) ([#2539](https://github.com/INTENTIUS/chant/issues/2539), [ws-008](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-008-joins.md)). A declared link comes from the consumer's `links` in the declaration and is matched exactly against the producer's `exports`. A join nobody declared is inferred from the members' IRs. Each of a member's `imports` is matched to the other members' `exports` with the core `joinKey()`, which ignores case and punctuation. The row is labelled `exact` when the names are equal and `folded` when they differ only in case or punctuation.
+
+A declared link replaces the inferred edge it covers, so the same join never appears twice. When an import matches outputs of two producers, the row has `status: "ambiguous"` and a `candidates` list instead of a producer, and no edge is drawn. A member of kind `other`, or of a kind from a package, is a link target through the `outputs` its entry or kind lists, even though it has no IR.
+
+| Field | Value |
+|---|---|
+| `consumer` | The member that reads the output |
+| `producer`, `output` | The member and output it reads. An ambiguous row has `candidates` instead, each with `producer`, `output`, `label` and `to` |
+| `kind` | The link kind, `output` |
+| `origin` | `declared`, or `inferred:joinKey` |
+| `label` | `exact` or `folded`. A declared link is always `exact` |
+| `input` | The consumer's import an inferred join feeds, or `null` for a declared link |
+| `from`, `to` | The composed ids of the import and export nodes, when the IRs name them |
+| `resolves` | `source` |
+| `status` | `resolved`, `missing`, `unresolved`, `invalid` or `ambiguous` |
+| `reason` | Why the row isn't `resolved`, or `null` |
+
+[`chant workspace check`](/chant/cli/workspace-check/#member-links) resolves the same links from source without running any member, and fails on a link whose output is missing.
 
 ### Reason codes
 

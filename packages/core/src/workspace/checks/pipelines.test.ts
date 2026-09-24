@@ -5,7 +5,8 @@
  */
 
 import { afterEach, describe, expect, test } from "vitest";
-import { rmSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { runDeclarationChecks } from "../checks";
 import { join, resolve } from "node:path";
 import { readDeclaration } from "../declaration";
 import { recordGeneratedFiles } from "../member-pipeline";
@@ -103,6 +104,25 @@ describe("gathering from a checkout", () => {
       { name: "web", dir: "apps/web", generated: [".github/workflows/chant-api-staging.yml", ".github/workflows/chant-web-prod.yml"], environments: ["staging", "prod"] },
     ]);
     expect(checkPipelines(gathered).map((f) => `${f.id}:${f.path}`)).toEqual(["WSP081:.github/workflows/chant-api-staging.yml"]);
+  });
+
+  test("WSP083 reads the declared member links: two linked members with no shared environment name (#2539)", async () => {
+    repo = twoMemberWorkspace();
+    const file = join(repo, "chant.workspace.json");
+    const decl = JSON.parse(readFileSync(file, "utf-8")) as { members: Record<string, unknown>[] };
+    decl.members.find((m) => m.name === "web")!.links = [{ member: "api", output: "ApiUrl" }];
+    writeFileSync(file, JSON.stringify(decl, null, 2));
+    writeFileSync(join(repo, "services/api/src/infra.ts"), `import { output } from "@intentius/chant-lexicon-aws";\nexport const url = output("u", "ApiUrl");\n`);
+    recordGeneratedFiles(join(repo, "services/api"), [{ path: "services/api/ci/api-staging.yml", command: "c", env: "staging" }]);
+    recordGeneratedFiles(join(repo, "apps/web"), [{ path: "apps/web/ci/web-production.yml", command: "c", env: "production" }]);
+    const report = await runDeclarationChecks(repo);
+    expect(report.diagnostics.map((d) => `${d.ruleId}:${d.severity}`)).toEqual(["WSP083:warning"]);
+    expect(report.diagnostics[0].message).toMatch(/api \(staging\) and web \(production\)/);
+
+    // Without the link, the two are never compared.
+    delete decl.members.find((m) => m.name === "web")!.links;
+    writeFileSync(file, JSON.stringify(decl, null, 2));
+    expect((await runDeclarationChecks(repo)).diagnostics).toEqual([]);
   });
 
   test("the chant repository's own declaration has no findings (#2557)", () => {

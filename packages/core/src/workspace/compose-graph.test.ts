@@ -5,6 +5,7 @@
 
 import { describe, expect, test } from "vitest";
 import { GRAPH_IR_VERSION, type GraphIR } from "../graph-ir";
+import { parseDeclaration } from "./declaration";
 import { composeWorkspaceGraph, readMemberIr, WORKSPACE_GRAPH_VERSION, type ComposedMember } from "./compose-graph";
 
 const member = (name: string, dir: string): ComposedMember => ({
@@ -98,5 +99,48 @@ describe("composeWorkspaceGraph", () => {
   test("does not change the members' own IRs", () => {
     expect(web.nodes[0].id).toBe("Bucket");
     expect(web.edges[0].from).toBe("web::Fn");
+  });
+});
+
+describe("the links section (#2539)", () => {
+  test("inferred joins carry their label, and a declared link suppresses the inferred edge it covers", () => {
+    const consumer: GraphIR = {
+      version: 1,
+      nodes: [
+        { id: "bucketArn", kind: "Parameter", lexicon: "aws", attrs: {} },
+        { id: "BUCKET_ARN", kind: "Parameter", lexicon: "aws", attrs: {} },
+      ],
+      edges: [],
+      groups: {},
+      imports: [
+        { name: "bucketArn", node: "bucketArn" },
+        { name: "BUCKET_ARN", node: "BUCKET_ARN" },
+      ],
+    };
+    const declaration = parseDeclaration(
+      JSON.stringify({
+        name: "acme",
+        schema: 1,
+        members: [
+          { name: "web", dir: "web", kind: "chant" },
+          { name: "jobs", dir: "jobs", kind: "chant" },
+          { name: "app", dir: "app", kind: "chant", links: [{ member: "web", output: "BucketArn" }] },
+        ],
+      }),
+      "chant.workspace.json",
+    );
+    const inputs = [
+      { member: member("web", "web"), ir: structuredClone(web) },
+      { member: member("jobs", "jobs"), ir: structuredClone(consumer) },
+      { member: member("app", "app"), ir: structuredClone(consumer) },
+    ];
+    const doc = composeWorkspaceGraph({ name: "acme", root: "/w" }, inputs, { declaration });
+    expect(
+      doc.links.map((r) => (r.status === "ambiguous" ? "" : `${r.origin} ${r.label} ${r.from ?? r.consumer} -> ${r.to}`)),
+    ).toEqual([
+      "declared exact app -> web/Bucket",
+      "inferred:joinKey folded jobs/BUCKET_ARN -> web/Bucket",
+      "inferred:joinKey folded jobs/bucketArn -> web/Bucket",
+    ]);
   });
 });

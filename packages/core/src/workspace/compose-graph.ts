@@ -13,8 +13,11 @@
  *   `byComposite` keep their keys (a lexicon or composite type is the same
  *   thing in every member) and merge the ids. `byStack`, `byContainer` and
  *   `byWave` name things inside one member, so their keys are prefixed too.
- * - `links` and `records` are the sections member links and record kinds fill
- *   (#2524 D6, D4). This release writes them empty.
+ * - `links` holds the member links (#2524 D6, #2539): the declared links and
+ *   the joins inferred from members' `imports` and `exports` with the core
+ *   `joinKey()`, labelled `exact` or `folded` (`./links.ts`). A declared link
+ *   suppresses the inferred edge it covers. `records` is the section record
+ *   kinds fill (#2524 D4), empty so far.
  *
  * A member's IR with no `version` field comes from a chant older than #2529.
  * It is version 1, and it is upgraded in place by stamping that version. An IR
@@ -25,6 +28,9 @@
  * `chant graph` itself is untouched: this is the only place members compose.
  */
 
+import type { Declaration } from "./declaration";
+import type { KindRegistry } from "./kinds";
+import { graphLinks, type LinkTableRow } from "./links";
 import { GRAPH_IR_VERSION, type GraphIR, type IRExport, type IRGroups, type IRImport, type IREdge, type IRNode } from "../graph-ir";
 
 /** The version of the composed document `chant workspace graph` writes. */
@@ -85,8 +91,8 @@ export interface WorkspaceGraph {
   exports: (IRExport & { member: string })[];
   imports: (IRImport & { member: string })[];
   derivedAttrs?: Record<string, string[]>;
-  /** Member links (#2524 D6). Empty until links land. */
-  links: unknown[];
+  /** Member links (#2524 D6, #2539), declared and inferred. Empty when no declaration is given. */
+  links: LinkTableRow[];
   /** Record sections (#2524 D4). Empty until record kinds join the graph. */
   records: unknown[];
 }
@@ -146,8 +152,17 @@ function sorted(rec: Record<string, string[]>): Record<string, string[]> {
   return out;
 }
 
-/** Compose the members' IRs into the workspace document. Members keep the order they are given in. */
-export function composeWorkspaceGraph(workspace: { name: string; root: string }, inputs: ComposeInput[]): WorkspaceGraph {
+/**
+ * Compose the members' IRs into the workspace document. Members keep the
+ * order they are given in. With `links`, the `links` section is filled from
+ * the declaration; `kinds` lets a member that isn't composed but whose kind
+ * lists its outputs (`other`, kinds from a package) be a link target.
+ */
+export function composeWorkspaceGraph(
+  workspace: { name: string; root: string },
+  inputs: ComposeInput[],
+  links?: { declaration: Declaration; kinds?: KindRegistry },
+): WorkspaceGraph {
   const nodes: ComposedNode[] = [];
   const edges: ComposedEdge[] = [];
   const exports: WorkspaceGraph["exports"] = [];
@@ -200,7 +215,9 @@ export function composeWorkspaceGraph(workspace: { name: string; root: string },
     groups,
     exports,
     imports,
-    links: [],
+    links: links
+      ? graphLinks(links.declaration, { composed: inputs.filter((i) => i.ir).map((i) => i.member.name), exports, imports }, links.kinds)
+      : [],
     records: [],
   };
   if (Object.keys(derivedAttrs).length) {

@@ -61,6 +61,17 @@
         },
         "probe": {
           "$ref": "#/$defs/probe"
+        },
+        "outputs": {
+          "type": "array",
+          "uniqueItems": true,
+          "description": "The outputs every member of this kind exposes as link targets (#2524 D6, #2539). A member entry of the kind may list more in its own outputs field. Without this field the kind exposes only what each entry lists.",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255,
+            "pattern": "^[^\\u0000-\\u001f]+$"
+          }
         }
       },
       "patternProperties": {
