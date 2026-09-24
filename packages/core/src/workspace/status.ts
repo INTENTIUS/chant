@@ -31,7 +31,9 @@ import { readPathSha } from "../lifecycle/git";
 import { latestPerComponent, readReleaseLedger, type ReleaseRecord } from "../lifecycle/release-ledger";
 import { findWorkspaceRoot } from "../project-root";
 import { readDeclaration, readerVersion, WorkspaceReadError, type ErrorLocation, type Member } from "./declaration";
+import type { ReasonCode } from "./reason-codes";
 import { gitTop, workingTree } from "./tree";
+import { handToRootChant } from "./which-chant";
 
 /** The version of the `status` output this chant writes. */
 export const STATUS_CONTRACT_VERSION = 1;
@@ -56,7 +58,7 @@ export const STATUS_REASON_CODES = [
   "ledger-unreadable",
   /** Some lines of the ledger aren't release records; the rest are listed. */
   "ledger-malformed",
-] as const;
+] as const satisfies readonly ReasonCode[];
 export type StatusReasonCode = (typeof STATUS_REASON_CODES)[number];
 
 /**
@@ -70,11 +72,12 @@ export const STATUS_ERROR_CODES = [
   "declaration-invalid",
   "placement-invalid",
   "reader-too-old",
+  "root-chant-required",
   /** The workspace isn't in a git repository, so it has no ledger branch. */
   "not-a-git-repository",
   /** An environment name that can't name a ledger directory. */
   "environment-invalid",
-] as const;
+] as const satisfies readonly ReasonCode[];
 export type StatusErrorCode = (typeof STATUS_ERROR_CODES)[number];
 
 /** Environment names a ledger directory can have: no `/`, no leading `_` or `.` (those are chant's own directories). */
@@ -266,7 +269,7 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
         "no chant.workspace.json or .jsonc between this directory and the git root; chant workspace init proposes one",
       );
     }
-    const declaration = readDeclaration(workingTree(found.dir));
+    const declaration = readDeclaration(workingTree(found.dir), "", { rootChant: true });
     const top = gitTop(found.dir);
     if (!top) throw new StatusError("not-a-git-repository", `${found.dir} is not in a git repository, so it has no ${LIFECYCLE_REF} branch to read`);
     const rootDir = relative(top, realpathSync(found.dir)).split("\\").join("/");
@@ -340,6 +343,9 @@ export async function runWorkspaceStatus(ctx: CommandContext): Promise<number> {
     console.error(formatError({ message: `${cwd} does not exist`, hint: USAGE }));
     return 1;
   }
+  // The root's chant reads the declaration (ws-021).
+  const handed = await handToRootChant(cwd, undefined);
+  if (handed !== undefined) return handed;
   const doc = await workspaceStatus({ cwd, env, compareTo: args.compareTo });
   if (args.json) {
     console.log(JSON.stringify(doc, null, 2));

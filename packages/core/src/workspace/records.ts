@@ -21,6 +21,7 @@ import { dirname, posix, relative, resolve, sep } from "node:path";
 import yaml from "js-yaml";
 import { z } from "zod";
 import { importLexiconModule, registerLexiconDeclarations } from "../lexicon-module";
+import type { ReasonCode } from "./reason-codes";
 import type { RecordSource } from "./record-source";
 
 // ── Reason codes ─────────────────────────────────────────────────────────────
@@ -40,7 +41,7 @@ export const RECORD_REASON_CODES = [
   "record-supersedes-unknown",
   /** A second closed record supersedes a record another one already superseded. */
   "record-supersedes-conflict",
-] as const;
+] as const satisfies readonly ReasonCode[];
 export type RecordReasonCode = (typeof RECORD_REASON_CODES)[number];
 
 /**
@@ -64,7 +65,7 @@ export const READ_ERROR_CODES = [
   "not-a-git-repository",
   /** `--at` names no commit. */
   "revision-unknown",
-] as const;
+] as const satisfies readonly ReasonCode[];
 export type ReadErrorCode = (typeof READ_ERROR_CODES)[number];
 
 export class RecordReadError extends Error {

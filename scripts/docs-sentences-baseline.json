@@ -999,6 +999,9 @@
   "discourse/punchy-fragments": 1,
   "claude/colon-reveal": 3
  },
+ "docs/src/content/docs/reference/workspace-read-contract.mdx": {
+  "claude/colon-reveal": 3
+ },
  "docs/src/content/docs/serialization/multi-stack.mdx": {
   "formatting/em-dash-density": 13,
   "discourse/punchy-fragments": 1,

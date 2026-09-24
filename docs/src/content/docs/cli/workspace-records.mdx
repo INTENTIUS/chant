@@ -84,7 +84,7 @@ An invalid entry doesn't fail the command. Failing closed on one is the job of `
 
 ## Output
 
-With `--json`, the output follows the schema `https://intentius.io/chant/schemas/workspace/records/v1/records.schema.json`, shipped in `@intentius/chant` at `src/workspace/records.schema.json`. Readers ignore fields they don't know. Fields are only added within a contract version, and the code lists are closed.
+The output is part of the workspace [read contract](/chant/reference/workspace-read-contract/). With `--json`, it follows the schema `https://intentius.io/chant/schemas/workspace/records/v1/records.schema.json`, shipped in `@intentius/chant` at `src/workspace/records.schema.json`. Readers ignore fields they don't know. Fields are only added within a contract version, and the code lists are closed.
 
 ```json
 {

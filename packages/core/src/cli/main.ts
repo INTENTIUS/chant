@@ -735,12 +735,14 @@ Workspace (level 1, #2524):
                         lint and workspace check there, then gate on the digest
                         of the patch (chant approve workspace-upgrade <scope>).
                         A second run with the approval applies the patch
-  workspace check [--json] [--format stylish|json|sarif] [--generated]
+  workspace check [--at <rev>] [--json] [--format stylish|json|sarif] [--generated]
                         Fail on an unreadable lineage lock or an open manual
                         step, and, in a declared workspace, on a WSP check of
                         the declaration, member ledgers, pipelines or
                         generated files. --generated runs declared generators
-                        and compares their output. Needs no workspace file
+                        and compares their output. Needs no workspace file.
+                        --at reads a commit's git objects; --format json
+                        prints the read-contract document
   workspace build [dir] [--member <name>] [-o <dir>] [--dry-run]
                         Build every chant member and example project, each with
                         its own chant, one process per toolchain. -o <dir>
@@ -752,9 +754,11 @@ Workspace (level 1, #2524):
   workspace audit [dir] [--json] [--member <name>]
                         Audit each chant member with its own .chant-audit.json;
                         every finding carries a member field
-  workspace graph [dir] [--member <name>] [-o <file>]
+  workspace graph [dir] [--at <rev>] [--member <name>] [-o <file>]
                         Compose each chant member's chant graph into one IR,
-                        with <member>/<id> ids and groups.byMember
+                        with <member>/<id> ids and groups.byMember: the
+                        read-contract document. --at <rev> runs each member's
+                        source as it was at that commit
 
 Lifecycle (alias: lc):
   lifecycle snapshot <env>  Query API, save metadata to orphan branch

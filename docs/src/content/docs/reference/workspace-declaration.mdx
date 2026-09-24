@@ -221,6 +221,8 @@ A pin names the toolchain or a plugin that reads the workspace.
 | an npm package | `package` and `version` (an exact version), optional `integrity` |
 | a local plugin | `path` inside the workspace, optional `integrity` |
 
+A pin of `@intentius/chant` names the root's chant, which is the chant that reads the declaration ([which chant reads it](/chant/reference/workspace-read-contract/#which-chant-reads-the-declaration)). The workspace commands of any other chant version hand themselves to it when it is installed at the root, and refuse with `root-chant-required` when it isn't.
+
 `integrity` is a Subresource Integrity digest such as `sha512-...`. chant records pins and lists them in `chant workspace ls --json`. Member kinds come only from pinned packages, which chant reads as data and never imports ([Workspace Kinds](/chant/reference/workspace-kinds/#which-packages-are-read)). chant doesn't verify `integrity` yet.
 
 ## Ledgers
@@ -277,5 +279,6 @@ declaration-invalid: chant.workspace.json:9:7: unknown field "dependsOn"; only f
 | `declaration-invalid` | doesn't match the schema, or repeats a name |
 | `placement-invalid` | breaks a placement rule |
 | `reader-too-old` | `minReader` is newer than this chant |
+| `root-chant-required` | the declaration pins another chant, which isn't installed at the root |
 
-`chant workspace ls --json` reports the same codes with the location ([Output](/chant/cli/workspace-ls/#output)).
+`chant workspace ls --json` reports the same codes with the location ([Output](/chant/cli/workspace-ls/#output)). Every code is in the closed list of the [read contract](/chant/reference/workspace-read-contract/#reason-codes).

@@ -33,6 +33,7 @@ import { relative, sep } from "node:path";
 import type { LintDiagnostic, LintRule, Severity } from "../lint/rule";
 import type { PostSynthDiagnostic } from "../lint/post-synth";
 import { readDeclaration, resolveGroups, WorkspaceReadError, type Declaration, type Entry, type ErrorLocation, type ResolvedGroup } from "./declaration";
+import type { ReasonCode } from "./reason-codes";
 import { parseJsonText, pointerToken, type TextLocation } from "./jsonc";
 import { loadKindRegistry, probeKind, resolveKind, type KindLoadProblem, type KindRegistry } from "./kinds";
 import { gitTop, workingTree, type WorkspaceTree } from "./tree";
@@ -93,6 +94,8 @@ export interface WorkspaceCheck {
 /** A diagnostic ready for lint's reporters, with the entry it is about. */
 export interface WorkspaceFinding extends LintDiagnostic {
   entity?: string;
+  /** The read contract's reason code, for a WSP001 finding: why the declaration can't be read (#2536). */
+  code?: ReasonCode;
 }
 
 export interface SuppressedFinding extends WorkspaceFinding {
@@ -360,6 +363,13 @@ export interface DeclarationCheckOptions {
   gather?: boolean;
   /** Run each declared generator and compare its output (`--generated`). Off by default: generators run member code. */
   runGenerators?: boolean;
+  /**
+   * The files to check, such as a revision's (`chant workspace check --at`,
+   * #2536); the working tree under `root` by default. Kinds still come from
+   * the packages installed under `root`. With a tree, no facts are
+   * gathered: they describe the working tree, not the revision.
+   */
+  tree?: WorkspaceTree;
 }
 
 /**
@@ -389,8 +399,9 @@ function realpath(path: string): string {
 }
 
 /**
- * Read the declaration in `root` (an absolute directory holding one), load
- * the kinds its pins supply, gather the facts the member checks read, run
+ * Read the declaration in `root` (an absolute directory holding one, or the
+ * files of `options.tree` when given, such as a revision's), load the kinds
+ * its pins supply from `root`, gather the facts the member checks read, run
  * every check and apply the declaration's settings. `file` in the findings
  * is the declaration's path as `display` says, relative to where the
  * command runs. Never throws a {@link WorkspaceReadError}: a declaration that
@@ -401,11 +412,11 @@ export async function runDeclarationChecks(
   display: (file: string) => string = (f) => f,
   options: DeclarationCheckOptions = {},
 ): Promise<DeclarationCheckReport> {
-  const tree = workingTree(root);
+  const tree = options.tree ?? workingTree(root);
   let declaration: Declaration;
   let groups: ResolvedGroup[];
   try {
-    declaration = readDeclaration(tree);
+    declaration = readDeclaration(tree, "", { rootChant: true });
     groups = resolveGroups(declaration, tree);
   } catch (err) {
     if (!(err instanceof WorkspaceReadError)) throw err;
@@ -417,11 +428,12 @@ export async function runDeclarationChecks(
       ruleId: UNREADABLE_CHECK_ID,
       severity: "error",
       message: `${err.code}: ${err.message}`,
+      code: err.code,
     };
     return { file: display(location.file), diagnostics: [diagnostic], suppressed: [], links: [], ok: false };
   }
   const { registry, problems } = loadKindRegistry(declaration.pins, root);
-  const facts = options.gather === false ? {} : await gatherWorkspaceFacts(root, declaration, options);
+  const facts = options.gather === false || options.tree ? {} : await gatherWorkspaceFacts(root, declaration, options);
   const ctx: WorkspaceCheckContext = { declaration, tree, groups, kinds: registry, kindProblems: problems, facts };
   const findings = runWorkspaceChecks(ctx);
   const { active, suppressed } = applyCheckSettings(declaration, findings);

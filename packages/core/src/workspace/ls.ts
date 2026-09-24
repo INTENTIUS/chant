@@ -10,13 +10,11 @@
  * `workspace records` and described by `ls.schema.json` beside this file.
  */
 
-import { existsSync, realpathSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 import { formatError } from "../cli/format";
 import type { CommandContext } from "../cli/registry";
-import { findWorkspaceRoot } from "../project-root";
 import {
-  findDeclarationDir,
   readDeclaration,
   readerVersion,
   resolveGroups,
@@ -26,8 +24,10 @@ import {
   type Member,
   type WorkspaceErrorCode,
 } from "./declaration";
+import type { ReasonCode } from "./reason-codes";
 import { loadKindRegistry, probeKind, type KindRegistry } from "./kinds";
-import { gitTop, gitTree, resolveCommit, workingTree, type WorkspaceTree } from "./tree";
+import type { WorkspaceTree } from "./tree";
+import { handToRootChant, locateWorkspace } from "./which-chant";
 
 /** The version of the `ls` output this chant writes. */
 export const LS_CONTRACT_VERSION = 1;
@@ -48,14 +48,14 @@ export const MEMBER_REASON_CODES = [
   "unknown-kind",
   /** The directory is not what its kind reads, such as a `chant` member with no chant config. */
   "kind-probe-failed",
-] as const;
+] as const satisfies readonly ReasonCode[];
 export type MemberReasonCode = (typeof MEMBER_REASON_CODES)[number];
 
 /** Why a group lists nothing. */
 export const GROUP_REASON_CODES = [
   /** No directory the globs match holds a chant project. */
   "no-matches",
-] as const;
+] as const satisfies readonly ReasonCode[];
 export type GroupReasonCode = (typeof GROUP_REASON_CODES)[number];
 
 export interface LsMember {
@@ -130,43 +130,10 @@ export function memberReason(member: Member, tree: WorkspaceTree, kinds: KindReg
 export function listWorkspace(query: LsQuery): LsDocument {
   const chant = readerVersion();
   const head = { $schema: LS_OUTPUT_SCHEMA_ID, contract: LS_CONTRACT_VERSION, chant };
-  const top = gitTop(query.cwd);
   try {
-    let tree: WorkspaceTree;
-    let rootDir: string;
-    /** The workspace root on disk, where pinned packages are installed. */
-    let rootOnDisk: string;
-    let at: string | null = null;
-    if (query.at !== undefined) {
-      if (!top) throw new WorkspaceReadError("not-a-git-repository", "--at reads git objects, and this directory is not in a git repository");
-      const commit = resolveCommit(top, query.at);
-      if (!commit) throw new WorkspaceReadError("revision-unknown", `--at ${query.at} names no commit in this repository`);
-      at = commit;
-      const whole = gitTree(top, commit);
-      const start = relative(top, realpathSync(resolve(query.cwd))).split("\\").join("/");
-      const found = findDeclarationDir(whole, start.startsWith("..") ? "" : start);
-      if (found === undefined) {
-        throw new WorkspaceReadError("declaration-missing", `no chant.workspace.json or .jsonc between ${start || "."} and the git root at ${commit.slice(0, 8)}`);
-      }
-      rootDir = found;
-      tree = found === "" ? whole : gitTree(top, commit, found);
-      rootOnDisk = join(top, ...found.split("/"));
-    } else {
-      const found = findWorkspaceRoot(query.cwd);
-      if (!found) {
-        throw new WorkspaceReadError(
-          "declaration-missing",
-          top
-            ? "no chant.workspace.json or .jsonc between this directory and the git root; chant workspace init proposes one"
-            : "no chant.workspace.json or .jsonc in this directory; chant workspace init proposes one",
-        );
-      }
-      tree = workingTree(found.dir);
-      rootOnDisk = found.dir;
-      // git reports the top with symlinks resolved (/private/var on macOS), so compare like with like.
-      rootDir = top ? relative(top, realpathSync(found.dir)).split("\\").join("/") : found.dir;
-    }
-    const declaration = readDeclaration(tree);
+    const located = locateWorkspace(query.cwd, query.at);
+    const { tree, rootOnDisk, at } = located;
+    const declaration = readDeclaration(tree, "", { rootChant: true });
     // Kinds come from the pinned packages installed in the working tree, also
     // for --at: they are read as data, never run (#2535).
     const kinds = query.kinds ?? loadKindRegistry(declaration.pins, rootOnDisk).registry;
@@ -200,7 +167,7 @@ export function listWorkspace(query: LsQuery): LsDocument {
       at,
       workspace: {
         name: declaration.name,
-        root: rootDir === "" ? "." : rootDir,
+        root: located.root,
         file: declaration.file,
         schema: declaration.schema,
         minReader: declaration.minReader,
@@ -228,6 +195,9 @@ export async function runWorkspaceLs(ctx: CommandContext): Promise<number> {
     console.error(formatError({ message: `${cwd} does not exist`, hint: USAGE }));
     return 1;
   }
+  // The root's chant reads the declaration (ws-021).
+  const handed = await handToRootChant(cwd, args.at);
+  if (handed !== undefined) return handed;
   const doc = listWorkspace({ cwd, at: args.at });
   if (args.json) {
     console.log(JSON.stringify(doc, null, 2));

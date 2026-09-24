@@ -31,6 +31,7 @@
 import type { Declaration } from "./declaration";
 import type { KindRegistry } from "./kinds";
 import { graphLinks, type LinkTableRow } from "./links";
+import type { ReasonCode } from "./reason-codes";
 import { GRAPH_IR_VERSION, type GraphIR, type IRExport, type IRGroups, type IRImport, type IREdge, type IRNode } from "../graph-ir";
 
 /** The version of the composed document `chant workspace graph` writes. */
@@ -55,7 +56,7 @@ export const MEMBER_RUN_REASON_CODES = [
   "output-unreadable",
   /** The member's IR has a version this chant can't read. */
   "ir-version-unsupported",
-] as const;
+] as const satisfies readonly ReasonCode[];
 export type MemberRunReasonCode = (typeof MEMBER_RUN_REASON_CODES)[number];
 
 export interface MemberReason {

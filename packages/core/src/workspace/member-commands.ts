@@ -35,13 +35,13 @@ import { fileURLToPath } from "node:url";
 import { formatError } from "../cli/format";
 import type { CommandContext, ParsedArgs } from "../cli/registry";
 import { findWorkspaceRoot } from "../project-root";
-import { composeWorkspaceGraph, readMemberIr, type ComposedMember, type ComposeInput, type MemberReason } from "./compose-graph";
+import type { ComposedMember, MemberReason } from "./compose-graph";
 import { mergeAudit, mergeSarif, type MemberOutput } from "./compose-reports";
 import { readDeclaration, resolveGroups, rootExclusions, WorkspaceReadError, type Declaration } from "./declaration";
-import { builtinKindRegistry, loadKindRegistry, type KindRegistry } from "./kinds";
+import { builtinKindRegistry, type KindRegistry } from "./kinds";
 import { memberReason } from "./ls";
 import { MEMBER_RUN_PROTOCOL, PROTOCOL_PREFIX, type MemberRunLine, type MemberRunRequest } from "./member-run";
-import { workingTree } from "./tree";
+import { workingTree, type WorkspaceTree } from "./tree";
 
 export type WorkspaceVerb = "build" | "lint" | "audit" | "graph";
 
@@ -143,11 +143,13 @@ export interface PlanOptions {
   kinds?: KindRegistry;
   /** The chant to use when neither a member nor the root has one. Defaults to {@link readerToolchain}. */
   reader?: Toolchain;
+  /** The files to plan from, such as a revision's (`--at`); the working tree under `root` by default. */
+  tree?: WorkspaceTree;
 }
 
 /** Work out which projects run and under which chant. Throws a {@link WorkspaceReadError} for an unreadable declaration or an unknown `--member` name. */
 export function planMembers(verb: WorkspaceVerb, root: string, options: PlanOptions = {}): MemberPlan {
-  const tree = workingTree(root);
+  const tree = options.tree ?? workingTree(root);
   const declaration: Declaration = readDeclaration(tree);
   const resolvedGroups = resolveGroups(declaration, tree);
   const kinds = options.kinds ?? builtinKindRegistry();
@@ -380,7 +382,7 @@ const USAGE: Record<WorkspaceVerb, string> = {
   graph: "chant workspace graph [dir] [--member <name>] [-o <file>] [--env <env>] [--dry-run]",
 };
 
-function describePlan(plan: MemberPlan): string {
+export function describePlan(plan: MemberPlan): string {
   const lines = [`chant workspace ${plan.verb} in ${plan.workspace.name} (${plan.workspace.root})`];
   for (const g of plan.groups) {
     lines.push("", `${g.toolchain.identity}  (${g.toolchain.source}, ${g.units.length} project${g.units.length === 1 ? "" : "s"}, one process)`);
@@ -394,7 +396,7 @@ function describePlan(plan: MemberPlan): string {
   return lines.join("\n");
 }
 
-function planJson(plan: MemberPlan): unknown {
+export function planJson(plan: MemberPlan): unknown {
   return {
     verb: plan.verb,
     workspace: plan.workspace,
@@ -404,7 +406,7 @@ function planJson(plan: MemberPlan): unknown {
   };
 }
 
-function emitDocument(doc: unknown, output: string | undefined): void {
+export function emitDocument(doc: unknown, output: string | undefined): void {
   const text = JSON.stringify(doc, null, 2);
   if (output) {
     mkdirSync(dirname(resolve(output)), { recursive: true });
@@ -452,11 +454,13 @@ function formatAuditText(doc: ReturnType<typeof mergeAudit>, plan: MemberPlan): 
   return lines.join("\n");
 }
 
-function memberStatus(name: string, dir: string, kind: string, status: ComposedMember["status"], reason: MemberReason | null, chant: string | null): ComposedMember {
+export function memberStatus(name: string, dir: string, kind: string, status: ComposedMember["status"], reason: MemberReason | null, chant: string | null): ComposedMember {
   return { name, dir, kind, status, reason, chant, irVersion: null };
 }
 
 export async function runWorkspaceMembers(ctx: CommandContext, verb: WorkspaceVerb): Promise<number> {
+  // graph is part of the read contract, with --at and its own document (#2536).
+  if (verb === "graph") return (await import("./graph-cli")).runWorkspaceGraph(ctx);
   const { args } = ctx;
   const start = resolve(args.extraPositional ?? ".");
   const found = existsSync(start) ? findWorkspaceRoot(start) : undefined;
@@ -482,42 +486,6 @@ export async function runWorkspaceMembers(ctx: CommandContext, verb: WorkspaceVe
   const results = await executePlan(plan, args);
   const anyFailed = results.some((r) => r.exitCode !== 0) || plan.unreadable.length > 0;
   const workspace = { name: plan.workspace.name, root: plan.workspace.root };
-
-  if (verb === "graph") {
-    const byId = new Map(results.map((r) => [r.id, r]));
-    const decl = readDeclaration(workingTree(plan.workspace.root));
-    const inputs: ComposeInput[] = [];
-    let failed = plan.unreadable.length > 0;
-    for (const m of decl.members) {
-      if (args.members?.length && !args.members.includes(m.name)) continue;
-      const r = byId.get(m.name);
-      const skip = plan.skipped.find((s) => s.name === m.name) ?? plan.unreadable.find((s) => s.name === m.name);
-      if (!r) {
-        const status = plan.unreadable.some((s) => s.name === m.name) ? "failed" : "skipped";
-        inputs.push({ member: memberStatus(m.name, m.dir, m.kind, status, skip?.reason ?? null, null) });
-        continue;
-      }
-      if (r.exitCode !== 0) {
-        failed = true;
-        const tail = r.stderr.trim().split("\n").slice(-5).join("\n");
-        inputs.push({ member: memberStatus(m.name, m.dir, m.kind, "failed", { code: "command-failed", message: `chant graph exited ${r.exitCode}${tail ? `: ${tail}` : ""}` }, r.chant) });
-        continue;
-      }
-      const read = readMemberIr(r.stdout);
-      if ("reason" in read) {
-        failed = true;
-        inputs.push({ member: memberStatus(m.name, m.dir, m.kind, "failed", read.reason, r.chant) });
-        continue;
-      }
-      const member = memberStatus(m.name, m.dir, m.kind, "composed", null, r.chant);
-      member.irVersion = read.irVersion;
-      inputs.push({ member, ir: read.ir });
-    }
-    for (const r of results) if (r.stderr.trim()) process.stderr.write(r.stderr.endsWith("\n") ? r.stderr : `${r.stderr}\n`);
-    const kinds = loadKindRegistry(decl.pins, plan.workspace.root).registry;
-    emitDocument(composeWorkspaceGraph(workspace, inputs, { declaration: decl, kinds }), args.output);
-    return failed ? 1 : 0;
-  }
 
   if (verb === "lint" && args.format === "sarif") {
     for (const r of results) if (r.stderr.trim()) process.stderr.write(r.stderr.endsWith("\n") ? r.stderr : `${r.stderr}\n`);

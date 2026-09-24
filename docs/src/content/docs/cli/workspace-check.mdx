@@ -7,7 +7,7 @@ diataxis: reference
 ## Synopsis
 
 ```
-chant workspace check [--json] [--format stylish|json|sarif] [--generated]
+chant workspace check [--at <rev>] [--json] [--format stylish|json|sarif] [--generated]
 ```
 
 ## Description
@@ -144,9 +144,10 @@ info   WSP104  services/api/skills/chant-aws/SKILL.md is kept by hand, so `chant
 
 | Option | Effect |
 |---|---|
+| `--at <rev>` | Check the declaration and the lineage lock as they were at a commit, read from the local git object store. No checkout or network is needed. The declaration, kind and member link checks read the revision's tree. The ledger, pipeline and generated-file checks (`WSP071` to `WSP083`, `WSP101` to `WSP106`) read the checkout, so they find nothing at a revision, and `--generated` does nothing there. |
 | `--json` | Print `{ lock, ok, findings }`, plus `declaration` when there is one. Each lock finding has `code`, `scope`, `path` and `message`, and `code` is one of `lock-invalid` and `manual-step-open`. `lock` is `null` when there is no lock. `declaration` holds `file`, `ok`, `diagnostics`, `suppressed` and `links`. The entries of `diagnostics` and `suppressed` have the shape `chant lint --format json` prints, plus `entity` naming the entry and `reason` for a suppressed one. `ok` covers both |
 | `--format stylish` | The default. Lock findings print as above, and declaration findings print as `chant lint` prints its own |
-| `--format json` | Print the active findings as `chant lint --format json` does. Lock findings use their code as the rule id |
+| `--format json` | Print the [read contract](/chant/reference/workspace-read-contract/) document, which follows `https://intentius.io/chant/schemas/workspace/check/v1/check.schema.json`. It holds what `--json` prints, with `$schema`, `contract`, `chant`, `at` and `workspace` (the declaration's `name` and `root`, or `null` without one) added. A `WSP001` finding also has `code`, the reason code the declaration couldn't be read with. `--at` outside a git repository or at an unknown revision prints `{ "$schema", "contract", "chant", "error" }` instead |
 | `--format sarif` | Print SARIF 2.1.0 through lint's SARIF reporter, with the suppressed findings as suppressed results |
 | `--generated` | Run each declared generator and compare its output with the file in the tree, as described under [generated files](#generated-files). Off by default, since generators run member code |
 

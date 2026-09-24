@@ -1,0 +1,129 @@
+---
+title: Workspace Read Contract
+description: The versioned contract that behold, hud and agents use to read a workspace, and the chant that reads its declaration.
+diataxis: reference
+---
+
+Tools that show a workspace read it through one contract ([#2536](https://github.com/INTENTIUS/chant/issues/2536), D15 of [#2524](https://github.com/INTENTIUS/chant/issues/2524)). behold, hud and agents all read the same JSON documents from the same commands, and an MCP tool wraps those documents rather than defining its own. The contract is made of the [declaration format](/chant/reference/workspace-declaration/) and a JSON Schema for each command's output. One closed list of reason codes and a chant floor for each contract version complete it.
+
+## Versions
+
+| Contract | chant floor | Declaration | Output schemas |
+|---|---|---|---|
+| 1 | 0.81.0 | schema 1 | `ls`, `graph`, `check`, `status` and `records`, each at `v1` |
+
+Every document carries `contract`, the version it follows, and `$schema`, its schema's `$id`. Most also carry `chant`, the version of the chant that wrote it. A reader that knows contract 1 refuses a document with any other `contract` value. Given a chant older than the floor, the reader can say so and name the version to install, since that chant doesn't write the contract at all.
+
+Within a version, fields are only added, and readers ignore fields they don't know. A new reason code, a removed field or a changed meaning is a new contract version. Codes can still be added to version 1 until 0.81.0 is released.
+
+## Output schemas
+
+Each schema ships in `@intentius/chant` at `src/workspace/<command>.schema.json`, and the package exports it as `@intentius/chant/workspace/<command>.schema.json`.
+
+| Command | Prints the document with | Schema `$id` |
+|---|---|---|
+| [`chant workspace ls`](/chant/cli/workspace-ls/#output) | `--json` | `https://intentius.io/chant/schemas/workspace/ls/v1/ls.schema.json` |
+| [`chant workspace graph`](/chant/cli/workspace-graph/#output) | always | `https://intentius.io/chant/schemas/workspace/graph/v1/graph.schema.json` |
+| [`chant workspace check`](/chant/cli/workspace-check/#options) | `--format json` | `https://intentius.io/chant/schemas/workspace/check/v1/check.schema.json` |
+| [`chant workspace status`](/chant/cli/workspace-status/#output) | `--json` | `https://intentius.io/chant/schemas/workspace/status/v1/status.schema.json` |
+| [`chant workspace records`](/chant/cli/workspace-records/#output) | `--json` | `https://intentius.io/chant/schemas/workspace/records/v1/records.schema.json` |
+
+Each schema is a `oneOf` of a result and a failure. A failure has `error: { code, message }`, plus `location` for the commands that read the declaration, and exits 1. A result may still hold entries that couldn't be read, each with a `reason: { code, message }`. Only `check` fails on those ([ws-020](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-020-unreadable.md)). In `check`, a declaration that can't be read is the finding `WSP001` with the same `code`, not a failure.
+
+## Identity and revisions
+
+A workspace is identified by its declared `name` and a git revision ([ws-016](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-016-identity.md)). Every result names both. The name is `workspace.name`, and `at` is the full commit id, or `null` for the working tree. `workspace.root` is the workspace root relative to the git root, so a nested workspace is told apart from the outer one.
+
+`ls`, `graph`, `check` and `records` take `--at <rev>` and read from the local git object store. They need no checkout, no clean working tree and no network.
+
+| Command | What `--at` reads |
+|---|---|
+| `ls` | the declaration, and the member and group directories, at the revision |
+| `check` | the declaration and the lineage lock at the revision, and runs the declaration and kind checks (`WSP001` to `WSP011`) on that tree. The ledger, pipeline and generated-file checks read the checkout, so they are left out |
+| `records` | the records at the revision |
+| `graph` | the declaration at the revision, and each member's graph from its source at the revision |
+
+A member's graph comes from running its chant config, so `graph --at` exports the workspace root's tree at the revision to a temporary directory with `git archive`, links the `node_modules` directories installed in the working tree into it, runs each member there and removes the directory. When no member runs, nothing is exported.
+
+Some of what `--at` reads still comes from the working tree, which is how it stays offline:
+
+- Pinned packages, and the kinds they supply, are the ones installed now.
+- The chant each member runs under is the toolchain installed now, not the one the revision pinned. A member whose config needs a package the revision used and the working tree no longer has fails with `command-failed`.
+- The `records` kind file and its schema come from the working tree.
+- The exported tree is not a git repository, so a member's chant can't read git history there.
+- Remote revisions and URLs are not read. Fetch first.
+- `status` has no `--at`. It reads the local `chant/lifecycle` branch and names the tip it read.
+
+## Which chant reads the declaration
+
+The root's chant reads the declaration ([ws-021](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-021-which-chant.md)). A root names its chant by pinning `@intentius/chant` in [`pins`](/chant/reference/workspace-declaration/#pins).
+
+| The declaration | Who reads it |
+|---|---|
+| pins `@intentius/chant` at this chant's version | this chant |
+| pins another version, installed at the workspace root | that chant: `ls`, `graph`, `check` and `status` hand the whole command line to it and exit with its exit code |
+| pins another version, not installed at the root | nobody: the read fails with `root-chant-required` (a `WSP001` finding for `check`) |
+| pins no chant, and `minReader` is this chant or older | this chant, the reader's own |
+| pins no chant, and `minReader` is newer | nobody: `reader-too-old` |
+
+The pin is checked before `minReader` and before the schema, since the pinned chant may know fields this one doesn't. The pin is read from the tree being read, so `--at` follows the pin at the revision. Members are never read by the root's chant. Each runs under its own toolchain, as [`chant workspace build`](/chant/cli/workspace-build/#which-chant-runs-a-member) describes.
+
+A reader without chant may parse the declaration itself against its [schema](/chant/reference/workspace-declaration/), which is how a Terraform-only estate stays viewable. It should apply the same two rules: defer to the pinned chant, and refuse a `minReader` newer than the format it knows.
+
+## Reason codes
+
+One closed list covers every command. It lives in `packages/core/src/workspace/reason-codes.ts`, each command's own list is a subset of it, and a test fails when a schema or the source names a code outside it.
+
+| Code | Where | Meaning |
+|---|---|---|
+| `declaration-missing` | error | No `chant.workspace.json` or `.jsonc` between the directory and the git root. |
+| `declaration-ambiguous` | error | Both `chant.workspace.json` and `chant.workspace.jsonc` exist. |
+| `declaration-unparseable` | error | The declaration is not valid JSON, or not valid JSONC for `.jsonc`. |
+| `declaration-invalid` | error | The declaration doesn't match its schema, repeats a name, or `--member` names no entry. |
+| `placement-invalid` | error | A member or group match breaks a [placement rule](/chant/reference/workspace-declaration/#placement). |
+| `reader-too-old` | error | The declaration's `minReader` is newer than the chant reading it. |
+| `root-chant-required` | error | The declaration pins another chant, and it is not installed at the workspace root. |
+| `not-a-git-repository` | error | `--at`, or `status`, needs a git repository and there is none. |
+| `revision-unknown` | error | `--at` names no commit. |
+| `environment-invalid` | error, `status` | The environment name can't name a ledger directory. |
+| `dir-missing` | member, `ls` and `graph` | The member's directory does not exist. |
+| `unknown-kind` | member, `ls` and `graph` | No built-in kind or pinned package supplies the member's kind. |
+| `kind-probe-failed` | member, `ls` and `graph` | The member's directory is not what its kind reads. |
+| `no-matches` | group, `ls` | The example group matches no chant project. |
+| `kind-not-run` | member, `graph` | The member's kind is one the per-member commands don't run, such as `other`. |
+| `command-failed` | member, `graph` | The member's own `chant graph` exited with a failure. |
+| `output-unreadable` | member, `graph` | The member's chant printed something that isn't a graph IR. |
+| `ir-version-unsupported` | member, `graph` | The member's IR has a version this chant can't read. |
+| `ledger-unreadable` | ledger, `status` | Reading the ledger failed, so nothing from it is listed. |
+| `ledger-malformed` | ledger, `status` | Some ledger lines aren't release records, and the rest are listed. |
+| `record-unparseable` | record, `records` | No front matter, a YAML error, or a value outside the JSON subset of YAML. |
+| `record-schema-invalid` | record, `records` | The front matter doesn't match the kind's schema. |
+| `record-id-duplicate` | record, `records` | An earlier record in path order has the same id. |
+| `record-supersedes-unknown` | record, `records` | A `supersedes` link names an id no record has. |
+| `record-supersedes-conflict` | record, `records` | A second closed record supersedes one another record already superseded. |
+| `kind-unreadable` | error, `records` | The record kind file is missing or could not be imported. |
+| `kind-invalid` | error, `records` | The record kind file exports no `recordKind`, or its shape is wrong. |
+| `schema-unreadable` | error, `records` | The schema file the kind names is missing or isn't JSON. |
+| `schema-id-mismatch` | error, `records` | The schema's `$id` differs from the id the kind names. |
+| `schema-invalid` | error, `records` | The record schema doesn't compile. |
+| `location-missing` | error, `records` | The records directory does not exist, in the tree or at the revision. |
+| `lock-invalid` | finding, `check` | The lineage lock can't be read. |
+| `manual-step-open` | finding, `check` | A scope in the lineage lock has an open manual step. |
+
+`check` also reports `WSP` ids, the [declaration check catalog](/chant/cli/workspace-check/#declaration-checks). That catalog is closed too, and it is versioned with the check contract.
+
+## Joining the documents
+
+A reader such as behold or hud builds one view from several commands. The join keys are the same in every document.
+
+| Key | `ls` | `graph` | `check` | `status` |
+|---|---|---|---|---|
+| the workspace | `workspace.name`, `at` | `workspace.name`, `at` | `workspace.name`, `at` | `workspace.name` and `lifecycle.commit` |
+| a member | `members[].name` | `members[].name`, and `member` on every node and edge | `entity` on a declaration finding | `members[].name` |
+| a member's directory | `members[].dir` | `members[].dir` | none | `members[].dir` |
+
+A reader starts with `ls`, which lists every member whether it can be read or not. It then reads `graph` for the nodes in `groups.byMember`, and matches each graph entry to the `ls` member of the same name. `check` findings attach to a member through `entity`, and `status` releases attach through the member name. Node ids in `graph` are `<member>/<id>`, so a node never collides with another member's.
+
+Documents read at the same `at` belong together. Mixing a working-tree `ls` with a `graph --at` of an older commit can list members the graph doesn't have, and each document names its own `at` so a reader can tell.
+
+hud reads exactly as behold does, and caches per member. At a commit, a member's entry and nodes don't change once read. A cache keyed on the workspace name, `at` and the member name stays valid while the member's toolchain (`chant` on its `graph` entry) stays the same. A working-tree read has `at: null` and is read again.

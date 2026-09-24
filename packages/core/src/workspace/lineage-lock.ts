@@ -199,9 +199,14 @@ export function emptyLock(): LineageLock {
 export function readLock(root: string): LineageLock | null {
   const path = lockPath(root);
   if (!existsSync(path)) return null;
+  return parseLock(readFileSync(path, "utf-8"));
+}
+
+/** Validate a lock's text, such as one read from a revision (`chant workspace check --at`, #2536). */
+export function parseLock(text: string): LineageLock {
   let raw: unknown;
   try {
-    raw = JSON.parse(readFileSync(path, "utf-8"));
+    raw = JSON.parse(text);
   } catch (err) {
     throw new LockError(`${LOCK_FILE} is not valid JSON: ${err instanceof Error ? err.message : String(err)}`);
   }

@@ -1,0 +1,347 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/check/v1/check.schema.json",
+  "title": "chant workspace check output",
+  "description": "What `chant workspace check --format json` prints, version 1 of the read contract for checking a workspace (#2524 D9, D15, D16, #2535, #2536). The lineage lock findings carry reason codes; the declaration findings carry WSP ids from the check catalog, and WSP001, a declaration that can't be read, also carries the declaration's reason code. Readers ignore fields they do not know; a field is only ever added within a version. The reason and error codes are closed lists: a new code is a new contract version. Contract version 1 is written by chant 0.81.0 and newer; a reader that needs it refuses output whose `contract` it doesn't know. Every code is in the one closed list of `reason-codes.ts`.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/result"
+    },
+    {
+      "$ref": "#/$defs/failure"
+    }
+  ],
+  "$defs": {
+    "result": {
+      "description": "The checks ran. Exit code 0 when ok is true, 1 otherwise.",
+      "type": "object",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "at",
+        "workspace",
+        "ok",
+        "lock",
+        "findings"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/check/v1/check.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string",
+          "description": "The version of the chant that ran the checks."
+        },
+        "at": {
+          "description": "The full commit id the checks read (--at), or null for the working tree.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{40,64}$"
+        },
+        "error": false,
+        "workspace": {
+          "description": "The workspace whose declaration was checked, or null when no declaration sits between the directory and the git root.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "name",
+                "root"
+              ],
+              "properties": {
+                "name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "The declared name, or null when the declaration can't be read."
+                },
+                "root": {
+                  "type": "string",
+                  "description": "The workspace root relative to the git root, with / separators, \".\" for the git root itself. An absolute path outside a git repository."
+                }
+              }
+            }
+          ]
+        },
+        "ok": {
+          "type": "boolean",
+          "description": "No lock finding, and no declaration finding of error severity."
+        },
+        "lock": {
+          "description": "The lineage lock's path, or null when the directory has none.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "const": ".chant/workspace.lock.json"
+            }
+          ]
+        },
+        "findings": {
+          "description": "The lineage lock findings.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/lockFinding"
+          }
+        },
+        "declaration": {
+          "$ref": "#/$defs/declaration"
+        }
+      }
+    },
+    "lockFinding": {
+      "type": "object",
+      "required": [
+        "code",
+        "scope",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "enum": [
+            "lock-invalid",
+            "manual-step-open"
+          ]
+        },
+        "scope": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The lock scope, or null for the lock as a whole."
+        },
+        "path": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      }
+    },
+    "declaration": {
+      "description": "Present when a declaration sits between the directory and the git root.",
+      "type": "object",
+      "required": [
+        "file",
+        "diagnostics",
+        "suppressed",
+        "ok"
+      ],
+      "properties": {
+        "file": {
+          "type": "string",
+          "description": "The declaration, relative to the directory the command ran in."
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "diagnostics": {
+          "description": "Active findings, in the shape `chant lint --format json` prints, sorted by position.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/diagnostic"
+          }
+        },
+        "suppressed": {
+          "description": "Findings an entry's suppress turned off, with its reason. They never fail the command.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/suppressed"
+          }
+        }
+      }
+    },
+    "diagnostic": {
+      "type": "object",
+      "required": [
+        "file",
+        "line",
+        "column",
+        "ruleId",
+        "severity",
+        "message"
+      ],
+      "properties": {
+        "file": {
+          "type": "string",
+          "description": "Relative to the directory the command ran in."
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "column": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "endLine": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "endColumn": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "ruleId": {
+          "type": "string",
+          "pattern": "^WSP[0-9]{3}$",
+          "description": "The declaration check's id, from the catalog on the workspace check page."
+        },
+        "severity": {
+          "enum": [
+            "error",
+            "warning",
+            "info"
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "entity": {
+          "type": "string",
+          "description": "The member or group the finding is about."
+        },
+        "code": {
+          "enum": [
+            "declaration-missing",
+            "declaration-ambiguous",
+            "declaration-unparseable",
+            "declaration-invalid",
+            "placement-invalid",
+            "reader-too-old",
+            "root-chant-required",
+            "not-a-git-repository",
+            "revision-unknown"
+          ],
+          "description": "For WSP001: why the declaration can't be read."
+        }
+      }
+    },
+    "suppressed": {
+      "type": "object",
+      "required": [
+        "file",
+        "line",
+        "column",
+        "ruleId",
+        "severity",
+        "message",
+        "reason"
+      ],
+      "properties": {
+        "file": {
+          "type": "string",
+          "description": "Relative to the directory the command ran in."
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "column": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "endLine": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "endColumn": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "ruleId": {
+          "type": "string",
+          "pattern": "^WSP[0-9]{3}$",
+          "description": "The declaration check's id, from the catalog on the workspace check page."
+        },
+        "severity": {
+          "enum": [
+            "error",
+            "warning",
+            "info"
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "entity": {
+          "type": "string",
+          "description": "The member or group the finding is about."
+        },
+        "code": {
+          "enum": [
+            "declaration-missing",
+            "declaration-ambiguous",
+            "declaration-unparseable",
+            "declaration-invalid",
+            "placement-invalid",
+            "reader-too-old",
+            "root-chant-required",
+            "not-a-git-repository",
+            "revision-unknown"
+          ],
+          "description": "For WSP001: why the declaration can't be read."
+        },
+        "reason": {
+          "type": "string"
+        }
+      }
+    },
+    "failure": {
+      "description": "The checks could not run: --at outside a git repository or at an unknown revision. Exit code 1.",
+      "type": "object",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "error"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/check/v1/check.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string"
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message",
+            "location"
+          ],
+          "properties": {
+            "code": {
+              "enum": [
+                "not-a-git-repository",
+                "revision-unknown"
+              ]
+            },
+            "message": {
+              "type": "string"
+            },
+            "location": {
+              "type": "null"
+            }
+          }
+        },
+        "findings": false,
+        "declaration": false
+      }
+    }
+  }
+}
