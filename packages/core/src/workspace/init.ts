@@ -13,7 +13,12 @@
  *   package.json, becomes an `other` member with a `because`;
  * - projects under an `examples`, `test` or `fixtures`-style directory become
  *   example groups (ws-051), one glob per tree where the tree is mostly
- *   projects, explicit paths where it isn't.
+ *   projects, explicit paths where it isn't;
+ * - each `chant` member gets an `ownership.stack` of its own (#2538, ws-037):
+ *   a stack no other member uses is kept, and a shared or missing one gets a
+ *   proposed name. The stack stays in the member's chant.config, since
+ *   markers carry no member key, so this is printed for the user to apply and
+ *   never written.
  *
  * Nothing here runs project code: it reads file names and package.json files.
  */
@@ -64,12 +69,31 @@ export interface ProposedEntry {
   glob?: string | string[];
 }
 
+/** The ownership stack proposed for one `chant` member (#2538). */
+export interface StackProposal {
+  member: string;
+  dir: string;
+  /** The config file the stack is set in, relative to the root. */
+  config: string;
+  /**
+   * The member's `ownership.stack` as written, when it is a plain string in
+   * the config. Null when it sets none, or computes it.
+   */
+  current: string | null;
+  /** The stack the member should use; equal to `current` when that is kept. */
+  proposed: string;
+  /** Why the stack changes: `missing`, `shared` with another member, or `computed`. Absent when kept. */
+  reason?: "missing" | "shared" | "computed";
+}
+
 export interface Proposal {
   root: string;
   /** The declaration as it would be written. */
   declaration: { name: string; schema: 1; members: ProposedEntry[] };
   /** Directories leaving the root project, with the .ts source files each holds. */
   leaving: { dir: string; owner: string; files: string[] }[];
+  /** One ownership stack per `chant` member, all distinct (ws-037). */
+  stacks: StackProposal[];
 }
 
 // ── Files ────────────────────────────────────────────────────────────────────
@@ -173,6 +197,79 @@ function uniqueName(name: string, taken: Set<string>): string {
   for (let i = 2; taken.has(n); i++) n = `${name.slice(0, 37)}-${i}`;
   taken.add(n);
   return n;
+}
+
+// ── Ownership stacks ─────────────────────────────────────────────────────────
+
+/** A string literal in TS or JSON source. */
+const STRING = String.raw`(?:"((?:[^"\\\n]|\\.)*)"|'((?:[^'\\\n]|\\.)*)'|\`([^\`$\\]*)\`)`;
+const TS_STACK = new RegExp(String.raw`\bownership\s*:\s*\{[^{}]*?\bstack\s*:\s*` + STRING);
+const TS_OWNERSHIP = /\bownership\s*:/;
+
+/**
+ * A member's `ownership.stack` read from its config's text, without running
+ * it: `{ stack }` when it is a plain string, `{ computed: true }` when the
+ * config has an ownership block whose stack is not one, and `{}` when it sets
+ * none.
+ */
+export function readOwnershipStack(tree: WorkspaceTree, dir: string): { config: string; stack?: string; computed?: boolean } | undefined {
+  for (const name of ["chant.config.ts", "chant.config.json"]) {
+    const config = dir ? `${dir}/${name}` : name;
+    if (tree.stat(config) !== "file") continue;
+    const text = tree.read(config);
+    if (name.endsWith(".json")) {
+      try {
+        const stack = (JSON.parse(text) as { ownership?: { stack?: unknown } }).ownership?.stack;
+        return typeof stack === "string" ? { config, stack } : { config };
+      } catch {
+        return { config };
+      }
+    }
+    const m = TS_STACK.exec(text);
+    if (m) return { config, stack: m[1] ?? m[2] ?? m[3] };
+    return TS_OWNERSHIP.test(text) && /\bstack\s*:/.test(text) ? { config, computed: true } : { config };
+  }
+  return undefined;
+}
+
+/** A stack name from a member name: the name itself, else the name with a number, avoiding `taken`. */
+function freeStack(name: string, taken: Set<string>): string {
+  let s = name;
+  for (let i = 2; taken.has(s); i++) s = `${name}-${i}`;
+  return s;
+}
+
+/**
+ * One distinct stack per `chant` member, in declaration order, so the root
+ * member and then the outermost directories keep theirs first. A stack only
+ * one member uses is kept. A shared stack stays with the first member using
+ * it, and the others get their member name. A member with no stack, or one
+ * the config computes, gets its member name too. A proposed name never takes
+ * a stack another member already sets.
+ */
+export function proposeStacks(tree: WorkspaceTree, members: { name: string; dir: string; kind: string }[]): StackProposal[] {
+  const chant = members
+    .filter((m) => m.kind === "chant")
+    .map((m) => ({ m, read: readOwnershipStack(tree, m.dir === "." ? "" : m.dir) }))
+    .filter((x): x is { m: (typeof members)[number]; read: NonNullable<typeof x.read> } => x.read !== undefined);
+  const setBy = new Map<string, string[]>();
+  for (const { m, read } of chant) if (read.stack) setBy.set(read.stack, [...(setBy.get(read.stack) ?? []), m.name]);
+  const taken = new Set<string>();
+  const out: StackProposal[] = [];
+  for (const { m, read } of chant) {
+    const current = read.stack ?? null;
+    const base = { member: m.name, dir: m.dir, config: read.config, current };
+    if (current !== null && !taken.has(current)) {
+      taken.add(current);
+      out.push({ ...base, proposed: current });
+      continue;
+    }
+    // Avoid every stack a member sets, so no rename lands on a later member's.
+    const proposed = freeStack(m.name, new Set([...taken, ...setBy.keys()]));
+    taken.add(proposed);
+    out.push({ ...base, proposed, reason: current !== null ? "shared" : read.computed ? "computed" : "missing" });
+  }
+  return out;
 }
 
 // ── Examples ─────────────────────────────────────────────────────────────────
@@ -341,7 +438,8 @@ export function proposeWorkspace(root: string, options: { name?: string } = {}):
     ...x,
     files: files.filter((f) => isInside(f, x.dir) && isSource(f)),
   }));
-  return { root, declaration, leaving };
+  const stacks = proposeStacks(tree, entries.map((e) => ({ name: e.name, dir: e.dir!, kind: e.kind })));
+  return { root, declaration, leaving, stacks };
 }
 
 // ── The command ──────────────────────────────────────────────────────────────
@@ -382,6 +480,26 @@ function formatLeaving(proposal: Proposal, verbose: boolean): string[] {
   const total = proposal.leaving.reduce((n, x) => n + x.files.length, 0);
   lines.push("");
   lines.push(`${proposal.leaving.length} director${proposal.leaving.length === 1 ? "y" : "ies"} with ${total} .ts source file${total === 1 ? "" : "s"} leave the root project.${verbose ? "" : " --verbose lists every file."}`);
+  return lines;
+}
+
+function formatStacks(proposal: Proposal): string[] {
+  if (proposal.stacks.length === 0) return [];
+  const lines: string[] = [];
+  lines.push("Each chant member needs its own ownership.stack: markers carry no member name, and chant workspace");
+  lines.push("check fails when two members share one. The stack stays in the member's chant.config, so apply");
+  lines.push("the changes below by hand. Renaming a stack that is already deployed changes its resources' markers.");
+  lines.push("");
+  const w0 = Math.max(6, ...proposal.stacks.map((s) => s.member.length));
+  const w1 = Math.max(5, ...proposal.stacks.map((s) => s.proposed.length));
+  lines.push(`  ${"MEMBER".padEnd(w0)}  ${"STACK".padEnd(w1)}  CHANGE`);
+  for (const s of proposal.stacks) {
+    let change = "keep";
+    if (s.reason === "missing") change = `set ownership.stack in ${s.config}`;
+    if (s.reason === "computed") change = `computed in ${s.config}; make sure it is distinct`;
+    if (s.reason === "shared") change = `rename from ${JSON.stringify(s.current)} in ${s.config}, which another member uses`;
+    lines.push(`  ${s.member.padEnd(w0)}  ${s.proposed.padEnd(w1)}  ${change}`);
+  }
   return lines;
 }
 
@@ -443,6 +561,11 @@ export async function runWorkspaceInit(ctx: CommandContext): Promise<number> {
   console.log(text);
   for (const line of formatLeaving(proposal, !!args.verbose)) console.log(line);
   console.log("");
+  const stackLines = formatStacks(proposal);
+  if (stackLines.length > 0) {
+    for (const line of stackLines) console.log(line);
+    console.log("");
+  }
 
   let write = !!args.yes;
   if (!write) {

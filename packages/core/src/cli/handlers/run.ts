@@ -7,7 +7,7 @@ import type { OpConfig } from "../../op/types";
 import { loadActivities, loadProfiles } from "../../op/activity-registry";
 import { runOpLocally, findPolicyGateStep, OpRunFailure, type StepRecord } from "../../op/local-executor";
 import { approveCommand } from "../../op/gate";
-import { writeGatedRunSummary, type GatedRunSummary } from "../../op/gate-summary";
+import { summaryLedgerPrefix, writeGatedRunSummary, type GatedRunSummary } from "../../op/gate-summary";
 import { createLocalOpRuntime } from "../../op/runtimes/local";
 import type { OpRuntimeProvider, OpRunStatus } from "../../op/runtime";
 import { renderHuman, renderJson } from "../../op/local-output";
@@ -788,6 +788,7 @@ export async function runOpComponents(ctx: CommandContext): Promise<number> {
         ...(gate.url ? { url: gate.url } : {}),
         ...(result.gated.pushed === false ? { pushed: false, pushWarning: result.gated.pushWarning } : {}),
         ...(gate.planDigest ? { planDigest: gate.planDigest } : {}),
+        ...(await summaryLedgerPrefix()),
       },
       gatedExit,
     );
@@ -918,6 +919,7 @@ export async function runOpOnRuntime(ctx: CommandContext): Promise<number> {
               ? { pushed: false, pushWarning: status.result.gatePushWarning }
               : {}),
             ...(pending?.planDigest ? { planDigest: pending.planDigest } : {}),
+            ...(await summaryLedgerPrefix()),
           },
           gatedExit,
         );

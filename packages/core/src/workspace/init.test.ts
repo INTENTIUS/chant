@@ -107,6 +107,33 @@ describe("proposeWorkspace (#2534)", () => {
     expect(leaving.find((l) => l.dir === "apps/web")?.files).toEqual(["apps/web/chant.config.ts", "apps/web/src/main.ts"]);
   });
 
+  test("proposes one distinct ownership stack per chant member, and never touches a config (#2538, ws-037)", () => {
+    const files = {
+      "chant.config.ts": `export default { lexicons: ["k8s"], ownership: { stack: "shop", env: "prod" } };`,
+      "services/api/chant.config.ts": `export default {\n  ownership: {\n    stack: 'api',\n  },\n};`,
+      "services/web/chant.config.json": JSON.stringify({ ownership: { stack: "shop" } }),
+      "services/jobs/chant.config.ts": `export default { lexicons: ["aws"] };`,
+      "services/cron/chant.config.ts": "const s = process.env.STACK;\nexport default { ownership: { stack: s } };",
+      "services/shop/chant.config.ts": `export default { lexicons: ["aws"] };`,
+    };
+    const root = repo(files);
+    const { stacks, declaration } = proposeWorkspace(root, { name: "acme" });
+    expect(stacks.map((s) => [s.member, s.current, s.proposed, s.reason ?? "keep"])).toEqual([
+      ["root", "shop", "shop", "keep"],
+      ["api", "api", "api", "keep"],
+      ["cron", null, "cron", "computed"],
+      ["jobs", null, "jobs", "missing"],
+      // "shop" is taken by the root member, so the member named shop gets a number.
+      ["shop", null, "shop-2", "missing"],
+      ["web", "shop", "web", "shared"],
+    ]);
+    expect(new Set(stacks.map((s) => s.proposed)).size).toBe(stacks.length);
+    expect(stacks.find((s) => s.member === "web")?.config).toBe("services/web/chant.config.json");
+    // No marker key, and nothing about stacks, goes into the declaration.
+    expect(JSON.stringify(declaration)).not.toMatch(/stack/);
+    for (const [path, text] of Object.entries(files)) expect(readFileSync(join(root, path), "utf-8")).toBe(text);
+  });
+
   test("sanitizeName fits the member grammar", () => {
     expect(sanitizeName("@Acme/My_Pkg.v2")).toBe("acme-my-pkg-v2");
     expect(sanitizeName("--x--")).toBe("x");
@@ -169,6 +196,18 @@ describe("chant workspace init (#2534)", () => {
     expect(written).toMatchObject({ name: "acme", schema: 1 });
     expect(await run(root, "--yes")).toBe(1);
     expect(err.join("\n")).toMatch(/already exists/);
+  });
+
+  test("prints the stack each chant member should use", async () => {
+    const root = repo({
+      "services/api/chant.config.json": JSON.stringify({ ownership: { stack: "shop" } }),
+      "services/web/chant.config.json": JSON.stringify({ ownership: { stack: "shop" } }),
+    });
+    expect(await run(root, "--name", "acme")).toBe(0);
+    const text = out.join("\n");
+    expect(text).toMatch(/Each chant member needs its own ownership\.stack/);
+    expect(text).toMatch(/api\s+shop\s+keep/);
+    expect(text).toMatch(/web\s+web\s+rename from "shop" in services\/web\/chant\.config\.json/);
   });
 
   test("--verbose lists every file leaving the root project", async () => {

@@ -16,7 +16,7 @@ chant workspace init [dir] [--name <name>] [--yes] [--verbose]
 
 The root is `dir` when it's given, otherwise the top of the git repository holding the current directory. The command refuses to run where a `chant.workspace.json` or `.jsonc` already exists.
 
-It runs no project code, and only reads file names and `package.json` files. In a git repository the file names come from git, which leaves out ignored files and `node_modules`.
+It runs no project code. It reads file names, `package.json` files, and the text of each member's `chant.config.ts` or `chant.config.json` for its `ownership.stack`. In a git repository the file names come from git, which leaves out ignored files and `node_modules`.
 
 ## What it proposes
 
@@ -50,6 +50,21 @@ Before it asks, init prints every member directory and example-group match that 
 ```
 
 These directories stop being read by root-level `chant build`, `lint`, `run` and `audit` once per-member commands ship ([#2537](https://github.com/INTENTIUS/chant/issues/2537)).
+
+## Ownership stacks
+
+Each `chant` member needs an `ownership.stack` of its own ([#2538](https://github.com/INTENTIUS/chant/issues/2538), ws-037). Ownership markers carry no member name, so the stack is what tells two members' resources and receipts apart, and the `WSP071` check fails when two members share one (see [Ledgers](/chant/reference/workspace-declaration/#ledgers)). Init prints one distinct stack per member after the directories that leave the root project:
+
+```
+  MEMBER  STACK  CHANGE
+  api     shop   keep
+  web     web    rename from "shop" in services/web/chant.config.json, which another member uses
+  jobs    jobs   set ownership.stack in services/jobs/chant.config.ts
+```
+
+Members are taken in declaration order, so the root member and then the outermost directories keep their stacks first. A stack that only one member uses is kept. A shared stack stays with the first member that uses it, and each other member gets its member name. A member that sets no stack gets its member name too, with a number added when another member already uses that name. A stack the config computes rather than writes as a plain string is listed as computed, with the member name as the proposal.
+
+The stack stays in the member's config and the declaration gains no marker key, so init never writes these changes. Apply them by hand. Renaming the stack of a member that is already deployed changes the markers on its resources, so resources deployed under the old stack are no longer matched as that member's.
 
 ## Options
 

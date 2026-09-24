@@ -34,6 +34,7 @@
 import { hostname } from "node:os";
 import { randomUUID } from "node:crypto";
 import { readRefSha, updateRefCAS, deleteRefCAS, writeBlob, readBlobBySha, pushRef, fetchRefInto, RefCASConflictError } from "./git";
+import { resolveMemberLedger } from "./member-ledger";
 
 export const LEASE_REF_PREFIX = "refs/chant/lease/";
 
@@ -59,12 +60,25 @@ export const LEASE_REMOTE_TRACKING_PREFIX = "refs/chant/lease-remote/";
  */
 export const DEFAULT_LEASE_TTL_MS = 5 * 60_000;
 
-export function leaseRef(opName: string): string {
-  return `${LEASE_REF_PREFIX}${opName}`;
+/**
+ * The lease ref for `opName`. `memberPrefix` is the project's ledger prefix
+ * from ./member-ledger.ts (#2538): empty at level 0 and for the root member
+ * `.`, which keeps `refs/chant/lease/<op>`, and `_members/<member>/` for any
+ * other workspace member, which gives `refs/chant/lease/_members/<member>/<op>`.
+ * Two members may then run Ops of the same name without sharing a lease.
+ */
+export function leaseRef(opName: string, memberPrefix = ""): string {
+  return `${LEASE_REF_PREFIX}${memberPrefix}${opName}`;
 }
 
-function leaseRemoteTrackingRef(opName: string): string {
-  return `${LEASE_REMOTE_TRACKING_PREFIX}${opName}`;
+function leaseRemoteTrackingRef(opName: string, memberPrefix = ""): string {
+  return `${LEASE_REMOTE_TRACKING_PREFIX}${memberPrefix}${opName}`;
+}
+
+/** The lease refs of `opName` for the project at `opts.cwd` (or the process's directory). */
+async function projectLeaseRefs(opName: string, opts?: { cwd?: string }): Promise<{ ref: string; trackingRef: string }> {
+  const { prefix } = await resolveMemberLedger(opts?.cwd ?? process.cwd());
+  return { ref: leaseRef(opName, prefix), trackingRef: leaseRemoteTrackingRef(opName, prefix) };
 }
 
 /**
@@ -147,8 +161,7 @@ export interface ReadLeaseResult {
  * call against it, regardless of what the comparison decided about `record`.
  */
 export async function readLease(opName: string, opts?: { cwd?: string }): Promise<ReadLeaseResult> {
-  const ref = leaseRef(opName);
-  const trackingRef = leaseRemoteTrackingRef(opName);
+  const { ref, trackingRef } = await projectLeaseRefs(opName, opts);
   await fetchRefInto(ref, trackingRef, opts).catch(() => undefined);
 
   const sha = await readRefSha(ref, opts);
@@ -212,9 +225,10 @@ export async function acquireLease(
     expiresAt: new Date(now.getTime() + ttlMs).toISOString(),
   };
 
+  const { ref } = await projectLeaseRefs(opName, opts);
   const blobSha = await writeBlob(JSON.stringify(record), opts);
   try {
-    await updateRefCAS(leaseRef(opName), blobSha, sha, opts);
+    await updateRefCAS(ref, blobSha, sha, opts);
   } catch (err) {
     if (err instanceof RefCASConflictError) {
       const retry = await readLease(opName, opts);
@@ -225,7 +239,7 @@ export async function acquireLease(
     // it into `heldBy`, per this function's doc.
     throw err;
   }
-  await pushRef(leaseRef(opName), opts).catch(() => undefined);
+  await pushRef(ref, opts).catch(() => undefined);
   return { acquired: true, lease: record };
 }
 
@@ -244,12 +258,13 @@ export async function releaseLease(
 ): Promise<boolean> {
   const { sha, record } = await readLease(opName, opts);
   if (!sha || !record || record.holder !== holder || record.token !== token) return false;
+  const { ref } = await projectLeaseRefs(opName, opts);
   try {
-    await deleteRefCAS(leaseRef(opName), sha, opts);
+    await deleteRefCAS(ref, sha, opts);
   } catch {
     return false;
   }
-  await pushRef(leaseRef(opName), opts).catch(() => undefined);
+  await pushRef(ref, opts).catch(() => undefined);
   return true;
 }
 
