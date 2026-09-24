@@ -158,32 +158,25 @@ A local audit walks the tree once and stops after 1000 files. Every file the wal
 
 Pass `--max-files <n>` to raise the limit. A repository URL is fetched with its own limits, so the flag is refused there.
 
-When the walk stops with files left over, `chant audit` prints a warning on stderr:
+When the walk stops with files left over, the report says so. Text output (`stylish`, `markdown` and `html`) leads with a note:
 
 ```
-warning: the scan of ./repo stopped at 1000 files, so part of the tree was not audited. The limit counts every file the walk reaches, not only the ones it audits.
-  Raise it with --max-files <n>. From the next release, text and JSON output will also report a truncated scan.
+Note: The scan of ./repo stopped at 1000 files, so part of the tree was not audited. The limit counts every file the walk reaches, not only the ones it audits. Raise it with --max-files <n>.
 ```
 
-In this release the report is unchanged: a truncated scan still reads as a whole one on stdout, in every format. The warning goes to stderr, so `--format json` output stays byte-identical.
+JSON output carries a `truncated` field with the limit and the flag that raises it. The field is absent when the whole tree was read:
 
-### Coming in the next release
-
-Two changes to level-0 output are on the [exception list](https://github.com/INTENTIUS/chant/issues/2525) and are tracked in [#2528](https://github.com/INTENTIUS/chant/issues/2528). This release warns about both.
-
-| Change | This release | Next release |
-|---|---|---|
-| Truncated scans | A warning on stderr | Text and JSON output report the truncation, the limit and `--max-files` |
-| `.gitignore` for `TF023` | Only the root `.gitignore` decides whether a state file or `.terraform/` counts as committed. A warning on stderr names each path a nested `.gitignore` ignores | Every `.gitignore` between the file and the scan root is read, so those paths are no longer reported |
-
-The `TF023` warning names the file and the `.gitignore` responsible:
-
-```
-infra/terraform.tfstate - warning: TF023 reports this path because chant audit reads only the root .gitignore, but infra/.gitignore ignores it.
-  From the next release chant audit reads every .gitignore between a file and the scan root, and TF023 will no longer report this path.
+```json
+{ "schemaVersion": "1.0", "status": "ok", "truncated": { "limit": 1000, "flag": "--max-files" }, "...": "..." }
 ```
 
-Auditing from a subdirectory reads that directory's `.gitignore` as the root one, so today an audit from the repository root and one from `infra/` can disagree about `infra/terraform.tfstate`. After the change they agree whenever the `.gitignore` responsible is at or below the subdirectory.
+SARIF has no place for the note, so with `--format sarif` it goes to stderr instead.
+
+Up to `v0.80.0` a truncated scan read as a whole one on stdout, and `v0.80.0` warned about it on stderr. This is one of the level-0 changes on the [exception list](/chant/reference/level-0-exceptions/) ([#2528](https://github.com/INTENTIUS/chant/issues/2528)).
+
+### `.gitignore` and `TF023`
+
+`TF023` reports Terraform state and `.terraform/` directories that are committed. On a local path, a path that any `.gitignore` between it and the scan root ignores is not committed, so it is not reported. Auditing from the repository root and from a subdirectory such as `infra/` agree about `infra/terraform.tfstate` whenever the `.gitignore` that ignores it is at or below `infra/`. Up to `v0.80.0` only the scan root's own `.gitignore` was read ([#2528](https://github.com/INTENTIUS/chant/issues/2528)).
 
 ## Report modes
 
@@ -227,6 +220,7 @@ For tooling, `--format json` emits a **versioned** envelope (stable contract). T
 - Consumers should check the **major** version and **ignore unknown fields**.
 - The `snapshot` anchors findings to an exact commit for reproducibility.
 - `status` is `"ok"` when at least one lexicon ran, `"no-lexicons"` when none could (see [Prerequisites](#prerequisites)). Check it before trusting an empty `findings`. An optional `unclaimed` list names files that wanted a lexicon that is not installed.
+- An optional `truncated` object (`limit`, `flag`) means the local walk stopped at its file limit, so `findings` covers only part of the tree (see [Scan limits](#scan-limits)).
 - `lineage` credits the open-source tools whose rules check the same condition, with the upstream rule id and how the two relate. It is credit, not authority, and is empty for a rule with no known counterpart. The [audit rules reference](/chant/lint-rules/audit-rules/#prior-art) lists every tool credited.
 - For maximum stability, integrate via `--format sarif` — an industry-standard, independently-versioned format.
 

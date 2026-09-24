@@ -129,6 +129,12 @@ export interface AuditReportJson {
   findings: SerializedFinding[];
   /** Candidate files that looked like they wanted a lexicon that is not installed. */
   unclaimed?: UnclaimedFile[];
+  /**
+   * Present when the local walk stopped at its file limit with files left
+   * unread (#2528): the limit, and the flag that raises it. Absent for a whole
+   * scan and for a repository URL.
+   */
+  truncated?: { limit: number; flag: string };
 }
 
 export function metaFor(id: string, catalog: Record<string, RuleMeta> = RULE_CATALOG): RuleMeta {
@@ -298,7 +304,13 @@ export function buildReportModel(findings: AuditFinding[], opts: BuildModelOptio
 /** Build the versioned, machine-readable JSON report (stable contract). */
 export function buildReportJson(
   findings: AuditFinding[],
-  opts: { snapshot?: AuditSnapshot; toolVersion?: string; catalog?: Record<string, RuleMeta>; unclaimed?: UnclaimedFile[] } = {},
+  opts: {
+    snapshot?: AuditSnapshot;
+    toolVersion?: string;
+    catalog?: Record<string, RuleMeta>;
+    unclaimed?: UnclaimedFile[];
+    truncated?: { limit: number; flag: string };
+  } = {},
 ): AuditReportJson {
   const model = buildReportModel(findings, { catalog: opts.catalog });
   const version = opts.toolVersion ?? opts.snapshot?.toolVersion ?? "0.0.0";
@@ -328,5 +340,6 @@ export function buildReportJson(
       docUrl: ruleDocUrl(f.checkId),
     })),
     unclaimed: opts.unclaimed && opts.unclaimed.length > 0 ? opts.unclaimed : undefined,
+    truncated: opts.truncated,
   };
 }

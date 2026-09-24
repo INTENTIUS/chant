@@ -180,7 +180,7 @@ A `terraform` block with no `required_version` attribute.
 **Why it matters.** Sits beside TF002 on the same block: without
 `required_version`, a root can be applied by whatever Terraform binary
 happens to be on the runner's `PATH`. A binary upgrade that changes behavior
-surfaces as a surprise plan diff instead of a version-check failure before
+surfaces as a surprise plan diff instead of a version-check failure up to
 anything runs.
 
 **The fix.** Add `required_version = ">= <lowest supported version>"` to the
@@ -931,19 +931,17 @@ over a parsed root module at all: it reads the file list `chant audit`
 discovers, so it lives in core beside the other lexicon-independent families
 (`packages/core/src/audit/terraform-state.ts`, catalogued in core's own
 `RULE_CATALOG`) and fires whether or not the terraform lexicon is installed. On
-a local path the root `.gitignore` is what separates "committed" from "merely
+a local path the `.gitignore` files are what separate "committed" from "merely
 on disk", since almost every Terraform working tree has an ignored
 `.terraform/` in it; a fetched repository's file list is already exactly its
 tracked files. Nothing reads the contents of either: the finding is that the
 path is there.
 
-Only the root `.gitignore` is read today. A state file that a `.gitignore`
-further down the tree ignores, such as `infra/.gitignore` for
-`infra/terraform.tfstate`, is still reported, and `chant audit` prints a
-warning on stderr naming the file and that `.gitignore`. From the next release
-every `.gitignore` between the file and the scan root is read, and those paths
-are no longer reported ([#2528](https://github.com/INTENTIUS/chant/issues/2528);
-see [Coming in the next release](/chant/cli/audit/#coming-in-the-next-release)).
+Every `.gitignore` between the file and the scan root is read, the root one
+included, so `infra/terraform.tfstate` is not reported when `infra/.gitignore`
+ignores it, and auditing from the repository root and from `infra/` agree
+([#2528](https://github.com/INTENTIUS/chant/issues/2528); up to `v0.80.0` only
+the root `.gitignore` was read).
 
 **Why it matters.** A state file records every attribute of every managed
 resource in plaintext JSON, including the ones providers mark sensitive, so a

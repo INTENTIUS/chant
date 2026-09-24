@@ -627,18 +627,6 @@ export interface CandidateWalkOptions {
   maxFiles?: number;
 }
 
-/**
- * A TF023 path the root `.gitignore` does not cover but a `.gitignore` in a
- * directory between it and the scan root does (#2528). TF023 reports it today;
- * from the next release, which reads every such `.gitignore`, it will not.
- */
-export interface NestedGitignoreChange {
-  /** The TF023 path, relative to the scan root. */
-  path: string;
-  /** The nested `.gitignore` that ignores it, relative to the scan root. */
-  gitignore: string;
-}
-
 /** What the local walk read, plus what it knows about its own limits. */
 export interface CandidateWalk {
   files: RepoFile[];
@@ -646,8 +634,6 @@ export interface CandidateWalk {
   maxFiles: number;
   /** True when the walk stopped at `maxFiles` with files left unread. */
   truncated: boolean;
-  /** TF023 paths whose finding changes once nested `.gitignore` files are read. */
-  nestedGitignore: NestedGitignoreChange[];
 }
 
 /** The walk half of `discoverByDetection`: candidate files read into memory, paths relative to the root. */
@@ -656,9 +642,8 @@ export function collectCandidates(root: string): RepoFile[] {
 }
 
 /**
- * `collectCandidates` with the facts the audit CLI warns about: whether the
- * walk was truncated, and which TF023 paths a nested `.gitignore` would drop.
- * Neither changes `files`; the CLI prints them on stderr (#2528).
+ * `collectCandidates` plus whether the walk stopped at its limit with files
+ * left unread, which the audit report states (#2528).
  */
 export function walkCandidates(root: string, opts: CandidateWalkOptions = {}): CandidateWalk {
   const all: string[] = [];
@@ -666,29 +651,26 @@ export function walkCandidates(root: string, opts: CandidateWalkOptions = {}): C
   walkFiles(root, all, state);
   // TF023 reads paths, not content: a `.tfstate` can be tens of megabytes of
   // machine-generated JSON, and the finding is that it is in the repository at
-  // all. The root `.gitignore` is what separates "committed" from "merely on
-  // disk" here — a Terraform working tree almost always has an ignored
+  // all. The `.gitignore` files are what separate "committed" from "merely on
+  // disk" here. A Terraform working tree almost always has an ignored
   // `.terraform/` in it, and reporting that would make TF023 fire on every
-  // local audit. A fetched repository has no such ambiguity (its file list is
-  // the tracked files) and is not filtered.
+  // local audit. Every `.gitignore` from the scan root down to the file's own
+  // directory is read (#2528), so auditing from the root and from a
+  // subdirectory agree. A fetched repository has no such ambiguity (its file
+  // list is the tracked files) and is not filtered.
   const gitignore = readSafe(join(root, ".gitignore")) ?? "";
-  // Only the root one decides, for now. The nested ones are read to say which
-  // findings the next release, which honours them, will stop reporting.
   const nestedBodies = new Map<string, string | undefined>();
   const nestedGitignoreAt = (dir: string): string | undefined => {
     if (!nestedBodies.has(dir)) nestedBodies.set(dir, readSafe(join(root, dir, ".gitignore")));
     return nestedBodies.get(dir);
   };
   const files: RepoFile[] = [];
-  const nestedGitignore: NestedGitignoreChange[] = [];
   for (const full of all) {
     const path = relative(root, full);
     if (isTerraformStatePath(path)) {
-      if (!gitignoreCoversTerraformState(gitignore, path)) {
-        files.push({ path, content: "" });
-        const dir = nestedGitignoreCovering(path, nestedGitignoreAt);
-        if (dir !== undefined) nestedGitignore.push({ path, gitignore: `${dir}/.gitignore` });
-      }
+      const ignored =
+        gitignoreCoversTerraformState(gitignore, path) || nestedGitignoreCovering(path, nestedGitignoreAt) !== undefined;
+      if (!ignored) files.push({ path, content: "" });
       continue;
     }
     // `.tf` is read locally so `classifyTerraform` can bundle real content.
@@ -702,5 +684,5 @@ export function walkCandidates(root: string, opts: CandidateWalkOptions = {}): C
     const content = readSafe(full);
     if (content !== undefined) files.push({ path, content });
   }
-  return { files, maxFiles: state.limit, truncated: state.truncated, nestedGitignore };
+  return { files, maxFiles: state.limit, truncated: state.truncated };
 }
