@@ -7,6 +7,18 @@ A hand-curated rollup of capabilities shipped recently. If you learned chant bef
 
 For the day-to-day reference docs see [Lifecycle Models](/chant/concepts/lifecycle-models/), [`chant lifecycle`](/chant/cli/lifecycle/), [Live Import](/chant/guide/live-import/), [Reconciling Lifecycle](/chant/guide/reconciling-lifecycle/), [Drift Detection](/chant/concepts/drift-detection/), and [Implementing Observation](/chant/lexicon-authoring/observation/).
 
+## Digests chant computes are real SHA-256
+
+`contentDigest` labelled its output `sha256:` but computed a 32-bit string hash repeated to 64 hex characters. It now returns `"sha256:" + sha256(utf8(content))`, so every `manifestDigest` and every digest of a synthesized template or BOM changes once for the same content. Image digests from `docker build` and other tools were already real and are unchanged. chant 0.80.0 warned about this a release ahead, as the [level-0 exceptions](/chant/reference/level-0-exceptions/) require.
+
+Old values in a release ledger or in persisted build manifests are never rewritten. They read back flagged `legacy-digest`, still resolve by their old digest, and are accepted through the `0.89.x` releases. [Digests made before real SHA-256](/chant/components/observability/#digests-made-before-real-sha-256) has the details.
+
+Everything else core hashes now goes through the same `contentDigest` over `canonicalJson`. Two values can move once as a result, because the old code sorted object keys by locale rather than by code unit. A plan digest can change for a plan whose keys mix upper and lower case, or digits and punctuation. An Op gate approved for such a plan before the upgrade stops and asks for `chant approve` again. Nothing is applied on a stale approval. The props hashes in a lifecycle snapshot can change the same way, so the first `chant lifecycle diff <env>` against a snapshot taken before the upgrade may list a few resources as changed.
+
+| # | Capability |
+|---|---|
+| [#2514](https://github.com/INTENTIUS/chant/issues/2514) | Real SHA-256 in `contentDigest`, manifest and SBOM digests, with old ledger entries flagged `legacy-digest` |
+
 ## Level-0 output is pinned by golden tests
 
 Workspaces are coming in levels, and a project with no `chant.workspace.json` stays at level 0, where nothing changes. On every pull request, golden tests now run the five level-0 commands over copies of five example projects and compare each output with a committed file. A git fixture pins the ledger paths and ownership markers next to them. The few changes allowed to alter level-0 output are listed, with their issues and warning releases, on [Level-0 Exceptions](/chant/reference/level-0-exceptions/). None has shipped a warning yet.

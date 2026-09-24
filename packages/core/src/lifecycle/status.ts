@@ -38,6 +38,7 @@
 
 import type { ChangeSet, ChangeAction } from "./change-set";
 import { latestPerComponent, type ReleaseRecord } from "./release-ledger";
+import { isLegacyContentDigest } from "./legacy-digest";
 import type { BuildLedgerEntry, ComponentBomSummary } from "./build-ledger";
 import { unobservedReasonText, type UnobservedReason } from "../observation";
 
@@ -491,6 +492,13 @@ export interface CrossEnvComparison {
   same: boolean;
   /** The identities `same` was decided on (`inputDigest ?? digest` per side), when both sides had one and they differ from the digests shown. */
   comparedOn?: { a: string; b: string };
+  /**
+   * Set when the two identities differ and exactly one of them is a
+   * `legacy-digest` value from before real SHA-256 (#2514). The same content
+   * hashes differently in the two forms, so `same: false` then says nothing
+   * about whether the builds match.
+   */
+  mixedDigestForms?: true;
 }
 
 /** Compare the latest recorded digest for `component` between two environments' release records. */
@@ -512,5 +520,8 @@ export function compareAcrossEnvironments(
     digestB: latestB?.digest,
     same: !!idA && !!idB && idA === idB,
     ...(comparedOnInputs && idA && idB ? { comparedOn: { a: idA, b: idB } } : {}),
+    ...(idA && idB && idA !== idB && isLegacyContentDigest(idA) !== isLegacyContentDigest(idB)
+      ? { mixedDigestForms: true as const }
+      : {}),
   };
 }

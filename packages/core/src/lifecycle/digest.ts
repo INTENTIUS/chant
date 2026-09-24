@@ -7,15 +7,19 @@
 import type { BuildResult } from "../build";
 import type { Declarable } from "../declarable";
 import type { BuildDigest, ResourceDigest, DigestDiff } from "./types";
-import { sortedJsonReplacer } from "../utils";
-import { getRuntime } from "../runtime-adapter";
+import { canonicalJson } from "../effect-receipt";
+import { contentDigest } from "../content-digest";
 
 /**
- * Hash an entity's props deterministically.
+ * Hash an entity's props deterministically: bare hex SHA-256 over their
+ * `canonicalJson` (chant #2514). Props are first passed through
+ * `JSON.stringify`, which applies `toJSON` and drops what JSON cannot hold
+ * (a function-valued prop, say), so a prop that serialises today still
+ * hashes rather than throwing.
  */
 export function hashProps(props: unknown): string {
-  const json = JSON.stringify(props, sortedJsonReplacer);
-  return getRuntime().hash(json);
+  const plain: unknown = JSON.parse(JSON.stringify(props) ?? "null");
+  return contentDigest(canonicalJson(plain)).slice("sha256:".length);
 }
 
 /**

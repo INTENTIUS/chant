@@ -83,7 +83,7 @@ export const migrated = EffectReceipt("migrated", {
 });
 ```
 
-Static inputs hash at synthesis (`receiptExpectation`). Reference inputs — attr-refs and other intrinsics — are recorded in placeholder form and resolve in the plan engine and again in the effect step, via `resolveReceiptExpectation(receipt, resolver)`; synthesis resolves nothing, and `receiptExpectation` refuses a hash receipt that still carries references. Hashing is JCS-style canonical JSON (`canonicalJson`: sorted keys, standard number and string encoding) digested with sha256.
+Static inputs hash at synthesis (`receiptExpectation`). Reference inputs — attr-refs and other intrinsics — are recorded in placeholder form and resolve in the plan engine and again in the effect step, via `resolveReceiptExpectation(receipt, resolver)`; synthesis resolves nothing, and `receiptExpectation` refuses a hash receipt that still carries references. Hashing is JCS-style canonical JSON (`canonicalJson`: sorted keys, standard number and string encoding) digested with `contentDigest`, real SHA-256 over the UTF-8 bytes. Everything else core hashes, including build manifests, plan digests and build-digest props, uses the same two functions ([#2514](https://github.com/INTENTIUS/chant/issues/2514)).
 
 A receipt carries a recognition marker (`Symbol.for("chant.effect-receipt")`) that core reads lexicon-independently (`isEffectReceipt`, `collectEffectReceipts`). Unlike a secret declaration the marker identifies rather than excludes: a receipt serializes, becoming a real observable resource through a per-lexicon materialization row that stamps the same marker. Receipts are observe-only to the generic apply path — the `effect()` step is the sole writer, on success, last.
 
