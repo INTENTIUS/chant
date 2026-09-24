@@ -285,6 +285,8 @@ export interface ParsedArgs {
   kind?: string;
   /** `chant workspace records --current` (#2546): leave out records a closed record supersedes. */
   current?: boolean;
+  /** `chant workspace records|verify --require attested` (#2547): the provenance level a gate requires. */
+  require?: string;
   /**
    * `chant build --root-only` and `chant lint --root-only` (#2537): run on the
    * root project of a declared workspace, members left out, instead of

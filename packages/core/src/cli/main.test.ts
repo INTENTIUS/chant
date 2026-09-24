@@ -710,6 +710,7 @@ describe("workspace init and ls (#2534)", () => {
       "workspace records",
       "workspace status",
       "workspace upgrade",
+      "workspace verify",
     ]);
   });
 

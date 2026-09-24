@@ -1,6 +1,7 @@
 /**
- * `chant workspace records --kind <path> [--current] [--at <rev>] [--json]`,
- * the first-test slice of the records query (#2546, #2536).
+ * `chant workspace records --kind <path> [--current] [--at <rev>] [--base <rev>]
+ * [--require attested] [--json]`, the first-test slice of the records query
+ * (#2546, #2536), with each record's provenance level (#2547).
  *
  * It reads every record the kind file locates and prints them, with reason
  * codes for any that are invalid. An invalid record never fails the command:
@@ -11,11 +12,14 @@
  * nothing is inferred (#2525 rule 1).
  */
 
+import { realpathSync } from "node:fs";
 import { relative } from "node:path";
 import { formatError } from "../cli/format";
 import type { CommandContext } from "../cli/registry";
 import { gitRevisionSource, gitRoot, resolveRevision, workingTreeSource } from "./record-source";
 import { loadRecordKind, readRecords, RecordReadError, type ReadErrorCode, type RecordEntry } from "./records";
+import { activeAttestors, type ProvenanceLevel } from "./trust/attestor";
+import { policyAtBase, recordProvenance, resolveBase, type BaseSource, type RecordProvenance } from "./trust/provenance";
 
 /** The version of the `records` output this chant writes. */
 export const RECORDS_CONTRACT_VERSION = 1;
@@ -23,14 +27,33 @@ export const RECORDS_CONTRACT_VERSION = 1;
 /** `$id` of the JSON Schema for the `--json` output, shipped beside this file. */
 export const RECORDS_OUTPUT_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace/records/v1/records.schema.json";
 
-const USAGE = "chant workspace records --kind <kind file> [--current] [--at <rev>] [--json]";
+const USAGE = "chant workspace records --kind <kind file> [--current] [--at <rev>] [--base <rev>] [--require attested] [--json]";
+
+/** Exit code when the read worked and a record falls below `--require`. */
+export const EXIT_BELOW_REQUIRED = 2;
 
 export interface RecordsQuery {
   kind: string;
   current?: boolean;
   at?: string;
+  /** The revision the trust policy is read at (#2547). Defaults to the target branch tip. */
+  base?: string;
   /** Where `kind` is resolved from and the repository is found. */
   cwd: string;
+}
+
+/** A record as the output carries it: the entry plus its provenance (#2547). */
+export type RecordView = RecordEntry & { provenance: RecordProvenance };
+
+/** Where provenance was judged from (#2547). */
+export interface TrustView {
+  /** The full commit id the policy was read at, or null when there is no base. */
+  base: string | null;
+  baseFrom: BaseSource | null;
+  /** Whether a signers file exists at base. False means every record is `unattested`. */
+  active: boolean;
+  signersPath: string;
+  problems: string[];
 }
 
 /** The `records` output: a result, or a failure with one error code. */
@@ -41,17 +64,21 @@ export type RecordsDocument =
       kind: { name: string; schema: string; file: string };
       at: string | null;
       current: boolean;
-      records: RecordEntry[];
+      trust: TrustView;
+      records: RecordView[];
       summary: { total: number; valid: number; invalid: number; superseded: number };
     }
   | { $schema: string; contract: number; error: { code: ReadErrorCode; message: string } };
 
 /** Run the query and build the document `--json` prints. Never throws a {@link RecordReadError}. */
 export async function queryRecords(query: RecordsQuery): Promise<RecordsDocument> {
-  const top = gitRoot(query.cwd);
-  const root = top ?? query.cwd;
+  // git reports its top through symlinks resolved (/var is /private/var on
+  // macOS), so the directory has to be too, or record paths leave the repository.
+  const cwd = realpathOr(query.cwd);
+  const top = gitRoot(cwd);
+  const root = top ?? cwd;
   try {
-    const loaded = await loadRecordKind(query.kind, query.cwd);
+    const loaded = await loadRecordKind(query.kind, cwd);
     let at: string | null = null;
     let source = workingTreeSource(root);
     if (query.at !== undefined) {
@@ -60,6 +87,16 @@ export async function queryRecords(query: RecordsQuery): Promise<RecordsDocument
       source = gitRevisionSource(top, at);
     }
     const result = await readRecords(loaded, { root, source, current: !!query.current });
+    // Provenance, judged by the policy at base and never by the tree read (#2547).
+    const base = top ? resolveBase(top, query.base) : { commit: null, from: null };
+    const policy = top ? policyAtBase(top, base) : policyAtBase(root, base);
+    const provenance = recordProvenance({
+      repo: top,
+      policy,
+      at,
+      paths: result.records.map((r) => r.path),
+      attestors: policy.active ? await activeAttestors() : [],
+    });
     return {
       $schema: RECORDS_OUTPUT_SCHEMA_ID,
       contract: RECORDS_CONTRACT_VERSION,
@@ -70,7 +107,8 @@ export async function queryRecords(query: RecordsQuery): Promise<RecordsDocument
       },
       at,
       current: !!query.current,
-      records: result.records,
+      trust: { base: base.commit, baseFrom: base.from, active: policy.active, signersPath: policy.signersPath, problems: policy.problems },
+      records: result.records.map((r) => ({ ...r, provenance: provenance.get(r.path)! })),
       summary: result.summary,
     };
   } catch (err) {
@@ -85,7 +123,11 @@ export async function runWorkspaceRecords(ctx: CommandContext): Promise<number> 
     console.error(formatError({ message: "--kind <kind file> is required", hint: USAGE }));
     return 1;
   }
-  const doc = await queryRecords({ kind: args.kind, current: args.current, at: args.at, cwd: process.cwd() });
+  if (args.require !== undefined && args.require !== "attested") {
+    console.error(formatError({ message: `--require takes one level, attested, not ${JSON.stringify(args.require)}`, hint: USAGE }));
+    return 1;
+  }
+  const doc = await queryRecords({ kind: args.kind, current: args.current, at: args.at, base: args.base, cwd: process.cwd() });
   if (args.json) {
     console.log(JSON.stringify(doc, null, 2));
   } else if ("error" in doc) {
@@ -93,10 +135,39 @@ export async function runWorkspaceRecords(ctx: CommandContext): Promise<number> 
   } else {
     console.log(formatRecords(doc.records, doc.summary, doc.at));
   }
-  return "error" in doc ? 1 : 0;
+  if ("error" in doc) return 1;
+  if (args.require) {
+    const below = belowRequired(doc.records, args.require);
+    if (below.length > 0) {
+      console.error(
+        formatError({
+          message: `${below.length} of ${doc.records.length} records are not ${args.require}: ${below
+            .slice(0, 5)
+            .map((r) => `${r.path} (${r.provenance.level})`)
+            .join(", ")}${below.length > 5 ? ", ..." : ""}`,
+          hint: doc.trust.active ? "run with --json to see each record's reason" : `there is no signers file (${doc.trust.signersPath}) at base`,
+        }),
+      );
+      return EXIT_BELOW_REQUIRED;
+    }
+  }
+  return 0;
 }
 
-function formatRecords(records: RecordEntry[], summary: { total: number; valid: number; invalid: number; superseded: number }, at: string | null): string {
+function realpathOr(dir: string): string {
+  try {
+    return realpathSync(dir);
+  } catch {
+    return dir;
+  }
+}
+
+/** Records whose provenance falls below `required`. Only `attested` can be required. */
+export function belowRequired(records: RecordView[], required: ProvenanceLevel): RecordView[] {
+  return records.filter((r) => r.provenance.level !== required);
+}
+
+function formatRecords(records: RecordView[], summary: { total: number; valid: number; invalid: number; superseded: number }, at: string | null): string {
   const lines: string[] = [];
   const idWidth = Math.max(2, ...records.map((r) => (r.id ?? "-").length));
   const stateWidth = Math.max(5, ...records.map((r) => (r.state ?? "-").length));
@@ -104,7 +175,8 @@ function formatRecords(records: RecordEntry[], summary: { total: number; valid: 
     const title = typeof r.data?.title === "string" ? r.data.title : r.path;
     const flag = r.valid ? "" : "  INVALID";
     const superseded = r.supersededBy ? `  superseded by ${r.supersededBy}` : "";
-    lines.push(`${(r.id ?? "-").padEnd(idWidth)}  ${(r.state ?? "-").padEnd(stateWidth)}  ${title}${superseded}${flag}`);
+    const attested = r.provenance.level === "attested" ? `  attested by ${r.provenance.principal}` : "";
+    lines.push(`${(r.id ?? "-").padEnd(idWidth)}  ${(r.state ?? "-").padEnd(stateWidth)}  ${title}${superseded}${attested}${flag}`);
     for (const reason of r.reasons) lines.push(`${" ".repeat(idWidth + 2)}${reason.code}: ${reason.message} (${r.path})`);
   }
   lines.push(
@@ -119,7 +191,7 @@ export async function runWorkspaceUnknown(ctx: CommandContext): Promise<number> 
   console.error(
     formatError({
       message: sub ? `Unknown workspace subcommand: ${sub}` : "chant workspace needs a subcommand",
-      hint: `Workspace subcommands: audit, build, check, graph, init, lineage, lint, ls, records, status, upgrade. Run "chant --help" for their options.`,
+      hint: `Workspace subcommands: audit, build, check, graph, init, lineage, lint, ls, records, status, upgrade, verify. Run "chant --help" for their options.`,
     }),
   );
   return 1;
