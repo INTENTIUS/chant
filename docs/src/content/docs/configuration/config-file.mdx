@@ -34,7 +34,7 @@ An entry can instead name a module in the project, for a lexicon you write yours
 lexicons: ["fly", { name: "site", module: "./lexicon/index.ts" }],
 ```
 
-The path is resolved against the directory holding `chant.config.ts`, and no package is needed. See [A lexicon in your own project](/chant/guide/managing-lexicons/#a-lexicon-in-your-own-project) for what the module has to export.
+The path is resolved against the directory holding `chant.config.ts`, and no package is needed. An optional `root` names the directory holding the lexicon's other files, which fold trusts the way it trusts a package's subpaths. See [A lexicon in your own project](/chant/guide/managing-lexicons/#a-lexicon-in-your-own-project) for what the module has to export and the bounds on `root`.
 
 ### `exclude` and `include`
 

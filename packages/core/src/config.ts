@@ -10,7 +10,7 @@ import type { BuildParamsConfig } from "./build-params";
 import type { BuildParamProvenance } from "./provenance";
 import { findProjectConfig } from "./project-root";
 import { evaluateProjectConfig } from "./config-sandbox";
-import { lexiconNames, registerLexiconDeclarations, type LexiconDeclaration } from "./lexicon-module";
+import { lexiconNames, pathLexiconRoot, registerLexiconDeclarations, type LexiconDeclaration } from "./lexicon-module";
 
 /**
  * One project-declared environment (chant #1166). Historically always a bare
@@ -131,6 +131,7 @@ const LexiconEntrySchema = z.union([
   z.object({
     name: z.string().min(1),
     module: z.string().min(1),
+    root: z.string().min(1).optional(),
   }).strict(),
 ]);
 
@@ -207,7 +208,8 @@ export interface ChantConfig {
    * Lexicons to load. A bare name (`"aws"`) loads the package
    * `@intentius/chant-lexicon-aws`. `{ name, module }` (#2520) loads a
    * project-local lexicon from a module path, resolved against the directory
-   * holding this config; see `./lexicon-module.ts`.
+   * holding this config; see `./lexicon-module.ts`. An optional `root`
+   * (chant#2590) names the directory holding the lexicon's other files.
    *
    * Once loaded, this holds names only: the loader replaces each
    * `{ name, module }` entry with its name and records the path in
@@ -941,7 +943,20 @@ function normalizeConfig(raw: Record<string, unknown>, source?: string): LoadedC
   // the loaders and the entry becomes its name, so every reader of `lexicons`
   // keeps seeing names. A config of plain names is returned untouched.
   const lexicons = (raw as ChantConfig).lexicons;
-  const recorded = registerLexiconDeclarations(lexicons, source !== undefined ? dirname(source) : process.cwd());
+  const baseDir = source !== undefined ? dirname(source) : process.cwd();
+  const sourceDir = (raw as ChantConfig).sourceDir;
+  // chant#2590 — a declared `root` must stay inside the project and must not
+  // contain its source directory. Refused here rather than narrowed, since
+  // the project asked for it by name.
+  for (const [i, entry] of (lexicons ?? []).entries()) {
+    if (typeof entry === "string" || entry.root === undefined) continue;
+    const { problem } = pathLexiconRoot(entry, baseDir, sourceDir);
+    if (problem !== undefined) {
+      const loc = source ? ` in ${source}` : "";
+      throw new InvalidChantConfigError(`Invalid chant config${loc}: lexicons.${i}.root: ${problem}`, "lexicons");
+    }
+  }
+  const recorded = registerLexiconDeclarations(lexicons, baseDir, sourceDir);
   if (Object.keys(recorded).length > 0) {
     return { ...(raw as ChantConfig), lexicons: lexiconNames(lexicons), lexiconModules: recorded };
   }
