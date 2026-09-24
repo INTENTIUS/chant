@@ -269,6 +269,18 @@ describe("parseArgs", () => {
     expect(result.actor).toBe("alice");
   });
 
+  test("--digest repeats for components promote, and --digest-file is parsed (#2602)", () => {
+    const promote = parseArgs([
+      "components", "promote", "--from", "staging", "--to", "prod",
+      "--digest", "api=sha256:a", "--digest", "web=sha256:w",
+    ]);
+    expect(promote.digests).toEqual(["api=sha256:a", "web=sha256:w"]);
+    expect(promote.digest).toBe("web=sha256:w");
+
+    const run = parseArgs(["run", "--components", "api", "--env", "staging", "--digest-file", "api.digest"]);
+    expect(run.digestFile).toBe("api.digest");
+  });
+
   test("parses --compare-to and --live for components status", () => {
     const result = parseArgs(["components", "status", "prod", "--compare-to", "staging", "--live", "--json"]);
     expect(result.command).toBe("components");

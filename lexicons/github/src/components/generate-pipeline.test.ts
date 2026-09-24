@@ -35,6 +35,7 @@ function pilotComponents(): DriverComponent[] {
 
 interface ParsedStep {
   name?: string;
+  id?: string;
   uses?: string;
   run?: string;
   with?: Record<string, unknown>;
@@ -44,6 +45,7 @@ interface ParsedJob {
   "runs-on"?: string;
   container?: string;
   needs?: string[];
+  outputs?: Record<string, string>;
   steps: ParsedStep[];
 }
 
@@ -342,7 +344,9 @@ describe("generateGithubPipeline: a promote job (#2575)", () => {
       { name: "api-archive", path: "dist/images" },
       { name: "worker-archive", path: "." },
     ]);
-    expect(runLines(promote)).toEqual(["chant components promote --from staging --to prod"]);
+    expect(runLines(promote)).toEqual([
+      'chant components promote --from staging --to prod --digest "api=${{ needs.api.outputs.digest }}" --digest "worker=${{ needs.worker.outputs.digest }}"',
+    ]);
 
     // The machine-readable views stay one entry per component.
     expect(result.jobs.map((j) => j.component).sort()).toEqual(["api", "shared-alb", "worker"]);
@@ -358,7 +362,7 @@ describe("generateGithubPipeline: a promote job (#2575)", () => {
     });
     expect(runLines(parsedJobs(result.yaml)["promote-prod"])).toEqual([
       "npm ci",
-      "npx chant components promote --from staging --to prod",
+      'npx chant components promote --from staging --to prod --digest "api=${{ needs.api.outputs.digest }}" --digest "worker=${{ needs.worker.outputs.digest }}"',
       "echo done",
     ]);
   });
@@ -372,8 +376,40 @@ describe("generateGithubPipeline: a promote job (#2575)", () => {
   });
 
   test("a component whose job name is the promote job's is refused", () => {
-    const components: DriverComponent[] = [{ name: "promote-prod", deploy: [] }];
+    const components: DriverComponent[] = [
+      { name: "promote-prod", deploy: [{ phase: "Publish", steps: [{ kind: "publish-image", from: "archive:a.tar" }] }] },
+    ];
     expect(() => generateGithubPipeline(components, { promoteTo: "prod" })).toThrow(/same name as a component job/);
+  });
+
+  test("each publishing job hands the digest its run recorded to the promote job, which pins it (#2602)", () => {
+    const jobs = parsedJobs(generateGithubPipeline(promotableComponents(), { env: "staging", promoteTo: "prod" }).yaml);
+
+    for (const name of ["api", "worker"]) {
+      const job = jobs[name];
+      // The run writes `<component>=<digest>` for the release it recorded ...
+      expect(runLines(job).find((l) => l.startsWith("chant run"))).toContain(`--digest-file ${name}.digest`);
+      // ... a step turns it into a step output, and the job exposes it.
+      const record = job.steps.find((s) => s.name === `Record ${name} digest`)!;
+      expect(record.id).toBe("digest");
+      expect(record.run).toBe(`echo "digest=$(cut -d= -f2- ${name}.digest)" >> "$GITHUB_OUTPUT"`);
+      expect(job.outputs).toEqual({ digest: "${{ steps.digest.outputs.digest }}" });
+    }
+
+    // shared-alb publishes nothing, so it records no release and is not pinned.
+    expect(jobs["shared-alb"].outputs).toBeUndefined();
+    expect(runLines(jobs["shared-alb"]).join("\n")).not.toContain("--digest-file");
+
+    const promote = runLines(jobs["promote-prod"]).find((l) => l.includes("components promote"))!;
+    expect(promote).toContain('--digest "api=${{ needs.api.outputs.digest }}"');
+    expect(promote).toContain('--digest "worker=${{ needs.worker.outputs.digest }}"');
+    expect(promote).not.toContain("shared-alb=");
+  });
+
+  test("with no component that publishes, there is no release to pin, and generation fails", () => {
+    const components: DriverComponent[] = [{ name: "shared-alb", dependsOn: [], deploy: [] }];
+    expect(() => generateGithubPipeline(components, { promoteTo: "prod" })).toThrow(/no component has a publish step/);
+    expect(() => generateGithubPipeline(components)).not.toThrow();
   });
 
   test("artifactRoot is the deepest directory holding every file", () => {

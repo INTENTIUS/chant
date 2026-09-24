@@ -1157,6 +1157,53 @@ describe("runOpComponents", () => {
       vi.restoreAllMocks();
     });
 
+    test("--digest-file writes <component>=<digest> for each release the run recorded (#2602)", async () => {
+      runComponentsMock.mockResolvedValue({
+        success: true,
+        selected: ["svc", "infra"],
+        run: {
+          order: ["svc", "infra"],
+          waves: [["svc", "infra"]],
+          results: [
+            { component: "svc", ok: true, status: "ok", records: [] },
+            { component: "infra", ok: true, status: "ok", records: [] },
+          ],
+          ok: true,
+          status: "ok",
+        },
+      });
+      maybeRecordAutoReleaseMock.mockImplementation(async (info: { component: string }) =>
+        info.component === "svc"
+          ? { recorded: true, commit: "a".repeat(40), record: { version: 1, component: "svc", env: "staging", digest: "sha256:abc", gitSha: "x", runId: "local-1", timestamp: "t", actor: "a" } }
+          : { recorded: false, reason: "no-digest" });
+      writeFileSyncMock.mockClear();
+      vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+      const exit = await runOpComponents({ args: makeArgs({ path: "all", env: "staging", digestFile: "out/svc.digest" }), plugins: [], serializers: [] });
+
+      expect(exit).toBe(0);
+      const call = writeFileSyncMock.mock.calls.find(([path]) => String(path).endsWith("out/svc.digest"));
+      expect(call?.[1]).toBe("svc=sha256:abc\n");
+      vi.restoreAllMocks();
+    });
+
+    test("--digest-file is written empty when nothing was recorded (#2602)", async () => {
+      runComponentsMock.mockResolvedValue({
+        success: true,
+        selected: ["svc"],
+        run: { order: ["svc"], waves: [["svc"]], results: [{ component: "svc", ok: true, status: "ok", records: [] }], ok: true, status: "ok" },
+      });
+      maybeRecordAutoReleaseMock.mockResolvedValue({ recorded: false, reason: "opted-out" });
+      writeFileSyncMock.mockClear();
+      vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+      await runOpComponents({ args: makeArgs({ path: "svc", digestFile: "svc.digest" }), plugins: [], serializers: [] });
+
+      const call = writeFileSyncMock.mock.calls.find(([path]) => String(path).endsWith("svc.digest"));
+      expect(call?.[1]).toBe("");
+      vi.restoreAllMocks();
+    });
+
     test("a release-write error is surfaced as a warning but does not change the exit code", async () => {
       runComponentsMock.mockResolvedValue({
         success: true,

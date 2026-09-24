@@ -115,11 +115,40 @@ export function selectRelease(
 }
 
 /**
+ * Read `--digest <component>=<digest>` values (#2602) into a component-to-
+ * digest map. A value with no `=` is left to the single-component form
+ * (`--component <name> --digest <digest>`), so it is an error here. An empty
+ * digest is an error too: a generated promote job passes one when the job that
+ * deployed the component recorded no release, and promoting whatever is
+ * latest instead is the thing the pin is there to prevent.
+ */
+export function parseDigestPins(values: string[]): { pins: Record<string, string> } | { error: string } {
+  const pins: Record<string, string> = {};
+  for (const value of values) {
+    const at = value.indexOf("=");
+    if (at < 0) return { error: "--digest picks one release of one component, so it needs --component <name>, or the form <component>=<digest>" };
+    const component = value.slice(0, at);
+    const digest = value.slice(at + 1);
+    if (component === "") return { error: `--digest ${value} names no component` };
+    if (digest === "") {
+      return { error: `--digest ${value} names no digest; the run that deployed "${component}" recorded no release for it` };
+    }
+    if (component in pins && pins[component] !== digest) {
+      return { error: `--digest pins "${component}" twice, to ${pins[component]} and ${digest}` };
+    }
+    pins[component] = digest;
+  }
+  return { pins };
+}
+
+/**
  * Decide which releases a promote deploys. With `component`, exactly that
- * component's latest source release (or the one recording `digest`). Without
- * it, the latest source release of every component this checkout declares;
- * a recorded component the checkout no longer declares is reported and left
- * alone, since there is no composition to deploy it with.
+ * component's latest source release (or the one recording `digest`). With
+ * `pins` (#2602), exactly the pinned components, each at the source release
+ * recording its pinned digest. Otherwise, the latest source release of every
+ * component this checkout declares; a recorded component the checkout no
+ * longer declares is reported and left alone, since there is no composition
+ * to deploy it with.
  */
 export function planPromotion(input: {
   from: string;
@@ -129,11 +158,27 @@ export function planPromotion(input: {
   declared: string[];
   component?: string;
   digest?: string;
+  /** Component name to the digest to promote for it, from `--digest <component>=<digest>`. */
+  pins?: Record<string, string>;
 }): PromotionPlan | { error: string } {
-  const { from, to, sourceRecords, declared, component, digest } = input;
+  const { from, to, sourceRecords, declared, component, digest, pins } = input;
   if (from === to) return { error: `--from and --to name the same environment ("${from}")` };
   if (digest !== undefined && component === undefined) {
     return { error: "--digest picks one release of one component, so it needs --component <name>" };
+  }
+
+  if (pins !== undefined && Object.keys(pins).length > 0) {
+    if (component !== undefined) {
+      return { error: "--digest <component>=<digest> names its own component, so it does not take --component" };
+    }
+    const items: PromotionItem[] = [];
+    for (const [name, pinned] of Object.entries(pins).sort(([a], [b]) => a.localeCompare(b))) {
+      if (!declared.includes(name)) return { error: `component "${name}" is not declared in this checkout` };
+      const picked = selectRelease(sourceRecords, name, from, pinned);
+      if ("error" in picked) return picked;
+      items.push({ component: name, digest: picked.record.digest, source: picked.record });
+    }
+    return { from, to, items, notPromoted: [] };
   }
 
   if (component !== undefined) {
@@ -241,6 +286,17 @@ export function promoteArchivePaths(component: DriverComponent): string[] {
   };
   walk(component.deploy);
   return paths;
+}
+
+/**
+ * Whether `component`'s deploy has a publish step (#2602). Only such a
+ * component records a release when it deploys, so only its release can be
+ * promoted; a generated pipeline pins exactly these components' digests.
+ */
+export function hasPublishStep(component: DriverComponent): boolean {
+  const walk = (steps: Array<DriverStep | DriverGate | DriverPhase>): boolean =>
+    steps.some((step) => isPhase(step) ? walk(step.steps) : !isGate(step) && PUBLISH_STEP_KINDS.includes(step.kind));
+  return walk(component.deploy);
 }
 
 /** A component's composition with its build-time steps taken out. */

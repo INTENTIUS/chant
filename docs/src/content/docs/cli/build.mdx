@@ -128,13 +128,19 @@ A components-only project need not declare a lexicon plugin at all. Lexicons are
 
 ### Promote job
 
-`--promote-to <env>` adds one job to the pipeline that runs [`chant components promote --from <env> --to <promote-to>`](/chant/cli/components/#components-promote) once every component job has succeeded. A promote publishes from the build archive on disk, and the promote job runs on its own runner, so the archive travels with the pipeline:
+`--promote-to <env>` adds one job to the pipeline that runs [`chant components promote --from <env> --to <promote-to>`](/chant/cli/components/#components-promote) once every component job has succeeded. The promote job promotes the releases this pipeline run recorded in `<env>`, not the latest ones there, which another pipeline may have recorded while this one ran.
+
+Each component job whose deploy has a publish step runs with `--digest-file <component>.digest`, which writes the digest of the release the run recorded. Components with no publish step record no release and are not promoted. On GitHub and Forgejo a `Record <component> digest` step writes that digest to the job output `digest`, and the promote job passes `--digest "<component>=${{ needs.<job>.outputs.digest }}"` for each such component. On GitLab the digest file joins the job's `artifacts:` and the promote job passes `--digest "<component>=$(cut -d= -f2- <component>.digest)"`.
+
+When a component job records no release (under `--no-release-record`, say) its digest is empty, and the promote refuses it instead of promoting something else. Generation fails when no component has a publish step, since there would be nothing to promote.
+
+A promote publishes from the build archive on disk, and the promote job runs on its own runner, so the archive travels with the pipeline too:
 
 - Each component job uploads the files its `docker-build`, `zip-package` and `jvm-build` steps wrote to `into`. On GitHub and Forgejo that is an `actions/upload-artifact` step named `<component>-archive`, and the promote job downloads each one back to the same path. On GitLab the files join the job's `artifacts:`, and the promote job, in a `promote` stage, receives them through `needs:`.
-- The `beforeScript` and `extraScript` options apply to the promote job as they do to the component jobs, and `promoteCommand` replaces its command.
+- The `beforeScript` and `extraScript` options apply to the promote job as they do to the component jobs, and `promoteCommand` replaces its command. The `--digest` pins are appended to `promoteCommand` as well.
 - An `into` the generator cannot read as a plain path, such as a wiring reference or an `$env.` value, fails generation and names the component, because the file it names is only known at run time.
 
-Without `--promote-to` the generated pipeline has no promote job and no archive uploads.
+Without `--promote-to` the generated pipeline has no promote job. It uploads no archives and writes no digest files either.
 
 `--promote-to` is refused anywhere else, including a plain `chant build --promote-to prod`, with an error naming the flags it needs.
 

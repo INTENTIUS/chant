@@ -299,6 +299,8 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.opsSpec = args[++i];
     } else if (arg === "--dump-outputs") {
       result.dumpOutputs = args[++i];
+    } else if (arg === "--digest-file") {
+      result.digestFile = args[++i];
     } else if (arg === "--seed-outputs") {
       (result.seedOutputs ??= []).push(args[++i]);
     } else if (arg === "--detail") {
@@ -380,6 +382,7 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.component = args[++i];
     } else if (arg === "--digest") {
       result.digest = args[++i];
+      if (result.digest !== undefined) (result.digests ??= []).push(result.digest);
     } else if (arg === "--git-sha") {
       result.gitSha = args[++i];
     } else if (arg === "--run-id") {
