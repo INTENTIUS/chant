@@ -143,7 +143,7 @@ export interface EcsClient {
   updateService(args: EcsUpdateServiceArgs): Promise<{ deploymentId: string }>;
   /** Current running/desired counts for a service, used by `wait-steady-state`. */
   describeService(cluster: string, service: string): Promise<EcsServiceState>;
-  /** Roll a service back to a previously recorded task definition/count (saga compensation). */
+  /** Roll a service back to the given task definition (and count, if set) (saga compensation). Throws without a `taskDefinition`: the executor records no previous one. */
   rollbackService(args: EcsUpdateServiceArgs): Promise<void>;
   /** Run a one-off task (e.g. a DB migration) and return its arn for `waitForTask`. */
   runTask(args: EcsRunTaskArgs): Promise<{ taskArn: string }>;
@@ -553,6 +553,13 @@ const realEcs: EcsClient = {
     return { runningCount: svc?.runningCount ?? 0, desiredCount: svc?.desiredCount ?? 0, stable: ecsServiceStable(svc) };
   },
   async rollbackService(args) {
+    // Nothing here records a service's previous task definition, so a rollback
+    // without one would leave the service as it is and still report success (#2605).
+    if (!args.taskDefinition) {
+      throw new Error(
+        `ecs rollback of service "${args.service}" on "${args.cluster}" needs the taskDefinition to roll back to`,
+      );
+    }
     await realEcs.updateService(args);
   },
   async runTask(args) {

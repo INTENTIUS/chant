@@ -250,8 +250,18 @@ describe("ecs-update-service (#557)", () => {
     const mock = createMockCloudExecutor();
     const capability = createEcsUpdateServiceCapability(mock.executor);
     expect(typeof capability.rollback).toBe("function");
-    await capability.rollback!(svcCtx, { cluster: "prod", service: "search" });
+    await capability.rollback!(svcCtx, { cluster: "prod", service: "search", imageRef: "search:7" });
     expect(mock.calls.map((c) => c.method)).toEqual(["rollbackService"]);
+    expect(mock.calls[0]!.args).toMatchObject({ taskDefinition: "search:7" });
+  });
+
+  it("rollback without an imageRef fails instead of reporting success (#2605)", async () => {
+    const mock = createMockCloudExecutor();
+    const capability = createEcsUpdateServiceCapability(mock.executor);
+    await expect(capability.rollback!(svcCtx, { cluster: "prod", service: "search", desiredCount: 2 })).rejects.toThrow(
+      /no imageRef to roll back to/,
+    );
+    expect(mock.calls).toEqual([]);
   });
 });
 
