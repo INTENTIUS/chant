@@ -5,6 +5,7 @@
  * import parsing, and code generation for GCP Config Connector resources.
  */
 
+import { compositeCatalog } from "./composites/catalog";
 import type { LexiconPlugin, InitTemplateSet, ResourceMetadata } from "@intentius/chant/lexicon";
 import { detectTemplate } from "./detect";
 import { LABEL_OWNERSHIP_KEYS } from "@intentius/chant/ownership";
@@ -203,6 +204,10 @@ export const bucketReader = new IAMPolicyMember({
 
   hoverProvider(ctx: HoverContext): HoverInfo | undefined {
     return gcpHover(ctx);
+  },
+
+  composites() {
+    return compositeCatalog;
   },
 
   mcpTools() {

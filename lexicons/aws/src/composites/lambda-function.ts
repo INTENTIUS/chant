@@ -40,6 +40,7 @@ export type LambdaFunctionResult = {
   func: InstanceType<typeof Function>;
 };
 
+/** A Lambda function with its execution role. */
 export const LambdaFunction = Composite<LambdaFunctionProps, LambdaFunctionResult>((props) => {
   const { defaults } = props;
   const managedPolicies = [BASIC_EXECUTION_ARN];

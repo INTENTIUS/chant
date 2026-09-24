@@ -14,6 +14,7 @@ export interface LambdaEventBridgeProps extends LambdaFunctionProps {
   };
 }
 
+/** A Lambda function triggered by an EventBridge rule, on a schedule or an event pattern. */
 export const LambdaEventBridge = Composite((props: LambdaEventBridgeProps) => {
   const { defaults } = props;
   const { role, func } = LambdaFunction(props);

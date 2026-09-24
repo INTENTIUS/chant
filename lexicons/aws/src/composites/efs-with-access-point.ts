@@ -28,6 +28,7 @@ export interface EfsWithAccessPointProps {
   throughputMode?: "bursting" | "provisioned" | "elastic";
 }
 
+/** An EFS file system with an access point and the security group that admits NFS traffic to it. */
 export const EfsWithAccessPoint = Composite((props: EfsWithAccessPointProps) => {
   // Ternary (not push-inside-if) keeps the `new`s out of control flow (EVL002).
   const ingressRules: InstanceType<typeof SecurityGroup_Ingress>[] = props.sourceSecurityGroupId

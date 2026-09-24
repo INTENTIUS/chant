@@ -70,6 +70,7 @@ function toKeySchema(partitionKey: DynamoDBKey, sortKey?: DynamoDBKey): Instance
   return sortEntry ? [partitionEntry, sortEntry] : [partitionEntry];
 }
 
+/** A DynamoDB table from a partition key, an optional sort key and optional global secondary indexes. */
 export const DynamoDBTable = Composite((props: DynamoDBTableProps) => {
   const billingMode = props.billingMode ?? "PAY_PER_REQUEST";
   const { defaults } = props;

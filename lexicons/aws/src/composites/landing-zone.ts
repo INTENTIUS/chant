@@ -114,6 +114,7 @@ export type RegionRestrictionResult = {
   scpRegionRestriction: InstanceType<typeof OrganizationsPolicy>;
 };
 
+/** A service control policy that denies requests outside the listed regions. */
 export const RegionRestriction = Composite<RegionRestrictionProps, RegionRestrictionResult>((props) => {
   const policy = regionRestriction(props.regions);
   const scpRegionRestriction = new OrganizationsPolicy({
@@ -139,6 +140,7 @@ export type OrganizationTrailResult = {
   trail: InstanceType<typeof Trail>;
 };
 
+/** An organization-wide CloudTrail trail. */
 export const OrganizationTrail = Composite<OrganizationTrailProps, OrganizationTrailResult>((props) => {
   const trail = new Trail({
     IsLogging: true,

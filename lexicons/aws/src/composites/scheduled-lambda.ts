@@ -13,6 +13,7 @@ export interface ScheduledLambdaProps extends LambdaFunctionProps {
   };
 }
 
+/** A Lambda function run on a schedule by an EventBridge rule. */
 export const LambdaScheduled = Composite((props: ScheduledLambdaProps) => {
   const { defaults } = props;
   const { role, func } = LambdaFunction(props);

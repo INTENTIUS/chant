@@ -28,6 +28,7 @@ export interface LambdaDynamoDBProps extends LambdaFunctionProps {
   };
 }
 
+/** A Lambda function with a DynamoDB table, table access for its role and an optional stream trigger. */
 export const LambdaDynamoDB = Composite((props: LambdaDynamoDBProps) => {
   // Conditional entries via spread keep the `new`s out of the `if` (EVL002).
   const attributeDefinitions = [

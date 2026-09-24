@@ -81,7 +81,7 @@ Returns `{ lexicon, pattern, files }`, where `files` is `[{ filename, content }]
 
 ### `search`
 
-Search available resource types across loaded lexicons.
+Search the resource types and the composites of the loaded lexicons.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -89,7 +89,19 @@ Search available resource types across loaded lexicons.
 | `lexicon` | `string` | No | Filter to a specific lexicon |
 | `limit` | `number` | No | Maximum results (default: `20`) |
 
-The response is `{ query, total, results }`, with prefix matches ahead of substring matches and `total` counting the matches before `limit` was applied.
+The response is `{ query, total, results }`, with prefix matches ahead of substring matches and `total` counting the matches before `limit` was applied. A resource type matches on its type, class name or kind and comes back as `{ className, resourceType, kind, lexicon }`. A composite matches on its name, its description or a resource kind it bundles, and comes back as `{ kind: "composite", name, description, bundles, lexicon }`, so a query for `queue` returns the `Queue` resource and the `LambdaSqs` composite that bundles one. Among matches of equal rank, composites come before resource types. The `composites` tool has the composite's parameters.
+
+### `composites`
+
+List the composites the loaded lexicons export. "What composites do you have for aws?" is a call with `lexicon: "aws"`.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `lexicon` | `string` | No | Only composites from this lexicon |
+| `query` | `string` | No | Keyword matched against the name, description, bundled resource kinds and parameter names |
+| `limit` | `number` | No | Maximum composites (default: `50`) |
+
+Returns `{ lexicons, total, composites }`, plus the `lexicon` and `query` that were given. `lexicons` names every loaded lexicon, so an empty list for a lexicon it names means that lexicon exports no composites. Each composite is `{ name, lexicon, description, bundles, params }`. Its `bundles` are the resource kinds it creates, nested composites included, and each entry in `params` is `{ name, type, required, description }`. With a `query`, name matches come first. The data is the catalog each lexicon ships in its package. Reading it loads no composite and calls no provider.
 
 ### `lifecycle-snapshot`
 
@@ -195,6 +207,7 @@ The server provides resources that agents can read for context:
 | `chant://ops` | `application/json` | Every Op discovered from `*.op.ts`, with overview, phase count, labels and dependencies |
 | `chant://ops/{name}/runs` | `application/json` | Run history for a named Op, newest first |
 | `chant://ops/{name}/runs/latest` | `application/json` | Latest run state for a named Op |
+| `chant://composites` | `application/json` | Every composite the loaded lexicons export, the same entries the `composites` tool returns, unfiltered |
 | `chant://knowledge` | `application/json` | The project's OKF knowledge bundle as `{ dir, index, concepts }`, empty when the project has authored none |
 | `chant://state/{environment}` | `application/json` | Every lexicon's snapshot for an environment, keyed by lexicon |
 | `chant://state/{environment}/{lexicon}` | `application/json` | One lexicon's snapshot for an environment |

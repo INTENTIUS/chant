@@ -5,6 +5,7 @@
  * for GitHub Actions workflows.
  */
 
+import { compositeCatalog } from "./composites/catalog";
 import type { LexiconPlugin, IntrinsicDef, InitTemplateSet } from "@intentius/chant/lexicon";
 import type { LintRule } from "@intentius/chant/lint/rule";
 import { postSynthChecks as postSynthCheckList } from "./lint/post-synth";
@@ -254,6 +255,10 @@ export const build = new Job({
     writeBundleSpec(spec, distDir);
 
     console.error(`Packaged ${stats.resources} entities, ${stats.ruleCount} rules, ${stats.skillCount} skills`);
+  },
+
+  composites() {
+    return compositeCatalog;
   },
 
   mcpTools() {

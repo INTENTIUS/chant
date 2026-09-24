@@ -1,3 +1,4 @@
+import { compositeCatalog } from "./composites/catalog";
 import type { LexiconPlugin, IntrinsicDef } from "@intentius/chant/lexicon";
 import { detectTemplate } from "./detect";
 import type { LintRule } from "@intentius/chant/lint/rule";
@@ -354,6 +355,10 @@ export const tags = defaultTags([
 
   hoverProvider(ctx: HoverContext): HoverInfo | undefined {
     return azureHover(ctx);
+  },
+
+  composites() {
+    return compositeCatalog;
   },
 
   mcpTools(): McpToolContribution[] {
