@@ -22,6 +22,9 @@
  *   `workspace check` passes.
  * - its `chant.template.json` declares a `name` parameter (#2627), and
  *   `--param name=<value>` puts the value in the app and the screen spec.
+ * - `chant init --from <this repo>#reference-workspace`, the directory form
+ *   (#2647), copies the same files with the same parameters and digest as
+ *   the git form, with a lock that records the digest alone.
  *
  * The per-member workspace commands and their contract tests join here as
  * each phase lands (#2537, #2536).
@@ -359,6 +362,36 @@ describe("chant init --from on the fixture", () => {
       expect((JSON.parse(check.stdout) as { ok: boolean; lock: string | null }).lock).not.toBeNull();
     } finally {
       rmSync(dirname(target), { recursive: true, force: true });
+    }
+  });
+
+  // The directory form reads the working files, which match HEAD in a clean checkout.
+  test("the directory form copies what the git form copies, with the digest alone as its address (#2647)", async () => {
+    const scratch = mkdtempSync(join(tmpdir(), "chant-2647-init-"));
+    try {
+      const fromGit = await initFromCommand({ from: `${repoRoot}@HEAD#reference-workspace`, path: join(scratch, "git"), params: { name: "Untitled app" } });
+      const fromDir = await initFromCommand({ from: `${repoRoot}#reference-workspace`, path: join(scratch, "dir"), params: { name: "Untitled app" } });
+      expect(fromGit.success, fromGit.error).toBe(true);
+      expect(fromDir.success, fromDir.error).toBe(true);
+      expect(fromDir.createdFiles).toEqual(fromGit.createdFiles);
+      for (const f of fromGit.createdFiles.filter((p) => p !== ".chant/workspace.lock.json")) {
+        expect(readFileSync(join(scratch, "dir", f)).equals(readFileSync(join(scratch, "git", f))), f).toBe(true);
+      }
+      type Scope = { source: unknown; ref?: string; address: { digest: string }; parameters: unknown; files: unknown };
+      const lockOf = (d: string) => (JSON.parse(readFileSync(join(scratch, d, ".chant", "workspace.lock.json"), "utf-8")) as { scopes: Record<string, Scope> }).scopes["."];
+      const git = lockOf("git");
+      const dir = lockOf("dir");
+      expect(dir.parameters).toEqual({ name: "Untitled app" });
+      expect(dir.parameters).toEqual(git.parameters);
+      expect(dir.files).toEqual(git.files);
+      expect(dir.address).toEqual({ digest: git.address.digest });
+      expect(dir.source).toEqual({ type: "dir", path: repoRoot, member: "reference-workspace" });
+      expect(dir.ref).toBeUndefined();
+
+      const check = chant(join(scratch, "dir"), "workspace", "check", "--json");
+      expect(check.status, check.stderr + check.stdout).toBe(0);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
     }
   });
 

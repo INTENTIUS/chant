@@ -13,15 +13,17 @@ chant workspace lineage resolve <path>
 
 ## Description
 
-`chant workspace lineage` reads [`.chant/workspace.lock.json`](/chant/reference/lineage-lock/) in the current directory and prints one entry per scope. Each entry names the scope's template and pin. It then counts the files the project has edited or deleted since, and lists open manual steps. Generated files are left out of the counts, because their command rebuilds them.
+`chant workspace lineage` reads [`.chant/workspace.lock.json`](/chant/reference/lineage-lock/) in the current directory and prints one entry per scope. Each entry names the scope's template and pin, and its source kind followed by where that source points. The kinds are the `type` values listed under [Sources](/chant/reference/lineage-lock/#sources). It then counts the files the project has edited or deleted since, and lists open manual steps. Generated files are left out of the counts, because their command rebuilds them.
 
 It needs no `chant.workspace.json`. Any project with a lock can use it, including a plain project made by `chant init --from`. The command exits 1 when there is no lock.
 
 ```
 $ chant workspace lineage
 .  template  github.com/acme/starter#service@v1.4.0 (4624a0b6ca83)
+  source: git acme/starter#service
   12 file(s), 2 edited, 0 deleted
 vendor/web-app  vendor web-app  local:../shared/web-app@v1.2.0
+  source: local ../shared/web-app
   3 file(s), 1 edited, 0 deleted
   manual step: vendor/web-app/index.ts (changed-locally)
 2 scope(s), 1 manual step(s) open
@@ -35,7 +37,7 @@ Closes the manual step for `<path>`, given relative to the lock's directory. Run
 
 | Option | Effect |
 |---|---|
-| `--json` | Print `{ lock, scopes }`, where each scope has `scope`, `kind`, `name` (vendor only), `template`, `ref`, `address`, `files` (a count), `edited`, `missing` and `manualSteps`. |
+| `--json` | Print `{ lock, scopes }`, where each scope has `scope`, `kind`, `name` (vendor only), `template`, `source` (as the lock records it), `ref`, `address`, `files` (a count), `edited`, `missing` and `manualSteps`. |
 
 ## Exit codes
 

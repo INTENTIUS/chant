@@ -71,6 +71,21 @@ A project made with `chant init --from acme/starter@v1.4.0#service --param name=
 
 Hashes are shortened here. In the file each is `sha256:` followed by 64 hex digits.
 
+`chant init --from /opt/studio/tool#template --param name=billing` makes the same scope from a directory on disk. It has a `dir` source and no `ref`. Its address is the digest alone:
+
+```json
+".": {
+  "kind": "template",
+  "template": "dir:/opt/studio/tool#template",
+  "source": { "type": "dir", "path": "/opt/studio/tool", "member": "template" },
+  "address": { "digest": "sha256:1695b7fb…" },
+  "parameters": { "name": "billing" },
+  "migrations": [],
+  "files": { "src/main.ts": { "class": "owned", "sha256": "sha256:037ecd1d…" } },
+  "manualSteps": []
+}
+```
+
 ## Top level
 
 | Field | Meaning |
@@ -99,7 +114,8 @@ chant writes the file with sorted keys and two-space indentation, so it diffs cl
 
 | `type` | Fields | Written by |
 |---|---|---|
-| `git` | `repo` as given, `url` that git fetches (a local repository is stored relative to the project), `path` for `#<member>` | `chant init --from` |
+| `git` | `repo` as given, `url` that git fetches (a local repository is stored relative to the project), `path` for `#<member>` | `chant init --from <repo>@<ref>` |
+| `dir` | `path` of the directory (absolute as given, or relative to the lock's directory), `member` for `#<member>` | `chant init --from <dir>` |
 | `lexicon` | `lexicon`, `template` | `chant init --template` |
 | `local` | `path`, relative to the lock's directory | `chant vendor` |
 | `archive` | `url`, optional `subpath` | `chant vendor` |
@@ -109,13 +125,14 @@ chant writes the file with sorted keys and two-space indentation, so it diffs cl
 | Source | Id |
 |---|---|
 | `git` | the repository's host and path without `.git`, plus `#<member>`: `github.com/acme/starter#service`. A local repository keeps the path as given. |
+| `dir` | `dir:<path>`, plus `#<member>`, with `path` as the source records it: `dir:/opt/studio/tool#template` |
 | `lexicon` | `lexicon:<lexicon>/<template>`, as in `lexicon:aws/node-pipeline` |
 | `local` | `local:<path>` |
 | `archive` | the URL, plus `#<subpath>` |
 
 ### Content address
 
-`address.digest` is always present. It hashes the file set as chant wrote it: sha256 over each `path`, a NUL byte, the content and a NUL byte, in sorted path order. A `vendor.json` checksum was computed the same way, so a migrated entry keeps its value. The other fields depend on the source.
+`address.digest` is always present. It hashes the file set as chant wrote it: sha256 over each `path`, a NUL byte, the content and a NUL byte, in sorted path order. A `vendor.json` checksum was computed the same way, so a migrated entry keeps its value. The other fields depend on the source. A `dir` source has none of them, so its address is the digest alone, and the git and directory forms of the same tree record the same digest.
 
 | Field | Source | Meaning |
 |---|---|---|
@@ -175,6 +192,7 @@ Files in a scope directory that the lineage does not list are never touched.
 | Command | Effect on the lock |
 |---|---|
 | [`chant init --from <repo>@<ref>[#<member>]`](/chant/cli/init/#from-a-template-repository) | Writes a new lock with scope `"."`, and its `parameters` from `--param` and the template's defaults |
+| [`chant init --from <dir>[#<member>]`](/chant/cli/init/#from-a-directory) | The same, with a `dir` source and no `ref` |
 | [`chant init --template <name>`](/chant/cli/init/#lineage) | Writes a new lock with scope `"."` |
 | [`chant vendor migrate`](/chant/cli/vendor/#chant-vendor-migrate) | Adds a vendor scope per `vendor.json` entry, creating the lock if needed |
 | [`chant vendor pull`](/chant/cli/vendor/#chant-vendor-pull-name) | Updates vendor scopes file by file |
