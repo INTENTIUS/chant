@@ -68,6 +68,11 @@ interface ResourceSpec {
   typeName: string;
   request: string;
   response: string;
+  /**
+   * Authoring props the request schema lacks because flaps takes them from the
+   * URL. The serializer moves them into the endpoint.
+   */
+  pathProps?: ParsedProperty[];
 }
 
 const RESOURCES: ResourceSpec[] = [
@@ -76,7 +81,22 @@ const RESOURCES: ResourceSpec[] = [
   { typeName: `Fly::${SERVICE}::Volume`, request: "CreateVolumeRequest", response: "Volume" },
   { typeName: `Fly::${SERVICE}::IPAddress`, request: "assignIPRequest", response: "IPAssignment" },
   { typeName: `Fly::${SERVICE}::Certificate`, request: "createAcmeCertificateRequest", response: "CertificateDetail" },
-  { typeName: `Fly::${SERVICE}::Secret`, request: "SetAppSecretRequest", response: "AppSecret" },
+  {
+    typeName: `Fly::${SERVICE}::Secret`,
+    request: "SetAppSecretRequest",
+    response: "AppSecret",
+    pathProps: [
+      {
+        name: "name",
+        tsType: "string",
+        required: false,
+        description:
+          "The secret's name on the app. Defaults to the declaration's export name. " +
+          "A Secret with no value is never sent: apply checks that the app already has it.",
+        constraints: {},
+      },
+    ],
+  },
 ];
 
 const REF_PREFIX = "#/components/schemas/";
@@ -117,11 +137,14 @@ export function parseFlyOpenAPI(data: string | Buffer): FlyParseResult[] {
         constraints: coreExtractConstraints(prop as JsonSchemaProperty),
       });
     }
+    for (const extra of rspec.pathProps ?? []) {
+      if (!(extra.name in reqProps)) properties.push(extra);
+    }
 
     // Attributes = response props not present in the request schema.
     const attributes: Array<{ name: string; tsType: string }> = [];
     for (const [name, prop] of Object.entries(res?.properties ?? {})) {
-      if (name in reqProps) continue;
+      if (properties.some((p) => p.name === name)) continue;
       attributes.push({ name, tsType: resolve(prop) });
     }
 

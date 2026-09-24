@@ -14,6 +14,11 @@ export {
   destroyMachine,
   deleteApp,
   listMachines,
+  listVolumes,
+  listIps,
+  listCerts,
+  listSecrets,
+  checkSecretExists,
   pruneMachines,
   waitForMachine,
   acquireLease,
@@ -23,7 +28,16 @@ export {
   parsePlan,
   isAppRequest,
   isMachineRequest,
+  isVolumeRequest,
+  isIpRequest,
+  isCertRequest,
+  isSecretRequest,
+  isValuelessSecret,
   machineAppSegment,
+  resourceAppSegment,
+  secretNameSegment,
+  ipType,
+  declaredIpType,
   resolveApp,
   appNameFromRequest,
   isChantOwned,
@@ -33,7 +47,19 @@ export {
   DEFAULT_FLAPS_BASE_URL,
   LEASE_NONCE_HEADER,
 } from "./fly-apply";
-export type { FlyApplyArgs, FlyPlan, FlapsRequest, FlapsMachine, FlyHttp, WaitOpts, ApplyCtx } from "./fly-apply";
+export type {
+  FlyApplyArgs,
+  FlyPlan,
+  FlapsRequest,
+  FlapsMachine,
+  FlapsVolume,
+  FlapsIp,
+  FlapsCert,
+  FlapsSecret,
+  FlyHttp,
+  WaitOpts,
+  ApplyCtx,
+} from "./fly-apply";
 
 // mudflaps (Fly Machines API emulator) lifecycle — boots/tears down the local
 // flaps target flyApply is exercised against.
