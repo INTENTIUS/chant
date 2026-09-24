@@ -101,7 +101,7 @@
         "error": false,
         "kinds": {
           "type": "array",
-          "description": "Each --kind file, in order: the record kind it reads, if any, and the form of its commitJoins export, if any.",
+          "description": "Each --kind file, in order: its name, the record kind it reads, if any, and the form of its commitJoins export, if any.",
           "items": {
             "type": "object",
             "required": [
@@ -113,6 +113,10 @@
               "file": {
                 "type": "string",
                 "description": "From the repository root."
+              },
+              "name": {
+                "type": "string",
+                "description": "The kind's name: the record kind's name, or the file's name without .kind.mjs for a plugin with no records. A plugin's findings use it as their namespace, plugin:<name>:<code> (#2656). Added within version 1, so an older document may lack it."
               },
               "records": {
                 "type": [
@@ -364,7 +368,7 @@
       }
     },
     "commit": {
-      "description": "A commit that touched the region. Linked from the region by a touched-by edge.",
+      "description": "A commit that touched the region. Linked from the region by a touched-by edge, and to each decision whose path window it falls in by a within edge.",
       "type": "object",
       "required": [
         "id",
@@ -466,6 +470,15 @@
             }
           ],
           "description": "For a line-range region, the ranges the commit changed within it, numbered in the commit's own version of the file. Null otherwise."
+        },
+        "state": {
+          "enum": [
+            "decided",
+            "decided-by-window",
+            "undecided",
+            null
+          ],
+          "description": "How the decisions constraining the region by path relate to the commit (#2656). decided: it falls inside a decision's window and that decision's own unit made it. decided-by-window: it falls inside a window, and it is not the decision's own work, so the person judges it. undecided: outside every window, with the finding intent-commit-undecided. null: no record kind was read. Added within version 1, so an older document may lack it."
         }
       }
     },
@@ -812,7 +825,7 @@
       }
     },
     "finding": {
-      "description": "A gap the walk found. Findings are nodes so a reader can draw them and a test can assert them; the tool asks, and never answers.",
+      "description": "A gap the walk found. Findings are nodes so a reader can draw them and a test can assert them; the tool asks, and never answers. A plugin's commitJoins may add findings of its own, with a code in its namespace (#2656).",
       "type": "object",
       "required": [
         "id",
@@ -830,19 +843,28 @@
           "const": "finding"
         },
         "code": {
-          "enum": [
-            "intent-commit-undecided",
-            "intent-commit-bare",
-            "intent-pin-drifted",
-            "intent-pin-missing",
-            "intent-artifact-unpinned",
-            "intent-decision-superseded-live",
-            "intent-decision-provisional",
-            "intent-constraint-coarse",
-            "intent-constraint-lost",
-            "intent-evidence-unpinned",
-            "intent-trailer-unverified",
-            "intent-region-unconstrained"
+          "anyOf": [
+            {
+              "enum": [
+                "intent-commit-undecided",
+                "intent-commit-bare",
+                "intent-pin-drifted",
+                "intent-pin-missing",
+                "intent-artifact-unpinned",
+                "intent-decision-superseded-live",
+                "intent-decision-provisional",
+                "intent-constraint-coarse",
+                "intent-constraint-lost",
+                "intent-evidence-unpinned",
+                "intent-trailer-unverified",
+                "intent-region-unconstrained"
+              ]
+            },
+            {
+              "type": "string",
+              "pattern": "^plugin:[^:\\s]+:[a-z0-9]+(-[a-z0-9]+)*$",
+              "description": "A plugin's own code, plugin:<name>:<code>, where <name> is the kind's name in kinds. Outside the closed list: the plugin owns its namespace."
+            }
           ]
         },
         "message": {
@@ -854,11 +876,22 @@
             "type": "string"
           },
           "description": "The ids of the nodes the finding is about."
+        },
+        "plugin": {
+          "type": "string",
+          "description": "For a plugin's finding: the kind file that returned it, as in kinds."
+        },
+        "refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "For a plugin's finding: the refs as the plugin gave them. Those that name a node in the graph are resolved to its id in concerns, after the commit the finding was returned for."
         }
       }
     },
     "edge": {
-      "description": "constrains: decision to region, file or contract. pins: decision to artifact. touched-by: region to commit. produced-by: commit to unit. serves: unit to contract. supersedes: the newer decision to the one it replaces. cites-evidence: unit, contract or decision to evidence. links: consumer member to producer member.",
+      "description": "constrains: decision to region, file or contract. pins: decision to artifact. touched-by: region to commit. produced-by: commit to unit. serves: unit to contract. supersedes: the newer decision to the one it replaces. cites-evidence: unit, contract or decision to evidence. links: consumer member to producer member. within: commit to a decision whose path window it falls in.",
       "oneOf": [
         {
           "$ref": "#/$defs/constrainsEdge"
@@ -868,6 +901,9 @@
         },
         {
           "$ref": "#/$defs/touchedEdge"
+        },
+        {
+          "$ref": "#/$defs/withinEdge"
         },
         {
           "$ref": "#/$defs/plainEdge"
@@ -1070,6 +1106,33 @@
             "supersedes",
             "cites-evidence",
             "links"
+          ]
+        }
+      }
+    },
+    "withinEdge": {
+      "description": "A commit made inside a decision's window, from the commit that added the decision's record until the one that added its successor (#2656). state is decided when the decision's own unit made the commit, and decided-by-window otherwise.",
+      "type": "object",
+      "required": [
+        "kind",
+        "from",
+        "to",
+        "state"
+      ],
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        },
+        "kind": {
+          "const": "within"
+        },
+        "state": {
+          "enum": [
+            "decided",
+            "decided-by-window"
           ]
         }
       }

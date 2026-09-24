@@ -7,7 +7,12 @@
  *   `path:app/server.mjs` and pins the spec by hash.
  * - c2 adds `app/server.mjs` inside dec-001's window, with a `Unit: U-0001`
  *   trailer that the fixture plugin maps to a unit, a contract and evidence,
- *   and a `Made-By` trailer the plugin says claims authorship.
+ *   and a `Made-By` trailer the plugin says claims authorship. U-0001's
+ *   record names dec-001, so c2 is dec-001's own work.
+ * - c2b edits `app/server.mjs` inside dec-001's window too, from unit
+ *   U-0002, whose record names no decision and which changed its contract's
+ *   criteria. It is decided by the window only (#2656), and the plugin
+ *   returns a finding for it in its own namespace, `plugin:units:`.
  * - c3 adds dec-002, which supersedes dec-001, pins the spec at the same hash
  *   and constrains `member:design` only.
  * - c4 edits `app/server.mjs` after that, with no decision covering it.
@@ -59,11 +64,15 @@ export function commitJoins(commit, context) {
   if (!id) return undefined;
   if (id === "U-BROKEN") throw new Error("no such unit");
   const unit = JSON.parse(context.read(\`units/\${id}.json\`));
+  if (unit.badCode) return { findings: [{ code: "plugin:other:x", message: "wrong namespace" }] };
   return {
-    unit: { id, role: unit.role, outcome: unit.outcome },
+    unit: { id, role: unit.role, outcome: unit.outcome, ...(unit.decisions ? { decisions: unit.decisions } : {}) },
     contract: { id: unit.contract, status: "closed" },
     evidence: [{ id: "E-1", ok: true }],
     authorship: commit.trailers["Made-By"] ? ["Made-By"] : [],
+    findings: unit.criteriaChanged
+      ? [{ code: "plugin:units:criteria-changed-undecided", message: \`\${unit.contract} changed its criteria in this commit with no decision\`, refs: [commit.sha, unit.contract, "dec-001", "no-such-thing"] }]
+      : [],
   };
 }
 `;
@@ -72,7 +81,8 @@ export function commitJoins(commit, context) {
 const DATA_PLUGIN = `export const commitJoins = { trailers: { unit: "Unit" }, records: { unit: "units/{id}.json" }, authorship: ["Made-By"] };\n`;
 
 const SERVER_1 = "// the app\nexport const status = 'Running.';\nexport const port = 8080;\n";
-const SERVER_2 = "// the app\nexport const status = 'Up.';\nexport const port = 8080;\n";
+const SERVER_1B = "// the app\nexport const status = 'Running.';\nexport const port = 9090;\n";
+const SERVER_2 = "// the app\nexport const status = 'Up.';\nexport const port = 9090;\n";
 
 let root: string;
 const sha: Record<string, string> = {};
@@ -106,11 +116,15 @@ beforeAll(() => {
     "plugins/units.kind.mjs": PLUGIN,
     "plugins/units-data.kind.mjs": DATA_PLUGIN,
     "plugins/empty.kind.mjs": "export const nothing = 1;\n",
-    "units/U-0001.json": JSON.stringify({ role: "implement", contract: "C-001", outcome: "done" }),
+    "units/U-0001.json": JSON.stringify({ role: "implement", contract: "C-001", outcome: "done", decisions: ["dec-001"] }),
+    "units/U-0002.json": JSON.stringify({ role: "implement", contract: "ctr-002", outcome: "done", criteriaChanged: true }),
+    "units/U-BAD.json": JSON.stringify({ badCode: true }),
   });
   sha.c1 = commit(["decide the server"]);
   writeFiles(root, { "app/server.mjs": SERVER_1 });
   sha.c2 = commit(["add the server", "Unit: U-0001\nMade-By: agent"]);
+  writeFiles(root, { "app/server.mjs": SERVER_1B });
+  sha.c2b = commit(["move the port", "Unit: U-0002"]);
   writeFiles(root, { "decisions/dec-002-design.md": decision("dec-002", { constrains: ["member:design"], evidence: [pin], supersedes: ["dec-001"] }) });
   sha.c3 = commit(["move the decision to the design member"]);
   writeFiles(root, { "app/server.mjs": SERVER_2 });
@@ -139,8 +153,8 @@ describe("the intent graph of app/server.mjs (#2651)", () => {
     expect(doc).toMatchObject({ contract: 1, at: null, workspace: { name: "studio", root: "." }, region: "region:app/server.mjs" });
     expect(doc.history).toEqual({ rev: sha.c4, follows: "file", shallow: false });
     expect(doc.kinds).toEqual([
-      { file: KIND, records: "decision", joins: null },
-      { file: "plugins/units.kind.mjs", records: null, joins: "function" },
+      { file: KIND, name: "decision", records: "decision", joins: null },
+      { file: "plugins/units.kind.mjs", name: "units", records: null, joins: "function" },
     ]);
     expect(doc.reasons).toEqual([]);
 
@@ -148,10 +162,13 @@ describe("the intent graph of app/server.mjs (#2651)", () => {
       "region:app/server.mjs",
       "member:app",
       `commit:${sha.c4}`,
+      `commit:${sha.c2b}`,
+      "unit:U-0002",
+      "contract:ctr-002",
+      "evidence:E-1",
       `commit:${sha.c2}`,
       "unit:U-0001",
       "contract:C-001",
-      "evidence:E-1",
       "record:decision/dec-001",
       "record:decision/dec-002",
       "artifact:design/screens/home.json",
@@ -159,6 +176,7 @@ describe("the intent graph of app/server.mjs (#2651)", () => {
       "finding:intent-commit-bare:1",
       "finding:intent-decision-superseded-live:1",
       "finding:intent-trailer-unverified:1",
+      "finding:plugin:units:criteria-changed-undecided:1",
     ]);
 
     expect(node(doc, "region:app/server.mjs")).toEqual({ id: "region:app/server.mjs", kind: "region", path: "app/server.mjs", lines: null, member: "app", at: null, type: "file", generated: false, node: null });
@@ -172,9 +190,13 @@ describe("the intent graph of app/server.mjs (#2651)", () => {
       pullRequest: null,
       signature: { level: "unattested" },
       lines: null,
+      // U-0001's record names dec-001: the decision's own work.
+      state: "decided",
     });
-    expect(node(doc, `commit:${sha.c4}`)).toMatchObject({ subject: "tweak the status line", trailers: {} });
-    expect(node(doc, "unit:U-0001")).toEqual({ id: "unit:U-0001", kind: "unit", ref: "U-0001", plugin: "plugins/units.kind.mjs", data: { role: "implement", outcome: "done" } });
+    // Inside dec-001's window, from a unit that names no decision (#2656).
+    expect(node(doc, `commit:${sha.c2b}`)).toMatchObject({ subject: "move the port", state: "decided-by-window" });
+    expect(node(doc, `commit:${sha.c4}`)).toMatchObject({ subject: "tweak the status line", trailers: {}, state: "undecided" });
+    expect(node(doc, "unit:U-0001")).toEqual({ id: "unit:U-0001", kind: "unit", ref: "U-0001", plugin: "plugins/units.kind.mjs", data: { role: "implement", outcome: "done", decisions: ["dec-001"] } });
     expect(node(doc, "contract:C-001")).toMatchObject({ kind: "contract", ref: "C-001", data: { status: "closed" } });
     expect(node(doc, "evidence:E-1")).toMatchObject({ kind: "evidence", ref: "E-1", data: { ok: true } });
     expect(node(doc, "record:decision/dec-001")).toMatchObject({
@@ -206,6 +228,10 @@ describe("the intent graph of app/server.mjs (#2651)", () => {
 
     expect(edges(doc)).toEqual([
       `touched-by region:app/server.mjs -> commit:${sha.c4}`,
+      `touched-by region:app/server.mjs -> commit:${sha.c2b}`,
+      `produced-by commit:${sha.c2b} -> unit:U-0002`,
+      "serves unit:U-0002 -> contract:ctr-002",
+      "cites-evidence unit:U-0002 -> evidence:E-1",
       `touched-by region:app/server.mjs -> commit:${sha.c2}`,
       `produced-by commit:${sha.c2} -> unit:U-0001`,
       "serves unit:U-0001 -> contract:C-001",
@@ -214,28 +240,82 @@ describe("the intent graph of app/server.mjs (#2651)", () => {
       "supersedes record:decision/dec-002 -> record:decision/dec-001",
       "pins record:decision/dec-001 -> artifact:design/screens/home.json (pinned)",
       "pins record:decision/dec-002 -> artifact:design/screens/home.json (stale)",
+      `within commit:${sha.c2b} -> record:decision/dec-001`,
+      `within commit:${sha.c2} -> record:decision/dec-001`,
+    ]);
+    expect(doc.edges.filter((e) => e.kind === "within")).toEqual([
+      { kind: "within", from: `commit:${sha.c2b}`, to: "record:decision/dec-001", state: "decided-by-window" },
+      { kind: "within", from: `commit:${sha.c2}`, to: "record:decision/dec-001", state: "decided" },
     ]);
 
-    // c2 falls inside dec-001's window (from c1 until c3); c4 comes after it.
+    // c2 and c2b fall inside dec-001's window (from c1 until c3), so neither is
+    // intent-commit-undecided; c4 comes after it. The plugin's finding is about
+    // c2b, and its refs resolve to the nodes they name, except the one that
+    // names nothing in the graph.
     expect(findings(doc)).toEqual([
       ["intent-commit-undecided", [`commit:${sha.c4}`, "region:app/server.mjs"]],
       ["intent-commit-bare", [`commit:${sha.c4}`]],
       ["intent-decision-superseded-live", ["region:app/server.mjs", "record:decision/dec-001"]],
       ["intent-trailer-unverified", [`commit:${sha.c2}`]],
+      ["plugin:units:criteria-changed-undecided", [`commit:${sha.c2b}`, "contract:ctr-002", "record:decision/dec-001"]],
     ]);
-    expect(doc.summary).toEqual({ commits: 2, decisions: 2, artifacts: 1, findings: 4 });
+    expect(node(doc, "finding:plugin:units:criteria-changed-undecided:1")).toEqual({
+      id: "finding:plugin:units:criteria-changed-undecided:1",
+      kind: "finding",
+      code: "plugin:units:criteria-changed-undecided",
+      message: "ctr-002 changed its criteria in this commit with no decision",
+      concerns: [`commit:${sha.c2b}`, "contract:ctr-002", "record:decision/dec-001"],
+      plugin: "plugins/units.kind.mjs",
+      refs: [sha.c2b, "ctr-002", "dec-001", "no-such-thing"],
+    });
+    expect(doc.summary).toEqual({ commits: 3, decisions: 2, artifacts: 1, findings: 5 });
   });
 
-  test("the text walk runs region, decisions, artifacts, commits, findings, one line each", async () => {
+  test("the text walk runs region, decisions with their in-window commits, artifacts, commits, findings, one line each", async () => {
     const text = formatIntent(await walk("app/server.mjs"));
     const lines = text.split("\n");
-    expect(lines.map((l) => l.trim().split(/\s+/)[0])).toEqual(["region", "decision", "decision", "artifact", "commit", "commit", "unit", "contract", "evidence", "finding", "finding", "finding", "finding", "2"]);
+    expect(lines.map((l) => l.trim().split(/\s+/)[0])).toEqual([
+      "region",
+      "decision",
+      "within",
+      "decided",
+      "ask",
+      "decision",
+      "artifact",
+      "commit",
+      "commit",
+      "unit",
+      "contract",
+      "evidence",
+      "commit",
+      "unit",
+      "contract",
+      "evidence",
+      "finding",
+      "finding",
+      "finding",
+      "finding",
+      "finding",
+      "3",
+    ]);
     expect(lines[0]).toBe("region    app/server.mjs (file, member app) in the working tree");
     expect(lines[1]).toContain("dec-001 decided, superseded by dec-002");
     expect(lines[1]).toContain("path:app/server.mjs (path)");
-    expect(lines[3]).toBe(`artifact  design/screens/home.json stale; pinned by dec-001 at ${HOME_SHA.slice(0, 8)} (pinned), dec-002 at ${HOME_SHA.slice(0, 8)} (stale); now ${HOME_SHA.slice(0, 8)}`);
-    expect(lines[4]).toContain(`${sha.c4.slice(0, 8)} `);
-    expect(lines.at(-1)).toBe("2 commits, 2 decisions, 1 artifacts, 4 findings");
+    // The in-window commits under their decision, and the question once (#2656, #2650 B).
+    expect(lines[2]).toBe(`  within    ${sha.c2b.slice(0, 8)} move the port; unit U-0002, in dec-001's window and not its work`);
+    expect(lines[3]).toBe(`  decided   ${sha.c2.slice(0, 8)} add the server; unit U-0001, dec-001's own work`);
+    expect(lines[4]).toBe("  ask       is this drift, a superseding decision nobody wrote down, or the decision being wrong?");
+    expect(lines[6]).toBe(`artifact  design/screens/home.json stale; pinned by dec-001 at ${HOME_SHA.slice(0, 8)} (pinned), dec-002 at ${HOME_SHA.slice(0, 8)} (stale); now ${HOME_SHA.slice(0, 8)}`);
+    expect(lines[7]).toContain(`${sha.c4.slice(0, 8)} `);
+    expect(lines.at(-2)).toBe("finding   plugin:units:criteria-changed-undecided: ctr-002 changed its criteria in this commit with no decision");
+    expect(lines.at(-1)).toBe("3 commits, 2 decisions, 1 artifacts, 5 findings");
+  });
+
+  test("a decision whose in-window commits are all its own work asks nothing", async () => {
+    const doc = await walk("app/server.mjs", { at: sha.c2 });
+    const text = formatIntent(doc);
+    expect(text).toContain(`  decided   ${sha.c2.slice(0, 8)} add the server`);
+    expect(text).not.toContain("  ask ");
   });
 
   test("a line range follows the lines with git log -L, and names the lines each commit changed", async () => {
@@ -250,15 +330,27 @@ describe("the intent graph of app/server.mjs (#2651)", () => {
 
   test("the data form of commitJoins joins the same unit, with no plugin code", async () => {
     const doc = await walk("app/server.mjs", { kinds: [KIND, "plugins/units-data.kind.mjs"] });
-    expect(doc.kinds[1]).toEqual({ file: "plugins/units-data.kind.mjs", records: null, joins: "data" });
-    expect(node(doc, "unit:U-0001")).toEqual({ id: "unit:U-0001", kind: "unit", ref: "U-0001", plugin: "plugins/units-data.kind.mjs", data: { role: "implement", contract: "C-001", outcome: "done" } });
+    expect(doc.kinds[1]).toEqual({ file: "plugins/units-data.kind.mjs", name: "units-data", records: null, joins: "data" });
+    expect(node(doc, "unit:U-0001")).toEqual({
+      id: "unit:U-0001",
+      kind: "unit",
+      ref: "U-0001",
+      plugin: "plugins/units-data.kind.mjs",
+      data: { role: "implement", contract: "C-001", outcome: "done", decisions: ["dec-001"] },
+    });
     expect(doc.edges).toContainEqual({ kind: "produced-by", from: `commit:${sha.c2}`, to: "unit:U-0001" });
+    // The unit record's decisions field makes c2 dec-001's own work in the data form too.
+    expect(node(doc, `commit:${sha.c2}`)).toMatchObject({ state: "decided" });
+    expect(node(doc, `commit:${sha.c2b}`)).toMatchObject({ state: "decided-by-window" });
+    expect(findings(doc).map(([c]) => c)).not.toContain("plugin:units:criteria-changed-undecided");
     expect(findings(doc).map(([c]) => c)).toContain("intent-trailer-unverified");
   });
 
   test("without --kind there are no decisions, so no decision findings", async () => {
     const doc = await walk("app/server.mjs", { kinds: [] });
-    expect(doc.nodes.map((n) => n.kind)).toEqual(["region", "member", "commit", "commit"]);
+    expect(doc.nodes.map((n) => n.kind)).toEqual(["region", "member", "commit", "commit", "commit"]);
+    expect(doc.nodes.filter((n) => n.kind === "commit").map((n) => n.kind === "commit" && n.state)).toEqual([null, null, null]);
+    expect(doc.edges.filter((e) => e.kind === "within")).toEqual([]);
     expect(findings(doc)).toEqual([]);
   });
 
@@ -361,6 +453,17 @@ describe("findings the fixture does not raise (#2651)", () => {
   );
 
   test(
+    "a commit whose unit serves a contract the decision constrains is the decision's own work (#2656)",
+    withFile("decisions/dec-001-server.md", decision("dec-001", { constrains: ["path:app/server.mjs", "ctr-002"], evidence: [pin] }), async () => {
+      const doc = await walk("app/server.mjs");
+      expect(doc.edges).toContainEqual({ kind: "constrains", from: "record:decision/dec-001", to: "contract:ctr-002", granularity: "contract", entry: "ctr-002" });
+      expect(node(doc, `commit:${sha.c2b}`)).toMatchObject({ state: "decided" });
+      expect(doc.edges).toContainEqual({ kind: "within", from: `commit:${sha.c2b}`, to: "record:decision/dec-001", state: "decided" });
+      expect(formatIntent(doc)).not.toContain("  ask ");
+    }),
+  );
+
+  test(
     "a decision constraining an issue the region's commits name covers it at issue granularity",
     withFile("decisions/dec-003-issue.md", decision("dec-003", { constrains: ["acme/studio#12"] }), async () => {
       git(root, "remote", "add", "origin", "git@github.com:acme/studio.git");
@@ -406,7 +509,22 @@ describe("reads that fail, and parts that can't be read (#2651)", () => {
       if ("error" in doc) throw new Error(doc.error.message);
       expect(failed).toBe(true);
       expect(doc.reasons).toEqual([{ code: "intent-plugin-failed", message: expect.stringContaining("no such unit") }]);
-      expect(doc.summary.commits).toBe(3);
+      expect(doc.summary.commits).toBe(4);
+    } finally {
+      git(root, "reset", "-q", "--hard", sha.c4);
+    }
+  });
+
+  test("a plugin finding outside the kind's namespace is intent-plugin-failed (#2656)", async () => {
+    writeFiles(root, { "app/server.mjs": `${SERVER_2}// bad code\n` });
+    commit(["a finding in someone else's namespace", "Unit: U-BAD"]);
+    try {
+      const { doc, failed } = await intentGraph({ cwd: root, region: "app/server.mjs", kinds: [join(root, KIND), join(root, "plugins/units.kind.mjs")] });
+      expectValid(doc);
+      if ("error" in doc) throw new Error(doc.error.message);
+      expect(failed).toBe(true);
+      expect(doc.reasons).toEqual([{ code: "intent-plugin-failed", message: expect.stringContaining("plugin:units:<code>") }]);
+      expect(doc.nodes.some((n) => n.kind === "finding" && n.code === "plugin:other:x")).toBe(false);
     } finally {
       git(root, "reset", "-q", "--hard", sha.c4);
     }

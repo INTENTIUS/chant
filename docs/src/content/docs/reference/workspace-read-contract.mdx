@@ -132,6 +132,8 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `lock-invalid` | finding, `check` | The lineage lock can't be read. |
 | `manual-step-open` | finding, `check` | A scope in the lineage lock has an open manual step. |
 
+`graph --intent` may also carry findings a plugin contributes through its [`commitJoins`](/chant/cli/workspace-graph/#commit-joins) ([#2656](https://github.com/INTENTIUS/chant/issues/2656)). Their codes are outside the list. Each is `plugin:<name>:<code>`, where `<name>` is the kind's name in the document's `kinds` and `<code>` is lower case words joined by dashes. The plugin owns its namespace, and chant only carries the finding. A reader that switches on codes can tell the two apart by the `plugin:` prefix.
+
 `check` also reports `WSP` ids, the [declaration check catalog](/chant/cli/workspace-check/#declaration-checks). That catalog is closed too, and it is versioned with the check contract.
 
 ## Record links and artifacts
@@ -162,7 +164,7 @@ To find the artifacts behind a file, a reader walks through the decisions. It ta
 
 `chant workspace graph --intent <region> --json` prints the intent graph over one region ([#2651](https://github.com/INTENTIUS/chant/issues/2651)). It encodes the walk from a piece of code back to the decisions, artifacts and commits behind it, as [#2650](https://github.com/INTENTIUS/chant/issues/2650) section B describes it. chant emits the graph and a reader such as hud draws it (D8 and D15 of [#2524](https://github.com/INTENTIUS/chant/issues/2524)).
 
-A result has `$schema`, `contract`, `chant`, `at` and `workspace` like the other documents. `region` is the id of the region node. `history` names the commit the history was read from (`rev`), how the region was followed (`line-range`, `file` or `directory`) and whether the clone is `shallow`. `kinds` lists each `--kind` file with the record kind it reads and the form of its `commitJoins`. `nodes` and `edges` hold the graph, and `reasons` holds parts of the walk that could not be read. A failure has `error: { code, message }` with a declaration code, a record kind code or `intent-region-invalid`.
+A result has `$schema`, `contract`, `chant`, `at` and `workspace` like the other documents. `region` is the id of the region node. `history` names the commit the history was read from (`rev`), how the region was followed (`line-range`, `file` or `directory`) and whether the clone is `shallow`. `kinds` lists each `--kind` file with its `name`, the record kind it reads and the form of its `commitJoins`. The name is the record kind's name, or for a file with no record kind, the file's name without `.kind.mjs`. `nodes` and `edges` hold the graph, and `reasons` holds parts of the walk that could not be read. A failure has `error: { code, message }` with a declaration code, a record kind code or `intent-region-invalid`.
 
 The walk runs in this order, and the nodes are listed in it:
 
@@ -178,12 +180,12 @@ The walk runs in this order, and the nodes are listed in it:
 | `region` | `region:<path>` or `region:<path>:<start>-<end>` | `path` from the workspace root, `lines` or `null`, `member`, `at`, `type` (`file` or `dir`), `generated` for a file, and `node` when the region was given as a graph node id |
 | `file` | `file:<path>` | `path`, `member`, `generated` |
 | `member` | `member:<name>` | `name`, `dir`, `memberKind` |
-| `commit` | `commit:<sha>` | `sha`, `subject`, `author`, `date`, `trailers`, `pullRequest`, `signature` (the provenance level, judged by the signers at base as `records` judges a record) and `lines`, the ranges it changed in a line-range region |
+| `commit` | `commit:<sha>` | `sha`, `subject`, `author`, `date`, `trailers`, `pullRequest`, `signature` (the provenance level, judged by the signers at base as `records` judges a record), `lines`, the ranges it changed in a line-range region, and `state`: `decided`, `decided-by-window`, `undecided`, or `null` when no record kind was read |
 | `unit`, `contract`, `evidence` | `<kind>:<id>` | `ref`, the plugin's own id, `plugin`, the kind file that supplied it, and `data`, its other fields. A decision's URL evidence is an `evidence` node with `plugin: null` and `data` holding `title`, `url`, `as_of` and `sha256` |
 | `decision` | `record:<kind>/<id>` | `recordKind`, `record`, `path`, `title`, `state`, `closed`, `valid`, `reasons`, `provenance`, `decided_by`, `decided_on`, `reviews` (agree, dissent, abstain and open concerns), `supersededBy`, `supersedes`, and `constrains`, the entries that cover the region with their granularity |
 | `artifact` | `artifact:<path>` | `path`, `anchor`, `pinnedSha256`, `currentSha256` and `pinState`: the state of a current decision's pin, or `unpinned` when only superseded decisions pin it |
 | `link` | `link:<n>` | `row`, the member link row |
-| `finding` | `finding:<code>:<n>` | `code`, `message`, and `concerns`, the ids of the nodes it is about |
+| `finding` | `finding:<code>:<n>` | `code`, `message`, and `concerns`, the ids of the nodes it is about. A plugin's finding also has `plugin`, the kind file that returned it, and `refs`, as the plugin gave them |
 
 | Edge kind | From, to | Fields |
 |---|---|---|
@@ -195,8 +197,13 @@ The walk runs in this order, and the nodes are listed in it:
 | `supersedes` | the newer decision to the one it replaces, derived as `records` derives it | |
 | `cites-evidence` | unit, contract or decision to evidence | |
 | `links` | consumer member to producer member | |
+| `within` | commit to a decision whose path window it falls in | `state`: `decided` when the decision's own unit made the commit, `decided-by-window` otherwise |
 
-A decision covers a commit from the commit that added its record until the commit that added the record superseding it. A commit outside every path-granularity window is `intent-commit-undecided`. A decision that constrains a path below a directory region has a `constrains` edge to each file under that path, and it does not count as constraining the whole region.
+A decision covers a commit from the commit that added its record until the commit that added the record superseding it. A commit outside every path-granularity window is `intent-commit-undecided`, and its `state` is `undecided`.
+
+A commit inside a window can still depart from the decision, and chant can't tell whether it does ([#2656](https://github.com/INTENTIUS/chant/issues/2656)). So each commit inside a path-granularity window has a `within` edge to the decision, and the edge says whether the commit is the decision's own work. It is when a plugin's `commitJoins` joins the commit to a unit and one of these holds: the unit or its contract lists the decision in `decisions`, by record id or as `<kind>/<id>`, or the decision constrains the contract the unit served. The commit's `state` is `decided` when it is the own work of at least one decision whose window holds it, and `decided-by-window` when it only falls in windows. A `decided-by-window` commit is something for the person to judge. The text walk lists it under its decision and asks whether it is drift, a superseding decision nobody wrote down, or the decision being wrong.
+
+A plugin's finding is about the commit it was returned for, so that commit's id comes first in `concerns`. Each of its `refs` that names a node in the graph follows as that node's id. chant first tries a ref as a node id, and then behind each node kind's prefix, such as `commit:` or `artifact:`. After that it tries the ref as a decision's record id or the start of a commit sha. A ref that names nothing in the graph stays in `refs` only. Plugin findings come after chant's own, in commit order. A decision that constrains a path below a directory region has a `constrains` edge to each file under that path, and it does not count as constraining the whole region.
 
 The document joins the others by the member name (`member` on region and file nodes, and `member:<name>` nodes), by the record id (`record` on a decision node, `records[].id` in `graph --kind` and `records`), and by the commit id (`at` and `provenance.commit`).
 

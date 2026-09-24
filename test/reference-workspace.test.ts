@@ -28,7 +28,8 @@
  *
  * - `chant workspace graph --intent app/src/server.mjs:19` (#2651) lists
  *   ref-001 and ref-002 by member, the commit that wrote line 19, and the
- *   findings #2651's acceptance names.
+ *   findings #2651's acceptance names. No decision constrains the line by
+ *   path, so no commit is inside a decision's window (#2656).
  *
  * The per-member workspace commands and their contract tests join here as
  * each phase lands (#2537, #2536).
@@ -366,7 +367,7 @@ describe("the intent graph on the fixture (#2651)", () => {
       region: string;
       history: { shallow: boolean };
       reasons: { code: string }[];
-      nodes: { id: string; kind: string; code?: string; sha?: string }[];
+      nodes: { id: string; kind: string; code?: string; sha?: string; state?: string | null }[];
       edges: { kind: string; from: string; to: string; granularity?: string }[];
     };
     const validate = compile2020(intentSchema);
@@ -386,6 +387,9 @@ describe("the intent graph on the fixture (#2651)", () => {
 
     const codes = doc.nodes.filter((n) => n.kind === "finding").map((n) => n.code);
     for (const code of ["intent-commit-undecided", "intent-constraint-coarse", "intent-decision-provisional"]) expect(codes).toContain(code);
+    // Both decisions constrain the region by member only, so no commit falls in a path window (#2656).
+    expect(doc.edges.filter((e) => e.kind === "within")).toEqual([]);
+    for (const n of doc.nodes.filter((n) => n.kind === "commit")) expect(n.state).toBe("undecided");
     // Decisions reach artifacts, and ref-002 pins the screen spec.
     expect(doc.edges).toContainEqual({ kind: "pins", from: "record:decision/ref-002", to: "artifact:design/screens/home.json", pinnedSha256: expect.any(String), pinState: "pinned" });
   });

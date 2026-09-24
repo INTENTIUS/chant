@@ -22,24 +22,28 @@
  *   the graph pins it.
  *
  * Every gap the walk finds is a `finding` node with a closed code, never
- * prose, so a reader can draw it and a test can assert it. chant emits the
+ * prose, so a reader can draw it and a test can assert it. A commit made
+ * inside a decision's window is not taken as that decision's work: unless
+ * the decision's own unit made it, it is `decided-by-window`, shown for the
+ * person to judge (#2656). A plugin's `commitJoins` may add findings of its
+ * own, in its own code namespace. chant emits the
  * graph and hud renders it (#2524 D8, D15). Git is read through a local
  * `git` subprocess only: no fetch, no network.
  */
 
 import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
-import { relative, resolve, sep } from "node:path";
+import { basename, relative, resolve, sep } from "node:path";
 import { readDeclaration, readerVersion, resolveGroups, WORKSPACE_ERROR_CODES, WorkspaceReadError, type Declaration } from "./declaration";
 import { classifyFile, declaredFilesUnder } from "./generated-files";
-import { hasTrailer, readCommitJoins, runCommitJoins, type CommitJoins, type IntentCommit, type JoinedEntity } from "./intent-joins";
+import { entityDecisions, hasTrailer, readCommitJoins, runCommitJoins, type CommitJoins, type IntentCommit, type JoinedEntity, type PluginFinding } from "./intent-joins";
 import { loadKindRegistry } from "./kinds";
 import { resolveLinks, type LinkTableRow } from "./links";
 import { sourceMemberHandles } from "./member-handles";
 import { constraintCovers, isWorkspacePath, memberHolding } from "./record-assets";
 import { importKindModule, loadRecordKind, RecordReadError, type LoadedRecordKind } from "./records";
 import { queryRecords, type RecordView } from "./records-cli";
-import type { ReasonCode } from "./reason-codes";
+import type { PluginCode, ReasonCode } from "./reason-codes";
 import { joinPath, skippedDir, type WorkspaceTree } from "./tree";
 import { activeAttestors, type ProvenanceLevel } from "./trust/attestor";
 import { commitProvenance, policyAtBase, resolveBase } from "./trust/provenance";
@@ -167,7 +171,17 @@ export interface CommitNode {
   signature: { level: ProvenanceLevel; reason: string; principal?: string };
   /** The line ranges the commit changed in the region, in the commit's own version of the file; null for a file or directory region. */
   lines: LineRange[] | null;
+  /**
+   * How the decisions constraining the region by path relate to the commit
+   * (#2656): `decided` when it falls inside a decision's window and that
+   * decision's own unit made it, `decided-by-window` when it only falls
+   * inside a window, `undecided` when it falls outside every window, and
+   * null when no record kind was read.
+   */
+  state: CommitState | null;
 }
+
+export type CommitState = "decided" | "decided-by-window" | "undecided";
 
 export interface JoinedNode {
   id: string;
@@ -237,9 +251,14 @@ export interface LinkNode {
 export interface FindingNode {
   id: string;
   kind: "finding";
-  code: IntentFindingCode;
+  /** A closed code, or a plugin's own `plugin:<name>:<code>` (#2656). */
+  code: IntentFindingCode | PluginCode;
   message: string;
   concerns: string[];
+  /** For a plugin's finding: the kind file that returned it. */
+  plugin?: string;
+  /** For a plugin's finding: the refs as the plugin gave them. The ones that name a node in the graph are in concerns. */
+  refs?: string[];
 }
 
 export type IntentNode = RegionNode | FileNode | MemberNode | CommitNode | JoinedNode | EvidenceEntryNode | DecisionNode | ArtifactNode | LinkNode | FindingNode;
@@ -250,6 +269,7 @@ export type IntentEdge =
   | { kind: "constrains"; from: string; to: string; granularity: Granularity; entry: string }
   | { kind: "pins"; from: string; to: string; pinnedSha256: string | null; pinState: PinState }
   | { kind: "touched-by"; from: string; to: string; lines: LineRange[] | null }
+  | { kind: "within"; from: string; to: string; state: "decided" | "decided-by-window" }
   | { kind: "produced-by" | "serves" | "cites-evidence" | "supersedes" | "links"; from: string; to: string };
 
 export interface IntentReason {
@@ -269,7 +289,7 @@ export type IntentDocument =
       workspace: { name: string; root: string };
       region: string;
       history: { rev: string | null; follows: "line-range" | "file" | "directory"; shallow: boolean };
-      kinds: { file: string; records: string | null; joins: "function" | "data" | null }[];
+      kinds: { file: string; name: string; records: string | null; joins: "function" | "data" | null }[];
       nodes: IntentNode[];
       edges: IntentEdge[];
       reasons: IntentReason[];
@@ -486,6 +506,8 @@ interface LoadedKind {
   file: string;
   /** Relative to the repository root, for the document. */
   display: string;
+  /** The record kind's name, or the file's name without `.kind.mjs`: the namespace of its plugin findings. */
+  name: string;
   records?: { loaded: LoadedRecordKind; views: RecordView[]; workspaceRoot: string };
   joins?: CommitJoins;
 }
@@ -503,12 +525,13 @@ async function loadKinds(query: IntentQuery, top: string): Promise<LoadedKind[]>
     }
     const joins = readCommitJoins(mod);
     if (typeof joins === "string") throw new IntentError("kind-invalid", `kind file ${k} has a commitJoins export that can't be read: ${joins}`);
-    const kind: LoadedKind = { file, display, ...(joins ? { joins } : {}) };
+    const kind: LoadedKind = { file, display, name: basename(file).replace(/(?:\.kind)?\.[cm]?[jt]s$/, ""), ...(joins ? { joins } : {}) };
     if (mod.recordKind !== undefined) {
       const doc = await queryRecords({ kind: file, at: query.at, cwd: query.cwd });
       if ("error" in doc) throw new IntentError(doc.error.code, doc.error.message);
       try {
         kind.records = { loaded: await loadRecordKind(file), views: doc.records, workspaceRoot: doc.workspaceRoot };
+        kind.name = kind.records.loaded.kind.name;
       } catch (err) {
         if (err instanceof RecordReadError) throw new IntentError(err.code as IntentErrorCode, err.message);
         throw err;
@@ -611,7 +634,15 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
     if (!isWorkspacePath(path) || located.tree.stat(path) !== "file") return undefined;
     return located.tree.read(path);
   };
-  const joined = new Map<string, { unit?: string; contracts: string[]; authorship: string[] }>();
+  interface Joined {
+    unit?: string;
+    contracts: string[];
+    authorship: string[];
+    /** The record ids the commit's units and contracts say they carry out. */
+    decisions: string[];
+  }
+  const joined = new Map<string, Joined>();
+  const pluginFindings: { commit: string; plugin: string; finding: PluginFinding }[] = [];
   const failedPlugins = new Set<string>();
   for (const t of touched) {
     const c = details.get(t.sha);
@@ -624,17 +655,17 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
       : { level: "unattested" as const, reason: policy.problems.length ? policy.problems.join("; ") : `no signers file (${policy.signersPath}) at base; attestation is off` };
     const pr = c.subject.match(/\(#([0-9]+)\)\s*$/);
     const cid = `commit:${c.sha}`;
-    add<CommitNode>({ id: cid, kind: "commit", sha: c.sha, subject: c.subject, author: c.author, date: c.date, trailers: c.trailers, pullRequest: pr ? Number(pr[1]) : null, signature, lines: t.lines });
+    add<CommitNode>({ id: cid, kind: "commit", sha: c.sha, subject: c.subject, author: c.author, date: c.date, trailers: c.trailers, pullRequest: pr ? Number(pr[1]) : null, signature, lines: t.lines, state: null });
     edges.push({ kind: "touched-by", from: rid, to: cid, lines: t.lines });
 
     // 2. Each commit's origin, from the plugins.
-    const entry = { contracts: [] as string[], authorship: [] as string[] } as { unit?: string; contracts: string[]; authorship: string[] };
+    const entry: Joined = { contracts: [], authorship: [], decisions: [] };
     joined.set(c.sha, entry);
     for (const k of kinds) {
       if (!k.joins) continue;
       let result;
       try {
-        result = await runCommitJoins(k.joins, c, { read: readAt, at: located.at });
+        result = await runCommitJoins(k.joins, c, { read: readAt, at: located.at }, k.name);
       } catch (err) {
         const message = `${k.display}: commitJoins failed for ${c.sha.slice(0, 8)}: ${err instanceof Error ? err.message : String(err)}`;
         if (!failedPlugins.has(message)) reasons.push({ code: "intent-plugin-failed", message });
@@ -653,6 +684,8 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
         if (contractId) edges.push({ kind: "serves", from: unitId, to: contractId });
       }
       if (contractId) entry.contracts.push(result.contract!.id);
+      if (unitId) entry.decisions.push(...entityDecisions(result.unit), ...entityDecisions(result.contract));
+      for (const f of result.findings ?? []) pluginFindings.push({ commit: cid, plugin: k.display, finding: f });
       const evidence = result.evidence === undefined ? [] : Array.isArray(result.evidence) ? result.evidence : [result.evidence];
       for (const e of evidence) edges.push({ kind: "cites-evidence", from: unitId ?? contractId ?? cid, to: joinedNode("evidence", e) });
       entry.authorship.push(...(result.authorship ?? []));
@@ -859,11 +892,20 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
       return !!w && w.from.has(sha) && !w.until?.has(sha);
     });
   const readsRecords = kinds.some((k) => k.records);
+  // A decision's own work: a commit whose unit, or that unit's contract, names
+  // the decision, or whose unit serves a contract the decision constrains.
+  const ownWork = (j: Joined, d: DecisionNode) =>
+    !!j.unit && (j.decisions.some((x) => x === d.record || x === `${d.recordKind}/${d.record}`) || d.constrains.some((x) => x.granularity === "contract" && j.contracts.includes(x.entry)));
   for (const t of touched) {
     const c = nodes.get(`commit:${t.sha}`) as CommitNode | undefined;
     if (!c) continue;
     const j = joined.get(t.sha)!;
-    if (readsRecords && coveredAt(t.sha, ["path"]).length === 0) {
+    if (readsRecords) {
+      const inWindow = coveredAt(t.sha, ["path"]);
+      for (const w of inWindow) edges.push({ kind: "within", from: c.id, to: w.node.id, state: ownWork(j, w.node) ? "decided" : "decided-by-window" });
+      c.state = inWindow.length === 0 ? "undecided" : inWindow.some((w) => ownWork(j, w.node)) ? "decided" : "decided-by-window";
+    }
+    if (readsRecords && c.state === "undecided") {
       find("intent-commit-undecided", `${t.sha.slice(0, 8)} changed the region when no decision constrained ${region.path} by path`, [c.id, rid]);
     }
     if (readsRecords && !j.unit && c.pullRequest === null && coveredAt(t.sha, ["path", "member", "contract", "issue"]).length === 0) {
@@ -915,7 +957,23 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
   }
 
   // Findings last, in the order of the code list, so the same walk always prints the same way.
-  findings.sort((x, y) => INTENT_FINDING_CODES.indexOf(x.code) - INTENT_FINDING_CODES.indexOf(y.code));
+  findings.sort((x, y) => INTENT_FINDING_CODES.indexOf(x.code as IntentFindingCode) - INTENT_FINDING_CODES.indexOf(y.code as IntentFindingCode));
+  // Then the plugins' findings, in commit order, each about its commit and the nodes its refs name.
+  const resolveRef = (ref: string): string | undefined => {
+    if (nodes.has(ref)) return ref;
+    for (const prefix of ["commit", "unit", "contract", "evidence", "artifact", "file", "member"]) if (nodes.has(`${prefix}:${ref}`)) return `${prefix}:${ref}`;
+    for (const n of nodes.values()) {
+      if (n.kind === "decision" && (ref === n.record || ref === `${n.recordKind}/${n.record}`)) return n.id;
+      if (n.kind === "commit" && /^[0-9a-f]{7,}$/.test(ref) && n.sha.startsWith(ref)) return n.id;
+    }
+    return undefined;
+  };
+  for (const { commit, plugin, finding } of pluginFindings) {
+    const code = finding.code as PluginCode;
+    const refs = finding.refs ?? [];
+    const concerns = [...new Set([commit, ...refs.map(resolveRef).filter((x): x is string => x !== undefined)])];
+    findings.push({ id: `finding:${code}:${findings.filter((f) => f.code === code).length + 1}`, kind: "finding", code, message: finding.message, concerns, plugin, refs });
+  }
   for (const f of findings) nodes.set(f.id, f);
   const all = [...nodes.values()];
   return {
@@ -925,7 +983,7 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
       workspace: { name: declaration.name, root: located.root },
       region: rid,
       history: { rev, follows: region.lines ? "line-range" : type === "file" ? "file" : "directory", shallow },
-      kinds: kinds.map((k) => ({ file: k.display, records: k.records?.loaded.kind.name ?? null, joins: k.joins?.form ?? null })),
+      kinds: kinds.map((k) => ({ file: k.display, name: k.name, records: k.records?.loaded.kind.name ?? null, joins: k.joins?.form ?? null })),
       nodes: all,
       edges,
       reasons,
