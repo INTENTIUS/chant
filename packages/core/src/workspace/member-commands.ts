@@ -38,7 +38,7 @@ import { findWorkspaceRoot } from "../project-root";
 import { composeWorkspaceGraph, readMemberIr, type ComposedMember, type ComposeInput, type MemberReason } from "./compose-graph";
 import { mergeAudit, mergeSarif, type MemberOutput } from "./compose-reports";
 import { readDeclaration, resolveGroups, rootExclusions, WorkspaceReadError, type Declaration } from "./declaration";
-import { builtinKindRegistry, type KindRegistry } from "./kinds";
+import { builtinKindRegistry, loadKindRegistry, type KindRegistry } from "./kinds";
 import { memberReason } from "./ls";
 import { MEMBER_RUN_PROTOCOL, PROTOCOL_PREFIX, type MemberRunLine, type MemberRunRequest } from "./member-run";
 import { workingTree } from "./tree";
@@ -514,7 +514,8 @@ export async function runWorkspaceMembers(ctx: CommandContext, verb: WorkspaceVe
       inputs.push({ member, ir: read.ir });
     }
     for (const r of results) if (r.stderr.trim()) process.stderr.write(r.stderr.endsWith("\n") ? r.stderr : `${r.stderr}\n`);
-    emitDocument(composeWorkspaceGraph(workspace, inputs), args.output);
+    const kinds = loadKindRegistry(decl.pins, plan.workspace.root).registry;
+    emitDocument(composeWorkspaceGraph(workspace, inputs, { declaration: decl, kinds }), args.output);
     return failed ? 1 : 0;
   }
 

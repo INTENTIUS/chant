@@ -116,6 +116,39 @@
         "additionalProperties": false
       }
     },
+    "outputName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255,
+      "pattern": "^[^\\u0000-\\u001f]+$",
+      "description": "An output's name, compared exactly."
+    },
+    "link": {
+      "type": "object",
+      "description": "A member link: this member reads output of member (#2539).",
+      "required": [
+        "member",
+        "output"
+      ],
+      "properties": {
+        "member": {
+          "$ref": "#/$defs/name",
+          "description": "The producer: another member of this workspace."
+        },
+        "output": {
+          "$ref": "#/$defs/outputName",
+          "description": "The producer's output, matched exactly. It must be one the producer's kind exposes."
+        },
+        "kind": {
+          "$ref": "#/$defs/kindName",
+          "description": "The link kind. output, the default, is the only one so far: the consumer reads the named output."
+        }
+      },
+      "patternProperties": {
+        "^x-": true
+      },
+      "additionalProperties": false
+    },
     "entry": {
       "description": "A member, or an example group when kind is examples (ws-051).",
       "type": "object",
@@ -200,6 +233,21 @@
           "description": "Files in the member's directory that a command writes (#2524 D14, #2541). chant workspace check fails when one differs from what its generator writes, unless the entry is marked handWritten with a reason. The lineage lock classes the same files as generated. skills/*/SKILL.md, which chant update writes, is listed implicitly for a chant member.",
           "items": {
             "$ref": "#/$defs/generatedFile"
+          }
+        },
+        "outputs": {
+          "type": "array",
+          "uniqueItems": true,
+          "description": "The outputs this member exposes as link targets (#2539), for a member whose kind takes them from the entry: other, or a kind a pinned package supplies. A chant member's outputs are read from its source, and a nested workspace exposes none.",
+          "items": {
+            "$ref": "#/$defs/outputName"
+          }
+        },
+        "links": {
+          "type": "array",
+          "description": "Member links (#2524 D6, #2539): the outputs of other members this member reads. A link is stated once, here on the consumer, and matched exactly against the producer's outputs. chant workspace check resolves it in source.",
+          "items": {
+            "$ref": "#/$defs/link"
           }
         },
         "upstream": {

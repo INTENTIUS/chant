@@ -36,6 +36,8 @@ import { readDeclaration, resolveGroups, WorkspaceReadError, type Declaration, t
 import { parseJsonText, pointerToken, type TextLocation } from "./jsonc";
 import { loadKindRegistry, probeKind, resolveKind, type KindLoadProblem, type KindRegistry } from "./kinds";
 import { gitTop, workingTree, type WorkspaceTree } from "./tree";
+import { LINK_CHECKS, linkTable } from "./checks/links";
+import type { LinkTableRow } from "./links";
 import { gatherGeneratedFacts, GENERATED_CHECKS, type GeneratedFileFacts } from "./checks/generated";
 import { gatherLedgerFacts, LEDGER_CHECKS, type MemberLedgerFacts } from "./checks/ledgers";
 import { gatherPipelineFacts, PIPELINE_CHECKS, type MemberPipelineFacts } from "./checks/pipelines";
@@ -102,6 +104,8 @@ export interface DeclarationCheckReport {
   file: string;
   diagnostics: WorkspaceFinding[];
   suppressed: SuppressedFinding[];
+  /** The member links, declared and inferred, as resolved in source (#2539). */
+  links: LinkTableRow[];
   /** Whether an error-severity finding is active. */
   ok: boolean;
 }
@@ -284,7 +288,8 @@ export const WORKSPACE_CHECKS: readonly WorkspaceCheck[] = [
   ...LEDGER_CHECKS,
   // Recorded pipelines (#2542).
   ...PIPELINE_CHECKS,
-  // Member links (#2539), WSP091 to WSP097, go here, so the ids stay in order.
+  // Member links (#2539), WSP091 to WSP097.
+  ...LINK_CHECKS,
   // Generated files (#2541).
   ...GENERATED_CHECKS,
 ];
@@ -413,11 +418,12 @@ export async function runDeclarationChecks(
       severity: "error",
       message: `${err.code}: ${err.message}`,
     };
-    return { file: display(location.file), diagnostics: [diagnostic], suppressed: [], ok: false };
+    return { file: display(location.file), diagnostics: [diagnostic], suppressed: [], links: [], ok: false };
   }
   const { registry, problems } = loadKindRegistry(declaration.pins, root);
   const facts = options.gather === false ? {} : await gatherWorkspaceFacts(root, declaration, options);
-  const findings = runWorkspaceChecks({ declaration, tree, groups, kinds: registry, kindProblems: problems, facts });
+  const ctx: WorkspaceCheckContext = { declaration, tree, groups, kinds: registry, kindProblems: problems, facts };
+  const findings = runWorkspaceChecks(ctx);
   const { active, suppressed } = applyCheckSettings(declaration, findings);
 
   const parsed = parseJsonText(tree.read(declaration.file), { jsonc: declaration.file.endsWith(".jsonc") });
@@ -437,6 +443,7 @@ export async function runDeclarationChecks(
     file,
     diagnostics,
     suppressed: suppressed.map((s) => ({ ...toFinding(s), reason: s.reason })).sort(order),
+    links: linkTable(ctx),
     ok: !diagnostics.some((d) => d.severity === "error"),
   };
 }

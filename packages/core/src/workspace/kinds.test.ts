@@ -93,7 +93,14 @@ describe("parseKindData", () => {
   test("reads valid kinds, with their source", () => {
     const data = parseKindData(kindsFile([tf]), "@acme/tf-kinds");
     expect(data.problems).toEqual([]);
-    expect(data.kinds).toEqual([{ ...tf, shape: "member", source: "@acme/tf-kinds" }]);
+    expect(data.kinds).toEqual([{ ...tf, shape: "member", outputs: { from: "declared", names: [] }, source: "@acme/tf-kinds" }]);
+  });
+
+  test("a kind may list the outputs its members expose as link targets (#2539)", () => {
+    const data = parseKindData(kindsFile([{ ...tf, outputs: ["state_bucket", "vpc_id"] }]), "p");
+    expect(data.problems).toEqual([]);
+    expect(data.kinds[0].outputs).toEqual({ from: "declared", names: ["state_bucket", "vpc_id"] });
+    expect(parseKindData(kindsFile([{ ...tf, outputs: ["a", "a"] }]), "p").problems[0]).toMatch(/duplicate/);
   });
 
   test("refuses a built-in name, a name twice, a schema mismatch and text that isn't JSON", () => {
@@ -210,6 +217,7 @@ describe("resolveKind: overlapping probes", () => {
     precedence,
     probe: { anyFile: [file] },
     shape: "member",
+    outputs: { from: "declared", names: [] },
     source: "test",
   });
 
@@ -238,7 +246,7 @@ describe("resolveKind: overlapping probes", () => {
 });
 
 describe("file probes: names with *, and blocks (#2545)", () => {
-  const kind = (probe: MemberKind["probe"]): MemberKind => ({ name: "k", description: "k", precedence: 400, probe, shape: "member", source: "test" });
+  const kind = (probe: MemberKind["probe"]): MemberKind => ({ name: "k", description: "k", precedence: 400, probe, shape: "member", outputs: { from: "declared", names: [] }, source: "test" });
 
   test("a * in anyFile matches any run of characters in one name, directly in the directory", () => {
     const tree = workingTree(dir({ "a/network.tf": "", "b/modules/net/main.tf": "", "c/main.tfvars": "", "d/x.tf.json": "" }));

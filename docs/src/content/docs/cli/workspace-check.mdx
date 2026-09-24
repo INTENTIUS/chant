@@ -58,7 +58,14 @@ chant.workspace.json
 | `WSP073` | ledger-settings-unread | info | yes | A `chant` member's `ownership` or `environments` can't be read from its config without running it, so `WSP071` and `WSP072` skip the member |
 | `WSP081` | generated-declared-twice | error | yes | Two members record the same generated file in `.chant/generated.json`, so each would overwrite the other's |
 | `WSP082` | generated-outside-member | error | yes | A member records a generated file outside its directory, and the file is not a forge CI file like those in `.github/workflows/` |
-| `WSP083` | linked-environments-disjoint | warning | yes | Two linked members share no environment name. It reads member links once they land ([#2539](https://github.com/INTENTIUS/chant/issues/2539)) |
+| `WSP083` | linked-environments-disjoint | warning | yes | Two members joined by a declared [member link](#member-links) share no environment name |
+| `WSP091` | link-target-unknown | error | no | A [member link](#member-links) names no member, an example group, or the member that states it |
+| `WSP092` | link-kind-unknown | error | no | A member link's `kind` is not one chant knows. `output` is the only one so far |
+| `WSP093` | link-output-missing | error | yes | The producer exposes no output with the linked name, as when it was renamed. The message names outputs that differ only in case or punctuation |
+| `WSP094` | link-unresolved | info | yes | The producer's outputs can't all be read in source, and the linked name wasn't found. The link is kept |
+| `WSP095` | join-ambiguous | warning | yes | An inferred join is ambiguous: a parameter matches outputs of two producers, or two outputs of one |
+| `WSP096` | link-duplicate | error | yes | A member states the same link twice |
+| `WSP097` | outputs-not-listable | error | yes | An entry lists `outputs` for a kind that doesn't take them from the entry, such as `chant` |
 | `WSP101` | generated-drift | error | yes | A [generated file](#generated-files) differs from what its generator writes |
 | `WSP102` | generated-missing | error | yes | A declared generated file does not exist |
 | `WSP103` | generator-failed | error | yes | A generator can't be run, exits non-zero, or writes nothing |
@@ -66,7 +73,35 @@ chant.workspace.json
 | `WSP105` | generated-not-compared | info | yes | An entry was not compared with its generator's output, and the message says why |
 | `WSP106` | generated-source-missing | error | yes | An entry names a source that does not exist |
 
-A finding's location is the entry it is about, or the pin for `WSP002`. A finding about two or more members sits at the first of them in the declaration, and that member's entry is where a `suppress` for it goes.
+A finding's location is the entry it is about, the link for `WSP091` to `WSP094` and `WSP096`, or the pin for `WSP002`. A finding about two or more members sits at the first of them in the declaration, and that member's entry is where a `suppress` for it goes.
+
+### Member links
+
+`WSP091` to `WSP097` resolve every [member link](/chant/reference/workspace-declaration/#member-links) in source ([#2539](https://github.com/INTENTIUS/chant/issues/2539)). A `chant` producer's outputs are read from its TypeScript without running it, and other kinds expose what the kind and the entry list. Only files are read. No process starts and no network is reached, and a test runs the command under the [no-egress guard](/chant/reference/network-egress/). Resolving links against a live estate comes later, with `--live`.
+
+```
+$ chant workspace check
+
+chant.workspace.json
+   17:21   error    web's link to shared output ClusterArn does not resolve: shared has no output ClusterArn; its outputs: EcsClusterArn, ListenerArn  WSP093
+
+✖ 1 error
+```
+
+The same pass infers the joins nobody declared and reports an ambiguous one as `WSP095`. `--json` lists every link in `declaration.links`, declared and inferred.
+
+| Field | Value |
+|---|---|
+| `consumer` | The member that reads the output |
+| `producer`, `output` | The member and output it reads. An ambiguous row has `candidates` instead, each with `producer`, `output` and `label` |
+| `kind` | The link kind, `output` |
+| `origin` | `declared`, or `inferred:joinKey` for a join matched by name |
+| `label` | `exact`, or `folded` when an inferred join's names differ only in case or punctuation. A declared link is always `exact` |
+| `input` | The consumer's parameter an inferred join feeds, or `null` for a declared link |
+| `resolves` | `source`, where the row was resolved |
+| `status` | `resolved`, `missing`, `unresolved`, `invalid` or `ambiguous` |
+| `reason` | Why the row isn't `resolved`, or `null` |
+| `pointer` | Where a declared link sits in the declaration, as a JSON Pointer |
 
 ### Severity and suppression
 
@@ -109,7 +144,7 @@ info   WSP104  services/api/skills/chant-aws/SKILL.md is kept by hand, so `chant
 
 | Option | Effect |
 |---|---|
-| `--json` | Print `{ lock, ok, findings }`, plus `declaration` when there is one. Each lock finding has `code`, `scope`, `path` and `message`, and `code` is one of `lock-invalid` and `manual-step-open`. `lock` is `null` when there is no lock. `declaration` holds `file`, `ok`, `diagnostics` and `suppressed`, whose entries have the shape `chant lint --format json` prints, plus `entity` naming the entry and `reason` for a suppressed one. `ok` covers both |
+| `--json` | Print `{ lock, ok, findings }`, plus `declaration` when there is one. Each lock finding has `code`, `scope`, `path` and `message`, and `code` is one of `lock-invalid` and `manual-step-open`. `lock` is `null` when there is no lock. `declaration` holds `file`, `ok`, `diagnostics`, `suppressed` and `links`. The entries of `diagnostics` and `suppressed` have the shape `chant lint --format json` prints, plus `entity` naming the entry and `reason` for a suppressed one. `ok` covers both |
 | `--format stylish` | The default. Lock findings print as above, and declaration findings print as `chant lint` prints its own |
 | `--format json` | Print the active findings as `chant lint --format json` does. Lock findings use their code as the rule id |
 | `--format sarif` | Print SARIF 2.1.0 through lint's SARIF reporter, with the suppressed findings as suppressed results |

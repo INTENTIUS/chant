@@ -22,6 +22,7 @@
 import { join } from "node:path";
 import type { WorkspaceCheck, WorkspaceCheckContext, WorkspaceDiagnostic } from "../checks";
 import type { Declaration } from "../declaration";
+import { declaredMemberLinks } from "../links";
 import { readGeneratedRecord } from "../member-pipeline";
 
 export const WSP_ONE_DECLARER = "WSP081";
@@ -165,8 +166,8 @@ export function gatherPipelineFacts(workspaceRoot: string, declaration: Declarat
 }
 
 /**
- * Run the three checks. `links` defaults to none: member links are declared
- * by #2539, which has not landed, so `WSP083` has nothing to read yet.
+ * Run the three checks. `links` defaults to none; `chant workspace check`
+ * passes the declared member links (#2539).
  */
 export function checkPipelines(facts: readonly MemberPipelineFacts[], links: readonly MemberLink[] = []): PipelineFinding[] {
   return [...checkOneDeclarer(facts), ...checkGeneratedPlacement(facts), ...checkLinkedEnvironments(facts, links)];
@@ -184,13 +185,9 @@ function toDiagnostic(check: WorkspaceCheck, ctx: WorkspaceCheckContext, f: Pipe
   return { checkId: check.id, severity: check.severity, message: f.message, entity: f.members[0], pointer: member?.pointer ?? "" };
 }
 
-/**
- * The member links `WSP083` compares. None yet.
- * TODO(#2539): return `declaredMemberLinks(ctx.declaration)` from ../links.ts
- * once member links land.
- */
-function declaredLinks(_ctx: WorkspaceCheckContext): MemberLink[] {
-  return [];
+/** The member links `WSP083` compares: the pairs the declaration links (#2539). */
+function declaredLinks(ctx: WorkspaceCheckContext): MemberLink[] {
+  return declaredMemberLinks(ctx.declaration);
 }
 
 /** The pipeline checks, which read `ctx.facts.pipelines`. They find nothing when the facts were not gathered. */

@@ -111,6 +111,18 @@ export interface GeneratedFile {
   pointer: string;
 }
 
+/** A member link as the consumer states it (#2524 D6, #2539). */
+export interface LinkDeclaration {
+  /** The producer member. */
+  member: string;
+  /** The producer's output, compared exactly. */
+  output: string;
+  /** The link kind as written, or null for the default (`output`). */
+  kind: string | null;
+  /** The link's JSON Pointer in the file, for messages. */
+  pointer: string;
+}
+
 export interface Member {
   type: "member";
   name: string;
@@ -120,6 +132,10 @@ export interface Member {
   roles: MemberRole[];
   /** Declared generated files, in file order. The implicit ones are not listed here (see `generated-files.ts`). */
   generated: GeneratedFile[];
+  /** Outputs the entry lists as link targets, or null when it lists none (#2539). */
+  outputs: string[] | null;
+  /** The links this member states as a consumer, in file order (#2539). */
+  links: LinkDeclaration[];
   upstream: string | null;
   because: string | null;
   suppress: Suppression[];
@@ -315,6 +331,12 @@ export function parseDeclaration(text: string, file: string, reader: string = re
       handWritten: g.handWritten ? { because: (g.handWritten as { because: string }).because } : null,
       pointer: `${pointer}/generated/${j}`,
     }));
+    const links = ((e.links as { member: string; output: string; kind?: string }[] | undefined) ?? []).map((l, j) => ({
+      member: l.member,
+      output: l.output,
+      kind: l.kind ?? null,
+      pointer: `${pointer}/links/${j}`,
+    }));
     return {
       type: "member",
       name: e.name as string,
@@ -322,6 +344,8 @@ export function parseDeclaration(text: string, file: string, reader: string = re
       kind: e.kind as string,
       roles,
       generated,
+      outputs: e.outputs === undefined ? null : [...(e.outputs as string[])],
+      links,
       upstream: (e.upstream as string | undefined) ?? null,
       because: (e.because as string | undefined) ?? null,
       suppress,

@@ -55,6 +55,18 @@ export type KindProbe =
   /** The directory holds a chant project, as {@link holdsChantProject} says (`examples`). */
   | { chantProject: true };
 
+/**
+ * Which outputs a member of a kind exposes as link targets (#2524 D6,
+ * #2539). A member link may only name an output its producer exposes.
+ */
+export type KindOutputs =
+  /** The chant project's own outputs, read from its source without running it (`chant`). */
+  | { from: "chant-source" }
+  /** None: the member is opaque to links (`workspace`, and the group kind `examples`). */
+  | { from: "none" }
+  /** The names listed here, plus any the member entry lists in `outputs` (`other`, and kinds from a package). */
+  | { from: "declared"; names: string[] };
+
 export interface MemberKind {
   name: string;
   /** One line for listings and error messages. */
@@ -68,6 +80,8 @@ export interface MemberKind {
   precedence: number;
   /** A member kind, or the kind of an example group (ws-051). */
   shape: "member" | "group";
+  /** The outputs a member of this kind exposes as link targets (#2539). */
+  outputs: KindOutputs;
   /** Where the kind comes from: `builtin`, or the package that supplies it. */
   source: string;
 }
@@ -90,6 +104,7 @@ export const BUILTIN_KINDS: readonly MemberKind[] = [
     probe: { anyFile: ["chant.config.ts", "chant.config.json"] },
     precedence: 500,
     shape: "member",
+    outputs: { from: "chant-source" },
     source: "builtin",
   },
   {
@@ -98,6 +113,7 @@ export const BUILTIN_KINDS: readonly MemberKind[] = [
     probe: { anyFile: ["chant.workspace.json", "chant.workspace.jsonc"] },
     precedence: 1000,
     shape: "member",
+    outputs: { from: "none" },
     source: "builtin",
   },
   {
@@ -106,6 +122,7 @@ export const BUILTIN_KINDS: readonly MemberKind[] = [
     probe: { directory: true },
     precedence: 0,
     shape: "member",
+    outputs: { from: "declared", names: [] },
     source: "builtin",
   },
   {
@@ -114,6 +131,7 @@ export const BUILTIN_KINDS: readonly MemberKind[] = [
     probe: { chantProject: true },
     precedence: 0,
     shape: "group",
+    outputs: { from: "none" },
     source: "builtin",
   },
 ];
@@ -292,7 +310,7 @@ export function parseKindData(text: string, source: string): KindData {
   const problems: string[] = [];
   const kinds: MemberKind[] = [];
   const seen = new Set<string>();
-  for (const k of (raw as { kinds: { name: string; description: string; precedence: number; probe: FileProbe }[] }).kinds) {
+  for (const k of (raw as { kinds: { name: string; description: string; precedence: number; probe: FileProbe; outputs?: string[] }[] }).kinds) {
     if (BUILTIN_KIND_NAMES.includes(k.name)) {
       problems.push(`${source}: kind ${k.name} is built in and can't be supplied by a package`);
       continue;
@@ -311,6 +329,7 @@ export function parseKindData(text: string, source: string): KindData {
       },
       precedence: k.precedence,
       shape: "member",
+      outputs: { from: "declared", names: [...(k.outputs ?? [])] },
       source,
     });
   }

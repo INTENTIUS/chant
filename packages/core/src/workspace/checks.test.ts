@@ -42,7 +42,7 @@ describe("the WSP catalog", () => {
     expect(new Set(list).size).toBe(list.length);
   });
 
-  test("the checks D3 says always fail are fixed, and so are the ledger checks", async () => {
+  test("the checks D3 and D6 say always fail are fixed, and so are the ledger checks", async () => {
     const fixed = WORKSPACE_CHECKS.filter((c) => !c.configurable).map((c) => c.name);
     expect(fixed).toEqual([
       "declaration-unreadable",
@@ -54,12 +54,19 @@ describe("the WSP catalog", () => {
       // A member that ignores either writes its records or marks its resources as another's (#2538).
       "ownership-stack-shared",
       "flat-ledger-environment-shared",
+      "link-target-unknown",
+      "link-kind-unknown",
     ]);
   });
 
-  test("no two modules share an id: ledgers, pipelines and generated files each have their own range (#2641)", async () => {
+  test("no two modules share an id: ledgers, pipelines, links and generated files each have their own range (#2641)", async () => {
     const list = WORKSPACE_CHECKS.map((c) => c.id);
-    expect(list.filter((id) => /^WSP(07|08|10)\d$/.test(id))).toEqual(["WSP071", "WSP072", "WSP073", "WSP081", "WSP082", "WSP083", "WSP101", "WSP102", "WSP103", "WSP104", "WSP105", "WSP106"]);
+    expect(list.filter((id) => /^WSP(07|08|09|10)\d$/.test(id))).toEqual([
+      "WSP071", "WSP072", "WSP073",
+      "WSP081", "WSP082", "WSP083",
+      "WSP091", "WSP092", "WSP093", "WSP094", "WSP095", "WSP096", "WSP097",
+      "WSP101", "WSP102", "WSP103", "WSP104", "WSP105", "WSP106",
+    ]);
   });
 
   test("each check is also a rule for the SARIF reporter's metadata", async () => {
@@ -79,7 +86,7 @@ describe("declaration checks (#2535)", () => {
       "api/chant.config.ts": "",
       "examples/one/chant.config.ts": "",
     });
-    expect(await runDeclarationChecks(root)).toEqual({ file: "chant.workspace.json", diagnostics: [], suppressed: [], ok: true });
+    expect(await runDeclarationChecks(root)).toEqual({ file: "chant.workspace.json", diagnostics: [], suppressed: [], links: [], ok: true });
   });
 
   test("an unknown kind fails closed and lists the known kinds", async () => {
