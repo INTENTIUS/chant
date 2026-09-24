@@ -50,6 +50,16 @@
       "default": "./src/cli/index.ts"
     },
     "./workspace/*.schema.json": "./src/workspace/*.schema.json",
+    "./workspace/conformance": {
+      "development": "./src/workspace/conformance/index.ts",
+      "types": "./dist/workspace/conformance/index.d.ts",
+      "default": "./src/workspace/conformance/index.mjs"
+    },
+    "./workspace/conformance/vitest": {
+      "development": "./src/workspace/conformance/vitest.ts",
+      "types": "./dist/workspace/conformance/vitest.d.ts",
+      "default": "./src/workspace/conformance/vitest.ts"
+    },
     "./cli/*": {
       "development": "./src/cli/*.ts",
       "types": "./dist/cli/*.d.ts",
@@ -103,6 +113,14 @@
   },
   "devDependencies": {
     "@cdktn/hcl2json": "^0.24.0"
+  },
+  "peerDependencies": {
+    "vitest": ">=2"
+  },
+  "peerDependenciesMeta": {
+    "vitest": {
+      "optional": true
+    }
   },
   "overrides": {
     "esbuild": "^0.28.1"

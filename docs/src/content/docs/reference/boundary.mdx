@@ -14,14 +14,15 @@ chant provides the repository specification and nothing that faces a person. hud
 |---|---|---|
 | declaration, kinds, members, links, lineage, migrations, `init --from`, `upgrade` | rendering | domain record kinds (contracts, units, evidence, drivers, sessions) |
 | records: schemas, states, seals, pins, supersession, attestation, provenance | review actions as UI (agree, dissent, propose, quorum meter, live sessions) | `commitJoins` and other joins from commits to records |
-| the read contract: versioned JSON of `ls`, `graph`, `check`, `records`, `status`, `graph --intent`, closed reason codes | identity, sessions, who is looking | agent prompts and context bundles |
-| the writing and verifying commands: `approve`, `records pin`, `verify`, `check`, gates, ledgers | the agent chat, the dev proxy, comment mode |  |
-| findings as data | the question put to the person at each finding |  |
+| the read contract: versioned JSON of `ls`, `graph`, `check`, `records`, `status`, `graph --intent`, `graph --composites`, closed reason codes | identity, sessions, who is looking | agent prompts and context bundles |
+| reader conformance: a reader reads only through the read contract and writes nothing | the agent chat, the dev proxy, comment mode |  |
+| the writing and verifying commands: `approve`, `records pin`, `verify`, `check`, gates, ledgers | the question put to the person at each finding |  |
+| findings as data |  |  |
 
 ## Rules
 
 - chant never listens on a port, never authenticates a person and never renders. `test/no-listener.test.ts` holds `packages/core` to the first and to importing no UI or agent-runtime package.
-- hud never parses a record file, never runs git for provenance and never computes drift. It reads only through the [read contract](/chant/reference/workspace-read-contract/) and writes only through chant commands. `describeWorkspaceReaderConformance` in `@intentius/chant-test-utils` is the suite a reader runs to show it.
+- hud never parses a record file, never runs git for provenance and never computes drift. It reads only through the [read contract](/chant/reference/workspace-read-contract/) and writes only through chant commands. The suite a reader runs to show it ships in `@intentius/chant` as `@intentius/chant/workspace/conformance`, for any test runner.
 - chud is the transitional owner of the plugin column (jhgaylor/chud#78, #79, #80).
 
 ## The roster
@@ -30,7 +31,7 @@ This page is generated from `docs/data/boundary.yaml`, which has one row for eac
 
 | Category | Where the code keeps it | chant | hud | plugin |
 |---|---|---|---|---|
-| boundary cell | the table of #2657, one row per cell | 5 | 5 | 3 |
+| boundary cell | the table of #2657, one row per cell | 6 | 5 | 3 |
 | workspace command | `commandRegistry` in `cli/main.ts`, and each sub-verb its help names | 20 | 0 | 0 |
 | member kind | `BUILTIN_KIND_NAMES` in `kinds.ts` | 4 | 0 | 0 |
 | record kind | none in core; `decision` is this repository's, the rest a plugin's | 1 | 0 | 5 |
@@ -49,7 +50,8 @@ Each row follows, in the order of the table above.
 |---|---|---|---|---|
 | boundary cell | declaration, kinds, members, links, lineage, migrations, `init --from`, `upgrade` | chant | declaration.schema.json, workspace-kinds.schema.json, .chant/workspace.lock.json | The repository specification itself: what a workspace declares, how each member is read, how members join, and where the files came from. |
 | boundary cell | records: schemas, states, seals, pins, supersession, attestation, provenance | chant | records.schema.json | How a record file is validated, sealed, pinned to the files it rests on, superseded and traced to a signed commit. |
-| boundary cell | the read contract: versioned JSON of `ls`, `graph`, `check`, `records`, `status`, `graph --intent`, closed reason codes | chant | ls.schema.json, graph.schema.json, check.schema.json, records.schema.json, status.schema.json, intent.schema.json | The only way a reader sees a workspace: one JSON Schema per document, a contract version and a chant floor. |
+| boundary cell | the read contract: versioned JSON of `ls`, `graph`, `check`, `records`, `status`, `graph --intent`, `graph --composites`, closed reason codes | chant | ls.schema.json, graph.schema.json, check.schema.json, records.schema.json, status.schema.json, intent.schema.json, composites.schema.json | The only way a reader sees a workspace: one JSON Schema per document, a contract version and a chant floor. |
+| boundary cell | reader conformance: a reader reads only through the read contract and writes nothing | chant | @intentius/chant/workspace/conformance, @intentius/chant/workspace/conformance/vitest | The suite a reader such as hud runs in its own CI, with any test runner, on a workspace it generates from the fixture that @intentius/chant ships. |
 | boundary cell | the writing and verifying commands: `approve`, `records pin`, `verify`, `check`, gates, ledgers | chant | chant approve, chant workspace records pin, chant workspace records new, amend and review, chant workspace verify, chant workspace check | Every change to the repository that carries weight is made or checked by a chant command, so a UI writes only by calling one. |
 | boundary cell | findings as data | chant | check.schema.json, intent.schema.json | A finding is a node or a row with a closed code, so a reader can draw it and a test can assert it. |
 | boundary cell | rendering | hud | alecraso/hud | Drawing the documents of the read contract for a person. |

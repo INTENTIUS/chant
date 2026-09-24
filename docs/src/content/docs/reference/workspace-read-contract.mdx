@@ -300,40 +300,50 @@ A write never makes the caller compute anything about the record. `new` allocate
 
 ## Testing a reader
 
-A reader such as hud reads only through this contract and writes only through chant commands ([ws-052](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-052-chant-hud-boundary.md), the [chant and hud boundary](/chant/reference/boundary/)). `@intentius/chant-test-utils` exports `describeWorkspaceReaderConformance`, beside `describeWorkspaceKindConformance`, so a reader can show that in its own CI.
+A reader such as hud reads only through this contract and writes only through chant commands ([ws-052](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-052-chant-hud-boundary.md), the [chant and hud boundary](/chant/reference/boundary/)). `@intentius/chant` ships a conformance suite for that, so a reader can show it in its own CI with nothing else installed ([#2679](https://github.com/INTENTIUS/chant/issues/2679)).
 
-The suite builds the reader from a function you pass, giving it a transport that runs chant in the workspace. The reader's `read(command, args)` runs one contract command through the transport and returns the parsed document.
+| Import | For |
+|---|---|
+| `@intentius/chant/workspace/conformance` | any test runner: `runWorkspaceReaderConformance` returns the problems, and `checkReaderRead` checks one read. It imports no runner and loads under plain `node` |
+| `@intentius/chant/workspace/conformance/vitest` | vitest: `describeWorkspaceReaderConformance` adds one test per command. Only this entry imports vitest |
 
-```ts
-import { describeWorkspaceReaderConformance, type ChantTransport, type ReadContractCommand } from "@intentius/chant-test-utils";
+The suite builds the reader from a function you pass, giving it a transport that runs chant in the workspace. The reader's `read(command, args)` runs one contract command through the transport and returns the parsed document. `commands` lists the commands the reader reads. The suite reads only those, and the report names the others in `skipped` as not applicable.
 
-const jsonFlag: Record<ReadContractCommand, string[]> = {
-  ls: ["--json"],
-  graph: [],
-  check: ["--format", "json"],
-  status: ["--json"],
-  records: ["--json"],
-  "graph --intent": ["--json"],
-};
+A reader of `ls`, `status` and `graph --composites`, tested with `node:test` after `npm i -D @intentius/chant`:
 
-describeWorkspaceReaderConformance({
-  name: "my reader",
-  reader: (chant: ChantTransport) => ({
-    async read(command: ReadContractCommand, args: string[]) {
-      const run = await chant.run(["workspace", ...command.split(" "), ...args, ...jsonFlag[command]]);
-      return JSON.parse(run.stdout);
-    },
-  }),
+```js
+// reader-conformance.test.mjs, run with: node --test
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { runWorkspaceReaderConformance } from "@intentius/chant/workspace/conformance";
+
+const JSON_FLAG = { ls: ["--json"], status: ["--json"], "graph --composites": ["--json"] };
+
+/** The reader: one contract command through the transport, and the document chant printed. */
+const myReader = (chant) => ({
+  async read(command, args) {
+    const run = await chant.run(["workspace", ...command.split(" "), ...args, ...JSON_FLAG[command]]);
+    return JSON.parse(run.stdout);
+  },
+});
+
+test("my reader reads only through the read contract", { timeout: 300_000 }, async () => {
+  const report = await runWorkspaceReaderConformance(myReader, { commands: ["ls", "status", "graph --composites"] });
+  assert.deepEqual(report.problems, []);
 });
 ```
 
-It reads the reference workspace with each of `ls`, `graph`, `check`, `status`, `records` and `graph --intent`, and fails when any of these is false:
+With vitest, `describeWorkspaceReaderConformance({ name, reader, commands })` from the `vitest` entry takes the same reader.
+
+For each command it reads, the suite fails when any of these is false:
 
 | Check | How |
 |---|---|
-| the document validates against the command's output schema and carries this contract's version | the schemas under `packages/core/src/workspace/` |
+| the document validates against the command's output schema and carries this contract's version | the schemas `@intentius/chant` ships, with its own ajv |
 | the read made exactly one chant call, the contract command with the suite's arguments and its JSON flag | the transport records every call |
 | the reader returned the document chant printed, unchanged | compared with the recorded output |
 | no file in the workspace changed | every file is hashed before the first read and after the last |
 
-The reader never gets the workspace's path, so the transport is its only route to the workspace, and the transport records everything that goes through it. `workspaceDir` names another copy of the reference workspace, and `chantCommand` names the chant to run, which is this checkout's CLI by default.
+The reader never gets the workspace's path, so the transport is its only route to the workspace, and the transport records everything that goes through it.
+
+Outside the chant repository the suite writes a workspace to a temporary directory and removes it afterwards. The workspace is copied from the fixture in `src/workspace/conformance/__fixture__/` of `@intentius/chant`. Its chant member declares one composite and the component that deploys it, and its `decisions/` directory holds one decision. `chant workspace init --yes` declares it, and git commits it. Inside the chant repository the suite reads `reference-workspace/`. Both have the files the suite's arguments name, such as `decisions/decision.kind.mjs` and `app/src/server.mjs:19`. `workspaceDir` names another workspace with those files. `chantCommand` names the chant to run. By default that is the first `node_modules/.bin/chant` above the current directory, then the chant the suite came with.
