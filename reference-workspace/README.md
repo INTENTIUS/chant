@@ -18,7 +18,7 @@ The chant repo's own [`chant.workspace.json`](../chant.workspace.json) lists thi
 | Member | Directory | Kind | What it is |
 |---|---|---|---|
 | app | [`app/`](app) | `other` | a Node HTTP server with no dependencies, its own Dockerfile and one test. No app kind exists yet ([#2535](https://github.com/INTENTIUS/chant/issues/2535)) |
-| delivery | [`delivery/`](delivery) | `chant` | a chant project on the docker lexicon. `chant build` writes a Compose file that builds the app's image from `app/Dockerfile` and runs it |
+| delivery | [`delivery/`](delivery) | `chant` | a chant project on the docker lexicon. It declares the app with the `DockerWebService` composite, and `chant build` writes a Compose file that builds the app's image from `app/Dockerfile` and runs it. Its `app` component deploys that composite |
 | design-client | [`design-client/`](design-client) | `other`, role `design-app` | a placeholder for a hud client with its own lineage. No hud client package is published to vendor yet |
 | design | [`design/`](design) | `other` | the design data member: a screen spec and a wireframe for the app's home page |
 
@@ -51,10 +51,11 @@ chant workspace records --kind decisions/decision.kind.mjs --current
 | [#2549](https://github.com/INTENTIUS/chant/issues/2549) | partly landed: `ref-002` pins `design/screens/home.json` by hash, and `chant workspace records` reports an edit to it as drift. The design member's kind and `check --live` come later |
 | [#2550](https://github.com/INTENTIUS/chant/issues/2550) | `chant workspace upgrade` from an older tag of this workspace |
 | [#2627](https://github.com/INTENTIUS/chant/issues/2627) | landed: [`chant.template.json`](chant.template.json) declares a `name` parameter, the app's display name. `chant init --from ... --param name="Untitled app"` puts it in the home page and the screen spec, and the lock records it |
+| [#2662](https://github.com/INTENTIUS/chant/issues/2662) | landed: delivery declares the app as a `DockerWebService` composite instance, and [`delivery/src/app.component.ts`](delivery/src/app.component.ts) is the component that deploys it, naming that kind in `composites`. `chant workspace graph --composites` lists the instance `delivery/app` with the component, matched in the same member. Compose names the service `appService` |
 
 ## Tests
 
-[`test/reference-workspace.test.ts`](../test/reference-workspace.test.ts) runs in chant's test job. It validates the declaration against chant's declaration schema, checks that its members are on disk, runs `chant workspace ls --json` and `chant workspace check` from the commit under test, runs the app's test, builds and lints delivery with no findings, validates the decision files against chant's schema and reads them with `chant workspace records`. It also runs `chant init --from` on this directory at `HEAD` and checks that the copy is a working workspace: it has a lock, reads its own decisions, lists the same four members with `chant workspace ls`, and passes `chant workspace check`. The per-member workspace commands and their contract tests join the test as their issues land (#2537, #2536).
+[`test/reference-workspace.test.ts`](../test/reference-workspace.test.ts) runs in chant's test job. It validates the declaration against chant's declaration schema, checks that its members are on disk, runs `chant workspace ls --json` and `chant workspace check` from the commit under test, runs the app's test, builds and lints delivery with no findings, runs `chant workspace graph --composites` and checks the app's row, validates the decision files against chant's schema and reads them with `chant workspace records`. It also runs `chant init --from` on this directory at `HEAD` and checks that the copy is a working workspace: it has a lock, reads its own decisions, lists the same four members with `chant workspace ls`, and passes `chant workspace check`. The per-member workspace commands and their contract tests join the test as their issues land (#2537, #2536).
 
 ## Ownership and support
 
@@ -62,10 +63,10 @@ chant workspace records --kind decisions/decision.kind.mjs --current
 |---|---|
 | Owner | the chant maintainers, [INTENTIUS/chant](https://github.com/INTENTIUS/chant). Changes go through chant's own pull requests |
 | Tags | `reference-workspace-v<minor>` on the chant repo, one per chant minor release, on the same commit as `chant-v<minor>.0`. Tags are cut starting with the first chant release after the declaration landed; none exists yet |
-| Chant floor | 0.81.0 |
+| Chant floor | 0.85.0 |
 | Upgrade range | a workspace made from any tag of the last three chant minors upgrades to the current one |
 
-The floor is 0.81.0 because the declaration needs `chant workspace ls` and the declaration reader ([#2593](https://github.com/INTENTIUS/chant/pull/2593)), merged after 0.80.0. The decision files need `chant workspace records`, which is in 0.80.0 ([#2572](https://github.com/INTENTIUS/chant/pull/2572), [#2573](https://github.com/INTENTIUS/chant/pull/2573)), and the delivery member alone builds on older releases, but the fixture is only ever tested as a whole. The floor moves up when a phase lands a feature here that an older chant does not have, and the tag for that minor says so below.
+The floor is 0.85.0 because delivery declares the app with the docker lexicon's `DockerWebService` composite and `graph --composites` reads it ([#2662](https://github.com/INTENTIUS/chant/issues/2662)), neither of which is in 0.84.0. Before that it was 0.81.0, because the declaration needs `chant workspace ls` and the declaration reader ([#2593](https://github.com/INTENTIUS/chant/pull/2593)), merged after 0.80.0. The decision files need `chant workspace records`, which is in 0.80.0 ([#2572](https://github.com/INTENTIUS/chant/pull/2572), [#2573](https://github.com/INTENTIUS/chant/pull/2573)), and the delivery member alone builds on older releases, but the fixture is only ever tested as a whole. The floor moves up when a phase lands a feature here that an older chant does not have, and the tag for that minor says so below.
 
 Until `chant workspace upgrade` exists (#2550), no command performs an upgrade. Within the range, the promise is that each change between two tags is listed below with any manual step it needs, so a workspace made from an older tag can be brought forward by hand from `git diff reference-workspace-v<old> reference-workspace-v<new> -- reference-workspace/`. Once #2550 lands, the same range is what its migrations cover.
 
@@ -74,3 +75,4 @@ Until `chant workspace upgrade` exists (#2550), no command performs an upgrade. 
 | Tag | Chant floor | Changes | Manual steps |
 |---|---|---|---|
 | the first tag, `reference-workspace-v<minor>` for the first chant minor after the declaration landed | 0.81.0 | the four members declared in `chant.workspace.json` at level 1, two decision files | none |
+| `reference-workspace-v0.85`, with chant 0.85.0 | 0.85.0 | delivery declares the app with the docker lexicon's `DockerWebService` composite and adds `delivery/src/app.component.ts`, the component that deploys it ([#2662](https://github.com/INTENTIUS/chant/issues/2662)) | Compose now names the service `appService` instead of `app`, so a command that names the service, such as `docker compose logs app`, needs the new name |

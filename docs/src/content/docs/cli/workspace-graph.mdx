@@ -172,7 +172,7 @@ A member is `read` when both of its graphs were read. When its component graph f
 | `composites-none-declared` | The members read declare no composite instance |
 | `composites-no-component` | The members read declare no component, so no composite instance has one |
 
-The reference workspace's `delivery` member has a Docker `Service` and no composite or component, so its document lists no instance and carries `composites-none-declared` and `composites-no-component`.
+The reference workspace's `delivery` member declares the app with the docker lexicon's `DockerWebService` composite and deploys it with the `app` component, whose contract lists that kind in `composites`. Its document has one row, `delivery/app`, with that component matched `by: "composites"` and `via: "member"`, and no reason.
 
 ## The intent graph
 

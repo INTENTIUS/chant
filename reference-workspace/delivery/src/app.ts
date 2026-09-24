@@ -1,27 +1,20 @@
-import { Service } from "@intentius/chant-lexicon-docker";
+import { DockerWebService } from "@intentius/chant-lexicon-docker";
 
 /**
+ * The app, declared through the docker lexicon's DockerWebService composite,
+ * so the build IR names it as a composite instance (`app`, of kind
+ * DockerWebService) and `chant workspace graph --composites` lists it with
+ * the component that deploys it (app.component.ts). Compose runs it as the
+ * service `appService`.
+ *
  * The image is built from the app member's own Dockerfile. The compose file is
  * written to dist/, so the build context is two levels up from it. Until
  * member links land (#2539), nothing but this path says delivery depends on
  * the app.
  */
-export const appBuild = { context: "../../app", dockerfile: "Dockerfile" };
-
-export const appEnvironment = { PORT: "8080" };
-
-export const appHealthcheck = {
-  test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"],
-  interval: "30s",
-  timeout: "5s",
-  retries: 3,
-};
-
-export const app = new Service({
-  build: appBuild,
+export const app = DockerWebService({
+  build: { context: "../../app" },
   image: "reference-workspace-app:local",
-  ports: ["8080:8080"],
-  environment: appEnvironment,
-  restart: "unless-stopped",
-  healthcheck: appHealthcheck,
+  port: 8080,
+  healthPath: "/healthz",
 });
