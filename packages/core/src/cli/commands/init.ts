@@ -3,7 +3,7 @@ import { join, resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 import { createInterface } from "readline";
 import { formatSuccess, formatWarning } from "../format";
-import { loadPlugin, recordProjectLexicons } from "../plugins";
+import { loadPlugin, recordProjectLexicons, unknownPathLexiconsNotice } from "../plugins";
 import { lexiconModulePath, lexiconSourceLabel } from "../../lexicon-module";
 import { MCP_CONFIG_FILENAME, detectPackageManager, generateMcpConfig, mcpConfigPath } from "../mcp-config";
 
@@ -266,10 +266,13 @@ export async function initCommand(options: InitOptions): Promise<InitResult> {
 
   // chant#2578 — `--force` into an existing project keeps its chant.config.
   // When that config declares the lexicon by path, it loads from the module
-  // and there is no package to depend on or install.
+  // and there is no package to depend on or install. chant#2591 — the config
+  // is read without running it; when that fails, init says so and treats the
+  // lexicon as a package.
   let lexiconModule: string | undefined;
   if (existsSync(join(targetDir, "chant.config.ts")) || existsSync(join(targetDir, "chant.config.json"))) {
-    await recordProjectLexicons(targetDir);
+    const notice = unknownPathLexiconsNotice(recordProjectLexicons(targetDir));
+    if (notice !== undefined) warnings.push(notice);
     if (lexiconModulePath(options.lexicon) !== undefined) {
       lexiconModule = lexiconSourceLabel(options.lexicon, targetDir);
     }

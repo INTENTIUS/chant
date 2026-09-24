@@ -36,6 +36,8 @@ chant init <path> --from <repo>@<ref>[#<member>] [--force]
 | `package.json` | Dependencies |
 | `.gitignore` | Ignores generated files |
 
+With `--force` into a directory that already has a `chant.config.ts` or `chant.config.json`, init reads that config's `lexicons` to check whether the lexicon is declared by path. If it is, `package.json` gets no dependency for it and the summary says where it loads from. The config is read without running it; when its `lexicons` cannot be read that way, init prints a note and treats the lexicon as a package. See [Commands that read `chant.config.ts` without running it](/chant/architecture/sandbox/#commands-that-read-chantconfigts-without-running-it).
+
 ## Usage
 
 ```bash

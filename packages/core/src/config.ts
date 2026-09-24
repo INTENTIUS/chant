@@ -561,7 +561,7 @@ export async function loadChantConfigUpward(startDir: string): Promise<ResolvedC
 }
 
 /** The walk {@link loadChantConfigUpward} makes, lint-only fragments skipped, without its warning. */
-function findProjectConfigPastFragments(startDir: string): { dir: string; configPath?: string } {
+export function findProjectConfigPastFragments(startDir: string): { dir: string; configPath?: string } {
   let { dir, configPath } = findProjectConfig(startDir);
   while (configPath && isLintOnlyFragment(configPath)) {
     const parent = dirname(dir);

@@ -1027,7 +1027,8 @@ export const commandRegistry: CommandDef[] = [
   { name: "describe", handler: runDescribe },
   { name: "explain", handler: runExplain },
   { name: "search", handler: runSearch },
-  { name: "import", handler: runImport },
+  // chant#2591 — `import --agents` reads chant.config statically and never evaluates it.
+  { name: "import", handler: runImport, runsNoConfig: (args) => args.agents === true },
   { name: "audit", handler: runAudit },
   { name: "migrate", handler: runMigrate },
   // Read-only Terraform peelability advisor (#214). Compound so "advise" lands
@@ -1047,7 +1048,7 @@ export const commandRegistry: CommandDef[] = [
   // Status read over a tree of carve manifests (#2038): the contract a
   // renderer replaces its own walk-and-guess discovery with. Read-only.
   { name: "carve status", handler: runCarveStatus },
-  { name: "init", handler: runInit },
+  { name: "init", handler: runInit, runsNoConfig: true },
   { name: "init lexicon", handler: runInitLexicon },
 { name: "update", handler: runUpdate },
   { name: "doctor", handler: runDoctor },
@@ -1055,7 +1056,7 @@ export const commandRegistry: CommandDef[] = [
   // Dev subcommands
   { name: "dev generate", requiresPlugins: true, handler: runDevGenerate },
   { name: "dev publish", requiresPlugins: true, handler: runDevPublish },
-  { name: "dev onboard", handler: runDevOnboard },
+  { name: "dev onboard", handler: runDevOnboard, runsNoConfig: true },
   { name: "dev check-lexicon", handler: runDevCheckLexicon },
   { name: "dev surface-diff", handler: runDevSurfaceDiff },
   { name: "dev pinned-upgrade", handler: runDevPinnedUpgrade },
@@ -1188,10 +1189,17 @@ async function main(): Promise<void> {
   // subdirectory build/command (`chant build src/<stack> --env prod`) the
   // declared `environments` almost always live in the root `chant.config.ts`,
   // not `args.path` itself.
+  //
+  // chant#2591 — a command marked `runsNoConfig` skips this load: it must not
+  // run the project's `chant.config.ts` (see `CommandDef.runsNoConfig`). Such a
+  // command gets no `--env` check against the declared environments either.
+  const earlyMatch = resolveCommand(args, commandRegistry);
+  const runsNoConfig =
+    typeof earlyMatch?.def.runsNoConfig === "function" ? earlyMatch.def.runsNoConfig(args) : earlyMatch?.def.runsNoConfig === true;
   const projectPath0 = resolve(args.path === "." ? "." : args.path);
   let loadedConfig;
   try {
-    loadedConfig = await loadChantConfigUpward(projectPath0);
+    if (!runsNoConfig) loadedConfig = await loadChantConfigUpward(projectPath0);
     initRuntime();
   } catch {
     // Config may not exist yet (e.g. `chant init`)
@@ -1205,7 +1213,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const match = resolveCommand(args, commandRegistry);
+  const match = earlyMatch;
   if (!match) {
     // chant #1078 — not one of core's own commands; check whether a lexicon
     // mounted a command group under this name before giving up. This is the

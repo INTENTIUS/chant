@@ -25,6 +25,8 @@ The command modifies 6 files:
 | `test/Dockerfile.smoke` | Adds `<name>` to the `for lex in ...` lexicon list |
 | `test/Dockerfile.smoke-npm` | Adds `<name>` to both `for lex in ...` lexicon lists |
 
+A lexicon the current project's `chant.config.ts` declares by path has no package to wire in, so onboard refuses it and names its path. Onboard reads the config without running it, and prints a note when its `lexicons` cannot be read that way. See [Commands that read `chant.config.ts` without running it](/chant/architecture/sandbox/#commands-that-read-chantconfigts-without-running-it).
+
 The command is **idempotent**. Running it again on an already-onboarded lexicon changes nothing and reports each file as already covered.
 
 ## Options
