@@ -1,0 +1,113 @@
+/**
+ * One closed list of reason codes (#2536, #2524 D15): every command's own
+ * list is a subset of `REASON_CODES`, together they cover it, the output
+ * schemas name nothing outside it, and no source file under `workspace/`
+ * emits a code outside it. The read-contract page documents every code.
+ */
+
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { describe, expect, test } from "vitest";
+import { REPO } from "./__fixtures__/contract-repo";
+import { MEMBER_RUN_REASON_CODES } from "./compose-graph";
+import { WORKSPACE_ERROR_CODES } from "./declaration";
+import { GRAPH_ERROR_CODES } from "./graph-cli";
+import { CHECK_CODES, CHECK_ERROR_CODES } from "./lineage-check";
+import { GROUP_REASON_CODES, MEMBER_REASON_CODES } from "./ls";
+import { isReasonCode, REASON_CODES, REASONS } from "./reason-codes";
+import { READ_ERROR_CODES, RECORD_REASON_CODES } from "./records";
+import { STATUS_ERROR_CODES, STATUS_REASON_CODES } from "./status";
+
+const HERE = import.meta.dirname;
+
+const PER_COMMAND: Record<string, readonly string[]> = {
+  WORKSPACE_ERROR_CODES,
+  MEMBER_REASON_CODES,
+  GROUP_REASON_CODES,
+  MEMBER_RUN_REASON_CODES,
+  GRAPH_ERROR_CODES,
+  CHECK_CODES,
+  CHECK_ERROR_CODES,
+  STATUS_REASON_CODES,
+  STATUS_ERROR_CODES,
+  RECORD_REASON_CODES,
+  READ_ERROR_CODES,
+};
+
+/** Every string in an `enum` under a property named `code`, anywhere in a schema. */
+function schemaCodes(node: unknown, underCode = false, out = new Set<string>()): Set<string> {
+  if (Array.isArray(node)) {
+    for (const n of node) schemaCodes(n, underCode, out);
+  } else if (node !== null && typeof node === "object") {
+    for (const [k, v] of Object.entries(node)) {
+      if (k === "enum" && underCode) for (const e of v as unknown[]) out.add(String(e));
+      schemaCodes(v, k === "code" || (underCode && k !== "properties"), out);
+    }
+  }
+  return out;
+}
+
+function sourceFiles(dir: string): string[] {
+  const out: string[] = [];
+  for (const d of readdirSync(dir, { withFileTypes: true })) {
+    if (d.isDirectory() && d.name !== "__fixtures__") out.push(...sourceFiles(join(dir, d.name)));
+    else if (d.isFile() && d.name.endsWith(".ts") && !d.name.endsWith(".test.ts")) out.push(join(dir, d.name));
+  }
+  return out;
+}
+
+/** Codes that are someone else's: zod's issue codes. */
+const NOT_OURS = new Set(["custom"]);
+
+describe("the closed list of reason codes", () => {
+  test("has no duplicates, and every code says what it means", () => {
+    expect(new Set(REASON_CODES).size).toBe(REASON_CODES.length);
+    for (const c of REASON_CODES) {
+      expect(c).toMatch(/^[a-z]+(-[a-z0-9]+)*$/);
+      expect(REASONS[c].length).toBeGreaterThan(10);
+    }
+    expect(isReasonCode("dir-missing")).toBe(true);
+    expect(isReasonCode("toString")).toBe(false);
+  });
+
+  test("each command's list is a subset, and together they are the whole list", () => {
+    const union = new Set<string>();
+    for (const [name, codes] of Object.entries(PER_COMMAND)) {
+      for (const c of codes) {
+        expect(isReasonCode(c), `${name} has ${c}, which is not in reason-codes.ts`).toBe(true);
+        union.add(c);
+      }
+    }
+    expect([...union].sort()).toEqual([...REASON_CODES].sort());
+  });
+
+  test("the output schemas name exactly these codes", () => {
+    const named = new Set<string>();
+    for (const f of readdirSync(HERE).filter((f) => f.endsWith(".schema.json") && !f.startsWith("declaration") && !f.startsWith("workspace-kinds"))) {
+      for (const c of schemaCodes(JSON.parse(readFileSync(join(HERE, f), "utf-8")))) {
+        expect(isReasonCode(c), `${f} names ${c}, which is not in reason-codes.ts`).toBe(true);
+        named.add(c);
+      }
+    }
+    expect([...named].sort()).toEqual([...REASON_CODES].sort());
+  });
+
+  test("no source file emits a code outside the list", () => {
+    const emitted = /(?:\bcode:\s*|(?:WorkspaceReadError|RecordReadError|StatusError)\(\s*)"([a-z0-9-]+)"/g;
+    let seen = 0;
+    for (const file of sourceFiles(HERE)) {
+      const text = readFileSync(file, "utf-8");
+      for (const m of text.matchAll(emitted)) {
+        if (NOT_OURS.has(m[1])) continue;
+        seen++;
+        expect(isReasonCode(m[1]), `${file.slice(HERE.length + 1)} emits ${m[1]}, which is not in reason-codes.ts`).toBe(true);
+      }
+    }
+    expect(seen).toBeGreaterThan(30);
+  });
+
+  test("the read-contract page documents every code", () => {
+    const page = readFileSync(join(REPO, "docs", "src", "content", "docs", "reference", "workspace-read-contract.mdx"), "utf-8");
+    for (const c of REASON_CODES) expect(page, c).toContain(`| \`${c}\` |`);
+  });
+});

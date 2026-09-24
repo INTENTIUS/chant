@@ -7,12 +7,14 @@ title: "chant workspace graph"
 ## Synopsis
 
 ```
-chant workspace graph [dir] [-o <file>] [--member <name>] [--env <name>] [--dry-run]
+chant workspace graph [dir] [--at <rev>] [-o <file>] [--member <name>] [--env <name>] [--dry-run]
 ```
 
 ## Description
 
 `chant workspace graph` reads every member of kind `chant` through that member's own `chant graph --format ir` and composes the results into one document ([#2537](https://github.com/INTENTIUS/chant/issues/2537), [ws-009](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-009-ir-versions.md), [ws-018](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-018-composer.md), [ws-022](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-022-ids.md)). The toolchain each member gets works as described for [`chant workspace build`](/chant/cli/workspace-build/#which-chant-runs-a-member). Example groups have no place in the graph.
+
+The document is part of the workspace [read contract](/chant/reference/workspace-read-contract/), with its own schema and reason codes.
 
 [`chant graph`](/chant/cli/graph/) is unchanged. At a workspace root it still prints the single-project IR of the root project, and this command is the only place members are composed.
 
@@ -28,10 +30,16 @@ A member's IR with no `version` field comes from a chant older than that field. 
 
 ## Output
 
+The document follows the schema `https://intentius.io/chant/schemas/workspace/graph/v1/graph.schema.json`, shipped in `@intentius/chant` at `src/workspace/graph.schema.json`. Readers ignore fields they don't know. Fields are only added within a contract version, and the code lists are closed.
+
 ```json
 {
+  "$schema": "https://intentius.io/chant/schemas/workspace/graph/v1/graph.schema.json",
+  "contract": 1,
+  "chant": "0.81.0",
+  "at": null,
   "version": 1,
-  "workspace": { "name": "acme", "root": "/work/acme" },
+  "workspace": { "name": "acme", "root": "." },
   "members": [
     { "name": "api", "dir": "services/api", "kind": "chant", "status": "composed", "reason": null, "chant": "0.80.0", "irVersion": 1 },
     { "name": "legacy", "dir": "legacy", "kind": "chant", "status": "composed", "reason": null, "chant": null, "irVersion": null },
@@ -57,7 +65,9 @@ A member's IR with no `version` field comes from a chant older than that field. 
 }
 ```
 
-`version` is the version of the composed document. A member's `chant` is the version its toolchain reported, or `null` when the member was read by a chant older than `member-run`. A member's `meta` and `pipeline`, when its IR has them, stay on the member's entry.
+`contract` is the read-contract version and `chant` the version that composed the graph. `at` is the full commit id with `--at`, and `null` for the working tree. `workspace.root` is the workspace root relative to the git root. `version` is the version of the composed graph format. A member's `chant` is the version its toolchain reported, or `null` when the member was read by a chant older than `member-run`. A member's `meta` and `pipeline`, when its IR has them, stay on the member's entry.
+
+When the declaration can't be read, the command prints `{ "$schema", "contract", "chant", "error": { "code", "message", "location" } }` instead, with one of the [declaration's error codes](/chant/reference/workspace-declaration/#errors) or an `--at` code, `not-a-git-repository` or `revision-unknown`.
 
 ## Links
 
@@ -95,6 +105,7 @@ A declared link replaces the inferred edge it covers, so the same join never app
 | Option | Effect |
 |---|---|
 | `dir` | Where the walk up to the declaration starts. |
+| `--at <rev>` | Read the declaration at a commit, and each member's graph from its source at that commit. The tree is exported to a temporary directory and each member runs there under the toolchain installed now. See [what `--at` reads](/chant/reference/workspace-read-contract/#identity-and-revisions). |
 | `-o, --output <file>` | Write the document to a file. |
 | `--member <name>` | Compose only these members. Repeatable, and a comma list works too. |
 | `--env <name>` | Passed to each member's `chant graph`. |

@@ -23,6 +23,7 @@ import schema from "./declaration.schema.json";
 import { expandGlob } from "./glob";
 import { EXAMPLES_KIND, holdsChantProject } from "./kinds";
 import { parseJsonText, pointerToken, type TextLocation } from "./jsonc";
+import type { ReasonCode } from "./reason-codes";
 import { joinPath, type WorkspaceTree } from "./tree";
 
 export const DECLARATION_SCHEMA_ID = schema.$id;
@@ -52,11 +53,13 @@ export const WORKSPACE_ERROR_CODES = [
   "placement-invalid",
   /** The declaration's minReader is newer than this chant. */
   "reader-too-old",
+  /** The declaration pins another chant, which is not installed at the root (#2524 D15, ws-021). */
+  "root-chant-required",
   /** `--at` was given outside a git repository. */
   "not-a-git-repository",
   /** `--at` names no commit. */
   "revision-unknown",
-] as const;
+] as const satisfies readonly ReasonCode[];
 export type WorkspaceErrorCode = (typeof WORKSPACE_ERROR_CODES)[number];
 
 export interface ErrorLocation extends TextLocation {
@@ -182,6 +185,9 @@ export interface Declaration {
 
 // ── This chant ───────────────────────────────────────────────────────────────
 
+/** The package whose pin names the root's chant (#2524 D15, ws-021). */
+export const CHANT_PACKAGE = "@intentius/chant";
+
 let readerVersionCache: string | undefined;
 
 /**
@@ -279,12 +285,34 @@ function valueAt(root: unknown, pointer: string): unknown {
   return v;
 }
 
+export interface ReadOptions {
+  /**
+   * Apply "which chant reads it" (#2524 D15, ws-021): when the declaration
+   * pins `@intentius/chant` at a version other than `reader`, that pinned
+   * chant, the root's, reads it, and this one refuses with
+   * `root-chant-required`. The read-contract commands (`ls`, `graph`,
+   * `check`, `status`) set it, and hand the command to the root's chant
+   * first when it is installed (`which-chant.ts`). Other commands leave it
+   * off: a member's own toolchain writes its ledger whatever the root pins.
+   */
+  rootChant?: boolean;
+}
+
+/** The version the declaration's `@intentius/chant` pin names, and where the pin is. Undefined without one. */
+export function pinnedChant(obj: Record<string, unknown>): { version: string; index: number } | undefined {
+  if (!Array.isArray(obj.pins)) return undefined;
+  const index = obj.pins.findIndex(
+    (p) => p !== null && typeof p === "object" && (p as Record<string, unknown>).package === CHANT_PACKAGE && typeof (p as Record<string, unknown>).version === "string",
+  );
+  return index < 0 ? undefined : { version: (obj.pins[index] as { version: string }).version, index };
+}
+
 /**
  * Parse and check a declaration's text. `file` is the name used in messages
  * and decides the dialect: a name ending in `.jsonc` allows comments and
  * trailing commas.
  */
-export function parseDeclaration(text: string, file: string, reader: string = readerVersion()): Declaration {
+export function parseDeclaration(text: string, file: string, reader: string = readerVersion(), options: ReadOptions = {}): Declaration {
   const parsed = parseJsonText(text, { jsonc: file.endsWith(".jsonc") });
   if (!parsed.ok) {
     throw new WorkspaceReadError("declaration-unparseable", parsed.message, { file, ...parsed.location });
@@ -295,6 +323,18 @@ export function parseDeclaration(text: string, file: string, reader: string = re
     throw new WorkspaceReadError("declaration-invalid", "the declaration must be a JSON object", at(""));
   }
   const obj = raw as Record<string, unknown>;
+
+  // The root's chant reads the declaration (ws-021). A pin to another chant
+  // comes before minReader and the schema: that chant may know fields this
+  // one doesn't.
+  const pin = options.rootChant ? pinnedChant(obj) : undefined;
+  if (pin && pin.version !== reader) {
+    throw new WorkspaceReadError(
+      "root-chant-required",
+      `this declaration pins ${CHANT_PACKAGE} ${pin.version}, and this is chant ${reader}; the root's chant reads it, so install ${CHANT_PACKAGE}@${pin.version} at the workspace root`,
+      at(`/pins/${pin.index}/version`),
+    );
+  }
 
   // minReader first: a declaration written for a newer chant may use fields
   // this one doesn't know, and "too old" is the true reason it can't read it.
@@ -461,7 +501,7 @@ export function isInside(path: string, dir: string): boolean {
  * `declaration-missing` when neither name is there and
  * `declaration-ambiguous` when both are.
  */
-export function readDeclaration(tree: WorkspaceTree, dir = ""): Declaration {
+export function readDeclaration(tree: WorkspaceTree, dir = "", options: ReadOptions = {}): Declaration {
   const present = DECLARATION_FILES.map((name) => joinPath(dir, name)).filter((p) => tree.stat(p) === "file");
   if (present.length === 0) {
     throw new WorkspaceReadError("declaration-missing", `no ${DECLARATION_FILES.join(" or ")} in ${dir || "the workspace root"}${tree.label}`);
@@ -473,7 +513,7 @@ export function readDeclaration(tree: WorkspaceTree, dir = ""): Declaration {
       { file: present[1], line: 1, column: 1 },
     );
   }
-  return parseDeclaration(tree.read(present[0]), present[0]);
+  return parseDeclaration(tree.read(present[0]), present[0], readerVersion(), options);
 }
 
 /**

@@ -49,6 +49,7 @@
       "types": "./dist/cli/index.d.ts",
       "default": "./src/cli/index.ts"
     },
+    "./workspace/*.schema.json": "./src/workspace/*.schema.json",
     "./cli/*": {
       "development": "./src/cli/*.ts",
       "types": "./dist/cli/*.d.ts",

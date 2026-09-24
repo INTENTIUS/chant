@@ -51,7 +51,7 @@ The command loads only when it runs. A project without a declaration never loads
 
 ## Output
 
-With `--json`, the output follows the schema `https://intentius.io/chant/schemas/workspace/ls/v1/ls.schema.json`, shipped in `@intentius/chant` at `src/workspace/ls.schema.json`. Readers ignore fields they don't know. Fields are only added within a contract version, and the code lists are closed.
+The output is part of the workspace [read contract](/chant/reference/workspace-read-contract/). With `--json`, it follows the schema `https://intentius.io/chant/schemas/workspace/ls/v1/ls.schema.json`, shipped in `@intentius/chant` at `src/workspace/ls.schema.json`. Readers ignore fields they don't know. Fields are only added within a contract version, and the code lists are closed.
 
 ```json
 {
@@ -110,6 +110,7 @@ A group whose globs match no chant project has the reason `no-matches`.
 | `declaration-invalid` | doesn't match the schema, or repeats a name |
 | `placement-invalid` | breaks a [placement rule](/chant/reference/workspace-declaration/#placement) |
 | `reader-too-old` | the declaration's `minReader` is newer than this chant |
+| `root-chant-required` | the declaration pins another chant, which isn't installed at the root ([which chant reads it](/chant/reference/workspace-read-contract/#which-chant-reads-the-declaration)) |
 | `not-a-git-repository` | `--at` was given outside a git repository |
 | `revision-unknown` | `--at` names no commit |
 

@@ -67,7 +67,7 @@ The command doesn't read live state. `--compare-to --live` is refused with a poi
 
 ## Output
 
-With `--json`, the output follows the schema `https://intentius.io/chant/schemas/workspace/status/v1/status.schema.json`, shipped in `@intentius/chant` at `src/workspace/status.schema.json`. Readers ignore fields they don't know. Fields are only added within a contract version, and the code lists are closed.
+The output is part of the workspace [read contract](/chant/reference/workspace-read-contract/). With `--json`, it follows the schema `https://intentius.io/chant/schemas/workspace/status/v1/status.schema.json`, shipped in `@intentius/chant` at `src/workspace/status.schema.json`. Readers ignore fields they don't know. Fields are only added within a contract version, and the code lists are closed.
 
 ```json
 {

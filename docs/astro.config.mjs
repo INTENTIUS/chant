@@ -201,6 +201,7 @@ export default defineConfig({
 						{ label: 'Template Migrations', slug: 'reference/template-migrations' },
 						{ label: 'Workspace Declaration', slug: 'reference/workspace-declaration' },
 						{ label: 'Workspace Kinds', slug: 'reference/workspace-kinds' },
+						{ label: 'Workspace Read Contract', slug: 'reference/workspace-read-contract' },
 						{
 							label: 'CLI',
 							items: [

@@ -1,0 +1,129 @@
+/**
+ * The read contract as a whole (#2536, #2524 D15): every output schema, run
+ * against the reference workspace (#2543) in this checkout.
+ *
+ * `reference-workspace/` is a nested workspace of the chant repo, with a
+ * `chant` member (`delivery`), three `other` members and decision records.
+ * Each read-contract command reads it here, and its output must validate
+ * against the command's schema: `ls`, `graph` (running delivery's real
+ * `chant graph`), `check`, `status` and `records`, in the working tree and,
+ * for `ls`, `graph` and `check`, at `HEAD` through `--at`.
+ *
+ * The schemas themselves are checked here too: each is a draft 2020-12
+ * document under `https://intentius.io/chant/schemas/workspace/<command>/v1/`,
+ * at the contract version this chant writes, naming the chant floor.
+ */
+
+import { realpathSync } from "node:fs";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+import { describe, expect, test } from "vitest";
+import { contract, git, REPO, validSchema } from "./__fixtures__/contract-repo";
+import checkSchema from "./check.schema.json";
+import { workspaceGraph } from "./graph-cli";
+import graphSchema from "./graph.schema.json";
+import { runChecks } from "./lineage-check";
+import { listWorkspace } from "./ls";
+import lsSchema from "./ls.schema.json";
+import { readerBin, type Toolchain } from "./member-commands";
+import { READ_CONTRACT_FLOOR, READ_CONTRACT_VERSION } from "./reason-codes";
+import { queryRecords } from "./records-cli";
+import recordsSchema from "./records.schema.json";
+import { workspaceStatus } from "./status";
+import statusSchema from "./status.schema.json";
+
+const FIXTURE = join(REPO, "reference-workspace");
+const TIMEOUT = 240_000;
+
+const SCHEMAS = { ls: lsSchema, graph: graphSchema, check: checkSchema, status: statusSchema, records: recordsSchema };
+
+/** This checkout's chant, started the way the CLI starts it, for members with no toolchain of their own. */
+const reader: Toolchain = {
+  command: [process.execPath, "--import", pathToFileURL(join(REPO, "node_modules", "tsx", "dist", "loader.mjs")).href, join(REPO, "packages", "core", "src", "cli", "main.ts")],
+  identity: realpathSync(readerBin()),
+  source: "reader",
+};
+
+describe("the read contract's schemas", () => {
+  test.each(Object.entries(SCHEMAS))("%s is a valid draft 2020-12 document at the contract version, naming the floor", (name, schema) => {
+    expect(validSchema(schema)).toBe(true);
+    expect(schema.$id).toBe(`https://intentius.io/chant/schemas/workspace/${name}/v${READ_CONTRACT_VERSION}/${name}.schema.json`);
+    for (const branch of ["result", "failure"] as const) {
+      const props = (schema.$defs as Record<string, { properties: Record<string, unknown> }>)[branch].properties;
+      expect(props.contract, `${name} ${branch}`).toEqual({ const: READ_CONTRACT_VERSION });
+      expect(props.$schema, `${name} ${branch}`).toEqual({ const: schema.$id });
+    }
+    expect(schema.description).toContain(`chant ${READ_CONTRACT_FLOOR} and newer`);
+  });
+});
+
+describe("every schema against the reference workspace (#2543)", () => {
+  const head = git(REPO, "rev-parse", "HEAD");
+
+  test("ls, in the working tree and at HEAD", () => {
+    const { expectValid } = contract(lsSchema);
+    for (const at of [undefined, "HEAD"]) {
+      const doc = listWorkspace({ cwd: join(FIXTURE, "delivery"), at });
+      expectValid(doc);
+      if ("error" in doc) throw new Error(doc.error.message);
+      expect(doc.workspace).toMatchObject({ name: "reference", root: "reference-workspace" });
+      expect(doc.at).toBe(at ? head : null);
+      expect(doc.members.map((m) => [m.name, m.readable])).toEqual([
+        ["app", true],
+        ["delivery", true],
+        ["design-client", true],
+        ["design", true],
+      ]);
+    }
+  });
+
+  test(
+    "graph runs delivery's own chant graph, in the working tree and at HEAD",
+    async () => {
+      const { expectValid } = contract(graphSchema);
+      for (const at of [undefined, "HEAD"]) {
+        const { doc, failed } = await workspaceGraph({ cwd: FIXTURE, at, reader });
+        expectValid(doc);
+        if ("error" in doc) throw new Error(doc.error.message);
+        expect(failed, JSON.stringify(doc.members)).toBe(false);
+        expect(doc.workspace).toEqual({ name: "reference", root: "reference-workspace" });
+        expect(doc.at).toBe(at ? head : null);
+        const delivery = doc.members.find((m) => m.name === "delivery");
+        expect(delivery).toMatchObject({ status: "composed", reason: null, irVersion: 1 });
+        expect(doc.groups.byMember.delivery.length).toBeGreaterThan(0);
+        expect(doc.nodes.every((n) => n.id.startsWith("delivery/") && n.member === "delivery")).toBe(true);
+      }
+    },
+    TIMEOUT,
+  );
+
+  test("check, in the working tree and at HEAD", async () => {
+    const { expectValid } = contract(checkSchema);
+    for (const at of [undefined, "HEAD"]) {
+      const doc = await runChecks(FIXTURE, at);
+      expectValid(doc);
+      if ("error" in doc) throw new Error(doc.error.message);
+      expect(doc.workspace).toEqual({ name: "reference", root: "reference-workspace" });
+      expect(doc.declaration?.diagnostics.filter((d) => d.severity === "error")).toEqual([]);
+    }
+  });
+
+  test("status", async () => {
+    const doc = await workspaceStatus({ cwd: FIXTURE, env: "dev" });
+    contract(statusSchema).expectValid(doc);
+    if ("error" in doc) throw new Error(doc.error.message);
+    expect(doc.workspace).toMatchObject({ name: "reference", root: "reference-workspace" });
+    expect(doc.members.map((m) => m.name)).toEqual(["app", "delivery", "design-client", "design"]);
+  });
+
+  test("records, in the working tree and at HEAD", async () => {
+    const { expectValid } = contract(recordsSchema);
+    for (const at of [undefined, "HEAD"]) {
+      const doc = await queryRecords({ kind: "decisions/decision.kind.mjs", cwd: FIXTURE, at });
+      expectValid(doc);
+      if ("error" in doc) throw new Error(doc.error.message);
+      expect(doc.summary.invalid).toBe(0);
+      expect(doc.records.map((r) => r.id)).toContain("ref-001");
+    }
+  });
+});

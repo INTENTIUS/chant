@@ -294,10 +294,12 @@ describe("chant workspace check with a declaration", () => {
     expect(sarif.runs[0].tool.driver.rules.map((r: { id: string }) => r.id)).toEqual(["WSP003", "WSP009"]);
   });
 
-  test("--format json prints lint's JSON: the active diagnostics", async () => {
+  test("--format json prints the read-contract document, with the active diagnostics in lint's shape (#2536)", async () => {
     const root = repo(files);
     expect(await run(root, "--format", "json")).toBe(1);
-    expect(JSON.parse(out.join("\n")).map((d: { ruleId: string }) => d.ruleId)).toEqual(["WSP003"]);
+    const doc = JSON.parse(out.join("\n")) as { contract: number; declaration: { diagnostics: { ruleId: string }[] } };
+    expect(doc.contract).toBe(1);
+    expect(doc.declaration.diagnostics.map((d) => d.ruleId)).toEqual(["WSP003"]);
   });
 
   test("stylish lists the findings and the suppressed ones", async () => {

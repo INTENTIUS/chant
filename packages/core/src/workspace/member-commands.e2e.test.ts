@@ -19,7 +19,9 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import Ajv2020 from "ajv/dist/2020";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import graphSchema from "./graph.schema.json";
 
 const REPO = realpathSync(join(import.meta.dirname, "..", "..", "..", ".."));
 const LOADER = join(REPO, "node_modules", "tsx", "dist", "loader.mjs");
@@ -184,6 +186,23 @@ describe("chant workspace graph", () => {
     expect(lines(services)).toEqual(["workspace member-run"]);
     expect(lines(legacyLog)).toEqual(["workspace member-run", "graph . --format ir"]);
   });
+
+  test("--at reads each member's source at the revision, under the toolchains installed now (#2536)", () => {
+    const web = join(root, "services", "web", "src", "infra.ts");
+    const before = readFileSync(web, "utf-8");
+    writeFileSync(web, ns("webNsChanged", "web"));
+    try {
+      const r = chant(["workspace", "graph", "--at", "HEAD"]);
+      expect(r.status, r.stderr).toBe(0);
+      const at = JSON.parse(r.stdout) as { at: string; contract: number; nodes: Array<{ id: string }> };
+      const validate = new Ajv2020({ strict: true, allErrors: true }).compile(graphSchema);
+      expect(validate(at), JSON.stringify(validate.errors)).toBe(true);
+      expect(at.at).toMatch(/^[0-9a-f]{40}$/);
+      expect(at.nodes.map((n) => n.id)).toEqual(["api/apiNs", "legacy/Queue", "platform/rootNs", "web/webNs"]);
+    } finally {
+      writeFileSync(web, before);
+    }
+  }, TIMEOUT);
 
   test("leaves chant graph at the root as the single-project IR", () => {
     const r = chant(["graph", "--format", "ir"]);
