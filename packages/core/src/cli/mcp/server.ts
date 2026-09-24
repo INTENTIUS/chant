@@ -6,6 +6,7 @@ import { importTool, handleImport } from "./tools/import";
 import { explainTool, handleExplain } from "./tools/explain";
 import { scaffoldTool, createScaffoldHandler } from "./tools/scaffold";
 import { searchTool, createSearchHandler } from "./tools/search";
+import { compositesTool, createCompositesHandler } from "./tools/composites";
 import type { LexiconPlugin } from "../../lexicon";
 import type { McpRequest, McpResponse, McpRequestMeta, ToolDefinition, ToolHandler, ResourceDefinition } from "./types";
 import { createSnapshotTool, createDiffTool } from "./lifecycle-tools";
@@ -90,8 +91,10 @@ export class McpServer {
   private tools: Map<string, ToolDefinition> = new Map();
   private toolHandlers: Map<string, ToolHandler> = new Map();
   private pluginResources: Map<string, { definition: ResourceDefinition; handler: () => Promise<string> }> = new Map();
+  private plugins: LexiconPlugin[];
 
   constructor(plugins?: LexiconPlugin[]) {
+    this.plugins = plugins ?? [];
     // Register core tools
     this.registerTool(buildTool, handleBuild);
     this.registerTool(lintTool, handleLint);
@@ -99,6 +102,7 @@ export class McpServer {
     this.registerTool(explainTool, handleExplain);
     this.registerTool(scaffoldTool, createScaffoldHandler(plugins ?? []));
     this.registerTool(searchTool, createSearchHandler(plugins ?? []));
+    this.registerTool(compositesTool, createCompositesHandler(plugins ?? []));
 
     // Register state tools
     const snapshot = createSnapshotTool(plugins ?? []);
@@ -252,7 +256,7 @@ export class McpServer {
         return buildResourcesList(this.pluginResources);
 
       case "resources/read":
-        return handleResourcesRead(params, this.pluginResources);
+        return handleResourcesRead(params, this.pluginResources, this.plugins);
 
       default:
         throw new Error(`Unknown method: ${method}`);

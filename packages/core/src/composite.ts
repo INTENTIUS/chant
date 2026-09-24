@@ -72,6 +72,15 @@ export function isCompositeInstance(value: unknown): value is CompositeInstance 
 }
 
 /**
+ * Type guard: is this value a composite definition, what `Composite()` and
+ * `withDefaults()` return? A lexicon's composite catalog test uses it to find
+ * the composites a module exports (#2662).
+ */
+export function isCompositeDefinition(value: unknown): value is CompositeDefinition<unknown> {
+  return typeof value === "function" && typeof (value as { compositeName?: unknown }).compositeName === "string";
+}
+
+/**
  * Global registry of composite definitions.
  */
 export class CompositeRegistry {

@@ -28,6 +28,7 @@ import type { BehaviourKinds } from "./behaviour-kinds";
 import type { DisruptionQuery, DisruptionVerdict } from "./lifecycle/disruption";
 import type { OwnerChainVerdict } from "./owner-chain";
 import type { CommandGroup } from "./cli/command-group";
+import type { Archetype } from "./components/component";
 
 // Re-exported so a lexicon that hosts Op runs (#2121) can type its
 // `opRuntime` from the same entry it imports the plugin contract from.
@@ -929,6 +930,45 @@ export interface AuditEntitiesInput {
   baseDir?: string;
 }
 
+/**
+ * One parameter of a composite, read from the composite's declared props type
+ * (#2662).
+ */
+export interface CompositeParam {
+  /** The prop name as a caller writes it. */
+  name: string;
+  /** The declared TypeScript type, as source text (long inline types are shortened). */
+  type: string;
+  /** False when the prop is optional. */
+  required: boolean;
+  /** The prop's JSDoc summary, when it has one. */
+  description?: string;
+}
+
+/**
+ * A composite this lexicon exports, as static catalog data (#2662).
+ *
+ * The catalog is what `chant serve mcp` answers "what composites do you have
+ * for aws?" from: the `composites` tool, the `chant://composites` resource and
+ * `search` results of kind `composite` all read it, and none of them calls a
+ * provider. A lexicon writes it once, from source, and a test in the lexicon
+ * holds it to the composites the package actually exports.
+ */
+export interface CompositeEntry {
+  /** The exported name a caller imports (an alias gets its own entry). */
+  name: string;
+  /** The lexicon that exports it. */
+  lexicon: string;
+  /** One line saying what it builds. */
+  description: string;
+  /** Resource kinds (the lexicon's class names) its members are, nested composites flattened. */
+  bundles: string[];
+  /** Its props, from the declared props type. */
+  params: CompositeParam[];
+  /** The component archetype that ships it, when that is known. */
+  archetype?: Archetype;
+}
+
 export interface LexiconPlugin {
   // ── Required ──────────────────────────────────────────────
   /** Human-readable name (e.g. "aws", "gcp") */
@@ -1211,6 +1251,13 @@ export interface LexiconPlugin {
   // Docs
   /** Generate documentation pages */
   docs?(options?: { verbose?: boolean }): Promise<void>;
+
+  /**
+   * The composites this lexicon exports, as static data (#2662). Read by the
+   * MCP `composites` tool, the `chant://composites` resource and `search`.
+   * Omit for a lexicon that exports no composites.
+   */
+  composites?(): CompositeEntry[];
 
   // MCP
   /** Return MCP tool contributions */

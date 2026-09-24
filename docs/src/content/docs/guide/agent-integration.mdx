@@ -61,7 +61,8 @@ To configure manually, add the chant MCP server to your IDE's MCP config:
 | `import` | Import infrastructure templates and generate TypeScript files |
 | `explain` | Summarize project resources by lexicon and kind |
 | `scaffold` | Generate starter files from lexicon templates |
-| `search` | Search available resource types across lexicons |
+| `search` | Search resource types and composites across lexicons |
+| `composites` | List the composites a lexicon exports, with what each bundles and its parameters |
 | `lifecycle-snapshot` | Capture deployed state for an environment |
 | `lifecycle-diff` | Compare the current build against an environment's last snapshot |
 | `op-list` | List discovered Ops with the run state a runtime reports |
@@ -78,6 +79,7 @@ The parameters each one takes, and what it returns, are in the [`chant serve mcp
 |--------------|-------------|
 | `chant://context` | Lexicon-specific instructions and patterns for chant development |
 | `chant://examples/list` | List of available chant examples |
+| `chant://composites` | Every composite the loaded lexicons export |
 
 Lexicon plugins can contribute additional tools and resources. The [`chant serve mcp` reference](/chant/cli/mcp/#resources) lists every core resource the server serves, the knowledge bundle and per-environment state among them.
 

@@ -1,3 +1,4 @@
+import { compositeCatalog } from "./composites/catalog";
 import type {
   LexiconPlugin,
   SkillDefinition,
@@ -157,6 +158,10 @@ export const cplnPlugin: LexiconPlugin = {
         "Wire Control Plane secrets, identities and policies so a workload can actually read them",
     },
   ]) as () => SkillDefinition[],
+
+  composites() {
+    return compositeCatalog;
+  },
 
   mcpTools(): McpToolContribution[] {
     return [

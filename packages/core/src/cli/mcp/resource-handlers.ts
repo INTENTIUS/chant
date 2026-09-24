@@ -1,6 +1,8 @@
 import { resolve, join, dirname } from "node:path";
 import { readFile } from "node:fs/promises";
 import type { ResourceDefinition } from "./types";
+import type { LexiconPlugin } from "../../lexicon";
+import { collectComposites } from "./tools/composites";
 import { getContext } from "./resources/context";
 import { readSnapshot, readEnvironmentSnapshots } from "../../lifecycle/git";
 import { discoverOps } from "../../op/discover";
@@ -42,6 +44,12 @@ export const coreResourceDefinitions: ResourceDefinition[] = [
     uri: "chant://ops/{name}/runs/latest",
     name: "Op latest run",
     description: "Latest run state for a named Op",
+    mimeType: "application/json",
+  },
+  {
+    uri: "chant://composites",
+    name: "Composite catalog",
+    description: "Every composite the loaded lexicons export, with what each bundles and its parameters (#2662)",
     mimeType: "application/json",
   },
   {
@@ -99,8 +107,17 @@ export function collectExamples(
 export async function handleResourcesRead(
   params: Record<string, unknown>,
   pluginResources: Map<string, PluginResourceEntry>,
+  plugins: LexiconPlugin[] = [],
 ): Promise<unknown> {
   const uri = params.uri as string;
+
+  // The whole composite catalog (#2662), static data from each lexicon's
+  // `composites()`; the `composites` tool filters the same list.
+  if (uri === "chant://composites") {
+    return {
+      contents: [{ uri, mimeType: "application/json", text: JSON.stringify(collectComposites(plugins), null, 2) }],
+    };
+  }
 
   if (uri === "chant://context") {
     return {

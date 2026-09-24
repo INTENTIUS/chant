@@ -21,6 +21,7 @@ export interface MinimalVpcProps {
   };
 }
 
+/** A VPC with one public subnet, an internet gateway, a public route and a security group. */
 export const MinimalVpc = Composite((props: MinimalVpcProps) => {
   const { defaults } = props;
   const cidr = props.cidr ?? "10.0.0.0/24";
