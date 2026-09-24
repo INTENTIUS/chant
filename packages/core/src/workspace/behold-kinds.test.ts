@@ -1,15 +1,14 @@
 /**
  * behold's two closed member kinds, read through chant's workspace (#2545).
  *
- * `terraform` ships from the terraform lexicon's `./workspace-kinds` subpath,
- * and `choudoufu` from the kinds-only package
- * `@intentius/workspace-kind-choudoufu`. A workspace that pins both lists
- * members of either kind through `chant workspace ls --json`, with the kinds
- * behold gave the same directories, and reading the kinds imports neither
- * package.
+ * Both ship from the terraform lexicon's `./workspace-kinds` subpath, since
+ * a choudoufu estate is a Terraform root the lexicon's choudoufu mode reads.
+ * A workspace that pins the lexicon lists members of either kind through
+ * `chant workspace ls --json`, with the kinds behold gave the same
+ * directories, and reading the kinds never imports the lexicon.
  *
- * The installed packages are the repo's own: their package.json and kinds
- * file are copied as they ship, and every code entry their `exports` name is
+ * The installed package is the repo's own: its package.json and kinds file
+ * are copied as they ship, and every code entry its `exports` names is
  * replaced by a module that leaves a marker file when it is imported.
  */
 
@@ -25,7 +24,6 @@ import { workingTree } from "./tree";
 
 const REPO = join(import.meta.dirname, "..", "..", "..", "..");
 const TERRAFORM = join(REPO, "lexicons", "terraform");
-const CHOUDOUFU = join(REPO, "packages", "workspace-kind-choudoufu");
 const FIXTURES = join(TERRAFORM, "src", "__fixtures__");
 
 const scratch: string[] = [];
@@ -65,7 +63,7 @@ function install(root: string, from: string): string {
 function workspace(): { root: string; installed: string[] } {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "chant-behold-kinds-")));
   scratch.push(root);
-  const installed = [install(root, TERRAFORM), install(root, CHOUDOUFU)];
+  const installed = [install(root, TERRAFORM)];
   // Estates in the shapes behold serves: a stock root, a choudoufu root with
   // the sidecar, one with the live block, and a chant project beside .tf files.
   cpSync(join(FIXTURES, "no-backend"), join(root, "estates", "stock"), { recursive: true });
@@ -82,7 +80,6 @@ function workspace(): { root: string; installed: string[] } {
         schema: 1,
         pins: [
           { package: "@intentius/chant-lexicon-terraform", version: version(TERRAFORM) },
-          { package: "@intentius/workspace-kind-choudoufu", version: version(CHOUDOUFU) },
         ],
         members: [
           { name: "stock", dir: "estates/stock", kind: "terraform" },
@@ -106,7 +103,7 @@ describe("behold's member kinds from their packages (#2545)", () => {
   });
   afterEach(() => vi.restoreAllMocks());
 
-  test("chant workspace ls --json lists terraform and choudoufu members, readable, and imports neither package", async () => {
+  test("chant workspace ls --json lists terraform and choudoufu members, readable, and never imports the lexicon", async () => {
     const { root, installed } = workspace();
     const code = await runWorkspaceLs({ args: parseArgs(["workspace", "ls", root, "--json"]), plugins: [] } as never);
     expect(code).toBe(0);
@@ -126,12 +123,11 @@ describe("behold's member kinds from their packages (#2545)", () => {
     const { root } = workspace();
     const pins = [
       { package: "@intentius/chant-lexicon-terraform", version: version(TERRAFORM), path: null },
-      { package: "@intentius/workspace-kind-choudoufu", version: version(CHOUDOUFU), path: null },
     ];
     const { registry, problems } = loadKindRegistry(pins, root);
     expect(problems).toEqual([]);
     expect(registry.get("terraform")).toMatchObject({ source: "@intentius/chant-lexicon-terraform", precedence: 400 });
-    expect(registry.get("choudoufu")).toMatchObject({ source: "@intentius/workspace-kind-choudoufu", precedence: 450 });
+    expect(registry.get("choudoufu")).toMatchObject({ source: "@intentius/chant-lexicon-terraform", precedence: 450 });
     const tree = workingTree(root);
     const winner = (dir: string) => resolveKind(registry, tree, dir).winner?.name;
     expect(winner("estates/stock")).toBe("terraform");

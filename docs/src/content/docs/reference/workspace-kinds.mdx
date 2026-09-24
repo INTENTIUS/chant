@@ -84,20 +84,19 @@ A pin that isn't installed, is installed at another version, or publishes a kind
 
 ## Terraform and choudoufu
 
-Two kinds ship from chant's own packages. behold used to keep both in its closed list of member kinds ([#2545](https://github.com/INTENTIUS/chant/issues/2545)), and each keeps behold's probe, narrowed to the member's own directory, and behold's order: a chant project first, then choudoufu, then terraform.
+Two kinds ship from the terraform lexicon, since a choudoufu estate is a Terraform root that the lexicon's choudoufu mode reads. behold used to keep both in its closed list of member kinds ([#2545](https://github.com/INTENTIUS/chant/issues/2545)), and each keeps behold's probe, narrowed to the member's own directory, and behold's order: a chant project first, then choudoufu, then terraform.
 
 | Kind | Package | Precedence | Probe |
 |---|---|---|---|
-| `choudoufu` | `@intentius/workspace-kind-choudoufu`, a kinds-only package | 450 | `anyFile: ["estate.chdf.hcl"]`, or `anyBlock` for a `live` block in a `*.tf` file |
+| `choudoufu` | `@intentius/chant-lexicon-terraform` | 450 | `anyFile: ["estate.chdf.hcl"]`, or `anyBlock` for a `live` block in a `*.tf` file |
 | `terraform` | `@intentius/chant-lexicon-terraform` | 400 | `anyFile: ["*.tf"]` |
 
-A choudoufu root also passes the `terraform` probe, and the higher precedence makes it a `choudoufu` member. A workspace that uses either kind pins its package.
+A choudoufu root also passes the `terraform` probe, and the higher precedence makes it a `choudoufu` member. A workspace that uses either kind pins the lexicon.
 
 ```json
 {
   "pins": [
-    { "package": "@intentius/chant-lexicon-terraform", "version": "0.80.0" },
-    { "package": "@intentius/workspace-kind-choudoufu", "version": "1.0.0" }
+    { "package": "@intentius/chant-lexicon-terraform", "version": "0.81.0" }
   ],
   "members": [
     { "name": "network", "dir": "estates/network", "kind": "terraform" },

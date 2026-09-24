@@ -181,8 +181,8 @@ the lexicon in `chant.workspace.json` and declare the root with that kind.
 The kind's probe passes when a `.tf` file sits directly in the member's
 directory, and its precedence is 400. A chant project (500) that keeps `.tf`
 files beside its config is still a `chant` member. A choudoufu root passes this
-probe too, and the `choudoufu` kind from `@intentius/workspace-kind-choudoufu`
-(450) outranks it. `chant workspace ls` reads the kind from the file and never
+probe too, and the `choudoufu` kind this lexicon also ships (450, an
+`estate.chdf.hcl` sidecar or a `live` block) outranks it. `chant workspace ls` reads the kind from the file and never
 imports the lexicon. behold's own `terraform` member kind moved here, so an estate
 behold reads lists the same way in a chant workspace. See
 [Workspace Kinds](/chant/reference/workspace-kinds/#terraform-and-choudoufu) for the

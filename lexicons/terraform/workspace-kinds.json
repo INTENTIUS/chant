@@ -1,12 +1,34 @@
 {
-  "$comment": "Member kinds this lexicon supplies to a chant workspace (#2545). chant reads this file as data and never imports the lexicon. The probe is behold's terraform member probe, narrowed to the member's own directory.",
+  "$comment": "Member kinds this lexicon supplies to a chant workspace (#2545). chant reads this file as data and never imports the lexicon. Both probes are behold's, narrowed to the member's own directory: a choudoufu estate is a Terraform root with an estate.chdf.hcl sidecar or a live block, and the lexicon's choudoufu mode (#2103) reads it, so the kind lives here.",
   "schema": 1,
   "kinds": [
     {
       "name": "terraform",
       "description": "a Terraform root module, with a .tf file directly in its directory",
       "precedence": 400,
-      "probe": { "anyFile": ["*.tf"] }
+      "probe": {
+        "anyFile": [
+          "*.tf"
+        ]
+      }
+    },
+    {
+      "name": "choudoufu",
+      "description": "a choudoufu estate: a Terraform root with an estate.chdf.hcl sidecar or a live block in one of its .tf files",
+      "precedence": 450,
+      "probe": {
+        "anyFile": [
+          "estate.chdf.hcl"
+        ],
+        "anyBlock": {
+          "in": [
+            "*.tf"
+          ],
+          "blocks": [
+            "live"
+          ]
+        }
+      }
     }
   ]
 }
