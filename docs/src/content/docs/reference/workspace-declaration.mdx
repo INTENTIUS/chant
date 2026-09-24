@@ -7,7 +7,7 @@ diataxis: reference
 A `chant.workspace.json` at the top of a repository makes it a workspace: a directory of members of declared kinds ([#2524](https://github.com/INTENTIUS/chant/issues/2524) D1, D2). Only this file creates a workspace. chant never infers one, and a project without it stays at level 0, where nothing changes ([#2525](https://github.com/INTENTIUS/chant/issues/2525)). [`chant workspace init`](/chant/cli/workspace-init/) proposes one from the projects already in the repository, and [`chant workspace ls`](/chant/cli/workspace-ls/) lists what it declares.
 
 :::note[What ships so far]
-chant reads, validates and lists the declaration. Per-member build and lint, and the refusal of root-level `chant build` and `chant lint` at a declared root, come with [#2537](https://github.com/INTENTIUS/chant/issues/2537). Until then the file changes nothing about any other chant command.
+chant reads, validates and lists the declaration, and each member writes its lifecycle ledger under its own path on `chant/lifecycle` ([#2538](https://github.com/INTENTIUS/chant/issues/2538), see [Ledgers](#ledgers)). Per-member build and lint, and the refusal of root-level `chant build` and `chant lint` at a declared root, come with [#2537](https://github.com/INTENTIUS/chant/issues/2537). Until then the file changes nothing else about other chant commands.
 :::
 
 The format is JSON so that any reader can list the members without running TypeScript. The JSON Schema ships in `@intentius/chant` at `src/workspace/declaration.schema.json`, with the `$id` `https://intentius.io/chant/schemas/workspace/declaration/v1/chant.workspace.schema.json`. chant validates the file against it on every read.
@@ -138,6 +138,44 @@ A pin names the toolchain or a plugin that reads the workspace.
 | a local plugin | `path` inside the workspace, optional `integrity` |
 
 `integrity` is a Subresource Integrity digest such as `sha512-...`. chant records pins and lists them in `chant workspace ls --json`; which of them load kinds comes with [#2535](https://github.com/INTENTIUS/chant/issues/2535).
+
+## Ledgers
+
+chant records each lifecycle fact on the orphan branch `chant/lifecycle`, and keeps operator leases in refs beside it. A member writes all of them under its own directory on that one branch ([#2538](https://github.com/INTENTIUS/chant/issues/2538), [#2524](https://github.com/INTENTIUS/chant/issues/2524) D7). In the table, `<ledger>` is the top of the branch for a project with no declaration, and `_members/<member>/` for a member. The paths are chant's storage rather than a contract, so read the facts with the CLI.
+
+| Store | Path |
+|---|---|
+| Release records | `<ledger><env>/releases.jsonl` |
+| State snapshots | `<ledger><env>/<lexicon>.json`, with a `<stack>__` prefix for a project with several stacks |
+| Accepted observation baseline | `<ledger><env>/observation-baseline.json` |
+| Op run records | `<ledger><env>/runs__<op>.jsonl` |
+| Converge tick records | `<ledger><env>/converge.jsonl` |
+| Gate facts, pending and resolved | `<ledger>_gates/<op>.jsonl` |
+| Build manifests | `<ledger>_builds/<digest>.json` |
+| Operator leases | the ref `refs/chant/lease/<ledger><op>` |
+
+chant looks up from a project's directory to the git root for a declaration. The entry that owns the directory decides the ledger.
+
+| The project is | Its ledger |
+|---|---|
+| a project with no declaration above it (level 0) | the top of the branch, byte for byte as before |
+| the root member `"."`, or a directory no member owns | the top of the branch |
+| a match of an example group, since a group has no ledger | the top of the branch |
+| any other member | `_members/<member>/` |
+| a member of a nested workspace held by the outer member `platform` | `_members/platform/_members/<member>/` |
+
+A project with no declaration loads no workspace code for this lookup. When a declaration exists but can't be read, a ledger write fails with the read error instead of guessing the member. There is still one branch, so pushing it and refusing a stale push work as before. One commit can write the ledgers of several members.
+
+Receipts written by an `effect()` step are not on the branch. They live wherever the lexicon stores them, named by `ownership.stack` and environment, so distinct stacks keep members' receipts apart.
+
+Declaring a project as a member changes where it writes from then on. chant does not copy the records the project already wrote at the top of the branch. A project with history that becomes the root member `"."` keeps reading it.
+
+The first chant that writes member paths is `0.81.0`. A member whose own toolchain resolves an older chant keeps writing the top of the branch. Two checks in `packages/core/src/workspace/checks/ledgers.ts` cover this, and `chant workspace check` reports them once the check contract of [#2535](https://github.com/INTENTIUS/chant/issues/2535) lands.
+
+| Id | Fails when |
+|---|---|
+| `WSP071` | two `chant` members set the same `ownership.stack`. Markers carry no member name, so the stack keeps members' resources apart. A member with no stack stamps no marker and isn't compared. [`chant workspace init`](/chant/cli/workspace-init/#ownership-stacks) proposes a distinct stack for each member |
+| `WSP072` | two members that write the top of the branch share an environment name, taken from `environments` and a literal `ownership.env`. The root member writes there, and so does a member on a chant older than `0.81.0` |
 
 ## Errors
 

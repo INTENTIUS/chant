@@ -46,7 +46,7 @@ import {
   type PromotionPlan,
 } from "../../components/promote";
 import type { DriverComponent } from "../../components/driver";
-import { writeGatedRunSummary } from "../../op/gate-summary";
+import { summaryLedgerPrefix, writeGatedRunSummary } from "../../op/gate-summary";
 import { approveCommand } from "../../op/gate";
 import { resolveCliBuildParams, parseParamFlags } from "../build-params-cli";
 import { formatError, formatWarning, formatSuccess, formatBold, formatInfo } from "../format";
@@ -256,6 +256,7 @@ async function deployPlan(
       expiresAt: pending.expiresAt,
       ...(pending.url ? { url: pending.url } : {}),
       ...(pending.planDigest ? { planDigest: pending.planDigest } : {}),
+      ...(await summaryLedgerPrefix()),
     });
     return GATED_EXIT_CODE;
   }

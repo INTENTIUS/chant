@@ -5,8 +5,22 @@
  * no working tree changes.
  */
 import { getRuntime } from "../runtime-adapter";
+import { resolveMemberLedger } from "./member-ledger";
 
 const STATE_BRANCH = "chant/lifecycle";
+
+/**
+ * The branch path of `dir` for the project at `cwd` (#2538): `dir` itself at
+ * level 0 and for the root member `.`, `_members/<member>/<dir>` for any
+ * other workspace member. Every store in this module and the ones built on it
+ * (releases, snapshots, observation baselines, runs, converge records, gates,
+ * build records) goes through here, so none of them names the prefix itself.
+ * See ./member-ledger.ts for who counts as a member.
+ */
+export async function ledgerDir(dir: string, opts?: { cwd?: string }): Promise<string> {
+  const { prefix } = await resolveMemberLedger(opts?.cwd ?? process.cwd());
+  return `${prefix}${dir}`;
+}
 
 /**
  * The identity chant's ledger commits fall back to when the checkout has none
@@ -72,6 +86,16 @@ function ledgerWriteError(stage: string, path: string, stderr: string): Error {
 }
 
 /**
+ * Bounded retry budget for {@link writeBlobToPath}'s own internal CAS retry
+ * (#1959 finding 1). A conflict caused by some *other* env/file entry
+ * changing concurrently (the ordinary case — e.g. two operator ticks
+ * targeting different envs) is safe to resolve by simply rebuilding the tree
+ * against the new tip and retrying; this bounds how many times it does that
+ * before giving up and surfacing the conflict.
+ */
+const WRITE_BLOB_RETRY_ATTEMPTS = 5;
+
+/**
  * Write a blob to an arbitrary `<environment>/<filename>` path on the orphan
  * branch, preserving every other env/file entry already on the branch.
  *
@@ -91,17 +115,11 @@ function ledgerWriteError(stage: string, path: string, stderr: string): Error {
  * entry name this function's tree-building logic groups by; callers outside
  * this module that pass a non-env value (like `_builds`) are relying on that
  * generic behavior, not on any env-specific semantics.
+ *
+ * `environment` is relative to the project's ledger (#2538): a workspace
+ * member's write lands under `_members/<member>/` ({@link ledgerDir}). The
+ * write itself is {@link writeLedgerFiles} with one file.
  */
-/**
- * Bounded retry budget for {@link writeBlobToPath}'s own internal CAS retry
- * (#1959 finding 1). A conflict caused by some *other* env/file entry
- * changing concurrently (the ordinary case — e.g. two operator ticks
- * targeting different envs) is safe to resolve by simply rebuilding the tree
- * against the new tip and retrying; this bounds how many times it does that
- * before giving up and surfacing the conflict.
- */
-const WRITE_BLOB_RETRY_ATTEMPTS = 5;
-
 export async function writeBlobToPath(
   environment: string,
   filename: string,
@@ -109,25 +127,72 @@ export async function writeBlobToPath(
   commitMessage: string,
   opts?: { cwd?: string; expectPriorPathSha?: string | null },
 ): Promise<string> {
+  const dir = await ledgerDir(environment, opts);
+  return writeLedgerFiles(
+    [{ path: `${dir}/${filename}`, content, ...(opts?.expectPriorPathSha !== undefined ? { expectPriorSha: opts.expectPriorPathSha } : {}) }],
+    commitMessage,
+    opts,
+  );
+}
+
+/** One file for {@link writeLedgerFiles}. */
+export interface LedgerFileWrite {
+  /** The file's full path on the branch, such as `_members/api/prod/releases.jsonl`. No prefix is added. */
+  path: string;
+  content: string;
+  /**
+   * For a read-modify-write caller: the blob sha the caller's content was
+   * computed from (`null` for "the file did not exist"). A different sha on
+   * the branch is a conflict, never a blind retry.
+   */
+  expectPriorSha?: string | null;
+}
+
+/**
+ * Write several files to the branch in one commit (#2538). Paths are full
+ * branch paths, so one commit can write the ledgers of several members, for
+ * example `_members/api/prod/releases.jsonl` and
+ * `_members/web/prod/releases.jsonl` together. {@link writeBlobToPath} is the
+ * one-file case with the project's own member prefix applied.
+ *
+ * Pipeline, per attempt: read the directories each path passes through at
+ * the branch tip, replace the entries, rebuild the touched trees bottom-up
+ * with `git mktree`, `commit-tree` on that tip, then CAS-update the ref.
+ * Every entry the write does not touch is carried over as it is, so the tree
+ * of an unchanged directory keeps its sha.
+ */
+export async function writeLedgerFiles(
+  files: LedgerFileWrite[],
+  commitMessage: string,
+  opts?: { cwd?: string },
+): Promise<string> {
   const rt = getRuntime();
   const cwd = opts?.cwd;
-
-  // 1. Write blob — hash-object reads from stdin. Fed directly via spawn's
-  // stdin (no shell involved), so content is written byte-for-byte: no `sh`
-  // `echo` reinterpreting backslash-escape sequences (e.g. `\n` inside JSON,
-  // as in a serialized kubectl.kubernetes.io/last-applied-configuration
-  // annotation) and no shell-quoting dance around embedded single quotes.
-  // Content-addressed and idempotent, so this stays outside the retry loop
-  // below — nothing about a CAS conflict on the ref ever invalidates it.
-  //
-  // `path` is resolved first only so every failure below can name it (#2301).
-  const path = `${environment}/${filename}`;
-
-  const blobResult = await rt.spawn(["git", "hash-object", "-w", "--stdin"], { cwd, stdin: content });
-  if (blobResult.exitCode !== 0) {
-    throw ledgerWriteError("git hash-object", path, blobResult.stderr);
+  if (files.length === 0) throw new Error("writeLedgerFiles needs at least one file");
+  // Failures name the first path; one file is the ordinary case.
+  const path = files[0].path;
+  for (const f of files) {
+    const segs = f.path.split("/");
+    if (segs.length < 2 || segs.some((seg) => seg === "")) {
+      throw new Error(`cannot write ${f.path} on the ${STATE_BRANCH} branch: a ledger path is <dir>/<file>`);
+    }
   }
-  const blobSha = blobResult.stdout.trim();
+
+  // 1. Write the blobs — hash-object reads from stdin. Fed directly via
+  // spawn's stdin (no shell involved), so content is written byte-for-byte:
+  // no `sh` `echo` reinterpreting backslash-escape sequences (e.g. `\n`
+  // inside JSON, as in a serialized
+  // kubectl.kubernetes.io/last-applied-configuration annotation) and no
+  // shell-quoting dance around embedded single quotes. Content-addressed
+  // and idempotent, so this stays outside the retry loop below.
+  const blobs: { path: string; sha: string }[] = [];
+  for (const f of files) {
+    const blobResult = await rt.spawn(["git", "hash-object", "-w", "--stdin"], { cwd, stdin: f.content });
+    if (blobResult.exitCode !== 0) {
+      throw ledgerWriteError("git hash-object", f.path, blobResult.stderr);
+    }
+    blobs.push({ path: f.path, sha: blobResult.stdout.trim() });
+  }
 
   // Resolved once, outside the retry loop: whether the checkout can name a
   // committer does not change between attempts (#2301).
@@ -156,99 +221,94 @@ export async function writeBlobToPath(
     await requireLifecycleLedger({ ...(cwd ? { cwd } : {}) });
   }
 
-  // 2-5. Read tree, build the commit, and CAS-update the branch ref — retried
-  // on a conflict (#1959 finding 1). `writeBlobToPath` had no retry of its
-  // own before this: a conflict from step 5's `updateRefCAS` simply threw,
-  // breaking every pre-existing caller (observation-baseline.ts,
-  // snapshot.ts, build-ledger-store.ts, and — via `appendReleaseRecordLine`
-  // below — release-ledger.ts) the moment any concurrent writer touched the
-  // orphan branch, e.g. a live `chant operator` ticking a different env.
+  // 2-5. Read the trees, build the commit, and CAS-update the branch ref —
+  // retried on a conflict (#1959 finding 1). Before that retry existed a
+  // conflict from step 5's `updateRefCAS` simply threw, breaking every caller
+  // (observation-baseline.ts, snapshot.ts, build-ledger-store.ts, and — via
+  // `appendReleaseRecordLine` below — release-ledger.ts) the moment any
+  // concurrent writer touched the orphan branch, e.g. a live `chant
+  // operator` ticking a different env.
   //
-  // Safety of a *blind* retry (same `content`/`blobSha`, freshly rebuilt
-  // tree) hinges on whether *our own* target path (`environment/filename`)
-  // is what actually caused the conflict:
+  // Safety of a *blind* retry (same content and blob, freshly rebuilt tree)
+  // hinges on whether *our own* target paths are what actually caused the
+  // conflict:
   //   - If some OTHER path changed (the ordinary multi-env/multi-file case),
   //     our data is unaffected — rebuilding the tree from the new tip and
   //     retrying the ref update is always correct, no matter what kind of
   //     write the caller is doing (replace or append).
-  //   - If OUR OWN path changed concurrently, a blind retry using `content`
-  //     computed before that race would silently clobber the other writer's
-  //     change — safe only for a caller whose `content` is a self-contained
-  //     replacement (writeObservationBaseline, writeSnapshot,
+  //   - If one of OUR paths changed concurrently, a blind retry using
+  //     content computed before that race would silently clobber the other
+  //     writer's change — safe only for a caller whose content is a
+  //     self-contained replacement (writeObservationBaseline, writeSnapshot,
   //     persistBuildManifest), never for a read-modify-write caller whose
-  //     `content` already embeds a stale read (an append). Since this
-  //     function can't tell those apart, it does NOT blind-retry in that
-  //     case — it re-throws immediately so a read-modify-write caller's own
-  //     outer retry (appendConvergeRecord, appendGateResolution,
-  //     appendReleaseRecordLine below) can re-read and recompute `content`
-  //     fresh before trying again, exactly as they already do.
+  //     content already embeds a stale read (an append). Since this function
+  //     can't tell those apart, it does NOT blind-retry in that case — it
+  //     re-throws immediately so a read-modify-write caller's own outer retry
+  //     (appendConvergeRecord, appendGateResolution, appendReleaseRecordLine
+  //     below) can re-read and recompute content fresh before trying again.
   //
-  //   - A read-modify-write caller must pass `expectPriorPathSha`. Without it
+  //   - A read-modify-write caller must pass `expectPriorSha`. Without it
   //     attempt 1 has no prior sha to compare, so a commit landing between the
-  //     caller's baseline read and this function's first tree read reads as the
-  //     ambient starting state rather than a conflict, and is overwritten from
-  //     the caller's stale content.
+  //     caller's baseline read and this function's first tree read reads as
+  //     the ambient starting state rather than a conflict, and is overwritten
+  //     from the caller's stale content.
+  const prior = new Map<string, string | null | undefined>(files.map((f) => [f.path, f.expectPriorSha]));
   let lastErr: unknown;
-  let priorPathSha: string | null | undefined = opts?.expectPriorPathSha;
   for (let attempt = 1; attempt <= WRITE_BLOB_RETRY_ATTEMPTS; attempt++) {
-    // 2. Read existing tree (if branch exists) to preserve other env/file
-    // entries. `tip` is the commit sha `entries` was read from, and must stay
+    // 2. Read the tip once and every listing from that sha. `tip` must stay
     // the commit parent and CAS oldValue below. Re-resolving the branch name
-    // there instead can observe a newer tip than `entries` reflects, which
+    // there instead can observe a newer tip than the listings reflect, which
     // makes the CAS succeed against a tree built from a stale read.
-    const { tip, entries: existingTree } = await readTree(cwd);
-    const currentPathSha = existingTree.find((e) => e.env === environment && e.name === filename)?.sha ?? null;
-
-    if (priorPathSha !== undefined && currentPathSha !== priorPathSha) {
-      // Our own path moved since our previous attempt started — a genuine
-      // content-level race on the exact file we're writing, not just a CAS
-      // conflict from a sibling path. Not safe to paper over here.
-      throw lastErr ?? new RefCASConflictError(`refs/heads/${STATE_BRANCH}`, priorPathSha, "target path changed concurrently");
-    }
-    priorPathSha = currentPathSha;
-
-    // 3. Build new tree entries
-    const entries = mergeTreeEntry(existingTree, path, blobSha);
-
-    // mktree needs a nested tree structure. Build env subtree first, then root tree.
-    // Build env subtree
-    const envEntries = entries
-      .filter((e) => e.env === environment)
-      .map((e) => `${e.mode} ${e.type} ${e.sha}\t${e.name}`)
-      .join("\n");
-
-    const envTreeResult = await rt.spawn(["git", "mktree"], { cwd, stdin: `${envEntries}\n` });
-    if (envTreeResult.exitCode !== 0) {
-      throw ledgerWriteError("git mktree (env)", path, envTreeResult.stderr);
-    }
-    const envTreeSha = envTreeResult.stdout.trim();
-
-    // Build root tree: collect env subtrees
-    const rootEntries: string[] = [];
-    const envsSeen = new Set<string>();
-    for (const e of entries) {
-      if (!envsSeen.has(e.env)) {
-        envsSeen.add(e.env);
-        if (e.env === environment) {
-          rootEntries.push(`040000 tree ${envTreeSha}\t${environment}`);
-        } else {
-          rootEntries.push(`040000 tree ${e.envTreeSha!}\t${e.env}`);
-        }
+    const tip = await getStateBranchTip(cwd);
+    const trees = new Map<string, Map<string, TreeLine>>();
+    const listing = async (dir: string): Promise<Map<string, TreeLine>> => {
+      let entries = trees.get(dir);
+      if (!entries) {
+        entries = tip ? await listTreeAt(tip, dir, cwd) : new Map();
+        trees.set(dir, entries);
       }
+      return entries;
+    };
+
+    for (const b of blobs) {
+      const { dir, name } = splitPath(b.path);
+      const current = (await listing(dir)).get(name);
+      const currentSha = current?.type === "blob" ? current.sha : null;
+      const expected = prior.get(b.path);
+      if (expected !== undefined && currentSha !== expected) {
+        // Our own path moved since the caller read it or our previous
+        // attempt started — a genuine content-level race on the exact file
+        // we're writing, not just a CAS conflict from a sibling path. Not
+        // safe to paper over here.
+        throw lastErr ?? new RefCASConflictError(`refs/heads/${STATE_BRANCH}`, expected, "target path changed concurrently");
+      }
+      prior.set(b.path, currentSha);
     }
 
-    const rootTreeResult = await rt.spawn(["git", "mktree"], {
-      cwd,
-      stdin: `${rootEntries.join("\n")}\n`,
-    });
-    if (rootTreeResult.exitCode !== 0) {
-      throw ledgerWriteError("git mktree (root)", path, rootTreeResult.stderr);
+    // 3. Replace the entries, listing every directory up to the root so the
+    // rebuild below has each parent in hand.
+    for (const b of blobs) {
+      const { dir, name } = splitPath(b.path);
+      (await listing(dir)).set(name, { mode: "100644", type: "blob", sha: b.sha });
+      for (let d = dir; d !== ""; d = parentDir(d)) await listing(parentDir(d));
     }
-    const rootTreeSha = rootTreeResult.stdout.trim();
 
-    // 4. Create commit — parented on `tip`, the exact sha `existingTree` was
-    // read from (see the comment on step 2), not a fresh re-resolution of
-    // the branch name.
+    // 4. Rebuild the touched trees, deepest first, then the root.
+    const touched = [...trees.keys()].sort((a, b) => depth(b) - depth(a) || (a < b ? -1 : 1));
+    let rootTreeSha = "";
+    for (const dir of touched) {
+      const lines = [...trees.get(dir)!].map(([name, e]) => `${e.mode} ${e.type} ${e.sha}\t${name}`).join("\n");
+      const result = await rt.spawn(["git", "mktree"], { cwd, stdin: `${lines}\n` });
+      if (result.exitCode !== 0) {
+        throw ledgerWriteError(`git mktree (${dir === "" ? "root" : dir})`, path, result.stderr);
+      }
+      const sha = result.stdout.trim();
+      if (dir === "") rootTreeSha = sha;
+      else trees.get(parentDir(dir))!.set(baseName(dir), { mode: "040000", type: "tree", sha });
+    }
+
+    // 5. Create the commit — parented on `tip`, the exact sha every listing
+    // was read from (see step 2), not a fresh re-resolution of the branch.
     const parentRef = tip;
     const parentArgs = parentRef ? ["-p", parentRef] : [];
     const commitResult = await rt.spawn(
@@ -260,7 +320,7 @@ export async function writeBlobToPath(
     }
     const commitSha = commitResult.stdout.trim();
 
-    // 5. Update ref — CAS-guarded against `parentRef` (#1485): closes the
+    // 6. Update ref — CAS-guarded against `parentRef` (#1485): closes the
     // local race two concurrent writers used to hit silently (whoever called
     // update-ref last simply overwrote the other's tree, no error). A
     // conflict here throws RefCASConflictError instead of clobbering.
@@ -290,8 +350,9 @@ export async function readBlobFromPath(
   opts?: { cwd?: string },
 ): Promise<string | null> {
   const rt = getRuntime();
+  const dir = await ledgerDir(environment, opts);
   const result = await rt.spawn(
-    ["git", "show", `${STATE_BRANCH}:${environment}/${filename}`],
+    ["git", "show", `${STATE_BRANCH}:${dir}/${filename}`],
     { cwd: opts?.cwd },
   );
   if (result.exitCode !== 0) return null;
@@ -311,8 +372,9 @@ export async function readPathSha(
   opts?: { cwd?: string },
 ): Promise<string | null> {
   const rt = getRuntime();
+  const dir = await ledgerDir(environment, opts);
   const result = await rt.spawn(
-    ["git", "rev-parse", "--verify", `${STATE_BRANCH}:${environment}/${filename}`],
+    ["git", "rev-parse", "--verify", `${STATE_BRANCH}:${dir}/${filename}`],
     { cwd: opts?.cwd },
   );
   if (result.exitCode !== 0) return null;
@@ -370,8 +432,9 @@ export async function readSnapshotAt(
   opts?: { cwd?: string },
 ): Promise<string | null> {
   const rt = getRuntime();
+  const dir = await ledgerDir(environment, opts);
   const result = await rt.spawn(
-    ["git", "show", `${ref}:${environment}/${lexicon}.json`],
+    ["git", "show", `${ref}:${dir}/${lexicon}.json`],
     { cwd: opts?.cwd },
   );
   if (result.exitCode !== 0) return null;
@@ -460,9 +523,16 @@ export async function listLedgerEnvironments(opts?: { cwd?: string }): Promise<s
   const tip = await getStateBranchTip(opts?.cwd);
   if (!tip) return [];
   const rt = getRuntime();
+  // A member lists the directories under its own `_members/<member>/`; the
+  // flat layout lists the root, where `_members` holds no releases.jsonl and
+  // so never reads as an environment (#2538).
+  const base = await ledgerDir("", opts);
   // `--full-tree`: from a subdirectory, a bare `ls-tree` lists only that
   // subdirectory's part of the tree (#2550).
-  const rootResult = await rt.spawn(["git", "ls-tree", "--full-tree", STATE_BRANCH], { cwd: opts?.cwd });
+  const rootResult = await rt.spawn(
+    ["git", "ls-tree", "--full-tree", base === "" ? STATE_BRANCH : `${STATE_BRANCH}:${base}`],
+    { cwd: opts?.cwd },
+  );
   if (rootResult.exitCode !== 0) return [];
 
   const envs: string[] = [];
@@ -490,8 +560,9 @@ export async function listFilesInDir(dir: string, opts?: { cwd?: string }): Prom
   const tip = await getStateBranchTip(opts?.cwd);
   if (!tip) return [];
   const rt = getRuntime();
+  const path = await ledgerDir(dir, opts);
   const lsResult = await rt.spawn(
-    ["git", "ls-tree", "--full-tree", "--name-only", `${STATE_BRANCH}:${dir}/`],
+    ["git", "ls-tree", "--full-tree", "--name-only", `${STATE_BRANCH}:${path}/`],
     { cwd: opts?.cwd },
   );
   if (lsResult.exitCode !== 0) return [];
@@ -509,8 +580,9 @@ export async function readEnvironmentSnapshots(
   const snapshots = new Map<string, string>();
 
   // List files in the environment directory
+  const dir = await ledgerDir(environment, opts);
   const lsResult = await rt.spawn(
-    ["git", "ls-tree", "--full-tree", "--name-only", `${STATE_BRANCH}:${environment}/`],
+    ["git", "ls-tree", "--full-tree", "--name-only", `${STATE_BRANCH}:${dir}/`],
     { cwd: opts?.cwd },
   );
   if (lsResult.exitCode !== 0) return snapshots;
@@ -534,8 +606,12 @@ export async function listSnapshots(
   opts?: { cwd?: string; environment?: string },
 ): Promise<Array<{ commit: string; date: string; message: string }>> {
   const rt = getRuntime();
+  // A member sees the commits that touched its own ledger (#2538); the flat
+  // layout keeps today's whole-branch history.
+  const base = await ledgerDir("", opts);
   const result = await rt.spawn(
-    ["git", "log", "--format=%H %aI %s", STATE_BRANCH],
+    // `:(top)`: a pathspec is otherwise relative to the directory git runs in.
+    ["git", "log", "--format=%H %aI %s", STATE_BRANCH, ...(base === "" ? [] : ["--", `:(top)${base}`])],
     { cwd: opts?.cwd },
   );
   if (result.exitCode !== 0) return [];
@@ -1108,13 +1184,11 @@ export async function getHeadCommit(opts?: { cwd?: string }): Promise<string> {
 
 // ── Internal helpers ────────────────────────────────────────────
 
-interface TreeEntry {
+/** One entry of a tree listing, keyed by its name in the listing's map. */
+interface TreeLine {
   mode: string;
   type: string;
   sha: string;
-  name: string;
-  env: string;
-  envTreeSha?: string;
 }
 
 async function getStateBranchTip(cwd?: string): Promise<string | null> {
@@ -1128,81 +1202,45 @@ async function getStateBranchTip(cwd?: string): Promise<string | null> {
 }
 
 /**
- * Read the orphan branch's tip and every env/file tree entry under it as one
- * consistent snapshot. Every listing must stay pinned to the resolved `tip`
- * sha, never to `STATE_BRANCH`: the read spans several `ls-tree` calls (root
- * plus one per env subtree) and a branch name re-resolves on each, so a
- * concurrent commit splices entries from two commits into one array
- * undetectably. Callers need the returned `tip` as their commit parent.
+ * The entries of directory `dir` (branch-relative, `""` for the root) in
+ * commit `tip`, or an empty map when it does not exist. Always pinned to the
+ * resolved `tip` sha, never to `STATE_BRANCH`: a write reads several
+ * directories, and a branch name re-resolves on each read, so a concurrent
+ * commit would splice entries from two commits into one tree undetectably.
+ *
+ * `--full-tree` (#2550): run from a project in a subdirectory of the
+ * repository, a bare `ls-tree` lists only the part of the tree under that
+ * subdirectory, which on the orphan branch is nothing. The write then
+ * rebuilt the branch from an empty tree, and an append's CAS refused it as a
+ * concurrent change.
  */
-async function readTree(cwd?: string): Promise<{ tip: string | null; entries: TreeEntry[] }> {
+async function listTreeAt(tip: string, dir: string, cwd?: string): Promise<Map<string, TreeLine>> {
   const rt = getRuntime();
-  const tip = await getStateBranchTip(cwd);
-  if (!tip) return { tip: null, entries: [] };
-
-  // List root tree to get env directories — pinned to `tip`, not `STATE_BRANCH`.
-  // `--full-tree` (#2550): run from a project in a subdirectory of the
-  // repository, a bare `ls-tree` lists only the part of the tree under that
-  // subdirectory, which on the orphan branch is nothing. The write then
-  // rebuilt the branch from an empty tree, and an append's CAS refused it as a
-  // concurrent change.
-  const rootResult = await rt.spawn(
-    ["git", "ls-tree", "--full-tree", tip],
-    { cwd },
-  );
-  if (rootResult.exitCode !== 0) return { tip, entries: [] };
-
-  const entries: TreeEntry[] = [];
-  const lines = rootResult.stdout.trim().split("\n").filter(Boolean);
-
-  for (const line of lines) {
+  const entries = new Map<string, TreeLine>();
+  const result = await rt.spawn(["git", "ls-tree", "--full-tree", dir === "" ? tip : `${tip}:${dir}/`], { cwd });
+  if (result.exitCode !== 0) return entries;
+  for (const line of result.stdout.split("\n")) {
     // Format: mode type sha\tname
     const match = line.match(/^(\d+)\s+(\w+)\s+([0-9a-f]+)\t(.+)$/);
-    if (!match) continue;
-    const [, mode, type, sha, name] = match;
-
-    if (type === "tree") {
-      // This is an env directory — list its contents, still pinned to `tip`.
-      const envResult = await rt.spawn(
-        ["git", "ls-tree", "--full-tree", `${tip}:${name}/`],
-        { cwd },
-      );
-      if (envResult.exitCode !== 0) continue;
-
-      const envLines = envResult.stdout.trim().split("\n").filter(Boolean);
-      for (const envLine of envLines) {
-        const envMatch = envLine.match(/^(\d+)\s+(\w+)\s+([0-9a-f]+)\t(.+)$/);
-        if (!envMatch) continue;
-        entries.push({
-          mode: envMatch[1],
-          type: envMatch[2],
-          sha: envMatch[3],
-          name: envMatch[4],
-          env: name,
-          envTreeSha: sha,
-        });
-      }
-    }
+    if (match) entries.set(match[4], { mode: match[1], type: match[2], sha: match[3] });
   }
-
-  return { tip, entries };
+  return entries;
 }
 
-function mergeTreeEntry(
-  existing: TreeEntry[],
-  path: string,
-  blobSha: string,
-): TreeEntry[] {
-  const [env, filename] = path.split("/");
-  const entries = existing.filter(
-    (e) => !(e.env === env && e.name === filename),
-  );
-  entries.push({
-    mode: "100644",
-    type: "blob",
-    sha: blobSha,
-    name: filename,
-    env,
-  });
-  return entries;
+function splitPath(path: string): { dir: string; name: string } {
+  const slash = path.lastIndexOf("/");
+  return { dir: path.slice(0, slash), name: path.slice(slash + 1) };
+}
+
+function parentDir(dir: string): string {
+  const slash = dir.lastIndexOf("/");
+  return slash < 0 ? "" : dir.slice(0, slash);
+}
+
+function baseName(dir: string): string {
+  return dir.slice(dir.lastIndexOf("/") + 1);
+}
+
+function depth(dir: string): number {
+  return dir === "" ? 0 : dir.split("/").length;
 }

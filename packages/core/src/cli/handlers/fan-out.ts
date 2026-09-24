@@ -43,7 +43,7 @@ import { deriveFanOut, fanOutRegistry } from "../../components/fan-out-support";
 import { runFanOut } from "../../components/fan-out-run";
 import { renderFanOutHuman, renderFanOutJson, renderFanOutPlan } from "../../components/fan-out-output";
 import { ndjsonProgressSink } from "../../components/run-progress";
-import { writeGatedRunSummary } from "../../op/gate-summary";
+import { summaryLedgerPrefix, writeGatedRunSummary } from "../../op/gate-summary";
 import { remainingFanOut, type ChangedUnits, type FanOutProgress } from "../../components/fan-out";
 import { resolveCliBuildParams, parseParamFlags } from "../build-params-cli";
 import { formatError, formatInfo, formatWarning } from "../format";
@@ -328,6 +328,7 @@ export async function runComponentsFanOut(ctx: CommandContext): Promise<number> 
       expiresAt: pending.expiresAt,
       ...(pending.url ? { url: pending.url } : {}),
       ...(pending.planDigest ? { planDigest: pending.planDigest } : {}),
+      ...(await summaryLedgerPrefix()),
     });
     return GATED_EXIT_CODE;
   }

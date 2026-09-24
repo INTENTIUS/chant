@@ -80,7 +80,7 @@ const same = await readBuildManifest(manifest.manifestDigest);         // read b
 const behindDeploy = await findBuildManifestByArtifactDigest(digest);  // read back by a *promoted artifact* digest
 ```
 
-Manifests live under a fixed top-level `_builds/` directory on the orphan branch — a peer of the per-env directories the release ledger and snapshots use, never nested inside one. A build archive is promoted by digest across environments rather than owned by a single one, so it doesn't belong under any single `<env>/` path.
+Manifests live under a fixed top-level `_builds/` directory on the orphan branch — a peer of the per-env directories the release ledger and snapshots use, never nested inside one. A build archive is promoted by digest across environments rather than owned by a single one, so it doesn't belong under any single `<env>/` path. A workspace member keeps its own `_builds/` under `_members/<member>/`, as described under [Ledgers](/chant/reference/workspace-declaration/#ledgers).
 
 <Aside type="tip" title="Populated by construction, same opt-out as the release record">
 Like the release record, manifest persistence runs in the CLI once the deploy settles. It stays out of the driver, which is capability-agnostic (`../../components/driver.ts`), and out of the composition, which would re-run it on every retry. It shares the release record's opt-out: `--no-release-record` / `chant.config.ts`'s `release.autoRecord: false` disables both, and a failed or dry-run deploy persists nothing, by construction — the CLI only reaches this step after a run reports success.
