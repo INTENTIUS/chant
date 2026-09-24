@@ -67,6 +67,14 @@ Run named, phased workflows defined in `*.op.ts` files. The local runtime is bui
 | [`run log <name>`](/chant/cli/run/) | Show run history for an Op |
 | [`graph`](/chant/cli/graph/) | Print the Op dependency graph |
 
+## Workspace Commands
+
+The first slice of workspace support reads record files and needs no `chant.workspace.json`.
+
+| Command | Description |
+|---------|-------------|
+| [`workspace records --kind <file>`](/chant/cli/workspace-records/) | Print the records a record kind locates, with reason codes for invalid ones |
+
 ## State Commands
 
 Capture and compare deployed infrastructure state. Snapshots are stored on an orphan git branch (`chant/lifecycle`); `lifecycle diff --live` queries the cloud directly for drift detection. AWS, fountain, K8s, GCP, and Azure surface their resources entity-keyed; Helm and Docker surface runtime artifacts. See [`chant lifecycle`](/chant/cli/lifecycle/) for the full surface.

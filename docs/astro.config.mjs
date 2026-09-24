@@ -218,6 +218,7 @@ export default defineConfig({
 								{ label: 'run', slug: 'cli/run' },
 								{ label: 'operator', slug: 'cli/operator' },
 								{ label: 'graph', slug: 'cli/graph' },
+								{ label: 'workspace records', slug: 'cli/workspace-records' },
 								{ label: 'lifecycle', slug: 'cli/lifecycle' },
 								{ label: 'scenario', slug: 'cli/scenario' },
 								{ label: 'components', slug: 'cli/components' },
