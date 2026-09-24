@@ -47,6 +47,9 @@ import type { GateApprover, GatePolicyDecision, ResolvedGateApproval } from "../
 import { readBlobFromPath, readPathSha, readBlobBySha, writeBlobToPath, RefCASConflictError } from "./git";
 
 const DIR = "_gates";
+
+/** The directory on the `chant/lifecycle` branch that holds gate ledgers, under a member's prefix when it has one. */
+export const GATES_DIR = DIR;
 const APPEND_RETRY_ATTEMPTS = 5;
 
 /**
@@ -350,7 +353,18 @@ export async function readGateLedger(
 ): Promise<{ resolutions: GateResolutionRecord[]; pending: PendingGateRecord[]; malformed: number }> {
   const content = await readBlobFromPath(DIR, filename(op), opts);
   if (!content) return { resolutions: [], pending: [], malformed: 0 };
+  return parseGateLedger(content);
+}
 
+/**
+ * Split the text of one gate ledger file into its two kinds of line, oldest
+ * first, the way {@link readGateLedger} reads it. Exported for a reader that
+ * fetches the file itself, such as `chant workspace status` (#2674), which
+ * reads every member's ledger by its full path from the workspace root.
+ */
+export function parseGateLedger(
+  content: string,
+): { resolutions: GateResolutionRecord[]; pending: PendingGateRecord[]; malformed: number } {
   const lines = content.split("\n").map((l) => l.trim()).filter(Boolean);
   const resolutions: GateResolutionRecord[] = [];
   const pending: PendingGateRecord[] = [];

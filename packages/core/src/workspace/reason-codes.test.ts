@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { REPO } from "./__fixtures__/contract-repo";
 import { MEMBER_RUN_REASON_CODES } from "./compose-graph";
-import { COMPOSITES_ERROR_CODES, COMPOSITES_REASON_CODES } from "./composites";
+import { COMPOSITES_ERROR_CODES, COMPOSITES_REASON_CODES, COMPOSITES_RUNTIME_REASON_CODES } from "./composites";
 import { WORKSPACE_ERROR_CODES } from "./declaration";
 import { GRAPH_ERROR_CODES } from "./graph-cli";
 import { INTENT_ERROR_CODES, INTENT_FINDING_CODES, INTENT_REASON_CODES } from "./intent";
@@ -20,7 +20,7 @@ import intentSchema from "./intent.schema.json";
 import { isPluginCode, isReasonCode, REASON_CODES, REASONS } from "./reason-codes";
 import { contract } from "./__fixtures__/contract-repo";
 import { READ_ERROR_CODES, RECORD_REASON_CODES, RECORD_WARNING_CODES, REVIEW_REASON_CODES } from "./records";
-import { STATUS_ERROR_CODES, STATUS_REASON_CODES } from "./status";
+import { STATUS_ERROR_CODES, STATUS_GATE_REASON_CODES, STATUS_REASON_CODES } from "./status";
 
 const HERE = import.meta.dirname;
 
@@ -34,6 +34,7 @@ const PER_COMMAND: Record<string, readonly string[]> = {
   CHECK_ERROR_CODES,
   STATUS_REASON_CODES,
   STATUS_ERROR_CODES,
+  STATUS_GATE_REASON_CODES,
   RECORD_REASON_CODES,
   RECORD_WARNING_CODES,
   REVIEW_REASON_CODES,
@@ -43,6 +44,7 @@ const PER_COMMAND: Record<string, readonly string[]> = {
   INTENT_REASON_CODES,
   COMPOSITES_ERROR_CODES,
   COMPOSITES_REASON_CODES,
+  COMPOSITES_RUNTIME_REASON_CODES,
 };
 
 /** Every string in an `enum` under a property named `code`, anywhere in a schema. */

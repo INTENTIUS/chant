@@ -20,6 +20,11 @@
  * declaration that can't be read, or an environment name that can't be one,
  * exits 1. The `--json` output is part of the read contract and is described
  * by `status.schema.json` beside this file.
+ *
+ * The JSON also lists each member's gates, read from its gate ledger on the
+ * same branch (#2674, `status-gates.ts`): the state of each, the approvals
+ * that count, and the `chant approve` line that answers it. The text view
+ * doesn't show them.
  */
 
 import { execFileSync } from "node:child_process";
@@ -27,11 +32,13 @@ import { existsSync, realpathSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import { formatError } from "../cli/format";
 import type { CommandContext } from "../cli/registry";
+import { GATES_DIR } from "../lifecycle/gate-ledger";
 import { readPathSha } from "../lifecycle/git";
 import { latestPerComponent, readReleaseLedger, type ReleaseRecord } from "../lifecycle/release-ledger";
 import { findWorkspaceRoot } from "../project-root";
 import { readDeclaration, readerVersion, WorkspaceReadError, type ErrorLocation, type Member } from "./declaration";
 import type { ReasonCode } from "./reason-codes";
+import { GATE_REASON_CODES, readMemberGates, type GateLedgerReader, type StatusGate, type StatusGateLedger } from "./status-gates";
 import { gitTop, workingTree } from "./tree";
 import { handToRootChant } from "./which-chant";
 
@@ -60,6 +67,9 @@ export const STATUS_REASON_CODES = [
   "ledger-malformed",
 ] as const satisfies readonly ReasonCode[];
 export type StatusReasonCode = (typeof STATUS_REASON_CODES)[number];
+
+/** Why a member's gates can't be listed (#2674). Closed, like {@link STATUS_REASON_CODES}. */
+export const STATUS_GATE_REASON_CODES = GATE_REASON_CODES;
 
 /**
  * Why the status couldn't be read at all. The declaration's own codes, except
@@ -129,7 +139,12 @@ export interface StatusMember {
   environments: StatusEnvironment[];
   /** Null without `--compare-to`. */
   compare: StatusCompare | null;
+  /** True when no environment's release ledger has a reason. Gate reasons don't change it. */
   readable: boolean;
+  /** Where the member's gates were read from, and why none are listed when none can be (#2674). */
+  gateLedger: StatusGateLedger;
+  /** Each gate in the member's gate ledger, one per environment asked for, sorted by component then gate. */
+  gates: StatusGate[];
 }
 
 export type StatusDocument =
@@ -160,6 +175,10 @@ export interface StatusQuery {
   compareTo?: string;
   /** Reads one ledger; the lifecycle reader unless a test swaps it. */
   readLedger?: LedgerReader;
+  /** Reads one member's gate ledger directory; git unless a test swaps it. */
+  readGates?: GateLedgerReader;
+  /** The instant a gate's expiry is measured against; now by default. */
+  now?: string;
 }
 
 class StatusError extends Error {
@@ -192,9 +211,14 @@ function lifecycleTip(cwd: string): string | null {
   }
 }
 
+/** Whether the member writes under `_members/<member>/` (#2538). The root member never does. */
+async function hasMemberLedger(member: Member, cwd: string): Promise<boolean> {
+  return member.dir !== "." && (await readPathSha(MEMBERS_DIR, member.name, { cwd })) !== null;
+}
+
 /** Which ledger a member's releases for `env` are in (#2524 D7). */
 async function ledgerFor(member: Member, env: string, cwd: string): Promise<Omit<StatusLedger, "shared">> {
-  if (member.dir !== "." && (await readPathSha(MEMBERS_DIR, member.name, { cwd })) !== null) {
+  if (await hasMemberLedger(member, cwd)) {
     return { layout: "members", path: `${MEMBERS_DIR}/${member.name}/${env}/releases.jsonl` };
   }
   return { layout: "flat", path: `${env}/releases.jsonl` };
@@ -276,10 +300,15 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
     const read = query.readLedger ?? defaultReader;
     const envs = query.compareTo !== undefined && query.compareTo !== query.env ? [query.env, query.compareTo] : [query.env];
 
+    const commit = lifecycleTip(found.dir);
+    const now = query.now ?? new Date().toISOString();
+
     const members: StatusMember[] = [];
     for (const m of declaration.members) {
       const environments: StatusEnvironment[] = [];
       for (const env of envs) environments.push(await readEnvironment(m, env, found.dir, read));
+      const own = await hasMemberLedger(m, found.dir);
+      const gates = await readMemberGates(own ? `${MEMBERS_DIR}/${m.name}/${GATES_DIR}` : GATES_DIR, own ? "members" : "flat", commit, envs, found.dir, now, query.readGates);
       members.push({
         name: m.name,
         dir: m.dir,
@@ -287,18 +316,22 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
         environments,
         compare: query.compareTo === undefined ? null : compareEnvironments(environments[0], environments[environments.length - 1]),
         readable: environments.every((e) => e.reason === null),
+        gateLedger: gates.ledger,
+        gates: gates.gates,
       });
     }
     // Several members read from one flat ledger see the same records; say so.
     const readers = new Map<string, number>();
     for (const m of members) for (const e of m.environments) if (e.ledger.layout === "flat") readers.set(e.ledger.path, (readers.get(e.ledger.path) ?? 0) + 1);
     for (const m of members) for (const e of m.environments) e.ledger.shared = e.ledger.layout === "flat" && (readers.get(e.ledger.path) ?? 0) > 1;
+    const flatGates = members.filter((m) => m.gateLedger.layout === "flat").length;
+    for (const m of members) m.gateLedger.shared = m.gateLedger.layout === "flat" && flatGates > 1;
 
     return {
       ...head,
       env: query.env,
       compareTo: query.compareTo ?? null,
-      lifecycle: { ref: LIFECYCLE_REF, commit: lifecycleTip(found.dir) },
+      lifecycle: { ref: LIFECYCLE_REF, commit },
       workspace: { name: declaration.name, root: rootDir === "" ? "." : rootDir, file: declaration.file },
       members,
       summary: {

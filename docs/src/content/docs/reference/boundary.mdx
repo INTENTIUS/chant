@@ -38,7 +38,7 @@ This page is generated from `docs/data/boundary.yaml`, which has one row for eac
 | record link kind | `RECORD_LINK_KINDS` in `record-assets.ts` | 2 | 0 | 0 |
 | intent node kind | the node kinds of `intent.schema.json` | 8 | 0 | 3 |
 | intent edge kind | the edge kinds of `intent.schema.json` | 6 | 0 | 3 |
-| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 50 | 0 | 0 |
+| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 55 | 0 | 0 |
 | finding code | the finding codes of `intent.schema.json` | 12 | 0 | 0 |
 | WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 34 | 0 | 0 |
 | hud view | the hud reader requirements H1 to H11 of #2650 | 0 | 11 | 0 |
@@ -130,6 +130,9 @@ Each row follows, in the order of the table above.
 | reason code | `ir-version-unsupported` | chant | composites.schema.json, graph.schema.json | The member's IR has a version this chant can't read. |
 | reason code | `ledger-unreadable` | chant | status.schema.json | Reading the ledger failed, so nothing from it is listed. |
 | reason code | `ledger-malformed` | chant | status.schema.json | Some lines of the ledger aren't release records; the rest are listed. |
+| reason code | `gates-no-ledger` | chant | status.schema.json | The checkout has no chant/lifecycle branch, so there is no gate ledger to read. |
+| reason code | `gates-no-gate-ledger` | chant | status.schema.json | The branch has no gate ledger for the member: no run of it has reached a gate. |
+| reason code | `gates-ledger-unreadable` | chant | status.schema.json | Reading the member's gate ledger failed, so no gate is listed. |
 | reason code | `record-unparseable` | chant | intent.schema.json, records.schema.json | No front matter, a YAML error, or a value outside the JSON subset of YAML. |
 | reason code | `record-schema-invalid` | chant | intent.schema.json, records.schema.json | The front matter does not match the kind's schema. |
 | reason code | `record-id-duplicate` | chant | intent.schema.json, records.schema.json | Another record earlier in path order has the same id. |
@@ -148,6 +151,8 @@ Each row follows, in the order of the table above.
 | reason code | `composites-no-chant-member` | chant | composites.schema.json | No member of kind chant was read, so nothing declares a composite instance or a component. |
 | reason code | `composites-none-declared` | chant | composites.schema.json | The members read declare no composite instance. |
 | reason code | `composites-no-component` | chant | composites.schema.json | The members read declare no component, so no composite instance has one. |
+| reason code | `runtimes-config-unreadable` | chant | composites.schema.json | The member's chant.config.ts could not be read, so only the built-in local runtime is listed. |
+| reason code | `runtimes-lexicon-unreadable` | chant | composites.schema.json | A lexicon the member's config lists could not be loaded, so it is not listed as a runtime. |
 | reason code | `record-supersedes-pending` | chant | records.schema.json | A supersedes link from a record whose state is weaker than the record it names, so the link has no effect yet. |
 | reason code | `kind-unreadable` | chant | intent.schema.json, records.schema.json | The record kind file is missing or could not be imported. |
 | reason code | `kind-invalid` | chant | intent.schema.json, records.schema.json | The record kind file exports no recordKind, or its shape is wrong. |

@@ -7,7 +7,7 @@
  * (`read-contract.test.ts`).
  */
 
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, describe, expect, test } from "vitest";
 import type { GraphIR, IRNode } from "../graph-ir";
@@ -18,6 +18,7 @@ import {
   COMPOSITES_ERROR_CODES,
   COMPOSITES_OUTPUT_SCHEMA_ID,
   COMPOSITES_REASON_CODES,
+  COMPOSITES_RUNTIME_REASON_CODES,
   compositeInstances,
   joinComponents,
   workspaceComposites,
@@ -53,6 +54,9 @@ const componentIr = (components: { name: string; composites?: string[]; archetyp
     })),
     { groups: { byWave: { "wave-1": components.map((c) => c.name) } } },
   );
+
+/** The built-in runtime every component has. */
+const local = (name: string) => ({ name: "local", lexicon: null, default: true, command: `chant run --components ${name}` });
 
 /**
  * app declares three instances and exports ImageUri; delivery links to it and
@@ -106,6 +110,7 @@ describe("composites output schema", () => {
     expect(schema.$defs.failure.properties.error.properties.code.enum).toEqual([...COMPOSITES_ERROR_CODES]);
     expect(COMPOSITES_ERROR_CODES).toEqual(GRAPH_ERROR_CODES);
     expect(schema.$defs.member.properties.reason.oneOf[1].properties!.code.enum).toEqual([...MEMBER_RUN_REASON_CODES]);
+    expect(schema.$defs.member.properties.runtimeReasons.items.properties.code.enum).toEqual([...COMPOSITES_RUNTIME_REASON_CODES]);
   });
 });
 
@@ -117,7 +122,7 @@ describe("the join", () => {
       { ...composite("a/billingTable", "Table", "a/billing"), member: "a" },
     ],
   });
-  const component = (member: string, name: string, composites: string[] | null = null): ComponentEntry => ({ id: `${member}/${name}`, name, member, archetype: null, composites, file: null });
+  const component = (member: string, name: string, composites: string[] | null = null): ComponentEntry => ({ id: `${member}/${name}`, name, member, archetype: null, composites, file: null, runtimes: [] });
 
   test("an instance carries every kind and lexicon of its nodes", () => {
     expect(instances.map((i) => [i.id, i.instance, i.kinds, i.lexicons])).toEqual([
@@ -160,9 +165,9 @@ describe("chant workspace graph --composites on a built workspace", () => {
       ["docs", "skipped", "kind-not-run"],
     ]);
     expect(g.components).toEqual([
-      { id: "delivery/edge", name: "edge", member: "delivery", archetype: "infra", composites: ["StaticSite"], file: "delivery/src/edge.component.ts" },
-      { id: "delivery/loom-backend", name: "loom-backend", member: "delivery", archetype: "service", composites: null, file: "delivery/src/loom-backend.component.ts" },
-      { id: "jobs/queue-runner", name: "queue-runner", member: "jobs", archetype: null, composites: ["WorkQueue", "CacheCluster"], file: "jobs/src/queue-runner.component.ts" },
+      { id: "delivery/edge", name: "edge", member: "delivery", archetype: "infra", composites: ["StaticSite"], file: "delivery/src/edge.component.ts", runtimes: [local("edge")] },
+      { id: "delivery/loom-backend", name: "loom-backend", member: "delivery", archetype: "service", composites: null, file: "delivery/src/loom-backend.component.ts", runtimes: [local("loom-backend")] },
+      { id: "jobs/queue-runner", name: "queue-runner", member: "jobs", archetype: null, composites: ["WorkQueue", "CacheCluster"], file: "jobs/src/queue-runner.component.ts", runtimes: [local("queue-runner")] },
     ]);
     const rows = Object.fromEntries(g.composites.map((c) => [c.id, c]));
     expect(Object.keys(rows)).toEqual(["app/backend", "app/cache", "app/site", "jobs/queue"]);
@@ -240,5 +245,90 @@ describe("why the list is empty", () => {
     expectValid(doc);
     expect(failed).toBe(true);
     expect("error" in doc && doc.error.code).toBe("declaration-missing");
+  });
+});
+
+/** A lexicon module: a LexiconPlugin export, with `opRuntime` when `runtime` says what it hosts. */
+function lexiconModule(name: string, runtime: "components" | "ops" | "none"): string {
+  const opRuntime =
+    runtime === "none"
+      ? ""
+      : `opRuntime: { name: ${JSON.stringify(name)}, start: async () => { throw new Error("stub"); }${runtime === "components" ? ", runComponents: async () => ({ success: true })" : ""} },`;
+  return `const noop = async () => {};
+export const plugin = { name: ${JSON.stringify(name)}, serializer: {}, generate: noop, validate: noop, coverage: noop, package: noop, ${opRuntime} };
+`;
+}
+
+describe("the runtimes each component can deploy on (#2674)", () => {
+  /** delivery configures four lexicons: one hosts component runs, one hosts only Op runs, one hosts nothing, one can't load. */
+  function hosting(): string {
+    const root = fixture();
+    writeFileSync(
+      join(root, "delivery", "chant.config.ts"),
+      `export default {
+  lexicons: [
+    { name: "fleet", module: "./lexicons/fleet.ts" },
+    { name: "oponly", module: "./lexicons/oponly.ts" },
+    { name: "plain", module: "./lexicons/plain.ts" },
+    { name: "gone", module: "./lexicons/gone.ts" },
+  ],
+};
+`,
+    );
+    mkdirSync(join(root, "delivery", "lexicons"));
+    writeFileSync(join(root, "delivery", "lexicons", "fleet.ts"), lexiconModule("fleet", "components"));
+    writeFileSync(join(root, "delivery", "lexicons", "oponly.ts"), lexiconModule("oponly", "ops"));
+    writeFileSync(join(root, "delivery", "lexicons", "plain.ts"), lexiconModule("plain", "none"));
+    return root;
+  }
+
+  test("local is the default, and a configured lexicon whose opRuntime hosts component runs is listed with its --on line", async () => {
+    const g = result((await workspaceComposites({ cwd: hosting() })).doc);
+    expectValid(g);
+    const edge = g.components.find((c) => c.id === "delivery/edge")!;
+    expect(edge.runtimes).toEqual([
+      { name: "local", lexicon: null, default: true, command: "chant run --components edge" },
+      { name: "fleet", lexicon: "fleet", default: false, command: "chant run --components edge --on fleet" },
+    ]);
+    expect(g.components.find((c) => c.id === "delivery/loom-backend")!.runtimes.map((r) => r.command)).toEqual([
+      "chant run --components loom-backend",
+      "chant run --components loom-backend --on fleet",
+    ]);
+    // jobs configures no lexicon, so only local.
+    expect(g.components.find((c) => c.id === "jobs/queue-runner")!.runtimes).toEqual([local("queue-runner")]);
+    const delivery = g.members.find((m) => m.name === "delivery")!;
+    expect(delivery.runtimeReasons.map((r) => r.code)).toEqual(["runtimes-lexicon-unreadable"]);
+    expect(delivery.runtimeReasons[0].message).toContain('lexicon "gone"');
+    expect(g.members.find((m) => m.name === "docs")!.runtimeReasons).toEqual([]);
+  });
+
+  test("a member whose config can't be read lists local only, with a reason", async () => {
+    const root = fixture();
+    writeFileSync(join(root, "jobs", "chant.config.ts"), 'throw new Error("no config here");\nexport default {};\n');
+    const { doc, failed } = await workspaceComposites({ cwd: root, loadPlugin: async () => { throw new Error("not called"); } });
+    const g = result(doc);
+    expectValid(g);
+    expect(failed).toBe(false);
+    const jobs = g.members.find((m) => m.name === "jobs")!;
+    expect(jobs.runtimeReasons).toEqual([{ code: "runtimes-config-unreadable", message: expect.stringContaining("no config here") }]);
+    expect(g.components.find((c) => c.id === "jobs/queue-runner")!.runtimes).toEqual([local("queue-runner")]);
+  });
+
+  test("the plugin loader decides from opRuntime.runComponents alone", async () => {
+    const root = fixture();
+    writeFileSync(join(root, "jobs", "chant.config.ts"), 'export default { lexicons: ["hosted", "bare"] };\n');
+    const g = result(
+      (
+        await workspaceComposites({
+          cwd: root,
+          loadPlugin: async (name) => (name === "hosted" ? { opRuntime: { runComponents: () => undefined } } : {}),
+        })
+      ).doc,
+    );
+    expectValid(g);
+    expect(g.components.find((c) => c.id === "jobs/queue-runner")!.runtimes.map((r) => [r.name, r.lexicon, r.default])).toEqual([
+      ["local", null, true],
+      ["hosted", "hosted", false],
+    ]);
   });
 });

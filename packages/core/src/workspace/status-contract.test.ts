@@ -19,6 +19,7 @@ import {
   runWorkspaceStatus,
   STATUS_CONTRACT_VERSION,
   STATUS_ERROR_CODES,
+  STATUS_GATE_REASON_CODES,
   STATUS_OUTPUT_SCHEMA_ID,
   STATUS_REASON_CODES,
   workspaceStatus,
@@ -146,6 +147,7 @@ describe("status output schema", () => {
   test("lists exactly the reason and error codes the code can return", () => {
     expect(schema.$defs.environment.properties.reason.oneOf[1].properties!.code.enum).toEqual([...STATUS_REASON_CODES]);
     expect(schema.$defs.failure.properties.error.properties.code.enum).toEqual([...STATUS_ERROR_CODES]);
+    expect(schema.$defs.gateLedger.properties.reason.oneOf[1].properties!.code.enum).toEqual([...STATUS_GATE_REASON_CODES]);
   });
 });
 
@@ -291,6 +293,167 @@ describe("chant workspace status on built workspaces", () => {
       expect(await run({ extraPositional: "../prod", json: true })).toBe(1);
     } finally {
       err.mockRestore();
+      log.mockRestore();
+    }
+  });
+});
+
+/** One pending fact, as a run records it. */
+const pending = (op: string, gate: string, timestamp: string, extra: Record<string, unknown> = {}) =>
+  JSON.stringify({ version: 1, kind: "pending", op, gate, timestamp, expiresAt: "2026-12-31T00:00:00.000Z", origin: "cli", ...extra });
+
+/** One approval, as `chant approve` records it. */
+const approval = (op: string, gate: string, resolvedBy: string, timestamp: string, extra: Record<string, unknown> = {}) =>
+  JSON.stringify({ version: 1, kind: "resolution", op, gate, resolvedBy, timestamp, origin: "cli", approver: { kind: "human" }, ...extra });
+
+const NOW = "2026-09-24T00:00:00.000Z";
+
+/**
+ * web writes _members/web/, api and the root member read the flat _gates/.
+ * Each gate is in one state: approved, pending with part of a quorum,
+ * expired, superseded, and an Op gate that records no environment.
+ */
+function gated(): string {
+  const root = twoLayouts();
+  lifecycle(root, {
+    "_members/web/staging/releases.jsonl": jsonl(release("web", "staging", D("a"), "a".repeat(40))),
+    "_members/web/_gates/web.jsonl": jsonl(
+      pending("web", "deploy", "2026-09-20T00:00:00.000Z", { environment: "staging", planDigest: D("1") }),
+      approval("web", "deploy", "alice", "2026-09-20T01:00:00.000Z", { environment: "staging", planDigest: D("1") }),
+      pending("web", "deploy", "2026-09-21T00:00:00.000Z", { environment: "prod", planDigest: D("2") }),
+      pending("web", "deploy", "2026-09-21T00:00:00.000Z", { environment: "qa", planDigest: D("3") }),
+      // chant approve --expire writes a line with no environment; a run ignores it for an environment-bound gate.
+      pending("web", "deploy", "2026-09-22T00:00:00.000Z", { expiresAt: "2026-09-22T00:00:00.000Z" }),
+      pending("web", "review", "2026-09-20T00:00:00.000Z", { environment: "staging", planDigest: D("4"), approval: { mode: "log-only", quorum: { count: 2 } } }),
+      approval("web", "review", "bob", "2026-09-20T02:00:00.000Z", { environment: "staging", planDigest: D("4") }),
+      approval("web", "review", "unattested", "2026-09-20T03:00:00.000Z", { environment: "staging", planDigest: D("4"), origin: "mcp", approver: { kind: "agent" } }),
+    ),
+    "staging/releases.jsonl": jsonl(release("api", "staging", D("b"), "b".repeat(40))),
+    "_gates/api.jsonl": jsonl(
+      pending("api", "deploy", "2026-09-10T00:00:00.000Z", { environment: "staging", planDigest: D("5"), expiresAt: "2026-09-12T00:00:00.000Z" }),
+      pending("api", "smoke", "2026-09-20T00:00:00.000Z", { environment: "staging", planDigest: D("6") }),
+      approval("api", "smoke", "carol", "2026-09-20T05:00:00.000Z", { environment: "staging", planDigest: D("7") }),
+      "{not json",
+    ),
+    "_gates/nightly.jsonl": jsonl(pending("nightly", "confirm", "2026-09-23T00:00:00.000Z"), approval("nightly", "confirm", "dave", "2026-09-23T01:00:00.000Z")),
+  });
+  return root;
+}
+
+describe("gate state in chant workspace status --json (#2674)", () => {
+  test("each member lists its gates with state, approvals, quorum and the approve line", async () => {
+    const doc = result(await workspaceStatus({ cwd: gated(), env: "staging", compareTo: "prod", now: NOW }));
+    expectValid(doc);
+    const [site, web, api] = doc.members;
+    expect(web.gateLedger).toEqual({ layout: "members", path: "_members/web/_gates", shared: false, malformed: 0, reason: null });
+    expect(web.gates).toEqual([
+      {
+        component: "web",
+        name: "deploy",
+        env: "staging",
+        planDigest: D("1"),
+        state: "approved",
+        recordedAt: "2026-09-20T00:00:00.000Z",
+        expiresAt: "2026-12-31T00:00:00.000Z",
+        approvals: [{ principal: "alice", channel: "cli", at: "2026-09-20T01:00:00.000Z" }],
+        needed: 1,
+        approve: "chant approve web deploy --env staging",
+      },
+      {
+        component: "web",
+        name: "deploy",
+        env: "prod",
+        planDigest: D("2"),
+        state: "pending",
+        recordedAt: "2026-09-21T00:00:00.000Z",
+        expiresAt: "2026-12-31T00:00:00.000Z",
+        approvals: [],
+        needed: 1,
+        approve: "chant approve web deploy --env prod",
+      },
+      {
+        component: "web",
+        name: "review",
+        env: "staging",
+        planDigest: D("4"),
+        state: "pending",
+        recordedAt: "2026-09-20T00:00:00.000Z",
+        expiresAt: "2026-12-31T00:00:00.000Z",
+        // The agent's approval doesn't count toward the quorum.
+        approvals: [{ principal: "bob", channel: "cli", at: "2026-09-20T02:00:00.000Z" }],
+        needed: 2,
+        approve: "chant approve web review --env staging",
+      },
+    ]);
+    // api and the root member both read the flat _gates/.
+    expect(api.gateLedger).toEqual({ layout: "flat", path: "_gates", shared: true, malformed: 1, reason: null });
+    expect(site.gates).toEqual(api.gates);
+    expect(api.gates.map((g) => [g.component, g.name, g.env, g.state, g.approve])).toEqual([
+      ["api", "deploy", "staging", "expired", "chant approve api deploy --env staging"],
+      ["api", "smoke", "staging", "superseded", "chant approve api smoke --env staging"],
+      ["nightly", "confirm", null, "approved", "chant approve nightly confirm"],
+    ]);
+    // The superseding approval named another plan, so it isn't listed as one that counts.
+    expect(api.gates[1].approvals).toEqual([]);
+    expect(api.gates[2]).toMatchObject({ planDigest: null, approvals: [{ principal: "dave", channel: "cli" }] });
+    // Gate reasons and gate states don't change readable or the summary.
+    expect(doc.summary.unreadable).toBe(0);
+  });
+
+  test("only the environments asked for are listed, and the text view doesn't change", async () => {
+    const root = gated();
+    const doc = result(await workspaceStatus({ cwd: root, env: "prod", now: NOW }));
+    expectValid(doc);
+    const web = doc.members.find((m) => m.name === "web")!;
+    expect(web.gates.map((g) => [g.name, g.env])).toEqual([["deploy", "prod"]]);
+    const plain = { ...doc, members: doc.members.map((m) => ({ ...m, gates: [], gateLedger: { ...m.gateLedger, reason: null } })) };
+    expect(formatStatus(doc)).toBe(formatStatus(plain));
+    expect(formatStatus(doc)).not.toContain("deploy");
+  });
+
+  test("a member with no gate ledger, a checkout with no branch, and an unreadable ledger each carry a reason", async () => {
+    const root = twoLayouts();
+    const none = result(await workspaceStatus({ cwd: root, env: "staging", now: NOW }));
+    expectValid(none);
+    expect(none.members.map((m) => [m.name, m.gateLedger.reason?.code, m.gates.length])).toEqual([
+      ["site", "gates-no-gate-ledger", 0],
+      ["web", "gates-no-gate-ledger", 0],
+      ["api", "gates-no-gate-ledger", 0],
+    ]);
+    expect(none.members[1].gateLedger.reason!.message).toBe("_members/web/_gates does not exist on chant/lifecycle: no run has reached a gate");
+
+    const bare = repo({ "chant.workspace.json": declaration([{ name: "web", dir: "web", kind: "chant" }]) });
+    const noBranch = result(await workspaceStatus({ cwd: bare, env: "prod", now: NOW }));
+    expectValid(noBranch);
+    expect(noBranch.members[0].gateLedger).toMatchObject({ layout: "flat", path: "_gates", reason: { code: "gates-no-ledger" } });
+
+    const broken = result(
+      await workspaceStatus({
+        cwd: gated(),
+        env: "staging",
+        now: NOW,
+        readGates: async (dir) => {
+          if (dir === "_members/web/_gates") throw new Error("fatal: bad object\nmore");
+          return null;
+        },
+      }),
+    );
+    expectValid(broken);
+    const web = broken.members.find((m) => m.name === "web")!;
+    expect(web.gateLedger.reason).toEqual({ code: "gates-ledger-unreadable", message: "_members/web/_gates: fatal: bad object" });
+    expect(web.gates).toEqual([]);
+    expect(web.readable).toBe(true);
+  });
+
+  test("the JSON the command prints carries the gates", async () => {
+    const root = gated();
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      expect(await runWorkspaceStatus({ args: { extraPositional: "staging", extraPositional2: root, json: true } } as unknown as CommandContext)).toBe(0);
+      const printed = JSON.parse(String(log.mock.calls.at(-1)?.[0])) as StatusDocument;
+      expectValid(printed);
+      expect(result(printed).members.find((m) => m.name === "web")!.gates.map((g) => g.approve)).toContain("chant approve web deploy --env staging");
+    } finally {
       log.mockRestore();
     }
   });

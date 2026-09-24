@@ -141,8 +141,8 @@ A component can match an instance in another member. Each match says how it cros
   "at": null,
   "workspace": { "name": "acme", "root": "." },
   "members": [
-    { "name": "app", "dir": "app", "kind": "chant", "status": "read", "reason": null, "chant": "0.84.0" },
-    { "name": "delivery", "dir": "delivery", "kind": "chant", "status": "read", "reason": null, "chant": "0.84.0" }
+    { "name": "app", "dir": "app", "kind": "chant", "status": "read", "reason": null, "chant": "0.84.0", "runtimeReasons": [] },
+    { "name": "delivery", "dir": "delivery", "kind": "chant", "status": "read", "reason": null, "chant": "0.84.0", "runtimeReasons": [] }
   ],
   "composites": [
     {
@@ -155,7 +155,14 @@ A component can match an instance in another member. Each match says how it cros
     { "id": "app/cache", "member": "app", "instance": "cache", "kinds": ["CacheCluster"], "lexicons": ["aws"], "nodes": ["app/cacheCluster"], "components": [] }
   ],
   "components": [
-    { "id": "delivery/loom-backend", "name": "loom-backend", "member": "delivery", "archetype": "service", "composites": null, "file": "delivery/src/loom-backend.component.ts" }
+    {
+      "id": "delivery/loom-backend", "name": "loom-backend", "member": "delivery", "archetype": "service", "composites": null,
+      "file": "delivery/src/loom-backend.component.ts",
+      "runtimes": [
+        { "name": "local", "lexicon": null, "default": true, "command": "chant run --components loom-backend" },
+        { "name": "fleet", "lexicon": "fleet", "default": false, "command": "chant run --components loom-backend --on fleet" }
+      ]
+    }
   ],
   "reasons": [],
   "summary": { "composites": 2, "withComponent": 1, "withoutComponent": 1, "components": 1 }
@@ -172,7 +179,16 @@ A member is `read` when both of its graphs were read. When its component graph f
 | `composites-none-declared` | The members read declare no composite instance |
 | `composites-no-component` | The members read declare no component, so no composite instance has one |
 
-The reference workspace's `delivery` member declares the app with the docker lexicon's `DockerWebService` composite and deploys it with the `app` component, whose contract lists that kind in `composites`. Its document has one row, `delivery/app`, with that component matched `by: "composites"` and `via: "member"`, and no reason.
+Each component lists in `runtimes` where its deploy can run ([#2674](https://github.com/INTENTIUS/chant/issues/2674)). The first entry is the built-in `local` runtime. After it comes each lexicon in the member's `chant.config.ts` whose `opRuntime` hosts component runs, in config order. That is the list [`chant run --components <name> --on <runtime>`](/chant/cli/run/) accepts in the member's directory. A lexicon whose runtime hosts only Op runs isn't listed, because `chant run --components` refuses it. `default` marks the runtime `chant run` uses without `--on`, which is `local`. `command` is the exact line to run in the member's directory, with `--on` for any runtime but `local`. A reader offers only these runtimes and never guesses one.
+
+The reading chant loads each member's `chant.config.ts` and the lexicons it lists, from the working tree or from the tree `--at` exported. When either can't be read, the member's `runtimeReasons` says so. Its components still list `local`, and the exit code stays the same.
+
+| Code | Meaning |
+|---|---|
+| `runtimes-config-unreadable` | The member's `chant.config.ts` couldn't be read, so only `local` is listed |
+| `runtimes-lexicon-unreadable` | A lexicon the config lists couldn't be loaded, so it isn't listed |
+
+The reference workspace's `delivery` member declares the app with the docker lexicon's `DockerWebService` composite and deploys it with the `app` component, whose contract lists that kind in `composites`. Its document has one row, `delivery/app`, with that component matched `by: "composites"` and `via: "member"` and no reason. The component's only runtime is `local`.
 
 ## The intent graph
 

@@ -372,7 +372,8 @@ describe("the composite graph on the fixture (#2662)", () => {
     expect(run.status, run.stderr).toBe(0);
     const doc = JSON.parse(run.stdout) as {
       composites: { id: string; member: string; instance: string; kinds: string[]; lexicons: string[]; nodes: string[]; components: unknown[] }[];
-      components: { id: string; archetype: string | null; composites: string[] | null; file: string | null }[];
+      components: { id: string; archetype: string | null; composites: string[] | null; file: string | null; runtimes: unknown[] }[];
+      members: { name: string; runtimeReasons: unknown[] }[];
       reasons: unknown[];
       summary: unknown;
     };
@@ -390,8 +391,18 @@ describe("the composite graph on the fixture (#2662)", () => {
       },
     ]);
     expect(doc.components).toEqual([
-      { id: "delivery/app", name: "app", member: "delivery", archetype: "service", composites: ["DockerWebService"], file: "delivery/src/app.component.ts" },
+      {
+        id: "delivery/app",
+        name: "app",
+        member: "delivery",
+        archetype: "service",
+        composites: ["DockerWebService"],
+        file: "delivery/src/app.component.ts",
+        // #2674: delivery configures no lexicon that hosts component runs, so the app deploys locally only.
+        runtimes: [{ name: "local", lexicon: null, default: true, command: "chant run --components app" }],
+      },
     ]);
+    expect(doc.members.find((m) => m.name === "delivery")!.runtimeReasons).toEqual([]);
     expect(doc.reasons).toEqual([]);
     expect(doc.summary).toEqual({ composites: 1, withComponent: 1, withoutComponent: 0, components: 1 });
   });

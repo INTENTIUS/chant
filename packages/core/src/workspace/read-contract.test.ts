@@ -155,6 +155,9 @@ describe("every schema against the reference workspace (#2543)", () => {
           ["delivery/app", ["DockerWebService"], [["delivery/app", "composites", "member"]]],
         ]);
         expect(doc.components.map((c) => [c.id, c.archetype])).toEqual([["delivery/app", "service"]]);
+        // #2674: the reference config's lexicons host no component runs, so local is the only runtime, read at HEAD too.
+        expect(doc.components[0].runtimes).toEqual([{ name: "local", lexicon: null, default: true, command: "chant run --components app" }]);
+        expect(doc.members.find((m) => m.name === "delivery")!.runtimeReasons).toEqual([]);
         expect(doc.reasons).toEqual([]);
       }
     },
