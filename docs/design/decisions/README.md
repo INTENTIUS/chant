@@ -2,7 +2,7 @@
 
 Each file in this directory records one design decision. The format comes from [#2555](https://github.com/INTENTIUS/chant/issues/2555), and any epic can use it. The first set is the workspace design, [#2524](https://github.com/INTENTIUS/chant/issues/2524), with ids `ws-001` to `ws-050`, one per row of its Decisions table. Later workspace decisions continue the sequence: `ws-051` records how examples and fixtures are declared ([#2556](https://github.com/INTENTIUS/chant/issues/2556)), and `ws-052` records the boundary between chant and hud ([#2657](https://github.com/INTENTIUS/chant/issues/2657)).
 
-All of the `ws-` decisions are in state `decided`. One maintainer chose each of them, and they bind nobody until a group reviews and ratifies them as #2555 describes. The states and their transitions are drawn in [decision-states.md](../decision-states.md).
+The `ws-` decisions are in state `decided`, except `ws-053` ([#2664](https://github.com/INTENTIUS/chant/issues/2664)), which is `proposed`: it lists the options with a recommendation in `x-recommendation`, and its `choice` stays null until someone decides. One maintainer chose each decided one, and they bind nobody until a group reviews and ratifies them as #2555 describes. The states and their transitions are drawn in [decision-states.md](../decision-states.md).
 
 ## A file
 

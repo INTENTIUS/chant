@@ -1,0 +1,84 @@
+---
+schema: 1
+id: "ws-053"
+title: "Record formats beyond markdown front matter"
+state: "proposed"
+area: "D4"
+source:
+  issue: "INTENTIUS/chant#2664"
+  row: "Record formats beyond markdown front matter"
+  revision: null
+question: "How does a record kind declare records that are not Markdown front matter, such as chud's JSON units, sessions and driver closures and its evidence named by the hash of its bytes, so that a plugin declares each of them with a kind file and no reader code?"
+options:
+  - id: "a"
+    label: "a `json` format on the kind file"
+    how: "The kind file's `format` accepts `json` beside `markdown-front-matter`. For `json` the whole file is the record. `records.ts` parses it with `JSON.parse`, refuses a top-level value that is not an object, and refuses a repeated member name (I-JSON, RFC 7493), which `JSON.parse` alone accepts by keeping the last value. A file that fails any of that is `record-unparseable`. Schema validation, ids, supersession, pins and `constrains` then run on the parsed object as they run on front matter today. `records.schema.json` keeps contract 1 and every code; the description of `data` changes from the front matter to the record's structured core."
+    tradeoff: "One parser branch in one module, no new code and no new contract version, and level 0 pays nothing because `records.ts` loads only under `chant workspace`. Alone it still reads none of chud's JSON kinds: units have no `supersedes`, evidence and driver closures have no state, and an evidence file holds no id at all, since its id is its file name."
+  - id: "b"
+    label: "a kind that reads several directories or a glob"
+    how: "`location` takes a list of directories or a `glob` in place of `dir`. `RecordSource.list` walks subdirectories, in the working tree and through `git ls-tree -r` under `--at`. Record paths in the output are already from the repository root, so consumers see no new field, and ids stay unique across every matched directory in path order."
+    tradeoff: "One kind can cover files spread over a tree, such as chud's `drivers/D-NNN/design.html` documents. Every other chud kind already lives in one directory, driver closures included, and the HTML driver document also needs an HTML core format that nobody has proposed. A recursive list costs more under `--at`, and a kind that can match anywhere makes a write scope per principal class (#2524 D4) harder to state as paths."
+  - id: "c"
+    label: "a content-addressed id rule"
+    how: "A kind declares `idFrom: \"sha256\"` in place of `idField`. The reader hashes each file's bytes, through a `bytes` read on `RecordSource` like the one `WorkspaceTree` has for pins, and the lowercase hex digest is the record's id. The file name's stem is the hash the name claims. A stem that differs is reported as the record pinning itself: an entry `{path, sha256: <stem>, actual, state: \"drifted\"}` in `assets` and the `asset-drift` warning, so no reason code is added after the 0.81.0 floor. Pins hash bytes the same way, so a unit's evidence pin `{path, sha256}` carries the same string as the evidence record's id."
+    tradeoff: "chud's evidence becomes a record whose id cannot disagree with its content, and a plugin's evidence id in the intent graph and the record id are one key. Alone it reads nothing chud has, because chud's content-addressed files are JSON. A misnamed file stays valid with a warning, where chud's reader refuses it today, so chud's checks read `warnings` to keep refusing it."
+  - id: "d"
+    label: "a reader function in the kind file"
+    how: "The kind file exports `readRecords(tree)`, which returns entries with an id, a path, a state and the data. Core calls it for a kind whose format is not built in, then derives supersession and checks pins over what it returns. Schema validation either stays in core on the returned data or moves into the plugin with the parsing."
+    tradeoff: "Core stays small, and chud reads every layout it has today, HTML driver documents included, with the code it already has. What a file means becomes plugin code: two plugins can read the same bytes differently, a seal (ws-003) and the spec query (ws-045) rest on a core chant did not extract, `--at` works only when the plugin reads through the tree it is handed, and chant can no longer say what a kind reads without running it."
+  - id: "e"
+    label: "(a) and (c) together, with state and supersedes optional"
+    how: "The kind contract gains `format: \"json\"` as in (a) and `idFrom: \"sha256\"` as in (c). `stateField`, `states` and `closedStates` become optional together, for kinds whose records have no lifecycle, such as evidence and driver closures; their records carry `state: null`, which `records.schema.json` already allows. `supersedes` becomes optional, and so does its `key`: without `key` the field holds one id or a list of ids, as chud's contract `supersedes: \"C-001\"` does. A kind with `supersedes` must have states, because a link takes effect only from a closed or ranked state. A kind may also name the schema files its schema references (`schema.refs`), because chud's schemas `$ref` a shared `defs.schema.json`. `records.schema.json` keeps contract 1: no reason, warning or error code is added, `kind` gains an optional `format`, and `data` is described as the structured core."
+    tradeoff: "chud's unit, evidence, session and driver-closure kinds, and its Markdown contracts with their single-id `supersedes`, become kind files with no reader code, and the decision kind's output does not change. It is four small changes to one module and its kind schema rather than one. HTML driver documents stay outside until (b) and an HTML core format are proposed."
+choice: null
+rejected:
+  - option: "a"
+    why: "Alone it leaves evidence unreadable, since an evidence file holds no id, and leaves units, sessions and closures unreadable until state and supersedes are optional. It is kept as part of (e)."
+  - option: "b"
+    why: "No chud kind that #2664 names needs it: each lives in one directory, and closures are a kind of their own. The one layout that does need it, `D-NNN/design.html`, also needs an HTML core format, so it waits for that proposal."
+  - option: "c"
+    why: "Alone it reads nothing chud has, because chud's content-addressed files are JSON. It is kept as part of (e)."
+  - option: "d"
+    why: "It moves what a record is out of core. #2524 D4 has core validate every record on every read, ws-003 seals the whole file against a core chant extracts, and ws-052 rejected a second parser of the same records for hud. A reader function is that second parser, run inside chant."
+supersedes: []
+evidence:
+  - title: "INTENTIUS/chant#2664, record kinds beyond markdown front matter in one directory"
+    url: "https://github.com/INTENTIUS/chant/issues/2664"
+    as_of: "2026-09-24T20:27:48Z"
+  - title: "INTENTIUS/chant#2546, records, seals and the spec query (phase 3a)"
+    url: "https://github.com/INTENTIUS/chant/issues/2546"
+    as_of: "2026-09-23T19:33:46Z"
+  - title: "INTENTIUS/chant#2524, D4. Records"
+    url: "https://github.com/INTENTIUS/chant/issues/2524#d4-records"
+    as_of: "2026-09-23T20:56:42Z"
+  - title: "jhgaylor/chud#85, research for chud#78: chud's records and dispatch as a chant plugin"
+    url: "https://github.com/jhgaylor/chud/pull/85"
+    as_of: "2026-09-24T20:27:44Z"
+  - title: "chud's record inventory and proposed shape, sections 1 and 4, at chud 9ce13a21"
+    url: "https://github.com/jhgaylor/chud/blob/9ce13a218b2f92d2f9a3af4ea6fc3d834d795bc9/docs/research/78-records-and-dispatch-as-a-chant-plugin.md"
+    as_of: "2026-09-24T20:27:44Z"
+  - title: "The records reader the options change, at 0241e2eb"
+    url: "https://github.com/INTENTIUS/chant/blob/0241e2eb4c9bec1bcb8e072f4eca72eecf42f4b1/packages/core/src/workspace/records.ts"
+    as_of: "2026-09-24T20:27:48Z"
+    sha256: "61a90772db5eb2c0ccaf32beb6548fd81f56cec710a0b4460f926e5479ff62f4"
+  - title: "The records output schema, contract 1, at 0241e2eb"
+    url: "https://github.com/INTENTIUS/chant/blob/0241e2eb4c9bec1bcb8e072f4eca72eecf42f4b1/packages/core/src/workspace/records.schema.json"
+    as_of: "2026-09-24T20:27:48Z"
+    sha256: "400a3ae406089d17a651663dc35676efc9547b00754e27fd195c110981129b2e"
+decided_by: null
+decided_on: null
+reviews: []
+constrains:
+  - "INTENTIUS/chant#2546"
+  - "INTENTIUS/chant#2664"
+  - "member:core"
+  - "path:packages/core/src/workspace/records.ts"
+  - "path:packages/core/src/workspace/records.schema.json"
+x-recommendation:
+  option: "e"
+  reason: "It is the smallest change that makes every chud JSON kind a kind file with no reader code, and it keeps parsing, validation and ids in core, where seals and the spec query need them. It adds no code to the read contract, so contract 1 and its readers hold, and nothing loads at level 0."
+---
+
+# Record formats beyond markdown front matter
+
+Proposed, not decided. The comparison of the options, chud's kinds written against the recommendation, and the implementation issues in landing order are in [record-formats.md](../workspace/record-formats.md).
