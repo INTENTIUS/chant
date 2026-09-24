@@ -81,6 +81,20 @@ describe("the local op runtime", () => {
     expect(status.records?.map((r) => r.fn)).toEqual(["ok"]);
   });
 
+  test("an activity reads --env and the run id the ledger records (#2522)", async () => {
+    const { currentOpRun } = await import("../run-context");
+    let seen: ReturnType<typeof currentOpRun>;
+    loadActivitiesMock.mockResolvedValue(new Map([["ok", vi.fn(async () => { seen = currentOpRun(); })]]));
+    const runtime = createLocalOpRuntime();
+
+    const handle = await runtime.start(op("hello", [{ kind: "activity", fn: "ok", args: {} }]), { env: "staging" });
+    const status = await handle.result();
+
+    expect(seen?.env).toBe("staging");
+    expect(seen?.runId).toBe(handle.runId);
+    expect(status.result?.record?.id).toBe(handle.runId);
+  });
+
   test("the project's configured lexicons decide which appliers load", async () => {
     loadActivitiesMock.mockResolvedValue(new Map([["ok", vi.fn(async () => ({}))]]));
     const runtime = createLocalOpRuntime();

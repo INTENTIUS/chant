@@ -150,6 +150,8 @@ export function createLocalOpRuntime(opts: { projectPath?: string } = {}): OpRun
             startOpts.signal,
             {
               runId,
+              // #2522: `--env` reaches the activities through the run context.
+              ...(startOpts.env !== undefined ? { env: startOpts.env } : {}),
               // The run's outcome is a durable fact (#2118): the executor
               // appends it here, at the one seam every local run passes
               // through, rather than in the CLI handler above it.
