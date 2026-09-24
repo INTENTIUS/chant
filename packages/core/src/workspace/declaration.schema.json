@@ -44,6 +44,11 @@
         "$ref": "#/$defs/pin"
       }
     },
+    "quorum": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "How many agree verdicts besides the decider's a record needs, for every record kind with a reviews list (#2671). chant workspace records reports each record's quorum against it. Two when absent. Added in schema 1 by chant 0.86.0, so a declaration that sets it sets minReader to 0.86.0 or newer. A per-kind quorum comes later (#2650 C14)."
+    },
     "checks": {
       "type": "object",
       "description": "Severity for the declaration checks that allow it, keyed by WSP id (#2535, ws-028): error, warning, info or off. chant workspace check refuses an id it does not know, and one whose severity is fixed.",

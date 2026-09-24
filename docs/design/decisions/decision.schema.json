@@ -144,6 +144,11 @@
           "verdict": { "enum": ["agree", "dissent", "abstain"] },
           "note": { "type": ["string", "null"] },
           "on": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+          "digest": {
+            "description": "The digest of the record text the verdict judged: the lowercase hex SHA-256 of the file with LF line endings and without its reviews block (#2672). A verdict whose digest is not the record's digest now stops counting toward the quorum. A verdict without one still counts, with the warning review-undigested.",
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
           "proposes": {
             "description": "With a dissent, the id of a new proposed decision the reviewer opened.",
             "$ref": "#/definitions/decisionId"

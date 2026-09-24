@@ -38,7 +38,7 @@ This page is generated from `docs/data/boundary.yaml`, which has one row for eac
 | record link kind | `RECORD_LINK_KINDS` in `record-assets.ts` | 2 | 0 | 0 |
 | intent node kind | the node kinds of `intent.schema.json` | 8 | 0 | 3 |
 | intent edge kind | the edge kinds of `intent.schema.json` | 6 | 0 | 3 |
-| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 44 | 0 | 0 |
+| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 50 | 0 | 0 |
 | finding code | the finding codes of `intent.schema.json` | 12 | 0 | 0 |
 | WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 34 | 0 | 0 |
 | hud view | the hud reader requirements H1 to H11 of #2650 | 0 | 11 | 0 |
@@ -139,6 +139,12 @@ Each row follows, in the order of the table above.
 | reason code | `asset-missing` | chant | records.schema.json | A file the record pins by hash does not exist in the tree read. |
 | reason code | `asset-stale` | chant | records.schema.json | A file the record pins is unchanged at the hash a record it supersedes pinned: the decision changed and the artifact did not follow. |
 | reason code | `record-no-evidence` | chant | records.schema.json | The record's evidence list is empty: it cites nothing and pins no file. Information for a reviewer, never an error. |
+| reason code | `review-undigested` | chant | records.schema.json | A verdict names no digest of the text it judged. It still counts, and an amendment does not stop it counting. |
+| reason code | `review-decider` | chant | records.schema.json | The verdict is the decider's own, and the quorum counts verdicts besides the decider's. |
+| reason code | `review-agent` | chant | records.schema.json | The reviewer holds the agent role in the trust policy at base. |
+| reason code | `review-duplicate` | chant | records.schema.json | A later verdict by the same principal replaces this one. Names are compared after NFKC, trimming and lower-casing. |
+| reason code | `review-older-digest` | chant | records.schema.json | The verdict names a digest other than the record's text now: the record changed after the verdict. |
+| reason code | `review-unattested` | chant | records.schema.json | An attestation policy is active at base, and the verdict carries no seal. |
 | reason code | `composites-no-chant-member` | chant | composites.schema.json | No member of kind chant was read, so nothing declares a composite instance or a component. |
 | reason code | `composites-none-declared` | chant | composites.schema.json | The members read declare no composite instance. |
 | reason code | `composites-no-component` | chant | composites.schema.json | The members read declare no component, so no composite instance has one. |

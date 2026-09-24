@@ -179,6 +179,8 @@ export interface Declaration {
   pins: Pin[];
   /** Severities set for declaration checks, keyed by `WSP` id (#2535). */
   checks: Record<string, CheckSeverity>;
+  /** How many verdicts besides the decider's a record needs, or null when the declaration names none (#2671). */
+  quorum: number | null;
   /** The file, relative to the workspace root's tree (`chant.workspace.json` or `.jsonc`). */
   file: string;
 }
@@ -484,6 +486,7 @@ export function parseDeclaration(text: string, file: string, reader: string = re
     groups: entries.filter((e): e is Group => e.type === "group"),
     pins,
     checks: { ...((obj.checks as Record<string, CheckSeverity> | undefined) ?? {}) },
+    quorum: typeof obj.quorum === "number" ? obj.quorum : null,
     file,
   };
 }

@@ -26,4 +26,7 @@ export const recordKind = {
   pins: { field: "evidence" },
   // member:<name> and path:<path> entries are the record's links in workspace graph (#2549).
   constrains: { field: "constrains" },
+  // Verdicts, and the field naming the decider, for each record's digest and
+  // quorum (#2671, #2672).
+  reviews: { field: "reviews", decider: "decided_by" },
 };

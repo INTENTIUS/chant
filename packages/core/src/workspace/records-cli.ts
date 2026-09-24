@@ -20,8 +20,22 @@ import type { CommandContext } from "../cli/registry";
 import { findWorkspaceRoot } from "../project-root";
 import { fileDigest, isWorkspacePath } from "./record-assets";
 import { gitRevisionSource, gitRoot, resolveRevision, workingTreeSource } from "./record-source";
-import { loadRecordKind, readRecords, RecordReadError, type LoadedRecordKind, type ReadErrorCode, type ReadRecordsResult, type RecordEntry, type RecordHistory } from "./records";
-import { gitTree, workingTree } from "./tree";
+import { readDeclaration } from "./declaration";
+import {
+  computeQuorum,
+  DEFAULT_QUORUM,
+  loadRecordKind,
+  normalisePrincipal,
+  readRecords,
+  RecordReadError,
+  type LoadedRecordKind,
+  type Quorum,
+  type ReadErrorCode,
+  type ReadRecordsResult,
+  type RecordEntry,
+  type RecordHistory,
+} from "./records";
+import { gitTree, workingTree, type WorkspaceTree } from "./tree";
 import { activeAttestors, type ProvenanceLevel } from "./trust/attestor";
 import { policyAtBase, recordProvenance, resolveBase, type BaseSource, type RecordProvenance } from "./trust/provenance";
 
@@ -46,8 +60,14 @@ export interface RecordsQuery {
   cwd: string;
 }
 
-/** A record as the output carries it: the entry plus its provenance (#2547). */
-export type RecordView = RecordEntry & { provenance: RecordProvenance };
+/**
+ * A record as the output carries it: the entry plus its provenance (#2547),
+ * and its quorum when the kind has a reviews list (#2671).
+ */
+export type RecordView = RecordEntry & { provenance: RecordProvenance; quorum?: Quorum | null };
+
+/** The role in the trust policy whose holders' verdicts the quorum does not count (#2671). */
+export const AGENT_ROLE = "agent";
 
 /** Where provenance was judged from (#2547). */
 export interface TrustView {
@@ -86,7 +106,24 @@ export interface RecordsRead {
   at: string | null;
   /** Where pinned paths resolve, relative to `root` ("." for the root itself). */
   workspaceRoot: string;
+  /** The workspace root's tree, as read: the working tree, or the revision under `--at`. */
+  tree: WorkspaceTree;
   result: ReadRecordsResult;
+}
+
+/**
+ * The quorum the workspace declares: the declaration at the workspace root
+ * of the tree read, or the default when there is none, or when it can't be
+ * read (#2671). Records need no declaration, so neither does this.
+ */
+function declaredQuorum(tree: WorkspaceTree): { need: number; needFrom: "declaration" | "default" } {
+  try {
+    const q = readDeclaration(tree).quorum;
+    if (q !== null) return { need: q, needFrom: "declaration" };
+  } catch {
+    // No declaration, or one this read can't use: the default applies.
+  }
+  return { need: DEFAULT_QUORUM, needFrom: "default" };
 }
 
 /**
@@ -147,13 +184,13 @@ export async function readRecordsFor(query: Omit<RecordsQuery, "base">): Promise
   }
   const history = top ? gitHistory(top, at ?? "HEAD", workspaceRoot) : undefined;
   const result = await readRecords(loaded, { root, source, current: !!query.current, assets, ...(history ? { history } : {}) });
-  return { loaded, root, top, at, workspaceRoot, result };
+  return { loaded, root, top, at, workspaceRoot, tree: assets, result };
 }
 
 /** Run the query and build the document `--json` prints. Never throws a {@link RecordReadError}. */
 export async function queryRecords(query: RecordsQuery): Promise<RecordsDocument> {
   try {
-    const { loaded, root, top, at, workspaceRoot, result } = await readRecordsFor(query);
+    const { loaded, root, top, at, workspaceRoot, tree, result } = await readRecordsFor(query);
     // Provenance, judged by the policy at base and never by the tree read (#2547).
     const base = top ? resolveBase(top, query.base) : { commit: null, from: null };
     const policy = top ? policyAtBase(top, base) : policyAtBase(root, base);
@@ -164,6 +201,15 @@ export async function queryRecords(query: RecordsQuery): Promise<RecordsDocument
       paths: result.records.map((r) => r.path),
       attestors: policy.active ? await activeAttestors() : [],
     });
+    // The quorum: the need from the declaration in the tree read, agents and
+    // whether verdicts need a seal from the policy at base (#2671).
+    const quorumOptions = loaded.kind.reviews
+      ? {
+          ...declaredQuorum(tree),
+          agents: new Set((policy.roles[AGENT_ROLE] ?? []).map(normalisePrincipal)),
+          attestation: policy.active,
+        }
+      : undefined;
     return {
       $schema: RECORDS_OUTPUT_SCHEMA_ID,
       contract: RECORDS_CONTRACT_VERSION,
@@ -176,7 +222,11 @@ export async function queryRecords(query: RecordsQuery): Promise<RecordsDocument
       workspaceRoot,
       current: !!query.current,
       trust: { base: base.commit, baseFrom: base.from, active: policy.active, signersPath: policy.signersPath, problems: policy.problems },
-      records: result.records.map((r) => ({ ...r, provenance: provenance.get(r.path)! })),
+      records: result.records.map((r) => ({
+        ...r,
+        provenance: provenance.get(r.path)!,
+        ...(quorumOptions ? { quorum: computeQuorum(loaded.kind, r, quorumOptions) } : {}),
+      })),
       summary: result.summary,
     };
   } catch (err) {
@@ -281,6 +331,12 @@ function formatRecords(records: RecordView[], summary: { total: number; valid: n
     lines.push(`${(r.id ?? "-").padEnd(idWidth)}  ${(r.state ?? "-").padEnd(stateWidth)}  ${title}${superseded}${attested}${flag}`);
     for (const reason of r.reasons) lines.push(`${" ".repeat(idWidth + 2)}${reason.code}: ${reason.message} (${r.path})`);
     for (const warning of r.warnings) lines.push(`${" ".repeat(idWidth + 2)}warning ${warning.code}: ${warning.message} (${r.path})`);
+    const q = r.quorum;
+    if (q && q.counted.length + q.notCounted.length > 0) {
+      const verdict = q.metWithObjections ? "met with objections" : q.met ? "met" : "not met";
+      const concerns = q.openConcerns.length > 0 ? `, ${q.openConcerns.length} open ${q.openConcerns.length === 1 ? "concern" : "concerns"}` : "";
+      lines.push(`${" ".repeat(idWidth + 2)}quorum ${q.agreed} of ${q.need} agreed, ${verdict}; ${q.notCounted.length} not counted${concerns}`);
+    }
   }
   lines.push(
     `${summary.total} records${at ? ` at ${at.slice(0, 8)}` : ""}: ${summary.valid} valid, ${summary.invalid} invalid, ${summary.superseded} superseded`,
