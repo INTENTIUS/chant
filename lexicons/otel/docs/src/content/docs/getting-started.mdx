@@ -1,0 +1,92 @@
+---
+title: "Getting Started"
+description: "Declare a first collector config with the otel lexicon and build it to collector YAML"
+diataxis: tutorial
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-otel` — DO NOT EDIT.
+    Edit lexicons/otel/docs/pages/getting-started.mdx instead; changes here are overwritten. */}
+
+
+This walks through a collector that receives OTLP, batches it and sends traces to a tracing backend.
+
+## 1. Install and register the lexicon
+
+```bash
+npm install --save-dev @intentius/chant @intentius/chant-lexicon-otel
+```
+
+```ts title="chant.config.ts"
+import type { ChantConfig } from "@intentius/chant";
+
+export default { lexicons: ["otel"] } satisfies ChantConfig;
+```
+
+## 2. Declare the components
+
+Each receiver, processor, exporter and extension is an entity. Config keys are the collector's own, in snake_case, exactly as the collector docs spell them.
+
+```ts title="src/collector.ts"
+import { OtlpReceiver, MemoryLimiterProcessor, BatchProcessor, OtlpExporter, Pipeline } from "@intentius/chant-lexicon-otel";
+
+const protocols = { grpc: { endpoint: "0.0.0.0:4317" } };
+const otlp = new OtlpReceiver({ protocols });
+const memoryLimiter = new MemoryLimiterProcessor({ check_interval: "1s", limit_percentage: 80 });
+const batch = new BatchProcessor({ timeout: "5s" });
+const tempo = new OtlpExporter({ name: "tempo", endpoint: "tempo.observability.svc:4317" });
+
+const traces = new Pipeline({
+  signal: "traces",
+  receivers: [otlp],
+  processors: [memoryLimiter, batch],
+  exporters: [tempo],
+});
+
+export { otlp, memoryLimiter, batch, tempo, traces };
+```
+
+`name: "tempo"` makes the exporter's id `otlp/tempo`. Without a name the id is the bare type, `otlp`.
+
+## 3. Build
+
+```bash
+npx chant build src --lexicon otel -o collector.yaml
+```
+
+```yaml title="collector.yaml"
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+processors:
+  batch:
+    timeout: 5s
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 80
+
+exporters:
+  otlp/tempo:
+    endpoint: tempo.observability.svc:4317
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp/tempo]
+```
+
+Run it with `otelcol-contrib --config collector.yaml`.
+
+## 4. Lint
+
+`chant lint src` runs the source rules (OTEL001, OTEL002) and `chant build` runs the post-synth checks. Remove `memoryLimiter` from the chain but leave it declared, and OTEL103 warns that it is declared and unused. Replace `tempo` with the string `"otlp/tmepo"` and OTEL101 fails the build, because no exporter has that id.
+
+## Next
+
+- [Components](../components/) lists the built-in set and the rules each one checks.
+- [Custom components](../custom-components/) adds a component chant doesn't ship.
+- [Composites](../composites/) runs a declared config on a platform.

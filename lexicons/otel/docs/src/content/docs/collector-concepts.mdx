@@ -1,0 +1,35 @@
+---
+title: "How the Collector Maps to Chant"
+description: "Entities, component ids, pipelines, ordering and why the built-in types are written by hand"
+diataxis: explanation
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-otel` — DO NOT EDIT.
+    Edit lexicons/otel/docs/pages/collector-concepts.mdx instead; changes here are overwritten. */}
+
+
+A collector config file has four component sections (receivers, processors, exporters, extensions) and a `service` block whose `pipelines` wire components together per signal. The otel lexicon gives each of those parts an entity.
+
+## Components are entities, ids come from the config
+
+A component entity is `new <Class>(config)`. Its collector id is its type, or `type/name` when the config sets `name`. The export name in your source is chant's name for the entity and never appears in the YAML, so renaming a variable cannot change the emitted config, and two differently named exports that declare the same id are reported (OTEL108) rather than silently merged.
+
+## Pipelines reference entities
+
+`Pipeline` takes a `signal` (`traces`, `metrics` or `logs`), an optional `name`, and lists of receivers, processors and exporters. Each entry is either the entity itself, which TypeScript checks for kind, or an id string for a component declared somewhere chant can't see. A component that a pipeline references by entity is emitted even if you never exported it, because the entity carries its config. A string that matches no declared component is OTEL101.
+
+## Extensions and the service block
+
+Declared extensions are enabled in declaration order. Declare a `Service` to choose the order, enable a subset, or set `service.telemetry`.
+
+## Order in the output
+
+Sections always come out as receivers, processors, exporters, extensions, service. Within a section, components follow the order the build hands them over, and each component's keys keep the order you wrote them in. Processor order inside a pipeline is significant to the collector and is emitted exactly as declared.
+
+## Why the built-in types are hand-written
+
+Most chant lexicons generate their types from an upstream schema. The collector has no such schema: each component defines its config as a Go struct in its own module, and the set changes with every collector release. The built-in types are written against one collector-contrib release, recorded as `COLLECTOR_PIN`, and move when this package does. Components outside that set come in through [`defineComponent`](../custom-components/), which carries its own pin.
+
+## What chant does not do here
+
+The lexicon writes the config file. It does not run a collector, and it does not model connectors yet (a connector id in a parsed config is accepted where the collector accepts one). Running the collector is a platform concern, handled by composites in the platform lexicons, see [Composites](../composites/).

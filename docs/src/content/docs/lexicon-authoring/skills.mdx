@@ -138,8 +138,8 @@ export const myPlugin: LexiconPlugin = {
 ```
 
 The `file` field is the filename inside `src/skills/`; every other field of
-`SkillFileSpec` is a `SkillDefinition` field minus `content`. Fifteen of the
-seventeen lexicons wire skills this way. `lexicons/fly/src/plugin.ts:79` is a
+`SkillFileSpec` is a `SkillDefinition` field minus `content`. Sixteen of the
+eighteen lexicons wire skills this way. `lexicons/fly/src/plugin.ts:79` is a
 short worked example; k3s keeps a hand-rolled loop for the same effect.
 
 ## Installation
@@ -181,7 +181,7 @@ const skills = collectSkills(myPlugin.skills!());
 
 ## Reference
 
-Sixteen of the seventeen lexicons ship skills. Only k3d ships none
+Seventeen of the eighteen lexicons ship skills. Only k3d ships none
 (`lexicons/k3d/src/plugin.ts` returns `[]`).
 
 | Lexicon | Skills | Count |
@@ -200,6 +200,7 @@ Sixteen of the seventeen lexicons ship skills. Only k3d ships none
 | Helm | `chant-helm`, `chant-helm-patterns`, `chant-helm-security` | 3 |
 | K3s | `chant-k3s` | 1 |
 | K8s | `chant-k8s`, `chant-k8s-patterns`, `chant-k8s-deployment-strategies`, `chant-k8s-security`, `chant-k8s-eks`, `chant-k8s-gke`, `chant-k8s-aks`, `chant-k8s-argo`, `chant-k8s-flux`, `chant-k8s-ray` | 10 |
+| OTel | `chant-otel`, `chant-otel-custom-components`, `chant-otel-platforms` | 3 |
 | Render | `chant-render`, `chant-render-patterns` | 2 |
 
 ## Next Steps

@@ -1,0 +1,32 @@
+---
+title: "All Rules"
+description: "Every lint rule and post-synth check provided by the OpenTelemetry Collector lexicon"
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-otel` — DO NOT EDIT.
+    Edit lexicons/otel/src/codegen/docs.ts instead; changes here are overwritten. */}
+
+The OpenTelemetry Collector lexicon provides **11** rules: 2 lint rules and 9 post-synth checks.
+
+## Lint Rules
+
+| ID | Severity | Category | Description |
+|----|----------|----------|-------------|
+| `OTEL001` | error | correctness | a component id or instance name the collector can't parse. |
+| `OTEL002` | error | security | a credential written as a literal in a component's config. |
+
+## Post-Synth Checks
+
+Post-synth checks validate the serialized output after the build pipeline completes.
+
+| ID | Description |
+|----|-------------|
+| `OTEL101` | A pipeline uses a receiver, processor or exporter that is not declared |
+| `OTEL102` | A pipeline has no receivers or no exporters |
+| `OTEL103` | A declared component is never used |
+| `OTEL104` | service.extensions enables an extension that is not declared |
+| `OTEL105` | memory_limiter is not the first processor in a pipeline |
+| `OTEL106` | A pipeline id or component reference is not valid collector syntax |
+| `OTEL107` | A component's config breaks its definition's rules |
+| `OTEL108` | Two components or two pipelines declare the same id |
+| `OTEL109` | A custom component has no schema pin |

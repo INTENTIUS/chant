@@ -1,0 +1,31 @@
+---
+title: "Composites"
+description: "Run a declared collector config on a platform, and how the GKE composite is built on this lexicon"
+diataxis: reference
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-otel` — DO NOT EDIT.
+    Edit lexicons/otel/docs/pages/composites.mdx instead; changes here are overwritten. */}
+
+
+The otel lexicon writes collector config. Running a collector is the platform's job, so platform composites live in the platform lexicons and use `collectorYaml()` to render a declared config into whatever file the platform mounts.
+
+## `collectorYaml(entities)`
+
+Returns exactly the YAML the otel serializer would emit for the given entities, including the `# chant:` pin lines for custom components. Pass the components and pipelines; a component a pipeline references is included automatically.
+
+```ts
+import { OtlpReceiver, DebugExporter, Pipeline, collectorYaml } from "@intentius/chant-lexicon-otel";
+
+const otlp = new OtlpReceiver({ protocols: { grpc: { endpoint: "0.0.0.0:4317" } } });
+const debug = new DebugExporter({});
+const yaml = collectorYaml([new Pipeline({ signal: "traces", receivers: [otlp], exporters: [debug] })]);
+```
+
+`buildCollectorConfig(entities)` returns the same config as a plain object, before it is printed.
+
+## `GkeOtelCollector` (k8s lexicon)
+
+`GkeOtelCollector` in `@intentius/chant-lexicon-k8s` deploys a collector DaemonSet on GKE with Workload Identity. Its config is declared through this lexicon: an `otlp` receiver on 4317 and 4318, `batch` and `resourcedetection` (gcp) processors, and a `googlecloud` exporter for the given project with a metric prefix per cluster, wired into metrics and traces pipelines. The composite renders it with `collectorYaml` into the `config.yaml` key of its ConfigMap.
+
+Moving it onto this lexicon did not change its output. The composite's tests compare the rendered config byte for byte with the hand-written template it used before, for several project and cluster names, and run `validateCollectorConfig` over it.

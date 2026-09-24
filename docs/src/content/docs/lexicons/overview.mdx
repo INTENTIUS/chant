@@ -26,6 +26,7 @@ A **lexicon** is a collection of types and semantic lint rules for an operationa
 | Cedar | `@intentius/chant-lexicon-cedar` | Policy and Schema, plus entity and action types generated from your schema | [Reference](/chant/lexicons/cedar/) — emits `.cedar` and Cedar JSON; observes and imports against Amazon Verified Permissions |
 | k3d | `@intentius/chant-lexicon-k3d` | 1 resource (Cluster) + config property types, pinned to k3d v5.9.0 | [Reference](/chant/lexicons/k3d/) — emits the `k3d.io/v1alpha5` config `k3d cluster create --config` consumes; `k3dUp`/`k3dDown` Op activities |
 | k3s | `@intentius/chant-lexicon-k3s` | 3 resources (Server, Agent, Registries) | [Reference](/chant/lexicons/k3s/) — emits `config.yaml` and `registries.yaml` for `/etc/rancher/k3s/`; `k3sInstall`/`k3sUninstall` Op activities |
+| OpenTelemetry Collector | `@intentius/chant-lexicon-otel` | 18 components (4 receivers, 6 processors, 5 exporters, 3 extensions), Pipeline, Service | [Reference](/chant/lexicons/otel/) — emits collector YAML; `defineComponent` adds components chant doesn't ship, with a pinned schema |
 | Terraform | `@intentius/chant-lexicon-terraform` | one entity per HCL block, no generated resource surface | [Reference](/chant/lexicons/terraform/) — reads an existing root module's `.tf` files as-is; `terraformInit`/`terraformPlan`/`terraformApply`/`terraformShow` Op activities and the `TerraformApplyOp` composite |
 
 ## Runtime observation coverage
@@ -55,6 +56,7 @@ A fourth, `predictBehaviour()`, answers a different question from the other thre
 | GitHub Actions |  |  |  |  | — | N/A — workflow definitions are git-tracked; drift is `git diff` ([rationale](https://github.com/INTENTIUS/chant/blob/main/lexicons/github/README.md#runtime-observation-na)) |
 | GitLab CI/CD |  |  |  |  | — | N/A — same rationale ([README](https://github.com/INTENTIUS/chant/blob/main/lexicons/gitlab/README.md#runtime-observation-na)) |
 | Forgejo Actions |  |  |  |  | — | N/A — workflow definitions are git-tracked; drift is `git diff` (same as github) |
+| OpenTelemetry Collector |  |  |  |  | — | N/A — a collector config file is an input to a collector the platform lexicons deploy; there is nothing live to read |
 
 Lexicons that implement neither are warn-skipped — `--live` doesn't fail the whole command for them.
 

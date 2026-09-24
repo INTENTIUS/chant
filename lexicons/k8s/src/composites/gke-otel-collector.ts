@@ -3,9 +3,21 @@
  *
  * @gke Like AdotCollector but targets Cloud Trace + Cloud Monitoring via the
  * googlecloud exporter and uses GKE Workload Identity instead of IRSA.
+ *
+ * The collector config is typed through the otel lexicon
+ * (`@intentius/chant-lexicon-otel`) and rendered with its `collectorYaml`, so
+ * it is checked the way any declared collector config is.
  */
 
 import { Composite, mergeDefaults } from "@intentius/chant";
+import {
+  OtlpReceiver,
+  BatchProcessor,
+  ResourceDetectionProcessor,
+  GoogleCloudExporter,
+  Pipeline,
+  collectorYaml,
+} from "@intentius/chant-lexicon-otel";
 import { DaemonSet, ServiceAccount, ClusterRole, ClusterRoleBinding, ConfigMap } from "../generated";
 
 export interface GkeOtelCollectorProps {
@@ -92,43 +104,31 @@ export const GkeOtelCollector = Composite((props: GkeOtelCollectorProps) => {
     ...extraLabels,
   };
 
-  const otelConfig = `receivers:
-  otlp:
-    protocols:
-      grpc:
-        endpoint: 0.0.0.0:4317
-      http:
-        endpoint: 0.0.0.0:4318
-
-processors:
-  batch:
-    timeout: 30s
-    send_batch_size: 8192
-  resourcedetection:
-    detectors: [gcp]
-    timeout: 10s
-
-exporters:
-  googlecloud:
-    project: ${projectId}
-    metric:
-      prefix: custom.googleapis.com/${clusterName}
-    trace:
-      attribute_mappings:
-        - key: service.name
-          replacement: g.co/r/service/name
-
-service:
-  pipelines:
-    metrics:
-      receivers: [otlp]
-      processors: [batch, resourcedetection]
-      exporters: [googlecloud]
-    traces:
-      receivers: [otlp]
-      processors: [batch, resourcedetection]
-      exporters: [googlecloud]
-`;
+  // The collector config, declared through the otel lexicon and rendered to
+  // the same YAML the ConfigMap has always carried (#2559).
+  const otlp = new OtlpReceiver({
+    protocols: {
+      grpc: { endpoint: "0.0.0.0:4317" },
+      http: { endpoint: "0.0.0.0:4318" },
+    },
+  });
+  const batch = new BatchProcessor({ timeout: "30s", send_batch_size: 8192 });
+  const resourceDetection = new ResourceDetectionProcessor({ detectors: ["gcp"], timeout: "10s" });
+  const googleCloud = new GoogleCloudExporter({
+    project: projectId,
+    metric: { prefix: `custom.googleapis.com/${clusterName}` },
+    trace: {
+      attribute_mappings: [{ key: "service.name", replacement: "g.co/r/service/name" }],
+    },
+  });
+  const otelConfig = collectorYaml([
+    otlp,
+    batch,
+    resourceDetection,
+    googleCloud,
+    new Pipeline({ signal: "metrics", receivers: [otlp], processors: [batch, resourceDetection], exporters: [googleCloud] }),
+    new Pipeline({ signal: "traces", receivers: [otlp], processors: [batch, resourceDetection], exporters: [googleCloud] }),
+  ]);
 
   const container: Record<string, unknown> = {
     name,

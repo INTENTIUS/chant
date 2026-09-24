@@ -74,6 +74,7 @@ jobs:
       - run: npm run --prefix lexicons/gitlab prepack
       - run: npm run --prefix lexicons/github prepack
       - run: npm run --prefix lexicons/forgejo prepack
+      - run: npm run --prefix lexicons/otel prepack
       - run: npm run --prefix lexicons/k8s prepack
       - run: npm run --prefix lexicons/gcp prepack
       - run: npm run --prefix lexicons/helm prepack

@@ -1,0 +1,43 @@
+---
+title: "Topology"
+description: "collectorTopology(): where a collector sends each signal, as plain data for other tools"
+diataxis: reference
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-otel` — DO NOT EDIT.
+    Edit lexicons/otel/docs/pages/topology.mdx instead; changes here are overwritten. */}
+
+
+`collectorTopology(config)` reads a collector config, declared or parsed from a YAML file, and returns where its telemetry goes. `collectorTopologyOf(entities)` does the same for declared entities, via the config the serializer would emit for them. Both return plain data with no chant types in it.
+
+```ts
+import { collectorTopologyOf } from "@intentius/chant-lexicon-otel";
+
+const topology = collectorTopologyOf(buildResult.entities);
+for (const exporter of topology.exporters) {
+  console.log(exporter.id, exporter.signals, exporter.endpoints);
+}
+```
+
+## Shape
+
+```ts
+interface CollectorTopology {
+  pipelines: Array<{ id: string; signal: string; receivers: string[]; processors: string[]; exporters: string[] }>;
+  components: Array<{
+    id: string;                 // "otlp/tempo"
+    kind: "receiver" | "processor" | "exporter" | "extension";
+    type: string;               // "otlp"
+    name?: string;              // "tempo"
+    builtin: boolean;
+    schema?: { source: string; version: string; digest?: string };
+    endpoints: string[];
+    pipelines: string[];        // pipeline ids that use it
+  }>;
+  exporters: Array<{ id: string; type: string; endpoints: string[]; pipelines: string[]; signals: string[] }>;
+}
+```
+
+`endpoints` are what the config states, with the collector's defaults filled in where a component has one (an `otlp` receiver with an empty `grpc` block reports `localhost:4317`). A definition's `endpoints` function decides them; a component with no loaded definition reports its `endpoint` key when it has one. The `googlecloud` exporter reports `googlecloud://projects/<project>`, since it sends to Google's APIs rather than to an address in the config.
+
+Parsing a built file and reading the declaration give the same topology, which the lexicon's tests assert.

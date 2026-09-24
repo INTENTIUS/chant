@@ -1,0 +1,62 @@
+---
+title: "Components"
+description: "The built-in receivers, processors, exporters and extensions, with the config rules each checks"
+diataxis: reference
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-otel` — DO NOT EDIT.
+    Edit lexicons/otel/docs/pages/components.mdx instead; changes here are overwritten. */}
+
+
+Every built-in follows the config of the collector-contrib release in `COLLECTOR_PIN` (`github.com/open-telemetry/opentelemetry-collector-contrib` `v0.130.0`). The "Checks" column lists what OTEL107 reports beyond the TypeScript type. "Endpoints" is what [`collectorTopology()`](../topology/) reports for the component.
+
+## Receivers
+
+| Class | Type | Checks | Endpoints |
+|---|---|---|---|
+| `OtlpReceiver` | `otlp` | at least one of `protocols.grpc`, `protocols.http` | each enabled protocol's `endpoint`, defaulting to `localhost:4317` and `localhost:4318` |
+| `PrometheusReceiver` | `prometheus` | scrape job names are unique; some scrape config or a target allocator | static scrape targets |
+| `HostMetricsReceiver` | `hostmetrics` | at least one scraper | none |
+| `FileLogReceiver` | `filelog` | `include` is not empty | the `include` globs |
+
+## Processors
+
+| Class | Type | Checks |
+|---|---|---|
+| `BatchProcessor` | `batch` | `send_batch_max_size` is not below `send_batch_size` |
+| `MemoryLimiterProcessor` | `memory_limiter` | `limit_mib` or `limit_percentage` is set; spike limit below the limit; percentage within 1 to 100 |
+| `ResourceProcessor` | `resource` | at least one action; each action has what its kind needs |
+| `AttributesProcessor` | `attributes` | as `resource`, for `actions` |
+| `K8sAttributesProcessor` | `k8sattributes` | none beyond the type |
+| `ResourceDetectionProcessor` | `resourcedetection` | at least one detector |
+
+Put `memory_limiter` first in every pipeline; OTEL105 warns otherwise.
+
+## Exporters
+
+| Class | Type | Checks | Endpoints |
+|---|---|---|---|
+| `OtlpExporter` | `otlp` | `endpoint` is set | `endpoint` |
+| `OtlpHttpExporter` | `otlphttp` | `endpoint` or a per-signal endpoint is set | every endpoint set |
+| `DebugExporter` | `debug` | none | `console` |
+| `PrometheusExporter` | `prometheus` | `endpoint` is set | `endpoint` (the address Prometheus scrapes) |
+| `GoogleCloudExporter` | `googlecloud` | none | `googlecloud://projects/<project>`, plus any endpoint overrides |
+
+## Extensions
+
+| Class | Type | Endpoints |
+|---|---|---|
+| `HealthCheckExtension` | `health_check` | `endpoint` + `path`, default `localhost:13133/` |
+| `PprofExtension` | `pprof` | `endpoint`, default `localhost:1777` |
+| `ZPagesExtension` | `zpages` | `endpoint`, default `localhost:55679` |
+
+## Pipeline and Service
+
+| Class | What it emits |
+|---|---|
+| `Pipeline` | one entry under `service.pipelines`, id `signal` or `signal/name` |
+| `Service` | `service.extensions` and `service.telemetry`; declare at most one |
+
+## Shared config types
+
+The settings many components share are exported as types: `TLSClientSettings`, `TLSServerSettings`, `GRPCServerSettings`, `HTTPServerSettings`, `GRPCClientSettings`, `HTTPClientSettings`, `RetrySettings`, `QueueSettings`, `ExporterHelperSettings` and `AttributeAction`. Use them to type a nested block you declare as its own const.

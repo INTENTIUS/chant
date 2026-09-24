@@ -60,6 +60,7 @@ jobs:
           npm run --prefix lexicons/gitlab prepack
           npm run --prefix lexicons/github prepack
           npm run --prefix lexicons/forgejo prepack
+          npm run --prefix lexicons/otel prepack
           npm run --prefix lexicons/k8s prepack
           npm run --prefix lexicons/gcp prepack
           npm run --prefix lexicons/helm prepack
@@ -196,6 +197,7 @@ jobs:
           npm run --prefix lexicons/gitlab prepack
           npm run --prefix lexicons/github prepack
           npm run --prefix lexicons/forgejo prepack
+          npm run --prefix lexicons/otel prepack
           npm run --prefix lexicons/k8s prepack
           npm run --prefix lexicons/gcp prepack
           npm run --prefix lexicons/helm prepack
@@ -295,6 +297,9 @@ jobs:
 
       - name: Generate and validate Forgejo lexicon
         run: npm run --prefix lexicons/forgejo prepack
+
+      - name: Generate and validate OTel lexicon
+        run: npm run --prefix lexicons/otel prepack
 
       - name: Generate and validate K8s lexicon
         run: npm run --prefix lexicons/k8s prepack
