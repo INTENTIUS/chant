@@ -306,6 +306,17 @@ describe("parseArgs", () => {
     expect(() => parseArgs(["build", "--promote-to", "--env", "x"])).toThrow(/--promote-to needs an environment/);
   });
 
+  test("--promote-to outside build --components --generate is refused, naming the flags it needs (#2603)", () => {
+    const needs = /--promote-to needs build --components --generate <lexicon>/;
+    expect(() => parseArgs(["build", "--promote-to", "prod"])).toThrow(needs);
+    expect(() => parseArgs(["build", "--components", "--promote-to", "prod"])).toThrow(needs);
+    expect(() => parseArgs(["build", "--generate", "github", "--promote-to", "prod"])).toThrow(needs);
+    expect(() => parseArgs(["run", "--components", "all", "--generate", "github", "--promote-to", "prod"])).toThrow(needs);
+    expect(() => parseArgs(["components", "promote", "--from", "staging", "--promote-to", "prod"])).toThrow(needs);
+    // Flag order does not matter: the check runs once the whole line is parsed.
+    expect(parseArgs(["build", "--promote-to", "prod", "--generate", "gitlab", "--components"]).promoteTo).toBe("prod");
+  });
+
   test("parses --no-release-record for run --components", () => {
     const result = parseArgs(["run", "--components", "search-service", "--env", "staging", "--no-release-record"]);
     expect(result.components).toBe(true);

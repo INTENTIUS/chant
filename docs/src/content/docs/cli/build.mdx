@@ -32,7 +32,7 @@ It reaches no network. Every schema it needs is generated into the lexicon packa
 | `--params-file <path>` | `string` | — | JSON file of `{ "name": value }` build-time parameter values; second precedence, after `--param` |
 | `--env <name>` | `string` | — | Active environment. Sets `CHANT_ENV` so env-aware source re-evaluates for that environment, and selects the organizational policy that applies. Must be declared under `environments` in `chant.config.ts` when that list exists |
 | `--components --generate <lexicon>` | `string` | — | Generate mode. Synthesize a CI pipeline from the discovered `*.component.ts` declarations instead of running a lexicon build. See [Generate mode](#generate-mode-ci-pipelines-from-components) |
-| `--promote-to <env>` | `string` | — | Generate mode only. Add a job that promotes the deployed releases to `<env>` after every component job succeeds. See [Promote job](#promote-job) |
+| `--promote-to <env>` | `string` | — | Generate mode only. Add a job that promotes the deployed releases to `<env>` after every component job succeeds. Without `--components --generate <lexicon>` the command fails rather than ignoring the flag. See [Promote job](#promote-job) |
 | `--fold-rank [path]` | `bool` or `string` | off | After a folded build, print the run-fallback blockers ranked by how many files each one keeps from folding. With a path, also write the ranking in collapsed-stack format to that file for a flame-graph viewer. No-op with `--no-fold` |
 
 ## Usage
@@ -135,6 +135,8 @@ A components-only project need not declare a lexicon plugin at all. Lexicons are
 - An `into` the generator cannot read as a plain path, such as a wiring reference or an `$env.` value, fails generation and names the component, because the file it names is only known at run time.
 
 Without `--promote-to` the generated pipeline has no promote job and no archive uploads.
+
+`--promote-to` is refused anywhere else, including a plain `chant build --promote-to prod`, with an error naming the flags it needs.
 
 ```bash
 chant build --components --generate github --env staging --promote-to prod --output .github/workflows/components.yml
