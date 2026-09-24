@@ -303,6 +303,10 @@ When some lexicons are installed and files on disk look like they belong to one 
 
 If a lexicon package is present for detection but its checks fail to load, the command surfaces that as an error naming the package.
 
+### Lexicons a project declares by path
+
+A chant project can declare a lexicon by module path in `chant.config.ts` ([A lexicon in your own project](/chant/guide/managing-lexicons/#a-lexicon-in-your-own-project)). Such a lexicon has no package. The install line leaves it out, and the messages above name its path instead. Audit reads the target's config without running it, since it audits code it must not execute. When the config's `lexicons` cannot be read that way, audit prints a note saying so. Every lexicon is then treated as a package. It never loads a lexicon's module from a path either: its checks always come from installed lexicon packages. See [Commands that read `chant.config.ts` without running it](/chant/architecture/sandbox/#commands-that-read-chantconfigts-without-running-it).
+
 ## Secrets & credentials detection
 
 The `SEC*` rules (see the [rules reference](/chant/lint-rules/audit-rules/)) scan the raw text of every scanned file for likely credentials — independent of lexicon, so they run even for file types no installed lexicon claims. Two layers:

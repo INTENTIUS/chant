@@ -1046,9 +1046,10 @@ export const commandRegistry: CommandDef[] = [
   { name: "describe", handler: runDescribe },
   { name: "explain", handler: runExplain },
   { name: "search", handler: runSearch },
-  // chant#2591 — `import --agents` reads chant.config statically and never evaluates it.
+  // chant#2591 — `import --agents` and `audit` read chant.config statically
+  // and never evaluate it (chant#2589 for audit, which audits code it must not run).
   { name: "import", handler: runImport, runsNoConfig: (args) => args.agents === true },
-  { name: "audit", handler: runAudit },
+  { name: "audit", handler: runAudit, runsNoConfig: true },
   { name: "migrate", handler: runMigrate },
   // Read-only Terraform peelability advisor (#214). Compound so "advise" lands
   // in args.path; the estate dir comes from --from. No plugins, no project.

@@ -1,12 +1,12 @@
 /**
- * chant#2591 — read the `lexicons` a project's config declares without
- * running the config.
+ * chant#2591, chant#2589 — read the `lexicons` a project's config declares
+ * without running the config.
  *
  * `chant.config.ts` is project code. Most commands evaluate it (see
  * `./config-sandbox.ts`), but a few only need to know which lexicons it
- * declares by path (#2520): `init --force`, `dev onboard` and
- * `import --agents`. Those read the config here, statically, and never
- * evaluate it.
+ * declares by path (#2520) so their messages can name the path instead of a
+ * package: `init --force`, `dev onboard`, `import --agents` and `audit`.
+ * Those read the config here, statically, and never evaluate it.
  *
  * The reader parses the file and reduces the `lexicons` value with the fold
  * machinery (`./fold/fold.ts`'s {@link fold}), given the file's own top-level
