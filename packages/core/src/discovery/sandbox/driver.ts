@@ -71,6 +71,49 @@ function lit(value: unknown): string {
 }
 
 /**
+ * chant#2461 — the `send` every driver uses, as generated source lines.
+ *
+ * `process.send` is asynchronous: it queues the message on the IPC channel and
+ * returns. Node's contract is that the optional callback runs once the message
+ * has been written, or with an error if it could not be. Without the callback a
+ * failed send is not reported to the caller at all, so the driver could return
+ * from `main()` believing it had answered.
+ *
+ * So `send` returns a promise that settles only when the write has completed,
+ * and every call site awaits it before `main()` returns. A send that fails, or
+ * throws synchronously (a payload that cannot be serialized), writes the reason
+ * to stderr with a synchronous `writeSync` and exits 1. That way a result that
+ * never left the child cannot end as exit 0 with empty stderr, which is the
+ * signature that looks like success went missing.
+ *
+ * `before` is spliced in at the top of the function body (the run driver marks
+ * itself `reported` there).
+ */
+export function sendFunctionSource(before: readonly string[] = []): string[] {
+  return [
+    `function send(payload) {`,
+    ...before.map((line) => `  ${line}`),
+    `  if (typeof process.send !== "function") {`,
+    `    console.log(JSON.stringify(payload));`,
+    `    return Promise.resolve();`,
+    `  }`,
+    `  return new Promise((resolve) => {`,
+    `    const lost = (err) => {`,
+    `      writeSync(2, "chant: the sandboxed child could not hand its result to the parent: " +`,
+    `        (err && err.message ? err.message : String(err)) + " (chant#2461)\\n");`,
+    `      process.exit(1);`,
+    `    };`,
+    `    try {`,
+    `      process.send(payload, (err) => (err ? lost(err) : resolve()));`,
+    `    } catch (err) {`,
+    `      lost(err);`,
+    `    }`,
+    `  });`,
+    `}`,
+  ];
+}
+
+/**
  * Generate the driver module's full TypeScript source. Written to a tmp file
  * and bundled (see `./bundle.ts`) before being handed to a sandboxed child —
  * never executed directly by the parent process.
@@ -117,11 +160,7 @@ export function generateDriverSource(options: GenerateDriverOptions): string {
     `    "Nothing is thrown, so nothing else can name it (chant#2461).\\n");`,
     `});`,
     ``,
-    `function send(payload) {`,
-    `  reported = true;`,
-    `  if (typeof process.send === "function") process.send(payload);`,
-    `  else console.log(JSON.stringify(payload));`,
-    `}`,
+    ...sendFunctionSource([`reported = true;`]),
     ``,
     // collectEntities (bundled, real DiscoveryError instances) already names
     // the exact offending file on a same-directory duplicate — reuse that
@@ -156,7 +195,7 @@ export function generateDriverSource(options: GenerateDriverOptions): string {
     `    entities = collectEntities(modules, BUILD_ROOT);`,
     `  } catch (err) {`,
     `    errors.push(classifyChildError(errFile(err), err, "resolution").toJSON());`,
-    `    send({ entitySet: { entities: [] }, errors, provenanceByName: {} });`,
+    `    await send({ entitySet: { entities: [] }, errors, provenanceByName: {} });`,
     `    return;`,
     `  }`,
     ``,
@@ -178,18 +217,20 @@ export function generateDriverSource(options: GenerateDriverOptions): string {
     `    errors.push(classifyChildError("", err, "resolution").toJSON());`,
     `  }`,
     ``,
+    `  let entitySet;`,
     `  try {`,
-    `    const entitySet = encodeEntitySet(entities);`,
-    `    send({ entitySet, errors, provenanceByName });`,
+    `    entitySet = encodeEntitySet(entities);`,
     `  } catch (err) {`,
     `    errors.push(classifyChildError("", err, "resolution").toJSON());`,
-    `    send({ entitySet: { entities: [] }, errors, provenanceByName });`,
+    `    await send({ entitySet: { entities: [] }, errors, provenanceByName });`,
+    `    return;`,
     `  }`,
+    `  await send({ entitySet, errors, provenanceByName });`,
     `}`,
     ``,
-    `main().catch((err) => {`,
-    `  send({ entitySet: { entities: [] }, errors: [classifyChildError("", err).toJSON()], provenanceByName: {}, fatal: true });`,
-    `});`,
+    `main().catch((err) =>`,
+    `  send({ entitySet: { entities: [] }, errors: [classifyChildError("", err).toJSON()], provenanceByName: {}, fatal: true }),`,
+    `);`,
   );
 
   return lines.join("\n");
@@ -218,18 +259,16 @@ export function generateConfigDriverSource(configPath: string): string {
   return [
     `import { classifyChildError } from ${lit(CHILD_ERRORS_MODULE)};`,
     `import { scanConfigWireSafety } from ${lit(CONFIG_WIRE_MODULE)};`,
+    `import { writeSync } from "node:fs";`,
     ``,
-    `function send(payload) {`,
-    `  if (typeof process.send === "function") process.send(payload);`,
-    `  else console.log(JSON.stringify(payload));`,
-    `}`,
+    ...sendFunctionSource(),
     ``,
     `async function main() {`,
     `  let namespace;`,
     `  try {`,
     `    namespace = await import(${lit(configPath)});`,
     `  } catch (err) {`,
-    `    send({ kind: "chant-config", ok: false, error: classifyChildError(${lit(configPath)}, err).toJSON() });`,
+    `    await send({ kind: "chant-config", ok: false, error: classifyChildError(${lit(configPath)}, err).toJSON() });`,
     `    return;`,
     `  }`,
     ``,
@@ -240,24 +279,26 @@ export function generateConfigDriverSource(configPath: string): string {
     ``,
     `  const offenders = scanConfigWireSafety(selected);`,
     `  if (offenders.length > 0) {`,
-    `    send({ kind: "chant-config", ok: false, offenders });`,
+    `    await send({ kind: "chant-config", ok: false, offenders });`,
     `    return;`,
     `  }`,
     ``,
+    `  let config;`,
     `  try {`,
     // Round-trip here, not just at the IPC boundary: this is what proves the
     // payload really is JSON before it leaves the child, and turns anything
     // the scan somehow missed into a named error instead of a quiet drop.
-    `    const config = JSON.parse(JSON.stringify(selected ?? {}));`,
-    `    send({ kind: "chant-config", ok: true, config });`,
+    `    config = JSON.parse(JSON.stringify(selected ?? {}));`,
     `  } catch (err) {`,
-    `    send({ kind: "chant-config", ok: false, error: classifyChildError(${lit(configPath)}, err, "resolution").toJSON() });`,
+    `    await send({ kind: "chant-config", ok: false, error: classifyChildError(${lit(configPath)}, err, "resolution").toJSON() });`,
+    `    return;`,
     `  }`,
+    `  await send({ kind: "chant-config", ok: true, config });`,
     `}`,
     ``,
-    `main().catch((err) => {`,
-    `  send({ kind: "chant-config", ok: false, error: classifyChildError(${lit(configPath)}, err).toJSON() });`,
-    `});`,
+    `main().catch((err) =>`,
+    `  send({ kind: "chant-config", ok: false, error: classifyChildError(${lit(configPath)}, err).toJSON() }),`,
+    `);`,
   ].join("\n");
 }
 
@@ -294,18 +335,15 @@ export function generatePolicyDriverSource(policyPaths: readonly string[]): stri
     `import { classifyChildError } from ${lit(CHILD_ERRORS_MODULE)};`,
     `import { decodePolicyBuildResult, scanPolicyDiagnostics, PolicyWireError } from ${lit(POLICY_WIRE_MODULE)};`,
     `import { runPostSynthChecks, isPostSynthCheck } from ${lit(POST_SYNTH_MODULE)};`,
+    `import { writeSync } from "node:fs";`,
     ``,
-    `function send(payload) {`,
-    `  if (typeof process.send === "function") process.send(payload);`,
-    `  else console.log(JSON.stringify(payload));`,
-    `}`,
+    ...sendFunctionSource(),
     ``,
     `function fail(file, err, type) {`,
     `  if (err instanceof PolicyWireError) {`,
-    `    send({ kind: "chant-policy", ok: false, offenders: err.offenders });`,
-    `    return;`,
+    `    return send({ kind: "chant-policy", ok: false, offenders: err.offenders });`,
     `  }`,
-    `  send({ kind: "chant-policy", ok: false, error: classifyChildError(file, err, type).toJSON() });`,
+    `  return send({ kind: "chant-policy", ok: false, error: classifyChildError(file, err, type).toJSON() });`,
     `}`,
     ``,
     // The wrapper described in the doc above: same id/description so any
@@ -329,7 +367,7 @@ export function generatePolicyDriverSource(policyPaths: readonly string[]): stri
     `  try {`,
     `    buildResult = decodePolicyBuildResult(request.buildResult);`,
     `  } catch (err) {`,
-    `    fail("", err, "resolution");`,
+    `    await fail("", err, "resolution");`,
     `    return;`,
     `  }`,
     ``,
@@ -347,7 +385,7 @@ export function generatePolicyDriverSource(policyPaths: readonly string[]): stri
       `      if (isPostSynthCheck(value)) checks.push(guard(value, ${lit(policyPath)}));`,
       `    }`,
       `  } catch (err) {`,
-      `    fail(${lit(policyPath)}, err, "import");`,
+      `    await fail(${lit(policyPath)}, err, "import");`,
       `    return;`,
       `  }`,
     );
@@ -359,11 +397,11 @@ export function generatePolicyDriverSource(policyPaths: readonly string[]): stri
     `  try {`,
     `    diagnostics = runPostSynthChecks(checks, buildResult, request.env ?? undefined);`,
     `  } catch (err) {`,
-    `    fail("", err, "resolution");`,
+    `    await fail("", err, "resolution");`,
     `    return;`,
     `  }`,
     ``,
-    `  send({ kind: "chant-policy", ok: true, diagnostics });`,
+    `  await send({ kind: "chant-policy", ok: true, diagnostics });`,
     `}`,
     ``,
     // Registered synchronously at module top level — see the doc above on why

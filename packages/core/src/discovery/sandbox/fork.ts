@@ -1,4 +1,4 @@
-import { fork } from "node:child_process";
+import { fork, type ChildProcess } from "node:child_process";
 
 /**
  * The one place chant starts a sandboxed child process.
@@ -131,38 +131,33 @@ function lineBuffered(emit: (line: string) => void) {
  * chant#2461 — this used to be one sentence, `child exited before reporting
  * results (code N, signal S)`, for three unrelated situations. The one that
  * was observed in the wild is the hardest to read: exit code 0, empty stderr,
- * no message. That reads like the child was cut off, and it was not — it ran
- * to completion and sent nothing.
+ * no message. That reads like the child was cut off, and it was not: it ran
+ * to completion.
  *
- * Two mechanisms produce it, and the driver decides which is possible.
+ * The observed case turned out to be the parent's fault. A config child that
+ * sent its result and exited could have its `exit` dispatched here BEFORE its
+ * already-written `message`, and the old `exit` handler settled on the spot.
+ * The payload arrived a moment later and was ignored. Stress runs of the real
+ * `evaluateConfigSandboxed`, 24 at a time under 16 CPU hogs, lost 3 of 800 and
+ * 13 of 1500 that way. An earlier test that blocked the parent had seen
+ * `message` win 60 of 60, which is why this was ruled out for a while.
+ * {@link settleOnExitAfterChannelDrains} closes it by not reading the exit
+ * until the IPC channel has drained. Every driver also awaits its
+ * `process.send` callback and exits 1 with a stderr line if the send fails
+ * (see `./driver.ts`'s `sendFunctionSource`), so a result that never left the
+ * child cannot look like exit 0 either.
  *
- * The first is an `await` that never settles. `main().catch(...)` catches a
- * REJECTION, and a promise that never settles is not one, so if nothing keeps
- * the loop alive Node drains it and exits 0 having sent nothing and written
- * nothing. Nothing else in the process reports that.
- *
- * On the RUN path that is not hypothetical, and it is reproducible: the driver
- * does `await import(<project file>)` for each run-fallback file, module scope
- * is arbitrary project source, and a file whose top level awaits something that
- * never settles makes that import never complete. A fixture doing exactly that
- * yields this error, which is how the wording here was checked rather than
- * guessed.
- *
- * The second is the payload being lost between `process.send` and exit.
- *
- * For the CONFIG driver the first is impossible, which is worth stating because
- * it was the working hypothesis until the bundle was read. Its `await
- * import(configPath)` bundles to `await Promise.resolve().then(() =>
- * (init_chant_config(), chant_config_exports))` — one microtask over
- * synchronous code — and the bundle has no runtime imports, no dynamic
- * `import(`, and exactly one `process.send`. There is nothing there to hang on.
- * So a config child that exits 0 with nothing sent DID send, and the payload
- * did not arrive.
- *
- * The exit/message race originally proposed in chant#2461 is a third thing and
- * is not it: with the parent blocked so a queued payload and the reap were both
- * pending, `message` was dispatched first 60 times out of 60, because the live
- * IPC channel keeps the child alive until the payload flushes.
+ * With both of those in place, exit 0 with nothing on stderr and nothing
+ * received has one known cause left: an `await` that never settles.
+ * `main().catch(...)` catches a REJECTION, and a promise that never settles is
+ * not one, so if nothing keeps the loop alive Node drains it and exits 0
+ * having sent nothing. On the RUN path that is reproducible: the driver does
+ * `await import(<project file>)` per run-fallback file, module scope is
+ * arbitrary project source, and a file whose top level never settles makes
+ * that import never complete (the run driver names the file on stderr in that
+ * case). The CONFIG driver bundles to one microtask over synchronous code with
+ * no runtime imports, so on that path the cause is not known, and the message
+ * says so rather than guessing.
  */
 function describeSilentExit(
   label: string,
@@ -190,19 +185,62 @@ function describeSilentExit(
   if (stderr) return `${head}: ${stderr}`;
   if (code !== 0 || signal !== null) return head;
 
-  // Exit 0, nothing on stderr, nothing sent. The child finished normally and
-  // the parent has nothing. Two mechanisms produce exactly this, and which one
-  // it is depends on the driver — see this function's doc.
+  // Exit 0, nothing on stderr, and nothing received even after the IPC
+  // channel drained. See this function's doc for what is and is not left.
   return (
-    `${head}. It exited cleanly with nothing on stderr and sent no message, so the child drained ` +
-    `its loop without sending: something it awaited never settled. On the run path the usual ` +
-    `cause is a project file with a top-level \`await\` that does not settle — module scope is ` +
-    `arbitrary project source, and an import of such a file never completes. A promise that ` +
-    `never settles is not a rejection, so the driver's own \`main().catch\` does not see it ` +
-    `either, which is why nothing is written anywhere. The config driver bundles to one ` +
-    `microtask over synchronous code with no runtime I/O, so on THAT path nothing can hang and ` +
-    `the payload was lost between \`process.send\` and exit instead (chant#2461).`
+    `${head}. It exited cleanly with nothing on stderr, and no message arrived even after its ` +
+    `IPC channel closed, so it never sent one: something it awaited never settled. On the run ` +
+    `path the usual cause is a project file with a top-level \`await\` that does not settle. ` +
+    `Module scope is arbitrary project source, an import of such a file never completes, and a ` +
+    `promise that never settles is not a rejection, so the driver's own \`main().catch\` does ` +
+    `not see it either. The config driver has nothing to await that can hang, and a failed ` +
+    `send exits non-zero with a reason on stderr, so on the config path this has no known ` +
+    `cause: please report it with the command that produced it (chant#2461).`
   );
+}
+
+/** How long {@link settleOnExitAfterChannelDrains} waits, after exit, for the IPC channel to report closed. Normally it takes well under a millisecond; this only bounds a channel that never does. */
+const EXIT_DRAIN_GRACE_MS = 2_000;
+
+/**
+ * chant#2461 — call `onExit` once `child` has exited AND its IPC channel has
+ * drained, so a message the child wrote before exiting is always dispatched
+ * first.
+ *
+ * Node does not order `exit` after `message`. The child's exit and the last
+ * bytes on the IPC socket reach the parent's event loop as separate events,
+ * and under load the exit can be handled first even though the child wrote
+ * the message before it exited. Settling on `exit` alone then drops a payload
+ * that is already sitting in the socket. The channel reports `disconnect`
+ * only after it has read EOF, which comes after every message the child
+ * wrote, so waiting for it is exact.
+ *
+ * This is deliberately not `close`. `close` also waits for stdout and stderr
+ * to end, and a grandchild holding those pipes would turn a fast failure into
+ * the full timeout. The wait here is on the IPC channel alone, and is bounded
+ * by `graceMs` in case that channel never reports closed.
+ */
+export function settleOnExitAfterChannelDrains(
+  child: ChildProcess,
+  onExit: (code: number | null, signal: NodeJS.Signals | null) => void,
+  graceMs = EXIT_DRAIN_GRACE_MS,
+): void {
+  child.on("exit", (code, signal) => {
+    let done = false;
+    let grace: NodeJS.Timeout | undefined;
+    const finish = (): void => {
+      if (done) return;
+      done = true;
+      if (grace !== undefined) clearTimeout(grace);
+      onExit(code, signal);
+    };
+    if (!child.connected) {
+      finish();
+      return;
+    }
+    child.once("disconnect", finish);
+    grace = setTimeout(finish, graceMs);
+  });
 }
 
 export function forkSandboxed<T>(
@@ -298,7 +336,9 @@ export function forkSandboxed<T>(
       reject(err);
     });
 
-    child.on("exit", (code, signal) => {
+    // chant#2461 — not `child.on("exit")`: a payload can still be in the IPC
+    // socket when the exit is handled. See settleOnExitAfterChannelDrains.
+    settleOnExitAfterChannelDrains(child, (code, signal) => {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
