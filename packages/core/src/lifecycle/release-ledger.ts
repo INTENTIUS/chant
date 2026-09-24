@@ -52,7 +52,7 @@ export interface RunOrigin {
 }
 
 /**
- * Points at one earlier release record (#2530, #2531). A record has no id of its own,
+ * Points at one earlier release record (#2530, #2531, #2604). A record has no id of its own,
  * so it is named by the environment whose ledger holds it plus the run id and
  * timestamp it was written with, which is enough to find the line again.
  */
@@ -163,6 +163,13 @@ export interface ReleaseRecord {
    * `LEGACY_DIGEST_ACCEPTED_THROUGH` (./legacy-digest.ts).
    */
   flags?: LegacyDigestFlag[];
+  /**
+   * Optional: set when this release was a redeploy (`chant components
+   * redeploy`, #2604). Names the release the ledger recorded as current,
+   * whose digest was deployed again, usually after a deploy that failed
+   * partway. Absent on every other record.
+   */
+  redeploys?: ReleaseRef;
 }
 
 /** Required, non-empty-string fields every `ReleaseRecord` must carry. */

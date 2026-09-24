@@ -24,6 +24,9 @@ chant components promote --from <env> --to <env>
 chant components rollback <env> --component <name> [--digest <sha256:...>]
                                 [--dry-run] [--json] [--seed-outputs <file>]
                                 [--run-id <id>] [--actor <name>]
+chant components redeploy <env> --component <name> [--digest <sha256:...>]
+                                [--dry-run] [--json] [--seed-outputs <file>]
+                                [--run-id <id>] [--actor <name>]
 ```
 
 ## Description
@@ -296,6 +299,8 @@ The promote appends one record to the `--to` ledger for every component it deplo
 
 A component that did not finish gets no record. The components that did deploy keep theirs. A ledger write that fails after a deploy exits 1 and says the deploy happened.
 
+When a promote fails partway, the component's in-run unwind undoes the steps it ran, and the `--to` ledger still records the release that was there before. If the unwind could not put everything back, [`chant components redeploy <to> --component <name>`](#components-redeploy-env) deploys that recorded release again. Once the cause is fixed, running the same promote again is the other way forward.
+
 | Flag | Meaning |
 |---|---|
 | `--from <env>` | Required. The environment whose release ledger holds the digests. |
@@ -337,6 +342,8 @@ When the rollback succeeds, `<env>`'s ledger gains a record with the restored re
 
 This is a different mechanism from the saga unwind inside a single run, which undoes that run's own steps when it fails. See [Rolling back to an earlier release](/chant/components/orchestration/#rolling-back-to-an-earlier-release) for how the two relate.
 
+A rollback always moves to a release other than the current one, so it cannot recover from a deploy that failed partway. A failed deploy records nothing, and the ledger still names the last good release as current while the environment may be running part of the failed one. [`components redeploy`](#components-redeploy-env) puts the current release back. The same applies when a rollback itself fails: the ledger still names the release that was current before it.
+
 | Flag | Meaning |
 |---|---|
 | `--component <name>` | Required. The component to roll back. |
@@ -347,13 +354,50 @@ This is a different mechanism from the saga unwind inside a single run, which un
 | `--run-id <id>` | Run id for the new record. Defaults as `components release` does. |
 | `--actor <name>` | Who ran the rollback. Defaults as `components release` does, and must resolve before anything deploys. |
 
+### `components redeploy <env>`
+
+Redeploy the release of one component that `<env>`'s ledger records as current. Use it after a deploy that failed partway, from `chant run --components`, `components promote` or `components rollback`.
+
+```bash
+chant components redeploy prod --component search-service --dry-run
+chant components redeploy prod --component search-service
+chant components redeploy prod --component search-service --digest sha256:9fae3d7c...
+```
+
+A deploy writes its release record only after it succeeds, so a failed one leaves the ledger on the last good release. The run's own unwind undoes the steps it ran, but a best-effort compensation, or a crash during the unwind, can leave the environment running something else. `components rollback` cannot help here, because it refuses the release that is already current.
+
+The redeploy picks the newest record for the component in `<env>` and runs it the way a rollback runs an earlier release. Build steps are taken out and the publish step is replaced by a `recorded-digest` step, so a composition a rollback refuses is refused here too. A gate in the composition stops a redeploy the same way it stops a rollback, with exit 3 and the `chant approve` command to run before trying again. With `--digest`, the redeploy checks that the digest is the current one and refuses anything else before it runs, which catches a deploy recorded since you last read the ledger. An earlier digest is a job for `components rollback --digest`, and the error says so.
+
+A successful redeploy appends a record to `<env>`'s ledger that carries the current release's artifact identities, plus a `redeploys` field pointing at that release. The current digest stays the same, and the record shows who put the release back and when:
+
+```json
+{
+  "component": "search-service",
+  "env": "prod",
+  "digest": "sha256:9fae3d7c...",
+  "redeploys": { "env": "prod", "runId": "4821", "timestamp": "2026-07-02T18:04:11.000Z" }
+}
+```
+
+A redeploy that fails records nothing, like any other deploy, and can be run again.
+
+| Flag | Meaning |
+|---|---|
+| `--component <name>` | Required. The component to redeploy. |
+| `--digest <sha256:...>` | The digest you expect to be current. Anything else is refused. |
+| `--dry-run` | Print the release that would be redeployed and the steps that will not run, and deploy nothing. |
+| `--json` | Emit the plan, the run result and the record written as one JSON document on stdout. |
+| `--seed-outputs <file>` | Load outputs from dependencies. Repeatable. |
+| `--run-id <id>` | Run id for the new record. Defaults as `components release` does. |
+| `--actor <name>` | Who ran the redeploy. Defaults as `components release` does, and must resolve before anything deploys. |
+
 ## Exit Codes
 
 | Code | Meaning |
 |------|---------|
 | 0 | Success (for `fan-out`, every selected component applied) |
-| 1 | Error (missing required flags, unresolvable actor, concurrent ledger write, no manifest found, an export entry missing on disk; for `fan-out`, a component failed, or the change signal was unusable; for `promote` and `rollback`, a digest missing from the ledger, a composition that cannot be pinned, or a failed deploy) |
-| 3 | `fan-out`, `promote` and `rollback`: stopped at a gate nobody has approved. For `fan-out` nothing ran; for the other two the steps before the gate ran, and only components that finished were recorded. |
+| 1 | Error (missing required flags, unresolvable actor, concurrent ledger write, no manifest found, an export entry missing on disk; for `fan-out`, a component failed, or the change signal was unusable; for `promote`, `rollback` and `redeploy`, a digest missing from the ledger or not current, a composition that cannot be pinned, or a failed deploy) |
+| 3 | `fan-out`, `promote`, `rollback` and `redeploy`: stopped at a gate nobody has approved. For `fan-out` nothing ran; for the others the steps before the gate ran, and only components that finished were recorded. |
 
 ## See Also
 

@@ -1,5 +1,6 @@
 /**
- * `chant components promote` (#2530), with the ledger, discovery and the
+ * `chant components promote` (#2530), `rollback` (#2531) and `redeploy`
+ * (#2604), with the ledger, discovery and the
  * capability registry replaced by fakes.
  */
 
@@ -66,7 +67,7 @@ vi.mock("../../op/gate", async () => {
 // The run handler pulls in every runtime; the promote needs only its exit code.
 vi.mock("./run", () => ({ GATED_EXIT_CODE: 3 }));
 
-const { runComponentsPromote, runComponentsRollback } = await import("./promote");
+const { runComponentsPromote, runComponentsRollback, runComponentsRedeploy } = await import("./promote");
 
 const api: DriverComponent = {
   name: "api",
@@ -257,5 +258,89 @@ describe("chant components rollback", () => {
     expect(ran).not.toContain("prod:apply");
     expect(appendReleaseRecordMock).not.toHaveBeenCalled();
     expect(errors.join("\n")).toMatch(/chant approve api rollback-ok/);
+  });
+});
+
+describe("chant components redeploy", () => {
+  const prod = (digest: string, timestamp: string, runId: string): ReleaseRecord =>
+    ({ ...staging, env: "prod", digest, timestamp, runId });
+
+  beforeEach(() => {
+    readReleaseLedgerMock.mockResolvedValue({
+      records: [prod("sha256:old", "2026-01-01T00:00:00.000Z", "run-1"), prod("sha256:new", "2026-01-02T00:00:00.000Z", "run-2")],
+      malformed: 0,
+    });
+  });
+
+  const rd = (a: Partial<ParsedArgs>) => ctx({ migrateFrom: undefined, migrateTo: undefined, path: "redeploy", extraPositional: "prod", component: "api", ...a });
+
+  test("an environment and --component are required", async () => {
+    expect(await runComponentsRedeploy(rd({ extraPositional: undefined }))).toBe(1);
+    expect(errors.join("\n")).toMatch(/--component <name> are required/);
+    expect(errors.join("\n")).toMatch(/chant components redeploy <env>/);
+  });
+
+  test("redeploys the current release from its recorded digest and records it", async () => {
+    expect(await runComponentsRedeploy(rd({}))).toBe(0);
+    expect(readReleaseLedgerMock).toHaveBeenCalledWith("prod");
+    // Neither a build nor a publish: the environment already has the artifact.
+    expect(ran).toEqual(["prod:apply"]);
+    expect(appendReleaseRecordMock).toHaveBeenCalledTimes(1);
+    const written = appendReleaseRecordMock.mock.calls[0][0];
+    expect(written).toMatchObject({
+      component: "api",
+      env: "prod",
+      digest: "sha256:new",
+      runId: "run-9",
+      actor: "bob",
+      redeploys: { env: "prod", runId: "run-2", timestamp: "2026-01-02T00:00:00.000Z" },
+    });
+    expect(written).not.toHaveProperty("restores");
+    expect(written).not.toHaveProperty("promotedFrom");
+    expect(pushLifecycleMock).toHaveBeenCalledTimes(1);
+    expect(errors.join("\n")).toMatch(/Redeployed .*api.* in prod at sha256:new/);
+  });
+
+  test("the same digest rollback refuses is the one redeploy accepts", async () => {
+    expect(await runComponentsRollback(rd({ path: "rollback", digest: "sha256:new" }))).toBe(1);
+    expect(errors.join("\n")).toMatch(/already the current release/);
+    expect(await runComponentsRedeploy(rd({ digest: "sha256:new" }))).toBe(0);
+    expect(appendReleaseRecordMock.mock.calls[0][0]).toMatchObject({ digest: "sha256:new" });
+  });
+
+  test("a --digest other than the current one is refused before anything runs", async () => {
+    expect(await runComponentsRedeploy(rd({ digest: "sha256:old" }))).toBe(1);
+    expect(errors.join("\n")).toMatch(/sha256:old is not the current release/);
+    expect(ran).toEqual([]);
+    expect(appendReleaseRecordMock).not.toHaveBeenCalled();
+  });
+
+  test("--dry-run prints the plan and deploys nothing", async () => {
+    expect(await runComponentsRedeploy(rd({ dryRun: true, json: true }))).toBe(0);
+    expect(ran).toEqual([]);
+    expect(appendReleaseRecordMock).not.toHaveBeenCalled();
+    const plan = JSON.parse(logs.join("\n"));
+    expect(plan).toMatchObject({ from: "prod", to: "prod" });
+    expect(plan.items).toEqual([expect.objectContaining({ component: "api", digest: "sha256:new", notRun: ["docker-build", "publish-image"] })]);
+  });
+
+  test("the environment's gate applies to a redeploy", async () => {
+    const gated: DriverComponent = {
+      ...api,
+      deploy: [...api.deploy.slice(0, 2), { phase: "Apply", steps: [{ kind: "gate", gate: "redeploy-ok" }, { kind: "apply" }] }],
+    };
+    resolveTargetsMock.mockResolvedValue({ success: true, targets: [gated] });
+    expect(await runComponentsRedeploy(rd({}))).toBe(3);
+    expect(ran).not.toContain("prod:apply");
+    expect(appendReleaseRecordMock).not.toHaveBeenCalled();
+    expect(errors.join("\n")).toMatch(/chant approve api redeploy-ok/);
+    expect(errors.join("\n")).toMatch(/then run the same redeploy again/);
+  });
+
+  test("a failed redeploy records nothing and exits 1", async () => {
+    failApplyFor = "api";
+    expect(await runComponentsRedeploy(rd({}))).toBe(1);
+    expect(appendReleaseRecordMock).not.toHaveBeenCalled();
+    expect(errors.join("\n")).toMatch(/redeploy failed at "api"/);
   });
 });
