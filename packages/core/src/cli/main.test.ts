@@ -676,7 +676,7 @@ describe("workspace records (#2546)", () => {
 
   test("resolves to the records command, and anything else under workspace to its fallback", () => {
     expect(resolveCommand(parseArgs(["workspace", "records", "--kind", "k.mjs"]), commandRegistry)?.def.name).toBe("workspace records");
-    expect(resolveCommand(parseArgs(["workspace", "ls"]), commandRegistry)?.def.name).toBe("workspace");
+    expect(resolveCommand(parseArgs(["workspace", "no-such-subcommand"]), commandRegistry)?.def.name).toBe("workspace");
   });
 
   // #2525 rule 5: the workspace code loads only when a workspace command runs.
@@ -685,6 +685,32 @@ describe("workspace records (#2546)", () => {
     const source = readFileSync(join(import.meta.dirname, "main.ts"), "utf-8");
     expect(source).not.toMatch(/^import[^;]*from\s+["'][^"']*workspace/m);
     expect(source).toMatch(/await import\("\.\.\/workspace\/records-cli"\)/);
+  });
+});
+
+describe("workspace init and ls (#2534)", () => {
+  test("resolve to their commands in the one workspace group, with the directory as extra positional", () => {
+    const ls = parseArgs(["workspace", "ls", "examples", "--at", "HEAD", "--json"]);
+    expect(ls).toMatchObject({ command: "workspace", path: "ls", extraPositional: "examples", at: "HEAD", json: true });
+    expect(resolveCommand(ls, commandRegistry)?.def.name).toBe("workspace ls");
+    const init = parseArgs(["workspace", "init", "--name", "acme", "--yes"]);
+    expect(init).toMatchObject({ command: "workspace", path: "init", selectName: "acme", yes: true });
+    expect(resolveCommand(init, commandRegistry)?.def.name).toBe("workspace init");
+    expect(commandRegistry.filter((c) => c.name === "workspace" || c.name.startsWith("workspace ")).map((c) => c.name).sort()).toEqual([
+      "workspace",
+      "workspace check",
+      "workspace init",
+      "workspace lineage",
+      "workspace ls",
+      "workspace records",
+      "workspace upgrade",
+    ]);
+  });
+
+  test("load their modules only when they run", () => {
+    const source = readFileSync(join(import.meta.dirname, "main.ts"), "utf-8");
+    expect(source).toMatch(/await import\("\.\.\/workspace\/init"\)/);
+    expect(source).toMatch(/await import\("\.\.\/workspace\/ls"\)/);
   });
 });
 

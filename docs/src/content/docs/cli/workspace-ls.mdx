@@ -1,0 +1,124 @@
+---
+title: "chant workspace ls"
+description: List a workspace's members and example groups from chant.workspace.json, with a reason code for each member that can't be read
+diataxis: reference
+---
+
+## Synopsis
+
+```
+chant workspace ls [dir] [--at <rev>] [--json]
+```
+
+## Description
+
+`chant workspace ls` finds the [workspace declaration](/chant/reference/workspace-declaration/) by walking up from `dir` (default: the current directory) to the git root, validates it and lists what it declares. Each member is shown with its kind, directory and roles, and each example group with its globs and how many projects they match.
+
+A member that can't be read is still listed, with a reason code, and the command still exits 0 ([ws-020](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-020-unreadable.md)). A reader can then show the rest of the workspace and explain the gap. Failing on an unreadable member is the job of `chant workspace check`, once it checks the declaration ([#2535](https://github.com/INTENTIUS/chant/issues/2535)). Only a declaration that can't be read exits 1.
+
+```
+chant  (chant.workspace.json)
+
+MEMBER             KIND   DIR                  ROLES
+docs               other  docs
+lexicon-aws        other  lexicons/aws
+core               other  packages/core
+
+GROUP             KIND      GLOB                                    PROJECTS
+examples          examples  examples/*                              33
+lexicon-examples  examples  lexicons/*/examples/*                   95
+fixtures          examples  test/forgejo-preview-e2e test/leftness  2
+
+22 members, 0 unreadable; 3 example groups with 130 projects
+```
+
+The command loads only when it runs. A project without a declaration never loads any of its code.
+
+## Options
+
+| Option | Effect |
+|---|---|
+| `dir` | Where the walk up to the declaration starts. |
+| `--at <rev>` | Read the declaration and the members' directories as they were at a commit, from the local git object store. No checkout or network is needed. |
+| `--json` | Print the result as JSON (see [Output](#output)). |
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | The declaration was read. Some members may be unreadable, and each carries a reason code. |
+| 1 | The declaration couldn't be read. Nothing is listed. |
+
+## Output
+
+With `--json`, the output follows the schema `https://intentius.io/chant/schemas/workspace/ls/v1/ls.schema.json`, shipped in `@intentius/chant` at `src/workspace/ls.schema.json`. Readers ignore fields they don't know. Fields are only added within a contract version, and the code lists are closed.
+
+```json
+{
+  "$schema": "https://intentius.io/chant/schemas/workspace/ls/v1/ls.schema.json",
+  "contract": 1,
+  "chant": "0.80.0",
+  "at": null,
+  "workspace": { "name": "chant", "root": ".", "file": "chant.workspace.json", "schema": 1, "minReader": null, "pins": [] },
+  "members": [
+    {
+      "name": "lexicon-aws",
+      "dir": "lexicons/aws",
+      "kind": "other",
+      "roles": [],
+      "upstream": null,
+      "because": "an npm workspace package with no chant project",
+      "readable": true,
+      "reason": null
+    }
+  ],
+  "groups": [
+    {
+      "name": "lexicon-examples",
+      "kind": "examples",
+      "glob": ["lexicons/*/examples/*"],
+      "matches": ["lexicons/aws/examples/lambda-api"],
+      "skipped": ["lexicons/gitlab/examples/migrate-from-github"],
+      "reason": null
+    }
+  ],
+  "summary": { "members": 22, "unreadable": 0, "groups": 3, "matches": 130 }
+}
+```
+
+The example shortens the lists. `chant` is the version that read the workspace. `root` is the workspace root relative to the git root. `at` is the full commit id when `--at` is given. A group's `matches` are the directories its globs match that hold a chant project; `skipped` are the ones that hold none.
+
+A failed read prints `{ "$schema", "contract", "chant", "error": { "code", "message", "location" } }` instead. `location` is `{ "file", "line", "column" }` when the problem is in the file, and `null` otherwise.
+
+### Reason codes
+
+| Code | The member |
+|---|---|
+| `dir-missing` | has no directory at its `dir` |
+| `unknown-kind` | has a kind no installed kind has; the message lists the known ones |
+| `kind-probe-failed` | isn't what its kind reads, such as a `chant` member with no chant config |
+
+A group whose globs match no chant project has the reason `no-matches`.
+
+### Error codes
+
+| Code | Cause |
+|---|---|
+| `declaration-missing` | no declaration between the directory and the git root |
+| `declaration-ambiguous` | both `chant.workspace.json` and `chant.workspace.jsonc` exist |
+| `declaration-unparseable` | not valid JSON, or not valid JSONC for `.jsonc` |
+| `declaration-invalid` | doesn't match the schema, or repeats a name |
+| `placement-invalid` | breaks a [placement rule](/chant/reference/workspace-declaration/#placement) |
+| `reader-too-old` | the declaration's `minReader` is newer than this chant |
+| `not-a-git-repository` | `--at` was given outside a git repository |
+| `revision-unknown` | `--at` names no commit |
+
+## Examples
+
+```bash
+# The chant repository's members and example groups
+chant workspace ls
+
+# The same, as it was at a commit
+chant workspace ls --json --at 91c7547e
+```

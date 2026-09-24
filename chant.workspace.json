@@ -1,0 +1,168 @@
+{
+  "name": "chant",
+  "schema": 1,
+  "members": [
+    {
+      "name": "docs",
+      "dir": "docs",
+      "kind": "other",
+      "because": "an npm package with no chant project"
+    },
+    {
+      "name": "vscode",
+      "dir": "editors/vscode",
+      "kind": "other",
+      "because": "an npm package with no chant project"
+    },
+    {
+      "name": "lexicon-aws",
+      "dir": "lexicons/aws",
+      "kind": "other",
+      "because": "an npm workspace package with no chant project"
+    },
+    {
+      "name": "lexicon-azure",
+      "dir": "lexicons/azure",
+      "kind": "other",
+      "because": "an npm workspace package with no chant project"
+    },
+    {
+      "name": "lexicon-cedar",
+      "dir": "lexicons/cedar",
+      "kind": "other",
+      "because": "an npm workspace package with no chant project"
+    },
+    {
+      "name": "lexicon-cpln",
+      "dir": "lexicons/cpln",
+      "kind": "other",
+      "because": "an npm workspace package with no chant project"
+    },
+    {
+      "name": "lexicon-docker",
+      "dir": "lexicons/docker",
+      "kind": "other",
+      "because": "an npm workspace package with no chant project"
+    },
+    {
+      "name": "lexicon-fly",
+      "dir": "lexicons/fly",
+      "kind": "other",
+      "because": "an npm workspace package with no chant project"
+    },
+    {
+      "name": "lexicon-forgejo",
+      "dir": "lexicons/forgejo",
+      "kind": "other",
+      "because": "an npm workspace package with no chant project"
+    },
+    {
+      "name": "lexicon-fountain",
+      "dir": "lexicons/fountain",
+      "kind": "other",
+      "because": "an npm workspace package with no chant project"
+    },
+    {
+      "name": "lexicon-gcp",
+      "dir": "lexicons/gcp",
+      "kind": "other",
+      "because": "an npm workspace package with no chant project"
+    },
+    {
+      "name": "lexicon-github",
+      "dir": "lexicons/github",
+      "kind": "other",
+      "because": "an npm workspace package with no chant project"
+    },
+    {
+      "name": "lexicon-gitlab",
+      "dir": "lexicons/gitlab",
+      "kind": "other",
+      "because": "an npm workspace package with no chant project"
+    },
+    {
+      "name": "lexicon-helm",
+      "dir": "lexicons/helm",
+      "kind": "other",
+      "because": "an npm workspace package with no chant project"
+    },
+    {
+      "name": "lexicon-k3d",
+      "dir": "lexicons/k3d",
+      "kind": "other",
+      "because": "an npm workspace package with no chant project"
+    },
+    {
+      "name": "lexicon-k3s",
+      "dir": "lexicons/k3s",
+      "kind": "other",
+      "because": "an npm workspace package with no chant project"
+    },
+    {
+      "name": "lexicon-k8s",
+      "dir": "lexicons/k8s",
+      "kind": "other",
+      "because": "an npm workspace package with no chant project"
+    },
+    {
+      "name": "lexicon-otel",
+      "dir": "lexicons/otel",
+      "kind": "other",
+      "because": "an npm workspace package with no chant project"
+    },
+    {
+      "name": "lexicon-render",
+      "dir": "lexicons/render",
+      "kind": "other",
+      "because": "an npm workspace package with no chant project"
+    },
+    {
+      "name": "lexicon-terraform",
+      "dir": "lexicons/terraform",
+      "kind": "other",
+      "because": "an npm workspace package with no chant project"
+    },
+    {
+      "name": "core",
+      "dir": "packages/core",
+      "kind": "other",
+      "because": "an npm workspace package with no chant project"
+    },
+    {
+      "name": "k8s-client",
+      "dir": "packages/k8s-client",
+      "kind": "other",
+      "because": "an npm workspace package with no chant project"
+    },
+    {
+      "name": "test-utils",
+      "dir": "packages/test-utils",
+      "kind": "other",
+      "because": "an npm workspace package with no chant project"
+    },
+    {
+      "name": "reference-workspace",
+      "dir": "reference-workspace",
+      "kind": "other",
+      "because": "the reference workspace (#2543); it becomes a workspace member once its own declaration replaces the draft it holds"
+    },
+    {
+      "name": "examples",
+      "kind": "examples",
+      "glob": "examples/*"
+    },
+    {
+      "name": "lexicon-examples",
+      "kind": "examples",
+      "glob": "lexicons/*/examples/*"
+    },
+    {
+      "name": "fixtures",
+      "kind": "examples",
+      "glob": [
+        "test/forgejo-preview-e2e",
+        "test/leftness"
+      ]
+    }
+  ]
+}
