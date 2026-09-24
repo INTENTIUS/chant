@@ -197,6 +197,7 @@ export default defineConfig({
 						{ label: 'Network Egress', slug: 'reference/network-egress' },
 						{ label: 'Behaviour Coverage', slug: 'reference/behaviour-coverage' },
 						{ label: 'Level-0 Exceptions', slug: 'reference/level-0-exceptions' },
+						{ label: 'Lineage Lock', slug: 'reference/lineage-lock' },
 						{
 							label: 'CLI',
 							items: [
@@ -219,6 +220,7 @@ export default defineConfig({
 								{ label: 'operator', slug: 'cli/operator' },
 								{ label: 'graph', slug: 'cli/graph' },
 								{ label: 'workspace records', slug: 'cli/workspace-records' },
+								{ label: 'workspace lineage', slug: 'cli/workspace-lineage' },
 								{ label: 'lifecycle', slug: 'cli/lifecycle' },
 								{ label: 'scenario', slug: 'cli/scenario' },
 								{ label: 'components', slug: 'cli/components' },

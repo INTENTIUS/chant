@@ -447,6 +447,22 @@ export async function initCommand(options: InitOptions): Promise<InitResult> {
     // Skills are optional — don't fail init if plugin isn't installed yet
   }
 
+  // `--template` records where the files came from (#2540, ws-047). Plain
+  // init writes no lock and never loads the lineage module.
+  if (options.template && templateSet) {
+    const { writeTemplateLock } = await import("../../workspace/lineage-init");
+    const lock = writeTemplateLock({
+      targetDir,
+      lexicon: options.lexicon,
+      template: options.template,
+      createdFiles,
+      chantVersion: getChantVersion(),
+      lexiconModule,
+    });
+    if (lock) createdFiles.push(lock);
+    else warnings.push(".chant/workspace.lock.json already exists, skipping");
+  }
+
   return {
     success: true,
     createdFiles,

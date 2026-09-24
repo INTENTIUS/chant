@@ -207,9 +207,9 @@ export function parseArgs(args: string[]): ParsedArgs {
       if (v !== "source" && v !== "live") throw new Error(`--overlay-anchor must be 'source' or 'live', got '${v}'`);
       result.overlayAnchor = v;
     } else if (arg === "--from") {
-      // Shared by `migrate --from <lexicon>`, `import --from <env>` and
-      // `components promote --from <env>`; the commands never run together,
-      // so one field carries all three.
+      // Shared by `migrate --from <lexicon>`, `import --from <env>`,
+      // `components promote --from <env>` and `init --from <repo>@<ref>`;
+      // the commands never run together, so one field carries all four.
       result.migrateFrom = args[++i];
     } else if (arg === "--kustomize") {
       // `chant import --kustomize <dir>` (#1548): render the overlay, import
@@ -506,6 +506,8 @@ Usage:
 
 Commands:
   init                  Initialize a new chant project
+                        (--from <repo>@<ref>[#<member>] copies a template
+                        repository and records its lineage)
   init lexicon <name>   Scaffold a new lexicon plugin project
   build                 Build infrastructure from specification files
                         (--components --generate github|gitlab|forgejo:
@@ -521,6 +523,8 @@ Commands:
                         concept per entity + index.md; -o <dir> writes the
                         bundle tree, otherwise JSON path→content on stdout)
   vendor                Pull pinned, checksummed patterns into your repo
+                        (pull [name] | check | migrate; migrate moves
+                        vendor.json into .chant/workspace.lock.json)
   import                Import external template into TypeScript
                         (--agents re-expresses this machine's agent config as
                          chant code instead of reading a template file)
@@ -645,6 +649,12 @@ Workspace (first-test slice, #2546):
                         against its schema, with reason codes for invalid
                         ones. --current leaves out superseded records; --at
                         reads a commit's git objects. Needs no workspace file
+  workspace lineage [--json]
+                        Show each scope in .chant/workspace.lock.json: its
+                        template and pin, locally edited files and open
+                        manual steps. Needs no workspace file
+  workspace lineage resolve <path>
+                        Close a manual step once the file is merged by hand
 
 Lifecycle (alias: lc):
   lifecycle snapshot <env>  Query API, save metadata to orphan branch
@@ -752,7 +762,8 @@ Options:
                         re-evaluates for that environment (build + graph), and
                         drives organizational policy. Must be in chant.config
                         \`environments\` when declared.
-  -t, --template <name> Init template (e.g. node-pipeline, docker-build)
+  -t, --template <name> Init template (e.g. node-pipeline, docker-build);
+                        records its lineage in .chant/workspace.lock.json
   --skill <name>        Init: install only this skill from the lexicon
   --skip-mcp            Init: scaffold without writing the project's .mcp.json
   --fix                 Auto-fix fixable issues (lint command)
@@ -1043,6 +1054,7 @@ export const commandRegistry: CommandDef[] = [
   // Workspace reads (#2524). Imported on first use, so a level-0 command never
   // loads anything under workspace/ (#2525 rule 5, pinned by #2526's goldens).
   { name: "workspace records", handler: async (ctx) => (await import("../workspace/records-cli")).runWorkspaceRecords(ctx) },
+  { name: "workspace lineage", handler: async (ctx) => (await import("../workspace/lineage-cli")).runWorkspaceLineage(ctx) },
 
   // State subcommands
   { name: "lifecycle snapshot", requiresPlugins: true, handler: runLifecycleSnapshot },

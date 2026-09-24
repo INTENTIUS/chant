@@ -230,6 +230,10 @@
   "tricolon/density": 1,
   "anaphora/repeated-opening": 1
  },
+ "docs/src/content/docs/cli/workspace-lineage.mdx": {
+  "formatting/em-dash-density": 2,
+  "claude/colon-reveal": 2
+ },
  "docs/src/content/docs/cli/workspace-records.mdx": {
   "formatting/em-dash-density": 2,
   "claude/colon-reveal": 2
@@ -930,11 +934,16 @@
   "discourse/punchy-fragments": 1,
   "claude/colon-reveal": 3
  },
+ "docs/src/content/docs/reference/lineage-lock.mdx": {
+  "formatting/em-dash-density": 2,
+  "discourse/punchy-fragments": 1,
+  "claude/colon-reveal": 3
+ },
  "docs/src/content/docs/reference/network-egress.mdx": {
   "formatting/em-dash-density": 17,
   "claude/colon-reveal": 5,
   "tricolon/comma-series": 2,
-  "anaphora/repeated-opening": 1,
+  "anaphora/repeated-opening": 2,
   "formatting/bold-first-bullet": 1
  },
  "docs/src/content/docs/serialization/multi-stack.mdx": {
