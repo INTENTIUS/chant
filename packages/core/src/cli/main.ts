@@ -741,8 +741,9 @@ Workspace (level 1, #2524):
                         beside it and marks the members whose digests differ.
                         Read only; never fetches. --json prints the
                         read-contract document
-  workspace records --kind <kind file> [--current] [--at <rev>] [--base <rev>] [--require attested] [--json]
-                        Read the records a record kind locates, validated
+  workspace records [--kind <kind file>] [--current] [--at <rev>] [--base <rev>] [--require attested] [--json]
+                        Without --kind, every record kind the declaration
+                        names. Read the records a record kind locates, validated
                         against its schema, with reason codes for invalid
                         ones. --current leaves out superseded records; --at
                         reads a commit's git objects. Needs no workspace file.
@@ -751,7 +752,7 @@ Workspace (level 1, #2524):
                         --require attested exits 2 if any record is not
                         attested. A pinned file that changed is a warning,
                         asset-drift or asset-missing
-  workspace records --kind <kind file> --since <rev> [--at <rev>] [--json]
+  workspace records [--kind <kind file>] --since <rev> [--at <rev>] [--json]
                         What changed in the records between <rev> and --at
                         (default: the working tree): new and removed records,
                         state transitions, new verdicts, new supersessions
@@ -759,19 +760,20 @@ Workspace (level 1, #2524):
   workspace records pin <path>
                         Print the path from the workspace root and the
                         sha256 of a file, for a decision's evidence pin
-  workspace records new <kind file> --from <file|-> [--prefix <prefix>] [--dry-run]
+  workspace records new [<kind file>] --from <file|-> [--prefix <prefix>] [--dry-run]
                         Write one new record in the kind's directory from
                         the JSON fields given, after validating them as
-                        records would read them. Allocates the next id when
+                        records would read them. Without a kind file, the one
+                        kind the declaration names. Allocates the next id when
                         the fields hold none. Prints {path, id} as JSON and
                         never commits
-  workspace records amend <id> --kind <kind file> --set <file|-> [--dry-run]
+  workspace records amend <id> [--kind <kind file>] --set <file|-> [--dry-run]
                         Set top-level fields of one record. A closed record
                         never changes, and an approved one changes only its
                         state (upward), pins and reviews; anything else is
                         refused with amend-supersede-instead. Prints
                         {path, id, changed}
-  workspace records review <id> --kind <kind file> --verdict agree|dissent|abstain --by <principal> [--note <text>] [--session <id>] [--dry-run]
+  workspace records review <id> [--kind <kind file>] --verdict agree|dissent|abstain --by <principal> [--note <text>] [--session <id>] [--dry-run]
                         Append a review to one record, dated and bound to
                         the digest of the record text. A dissent needs
                         --note. The principal is not checked; attestation is
@@ -826,7 +828,8 @@ Workspace (level 1, #2524):
   workspace graph --intent <path[:start-end]> [--at <rev>] [--kind <kind file>...] [--json]
                         The intent graph over one region: the commits that
                         touched it, the decisions whose constrains cover it,
-                        the artifacts they pin, and findings with closed codes
+                        the artifacts they pin, and findings with closed codes.
+                        Without --kind, every record kind the declaration names
 
 Lifecycle (alias: lc):
   lifecycle snapshot <env>  Query API, save metadata to orphan branch

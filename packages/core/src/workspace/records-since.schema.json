@@ -3,8 +3,44 @@
   "$id": "https://intentius.io/chant/schemas/workspace/records-since/v1/records-since.schema.json",
   "title": "chant workspace records --since output",
   "description": "What `chant workspace records --kind <kind file> --since <rev> --json` prints (#2673, #2650 C11): what changed in a kind's records between the commit --since names and the tree --at names, or the working tree without it. Records are matched by id; a record whose id could not be read is not compared. Between a review session's open and close commits, the changes are what the session did. Readers ignore fields they do not know; a field is only ever added within a version. The change kinds and the error codes are closed lists. Contract version 1 is written by chant 0.81.0 and newer, and this document was added to it by #2673; a chant without --since on records refuses the flag. Every code is in the one closed list of `reason-codes.ts`.",
-  "oneOf": [{ "$ref": "#/$defs/result" }, { "$ref": "#/$defs/failure" }],
+  "oneOf": [{ "$ref": "#/$defs/result" }, { "$ref": "#/$defs/failure" }, { "$ref": "#/$defs/set" }],
   "$defs": {
+    "set": {
+      "description": "Added in contract 1 by #2680. What records --since prints without --kind when the workspace declaration names record kinds: one result or failure per declared kind, in the declaration's order (the workspace's own kinds, then each member's in member order). Exit code 1 when any kind's read failed; the others are still compared and listed.",
+      "type": "object",
+      "required": ["$schema", "contract", "kinds"],
+      "properties": {
+        "$schema": { "const": "https://intentius.io/chant/schemas/workspace/records-since/v1/records-since.schema.json" },
+        "contract": { "const": 1 },
+        "kinds": {
+          "type": "array",
+          "items": {
+            "allOf": [
+              { "oneOf": [{ "$ref": "#/$defs/result" }, { "$ref": "#/$defs/failure" }] },
+              {
+                "type": "object",
+                "required": ["declared"],
+                "properties": {
+                  "declared": {
+                    "description": "The declaration's entry for the kind, as in the records set.",
+                    "type": "object",
+                    "required": ["member", "path", "name"],
+                    "properties": {
+                      "member": { "type": ["string", "null"] },
+                      "path": { "type": "string" },
+                      "name": { "type": ["string", "null"] }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "kind": false,
+        "changes": false,
+        "error": false
+      }
+    },
     "result": {
       "description": "Both revisions were read. Exit code 0, whatever changed.",
       "type": "object",

@@ -128,6 +128,23 @@ export interface LinkDeclaration {
   pointer: string;
 }
 
+/**
+ * A record kind the declaration names (#2680): the workspace's own, in the
+ * top-level `records`, or a member's, in that member's `records`.
+ */
+export interface RecordKindDeclaration {
+  /** The kind file as the entry writes it: relative to the member's directory, or to the workspace root for the workspace's own. */
+  kind: string;
+  /** The kind file from the workspace root, with / separators. */
+  path: string;
+  /** The name the entry gives the kind, or null when readers use the kind file's own `recordKind.name`. */
+  name: string | null;
+  /** The member that declares it, or null for the workspace's own. */
+  member: string | null;
+  /** The entry's JSON Pointer in the file, for messages. */
+  pointer: string;
+}
+
 export interface Member {
   type: "member";
   name: string;
@@ -141,6 +158,8 @@ export interface Member {
   outputs: string[] | null;
   /** The links this member states as a consumer, in file order (#2539). */
   links: LinkDeclaration[];
+  /** The record kinds this member declares, in file order (#2680). */
+  records: RecordKindDeclaration[];
   upstream: string | null;
   because: string | null;
   suppress: Suppression[];
@@ -181,6 +200,8 @@ export interface Declaration {
   checks: Record<string, CheckSeverity>;
   /** How many verdicts besides the decider's a record needs, or null when the declaration names none (#2671). */
   quorum: number | null;
+  /** The workspace's own record kinds, from the top-level `records`, in file order (#2680). A member's are on the member. */
+  records: RecordKindDeclaration[];
   /** The file, relative to the workspace root's tree (`chant.workspace.json` or `.jsonc`). */
   file: string;
 }
@@ -392,6 +413,7 @@ export function parseDeclaration(text: string, file: string, reader: string = re
       kind: l.kind ?? null,
       pointer: `${pointer}/links/${j}`,
     }));
+    const records = recordKindsOf(e.records, e.dir as string, e.name as string, `${pointer}/records`);
     return {
       type: "member",
       name: e.name as string,
@@ -401,6 +423,7 @@ export function parseDeclaration(text: string, file: string, reader: string = re
       generated,
       outputs: e.outputs === undefined ? null : [...(e.outputs as string[])],
       links,
+      records,
       upstream: (e.upstream as string | undefined) ?? null,
       because: (e.because as string | undefined) ?? null,
       suppress,
@@ -470,6 +493,21 @@ export function parseDeclaration(text: string, file: string, reader: string = re
     }
   }
 
+  // A kind file is declared once, and a name the declaration gives a kind is
+  // given once (#2680): readers key the kinds by both.
+  const ownRecords = recordKindsOf(obj.records, ".", null, "/records");
+  const byPath = new Map<string, RecordKindDeclaration>();
+  const byName = new Map<string, RecordKindDeclaration>();
+  for (const r of [...ownRecords, ...members.flatMap((m) => m.records)]) {
+    const first = byPath.get(r.path);
+    if (first) throw new WorkspaceReadError("declaration-invalid", `the record kind ${r.path} is already declared at ${first.pointer}`, at(`${r.pointer}/kind`));
+    byPath.set(r.path, r);
+    if (r.name === null) continue;
+    const named = byName.get(r.name);
+    if (named) throw new WorkspaceReadError("declaration-invalid", `the record kind name ${JSON.stringify(r.name)} is already given at ${named.pointer}`, at(`${r.pointer}/name`));
+    byName.set(r.name, r);
+  }
+
   const pins = ((obj.pins as Record<string, string>[] | undefined) ?? []).map((p) => ({
     package: p.package ?? null,
     version: p.version ?? null,
@@ -487,8 +525,29 @@ export function parseDeclaration(text: string, file: string, reader: string = re
     pins,
     checks: { ...((obj.checks as Record<string, CheckSeverity> | undefined) ?? {}) },
     quorum: typeof obj.quorum === "number" ? obj.quorum : null,
+    records: ownRecords,
     file,
   };
+}
+
+/** The `records` list at `pointer`, already validated, with each kind file's path from the workspace root. */
+function recordKindsOf(raw: unknown, dir: string, member: string | null, pointer: string): RecordKindDeclaration[] {
+  return ((raw as { kind: string; name?: string }[] | undefined) ?? []).map((r, i) => ({
+    kind: r.kind,
+    path: dir === "." ? r.kind : `${dir}/${r.kind}`,
+    name: r.name ?? null,
+    member,
+    pointer: `${pointer}/${i}`,
+  }));
+}
+
+/**
+ * Every record kind the declaration names (#2680), in the order readers use
+ * them: the workspace's own first, then each member's, members in file order
+ * and each list in its own order.
+ */
+export function declaredRecordKinds(declaration: Declaration): RecordKindDeclaration[] {
+  return [...declaration.records, ...declaration.members.flatMap((m) => m.records)];
 }
 
 /** Whether `path` is `dir` or sits under it. Both are tree-relative; `"."` is the root. */

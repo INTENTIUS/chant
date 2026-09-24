@@ -26,7 +26,9 @@
  * inside a decision's window is not taken as that decision's work: unless
  * the decision's own unit made it, it is `decided-by-window`, shown for the
  * person to judge (#2656). A plugin's `commitJoins` may add findings of its
- * own, in its own code namespace. chant emits the
+ * own, in its own code namespace. Without `kinds`, the walk reads every
+ * record kind the declaration names (#2680), and each one's `commitJoins`
+ * runs for every commit in that order. chant emits the
  * graph and hud renders it (#2524 D8, D15). Git is read through a local
  * `git` subprocess only: no fetch, no network.
  */
@@ -34,7 +36,8 @@
 import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { basename, relative, resolve, sep } from "node:path";
-import { readDeclaration, readerVersion, resolveGroups, WORKSPACE_ERROR_CODES, WorkspaceReadError, type Declaration } from "./declaration";
+import { declaredRecordKinds, readDeclaration, readerVersion, resolveGroups, WORKSPACE_ERROR_CODES, WorkspaceReadError, type Declaration } from "./declaration";
+import { declaredKindFile } from "./declared-kinds";
 import { classifyFile, declaredFilesUnder } from "./generated-files";
 import { entityDecisions, hasTrailer, readCommitJoins, runCommitJoins, type CommitJoins, type IntentCommit, type JoinedEntity, type PluginFinding } from "./intent-joins";
 import { loadKindRegistry } from "./kinds";
@@ -303,7 +306,11 @@ export interface IntentQuery {
   /** `path`, `path:line` or `path:start-end`, or a graph node id `<member>/<id>`. */
   region: string;
   at?: string;
-  /** Kind files: record kinds, plugins with `commitJoins`, or both. Relative to `cwd`. */
+  /**
+   * Kind files: record kinds, plugins with `commitJoins`, or both. Relative to
+   * `cwd`. Left out, every record kind the declaration names, in its order
+   * (#2680); an empty list reads none.
+   */
   kinds?: string[];
   /**
    * Resolve a graph node id to its source location, for a region given as a
@@ -591,7 +598,9 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
     const count = located.tree.read(region.path).replace(/\n$/, "").split("\n").length;
     if (region.lines.end > count) throw new IntentError("intent-region-invalid", `${region.path} has ${count} lines${located.tree.label}, so ${region.lines.start}-${region.lines.end} is not in it`);
   }
-  const kinds = await loadKinds(query, top);
+  // Without --kind, the declared record kinds, read from the working tree as a --kind file is (#2680).
+  const kindFiles = query.kinds ?? declaredRecordKinds(declaration).map((d) => declaredKindFile(d, located.rootOnDisk));
+  const kinds = await loadKinds({ ...query, kinds: kindFiles }, top);
 
   const nodes = new Map<string, IntentNode>();
   const edges: IntentEdge[] = [];

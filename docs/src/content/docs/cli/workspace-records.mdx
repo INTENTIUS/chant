@@ -5,23 +5,23 @@ diataxis: reference
 ---
 
 :::note[First-test slice]
-This command is the first slice of workspace records ([#2546](https://github.com/INTENTIUS/chant/issues/2546)) and the read contract ([#2536](https://github.com/INTENTIUS/chant/issues/2536)). It exists so a hosted design studio built on hud can show the workspace design's decision files for review ([#2555](https://github.com/INTENTIUS/chant/issues/2555)). Each record reports its provenance level ([#2547](https://github.com/INTENTIUS/chant/issues/2547)). Seals come later. Kinds are named with `--kind` for now; once they come from plugins, [`chant.workspace.json`](/chant/reference/workspace-declaration/) will name them instead.
+This command is the first slice of workspace records ([#2546](https://github.com/INTENTIUS/chant/issues/2546)) and the read contract ([#2536](https://github.com/INTENTIUS/chant/issues/2536)). It exists so a hosted design studio built on hud can show the workspace design's decision files for review ([#2555](https://github.com/INTENTIUS/chant/issues/2555)). Each record reports its provenance level ([#2547](https://github.com/INTENTIUS/chant/issues/2547)). Seals come later. Kinds are named with `--kind`, or by [`chant.workspace.json`](/chant/reference/workspace-declaration/#record-kinds) when `--kind` is not given ([#2680](https://github.com/INTENTIUS/chant/issues/2680)).
 :::
 
 ## Synopsis
 
 ```
-chant workspace records --kind <kind file> [--current] [--at <rev>] [--base <rev>] [--require attested] [--json]
-chant workspace records --kind <kind file> --since <rev> [--at <rev>] [--json]
+chant workspace records [--kind <kind file>] [--current] [--at <rev>] [--base <rev>] [--require attested] [--json]
+chant workspace records [--kind <kind file>] --since <rev> [--at <rev>] [--json]
 chant workspace records pin <path>
-chant workspace records new <kind file> --from <file|-> [--prefix <prefix>] [--dry-run]
-chant workspace records amend <id> --kind <kind file> --set <file|-> [--dry-run]
-chant workspace records review <id> --kind <kind file> --verdict agree|dissent|abstain --by <principal> [--note <text>] [--session <id>] [--dry-run]
+chant workspace records new [<kind file>] --from <file|-> [--prefix <prefix>] [--dry-run]
+chant workspace records amend <id> [--kind <kind file>] --set <file|-> [--dry-run]
+chant workspace records review <id> [--kind <kind file>] --verdict agree|dissent|abstain --by <principal> [--note <text>] [--session <id>] [--dry-run]
 ```
 
 ## Description
 
-`chant workspace records` reads every file that a record kind locates and prints what it found. Each file's front matter is parsed and then checked against the kind's JSON Schema. The command also works out which entries a later one supersedes. The read never writes a file, and it needs no `chant.workspace.json`. The kind file is named on the command line, so nothing is inferred. Its `new`, `amend` and `review` verbs are the only ones that write, as [Writing records](#writing-records) describes.
+`chant workspace records` reads every file that a record kind locates and prints what it found. Each file's front matter is parsed and then checked against the kind's JSON Schema. The command also works out which entries a later one supersedes. The read never writes a file, and it needs no `chant.workspace.json`. The kind file is named on the command line or by the declaration, so nothing is inferred. Its `new`, `amend` and `review` verbs are the only ones that write, as [Writing records](#writing-records) describes.
 
 The command loads only when it runs. A project without workspace files never loads any of its code.
 
@@ -29,7 +29,7 @@ The command loads only when it runs. A project without workspace files never loa
 
 | Option | Effect |
 |---|---|
-| `--kind <kind file>` | The record kind to read through. Required. The path is resolved against the current directory. |
+| `--kind <kind file>` | The record kind to read through. The path is resolved against the current directory. Without it, every kind the declaration names (see [Declared kinds](#declared-kinds)). With neither, the command fails with `--kind <kind file> is required`. |
 | `--current` | Leave out records that a closed record supersedes. |
 | `--at <rev>` | Read the records as they were at a commit, from the local git object store, and check their pins against the files at that commit. No checkout or network is needed. The kind file and its schema still come from the working tree. |
 | `--base <rev>` | The revision the trust policy is read from (see [Provenance](#provenance)). Defaults to the target branch: `origin/HEAD`, then `main`, then `master`. |
@@ -64,6 +64,33 @@ export const recordKind = {
 `approval`, `pins`, `constrains`, `reviews` and `session` are optional, and `approval` ranks the states for [supersession](#supersession). `pins.field` names the list whose entries may pin a workspace file (see [Asset pins](#asset-pins)). `constrains.field` names the list of what a record governs, whose `member:<name>` and `path:<path>` entries become the record's links in [`chant workspace graph --kind`](/chant/cli/workspace-graph/#record-links). For `reviews`, `field` is the list of review verdicts and `decider` is the field holding the decider, and with them each record gets a digest and a quorum (see [Reviews and quorum](#reviews-and-quorum)). chant 0.82.0 and older refuse a kind file that has `approval`, `pins` or `constrains`. `session` makes the kind a [review-session kind](#review-sessions), and chant 0.81.0 and older refuse it too.
 
 Front matter is read as the part of YAML that JSON can also express. Line endings are normalised first. A file with a YAML alias or a duplicate key is unparseable, and so is one holding a value JSON cannot hold.
+
+## Declared kinds
+
+Without `--kind`, the command reads every [record kind the workspace declaration names](/chant/reference/workspace-declaration/#record-kinds) ([#2680](https://github.com/INTENTIUS/chant/issues/2680)). The declaration is the one nearest above the current directory, read in the tree `--at` names. Each kind file is loaded from the working tree, as a `--kind` file is. The kinds come in the declaration's order: the workspace's own first, then each member's.
+
+With `--json` the output is one set holding a document per kind, each the document `--kind` would print for that kind plus `declared`:
+
+```json
+{
+  "$schema": "https://intentius.io/chant/schemas/workspace/records/v1/records.schema.json",
+  "contract": 1,
+  "kinds": [
+    {
+      "$schema": "https://intentius.io/chant/schemas/workspace/records/v1/records.schema.json",
+      "contract": 1,
+      "kind": { "name": "decision", "schema": "urn:intentius:chant:decision:1", "file": "decisions/decision.kind.mjs" },
+      "declared": { "member": null, "path": "decisions/decision.kind.mjs", "name": null },
+      "records": [],
+      "summary": { "total": 2, "valid": 2, "invalid": 0, "superseded": 0 }
+    }
+  ]
+}
+```
+
+The example leaves out each document's other fields. `declared.member` is the member that declares the kind, or `null` for the workspace's own. `declared.path` is the kind file from the workspace root, and `declared.name` is the name the declaration gives it, or `null`. A kind whose read fails is a failure document in the list, with `declared` too. The other kinds are still read, and the command exits 1. `--require attested` covers the records of every kind. Without `--json`, each kind's records follow a line naming the kind and its file.
+
+A workspace whose declaration names no kinds, and a directory with no declaration, fail as before with `--kind <kind file> is required`. A declaration that can't be read fails with its code.
 
 ## Supersession
 
@@ -147,6 +174,8 @@ Records are matched by id, and a record whose id can't be read is left out of th
 ```
 
 The document follows `https://intentius.io/chant/schemas/workspace/records-since/v1/records-since.schema.json`, shipped at `src/workspace/records-since.schema.json`. A failure prints `{ "$schema", "contract", "error": { "code", "message" } }` and exits 1, with any of the [error codes](#error-codes) below. A `<rev>` that names no commit is `since-rev-unknown`, and an `--at` that names none is `revision-unknown`. Without `--json`, each change is one line, followed by a summary.
+
+Without `--kind`, `--since` compares every [declared kind](#declared-kinds), by the same rule as a read ([#2680](https://github.com/INTENTIUS/chant/issues/2680)). The output is then a set, `{ "$schema", "contract", "kinds" }`, with one `records-since` document per kind and each carrying `declared`. A kind whose read fails is a failure in the list, the others are still compared, and the command exits 1.
 
 ## Asset pins
 
@@ -252,7 +281,7 @@ Without `--json`, a record with any verdict gets one more line, such as `quorum 
 | Code | Meaning |
 |---|---|
 | 0 | The read worked. Some entries may be invalid, and each invalid one carries reason codes. |
-| 1 | The read failed, or `--kind` is missing. Nothing is returned. |
+| 1 | The read failed, or `--kind` is missing and the declaration names no kinds. Nothing is returned. Without `--kind`, a read of any declared kind failed, and the others are still listed. |
 | 2 | The read worked, and `--require attested` was given, but at least one record isn't attested. |
 
 An invalid entry doesn't fail the command. Failing closed on one is the job of `chant workspace check`, which comes later.
@@ -310,7 +339,7 @@ The output is part of the workspace [read contract](/chant/reference/workspace-r
 
 `data` holds the whole front matter; the example shortens it. `at` is the full commit id when `--at` is given. `trust` and `provenance` were added within contract 1 by [#2547](https://github.com/INTENTIUS/chant/issues/2547), and `workspaceRoot`, `assets` and `warnings` by [#2549](https://github.com/INTENTIUS/chant/issues/2549). `digest` and `quorum` were added by [#2672](https://github.com/INTENTIUS/chant/issues/2672) and [#2671](https://github.com/INTENTIUS/chant/issues/2671), and only a kind with `reviews` has `quorum`. `citedBy`, on a session kind's records only, was added by [#2673](https://github.com/INTENTIUS/chant/issues/2673).
 
-A failed read prints `{ "$schema", "contract", "error": { "code", "message" } }` instead.
+A failed read prints `{ "$schema", "contract", "error": { "code", "message" } }` instead. Without `--kind`, the output is the set of [Declared kinds](#declared-kinds), added within contract 1 by [#2680](https://github.com/INTENTIUS/chant/issues/2680).
 
 ### Reason codes
 
@@ -359,6 +388,8 @@ A UI such as hud never writes a record file itself ([ws-052](https://github.com/
 | `records amend <id> --kind <kind file> --set <file\|->` | the same record, with the top-level fields of a JSON object replacing its own |
 | `records review <id> --kind <kind file> --verdict <verdict> --by <principal>` | the same record, with one entry appended to `reviews` |
 
+Without a kind file, each command writes through the one [record kind the declaration names](#declared-kinds) ([#2680](https://github.com/INTENTIUS/chant/issues/2680)). When the declaration names several, the command is refused with `write-usage-invalid` and a message that lists them, so name the kind to write. With no declared kind it fails as before.
+
 `-` reads the JSON from standard input. Each command reads the records first, builds the one file it would write, and reads the records again with that file in place. The write happens only when the written record comes back valid and no other record gains a reason code, so a write is refused for anything a later read would report. Warnings such as `record-no-evidence` never refuse a write, and the result lists them. Each command writes one file or none, and it never runs git: the caller commits, so the pull request stays the unit of review. `--dry-run` prints the result with `text`, the whole file it would write, and writes nothing.
 
 `new` allocates the id when the fields hold none. The new id is the prefix every record in the directory shares, a dash, and one more than the highest number with that prefix, padded to at least three digits: `ws-054` after `ws-053`. A file that can't be read still holds its id through its name, so an id is never handed out twice. When the records use more than one prefix, or there are none yet, `--prefix <prefix>` names it. A caller may give the id in the fields instead, and an id already in use is refused with `record-id-taken`. The file is named `<id>-<slug>.md`, with the slug made from `title` as the decision README describes, and it must match the kind's `location.match`. The front matter is laid out in the schema's field order, with every string double-quoted, and the body is the title as a heading.
@@ -406,6 +437,8 @@ chant workspace records --kind docs/design/decisions/decision.kind.mjs --current
 # What a review session did, between its open and close commits
 chant workspace records --kind design/sessions/session.kind.mjs --since <open> --at <close> --json
 chant workspace records --kind decisions/decision.kind.mjs --since <open> --at <close> --json
+# Every kind the workspace declaration names
+chant workspace records --current --json
 
 # The path and hash for a new evidence pin
 chant workspace records pin design/screens/home.json

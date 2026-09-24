@@ -8,6 +8,11 @@
  *
  * The `--json` output is part of the read contract, versioned like
  * `workspace records` and described by `ls.schema.json` beside this file.
+ *
+ * The record kinds the declaration names are listed too, the workspace's own
+ * and each member's, with each kind file's own name when it loads (#2680).
+ * Loading one imports it, so {@link listWorkspace} lists them unloaded and
+ * {@link listWorkspaceWithKinds}, which the command runs, loads them.
  */
 
 import { existsSync } from "node:fs";
@@ -28,6 +33,7 @@ import type { ReasonCode } from "./reason-codes";
 import { loadKindRegistry, probeKind, type KindRegistry } from "./kinds";
 import type { WorkspaceTree } from "./tree";
 import { handToRootChant, locateWorkspace } from "./which-chant";
+import type { DeclaredKindReasonCode } from "./declared-kinds";
 
 /** The version of the `ls` output this chant writes. */
 export const LS_CONTRACT_VERSION = 1;
@@ -58,6 +64,18 @@ export const GROUP_REASON_CODES = [
 ] as const satisfies readonly ReasonCode[];
 export type GroupReasonCode = (typeof GROUP_REASON_CODES)[number];
 
+/** A record kind the declaration names (#2680). */
+export interface LsRecordKind {
+  /** The name the declaration gives it, else the kind file's own, else null when the file wasn't loaded. */
+  name: string | null;
+  /** The kind file from the workspace root. */
+  path: string;
+  /** The kind file's `recordKind.name`, or null when it wasn't loaded. */
+  kind: string | null;
+  /** Why the kind file can't be loaded, or null. */
+  reason: { code: DeclaredKindReasonCode; message: string } | null;
+}
+
 export interface LsMember {
   name: string;
   dir: string;
@@ -67,6 +85,8 @@ export interface LsMember {
   because: string | null;
   readable: boolean;
   reason: { code: MemberReasonCode; message: string } | null;
+  /** The record kinds the member declares, in file order (#2680). */
+  records: LsRecordKind[];
 }
 
 export interface LsGroup {
@@ -92,6 +112,8 @@ export type LsDocument =
         schema: number;
         minReader: string | null;
         pins: Declaration["pins"];
+        /** The workspace's own record kinds, from the top-level `records` (#2680). */
+        records: LsRecordKind[];
       };
       members: LsMember[];
       groups: LsGroup[];
@@ -126,8 +148,36 @@ export function memberReason(member: Member, tree: WorkspaceTree, kinds: KindReg
   return null;
 }
 
-/** Find the workspace, read it and build the document `--json` prints. Never throws a {@link WorkspaceReadError}. */
+/**
+ * Find the workspace, read it and build the document `--json` prints, with
+ * the declared record kinds unloaded: `kind` null and no reason. Never throws
+ * a {@link WorkspaceReadError}.
+ */
 export function listWorkspace(query: LsQuery): LsDocument {
+  return readListing(query).doc;
+}
+
+/** {@link listWorkspace}, with each declared record kind loaded for its name, or the reason it can't be (#2680). */
+export async function listWorkspaceWithKinds(query: LsQuery): Promise<LsDocument> {
+  const { doc, declaration, tree, rootOnDisk } = readListing(query);
+  if (!declaration || "error" in doc) return doc;
+  const { loadDeclaredKinds } = await import("./declared-kinds");
+  const loaded = await loadDeclaredKinds(declaration, tree!, rootOnDisk!);
+  const byPath = new Map(loaded.map((k) => [k.declared.path, k]));
+  const fill = (r: LsRecordKind): LsRecordKind => {
+    const k = byPath.get(r.path)!;
+    return { ...r, name: r.name ?? k.kind, kind: k.kind, reason: k.reason };
+  };
+  return {
+    ...doc,
+    workspace: { ...doc.workspace, records: doc.workspace.records.map(fill) },
+    members: doc.members.map((m) => ({ ...m, records: m.records.map(fill) })),
+  };
+}
+
+const unloaded = (records: Declaration["records"]): LsRecordKind[] => records.map((r) => ({ name: r.name, path: r.path, kind: null, reason: null }));
+
+function readListing(query: LsQuery): { doc: LsDocument; declaration?: Declaration; tree?: WorkspaceTree; rootOnDisk?: string } {
   const chant = readerVersion();
   const head = { $schema: LS_OUTPUT_SCHEMA_ID, contract: LS_CONTRACT_VERSION, chant };
   try {
@@ -149,6 +199,7 @@ export function listWorkspace(query: LsQuery): LsDocument {
         because: m.because,
         readable: reason === null,
         reason,
+        records: unloaded(m.records),
       };
     });
     const lsGroups: LsGroup[] = groups.map((g) => ({
@@ -162,7 +213,7 @@ export function listWorkspace(query: LsQuery): LsDocument {
           ? { code: "no-matches", message: `no directory ${g.group.globs.join(" or ")} matches${tree.label} holds a chant project` }
           : null,
     }));
-    return {
+    const doc: LsDocument = {
       ...head,
       at,
       workspace: {
@@ -172,6 +223,7 @@ export function listWorkspace(query: LsQuery): LsDocument {
         schema: declaration.schema,
         minReader: declaration.minReader,
         pins: declaration.pins,
+        records: unloaded(declaration.records),
       },
       members,
       groups: lsGroups,
@@ -182,9 +234,10 @@ export function listWorkspace(query: LsQuery): LsDocument {
         matches: lsGroups.reduce((n, g) => n + g.matches.length, 0),
       },
     };
+    return { doc, declaration, tree, rootOnDisk };
   } catch (err) {
     if (!(err instanceof WorkspaceReadError)) throw err;
-    return { ...head, error: { code: err.code, message: err.message, location: err.location ?? null } };
+    return { doc: { ...head, error: { code: err.code, message: err.message, location: err.location ?? null } } };
   }
 }
 
@@ -198,7 +251,7 @@ export async function runWorkspaceLs(ctx: CommandContext): Promise<number> {
   // The root's chant reads the declaration (ws-021).
   const handed = await handToRootChant(cwd, args.at);
   if (handed !== undefined) return handed;
-  const doc = listWorkspace({ cwd, at: args.at });
+  const doc = await listWorkspaceWithKinds({ cwd, at: args.at });
   if (args.json) {
     console.log(JSON.stringify(doc, null, 2));
   } else if ("error" in doc) {
@@ -231,6 +284,18 @@ function formatLs(doc: Extract<LsDocument, { members: unknown }>): string {
     doc.members.forEach((m, i) => {
       lines.push(rendered[i + 1]);
       if (m.reason) lines.push(`  ${m.reason.code}: ${m.reason.message}`);
+    });
+  }
+  const kinds = [...w.records.map((r) => ({ owner: "(workspace)", r })), ...doc.members.flatMap((m) => m.records.map((r) => ({ owner: m.name, r })))];
+  if (kinds.length > 0) {
+    lines.push("");
+    const rows = [["RECORDS", "KIND", "MEMBER", "FILE"]];
+    for (const { owner, r } of kinds) rows.push([r.name ?? "-", r.kind ?? "-", owner, r.path]);
+    const rendered = table(rows);
+    lines.push(rendered[0]);
+    kinds.forEach(({ r }, i) => {
+      lines.push(rendered[i + 1]);
+      if (r.reason) lines.push(`  ${r.reason.code}: ${r.reason.message}`);
     });
   }
   if (doc.groups.length > 0) {

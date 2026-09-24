@@ -8,8 +8,10 @@
  * the exit code is 0 whenever the read itself worked. Only a kind, schema or
  * revision that cannot be read exits 1.
  *
- * It needs no `chant.workspace.json`. The kind is passed explicitly, so
- * nothing is inferred (#2525 rule 1).
+ * It needs no `chant.workspace.json`. The kind is passed explicitly, or,
+ * without `--kind`, it is every record kind the declaration names (#2680), so
+ * nothing is inferred (#2525 rule 1). Several kinds print one document per
+ * kind, in the declaration's order, inside one set.
  *
  * With `--since <rev>` it prints what changed between two revisions instead,
  * through `records-since.ts` (#2673).
@@ -23,7 +25,9 @@ import type { CommandContext } from "../cli/registry";
 import { findWorkspaceRoot } from "../project-root";
 import { fileDigest, isWorkspacePath } from "./record-assets";
 import { gitRevisionSource, gitRoot, resolveRevision, workingTreeSource } from "./record-source";
-import { readDeclaration } from "./declaration";
+import { declaredRecordKinds, readDeclaration, WorkspaceReadError, type RecordKindDeclaration } from "./declaration";
+import { declaredKindFile } from "./declared-kinds";
+import { locateWorkspace } from "./which-chant";
 import {
   computeQuorum,
   DEFAULT_QUORUM,
@@ -49,7 +53,7 @@ export const RECORDS_CONTRACT_VERSION = 1;
 export const RECORDS_OUTPUT_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace/records/v1/records.schema.json";
 
 const USAGE =
-  "chant workspace records --kind <kind file> [--current] [--at <rev>] [--base <rev>] [--require attested] [--json] | chant workspace records --kind <kind file> --since <rev> [--at <rev>] [--json] | chant workspace records pin <path> | chant workspace records new|amend|review (#2670)";
+  "chant workspace records [--kind <kind file>] [--current] [--at <rev>] [--base <rev>] [--require attested] [--json] | chant workspace records [--kind <kind file>] --since <rev> [--at <rev>] [--json] | chant workspace records pin <path> | chant workspace records new|amend|review (#2670)";
 
 /** Exit code when the read worked and a record falls below `--require`. */
 export const EXIT_BELOW_REQUIRED = 2;
@@ -99,6 +103,53 @@ export type RecordsDocument =
       summary: { total: number; valid: number; invalid: number; superseded: number };
     }
   | { $schema: string; contract: number; error: { code: ReadErrorCode; message: string } };
+
+/** Where a document in a {@link RecordsSetDocument} comes from: the declaration's entry for its kind (#2680). */
+export interface DeclaredKindView {
+  /** The member that declares the kind, or null for the workspace's own. */
+  member: string | null;
+  /** The kind file from the workspace root. */
+  path: string;
+  /** The name the declaration gives the kind, or null. */
+  name: string | null;
+}
+
+/**
+ * The `records` output without `--kind` when the declaration names record
+ * kinds (#2680): one {@link RecordsDocument} per kind, in the declaration's
+ * order, each with the entry that declares it.
+ */
+export interface RecordsSetDocument {
+  $schema: string;
+  contract: number;
+  kinds: (RecordsDocument & { declared: DeclaredKindView })[];
+}
+
+/**
+ * The record kinds the declaration nearest above `cwd` names, in the tree
+ * `at` reads, with each kind file on disk. Empty when there is no declaration.
+ * Throws a {@link WorkspaceReadError} for one that can't be read.
+ */
+export function declaredKindFiles(cwd: string, at?: string): { declared: RecordKindDeclaration; file: string }[] {
+  let located;
+  try {
+    located = locateWorkspace(cwd, at);
+  } catch (err) {
+    if (err instanceof WorkspaceReadError && err.code === "declaration-missing") return [];
+    throw err;
+  }
+  return declaredRecordKinds(readDeclaration(located.tree)).map((declared) => ({ declared, file: declaredKindFile(declared, located.rootOnDisk) }));
+}
+
+/** Read every declared kind in `kinds`, as {@link queryRecords} reads one. */
+export async function queryDeclaredRecords(kinds: { declared: RecordKindDeclaration; file: string }[], query: Omit<RecordsQuery, "kind">): Promise<RecordsSetDocument> {
+  const out: RecordsSetDocument["kinds"] = [];
+  for (const k of kinds) {
+    const doc = await queryRecords({ ...query, kind: k.file });
+    out.push({ ...doc, declared: { member: k.declared.member, path: k.declared.path, name: k.declared.name } });
+  }
+  return { $schema: RECORDS_OUTPUT_SCHEMA_ID, contract: RECORDS_CONTRACT_VERSION, kinds: out };
+}
 
 /** A records read, before provenance. */
 export interface RecordsRead {
@@ -284,10 +335,7 @@ export async function runWorkspaceRecords(ctx: CommandContext): Promise<number> 
     console.error(formatError({ message: `chant workspace records takes no argument but pin, new, amend or review (got ${args.extraPositional})`, hint: USAGE }));
     return 1;
   }
-  if (!args.kind) {
-    console.error(formatError({ message: "--kind <kind file> is required", hint: USAGE }));
-    return 1;
-  }
+  if (!args.kind) return runDeclaredRecords(args);
   if (args.require !== undefined && args.require !== "attested") {
     console.error(formatError({ message: `--require takes one level, attested, not ${JSON.stringify(args.require)}`, hint: USAGE }));
     return 1;
@@ -330,6 +378,91 @@ export async function runWorkspaceRecords(ctx: CommandContext): Promise<number> 
     }
   }
   return 0;
+}
+
+/**
+ * `records` without `--kind` (#2680): every record kind the declaration
+ * names, or, when it names none or there is no declaration, the error it has
+ * always been. A kind whose read fails is listed with its error, the others
+ * are still read, and the exit code is 1.
+ */
+async function runDeclaredRecords(args: CommandContext["args"]): Promise<number> {
+  if (args.require !== undefined && args.require !== "attested") {
+    console.error(formatError({ message: `--require takes one level, attested, not ${JSON.stringify(args.require)}`, hint: USAGE }));
+    return 1;
+  }
+  let declared: { declared: RecordKindDeclaration; file: string }[];
+  try {
+    declared = declaredKindFiles(process.cwd(), args.at);
+  } catch (err) {
+    if (!(err instanceof WorkspaceReadError)) throw err;
+    console.error(formatError({ message: `${err.code}: ${err.describe()}; without --kind, the declaration names the record kinds`, hint: USAGE }));
+    return 1;
+  }
+  if (declared.length === 0) {
+    console.error(formatError({ message: "--kind <kind file> is required", hint: USAGE }));
+    return 1;
+  }
+  if (args.since !== undefined) return runDeclaredSince(declared, args);
+  const set = await queryDeclaredRecords(declared, { current: args.current, at: args.at, base: args.base, cwd: process.cwd() });
+  if (args.json) console.log(JSON.stringify(set, null, 2));
+  for (const doc of args.json ? [] : set.kinds) {
+    if ("error" in doc) {
+      console.error(formatError({ message: `${doc.declared.path}: ${doc.error.code}: ${doc.error.message}`, hint: USAGE }));
+      continue;
+    }
+    console.log(`${doc.declared.name ?? doc.kind.name} (${doc.declared.path})`);
+    console.log(formatRecords(doc.records, doc.summary, doc.at));
+  }
+  if (set.kinds.some((d) => "error" in d)) return 1;
+  if (args.require) {
+    const results = set.kinds.filter((d): d is Extract<typeof d, { records: unknown }> => !("error" in d));
+    const all = results.flatMap((d) => d.records);
+    const below = belowRequired(all, args.require);
+    if (below.length > 0) {
+      const inactive = results.find((d) => !d.trust.active);
+      console.error(
+        formatError({
+          message: `${below.length} of ${all.length} records are not ${args.require}: ${below
+            .slice(0, 5)
+            .map((r) => `${r.path} (${r.provenance.level})`)
+            .join(", ")}${below.length > 5 ? ", ..." : ""}`,
+          hint: inactive ? `there is no signers file (${inactive.trust.signersPath}) at base` : "run with --json to see each record's reason",
+        }),
+      );
+      return EXIT_BELOW_REQUIRED;
+    }
+  }
+  return 0;
+}
+
+/**
+ * `records --since` without `--kind` (#2680): what changed in every declared
+ * kind, one `records-since` document per kind inside one set, in the
+ * declaration's order. A kind whose read fails is listed with its error, and
+ * the exit code is 1.
+ */
+async function runDeclaredSince(declared: { declared: RecordKindDeclaration; file: string }[], args: CommandContext["args"]): Promise<number> {
+  if (args.current || args.require !== undefined || args.base !== undefined) {
+    console.error(formatError({ message: "--since compares two revisions and takes no --current, --require or --base", hint: USAGE }));
+    return 1;
+  }
+  const { formatSince, queryRecordsSince, RECORDS_SINCE_OUTPUT_SCHEMA_ID } = await import("./records-since");
+  const kinds = [];
+  for (const k of declared) {
+    const doc = await queryRecordsSince({ kind: k.file, since: args.since!, at: args.at, cwd: process.cwd() });
+    kinds.push({ ...doc, declared: { member: k.declared.member, path: k.declared.path, name: k.declared.name } });
+  }
+  if (args.json) console.log(JSON.stringify({ $schema: RECORDS_SINCE_OUTPUT_SCHEMA_ID, contract: RECORDS_CONTRACT_VERSION, kinds }, null, 2));
+  for (const doc of args.json ? [] : kinds) {
+    if ("error" in doc) {
+      console.error(formatError({ message: `${doc.declared.path}: ${doc.error.code}: ${doc.error.message}`, hint: USAGE }));
+      continue;
+    }
+    console.log(`${doc.declared.name ?? doc.kind.name} (${doc.declared.path})`);
+    console.log(formatSince(doc));
+  }
+  return kinds.some((d) => "error" in d) ? 1 : 0;
 }
 
 export function realpathOr(dir: string): string {

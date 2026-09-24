@@ -24,8 +24,10 @@
       "name": "design",
       "dir": "design",
       "kind": "other",
-      "because": "the design data member; decisions pin its files by hash, and its kind comes with #2549"
+      "because": "the design data member; decisions pin its files by hash, and its kind comes with #2549",
+      "records": [{ "kind": "sessions/session.kind.mjs" }]
     }
   ],
+  "records": [{ "kind": "decisions/decision.kind.mjs" }],
   "pins": []
 }

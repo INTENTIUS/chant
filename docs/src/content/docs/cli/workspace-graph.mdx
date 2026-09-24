@@ -199,7 +199,7 @@ The region is a path from `dir` (or the current directory): a file, a directory,
 The walk gathers three sources before it relates any of them:
 
 1. The commits that touched the region. A line range is followed with `git log -L`, a file with `git log --follow`, and a directory with `git log -- <dir>`. Each commit carries its author and date and its trailers. It also has its provenance level, and the pull request number when its subject ends with one.
-2. The decisions whose `constrains` cover the region, read through each `--kind` record kind. A `path:` entry covers the region when it is the region or a directory above it, and `member:<name>` covers the region's member. An issue entry covers it when one of the region's commits names that issue in the `origin` repository, and a contract id covers it when a plugin joined that contract to one of the commits. Decisions in the supersession chain of a covering decision come along.
+2. The decisions whose `constrains` cover the region, read through each record kind: each `--kind` file, or without `--kind`, every kind the declaration names. A `path:` entry covers the region when it is the region or a directory above it, and `member:<name>` covers the region's member. An issue entry covers it when one of the region's commits names that issue in the `origin` repository, and a contract id covers it when a plugin joined that contract to one of the commits. Decisions in the supersession chain of a covering decision come along.
 3. The artifacts those decisions pin. Artifacts relate to code only through decisions, so a file is in the graph because a decision in the graph pins it.
 
 Each gap is a `finding` node with a closed code. For example, a commit made while no decision constrained the region by path is `intent-commit-undecided`, and a region constrained only through its member is `intent-constraint-coarse`.
@@ -230,9 +230,13 @@ finding   intent-constraint-coarse: app/src/server.mjs is constrained only throu
 ...
 ```
 
+Without `--kind`, the walk reads every [record kind the declaration names](/chant/reference/workspace-declaration/#record-kinds), in the declaration's order: the workspace's own first, then each member's ([#2680](https://github.com/INTENTIUS/chant/issues/2680)). The declaration is the one the walk reads, at the revision under `--at`, and each kind file is loaded from the working tree, as a `--kind` file is. `--kind` overrides the declaration, and a workspace with neither reads no decisions, as before. The reference workspace declares its decision kind and its design member's session kind. The sessions constrain nothing, so `chant workspace graph --intent app/src/server.mjs:19` prints the walk below without `--kind`.
+
 ### Commit joins
 
 Units of work, contracts and evidence come from a plugin, because core has no model of them. A kind file given with `--kind` supplies them through its `commitJoins` export. The file may also export a `recordKind`, or only `commitJoins`.
+
+Each kind's `commitJoins` runs for every commit, in the order the kinds are listed in `kinds`. When two kinds both join a commit, both joins apply. Each join adds its own unit, contract and evidence nodes and edges, so the commit gets a `produced-by` edge to each kind's unit. A node id that two joins both return is one node, and it keeps the `data` and `plugin` of the kind listed first. The record ids that both joins name are pooled when the walk decides whether a commit is a decision's own work. Each kind's findings stay in its own `plugin:<name>:` namespace.
 
 The export is either a function or data. A function gets each commit that touched the region (`sha`, `subject`, `body`, `author`, `date` and `trailers`) and a context whose `read(path)` returns a file from the workspace root in the tree read, and whose `list(dir)` returns the entries directly inside a directory there: paths from the workspace root, sorted, with a directory's ending in `/`. Either returns `undefined` for a path that isn't a file or a directory in that tree. With `list` a plugin can find the record that names a commit, so the commit needs no trailer ([#2663](https://github.com/INTENTIUS/chant/issues/2663)). It returns any of `unit`, `contract` and `evidence`, each an object with a string `id`, and `authorship`, the trailer keys on the commit that claim who wrote it. A unit or contract may list `decisions`, the ids of the decision records it carries out, which makes the commit those decisions' own work.
 
@@ -278,7 +282,7 @@ Core reads trailers as git parses them and gives no key a meaning of its own. A 
 | `--at <rev>` | Read the declaration at a commit, and each member's graph from its source at that commit. The tree is exported to a temporary directory and each member runs there under the toolchain installed now. See [what `--at` reads](/chant/reference/workspace-read-contract/#identity-and-revisions). |
 | `-o, --output <file>` | Write the document to a file. |
 | `--member <name>` | Compose only these members. Repeatable, and a comma list works too. |
-| `--kind <kind file>` | Read the records of this record kind and add their [record links](#record-links). The path is resolved against the current directory. With `--intent` it is repeatable, and each file is a record kind, a plugin with [commit joins](#commit-joins), or both. |
+| `--kind <kind file>` | Read the records of this record kind and add their [record links](#record-links). The path is resolved against the current directory. With `--intent` it is repeatable, and each file is a record kind, a plugin with [commit joins](#commit-joins), or both. Without it, `--intent` reads every kind the declaration names. |
 | `--composites` | Print the [composite instances and their components](#composites-and-components) instead of the composed graph. Takes neither `--kind` nor `--intent`. |
 | `--intent <region>` | Print the [intent graph](#the-intent-graph) over `path`, `path:line` or `path:start-end` instead of the composed graph. |
 | `--json` | With `--intent`, print the document as JSON instead of the text walk. |
