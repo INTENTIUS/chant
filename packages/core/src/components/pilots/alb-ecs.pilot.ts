@@ -1,7 +1,7 @@
 /**
  * Pilot: ALB/ECS target (#555, epic #551).
  *
- * Exercises the build + cross-stack + auto-rollback axes: `docker-build` →
+ * Exercises the build + cross-stack axes: `docker-build` →
  * `publish-image` (promote by digest, deploy-time) → `cfn-deploy` (importing
  * the shared ALB's listener/cluster/subnets as cross-stack outputs, resolved
  * by `chant graph --stacks` rather than a `describe-stacks | jq` pipeline
@@ -15,6 +15,12 @@
  * `docker build`/`docker push` steps are the `docker-build` + `publish-image`
  * capabilities. `service` archetype: build → publish → apply → verify, the
  * fullest of the three archetypes.
+ *
+ * It declares no component-level `rollback` phase (#2576). It used to declare
+ * one holding a `rollback-previous` step with only `service` and `cluster`,
+ * which the aws capability turned into an `aws ecs update-service` with no
+ * changes. Taking an environment back to an earlier recorded release is
+ * `chant components rollback` (#2531).
  *
  * The JSON projection of this pilot is authoritative at
  * ../__fixtures__/alb-ecs-service.json (already schema-validated by
@@ -54,10 +60,4 @@ export const searchService: Component = {
       { kind: "health-gate", path: "/healthz" },
     ]),
   ],
-  // No native `rollback` on ecs-update-service/cfn-deploy for an already-running
-  // service swap — the component declares an explicit compensation phase
-  // (auto/no-rollback axis: this is the "no automatic capability rollback,
-  // component supplies its own" side, contrasted with code-deploy's native
-  // automatic rollback in the Neo4j pilot).
-  rollback: [phase("Rollback", [{ kind: "rollback-previous", service: "search", cluster: "$env.cluster" }])],
 };

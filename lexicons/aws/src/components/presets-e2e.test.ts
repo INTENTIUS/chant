@@ -25,6 +25,8 @@ import { createDockerBuildCapability } from "@intentius/chant/components/verbs/b
 import { createPublishImageCapability, createLoadImageOnHostCapability } from "./publish";
 import { createCfnDeployCapability, createEcsUpdateServiceCapability, createLambdaDeployCapability } from "./apply";
 import { createWaitSteadyStateCapability } from "./wait-aws";
+import { starterCapabilityPlugin } from "@intentius/chant/components/starter-plugin";
+import { awsCapabilityPlugin } from "./capability-plugin";
 
 /** Same registry-building convention as ../pilots/pilots-e2e.test.ts: real capabilities wired to one shared mock executor, plus fakes for verbs this suite's presets reference but that stay typed stubs (out of scope for #566, matching the pilots' own accounting). */
 function buildRegistry(mock: MockCloudExecutor): CapabilityRegistry {
@@ -37,7 +39,6 @@ function buildRegistry(mock: MockCloudExecutor): CapabilityRegistry {
   registry.register(createLambdaDeployCapability(mock.executor));
   registry.register(createWaitSteadyStateCapability(mock.executor));
   registry.register({ kind: "health-gate", run: async () => ({ healthy: true }) });
-  registry.register({ kind: "rollback-previous", run: async () => ({ restored: true }) });
   registry.register({ kind: "copy-to-host", run: async () => ({ bytesCopied: 128 }) });
   registry.register({ kind: "remote-exec", run: async () => ({ exitCode: 0, stdout: "" }) });
   registry.register({ kind: "wait-endpoint", run: async () => ({ status: 200 }) });
@@ -162,5 +163,42 @@ describe("Preset library end-to-end through the real interpret driver (#566 acce
     expect(callsByClient).toContain("host.dockerLoad"); // load-image-on-host
     expect(callsByClient.some((c) => c.startsWith("docker.push"))).toBe(false); // never touches a registry
     expect(callsByClient.some((c) => c.startsWith("ecr."))).toBe(false);
+  });
+});
+
+/** Every step kind a component composes, in `deploy` and `rollback`, nested fan-out phases included. */
+function stepKinds(component: DriverComponent): string[] {
+  const kinds: string[] = [];
+  const walk = (steps: unknown[]): void => {
+    for (const step of steps) {
+      const s = step as { kind?: string; steps?: unknown[] };
+      if (Array.isArray(s.steps)) walk(s.steps);
+      else if (s.kind && s.kind !== "gate") kinds.push(s.kind);
+    }
+  };
+  for (const phase of [...component.deploy, ...(component.rollback ?? [])]) walk(phase.steps);
+  return kinds;
+}
+
+describe("presets compose only registered step kinds (#2576)", () => {
+  const registered = new Set(
+    [...starterCapabilityPlugin.capabilities(), ...awsCapabilityPlugin.capabilities()].map((c) => c.kind),
+  );
+  const components: Array<[string, DriverComponent]> = [
+    ["EcsFargateComponent", projectToJson(EcsFargateComponent({ name: "svc", healthPath: "/healthz", sharedAlbStack: "shared-alb" })) as unknown as DriverComponent],
+    ["LambdaComponent", projectToJson(LambdaComponent({ name: "fn", functionName: "fn" })) as unknown as DriverComponent],
+    ["SingleHostComposeComponent", projectToJson(SingleHostComposeComponent({ name: "host", healthPath: "/", healthPort: 80 })) as unknown as DriverComponent],
+    ["the ALB/ECS pilot", projectToJson(searchService) as unknown as DriverComponent],
+  ];
+
+  it.each(components)("%s uses no step kind the starter and aws plugins leave unregistered", (_name, component) => {
+    expect(stepKinds(component).filter((kind) => !registered.has(kind))).toEqual([]);
+  });
+
+  it("the ECS preset and the ALB/ECS pilot declare no rollback-previous step", () => {
+    for (const [, component] of components) {
+      expect(stepKinds(component)).not.toContain("rollback-previous");
+    }
+    expect(components[0]![1].rollback).toBeUndefined();
   });
 });
