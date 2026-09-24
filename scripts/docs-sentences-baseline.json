@@ -688,6 +688,10 @@
   "discourse/punchy-fragments": 2,
   "repetition/near-duplicate": 1
  },
+ "docs/src/content/docs/guide/tracing-intent.mdx": {
+  "formatting/em-dash-density": 3,
+  "claude/colon-reveal": 2
+ },
  "docs/src/content/docs/guide/watching-lifecycle.mdx": {
   "formatting/em-dash-density": 19,
   "claude/colon-reveal": 5,

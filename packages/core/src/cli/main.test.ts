@@ -688,6 +688,17 @@ describe("workspace records (#2546)", () => {
   });
 });
 
+describe("workspace graph --intent (#2651)", () => {
+  test("parses the region and every --kind, in order", () => {
+    const args = parseArgs(["workspace", "graph", "--intent", "app/server.mjs:3-7", "--kind", "a.kind.mjs", "--kind", "b.kind.mjs", "--at", "HEAD", "--json"]);
+    expect(args).toMatchObject({ command: "workspace", path: "graph", intent: "app/server.mjs:3-7", kinds: ["a.kind.mjs", "b.kind.mjs"], kind: "b.kind.mjs", at: "HEAD", json: true });
+    expect(parseArgs(["workspace", "graph", "--intent=app"]).intent).toBe("app");
+    expect(() => parseArgs(["workspace", "graph", "--intent"])).toThrow(/--intent needs a region/);
+    expect(() => parseArgs(["workspace", "graph", "--intent", "--json"])).toThrow(/--intent needs a region/);
+    expect(resolveCommand(args, commandRegistry)?.def.name).toBe("workspace graph");
+  });
+});
+
 describe("workspace init and ls (#2534)", () => {
   test("resolve to their commands in the one workspace group, with the directory as extra positional", () => {
     const ls = parseArgs(["workspace", "ls", "examples", "--at", "HEAD", "--json"]);

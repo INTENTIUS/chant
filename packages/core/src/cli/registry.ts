@@ -283,6 +283,10 @@ export interface ParsedArgs {
   at?: string;
   /** `chant workspace records --kind <path>` (#2546): the record kind file to read records through. */
   kind?: string;
+  /** Every `--kind` given, in order: `chant workspace graph --intent` reads each (#2651). */
+  kinds?: string[];
+  /** `chant workspace graph --intent <path[:start-end]>` (#2651): the region the intent graph is over. */
+  intent?: string;
   /** `chant workspace records --current` (#2546): leave out records a closed record supersedes. */
   current?: boolean;
   /** `chant workspace records|verify --require attested` (#2547): the provenance level a gate requires. */

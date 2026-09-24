@@ -1,0 +1,73 @@
+---
+title: Asking How a File Got This Way
+description: Trace a file or a line range in a workspace back to the decisions, pinned artifacts and commits behind it with chant workspace graph --intent.
+diataxis: how-to
+---
+
+Use `chant workspace graph --intent` when you are looking at some code in a workspace and want to know how it got this way and who decided it should be this way. The command gathers the commits that touched the code, the decisions that govern it and the artifacts those decisions rest on. It shows you where they leave gaps, and the judgment stays with you.
+
+You need a workspace with a `chant.workspace.json`, a git history, and decision records read through a record kind file, as [`chant workspace records`](/chant/cli/workspace-records/) reads them.
+
+## Walk from a line
+
+Name the file and the line, and pass the decision kind:
+
+```bash
+cd reference-workspace
+chant workspace graph --intent app/src/server.mjs:19 --kind decisions/decision.kind.mjs
+```
+
+The output reads top to bottom in the order you would ask the questions:
+
+```
+region    app/src/server.mjs:19 (file, member app) in the working tree
+decision  ref-001 decided: How the app is deployed; constrains member:app (member), ...
+decision  ref-002 decided: Where the screen design lives; constrains member:app (member), ...
+artifact  design/screens/home.json pinned; pinned by ref-002 at 074e55f5 (pinned); now 074e55f5
+commit    72173388 2026-09-23 lex00: feat(workspace): the reference workspace as chant's integration fixture (#2543) (#2595), lines 13; unattested
+finding   intent-commit-undecided: 72173388 changed the region when no decision constrained app/src/server.mjs by path
+finding   intent-decision-provisional: the decisions constraining app/src/server.mjs are decided, and none is in a closed state
+finding   intent-constraint-coarse: app/src/server.mjs is constrained only through its member, app
+```
+
+A whole file (`app/src/server.mjs`) or a directory (`app`) works the same way. A line range follows the lines through their history with `git log -L`, so a commit that changed other parts of the file is left out.
+
+## Read the findings as questions
+
+Each finding marks a place where the record is thin. None of them says the code is wrong.
+
+| Finding | What to ask |
+|---|---|
+| `intent-commit-undecided` | Was this change meant to carry out a decision? If so, which one, and should it name this path? |
+| `intent-constraint-coarse` | Only a member-wide decision covers this code. Should a decision name the path? |
+| `intent-decision-provisional` | No one has ratified the decisions this code rests on. Should they be reviewed first? |
+| `intent-pin-drifted` | The artifact changed after the decision pinned it. Does the decision still hold for the new version? |
+| `intent-artifact-unpinned` | Only a superseded decision pinned this artifact. Should the decision that replaced it pin it too? |
+| `intent-decision-superseded-live` | The decision covering this code was replaced, and nothing newer covers it. Does the replacement apply here? |
+| `intent-region-unconstrained` | No decision covers this code. Is one needed? |
+
+The [read contract](/chant/reference/workspace-read-contract/#reason-codes) lists every code.
+
+## Look at an older state
+
+Add `--at <rev>` to walk the tree, the records and the history as they were at a commit. Nothing is checked out and nothing is fetched.
+
+```bash
+chant workspace graph --intent app/src/server.mjs:19 --kind decisions/decision.kind.mjs --at HEAD~5
+```
+
+A shallow clone cuts the history short. The walk still runs and reports `intent-history-shallow`, so run `git fetch --unshallow` first when the older commits matter.
+
+## Add units and contracts from a plugin
+
+When the workspace records units of work and contracts, a kind file with a `commitJoins` export joins them to the commits. Pass it with a second `--kind`:
+
+```bash
+chant workspace graph --intent app/src/server.mjs --kind decisions/decision.kind.mjs --kind plugins/units.kind.mjs
+```
+
+Each commit then lists the unit that produced it and the contract it served. [Commit joins](/chant/cli/workspace-graph/#commit-joins) describes the export.
+
+## Hand the graph to another tool
+
+Add `--json` to print the document hud and other readers draw. It follows the schema `https://intentius.io/chant/schemas/workspace/intent/v1/intent.schema.json`. The findings are nodes in it, so a reader draws each one beside the nodes it concerns.

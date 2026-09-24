@@ -26,6 +26,10 @@
  *   (#2647), copies the same files with the same parameters and digest as
  *   the git form, with a lock that records the digest alone.
  *
+ * - `chant workspace graph --intent app/src/server.mjs:19` (#2651) lists
+ *   ref-001 and ref-002 by member, the commit that wrote line 19, and the
+ *   findings #2651's acceptance names.
+ *
  * The per-member workspace commands and their contract tests join here as
  * each phase lands (#2537, #2536).
  */
@@ -349,6 +353,41 @@ describe("workspace commands on the fixture", () => {
     const run = chant(fixture, "workspace", "check", "--json");
     expect(run.status, run.stderr + run.stdout).toBe(0);
     expect((JSON.parse(run.stdout) as { ok: boolean }).ok).toBe(true);
+  });
+});
+
+describe("the intent graph on the fixture (#2651)", () => {
+  const intentSchema = JSON.parse(readFileSync(join(workspaceSrc, "intent.schema.json"), "utf-8")) as object;
+
+  test("graph --intent app/src/server.mjs:19 lists ref-001 and ref-002 by member, 72173388, and the findings #2651 names", () => {
+    const run = chant(fixture, "workspace", "graph", "--intent", "app/src/server.mjs:19", "--kind", "decisions/decision.kind.mjs", "--json");
+    expect(run.status, run.stderr).toBe(0);
+    const doc = JSON.parse(run.stdout) as {
+      region: string;
+      history: { shallow: boolean };
+      reasons: { code: string }[];
+      nodes: { id: string; kind: string; code?: string; sha?: string }[];
+      edges: { kind: string; from: string; to: string; granularity?: string }[];
+    };
+    const validate = compile2020(intentSchema);
+    expect(validate(doc), JSON.stringify(validate.errors, null, 2)).toBe(true);
+    expect(doc.region).toBe("region:app/src/server.mjs:19");
+
+    const constrains = doc.edges.filter((e) => e.kind === "constrains" && e.to === doc.region).map((e) => [e.from, e.granularity]);
+    expect(constrains).toEqual([
+      ["record:decision/ref-001", "member"],
+      ["record:decision/ref-002", "member"],
+    ]);
+    const touched = doc.edges.filter((e) => e.kind === "touched-by").map((e) => e.to);
+    // A shallow clone (CI checks out one commit) cuts the history at its
+    // boundary, and the document says so instead of naming 72173388.
+    if (doc.history.shallow) expect(doc.reasons.map((r) => r.code)).toContain("intent-history-shallow");
+    else expect(touched).toEqual([expect.stringMatching(/^commit:72173388/)]);
+
+    const codes = doc.nodes.filter((n) => n.kind === "finding").map((n) => n.code);
+    for (const code of ["intent-commit-undecided", "intent-constraint-coarse", "intent-decision-provisional"]) expect(codes).toContain(code);
+    // Decisions reach artifacts, and ref-002 pins the screen spec.
+    expect(doc.edges).toContainEqual({ kind: "pins", from: "record:decision/ref-002", to: "artifact:design/screens/home.json", pinnedSha256: expect.any(String), pinState: "pinned" });
   });
 });
 

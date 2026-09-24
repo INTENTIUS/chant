@@ -1,0 +1,1078 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/intent/v1/intent.schema.json",
+  "title": "chant workspace graph --intent output",
+  "description": "What `chant workspace graph --intent <region> --json` prints: the intent graph over one region of a workspace (#2651, #2650 section C1, #2524 D8 and D15). The region, the commits that touched it, the decisions whose constrains cover it and their supersession chains, the artifacts those decisions pin, the units, contracts and evidence a plugin joins to the commits, the member links of the region's member, and findings as nodes with closed codes. chant emits it and a reader such as hud draws it. Readers ignore fields and node or edge kinds they do not know; a field is only ever added within a version. The finding, reason and error codes are closed lists. Contract version 1 is written by chant 0.81.0 and newer, and this document was added to it by #2651; a chant without --intent refuses the flag. Every code is in the one closed list of `reason-codes.ts`.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/result"
+    },
+    {
+      "$ref": "#/$defs/failure"
+    }
+  ],
+  "$defs": {
+    "result": {
+      "description": "The region was read. Exit code 0, or 1 when a plugin failed; the document is printed either way.",
+      "type": "object",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "at",
+        "workspace",
+        "region",
+        "history",
+        "kinds",
+        "nodes",
+        "edges",
+        "reasons",
+        "summary"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/intent/v1/intent.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string",
+          "description": "The chant that wrote the document."
+        },
+        "at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{40,64}$",
+          "description": "The full commit id read with --at, or null for the working tree. History is read from this commit, or from HEAD for the working tree."
+        },
+        "workspace": {
+          "type": "object",
+          "required": [
+            "name",
+            "root"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "root": {
+              "type": "string",
+              "description": "The workspace root relative to the git root, \".\" for the git root."
+            }
+          }
+        },
+        "region": {
+          "type": "string",
+          "description": "The id of the region node."
+        },
+        "history": {
+          "type": "object",
+          "required": [
+            "rev",
+            "follows",
+            "shallow"
+          ],
+          "properties": {
+            "rev": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "pattern": "^[0-9a-f]{40,64}$",
+              "description": "The commit the history was read from, or null when the repository has no commits."
+            },
+            "follows": {
+              "enum": [
+                "line-range",
+                "file",
+                "directory"
+              ],
+              "description": "line-range: git log -L over the region's lines. file: git log --follow over the file. directory: git log over the directory."
+            },
+            "shallow": {
+              "type": "boolean",
+              "description": "Whether the repository is a shallow clone. When true, reasons holds intent-history-shallow."
+            }
+          }
+        },
+        "error": false,
+        "kinds": {
+          "type": "array",
+          "description": "Each --kind file, in order: the record kind it reads, if any, and the form of its commitJoins export, if any.",
+          "items": {
+            "type": "object",
+            "required": [
+              "file",
+              "records",
+              "joins"
+            ],
+            "properties": {
+              "file": {
+                "type": "string",
+                "description": "From the repository root."
+              },
+              "records": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The record kind's name, or null for a plugin with no records."
+              },
+              "joins": {
+                "enum": [
+                  "function",
+                  "data",
+                  null
+                ]
+              }
+            }
+          }
+        },
+        "nodes": {
+          "type": "array",
+          "description": "In walk order: the region, its files and member, the commits newest first with the units, contracts and evidence joined to them, the decisions and their evidence entries, the artifacts, the links, and the findings.",
+          "items": {
+            "$ref": "#/$defs/node"
+          }
+        },
+        "edges": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/edge"
+          }
+        },
+        "reasons": {
+          "type": "array",
+          "description": "Parts of the walk that could not be read. The rest of the document stands.",
+          "items": {
+            "$ref": "#/$defs/reason"
+          }
+        },
+        "summary": {
+          "type": "object",
+          "required": [
+            "commits",
+            "decisions",
+            "artifacts",
+            "findings"
+          ],
+          "properties": {
+            "commits": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "decisions": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "artifacts": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "findings": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      }
+    },
+    "node": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/region"
+        },
+        {
+          "$ref": "#/$defs/file"
+        },
+        {
+          "$ref": "#/$defs/member"
+        },
+        {
+          "$ref": "#/$defs/commit"
+        },
+        {
+          "$ref": "#/$defs/joined"
+        },
+        {
+          "$ref": "#/$defs/decision"
+        },
+        {
+          "$ref": "#/$defs/artifact"
+        },
+        {
+          "$ref": "#/$defs/link"
+        },
+        {
+          "$ref": "#/$defs/finding"
+        }
+      ]
+    },
+    "lineRange": {
+      "type": "object",
+      "required": [
+        "start",
+        "end"
+      ],
+      "properties": {
+        "start": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "end": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "region": {
+      "description": "The region the walk starts from. Its id is region:<path> with :<start>-<end> for a line range.",
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "path",
+        "lines",
+        "member",
+        "at",
+        "type",
+        "generated",
+        "node"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^region:"
+        },
+        "kind": {
+          "const": "region"
+        },
+        "path": {
+          "type": "string",
+          "description": "From the workspace root, \".\" for the root itself."
+        },
+        "lines": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/lineRange"
+            }
+          ],
+          "description": "The line range asked for, in the file as read, or null for the whole path."
+        },
+        "member": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The member whose directory holds the path, or null."
+        },
+        "at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{40,64}$"
+        },
+        "type": {
+          "enum": [
+            "file",
+            "dir"
+          ]
+        },
+        "generated": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "For a file, whether it is generated (#2524 D14): declared in a member's generated entries, or one core registers. Null for a directory."
+        },
+        "node": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The graph node id the region was given as, whose sourceLoc it is, or null."
+        }
+      }
+    },
+    "file": {
+      "description": "A file under a directory region.",
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "path",
+        "member",
+        "generated"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^file:"
+        },
+        "kind": {
+          "const": "file"
+        },
+        "path": {
+          "type": "string"
+        },
+        "member": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "generated": {
+          "type": "boolean"
+        }
+      }
+    },
+    "member": {
+      "description": "The region's member, and each member a link joins it to.",
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "name",
+        "dir",
+        "memberKind"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^member:"
+        },
+        "kind": {
+          "const": "member"
+        },
+        "name": {
+          "type": "string",
+          "description": "Joins to members[].name in ls and graph."
+        },
+        "dir": {
+          "type": "string"
+        },
+        "memberKind": {
+          "type": "string"
+        }
+      }
+    },
+    "commit": {
+      "description": "A commit that touched the region. Linked from the region by a touched-by edge.",
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "sha",
+        "subject",
+        "author",
+        "date",
+        "trailers",
+        "pullRequest",
+        "signature",
+        "lines"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^commit:"
+        },
+        "kind": {
+          "const": "commit"
+        },
+        "sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40,64}$"
+        },
+        "subject": {
+          "type": "string"
+        },
+        "author": {
+          "type": "object",
+          "required": [
+            "name",
+            "email"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "email": {
+              "type": "string"
+            }
+          }
+        },
+        "date": {
+          "type": "string",
+          "description": "Author date, ISO 8601."
+        },
+        "trailers": {
+          "type": "object",
+          "description": "Every trailer git parses from the message, keyed as written. Core gives no key a meaning; a kind's commitJoins may.",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "pullRequest": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "The number in a (#n) that ends the subject, as a squash merge writes it, or null."
+        },
+        "signature": {
+          "type": "object",
+          "required": [
+            "level",
+            "reason"
+          ],
+          "properties": {
+            "level": {
+              "enum": [
+                "attested",
+                "attested-unverifiable-here",
+                "adopted",
+                "unattested"
+              ],
+              "description": "The commit's provenance level, judged by the signers at base as records judges a record (#2547)."
+            },
+            "reason": {
+              "type": "string"
+            },
+            "principal": {
+              "type": "string"
+            }
+          }
+        },
+        "lines": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/lineRange"
+              }
+            }
+          ],
+          "description": "For a line-range region, the ranges the commit changed within it, numbered in the commit's own version of the file. Null otherwise."
+        }
+      }
+    },
+    "joined": {
+      "description": "A unit of work, contract or piece of evidence from a plugin (#2650 C13), or an evidence entry of a decision that has a URL.",
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "ref",
+        "plugin",
+        "data"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^(unit|contract|evidence):"
+        },
+        "kind": {
+          "enum": [
+            "unit",
+            "contract",
+            "evidence"
+          ]
+        },
+        "ref": {
+          "type": "string",
+          "description": "The plugin's own id, or the URL of a decision's evidence entry."
+        },
+        "plugin": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The kind file whose commitJoins supplied it, from the repository root, or null for a decision's evidence entry."
+        },
+        "data": {
+          "type": "object",
+          "description": "The fields the plugin gave besides the id, such as a unit's role, scope, base_commit, context_hash and outcome, or a contract's sha, status and criteria. For a decision's evidence entry: title, url, path, as_of and sha256."
+        }
+      }
+    },
+    "decision": {
+      "description": "A record whose constrains cover the region, or one in the supersession chain of such a record. Its id is record:<kind>/<id>.",
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "recordKind",
+        "record",
+        "path",
+        "title",
+        "state",
+        "closed",
+        "valid",
+        "reasons",
+        "provenance",
+        "decided_by",
+        "decided_on",
+        "reviews",
+        "supersededBy",
+        "supersedes",
+        "constrains"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^record:"
+        },
+        "kind": {
+          "const": "decision"
+        },
+        "recordKind": {
+          "type": "string"
+        },
+        "record": {
+          "type": "string",
+          "description": "The record's id; joins to records[].id in graph --kind and records."
+        },
+        "path": {
+          "type": "string",
+          "description": "The record file, from the repository root."
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "state": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "closed": {
+          "type": "boolean",
+          "description": "Whether the record kind lists the state as closed, such as ratified."
+        },
+        "valid": {
+          "type": "boolean"
+        },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "code",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "enum": [
+                  "record-unparseable",
+                  "record-schema-invalid",
+                  "record-id-duplicate",
+                  "record-supersedes-unknown",
+                  "record-supersedes-conflict"
+                ]
+              },
+              "message": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "provenance": {
+          "type": "object",
+          "required": [
+            "level",
+            "commit",
+            "reason"
+          ],
+          "properties": {
+            "level": {
+              "enum": [
+                "attested",
+                "attested-unverifiable-here",
+                "adopted",
+                "unattested"
+              ]
+            },
+            "commit": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "pattern": "^[0-9a-f]{40,64}$"
+            },
+            "reason": {
+              "type": "string"
+            }
+          }
+        },
+        "decided_by": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "decided_on": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reviews": {
+          "type": "object",
+          "required": [
+            "agree",
+            "dissent",
+            "abstain",
+            "openConcerns"
+          ],
+          "properties": {
+            "agree": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "dissent": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "abstain": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "openConcerns": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "description": "Verdict counts. openConcerns counts dissents with neither addressed_by nor withdrawn_on."
+        },
+        "supersededBy": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Derived as records derives it: the id of the record whose supersedes link replaces this one."
+        },
+        "supersedes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The ids this record's supersedes links name."
+        },
+        "constrains": {
+          "type": "array",
+          "description": "The entries that cover the region, with their granularity. Empty for a decision in the graph only through a supersession chain or a path below a directory region.",
+          "items": {
+            "type": "object",
+            "required": [
+              "entry",
+              "granularity"
+            ],
+            "properties": {
+              "entry": {
+                "type": "string"
+              },
+              "granularity": {
+                "enum": [
+                  "path",
+                  "member",
+                  "contract",
+                  "issue"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "artifact": {
+      "description": "A workspace file a decision in the graph pins. Artifacts reach the region only through decisions (#2549).",
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "path",
+        "anchor",
+        "pinnedSha256",
+        "currentSha256",
+        "pinState"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^artifact:"
+        },
+        "kind": {
+          "const": "artifact"
+        },
+        "path": {
+          "type": "string",
+          "description": "From the workspace root the pinning record kind resolves pins in."
+        },
+        "anchor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pinnedSha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "The hash a current decision pins, or null when none does."
+        },
+        "currentSha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "The file's hash in the tree read, or null when it is missing or nothing hashed it."
+        },
+        "pinState": {
+          "enum": [
+            "pinned",
+            "drifted",
+            "missing",
+            "stale",
+            "unpinned"
+          ],
+          "description": "The state of a current decision's pin (the worst, when several pin it): pinned, drifted, missing or stale as records reports it. unpinned when only superseded decisions pin it, or the evidence entry has no hash."
+        }
+      }
+    },
+    "link": {
+      "description": "A member link that touches the region's member.",
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "row"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^link:"
+        },
+        "kind": {
+          "const": "link"
+        },
+        "row": {
+          "type": "object",
+          "required": [
+            "consumer",
+            "kind",
+            "origin",
+            "resolves",
+            "status",
+            "reason"
+          ],
+          "description": "A declared member link row of the region's member, resolved in source as workspace check resolves it (#2539).",
+          "properties": {
+            "consumer": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string"
+            },
+            "origin": {
+              "type": "string"
+            },
+            "resolves": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string"
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "finding": {
+      "description": "A gap the walk found. Findings are nodes so a reader can draw them and a test can assert them; the tool asks, and never answers.",
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "code",
+        "message",
+        "concerns"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^finding:"
+        },
+        "kind": {
+          "const": "finding"
+        },
+        "code": {
+          "enum": [
+            "intent-commit-undecided",
+            "intent-commit-bare",
+            "intent-pin-drifted",
+            "intent-pin-missing",
+            "intent-artifact-unpinned",
+            "intent-decision-superseded-live",
+            "intent-decision-provisional",
+            "intent-constraint-coarse",
+            "intent-constraint-lost",
+            "intent-evidence-unpinned",
+            "intent-trailer-unverified",
+            "intent-region-unconstrained"
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "concerns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The ids of the nodes the finding is about."
+        }
+      }
+    },
+    "edge": {
+      "description": "constrains: decision to region, file or contract. pins: decision to artifact. touched-by: region to commit. produced-by: commit to unit. serves: unit to contract. supersedes: the newer decision to the one it replaces. cites-evidence: unit, contract or decision to evidence. links: consumer member to producer member.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/constrainsEdge"
+        },
+        {
+          "$ref": "#/$defs/pinsEdge"
+        },
+        {
+          "$ref": "#/$defs/touchedEdge"
+        },
+        {
+          "$ref": "#/$defs/plainEdge"
+        }
+      ]
+    },
+    "reason": {
+      "type": "object",
+      "required": [
+        "code",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "enum": [
+            "intent-history-shallow",
+            "intent-plugin-failed"
+          ]
+        },
+        "message": {
+          "type": "string"
+        }
+      }
+    },
+    "failure": {
+      "description": "The declaration, a record kind or the region could not be read, and nothing was walked. Exit code 1.",
+      "type": "object",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "error"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/intent/v1/intent.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string"
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "enum": [
+                "declaration-missing",
+                "declaration-ambiguous",
+                "declaration-unparseable",
+                "declaration-invalid",
+                "placement-invalid",
+                "reader-too-old",
+                "root-chant-required",
+                "not-a-git-repository",
+                "revision-unknown",
+                "kind-unreadable",
+                "kind-invalid",
+                "schema-unreadable",
+                "schema-id-mismatch",
+                "schema-invalid",
+                "location-missing",
+                "intent-region-invalid"
+              ]
+            },
+            "message": {
+              "type": "string"
+            }
+          }
+        },
+        "nodes": false
+      }
+    },
+    "constrainsEdge": {
+      "type": "object",
+      "required": [
+        "kind",
+        "from",
+        "to",
+        "granularity",
+        "entry"
+      ],
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        },
+        "kind": {
+          "const": "constrains"
+        },
+        "granularity": {
+          "enum": [
+            "path",
+            "member",
+            "contract",
+            "issue"
+          ]
+        },
+        "entry": {
+          "type": "string",
+          "description": "The constrains entry as written."
+        }
+      }
+    },
+    "pinsEdge": {
+      "type": "object",
+      "required": [
+        "kind",
+        "from",
+        "to",
+        "pinnedSha256",
+        "pinState"
+      ],
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        },
+        "kind": {
+          "const": "pins"
+        },
+        "pinnedSha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "pinState": {
+          "enum": [
+            "pinned",
+            "drifted",
+            "missing",
+            "stale",
+            "unpinned"
+          ]
+        }
+      }
+    },
+    "touchedEdge": {
+      "type": "object",
+      "required": [
+        "kind",
+        "from",
+        "to",
+        "lines"
+      ],
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        },
+        "kind": {
+          "const": "touched-by"
+        },
+        "lines": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/lineRange"
+              }
+            }
+          ]
+        }
+      }
+    },
+    "plainEdge": {
+      "type": "object",
+      "required": [
+        "kind",
+        "from",
+        "to"
+      ],
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "produced-by",
+            "serves",
+            "supersedes",
+            "cites-evidence",
+            "links"
+          ]
+        }
+      }
+    }
+  }
+}

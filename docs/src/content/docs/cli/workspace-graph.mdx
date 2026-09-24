@@ -8,6 +8,7 @@ title: "chant workspace graph"
 
 ```
 chant workspace graph [dir] [--at <rev>] [-o <file>] [--member <name>] [--kind <kind file>] [--env <name>] [--dry-run]
+chant workspace graph [dir] --intent <path[:start-end]> [--at <rev>] [--kind <kind file>...] [--json]
 ```
 
 ## Description
@@ -120,6 +121,62 @@ A record link has `record` and `target` where a member link has `consumer` and `
 | `output-unreadable` | printed something that is not a graph IR |
 | `ir-version-unsupported` | printed an IR newer than this chant reads |
 
+## The intent graph
+
+With `--intent <region>`, the command prints a different document: the intent graph over one region of the workspace ([#2651](https://github.com/INTENTIUS/chant/issues/2651)). A person looking at a piece of code asks how it got this way and who decided it should be this way. The document lays out what the workspace records about both and leaves the judgment to the person. No member runs, and git is read through a local `git` process, so the command needs no network.
+
+The region is a path from `dir` (or the current directory): a file, a directory, `path:line` or `path:start-end`. A graph node id such as `delivery/appService` works too, when no path by that name exists. The region is then the file and line in the node's `sourceLoc`.
+
+The walk gathers three sources before it relates any of them:
+
+1. The commits that touched the region. A line range is followed with `git log -L`, a file with `git log --follow`, and a directory with `git log -- <dir>`. Each commit carries its author and date and its trailers. It also has its provenance level, and the pull request number when its subject ends with one.
+2. The decisions whose `constrains` cover the region, read through each `--kind` record kind. A `path:` entry covers the region when it is the region or a directory above it, and `member:<name>` covers the region's member. An issue entry covers it when one of the region's commits names that issue in the `origin` repository, and a contract id covers it when a plugin joined that contract to one of the commits. Decisions in the supersession chain of a covering decision come along.
+3. The artifacts those decisions pin. Artifacts relate to code only through decisions, so a file is in the graph because a decision in the graph pins it.
+
+Each gap is a `finding` node with a closed code. For example, a commit made while no decision constrained the region by path is `intent-commit-undecided`, and a region constrained only through its member is `intent-constraint-coarse`. The [read contract](/chant/reference/workspace-read-contract/#the-intent-graph) lists every node kind, edge kind and code.
+
+Without `--json` the walk prints as text with one line per node. The region comes first and the findings last, in the order the walk runs.
+
+```
+$ chant workspace graph --intent app/src/server.mjs:19 --kind decisions/decision.kind.mjs
+region    app/src/server.mjs:19 (file, member app) in the working tree
+decision  ref-001 decided: How the app is deployed; constrains member:app (member), ...
+decision  ref-002 decided: Where the screen design lives; constrains member:app (member), ...
+artifact  design/screens/home.json pinned; pinned by ref-002 at 074e55f5 (pinned); now 074e55f5
+commit    72173388 2026-09-23 lex00: feat(workspace): the reference workspace as chant's integration fixture (#2543) (#2595), lines 13; unattested
+finding   intent-commit-undecided: 72173388 changed the region when no decision constrained app/src/server.mjs by path
+finding   intent-decision-provisional: the decisions constraining app/src/server.mjs are decided, and none is in a closed state
+finding   intent-constraint-coarse: app/src/server.mjs is constrained only through its member, app
+...
+```
+
+### Commit joins
+
+Units of work, contracts and evidence come from a plugin, because core has no model of them. A kind file given with `--kind` supplies them through its `commitJoins` export. The file may also export a `recordKind`, or only `commitJoins`.
+
+The export is either a function or data. A function gets each commit that touched the region (`sha`, `subject`, `body`, `author`, `date` and `trailers`) and a context whose `read(path)` returns a file from the workspace root in the tree read. It returns any of `unit`, `contract` and `evidence`, each an object with a string `id`, and `authorship`, the trailer keys on the commit that claim who wrote it.
+
+```js
+export function commitJoins(commit, context) {
+  const id = commit.trailers["Unit"]?.[0];
+  if (!id) return undefined;
+  const unit = JSON.parse(context.read(`units/${id}.json`));
+  return { unit: { id, role: unit.role }, contract: { id: unit.contract } };
+}
+```
+
+The data form needs no code. `trailers` names the trailer that holds each id, and `records` the file to read for each, with `{id}` for the id. `authorship` lists the trailers that claim who wrote a commit.
+
+```js
+export const commitJoins = {
+  trailers: { unit: "Unit", contract: "Contract" },
+  records: { unit: "units/{id}.json" },
+  authorship: ["Made-By"],
+};
+```
+
+Core reads trailers as git parses them and gives no key a meaning of its own. A commit that carries an authorship trailer and is not `attested` is the finding `intent-trailer-unverified`. A join that throws leaves that commit without its unit, adds the reason `intent-plugin-failed`, and makes the command exit 1 with the document still printed.
+
 ## Options
 
 | Option | Effect |
@@ -128,7 +185,9 @@ A record link has `record` and `target` where a member link has `consumer` and `
 | `--at <rev>` | Read the declaration at a commit, and each member's graph from its source at that commit. The tree is exported to a temporary directory and each member runs there under the toolchain installed now. See [what `--at` reads](/chant/reference/workspace-read-contract/#identity-and-revisions). |
 | `-o, --output <file>` | Write the document to a file. |
 | `--member <name>` | Compose only these members. Repeatable, and a comma list works too. |
-| `--kind <kind file>` | Read the records of this record kind and add their [record links](#record-links). The path is resolved against the current directory. |
+| `--kind <kind file>` | Read the records of this record kind and add their [record links](#record-links). The path is resolved against the current directory. With `--intent` it is repeatable, and each file is a record kind, a plugin with [commit joins](#commit-joins), or both. |
+| `--intent <region>` | Print the [intent graph](#the-intent-graph) over `path`, `path:line` or `path:start-end` instead of the composed graph. |
+| `--json` | With `--intent`, print the document as JSON instead of the text walk. |
 | `--env <name>` | Passed to each member's `chant graph`. |
 | `--dry-run` | Print the plan and read nothing. |
 
@@ -137,4 +196,4 @@ A record link has `record` and `target` where a member link has `consumer` and `
 | Code | Meaning |
 |---|---|
 | 0 | Every `chant` member was composed. |
-| 1 | A member failed or couldn't be read, the declaration couldn't be read, or the `--kind` records couldn't be read. The document is still printed, with the failed members listed. |
+| 1 | A member failed or couldn't be read, the declaration couldn't be read, or the `--kind` records couldn't be read. The document is still printed, with the failed members listed. With `--intent`: the declaration, a kind or the region couldn't be read, or a plugin's commit join failed. |

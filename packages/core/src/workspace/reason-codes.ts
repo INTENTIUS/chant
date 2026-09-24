@@ -71,6 +71,24 @@ export const REASONS = {
   "schema-id-mismatch": "The schema's $id differs from the id the record kind names.",
   "schema-invalid": "The record schema itself does not compile.",
   "location-missing": "The records directory does not exist, in the tree or at the revision.",
+  // The intent graph (graph --intent, #2651): a read that fails.
+  "intent-region-invalid": "The region's path, or its line range, does not exist in the tree read.",
+  // The intent graph: part of the walk that can't be read. The document is still printed.
+  "intent-history-shallow": "The repository is a shallow clone, so the region's history stops at the clone's boundary.",
+  "intent-plugin-failed": "A kind file's commitJoins, which joins commits to units, contracts and evidence, failed for a commit.",
+  // The intent graph: findings, each a node in the graph.
+  "intent-commit-undecided": "A commit changed the region when no decision constrained it at path granularity.",
+  "intent-commit-bare": "A commit names no unit, no pull request and no decision covering the region at its time.",
+  "intent-pin-drifted": "A decision's pinned artifact no longer hashes to the pin.",
+  "intent-pin-missing": "A decision's pinned artifact does not exist in the tree read.",
+  "intent-artifact-unpinned": "An artifact decisions in the graph pinned, which no current decision pins.",
+  "intent-decision-superseded-live": "Every decision constraining the region is superseded.",
+  "intent-decision-provisional": "The current decisions constraining the region are all in states their kind does not close, such as decided.",
+  "intent-constraint-coarse": "The region is constrained only through its member, not by path.",
+  "intent-constraint-lost": "A decision's path constraint names a path that does not exist in the tree read.",
+  "intent-evidence-unpinned": "A decision's evidence has no hash: a URL, or a path with no sha256.",
+  "intent-trailer-unverified": "A commit carries a trailer a plugin says claims authorship, and the commit is not attested.",
+  "intent-region-unconstrained": "No decision constrains the region at any granularity.",
   // The lineage lock (check).
   "lock-invalid": "The lineage lock can't be read.",
   "manual-step-open": "A scope in the lineage lock has an open manual step.",
