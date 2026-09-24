@@ -242,3 +242,43 @@ A reader starts with `ls`, which lists every member whether it can be read or no
 Documents read at the same `at` belong together. Mixing a working-tree `ls` with a `graph --at` of an older commit can list members the graph doesn't have, and each document names its own `at` so a reader can tell.
 
 hud reads exactly as behold does, and caches per member. At a commit, a member's entry and nodes don't change once read. A cache keyed on the workspace name, `at` and the member name stays valid while the member's toolchain (`chant` on its `graph` entry) stays the same. A working-tree read has `at: null` and is read again.
+
+## Testing a reader
+
+A reader such as hud reads only through this contract and writes only through chant commands ([ws-052](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-052-chant-hud-boundary.md), the [chant and hud boundary](/chant/reference/boundary/)). `@intentius/chant-test-utils` exports `describeWorkspaceReaderConformance`, beside `describeWorkspaceKindConformance`, so a reader can show that in its own CI.
+
+The suite builds the reader from a function you pass, giving it a transport that runs chant in the workspace. The reader's `read(command, args)` runs one contract command through the transport and returns the parsed document.
+
+```ts
+import { describeWorkspaceReaderConformance, type ChantTransport, type ReadContractCommand } from "@intentius/chant-test-utils";
+
+const jsonFlag: Record<ReadContractCommand, string[]> = {
+  ls: ["--json"],
+  graph: [],
+  check: ["--format", "json"],
+  status: ["--json"],
+  records: ["--json"],
+  "graph --intent": ["--json"],
+};
+
+describeWorkspaceReaderConformance({
+  name: "my reader",
+  reader: (chant: ChantTransport) => ({
+    async read(command: ReadContractCommand, args: string[]) {
+      const run = await chant.run(["workspace", ...command.split(" "), ...args, ...jsonFlag[command]]);
+      return JSON.parse(run.stdout);
+    },
+  }),
+});
+```
+
+It reads the reference workspace with each of `ls`, `graph`, `check`, `status`, `records` and `graph --intent`, and fails when any of these is false:
+
+| Check | How |
+|---|---|
+| the document validates against the command's output schema and carries this contract's version | the schemas under `packages/core/src/workspace/` |
+| the read made exactly one chant call, the contract command with the suite's arguments and its JSON flag | the transport records every call |
+| the reader returned the document chant printed, unchanged | compared with the recorded output |
+| no file in the workspace changed | every file is hashed before the first read and after the last |
+
+The reader never gets the workspace's path, so the transport is its only route to the workspace, and the transport records everything that goes through it. `workspaceDir` names another copy of the reference workspace, and `chantCommand` names the chant to run, which is this checkout's CLI by default.

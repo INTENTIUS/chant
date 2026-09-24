@@ -106,6 +106,14 @@ jobs:
       - name: Repo-wide typecheck (tests, scripts, examples)
         run: npx tsx scripts/typecheck.ts
 
+      # #2657 (ws-052) — the chant and hud boundary. packages/core opens no
+      # listener and imports no UI or agent-runtime package, and the owner
+      # roster in docs/data/boundary.yaml matches the code's closed lists.
+      # Both read source only, so they run here as a named step and also in
+      # the test shards through vitest's include list, as no-egress does.
+      - name: Boundary guards (no listener, owner roster)
+        run: npx vitest run test/no-listener.test.ts test/boundary-roster.test.ts
+
       - name: Lint aws reference composites (EVL regression guard, #916/#952)
         # The lexicon's own composites must obey the evaluability rules they teach.
         run: npx tsx packages/core/src/cli/main.ts lint lexicons/aws/src/composites
