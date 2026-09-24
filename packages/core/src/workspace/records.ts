@@ -350,22 +350,54 @@ export interface ReadRecordsResult {
 
 type Validator = (data: unknown) => { ok: true } | { ok: false; errors: string[] };
 
+/** One ajv error, compiled with `verbose` so the failing schema and data come with it. */
+interface SchemaError {
+  instancePath: string;
+  schemaPath: string;
+  keyword: string;
+  message?: string;
+  params?: { failingKeyword?: string };
+  parentSchema?: Record<string, unknown>;
+  data?: unknown;
+}
+
+/**
+ * ajv's errors as `<path> <message>` lines. A failed `if` whose `then` or
+ * `else` branch has a `description` is reported by that description alone, in
+ * place of the branch's own errors, with each `{field}` filled from the value
+ * the branch checked. The decision schema words its dissent rule this way, so
+ * the message names the reviewer (#2652). The schema stays plain JSON Schema,
+ * with no keyword a strict validator would refuse.
+ */
+function renderSchemaErrors(errors: readonly SchemaError[]): string[] {
+  const replaced: string[] = [];
+  const described = new Map<SchemaError, string>();
+  for (const e of errors) {
+    const branch = e.keyword === "if" ? e.params?.failingKeyword : undefined;
+    const text = branch ? (e.parentSchema?.[branch] as { description?: unknown } | undefined)?.description : undefined;
+    if (!branch || typeof text !== "string") continue;
+    const at = e.data !== null && typeof e.data === "object" ? (e.data as Record<string, unknown>) : {};
+    described.set(e, text.replace(/\{([A-Za-z0-9_]+)\}/g, (all, key: string) => (typeof at[key] === "string" ? (at[key] as string) : all)));
+    replaced.push(`${e.schemaPath.replace(/\/if$/, "")}/${branch}/`);
+  }
+  return errors
+    .filter((e) => described.has(e) || !replaced.some((prefix) => e.schemaPath.startsWith(prefix)))
+    .map((e) => `${e.instancePath || "/"} ${described.get(e) ?? e.message ?? "is invalid"}`);
+}
+
 async function compileSchema(schema: Record<string, unknown>): Promise<Validator> {
   const mod = (await import("ajv")) as unknown as { default: unknown };
   // ajv is CommonJS; its class is the default export, or that export's own default.
   const Ajv = ((mod.default as { default?: unknown }).default ?? mod.default) as new (opts: object) => {
-    compile(s: object): ((d: unknown) => boolean) & { errors?: Array<{ instancePath: string; message?: string }> | null };
+    compile(s: object): ((d: unknown) => boolean) & { errors?: SchemaError[] | null };
   };
   let validate: ReturnType<InstanceType<typeof Ajv>["compile"]>;
   try {
-    validate = new Ajv({ allErrors: true, strict: false }).compile(schema);
+    validate = new Ajv({ allErrors: true, strict: false, verbose: true }).compile(schema);
   } catch (err) {
     throw new RecordReadError("schema-invalid", `the kind's schema does not compile: ${message(err)}`);
   }
-  return (data) =>
-    validate(data)
-      ? { ok: true }
-      : { ok: false, errors: (validate.errors ?? []).map((e) => `${e.instancePath || "/"} ${e.message ?? "is invalid"}`) };
+  return (data) => (validate(data) ? { ok: true } : { ok: false, errors: renderSchemaErrors(validate.errors ?? []) });
 }
 
 /** Read every record `loaded` locates, through `options.source`. */

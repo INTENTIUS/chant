@@ -67,7 +67,7 @@ constrains:
 | `supersedes` | earlier choices this decision replaced |
 | `evidence` | the design sections, issues, audits and workspace files behind it: each a public link or a file pinned by hash (see [Evidence](#evidence)); may be empty |
 | `decided_by`, `decided_on` | the forge login and the date |
-| `reviews` | each reviewer's verdict (`agree`, `dissent` or `abstain`), a note and a date; empty until a review happens |
+| `reviews` | each reviewer's verdict (`agree`, `dissent` or `abstain`), a note and a date; a dissent must have a note; empty until a review happens |
 | `constrains` | the issues (`owner/repo#n`), decisions (their ids), members (`member:<name>`) or workspace files and directories (`path:<path>`) the decision governs; at least one, since a decision that governs nothing is refused |
 
 Unknown fields are refused, except ones starting with `x-`.
@@ -139,6 +139,12 @@ supersedes:
 ## Reviews
 
 A review adds entries to `reviews` through a pull request. It never edits the choice. Merging a pull request that brings a decision to its quorum (by default two distinct reviewers besides the decider, #2555) changes `state` to `ratified`. A dissent can name a new `proposed` decision in `proposes`.
+
+A dissent needs a reason. Its `note` must be a non-empty string, while `agree` and `abstain` may leave `note` out or set it to null. `chant workspace records` reports a dissent with no note as `record-schema-invalid`, naming the reviewer, and the record is not valid (#2652).
+
+Each dissent is a concern, and it stays open until it is addressed or withdrawn. `addressed_by` links the answer from the decider or the group: a decision id, an issue or pull request as `owner/repo#n`, or an `https://` link. Addressing a concern means answering it, which does not have to mean accommodating it (RFC 7282, section 3). `withdrawn_on` is the date the concern's author withdrew it, and only that author withdraws it. The schema cannot check who made a change, so review of the pull request enforces that. Only a dissent carries these two fields.
+
+The quorum counts distinct reviewers, so a reviewer listed twice counts once. chant does not compute the quorum yet, so whoever merges the ratifying pull request counts the reviewers.
 
 ## Importing from an issue
 

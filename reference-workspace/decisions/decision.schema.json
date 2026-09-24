@@ -147,7 +147,33 @@
           "proposes": {
             "description": "With a dissent, the id of a new proposed decision the reviewer opened.",
             "$ref": "#/definitions/decisionId"
+          },
+          "addressed_by": {
+            "description": "With a dissent, where the decider or the group answered the concern: a decision id, an issue or pull request (owner/repo#n) or an https link. An answer addresses a concern without necessarily accommodating it (RFC 7282, section 3).",
+            "anyOf": [
+              { "$ref": "#/definitions/decisionId" },
+              { "$ref": "#/definitions/issueRef" },
+              { "type": "string", "pattern": "^https://" }
+            ]
+          },
+          "withdrawn_on": {
+            "description": "With a dissent, the date its author withdrew the concern. Only the reviewer who raised a concern withdraws it.",
+            "type": "string",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
           }
+        },
+        "if": {
+          "required": ["verdict"],
+          "properties": { "verdict": { "const": "dissent" } }
+        },
+        "then": {
+          "description": "A dissent needs a reason: the dissent by {reviewer} has no note.",
+          "required": ["note"],
+          "properties": { "note": { "type": "string", "pattern": "\\S" } }
+        },
+        "else": {
+          "description": "Only a dissent is a concern: the {verdict} by {reviewer} cannot carry addressed_by or withdrawn_on.",
+          "properties": { "addressed_by": false, "withdrawn_on": false }
         }
       }
     },

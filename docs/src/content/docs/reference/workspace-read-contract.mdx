@@ -180,7 +180,7 @@ The walk runs in this order, and the nodes are listed in it:
 | `member` | `member:<name>` | `name`, `dir`, `memberKind` |
 | `commit` | `commit:<sha>` | `sha`, `subject`, `author`, `date`, `trailers`, `pullRequest`, `signature` (the provenance level, judged by the signers at base as `records` judges a record) and `lines`, the ranges it changed in a line-range region |
 | `unit`, `contract`, `evidence` | `<kind>:<id>` | `ref`, the plugin's own id, `plugin`, the kind file that supplied it, and `data`, its other fields. A decision's URL evidence is an `evidence` node with `plugin: null` and `data` holding `title`, `url`, `as_of` and `sha256` |
-| `decision` | `record:<kind>/<id>` | `recordKind`, `record`, `path`, `title`, `state`, `closed`, `valid`, `reasons`, `provenance`, `decided_by`, `decided_on`, `reviews` (agree, dissent, abstain and open concerns), `supersededBy`, `supersedes`, and `constrains`, the entries that cover the region with their granularity |
+| `decision` | `record:<kind>/<id>` | `recordKind`, `record`, `path`, `title`, `state`, `closed`, `valid`, `reasons`, `provenance`, `decided_by`, `decided_on`, `reviews` (agree, dissent, abstain and open concerns, the dissents with neither `addressed_by` nor `withdrawn_on`), `supersededBy`, `supersedes`, and `constrains`, the entries that cover the region with their granularity |
 | `artifact` | `artifact:<path>` | `path`, `anchor`, `pinnedSha256`, `currentSha256` and `pinState`: the state of a current decision's pin, or `unpinned` when only superseded decisions pin it |
 | `link` | `link:<n>` | `row`, the member link row |
 | `finding` | `finding:<code>:<n>` | `code`, `message`, and `concerns`, the ids of the nodes it is about |
