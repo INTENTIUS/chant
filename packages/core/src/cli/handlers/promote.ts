@@ -29,6 +29,7 @@ import { fanOutRegistry } from "../../components/fan-out-support";
 import { renderDriverHuman } from "../../components/driver-output";
 import { ndjsonProgressSink } from "../../components/run-progress";
 import {
+  parseDigestPins,
   planPromotion,
   planRollback,
   withoutBuildSteps,
@@ -49,7 +50,7 @@ import { GATED_EXIT_CODE } from "./run";
 import type { CommandContext } from "../registry";
 
 const PROMOTE_USAGE =
-  "chant components promote --from <env> --to <env> [--component <name> [--digest <sha256:...>]] [--dry-run] [--json]";
+  "chant components promote --from <env> --to <env> [--component <name> [--digest <sha256:...>] | --digest <component>=<sha256:...> ...] [--dry-run] [--json]";
 const ROLLBACK_USAGE =
   "chant components rollback <env> --component <name> [--digest <sha256:...>] [--dry-run] [--json]";
 
@@ -280,6 +281,23 @@ export async function runComponentsPromote(ctx: CommandContext): Promise<number>
   const project = await loadProject(ctx, args.component ?? "all");
   if (typeof project === "number") return project;
 
+  // Without --component, each --digest is <component>=<digest> (#2602): a
+  // generated promote job pins every component to the release its own
+  // pipeline run recorded, rather than whatever is latest in --from.
+  const digests = args.digests ?? (args.digest ? [args.digest] : []);
+  let pins: Record<string, string> | undefined;
+  if (!args.component && digests.length > 0) {
+    const parsed = parseDigestPins(digests);
+    if ("error" in parsed) {
+      console.error(formatError({ message: parsed.error, hint: PROMOTE_USAGE }));
+      return 1;
+    }
+    pins = parsed.pins;
+  } else if (args.component && digests.length > 1) {
+    console.error(formatError({ message: "--component takes one --digest", hint: PROMOTE_USAGE }));
+    return 1;
+  }
+
   await fetchLifecycle().catch(() => false);
   const plan = planPromotion({
     from,
@@ -287,7 +305,8 @@ export async function runComponentsPromote(ctx: CommandContext): Promise<number>
     sourceRecords: await readLedger(from),
     declared: project.targets.map((c) => c.name),
     ...(args.component ? { component: args.component } : {}),
-    ...(args.digest ? { digest: args.digest } : {}),
+    ...(args.component && args.digest ? { digest: args.digest } : {}),
+    ...(pins ? { pins } : {}),
   });
   if ("error" in plan) {
     console.error(formatError({ message: plan.error, hint: PROMOTE_USAGE }));

@@ -197,6 +197,37 @@ describe("chant components promote", () => {
     expect(appendReleaseRecordMock.mock.calls[0][0]).toMatchObject({ component: "api", env: "prod" });
   });
 
+  test("--digest <component>=<digest> promotes the pinned release, not the latest one (#2602)", async () => {
+    const web: DriverComponent = { ...api, name: "web" };
+    resolveTargetsMock.mockResolvedValue({ success: true, targets: [api, web] });
+    // Another pipeline recorded sha256:newer after this one recorded sha256:api.
+    readReleaseLedgerMock.mockResolvedValue({
+      records: [staging, { ...staging, digest: "sha256:newer", timestamp: "2026-01-03T00:00:00.000Z", runId: "run-8" }, { ...staging, component: "web" }],
+      malformed: 0,
+    });
+    expect(await runComponentsPromote(ctx({ digests: ["api=sha256:api"] }))).toBe(0);
+    expect(appendReleaseRecordMock).toHaveBeenCalledTimes(1);
+    expect(appendReleaseRecordMock.mock.calls[0][0]).toMatchObject({
+      component: "api",
+      env: "prod",
+      digest: "sha256:api",
+      promotedFrom: { env: "staging", runId: "run-7" },
+    });
+  });
+
+  test("an empty pinned digest fails and deploys nothing (#2602)", async () => {
+    expect(await runComponentsPromote(ctx({ digests: ["api="] }))).toBe(1);
+    expect(errors.join("\n")).toMatch(/--digest api= names no digest/);
+    expect(ran).toEqual([]);
+    expect(appendReleaseRecordMock).not.toHaveBeenCalled();
+  });
+
+  test("a bare --digest without --component is refused", async () => {
+    expect(await runComponentsPromote(ctx({ digest: "sha256:api", digests: ["sha256:api"] }))).toBe(1);
+    expect(errors.join("\n")).toMatch(/needs --component/);
+    expect(ran).toEqual([]);
+  });
+
   test("a component with no publish step is refused before anything runs", async () => {
     resolveTargetsMock.mockResolvedValue({
       success: true,

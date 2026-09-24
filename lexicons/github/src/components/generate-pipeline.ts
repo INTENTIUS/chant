@@ -39,6 +39,11 @@
  *    job and runs `chant components promote`. A promote publishes from the
  *    build archive on disk, so each component job uploads the files its
  *    build steps wrote and the promote job downloads them to the same paths.
+ *    Each component job with a publish step also writes the digest its run
+ *    recorded (`--digest-file`) to a job output, and the promote job passes
+ *    it back as `--digest <component>=<digest>` (#2602), so it promotes the
+ *    release this run built rather than whatever is latest in the source
+ *    environment.
  *
  * Cross-cutting changes (e.g. "sign every image before deploy") are made by
  * editing `GenerateGithubOptions.extraScript`/`beforeScript` (or the
@@ -50,7 +55,7 @@
 
 import { emitYAML } from "@intentius/chant/yaml";
 import { resolveComponentGraph, type DriverComponent } from "@intentius/chant/components/driver";
-import { promoteArchivePaths } from "@intentius/chant/components/promote";
+import { hasPublishStep, promoteArchivePaths } from "@intentius/chant/components/promote";
 import type {
   ComponentPipelineJob as GeneratedJob,
   ComponentPipelineOptions as GenerateGithubOptions,
@@ -109,6 +114,11 @@ function outputsFile(name: string): string {
 /** The workflow artifact name a producer's dumped outputs are uploaded under. */
 function artifactName(name: string): string {
   return `${name}-outputs`;
+}
+
+/** The file a component job writes the digest its run recorded to, for the promote job (#2602). */
+function digestFile(name: string): string {
+  return `${name}.digest`;
 }
 
 /** The workflow artifact name a component's build archive is uploaded under, for the promote job (#2575). */
@@ -172,10 +182,17 @@ export function buildGithubPipelineDoc(
   // build steps wrote and the promote job downloads them.
   const promoteTo = options.promoteTo;
   const archives = new Map<string, string[]>();
+  // The components the promote job pins to this run's digest (#2602): those
+  // with a publish step, the only ones whose deploy records a release.
+  const pinned = new Set<string>();
   if (promoteTo !== undefined) {
     for (const c of components) {
       const paths = promoteArchivePaths(c);
       if (paths.length > 0) archives.set(c.name, paths);
+      if (hasPublishStep(c)) pinned.add(c.name);
+    }
+    if (pinned.size === 0) {
+      throw new Error("no component has a publish step, so no deploy records a release for the promote job to promote");
     }
   }
 
@@ -203,6 +220,7 @@ export function buildGithubPipelineDoc(
       const runParts = runCommand.map((part) => part.replace("{name}", name));
       for (const dep of component.dependsOn ?? []) runParts.push("--seed-outputs", outputsFile(dep));
       if (dependedUpon.has(name)) runParts.push("--dump-outputs", outputsFile(name));
+      if (pinned.has(name)) runParts.push("--digest-file", digestFile(name));
 
       // One step per script line — mirrors gitlab's `script:` array of
       // discrete shell lines, rather than a single multi-line `run:` block, so
@@ -220,6 +238,15 @@ export function buildGithubPipelineDoc(
       for (const line of beforeScript) steps.push({ run: line });
       steps.push({ run: runParts.join(" ") });
       for (const line of extraScript) steps.push({ run: line });
+
+      // The file holds `<component>=<digest>`; the job output holds the digest.
+      if (pinned.has(name)) {
+        steps.push({
+          name: `Record ${name} digest`,
+          id: "digest",
+          run: `echo "digest=$(cut -d= -f2- ${digestFile(name)})" >> "$GITHUB_OUTPUT"`,
+        });
+      }
 
       if (dependedUpon.has(name)) {
         steps.push({
@@ -247,6 +274,7 @@ export function buildGithubPipelineDoc(
         "runs-on": "ubuntu-latest",
         ...(needs.length > 0 ? { needs } : {}),
         container: image,
+        ...(pinned.has(name) ? { outputs: { digest: "${{ steps.digest.outputs.digest }}" } } : {}),
         steps,
       };
       jobsDoc[jobName] = jobProps;
@@ -258,7 +286,10 @@ export function buildGithubPipelineDoc(
     if (promoteJob in jobsDoc) {
       throw new Error(`the promote job "${promoteJob}" has the same name as a component job; rename the component`);
     }
-    const command = options.promoteCommand ?? ["chant", "components", "promote", "--from", env, "--to", promoteTo];
+    const command = [...(options.promoteCommand ?? ["chant", "components", "promote", "--from", env, "--to", promoteTo])];
+    for (const name of [...pinned].sort()) {
+      command.push("--digest", `"${name}=\${{ needs.${jobNameByComponent.get(name)!}.outputs.digest }}"`);
+    }
     const steps: Array<Record<string, unknown>> = [{ uses: "actions/checkout@v4" }];
     for (const [name, paths] of archives) {
       steps.push({

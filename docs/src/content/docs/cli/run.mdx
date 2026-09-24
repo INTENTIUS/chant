@@ -161,6 +161,15 @@ chant run --components shared-alb --env staging --dump-outputs out/shared-alb.js
 chant run --components search-service --env staging --seed-outputs out/shared-alb.json
 ```
 
+#### The recorded digest: `--digest-file`
+
+`--digest-file <file>` writes one `<component>=<digest>` line for each release the run recorded (see [Auto-recorded releases](#auto-recorded-releases)), after a successful run. The file is empty when the run recorded nothing, for example under `--no-release-record` or for a component with no publish step. The line is the form [`chant components promote --digest`](/chant/cli/components/#components-promote) takes, so a later job can promote the exact release this job built rather than whatever is latest in the environment. A pipeline from [`chant build --components --generate <lexicon> --promote-to <env>`](/chant/cli/build/#promote-job) uses it that way.
+
+```bash
+chant run --components search-service --env staging --digest-file search-service.digest
+chant components promote --from staging --to prod --digest "$(cat search-service.digest)"
+```
+
 #### Streaming progress: `--progress-json`
 
 `--progress-json` streams one NDJSON record per line to stdout while the run executes, so a consumer can render live progress instead of tailing logs. On the component path each line is a `RunProgressEvent` (wave, component, phase, step). On `chant run <name>` each line is a `StepRecord` for a settled step, fed by whatever runtime is hosting the run. Run semantics, ordering and exit code are unchanged.
@@ -233,6 +242,7 @@ The `--no-release-record` flag always wins over config for that one invocation. 
 | `--progress-json` | Stream one NDJSON progress record per line to stdout while the run executes |
 | `--dump-outputs <file>` | After the run, write the accumulated cross-component outputs as JSON to `file` (`run --components`) |
 | `--seed-outputs <file>` | Before the run, load outputs written by `--dump-outputs`; repeatable (`run --components`) |
+| `--digest-file <file>` | After a successful run, write one `<component>=<digest>` line per release the run recorded (`run --components`) |
 | `--param <name=value>` | Bind a declared build-time parameter for the component build; repeatable (`run --components`) |
 | `--params-file <path>` | JSON file of build-time parameter values (`run --components`) |
 | `--sandbox` | Execute project source in one isolated child process. Refuses an Op with a `policyGate` step |

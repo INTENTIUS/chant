@@ -18,6 +18,8 @@ import {
   promotionRecord,
   gateApprover,
   promoteArchivePaths,
+  hasPublishStep,
+  parseDigestPins,
   type PromotionPlan,
 } from "./promote";
 
@@ -99,6 +101,72 @@ describe("planning", () => {
   test("an empty source ledger is an error, not a no-op", () => {
     const plan = planPromotion({ from: "staging", to: "prod", sourceRecords: [], declared: ["api"] });
     expect("error" in plan && plan.error).toMatch(/nothing to promote/);
+  });
+});
+
+describe("pinning each component to a digest (#2602)", () => {
+  // api's pinned release is older than its latest one: another pipeline
+  // recorded sha256:newer while this one ran.
+  const records = [
+    rec("api", "staging", "sha256:built", "2026-01-02T00:00:00Z"),
+    rec("api", "staging", "sha256:newer", "2026-01-03T00:00:00Z"),
+    rec("web", "staging", "sha256:web", "2026-01-02T00:00:00Z"),
+    rec("infra", "staging", "sha256:infra", "2026-01-02T00:00:00Z"),
+  ];
+  const declared = ["api", "web", "infra"];
+
+  test("promotes exactly the pinned components at the pinned digests, not the latest", () => {
+    const plan = planPromotion({
+      from: "staging", to: "prod", sourceRecords: records, declared,
+      pins: { web: "sha256:web", api: "sha256:built" },
+    });
+    expect("items" in plan).toBe(true);
+    const { items, notPromoted } = plan as PromotionPlan;
+    expect(items.map((i) => [i.component, i.digest, i.source.timestamp])).toEqual([
+      ["api", "sha256:built", "2026-01-02T00:00:00Z"],
+      ["web", "sha256:web", "2026-01-02T00:00:00Z"],
+    ]);
+    expect(notPromoted).toEqual([]);
+  });
+
+  test("a pinned digest the source never recorded fails", () => {
+    const plan = planPromotion({ from: "staging", to: "prod", sourceRecords: records, declared, pins: { api: "sha256:nope" } });
+    expect("error" in plan && plan.error).toMatch(/sha256:nope is not recorded for "api" in "staging"/);
+  });
+
+  test("a pinned component this checkout does not declare fails", () => {
+    const plan = planPromotion({ from: "staging", to: "prod", sourceRecords: records, declared, pins: { gone: "sha256:x" } });
+    expect("error" in plan && plan.error).toMatch(/"gone" is not declared/);
+  });
+
+  test("pins and --component do not mix", () => {
+    const plan = planPromotion({ from: "staging", to: "prod", sourceRecords: records, declared, component: "api", pins: { api: "sha256:built" } });
+    expect("error" in plan && plan.error).toMatch(/does not take --component/);
+  });
+
+  test("parseDigestPins reads <component>=<digest> values", () => {
+    expect(parseDigestPins(["api=sha256:a", "web=sha256:w"])).toEqual({ pins: { api: "sha256:a", web: "sha256:w" } });
+    expect(parseDigestPins(["api=sha256:a", "api=sha256:a"])).toEqual({ pins: { api: "sha256:a" } });
+  });
+
+  test("parseDigestPins refuses an empty digest, a bare digest, and two digests for one component", () => {
+    const err = (values: string[]) => {
+      const parsed = parseDigestPins(values);
+      return "error" in parsed ? parsed.error : undefined;
+    };
+    expect(err(["api="])).toMatch(/names no digest; the run that deployed "api" recorded no release/);
+    expect(err(["sha256:a"])).toMatch(/needs --component/);
+    expect(err(["=sha256:a"])).toMatch(/names no component/);
+    expect(err(["api=sha256:a", "api=sha256:b"])).toMatch(/pins "api" twice/);
+  });
+
+  test("hasPublishStep finds a publish step, nested phases included", () => {
+    expect(hasPublishStep(service("api"))).toBe(true);
+    expect(hasPublishStep({ name: "infra", deploy: [{ phase: "Apply", steps: [{ kind: "apply" }] }] })).toBe(false);
+    expect(hasPublishStep({
+      name: "nested",
+      deploy: [{ phase: "Outer", steps: [{ phase: "Inner", steps: [{ kind: "publish-artifact" }] }] }],
+    })).toBe(true);
   });
 });
 

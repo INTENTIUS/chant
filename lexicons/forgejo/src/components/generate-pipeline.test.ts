@@ -27,6 +27,7 @@ function pilotComponents(): DriverComponent[] {
 
 interface ParsedStep {
   name?: string;
+  id?: string;
   uses?: string;
   run?: string;
   with?: Record<string, unknown>;
@@ -35,6 +36,7 @@ interface ParsedJob {
   "runs-on"?: string;
   container?: string;
   needs?: string[];
+  outputs?: Record<string, string>;
   steps: ParsedStep[];
 }
 function parsedJobs(yaml: string): Record<string, ParsedJob> {
@@ -128,6 +130,23 @@ describe("generateForgejoPipeline: a promote job (#2575)", () => {
     const promote = jobs["promote-prod"];
     expect(promote.needs).toEqual(["api"]);
     expect(promote.steps.find((s) => s.name === "Download api build archive")?.with).toEqual({ name: "api-archive", path: "dist" });
-    expect(promote.steps.some((s) => s.run === "chant components promote --from staging --to prod")).toBe(true);
+    expect(promote.steps.some((s) => s.run === 'chant components promote --from staging --to prod --digest "api=${{ needs.api.outputs.digest }}"')).toBe(true);
+  });
+
+  test("the digest the api job recorded reaches the promote command through a job output (#2602)", () => {
+    const components: DriverComponent[] = [
+      {
+        name: "api",
+        deploy: [
+          { phase: "Build", steps: [{ kind: "docker-build", context: ".", into: "dist/api.tar" }] },
+          { phase: "Publish", steps: [{ kind: "publish-image", from: "archive:dist/api.tar" }] },
+        ],
+      },
+    ];
+    const jobs = parsedJobs(generateForgejoPipeline(components, { env: "staging", promoteTo: "prod" }).yaml);
+    expect(jobs["api"].outputs).toEqual({ digest: "${{ steps.digest.outputs.digest }}" });
+    expect(jobs["api"].steps.some((s) => s.run?.includes("--digest-file api.digest"))).toBe(true);
+    expect(jobs["api"].steps.find((s) => s.id === "digest")?.run).toBe('echo "digest=$(cut -d= -f2- api.digest)" >> "$GITHUB_OUTPUT"');
+    expect(jobs["promote-prod"].steps.some((s) => s.run?.includes('--digest "api=${{ needs.api.outputs.digest }}"'))).toBe(true);
   });
 });

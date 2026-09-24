@@ -327,6 +327,8 @@ export interface ParsedArgs {
   component?: string;
   /** `chant components release record --digest <sha256:...>` (#568) — artifact digest to record, joining this release to the build archive/ledger. Also `chant components export --digest <manifestDigest>` (#929) — a build archive manifest digest to export directly, bypassing env/component resolution. */
   digest?: string;
+  /** Every `--digest` value, in order (#2602). `chant components promote --digest <component>=<sha256:...>` is repeatable, one per component; the other commands read the single {@link digest}. */
+  digests?: string[];
   /** `chant components release record --git-sha <sha>` (#568) — git commit the deploy was built from. */
   gitSha?: string;
   /** `chant components release record --run-id <id>` (#568) — orchestrator/CI run identifier. */
@@ -343,6 +345,8 @@ export interface ParsedArgs {
   noReleaseRecord?: boolean;
   /** `chant run --components <name> --dump-outputs <file>` — after the run, write the accumulated cross-component/cross-stack outputs (JSON, keyed by component name) to `<file>`, for a downstream job to `--seed-outputs`. */
   dumpOutputs?: string;
+  /** `chant run --components <name> --digest-file <file>` (#2602) — after a successful run, write one `<component>=<digest>` line per release the run recorded to `<file>`, the form `chant components promote --digest` takes, so a generated promote job promotes exactly the release its pipeline run built. Written empty when nothing was recorded. */
+  digestFile?: string;
   /** `chant run --components <name> --seed-outputs <file>` (repeatable) — before the run, load each JSON outputs file (as written by `--dump-outputs`) and seed cross-component/cross-stack resolution with it, so a `stackOutput()`/`@<dep>.publish.*` reference to a component that ran in an earlier job resolves. */
   seedOutputs?: string[];
   /** `chant build --fold` (#1022/#1023, epic #1019) — opt-in: fold source modules statically instead of importing/running them; folds resource constructors and composite factory calls, falling back to run per-file for anything the folder can't represent (a cross-file-only reference, a re-export, `export default`, …). Also settable project-wide via `chant.config.ts`'s `build.fold: true`; the flag always wins when set. Default (flag omitted): the existing run path, unchanged. */

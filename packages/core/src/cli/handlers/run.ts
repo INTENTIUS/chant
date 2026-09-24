@@ -21,6 +21,7 @@ import { ndjsonProgressSink } from "../../components/run-progress";
 import { maybeRecordAutoRelease } from "../../components/auto-release";
 import { maybePersistBuildManifest } from "../../components/manifest-persistence";
 import type { DriverComponentResult } from "../../components/driver";
+import type { ReleaseRecord } from "../../lifecycle/release-ledger";
 import { runOpGenerate } from "./run-generate";
 
 /**
@@ -588,13 +589,16 @@ export async function runOp(ctx: CommandContext): Promise<number> {
  * ledger for work `chant run --components` records. Each result is filtered on
  * its own `ok`, so a fan-out that partly succeeded records exactly the
  * components that did.
+ *
+ * Returns the records it wrote, for `--digest-file` (#2602).
  */
 export async function recordAutoReleasesForRun(
   results: DriverComponentResult[],
   env: string,
   runId: string,
   disabled: boolean,
-): Promise<void> {
+): Promise<ReleaseRecord[]> {
+  const recorded: ReleaseRecord[] = [];
   for (const componentResult of results) {
     if (!componentResult.ok) continue;
     const outcome = await maybeRecordAutoRelease(
@@ -614,6 +618,7 @@ export async function recordAutoReleasesForRun(
         message: `release record for "${componentResult.component}"@${env} was not recorded: ${outcome.error}`,
       }));
     } else if (outcome.recorded) {
+      recorded.push(outcome.record);
       console.error(formatInfo(
         `Recorded release: ${formatBold(componentResult.component)}@${env} -> ${outcome.record.digest} (commit ${outcome.commit.slice(0, 7)})`,
       ));
@@ -633,6 +638,7 @@ export async function recordAutoReleasesForRun(
       ));
     }
   }
+  return recorded;
 }
 
 // ── chant run --components <name|all> ────────────────────────────────────────
@@ -790,7 +796,16 @@ export async function runOpComponents(ctx: CommandContext): Promise<number> {
 
   if (result.success && result.run) {
     const disabled = resolveAutoReleaseDisabled(config, ctx.args.noReleaseRecord);
-    await recordAutoReleasesForRun(result.run.results, env, `local-${Date.now()}`, disabled);
+    const recorded = await recordAutoReleasesForRun(result.run.results, env, `local-${Date.now()}`, disabled);
+    // `--digest-file` (#2602): the releases this run recorded, one
+    // `<component>=<digest>` line each, the form `chant components promote
+    // --digest` takes. A generated promote job reads it to promote exactly
+    // what this job built, not whatever is latest in the environment.
+    if (ctx.args.digestFile) {
+      const digestPath = resolve(ctx.args.digestFile);
+      mkdirSync(dirname(digestPath), { recursive: true });
+      writeFileSync(digestPath, recorded.map((r) => `${r.component}=${r.digest}\n`).join(""));
+    }
   }
 
   return result.success ? 0 : 1;

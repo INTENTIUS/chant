@@ -281,7 +281,7 @@ describe("generateGitlabPipeline: a promote job (#2575)", () => {
     const result = generateGitlabPipeline(components(), { env: "staging", promoteTo: "prod" });
     const parsed = parseYAML(result.yaml);
 
-    expect((parsed["api"] as Record<string, unknown>).artifacts).toEqual({ paths: ["dist/api.tar"] });
+    expect((parsed["api"] as Record<string, unknown>).artifacts).toEqual({ paths: ["dist/api.tar", "api.digest"] });
     expect((parsed["shared-alb"] as Record<string, unknown>).artifacts).toEqual({ paths: ["shared-alb.outputs.json"] });
 
     expect(parsed.stages).toEqual(["wave-1", "wave-2", "promote"]);
@@ -289,8 +289,41 @@ describe("generateGitlabPipeline: a promote job (#2575)", () => {
     expect(parsed["promote-prod"]).toEqual({
       stage: "promote",
       image: "node:22-slim",
-      script: ["chant components promote --from staging --to prod"],
+      script: ['chant components promote --from staging --to prod --digest "api=$(cut -d= -f2- api.digest)"'],
       needs: ["api", "shared-alb"],
     });
+  });
+
+  test("the promote job promotes the digest this pipeline's component job recorded (#2602)", () => {
+    const parsed = parseYAML(generateGitlabPipeline(components(), { env: "staging", promoteTo: "prod" }).yaml);
+    const job = (name: string) => parsed[name] as { script: string[]; artifacts?: { paths: string[] } };
+
+    // The component job writes the digest its run recorded, and keeps the file
+    // as an artifact, which GitLab hands to the promote job across `needs:`.
+    expect(job("api").script).toEqual(["chant run --components api --env staging --seed-outputs shared-alb.outputs.json --digest-file api.digest"]);
+    expect(job("api").artifacts?.paths).toContain("api.digest");
+    // shared-alb publishes nothing, so it records no release and is not pinned.
+    expect(job("shared-alb").script[0]).not.toContain("--digest-file");
+
+    const promote = job("promote-prod").script[0];
+    expect(promote).toContain('--digest "api=$(cut -d= -f2- api.digest)"');
+    expect(promote).not.toContain("shared-alb=");
+  });
+
+  test("promoteCommand still gets the pinned digests", () => {
+    const parsed = parseYAML(generateGitlabPipeline(components(), {
+      env: "staging",
+      promoteTo: "prod",
+      promoteCommand: ["npx", "chant", "components", "promote", "--from", "staging", "--to", "prod"],
+    }).yaml);
+    expect((parsed["promote-prod"] as { script: string[] }).script).toEqual([
+      'npx chant components promote --from staging --to prod --digest "api=$(cut -d= -f2- api.digest)"',
+    ]);
+  });
+
+  test("with no component that publishes, there is no release to pin, and generation fails", () => {
+    const infraOnly: DriverComponent[] = [{ name: "shared-alb", dependsOn: [], deploy: [] }];
+    expect(() => generateGitlabPipeline(infraOnly, { promoteTo: "prod" })).toThrow(/no component has a publish step/);
+    expect(() => generateGitlabPipeline(infraOnly)).not.toThrow();
   });
 });
