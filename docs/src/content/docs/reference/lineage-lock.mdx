@@ -108,6 +108,7 @@ chant writes the file with sorted keys and two-space indentation, so it diffs cl
 | `parameters` | The value of every parameter the template's [`chant.template.json`](/chant/cli/init/#template-manifest) declares, from `--param` or the default, keyed by name. Empty for vendor scopes, which take no parameters, for `chant init --template` scopes, and for templates that declare none. `chant workspace upgrade` substitutes these values into both versions it compares, keeps them, and adds the default of any parameter the new version declares. |
 | `migrations` | The ids of the [template migrations](/chant/reference/template-migrations/) `chant workspace upgrade` has applied since the scope was instantiated, in the order they ran. An id listed here never runs again. |
 | `files` | Every file chant wrote into the scope, keyed by its path relative to the scope directory. |
+| `repinned` | Optional. The decision records init re-pinned after substituting parameters ([#2549](https://github.com/INTENTIUS/chant/issues/2549)), each as `{record, paths}`: the record's path in the scope and the pinned paths it rewrote. A record's `evidence` pin on a file the manifest substitutes gets the hash of the substituted file, but only when the pin held in the template. `chant workspace upgrade` re-pins the merge base and the new version the same way and rewrites this list. |
 | `manualSteps` | Paths an update left alone because the project had its own version (see [Manual steps](#manual-steps)). |
 
 ### Sources
@@ -191,7 +192,7 @@ Files in a scope directory that the lineage does not list are never touched.
 
 | Command | Effect on the lock |
 |---|---|
-| [`chant init --from <repo>@<ref>[#<member>]`](/chant/cli/init/#from-a-template-repository) | Writes a new lock with scope `"."`, and its `parameters` from `--param` and the template's defaults |
+| [`chant init --from <repo>@<ref>[#<member>]`](/chant/cli/init/#from-a-template-repository) | Writes a new lock with scope `"."`, its `parameters` from `--param` and the template's defaults, and `repinned` when it re-pinned a record |
 | [`chant init --from <dir>[#<member>]`](/chant/cli/init/#from-a-directory) | The same, with a `dir` source and no `ref` |
 | [`chant init --template <name>`](/chant/cli/init/#lineage) | Writes a new lock with scope `"."` |
 | [`chant vendor migrate`](/chant/cli/vendor/#chant-vendor-migrate) | Adds a vendor scope per `vendor.json` entry, creating the lock if needed |

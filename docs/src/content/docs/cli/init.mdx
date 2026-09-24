@@ -105,6 +105,8 @@ In each listed file, `{{chant:name}}` becomes `Untitled app`. Parameters that `-
 
 The values used, defaults included, are recorded under `parameters` in `.chant/workspace.lock.json`. [`chant workspace upgrade`](/chant/cli/workspace-upgrade/) substitutes the same values into the template's newer version and into the merge base, so a file that carries a value upgrades like any other. A template without a manifest takes no `--param`.
 
+A decision record in the template may pin one of the substituted files by hash (see [asset pins](/chant/cli/workspace-records/#asset-pins)). Init re-pins it to the file as the copy has it, so the pin holds in the copy, and lists the record under `repinned` in the lock. A pin that did not hold in the template is left as it was.
+
 ### Template manifest
 
 The manifest sits at the root of the directory a project is made from, which is the repository root or the `#<member>` directory. chant reads it as JSON and runs no template code to find it. Like `.chant/migrations/`, the manifest is template metadata. It is not copied into the project, and the lock does not list it. The reference workspace declares one parameter in `reference-workspace/chant.template.json`.

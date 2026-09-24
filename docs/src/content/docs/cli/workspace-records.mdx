@@ -100,7 +100,7 @@ Every read checks each pin against the tree it reads: the working tree, or the c
 
 `stale` means the decision changed and the artifact did not follow. It looks at git history: the file's last commit in the revision read has to be older than the commit that added this record, and a record not committed yet counts as recorded now. Outside a git repository only the hashes are compared.
 
-A warning is listed in the record's `warnings`, not in `reasons`. The record stays valid and `--current` still lists it, since the decision stands until someone revisits it. To accept the new file, update the pin's `sha256` in a pull request, which is itself a reviewable change to the decision. [`chant workspace check --kind`](/chant/cli/workspace-check/#record-checks) reports the same states as `WSP111`, `WSP112` and `WSP113`.
+A warning is listed in the record's `warnings`, not in `reasons`. The record stays valid and `--current` still lists it, since the decision stands until someone revisits it. To accept the new file, update the pin's `sha256` in a pull request, which is itself a reviewable change to the decision. A copy made from a template with `chant init --from` has its pins on substituted files re-pinned to the copy's content, so they hold from the start. [`chant workspace check --kind`](/chant/cli/workspace-check/#record-checks) reports the same states as `WSP111`, `WSP112` and `WSP113`.
 
 ## Provenance
 

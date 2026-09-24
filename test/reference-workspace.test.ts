@@ -452,6 +452,16 @@ describe("chant init --from on the fixture", () => {
       expect(screen.title).toBe("Untitled app");
       expect(readFileSync(join(target, "design", "screens", "home.svg"), "utf-8")).toContain(">Untitled app</text>");
 
+      // ref-002 pinned the template's home.json; init re-pins it to the copy's bytes, so the pin holds (#2549).
+      const records = await queryRecords({ kind: "decisions/decision.kind.mjs", current: true, cwd: target });
+      if ("error" in records) throw new Error(`${records.error.code}: ${records.error.message}`);
+      const ref002 = records.records.find((r) => r.id === "ref-002")!;
+      expect(ref002.assets.map((a) => [a.path, a.state])).toEqual([["design/screens/home.json", "pinned"]]);
+      expect(ref002.assets[0].sha256).toBe(createHash("sha256").update(readFileSync(join(target, "design", "screens", "home.json"))).digest("hex"));
+      expect((lock.scopes["."] as { repinned?: unknown }).repinned).toEqual([
+        { record: "decisions/ref-002-where-the-screen-design-lives.md", paths: ["design/screens/home.json"] },
+      ]);
+
       const app = join(target, "app");
       const out = execFileSync(process.execPath, ["--test", join("test", "server.test.mjs")], { cwd: app, stdio: "pipe", encoding: "utf-8" });
       // execFileSync throws when a test fails.

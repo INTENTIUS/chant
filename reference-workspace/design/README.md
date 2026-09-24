@@ -9,4 +9,4 @@ The `design` data member (#2524 D18). It holds the design artifacts this workspa
 
 The app in `../app` implements `screens/home.json`, and `ref-002` records why the spec lives here rather than in the app. That decision pins `screens/home.json` by the SHA-256 of its bytes in its `evidence` (#2549), so `chant workspace records` reports an edit to the file as `asset-drift` until the decision is revisited and the pin updated with `chant workspace records pin design/screens/home.json`.
 
-A copy made with `chant init --from` fills the `{{chant:name}}` placeholder in both files, so the copy's bytes differ from the ones pinned here and the pin reports drift until the copy re-pins it.
+A copy made with `chant init --from` fills the `{{chant:name}}` placeholder in both files. Init then re-pins `ref-002` to the copy's `home.json`, so the pin holds in the copy too, and `workspace upgrade` does the same on each version it merges.
