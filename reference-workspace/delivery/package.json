@@ -1,0 +1,18 @@
+{
+  "name": "reference-workspace-delivery",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "description": "Builds and runs the reference workspace's app with Docker Compose.",
+  "scripts": {
+    "build": "chant build src --lexicon docker -o dist/docker-compose.yml",
+    "lint": "chant lint src"
+  },
+  "dependencies": {
+    "@intentius/chant": "*",
+    "@intentius/chant-lexicon-docker": "*"
+  },
+  "devDependencies": {
+    "typescript": "*"
+  }
+}

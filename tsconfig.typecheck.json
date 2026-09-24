@@ -31,7 +31,8 @@
     "lexicons/**/*",
     "scripts/**/*",
     "examples/**/*",
-    "test/**/*"
+    "test/**/*",
+    "reference-workspace/**/*"
   ],
   "exclude": [
     "node_modules",
