@@ -20,6 +20,7 @@ import intentSchema from "./intent.schema.json";
 import { isPluginCode, isReasonCode, REASON_CODES, REASONS } from "./reason-codes";
 import { contract } from "./__fixtures__/contract-repo";
 import { READ_ERROR_CODES, RECORD_REASON_CODES, RECORD_WARNING_CODES, REVIEW_REASON_CODES } from "./records";
+import { AMEND_ERROR_CODES, NEW_ERROR_CODES, REVIEW_ERROR_CODES } from "./records-write";
 import { STATUS_ERROR_CODES, STATUS_GATE_REASON_CODES, STATUS_REASON_CODES } from "./status";
 
 const HERE = import.meta.dirname;
@@ -39,6 +40,9 @@ const PER_COMMAND: Record<string, readonly string[]> = {
   RECORD_WARNING_CODES,
   REVIEW_REASON_CODES,
   READ_ERROR_CODES,
+  NEW_ERROR_CODES,
+  AMEND_ERROR_CODES,
+  REVIEW_ERROR_CODES,
   INTENT_ERROR_CODES,
   INTENT_FINDING_CODES,
   INTENT_REASON_CODES,
@@ -106,7 +110,7 @@ describe("the closed list of reason codes", () => {
   });
 
   test("no source file emits a code outside the list", () => {
-    const emitted = /(?:\bcode:\s*|(?:WorkspaceReadError|RecordReadError|StatusError|IntentError)\(\s*)"([a-z0-9-]+)"/g;
+    const emitted = /(?:\bcode:\s*|(?:WorkspaceReadError|RecordReadError|RecordWriteError|StatusError|IntentError)\(\s*)"([a-z0-9-]+)"/g;
     let seen = 0;
     for (const file of sourceFiles(HERE)) {
       const text = readFileSync(file, "utf-8");

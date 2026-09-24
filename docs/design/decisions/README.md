@@ -50,6 +50,8 @@ constrains:
 # Seal scope
 ```
 
+A decision can also be written through chant: `chant workspace records new`, `amend` and `review` write a decision file after validating it, allocate the next id and bind each review to the digest of the text it judged ([#2670](https://github.com/INTENTIUS/chant/issues/2670), described in [chant workspace records](https://intentius.io/chant/cli/workspace-records/#writing-records)). A UI such as hud writes decisions only that way.
+
 ## Fields
 
 | Field | Holds |
@@ -144,7 +146,7 @@ A dissent needs a reason. Its `note` must be a non-empty string, while `agree` a
 
 Each dissent is a concern, and it stays open until it is addressed or withdrawn. `addressed_by` links the answer from the decider or the group: a decision id, an issue or pull request as `owner/repo#n`, or an `https://` link. Addressing a concern means answering it, which does not have to mean accommodating it (RFC 7282, section 3). `withdrawn_on` is the date the concern's author withdrew it, and only that author withdraws it. The schema cannot check who made a change, so review of the pull request enforces that. Only a dissent carries these two fields.
 
-A verdict names the record's `digest`, which `chant workspace records --json` prints for each record: the SHA-256 of the file without its `reviews` block. Any edit outside `reviews` changes the digest, so a verdict given before an amendment stops counting and the reviewer has to look again (#2672). A verdict with no digest still counts, and `records` warns `review-undigested`.
+A verdict names the record's `digest`, which `chant workspace records --json` prints for each record: the SHA-256 of the file without its `reviews` block. Any edit outside `reviews` changes the digest, so a verdict given before an amendment stops counting and the reviewer has to look again (#2672). A verdict with no digest still counts, and `records` warns `review-undigested`. `chant workspace records review` writes a verdict with the digest and changes only the `reviews` block, so it never moves the digest itself.
 
 `chant workspace records --json` computes each decision's quorum (#2671). It counts distinct reviewers, after trimming and lower-casing their names, so a reviewer listed twice counts once. It never counts the decider, an agent, a verdict on an older digest, or, once an attestation policy is active, a verdict without a seal. The quorum is met when the counted `agree` verdicts reach the workspace's `quorum`, two by default. A met quorum with an open dissent is met with objections, not consensus. The rules are on the [`records` page](../../src/content/docs/cli/workspace-records.mdx#reviews-and-quorum).
 

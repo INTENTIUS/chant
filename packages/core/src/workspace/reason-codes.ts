@@ -83,6 +83,18 @@ export const REASONS = {
   "schema-id-mismatch": "The schema's $id differs from the id the record kind names.",
   "schema-invalid": "The record schema itself does not compile.",
   "location-missing": "The records directory does not exist, in the tree or at the revision.",
+  // A records write that is refused (records new, amend and review, #2670). Nothing is written.
+  "write-usage-invalid": "The command line lacks a value the write needs, or gives one it does not take.",
+  "write-input-invalid": "The fields given with --from or --set can't be read, are not JSON, or are not a JSON object.",
+  "record-not-found": "No record of the kind has the id given.",
+  "record-id-taken": "The id given for a new record is already used, by a record or a file name.",
+  "record-id-unallocatable": "No id was given and none can be allocated: the records share no single prefix and --prefix names none.",
+  "record-path-unmatched": "The file name made from the record's id and title does not match the kind's location.",
+  "record-closed": "The record is in a closed state, so nothing in it changes; a new record supersedes it instead.",
+  "amend-id-immutable": "An amendment changes the record's id, and ids are never renumbered.",
+  "amend-supersede-instead": "The record is approved, and the amendment changes a field the approval rule does not let change in place; a new record supersedes it instead.",
+  "review-unsupported": "The kind's schema has no reviews field, so its records take no review.",
+  "review-note-required": "A dissent was given with no note: a dissent needs a reason.",
   // The intent graph (graph --intent, #2651): a read that fails.
   "intent-region-invalid": "The region's path, or its line range, does not exist in the tree read.",
   // The intent graph: part of the walk that can't be read. The document is still printed.

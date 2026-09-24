@@ -291,6 +291,16 @@ export interface ParsedArgs {
   intent?: string;
   /** `chant workspace records --current` (#2546): leave out records a closed record supersedes. */
   current?: boolean;
+  /** `chant workspace records amend <id> --set <file|->` (#2670): the JSON fields to set. */
+  set?: string;
+  /** `chant workspace records review <id> --verdict <v>` (#2670): agree, dissent or abstain. */
+  verdict?: string;
+  /** `chant workspace records review <id> --by <principal>` (#2670): the reviewer, as the caller names them. */
+  by?: string;
+  /** `chant workspace records review <id> --session <id>` (#2670): the review session the verdict was given in. */
+  session?: string;
+  /** `chant workspace records new <kind> --prefix <prefix>` (#2670): the id prefix to allocate under. */
+  prefix?: string;
   /** `chant workspace records|verify --require attested` (#2547): the provenance level a gate requires. */
   require?: string;
   /**

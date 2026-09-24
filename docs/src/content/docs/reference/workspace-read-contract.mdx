@@ -124,6 +124,17 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `schema-id-mismatch` | error, `records` | The schema's `$id` differs from the id the kind names. |
 | `schema-invalid` | error, `records` | The record schema doesn't compile. |
 | `location-missing` | error, `records` | The records directory does not exist, in the tree or at the revision. |
+| `write-usage-invalid` | error, `records new`, `amend` and `review` | The command line lacks a value the write needs, or gives one it does not take. |
+| `write-input-invalid` | error, `records new` and `amend` | The fields given with `--from` or `--set` can't be read, aren't JSON, or aren't a JSON object. |
+| `record-not-found` | error, `records amend` and `review` | No record of the kind has the id given. |
+| `record-id-taken` | error, `records new` | The id given for a new record is already used, by a record or a file name. |
+| `record-id-unallocatable` | error, `records new` | No id was given and none can be allocated: the records share no single prefix and `--prefix` names none. |
+| `record-path-unmatched` | error, `records new` | The file name made from the id and title doesn't match the kind's `location.match`. |
+| `record-closed` | error, `records amend` and `review` | The record is in a closed state, so nothing in it changes. A new record supersedes it instead. |
+| `amend-id-immutable` | error, `records amend` | The amendment changes the record's id, and ids are never renumbered. |
+| `amend-supersede-instead` | error, `records amend` | The record is approved, and the amendment changes a field the approval rule doesn't let change in place. A new record supersedes it instead. |
+| `review-unsupported` | error, `records review` | The kind's schema has no `reviews` field, so its records take no review. |
+| `review-note-required` | error, `records review` | A dissent was given with no note. |
 | `intent-region-invalid` | error, `graph --intent` | The region's path, or its line range, does not exist in the tree read. |
 | `intent-history-shallow` | reason, `graph --intent` | The repository is a shallow clone, so the region's history stops at the clone's boundary. |
 | `intent-plugin-failed` | reason, `graph --intent` | A kind file's `commitJoins` failed for a commit. |
@@ -272,6 +283,20 @@ A reader starts with `ls`, which lists every member whether it can be read or no
 Documents read at the same `at` belong together. Mixing a working-tree `ls` with a `graph --at` of an older commit can list members the graph doesn't have, and each document names its own `at` so a reader can tell.
 
 hud reads exactly as behold does, and caches per member. At a commit, a member's entry and nodes don't change once read. A cache keyed on the workspace name, `at` and the member name stays valid while the member's toolchain (`chant` on its `graph` entry) stays the same. A working-tree read has `at: null` and is read again.
+
+## Writing records
+
+A reader writes only through chant commands ([ws-052](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-052-chant-hud-boundary.md)). For records those are [`records new`, `amend` and `review`](/chant/cli/workspace-records/#writing-records) ([#2670](https://github.com/INTENTIUS/chant/issues/2670)). Each validates the record it would write the way `records` reads it and then writes one file or none, leaving the commit to the caller. The document each prints follows its own schema:
+
+| Command | Schema `$id` | Result |
+|---|---|---|
+| `chant workspace records new` | `https://intentius.io/chant/schemas/workspace/records-new/v1/records-new.schema.json` | `path`, `id` |
+| `chant workspace records amend` | `https://intentius.io/chant/schemas/workspace/records-amend/v1/records-amend.schema.json` | `path`, `id`, `changed` |
+| `chant workspace records review` | `https://intentius.io/chant/schemas/workspace/records-review/v1/records-review.schema.json` | `path`, `id`, `review` |
+
+The schemas ship beside the read schemas and follow their shape: a `oneOf` of a result and a failure, `contract: 1`, and a closed list of error codes from the same list as every read. A result also carries `kind`, `dryRun`, the written record's `warnings`, and `text` under `--dry-run`. A failure exits 1 and writes nothing. chant 0.86.0 is the first release to print these documents.
+
+A write never makes the caller compute anything about the record. `new` allocates the id, `amend` applies the approval rule, and `review` computes the digest the verdict is bound to. The principal a review names is recorded as the caller gives it. Whether that principal really wrote it is the provenance of the commit that carries the file, which `records` reports ([#2547](https://github.com/INTENTIUS/chant/issues/2547)).
 
 ## Testing a reader
 

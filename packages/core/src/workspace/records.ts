@@ -5,7 +5,8 @@
  * they follow and which of their states are closed. This module reads every
  * record a kind locates, parses its front matter as the JSON subset of YAML,
  * validates it against the kind's schema and derives supersession from the
- * records' own `supersedes` links. It never writes a record.
+ * records' own `supersedes` links. It never writes a record; `records-write.ts`
+ * does, through the rules here (#2670).
  *
  * A record that fails any of that is still returned, with reason codes, and the
  * read succeeds. Only a failure to read the kind, its schema or the revision is
