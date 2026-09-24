@@ -33,6 +33,9 @@ export async function runDevOnboard(ctx: CommandContext): Promise<number> {
   }
 
   const { onboardCommand, printOnboardResult } = await import("../commands/onboard");
+  // chant#2578 — so a lexicon the project declares by path is recognised.
+  const { recordProjectLexicons } = await import("../plugins");
+  await recordProjectLexicons(process.cwd());
   const result = onboardCommand({ name, verbose: ctx.args.verbose });
   await printOnboardResult(result, name);
   return result.success ? 0 : 1;

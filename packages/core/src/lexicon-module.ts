@@ -24,7 +24,7 @@
  * a project that names lexicons by package takes exactly the path it always did.
  */
 
-import { isAbsolute, resolve } from "node:path";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 
 /** One `lexicons` entry: a package-backed name, or a name plus the module that implements it. */
 export type LexiconDeclaration = string | { name: string; module: string };
@@ -97,4 +97,21 @@ export async function importLexiconModule(name: string): Promise<Record<string, 
         (err instanceof Error ? err.message : String(err)),
     );
   }
+}
+
+/**
+ * chant#2578 — how a message should name a lexicon. A package-backed name is
+ * its npm package; a lexicon declared by path is that path, relative to
+ * `fromDir` when it sits under it.
+ */
+export function lexiconSourceLabel(name: string, fromDir: string = process.cwd()): string {
+  const path = modulePaths.get(name);
+  if (path === undefined) return `@intentius/chant-lexicon-${name}`;
+  const rel = relative(fromDir, path);
+  return rel === "" || rel.startsWith("..") || isAbsolute(rel) ? path : `./${rel.split(sep).join("/")}`;
+}
+
+/** The npm packages that provide `names`, leaving out every lexicon declared by path: those have nothing to install. */
+export function lexiconPackagesToInstall(names: readonly string[]): string[] {
+  return names.filter((name) => !modulePaths.has(name)).map((name) => `@intentius/chant-lexicon-${name}`);
 }
