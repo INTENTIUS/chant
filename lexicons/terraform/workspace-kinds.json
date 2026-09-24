@@ -1,0 +1,12 @@
+{
+  "$comment": "Member kinds this lexicon supplies to a chant workspace (#2545). chant reads this file as data and never imports the lexicon. The probe is behold's terraform member probe, narrowed to the member's own directory.",
+  "schema": 1,
+  "kinds": [
+    {
+      "name": "terraform",
+      "description": "a Terraform root module, with a .tf file directly in its directory",
+      "precedence": 400,
+      "probe": { "anyFile": ["*.tf"] }
+    }
+  ]
+}

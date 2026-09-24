@@ -158,6 +158,32 @@ app-apply` executes Init, Plan and Apply straight through in your terminal. See
 [Ops](../ops/) for every `TerraformApplyOp` option, the four activities and
 builders underneath it, and the compensation rule for a failed apply.
 
+## A root as a workspace member
+
+A root can also be a member of a [chant workspace](/chant/reference/workspace-declaration/)
+without a chant project of its own. This lexicon supplies the `terraform` member
+kind as data, in `workspace-kinds.json` at its `./workspace-kinds` subpath. Pin
+the lexicon in `chant.workspace.json` and declare the root with that kind.
+
+```json
+{
+  "name": "estate",
+  "schema": 1,
+  "pins": [{ "package": "@intentius/chant-lexicon-terraform", "version": "0.80.0" }],
+  "members": [{ "name": "network", "dir": "network", "kind": "terraform" }]
+}
+```
+
+The kind's probe passes when a `.tf` file sits directly in the member's
+directory, and its precedence is 400. A chant project (500) that keeps `.tf`
+files beside its config is still a `chant` member. A choudoufu root passes this
+probe too, and the `choudoufu` kind from `@intentius/workspace-kind-choudoufu`
+(450) outranks it. `chant workspace ls` reads the kind from the file and never
+imports the lexicon. behold's own `terraform` member kind moved here, so an estate
+behold reads lists the same way in a chant workspace. See
+[Workspace Kinds](/chant/reference/workspace-kinds/#terraform-and-choudoufu) for the
+format.
+
 ## Next
 
 The worked example lives in `examples/getting-started/`: a config, a

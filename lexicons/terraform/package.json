@@ -4,7 +4,8 @@
   "type": "module",
   "files": [
     "src/",
-    "dist/"
+    "dist/",
+    "workspace-kinds.json"
   ],
   "exports": {
     ".": {
@@ -12,6 +13,7 @@
       "types": "./dist/index.d.ts",
       "default": "./src/index.ts"
     },
+    "./workspace-kinds": "./workspace-kinds.json",
     "./*": {
       "development": "./src/*.ts",
       "types": "./dist/*.d.ts",

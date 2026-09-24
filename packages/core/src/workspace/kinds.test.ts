@@ -14,6 +14,7 @@ import {
   kindsFileShips,
   loadKindRegistry,
   parseKindData,
+  probeKind,
   readPackageKinds,
   resolveKind,
   type MemberKind,
@@ -233,5 +234,47 @@ describe("resolveKind: overlapping probes", () => {
     expect(resolveKind(builtinKindRegistry(), tree, "").winner?.name).toBe("workspace");
     expect(resolveKind(builtinKindRegistry(), tree, "", ["workspace"]).winner?.name).toBe("chant");
     expect(resolveKind(builtinKindRegistry(), workingTree(dir({ "README.md": "" })), "").claims).toEqual([]);
+  });
+});
+
+describe("file probes: names with *, and blocks (#2545)", () => {
+  const kind = (probe: MemberKind["probe"]): MemberKind => ({ name: "k", description: "k", precedence: 400, probe, shape: "member", source: "test" });
+
+  test("a * in anyFile matches any run of characters in one name, directly in the directory", () => {
+    const tree = workingTree(dir({ "a/network.tf": "", "b/modules/net/main.tf": "", "c/main.tfvars": "", "d/x.tf.json": "" }));
+    const tf = kind({ anyFile: ["*.tf"] });
+    expect(["a", "b", "c", "d"].map((d) => probeKind(tf, tree, d))).toEqual([true, false, false, false]);
+    expect(probeKind(kind({ anyFile: ["*.tf", "*.tf.json"] }), tree, "d")).toBe(true);
+  });
+
+  test("anyBlock finds an unlabelled block opened on a line of its own, in the files it names", () => {
+    const tree = workingTree(
+      dir({
+        "nested/main.tf": 'terraform {\n  live {\n    estate = "e"\n  }\n}\n',
+        "tight/main.tf": "live{\n}\n",
+        "comment/main.tf": "# live {\n",
+        "attribute/main.tf": "locals {\n  live = true\n}\n",
+        "labelled/main.tf": 'live "x" {\n}\n',
+        "other-file/notes.hcl": "live {\n}\n",
+      }),
+    );
+    const live = kind({ anyBlock: { in: ["*.tf"], blocks: ["live"] } });
+    expect(["nested", "tight", "comment", "attribute", "labelled", "other-file"].map((d) => probeKind(live, tree, d))).toEqual([true, true, false, false, false, false]);
+  });
+
+  test("a probe passes when any clause does, and its kind claims the directory", () => {
+    const k = kind({ anyFile: ["estate.chdf.hcl"], anyBlock: { in: ["*.tf"], blocks: ["live"] } });
+    const tree = workingTree(dir({ "s/estate.chdf.hcl": "", "s/main.tf": "", "i/main.tf": "live {}\n", "n/main.tf": "" }));
+    expect(["s", "i", "n"].map((d) => probeKind(k, tree, d))).toEqual([true, true, false]);
+    expect(resolveKind(createKindRegistry([k]), tree, "i").winner?.name).toBe("k");
+  });
+
+  test("the schema takes anyBlock, refuses an empty probe, and parseKindData keeps only the clauses given", () => {
+    const both = { ...tf, probe: { anyFile: ["estate.chdf.hcl"], anyBlock: { in: ["*.tf"], blocks: ["live"] } } };
+    expect(parseKindData(kindsFile([both]), "p").kinds[0].probe).toEqual(both.probe);
+    expect(parseKindData(kindsFile([tf]), "p").kinds[0].probe).toEqual({ anyFile: ["main.tf"] });
+    expect(parseKindData(kindsFile([{ ...tf, probe: {} }]), "p").problems[0]).toMatch(/probe/);
+    expect(parseKindData(kindsFile([{ ...tf, probe: { anyBlock: { in: ["*.tf"], blocks: ["live {"] } } }]), "p").problems[0]).toMatch(/blocks/);
+    expect(parseKindData(kindsFile([{ ...tf, probe: { anyBlock: { in: ["../x.tf"], blocks: ["live"] } } }]), "p").problems[0]).toMatch(/in/);
   });
 });
