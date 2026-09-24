@@ -1,0 +1,12 @@
+{
+  "$comment": "Template parameters for chant init --from (#2627). Each listed file carries {{chant:<name>}} where the value goes. See docs/src/content/docs/reference/template-manifest.mdx.",
+  "parameters": {
+    "name": {
+      "type": "string",
+      "default": "Reference app",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9 ._-]*$",
+      "description": "The app's display name: the home page's title and heading, and the screen spec's"
+    }
+  },
+  "files": ["app/src/server.mjs", "design/screens/home.json", "design/screens/home.svg"]
+}

@@ -16,6 +16,8 @@
  *
  * - `chant init --from <this repo>@HEAD#reference-workspace` copies it with a
  *   lineage lock (#2540), and the copy reads its decisions on its own.
+ * - its `chant.template.json` declares a `name` parameter (#2627), and
+ *   `--param name=<value>` puts the value in the app and the screen spec.
  *
  * The workspace commands and their contract tests join here as each phase
  * lands (#2537, #2536). The copy is not yet a working workspace in #2543's
@@ -235,11 +237,56 @@ describe("chant init --from on the fixture", () => {
       expect(scope.source.path).toBe("reference-workspace");
       expect(Object.keys(scope.files)).toContain("delivery/src/app.ts");
       expect(existsSync(join(target, "chant.workspace.draft.json"))).toBe(true);
+      // No --param: the declared default.
+      expect((scope as { parameters?: unknown }).parameters).toEqual({ name: "Reference app" });
+      expect(existsSync(join(target, "chant.template.json"))).toBe(false);
 
       const doc = await queryRecords({ kind: "decisions/decision.kind.mjs", current: true, cwd: target });
       if ("error" in doc) throw new Error(`${doc.error.code}: ${doc.error.message}`);
       expect(doc.summary.invalid).toBe(0);
       expect(doc.records.map((r) => r.id)).toContain("ref-001");
+    } finally {
+      rmSync(dirname(target), { recursive: true, force: true });
+    }
+  });
+
+  test("the manifest's listed files each carry the name placeholder", () => {
+    const manifest = JSON.parse(readFileSync(join(fixture, "chant.template.json"), "utf-8")) as {
+      parameters: Record<string, { type: string; default?: string }>;
+      files: string[];
+    };
+    expect(Object.keys(manifest.parameters)).toEqual(["name"]);
+    expect(manifest.files.length).toBeGreaterThan(0);
+    for (const f of manifest.files) expect(readFileSync(join(fixture, f), "utf-8"), f).toContain("{{chant:name}}");
+  });
+
+  test("--param name=<value> names the app, and the copy's app test passes with it", async () => {
+    const target = join(mkdtempSync(join(tmpdir(), "chant-2627-init-")), "ws");
+    try {
+      const refused = await initFromCommand({ from: `${repoRoot}@HEAD#reference-workspace`, path: target, params: { title: "x" } });
+      expect(refused.error).toBe("unknown parameter title (declared: name)");
+      expect(existsSync(target)).toBe(false);
+
+      const result = await initFromCommand({ from: `${repoRoot}@HEAD#reference-workspace`, path: target, params: { name: "Untitled app" } });
+      expect(result.success, result.error).toBe(true);
+      const lock = JSON.parse(readFileSync(join(target, ".chant", "workspace.lock.json"), "utf-8")) as {
+        scopes: Record<string, { parameters: Record<string, unknown> }>;
+      };
+      expect(lock.scopes["."].parameters).toEqual({ name: "Untitled app" });
+
+      expect(readFileSync(join(target, "app", "src", "server.mjs"), "utf-8")).toContain('export const APP_NAME = "Untitled app";');
+      const screen = JSON.parse(readFileSync(join(target, "design", "screens", "home.json"), "utf-8")) as { title: string };
+      expect(screen.title).toBe("Untitled app");
+      expect(readFileSync(join(target, "design", "screens", "home.svg"), "utf-8")).toContain(">Untitled app</text>");
+
+      const app = join(target, "app");
+      const out = execFileSync(process.execPath, ["--test", join("test", "server.test.mjs")], { cwd: app, stdio: "pipe", encoding: "utf-8" });
+      // execFileSync throws when a test fails.
+      expect(out).toMatch(/fail 0/);
+      const { handle } = (await import(join(app, "src", "server.mjs"))) as { handle: (req: unknown, res: unknown) => void };
+      let body = "";
+      handle({ method: "GET", url: "/" }, { writeHead: () => undefined, end: (b: string) => (body = b) });
+      expect(body).toContain("<h1>Untitled app</h1>");
     } finally {
       rmSync(dirname(target), { recursive: true, force: true });
     }

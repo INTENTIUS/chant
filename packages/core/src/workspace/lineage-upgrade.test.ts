@@ -398,3 +398,77 @@ describe("proposeWorkspaceUpgrade", () => {
     expect(gh.filter((a) => a[1] === "edit")).toHaveLength(1);
   });
 });
+
+describe("chant workspace upgrade with template parameters (#2627)", () => {
+  const TITLE_V1 = 'export const title = "{{chant:name}}";\ntwo\nthree\nfour\nfive\nsix\nseven\n';
+
+  beforeEach(async () => {
+    // A template that declares a parameter, and a project made from it with a value.
+    tpl = join(root, "ptpl");
+    proj = join(root, "pproj");
+    mkdirSync(tpl);
+    git(tpl, ["init", "-q", "-b", "main"]);
+    release("v1.0.0", {
+      "chant.template.json": JSON.stringify({ parameters: { name: { type: "string", default: "Starter" } }, files: ["app/title.ts", "README.md"] }),
+      "app/title.ts": TITLE_V1,
+      "README.md": "# {{chant:name}}\n",
+    });
+    const made = await initFromCommand({ from: `${tpl}@v1.0.0`, path: proj, params: { name: "Acme" } });
+    expect(made.error).toBeUndefined();
+    git(proj, ["init", "-q", "-b", "main"]);
+    commitProject("init from v1 with name=Acme");
+  });
+
+  test("the merge base carries the recorded value, so an edited file merges and an unedited one updates", async () => {
+    expect(read(proj, "app/title.ts")).toBe(TITLE_V1.replace("{{chant:name}}", "Acme"));
+    expect(existsSync(join(proj, "chant.template.json"))).toBe(false);
+    expect(readLock(proj)!.scopes["."].parameters).toEqual({ name: "Acme" });
+
+    put(proj, "app/title.ts", 'export const title = "Acme";\ntwo\nthree\nfour\nfive\nsix\nseven (ours)\n');
+    commitProject("edit");
+    release("v2.0.0", {
+      "chant.template.json": JSON.stringify({
+        parameters: { name: { type: "string", default: "Starter" }, owner: { type: "string", default: "platform" } },
+        files: ["app/title.ts", "README.md", "OWNERS"],
+      }),
+      "app/title.ts": 'export const title = "{{chant:name}}";\ntwo (theirs)\nthree\nfour\nfive\nsix\nseven\n',
+      "README.md": "# {{chant:name}} v2\n",
+      OWNERS: "{{chant:owner}}\n",
+    });
+
+    const staged = await stageUpgrade({ root: proj, to: "v2.0.0", runChant: passing });
+    try {
+      expect(staged.manualSteps).toEqual([]);
+      expect(staged.merged).toEqual(["app/title.ts"]);
+      expect(staged.written.sort()).toEqual(["OWNERS", "README.md"]);
+      expect(read(staged.worktreeProject, "app/title.ts")).toBe('export const title = "Acme";\ntwo (theirs)\nthree\nfour\nfive\nsix\nseven (ours)\n');
+      expect(read(staged.worktreeProject, "README.md")).toBe("# Acme v2\n");
+      expect(read(staged.worktreeProject, "OWNERS")).toBe("platform\n");
+      expect(existsSync(join(staged.worktreeProject, "chant.template.json"))).toBe(false);
+      const lineage = readLock(staged.worktreeProject)!.scopes["."];
+      // The recorded value is kept, and a parameter the new version adds takes its default.
+      expect(lineage.parameters).toEqual({ name: "Acme", owner: "platform" });
+      expect(lineage.files["README.md"].sha256).toBe(fileHash("# Acme v2\n"));
+      expect(lineage.files["chant.template.json"]).toBeUndefined();
+    } finally {
+      staged.dispose();
+    }
+  });
+
+  test("an upgrade to the same version changes nothing", async () => {
+    const staged = await stageUpgrade({ root: proj, to: "v1.0.0", runChant: passing });
+    try {
+      expect(staged.changed).toBe(false);
+      expect(staged.manualSteps).toEqual([]);
+    } finally {
+      staged.dispose();
+    }
+  });
+
+  test("a new parameter with no default refuses the upgrade", async () => {
+    release("v2.0.0", {
+      "chant.template.json": JSON.stringify({ parameters: { name: { type: "string" }, region: { type: "string" } }, files: ["README.md"] }),
+    });
+    await expect(stageUpgrade({ root: proj, to: "v2.0.0", runChant: passing })).rejects.toThrow(/region has no default/);
+  });
+});
