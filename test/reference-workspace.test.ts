@@ -1,12 +1,14 @@
 /**
  * The reference workspace (#2543, #2524 D21) as chant's integration fixture.
  *
- * `reference-workspace/` is a workspace-shaped tree held at level 0: it has no
- * `chant.workspace.json` until the declaration lands (#2534), only a draft that
- * nothing reads. This file checks what exists of it today, against the commit
- * under test rather than a released chant:
+ * `reference-workspace/` is a level 1 workspace: its `chant.workspace.json`
+ * (#2534) declares four members. This file checks it against the commit under
+ * test rather than a released chant:
  *
- * - the members the draft names are on disk, and no live declaration is;
+ * - the declaration validates against chant's declaration schema, and the
+ *   members it names are on disk;
+ * - `chant workspace ls --json` lists them with their kinds and roles, and
+ *   `chant workspace check` exits 0;
  * - the app's own test passes;
  * - the delivery member builds and lints with no findings, and the Compose
  *   file it writes points at the app's Dockerfile;
@@ -15,20 +17,23 @@
  *   which must stay the same as chant's.
  *
  * - `chant init --from <this repo>@HEAD#reference-workspace` copies it with a
- *   lineage lock (#2540), and the copy reads its decisions on its own.
+ *   lineage lock (#2540), and the copy is a working workspace: it reads its
+ *   decisions on its own, `workspace ls` lists the same members and
+ *   `workspace check` passes.
  * - its `chant.template.json` declares a `name` parameter (#2627), and
  *   `--param name=<value>` puts the value in the app and the screen spec.
  *
- * The workspace commands and their contract tests join here as each phase
- * lands (#2537, #2536). The copy is not yet a working workspace in #2543's
- * sense: that needs the declaration (#2534).
+ * The per-member workspace commands and their contract tests join here as
+ * each phase lands (#2537, #2536).
  */
 
 import { describe, expect, test } from "vitest";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
 import yaml from "js-yaml";
 import { buildCommand } from "@intentius/chant/cli/commands/build";
 import { lintCommand } from "@intentius/chant/cli/commands/lint";
@@ -36,13 +41,17 @@ import { loadPlugins, resolveProjectLexicons } from "@intentius/chant/cli";
 import { parseFrontMatter } from "@intentius/chant/workspace/records";
 import { queryRecords } from "@intentius/chant/workspace/records-cli";
 import { initFromCommand } from "@intentius/chant/workspace/lineage-init";
+import { parseDeclaration } from "@intentius/chant/workspace/declaration";
 
 const repoRoot = resolve(import.meta.dirname, "..");
 const fixture = join(repoRoot, "reference-workspace");
 const chantDecisions = join(repoRoot, "docs", "design", "decisions");
+const workspaceSrc = join(repoRoot, "packages", "core", "src", "workspace");
+const declarationSchema = JSON.parse(readFileSync(join(workspaceSrc, "declaration.schema.json"), "utf-8")) as object;
+const lsSchema = JSON.parse(readFileSync(join(workspaceSrc, "ls.schema.json"), "utf-8")) as object;
 const decisionsDir = join(fixture, "decisions");
 
-interface DraftMember {
+interface DeclaredMember {
   name: string;
   dir: string;
   kind: string;
@@ -50,11 +59,68 @@ interface DraftMember {
   because?: string;
 }
 
-const draft = JSON.parse(readFileSync(join(fixture, "chant.workspace.draft.json"), "utf-8")) as {
+const declarationText = readFileSync(join(fixture, "chant.workspace.json"), "utf-8");
+const declaration = JSON.parse(declarationText) as {
   name: string;
   schema: number;
-  members: DraftMember[];
+  members: DeclaredMember[];
+  pins: unknown[];
 };
+
+/** The four members #2543 asks for, as `workspace ls --json` shows them. */
+const EXPECTED_MEMBERS = [
+  { name: "app", dir: "app", kind: "other", roles: [] },
+  { name: "delivery", dir: "delivery", kind: "chant", roles: [] },
+  { name: "design-client", dir: "design-client", kind: "other", roles: [{ name: "design-app", path: null }] },
+  { name: "design", dir: "design", kind: "other", roles: [] },
+];
+
+const CLI_TIMEOUT_MS = 60_000;
+
+type Validate = ((d: unknown) => boolean) & { errors?: unknown };
+/** A draft 2020-12 validator, from core's own ajv 8 (the repo root hoists ajv 6). */
+function compile2020(schema: object): Validate {
+  const mod = createRequire(join(repoRoot, "packages", "core", "package.json"))("ajv/dist/2020") as { default?: unknown };
+  const Ajv = (mod.default ?? mod) as new (opts: object) => { compile(s: object): Validate };
+  return new Ajv({ strict: true, allErrors: true }).compile(schema);
+}
+
+/** Run this checkout's chant CLI in `cwd`, as a user would. */
+function chant(cwd: string, ...args: string[]) {
+  return spawnSync(
+    process.execPath,
+    ["--import", pathToFileURL(join(repoRoot, "node_modules/tsx/dist/loader.mjs")).href, join(repoRoot, "packages/core/src/cli/main.ts"), ...args],
+    { cwd, encoding: "utf-8", timeout: CLI_TIMEOUT_MS, env: { ...process.env, NO_COLOR: "1" } },
+  );
+}
+
+interface LsMemberJson {
+  name: string;
+  dir: string;
+  kind: string;
+  roles: { name: string; path: string | null }[];
+  because: string | null;
+  readable: boolean;
+  reason: unknown;
+}
+
+/** `chant workspace ls --json` in `cwd`, checked against the ls output schema. */
+function lsJson(cwd: string): { workspace: { name: string; root: string; file: string; pins: unknown[] }; members: LsMemberJson[]; groups: unknown[]; summary: { members: number; unreadable: number } } {
+  const run = chant(cwd, "workspace", "ls", "--json");
+  expect(run.status, run.stderr).toBe(0);
+  const doc = JSON.parse(run.stdout);
+  const validate = compile2020(lsSchema);
+  expect(validate(doc), JSON.stringify(validate.errors, null, 2)).toBe(true);
+  return doc;
+}
+
+function expectTheFourMembers(members: LsMemberJson[]): void {
+  expect(members.map(({ name, dir, kind, roles }) => ({ name, dir, kind, roles }))).toEqual(EXPECTED_MEMBERS);
+  for (const m of members) {
+    expect(m.readable, `${m.name}: ${JSON.stringify(m.reason)}`).toBe(true);
+    if (m.kind === "other") expect(m.because, `${m.name} is kind other with no because`).toBeTruthy();
+  }
+}
 
 /** Every path under `dir`, relative to it, skipping node_modules and dist. */
 function walk(dir: string, prefix = ""): string[] {
@@ -69,26 +135,40 @@ function walk(dir: string, prefix = ""): string[] {
 }
 
 describe("reference workspace layout", () => {
-  test("the draft declares the four members #2543 asks for", () => {
-    expect(draft.schema).toBe(1);
-    const byName = new Map(draft.members.map((m) => [m.name, m]));
+  test("the declaration validates against declaration.schema.json", () => {
+    const validate = compile2020(declarationSchema);
+    expect(validate(declaration), JSON.stringify(validate.errors, null, 2)).toBe(true);
+    // The rules JSON Schema cannot say (unique names, placement) are checked in code.
+    const parsed = parseDeclaration(declarationText, "chant.workspace.json");
+    expect(parsed.name).toBe("reference");
+    expect(parsed.schema).toBe(1);
+    expect(declaration.pins).toEqual([]);
+  });
+
+  test("it declares the four members #2543 asks for", () => {
+    const byName = new Map(declaration.members.map((m) => [m.name, m]));
     expect([...byName.keys()].sort()).toEqual(["app", "delivery", "design", "design-client"]);
     expect(byName.get("delivery")?.kind).toBe("chant");
     expect(byName.get("design-client")?.roles).toEqual(["design-app"]);
-    for (const m of draft.members) {
+    for (const m of declaration.members) {
       if (m.kind === "other") expect(m.because, `${m.name} is kind other with no because`).toBeTruthy();
     }
   });
 
   test("every member directory exists", () => {
-    for (const m of draft.members) {
+    for (const m of declaration.members) {
       expect(existsSync(join(fixture, m.dir)), `${m.dir} is missing`).toBe(true);
     }
   });
 
-  test("it stays at level 0: no live declaration anywhere in it", () => {
-    const declarations = walk(fixture).filter((p) => /(^|\/)chant\.workspace\.jsonc?$/.test(p));
-    expect(declarations).toEqual([]);
+  test("its declaration is the only one in it, and no draft is left", () => {
+    const declarations = walk(fixture).filter((p) => /(^|\/)chant\.workspace(\.draft)?\.jsonc?$/.test(p));
+    expect(declarations).toEqual(["chant.workspace.json"]);
+  });
+
+  test("the chant repo's own declaration holds it as a nested workspace", () => {
+    const outer = JSON.parse(readFileSync(join(repoRoot, "chant.workspace.json"), "utf-8")) as { members: { dir?: string; kind: string }[] };
+    expect(outer.members.find((m) => m.dir === "reference-workspace")?.kind).toBe("workspace");
   });
 
   test("only delivery is a chant project", () => {
@@ -195,8 +275,8 @@ describe("decision files", () => {
       for (const c of fm.value.constrains as string[]) {
         if (!c.startsWith("member:")) continue;
         expect(
-          draft.members.map((m) => m.name),
-          `${f} constrains ${c}, which the draft does not declare`,
+          declaration.members.map((m) => m.name),
+          `${f} constrains ${c}, which the declaration does not declare`,
         ).toContain(c.slice("member:".length));
       }
     }
@@ -221,9 +301,29 @@ describe("decision files", () => {
   });
 });
 
+describe("workspace commands on the fixture", () => {
+  test("workspace ls --json lists the four members with their kinds and roles", () => {
+    const doc = lsJson(fixture);
+    expect(doc.workspace).toMatchObject({ name: "reference", root: "reference-workspace", file: "chant.workspace.json", pins: [] });
+    expectTheFourMembers(doc.members);
+    expect(doc.groups).toEqual([]);
+    expect(doc.summary).toMatchObject({ members: 4, unreadable: 0 });
+  });
+
+  test("workspace ls finds the declaration from inside a member", () => {
+    expect(lsJson(join(fixture, "delivery")).workspace.name).toBe("reference");
+  });
+
+  test("workspace check exits 0", () => {
+    const run = chant(fixture, "workspace", "check", "--json");
+    expect(run.status, run.stderr + run.stdout).toBe(0);
+    expect((JSON.parse(run.stdout) as { ok: boolean }).ok).toBe(true);
+  });
+});
+
 describe("chant init --from on the fixture", () => {
   // Reads the committed tree at HEAD, not the working tree, as any consumer would.
-  test("copies it with a lineage lock, and the copy reads its own decisions", async () => {
+  test("copies it with a lineage lock, and the copy is a working workspace", async () => {
     const target = join(mkdtempSync(join(tmpdir(), "chant-2543-init-")), "ws");
     try {
       const result = await initFromCommand({ from: `${repoRoot}@HEAD#reference-workspace`, path: target });
@@ -236,7 +336,8 @@ describe("chant init --from on the fixture", () => {
       expect(scope.kind).toBe("template");
       expect(scope.source.path).toBe("reference-workspace");
       expect(Object.keys(scope.files)).toContain("delivery/src/app.ts");
-      expect(existsSync(join(target, "chant.workspace.draft.json"))).toBe(true);
+      expect(existsSync(join(target, "chant.workspace.json"))).toBe(true);
+      expect(existsSync(join(target, "chant.workspace.draft.json"))).toBe(false);
       // No --param: the declared default.
       expect((scope as { parameters?: unknown }).parameters).toEqual({ name: "Reference app" });
       expect(existsSync(join(target, "chant.template.json"))).toBe(false);
@@ -245,6 +346,17 @@ describe("chant init --from on the fixture", () => {
       if ("error" in doc) throw new Error(`${doc.error.code}: ${doc.error.message}`);
       expect(doc.summary.invalid).toBe(0);
       expect(doc.records.map((r) => r.id)).toContain("ref-001");
+
+      // The copy is a workspace of its own, outside any git repository.
+      const ls = lsJson(target);
+      expect(ls.workspace.name).toBe("reference");
+      expect(ls.workspace.file).toBe("chant.workspace.json");
+      expectTheFourMembers(ls.members);
+
+      // The lock init wrote reads, with no open manual step.
+      const check = chant(target, "workspace", "check", "--json");
+      expect(check.status, check.stderr + check.stdout).toBe(0);
+      expect((JSON.parse(check.stdout) as { ok: boolean; lock: string | null }).lock).not.toBeNull();
     } finally {
       rmSync(dirname(target), { recursive: true, force: true });
     }

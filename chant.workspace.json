@@ -385,8 +385,7 @@
     {
       "name": "reference-workspace",
       "dir": "reference-workspace",
-      "kind": "other",
-      "because": "the reference workspace (#2543); it becomes a workspace member once its own declaration replaces the draft it holds"
+      "kind": "workspace"
     },
     {
       "name": "examples",
