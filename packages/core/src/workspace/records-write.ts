@@ -33,7 +33,8 @@ import {
   type RecordEntry,
   type RecordWarning,
 } from "./records";
-import { pinRoot, realpathOr } from "./records-cli";
+import { declaredKindFiles, pinRoot, realpathOr } from "./records-cli";
+import { WorkspaceReadError } from "./declaration";
 import { workingTree } from "./tree";
 
 // ── Contract ─────────────────────────────────────────────────────────────────
@@ -619,13 +620,34 @@ export async function reviewRecord(opts: ReviewRecordOptions): Promise<ReviewDoc
 // ── The command ──────────────────────────────────────────────────────────────
 
 export const WRITE_USAGE = [
-  "chant workspace records new <kind file> --from <file|-> [--prefix <prefix>] [--dry-run]",
-  "chant workspace records amend <id> --kind <kind file> --set <file|-> [--dry-run]",
-  "chant workspace records review <id> --kind <kind file> --verdict agree|dissent|abstain --by <principal> [--note <text>] [--session <id>] [--dry-run]",
+  "chant workspace records new [<kind file>] --from <file|-> [--prefix <prefix>] [--dry-run]",
+  "chant workspace records amend <id> [--kind <kind file>] --set <file|-> [--dry-run]",
+  "chant workspace records review <id> [--kind <kind file>] --verdict agree|dissent|abstain --by <principal> [--note <text>] [--session <id>] [--dry-run]",
 ].join("\n");
 
 function usage(schema: string, message: string): WriteFailure<"write-usage-invalid"> {
   return { $schema: schema, contract: RECORDS_WRITE_CONTRACT_VERSION, error: { code: "write-usage-invalid", message: `${message}\n${WRITE_USAGE}` } };
+}
+
+/**
+ * The kind a write goes through when none is named (#2680): the one record
+ * kind the declaration nearest above `cwd` names. None declared keeps the
+ * message the verb has always given; several are refused, since a write
+ * never guesses which kind it means.
+ */
+function declaredWriteKind(schema: string, cwd: string, missing: string): string | WriteFailure<"write-usage-invalid"> {
+  let kinds: ReturnType<typeof declaredKindFiles>;
+  try {
+    kinds = declaredKindFiles(cwd);
+  } catch (err) {
+    if (!(err instanceof WorkspaceReadError)) throw err;
+    return usage(schema, `${missing}; the declaration can't name one: ${err.code}: ${err.describe()}`);
+  }
+  if (kinds.length === 0) return usage(schema, missing);
+  if (kinds.length > 1) {
+    return usage(schema, `the declaration names ${kinds.length} record kinds (${kinds.map((k) => k.declared.path).join(", ")}), so name the one to write with --kind`);
+  }
+  return kinds[0].file;
 }
 
 /** The text of `--from` or `--set`: a file, or standard input for `-`. */
@@ -652,8 +674,8 @@ export async function runRecordsWrite(ctx: CommandContext): Promise<number> {
     return "error" in doc ? 1 : 0;
   };
   if (verb === "new") {
-    const kind = args.extraPositional2 ?? args.kind;
-    if (!kind) return print(usage(RECORDS_NEW_SCHEMA_ID, "new needs the kind file"));
+    const kind = args.extraPositional2 ?? args.kind ?? declaredWriteKind(RECORDS_NEW_SCHEMA_ID, cwd, "new needs the kind file");
+    if (typeof kind !== "string") return print(kind);
     const input = readInput(RECORDS_NEW_SCHEMA_ID, "--from", args.migrateFrom, cwd);
     if (typeof input !== "string") return print(input);
     return print(await newRecord({ kind, fields: input, prefix: args.prefix, dryRun: args.dryRun, cwd }));
@@ -661,15 +683,16 @@ export async function runRecordsWrite(ctx: CommandContext): Promise<number> {
   const schema = verb === "amend" ? RECORDS_AMEND_SCHEMA_ID : RECORDS_REVIEW_SCHEMA_ID;
   const id = args.extraPositional2;
   if (!id) return print(usage(schema, `${verb} needs the record's id`));
-  if (!args.kind) return print(usage(schema, "--kind <kind file> is required"));
+  const kind = args.kind ?? declaredWriteKind(schema, cwd, "--kind <kind file> is required");
+  if (typeof kind !== "string") return print(kind);
   if (verb === "amend") {
     const input = readInput(schema, "--set", args.set, cwd);
     if (typeof input !== "string") return print(input);
-    return print(await amendRecord({ kind: args.kind, id, fields: input, dryRun: args.dryRun, cwd }));
+    return print(await amendRecord({ kind, id, fields: input, dryRun: args.dryRun, cwd }));
   }
   if (args.verdict === undefined) return print(usage(schema, "--verdict agree|dissent|abstain is required"));
   if (args.by === undefined) return print(usage(schema, "--by <principal> is required"));
   return print(
-    await reviewRecord({ kind: args.kind, id, verdict: args.verdict, by: args.by, note: args.note, session: args.session, dryRun: args.dryRun, cwd }),
+    await reviewRecord({ kind, id, verdict: args.verdict, by: args.by, note: args.note, session: args.session, dryRun: args.dryRun, cwd }),
   );
 }

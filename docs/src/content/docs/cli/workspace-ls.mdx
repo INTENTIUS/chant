@@ -12,7 +12,7 @@ chant workspace ls [dir] [--at <rev>] [--json]
 
 ## Description
 
-`chant workspace ls` finds the [workspace declaration](/chant/reference/workspace-declaration/) by walking up from `dir` (default: the current directory) to the git root, validates it and lists what it declares. Each member is shown with its kind, directory and roles, and each example group with its globs and how many projects they match.
+`chant workspace ls` finds the [workspace declaration](/chant/reference/workspace-declaration/) by walking up from `dir` (default: the current directory) to the git root, validates it and lists what it declares. Each member is shown with its kind, directory and roles, and each example group with its globs and how many projects they match. The [record kinds](/chant/reference/workspace-declaration/#record-kinds) the declaration names are listed with the name each kind file gives itself ([#2680](https://github.com/INTENTIUS/chant/issues/2680)).
 
 A member that can't be read is still listed, with a reason code, and the command still exits 0 ([ws-020](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-020-unreadable.md)). A reader can then show the rest of the workspace and explain the gap. Failing on an unreadable member is the job of [`chant workspace check`](/chant/cli/workspace-check/#declaration-checks). Only a declaration that can't be read exits 1.
 
@@ -59,7 +59,15 @@ The output is part of the workspace [read contract](/chant/reference/workspace-r
   "contract": 1,
   "chant": "0.80.0",
   "at": null,
-  "workspace": { "name": "chant", "root": ".", "file": "chant.workspace.json", "schema": 1, "minReader": null, "pins": [] },
+  "workspace": {
+    "name": "chant",
+    "root": ".",
+    "file": "chant.workspace.json",
+    "schema": 1,
+    "minReader": null,
+    "pins": [],
+    "records": [{ "name": "decision", "path": "decisions/decision.kind.mjs", "kind": "decision", "reason": null }]
+  },
   "members": [
     {
       "name": "lexicon-aws",
@@ -69,7 +77,8 @@ The output is part of the workspace [read contract](/chant/reference/workspace-r
       "upstream": null,
       "because": "an npm workspace package with no chant project",
       "readable": true,
-      "reason": null
+      "reason": null,
+      "records": []
     }
   ],
   "groups": [
@@ -87,6 +96,17 @@ The output is part of the workspace [read contract](/chant/reference/workspace-r
 ```
 
 The example shortens the lists. `chant` is the version that read the workspace. `root` is the workspace root relative to the git root. `at` is the full commit id when `--at` is given. A group's `matches` are the directories its globs match that hold a chant project; `skipped` are the ones that hold none.
+
+`workspace.records` holds the workspace's own record kinds and each member's `records` holds the member's, in file order. They were added within contract 1 by [#2680](https://github.com/INTENTIUS/chant/issues/2680). Each entry has these fields:
+
+| Field | Value |
+|---|---|
+| `name` | the name the declaration gives the kind, else the kind file's own `recordKind.name`, else `null` when the file can't be loaded |
+| `path` | the kind file from the workspace root |
+| `kind` | the kind file's `recordKind.name`, or `null` when it can't be loaded |
+| `reason` | `null`, or why the kind file can't be loaded: `kind-unreadable`, `kind-invalid`, `schema-unreadable` or `schema-id-mismatch`, the codes [`records`](/chant/cli/workspace-records/#error-codes) fails with |
+
+The kind file is looked for in the tree read, which is the revision under `--at`. It is loaded from the working tree, which imports it. A kind that can't be loaded leaves its member readable, and `chant workspace check` fails on it with `WSP115`.
 
 A failed read prints `{ "$schema", "contract", "chant", "error": { "code", "message", "location" } }` instead. `location` is `{ "file", "line", "column" }` when the problem is in the file, and `null` otherwise.
 

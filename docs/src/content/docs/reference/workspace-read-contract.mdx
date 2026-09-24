@@ -31,7 +31,7 @@ Each schema ships in `@intentius/chant` at `src/workspace/<command>.schema.json`
 | [`chant workspace graph --intent`](/chant/cli/workspace-graph/#the-intent-graph) | `--json` | `https://intentius.io/chant/schemas/workspace/intent/v1/intent.schema.json` |
 | [`chant workspace graph --composites`](/chant/cli/workspace-graph/#composites-and-components) | always | `https://intentius.io/chant/schemas/workspace/composites/v1/composites.schema.json` |
 
-Each schema is a `oneOf` of a result and a failure. A failure has `error: { code, message }`, plus `location` for the commands that read the declaration, and exits 1. A result may still hold entries that couldn't be read, each with a `reason: { code, message }`. Only `check` fails on those ([ws-020](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-020-unreadable.md)). In `check`, a declaration that can't be read is the finding `WSP001` with the same `code`, not a failure.
+Each schema is a `oneOf` of a result and a failure. The `records` schema has a third branch for the set it prints without `--kind` ([#2680](https://github.com/INTENTIUS/chant/issues/2680)). The set holds a result or a failure for each record kind the declaration names. A failure has `error: { code, message }`, plus `location` for the commands that read the declaration, and exits 1. A result may still hold entries that couldn't be read, each with a `reason: { code, message }`. Only `check` fails on those ([ws-020](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-020-unreadable.md)). In `check`, a declaration that can't be read is the finding `WSP001` with the same `code`, not a failure.
 
 ## Identity and revisions
 
@@ -122,10 +122,10 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `review-duplicate` | verdict, `records` | A later verdict by the same principal replaces this one. Names are compared after NFKC, trimming and lower-casing. |
 | `review-older-digest` | verdict, `records` | The verdict's `digest` is not the record's digest now, so the record changed after the verdict. |
 | `review-unattested` | verdict, `records` | An attestation policy is active at base, and the verdict carries no seal. No verdict carries one yet. |
-| `kind-unreadable` | error, `records` | The record kind file is missing or could not be imported. |
-| `kind-invalid` | error, `records` | The record kind file exports no `recordKind`, or its shape is wrong. |
-| `schema-unreadable` | error, `records` | The schema file the kind names is missing or isn't JSON. |
-| `schema-id-mismatch` | error, `records` | The schema's `$id` differs from the id the kind names. |
+| `kind-unreadable` | error, `records`; reason, `ls` | The record kind file is missing or could not be imported. |
+| `kind-invalid` | error, `records`; reason, `ls` | The record kind file exports no `recordKind`, or its shape is wrong. |
+| `schema-unreadable` | error, `records`; reason, `ls` | The schema file the kind names is missing or isn't JSON. |
+| `schema-id-mismatch` | error, `records`; reason, `ls` | The schema's `$id` differs from the id the kind names. |
 | `schema-invalid` | error, `records` | The record schema doesn't compile. |
 | `location-missing` | error, `records` | The records directory does not exist, in the tree or at the revision. With `--since`, a directory missing at the `--since` revision is read as empty. |
 | `write-usage-invalid` | error, `records new`, `amend` and `review` | The command line lacks a value the write needs, or gives one it does not take. |
@@ -199,7 +199,7 @@ To find the artifacts behind a file, a reader walks through the decisions. It ta
 
 `chant workspace graph --intent <region> --json` prints the intent graph over one region ([#2651](https://github.com/INTENTIUS/chant/issues/2651)). It encodes the walk from a piece of code back to the decisions, artifacts and commits behind it, as [#2650](https://github.com/INTENTIUS/chant/issues/2650) section B describes it. chant emits the graph and a reader such as hud draws it (D8 and D15 of [#2524](https://github.com/INTENTIUS/chant/issues/2524)).
 
-A result has `$schema`, `contract`, `chant`, `at` and `workspace` like the other documents. `region` is the id of the region node. `history` names the commit the history was read from (`rev`), how the region was followed (`line-range`, `file` or `directory`) and whether the clone is `shallow`. `kinds` lists each `--kind` file with its `name`, the record kind it reads and the form of its `commitJoins`. The name is the record kind's name, or for a file with no record kind, the file's name without `.kind.mjs`. `nodes` and `edges` hold the graph, and `reasons` holds parts of the walk that could not be read. A failure has `error: { code, message }` with a declaration code, a record kind code or `intent-region-invalid`.
+A result has `$schema`, `contract`, `chant`, `at` and `workspace` like the other documents. `region` is the id of the region node. `history` names the commit the history was read from (`rev`), how the region was followed (`line-range`, `file` or `directory`) and whether the clone is `shallow`. `kinds` lists each kind file with its `name`, the record kind it reads and the form of its `commitJoins`. The files are the `--kind` files, or without `--kind`, every kind the declaration names, in its order ([#2680](https://github.com/INTENTIUS/chant/issues/2680)). The name is the record kind's name, or for a file with no record kind, the file's name without `.kind.mjs`. `nodes` and `edges` hold the graph, and `reasons` holds parts of the walk that could not be read. A failure has `error: { code, message }` with a declaration code, a record kind code or `intent-region-invalid`.
 
 The walk runs in this order, and the nodes are listed in it:
 

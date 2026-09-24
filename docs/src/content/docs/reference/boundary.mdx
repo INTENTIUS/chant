@@ -40,7 +40,7 @@ This page is generated from `docs/data/boundary.yaml`, which has one row for eac
 | intent edge kind | the edge kinds of `intent.schema.json` | 6 | 0 | 3 |
 | reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 69 | 0 | 0 |
 | finding code | the finding codes of `intent.schema.json` | 12 | 0 | 0 |
-| WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 34 | 0 | 0 |
+| WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 35 | 0 | 0 |
 | hud view | the hud reader requirements H1 to H11 of #2650 | 0 | 11 | 0 |
 
 Each row follows, in the order of the table above.
@@ -57,17 +57,17 @@ Each row follows, in the order of the table above.
 | boundary cell | identity, sessions, who is looking | hud | alecraso/hud | Signing a person in and knowing who is present; chant never authenticates a person. |
 | boundary cell | the agent chat, the dev proxy, comment mode | hud | alecraso/hud | The interactive surfaces around a workspace, none of which chant serves. |
 | boundary cell | the question put to the person at each finding | hud | alecraso/hud | hud asks and never answers; the finding it asks about comes from chant as data. |
-| boundary cell | domain record kinds (contracts, units, evidence, drivers, sessions) | plugin | a record kind file and its schema, passed with --kind; jhgaylor/chud (transitional owner, jhgaylor/chud#78, #79, #80) | The record kinds a development model defines; core ships none of them. |
+| boundary cell | domain record kinds (contracts, units, evidence, drivers, sessions) | plugin | a record kind file and its schema, named in chant.workspace.json records or passed with --kind; jhgaylor/chud (transitional owner, jhgaylor/chud#78, #79, #80) | The record kinds a development model defines; core ships none of them, and the declaration names the ones a workspace holds. |
 | boundary cell | `commitJoins` and other joins from commits to records | plugin | a record kind file's commitJoins export (intent-joins.ts reads it) | How a commit is tied to a unit, contract or evidence; core calls the join and never parses a plugin's trailers. |
 | boundary cell | agent prompts and context bundles | plugin | jhgaylor/chud (transitional owner, jhgaylor/chud#78, #79, #80) | What an agent is told and given; chant hands out data and no prompts. |
 | workspace command | `workspace init` | chant | declaration.schema.json | Proposes a chant.workspace.json from the projects under a directory. |
-| workspace command | `workspace ls` | chant | ls.schema.json | Lists the declaration's members and example groups, with a reason code for each one that can't be read. |
+| workspace command | `workspace ls` | chant | ls.schema.json | Lists the declaration's members, the record kinds it names and its example groups, with a reason code for each one that can't be read. |
 | workspace command | `workspace graph` | chant | graph.schema.json | Prints the composed IR of every member, with member links and, given --kind, the records and their links. |
-| workspace command | `workspace graph --intent` | chant | intent.schema.json | Prints the intent graph over one region: its commits, the decisions that constrain it, the artifacts they pin, and findings as nodes. |
+| workspace command | `workspace graph --intent` | chant | intent.schema.json | Prints the intent graph over one region, through the kinds given with --kind or else every kind the declaration names: its commits, the decisions that constrain it, the artifacts they pin, and findings as nodes. |
 | workspace command | `workspace graph --composites` | chant | composites.schema.json | Prints each composite instance with the components that can deploy it, how each match was made and whether it crossed a member link; an instance with no component is listed with none, and the choice is never made here. |
 | workspace command | `workspace check` | chant | check.schema.json | Checks the declaration with WSP ids and the lineage lock with reason codes, and prints the result as a read-contract document. |
 | workspace command | `workspace status` | chant | status.schema.json | Shows each member's releases in one environment from the lifecycle ledgers, read-only. |
-| workspace command | `workspace records` | chant | records.schema.json, records-since.schema.json | Reads the records a record kind locates, validated against its schema, with provenance and reason codes; with --since, what changed in them between two revisions. |
+| workspace command | `workspace records` | chant | records.schema.json, records-since.schema.json | Reads the records a record kind locates, or every kind the declaration names, validated against its schema, with provenance and reason codes; with --since, what changed in them between two revisions. |
 | workspace command | `workspace records pin` | chant | chant workspace records pin &lt;path&gt; | Prints a file's path from the workspace root and its sha256, for a decision's evidence pin. |
 | workspace command | `workspace records new` | chant | records-new.schema.json | Writes one new record in a kind's directory from validated JSON fields, allocating the next id, and never commits. |
 | workspace command | `workspace records amend` | chant | records-amend.schema.json | Sets fields of one record under its schema and the approval rule, refusing a change to an approved record that only a superseding record can make. |
@@ -159,10 +159,10 @@ Each row follows, in the order of the table above.
 | reason code | `runtimes-config-unreadable` | chant | composites.schema.json | The member's chant.config.ts could not be read, so only the built-in local runtime is listed. |
 | reason code | `runtimes-lexicon-unreadable` | chant | composites.schema.json | A lexicon the member's config lists could not be loaded, so it is not listed as a runtime. |
 | reason code | `record-supersedes-pending` | chant | records-amend.schema.json, records-new.schema.json, records-review.schema.json, records.schema.json | A supersedes link from a record whose state is weaker than the record it names, so the link has no effect yet. |
-| reason code | `kind-unreadable` | chant | intent.schema.json, records-amend.schema.json, records-new.schema.json, records-review.schema.json, records-since.schema.json, records.schema.json | The record kind file is missing or could not be imported. |
-| reason code | `kind-invalid` | chant | intent.schema.json, records-amend.schema.json, records-new.schema.json, records-review.schema.json, records-since.schema.json, records.schema.json | The record kind file exports no recordKind, or its shape is wrong. |
-| reason code | `schema-unreadable` | chant | intent.schema.json, records-amend.schema.json, records-new.schema.json, records-review.schema.json, records-since.schema.json, records.schema.json | The schema file the record kind names is missing or is not JSON. |
-| reason code | `schema-id-mismatch` | chant | intent.schema.json, records-amend.schema.json, records-new.schema.json, records-review.schema.json, records-since.schema.json, records.schema.json | The schema's $id differs from the id the record kind names. |
+| reason code | `kind-unreadable` | chant | intent.schema.json, ls.schema.json, records-amend.schema.json, records-new.schema.json, records-review.schema.json, records-since.schema.json, records.schema.json | The record kind file is missing or could not be imported. |
+| reason code | `kind-invalid` | chant | intent.schema.json, ls.schema.json, records-amend.schema.json, records-new.schema.json, records-review.schema.json, records-since.schema.json, records.schema.json | The record kind file exports no recordKind, or its shape is wrong. |
+| reason code | `schema-unreadable` | chant | intent.schema.json, ls.schema.json, records-amend.schema.json, records-new.schema.json, records-review.schema.json, records-since.schema.json, records.schema.json | The schema file the record kind names is missing or is not JSON. |
+| reason code | `schema-id-mismatch` | chant | intent.schema.json, ls.schema.json, records-amend.schema.json, records-new.schema.json, records-review.schema.json, records-since.schema.json, records.schema.json | The schema's $id differs from the id the record kind names. |
 | reason code | `schema-invalid` | chant | intent.schema.json, records-amend.schema.json, records-new.schema.json, records-review.schema.json, records-since.schema.json, records.schema.json | The record schema itself does not compile. |
 | reason code | `location-missing` | chant | intent.schema.json, records-amend.schema.json, records-new.schema.json, records-review.schema.json, records-since.schema.json, records.schema.json | The records directory does not exist, in the tree or at the revision. |
 | reason code | `write-usage-invalid` | chant | records-amend.schema.json, records-new.schema.json, records-review.schema.json | The command line lacks a value the write needs, or gives one it does not take. |
@@ -228,6 +228,7 @@ Each row follows, in the order of the table above.
 | WSP check | `WSP112` `record-asset-missing` | chant | check.schema.json | Every file a current record pins by hash exists. |
 | WSP check | `WSP113` `record-asset-stale` | chant | check.schema.json | No current record pins a file at the same hash as a record it supersedes while the file is unchanged since: when a decision changes, the artifacts it rests on follow. |
 | WSP check | `WSP114` `records-unreadable` | chant | check.schema.json | The records of the kind named with --kind can be read. |
+| WSP check | `WSP115` `record-kind-unloadable` | chant | check.schema.json | Every record kind the declaration names is a file that exports a valid recordKind, with the schema it names. |
 | hud view | H1 | hud | alecraso/hud | Review queue: decided records grouped by area, oldest first, each as a decision card. It reads records --current --json. |
 | hud view | H2 | hud | alecraso/hud | Decision page: options side by side with rejected options kept, the supersession chain, amendment history and provenance. It reads records --json, records --at. |
 | hud view | H3 | hud | alecraso/hud | Review actions: agree, dissent with a required reason, abstain and propose, each verdict a pull request under the signed-in principal. It reads records, and writes through records review and records new in a pull request. |

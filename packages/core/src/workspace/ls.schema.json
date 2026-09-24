@@ -43,6 +43,11 @@
                   "integrity": { "type": ["string", "null"] }
                 }
               }
+            },
+            "records": {
+              "description": "Added in contract 1 by #2680. The workspace's own record kinds, from the declaration's top-level records, in file order.",
+              "type": "array",
+              "items": { "$ref": "#/$defs/recordKind" }
             }
           }
         },
@@ -89,6 +94,11 @@
         "upstream": { "type": ["string", "null"] },
         "because": { "type": ["string", "null"] },
         "readable": { "type": "boolean", "description": "True exactly when reason is null." },
+        "records": {
+          "description": "Added in contract 1 by #2680. The record kinds the member declares, in file order. A kind that can't be loaded does not make the member unreadable.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/recordKind" }
+        },
         "reason": {
           "oneOf": [
             { "type": "null" },
@@ -106,6 +116,30 @@
       "if": { "type": "object", "properties": { "readable": { "const": true } }, "required": ["readable"] },
       "then": { "type": "object", "properties": { "reason": { "type": "null" } } },
       "else": { "type": "object", "properties": { "reason": { "type": "object" } } }
+    },
+    "recordKind": {
+      "description": "A record kind the declaration names (#2680). chant workspace records and graph --intent read every one of them when --kind is not given.",
+      "type": "object",
+      "required": ["name", "path", "kind", "reason"],
+      "properties": {
+        "name": { "type": ["string", "null"], "description": "The name the declaration gives the kind, else the kind file's own recordKind.name, else null when the file can't be loaded." },
+        "path": { "type": "string", "description": "The kind file, relative to the workspace root, with / separators." },
+        "kind": { "type": ["string", "null"], "description": "The kind file's recordKind.name, or null when it can't be loaded." },
+        "reason": {
+          "description": "Why the kind file can't be loaded, or null. The file is looked for in the tree read, the revision under --at, and loaded from the working tree.",
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["code", "message"],
+              "properties": {
+                "code": { "enum": ["kind-unreadable", "kind-invalid", "schema-unreadable", "schema-id-mismatch"] },
+                "message": { "type": "string" }
+              }
+            }
+          ]
+        }
+      }
     },
     "group": {
       "type": "object",

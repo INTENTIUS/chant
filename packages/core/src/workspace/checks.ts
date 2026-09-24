@@ -27,6 +27,7 @@
  * | WSP091 to WSP097 | member links (#2539) |
  * | WSP101 to WSP106 | generated files |
  * | WSP111 to WSP114 | records read with `--kind` (#2549) |
+ * | WSP115 | the record kinds the declaration names (#2680) |
  */
 
 import { realpathSync } from "node:fs";
@@ -44,6 +45,7 @@ import { gatherGeneratedFacts, GENERATED_CHECKS, type GeneratedFileFacts } from 
 import { gatherLedgerFacts, LEDGER_CHECKS, type MemberLedgerFacts } from "./checks/ledgers";
 import { gatherPipelineFacts, PIPELINE_CHECKS, type MemberPipelineFacts } from "./checks/pipelines";
 import { RECORD_CHECKS, type RecordFacts } from "./checks/records";
+import { loadDeclaredKinds, type DeclaredKind } from "./declared-kinds";
 
 /**
  * What the checks beyond the declaration read, gathered from the checkout
@@ -59,6 +61,8 @@ export interface WorkspaceFacts {
   generated?: readonly GeneratedFileFacts[];
   /** The records of the kind named with `--kind`, with their pins checked (#2549). */
   records?: RecordFacts;
+  /** The record kinds the declaration names, each loaded, or only looked for under `--at` (#2680). */
+  declaredKinds?: readonly DeclaredKind[];
 }
 
 /** What every declaration check reads. */
@@ -444,7 +448,9 @@ export async function runDeclarationChecks(
   }
   const { registry, problems } = loadKindRegistry(declaration.pins, root);
   const gathered = options.gather === false || options.tree ? {} : await gatherWorkspaceFacts(root, declaration, options);
-  const facts: WorkspaceFacts = options.records ? { ...gathered, records: options.records } : gathered;
+  // The declared record kinds load from the working tree; under --at only whether each exists at the revision is checked (#2680).
+  const declaredKinds = options.gather === false ? undefined : await loadDeclaredKinds(declaration, tree, root, { load: !options.tree });
+  const facts: WorkspaceFacts = { ...gathered, ...(options.records ? { records: options.records } : {}), ...(declaredKinds ? { declaredKinds } : {}) };
   const ctx: WorkspaceCheckContext = { declaration, tree, groups, kinds: registry, kindProblems: problems, facts };
   const findings = runWorkspaceChecks(ctx);
   const { active, suppressed } = applyCheckSettings(declaration, findings);

@@ -13,6 +13,7 @@
  * | WSP112 | a pinned file that does not exist |
  * | WSP113 | a pinned file that a superseding record pins at the old hash: the artifact did not follow the decision |
  * | WSP114 | the records of `--kind` can't be read (fixed) |
+ * | WSP115 | a record kind the declaration names is missing or does not load as one (fixed, #2680) |
  */
 
 import type { WorkspaceCheck, WorkspaceDiagnostic } from "../checks";
@@ -78,6 +79,24 @@ export const RECORD_CHECKS: readonly WorkspaceCheck[] = [
       const facts = ctx.facts?.records;
       if (!facts || !("error" in facts)) return [];
       return [{ checkId: this.id, severity: this.severity, message: `--kind ${facts.kind}: ${facts.error.code}: ${facts.error.message}`, pointer: "" }];
+    },
+  },
+  {
+    id: "WSP115",
+    name: "record-kind-unloadable",
+    description: "Every record kind the declaration names is a file that exports a valid recordKind, with the schema it names.",
+    severity: "error",
+    configurable: false,
+    check(ctx) {
+      return (ctx.facts?.declaredKinds ?? [])
+        .filter((k) => k.reason !== null)
+        .map((k) => ({
+          checkId: this.id,
+          severity: this.severity,
+          message: `${k.declared.member === null ? "the workspace" : `member ${k.declared.member}`} declares the record kind ${k.declared.kind}, which can't be loaded: ${k.reason!.code}: ${k.reason!.message}`,
+          ...(k.declared.member !== null ? { entity: k.declared.member } : {}),
+          pointer: `${k.declared.pointer}/kind`,
+        }));
     },
   },
 ];

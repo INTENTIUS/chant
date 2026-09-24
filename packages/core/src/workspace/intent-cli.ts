@@ -5,7 +5,8 @@
  * section B: the region, its decisions, their artifacts, the commits, and the
  * findings. Under each decision come the commits made inside its window, and
  * when any of them is not the decision's own work, the question #2650 B puts
- * to the person about it (#2656).
+ * to the person about it (#2656). Without `--kind`, the walk reads every
+ * record kind the declaration names (#2680).
  */
 
 import { resolve } from "node:path";
@@ -107,8 +108,9 @@ export async function runWorkspaceIntent(ctx: CommandContext, cwd: string): Prom
     console.error(formatError({ message: "--intent needs a region: a path, path:line or path:start-end", hint: USAGE }));
     return 1;
   }
-  const kinds = args.kinds ?? (args.kind !== undefined ? [args.kind] : []);
-  const { doc, failed } = await intentGraph({ cwd, region: args.intent, at: args.at, kinds: kinds.map((k) => resolve(k)) });
+  // No --kind: undefined, so the walk reads the kinds the declaration names (#2680).
+  const kinds = args.kinds ?? (args.kind !== undefined ? [args.kind] : undefined);
+  const { doc, failed } = await intentGraph({ cwd, region: args.intent, at: args.at, kinds: kinds?.map((k) => resolve(k)) });
   if (args.json) console.log(JSON.stringify(doc, null, 2));
   if ("error" in doc) {
     console.error(formatError({ message: `${doc.error.code}: ${doc.error.message}`, hint: USAGE }));

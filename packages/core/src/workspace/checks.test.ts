@@ -58,6 +58,8 @@ describe("the WSP catalog", () => {
       "link-kind-unknown",
       // --kind names a record kind, and records that can't be read check nothing (#2549).
       "records-unreadable",
+      // A declared record kind that doesn't load breaks every reader's default (#2680).
+      "record-kind-unloadable",
     ]);
   });
 

@@ -76,6 +76,7 @@ chant.workspace.json
 | `WSP112` | record-asset-missing | warning | yes | A current record pins a file that does not exist |
 | `WSP113` | record-asset-stale | warning | yes | A current record pins a file at the hash a record it supersedes pinned, and the file has not changed since: the artifact did not follow the decision |
 | `WSP114` | records-unreadable | error | no | The records of the kind named with `--kind` can't be read |
+| `WSP115` | record-kind-unloadable | error | no | A [record kind the declaration names](/chant/reference/workspace-declaration/#record-kinds) is missing, or doesn't export a valid `recordKind` with the schema it names. The finding gives the reason code. Under `--at`, only whether the file exists at the revision is checked |
 
 A finding's location is the entry it is about, the link for `WSP091` to `WSP094` and `WSP096`, or the pin for `WSP002`. A finding about two or more members sits at the first of them in the declaration, and that member's entry is where a `suppress` for it goes.
 

@@ -52,6 +52,7 @@ chant finds the file by walking up from the current directory to the git root, t
 | `minReader` | no | The oldest chant version that may read the file, such as `"0.81.0"`. An older chant refuses it with `reader-too-old`. |
 | `pins` | no | An array of [pins](#pins). |
 | `checks` | no | Severities for the [declaration checks](/chant/cli/workspace-check/#severity-and-suppression), keyed by `WSP` id: `error`, `warning`, `info` or `off`. |
+| `records` | no | The workspace's own [record kinds](#record-kinds), each `{ "kind": "<path>" }` with the path from the workspace root. It was added in chant 0.86.0. |
 | `quorum` | no | How many agree verdicts besides the decider's a record needs, as an integer from 0. [`chant workspace records`](/chant/cli/workspace-records/#reviews-and-quorum) reports each record's quorum against it, and it applies to every record kind with a reviews list. The default is 2. It was added in chant 0.86.0, so a declaration that sets it should set `minReader` to `"0.86.0"`. |
 | `$schema`, `$comment` | no | Editor hints and notes. chant ignores them. |
 | `x-...` | no | Any field whose name starts with `x-`, for people and other tools. Allowed on every object in the file. |
@@ -71,6 +72,7 @@ A member is an object with `name`, `dir` and `kind`.
 | `generated` | no | The files a command writes in the member, with the command that writes each (see [Generated files](#generated-files)). |
 | `links` | no | The [member links](#member-links) this member reads, each `{ "member": "...", "output": "..." }`. |
 | `outputs` | no | For a member of kind `other` or a kind from a package, the outputs it exposes to [links](#member-links). A `chant` member's outputs are read from its source instead. |
+| `records` | no | The [record kinds](#record-kinds) the member holds, each `{ "kind": "<path>" }` with the path from the member's directory. It was added in chant 0.86.0. |
 | `upstream` | no | Where an embedded member's files come from. Versions live in the lock, not here. |
 | `because` | for `other` | Why the member is there. |
 | `suppress` | no | Declaration checks turned off for this member, each `{ "check": "WSP009", "because": "..." }`. See [severity and suppression](/chant/cli/workspace-check/#severity-and-suppression). |
@@ -121,6 +123,38 @@ The outputs a producer exposes depend on its kind.
 [`chant workspace check`](/chant/cli/workspace-check/#member-links) resolves every link in source and never reaches the network. A link whose output the producer no longer exposes fails, so renaming an output fails the check for every consumer that links to it. When chant can't read all of a `chant` producer's outputs without running its code, such as an output whose name is computed, a link to a name it didn't find is kept and reported as unresolved.
 
 Joins nobody wrote down are inferred. Each parameter of a `chant` member, written `export const name = new Parameter(...)`, is matched to the other members' outputs by the core function `joinKey()`. That function ignores case and punctuation. An inferred join is labelled `exact` when the names are equal and `folded` when they differ only in case or punctuation, so `clusterArn` joins `ClusterArn` as `folded`. A parameter that matches outputs of two producers is reported as ambiguous and joins neither. A declared link from the same consumer to one of the matched outputs replaces the inferred join, and writing one down is how an inferred join becomes declared.
+
+## Record kinds
+
+The declaration names the workspace's record kinds, so a reader never has to guess which kind files exist ([#2680](https://github.com/INTENTIUS/chant/issues/2680)). A member lists the kinds it holds in its `records`. Kinds whose records belong to no one member, such as a decisions directory at the root, go in the top-level `records`. The reference workspace declares its decision kind that way, and its design member declares the review-session kind. In this example the design member holds a kind of its own too:
+
+```json
+{
+  "name": "studio",
+  "schema": 1,
+  "minReader": "0.86.0",
+  "members": [
+    { "name": "design", "dir": "design", "kind": "other", "because": "the design data member", "records": [{ "kind": "notes/note.kind.mjs", "name": "notes" }] }
+  ],
+  "records": [{ "kind": "decisions/decision.kind.mjs" }]
+}
+```
+
+| Field | Required | Value |
+|---|---|---|
+| `kind` | yes | The kind file: a module that exports `recordKind` ([Record kinds](/chant/cli/workspace-records/#record-kinds)). The path is relative to the member's directory, or to the workspace root in the top-level list, and it stays inside it. A path is declared once across the file. |
+| `name` | no | The name readers show for the kind, in the kind-name grammar. Without it, the kind file's own `recordKind.name`. A name is given once across the file. |
+
+Readers take the top-level list first. The members' lists follow in file order.
+
+| Command | Uses the declared kinds |
+|---|---|
+| [`chant workspace ls`](/chant/cli/workspace-ls/#output) | lists them, with each kind file's name, or the reason it can't be loaded |
+| [`chant workspace check`](/chant/cli/workspace-check/#declaration-checks) | fails with `WSP115` when a kind file is missing or doesn't load as a record kind. The check is fixed, so it can't be turned down or suppressed |
+| [`chant workspace records`](/chant/cli/workspace-records/#declared-kinds) | reads every one of them when `--kind` is not given |
+| [`chant workspace graph --intent`](/chant/cli/workspace-graph/#the-intent-graph) | reads every one of them, and runs each one's commit joins, when `--kind` is not given |
+
+`--kind` still overrides the declaration in `records` and `graph --intent`. A kind file is looked for in the tree read, which is the revision under `--at`. It is loaded from the working tree, the way a `--kind` file is. A declaration that uses `records` should set `minReader` to `"0.86.0"`. An older chant then reports `reader-too-old`, where it would otherwise refuse the field as unknown.
 
 ## Example groups
 

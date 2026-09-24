@@ -318,6 +318,20 @@ describe("decision files", () => {
     for (const r of doc.records) expect(dirname(r.path)).toBe("reference-workspace/decisions");
   });
 
+  test("the declaration names the decision and session kinds, so ls lists them and records reads them without --kind (#2680)", async () => {
+    const ls = lsJson(fixture) as unknown as { workspace: { records: unknown[] }; members: { name: string; records: unknown[] }[] };
+    expect(ls.workspace.records).toEqual([{ name: "decision", path: "decisions/decision.kind.mjs", kind: "decision", reason: null }]);
+    expect(ls.members.find((m) => m.name === "design")!.records).toEqual([{ name: "session", path: "design/sessions/session.kind.mjs", kind: "session", reason: null }]);
+    const run = chant(fixture, "workspace", "records", "--current", "--json");
+    expect(run.status, run.stderr).toBe(0);
+    const set = JSON.parse(run.stdout) as { kinds: { kind: { name: string }; declared: unknown; records: { id: string }[] }[] };
+    expect(set.kinds.map((k) => [k.kind.name, k.declared])).toEqual([
+      ["decision", { member: null, path: "decisions/decision.kind.mjs", name: null }],
+      ["session", { member: "design", path: "design/sessions/session.kind.mjs", name: null }],
+    ]);
+    expect(set.kinds[0].records.map((r) => r.id)).toEqual(files.map((f) => f.slice(0, "ref-000".length)));
+  });
+
   test("ref-002 pins design/screens/home.json by hash, and the pin holds (#2549)", async () => {
     const doc = await queryRecords({ kind: "decisions/decision.kind.mjs", current: true, cwd: fixture });
     if ("error" in doc) throw new Error(`${doc.error.code}: ${doc.error.message}`);

@@ -49,6 +49,13 @@
       "minimum": 0,
       "description": "How many agree verdicts besides the decider's a record needs, for every record kind with a reviews list (#2671). chant workspace records reports each record's quorum against it. Two when absent. Added in schema 1 by chant 0.86.0, so a declaration that sets it sets minReader to 0.86.0 or newer. A per-kind quorum comes later (#2650 C14)."
     },
+    "records": {
+      "type": "array",
+      "description": "The workspace's own record kinds, each a kind file relative to the workspace root (#2680): the kinds whose records belong to no one member, such as a decisions directory at the root. A member names its own in its records. chant workspace ls lists them, and chant workspace records and graph --intent read every declared kind when --kind is not given. Added in schema 1 by chant 0.86.0, so a declaration that uses it sets minReader to 0.86.0 or newer.",
+      "items": {
+        "$ref": "#/$defs/recordKind"
+      }
+    },
     "checks": {
       "type": "object",
       "description": "Severity for the declaration checks that allow it, keyed by WSP id (#2535, ws-028): error, warning, info or off. chant workspace check refuses an id it does not know, and one whose severity is fixed.",
@@ -255,6 +262,13 @@
             "$ref": "#/$defs/link"
           }
         },
+        "records": {
+          "type": "array",
+          "description": "The record kinds this member holds, each a kind file relative to the member's directory (#2680). chant workspace ls lists them, and chant workspace records and graph --intent read every declared kind when --kind is not given. Added in schema 1 by chant 0.86.0, so a declaration that uses it sets minReader to 0.86.0 or newer.",
+          "items": {
+            "$ref": "#/$defs/recordKind"
+          }
+        },
         "upstream": {
           "type": "string",
           "minLength": 1,
@@ -339,6 +353,27 @@
       "type": "string",
       "description": "A file or directory path with / separators: no leading /, no . or .. segments and no trailing /.",
       "pattern": "^(?!\\.\\.?(/|$))[^/\\\\]+(/(?!\\.\\.?(/|$))[^/\\\\]+)*$"
+    },
+    "recordKind": {
+      "type": "object",
+      "description": "A record kind the workspace declares (#2680): a kind file that exports recordKind. chant workspace check fails (WSP115) when the file is missing or does not load as a record kind.",
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/path",
+          "description": "The kind file, relative to the member's directory, or to the workspace root for the workspace's own records. A path is listed once across the declaration."
+        },
+        "name": {
+          "$ref": "#/$defs/kindName",
+          "description": "The name readers show for the kind. Without it, the kind file's own recordKind.name. Unique across the declaration."
+        }
+      },
+      "patternProperties": {
+        "^x-": true
+      },
+      "additionalProperties": false
     },
     "generatedFile": {
       "type": "object",
