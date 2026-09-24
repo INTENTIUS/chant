@@ -10,6 +10,7 @@ Scaffold a new chant project with the standard directory structure and configura
 
 ```
 chant init <path> --lexicon <name> [flags]
+chant init <path> --from <repo>@<ref>[#<member>] [--force]
 ```
 
 ## Flags
@@ -17,7 +18,8 @@ chant init <path> --lexicon <name> [flags]
 | Flag | Description |
 |------|-------------|
 | `-d, --lexicon <name>` | Select lexicon (**required**) |
-| `-t, --template <name>` | Init template (e.g. `node-pipeline`, `docker-build`) |
+| `-t, --template <name>` | Init template (e.g. `node-pipeline`, `docker-build`). Also writes the [lineage lock](#lineage) |
+| `--from <repo>@<ref>[#<member>]` | Copy a template repository instead of a lexicon's templates (see [below](#from-a-template-repository)) |
 | `--force` | Overwrite existing files |
 
 ## Description
@@ -44,6 +46,32 @@ chant build
 # Overwrite existing files
 chant init my-infra --lexicon aws --force
 ```
+
+## Lineage
+
+With `--template`, init also writes `.chant/workspace.lock.json`. The lock records the template (`lexicon:<lexicon>/<template>`), the lexicon package and chant versions that rendered it, and the hash of every file init wrote, so a later upgrade can tell which files you have edited. The [Lineage Lock](/chant/reference/lineage-lock/) page describes the format.
+
+Plain `chant init` without `--template` writes no lock, and its output is unchanged.
+
+## From a template repository
+
+`--from` copies a template repository at a ref into the target directory and records where it came from:
+
+```bash
+chant init my-service --from acme/starter@v1.4.0#service
+chant init my-service --from https://git.example.com/acme/starter.git@main
+chant init my-service --from ../starter@4624a0b6ca83bf3a2776b2d29d269e989d8b560f
+```
+
+| Part | Meaning |
+|---|---|
+| `<repo>` | A git URL, `git@host:path`, a local repository path, or `owner/name` for a GitHub repository |
+| `<ref>` | A tag, branch or commit. Required |
+| `#<member>` | Copy only this directory of the repository. Its contents land at the project root |
+
+chant fetches the one commit with `git fetch --depth 1`, the only network step in `chant init`, listed on the [network egress](/chant/reference/network-egress/#starting-a-project-from-a-template) page. It copies every tracked file under the chosen directory, keeping the executable bit, and skips submodules, symbolic links and the template's own lineage lock with a warning. It then writes `.chant/workspace.lock.json` with the commit and tree as the content address.
+
+The template brings its own `chant.config.ts` and lexicons, so `--from` cannot be combined with `--lexicon` or `--template`. A non-empty directory needs `--force`, and files that already exist are kept and left out of the lineage. A directory that already has a lock is refused. `--from` does not install dependencies.
 
 ## Lexicon scaffold mode
 

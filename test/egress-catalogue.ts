@@ -43,7 +43,7 @@ import { join, relative, sep } from "node:path";
  * Which chant phase reaches a catalogued module. The phase, not the file, is
  * what an adopter asking "can I run this air-gapped" actually needs.
  */
-export type EgressPhaseId = "apply" | "emulator" | "codegen" | "audit" | "maintenance";
+export type EgressPhaseId = "apply" | "emulator" | "codegen" | "template" | "audit" | "maintenance";
 
 export interface EgressPhase {
   id: EgressPhaseId;
@@ -71,6 +71,12 @@ export const EGRESS_PHASES: readonly EgressPhase[] = [
     label: "Code generation",
     summary:
       "`chant dev generate`, `chant dev pinned-upgrade` and `chant vendor` fetch upstream schemas. Every lexicon's `spec/fetch.ts` runs here and nowhere else: the generated types and the committed spec snapshot are what a build reads, so a machine that never runs codegen never needs the endpoints below. `chant dev pinned-upgrade` is the one command here that queries `api.github.com`, and it is a lexicon-maintainer command — it moves a pin in a lexicon's own source, and nothing on an adopter's build, lint or apply path calls it.",
+  },
+  {
+    id: "template",
+    label: "Starting a project from a template",
+    summary:
+      "`chant init --from <repo>@<ref>` fetches one commit of a template repository, and nothing else in `chant init` reaches a network. `chant init --template <name>` renders a lexicon's templates from the installed package and reaches nothing. The fetch is a `git` child process, so it is listed below as a shell-out rather than as a module.",
   },
   {
     id: "audit",
@@ -213,6 +219,40 @@ export const OFFLINE_SHELL_OUTS: readonly ShellOut[] = [
     note: "`helm version`, then `helm template <name> <chart> --include-crds [--repo <url> --version <v>]`. A `HelmRender` composite resolves at synthesis time, so a project that declares one puts a chart render on its build path. With `repo` set, helm fetches the chart from that repository — **this is the one build-path shell-out that reaches a network**, on first synth only: the rendered manifests are cached under the render root (`CHANT_HELM_RENDER_ROOT`, default `~/.chant/helm-renders/`) and every later build reads the cache. A project declaring no `HelmRender` never spawns it.",
     conditional: true,
     reachesNetwork: true,
+  },
+];
+
+// ── Shell-outs that reach the network on purpose ─────────────────────────────
+
+export interface NetworkShellOut {
+  /** The binary spawned. */
+  binary: string;
+  /** Its subcommand, which the module must pass as a literal argument. */
+  subcommand: string;
+  /** The command a reader types. */
+  command: string;
+  /** The module that spawns it, repo-relative with forward slashes. */
+  file: string;
+  phase: EgressPhaseId;
+  destination: string;
+  why: string;
+}
+
+/**
+ * Child processes that a command spawns in order to reach a network. The scan
+ * below finds in-process primitives only, so these are listed by hand, and
+ * `test/no-egress.test.ts` checks that each module still spawns what its
+ * entry says.
+ */
+export const NETWORK_SHELL_OUTS: readonly NetworkShellOut[] = [
+  {
+    binary: "git",
+    subcommand: "fetch",
+    command: "chant init --from <repo>@<ref>",
+    file: "packages/core/src/workspace/lineage-init.ts",
+    phase: "template",
+    destination: "the repository named in `--from`: a git URL, `git@host:path`, or `https://github.com/<owner>/<name>.git` for `owner/name`. A local path reaches nothing",
+    why: "`git fetch --depth 1 <repo> <ref>` into a scratch repository that is deleted afterwards. The commit and tree it resolves are the content address the lineage lock records (#2540). Credentials are git's own, and `GIT_TERMINAL_PROMPT=0` stops it asking for any.",
   },
 ];
 
@@ -722,18 +762,30 @@ export function renderEgressCatalogueBlock(): string {
   lines.push("## Phases that do reach the network", "");
   for (const phase of EGRESS_PHASES) {
     const sites = EGRESS_CATALOGUE.filter((site) => site.phase === phase.id);
+    const shellOuts = NETWORK_SHELL_OUTS.filter((shellOut) => shellOut.phase === phase.id);
     lines.push(`### ${phase.label}`, "", phase.summary, "");
-    lines.push("| Module | Primitive | Destination | Why |", "|---|---|---|---|");
-    for (const site of sites) {
-      lines.push(
-        `| \`${cell(site.file)}\` | ${site.primitives.map((p) => `\`${cell(p)}\``).join(", ")} | ${cell(site.destination)} | ${cell(site.why)} |`,
-      );
+    if (sites.length > 0) {
+      lines.push("| Module | Primitive | Destination | Why |", "|---|---|---|---|");
+      for (const site of sites) {
+        lines.push(
+          `| \`${cell(site.file)}\` | ${site.primitives.map((p) => `\`${cell(p)}\``).join(", ")} | ${cell(site.destination)} | ${cell(site.why)} |`,
+        );
+      }
+      lines.push("");
     }
-    lines.push("");
+    if (shellOuts.length > 0) {
+      lines.push("| Command | Spawns | Module | Destination | Why |", "|---|---|---|---|---|");
+      for (const shellOut of shellOuts) {
+        lines.push(
+          `| \`${cell(shellOut.command)}\` | \`${cell(`${shellOut.binary} ${shellOut.subcommand}`)}\` | \`${cell(shellOut.file)}\` | ${cell(shellOut.destination)} | ${cell(shellOut.why)} |`,
+        );
+      }
+      lines.push("");
+    }
   }
 
   lines.push(
-    `**${EGRESS_CATALOGUE.length} modules** across ${EGRESS_SCAN_ROOTS.map((root) => `\`${root}/\``).join(", ")} call a network primitive directly. Every other module that reaches the network does so through one of them.`,
+    `**${EGRESS_CATALOGUE.length} modules** across ${EGRESS_SCAN_ROOTS.map((root) => `\`${root}/\``).join(", ")} call a network primitive directly. Every other module that reaches the network does so through one of them, or through a child process listed on this page.`,
   );
   lines.push("", EGRESS_CATALOGUE_END);
   return lines.join("\n");

@@ -89,7 +89,7 @@
 
 import { describe, expect, test, vi, afterAll } from "vitest";
 import { Socket } from "node:net";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 
@@ -151,6 +151,8 @@ const {
   EGRESS_CATALOGUE,
   EGRESS_CATALOGUE_DOCS,
   OFFLINE_SHELL_OUTS,
+  NETWORK_SHELL_OUTS,
+  EGRESS_PHASES,
   extractEgressCatalogueBlock,
   renderEgressCatalogueBlock,
   scanEgressSites,
@@ -601,6 +603,21 @@ describe("chant #1984 — the egress catalogue matches the tree", () => {
       (site) => scannedBy.has(site.file) && scannedBy.get(site.file) !== site.primitives.join(", "),
     ).map((site) => `${site.file}: declared [${site.primitives.join(", ")}], found [${scannedBy.get(site.file)}]`);
     expect(drifted, "a catalogue entry's declared primitives no longer match its source").toEqual([]);
+  });
+
+  test("each network shell-out's module still spawns what its entry says", () => {
+    // The scan above sees in-process primitives only, so a `git fetch` is
+    // listed by hand in NETWORK_SHELL_OUTS. This keeps the listing honest in
+    // the other direction: an entry whose module moved or stopped spawning
+    // the binary fails here.
+    for (const shellOut of NETWORK_SHELL_OUTS) {
+      const path = join(ROOT, shellOut.file);
+      expect(existsSync(path), `${shellOut.file} no longer exists`).toBe(true);
+      const source = readFileSync(path, "utf-8");
+      expect(source, `${shellOut.file} no longer spawns ${shellOut.binary}`).toContain(`"${shellOut.binary}"`);
+      expect(source, `${shellOut.file} no longer runs ${shellOut.binary} ${shellOut.subcommand}`).toContain(`"${shellOut.subcommand}"`);
+      expect(EGRESS_PHASES.map((p) => p.id)).toContain(shellOut.phase);
+    }
   });
 
   test("no catalogue entry is listed twice", () => {

@@ -108,6 +108,14 @@ An in-process guard says nothing about a child process, so the offline phases' s
 | `lexicons/cpln/src/spec/snapshot-cli.ts` | `fetch` | the Control Plane OpenAPI document | `just snapshot` refreshes the committed offline spec snapshot; run on a networked machine on purpose, and the snapshot is what everything else reads. |
 | `lexicons/azure/scripts/fetch-quickstart-templates.ts` | `fetch` | the Azure quickstart-templates repository | Builds the ARM fixture corpus the azure serializer is tested against; a maintainer script, not part of the lexicon's published surface. |
 
+### Starting a project from a template
+
+`chant init --from <repo>@<ref>` fetches one commit of a template repository, and nothing else in `chant init` reaches a network. `chant init --template <name>` renders a lexicon's templates from the installed package and reaches nothing. The fetch is a `git` child process, so it is listed below as a shell-out rather than as a module.
+
+| Command | Spawns | Module | Destination | Why |
+|---|---|---|---|---|
+| `chant init --from <repo>@<ref>` | `git fetch` | `packages/core/src/workspace/lineage-init.ts` | the repository named in `--from`: a git URL, `git@host:path`, or `https://github.com/<owner>/<name>.git` for `owner/name`. A local path reaches nothing | `git fetch --depth 1 <repo> <ref>` into a scratch repository that is deleted afterwards. The commit and tree it resolves are the content address the lineage lock records (#2540). Credentials are git's own, and `GIT_TERMINAL_PROMPT=0` stops it asking for any. |
+
 ### Auditing a remote repository
 
 `chant audit <url>` reads someone else's repository over a git host's API. Auditing a local path reaches nothing.
@@ -126,7 +134,7 @@ Freshness checks that run in this repository's own CI, against `api.github.com`.
 | `scripts/dogwood-freshness.ts` | `fetch` | `api.github.com` commit and tree metadata | Compares the committed dogwood pin against upstream for `scripts/check-dogwood-freshness.ts`. The transport is injectable, which is why the comparison half is unit-tested without a network. |
 | `scripts/prior-art-sweep.ts` | `fetch` | the rule indexes of the tools the audit rules credit: `raw.githubusercontent.com`, `api.github.com` directory listings, and a few tools' own docs sites (checkov.io, PSRule for Azure, the Bicep linter page) | Diffs each credited tool's published rule list against `scripts/prior-art/snapshot.json` so a rule that appears or disappears upstream, or a credit whose upstream id no longer resolves, is reported. Run by the monthly `prior-art-sweep` workflow and by hand; never by a CLI command or a test. |
 
-**34 modules** across `packages/`, `lexicons/`, `scripts/`, `ops/` call a network primitive directly. Every other module that reaches the network does so through one of them.
+**34 modules** across `packages/`, `lexicons/`, `scripts/`, `ops/` call a network primitive directly. Every other module that reaches the network does so through one of them, or through a child process listed on this page.
 
 {/* GENERATED:egress-catalogue:end */}
 

@@ -69,11 +69,12 @@ Run named, phased workflows defined in `*.op.ts` files. The local runtime is bui
 
 ## Workspace Commands
 
-The first slice of workspace support reads record files and needs no `chant.workspace.json`.
+The first slices of workspace support read record files and the lineage lock. Neither needs a `chant.workspace.json`.
 
 | Command | Description |
 |---------|-------------|
 | [`workspace records --kind <file>`](/chant/cli/workspace-records/) | Print the records a record kind locates, with reason codes for invalid ones |
+| [`workspace lineage`](/chant/cli/workspace-lineage/) | Show where a project's files came from and which manual steps are open |
 
 ## State Commands
 

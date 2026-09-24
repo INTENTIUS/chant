@@ -1,0 +1,179 @@
+---
+title: Lineage Lock
+description: The format of .chant/workspace.lock.json, the file that records where each scope of a project was copied from.
+diataxis: reference
+---
+
+The lineage lock records where a project's files came from. `chant init --from`, `chant init --template` and `chant vendor migrate` write it, and `chant vendor pull` keeps it current. Later, `chant workspace upgrade` ([#2550](https://github.com/INTENTIUS/chant/issues/2550)) reads it to bring a project forward to a newer template. The design is D9 of [#2524](https://github.com/INTENTIUS/chant/issues/2524), with decisions ws-038 (vendor as a lineage scope) and ws-047 (the lock is written at init).
+
+Lineage works for a plain project. The lock needs no `chant.workspace.json`, and chant loads its code only when a lock exists or a command that writes one runs. A project that never uses `--from`, `--template` or `chant vendor migrate` has no lock and sees no change.
+
+## Location
+
+| Project | Lock |
+|---|---|
+| A plain project | `<project>/.chant/workspace.lock.json`, with the project as scope `"."` |
+| A workspace (`chant.workspace.json`) | `<workspace root>/.chant/workspace.lock.json`, with one scope per member directory |
+
+Commit the lock. The generated `.gitignore` ignores `.chant/types/`, `.chant/meta/` and `.chant/rules/` only, so the lock is tracked by default.
+
+## Example
+
+A project made with `chant init --from acme/starter@v1.4.0#service` that also vendors one pattern:
+
+```json
+{
+  "lockVersion": 1,
+  "scopes": {
+    ".": {
+      "kind": "template",
+      "template": "github.com/acme/starter#service",
+      "source": {
+        "type": "git",
+        "repo": "acme/starter",
+        "url": "https://github.com/acme/starter.git",
+        "path": "service"
+      },
+      "ref": "v1.4.0",
+      "address": {
+        "digest": "sha256:1695b7fb…",
+        "commit": "4624a0b6ca83bf3a2776b2d29d269e989d8b560f",
+        "tree": "89aa2215293af8364e8832176cc75b9b846889d1"
+      },
+      "parameters": {},
+      "migrations": [],
+      "files": {
+        ".mcp.json": { "class": "seed", "sha256": "sha256:ca3d163b…" },
+        "skills/chant-aws/SKILL.md": { "class": "generated", "sha256": "sha256:0b1e…", "command": "chant update" },
+        "src/main.ts": { "class": "owned", "sha256": "sha256:037ecd1d…" }
+      },
+      "manualSteps": []
+    },
+    "vendor/web-app": {
+      "kind": "vendor",
+      "name": "web-app",
+      "template": "local:../shared/web-app",
+      "source": { "type": "local", "path": "../shared/web-app" },
+      "ref": "v1.2.0",
+      "address": { "digest": "sha256:9f2c…" },
+      "parameters": {},
+      "migrations": [],
+      "files": {
+        "index.ts": { "class": "owned", "sha256": "sha256:77aa…" }
+      },
+      "manualSteps": [
+        { "path": "index.ts", "reason": "changed-locally", "upstream": "sha256:5e01…" }
+      ]
+    }
+  }
+}
+```
+
+Hashes are shortened here. In the file each is `sha256:` followed by 64 hex digits.
+
+## Top level
+
+| Field | Meaning |
+|---|---|
+| `lockVersion` | The format version, `1`. A chant that reads a higher version refuses the file and says to upgrade. |
+| `scopes` | One lineage per scope, keyed by the scope's directory relative to the lock's root: `"."` for the root, otherwise a posix path such as `vendor/web-app`. |
+
+chant writes the file with sorted keys and two-space indentation, so it diffs cleanly.
+
+## A lineage
+
+| Field | Meaning |
+|---|---|
+| `kind` | `template` for a project or member made from a template, `vendor` for a `chant vendor` target. |
+| `name` | Vendor scopes only: the name `chant vendor pull <name>` takes. |
+| `template` | The source template's identity, stable across refs (see [Template ids](#template-ids)). |
+| `source` | Where the files are fetched from (see [Sources](#sources)). |
+| `ref` | The pin as written: a git ref, a tag or a version label. |
+| `address` | The content address the files came from, or `null` for a vendor scope that has never been pulled. |
+| `parameters` | The parameter values the template was instantiated with. Empty for vendor scopes, which take no parameters, and for templates that declare none. |
+| `migrations` | The migrations applied since the scope was instantiated. Empty until `chant workspace upgrade` exists. |
+| `files` | Every file chant wrote into the scope, keyed by its path relative to the scope directory. |
+| `manualSteps` | Paths an update left alone because the project had its own version (see [Manual steps](#manual-steps)). |
+
+### Sources
+
+| `type` | Fields | Written by |
+|---|---|---|
+| `git` | `repo` as given, `url` that git fetches (a local repository is stored relative to the project), `path` for `#<member>` | `chant init --from` |
+| `lexicon` | `lexicon`, `template` | `chant init --template` |
+| `local` | `path`, relative to the lock's directory | `chant vendor` |
+| `archive` | `url`, optional `subpath` | `chant vendor` |
+
+### Template ids
+
+| Source | Id |
+|---|---|
+| `git` | the repository's host and path without `.git`, plus `#<member>`: `github.com/acme/starter#service`. A local repository keeps the path as given. |
+| `lexicon` | `lexicon:<lexicon>/<template>`, as in `lexicon:aws/node-pipeline` |
+| `local` | `local:<path>` |
+| `archive` | the URL, plus `#<subpath>` |
+
+### Content address
+
+`address.digest` is always present. It hashes the file set as chant wrote it: sha256 over each `path`, a NUL byte, the content and a NUL byte, in sorted path order. A `vendor.json` checksum was computed the same way, so a migrated entry keeps its value. The other fields depend on the source.
+
+| Field | Source | Meaning |
+|---|---|---|
+| `commit` | `git` | The commit `ref` resolved to. |
+| `tree` | `git` | The git tree of the scope's directory at that commit. |
+| `package`, `version` | `lexicon` | The lexicon package and its installed version. For a lexicon the config declares by path, `package` is that path and `version` is `null`, as it is when chant cannot find the package. |
+| `chant` | `lexicon` | The chant version that rendered core's part of the scaffold, such as `package.json`. |
+
+## Files
+
+Each entry has a `class` and a `sha256`. The hash is the file's content when chant last wrote it, which is the merge base for the next update. A file whose content still has that hash has not been edited.
+
+| Class | Update rule | Default for |
+|---|---|---|
+| `owned` | Replaced when unedited. When edited, kept, and a manual step if the source changed it too. | every file not listed below |
+| `generated` | Rebuilt by `command`, never merged. Edits and absence are not reported. | `skills/*/SKILL.md`, rebuilt by `chant update` |
+| `seed` | Written once at init and never updated. | `.mcp.json` |
+
+`.chant/types/` is gitignored and never listed. A file that existed before init (kept with `--force`) was not written from the template and is not listed either.
+
+## Manual steps
+
+When an update finds that the project and the source both changed a file, it keeps the project's file and records a manual step. The source's version is not written anywhere. Fetch it from the source to merge by hand.
+
+| `reason` | What happened |
+|---|---|
+| `changed-locally` | The project edited the file, and the source changed it too. |
+| `deleted-locally` | The project deleted the file, and the source changed it. |
+| `exists-locally` | The source added a file the project already has. |
+| `removed-upstream` | The source removed a file the project edited. |
+
+`upstream` is the hash of the source's version, or `null` when the source removed the file. After merging, `chant workspace lineage resolve <path>` closes the step. The file as it stands is kept, and `upstream` becomes its merge base, so the next update treats it as an edit the source has not touched since. For `removed-upstream`, the file leaves the lineage and stays in the tree as the project's own.
+
+Open manual steps fail `chant vendor check` under `CI`. `chant workspace lineage` lists them.
+
+## Update rules
+
+`chant vendor pull` applies these rules per path today. `chant workspace upgrade` will apply the same rules and add the three-way merge from ws-005.
+
+| In the tree | From the source | Result |
+|---|---|---|
+| the recorded hash | anything | replaced, or removed if the source removed it |
+| the source's version | anything | kept, and the merge base moves to it |
+| edited | unchanged | kept |
+| edited | changed or removed | kept, with a manual step |
+| deleted | unchanged | stays deleted |
+| deleted | changed | stays deleted, with a manual step |
+| an unlisted file | adds the same path | kept, with a manual step |
+
+Files in a scope directory that the lineage does not list are never touched.
+
+## Commands
+
+| Command | Effect on the lock |
+|---|---|
+| [`chant init --from <repo>@<ref>[#<member>]`](/chant/cli/init/#from-a-template-repository) | Writes a new lock with scope `"."` |
+| [`chant init --template <name>`](/chant/cli/init/#lineage) | Writes a new lock with scope `"."` |
+| [`chant vendor migrate`](/chant/cli/vendor/#chant-vendor-migrate) | Adds a vendor scope per `vendor.json` entry, creating the lock if needed |
+| [`chant vendor pull`](/chant/cli/vendor/#chant-vendor-pull-name) | Updates vendor scopes file by file |
+| [`chant workspace lineage`](/chant/cli/workspace-lineage/) | Reads it |
+| [`chant workspace lineage resolve <path>`](/chant/cli/workspace-lineage/) | Closes a manual step |

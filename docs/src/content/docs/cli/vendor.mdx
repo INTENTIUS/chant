@@ -7,7 +7,7 @@ diataxis: reference
 ## Synopsis
 
 ```
-chant vendor [pull [name] | check]
+chant vendor [pull [name] | check | migrate]
 ```
 
 ## Description
@@ -67,15 +67,68 @@ One entry per vendored artifact:
 > existing fetch/extract infrastructure. Git and npm-pack sources are a
 > fast-follow.
 
+## The lineage lock
+
+Each vendored target can instead be a scope of kind `vendor` in the project's
+[lineage lock](/chant/reference/lineage-lock/), `.chant/workspace.lock.json`.
+The lock records the same source, pin and checksum as `vendor.json`, plus the
+hash of every file as it was pulled. With those hashes, `pull` can tell your
+edits from the source's changes and keep them. `chant vendor migrate` moves
+`vendor.json` into the lock.
+
+Until you migrate, `chant vendor` reads `vendor.json` exactly as before.
+
 ## `chant vendor pull [name]`
 
-Resolve each source (or just `name`), write it into `target`, and record the
-content checksum back into `vendor.json`.
+Resolve each source (or just `name`) and write it into `target`.
 
 ```bash
 chant vendor              # pull every entry
 chant vendor pull web-app # pull one
 ```
+
+For a `vendor.json` entry, `pull` replaces `target` with the source and records
+the content checksum back into `vendor.json`. Local edits to the target are
+lost.
+
+For a vendor scope in the lock, `pull` works file by file and never overwrites
+an edit:
+
+| Your file | The source | Result |
+|---|---|---|
+| unedited | changed or removed | updated or removed |
+| edited | unchanged | kept |
+| edited | changed or removed | kept, and a manual step |
+| deleted | changed | stays deleted, and a manual step |
+| not in the lock | adds the same path | kept, and a manual step |
+
+Files you added to the target are left alone. A manual step means the file needs
+merging by hand. Fetch the source's version, merge it into yours, then close the
+step with `chant workspace lineage resolve <path>`. `pull` exits 0 with open
+steps and lists them.
+
+If both the lock and `vendor.json` have entries, `pull` updates both. It pulls
+the `vendor.json` entries the old way and warns that they are not migrated yet.
+
+## `chant vendor migrate`
+
+Move every `vendor.json` entry into `.chant/workspace.lock.json` as a vendor
+scope, creating the lock if there is none, then delete `vendor.json`.
+
+```bash
+chant vendor migrate
+```
+
+Each entry's checksum becomes the scope's digest. The per-file hashes come from
+the target when it still matches the checksum. When you have edited the target,
+they come from the source, which must still match the checksum. If neither
+matches, the pinned files cannot be recovered and `migrate` stops without
+writing anything: run `chant vendor pull <name>` first, which overwrites the
+target, or restore it. An entry that was never pulled becomes an unpinned scope.
+
+`migrate` refuses an entry whose name or target is already a scope in the lock.
+To add a pattern later, add it to a new `vendor.json` and run `migrate` again. To
+bump a pin, edit the scope's `source` and `ref` in the lock and run `pull`.
 
 ## `chant vendor check`
 
@@ -89,15 +142,30 @@ chant vendor check
 Drift is a **warning locally** and a **failure in CI** (when `CI` is set), so a
 pipeline catches unrecorded changes while local adaptation stays frictionless.
 
+For vendor scopes in the lock, edits are expected and reported as
+`ok, N file(s) edited locally`. What fails under `CI` is an open manual step or a
+missing target.
+
 ## Updating a pin
 
-Bump the entry's `ref` (and `source.url` for an archive), re-run `chant vendor
-pull`, and review the resulting in-repo diff. The new content and its checksum
+To bump a pin, change the entry's `ref` (and `source.url` for an archive) in
+`vendor.json`, or the scope's `source` and `ref` in the lock. Then re-run
+`chant vendor pull` and review the in-repo diff. The new content and its checksum
 land together in one reviewable change — that is the whole update flow.
+
+## Coming in a later release
+
+A project with only `vendor.json` keeps today's behaviour in this release,
+including `pull` replacing the target. Moving those projects to the lock by
+default, and warning about `vendor.json` until then, changes the output of an
+existing command. Under the level-0 rule of
+[#2525](https://github.com/INTENTIUS/chant/issues/2525), that needs a listed
+exception and a release that warns first (see
+[Level-0 Exceptions](/chant/reference/level-0-exceptions/)).
 
 ## Exit Codes
 
 | Code | Meaning |
 |------|---------|
-| 0 | Pulled successfully, or `check` clean (or drift, locally) |
-| 1 | A source/manifest error, or `check` drift under CI |
+| 0 | Pulled or migrated successfully, or `check` clean (or drift, locally) |
+| 1 | A source, manifest or lock error, or `check` drift under CI |
