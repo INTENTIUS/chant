@@ -69,12 +69,14 @@ Run named, phased workflows defined in `*.op.ts` files. The local runtime is bui
 
 ## Workspace Commands
 
-The first slices of workspace support read record files and the lineage lock. Neither needs a `chant.workspace.json`.
+The first slices of workspace support read record files, and read and act on the lineage lock. None of them needs a `chant.workspace.json`.
 
 | Command | Description |
 |---------|-------------|
 | [`workspace records --kind <file>`](/chant/cli/workspace-records/) | Print the records a record kind locates, with reason codes for invalid ones |
 | [`workspace lineage`](/chant/cli/workspace-lineage/) | Show where a project's files came from and which manual steps are open |
+| [`workspace upgrade [<scope>] --to <ref>`](/chant/cli/workspace-upgrade/) | Bring a scope to a newer template version, gated on the digest of the patch |
+| [`workspace check`](/chant/cli/workspace-check/) | Fail on an unreadable lock or an open manual step |
 
 ## State Commands
 

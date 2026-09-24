@@ -113,6 +113,17 @@ describe("chant init --from", () => {
     expect(readFileSync(join(target, "svc/src/main.ts"), "utf-8")).toBe("export const a = 2;\n");
   });
 
+  test("the template's migrations are not copied (#2550)", async () => {
+    put(tpl, "svc/.chant/migrations/m.json", "{}");
+    git(tpl, ["add", "-A"]);
+    git(tpl, ["commit", "-q", "-m", "a migration"]);
+    const target = join(root, "proj");
+    const result = await initFromCommand({ from: `${tpl}@main#svc`, path: target });
+    expect(result.success).toBe(true);
+    expect(existsSync(join(target, ".chant/migrations"))).toBe(false);
+    expect(Object.keys(readLock(target)!.scopes["."].files).some((f) => f.startsWith(".chant/"))).toBe(false);
+  });
+
   test("refuses a non-empty directory, an unknown ref and a missing directory", async () => {
     const target = join(root, "proj");
     put(target, "keep.txt", "x");

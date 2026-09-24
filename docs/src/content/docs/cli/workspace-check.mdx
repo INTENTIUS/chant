@@ -1,0 +1,40 @@
+---
+title: "chant workspace check"
+description: Fail when the lineage lock cannot be read or a manual step is open
+diataxis: reference
+---
+
+## Synopsis
+
+```
+chant workspace check [--json]
+```
+
+## Description
+
+`chant workspace check` reads [`.chant/workspace.lock.json`](/chant/reference/lineage-lock/) in the current directory and fails when the lock cannot be read or any scope has an open manual step. D9 of [#2524](https://github.com/INTENTIUS/chant/issues/2524) says open manual steps fail `check`: a file that did not merge during an update stays a failure until someone merges it by hand and runs [`chant workspace lineage resolve <path>`](/chant/cli/workspace-lineage/).
+
+It needs no `chant.workspace.json`. A directory with no lock has nothing to check and passes.
+
+For now, `check` covers the lineage lock only. The generated-file drift checks ([#2541](https://github.com/INTENTIUS/chant/issues/2541)) and the per-member checks ([#2537](https://github.com/INTENTIUS/chant/issues/2537)) will add their findings to the same report.
+
+[`chant workspace upgrade`](/chant/cli/workspace-upgrade/) runs the same checks in its staging worktree before it records its gate. There, a finding already present at HEAD does not stop the upgrade, and neither do the manual steps the upgrade itself records, since those are part of what the gate approves.
+
+```
+$ chant workspace check
+  src/config.ts: manual step open (changed-locally): merge by hand, then `chant workspace lineage resolve src/config.ts`
+✗ 1 check(s) failed
+```
+
+## Options
+
+| Option | Effect |
+|---|---|
+| `--json` | Print `{ lock, ok, findings }`. Each finding has `code`, `scope`, `path` and `message`. `code` is one of `lock-invalid` and `manual-step-open`. `lock` is `null` when there is no lock. |
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | No lock, or no finding |
+| 1 | The lock cannot be read, or a manual step is open |

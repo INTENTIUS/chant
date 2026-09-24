@@ -460,7 +460,9 @@ export async function listLedgerEnvironments(opts?: { cwd?: string }): Promise<s
   const tip = await getStateBranchTip(opts?.cwd);
   if (!tip) return [];
   const rt = getRuntime();
-  const rootResult = await rt.spawn(["git", "ls-tree", STATE_BRANCH], { cwd: opts?.cwd });
+  // `--full-tree`: from a subdirectory, a bare `ls-tree` lists only that
+  // subdirectory's part of the tree (#2550).
+  const rootResult = await rt.spawn(["git", "ls-tree", "--full-tree", STATE_BRANCH], { cwd: opts?.cwd });
   if (rootResult.exitCode !== 0) return [];
 
   const envs: string[] = [];
@@ -489,7 +491,7 @@ export async function listFilesInDir(dir: string, opts?: { cwd?: string }): Prom
   if (!tip) return [];
   const rt = getRuntime();
   const lsResult = await rt.spawn(
-    ["git", "ls-tree", "--name-only", `${STATE_BRANCH}:${dir}/`],
+    ["git", "ls-tree", "--full-tree", "--name-only", `${STATE_BRANCH}:${dir}/`],
     { cwd: opts?.cwd },
   );
   if (lsResult.exitCode !== 0) return [];
@@ -508,7 +510,7 @@ export async function readEnvironmentSnapshots(
 
   // List files in the environment directory
   const lsResult = await rt.spawn(
-    ["git", "ls-tree", "--name-only", `${STATE_BRANCH}:${environment}/`],
+    ["git", "ls-tree", "--full-tree", "--name-only", `${STATE_BRANCH}:${environment}/`],
     { cwd: opts?.cwd },
   );
   if (lsResult.exitCode !== 0) return snapshots;
@@ -1139,8 +1141,13 @@ async function readTree(cwd?: string): Promise<{ tip: string | null; entries: Tr
   if (!tip) return { tip: null, entries: [] };
 
   // List root tree to get env directories — pinned to `tip`, not `STATE_BRANCH`.
+  // `--full-tree` (#2550): run from a project in a subdirectory of the
+  // repository, a bare `ls-tree` lists only the part of the tree under that
+  // subdirectory, which on the orphan branch is nothing. The write then
+  // rebuilt the branch from an empty tree, and an append's CAS refused it as a
+  // concurrent change.
   const rootResult = await rt.spawn(
-    ["git", "ls-tree", tip],
+    ["git", "ls-tree", "--full-tree", tip],
     { cwd },
   );
   if (rootResult.exitCode !== 0) return { tip, entries: [] };
@@ -1157,7 +1164,7 @@ async function readTree(cwd?: string): Promise<{ tip: string | null; entries: Tr
     if (type === "tree") {
       // This is an env directory — list its contents, still pinned to `tip`.
       const envResult = await rt.spawn(
-        ["git", "ls-tree", `${tip}:${name}/`],
+        ["git", "ls-tree", "--full-tree", `${tip}:${name}/`],
         { cwd },
       );
       if (envResult.exitCode !== 0) continue;

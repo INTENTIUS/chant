@@ -28,6 +28,7 @@ import {
   writeLock,
   type Lineage,
 } from "./lineage-lock";
+import { MIGRATIONS_DIR } from "./lineage-migrations";
 
 // ── The template spec ────────────────────────────────────────────────────────
 
@@ -100,7 +101,7 @@ export interface FetchedTemplate {
   skipped: Array<{ path: string; reason: string }>;
 }
 
-function git(cwd: string, args: string[]): string {
+export function git(cwd: string, args: string[]): string {
   return execFileSync("git", args, {
     cwd,
     encoding: "utf-8",
@@ -108,6 +109,51 @@ function git(cwd: string, args: string[]): string {
     env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
     maxBuffer: 256 * 1024 * 1024,
   }).trim();
+}
+
+/**
+ * Read the files of `member` (or the whole tree) at `commit` from a scratch
+ * repository that already holds the commit. Symbolic links, submodules and
+ * the template's own lineage lock are skipped, with the reason.
+ */
+export function readTemplateTree(
+  scratch: string,
+  commit: string,
+  member: string | undefined,
+  label: string,
+): { tree: string; files: FetchedTemplate["files"]; skipped: FetchedTemplate["skipped"] } {
+  let tree: string;
+  try {
+    tree = git(scratch, ["rev-parse", member ? `${commit}:${member}` : `${commit}^{tree}`]);
+    if (git(scratch, ["cat-file", "-t", tree]) !== "tree") throw new Error("not a tree");
+  } catch {
+    throw new LockError(`${label} has no directory ${member}`);
+  }
+
+  const files: FetchedTemplate["files"] = new Map();
+  const skipped: FetchedTemplate["skipped"] = [];
+  const listing = execFileSync("git", ["ls-tree", "-r", "-z", tree], { cwd: scratch, maxBuffer: 256 * 1024 * 1024 }).toString("utf-8");
+  for (const row of listing.split("\0")) {
+    if (!row) continue;
+    const tab = row.indexOf("\t");
+    const [mode, type, sha] = row.slice(0, tab).split(" ");
+    const path = row.slice(tab + 1);
+    if (path === LOCK_FILE) {
+      skipped.push({ path, reason: "the template's own lineage lock" });
+      continue;
+    }
+    if (type !== "blob") {
+      skipped.push({ path, reason: `a ${type === "commit" ? "submodule" : type}` });
+      continue;
+    }
+    if (mode === "120000") {
+      skipped.push({ path, reason: "a symbolic link" });
+      continue;
+    }
+    const data = execFileSync("git", ["cat-file", "blob", sha], { cwd: scratch, maxBuffer: 256 * 1024 * 1024 });
+    files.set(path, { data, executable: mode === "100755" });
+  }
+  return { tree, files, skipped };
 }
 
 /**
@@ -127,38 +173,7 @@ export function fetchTemplate(spec: TemplateSpec): FetchedTemplate {
       throw new LockError(`could not fetch ${spec.repo}@${spec.ref}${stderr ? `: ${stderr}` : ""}`);
     }
     const commit = git(scratch, ["rev-parse", "FETCH_HEAD^{commit}"]);
-    let tree: string;
-    try {
-      tree = git(scratch, ["rev-parse", spec.member ? `${commit}:${spec.member}` : `${commit}^{tree}`]);
-      if (git(scratch, ["cat-file", "-t", tree]) !== "tree") throw new Error("not a tree");
-    } catch {
-      throw new LockError(`${spec.repo}@${spec.ref} has no directory ${spec.member}`);
-    }
-
-    const files: FetchedTemplate["files"] = new Map();
-    const skipped: FetchedTemplate["skipped"] = [];
-    const listing = execFileSync("git", ["ls-tree", "-r", "-z", tree], { cwd: scratch, maxBuffer: 256 * 1024 * 1024 }).toString("utf-8");
-    for (const row of listing.split("\0")) {
-      if (!row) continue;
-      const tab = row.indexOf("\t");
-      const [mode, type, sha] = row.slice(0, tab).split(" ");
-      const path = row.slice(tab + 1);
-      if (path === LOCK_FILE) {
-        skipped.push({ path, reason: "the template's own lineage lock" });
-        continue;
-      }
-      if (type !== "blob") {
-        skipped.push({ path, reason: `a ${type === "commit" ? "submodule" : type}` });
-        continue;
-      }
-      if (mode === "120000") {
-        skipped.push({ path, reason: "a symbolic link" });
-        continue;
-      }
-      const data = execFileSync("git", ["cat-file", "blob", sha], { cwd: scratch, maxBuffer: 256 * 1024 * 1024 });
-      files.set(path, { data, executable: mode === "100755" });
-    }
-    return { commit, tree, files, skipped };
+    return { commit, ...readTemplateTree(scratch, commit, spec.member, `${spec.repo}@${spec.ref}`) };
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
@@ -219,6 +234,8 @@ export async function initFromCommand(options: InitFromOptions): Promise<InitFro
   mkdirSync(targetDir, { recursive: true });
   const written = new Map<string, Buffer>();
   for (const [path, file] of [...fetched.files].sort(([a], [b]) => a.localeCompare(b))) {
+    // The template's migrations (#2550) are for `chant workspace upgrade`, not part of a project.
+    if (path.startsWith(`${MIGRATIONS_DIR}/`)) continue;
     const abs = join(targetDir, path);
     if (existsSync(abs)) {
       warnings.push(`${path} already exists, skipping`);

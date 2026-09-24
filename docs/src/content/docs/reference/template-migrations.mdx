@@ -1,0 +1,109 @@
+---
+title: Template Migrations
+description: The format of the migrations a template ships for chant workspace upgrade, and how a chain of them is planned and refused.
+diataxis: reference
+---
+
+A template ships migrations to move projects made from its older versions onto its newer ones. [`chant workspace upgrade`](/chant/cli/workspace-upgrade/) runs them in its staging worktree, before the per-file merge, and records each one it applied in the [lineage lock](/chant/reference/lineage-lock/). D9 of [#2524](https://github.com/INTENTIUS/chant/issues/2524) fixes the shape of the format. `from` pairs a template id with a version range, and a body is either declarative or marked as code. Every one carries a post-condition, and the upgrade refuses a chain with a gap.
+
+## Location
+
+Migrations live in the template, under `.chant/migrations/` in the directory a project is made from (the repository root, or the `#<member>` directory). Each is one `.json` file. A code migration's module sits in the same directory.
+
+`chant init --from` never copies `.chant/migrations/` into a project, and an upgrade never writes it.
+
+## Example
+
+`.chant/migrations/rename-handler.json`, shipped in the template's `v2.0.0`:
+
+```json
+{
+  "id": "rename-handler",
+  "description": "src/handler.ts moved to src/handlers/index.ts",
+  "from": { "versions": ">=1.0.0 <2.0.0" },
+  "to": "2.0.0",
+  "body": {
+    "type": "declarative",
+    "steps": [
+      { "op": "move", "from": "src/handler.ts", "to": "src/handlers/index.ts" },
+      { "op": "json-set", "path": "package.json", "pointer": "/main", "value": "dist/handlers/index.js" }
+    ]
+  },
+  "post": [
+    { "check": "exists", "path": "src/handlers/index.ts" },
+    { "check": "absent", "path": "src/handler.ts" }
+  ]
+}
+```
+
+## Fields
+
+| Field | Required | Meaning |
+|---|---|---|
+| `id` | yes | Unique within the template: letters, digits, `.`, `_` and `-`. The lock's `migrations` list records it once applied, and an applied migration never runs again. |
+| `description` | no | Prose for a reader. |
+| `from.template` | no | The template id the migration applies to, as the lock writes it. Omitted, it applies to the template it ships in, whatever id a project recorded for it. |
+| `from.versions` | yes | The versions the migration can be applied to, as a range (see [Ranges](#ranges)). |
+| `to` | yes | The version the scope is at once the migration has run. |
+| `body` | yes | What the migration does (see [Bodies](#bodies)). |
+| `post` | no | Checks that must all hold after the body ran (see [Post-conditions](#post-conditions)). |
+
+Any other field is refused, and so is an unknown step or check.
+
+## Bodies
+
+### Declarative
+
+`{ "type": "declarative", "steps": [...] }`, with one or more of these steps. Paths are relative to the scope directory and may not leave it.
+
+| `op` | Fields | Effect |
+|---|---|---|
+| `move` | `from`, `to` | Moves a file. Its lock entry moves too, merge base included, so the merge that follows compares the file at its new path. `to` must not exist. |
+| `delete` | `path` | Deletes the file, if present, and drops it from the lineage. |
+| `replace` | `path`, `find`, `with` | Replaces every occurrence of the literal string `find`. |
+| `json-set` | `path`, `pointer`, `value` | Sets `value` at a JSON Pointer, creating objects on the way. The file is rewritten with two-space indentation. |
+| `json-delete` | `path`, `pointer` | Removes the key at a JSON Pointer. |
+
+### Code
+
+`{ "type": "code", "module": "2.0.0-rewrite.mjs" }` names a module in the migrations directory. Its default export is called as `async ({ dir }) => void`, with `dir` the scope directory in the staging worktree.
+
+A code migration runs the template's own code on the machine running the upgrade. It runs only when the upgrade is given `--allow-code` (`allowCode` for the activity). Without it, a chain that holds one is refused before anything is staged.
+
+## Post-conditions
+
+| `check` | Fields | Holds when |
+|---|---|---|
+| `exists` | `path` | the file exists |
+| `absent` | `path` | the file does not exist |
+| `contains` | `path`, `text` | the file exists and contains `text` |
+| `not-contains` | `path`, `text` | the file is absent or does not contain `text` |
+
+A failed check refuses the upgrade. Nothing has been written to the project by then.
+
+## Versions
+
+A scope's version is read from the ref the lock records, and the target's from `--to`. A version is the trailing `1.2.3` of the ref, with an optional `v` and an optional prefix ending in `-`, `_`, `/` or `@`: `v1.4.0`, `1.4`, `chant-v0.80.0`. Missing numbers read as 0. A branch or a commit id is not a version.
+
+### Ranges
+
+The npm subset: comparators (`>=1.0.0 <2.0.0`), `^1.2`, `~1.2.0`, `1.x`, a bare version for an exact match, `*`, and `||` between alternatives. A pre-release such as `2.0.0-rc.1` sorts below `2.0.0`, and only an exact comparator matches it.
+
+## Planning the chain
+
+The upgrade collects the target version's migrations that apply to the scope's template and have not been applied yet. Of those, it keeps each whose `to` lies after the scope's version and at or before the target, and orders them by `to`, then by `id`. Walking that order, each migration must accept, in `from.versions`, the version the scope has reached when its turn comes. After it runs, the scope is at its `to`. Several migrations to the same version all check the version before it.
+
+| Refused | Why |
+|---|---|
+| A gap | A migration does not accept the version the scope has reached. The migration that would bridge the two is missing, so the upgrade stops instead of applying part of the chain. |
+| A downgrade | The target version is below the scope's. |
+| No versions | Migrations are pending, but the scope's ref or the target is not a version, so no chain can be ordered. |
+| Code | The chain holds a code migration, and code was not allowed. |
+
+An upgrade with no pending migrations needs no versions, so a scope pinned to a branch can follow it.
+
+A migration that brings nothing into place for some versions can say so with its range. A template whose `1.x` releases need no change to reach `2.0.0`, but whose `3.0.0` does, ships the `3.0.0` migration with `from.versions` set to `>=1.0.0 <3.0.0`.
+
+## In the lock
+
+Each applied `id` is appended to the scope's `migrations`. The upgrade applies migrations only in its worktree. Their effects reach the project in the approved patch, together with the merged files and the lock's new pin.

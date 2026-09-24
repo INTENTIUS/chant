@@ -129,3 +129,40 @@ export const behaviourFindingContract = activityContract(
     mergeRequest: z.string().optional(),
   }),
 );
+
+/**
+ * The propose-only template upgrade (#2550, ws-032). `args` mirrors
+ * `ProposeWorkspaceUpgradeArgs` without its test hooks. `returns` names what
+ * a step reads: whether anything changed, whether it was proposed, the patch
+ * digest the command's gate would bind, and the branch and pull request.
+ */
+export const proposeWorkspaceUpgradeContract = activityContract(
+  "proposeWorkspaceUpgrade",
+  z.strictObject({
+    scope: z.string().optional(),
+    to: z.string().optional(),
+    mode: z.enum(["report", "branch", "pull-request"]).optional(),
+    branch: z.string().optional(),
+    base: z.string().optional(),
+    remote: z.string().optional(),
+    allowCode: z.boolean().optional(),
+    cwd: z.string().optional(),
+  }),
+  z.object({
+    scope: z.string(),
+    mode: z.enum(["report", "branch", "pull-request"]),
+    changed: z.boolean(),
+    proposed: z.boolean(),
+    checksOk: z.boolean(),
+    from: z.string().nullable(),
+    to: z.string().nullable(),
+    digest: z.string(),
+    manualSteps: z.number(),
+    governance: z.boolean(),
+    branch: z.string().optional(),
+    commit: z.string().optional(),
+    pushed: z.boolean().optional(),
+    prUrl: z.string().optional(),
+    summary: z.string(),
+  }),
+);
