@@ -28,7 +28,8 @@
  */
 import { resolve, join, dirname } from "node:path";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { getHeadCommit, fetchLifecycle, pushLifecycle, StaleLifecycleBranchError } from "../../lifecycle/git";
+import { getHeadCommit, fetchLifecycle, pushLifecycle, readSnapshot, snapshotStorageKey, StaleLifecycleBranchError } from "../../lifecycle/git";
+import type { LifecycleSnapshot } from "../../lifecycle/types";
 import {
   appendReleaseRecord,
   readReleaseLedger,
@@ -37,7 +38,7 @@ import {
   resolveRunId,
   InvalidReleaseRecordError,
 } from "../../lifecycle/release-ledger";
-import { reconcileStatus, liveEvidenceFromChangeSet, compareAcrossEnvironments, mergeLiveEvidence, type LiveComponentEvidence } from "../../lifecycle/status";
+import { reconcileStatus, liveEvidenceFromChangeSet, compareAcrossEnvironments, mergeLiveEvidence, type LiveComponentEvidence, type EntityLiveRead } from "../../lifecycle/status";
 import { commandBuildParams } from "../build-params-cli";
 import { buildChangeSet } from "../../lifecycle/change-set";
 import { buildLedgerEntries, componentBomSummary, type BuildLedgerEntry } from "../../lifecycle/build-ledger";
@@ -51,7 +52,7 @@ import { build } from "../../build";
 import { discoverComponents } from "../../components/discover";
 import { formatError, formatWarning, formatSuccess, formatBold } from "../format";
 import type { CommandContext } from "../registry";
-import type { LexiconPlugin } from "../../lexicon";
+import type { LexiconPlugin, ResourceMetadata } from "../../lexicon";
 import { normalizeObservation, mergeObservations, unobservedAll, type NormalizedObservation } from "../../observation";
 import type { Phase, Component } from "../../components/component";
 import { deployUnits } from "../../components/deploy-units";
@@ -468,6 +469,42 @@ async function observeComponentStacks(
   return evidence;
 }
 
+/**
+ * The last lifecycle snapshot(s) for one lexicon, as `components status --live`
+ * reads them for its drift baseline (#2513). Reads the stack-keyed snapshot for
+ * each stack the status read targets and the unstacked one `lifecycle plan`
+ * reads, merging resources (a stack's own snapshot wins) and remembering, per
+ * entity, which snapshot's timestamp it came from. A missing or unreadable
+ * snapshot is no baseline, never an error: with none, nothing can have changed
+ * since, and the status falls back to identity and presence.
+ */
+async function readStatusBaseline(
+  environment: string,
+  lexicon: string,
+  stacks: Array<string | undefined>,
+): Promise<{ resources: Record<string, ResourceMetadata> | undefined; timestamps: Map<string, string> }> {
+  const keys = [...new Set([...stacks.filter((s): s is string => !!s).map((s) => snapshotStorageKey(lexicon, s)), snapshotStorageKey(lexicon)])];
+  let resources: Record<string, ResourceMetadata> | undefined;
+  const timestamps = new Map<string, string>();
+  for (const key of keys) {
+    let snap: LifecycleSnapshot | undefined;
+    try {
+      const content = await readSnapshot(environment, key);
+      snap = content ? (JSON.parse(content) as LifecycleSnapshot) : undefined;
+    } catch {
+      snap = undefined;
+    }
+    if (!snap?.resources) continue;
+    resources ??= {};
+    for (const [name, meta] of Object.entries(snap.resources)) {
+      if (Object.prototype.hasOwnProperty.call(resources, name)) continue;
+      resources[name] = meta;
+      if (snap.timestamp) timestamps.set(name, snap.timestamp);
+    }
+  }
+  return { resources, timestamps };
+}
+
 export async function runComponentsStatus(ctx: CommandContext): Promise<number> {
   const { args, plugins, serializers } = ctx;
   const requestedEnv = args.extraPositional;
@@ -558,6 +595,7 @@ export async function runComponentsStatus(ctx: CommandContext): Promise<number> 
         for (const stack of config.stacks ?? []) componentStackNames.add(stack.name);
         const readTargets: Array<string | undefined> = componentStackNames.size ? [...componentStackNames] : [undefined];
         const merged: { env: string; entries: import("../../lifecycle/change-set").ChangeSetEntry[] } = { env: environment, entries: [] };
+        const observations = new Map<string, EntityLiveRead>();
         for (const plugin of plugins) {
           if (!plugin.describeResources) continue;
           const declared = new Set<string>();
@@ -597,15 +635,29 @@ export async function runComponentsStatus(ctx: CommandContext): Promise<number> 
             console.error(formatWarning({ message: `${plugin.name}: describeResources failed — ${message} (components in this lexicon report unknown, not stale)` }));
             observed = { resources: {}, unobserved: unobservedAll(declared, "read-failed", message, entities), queried: {}, sources: {}, notes: [] };
           }
+          // The last lifecycle snapshot is the prior observation drift is
+          // measured against (#2513) — the same one `lifecycle plan` reads, so
+          // `drifted` here means what `update` means there. Without it every
+          // live, declared entity classified `noop` and `drifted` could not be
+          // reached. Each entity remembers its snapshot's timestamp so the
+          // status join can ignore a change made before the release.
+          const baseline = await readStatusBaseline(environment, plugin.name, readTargets);
           const cs = buildChangeSet(environment, {
             declared,
             observedNow: observed.resources,
-            observedThen: undefined,
+            observedThen: baseline.resources,
             unobserved: observed.unobserved,
           }, { lexicon: plugin.name });
           merged.entries.push(...cs.entries);
+          for (const entry of cs.entries) {
+            observations.set(entry.name, {
+              now: observed.resources[entry.name],
+              then: baseline.resources?.[entry.name],
+              thenAt: baseline.timestamps.get(entry.name),
+            });
+          }
         }
-        liveEvidence = liveEvidenceFromChangeSet(merged, liveNameMapping);
+        liveEvidence = liveEvidenceFromChangeSet(merged, liveNameMapping, { observations });
 
         // Multi-stack component projects (each component owns its own stack) are
         // invisible to the entity-keyed, single-stack `describeResources` above —

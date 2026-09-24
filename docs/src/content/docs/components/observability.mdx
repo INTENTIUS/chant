@@ -111,7 +111,7 @@ Readers accept both forms through the `0.89.x` releases. A release from `0.90.0`
 | **reconciled** | A release record exists and live evidence confirms the component is present and chant-owned. |
 | **unrecorded** | Something is live and owned, but no release record references it — a deploy that happened outside the recorded path. |
 | **stale** | A release record exists, but nothing live corresponds to it anymore. |
-| **drifted** | A release record exists, but the live configuration has drifted since (the same `update` verdict `lifecycle plan` would give). |
+| **drifted** | A release record exists and the component is live, but the live read contradicts the record: the live `attributes.digest`/`attributes.gitSha` differs from the recorded one, the configuration changed since a lifecycle snapshot taken at or after the release (the same `update` verdict `lifecycle plan` would give), or chant's ownership marker is gone or names another stack. A resource that could not be read is never drifted. |
 | **unknown** | No live evidence was requested (`--live` omitted) — the ledger alone doesn't confirm reconciliation either way. |
 
 ## `chant components status`
