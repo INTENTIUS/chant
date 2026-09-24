@@ -50,21 +50,8 @@
       "type": ["string", "null"]
     },
     "source": {
-      "description": "Where the decision was first recorded.",
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["issue", "row"],
-      "properties": {
-        "issue": { "$ref": "#/definitions/issueRef" },
-        "row": {
-          "description": "The row's topic cell, verbatim, including any revision marker.",
-          "type": "string"
-        },
-        "revision": {
-          "description": "The design revision that last changed this row, such as \"v8\". Null when the row carries no marker.",
-          "type": ["string", "null"]
-        }
-      }
+      "description": "Where the decision was first recorded: a row of an issue's decisions table, or the workspace itself when no issue holds the decision (#2654).",
+      "oneOf": [{ "$ref": "#/definitions/sourceIssue" }, { "$ref": "#/definitions/sourceWorkspace" }]
     },
     "question": {
       "description": "One sentence. Null only in an importer draft.",
@@ -130,7 +117,7 @@
       }
     },
     "evidence": {
-      "description": "The research, audits, design sections and workspace files behind the decision. A public link carries a url; a file in the workspace carries a path and the hash of its bytes (#2549).",
+      "description": "The research, audits, design sections and workspace files behind the decision. A public link carries a url; a file in the workspace carries a path and the hash of its bytes (#2549). May be empty when the decision cites nothing; chant workspace records then warns decision-no-evidence (#2654).",
       "type": "array",
       "items": {
         "oneOf": [{ "$ref": "#/definitions/evidenceLink" }, { "$ref": "#/definitions/evidencePin" }]
@@ -165,8 +152,9 @@
       }
     },
     "constrains": {
-      "description": "What this decision governs: issues (owner/repo#n), other decisions (their ids), workspace members (member:<name>) or files and directories in the workspace (path:<path>, the grammar of an evidence path, #2549).",
+      "description": "What this decision governs: issues (owner/repo#n), other decisions (their ids), workspace members (member:<name>) or files and directories in the workspace (path:<path>, the grammar of an evidence path, #2549). At least one entry: a decision that governs nothing is refused.",
       "type": "array",
+      "minItems": 1,
       "items": {
         "type": "string",
         "pattern": "^([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[0-9]+|[a-z][a-z0-9]{0,15}-[0-9]{3,}|member:[a-z0-9][a-z0-9-]{0,39}|path:(?!/)(?!(?:[^/]*/)*\\.{1,2}(?:/|$))(?!.*//)[^\\\\\\u0000-\\u001f]*[^/\\\\\\u0000-\\u001f])$"
@@ -198,8 +186,7 @@
             }
           },
           "decided_by": { "type": "string" },
-          "decided_on": { "type": "string" },
-          "evidence": { "minItems": 1 }
+          "decided_on": { "type": "string" }
         }
       }
     },
@@ -256,6 +243,46 @@
         "as_of": {
           "description": "When the file was read, as an ISO 8601 timestamp.",
           "type": ["string", "null"]
+        }
+      }
+    },
+    "sourceIssue": {
+      "description": "A row of the decisions table in an issue.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["issue", "row"],
+      "properties": {
+        "issue": { "$ref": "#/definitions/issueRef" },
+        "row": {
+          "description": "The row's topic cell, verbatim, including any revision marker.",
+          "type": "string"
+        },
+        "revision": {
+          "description": "The design revision that last changed this row, such as \"v8\". Null when the row carries no marker.",
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "sourceWorkspace": {
+      "description": "A decision made in the workspace, such as in a product's own design flow, with no issue behind it (#2654).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "member"],
+      "properties": {
+        "kind": { "const": "workspace" },
+        "member": {
+          "description": "The workspace member the decision was made in, by its name in the declaration.",
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]{0,39}$"
+        },
+        "session": {
+          "description": "The id of the session the decision was made in, as the member names it. Null or absent when there was none.",
+          "type": ["string", "null"],
+          "minLength": 1
+        },
+        "issue": {
+          "description": "An issue the decision relates to, when there is one.",
+          "$ref": "#/definitions/issueRef"
         }
       }
     },

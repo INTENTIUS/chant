@@ -107,6 +107,7 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `asset-missing` | warning, `records` | A file the record pins by hash does not exist in the tree read. The record stays valid. |
 | `asset-stale` | warning, `records` | A file the record pins is unchanged at the hash a record it supersedes pinned: the decision changed and the artifact did not follow. The record stays valid. |
 | `record-supersedes-pending` | warning, `records` | A `supersedes` link from a record whose state is weaker than the record it names, so the link has no effect yet. The record stays valid. |
+| `record-no-evidence` | warning, `records` | The record's evidence list is empty: it cites nothing and pins no file, as a decision made in a product's own design flow may. Information for a reviewer. The record stays valid and `--current` lists it. |
 | `kind-unreadable` | error, `records` | The record kind file is missing or could not be imported. |
 | `kind-invalid` | error, `records` | The record kind file exports no `recordKind`, or its shape is wrong. |
 | `schema-unreadable` | error, `records` | The schema file the kind names is missing or isn't JSON. |

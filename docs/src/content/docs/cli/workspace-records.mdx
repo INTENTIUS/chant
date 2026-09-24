@@ -180,6 +180,7 @@ A failed read prints `{ "$schema", "contract", "error": { "code", "message" } }`
 | `asset-missing` | pins a file that does not exist in the tree read |
 | `asset-stale` | pins a file at the hash a record it supersedes pinned, and the file has not changed since |
 | `record-supersedes-pending` | names a record in `supersedes` whose state is stronger than its own, so the link has no effect yet |
+| `record-no-evidence` | has an empty evidence list (the kind's `pins` field), so it cites nothing and pins no file. This is information for a reviewer, and the record stays valid |
 
 ### Error codes
 

@@ -5,13 +5,13 @@
  * doesn't exist yet, so the chant repo's own decision files stand in for it.
  */
 
-import { cpSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Ajv2020 from "ajv/dist/2020";
 import { afterAll, describe, expect, test } from "vitest";
 import { queryRecords, RECORDS_CONTRACT_VERSION, RECORDS_OUTPUT_SCHEMA_ID, type RecordsDocument } from "./records-cli";
-import { READ_ERROR_CODES, RECORD_REASON_CODES } from "./records";
+import { READ_ERROR_CODES, RECORD_REASON_CODES, RECORD_WARNING_CODES } from "./records";
 import schema from "./records.schema.json";
 import { PROVENANCE_LEVELS } from "./trust/attestor";
 
@@ -75,6 +75,26 @@ describe("records output schema", () => {
     if ("error" in doc) throw new Error(doc.error.message);
     expect(doc.at).toBeNull();
     expect(doc.summary.invalid).toBe(2);
+  });
+
+  test("a workspace-sourced decision with no evidence validates, with its warning (#2654)", async () => {
+    const root = copyDecisions();
+    const dir = join(root, "docs", "design", "decisions");
+    const text = readFileSync(join(dir, "ws-003-seal-scope.md"), "utf-8")
+      .replace(/^id: .*$/m, 'id: "ws-900"')
+      .replace(/^source:\n(?:  .*\n)*/m, 'source:\n  kind: "workspace"\n  member: "app"\n')
+      .replace(/^evidence:\n(?:  .*\n)*/m, "evidence: []\n");
+    writeFileSync(join(dir, "ws-900-extra.md"), text);
+    const doc = await queryRecords({ kind: KIND, current: true, cwd: root });
+    expectValid(doc);
+    if ("error" in doc) throw new Error(doc.error.message);
+    const r = doc.records.find((x) => x.id === "ws-900");
+    expect(r?.valid).toBe(true);
+    expect(r?.warnings?.map((w) => w.code)).toEqual(["record-no-evidence"]);
+  });
+
+  test("lists exactly the warning codes the code can return", () => {
+    expect(schema.$defs.warning.properties.code.enum).toEqual([...RECORD_WARNING_CODES]);
   });
 
   test("every failure validates with its code", async () => {
