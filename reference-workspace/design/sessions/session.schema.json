@@ -1,0 +1,99 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "urn:intentius:chant:session:1",
+  "title": "Review session",
+  "description": "The front matter of a review-session file (#2673, #2650 C10): a group walking an agenda of records together, who attended, and the verdicts the session produced. Each verdict is also an entry in the judged record's reviews list, whose session field names this session. A closed session is sealed: closed_digest is the lowercase hex SHA-256 of the file with LF line endings and without its closed_digest line, and chant workspace records checks it on every read (session-seal-mismatch).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "id", "title", "state", "agenda", "attendance", "opened", "closed", "verdicts"],
+  "properties": {
+    "schema": { "const": 1 },
+    "id": {
+      "description": "S- and at least four digits, as chud numbers its sessions.",
+      "type": "string",
+      "pattern": "^S-[0-9]{4,}$"
+    },
+    "title": { "type": "string", "minLength": 1 },
+    "state": { "enum": ["open", "closed"] },
+    "agenda": {
+      "description": "What the session walks, in order: a record by its id, or an item of free text.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["record"],
+            "properties": { "record": { "type": "string", "minLength": 1 } }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["text"],
+            "properties": { "text": { "type": "string", "pattern": "\\S" } }
+          }
+        ]
+      }
+    },
+    "attendance": {
+      "description": "Who joined, with the class of each principal. An agent may attend to prepare and lay out; it never gives a verdict (#2650).",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["principal", "class"],
+        "properties": {
+          "principal": { "type": "string", "minLength": 1 },
+          "class": { "enum": ["person", "agent"] },
+          "roles": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } }
+        }
+      }
+    },
+    "opened": { "$ref": "#/definitions/dateTime" },
+    "closed": {
+      "description": "When the session closed, or null while it is open.",
+      "oneOf": [{ "type": "null" }, { "$ref": "#/definitions/dateTime" }]
+    },
+    "verdicts": {
+      "description": "The verdicts the session produced, in the order they were given.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["record", "principal", "verdict"],
+        "properties": {
+          "record": { "description": "The id of the record judged.", "type": "string", "minLength": 1 },
+          "principal": { "type": "string", "minLength": 1 },
+          "verdict": { "enum": ["agree", "dissent", "abstain"] },
+          "digest": {
+            "description": "The digest of the record text the verdict judged, as the review entry carries it.",
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        }
+      }
+    },
+    "closed_digest": {
+      "description": "The seal, written when the session closes.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  },
+  "definitions": {
+    "dateTime": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}(:[0-9]{2}(\\.[0-9]+)?)?(Z|[+-][0-9]{2}:[0-9]{2})$"
+    }
+  },
+  "if": { "required": ["state"], "properties": { "state": { "const": "closed" } } },
+  "then": {
+    "description": "A closed session needs its closed time and its seal.",
+    "required": ["closed_digest"],
+    "properties": { "closed": { "$ref": "#/definitions/dateTime" } }
+  },
+  "else": {
+    "description": "An open session has no closed time and no seal.",
+    "properties": { "closed": { "type": "null" }, "closed_digest": false }
+  }
+}

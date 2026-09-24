@@ -63,6 +63,9 @@ export const REASONS = {
   "record-id-duplicate": "Another record earlier in path order has the same id.",
   "record-supersedes-unknown": "A supersedes link names an id no record has.",
   "record-supersedes-conflict": "A second closed record supersedes a record another one already superseded.",
+  // A review session that isn't valid (records, #2673).
+  "session-seal-mismatch": "A closed session's seal is not the digest of its text: the session changed after it closed.",
+  "session-verdict-unknown-record": "A session's verdict names a record that none of the session kind's subject records has.",
   // A record that is valid but warned about (records, #2549).
   "asset-drift": "A file the record pins by hash has changed: its bytes no longer hash to the pinned sha256.",
   "asset-missing": "A file the record pins by hash does not exist in the tree read.",
@@ -95,6 +98,8 @@ export const REASONS = {
   "amend-supersede-instead": "The record is approved, and the amendment changes a field the approval rule does not let change in place; a new record supersedes it instead.",
   "review-unsupported": "The kind's schema has no reviews field, so its records take no review.",
   "review-note-required": "A dissent was given with no note: a dissent needs a reason.",
+  // records --since that fails (#2673).
+  "since-rev-unknown": "--since names no commit.",
   // The intent graph (graph --intent, #2651): a read that fails.
   "intent-region-invalid": "The region's path, or its line range, does not exist in the tree read.",
   // The intent graph: part of the walk that can't be read. The document is still printed.

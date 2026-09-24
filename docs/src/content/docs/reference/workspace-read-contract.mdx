@@ -10,7 +10,7 @@ Tools that show a workspace read it through one contract ([#2536](https://github
 
 | Contract | chant floor | Declaration | Output schemas |
 |---|---|---|---|
-| 1 | 0.81.0 | schema 1 | `ls`, `graph`, `check`, `status`, `records`, `intent` and `composites`, each at `v1` |
+| 1 | 0.81.0 | schema 1 | `ls`, `graph`, `check`, `status`, `records`, `records-since`, `intent` and `composites`, each at `v1` |
 
 Every document carries `contract`, the version it follows, and `$schema`, its schema's `$id`. Most also carry `chant`, the version of the chant that wrote it. A reader that knows contract 1 refuses a document with any other `contract` value. Given a chant older than the floor, the reader can say so and name the version to install, since that chant doesn't write the contract at all.
 
@@ -27,6 +27,7 @@ Each schema ships in `@intentius/chant` at `src/workspace/<command>.schema.json`
 | [`chant workspace check`](/chant/cli/workspace-check/#options) | `--format json` | `https://intentius.io/chant/schemas/workspace/check/v1/check.schema.json` |
 | [`chant workspace status`](/chant/cli/workspace-status/#output) | `--json` | `https://intentius.io/chant/schemas/workspace/status/v1/status.schema.json` |
 | [`chant workspace records`](/chant/cli/workspace-records/#output) | `--json` | `https://intentius.io/chant/schemas/workspace/records/v1/records.schema.json` |
+| [`chant workspace records --since`](/chant/cli/workspace-records/#what-changed-between-two-revisions) | `--json` | `https://intentius.io/chant/schemas/workspace/records-since/v1/records-since.schema.json` |
 | [`chant workspace graph --intent`](/chant/cli/workspace-graph/#the-intent-graph) | `--json` | `https://intentius.io/chant/schemas/workspace/intent/v1/intent.schema.json` |
 | [`chant workspace graph --composites`](/chant/cli/workspace-graph/#composites-and-components) | always | `https://intentius.io/chant/schemas/workspace/composites/v1/composites.schema.json` |
 
@@ -42,7 +43,8 @@ A workspace is identified by its declared `name` and a git revision ([ws-016](ht
 |---|---|
 | `ls` | the declaration, and the member and group directories, at the revision |
 | `check` | the declaration and the lineage lock at the revision, and runs the declaration and kind checks (`WSP001` to `WSP011`) on that tree. The ledger, pipeline and generated-file checks read the checkout, so they are left out |
-| `records` | the records at the revision, and the files their pins name, as committed at the revision |
+| `records` | the records at the revision, and the files their pins name, as committed at the revision. For a session kind, its subject records at the revision too |
+| `records --since` | the records at `--since` and at `--at`, or in the working tree without `--at`, compared by id |
 | `graph` | the declaration at the revision, and each member's graph from its source at the revision. With `--kind`, the records and the files they pin or constrain at the revision too |
 | `graph --intent` | the declaration, the region, the records and the files they pin at the revision, and the history reachable from it |
 
@@ -107,6 +109,8 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `record-id-duplicate` | record, `records` | An earlier record in path order has the same id. |
 | `record-supersedes-unknown` | record, `records` | A `supersedes` link names an id no record has. |
 | `record-supersedes-conflict` | record, `records` | A second closed record supersedes one another record already superseded. |
+| `session-seal-mismatch` | record, `records` | A closed session's seal is not the digest of its text: the session changed after it closed. |
+| `session-verdict-unknown-record` | record, `records` | A session's verdict names a record that none of the session kind's subject records has. |
 | `asset-drift` | warning, `records` | A file the record pins by hash has changed: its bytes no longer hash to the pinned `sha256`. The record stays valid. |
 | `asset-missing` | warning, `records` | A file the record pins by hash does not exist in the tree read. The record stays valid. |
 | `asset-stale` | warning, `records` | A file the record pins is unchanged at the hash a record it supersedes pinned: the decision changed and the artifact did not follow. The record stays valid. |
@@ -123,7 +127,7 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `schema-unreadable` | error, `records` | The schema file the kind names is missing or isn't JSON. |
 | `schema-id-mismatch` | error, `records` | The schema's `$id` differs from the id the kind names. |
 | `schema-invalid` | error, `records` | The record schema doesn't compile. |
-| `location-missing` | error, `records` | The records directory does not exist, in the tree or at the revision. |
+| `location-missing` | error, `records` | The records directory does not exist, in the tree or at the revision. With `--since`, a directory missing at the `--since` revision is read as empty. |
 | `write-usage-invalid` | error, `records new`, `amend` and `review` | The command line lacks a value the write needs, or gives one it does not take. |
 | `write-input-invalid` | error, `records new` and `amend` | The fields given with `--from` or `--set` can't be read, aren't JSON, or aren't a JSON object. |
 | `record-not-found` | error, `records amend` and `review` | No record of the kind has the id given. |
@@ -135,6 +139,7 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `amend-supersede-instead` | error, `records amend` | The record is approved, and the amendment changes a field the approval rule doesn't let change in place. A new record supersedes it instead. |
 | `review-unsupported` | error, `records review` | The kind's schema has no `reviews` field, so its records take no review. |
 | `review-note-required` | error, `records review` | A dissent was given with no note. |
+| `since-rev-unknown` | error, `records --since` | `--since` names no commit. |
 | `intent-region-invalid` | error, `graph --intent` | The region's path, or its line range, does not exist in the tree read. |
 | `intent-history-shallow` | reason, `graph --intent` | The repository is a shallow clone, so the region's history stops at the clone's boundary. |
 | `intent-plugin-failed` | reason, `graph --intent` | A kind file's `commitJoins` failed for a commit. |
@@ -279,6 +284,8 @@ A reader such as behold or hud builds one view from several commands. The join k
 | a record | none | `records[].id`, and `record` on a record link | the record's file on a `WSP111`, `WSP112` or `WSP113` finding | none |
 
 A reader starts with `ls`, which lists every member whether it can be read or not. It then reads `graph` for the nodes in `groups.byMember`, and matches each graph entry to the `ls` member of the same name. `check` findings attach to a member through `entity`, and `status` releases and gates attach through the member name. A gate's `component`, or a `status` release's, matches a `graph --composites` component's `name` in the same member. Node ids in `graph` are `<member>/<id>`, so a node never collides with another member's.
+
+A live review session view (H5 of [#2650](https://github.com/INTENTIUS/chant/issues/2650)) reads three documents. `records` on the session kind gives the agenda, the attendance and the verdicts. `records` on the decision kind gives each agenda decision, and `citedBy` on the session links the two through the decisions' review entries. At close, `records --since <open commit> --at <close commit>` on each kind gives what the session changed. The open and close commits are the ones that first wrote the session file and that set it to `closed`, which `git log` on the file gives.
 
 Documents read at the same `at` belong together. Mixing a working-tree `ls` with a `graph --at` of an older commit can list members the graph doesn't have, and each document names its own `at` so a reader can tell.
 

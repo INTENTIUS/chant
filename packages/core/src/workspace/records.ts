@@ -25,6 +25,7 @@ import { z } from "zod";
 import { importLexiconModule, registerLexiconDeclarations } from "../lexicon-module";
 import type { ReasonCode } from "./reason-codes";
 import { checkPins, pinEntries, type AssetPin } from "./record-assets";
+import { joinSessions, type SessionCitation } from "./record-sessions";
 import type { RecordSource } from "./record-source";
 import type { WorkspaceTree } from "./tree";
 
@@ -45,6 +46,10 @@ export const RECORD_REASON_CODES = [
   "record-supersedes-unknown",
   /** A second closed record supersedes a record another one already superseded. */
   "record-supersedes-conflict",
+  /** A closed session's seal is not the digest of its text: it changed after it closed (#2673). */
+  "session-seal-mismatch",
+  /** A session's verdict names a record the kind's subject records do not have (#2673). */
+  "session-verdict-unknown-record",
 ] as const satisfies readonly ReasonCode[];
 export type RecordReasonCode = (typeof RECORD_REASON_CODES)[number];
 
@@ -200,6 +205,22 @@ export const recordKindSchema = z
      * `withdrawn_on`. Optional.
      */
     reviews: z.object({ field: z.string().min(1), decider: z.string().min(1) }).strict().optional(),
+    /**
+     * A review-session kind (#2673, #2650 C10): the front-matter list of the
+     * verdicts a session produced, the field that seals a closed session, and
+     * the records its verdicts name, as the kind file that locates them
+     * (relative to this kind file's directory). The entries of that kind's
+     * reviews list (its `reviews.field`, or `reviews`) name a session in
+     * `session`. Optional.
+     */
+    session: z
+      .object({
+        verdicts: z.string().min(1),
+        seal: z.string().min(1),
+        subjects: z.object({ kind: z.string().min(1) }).strict(),
+      })
+      .strict()
+      .optional(),
   })
   .strict()
   .refine((k) => k.closedStates.every((s) => k.states.includes(s)), {
@@ -539,6 +560,8 @@ export interface RecordEntry {
   warnings: RecordWarning[];
   /** {@link recordTextDigest} of the file's text, without the kind's reviews list when it has one (#2672). */
   digest: string;
+  /** For a session kind only: the subject records' review entries that name this session (#2673). */
+  citedBy?: SessionCitation[];
 }
 
 export interface ReadRecordsOptions {
@@ -558,6 +581,12 @@ export interface ReadRecordsOptions {
    * compared.
    */
   history?: RecordHistory;
+  /**
+   * For a session kind: the records its `session.subjects.kind` locates, read
+   * from the same tree (#2673). Without them no verdict is checked and no
+   * session is cited.
+   */
+  subjects?: { records: RecordEntry[]; reviews: string };
 }
 
 /** Commit times, in seconds since the epoch, read from git. */
@@ -637,6 +666,7 @@ export async function readRecords(loaded: LoadedRecordKind, options: ReadRecords
   const validate = await compileSchema(loaded.schema);
 
   const entries: RecordEntry[] = [];
+  const texts = new Map<string, string>();
   for (const name of names.filter((n) => match.test(n)).sort()) {
     const path = dirRel === "." ? name : `${dirRel}/${name}`;
     const text = options.source.read(path);
@@ -653,6 +683,7 @@ export async function readRecords(loaded: LoadedRecordKind, options: ReadRecords
       digest: recordTextDigest(text, kind.reviews?.field ?? null),
     };
     entries.push(entry);
+    if (kind.session) texts.set(path, text);
     const fm = parseFrontMatter(text);
     if (!fm.ok) {
       entry.reasons.push({ code: "record-unparseable", message: fm.message });
@@ -762,6 +793,9 @@ export async function readRecords(loaded: LoadedRecordKind, options: ReadRecords
       });
     }
   }
+
+  // A session's seal and its verdicts' records (#2673).
+  joinSessions(kind, entries, texts, options.subjects ?? null);
 
   for (const e of entries) e.valid = e.reasons.length === 0;
   const records = options.current ? entries.filter((e) => e.supersededBy === null) : entries;

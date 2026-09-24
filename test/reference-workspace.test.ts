@@ -15,6 +15,8 @@
  * - the decision files validate against chant's decision schema, and
  *   `chant workspace records` reads them through the fixture's own kind file,
  *   which must stay the same as chant's.
+ * - the design member's review-session kind (#2673) reads its one closed
+ *   session as sealed and valid.
  *
  * - `chant init --from <this repo>@HEAD#reference-workspace` copies it with a
  *   lineage lock (#2540), and the copy is a working workspace: it reads its
@@ -341,6 +343,16 @@ describe("decision files", () => {
     } finally {
       rmSync(copy, { recursive: true, force: true });
     }
+  });
+});
+
+describe("review sessions (#2673)", () => {
+  test("the design member's session kind reads S-0001 as closed, sealed and valid, with its verdicts checked against the decisions", async () => {
+    const doc = await queryRecords({ kind: "design/sessions/session.kind.mjs", cwd: fixture });
+    if ("error" in doc) throw new Error(`${doc.error.code}: ${doc.error.message}`);
+    expect(doc.kind).toMatchObject({ name: "session", file: "reference-workspace/design/sessions/session.kind.mjs" });
+    expect(doc.records.map((r) => [r.id, r.state, r.valid, r.reasons])).toEqual([["S-0001", "closed", true, []]]);
+    expect(doc.records[0].citedBy).toEqual([]);
   });
 });
 

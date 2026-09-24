@@ -33,12 +33,12 @@ This page is generated from `docs/data/boundary.yaml`, which has one row for eac
 | boundary cell | the table of #2657, one row per cell | 5 | 5 | 3 |
 | workspace command | `commandRegistry` in `cli/main.ts`, and each sub-verb its help names | 20 | 0 | 0 |
 | member kind | `BUILTIN_KIND_NAMES` in `kinds.ts` | 4 | 0 | 0 |
-| record kind | none in core; `decision` is this repository's, the rest a plugin's | 1 | 0 | 5 |
+| record kind | none in core; `decision` and `session` are this repository's, the rest a plugin's | 2 | 0 | 4 |
 | member link kind | `LINK_KINDS` in `links.ts` | 1 | 0 | 0 |
 | record link kind | `RECORD_LINK_KINDS` in `record-assets.ts` | 2 | 0 | 0 |
 | intent node kind | the node kinds of `intent.schema.json` | 8 | 0 | 3 |
 | intent edge kind | the edge kinds of `intent.schema.json` | 6 | 0 | 3 |
-| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 66 | 0 | 0 |
+| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 69 | 0 | 0 |
 | finding code | the finding codes of `intent.schema.json` | 12 | 0 | 0 |
 | WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 34 | 0 | 0 |
 | hud view | the hud reader requirements H1 to H11 of #2650 | 0 | 11 | 0 |
@@ -67,7 +67,7 @@ Each row follows, in the order of the table above.
 | workspace command | `workspace graph --composites` | chant | composites.schema.json | Prints each composite instance with the components that can deploy it, how each match was made and whether it crossed a member link; an instance with no component is listed with none, and the choice is never made here. |
 | workspace command | `workspace check` | chant | check.schema.json | Checks the declaration with WSP ids and the lineage lock with reason codes, and prints the result as a read-contract document. |
 | workspace command | `workspace status` | chant | status.schema.json | Shows each member's releases in one environment from the lifecycle ledgers, read-only. |
-| workspace command | `workspace records` | chant | records.schema.json | Reads the records a record kind locates, validated against its schema, with provenance and reason codes. |
+| workspace command | `workspace records` | chant | records.schema.json, records-since.schema.json | Reads the records a record kind locates, validated against its schema, with provenance and reason codes; with --since, what changed in them between two revisions. |
 | workspace command | `workspace records pin` | chant | chant workspace records pin &lt;path&gt; | Prints a file's path from the workspace root and its sha256, for a decision's evidence pin. |
 | workspace command | `workspace records new` | chant | records-new.schema.json | Writes one new record in a kind's directory from validated JSON fields, allocating the next id, and never commits. |
 | workspace command | `workspace records amend` | chant | records-amend.schema.json | Sets fields of one record under its schema and the approval rule, refusing a change to an approved record that only a superseding record can make. |
@@ -89,7 +89,7 @@ Each row follows, in the order of the table above.
 | record kind | `unit` | plugin | a record kind file and its schema, passed with --kind; jhgaylor/chud (transitional owner, jhgaylor/chud#78, #79, #80) | A unit of work, joined to the commits it produced. |
 | record kind | `evidence` | plugin | a record kind file and its schema, passed with --kind; jhgaylor/chud (transitional owner, jhgaylor/chud#78, #79, #80) | The result of a check run on a tree, cited by a contract or unit. |
 | record kind | `driver` | plugin | a record kind file and its schema, passed with --kind; jhgaylor/chud (transitional owner, jhgaylor/chud#78, #79, #80) | A record that groups contracts under one intent, which a split unit serves in place of a contract. |
-| record kind | `session` | plugin | a record kind file and its schema, passed with --kind; jhgaylor/chud (transitional owner, jhgaylor/chud#78, #79, #80) | A review session with its agenda, attendance and verdicts. |
+| record kind | `session` | chant | reference-workspace/design/sessions/session.kind.mjs, session.schema.json | A review session with its agenda, attendance and the verdicts it produced, sealed on close; chud's numbered session files, such as sessions/S-0001.json, are the shape it started from (#2673). |
 | member link kind | `output` | chant | graph.schema.json, check.schema.json | A consumer names a producer's output, matched exactly; the default and only member link kind. |
 | record link kind | `asset` | chant | graph.schema.json | A current record pins a file by hash. |
 | record link kind | `constrains` | chant | graph.schema.json | A current record governs a member or a workspace path. |
@@ -120,8 +120,8 @@ Each row follows, in the order of the table above.
 | reason code | `placement-invalid` | chant | check.schema.json, composites.schema.json, graph.schema.json, intent.schema.json, ls.schema.json, status.schema.json | A member or group match breaks a placement rule. |
 | reason code | `reader-too-old` | chant | check.schema.json, composites.schema.json, graph.schema.json, intent.schema.json, ls.schema.json, status.schema.json | The declaration's minReader is newer than the chant reading it. |
 | reason code | `root-chant-required` | chant | check.schema.json, composites.schema.json, graph.schema.json, intent.schema.json, ls.schema.json, status.schema.json | The declaration pins a chant version other than the reader's, and that chant is not installed at the workspace root. |
-| reason code | `not-a-git-repository` | chant | check.schema.json, composites.schema.json, graph.schema.json, intent.schema.json, ls.schema.json, records.schema.json, status.schema.json | --at, or a ledger read, needs a git repository and there is none. |
-| reason code | `revision-unknown` | chant | check.schema.json, composites.schema.json, graph.schema.json, intent.schema.json, ls.schema.json, records.schema.json | --at names no commit. |
+| reason code | `not-a-git-repository` | chant | check.schema.json, composites.schema.json, graph.schema.json, intent.schema.json, ls.schema.json, records-since.schema.json, records.schema.json, status.schema.json | --at, or a ledger read, needs a git repository and there is none. |
+| reason code | `revision-unknown` | chant | check.schema.json, composites.schema.json, graph.schema.json, intent.schema.json, ls.schema.json, records-since.schema.json, records.schema.json | --at names no commit. |
 | reason code | `environment-invalid` | chant | status.schema.json | An environment name that can't name a ledger directory. |
 | reason code | `dir-missing` | chant | composites.schema.json, graph.schema.json, ls.schema.json | The member's directory does not exist. |
 | reason code | `unknown-kind` | chant | composites.schema.json, graph.schema.json, ls.schema.json | No built-in kind or pinned package supplies the member's kind. |
@@ -141,6 +141,8 @@ Each row follows, in the order of the table above.
 | reason code | `record-id-duplicate` | chant | intent.schema.json, records-amend.schema.json, records-new.schema.json, records-review.schema.json, records.schema.json | Another record earlier in path order has the same id. |
 | reason code | `record-supersedes-unknown` | chant | intent.schema.json, records-amend.schema.json, records-new.schema.json, records-review.schema.json, records.schema.json | A supersedes link names an id no record has. |
 | reason code | `record-supersedes-conflict` | chant | intent.schema.json, records-amend.schema.json, records-new.schema.json, records-review.schema.json, records.schema.json | A second closed record supersedes a record another one already superseded. |
+| reason code | `session-seal-mismatch` | chant | records-amend.schema.json, records-new.schema.json, records-review.schema.json, records.schema.json | A closed session's seal is not the digest of its text: the session changed after it closed. |
+| reason code | `session-verdict-unknown-record` | chant | records-amend.schema.json, records-new.schema.json, records-review.schema.json, records.schema.json | A session's verdict names a record that none of the session kind's subject records has. |
 | reason code | `asset-drift` | chant | records-amend.schema.json, records-new.schema.json, records-review.schema.json, records.schema.json | A file the record pins by hash has changed: its bytes no longer hash to the pinned sha256. |
 | reason code | `asset-missing` | chant | records-amend.schema.json, records-new.schema.json, records-review.schema.json, records.schema.json | A file the record pins by hash does not exist in the tree read. |
 | reason code | `asset-stale` | chant | records-amend.schema.json, records-new.schema.json, records-review.schema.json, records.schema.json | A file the record pins is unchanged at the hash a record it supersedes pinned: the decision changed and the artifact did not follow. |
@@ -157,12 +159,12 @@ Each row follows, in the order of the table above.
 | reason code | `runtimes-config-unreadable` | chant | composites.schema.json | The member's chant.config.ts could not be read, so only the built-in local runtime is listed. |
 | reason code | `runtimes-lexicon-unreadable` | chant | composites.schema.json | A lexicon the member's config lists could not be loaded, so it is not listed as a runtime. |
 | reason code | `record-supersedes-pending` | chant | records-amend.schema.json, records-new.schema.json, records-review.schema.json, records.schema.json | A supersedes link from a record whose state is weaker than the record it names, so the link has no effect yet. |
-| reason code | `kind-unreadable` | chant | intent.schema.json, records-amend.schema.json, records-new.schema.json, records-review.schema.json, records.schema.json | The record kind file is missing or could not be imported. |
-| reason code | `kind-invalid` | chant | intent.schema.json, records-amend.schema.json, records-new.schema.json, records-review.schema.json, records.schema.json | The record kind file exports no recordKind, or its shape is wrong. |
-| reason code | `schema-unreadable` | chant | intent.schema.json, records-amend.schema.json, records-new.schema.json, records-review.schema.json, records.schema.json | The schema file the record kind names is missing or is not JSON. |
-| reason code | `schema-id-mismatch` | chant | intent.schema.json, records-amend.schema.json, records-new.schema.json, records-review.schema.json, records.schema.json | The schema's $id differs from the id the record kind names. |
-| reason code | `schema-invalid` | chant | intent.schema.json, records-amend.schema.json, records-new.schema.json, records-review.schema.json, records.schema.json | The record schema itself does not compile. |
-| reason code | `location-missing` | chant | intent.schema.json, records-amend.schema.json, records-new.schema.json, records-review.schema.json, records.schema.json | The records directory does not exist, in the tree or at the revision. |
+| reason code | `kind-unreadable` | chant | intent.schema.json, records-amend.schema.json, records-new.schema.json, records-review.schema.json, records-since.schema.json, records.schema.json | The record kind file is missing or could not be imported. |
+| reason code | `kind-invalid` | chant | intent.schema.json, records-amend.schema.json, records-new.schema.json, records-review.schema.json, records-since.schema.json, records.schema.json | The record kind file exports no recordKind, or its shape is wrong. |
+| reason code | `schema-unreadable` | chant | intent.schema.json, records-amend.schema.json, records-new.schema.json, records-review.schema.json, records-since.schema.json, records.schema.json | The schema file the record kind names is missing or is not JSON. |
+| reason code | `schema-id-mismatch` | chant | intent.schema.json, records-amend.schema.json, records-new.schema.json, records-review.schema.json, records-since.schema.json, records.schema.json | The schema's $id differs from the id the record kind names. |
+| reason code | `schema-invalid` | chant | intent.schema.json, records-amend.schema.json, records-new.schema.json, records-review.schema.json, records-since.schema.json, records.schema.json | The record schema itself does not compile. |
+| reason code | `location-missing` | chant | intent.schema.json, records-amend.schema.json, records-new.schema.json, records-review.schema.json, records-since.schema.json, records.schema.json | The records directory does not exist, in the tree or at the revision. |
 | reason code | `write-usage-invalid` | chant | records-amend.schema.json, records-new.schema.json, records-review.schema.json | The command line lacks a value the write needs, or gives one it does not take. |
 | reason code | `write-input-invalid` | chant | records-amend.schema.json, records-new.schema.json | The fields given with --from or --set can't be read, are not JSON, or are not a JSON object. |
 | reason code | `record-not-found` | chant | records-amend.schema.json, records-review.schema.json | No record of the kind has the id given. |
@@ -174,6 +176,7 @@ Each row follows, in the order of the table above.
 | reason code | `amend-supersede-instead` | chant | records-amend.schema.json | The record is approved, and the amendment changes a field the approval rule does not let change in place; a new record supersedes it instead. |
 | reason code | `review-unsupported` | chant | records-review.schema.json | The kind's schema has no reviews field, so its records take no review. |
 | reason code | `review-note-required` | chant | records-review.schema.json | A dissent was given with no note: a dissent needs a reason. |
+| reason code | `since-rev-unknown` | chant | records-since.schema.json | --since names no commit. |
 | reason code | `intent-region-invalid` | chant | intent.schema.json | The region's path, or its line range, does not exist in the tree read. |
 | reason code | `intent-history-shallow` | chant | intent.schema.json | The repository is a shallow clone, so the region's history stops at the clone's boundary. |
 | reason code | `intent-plugin-failed` | chant | intent.schema.json | A kind file's commitJoins, which joins commits to units, contracts and evidence, failed for a commit. |

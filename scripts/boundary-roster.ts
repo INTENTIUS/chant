@@ -21,7 +21,7 @@ export const CATEGORIES = {
   area: { label: "boundary cell", source: "the table of #2657, one row per cell" },
   command: { label: "workspace command", source: "`commandRegistry` in `cli/main.ts`, and each sub-verb its help names" },
   "member-kind": { label: "member kind", source: "`BUILTIN_KIND_NAMES` in `kinds.ts`" },
-  "record-kind": { label: "record kind", source: "none in core; `decision` is this repository's, the rest a plugin's" },
+  "record-kind": { label: "record kind", source: "none in core; `decision` and `session` are this repository's, the rest a plugin's" },
   "member-link-kind": { label: "member link kind", source: "`LINK_KINDS` in `links.ts`" },
   "record-link-kind": { label: "record link kind", source: "`RECORD_LINK_KINDS` in `record-assets.ts`" },
   "intent-node-kind": { label: "intent node kind", source: "the node kinds of `intent.schema.json`" },
