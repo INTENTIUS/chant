@@ -129,6 +129,8 @@ export interface ParsedArgs {
    * ignore it.
    */
   namespace?: string;
+  /** `chant workspace upgrade --allow-code` (#2550) — run migrations whose body is the template's own code. */
+  allowCode?: boolean;
   /** `chant lifecycle rollback --dry-run` — compute the rollback delta and print it; open no PR, push nothing, leave no branch. */
   dryRun?: boolean;
   /** `chant lifecycle teardown <env> --yes` — execute the planned deletion

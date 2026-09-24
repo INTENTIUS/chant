@@ -10,15 +10,23 @@
  * | equals base     | anything                 | replaced (or removed) by the source     |
  * | equals source   | anything                 | kept; base moves to the source          |
  * | edited          | unchanged from base      | kept; base stays                        |
+ * | edited          | changed, merges cleanly  | merged; base moves to the source (*)    |
  * | edited          | changed or removed       | kept; a manual step                     |
  * | deleted         | unchanged from base      | stays deleted                           |
  * | deleted         | changed                  | stays deleted; a manual step            |
  * | untracked file  | adds the same path       | kept; a manual step                     |
  *
- * Files in the scope directory that the lineage does not list are never
- * touched. This is the per-file rule of ws-005 without the three-way merge:
- * the merge itself arrives with `chant workspace upgrade` (#2550), and until
- * then every conflicting path is one manual step.
+ * The table is for `owned` files. A `seed` file is never touched again, and a
+ * `generated` file is left for its command to rebuild (D9, D14). Files in the
+ * scope directory that the lineage does not list are never touched. This is
+ * the per-file rule of ws-005.
+ *
+ * (*) Only when the caller passes {@link MergeOptions}: the merge base's
+ * content, rebuilt by `chant workspace upgrade` (#2550), and a merge function.
+ * A file merges only when every hunk is clean; otherwise it is kept as it was
+ * and becomes one manual step. `chant vendor pull` passes no base, since a
+ * vendor source keeps no history to rebuild it from, so every conflicting
+ * path there is a manual step.
  */
 
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -27,9 +35,21 @@ import { contentDigest, defaultFileClass, fileHash, type Lineage, type ManualSte
 
 export interface UpdateResult {
   written: string[];
+  /** Edited files that took the source's changes through a clean three-way merge. */
+  merged: string[];
+  /** `seed` files, which an update never touches, and `generated` files, which their command rebuilds. */
+  skipped: Array<{ path: string; class: "seed" | "generated"; command?: string }>;
   removed: string[];
   kept: string[];
   manualSteps: ManualStep[];
+}
+
+/** The three-way merge, for `chant workspace upgrade`. */
+export interface MergeOptions {
+  /** The merge base's content, by path. A path missing here cannot be merged. */
+  base: Map<string, Buffer>;
+  /** Merged bytes, or null when a hunk conflicts. */
+  merge: (base: Buffer, ours: Buffer, theirs: Buffer) => Buffer | null;
 }
 
 /**
@@ -37,13 +57,20 @@ export interface UpdateResult {
  * updating `lineage` in place: its files, digest and manual steps. Open manual
  * steps for paths this update touches again are replaced, others are kept.
  */
-export function applyUpstream(dir: string, lineage: Lineage, upstream: Map<string, Buffer>): UpdateResult {
-  const result: UpdateResult = { written: [], removed: [], kept: [], manualSteps: [] };
+export function applyUpstream(dir: string, lineage: Lineage, upstream: Map<string, Buffer>, merging?: MergeOptions): UpdateResult {
+  const result: UpdateResult = { written: [], merged: [], skipped: [], removed: [], kept: [], manualSteps: [] };
   const steps = new Map(lineage.manualSteps.map((s) => [s.path, s]));
   const paths = new Set([...Object.keys(lineage.files), ...upstream.keys()]);
 
   for (const path of [...paths].sort()) {
     const abs = join(dir, path);
+    const entry = lineage.files[path];
+    if (entry && entry.class !== "owned") {
+      // D9: a seed is written once, and a generated file is rebuilt by its
+      // command rather than merged. Neither is written here.
+      result.skipped.push({ path, class: entry.class, ...(entry.command ? { command: entry.command } : {}) });
+      continue;
+    }
     const base = lineage.files[path]?.sha256;
     const incoming = upstream.get(path);
     const theirs = incoming ? fileHash(incoming) : undefined;
@@ -97,11 +124,22 @@ export function applyUpstream(dir: string, lineage: Lineage, upstream: Map<strin
       continue;
     }
     // The tree has its own version of the file.
-    result.kept.push(path);
     if (base !== undefined && base === theirs) {
+      result.kept.push(path);
       steps.delete(path);
       continue;
     }
+    const baseData = merging?.base.get(path);
+    if (merging && baseData && fileHash(baseData) === base) {
+      const merged = merging.merge(baseData, readFileSync(abs), incoming!);
+      if (merged) {
+        writeFileSync(abs, merged);
+        result.merged.push(path);
+        record(theirs);
+        continue;
+      }
+    }
+    result.kept.push(path);
     step(base === undefined ? "exists-locally" : "changed-locally");
   }
 

@@ -44,7 +44,7 @@ import {
   type GateApprover, type GatePolicyDecision, type GatePolicyEvaluator, type ResolvedGateApproval,
 } from "../../op/gate-approval";
 import { approverOf, tallyGateApprovals } from "../../op/gate";
-import { FAN_OUT_GATE_OP } from "../../op/gate-name";
+import { FAN_OUT_GATE_OP, WORKSPACE_UPGRADE_GATE_OP } from "../../op/gate-name";
 import { pushLifecycle, requireLifecycleLedger } from "../../lifecycle/git";
 import { formatError, formatWarning, formatSuccess, formatBold, formatInfo } from "../format";
 import type { CommandContext } from "../registry";
@@ -689,7 +689,9 @@ export async function runApprove(ctx: CommandContext): Promise<number> {
     console.error(formatInfo(
       opName === FAN_OUT_GATE_OP
         ? `The next \`chant components fan-out\` decides this gate from scratch and records a fresh pending fact.`
-        : `The next \`chant run ${opName}\` decides this gate from scratch and records a fresh pending fact.`,
+        : opName === WORKSPACE_UPGRADE_GATE_OP
+          ? `The next \`chant workspace upgrade ${gate}\` decides this gate from scratch and records a fresh pending fact.`
+          : `The next \`chant run ${opName}\` decides this gate from scratch and records a fresh pending fact.`,
     ));
     return 0;
   }
@@ -713,7 +715,9 @@ export async function runApprove(ctx: CommandContext): Promise<number> {
     `This records the resolution as a fact; it does not itself re-run anything. ` +
       (opName === FAN_OUT_GATE_OP
         ? `Repeat the \`chant components fan-out\` command and it walks through gate "${gate}".`
-        : `Run \`chant run ${opName}\` and it walks through gate "${gate}".`),
+        : opName === WORKSPACE_UPGRADE_GATE_OP
+          ? `Repeat \`chant workspace upgrade ${gate}\` with the same target, and it applies the patch this approval names.`
+          : `Run \`chant run ${opName}\` and it walks through gate "${gate}".`),
   ));
   return 0;
 }
@@ -786,7 +790,7 @@ export async function recordGateApproval(
   // `fan-out` is the op name every `chant components fan-out` gate is recorded
   // under (../handlers/fan-out.ts). It is a command rather than a declaration,
   // so there is no `*.op.ts` to find and nothing is wrong when none is there.
-  if (!ops.has(opName) && opName !== FAN_OUT_GATE_OP) {
+  if (!ops.has(opName) && opName !== FAN_OUT_GATE_OP && opName !== WORKSPACE_UPGRADE_GATE_OP) {
     console.error(formatWarning({
       message: `Op "${opName}" was not found among discovered *.op.ts declarations — recording the resolution anyway`,
     }));

@@ -43,7 +43,7 @@ import { join, relative, sep } from "node:path";
  * Which chant phase reaches a catalogued module. The phase, not the file, is
  * what an adopter asking "can I run this air-gapped" actually needs.
  */
-export type EgressPhaseId = "apply" | "emulator" | "codegen" | "template" | "audit" | "maintenance";
+export type EgressPhaseId = "apply" | "emulator" | "codegen" | "template" | "upgrade" | "audit" | "maintenance";
 
 export interface EgressPhase {
   id: EgressPhaseId;
@@ -77,6 +77,12 @@ export const EGRESS_PHASES: readonly EgressPhase[] = [
     label: "Starting a project from a template",
     summary:
       "`chant init --from <repo>@<ref>` fetches one commit of a template repository, and nothing else in `chant init` reaches a network. `chant init --template <name>` renders a lexicon's templates from the installed package and reaches nothing. The fetch is a `git` child process, so it is listed below as a shell-out rather than as a module.",
+  },
+  {
+    id: "upgrade",
+    label: "Upgrading a project from its template",
+    summary:
+      "`chant workspace upgrade <scope>` fetches the target version of a git template, and the commit the scope was made from, to rebuild the merge base. Everything after the fetch runs offline in a local worktree. A vendor scope is read from its source as `chant vendor pull` reads it. The `proposeWorkspaceUpgrade` activity stages the same upgrade, then pushes a proposal branch and opens or edits a pull request. Every step is a `git` or `gh` child process, listed below as shell-outs.",
   },
   {
     id: "audit",
@@ -253,6 +259,33 @@ export const NETWORK_SHELL_OUTS: readonly NetworkShellOut[] = [
     phase: "template",
     destination: "the repository named in `--from`: a git URL, `git@host:path`, or `https://github.com/<owner>/<name>.git` for `owner/name`. A local path reaches nothing",
     why: "`git fetch --depth 1 <repo> <ref>` into a scratch repository that is deleted afterwards. The commit and tree it resolves are the content address the lineage lock records (#2540). Credentials are git's own, and `GIT_TERMINAL_PROMPT=0` stops it asking for any.",
+  },
+  {
+    binary: "git",
+    subcommand: "fetch",
+    command: "chant workspace upgrade <scope>",
+    file: "packages/core/src/workspace/lineage-upgrade.ts",
+    phase: "upgrade",
+    destination: "the template repository the lineage lock records for the scope (`source.url`). A local repository reaches nothing",
+    why: "`git fetch --depth 1 <url> <ref>` for the target version, then `git fetch --depth 1 <url> <commit>` for the commit the scope was made from, into a scratch repository deleted afterwards. The second fetch rebuilds the merge base; when a server refuses it, the upgrade goes on without a base for edited files. Credentials are git's own, and `GIT_TERMINAL_PROMPT=0` stops it asking for any (#2550).",
+  },
+  {
+    binary: "git",
+    subcommand: "push",
+    command: "an Op step running the proposeWorkspaceUpgrade activity, in branch or pull-request mode",
+    file: "packages/core/src/op/activities/propose-upgrade.ts",
+    phase: "upgrade",
+    destination: "the repository's own remote (`origin` unless the step names another)",
+    why: "`git push --force <remote> <commit>:refs/heads/<branch>`, only for the proposal branch (default `chant/upgrade/<scope>`). The activity refuses the default branch, the base branch and the checked-out branch (#2550).",
+  },
+  {
+    binary: "gh",
+    subcommand: "pr",
+    command: "an Op step running the proposeWorkspaceUpgrade activity, in pull-request mode",
+    file: "packages/core/src/op/activities/propose-upgrade.ts",
+    phase: "upgrade",
+    destination: "the forge that hosts the remote, through the GitHub CLI and its own credentials",
+    why: "`gh pr list` to find the scope's open pull request, then `gh pr create` or `gh pr edit` with the staged summary and the patch digest (#2550).",
   },
 ];
 

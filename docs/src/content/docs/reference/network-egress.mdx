@@ -116,6 +116,16 @@ An in-process guard says nothing about a child process, so the offline phases' s
 |---|---|---|---|---|
 | `chant init --from <repo>@<ref>` | `git fetch` | `packages/core/src/workspace/lineage-init.ts` | the repository named in `--from`: a git URL, `git@host:path`, or `https://github.com/<owner>/<name>.git` for `owner/name`. A local path reaches nothing | `git fetch --depth 1 <repo> <ref>` into a scratch repository that is deleted afterwards. The commit and tree it resolves are the content address the lineage lock records (#2540). Credentials are git's own, and `GIT_TERMINAL_PROMPT=0` stops it asking for any. |
 
+### Upgrading a project from its template
+
+`chant workspace upgrade <scope>` fetches the target version of a git template, and the commit the scope was made from, to rebuild the merge base. Everything after the fetch runs offline in a local worktree. A vendor scope is read from its source as `chant vendor pull` reads it. The `proposeWorkspaceUpgrade` activity stages the same upgrade, then pushes a proposal branch and opens or edits a pull request. Every step is a `git` or `gh` child process, listed below as shell-outs.
+
+| Command | Spawns | Module | Destination | Why |
+|---|---|---|---|---|
+| `chant workspace upgrade <scope>` | `git fetch` | `packages/core/src/workspace/lineage-upgrade.ts` | the template repository the lineage lock records for the scope (`source.url`). A local repository reaches nothing | `git fetch --depth 1 <url> <ref>` for the target version, then `git fetch --depth 1 <url> <commit>` for the commit the scope was made from, into a scratch repository deleted afterwards. The second fetch rebuilds the merge base; when a server refuses it, the upgrade goes on without a base for edited files. Credentials are git's own, and `GIT_TERMINAL_PROMPT=0` stops it asking for any (#2550). |
+| `an Op step running the proposeWorkspaceUpgrade activity, in branch or pull-request mode` | `git push` | `packages/core/src/op/activities/propose-upgrade.ts` | the repository's own remote (`origin` unless the step names another) | `git push --force <remote> <commit>:refs/heads/<branch>`, only for the proposal branch (default `chant/upgrade/<scope>`). The activity refuses the default branch, the base branch and the checked-out branch (#2550). |
+| `an Op step running the proposeWorkspaceUpgrade activity, in pull-request mode` | `gh pr` | `packages/core/src/op/activities/propose-upgrade.ts` | the forge that hosts the remote, through the GitHub CLI and its own credentials | `gh pr list` to find the scope's open pull request, then `gh pr create` or `gh pr edit` with the staged summary and the patch digest (#2550). |
+
 ### Auditing a remote repository
 
 `chant audit <url>` reads someone else's repository over a git host's API. Auditing a local path reaches nothing.

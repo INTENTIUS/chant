@@ -1,0 +1,122 @@
+---
+title: "chant workspace upgrade"
+description: Bring a lineage scope to a newer version of its template, staged in a worktree and gated on the digest of the patch
+diataxis: reference
+---
+
+## Synopsis
+
+```
+chant workspace upgrade [<scope>] [--to <ref>] [--allow-code] [--dry-run] [--output <patch file>] [--json]
+```
+
+## Description
+
+`chant workspace upgrade` brings one scope of the [lineage lock](/chant/reference/lineage-lock/) to a newer version of its template. `<scope>` is a key of the lock's `scopes`: `.` (the default) for a project made by `chant init --from`, or a vendor scope's directory such as `vendor/web-app`. It needs no `chant.workspace.json`. The design is D9 of [#2524](https://github.com/INTENTIUS/chant/issues/2524), with decisions ws-005 (merge per file) and ws-032 (a core command plus a propose-only activity).
+
+The upgrade is a core command. A template never ships its own upgrader, so an upgrade cannot change the rules that decide whether it is accepted. Each run takes these steps:
+
+| Step | What happens |
+|---|---|
+| 1. Fetch | For a git scope, one `git fetch` of the `--to` ref, and one of the commit the scope was made from. For a vendor scope, the source is read again. This is the command's only network step (see [Network Egress](/chant/reference/network-egress/)). |
+| 2. Merge base | Rebuilt offline. Each recorded file's content at the old commit is kept when it has the hash the lock recorded. A file the project never edited serves as its own base. |
+| 3. Migrate | A git worktree is checked out at HEAD under `.chant/upgrade/`. The template's [migrations](/chant/reference/template-migrations/) run there, in version order. A gap in the chain refuses the upgrade. |
+| 4. Merge | Each file follows the [update rules](/chant/reference/lineage-lock/#update-rules). An edited file that the template also changed takes the change only when every hunk merges cleanly. Otherwise it stays as it was, and the lock records one manual step for it. |
+| 5. Check | In the worktree: `chant build` and `chant lint` when the project has a `chant.config`, and the checks of [`chant workspace check`](/chant/cli/workspace-check/). A failure stops the upgrade before its gate. |
+| 6. Gate | The gate `workspace-upgrade` / `<scope>` on the gate ledger binds the digest of the patch the steps produced. |
+
+The project's tree is untouched until the gate is approved. Before that, everything happens in the worktree, which is removed when the command ends.
+
+### The gate
+
+The first run records a pending gate and exits 3, the code `chant run` gives a gated run. It prints the patch digest and the command that approves it:
+
+```
+$ chant workspace upgrade . --to v2.0.0
+.  github.com/acme/starter#service  v1.4.0 -> v2.0.0
+  migration: rename-handler
+  updated: README.md
+  merged: src/main.ts
+  manual step: src/config.ts (changed-locally)
+  build: passed
+  lint: passed
+  workspace check: passed
+  patch: 5 file(s), sha256:3c1f…
+ℹ Gated: the patch sha256:3c1f… waits for approval. Review it (--output <file> writes it), then run `chant approve workspace-upgrade .` and repeat this command to apply it.
+
+$ chant approve workspace-upgrade .
+$ chant workspace upgrade . --to v2.0.0
+✓ applied the approved upgrade of "." (sha256:3c1f…), approved by alex. Review and commit it.
+```
+
+The second run stages the upgrade again. The approval counts only when the new patch has the approved digest, which is the rule `chant approve` applies to plans since [#2300](https://github.com/INTENTIUS/chant/issues/2300). If anything changed in between, whether in the template, the project or a migration, the digest differs. The command then asks for a new approval. The patch is applied to the working tree and left uncommitted.
+
+### Governance changes
+
+A patch that changes a governance file needs human approval. The governance files are `*.op.ts` Op files, `chant.config.*`, `chant.workspace.json`, CI workflows (`.github/workflows/`, `.forgejo/workflows/`, `.gitea/workflows/`, `.gitlab-ci.yml`) and `CODEOWNERS`. Approvals by an agent do not count. The number of approvals needed is read at HEAD: the highest quorum of any gate in the Op files the patch changes, and at least one. Op files the upgrade would write never decide their own gate.
+
+### Manual steps
+
+A file that did not merge is left whole, and the lock gains a manual step for it. Open manual steps fail `chant workspace check` until the file is merged by hand and closed with [`chant workspace lineage resolve <path>`](/chant/cli/workspace-lineage/). A scope with open steps cannot be upgraded again until they are closed.
+
+### File classes
+
+An upgrade updates or merges `owned` files only. It never touches a `seed` file again, and it leaves each `generated` file for its command to rebuild, naming that command in its output.
+
+### Scheduled upgrades
+
+An Op schedules upgrades with the `proposeWorkspaceUpgrade` activity rather than by running this command. The activity stages the same upgrade and proposes it as a branch or a pull request. It never writes the default branch. See [Scheduling upgrades from an Op](#scheduling-upgrades-from-an-op).
+
+## Options
+
+| Option | Effect |
+|---|---|
+| `--to <ref>` | The template version to upgrade to: a git ref, usually a tag. Defaults to the scope's current ref, which follows a moving ref such as a branch. For a vendor scope it only relabels `ref`. |
+| `--allow-code` | Run migrations whose body is code. Without it, a chain holding a code migration is refused. |
+| `--dry-run` | Stage and check, then stop. No gate is recorded. |
+| `--output <file>` | Write the patch to a file for review. |
+| `--json` | Print the outcome, the staged changes, the checks and the digest as JSON. |
+
+## What it needs
+
+- The project is in a git repository with at least one commit, and the scope and the lock have no uncommitted changes.
+- The scope has no open manual steps.
+- Scopes made by `chant init --template <name>` cannot be upgraded yet. Their merge base is the older lexicon's render, and chant cannot rebuild it offline.
+
+## Scheduling upgrades from an Op
+
+```ts
+import { Op, activity, phase } from "@intentius/chant";
+
+export default Op({
+  name: "template-upgrade",
+  overview: "Propose the next template version as a pull request",
+  schedule: { cron: "0 6 * * 1", overlap: "skip" },
+  phases: [
+    phase("Propose", [
+      activity("proposeWorkspaceUpgrade", { scope: ".", to: "v2.0.0", mode: "pull-request" }),
+    ]),
+  ],
+});
+```
+
+| Argument | Meaning |
+|---|---|
+| `scope` | The lineage scope, default `.` |
+| `to` | The target ref, default the scope's current ref |
+| `mode` | `report` (default) stages and checks only. `branch` commits the patch on the proposal branch and pushes it when the remote exists. `pull-request` also opens a pull request, or edits the open one. |
+| `branch` | Default `chant/upgrade/<scope>`, with `root` for `.`. The activity refuses the remote's default branch, the base branch and the checked-out branch. |
+| `base` | The pull request's base, default the remote's default branch |
+| `remote` | Default `origin` |
+| `allowCode` | Run code migrations, default false |
+| `cwd` | The directory holding the lock, default the working directory |
+
+It returns `scope`, `mode`, `changed`, `proposed`, `checksOk`, `from`, `to`, `digest`, `manualSteps` (a count), `governance`, and, when written, `branch`, `commit`, `pushed` and `prUrl`. A failed check leaves `proposed` false. The pull request body names the patch digest, the same value the command's gate binds.
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | Applied, already up to date, or `--dry-run` |
+| 1 | Refused (no lock, no such scope, uncommitted changes, open manual steps, a gap in the migration chain, a failed post-condition, a code migration without `--allow-code`), or a check failed in the worktree |
+| 3 | Gated: the patch waits for `chant approve workspace-upgrade <scope>` |

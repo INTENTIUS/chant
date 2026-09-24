@@ -147,3 +147,13 @@ export type {
   BehaviourFindingDeps,
   BaseCheckout,
 } from "./predict-behaviour";
+
+// The propose-only template upgrade (#2550). Loads the workspace code on first
+// call only, so importing this module loads nothing under `workspace/`.
+export { proposeWorkspaceUpgrade } from "./propose-upgrade";
+export type {
+  ProposeWorkspaceUpgradeArgs,
+  ProposeWorkspaceUpgradeResult,
+  ProposeUpgradeMode,
+  CommandRunner,
+} from "./propose-upgrade";

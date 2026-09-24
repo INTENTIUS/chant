@@ -95,6 +95,7 @@ const BOOLEAN_FLAGS = new Set([
   "--durable-requests",
   "--skip-mcp",
   "--current",
+  "--allow-code",
 ]);
 
 /**
@@ -445,6 +446,10 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--agent") {
       // #2508 — record the approval as an agent's rather than a person's.
       result.agent = true;
+    } else if (arg === "--allow-code") {
+      // #2550 — `chant workspace upgrade` runs a template's code migrations
+      // only when asked to.
+      result.allowCode = true;
     } else if (arg === "--allow-same-origin") {
       // chant#2384 — record a resolution the same-origin rule would refuse,
       // deliberately. Flagged on the record, not just accepted quietly.
@@ -655,6 +660,15 @@ Workspace (first-test slice, #2546):
                         manual steps. Needs no workspace file
   workspace lineage resolve <path>
                         Close a manual step once the file is merged by hand
+  workspace upgrade [<scope>] [--to <ref>] [--allow-code] [--dry-run] [--output <file>]
+                        Bring a lineage scope to a newer template version: fetch
+                        it, migrate and merge per file in a worktree, run build,
+                        lint and workspace check there, then gate on the digest
+                        of the patch (chant approve workspace-upgrade <scope>).
+                        A second run with the approval applies the patch
+  workspace check [--json]
+                        Fail on an unreadable lineage lock or an open manual
+                        step. Needs no workspace file
 
 Lifecycle (alias: lc):
   lifecycle snapshot <env>  Query API, save metadata to orphan branch
@@ -1055,6 +1069,8 @@ export const commandRegistry: CommandDef[] = [
   // loads anything under workspace/ (#2525 rule 5, pinned by #2526's goldens).
   { name: "workspace records", handler: async (ctx) => (await import("../workspace/records-cli")).runWorkspaceRecords(ctx) },
   { name: "workspace lineage", handler: async (ctx) => (await import("../workspace/lineage-cli")).runWorkspaceLineage(ctx) },
+  { name: "workspace upgrade", handler: async (ctx) => (await import("../workspace/lineage-upgrade-cli")).runWorkspaceUpgrade(ctx) },
+  { name: "workspace check", handler: async (ctx) => (await import("../workspace/lineage-check")).runWorkspaceCheck(ctx) },
 
   // State subcommands
   { name: "lifecycle snapshot", requiresPlugins: true, handler: runLifecycleSnapshot },
