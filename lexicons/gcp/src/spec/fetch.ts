@@ -8,6 +8,11 @@ import { homedir } from "os";
 import { join } from "path";
 import { fetchWithCache, clearCacheFile } from "@intentius/chant/codegen/fetch";
 
+/** Per-attempt download timeout for a multi-megabyte archive. */
+const ARCHIVE_ATTEMPT_TIMEOUT_MS = 120_000;
+/** A tagged archive never changes, so a cached copy stays good for a week. */
+const ARCHIVE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
 /**
  * Pinned Config Connector version for reproducible codegen.
  */
@@ -38,7 +43,12 @@ export async function fetchCRDBundle(
   const url = bundleUrl(version);
   const cache = cacheFile(version);
 
-  const tarData = await fetchWithCache({ url, cacheFile: cache }, force);
+  // The archive is a whole source tree at a pinned tag: tens of megabytes,
+  // immutable, so it gets a long attempt and a week of cache.
+  const tarData = await fetchWithCache(
+    { url, cacheFile: cache, attemptTimeoutMs: ARCHIVE_ATTEMPT_TIMEOUT_MS, cacheTtlMs: ARCHIVE_CACHE_TTL_MS },
+    force,
+  );
   return extractCRDs(tarData);
 }
 

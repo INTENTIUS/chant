@@ -1,5 +1,8 @@
 import { describe, test, expect, vi, afterEach } from "vitest";
-import { extractFromTar, fetchWithRetry, TransientFetchError } from "./fetch";
+import { extractFromTar, fetchWithCache, fetchWithRetry, TransientFetchError } from "./fetch";
+import { mkdtempSync, utimesSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 
 /**
  * Build a minimal valid tar buffer with a single file entry.
@@ -316,5 +319,64 @@ describe("fetchWithRetry", () => {
     const err = await fetchWithRetry("https://example.test/x", 0, 1).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(TransientFetchError);
     expect((err as TransientFetchError).message).toContain("1 attempt");
+  });
+});
+
+describe("fetchWithCache", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  function cacheAt(ageMs: number, content = "stale bytes"): string {
+    const file = join(mkdtempSync(join(tmpdir(), "chant-fetch-cache-")), "spec.bin");
+    writeFileSync(file, content);
+    const then = (Date.now() - ageMs) / 1000;
+    utimesSync(file, then, then);
+    return file;
+  }
+
+  test("returns the stale cached copy when every download attempt fails transiently", async () => {
+    const cacheFile = cacheAt(2 * 24 * 60 * 60 * 1000);
+    const fetchMock = vi.fn().mockRejectedValue(new Error("ECONNRESET"));
+    vi.stubGlobal("fetch", fetchMock);
+    const errors: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((m: unknown) => { errors.push(String(m)); });
+
+    const data = await fetchWithCache({ url: "https://example.test/spec", cacheFile, retries: 1, backoffMs: 1 });
+
+    expect(data.toString()).toBe("stale bytes");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(errors.join("\n")).toContain("Using the cached copy");
+  });
+
+  test("force ignores the stale copy and throws", async () => {
+    const cacheFile = cacheAt(2 * 24 * 60 * 60 * 1000);
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("ECONNRESET")));
+
+    await expect(
+      fetchWithCache({ url: "https://example.test/spec", cacheFile, retries: 1, backoffMs: 1 }, true),
+    ).rejects.toBeInstanceOf(TransientFetchError);
+  });
+
+  test("a permanent failure with a stale copy still throws", async () => {
+    const cacheFile = cacheAt(2 * 24 * 60 * 60 * 1000);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("gone", { status: 404 })));
+
+    await expect(
+      fetchWithCache({ url: "https://example.test/spec", cacheFile, retries: 1, backoffMs: 1 }),
+    ).rejects.toThrow();
+  });
+
+  test("passes attemptTimeoutMs through as the attempt signal", async () => {
+    const cacheFile = cacheAt(2 * 24 * 60 * 60 * 1000);
+    const fetchMock = vi.fn().mockResolvedValue(new Response("fresh"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const data = await fetchWithCache({ url: "https://example.test/spec", cacheFile, attemptTimeoutMs: 120_000 });
+
+    expect(data.toString()).toBe("fresh");
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(init.signal).toBeInstanceOf(AbortSignal);
   });
 });
