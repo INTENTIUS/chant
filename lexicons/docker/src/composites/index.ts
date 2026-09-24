@@ -1,12 +1,7 @@
 /**
- * Docker lexicon composites.
- *
- * Composites are factory functions that return pre-configured
- * multi-resource bundles. Docker composites will be added here.
+ * Docker lexicon composites: factory functions that return pre-configured
+ * multi-resource bundles.
  */
 
-// Composites deferred — see plan for Tier 2 implementation.
-// Example future composites:
-//   - PostgresService({ version, database, user, password }) → Service + Volume
-//   - RedisService({ version, persistence }) → Service + Volume
-//   - NginxService({ port, config }) → Service
+export { DockerOtelCollector } from "./docker-otel-collector";
+export type { DockerOtelCollectorProps } from "./docker-otel-collector";

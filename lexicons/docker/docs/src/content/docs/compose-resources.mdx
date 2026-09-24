@@ -108,6 +108,19 @@ export const proxy = new Service({
 });
 ```
 
+A config can carry its content inline instead of pointing at a file, and a service can name it by the declared value. The value serializes as the config's Compose key.
+
+```typescript
+import { DockerConfig, Service } from "@intentius/chant-lexicon-docker";
+
+export const appConf = new DockerConfig({ content: "log_level: info\n" });
+
+export const app = new Service({
+  image: "my-app:1.4.2",
+  configs: [{ source: appConf, target: "/etc/app/config.yaml" }],
+});
+```
+
 ## Secret
 
 Maps to `secrets.<name>` in `docker-compose.yml`. For sensitive values.

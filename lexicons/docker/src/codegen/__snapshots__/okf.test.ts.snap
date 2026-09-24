@@ -167,6 +167,7 @@ A config definition in Docker Compose
 ## Properties
 
 - \`file\` (\`string\`): Path to the config file
+- \`content\` (\`string\`): Inline config content
 - \`external\` (\`boolean\`): Whether the config is external
 - \`labels\` (\`Record<string, string>\`): Config labels
 - \`name\` (\`string\`): Custom config name
@@ -276,7 +277,7 @@ A containerized service definition in Docker Compose
 - \`healthcheck\` (\`object\`): Health check configuration
 - \`deploy\` (\`object\`): Swarm deployment configuration
 - \`secrets\` (\`string[]\`): Secrets to expose
-- \`configs\` (\`string[]\`): Configs to expose
+- \`configs\` (\`Array<string | { source: string | Declarable; target?: string; uid?: string; gid?: string; mode?: number }>\`): Configs to expose (short form, or long form with a mount target)
 
 ## Governed by
 

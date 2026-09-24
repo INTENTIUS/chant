@@ -95,6 +95,10 @@ export default defineConfig({
                               "slug": "lint-rules"
                         },
                         {
+                              "label": "OpenTelemetry Collector",
+                              "slug": "otel-collector"
+                        },
+                        {
                               "label": "Vendor Composites",
                               "items": [
                                     {

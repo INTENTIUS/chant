@@ -22,7 +22,10 @@
  * or the in-process fake with no code change.
  */
 
-import WebSocket from "ws";
+// `ws` is loaded inside spriteExec, not at the top. It is a CommonJS package
+// that requires "events", and a sandboxed build bundles the fly lexicon into
+// ESM, where that require throws. The top-level import put it on the path of
+// every project that imports the lexicon and needs the run fallback (#2613).
 
 export const DEFAULT_SPRITES_BASE_URL = "https://api.sprites.dev";
 
@@ -393,6 +396,7 @@ export async function spriteExec(args: SpriteExecArgs, signal?: AbortSignal): Pr
   const token = args.token ?? process.env.SPRITES_API_TOKEN;
   const headers: Record<string, string> = {};
   if (token) headers.Authorization = `Bearer ${token}`;
+  const { default: WebSocket } = await import("ws");
 
   const result = await new Promise<SpriteExecResult>((resolve, reject) => {
     const frames: Uint8Array[] = [];

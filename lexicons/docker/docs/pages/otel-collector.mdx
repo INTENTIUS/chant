@@ -1,0 +1,56 @@
+---
+title: "OpenTelemetry Collector"
+description: "DockerOtelCollector runs a collector as a Compose service, its config declared with the otel lexicon"
+diataxis: reference
+---
+
+`DockerOtelCollector` adds an OpenTelemetry Collector to a Compose project. The collector config is declared with the [otel lexicon](/chant/lexicons/otel/) and rendered with `collectorYaml()`. The composite carries the rendered YAML inline in a top-level Compose config and mounts it into the service at `/etc/otel/config.yaml`, so there is no config file to keep next to `docker-compose.yml`.
+
+```typescript
+import { Service, DockerOtelCollector } from "@intentius/chant-lexicon-docker";
+import { OtlpExporter, type TLSClientSettings } from "@intentius/chant-lexicon-otel";
+
+const jaeger = new Service({ image: "jaegertracing/all-in-one:1.62.0", ports: ["16686:16686"] });
+
+const plaintext: TLSClientSettings = { insecure: true };
+
+const otel = DockerOtelCollector({
+  exporters: [new OtlpExporter({ name: "jaeger", endpoint: "jaeger:4317", tls: plaintext })],
+  signals: ["traces"],
+});
+
+export { jaeger, otel };
+```
+
+The composite returns two members, `service` and `config`. Their Compose keys are the export name followed by the member name, so the example above emits a service `otelService` and a config `otelConfig`. Other services on the Compose network send OTLP to `otelService:4317` or `otelService:4318`.
+
+## Props
+
+| Prop | Default | Meaning |
+|------|---------|---------|
+| `exporters` | one `debug` exporter | Where the default config sends telemetry |
+| `signals` | traces, metrics and logs | Which signals get a pipeline in the default config |
+| `config` | none | A full config as otel entities; replaces the default, and `exporters` and `signals` are ignored |
+| `image` | the contrib image at the otel lexicon's pinned version | Collector image |
+| `publishPorts` | `true` | Publish the receiver ports on the host |
+| `restart` | `unless-stopped` | Restart policy |
+| `defaults` | none | Per-member overrides for `service` and `config` |
+
+## The default config
+
+Without `config`, the composite uses `otlpCollector()` from the otel lexicon. It has an `otlp` receiver on 4317 (gRPC) and 4318 (HTTP), `memory_limiter` then `batch`, the given exporters, and a `health_check` extension on 13133, with one pipeline per signal.
+
+## Ports
+
+The published ports are read back from the rendered config, one per receiver endpoint. A config whose OTLP receiver listens only on `0.0.0.0:14317` publishes `14317:14317` and nothing else. Set `publishPorts: false` when only services on the Compose network should reach the collector.
+
+The contrib image has no shell, so the service carries no Compose `healthcheck`. The `health_check` extension still answers on 13133 inside the network.
+
+## Running it
+
+```bash
+chant build src --lexicon docker -o docker-compose.yml
+docker compose up
+```
+
+The example project is `lexicons/docker/examples/otel-collector`.

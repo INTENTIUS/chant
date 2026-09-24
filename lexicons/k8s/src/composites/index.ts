@@ -65,6 +65,8 @@ export { WorkloadIdentityServiceAccount as AksWorkloadIdentityServiceAccount } f
 export type { WorkloadIdentityServiceAccountProps as AksWorkloadIdentityServiceAccountProps, WorkloadIdentityServiceAccountResult as AksWorkloadIdentityServiceAccountResult } from "./workload-identity-sa";
 export { GkeFluentBitAgent } from "./gke-fluent-bit-agent";
 export type { GkeFluentBitAgentProps, GkeFluentBitAgentResult } from "./gke-fluent-bit-agent";
+export { OtelCollector } from "./otel-collector";
+export type { OtelCollectorProps, OtelCollectorResult } from "./otel-collector";
 export { GkeOtelCollector } from "./gke-otel-collector";
 export type { GkeOtelCollectorProps, GkeOtelCollectorResult } from "./gke-otel-collector";
 export { GkeExternalDnsAgent } from "./gke-external-dns-agent";

@@ -60,3 +60,14 @@ export {
   type TopologyComponent,
   type TopologyExporter,
 } from "./topology";
+
+// What the platform collector composites (docker, k8s, fly) share
+export {
+  otlpCollector,
+  collectorEndpoints,
+  COLLECTOR_IMAGE,
+  COLLECTOR_CONFIG_PATH,
+  type OtlpCollectorOptions,
+  type CollectorPort,
+  type CollectorEndpoints,
+} from "./platform";

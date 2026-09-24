@@ -70,10 +70,15 @@ function preprocessIntrinsics(value: unknown): unknown {
 // ── Visitor ───────────────────────────────────────────────────────
 
 function dockerVisitor(entityNames: Map<Declarable, string>): SerializerVisitor {
+  const dockerfiles = new Set<string>();
+  for (const [entity, name] of entityNames) {
+    if ((entity as unknown as Record<string, unknown>).entityType === "Docker::Dockerfile") dockerfiles.add(name);
+  }
   return {
     attrRef: (name, _attr) => name,
-    // For Dockerfile references, emit the filename
-    resourceRef: (name) => `Dockerfile.${name}`,
+    // A Dockerfile reference is its filename. Any other entity (a config, a
+    // secret, a volume) is referenced by its key in the compose file.
+    resourceRef: (name) => (dockerfiles.has(name) ? `Dockerfile.${name}` : name),
     propertyDeclarable: (entity, walk) => {
       const props = getProps(entity);
       const result: Record<string, unknown> = {};
