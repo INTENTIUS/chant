@@ -10,7 +10,7 @@ Tools that show a workspace read it through one contract ([#2536](https://github
 
 | Contract | chant floor | Declaration | Output schemas |
 |---|---|---|---|
-| 1 | 0.81.0 | schema 1 | `ls`, `graph`, `check`, `status`, `records` and `intent`, each at `v1` |
+| 1 | 0.81.0 | schema 1 | `ls`, `graph`, `check`, `status`, `records`, `intent` and `composites`, each at `v1` |
 
 Every document carries `contract`, the version it follows, and `$schema`, its schema's `$id`. Most also carry `chant`, the version of the chant that wrote it. A reader that knows contract 1 refuses a document with any other `contract` value. Given a chant older than the floor, the reader can say so and name the version to install, since that chant doesn't write the contract at all.
 
@@ -28,6 +28,7 @@ Each schema ships in `@intentius/chant` at `src/workspace/<command>.schema.json`
 | [`chant workspace status`](/chant/cli/workspace-status/#output) | `--json` | `https://intentius.io/chant/schemas/workspace/status/v1/status.schema.json` |
 | [`chant workspace records`](/chant/cli/workspace-records/#output) | `--json` | `https://intentius.io/chant/schemas/workspace/records/v1/records.schema.json` |
 | [`chant workspace graph --intent`](/chant/cli/workspace-graph/#the-intent-graph) | `--json` | `https://intentius.io/chant/schemas/workspace/intent/v1/intent.schema.json` |
+| [`chant workspace graph --composites`](/chant/cli/workspace-graph/#composites-and-components) | always | `https://intentius.io/chant/schemas/workspace/composites/v1/composites.schema.json` |
 
 Each schema is a `oneOf` of a result and a failure. A failure has `error: { code, message }`, plus `location` for the commands that read the declaration, and exits 1. A result may still hold entries that couldn't be read, each with a `reason: { code, message }`. Only `check` fails on those ([ws-020](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-020-unreadable.md)). In `check`, a declaration that can't be read is the finding `WSP001` with the same `code`, not a failure.
 
@@ -129,6 +130,9 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `intent-evidence-unpinned` | finding, `graph --intent` | A decision's evidence has no hash: a URL, or a path with no `sha256`. |
 | `intent-trailer-unverified` | finding, `graph --intent` | A commit carries a trailer a plugin says claims authorship, and the commit is not `attested`. |
 | `intent-region-unconstrained` | finding, `graph --intent` | No decision constrains the region at any granularity. |
+| `composites-no-chant-member` | reason, `graph --composites` | No member of kind `chant` was read, so nothing declares a composite instance or a component. |
+| `composites-none-declared` | reason, `graph --composites` | The members read declare no composite instance. |
+| `composites-no-component` | reason, `graph --composites` | The members read declare no component, so no composite instance has one. |
 | `lock-invalid` | finding, `check` | The lineage lock can't be read. |
 | `manual-step-open` | finding, `check` | A scope in the lineage lock has an open manual step. |
 
@@ -206,6 +210,21 @@ A commit inside a window can still depart from the decision, and chant can't tel
 A plugin's finding is about the commit it was returned for, so that commit's id comes first in `concerns`. Each of its `refs` that names a node in the graph follows as that node's id. chant first tries a ref as a node id, and then behind each node kind's prefix, such as `commit:` or `artifact:`. After that it tries the ref as a decision's record id or the start of a commit sha. A ref that names nothing in the graph stays in `refs` only. Plugin findings come after chant's own, in commit order. A decision that constrains a path below a directory region has a `constrains` edge to each file under that path, and it does not count as constraining the whole region.
 
 The document joins the others by the member name (`member` on region and file nodes, and `member:<name>` nodes), by the record id (`record` on a decision node, `records[].id` in `graph --kind` and `records`), and by the commit id (`at` and `provenance.commit`).
+
+## Composites and components
+
+`chant workspace graph --composites` lists each composite instance the members declare, joined to the components that can deploy it ([#2662](https://github.com/INTENTIUS/chant/issues/2662)). It is the data a deployment menu is built from. chant lists every match and says how each was made. Under the chant and hud boundary of [#2657](https://github.com/INTENTIUS/chant/issues/2657), the reader chooses what to offer.
+
+An instance's `id` is the composed graph's `compositeInstance`, `<member>/<instance>`, and its `nodes` are the composed node ids. A component's `id` is `<member>/<name>`. Each entry in an instance's `components` names a component by that id and says how it matched:
+
+| Field | Value |
+|---|---|
+| `by` | `composites` when the component's contract lists one of the instance's `kinds`. `name` when the contract lists no `composites` and the component's `name` joins a kind or the instance's name with the core `joinKey()` |
+| `against`, `value` | `kind` or `instance`, and the name that matched |
+| `label` | `exact`, or `folded` when only case or punctuation differ |
+| `via` | `member` when the component and the instance are in the same member, `link` when the component's member reads the instance's member through a resolved [member link](/chant/reference/workspace-declaration/#member-links), and `unlinked` otherwise |
+
+An instance no component matches has an empty `components`. When the whole list is empty, or no instance has a component, `reasons` holds a code from the closed list that says why.
 
 ## Joining the documents
 

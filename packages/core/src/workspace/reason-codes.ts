@@ -90,6 +90,10 @@ export const REASONS = {
   "intent-evidence-unpinned": "A decision's evidence has no hash: a URL, or a path with no sha256.",
   "intent-trailer-unverified": "A commit carries a trailer a plugin says claims authorship, and the commit is not attested.",
   "intent-region-unconstrained": "No decision constrains the region at any granularity.",
+  // Composite instances joined to components (graph --composites, #2662): why the list is empty or has no component.
+  "composites-no-chant-member": "No member of kind chant was read, so nothing declares a composite instance or a component.",
+  "composites-none-declared": "The members read declare no composite instance.",
+  "composites-no-component": "The members read declare no component, so no composite instance has one.",
   // The lineage lock (check).
   "lock-invalid": "The lineage lock can't be read.",
   "manual-step-open": "A scope in the lineage lock has an open manual step.",

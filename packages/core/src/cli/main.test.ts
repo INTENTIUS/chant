@@ -688,6 +688,15 @@ describe("workspace records (#2546)", () => {
   });
 });
 
+describe("workspace graph --composites (#2662)", () => {
+  test("parses as a boolean on workspace graph", () => {
+    const args = parseArgs(["workspace", "graph", "--composites", "--at", "HEAD", "--json"]);
+    expect(args).toMatchObject({ command: "workspace", path: "graph", composites: true, at: "HEAD", json: true });
+    expect(() => parseArgs(["workspace", "graph", "--composites=yes"])).toThrow();
+    expect(resolveCommand(args, commandRegistry)?.def.name).toBe("workspace graph");
+  });
+});
+
 describe("workspace graph --intent (#2651)", () => {
   test("parses the region and every --kind, in order", () => {
     const args = parseArgs(["workspace", "graph", "--intent", "app/server.mjs:3-7", "--kind", "a.kind.mjs", "--kind", "b.kind.mjs", "--at", "HEAD", "--json"]);

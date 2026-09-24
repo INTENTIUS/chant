@@ -6,8 +6,9 @@
  * `chant` member (`delivery`), three `other` members and decision records.
  * Each read-contract command reads it here, and its output must validate
  * against the command's schema: `ls`, `graph` (running delivery's real
- * `chant graph`), `check`, `status` and `records`, in the working tree and,
- * for `ls`, `graph` and `check`, at `HEAD` through `--at`.
+ * `chant graph`), `graph --composites`, `check`, `status` and `records`, in
+ * the working tree and, for `ls`, `graph` and `check`, at `HEAD` through
+ * `--at`.
  *
  * The schemas themselves are checked here too: each is a draft 2020-12
  * document under `https://intentius.io/chant/schemas/workspace/<command>/v1/`,
@@ -20,6 +21,8 @@ import { pathToFileURL } from "node:url";
 import { describe, expect, test } from "vitest";
 import { contract, git, REPO, validSchema } from "./__fixtures__/contract-repo";
 import checkSchema from "./check.schema.json";
+import { workspaceComposites } from "./composites";
+import compositesSchema from "./composites.schema.json";
 import { workspaceGraph } from "./graph-cli";
 import graphSchema from "./graph.schema.json";
 import { intentGraph } from "./intent";
@@ -37,7 +40,7 @@ import statusSchema from "./status.schema.json";
 const FIXTURE = join(REPO, "reference-workspace");
 const TIMEOUT = 240_000;
 
-const SCHEMAS = { ls: lsSchema, graph: graphSchema, check: checkSchema, status: statusSchema, records: recordsSchema, intent: intentSchema };
+const SCHEMAS = { ls: lsSchema, graph: graphSchema, check: checkSchema, status: statusSchema, records: recordsSchema, intent: intentSchema, composites: compositesSchema };
 
 /** This checkout's chant, started the way the CLI starts it, for members with no toolchain of their own. */
 const reader: Toolchain = {
@@ -130,6 +133,31 @@ describe("every schema against the reference workspace (#2543)", () => {
       expect(doc.region).toBe("region:app/src/server.mjs:19");
     }
   });
+
+  test(
+    "graph --composites runs delivery's own component graph, and says why the list is empty (#2662)",
+    async () => {
+      const { expectValid } = contract(compositesSchema);
+      for (const at of [undefined, "HEAD"]) {
+        const { doc, failed } = await workspaceComposites({ cwd: FIXTURE, at, reader });
+        expectValid(doc);
+        if ("error" in doc) throw new Error(doc.error.message);
+        expect(failed, JSON.stringify(doc.members)).toBe(false);
+        expect(doc.at).toBe(at ? head : null);
+        expect(doc.members.map((m) => [m.name, m.status])).toEqual([
+          ["app", "skipped"],
+          ["delivery", "read"],
+          ["design-client", "skipped"],
+          ["design", "skipped"],
+        ]);
+        // delivery has a docker Service and no composite or component.
+        expect(doc.composites).toEqual([]);
+        expect(doc.components).toEqual([]);
+        expect(doc.reasons.map((r) => r.code)).toEqual(["composites-none-declared", "composites-no-component"]);
+      }
+    },
+    TIMEOUT,
+  );
 
   test("records, in the working tree and at HEAD", async () => {
     const { expectValid } = contract(recordsSchema);

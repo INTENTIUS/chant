@@ -333,9 +333,12 @@ export function parseMemberRunOutput(stdout: string): { chant: string; results: 
   return header ? { chant: header.chant, results, stray: stray.join("\n") } : undefined;
 }
 
-async function runGroup(verb: WorkspaceVerb, group: ToolchainGroup, root: string, args: ParsedArgs): Promise<UnitResult[]> {
+/** A command line to run in each member instead of the verb's own, such as `graph --components` (#2662). */
+export type MemberArgv = (unit: RunUnit) => string[];
+
+async function runGroup(verb: WorkspaceVerb, group: ToolchainGroup, root: string, args: ParsedArgs, argvFor?: MemberArgv): Promise<UnitResult[]> {
   const { toolchain, units } = group;
-  const argvs = new Map(units.map((u) => [u.id, memberArgv(verb, u, args)]));
+  const argvs = new Map(units.map((u) => [u.id, argvFor ? argvFor(u) : memberArgv(verb, u, args)]));
   for (const u of units) {
     const o = argvs.get(u.id)!;
     const i = o.indexOf("--output");
@@ -365,9 +368,12 @@ async function runGroup(verb: WorkspaceVerb, group: ToolchainGroup, root: string
   return out;
 }
 
-/** Run every group of the plan, one process per toolchain at a time each, and return the results in plan order. */
-export async function executePlan(plan: MemberPlan, args: ParsedArgs): Promise<UnitResult[]> {
-  const perGroup = await Promise.all(plan.groups.map((g) => runGroup(plan.verb, g, plan.workspace.root, args)));
+/**
+ * Run every group of the plan, one process per toolchain at a time each, and
+ * return the results in plan order. `argvFor` replaces the verb's command line.
+ */
+export async function executePlan(plan: MemberPlan, args: ParsedArgs, argvFor?: MemberArgv): Promise<UnitResult[]> {
+  const perGroup = await Promise.all(plan.groups.map((g) => runGroup(plan.verb, g, plan.workspace.root, args, argvFor)));
   const byId = new Map(perGroup.flat().map((r) => [r.id, r]));
   const order = plan.groups.flatMap((g) => g.units);
   return order.map((u) => byId.get(u.id)!);

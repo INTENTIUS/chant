@@ -1,0 +1,471 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/composites/v1/composites.schema.json",
+  "title": "chant workspace graph --composites output",
+  "description": "What `chant workspace graph --composites` prints: each composite instance the workspace's members declare, joined to the components whose contract can deploy it (#2662). Each member of kind chant is read through its own `chant graph --format ir` and `chant graph --components --format ir`, under its own toolchain. An instance with no component is listed with an empty `components` array. chant supplies the rows and never picks one: each match says how it was made and how it crosses members. Readers ignore fields they do not know; a field is only ever added within a version. The reason and error codes are closed lists. Contract version 1 is written by chant 0.81.0 and newer, and this document was added to it by #2662; a chant without --composites refuses the flag. Every code is in the one closed list of `reason-codes.ts`.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/result"
+    },
+    {
+      "$ref": "#/$defs/failure"
+    }
+  ],
+  "$defs": {
+    "result": {
+      "description": "The workspace was read. Exit code 0, or 1 when a member's graph or component graph could not be read; the document is printed either way.",
+      "type": "object",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "at",
+        "workspace",
+        "members",
+        "composites",
+        "components",
+        "reasons",
+        "summary"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/composites/v1/composites.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string",
+          "description": "The chant that wrote the document."
+        },
+        "at": {
+          "description": "The full commit id the workspace was read at (--at), or null for the working tree.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{40,64}$"
+        },
+        "workspace": {
+          "type": "object",
+          "required": [
+            "name",
+            "root"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "root": {
+              "type": "string",
+              "description": "The workspace root relative to the git root, \".\" for the git root."
+            }
+          }
+        },
+        "error": false,
+        "members": {
+          "type": "array",
+          "description": "Every member the read covered, in declaration order.",
+          "items": {
+            "$ref": "#/$defs/member"
+          }
+        },
+        "composites": {
+          "type": "array",
+          "description": "Every composite instance, sorted by id.",
+          "items": {
+            "$ref": "#/$defs/composite"
+          }
+        },
+        "components": {
+          "type": "array",
+          "description": "Every component the members read declare, sorted by id, whether or not it matches an instance.",
+          "items": {
+            "$ref": "#/$defs/component"
+          }
+        },
+        "reasons": {
+          "type": "array",
+          "description": "Why the list is empty, or why no instance has a component.",
+          "items": {
+            "$ref": "#/$defs/reason"
+          }
+        },
+        "summary": {
+          "type": "object",
+          "required": [
+            "composites",
+            "withComponent",
+            "withoutComponent",
+            "components"
+          ],
+          "properties": {
+            "composites": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "withComponent": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Instances with at least one component."
+            },
+            "withoutComponent": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Instances with none."
+            },
+            "components": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      }
+    },
+    "member": {
+      "type": "object",
+      "required": [
+        "name",
+        "dir",
+        "kind",
+        "status",
+        "reason",
+        "chant"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "dir": {
+          "type": "string",
+          "description": "Relative to the workspace root, with / separators; \".\" is the root member."
+        },
+        "kind": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "read",
+            "skipped",
+            "failed"
+          ],
+          "description": "read: its graph and its component graph were both read. skipped: its kind is not run. failed: either read failed, and reason says which."
+        },
+        "reason": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "code",
+                "message"
+              ],
+              "properties": {
+                "code": {
+                  "enum": [
+                    "kind-not-run",
+                    "dir-missing",
+                    "unknown-kind",
+                    "kind-probe-failed",
+                    "command-failed",
+                    "output-unreadable",
+                    "ir-version-unsupported"
+                  ]
+                },
+                "message": {
+                  "type": "string"
+                }
+              }
+            }
+          ]
+        },
+        "chant": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The chant version the member's toolchain reported, or null when a chant older than member-run read it."
+        }
+      },
+      "if": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "const": "read"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "null"
+          }
+        }
+      },
+      "else": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "composite": {
+      "type": "object",
+      "required": [
+        "id",
+        "member",
+        "instance",
+        "kinds",
+        "lexicons",
+        "nodes",
+        "components"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "<member>/<instance>, the composed graph's compositeInstance."
+        },
+        "member": {
+          "type": "string"
+        },
+        "instance": {
+          "type": "string",
+          "description": "The instance's name in its member, the export name."
+        },
+        "kinds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The composite kinds its nodes came from, sorted. One for a plain composite; a composite built from nested composites also lists the inner kinds."
+        },
+        "lexicons": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The lexicons of its nodes, sorted."
+        },
+        "nodes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The composed ids of its nodes, as in chant workspace graph."
+        },
+        "components": {
+          "type": "array",
+          "description": "The components that match the instance, sorted by component id. Empty when none does.",
+          "items": {
+            "$ref": "#/$defs/match"
+          }
+        }
+      }
+    },
+    "match": {
+      "type": "object",
+      "required": [
+        "component",
+        "by",
+        "against",
+        "value",
+        "label",
+        "via"
+      ],
+      "properties": {
+        "component": {
+          "type": "string",
+          "description": "The id of an entry in components."
+        },
+        "by": {
+          "enum": [
+            "composites",
+            "name"
+          ],
+          "description": "composites: the component's contract lists one of the instance's kinds. name: the component lists no composites, and its name joins the instance's kind or the instance's name with the core joinKey()."
+        },
+        "against": {
+          "enum": [
+            "kind",
+            "instance"
+          ]
+        },
+        "value": {
+          "type": "string",
+          "description": "The kind or instance name that matched."
+        },
+        "label": {
+          "enum": [
+            "exact",
+            "folded"
+          ],
+          "description": "exact when the names are equal; folded when only case or punctuation differ. A composites match is always exact."
+        },
+        "via": {
+          "enum": [
+            "member",
+            "link",
+            "unlinked"
+          ],
+          "description": "member: the component and the instance are in the same member. link: the component's member reads the instance's member through a resolved member link. unlinked: neither."
+        }
+      }
+    },
+    "component": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "member",
+        "archetype",
+        "composites",
+        "file"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "<member>/<name>."
+        },
+        "name": {
+          "type": "string"
+        },
+        "member": {
+          "type": "string"
+        },
+        "archetype": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Declared or inferred, such as service, infra or producer-library. null when the member's chant does not print it."
+        },
+        "composites": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1
+            }
+          ],
+          "description": "The contract's composites, or null when it declares none and name matching applies."
+        },
+        "file": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The component's file from the workspace root, when the member's chant names it."
+        }
+      }
+    },
+    "reason": {
+      "type": "object",
+      "required": [
+        "code",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "enum": [
+            "composites-no-chant-member",
+            "composites-none-declared",
+            "composites-no-component"
+          ]
+        },
+        "message": {
+          "type": "string"
+        }
+      }
+    },
+    "failure": {
+      "description": "The declaration could not be read, and nothing was read. Exit code 1.",
+      "type": "object",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "error"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/composites/v1/composites.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string"
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message",
+            "location"
+          ],
+          "properties": {
+            "code": {
+              "enum": [
+                "declaration-missing",
+                "declaration-ambiguous",
+                "declaration-unparseable",
+                "declaration-invalid",
+                "placement-invalid",
+                "reader-too-old",
+                "root-chant-required",
+                "not-a-git-repository",
+                "revision-unknown"
+              ]
+            },
+            "message": {
+              "type": "string"
+            },
+            "location": {
+              "description": "Where in the declaration the problem is, or null when it is not in the file.",
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "file",
+                    "line",
+                    "column"
+                  ],
+                  "properties": {
+                    "file": {
+                      "type": "string"
+                    },
+                    "line": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "column": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "composites": false
+      }
+    }
+  }
+}
