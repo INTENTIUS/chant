@@ -30,6 +30,15 @@
           ]
         },
         {
+          "path": "src/content/docs/reference/boundary.mdx",
+          "generator": "npx tsx ../scripts/generate-boundary-doc.ts",
+          "sources": [
+            "scripts/generate-boundary-doc.ts",
+            "scripts/boundary-roster.ts",
+            "docs/data/boundary.yaml"
+          ]
+        },
+        {
           "path": "src/content/docs/reference/behaviour-coverage.mdx",
           "generator": "npx tsx ../scripts/generate-behaviour-coverage.ts",
           "sources": [

@@ -208,6 +208,7 @@ export default defineConfig({
 						{ label: 'Workspace Declaration', slug: 'reference/workspace-declaration' },
 						{ label: 'Workspace Kinds', slug: 'reference/workspace-kinds' },
 						{ label: 'Workspace Read Contract', slug: 'reference/workspace-read-contract' },
+						{ label: 'chant and hud Boundary', slug: 'reference/boundary' },
 						{
 							label: 'CLI',
 							items: [

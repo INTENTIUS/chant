@@ -1,0 +1,213 @@
+---
+title: chant and hud Boundary
+description: The owner of each workspace concept, and the schema or command that carries it.
+diataxis: reference
+---
+
+{/* Generated from docs/data/boundary.yaml by scripts/generate-boundary-doc.ts, so edit the roster and run the script. */}
+
+chant provides the repository specification and nothing that faces a person. hud renders and interacts. Domain record kinds and the joins from commits to them belong to a plugin. The decision is [ws-052](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-052-chant-hud-boundary.md), from [#2657](https://github.com/INTENTIUS/chant/issues/2657).
+
+## The boundary
+
+| chant | hud | plugin |
+|---|---|---|
+| declaration, kinds, members, links, lineage, migrations, `init --from`, `upgrade` | rendering | domain record kinds (contracts, units, evidence, drivers, sessions) |
+| records: schemas, states, seals, pins, supersession, attestation, provenance | review actions as UI (agree, dissent, propose, quorum meter, live sessions) | `commitJoins` and other joins from commits to records |
+| the read contract: versioned JSON of `ls`, `graph`, `check`, `records`, `status`, `graph --intent`, closed reason codes | identity, sessions, who is looking | agent prompts and context bundles |
+| the writing and verifying commands: `approve`, `records pin`, `verify`, `check`, gates, ledgers | the agent chat, the dev proxy, comment mode |  |
+| findings as data | the question put to the person at each finding |  |
+
+## Rules
+
+- chant never listens on a port, never authenticates a person and never renders. `test/no-listener.test.ts` holds `packages/core` to the first and to importing no UI or agent-runtime package.
+- hud never parses a record file, never runs git for provenance and never computes drift. It reads only through the [read contract](/chant/reference/workspace-read-contract/) and writes only through chant commands. `describeWorkspaceReaderConformance` in `@intentius/chant-test-utils` is the suite a reader runs to show it.
+- chud is the transitional owner of the plugin column (jhgaylor/chud#78, #79, #80).
+
+## The roster
+
+This page is generated from `docs/data/boundary.yaml`, which has one row for each concept. `test/boundary-roster.test.ts` compares the roster with the closed lists in the code. It fails the build when something in one of those lists has no row, or when a row names something that is not there. A row for a cell of the table above uses the cell's text as #2657 words it, and a row owned by hud is carried by alecraso/hud.
+
+| Category | Where the code keeps it | chant | hud | plugin |
+|---|---|---|---|---|
+| boundary cell | the table of #2657, one row per cell | 5 | 5 | 3 |
+| workspace command | `commandRegistry` in `cli/main.ts`, and each sub-verb its help names | 17 | 0 | 0 |
+| member kind | `BUILTIN_KIND_NAMES` in `kinds.ts` | 4 | 0 | 0 |
+| record kind | none in core; `decision` is this repository's, the rest a plugin's | 1 | 0 | 5 |
+| member link kind | `LINK_KINDS` in `links.ts` | 1 | 0 | 0 |
+| record link kind | `RECORD_LINK_KINDS` in `record-assets.ts` | 2 | 0 | 0 |
+| intent node kind | the node kinds of `intent.schema.json` | 8 | 0 | 3 |
+| intent edge kind | the edge kinds of `intent.schema.json` | 6 | 0 | 3 |
+| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 44 | 0 | 0 |
+| finding code | the finding codes of `intent.schema.json` | 12 | 0 | 0 |
+| WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 34 | 0 | 0 |
+| hud view | the hud reader requirements H1 to H11 of #2650 | 0 | 11 | 0 |
+
+Each row follows, in the order of the table above.
+
+| Category | Concept | Owner | Carried by | What |
+|---|---|---|---|---|
+| boundary cell | declaration, kinds, members, links, lineage, migrations, `init --from`, `upgrade` | chant | declaration.schema.json, workspace-kinds.schema.json, .chant/workspace.lock.json | The repository specification itself: what a workspace declares, how each member is read, how members join, and where the files came from. |
+| boundary cell | records: schemas, states, seals, pins, supersession, attestation, provenance | chant | records.schema.json | How a record file is validated, sealed, pinned to the files it rests on, superseded and traced to a signed commit. |
+| boundary cell | the read contract: versioned JSON of `ls`, `graph`, `check`, `records`, `status`, `graph --intent`, closed reason codes | chant | ls.schema.json, graph.schema.json, check.schema.json, records.schema.json, status.schema.json, intent.schema.json | The only way a reader sees a workspace: one JSON Schema per document, a contract version and a chant floor. |
+| boundary cell | the writing and verifying commands: `approve`, `records pin`, `verify`, `check`, gates, ledgers | chant | chant approve, chant workspace records pin, chant workspace verify, chant workspace check | Every change to the repository that carries weight is made or checked by a chant command, so a UI writes only by calling one. |
+| boundary cell | findings as data | chant | check.schema.json, intent.schema.json | A finding is a node or a row with a closed code, so a reader can draw it and a test can assert it. |
+| boundary cell | rendering | hud | alecraso/hud | Drawing the documents of the read contract for a person. |
+| boundary cell | review actions as UI (agree, dissent, propose, quorum meter, live sessions) | hud | alecraso/hud | The buttons and meters a reviewer uses; each verdict lands as a pull request that chant then reads. |
+| boundary cell | identity, sessions, who is looking | hud | alecraso/hud | Signing a person in and knowing who is present; chant never authenticates a person. |
+| boundary cell | the agent chat, the dev proxy, comment mode | hud | alecraso/hud | The interactive surfaces around a workspace, none of which chant serves. |
+| boundary cell | the question put to the person at each finding | hud | alecraso/hud | hud asks and never answers; the finding it asks about comes from chant as data. |
+| boundary cell | domain record kinds (contracts, units, evidence, drivers, sessions) | plugin | a record kind file and its schema, passed with --kind; jhgaylor/chud (transitional owner, jhgaylor/chud#78, #79, #80) | The record kinds a development model defines; core ships none of them. |
+| boundary cell | `commitJoins` and other joins from commits to records | plugin | a record kind file's commitJoins export (intent-joins.ts reads it) | How a commit is tied to a unit, contract or evidence; core calls the join and never parses a plugin's trailers. |
+| boundary cell | agent prompts and context bundles | plugin | jhgaylor/chud (transitional owner, jhgaylor/chud#78, #79, #80) | What an agent is told and given; chant hands out data and no prompts. |
+| workspace command | `workspace init` | chant | declaration.schema.json | Proposes a chant.workspace.json from the projects under a directory. |
+| workspace command | `workspace ls` | chant | ls.schema.json | Lists the declaration's members and example groups, with a reason code for each one that can't be read. |
+| workspace command | `workspace graph` | chant | graph.schema.json | Prints the composed IR of every member, with member links and, given --kind, the records and their links. |
+| workspace command | `workspace graph --intent` | chant | intent.schema.json | Prints the intent graph over one region: its commits, the decisions that constrain it, the artifacts they pin, and findings as nodes. |
+| workspace command | `workspace graph --composites` | chant | composites.schema.json | Prints each composite instance with the components that can deploy it, how each match was made and whether it crossed a member link; an instance with no component is listed with none, and the choice is never made here. |
+| workspace command | `workspace check` | chant | check.schema.json | Checks the declaration with WSP ids and the lineage lock with reason codes, and prints the result as a read-contract document. |
+| workspace command | `workspace status` | chant | status.schema.json | Shows each member's releases in one environment from the lifecycle ledgers, read-only. |
+| workspace command | `workspace records` | chant | records.schema.json | Reads the records a record kind locates, validated against its schema, with provenance and reason codes. |
+| workspace command | `workspace records pin` | chant | chant workspace records pin &lt;path&gt; | Prints a file's path from the workspace root and its sha256, for a decision's evidence pin. |
+| workspace command | `workspace verify` | chant | chant workspace verify | Checks the commits in base..head against the signers and roles read from base. |
+| workspace command | `workspace lineage` | chant | chant workspace lineage --json | Shows each scope in the lineage lock with its template, pin, edited files and open manual steps. |
+| workspace command | `workspace lineage resolve` | chant | chant workspace lineage resolve &lt;path&gt; | Closes a manual step once the file has been merged by hand. |
+| workspace command | `workspace upgrade` | chant | chant workspace upgrade | Brings a lineage scope to a newer template version in a worktree and gates the patch on its digest. |
+| workspace command | `workspace build` | chant | chant workspace build | Builds every chant member and example project, each under its own chant. |
+| workspace command | `workspace lint` | chant | chant workspace lint | Runs each member's own lint, with one SARIF run per member. |
+| workspace command | `workspace audit` | chant | chant workspace audit | Audits each member's files on disk with its own audit config, adding a member field to each finding. |
+| workspace command | `workspace member-run` | chant | chant workspace member-run | The internal entry one member's process runs under when a per-member command fans out; not for readers. |
+| member kind | `chant` | chant | declaration.schema.json, workspace-kinds.schema.json | A chant project, with a chant.config.ts or chant.config.json in its directory. |
+| member kind | `workspace` | chant | declaration.schema.json, workspace-kinds.schema.json | A nested workspace with its own declaration, opaque to the outer one. |
+| member kind | `other` | chant | declaration.schema.json, workspace-kinds.schema.json | A directory chant does not read; the entry says why in because. |
+| member kind | `examples` | chant | declaration.schema.json, workspace-kinds.schema.json | An example group: every chant project its glob matches is built and linted. |
+| record kind | `decision` | chant | docs/design/decisions/decision.kind.mjs, decision.schema.json | The decision record chant's own design and the reference workspace use; the intent graph reads decisions as core nodes. |
+| record kind | `contract` | plugin | a record kind file and its schema, passed with --kind; jhgaylor/chud (transitional owner, jhgaylor/chud#78, #79, #80) | A unit of work's acceptance criteria, cited by the commits that serve it. |
+| record kind | `unit` | plugin | a record kind file and its schema, passed with --kind; jhgaylor/chud (transitional owner, jhgaylor/chud#78, #79, #80) | A unit of work, joined to the commits it produced. |
+| record kind | `evidence` | plugin | a record kind file and its schema, passed with --kind; jhgaylor/chud (transitional owner, jhgaylor/chud#78, #79, #80) | The result of a check run on a tree, cited by a contract or unit. |
+| record kind | `driver` | plugin | a record kind file and its schema, passed with --kind; jhgaylor/chud (transitional owner, jhgaylor/chud#78, #79, #80) | A record that groups contracts under one intent, which a split unit serves in place of a contract. |
+| record kind | `session` | plugin | a record kind file and its schema, passed with --kind; jhgaylor/chud (transitional owner, jhgaylor/chud#78, #79, #80) | A review session with its agenda, attendance and verdicts. |
+| member link kind | `output` | chant | graph.schema.json, check.schema.json | A consumer names a producer's output, matched exactly; the default and only member link kind. |
+| record link kind | `asset` | chant | graph.schema.json | A current record pins a file by hash. |
+| record link kind | `constrains` | chant | graph.schema.json | A current record governs a member or a workspace path. |
+| intent node kind | `region` | chant | intent.schema.json | The path, and optional line range, the intent graph is over. |
+| intent node kind | `file` | chant | intent.schema.json | A file under a directory region, marked when it is a declared generated file. |
+| intent node kind | `member` | chant | intent.schema.json | The member a region, file or link belongs to. |
+| intent node kind | `commit` | chant | intent.schema.json | A commit that touched the region, with its trailers and provenance level. |
+| intent node kind | `unit` | plugin | intent.schema.json | A unit of work a plugin's commitJoins tied to a commit. |
+| intent node kind | `contract` | plugin | intent.schema.json | A contract a plugin's commitJoins tied to a unit or commit. |
+| intent node kind | `evidence` | plugin | intent.schema.json | Evidence a plugin's commitJoins tied to a contract or unit. |
+| intent node kind | `decision` | chant | intent.schema.json | A decision record that constrains the region, with its state, provenance and reviews. |
+| intent node kind | `artifact` | chant | intent.schema.json | A file a decision pins, with its pin state. |
+| intent node kind | `link` | chant | intent.schema.json | A member link touching the region's member. |
+| intent node kind | `finding` | chant | intent.schema.json | A finding with a closed code and the nodes it concerns. |
+| intent edge kind | `constrains` | chant | intent.schema.json | A decision governs a region, file, member, contract or issue, at a named granularity. |
+| intent edge kind | `pins` | chant | intent.schema.json | A decision pins an artifact, with the pin's state. |
+| intent edge kind | `touched-by` | chant | intent.schema.json | A region was changed by a commit, with the lines touched. |
+| intent edge kind | `produced-by` | plugin | intent.schema.json | A commit was produced by a unit, as a plugin's commitJoins says. |
+| intent edge kind | `serves` | plugin | intent.schema.json | A unit serves a contract, as a plugin's commitJoins says. |
+| intent edge kind | `supersedes` | chant | intent.schema.json | A newer decision replaces an older one, derived as records derives it. |
+| intent edge kind | `within` | chant | intent.schema.json | A commit falls inside a decision's window, with the state decided when the decision's own unit made it and decided-by-window when it only falls there; shown for judgment, never a finding. |
+| intent edge kind | `cites-evidence` | plugin | intent.schema.json | A unit, contract or decision cites evidence, contributed by a plugin's commitJoins. |
+| intent edge kind | `links` | chant | intent.schema.json | A consumer member links to a producer member. |
+| reason code | `declaration-missing` | chant | check.schema.json, composites.schema.json, graph.schema.json, intent.schema.json, ls.schema.json, status.schema.json | No chant.workspace.json or .jsonc between the directory and the git root. |
+| reason code | `declaration-ambiguous` | chant | check.schema.json, composites.schema.json, graph.schema.json, intent.schema.json, ls.schema.json, status.schema.json | Both chant.workspace.json and chant.workspace.jsonc exist. |
+| reason code | `declaration-unparseable` | chant | check.schema.json, composites.schema.json, graph.schema.json, intent.schema.json, ls.schema.json, status.schema.json | The declaration is not valid JSON, or not valid JSONC for .jsonc. |
+| reason code | `declaration-invalid` | chant | check.schema.json, composites.schema.json, graph.schema.json, intent.schema.json, ls.schema.json, status.schema.json | The declaration does not match its schema, repeats a name, or --member names no entry. |
+| reason code | `placement-invalid` | chant | check.schema.json, composites.schema.json, graph.schema.json, intent.schema.json, ls.schema.json, status.schema.json | A member or group match breaks a placement rule. |
+| reason code | `reader-too-old` | chant | check.schema.json, composites.schema.json, graph.schema.json, intent.schema.json, ls.schema.json, status.schema.json | The declaration's minReader is newer than the chant reading it. |
+| reason code | `root-chant-required` | chant | check.schema.json, composites.schema.json, graph.schema.json, intent.schema.json, ls.schema.json, status.schema.json | The declaration pins a chant version other than the reader's, and that chant is not installed at the workspace root. |
+| reason code | `not-a-git-repository` | chant | check.schema.json, composites.schema.json, graph.schema.json, intent.schema.json, ls.schema.json, records.schema.json, status.schema.json | --at, or a ledger read, needs a git repository and there is none. |
+| reason code | `revision-unknown` | chant | check.schema.json, composites.schema.json, graph.schema.json, intent.schema.json, ls.schema.json, records.schema.json | --at names no commit. |
+| reason code | `environment-invalid` | chant | status.schema.json | An environment name that can't name a ledger directory. |
+| reason code | `dir-missing` | chant | composites.schema.json, graph.schema.json, ls.schema.json | The member's directory does not exist. |
+| reason code | `unknown-kind` | chant | composites.schema.json, graph.schema.json, ls.schema.json | No built-in kind or pinned package supplies the member's kind. |
+| reason code | `kind-probe-failed` | chant | composites.schema.json, graph.schema.json, ls.schema.json | The member's directory is not what its kind reads. |
+| reason code | `no-matches` | chant | ls.schema.json | An example group matches no directory holding a chant project. |
+| reason code | `kind-not-run` | chant | composites.schema.json, graph.schema.json | The member's kind is one the per-member commands don't run, such as other. |
+| reason code | `command-failed` | chant | composites.schema.json, graph.schema.json | The member's own command exited with a failure. |
+| reason code | `output-unreadable` | chant | composites.schema.json, graph.schema.json | The member's command printed something that isn't the document asked for. |
+| reason code | `ir-version-unsupported` | chant | composites.schema.json, graph.schema.json | The member's IR has a version this chant can't read. |
+| reason code | `ledger-unreadable` | chant | status.schema.json | Reading the ledger failed, so nothing from it is listed. |
+| reason code | `ledger-malformed` | chant | status.schema.json | Some lines of the ledger aren't release records; the rest are listed. |
+| reason code | `record-unparseable` | chant | intent.schema.json, records.schema.json | No front matter, a YAML error, or a value outside the JSON subset of YAML. |
+| reason code | `record-schema-invalid` | chant | intent.schema.json, records.schema.json | The front matter does not match the kind's schema. |
+| reason code | `record-id-duplicate` | chant | intent.schema.json, records.schema.json | Another record earlier in path order has the same id. |
+| reason code | `record-supersedes-unknown` | chant | intent.schema.json, records.schema.json | A supersedes link names an id no record has. |
+| reason code | `record-supersedes-conflict` | chant | intent.schema.json, records.schema.json | A second closed record supersedes a record another one already superseded. |
+| reason code | `asset-drift` | chant | records.schema.json | A file the record pins by hash has changed: its bytes no longer hash to the pinned sha256. |
+| reason code | `asset-missing` | chant | records.schema.json | A file the record pins by hash does not exist in the tree read. |
+| reason code | `asset-stale` | chant | records.schema.json | A file the record pins is unchanged at the hash a record it supersedes pinned: the decision changed and the artifact did not follow. |
+| reason code | `record-no-evidence` | chant | records.schema.json | The record's evidence list is empty: it cites nothing and pins no file. Information for a reviewer, never an error. |
+| reason code | `composites-no-chant-member` | chant | composites.schema.json | No member of kind chant was read, so nothing declares a composite instance or a component. |
+| reason code | `composites-none-declared` | chant | composites.schema.json | The members read declare no composite instance. |
+| reason code | `composites-no-component` | chant | composites.schema.json | The members read declare no component, so no composite instance has one. |
+| reason code | `record-supersedes-pending` | chant | records.schema.json | A supersedes link from a record whose state is weaker than the record it names, so the link has no effect yet. |
+| reason code | `kind-unreadable` | chant | intent.schema.json, records.schema.json | The record kind file is missing or could not be imported. |
+| reason code | `kind-invalid` | chant | intent.schema.json, records.schema.json | The record kind file exports no recordKind, or its shape is wrong. |
+| reason code | `schema-unreadable` | chant | intent.schema.json, records.schema.json | The schema file the record kind names is missing or is not JSON. |
+| reason code | `schema-id-mismatch` | chant | intent.schema.json, records.schema.json | The schema's $id differs from the id the record kind names. |
+| reason code | `schema-invalid` | chant | intent.schema.json, records.schema.json | The record schema itself does not compile. |
+| reason code | `location-missing` | chant | intent.schema.json, records.schema.json | The records directory does not exist, in the tree or at the revision. |
+| reason code | `intent-region-invalid` | chant | intent.schema.json | The region's path, or its line range, does not exist in the tree read. |
+| reason code | `intent-history-shallow` | chant | intent.schema.json | The repository is a shallow clone, so the region's history stops at the clone's boundary. |
+| reason code | `intent-plugin-failed` | chant | intent.schema.json | A kind file's commitJoins, which joins commits to units, contracts and evidence, failed for a commit. |
+| reason code | `lock-invalid` | chant | check.schema.json | The lineage lock can't be read. |
+| reason code | `manual-step-open` | chant | check.schema.json | A scope in the lineage lock has an open manual step. |
+| finding code | `intent-commit-undecided` | chant | intent.schema.json | A commit changed the region when no decision constrained it at path granularity. |
+| finding code | `intent-commit-bare` | chant | intent.schema.json | A commit names no unit, no pull request and no decision covering the region at its time. |
+| finding code | `intent-pin-drifted` | chant | intent.schema.json | A decision's pinned artifact no longer hashes to the pin. |
+| finding code | `intent-pin-missing` | chant | intent.schema.json | A decision's pinned artifact does not exist in the tree read. |
+| finding code | `intent-artifact-unpinned` | chant | intent.schema.json | An artifact decisions in the graph pinned, which no current decision pins. |
+| finding code | `intent-decision-superseded-live` | chant | intent.schema.json | Every decision constraining the region is superseded. |
+| finding code | `intent-decision-provisional` | chant | intent.schema.json | The current decisions constraining the region are all in states their kind does not close, such as decided. |
+| finding code | `intent-constraint-coarse` | chant | intent.schema.json | The region is constrained only through its member, not by path. |
+| finding code | `intent-constraint-lost` | chant | intent.schema.json | A decision's path constraint names a path that does not exist in the tree read. |
+| finding code | `intent-evidence-unpinned` | chant | intent.schema.json | A decision's evidence has no hash: a URL, or a path with no sha256. |
+| finding code | `intent-trailer-unverified` | chant | intent.schema.json | A commit carries a trailer a plugin says claims authorship, and the commit is not attested. |
+| finding code | `intent-region-unconstrained` | chant | intent.schema.json | No decision constrains the region at any granularity. |
+| WSP check | `WSP001` `declaration-unreadable` | chant | check.schema.json | The declaration can be read: it parses, matches the schema and keeps the placement rules. |
+| WSP check | `WSP002` `kinds-unreadable` | chant | check.schema.json | Every pinned package's kinds can be read: it is installed at the pinned version, and its ./workspace-kinds file is valid kind data. |
+| WSP check | `WSP003` `kind-unknown` | chant | check.schema.json | Every member's kind is built in or supplied by a pinned package. Unknown kinds fail closed. |
+| WSP check | `WSP004` `member-dir-missing` | chant | check.schema.json | Every member's directory exists. |
+| WSP check | `WSP005` `kind-probe-failed` | chant | check.schema.json | Every member's directory is what its kind reads, such as a chant config for a chant member. |
+| WSP check | `WSP006` `kind-probe-tie` | chant | check.schema.json | No directory is claimed by two kinds of the same highest precedence. Ties fail. |
+| WSP check | `WSP007` `kind-outranked` | chant | check.schema.json | When several kinds claim a member's directory, the declared kind is the one the precedence order picks. |
+| WSP check | `WSP008` `other-claimed` | chant | check.schema.json | No other member's directory is claimed by a registered kind's probe. |
+| WSP check | `WSP009` `other-member` | chant | check.schema.json | A member of kind other is one chant does not read. It is reported so that it stays a decision. |
+| WSP check | `WSP010` `group-empty` | chant | check.schema.json | Every example group matches at least one chant project. |
+| WSP check | `WSP011` `check-settings-invalid` | chant | check.schema.json | The declaration's checks and suppress settings name known, configurable WSP ids. |
+| WSP check | `WSP071` `ownership-stack-shared` | chant | check.schema.json | No two chant members set the same ownership.stack. Ownership markers carry no member name, so the stack tells members' resources and receipts apart. |
+| WSP check | `WSP072` `flat-ledger-environment-shared` | chant | check.schema.json | No two members that write the flat ledger layout (the root member, and members on a chant older than 0.81.0) share an environment name. |
+| WSP check | `WSP073` `ledger-settings-unread` | chant | check.schema.json | A chant member's ownership and environments could not be read from its config without running it, so WSP071 and WSP072 could not compare it. |
+| WSP check | `WSP081` `generated-declared-twice` | chant | check.schema.json | No two members record the same generated file, so no member's regeneration overwrites another's pipeline. |
+| WSP check | `WSP082` `generated-outside-member` | chant | check.schema.json | A member's recorded generated files sit in its own directory, or are forge CI files at the fixed paths forges read. |
+| WSP check | `WSP083` `linked-environments-disjoint` | chant | check.schema.json | Linked members share at least one environment name, matched exactly, when both name any. |
+| WSP check | `WSP091` `link-target-unknown` | chant | check.schema.json | Every member link names another member of the workspace. A link to an unknown name, an example group or the consumer itself fails closed. |
+| WSP check | `WSP092` `link-kind-unknown` | chant | check.schema.json | Every member link's kind is one chant knows. Unknown link kinds fail closed; output is the default and the only one so far. |
+| WSP check | `WSP093` `link-output-missing` | chant | check.schema.json | Every member link names an output its producer exposes, matched exactly. A producer that renames an output fails this for every consumer that links to the old name. |
+| WSP check | `WSP094` `link-unresolved` | chant | check.schema.json | A member link whose producer's outputs can't be read in source is kept, unresolved, and reported. |
+| WSP check | `WSP095` `join-ambiguous` | chant | check.schema.json | No inferred join is ambiguous: a parameter that matches outputs of two producers (or two outputs of one) needs a declared link saying which. |
+| WSP check | `WSP096` `link-duplicate` | chant | check.schema.json | A link is stated once: no consumer lists the same member and output twice. |
+| WSP check | `WSP097` `outputs-not-listable` | chant | check.schema.json | An entry lists outputs only when its kind takes them from the entry: other, or a kind from a package. A chant member's outputs are read from its source, and a nested workspace exposes none. |
+| WSP check | `WSP101` `generated-drift` | chant | check.schema.json | A generated file is what its generator writes. Declared generators run only with --generated. |
+| WSP check | `WSP102` `generated-missing` | chant | check.schema.json | Every declared generated file exists. |
+| WSP check | `WSP103` `generator-failed` | chant | check.schema.json | A declared generator runs, exits 0 and writes the file. |
+| WSP check | `WSP104` `generated-hand-written` | chant | check.schema.json | An entry kept by hand is reported with its reason, and its generator is not run. |
+| WSP check | `WSP105` `generated-not-compared` | chant | check.schema.json | An entry not compared with its generator's output is reported with the reason. |
+| WSP check | `WSP106` `generated-source-missing` | chant | check.schema.json | Every source a generated entry names exists. |
+| WSP check | `WSP111` `record-asset-drift` | chant | check.schema.json | Every file a current record pins by hash still hashes to the pinned sha256. A changed file asks for the record to be revisited. |
+| WSP check | `WSP112` `record-asset-missing` | chant | check.schema.json | Every file a current record pins by hash exists. |
+| WSP check | `WSP113` `record-asset-stale` | chant | check.schema.json | No current record pins a file at the same hash as a record it supersedes while the file is unchanged since: when a decision changes, the artifacts it rests on follow. |
+| WSP check | `WSP114` `records-unreadable` | chant | check.schema.json | The records of the kind named with --kind can be read. |
+| hud view | H1 | hud | alecraso/hud | Review queue: decided records grouped by area, oldest first, each as a decision card. It reads records --current --json. |
+| hud view | H2 | hud | alecraso/hud | Decision page: options side by side with rejected options kept, the supersession chain, amendment history and provenance. It reads records --json, records --at. |
+| hud view | H3 | hud | alecraso/hud | Review actions: agree, dissent with a required reason, abstain and propose, each verdict a pull request under the signed-in principal. It reads records, and writes through a pull request. |
+| hud view | H4 | hud | alecraso/hud | Quorum meter: counted and not-counted principals with reasons and open concerns. It reads the quorum in records. |
+| hud view | H5 | hud | alecraso/hud | Review session: agenda, attendance, presence and follow mode, live meters and a summary of what changed at close. It reads session records, records --since. |
+| hud view | H6 | hud | alecraso/hud | Impact: constrained targets with their live state, and provisional dependants flagged. It reads records --constrains, ls, the forge. |
+| hud view | H7 | hud | alecraso/hud | Evidence drift: pin states, with the pinned and current artifact side by side. It reads the pins in records. |
+| hud view | H8 | hud | alecraso/hud | Intent graph: the region at the centre, with artifacts, decisions and commits in bands and findings drawn as nodes. It reads graph --intent. |
+| hud view | H9 | hud | alecraso/hud | Anchor states for constraint paths and pins, and re-anchor as an action that drafts a record. It reads graph --intent, records --constrains. |
+| hud view | H10 | hud | alecraso/hud | Text from records, commits and comments goes to any agent fenced as data. It reads every document it passes on. |
+| hud view | H11 | hud | alecraso/hud | Every walk answer is kept as a disposition list, so a group can review a walk without redoing it. It reads hud-side state, with the resulting records in git. |

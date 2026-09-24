@@ -122,6 +122,12 @@ export default defineConfig({
       // its members' build, lint and test, and its decision files read by
       // `chant workspace records`. No Docker, no network.
       "test/reference-workspace.test.ts",
+      // chant #2657 — the chant and hud boundary (ws-052): the owner roster in
+      // docs/data/boundary.yaml against the code's closed lists, and the
+      // static guard that packages/core opens no listener and imports no UI
+      // or agent-runtime package. Both read source only.
+      "test/boundary-roster.test.ts",
+      "test/no-listener.test.ts",
     ],
     // chant #1419 — a fresh clone has no lexicon src/generated/ or
     // dist/meta.json, and lexicon tests fail against their absence with

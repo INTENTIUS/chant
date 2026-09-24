@@ -31,9 +31,11 @@ export {
 } from "./behaviour-conformance";
 export { describeApplyConformance } from "./apply-conformance";
 export { describeWorkspaceKindConformance } from "./workspace-kind-conformance";
+export { describeWorkspaceReaderConformance, readerCallProblems, READ_CONTRACT_COMMANDS, READ_CONTRACT_SCHEMAS, READ_CONTRACT_JSON_FLAGS, REFERENCE_READS } from "./workspace-reader-conformance";
 export type { ObservationConformanceConfig, ObservationScenario } from "./observation-conformance";
 export type { BehaviourConformanceConfig, BehaviourScenario } from "./behaviour-conformance";
 export type { WorkspaceKindConformanceConfig, WorkspaceKindScenario } from "./workspace-kind-conformance";
+export type { WorkspaceReaderConformanceConfig, WorkspaceReader, ChantTransport, ChantRun, ReadContractCommand } from "./workspace-reader-conformance";
 export type {
   ApplyConformanceConfig,
   ApplyScenario,
