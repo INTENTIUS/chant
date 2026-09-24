@@ -286,6 +286,17 @@ export interface ParsedArgs {
   /** `chant workspace records --current` (#2546): leave out records a closed record supersedes. */
   current?: boolean;
   /**
+   * `chant build --root-only` and `chant lint --root-only` (#2537): run on the
+   * root project of a declared workspace, members left out, instead of
+   * refusing with `WSP000`.
+   */
+  rootOnly?: boolean;
+  /**
+   * `chant workspace build|lint|audit|graph --member <name>` (#2537): run only
+   * the named members or example groups. Repeatable, and a comma list works too.
+   */
+  members?: string[];
+  /**
    * `chant search "<q>" --ambient --live --env <name>` (#1278) — also report
    * resources of a kind this estate manages that exist in the account without
    * being declared or referenced. What "which of my security groups are

@@ -6,6 +6,7 @@ import { formatSuccess, formatError } from "./format";
 import { loadPlugins, resolveProjectLexicons } from "./plugins";
 import { resolveCommand, type CommandDef, type ParsedArgs } from "./registry";
 import { loadChantConfigUpward } from "../config";
+import { findProjectRoot, findWorkspaceRoot } from "../project-root";
 import { validateLexiconConfig, formatLexiconConfigProblems } from "../lexicon-config";
 import { armSandboxConfigEvaluation } from "../config-sandbox";
 import { armSandboxPolicyExecution } from "../lint/policy-import";
@@ -96,6 +97,7 @@ const BOOLEAN_FLAGS = new Set([
   "--skip-mcp",
   "--current",
   "--allow-code",
+  "--root-only",
 ]);
 
 /**
@@ -453,6 +455,16 @@ export function parseArgs(args: string[]): ParsedArgs {
       // #2550 — `chant workspace upgrade` runs a template's code migrations
       // only when asked to.
       result.allowCode = true;
+    } else if (arg === "--root-only") {
+      // #2537 — `chant build` and `chant lint` at a declared workspace root
+      // run on the root project alone instead of refusing with WSP000.
+      result.rootOnly = true;
+    } else if (arg === "--member") {
+      // #2537 — `chant workspace build|lint|audit|graph --member <name>`.
+      // Repeatable, and a comma list works too.
+      const value = args[++i];
+      if (!value || value.startsWith("-")) throw new Error("--member needs a member or group name: --member <name>");
+      result.members = [...(result.members ?? []), ...value.split(",").map((m) => m.trim()).filter(Boolean)];
     } else if (arg === "--allow-same-origin") {
       // chant#2384 — record a resolution the same-origin rule would refuse,
       // deliberately. Flagged on the record, not just accepted quietly.
@@ -538,7 +550,10 @@ Commands:
                          pipeline that triggers each discovered component's
                          own deploy in wave order, instead of a normal
                          lexicon build)
+                        At a declared workspace root it refuses with WSP000;
+                        --root-only builds the root project alone
   lint                  Check specifications for issues
+                        (at a declared workspace root: WSP000 unless --root-only)
   list                  List discovered entities
   describe              Show the effective config for one component
   explain               Summarize discovered entities (--format markdown|json|okf;
@@ -705,6 +720,20 @@ Workspace (level 1, #2524):
   workspace check [--json]
                         Fail on an unreadable lineage lock or an open manual
                         step. Needs no workspace file
+  workspace build [dir] [--member <name>] [-o <dir>] [--dry-run]
+                        Build every chant member and example project, each with
+                        its own chant, one process per toolchain. -o <dir>
+                        writes <dir>/<member>.json; --member narrows the run;
+                        --dry-run prints which chant runs which project
+  workspace lint [dir] [--format stylish|json|sarif] [--member <name>]
+                        Lint every chant member and example project with its
+                        own chant; sarif writes one run per member
+  workspace audit [dir] [--json] [--member <name>]
+                        Audit each chant member with its own .chant-audit.json;
+                        every finding carries a member field
+  workspace graph [dir] [--member <name>] [-o <file>]
+                        Compose each chant member's chant graph into one IR,
+                        with <member>/<id> ids and groups.byMember
 
 Lifecycle (alias: lc):
   lifecycle snapshot <env>  Query API, save metadata to orphan branch
@@ -1039,6 +1068,40 @@ async function loadPluginsOrExit(path: string): Promise<import("../lexicon").Lex
   return plugins;
 }
 
+/**
+ * Run one level-0 command line in this process and return its exit code
+ * (#2537). `chant workspace member-run` calls it once per member, from inside
+ * the member's directory, so each member is built, linted, audited or graphed
+ * as `chant <verb> .` would do it there, while members that share a toolchain
+ * share one process. It is main()'s dispatch without the help, the root
+ * refusal and the lexicon command groups: the config is loaded, `--env` is
+ * checked, plugins are loaded when the command needs them, and the handler
+ * runs. A `process.exit` inside (loadPluginsOrExit's, say) is the caller's to
+ * catch.
+ */
+export async function runCommandInProcess(argv: string[]): Promise<number> {
+  const args = parseArgs(argv);
+  const match = resolveCommand(args, commandRegistry);
+  if (!match) {
+    console.error(formatError({ message: `Unknown command: ${args.command}` }));
+    return 1;
+  }
+  if (args.env) process.env[ENV_VAR] = args.env;
+  let loadedConfig;
+  try {
+    loadedConfig = await loadChantConfigUpward(resolve(args.path));
+  } catch {
+    // A project with no config is the handler's to report, as in main().
+  }
+  const envErr = unknownEnvError(args.env, loadedConfig?.config.environments);
+  if (envErr) {
+    console.error(formatError({ message: envErr, hint: "Declare it in chant.config `environments`, or omit --env." }));
+    return 1;
+  }
+  const plugins = match.def.requiresPlugins ? await loadPluginsOrExit(match.compound ? "." : args.path) : [];
+  return match.def.handler({ args, plugins, serializers: plugins.map((p) => p.serializer) });
+}
+
 // ── Command registry ──────────────────────────────────────────────
 
 /**
@@ -1121,6 +1184,13 @@ export const commandRegistry: CommandDef[] = [
   { name: "workspace lineage", handler: async (ctx) => (await import("../workspace/lineage-cli")).runWorkspaceLineage(ctx) },
   { name: "workspace upgrade", handler: async (ctx) => (await import("../workspace/lineage-upgrade-cli")).runWorkspaceUpgrade(ctx) },
   { name: "workspace check", handler: async (ctx) => (await import("../workspace/lineage-check")).runWorkspaceCheck(ctx) },
+  // #2537 — per-member commands. Each member runs under its own chant, one
+  // process per toolchain identity; `member-run` is that process's entry.
+  { name: "workspace build", handler: async (ctx) => (await import("../workspace/member-commands")).runWorkspaceMembers(ctx, "build") },
+  { name: "workspace lint", handler: async (ctx) => (await import("../workspace/member-commands")).runWorkspaceMembers(ctx, "lint") },
+  { name: "workspace audit", handler: async (ctx) => (await import("../workspace/member-commands")).runWorkspaceMembers(ctx, "audit") },
+  { name: "workspace graph", handler: async (ctx) => (await import("../workspace/member-commands")).runWorkspaceMembers(ctx, "graph") },
+  { name: "workspace member-run", handler: async (ctx) => (await import("../workspace/member-run")).runWorkspaceMemberRun(ctx, runCommandInProcess) },
 
   // State subcommands
   { name: "lifecycle snapshot", requiresPlugins: true, handler: runLifecycleSnapshot },
@@ -1266,6 +1336,28 @@ async function main(): Promise<void> {
       hint: 'Run "chant --help" to see available commands',
     }));
     process.exit(1);
+  }
+
+  // #2537 (#2524 D0) — at the root of a declared workspace, `build` and
+  // `lint` refuse with WSP000 unless `--root-only` or `rootOnly: true` says
+  // to run on the root project alone. Both lookups only test whether files
+  // exist; the workspace code loads only when this project is a declared root.
+  if (match.def.name === "build" || match.def.name === "lint") {
+    const target = resolve(args.path);
+    const workspace = findWorkspaceRoot(target);
+    if (workspace && findProjectRoot(target) === workspace.dir) {
+      const { guardRootCommand } = await import("../workspace/root-refusal");
+      const refused = guardRootCommand({
+        verb: match.def.name,
+        target,
+        workspaceDir: workspace.dir,
+        rootOnly: args.rootOnly === true || loadedConfig?.config.rootOnly === true,
+      });
+      if (refused !== undefined) {
+        await flushAndExit(refused);
+        return;
+      }
+    }
   }
 
   // For compound commands (e.g. "run list", "lifecycle plan <env>"), the first

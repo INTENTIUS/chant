@@ -21,6 +21,7 @@ chant lint [path] [flags]
 | `--format` | `string` | `stylish` | Output format: `stylish`, `json`, or `sarif` |
 | `--fix` | `bool` | `false` | Auto-fix fixable issues |
 | `-w, --watch` | `bool` | `false` | Watch for file changes and re-lint |
+| `--root-only` | `bool` | `false` | At the root of a declared workspace, lint the root project alone instead of refusing. See [At a workspace root](#at-a-workspace-root) |
 | `--sandbox` | `bool` | `false` | Run any project source the lint has to execute in one isolated child process rather than in the chant process. The same boundary as [`chant build --sandbox`](/chant/cli/build/#sandboxed-execution); composes with `--watch` |
 
 ## Usage
@@ -53,9 +54,13 @@ A lexicon the project declares in `chant.config.*` but that cannot be resolved i
 
 A project that declares no lexicon and imports none is unaffected. It lints under the core rules alone, as it always has.
 
+## At a workspace root
+
+At the root of a [declared workspace](/chant/reference/workspace-declaration/), `chant lint` refuses with the code `WSP000` and exits 1, as [`chant build`](/chant/cli/build/#at-a-workspace-root) does. The members have left the root project, and [`chant workspace lint`](/chant/cli/workspace-lint/) lints each of them with its own chant. With `--root-only`, or `rootOnly: true` in the root's `chant.config.ts`, the root project is linted on its own. Member directories and example-group matches are then left out of it. Linting inside a member is never refused.
+
 ## Exit Codes
 
 | Code | Meaning |
 |------|---------|
 | 0 | No errors found |
-| 1 | Lint errors found, including a declared lexicon that could not be resolved |
+| 1 | Lint errors found, including a declared lexicon that could not be resolved, or `WSP000` at a workspace root |
