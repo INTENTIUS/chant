@@ -106,7 +106,7 @@
  */
 
 import { emitYAML } from "@intentius/chant/yaml";
-import { resolveOpTrigger } from "@intentius/chant/lexicon";
+import { memberGitlabChanges, memberRepoPath, memberShellDir, resolveOpTrigger } from "@intentius/chant/lexicon";
 import type {
   ComponentPipelineOptions as GenerateGitlabOpOptions,
   OpEnvironment,
@@ -425,8 +425,16 @@ export function generateGitlabOpPipeline(
   const extraScript = options.extraScript ?? [];
   const stage = options.opsStage ?? DEFAULT_STAGE;
   assertOpsStage(stage);
-  const fileName = options.opsFileName ?? `${stage}.gitlab-ci.yml`;
-  assertOpsFileName(fileName);
+  const baseFileName = options.opsFileName ?? `${stage}.gitlab-ci.yml`;
+  assertOpsFileName(baseFileName);
+  // A workspace member's file, jobs and resource groups carry its name
+  // (#2542): the root .gitlab-ci.yml includes every member's file, and job
+  // names share one namespace across them.
+  const member = options.member;
+  const fileName = member ? `${member.name}-${baseFileName}` : baseFileName;
+  const jobPrefix = member ? `${member.name}-` : "";
+  const changes = member ? memberGitlabChanges(member, member.fileDir ? `${member.fileDir}/${fileName}` : undefined) : undefined;
+  const cdLine = member && member.dir !== "." && member.dir !== "" ? [`cd ${memberShellDir(member)}`] : [];
 
   const jobs: OpPipelineJob[] = [];
   const doc: Record<string, unknown> = { stages: [stage] };
@@ -443,7 +451,7 @@ export function generateGitlabOpPipeline(
     assertTriggerSupportsMode(spec.name, findingMode, trigger);
     if (trigger.kind === "cron") anyCron = true;
 
-    const jobName = toJobName(spec.name);
+    const jobName = jobPrefix + toJobName(spec.name);
     jobs.push({ jobName, op: spec.name, trigger, findingMode });
     opLines.push(headerLineFor(spec, trigger, jobName, findingMode));
     if (spec.environment) {
@@ -484,14 +492,14 @@ export function generateGitlabOpPipeline(
           }
         : {}),
       ...(Object.keys(jobVariables).length > 0 ? { variables: jobVariables } : {}),
-      rules: rulesFor(spec, trigger),
-      script: [...setupScript, ...beforeScript, invocation.join(" "), ...extraScript],
+      rules: changes && trigger.kind !== "cron" ? rulesFor(spec, trigger).map((r) => ({ ...r, changes })) : rulesFor(spec, trigger),
+      script: [...cdLine, ...setupScript, ...beforeScript, invocation.join(" "), ...extraScript],
       // `when: always` because the run this publishes for is the green one: a
       // gated apply succeeds, and the block is the only thing that says a
       // human still has to act. A run that walked through its gate writes no
       // block, and GitLab reports the empty upload as a warning, not a failure.
       ...(gated
-        ? { artifacts: { when: "always", paths: [gateSummary], expire_in: GATE_ARTIFACT_EXPIRY } }
+        ? { artifacts: { when: "always", paths: [member ? memberRepoPath(member, gateSummary) : gateSummary], expire_in: GATE_ARTIFACT_EXPIRY } }
         : {}),
     };
   }

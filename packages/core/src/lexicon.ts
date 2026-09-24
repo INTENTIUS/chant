@@ -501,6 +501,78 @@ export interface ComponentPipelineOptions {
    * `["chant", "components", "promote", "--from", <env>, "--to", <promoteTo>]`.
    */
   promoteCommand?: string[];
+  /**
+   * The workspace member this pipeline belongs to (#2542, #2524 D19). Core
+   * sets it when the project sits in a member of a `chant.workspace.json`;
+   * a caller never needs to. Unset, every generator's output is unchanged.
+   * Set, the pipeline keeps the triggers it has without a member, and the
+   * ones that can take a path filter (an Op's `push` and `pull_request`, and
+   * GitLab's job rules) are limited to the member's files and the pipeline
+   * file. Its jobs run in the member's directory, and its names carry the
+   * member's name so two members' pipelines never collide.
+   */
+  member?: PipelineMember;
+}
+
+/** Where a workspace member sits, for a generated pipeline (#2542). */
+export interface PipelineMember {
+  /** The member's name in the declaration. */
+  name: string;
+  /**
+   * The member's directory relative to the repository root, with `/`
+   * separators, or `"."` for a member at the root.
+   */
+  dir: string;
+  /**
+   * Directories (repository-relative) that belong to other members or to
+   * example groups. Only a member at `"."` uses them: its path filter is the
+   * whole repository minus these.
+   */
+  exclude?: string[];
+  /** The generated component pipeline's path, repository-relative. Added to the path filter. */
+  file?: string;
+  /**
+   * The directory (repository-relative) the generated Op pipeline files land
+   * in. Each file's own path is added to its path filter.
+   */
+  fileDir?: string;
+}
+
+/** `path` (relative to the member's directory) made relative to the repository root. Absolute paths pass through. */
+export function memberRepoPath(member: PipelineMember, path: string): string {
+  if (path.startsWith("/") || member.dir === "." || member.dir === "") return path;
+  const rest = path.replace(/^\.\/+/, "").replace(/\/+$/, "");
+  return rest === "" || rest === "." ? member.dir : `${member.dir}/${rest}`;
+}
+
+/**
+ * The path filter for a member's `push` or `pull_request` trigger in GitHub
+ * Actions syntax (also Forgejo's): the member's directory and the pipeline
+ * file. A member at
+ * `"."` gets every path, minus the other members' directories.
+ */
+export function memberPathFilter(member: PipelineMember, file: string | undefined = member.file): string[] {
+  const paths =
+    member.dir === "." || member.dir === ""
+      ? ["**", ...(member.exclude ?? []).map((d) => `!${d}/**`)]
+      : [`${member.dir}/**`];
+  if (file && !paths.includes(file)) paths.push(file);
+  return paths;
+}
+
+/**
+ * The `rules: changes:` list for a member's GitLab jobs, or undefined for a
+ * member at `"."`: GitLab's `changes` has no exclusions, so the root member's
+ * jobs run on every change.
+ */
+export function memberGitlabChanges(member: PipelineMember, file: string | undefined = member.file): string[] | undefined {
+  if (member.dir === "." || member.dir === "") return undefined;
+  return [`${member.dir}/**/*`, ...(file ? [file] : [])];
+}
+
+/** A shell word for `cd` into the member's directory. */
+export function memberShellDir(member: PipelineMember): string {
+  return /^[A-Za-z0-9._\/-]+$/.test(member.dir) ? member.dir : `'${member.dir.replace(/'/g, `'\\''`)}'`;
 }
 
 /** The synthesized CI pipeline for a component graph (generate mode). */
