@@ -13,41 +13,41 @@ whether a session's decisions get captured depends on who's driving and
 which harness they're in.
 
 The [reference workspace](https://github.com/INTENTIUS/chant/tree/main/reference-workspace)
-ships a harness-neutral way to do it by hand, in two files a `chant init
---from` copies into every workspace made from it:
+ships a harness-neutral way to do it by hand, in two files that
+`chant init --from` copies into every workspace made from it:
 
 - [`skills/record-decisions/SKILL.md`](https://github.com/INTENTIUS/chant/blob/main/reference-workspace/skills/record-decisions/SKILL.md),
   plain Markdown with the short frontmatter chant's other skills use. Claude
-  Code, Codex, Gemini CLI and opencode all read skill files this way; a
-  person just asks to record the session's decisions.
+  Code and Codex both read skill files this way, and Gemini CLI and opencode
+  do too; a person just asks to record the session's decisions.
 - [`docs/record-decisions.md`](https://github.com/INTENTIUS/chant/blob/main/reference-workspace/docs/record-decisions.md),
   the same ask written as one prompt, for a harness with no skill mechanism.
   Paste it into the chat.
 
 Both describe the same loop. This page walks it once, end to end.
 
-## The loop
+## List what was actually decided
 
-**List what was actually decided.** Not everything that happened in a
-session is a decision. A decision is a choice between options, made for a
-stated reason. Filter for that: drop one-way tasks, fixes, and anything that
-just applied a rule someone else already settled.
+Not everything that happened in a session is a decision. A decision is a
+choice between options, made for a stated reason. Drop one-way tasks, fixes,
+and anything that just applied a rule someone else already settled.
 
-**Check it against what the workspace already has.**
+## Check it against what the workspace already has
 
 ```bash
 chant workspace records --kind decisions/decision.kind.mjs --current --json
 ```
 
-Compare each candidate's title and question against the current records.
-One that says the same thing as an existing record is a duplicate: drop it,
-don't write it again. One that reaches the opposite conclusion on the same
-topic contests that record: keep the candidate, but say so.
+Compare each candidate's title and question against the current records. One
+that says the same thing as an existing record is a duplicate, so drop it
+and don't write it again. One that reaches the opposite conclusion on the
+same topic contests that record; keep the candidate, but say so.
 
-**Show the list, write only what's kept.** A person decides which candidates
-are worth a record. Nothing gets written without that.
+Then show the whole list, duplicates and contests marked, to a person. Only
+they decide which candidates are worth a record; nothing gets written
+without that.
 
-**Write each kept one as `proposed`.**
+## Write each kept one as `proposed`
 
 ```bash
 chant workspace records new decisions/decision.kind.mjs --from - <<'JSON'
