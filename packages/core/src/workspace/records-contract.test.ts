@@ -12,6 +12,7 @@ import Ajv2020 from "ajv/dist/2020";
 import { afterAll, describe, expect, test } from "vitest";
 import { queryRecords, RECORDS_CONTRACT_VERSION, RECORDS_OUTPUT_SCHEMA_ID, type RecordsDocument } from "./records-cli";
 import { READ_ERROR_CODES, RECORD_REASON_CODES, RECORD_WARNING_CODES, recordTextDigest, REVIEW_REASON_CODES } from "./records";
+import { WORK_WARNING_CODES } from "./work";
 import schema from "./records.schema.json";
 import { PROVENANCE_LEVELS } from "./trust/attestor";
 
@@ -147,7 +148,8 @@ describe("records output schema", () => {
   });
 
   test("lists exactly the warning codes the code can return", () => {
-    expect(schema.$defs.warning.properties.code.enum).toEqual([...RECORD_WARNING_CODES]);
+    // A work kind's records carry the work warnings too, except work-done-gap-open, which only graph --intent raises (#2683).
+    expect(schema.$defs.warning.properties.code.enum).toEqual([...RECORD_WARNING_CODES, ...WORK_WARNING_CODES.filter((c) => c !== "work-done-gap-open")]);
   });
 
   test("every failure validates with its code", async () => {

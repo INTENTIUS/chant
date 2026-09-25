@@ -698,6 +698,10 @@
   "anaphora/repeated-opening": 2,
   "formatting/bold-first-bullet": 1
  },
+ "docs/src/content/docs/guide/work-items.mdx": {
+  "formatting/em-dash-density": 3,
+  "claude/colon-reveal": 3
+ },
  "docs/src/content/docs/guide/writing-resources.mdx": {
   "formatting/em-dash-density": 7,
   "claude/colon-reveal": 3,

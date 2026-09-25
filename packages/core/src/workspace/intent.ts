@@ -35,7 +35,7 @@
 
 import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
-import { basename, relative, resolve, sep } from "node:path";
+import { basename, dirname, relative, resolve, sep } from "node:path";
 import { declaredRecordKinds, readDeclaration, readerVersion, resolveGroups, WORKSPACE_ERROR_CODES, WorkspaceReadError, type Declaration } from "./declaration";
 import { declaredKindFile } from "./declared-kinds";
 import { classifyFile, declaredFilesUnder } from "./generated-files";
@@ -44,13 +44,14 @@ import { loadKindRegistry } from "./kinds";
 import { resolveLinks, type LinkTableRow } from "./links";
 import { sourceMemberHandles } from "./member-handles";
 import { constraintCovers, isWorkspacePath, memberHolding } from "./record-assets";
-import { importKindModule, loadRecordKind, RecordReadError, supersedesTargets, type LoadedRecordKind } from "./records";
+import { importKindModule, loadRecordKind, parseFrontMatter, RecordReadError, supersedesTargets, type LoadedRecordKind } from "./records";
 import { queryRecords, type RecordView } from "./records-cli";
-import type { PluginCode, ReasonCode } from "./reason-codes";
+import { isPluginCode, type PluginCode, type ReasonCode } from "./reason-codes";
 import { joinPath, skippedDir, type WorkspaceTree } from "./tree";
 import { activeAttestors, type ProvenanceLevel } from "./trust/attestor";
 import { commitProvenance, policyAtBase, resolveBase } from "./trust/provenance";
 import { locateWorkspace, type LocatedWorkspace } from "./which-chant";
+import { idList, isDecided, WORK_WARNING_CODES, type WorkLink, type WorkWarningCode } from "./work";
 
 /** The version of the `intent` document this chant writes. */
 export const INTENT_CONTRACT_VERSION = 1;
@@ -86,6 +87,12 @@ export const INTENT_FINDING_CODES = [
   "intent-trailer-unverified",
   /** No decision constrains the region at any granularity. */
   "intent-region-unconstrained",
+  /** A decided decision constrains the region, no work item that is not dropped implements it, and no commit falls in its window (#2683). Only with a work kind read. */
+  "intent-decision-unimplemented",
+  /** A work item constraining the region has commits in its window while its blockedBy is not empty (#2683). */
+  "intent-work-blocked",
+  /** Commits in the region are a decision's own work while the work item implementing it is still open: the code says done and the queue says not (#2683). */
+  "intent-work-open-decided-code",
 ] as const satisfies readonly ReasonCode[];
 export type IntentFindingCode = (typeof INTENT_FINDING_CODES)[number];
 
@@ -262,9 +269,53 @@ export interface FindingNode {
   plugin?: string;
   /** For a plugin's finding: the refs as the plugin gave them. The ones that name a node in the graph are in concerns. */
   refs?: string[];
+  /** With a work kind read (#2683): whether a work item addresses the finding. */
+  addressed?: boolean;
+  /** With a work kind read: the work items addressing the finding, each with its state. */
+  addressedBy?: WorkLink[];
 }
 
-export type IntentNode = RegionNode | FileNode | MemberNode | CommitNode | JoinedNode | EvidenceEntryNode | DecisionNode | ArtifactNode | LinkNode | FindingNode;
+/** Where a work item says it came from: the gap the intent graph reported (#2683). */
+export interface WorkGapSource {
+  finding: string;
+  region: string;
+  decision?: string;
+  artifact?: string;
+}
+
+export interface WorkNode {
+  id: string;
+  kind: "work";
+  recordKind: string;
+  record: string;
+  /** The record file, from the repository root. */
+  path: string;
+  title: string | null;
+  state: string | null;
+  /** Whether the kind counts the state as closed, such as done or dropped. */
+  closed: boolean;
+  valid: boolean;
+  reasons: RecordView["reasons"];
+  provenance: { level: ProvenanceLevel; commit: string | null; reason: string };
+  owner: string | null;
+  /** As records reports it: open, and every need done. */
+  ready: boolean;
+  /** Each need that is not done, with its state. */
+  blockedBy: WorkLink[];
+  /** Each decision the item implements, with its state. */
+  implements: WorkLink[];
+  /** The ids the item's needs list names. */
+  needs: string[];
+  /** The gap the item came from, when its source names one. */
+  source: WorkGapSource | null;
+  supersededBy: string | null;
+  /** The constrains entries that cover the region, with their granularity. Empty for an item in the graph only through a link. */
+  constrains: { entry: string; granularity: Granularity }[];
+  /** The item's work warnings, as records reports them, and work-done-gap-open. */
+  warnings: { code: WorkWarningCode; message: string }[];
+}
+
+export type IntentNode = RegionNode | FileNode | MemberNode | CommitNode | JoinedNode | EvidenceEntryNode | DecisionNode | WorkNode | ArtifactNode | LinkNode | FindingNode;
 
 export type Granularity = "path" | "member" | "contract" | "issue";
 
@@ -272,8 +323,8 @@ export type IntentEdge =
   | { kind: "constrains"; from: string; to: string; granularity: Granularity; entry: string }
   | { kind: "pins"; from: string; to: string; pinnedSha256: string | null; pinState: PinState }
   | { kind: "touched-by"; from: string; to: string; lines: LineRange[] | null }
-  | { kind: "within"; from: string; to: string; state: "decided" | "decided-by-window" }
-  | { kind: "produced-by" | "serves" | "cites-evidence" | "supersedes" | "links"; from: string; to: string };
+  | { kind: "within"; from: string; to: string; state: "decided" | "decided-by-window" | "worked" }
+  | { kind: "produced-by" | "serves" | "cites-evidence" | "supersedes" | "links" | "implements" | "needs" | "addressed-by"; from: string; to: string };
 
 export interface IntentReason {
   code: IntentReasonCode;
@@ -410,6 +461,25 @@ function addingCommit(top: string, rev: string, path: string): string | null {
   return out?.trim() || null;
 }
 
+/**
+ * The commit reachable from `rev` that moved the record at `path` into a
+ * closed state and kept it there, or null when the record is not closed at
+ * `rev` (#2683). A record added in a closed state closes in the commit that
+ * added it.
+ */
+function closingCommit(top: string, rev: string, path: string, stateField: string, closed: readonly string[]): string | null {
+  const out = tryGit(top, ["log", "--format=%H", rev, "--", path]);
+  let closing: string | null = null;
+  for (const sha of (out ?? "").split("\n").map((l) => l.trim()).filter(Boolean)) {
+    const text = tryGit(top, ["show", `${sha}:${path}`]);
+    const fm = text === undefined ? undefined : parseFrontMatter(text);
+    const state = fm?.ok ? fm.value[stateField] : undefined;
+    if (typeof state !== "string" || !closed.includes(state)) break;
+    closing = sha;
+  }
+  return closing;
+}
+
 /** `commit` and every commit between it and `rev` that has it as an ancestor. */
 function descendants(top: string, commit: string, rev: string): Set<string> {
   const out = new Set<string>([commit]);
@@ -474,6 +544,20 @@ function isGenerated(declaration: Declaration, path: string): boolean {
 
 function stringOr(v: unknown): string | null {
   return typeof v === "string" ? v : null;
+}
+
+/** A work record's `source` when it names the gap it came from (#2683), or null. */
+function gapSource(data: Record<string, unknown> | null): WorkGapSource | null {
+  const src = data?.source;
+  if (src === null || typeof src !== "object" || Array.isArray(src)) return null;
+  const s = src as Record<string, unknown>;
+  if (typeof s.finding !== "string" || typeof s.region !== "string") return null;
+  return {
+    finding: s.finding,
+    region: s.region,
+    ...(typeof s.decision === "string" ? { decision: s.decision } : {}),
+    ...(typeof s.artifact === "string" ? { artifact: s.artifact } : {}),
+  };
 }
 
 function reviewSummary(data: Record<string, unknown> | null): DecisionNode["reviews"] {
@@ -746,36 +830,41 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
     });
   };
   const fileNodesUnder = (full: string) => files.filter((f) => constraintCovers(full, joinPath(workspacePrefix, f)));
+  /** The constrains entries of a record that cover the region or a file under it. Decisions and work items match the same way (#2683). */
+  const matchConstrains = (k: LoadedKind, v: RecordView): { entry: string; granularity: Granularity; to: string }[] => {
+    const field = k.records!.loaded.kind.constrains?.field;
+    const kindPrefix = k.records!.workspaceRoot === "." ? "" : k.records!.workspaceRoot;
+    const list = field ? v.data?.[field] : undefined;
+    const matched: { entry: string; granularity: Granularity; to: string }[] = [];
+    if (!Array.isArray(list)) return matched;
+    for (const entry of list) {
+      if (typeof entry !== "string") continue;
+      if (entry.startsWith("path:")) {
+        const p = entry.slice("path:".length);
+        if (!isWorkspacePath(p)) continue;
+        const full = joinPath(kindPrefix, p);
+        if (regionFull !== "" && constraintCovers(full, regionFull)) {
+          matched.push({ entry, granularity: "path", to: rid });
+        } else if (type === "dir" && full !== regionFull && (regionFull === "" || full.startsWith(`${regionFull}/`))) {
+          // A path below a directory region constrains the files under it, not the whole region.
+          for (const f of fileNodesUnder(full)) matched.push({ entry, granularity: "path", to: `file:${f}` });
+        }
+      } else if (entry.startsWith("member:")) {
+        if (member !== null && entry.slice("member:".length) === member) matched.push({ entry, granularity: "member", to: rid });
+      } else {
+        const issue = entry.match(ISSUE);
+        if (issue && origin !== null && issue[1].toLowerCase() === origin && commitRefs.has(issue[2])) matched.push({ entry, granularity: "issue", to: rid });
+        else if (contractIds.has(entry)) matched.push({ entry, granularity: "contract", to: `contract:${entry}` });
+      }
+    }
+    return matched;
+  };
   for (const k of kinds) {
-    if (!k.records) continue;
-    const field = k.records.loaded.kind.constrains?.field;
-    const kindPrefix = k.records.workspaceRoot === "." ? "" : k.records.workspaceRoot;
+    if (!k.records || k.records.loaded.kind.work) continue;
     for (const v of k.records.views) {
       if (v.id === null) continue;
       decisionById.set(`${k.records.loaded.kind.name}/${v.id}`, { view: v, kind: k });
-      const list = field ? v.data?.[field] : undefined;
-      if (!Array.isArray(list)) continue;
-      const matched: { entry: string; granularity: Granularity; to: string }[] = [];
-      for (const entry of list) {
-        if (typeof entry !== "string") continue;
-        if (entry.startsWith("path:")) {
-          const p = entry.slice("path:".length);
-          if (!isWorkspacePath(p)) continue;
-          const full = joinPath(kindPrefix, p);
-          if (regionFull !== "" && constraintCovers(full, regionFull)) {
-            matched.push({ entry, granularity: "path", to: rid });
-          } else if (type === "dir" && full !== regionFull && (regionFull === "" || full.startsWith(`${regionFull}/`))) {
-            // A path below a directory region constrains the files under it, not the whole region.
-            for (const f of fileNodesUnder(full)) matched.push({ entry, granularity: "path", to: `file:${f}` });
-          }
-        } else if (entry.startsWith("member:")) {
-          if (member !== null && entry.slice("member:".length) === member) matched.push({ entry, granularity: "member", to: rid });
-        } else {
-          const issue = entry.match(ISSUE);
-          if (issue && origin !== null && issue[1].toLowerCase() === origin && commitRefs.has(issue[2])) matched.push({ entry, granularity: "issue", to: rid });
-          else if (contractIds.has(entry)) matched.push({ entry, granularity: "contract", to: `contract:${entry}` });
-        }
-      }
+      const matched = matchConstrains(k, v);
       if (matched.length === 0) continue;
       const node = decisionNode(k, v);
       for (const m of matched) {
@@ -898,6 +987,116 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
       windows.set(c.node.id, { from: added ? descendants(top, added, rev) : new Set(), until: replaced ? descendants(top, replaced, rev) : null });
     }
   }
+  // Work items (#2683): the records of each work kind whose constrains cover
+  // the region, the decisions they implement and the items they need, one hop
+  // each, and each covering item's window: from the commit that added the
+  // record to the commit that closed it, that commit included, or to the
+  // revision read while it is open.
+  interface WorkHit {
+    view: RecordView;
+    kind: LoadedKind;
+    node?: WorkNode;
+  }
+  const workKinds = kinds.filter((k) => k.records?.loaded.kind.work);
+  const readsWork = workKinds.length > 0;
+  const workAll: WorkHit[] = [];
+  const workByKey = new Map<string, WorkHit>();
+  for (const k of workKinds) {
+    for (const v of k.records!.views) {
+      if (v.id === null) continue;
+      const hit: WorkHit = { view: v, kind: k };
+      workAll.push(hit);
+      const key = `${k.records!.loaded.kind.name}/${v.id}`;
+      if (!workByKey.has(key)) workByKey.set(key, hit);
+    }
+  }
+  const workSpec = (h: WorkHit) => h.kind.records!.loaded.kind.work!;
+  const workNode = (h: WorkHit): WorkNode => {
+    if (h.node) return h.node;
+    const kind = h.kind.records!.loaded.kind;
+    const v = h.view;
+    h.node = add<WorkNode>({
+      id: `record:${kind.name}/${v.id!}`,
+      kind: "work",
+      recordKind: kind.name,
+      record: v.id!,
+      path: v.path,
+      title: stringOr(v.data?.title),
+      state: v.state,
+      closed: v.state !== null && (kind.closedStates ?? []).includes(v.state),
+      valid: v.valid,
+      reasons: v.reasons,
+      provenance: { level: v.provenance.level, commit: v.provenance.commit, reason: v.provenance.reason },
+      owner: stringOr(v.data?.owner),
+      ready: v.ready ?? false,
+      blockedBy: v.blockedBy ?? [],
+      implements: v.implements ?? [],
+      needs: idList(v.data, kind.work!.needs),
+      source: gapSource(v.data),
+      supersededBy: v.supersededBy,
+      constrains: [],
+      warnings: v.warnings.filter((w): w is { code: WorkWarningCode; message: string } => (WORK_WARNING_CODES as readonly string[]).includes(w.code)),
+    });
+    return h.node;
+  };
+  /** The decision kind a work kind names, when it is among the kinds read. */
+  const decisionKindOf = (k: LoadedKind): LoadedKind | undefined => {
+    const file = realpathOr(resolve(dirname(k.records!.loaded.file), k.records!.loaded.kind.work!.decisions));
+    return kinds.find((x) => x.records && !x.records.loaded.kind.work && realpathOr(x.records.loaded.file) === file);
+  };
+  /** The node ids of the decisions a work item implements, among the decisions read. */
+  const implementedIds = (h: WorkHit): string[] => {
+    const dk = decisionKindOf(h.kind);
+    if (!dk) return [];
+    return idList(h.view.data, workSpec(h).implements)
+      .map((d) => decisionById.get(`${dk.records!.loaded.kind.name}/${d}`))
+      .filter((x): x is { view: RecordView; kind: LoadedKind } => x !== undefined)
+      .map((x) => decisionId(x.kind, x.view.id!));
+  };
+  /** The work items implementing a decision, leaving out dropped ones: a closed state other than done. */
+  const implementersOf = (d: DecisionNode): WorkHit[] =>
+    workAll.filter((h) => {
+      const kind = h.kind.records!.loaded.kind;
+      const dropped = h.view.state !== null && h.view.state !== kind.work!.done && (kind.closedStates ?? []).includes(h.view.state);
+      return !dropped && implementedIds(h).includes(d.id);
+    });
+  const workCovering: WorkHit[] = [];
+  for (const h of workAll) {
+    const matched = matchConstrains(h.kind, h.view);
+    if (matched.length === 0) continue;
+    const node = workNode(h);
+    for (const m of matched) {
+      edges.push({ kind: "constrains", from: node.id, to: m.to, granularity: m.granularity, entry: m.entry });
+      if (m.to === rid || m.granularity === "contract") node.constrains.push({ entry: m.entry, granularity: m.granularity });
+    }
+    if (node.constrains.length > 0) workCovering.push(h);
+  }
+  for (const h of workAll.filter((x) => x.node)) {
+    for (const id of implementedIds(h)) {
+      const hit = decisionById.get(id.slice("record:".length))!;
+      edges.push({ kind: "implements", from: h.node!.id, to: decisionNode(hit.kind, hit.view).id });
+    }
+    for (const n of idList(h.view.data, workSpec(h).needs)) {
+      const hit = workByKey.get(`${h.kind.records!.loaded.kind.name}/${n}`);
+      if (hit) edges.push({ kind: "needs", from: h.node!.id, to: workNode(hit).id });
+    }
+  }
+  const workWindows = new Map<string, { from: Set<string>; until: Set<string> | null }>();
+  if (rev) {
+    for (const h of workCovering) {
+      const kind = h.kind.records!.loaded.kind;
+      const added = addingCommit(top, rev, h.view.path);
+      const closing = kind.stateField ? closingCommit(top, rev, h.view.path, kind.stateField, kind.closedStates ?? []) : null;
+      const until = closing ? descendants(top, closing, rev) : null;
+      if (closing) until!.delete(closing);
+      workWindows.set(h.node!.id, { from: added ? descendants(top, added, rev) : new Set(), until });
+    }
+  }
+  const inWorkWindow = (h: WorkHit, sha: string) => {
+    const w = workWindows.get(h.node!.id);
+    return !!w && w.from.has(sha) && !w.until?.has(sha);
+  };
+
   const coveredAt = (sha: string, granularities: Granularity[]) =>
     covering.filter((c) => {
       if (!c.node.constrains.some((x) => granularities.includes(x.granularity))) return false;
@@ -917,6 +1116,10 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
       const inWindow = coveredAt(t.sha, ["path"]);
       for (const w of inWindow) edges.push({ kind: "within", from: c.id, to: w.node.id, state: ownWork(j, w.node) ? "decided" : "decided-by-window" });
       c.state = inWindow.length === 0 ? "undecided" : inWindow.some((w) => ownWork(j, w.node)) ? "decided" : "decided-by-window";
+    }
+    // A commit in a work item's window is worked; its own state still comes from decisions (#2683).
+    for (const h of workCovering) {
+      if (h.node!.constrains.some((x) => x.granularity === "path") && inWorkWindow(h, t.sha)) edges.push({ kind: "within", from: c.id, to: h.node!.id, state: "worked" });
     }
     if (readsRecords && c.state === "undecided") {
       find("intent-commit-undecided", `${t.sha.slice(0, 8)} changed the region when no decision constrained ${region.path} by path`, [c.id, rid]);
@@ -943,6 +1146,37 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
     const granularities = new Set(covering.flatMap((c) => c.node.constrains.map((x) => x.granularity)));
     if (covering.length > 0 && !granularities.has("path") && granularities.has("member")) {
       find("intent-constraint-coarse", `${region.path} is constrained only through its member, ${member}`, [rid, ...covering.map((c) => c.node.id)]);
+    }
+  }
+
+  // Findings about work items (#2683).
+  if (readsWork) {
+    for (const c of covering) {
+      if (c.node.supersededBy !== null || !isDecided(c.kind.records!.loaded.kind, c.node.state)) continue;
+      if (implementersOf(c.node).length > 0) continue;
+      const w = windows.get(c.node.id);
+      if (w && touched.some((t) => w.from.has(t.sha) && !w.until?.has(t.sha))) continue;
+      find("intent-decision-unimplemented", `${c.node.record} is ${c.node.state} and constrains ${region.path}, and no work item that is not dropped implements it, and no commit changed the region in its window`, [c.node.id, rid]);
+    }
+    for (const h of workCovering) {
+      const node = h.node!;
+      if (node.blockedBy.length === 0) continue;
+      const worked = touched.filter((t) => inWorkWindow(h, t.sha));
+      if (worked.length === 0) continue;
+      const waiting = node.blockedBy.map((b) => `${b.id} (${b.state ?? "unknown"})`).join(", ");
+      const blockers = node.blockedBy.map((b) => workByKey.get(`${node.recordKind}/${b.id}`)).filter((x): x is WorkHit => x !== undefined).map((x) => workNode(x).id);
+      find("intent-work-blocked", `${node.record} has ${worked.length} ${worked.length === 1 ? "commit" : "commits"} in its window while it waits on ${waiting}`, [node.id, ...worked.map((t) => `commit:${t.sha}`), ...blockers]);
+    }
+    for (const d of [...nodes.values()].filter((n): n is DecisionNode => n.kind === "decision")) {
+      const own = edges.filter((e) => e.kind === "within" && e.to === d.id && e.state === "decided").map((e) => e.from);
+      if (own.length === 0) continue;
+      const impl = implementersOf(d);
+      if (impl.length === 0 || impl.some((h) => h.view.state === workSpec(h).done)) continue;
+      find(
+        "intent-work-open-decided-code",
+        `${own.length} ${own.length === 1 ? "commit" : "commits"} in ${region.path} ${own.length === 1 ? "is" : "are"} ${d.record}'s own work, and ${impl.map((h) => `${h.view.id} is ${h.view.state ?? "stateless"}`).join(", ")}: the code says done and the queue says not`,
+        [d.id, ...own, ...impl.map((h) => workNode(h).id)],
+      );
     }
   }
 
@@ -986,6 +1220,46 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
     const refs = finding.refs ?? [];
     const concerns = [...new Set([commit, ...refs.map(resolveRef).filter((x): x is string => x !== undefined)])];
     findings.push({ id: `finding:${code}:${findings.filter((f) => f.code === code).length + 1}`, kind: "finding", code, message: finding.message, concerns, plugin, refs });
+  }
+  // A finding a work item addresses (#2683): the item came from that gap on
+  // this region, or it implements the decision a drifted or missing pin, or a
+  // plugin's finding, is about. A done item whose gap still fires here gets
+  // work-done-gap-open.
+  if (readsWork) {
+    // Implementing a decision closes the gaps between it and the code or its
+    // artifacts, not gaps in the decision record itself (its review, its
+    // granularity, its evidence), so only these findings, and a plugin's,
+    // count as addressed through implements.
+    const CLOSED_BY_IMPLEMENTING = new Set<string>(["intent-pin-drifted", "intent-pin-missing"]);
+    const fromGap = (h: WorkHit, code: string): boolean => {
+      const src = gapSource(h.view.data);
+      if (src === null || src.finding !== code) return false;
+      const parsed = parseRegion(src.region);
+      if ("error" in parsed) return false;
+      const kindPrefix = h.kind.records!.workspaceRoot === "." ? "" : h.kind.records!.workspaceRoot;
+      const full = joinPath(kindPrefix, parsed.path);
+      const contains = (a: string, b: string) => a === b || a === "" || b.startsWith(`${a}/`);
+      if (!contains(full, regionFull) && !contains(regionFull, full)) return false;
+      if (full === regionFull && parsed.lines && region.lines) return parsed.lines.start <= region.lines.end && region.lines.start <= parsed.lines.end;
+      return true;
+    };
+    for (const f of findings) {
+      const by: WorkHit[] = [];
+      for (const h of workAll) {
+        const gap = fromGap(h, f.code);
+        const viaDecision = (CLOSED_BY_IMPLEMENTING.has(f.code) || isPluginCode(f.code)) && implementedIds(h).some((id) => f.concerns.includes(id));
+        if (gap || viaDecision) by.push(h);
+        if (gap && h.view.state === workSpec(h).done) {
+          const node = workNode(h);
+          if (!node.warnings.some((w) => w.code === "work-done-gap-open")) {
+            node.warnings.push({ code: "work-done-gap-open", message: `${node.record} is ${h.view.state}, and ${f.code}, the gap it came from, still fires on ${region.path}` });
+          }
+        }
+      }
+      f.addressed = by.length > 0;
+      f.addressedBy = by.map((h) => ({ id: h.view.id!, state: h.view.state }));
+      for (const h of by) edges.push({ kind: "addressed-by", from: f.id, to: workNode(h).id });
+    }
   }
   for (const f of findings) nodes.set(f.id, f);
   const all = [...nodes.values()];

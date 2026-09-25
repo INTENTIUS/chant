@@ -12,7 +12,7 @@
 import { resolve } from "node:path";
 import { formatError } from "../cli/format";
 import type { CommandContext } from "../cli/registry";
-import { intentGraph, type ArtifactNode, type CommitNode, type DecisionNode, type IntentDocument, type IntentEdge, type IntentNode } from "./intent";
+import { intentGraph, type ArtifactNode, type CommitNode, type DecisionNode, type IntentDocument, type IntentEdge, type IntentNode, type WorkNode } from "./intent";
 
 const USAGE = "chant workspace graph --intent <path[:start-end]> [--at <rev>] [--kind <kind file>...] [--json]";
 
@@ -58,6 +58,22 @@ function decisionLine(d: DecisionNode): string {
   return `decision  ${d.record} ${d.state ?? "stateless"}${superseded}: ${d.title ?? d.path}; constrains ${via}${by}; ${reviews}; ${d.provenance.level}${d.valid ? "" : `; invalid: ${d.reasons.map((r) => r.code).join(", ")}`}`;
 }
 
+/** A work item, then the commits made inside its window (#2683). */
+function workLines(doc: Result, w: WorkNode): string[] {
+  const via = w.constrains.length > 0 ? w.constrains.map((c) => `${c.entry} (${c.granularity})`).join(", ") : "through a link only";
+  const implemented = w.implements.length > 0 ? `; implements ${w.implements.map((d) => `${d.id} (${d.state ?? "unknown"})`).join(", ")}` : "";
+  const readiness = w.ready ? "; ready" : w.blockedBy.length > 0 ? `; blocked by ${w.blockedBy.map((b) => `${b.id} (${b.state ?? "unknown"})`).join(", ")}` : "";
+  const owner = w.owner ? `, owned by ${w.owner}` : "";
+  const from = w.source ? `; from ${w.source.finding} on ${w.source.region}` : "";
+  const out = [`work      ${w.record} ${w.state ?? "stateless"}${owner}: ${w.title ?? w.path}; constrains ${via}${implemented}${readiness}${from}`];
+  for (const e of doc.edges.filter((x) => x.kind === "within" && x.to === w.id)) {
+    const c = doc.nodes.find((n): n is CommitNode => n.kind === "commit" && n.id === e.from);
+    if (c) out.push(`  worked    ${short(c.sha)} ${c.subject}; in ${w.record}'s window`);
+  }
+  for (const x of w.warnings) out.push(`  warning   ${x.code}: ${x.message}`);
+  return out;
+}
+
 function artifactLine(doc: Result, a: ArtifactNode): string {
   const by = doc.edges
     .filter((e): e is Extract<IntentEdge, { kind: "pins" }> => e.kind === "pins" && e.to === a.id)
@@ -89,16 +105,21 @@ export function formatIntent(doc: Result): string {
   const files = ofKind(doc, "file");
   if (files.length > 0) out.push(`files     ${files.length} under the region, ${files.filter((f) => f.generated).length} generated`);
   for (const d of ofKind(doc, "decision")) out.push(decisionLine(d), ...withinLines(doc, d));
+  for (const w of ofKind(doc, "work")) out.push(...workLines(doc, w));
   for (const a of ofKind(doc, "artifact")) out.push(artifactLine(doc, a));
   for (const c of ofKind(doc, "commit")) out.push(...commitLine(doc, c));
   for (const l of ofKind(doc, "link")) {
     const r = l.row;
     out.push(`link      ${r.consumer} reads ${"producer" in r ? `${r.producer} ${r.output}` : r.input} (${r.status})`);
   }
-  for (const f of ofKind(doc, "finding")) out.push(`finding   ${f.code}: ${f.message}`);
+  for (const f of ofKind(doc, "finding")) {
+    const by = f.addressedBy && f.addressedBy.length > 0 ? `; addressed by ${f.addressedBy.map((w) => `${w.id} (${w.state ?? "unknown"})`).join(", ")}` : "";
+    out.push(`finding   ${f.code}: ${f.message}${by}`);
+  }
   for (const r of doc.reasons) out.push(`reason    ${r.code}: ${r.message}`);
   const kinds = doc.kinds.length === 0 ? "; no --kind, so no decisions were read" : "";
-  out.push(`${doc.summary.commits} commits, ${doc.summary.decisions} decisions, ${doc.summary.artifacts} artifacts, ${doc.summary.findings} findings${kinds}`);
+  const work = ofKind(doc, "work").length;
+  out.push(`${doc.summary.commits} commits, ${doc.summary.decisions} decisions, ${work > 0 ? `${work} work ${work === 1 ? "item" : "items"}, ` : ""}${doc.summary.artifacts} artifacts, ${doc.summary.findings} findings${kinds}`);
   return out.join("\n");
 }
 

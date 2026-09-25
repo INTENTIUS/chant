@@ -30,6 +30,7 @@ import { checkPins, pinEntries, type AssetPin } from "./record-assets";
 import { joinSessions, type SessionCitation } from "./record-sessions";
 import type { RecordSource } from "./record-source";
 import type { WorkspaceTree } from "./tree";
+import type { DecisionWork, WorkLink, WorkWarningCode } from "./work";
 
 // ── Reason codes ─────────────────────────────────────────────────────────────
 
@@ -105,7 +106,8 @@ export const REVIEW_REASON_CODES = [
 export type ReviewReasonCode = (typeof REVIEW_REASON_CODES)[number];
 
 export interface RecordWarning {
-  code: RecordWarningCode;
+  /** A work kind's records also carry the codes of `WORK_WARNING_CODES` (#2683). */
+  code: RecordWarningCode | WorkWarningCode;
   message: string;
 }
 
@@ -251,6 +253,26 @@ export const recordKindSchema = z
       })
       .strict()
       .optional(),
+    /**
+     * A work kind (#2683): the front-matter lists of the work ids a record
+     * needs and the decision ids it implements, the decision kind file those
+     * ids name (relative to this kind file), the state a ready record is in,
+     * the state that satisfies a need, and the field holding the closing
+     * date. With it, `work.ts` gives each record `ready`, `blockedBy` and
+     * `implements`, and the read lists each decision with `implementedBy`.
+     * Optional.
+     */
+    work: z
+      .object({
+        needs: z.string().min(1),
+        implements: z.string().min(1),
+        decisions: z.string().min(1),
+        open: z.string().min(1),
+        done: z.string().min(1),
+        closedOn: z.string().min(1),
+      })
+      .strict()
+      .optional(),
   })
   .strict()
   .refine((k) => (k.idField === undefined) !== (k.idFrom === undefined), {
@@ -280,6 +302,10 @@ export const recordKindSchema = z
   .refine((k) => Object.keys(k.approval ?? {}).every((s) => (k.states ?? []).includes(s)), {
     message: "every state approval ranks must be listed in states",
     path: ["approval"],
+  })
+  .refine((k) => !k.work || (k.states !== undefined && k.states.includes(k.work.open) && k.states.includes(k.work.done)), {
+    message: "a work kind must have states, and its work open and done states must be listed in them",
+    path: ["work"],
   });
 
 export type RecordKind = z.infer<typeof recordKindSchema>;
@@ -785,6 +811,12 @@ export interface RecordEntry {
   digest: string;
   /** For a session kind only: the subject records' review entries that name this session (#2673). */
   citedBy?: SessionCitation[];
+  /** For a work kind (#2683): the record's state is its kind's open state and every need is done. */
+  ready?: boolean;
+  /** For a work kind: each need that is not done, with its state, or null when no record has the id. */
+  blockedBy?: WorkLink[];
+  /** For a work kind: each decision the record implements, with its state, or null when no decision has the id. */
+  implements?: WorkLink[];
 }
 
 export interface ReadRecordsOptions {
@@ -829,6 +861,8 @@ export interface RecordHistory {
 export interface ReadRecordsResult {
   records: RecordEntry[];
   summary: { total: number; valid: number; invalid: number; superseded: number };
+  /** For a work kind (#2683): every decision its decision kind reads, with the work records implementing it. */
+  decisions?: DecisionWork[];
 }
 
 type Validator = (data: unknown) => { ok: true } | { ok: false; errors: string[] };
@@ -1066,6 +1100,8 @@ export async function readRecords(loaded: LoadedRecordKind, options: ReadRecords
 
   // A session's seal and its verdicts' records (#2673).
   joinSessions(kind, entries, texts, options.subjects ?? null);
+  // A work kind's links, ready and blocked (#2683), from every record before --current.
+  const work = kind.work ? await (await import("./work")).applyWork(loaded, entries, options) : undefined;
 
   for (const e of entries) e.valid = e.reasons.length === 0;
   const records = options.current ? entries.filter((e) => e.supersededBy === null) : entries;
@@ -1077,6 +1113,7 @@ export async function readRecords(loaded: LoadedRecordKind, options: ReadRecords
       invalid: records.filter((e) => !e.valid).length,
       superseded: entries.filter((e) => e.supersededBy !== null).length,
     },
+    ...(work ? { decisions: work.decisions } : {}),
   };
 }
 

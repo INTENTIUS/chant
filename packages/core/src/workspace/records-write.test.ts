@@ -190,6 +190,10 @@ describe("records new", () => {
     const entry = (id: string) => ({ id, path: `d/${id}-x.md`, state: null, valid: true, reasons: [], supersededBy: null, data: {}, digest: "", assets: [], warnings: [] });
     expect(allocateId([entry("s-0009"), entry("s-0010")], undefined, "k")).toBe("s-0011");
     expect(allocateId([entry("s-999")], undefined, "k")).toBe("s-1000");
+    // Case and padding come from the records (#2683).
+    expect(allocateId([entry("W-001"), entry("W-002")], undefined, "work")).toBe("W-003");
+    expect(allocateId([entry("W-0009")], undefined, "work")).toBe("W-0010");
+    expect(allocateId([], "W", "work")).toBe("W-001");
   });
 
   test("refuses fields the schema refuses, and writes nothing", async () => {

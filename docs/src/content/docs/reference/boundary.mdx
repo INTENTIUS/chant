@@ -34,13 +34,13 @@ This page is generated from `docs/data/boundary.yaml`, which has one row for eac
 | boundary cell | the table of #2657, one row per cell | 6 | 5 | 3 |
 | workspace command | `commandRegistry` in `cli/main.ts`, and each sub-verb its help names | 20 | 0 | 0 |
 | member kind | `BUILTIN_KIND_NAMES` in `kinds.ts` | 4 | 0 | 0 |
-| record kind | none in core; `decision` and `session` are this repository's, the rest a plugin's | 2 | 0 | 4 |
+| record kind | none in core; `decision` and `session` are this repository's, the rest a plugin's | 3 | 0 | 4 |
 | member link kind | `LINK_KINDS` in `links.ts` | 1 | 0 | 0 |
 | record link kind | `RECORD_LINK_KINDS` in `record-assets.ts` | 2 | 0 | 0 |
-| intent node kind | the node kinds of `intent.schema.json` | 8 | 0 | 3 |
-| intent edge kind | the edge kinds of `intent.schema.json` | 6 | 0 | 3 |
-| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 69 | 0 | 0 |
-| finding code | the finding codes of `intent.schema.json` | 12 | 0 | 0 |
+| intent node kind | the node kinds of `intent.schema.json` | 9 | 0 | 3 |
+| intent edge kind | the edge kinds of `intent.schema.json` | 9 | 0 | 3 |
+| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 76 | 0 | 0 |
+| finding code | the finding codes of `intent.schema.json` | 15 | 0 | 0 |
 | WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 35 | 0 | 0 |
 | hud view | the hud reader requirements H1 to H11 of #2650 | 0 | 11 | 0 |
 
@@ -87,6 +87,7 @@ Each row follows, in the order of the table above.
 | member kind | `other` | chant | declaration.schema.json, workspace-kinds.schema.json | A directory chant does not read; the entry says why in because. |
 | member kind | `examples` | chant | declaration.schema.json, workspace-kinds.schema.json | An example group: every chant project its glob matches is built and linted. |
 | record kind | `decision` | chant | docs/design/decisions/decision.kind.mjs, decision.schema.json | The decision record chant's own design and the reference workspace use; the intent graph reads decisions as core nodes. |
+| record kind | `work` | chant | reference-workspace/work/work.kind.mjs, work.schema.json | A work item: a record with needs and implements links that people and agents share as one queue with no server. records gives each one ready and blockedBy, and the intent graph reads work items as core nodes (#2683). jhgaylor/chud#78 makes units work items. |
 | record kind | `contract` | plugin | a record kind file and its schema, passed with --kind; jhgaylor/chud (transitional owner, jhgaylor/chud#78, #79, #80) | A unit of work's acceptance criteria, cited by the commits that serve it. |
 | record kind | `unit` | plugin | a record kind file and its schema, passed with --kind; jhgaylor/chud (transitional owner, jhgaylor/chud#78, #79, #80) | A unit of work, joined to the commits it produced. |
 | record kind | `evidence` | plugin | a record kind file and its schema, passed with --kind; jhgaylor/chud (transitional owner, jhgaylor/chud#78, #79, #80) | The result of a check run on a tree, cited by a contract or unit. |
@@ -103,18 +104,22 @@ Each row follows, in the order of the table above.
 | intent node kind | `contract` | plugin | intent.schema.json | A contract a plugin's commitJoins tied to a unit or commit. |
 | intent node kind | `evidence` | plugin | intent.schema.json | Evidence a plugin's commitJoins tied to a contract or unit. |
 | intent node kind | `decision` | chant | intent.schema.json | A decision record that constrains the region, with its state, provenance and reviews. |
+| intent node kind | `work` | chant | intent.schema.json | A work item that constrains the region, or that one there implements, needs or addresses, with its state, ready and blockedBy (#2683). |
 | intent node kind | `artifact` | chant | intent.schema.json | A file a decision pins, with its pin state. |
 | intent node kind | `link` | chant | intent.schema.json | A member link touching the region's member. |
 | intent node kind | `finding` | chant | intent.schema.json | A finding with a closed code and the nodes it concerns. |
-| intent edge kind | `constrains` | chant | intent.schema.json | A decision governs a region, file, member, contract or issue, at a named granularity. |
+| intent edge kind | `constrains` | chant | intent.schema.json | A decision or work item governs a region, file, member, contract or issue, at a named granularity. |
 | intent edge kind | `pins` | chant | intent.schema.json | A decision pins an artifact, with the pin's state. |
 | intent edge kind | `touched-by` | chant | intent.schema.json | A region was changed by a commit, with the lines touched. |
 | intent edge kind | `produced-by` | plugin | intent.schema.json | A commit was produced by a unit, as a plugin's commitJoins says. |
 | intent edge kind | `serves` | plugin | intent.schema.json | A unit serves a contract, as a plugin's commitJoins says. |
 | intent edge kind | `supersedes` | chant | intent.schema.json | A newer decision replaces an older one, derived as records derives it. |
-| intent edge kind | `within` | chant | intent.schema.json | A commit falls inside a decision's window, with the state decided when the decision's own unit made it and decided-by-window when it only falls there; shown for judgment, never a finding. |
+| intent edge kind | `within` | chant | intent.schema.json | A commit falls inside a decision's window, with the state decided when the decision's own unit made it and decided-by-window when it only falls there; shown for judgment, never a finding. A commit inside a work item's window has the state worked (#2683). |
 | intent edge kind | `cites-evidence` | plugin | intent.schema.json | A unit, contract or decision cites evidence, contributed by a plugin's commitJoins. |
 | intent edge kind | `links` | chant | intent.schema.json | A consumer member links to a producer member. |
+| intent edge kind | `implements` | chant | intent.schema.json | A work item carries out a decision (#2683). |
+| intent edge kind | `needs` | chant | intent.schema.json | A work item waits on another work item (#2683). |
+| intent edge kind | `addressed-by` | chant | intent.schema.json | A finding is being closed by a work item that came from it or implements the decision it concerns (#2683). |
 | reason code | `declaration-missing` | chant | check.schema.json, composites.schema.json, graph.schema.json, intent.schema.json, ls.schema.json, status.schema.json | No chant.workspace.json or .jsonc between the directory and the git root. |
 | reason code | `declaration-ambiguous` | chant | check.schema.json, composites.schema.json, graph.schema.json, intent.schema.json, ls.schema.json, status.schema.json | Both chant.workspace.json and chant.workspace.jsonc exist. |
 | reason code | `declaration-unparseable` | chant | check.schema.json, composites.schema.json, graph.schema.json, intent.schema.json, ls.schema.json, status.schema.json | The declaration is not valid JSON, or not valid JSONC for .jsonc. |
@@ -150,6 +155,13 @@ Each row follows, in the order of the table above.
 | reason code | `asset-stale` | chant | records-amend.schema.json, records-new.schema.json, records-review.schema.json, records.schema.json | A file the record pins is unchanged at the hash a record it supersedes pinned: the decision changed and the artifact did not follow. |
 | reason code | `record-no-evidence` | chant | records-amend.schema.json, records-new.schema.json, records-review.schema.json, records.schema.json | The record's evidence list is empty: it cites nothing and pins no file. Information for a reviewer, never an error. |
 | reason code | `review-undigested` | chant | records-amend.schema.json, records-new.schema.json, records-review.schema.json, records.schema.json | A verdict names no digest of the text it judged. It still counts, and an amendment does not stop it counting. |
+| reason code | `work-needs-unknown` | chant | intent.schema.json, records.schema.json | A work record's needs list names a work id no record has, so the item stays blocked. |
+| reason code | `work-implements-unknown` | chant | intent.schema.json, records.schema.json | A work record's implements list names a decision id no decision has. |
+| reason code | `work-needs-cycle` | chant | intent.schema.json, records.schema.json | A work record needs itself through its needs links, so it can never be ready. |
+| reason code | `work-implements-undecided` | chant | intent.schema.json, records.schema.json | A work record implements a decision whose state is not approved, such as proposed. |
+| reason code | `work-done-unpinned` | chant | intent.schema.json, records.schema.json | A work record is done and its evidence list is empty: nothing shows the work was done. |
+| reason code | `work-closed-without-date` | chant | intent.schema.json, records.schema.json | A work record is done or dropped and has no closing date. |
+| reason code | `work-done-gap-open` | chant | intent.schema.json | A work record is done, and the finding it came from still fires on its region. Only graph --intent raises it. |
 | reason code | `review-decider` | chant | records.schema.json | The verdict is the decider's own, and the quorum counts verdicts besides the decider's. |
 | reason code | `review-agent` | chant | records.schema.json | The reviewer holds the agent role in the trust policy at base. |
 | reason code | `review-duplicate` | chant | records.schema.json | A later verdict by the same principal replaces this one. Names are compared after NFKC, trimming and lower-casing. |
@@ -196,6 +208,9 @@ Each row follows, in the order of the table above.
 | finding code | `intent-evidence-unpinned` | chant | intent.schema.json | A decision's evidence has no hash: a URL, or a path with no sha256. |
 | finding code | `intent-trailer-unverified` | chant | intent.schema.json | A commit carries a trailer a plugin says claims authorship, and the commit is not attested. |
 | finding code | `intent-region-unconstrained` | chant | intent.schema.json | No decision constrains the region at any granularity. |
+| finding code | `intent-decision-unimplemented` | chant | intent.schema.json | A decided decision constrains the region, no work item that is not dropped implements it, and no commit falls in its window. |
+| finding code | `intent-work-blocked` | chant | intent.schema.json | A work item constraining the region has commits in its window while a work item it needs is not done. |
+| finding code | `intent-work-open-decided-code` | chant | intent.schema.json | Commits in the region are a decision's own work while the work item implementing that decision is still open. |
 | WSP check | `WSP001` `declaration-unreadable` | chant | check.schema.json | The declaration can be read: it parses, matches the schema and keeps the placement rules. |
 | WSP check | `WSP002` `kinds-unreadable` | chant | check.schema.json | Every pinned package's kinds can be read: it is installed at the pinned version, and its ./workspace-kinds file is valid kind data. |
 | WSP check | `WSP003` `kind-unknown` | chant | check.schema.json | Every member's kind is built in or supplied by a pinned package. Unknown kinds fail closed. |
