@@ -117,6 +117,7 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `record-supersedes-pending` | warning, `records` | A `supersedes` link from a record whose state is weaker than the record it names, so the link has no effect yet. The record stays valid. |
 | `record-no-evidence` | warning, `records` | The record's evidence list is empty: it cites nothing and pins no file, as a decision made in a product's own design flow may. Information for a reviewer. The record stays valid and `--current` lists it. |
 | `review-undigested` | warning, `records` | A verdict in the record's reviews names no `digest` of the text it judged. It still counts, and an amendment won't stop it counting. The record stays valid. |
+| `source-transcript-drift` | warning, `records` | The record's source block pins a transcript by hash, the file it names can be read here, and its bytes hash to something else, so it isn't the transcript the record means ([#2708](https://github.com/INTENTIUS/chant/issues/2708)). A transcript that can't be read gives no warning. The record stays valid. |
 | `work-needs-unknown` | warning, `records` and `graph --intent` | A work record's `needs` names a work id no record has, so the item stays blocked. The record stays valid. |
 | `work-implements-unknown` | warning, `records` and `graph --intent` | A work record's `implements` names a decision id no decision has. The record stays valid. |
 | `work-needs-cycle` | warning, `records` and `graph --intent` | A work record needs itself through its `needs` links, so it can never be ready. The record stays valid. |
@@ -153,6 +154,7 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `review-note-required` | error, `records review` | A dissent was given with no note. |
 | `review-sign-failed` | error, `records review` | `--sign` was given and no seal could be made: the key can't be read or used, git names no ssh signing key, or `ssh-keygen` isn't installed. |
 | `record-sign-failed` | error, `records new` and `amend` | `--sign` was given and no author seal could be made: the record names no author, the key can't be read or used, git names no ssh signing key, or `ssh-keygen` isn't installed. |
+| `source-harvest-not-proposed` | error, `records new` | The fields' source block says `via: "harvest"` and the state isn't the kind's first, such as `proposed`: a harvest proposes, and a person decides ([#2708](https://github.com/INTENTIUS/chant/issues/2708)). |
 | `session-unknown` | error, `records review` | `--session` names no session of a session kind whose subjects are the record's kind ([#2693](https://github.com/INTENTIUS/chant/issues/2693)). |
 | `session-not-open` | error, `records review` | `--session` names a closed session, which takes no more verdicts. |
 | `since-rev-unknown` | error, `records --since` | `--since` names no commit, or names a session with no opening revision whose file no commit added. |

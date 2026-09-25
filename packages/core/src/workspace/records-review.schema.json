@@ -212,7 +212,8 @@
             "asset-stale",
             "record-supersedes-pending",
             "record-no-evidence",
-            "review-undigested"
+            "review-undigested",
+            "source-transcript-drift"
           ]
         },
         "message": {

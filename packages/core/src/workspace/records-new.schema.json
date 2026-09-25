@@ -117,7 +117,8 @@
             "asset-stale",
             "record-supersedes-pending",
             "record-no-evidence",
-            "review-undigested"
+            "review-undigested",
+            "source-transcript-drift"
           ]
         },
         "message": {
@@ -161,6 +162,7 @@
                 "record-id-unallocatable",
                 "record-path-unmatched",
                 "record-sign-failed",
+                "source-harvest-not-proposed",
                 "record-unparseable",
                 "record-schema-invalid",
                 "record-id-duplicate",

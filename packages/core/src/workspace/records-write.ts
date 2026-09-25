@@ -67,6 +67,7 @@ export const NEW_ERROR_CODES = [
   "record-id-unallocatable",
   "record-path-unmatched",
   "record-sign-failed",
+  "source-harvest-not-proposed",
   ...RECORD_REASON_CODES,
 ] as const satisfies readonly ReasonCode[];
 
@@ -354,7 +355,7 @@ export async function readAll(o: Opened, source: RecordSource): Promise<RecordEn
     const subjectKind = await loadRecordKind(resolve(dirname(o.loaded.file), o.loaded.kind.session.subjects.kind), o.root);
     subjects = { records: (await readRecords(subjectKind, { root: o.root, source })).records, reviews: subjectKind.kind.reviews?.field ?? "reviews" };
   }
-  return (await readRecords(o.loaded, { root: o.root, source, assets, ...(subjects ? { subjects } : {}) })).records;
+  return (await readRecords(o.loaded, { root: o.root, source, assets, workspaceRoot: o.workspaceRoot, ...(subjects ? { subjects } : {}) })).records;
 }
 
 /** `base` with the file at `path` holding `text`, added to its directory when new. */
@@ -439,6 +440,24 @@ function refuseRevisionFields(kind: LoadedRecordKind["kind"], fields: Record<str
     if (f === undefined || !(f in fields) || (f in old && stableJson(old[f]) === stableJson(fields[f]))) continue;
     throw new RecordWriteError("write-input-invalid", `the fields given with ${flag} set ${f}, and chant writes it: records new writes the commit a session opened at, and records close the one it closed at`);
   }
+}
+
+/**
+ * Refuse a harvested record in any state but the kind's first (#2708): a
+ * record whose source block says `via: "harvest"` came out of a transcript
+ * after the fact, so it is a proposal, and a person decides it.
+ */
+function refuseHarvestedDecision(kind: LoadedRecordKind["kind"], fields: Record<string, unknown>): void {
+  if (!kind.source || !kind.states || kind.stateField === undefined) return;
+  const block = fields[kind.source.field];
+  if (block === null || typeof block !== "object" || Array.isArray(block) || (block as Record<string, unknown>).via !== "harvest") return;
+  const opens = kind.states[0];
+  const state = fields[kind.stateField];
+  if (state === opens) return;
+  throw new RecordWriteError(
+    "source-harvest-not-proposed",
+    `${kind.source.field}.via is harvest, and a harvested ${kind.name} opens ${opens}, not ${JSON.stringify(state ?? null)}: write it with ${kind.stateField} "${opens}", and let the person who decides it move it on with chant workspace records amend or review`,
+  );
 }
 
 /**
@@ -617,6 +636,7 @@ export async function newRecord(opts: NewRecordOptions): Promise<NewDocument> {
       if (taken) throw new RecordWriteError("record-id-taken", `id ${given} is already used by ${taken.path}; ids are never reused, so leave ${idField} out to have the next one allocated`);
       id = given;
     }
+    refuseHarvestedDecision(kind, fields);
     // A session records the commit it opened at (#2693): HEAD now, or null before the first commit.
     const opened = kind.session?.openedRev ? { [kind.session.openedRev]: headCommit(o.root) } : {};
     const full = { ...fields, ...opened, [idField]: id };
