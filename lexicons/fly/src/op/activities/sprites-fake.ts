@@ -41,7 +41,10 @@ interface StoredService {
   dir?: string;
   needs?: string[];
   http_port?: number;
-  state: { name: string; pid: number; status: string; started_at?: string };
+  state: { name: string; pid: number; status: string; started_at?: string; error?: string };
+  /** Synthetic log lines (#2711) — the fake runs no real process, so `logs` is a
+   * scripted trail of lifecycle events, enough to exercise `spriteServiceLogs`. */
+  logs: string[];
 }
 
 interface SpriteState {
@@ -316,8 +319,8 @@ export function createSpritesFake(): Promise<{ url: string; close(): Promise<voi
       return send(404, { error: `not found: ${method} ${path}` });
     }
 
-    // Services: /v1/sprites/{id}/services[/{svc}[/start|stop|restart]].
-    const svcm = path.match(/^\/v1\/sprites\/([^/]+)\/services(?:\/([^/]+)(\/start|\/stop|\/restart)?)?\/?$/);
+    // Services: /v1/sprites/{id}/services[/{svc}[/start|stop|restart|logs]].
+    const svcm = path.match(/^\/v1\/sprites\/([^/]+)\/services(?:\/([^/]+)(\/start|\/stop|\/restart|\/logs)?)?\/?$/);
     if (svcm) {
       const id = decodeURIComponent(svcm[1]);
       const svc = svcm[2] ? decodeURIComponent(svcm[2]) : undefined;
@@ -328,15 +331,30 @@ export function createSpritesFake(): Promise<{ url: string; close(): Promise<voi
       // GET /services — list.
       if (method === "GET" && !svc) return send(200, Object.values(sprite.services));
 
+      // GET /services/{svc}/logs — the tail as NDJSON (#2711).
+      if (method === "GET" && svc && action === "/logs") {
+        const s = sprite.services[svc];
+        if (!s) return send(404, { error: `no service ${svc}` });
+        const n = Number(url.searchParams.get("lines"));
+        const tail = Number.isFinite(n) && n > 0 ? s.logs.slice(-n) : s.logs;
+        return sendNdjson(
+          200,
+          [...tail.map((data) => ({ type: "stdout", data })), { type: "complete", data: `${svc} log tail` }],
+        );
+      }
+
       if (svc && !action) {
         // GET /services/{svc}
         if (method === "GET") {
           const s = sprite.services[svc];
           return s ? send(200, s) : send(404, { error: `no service ${svc}` });
         }
-        // PUT /services/{svc} — create or update.
+        // PUT /services/{svc} — create-or-update, then start (#2711: real
+        // Sprites/spritzer's PUT both defines and starts the service).
         if (method === "PUT") {
-          const b = ((await readBody(req)) ?? {}) as Omit<StoredService, "name" | "state">;
+          const b = ((await readBody(req)) ?? {}) as Omit<StoredService, "name" | "state" | "logs">;
+          const prev = sprite.services[svc];
+          const started = new Date().toISOString();
           sprite.services[svc] = {
             name: svc,
             cmd: b.cmd,
@@ -345,24 +363,49 @@ export function createSpritesFake(): Promise<{ url: string; close(): Promise<voi
             dir: b.dir,
             needs: b.needs,
             http_port: b.http_port,
-            state: sprite.services[svc]?.state ?? { name: svc, pid: 0, status: "stopped" },
+            state: { name: svc, pid: 4321, status: "running", started_at: started },
+            logs: [...(prev?.logs ?? []), `${svc} started (pid 4321)`],
           };
           return send(200, sprite.services[svc]);
+        }
+        // DELETE /services/{svc} — idempotent; a 404 means already gone (#2711).
+        if (method === "DELETE") {
+          if (!(svc in sprite.services)) return send(404, { error: `no service ${svc}` });
+          delete sprite.services[svc];
+          return send(200, {});
         }
       }
 
       // POST /services/{svc}/start|stop|restart — NDJSON, flips status.
-      if (method === "POST" && svc && action) {
+      if (method === "POST" && svc && (action === "/start" || action === "/stop" || action === "/restart")) {
         const s = sprite.services[svc];
         if (!s) return send(404, { error: `no service ${svc}` });
         const stopped = action === "/stop";
         s.state = { name: svc, pid: stopped ? 0 : 4321, status: stopped ? "stopped" : "running", started_at: new Date().toISOString() };
+        s.logs.push(`${svc} ${stopped ? "stopping" : "started"}`);
         return sendNdjson(200, [
           { type: stopped ? "stopping" : "started", data: `${svc} ${stopped ? "stopping" : "started"}` },
           { type: "complete", data: `${svc} ${action.slice(1)} complete` },
         ]);
       }
       return send(404, { error: `not found: ${method} ${path}` });
+    }
+
+    // The sprite URL proxy: /s/{id}[/...] (#2711). Real spritzer routes this to
+    // whatever listens on the `http_port` service's port; the fake has no real
+    // process, so it answers 200 when such a service is `running` and 503
+    // ("nothing is answering", matching spritzer's real error) otherwise —
+    // enough for `spriteUrl`'s wait-for-200 and the stop/start round trip.
+    const sm = path.match(/^\/s\/([^/]+)(?:\/.*)?$/);
+    if (sm) {
+      const id = decodeURIComponent(sm[1]);
+      const sprite = sprites.get(id);
+      if (!sprite || sprite.status === "destroyed") return send(404, { error: `no sprite ${id}` });
+      const serving = Object.values(sprite.services).find((s) => s.http_port !== undefined && s.state.status === "running");
+      if (serving) return send(200, { ok: true, service: serving.name });
+      res.writeHead(503, { "content-type": "application/json", "retry-after": "2" });
+      res.end(JSON.stringify({ error: `sprite ${id}: nothing is answering on its url port` }));
+      return;
     }
 
     // Filesystem API: /v1/sprites/{id}/fs/{read|write|list|delete}. read/write

@@ -28,9 +28,18 @@
 
 import { activity, type NamedActivityStep, type WithStepRefs } from "@intentius/chant/op";
 import type { ActivityStep } from "@intentius/chant/op";
-import type { SpriteCreateArgs, SpriteExecArgs, SpriteCheckpointArgs, SpriteRestoreArgs, ListCheckpointsArgs, SpriteDestroyArgs } from "./activities/sprites";
+import type { SpriteCreateArgs, SpriteExecArgs, SpriteCheckpointArgs, SpriteRestoreArgs, ListCheckpointsArgs, SpriteDestroyArgs, SpriteDeleteArgs, SpriteUrlArgs } from "./activities/sprites";
 import type { SpriteWriteFileArgs, SpriteReadFileArgs, SpriteListDirArgs, SpriteRemoveArgs } from "./activities/sprite-fs";
 import type { SpriteApplyNetworkPolicyArgs, SpriteApplyServicesArgs } from "./activities/sprite-config";
+import type {
+  SpriteServiceCreateArgs,
+  SpriteServiceGetArgs,
+  SpriteServiceListArgs,
+  SpriteServiceStartArgs,
+  SpriteServiceStopArgs,
+  SpriteServiceDeleteArgs,
+  SpriteServiceLogsArgs,
+} from "./activities/sprite-services";
 import type { SpriteTaskCreateArgs, SpriteTaskRefreshArgs, SpriteTaskReleaseArgs } from "./activities/sprite-tasks";
 import type { SpritesUpArgs, SpritesDownArgs } from "./activities/sprites-emulator";
 
@@ -75,6 +84,10 @@ export const spriteRestore = spriteStep<SpriteRestoreArgs>("spriteRestore", "lon
 export const listCheckpoints = spriteStep<ListCheckpointsArgs>("listCheckpoints", "fastIdempotent");
 /** Destroy a sprite — the fully typed twin of core's `spriteDestroy`. Defaults to the `fastIdempotent` profile. */
 export const spriteDestroy = spriteStep<SpriteDestroyArgs>("spriteDestroy", "fastIdempotent");
+/** Delete a sprite (#2711; alias of `spriteDestroy`). Defaults to the `fastIdempotent` profile. */
+export const spriteDelete = spriteStep<SpriteDeleteArgs>("spriteDelete", "fastIdempotent");
+/** Resolve a sprite's URL, optionally waiting until a path on it answers (#2711). Defaults to the `fastIdempotent` profile. */
+export const spriteUrl = spriteStep<SpriteUrlArgs>("spriteUrl", "fastIdempotent");
 /** Write a file into a sprite — the fully typed twin of core's `spriteWriteFile`. Defaults to the `fastIdempotent` profile. */
 export const spriteWriteFile = spriteStep<SpriteWriteFileArgs>("spriteWriteFile", "fastIdempotent");
 /** Read a file from a sprite — the fully typed twin of core's `spriteReadFile`. Defaults to the `fastIdempotent` profile. */
@@ -87,6 +100,20 @@ export const spriteRemove = spriteStep<SpriteRemoveArgs>("spriteRemove", "fastId
 export const spriteApplyNetworkPolicy = spriteStep<SpriteApplyNetworkPolicyArgs>("spriteApplyNetworkPolicy", "fastIdempotent");
 /** Reconcile a sprite's background services — the fully typed twin of core's `spriteApplyServices`. Defaults to the `fastIdempotent` profile. */
 export const spriteApplyServices = spriteStep<SpriteApplyServicesArgs>("spriteApplyServices", "fastIdempotent");
+/** Create-and-start one background service (#2711) — the single-service primitive underneath `spriteApplyServices`. Defaults to the `longInfra` profile (the create+start NDJSON round trip). */
+export const spriteServiceCreate = spriteStep<SpriteServiceCreateArgs>("spriteServiceCreate", "longInfra");
+/** Get one background service's definition and live state (#2711). Defaults to the `fastIdempotent` profile. */
+export const spriteServiceGet = spriteStep<SpriteServiceGetArgs>("spriteServiceGet", "fastIdempotent");
+/** List a sprite's background services (#2711). Defaults to the `fastIdempotent` profile. */
+export const spriteServiceList = spriteStep<SpriteServiceListArgs>("spriteServiceList", "fastIdempotent");
+/** Start a stopped background service (#2711). Defaults to the `longInfra` profile (the NDJSON round trip). */
+export const spriteServiceStart = spriteStep<SpriteServiceStartArgs>("spriteServiceStart", "longInfra");
+/** Stop a running background service (#2711). Defaults to the `fastIdempotent` profile. */
+export const spriteServiceStop = spriteStep<SpriteServiceStopArgs>("spriteServiceStop", "fastIdempotent");
+/** Delete a background service, idempotent (#2711). Defaults to the `fastIdempotent` profile. */
+export const spriteServiceDelete = spriteStep<SpriteServiceDeleteArgs>("spriteServiceDelete", "fastIdempotent");
+/** Read a background service's log tail (#2711). Defaults to the `fastIdempotent` profile. */
+export const spriteServiceLogs = spriteStep<SpriteServiceLogsArgs>("spriteServiceLogs", "fastIdempotent");
 /** Create a keep-alive task — the fully typed twin of core's `spriteTaskCreate`. Defaults to the `fastIdempotent` profile. */
 export const spriteTaskCreate = spriteStep<SpriteTaskCreateArgs>("spriteTaskCreate", "fastIdempotent");
 /** Refresh a keep-alive task's expiry — the fully typed twin of core's `spriteTaskRefresh`. Defaults to the `fastIdempotent` profile. */
