@@ -34,22 +34,29 @@ Record the decisions made in this session as chant decision records.
 5. For each one I keep, write it as a `proposed` record (never `decided`) by
    piping its fields as JSON to
    `chant workspace records new <kind file> --from -`. Required fields:
-   `schema: 1`, `title`, `state: "proposed"`, `area` (or `null`), `source`
-   (`{"kind": "workspace", "member": "<name>", "session": null}` with no
-   issue behind it, or `{"issue": "owner/repo#n", "row": "<title>",
-   "revision": null}` when there is one), `question`, `options` (every
-   option, each with `id`, `label`, `how`, `tradeoff`), `choice: null`,
-   `rejected: []` (or with reasons, if you have them), `supersedes: []`,
-   `evidence: []` (or links/pins, if you have them), `decided_by: null`,
-   `decided_on: null`, `reviews: []`, and `constrains` with at least one
-   entry (`member:<name>`, `path:<path>`, a decision id, or an issue ref).
-   Leave `id` out so chant assigns the next one. Tell me the path and id it
-   wrote, and read out any warnings.
+   `schema: 1`, `title`, `state: "proposed"`, `area` (or `null`), `source`,
+   `question`, `options` (every option, each with `id`, `label`, `how`,
+   `tradeoff`), `choice: null`, `rejected: []` (or with reasons, if you have
+   them), `supersedes: []`, `evidence: []` (or links/pins, if you have
+   them), `decided_by: null`, `decided_on: null`, `reviews: []`, and
+   `constrains` with at least one entry (`member:<name>`, `path:<path>`, a
+   decision id, or an issue ref). Leave `id` out so chant assigns the next
+   one.
+
+   `source` says where the decision was made: `{"kind": "workspace",
+   "member": "<name>"}` with no issue behind it, or `{"issue":
+   "owner/repo#n", "row": "<title>", "revision": null}` when there is one.
+   Add to that same object, if you know them: `via: "cli"` (you're using the
+   shell command), `harness` (your own id, such as `"claude-code"`,
+   `"codex"`, `"gemini-cli"` or `"opencode"`), `model` (the model id you're
+   running as), `session` (your harness's session or conversation id), and
+   `transcript` (`{"path": "<file>", "sha256": "<hex>"}`, pinning your
+   session transcript by the hash of its bytes, never its content). All of
+   these are optional; leave out what you don't know.
+
+   Tell me the path and id it wrote, and read out any warnings.
 
 If the workspace's chant serves an MCP `records-new` tool
 ([#2707](https://github.com/INTENTIUS/chant/issues/2707)), use it instead of
-the shell command in step 5; same fields, and it names you as the proposer
-automatically. Chant records will also pin which harness, model and session
-proposed them once [#2708](https://github.com/INTENTIUS/chant/issues/2708)
-lands; until then, the record's only provenance is the git commit that adds
-it.
+the shell command in step 5; same fields, minus `via` and `client`, which it
+fills in itself from the MCP client's own `clientInfo`.

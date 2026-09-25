@@ -56,7 +56,7 @@ chant workspace records new decisions/decision.kind.mjs --from - <<'JSON'
   "title": "Where request logs go",
   "state": "proposed",
   "area": "app",
-  "source": { "kind": "workspace", "member": "app", "session": null },
+  "source": { "kind": "workspace", "member": "app", "via": "cli", "harness": "claude-code" },
   "question": "Where does the app write its structured request logs?",
   "options": [
     { "id": "a", "label": "stdout, newline-delimited JSON", "how": "One JSON object per request to stdout.", "tradeoff": "No dependency; nothing rotates it." },
@@ -84,25 +84,33 @@ There's no `--by` flag on `records new`. The record's provenance is the git
 commit that adds the file, chant's own provenance model, without anything
 else to set.
 
-## Where a decision without an issue comes from
+## Where a decision, and its proposal, came from
 
 `source` says where a decision was first recorded. A row in an issue's
 decisions table uses `{"issue": "owner/repo#123", "row": "...", "revision":
 null}`. A decision made directly in the workspace, with no issue behind it,
-uses `{"kind": "workspace", "member": "<name>", "session": null}`, naming
-the member it concerns.
+uses `{"kind": "workspace", "member": "<name>"}`, naming the member it
+concerns.
+
+The same object can also say where the proposal came from
+([#2708](https://github.com/INTENTIUS/chant/issues/2708)): `via` (`"cli"`
+for the shell command above, `"mcp"` for the tool below, `"harvest"` for a
+transcript read after the fact), `harness` (`"claude-code"`, `"codex"`,
+`"gemini-cli"`, `"opencode"`, `"fountain"`, `"hud"`, or another id), `model`,
+`session`, `turns` and a `transcript` pinned by a path or URI and the SHA-256
+of its bytes, never its content. Every one of these is optional, and none of
+them changes a record's standing; it's data about the proposal, not trust.
+`chant workspace records` warns `source-transcript-drift` when a pinned
+transcript is reachable and its bytes no longer match.
 
 ## When your chant serves more
 
-Two more pieces land the loop fully:
 [#2707](https://github.com/INTENTIUS/chant/issues/2707) adds a `records-new`
 MCP tool, so a harness that speaks MCP but has no shell can propose a
-decision the same way, with the tool naming the proposer automatically.
-[#2708](https://github.com/INTENTIUS/chant/issues/2708) adds a pinned
-transcript to that provenance: which harness, model and session proposed the
-record, and a hash of the transcript it came from. The skill and the prompt
-both use the MCP tool once it's there, and fall back to the shell command
-above when it isn't.
+decision the same way. It fills in `source.via` (`"mcp"`) and `source.client`
+itself, from the MCP client's own `clientInfo`; the skill and the prompt both
+use it once it's there, and fall back to the shell command above when it
+isn't.
 
 ## Reviewing what gets proposed
 

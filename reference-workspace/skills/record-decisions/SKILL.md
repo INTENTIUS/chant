@@ -83,7 +83,14 @@ logging might produce:
   "title": "Where request logs go",
   "state": "proposed",
   "area": "app",
-  "source": { "kind": "workspace", "member": "app", "session": null },
+  "source": {
+    "kind": "workspace",
+    "member": "app",
+    "via": "cli",
+    "harness": "claude-code",
+    "model": "claude-sonnet-5",
+    "session": "52f2ef3f-97d9-4d29-beab-cb0a2aa898a2"
+  },
   "question": "Where does the app write its structured request logs?",
   "options": [
     {
@@ -145,7 +152,7 @@ Field notes:
 | Field | What to put in it |
 |---|---|
 | `state` | Always `"proposed"` here. `choice` must be `null` while it is. |
-| `source` | Where the decision was made. With no issue behind it, use `{"kind": "workspace", "member": "<member-name>", "session": null}`, naming the workspace member the decision concerns. If the session was working an open issue, use `{"issue": "owner/repo#123", "row": "<title>", "revision": null}` instead. |
+| `source` | Where the decision was made, and where the proposal came from. See below. |
 | `area` | The rough section or topic, such as `"app"` or `"delivery"`. Use `null` if nothing fits yet. |
 | `decided_by`, `decided_on` | Leave both `null`. Nobody has decided yet: that happens later, in a review, with `records amend <id> --set - <<< '{"state": "decided", "decided_by": "<name>", "decided_on": "YYYY-MM-DD", "choice": {...}}'`. This skill doesn't take that step. |
 | `evidence` | Links or pinned workspace files backing the decision, if you have them. `[]` is fine for a quick capture. |
@@ -157,21 +164,31 @@ provenance comes from the git commit that adds the file, once it's committed:
 that's who chant already shows as having proposed the record, without you
 setting anything.
 
-## 5. A pinned transcript, once your chant has it
+`source` says where the decision was made: a workspace member, an issue row,
+or neither. It can also say where the proposal itself came from, in the same
+object, as the example above does:
 
-The `source` field above only says where the decision was made, not which
-harness or model proposed it. [#2708](https://github.com/INTENTIUS/chant/issues/2708)
-adds that: which harness, model and session proposed a record, with a hash of
-the transcript it came from, so a later reader can tell the transcript they
-hold is the one meant. Once your chant writes it, fill it in from your
-harness's own session info; until then, skip it, and the record's only
-provenance is the git commit that adds it.
+| `source` field | What to put in it |
+|---|---|
+| `via` | `"cli"`, since you're writing it with the shell command above. |
+| `harness` | Your own id, such as `"claude-code"`, `"codex"`, `"gemini-cli"` or `"opencode"`. |
+| `model` | The model id you're running as, exactly as your harness reports it. |
+| `session` | Your harness's session or conversation id, as a string, if it has one. |
+| `turns` | `{"from": <n>, "to": <n>}`, the turns of the session the decision was made in, if your harness numbers them. |
+| `transcript` | `{"path": "<file>", "sha256": "<hex>"}` (or `"uri"` in place of `"path"`), pinning your session transcript by the hash of its bytes, if you can write one out and hash it. Never put the transcript's content here. |
 
-## 6. Prefer the MCP tool when your chant serves it
+Fill in whatever you actually know and leave the rest out; every one of
+these is optional. With none of them, `source` is just where the decision
+was made, as it always was. `chant workspace records` warns
+`source-transcript-drift` if a transcript you pinned changes underneath it,
+so a later reader can tell the copy they hold isn't the one meant.
+
+## 5. Prefer the MCP tool when your chant serves it
 
 [#2707](https://github.com/INTENTIUS/chant/issues/2707) adds a `records-new`
 MCP tool that does the same write as step 4, over MCP instead of a shell, and
-fills in who proposed it (the MCP client) automatically. If your harness is
-connected to `chant serve mcp` and it lists `records-new`, use it instead of
-the CLI command in step 4; the fields are the same. If it doesn't, or you're
-not sure, the CLI command works everywhere and is the one to fall back on.
+fills in `source.via` (`"mcp"`) and `source.client` itself, from the MCP
+client's own `clientInfo`. If your harness is connected to `chant serve mcp`
+and it lists `records-new`, use it instead of the CLI command in step 4; the
+fields are the same, minus `via` and `client`. If it doesn't, or you're not
+sure, the CLI command works everywhere and is the one to fall back on.
