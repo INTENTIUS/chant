@@ -418,6 +418,24 @@ describe("runOp: a steward's turn (#2750)", () => {
     expect(runtime.start).toHaveBeenCalledTimes(1);
     expect(acquireStewardTurnMock).not.toHaveBeenCalled();
   });
+
+  test("local form, the turn lease's own acquire throws (a stale .lock): refused as a lease error, not an uncaught exception, and nothing runs", async () => {
+    discoverOpsMock.mockResolvedValue({
+      ops: new Map([localOp("release", [{ kind: "activity", fn: "shellCmd", args: { cmd: "true" } }])]),
+      errors: [],
+    });
+    discoverStewardsMock.mockResolvedValueOnce(stewardOwning("release", "box-steward"));
+    acquireStewardTurnMock.mockRejectedValue(new Error("cannot lock ref 'refs/chant/lease/_turns/box-steward': File exists"));
+    const stderr = makeStderrSpy();
+
+    const exit = await runOp({ args: makeArgs({ path: "release" }), plugins: [], serializers: [] });
+
+    expect(exit).toBe(1);
+    const out = stderr.join("\n");
+    expect(out).toContain('steward "box-steward"');
+    expect(out).toContain("cannot lock ref");
+    expect(releaseLeaseMock).not.toHaveBeenCalled();
+  });
 });
 
 /**

@@ -19,7 +19,8 @@ import { resolveCliBuildParams, parseParamFlags } from "../build-params-cli";
 import type { CommandContext } from "../registry";
 import { stewardFormFor, stewardTurnLeaseName, DEFAULT_STEWARD_ENV, type StewardDeclaration } from "../../op/steward";
 import { acquireStewardTurn, STEWARD_TURN_WAIT_MS } from "../../op/operator";
-import { releaseLease, currentHolderId } from "../../lifecycle/lease";
+import { releaseLease, currentHolderId, type AcquireLeaseResult } from "../../lifecycle/lease";
+import { StaleLockError } from "../../lifecycle/git";
 import { renderDriverHuman, renderDriverJson } from "../../components/driver-output";
 import { ndjsonProgressSink } from "../../components/run-progress";
 import { maybeRecordAutoRelease } from "../../components/auto-release";
@@ -585,7 +586,22 @@ async function stewardTurnGate(opName: string, ctx: CommandContext): Promise<Ste
   }
 
   const holder = currentHolderId();
-  const turn = await acquireStewardTurn(owner.name, holder, { waitMs: STEWARD_TURN_WAIT_MS });
+  let turn: AcquireLeaseResult;
+  try {
+    turn = await acquireStewardTurn(owner.name, holder, { waitMs: STEWARD_TURN_WAIT_MS });
+  } catch (err) {
+    // Not turn contention — the acquire attempt itself failed (most likely a
+    // StaleLockError, a `.lock` left behind by a killed operator process).
+    // Report it as a refusal rather than letting it propagate uncaught out
+    // of `runOpOnRuntime`, before that function's own try/catch even starts.
+    return {
+      ok: false,
+      message: `Op "${opName}" is one of steward "${owner.name}"'s turns, and its lease could not be read`,
+      hint:
+        `${err instanceof StaleLockError ? err.message : err instanceof Error ? err.message : String(err)} ` +
+        `This can happen when an operator process was killed mid-write; check refs/chant/lease/_turns/${owner.name} for a stale lock.`,
+    };
+  }
   if (!turn.acquired) {
     const heldBy = turn.heldBy?.holder;
     return {

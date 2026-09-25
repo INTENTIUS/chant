@@ -268,4 +268,29 @@ describe("a hand run waits its turn (#2750)", () => {
       expect((await readLease("box-converge", { cwd: dir })).record).toBeUndefined();
     });
   });
+
+  test("a stale .lock on the turn ref reports lease-error, never a thrown exception out of the round, and still releases the op lease it had just taken (#1959 finding 2, applied to #2750's turn lease)", async () => {
+    await withTestDir(async (dir) => {
+      await initRepo(dir);
+      const steward = declareSteward({ name: "box-steward", ops: [op("box-converge", "* * * * *")] });
+
+      // A previous holder of the turn lease was killed mid-write — its
+      // `.lock` file is still sitting there, blocking every future write to
+      // `_turns/box-steward`, the same way #1959 finding 2 covers the
+      // per-op lease.
+      mkdirSync(join(dir, ".git", "refs", "chant", "lease", "_turns"), { recursive: true });
+      writeFileSync(join(dir, ".git", "refs", "chant", "lease", "_turns", "box-steward.lock"), "");
+
+      const log: string[] = [];
+      const now = () => new Date(2026, 8, 25, 10, 1, 0);
+      const events = await runOperatorRound({ cwd: dir, holder: "steward-proc", steward, activities: turns(log), profiles: PROFILES, now });
+
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({ kind: "lease-error", op: "_turns/box-steward", env: "local" });
+      expect((events[0] as { error: string }).error).toContain("box-steward.lock");
+      expect(log).toEqual([]);
+      // The op's own lease, freshly acquired before the failed turn attempt, was let go again.
+      expect((await readLease("box-converge", { cwd: dir })).record).toBeUndefined();
+    });
+  });
 });

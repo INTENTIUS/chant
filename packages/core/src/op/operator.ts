@@ -411,7 +411,18 @@ export async function runOperatorRound(opts: OperatorRoundOptions): Promise<Oper
     // of it in `roundOps` would fail the identical check.
     let turn: AcquireLeaseResult | undefined;
     if (steward) {
-      turn = await acquireStewardTurn(steward.name, holder, { cwd: opts.cwd, ttlMs: opts.leaseTtlMs, now: opts.now });
+      try {
+        turn = await acquireStewardTurn(steward.name, holder, { cwd: opts.cwd, ttlMs: opts.leaseTtlMs, now: opts.now });
+      } catch (err) {
+        // Not turn contention — the acquire attempt itself failed (most
+        // likely a StaleLockError). Same shape as the per-op acquire's own
+        // catch above: report it and stop, rather than let it propagate and
+        // leak the per-op lease this round just took.
+        await releaseLease(config.name, holder, lease.token, { cwd: opts.cwd }).catch(() => false);
+        const message = err instanceof StaleLockError ? err.message : err instanceof Error ? err.message : String(err);
+        events.push({ kind: "lease-error", op: stewardTurnLeaseName(steward.name), env, error: message });
+        break;
+      }
       if (!turn.acquired) {
         await releaseLease(config.name, holder, lease.token, { cwd: opts.cwd }).catch(() => false);
         events.push({ kind: "turn-busy", op: config.name, env, steward: steward.name, heldBy: turn.heldBy?.holder });
