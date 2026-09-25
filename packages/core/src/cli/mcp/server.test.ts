@@ -1,10 +1,14 @@
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { McpServer } from "./server";
+import { readFileSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { LexiconPlugin } from "../../lexicon";
 import type { Serializer } from "../../serializer";
+
+/** The version in `packages/core/package.json`, read here apart from the code under test. */
+const CORE_VERSION: string = JSON.parse(readFileSync(join(import.meta.dirname, "..", "..", "..", "package.json"), "utf-8")).version;
 
 function createMockPlugin(overrides?: Partial<LexiconPlugin>): LexiconPlugin {
   return {
@@ -51,7 +55,16 @@ describe("McpServer", () => {
       expect(result.protocolVersion).toBe("2026-07-28");
       expect(result.capabilities).toBeDefined();
       expect((result.serverInfo as Record<string, unknown>).name).toBe("chant");
-      expect((result.serverInfo as Record<string, unknown>).version).toBe("0.1.0");
+      expect((result.serverInfo as Record<string, unknown>).version).toBe(CORE_VERSION);
+    });
+
+    test("server info names the installed chant's version, from core's package.json (#2689)", async () => {
+      expect(CORE_VERSION).toMatch(/^\d+\.\d+\.\d+/);
+      expect(CORE_VERSION).not.toBe("0.1.0");
+      for (const params of [{}, { protocolVersion: "2024-11-05" }]) {
+        const response = await server.handleRequest({ jsonrpc: "2.0", id: 1, method: "initialize", params });
+        expect(((response.result as Record<string, unknown>).serverInfo as Record<string, unknown>).version).toBe(CORE_VERSION);
+      }
     });
 
     test("capabilities include tools and resources", async () => {

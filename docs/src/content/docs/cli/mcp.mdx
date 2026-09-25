@@ -268,7 +268,7 @@ On the 2026-07-28 revision the requested version and the client identity travel 
 
 | Method | Description |
 |--------|-------------|
-| `initialize` | Handshake — returns the negotiated protocol version, capabilities, and server info |
+| `initialize` | Handshake — returns the negotiated protocol version, capabilities, and server info: `name` is `chant`, and `version` is the installed chant's version |
 | `server/discover` | The `initialize` result merged with the tool and resource listings, so a client can discover everything in one call |
 | `tools/list` | List all available tools (core + plugin-contributed) |
 | `tools/call` | Invoke a tool by name with parameters |

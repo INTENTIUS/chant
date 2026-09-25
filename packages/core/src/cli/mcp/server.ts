@@ -13,6 +13,7 @@ import { createSnapshotTool, createDiffTool } from "./lifecycle-tools";
 import { setGateOrigin } from "../../lifecycle/gate-origin";
 import { createOpListTool, createOpRunTool, createOpStatusTool, createOpApproveTool, createOpReportTool } from "./op-tools";
 import { buildResourcesList, handleResourcesRead } from "./resource-handlers";
+import { CHANT_VERSION } from "../version";
 
 /**
  * Protocol versions this server understands, newest first. `initialize` and
@@ -223,7 +224,8 @@ export class McpServer {
     return {
       protocolVersion: negotiateProtocolVersion(protocolVersion),
       capabilities: { tools: {}, resources: {} },
-      serverInfo: { name: "chant", version: "0.1.0" },
+      // The installed chant's version, so a client can tell which chant it talks to (#2689).
+      serverInfo: { name: "chant", version: CHANT_VERSION },
     };
   }
 
