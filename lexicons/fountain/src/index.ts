@@ -39,7 +39,7 @@ export type { FountainOpRuntimeOptions, FountainSse, FountainSseEvent } from "./
 // Composites — secure-by-construction bundles.
 export { ConciergeStack } from "./composites/concierge-stack";
 export type { ConciergeStackOpts, ConciergeStackResources } from "./composites/concierge-stack";
-export { Steward, stewardForOp, STEWARD_RUNTIME_COMMAND } from "./composites/steward";
+export { Steward, stewardForOp, stewardRuntimeCommand, STEWARD_RUNTIME_COMMAND } from "./composites/steward";
 export type { StewardOp, StewardOpts, StewardResources, StewardWebhookOpts } from "./composites/steward";
 export {
   Box,

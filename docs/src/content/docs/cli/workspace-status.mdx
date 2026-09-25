@@ -96,8 +96,9 @@ A steward is the one writer that runs a member's operational Ops, on Fountain or
 | `forms` | The declared default form, and the environments whose form differs from it |
 | `vault`, `capabilities` | The vault the steward holds, or `null`, and the box capabilities it reaches through a broker, each with the `broker` the member's box block gives it and `declared: false` when the block doesn't list it ([#2726](https://github.com/INTENTIUS/chant/issues/2726)) |
 | `lease` | The local steward's lease (`holder`, `acquiredAt`, `expiresAt`, `live`), or `null` when no local operator has held it |
-| `ops[]` | Each Op the steward runs, in declaration order, with `schedule` (`null` for an Op it runs only when asked), the `env` its runs are recorded under, and `lastRun` (`id`, `status`, `started`, `ended`, `gate`) or `null` |
+| `ops[]` | Each Op the steward runs, in declaration order, with `schedule` (`null` for an Op it runs only when asked), the `env` its runs are recorded under, and `lastRun` (`id`, `status`, `started`, `ended`, `gate`, `point`) or `null`. `status` is `waiting` for a run that stopped on an open decision point, and `point` names that question |
 | `ops[].changesCheckout`, `ops[].workLease` | Whether the Op changes the checkout, and its [work lease](/chant/guide/ops/#running-under-a-work-lease) or `null` ([#2748](https://github.com/INTENTIUS/chant/issues/2748)). `workLease.kind` is the work kind file whose ledger holds the lease, or `null` for the member's own. `workLease.held` lists the leases the steward's turns of this Op hold, the ones whose holder is `<steward>/<op>@<process>`: an `active` one while a turn runs, an `expired` one left by a turn that stopped renewing |
+| `waiting[]` | The open decision points the steward waits on ([#2749](https://github.com/INTENTIUS/chant/issues/2749)): for each Op whose newest run is the steward's own and stopped on a question, the `op`, the `run`, and the question's `id`, `point`, `state`, `path`, `subject` and `since`. [`points --open`](/chant/cli/workspace-points/) has the question's state now |
 
 ### Work leases
 
@@ -201,7 +202,7 @@ The output is part of the workspace [read contract](/chant/reference/workspace-r
               "name": "api-converge",
               "schedule": { "cron": "*/5 * * * *", "overlap": "skip" },
               "env": "local",
-              "lastRun": { "id": "0b6f...", "status": "ok", "started": "2026-09-21T09:00:00.000Z", "ended": "2026-09-21T09:00:04.000Z", "gate": null },
+              "lastRun": { "id": "0b6f...", "status": "ok", "started": "2026-09-21T09:00:00.000Z", "ended": "2026-09-21T09:00:04.000Z", "gate": null, "point": null },
               "changesCheckout": false,
               "workLease": null
             },
@@ -219,7 +220,8 @@ The output is part of the workspace [read contract](/chant/reference/workspace-r
                 ]
               }
             }
-          ]
+          ],
+          "waiting": []
         }
       ],
       "stewardReasons": []

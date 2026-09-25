@@ -594,7 +594,7 @@ describe("stewards in chant workspace status --json (#2731)", () => {
         name: "box-converge",
         schedule: { cron: "* * * * *", overlap: "skip" },
         env: "local",
-        lastRun: { id: expect.any(String), status: "ok", started: "2026-09-25T10:00:00.000Z", ended: "2026-09-25T10:00:05.000Z", gate: null },
+        lastRun: { id: expect.any(String), status: "ok", started: "2026-09-25T10:00:00.000Z", ended: "2026-09-25T10:00:05.000Z", gate: null, point: null },
         changesCheckout: false,
         workLease: null,
       },
@@ -620,6 +620,8 @@ describe("stewards in chant workspace status --json (#2731)", () => {
         },
       },
     ]);
+    // #2749: nothing the steward runs waits on a decision point.
+    expect(s.waiting).toEqual([]);
 
     const k3d = result(await workspaceStatus({ cwd: root, env: "fountain-k3d", now: "2026-09-25T11:00:00.000Z" }));
     expectValid(k3d);

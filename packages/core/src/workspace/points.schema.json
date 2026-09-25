@@ -583,6 +583,32 @@
             "type": "string"
           }
         },
+        "askedBy": {
+          "description": "The steward whose turn asked the question (#2749), and the run it was in, or null. The steward waits on the question and never answers it: a person does.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "steward",
+                "run"
+              ],
+              "properties": {
+                "steward": {
+                  "type": "string"
+                },
+                "run": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            }
+          ]
+        },
         "askedOn": {
           "type": [
             "string",

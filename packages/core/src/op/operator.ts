@@ -39,7 +39,9 @@ import type { ActivityFn, ActivityProfile } from "./activity-registry";
 import { discoverOps, type DiscoveredOp } from "./discover";
 import { runOpLocally, OpRunFailure, type OpRunResult } from "./local-executor";
 import { acquireLease, stillHoldsLease, currentHolderId, DEFAULT_LEASE_TTL_MS, type LeaseRecord, type AcquireLeaseResult } from "../lifecycle/lease";
-import { runEnvOf } from "../lifecycle/run-ledger";
+import { randomUUID } from "node:crypto";
+import { readRunLedger, runEnvOf } from "../lifecycle/run-ledger";
+import { enterStewardTurn } from "./steward-turn";
 import { stewardLeaseName, type StewardDeclaration } from "./steward";
 import { stewardWorkHolder } from "./work-lease-run";
 import { StaleLockError } from "../lifecycle/git";
@@ -79,7 +81,18 @@ export async function discoverConvergeOps(
 
 /** One discovered ConvergeOp's outcome for one round — what `chant operator`'s one-line-per-tick log (and its tests) key off of. */
 export type OperatorTickEvent =
-  | { kind: "ticked"; op: string; env: string; result: OpRunResult }
+  /**
+   * The Op ran. `resumed` names the decision point question it was waiting on
+   * (#2749) when a steward ran it because that question is now answered,
+   * rather than because its cron fired.
+   */
+  | { kind: "ticked"; op: string; env: string; result: OpRunResult; resumed?: string }
+  /**
+   * A steward's Op whose last run stopped on an open decision point (#2749),
+   * and the question is still open, so the Op is not run this round. A person
+   * answers it through hud or `points answer`; the steward never does.
+   */
+  | { kind: "waiting-on-point"; op: string; env: string; point: string; question: string; state: string }
   | { kind: "skipped-lease-held"; op: string; env: string; heldBy?: string }
   /** The Op declares its own `schedule.cron` (#2120) and this round did not land on a firing minute — the lease was never touched. An Op without a cron is never reported this way: it ticks every round, on `--interval`. */
   | { kind: "skipped-not-due"; op: string; env: string; cron: string }
@@ -137,6 +150,67 @@ export interface OperatorRoundOptions {
    * lease, and ticks nothing when another holder has it.
    */
   steward?: StewardDeclaration;
+  /**
+   * How a steward's round reads the state of the questions its waiting runs
+   * stopped on (#2749): question id to state, or null when they can't be
+   * read. Defaults to the workspace's `points` read; a test injects one.
+   */
+  readQuestions?: (cwd: string) => Promise<Map<string, string> | null>;
+}
+
+/** A steward's Op whose last run waits on a decision point (#2749). */
+interface WaitState {
+  /** The answer record's id. */
+  question: string;
+  point: string;
+  /** The question's state now, or the one the run recorded when it can't be read. */
+  state: string;
+  /** The question is answered, or its record is gone, so the Op runs again. */
+  answered: boolean;
+}
+
+/**
+ * The steward's Ops whose newest run is the steward's own and stopped on a
+ * decision point, with that question's state now. The questions are read
+ * from the workspace the way `points` reads them; a workspace that can't be
+ * read leaves every run waiting.
+ */
+async function stewardWaits(steward: StewardDeclaration, opts: OperatorRoundOptions): Promise<Map<string, WaitState>> {
+  const out = new Map<string, WaitState>();
+  const runs: { op: string; question: string; point: string; state: string }[] = [];
+  for (const op of steward.ops) {
+    try {
+      const newest = (await readRunLedger(runEnvOf(op), op.name, { cwd: opts.cwd })).records.at(-1);
+      if (newest?.status === "waiting" && newest.point && newest.steward === steward.name) {
+        runs.push({ op: op.name, question: newest.point.id, point: newest.point.point, state: newest.point.state });
+      }
+    } catch {
+      // A ledger that can't be read has no waiting run to resume.
+    }
+  }
+  if (runs.length === 0) return out;
+  const states = await (opts.readQuestions ?? readQuestionStates)(opts.cwd ?? process.cwd());
+  for (const r of runs) {
+    const now = states?.get(r.question);
+    const answered = states !== null && (now === undefined || now === "answered");
+    out.set(r.op, { question: r.question, point: r.point, state: now ?? r.state, answered });
+  }
+  return out;
+}
+
+/** Every question's state in the workspace, by id, or null when the workspace's points can't be read. */
+async function readQuestionStates(cwd: string): Promise<Map<string, string> | null> {
+  try {
+    const { workspacePoints } = await import("../workspace/points-cli");
+    const doc = await workspacePoints({ cwd });
+    if (!("questions" in doc)) return null;
+    // An answer kind that could not be read might hold the question: say
+    // nothing rather than resume a run whose question may still be open.
+    if (doc.sources.some((s) => s.reason !== null)) return null;
+    return new Map(doc.questions.map((q) => [q.id, q.state]));
+  } catch {
+    return null;
+  }
 }
 
 /** Take or renew a local steward's own lease (#2731). */
@@ -148,9 +222,13 @@ export async function acquireStewardLease(
   return acquireLease(stewardLeaseName(steward), holder, { ...opts, ttlMs: opts.ttlMs ?? DEFAULT_LEASE_TTL_MS });
 }
 
-/** The Ops one round considers: a steward's scheduled ones, or every ConvergeOp. */
+/**
+ * The Ops one round considers: a steward's Ops, or every ConvergeOp. A
+ * steward's Op with no schedule is considered only to resume a run of the
+ * steward's that waits on a decision point.
+ */
 async function roundOps(opts: OperatorRoundOptions): Promise<DiscoveredOp["config"][]> {
-  if (opts.steward) return opts.steward.ops.filter((op) => op.schedule !== undefined);
+  if (opts.steward) return [...opts.steward.ops];
   const { ops } = await discoverConvergeOps({ cwd: opts.cwd, env: opts.env });
   return ops.map((d) => d.config);
 }
@@ -197,8 +275,19 @@ export async function runOperatorRound(opts: OperatorRoundOptions): Promise<Oper
 
   if (!(await holdSteward())) return events;
 
+  // A steward's Ops whose last run waits on a decision point (#2749), read
+  // once per round, and the state of those questions now.
+  const waiting = steward ? await stewardWaits(steward, opts) : new Map<string, WaitState>();
+
   for (const config of await roundOps(opts)) {
     const env = steward ? runEnvOf(config) : (envOf(config) ?? "unknown");
+    const wait = waiting.get(config.name);
+    let resumed: string | undefined;
+
+    // A run waiting on a question that is now answered is resumed on this
+    // round, whatever its cron says. One whose question is still open is left
+    // until a person answers it, unless its cron fires, which asks again.
+    if (wait?.answered) resumed = wait.question;
 
     // An Op that declares its own cadence (#2120) is ticked on that cron
     // rather than on every round. Level-triggered: the question is whether a
@@ -212,10 +301,19 @@ export async function runOperatorRound(opts: OperatorRoundOptions): Promise<Oper
       const lastSeen = opts.scheduleState?.get(config.name);
       const due = lastSeen === undefined ? cronMatches(cron, now) : cronDueBetween(cron, lastSeen, now);
       opts.scheduleState?.set(config.name, now);
-      if (!due) {
-        events.push({ kind: "skipped-not-due", op: config.name, env, cron });
+      if (!due && resumed === undefined) {
+        events.push(
+          wait
+            ? { kind: "waiting-on-point", op: config.name, env, point: wait.point, question: wait.question, state: wait.state }
+            : { kind: "skipped-not-due", op: config.name, env, cron },
+        );
         continue;
       }
+    } else if (steward && resumed === undefined) {
+      // An unscheduled Op runs when someone asks for it; the steward runs it
+      // only to resume its own waiting run.
+      if (wait) events.push({ kind: "waiting-on-point", op: config.name, env, point: wait.point, question: wait.question, state: wait.state });
+      continue;
     }
 
     let acquired: AcquireLeaseResult;
@@ -242,8 +340,17 @@ export async function runOperatorRound(opts: OperatorRoundOptions): Promise<Oper
     }
 
     const lease = acquired.lease as LeaseRecord;
+    // The run is the steward's turn (#2749): a decision point it asks names the
+    // steward and makes its model call through the steward's broker, and an
+    // answer from inside the turn is refused.
+    const runId = randomUUID();
+    const restoreTurn = steward
+      ? enterStewardTurn({ steward: steward.name, capabilities: steward.capabilities, vault: steward.vault, run: runId })
+      : undefined;
     try {
       const result = await runOpLocally(config, opts.activities, opts.profiles, opts.signal, {
+        runId,
+        ...(steward ? { steward: steward.name } : {}),
         ledger: { cwd: opts.cwd },
         // A steward's turn claims work leases as `<steward>/<op>@<holder>`
         // (#2748), which is how `workspace status` finds the lease it holds.
@@ -263,7 +370,11 @@ export async function runOperatorRound(opts: OperatorRoundOptions): Promise<Oper
           }),
       });
       const held = await stillHoldsLease(config.name, holder, lease.token, { cwd: opts.cwd });
-      events.push(held ? { kind: "ticked", op: config.name, env, result } : { kind: "fenced", op: config.name, env });
+      events.push(
+        held
+          ? { kind: "ticked", op: config.name, env, result, ...(resumed !== undefined ? { resumed } : {}) }
+          : { kind: "fenced", op: config.name, env },
+      );
     } catch (err) {
       // #2301: "see its ledger record" was the whole message, and it sent the
       // reader to an artifact that a failed ledger append means is missing —
@@ -277,6 +388,8 @@ export async function runOperatorRound(opts: OperatorRoundOptions): Promise<Oper
             ? err.message
             : String(err);
       events.push({ kind: "tick-failed", op: config.name, env, error: message });
+    } finally {
+      restoreTurn?.();
     }
     if (!(await holdSteward())) break;
   }
@@ -488,7 +601,11 @@ export function formatRoundLine(event: OperatorTickEvent): string {
   switch (event.kind) {
     case "ticked":
       return `operator: ${event.op}@${event.env} ticked=1 status=${event.result.status}` +
-        (event.result.gate ? ` gate="${event.result.gate.gate}"` : "");
+        (event.result.gate ? ` gate="${event.result.gate.gate}"` : "") +
+        (event.result.point ? ` point="${event.result.point.id}"` : "") +
+        (event.resumed ? ` resumed="${event.resumed}"` : "");
+    case "waiting-on-point":
+      return `operator: ${event.op}@${event.env} waiting=1(point:${event.question}:${event.state})`;
     case "skipped-lease-held":
       return `operator: ${event.op}@${event.env} skipped=1(lease-held${event.heldBy ? `:${event.heldBy}` : ""})`;
     case "skipped-not-due":

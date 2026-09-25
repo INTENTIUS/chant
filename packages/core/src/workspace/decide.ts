@@ -66,6 +66,7 @@ import { policyAtBase, resolveBase } from "./trust/provenance";
 import { emptyPolicy, type TrustPolicy } from "./trust/policy";
 import { AGENT_ROLE } from "./records-cli";
 import type { SourceVia } from "./source-block";
+import { currentStewardTurn } from "../op/steward-turn";
 
 /** The version of the write documents `points ask` and `points answer` print. */
 export const POINTS_WRITE_CONTRACT_VERSION = 1;
@@ -93,6 +94,8 @@ export const POINTS_WRITE_ERROR_CODES = [
   "record-not-found",
   "record-closed",
   "record-id-taken",
+  /** The answer was given during a steward's turn (#2749): a steward never answers a question, its own or another's. */
+  "answer-in-steward-turn",
   ...RECORD_REASON_CODES,
 ] as const satisfies readonly ReasonCode[];
 export type PointsWriteErrorCode = (typeof POINTS_WRITE_ERROR_CODES)[number];
@@ -141,8 +144,31 @@ export interface QuestionView {
   answeredBy: string[];
   askedOn: string | null;
   answeredOn: string | null;
+  /**
+   * The steward whose turn asked the question (#2749), and the run it was in,
+   * or null when no steward asked it. The steward waits on the question and
+   * never answers it: a person does, through hud or `points answer`.
+   */
+  askedBy: { steward: string; run: string | null } | null;
   valid: boolean;
   warnings: RecordWarning[];
+}
+
+/** The harness a steward's question names in its source block (#2749). */
+export const STEWARD_HARNESS = "chant-steward";
+
+/** The steward that asked, from a record's source block, or null. */
+export function askedByOf(data: Record<string, unknown>): QuestionView["askedBy"] {
+  const source = data.source;
+  if (source === null || typeof source !== "object" || Array.isArray(source)) return null;
+  const s = source as Record<string, unknown>;
+  if (s.harness !== STEWARD_HARNESS) return null;
+  const client = s.client as Record<string, unknown> | undefined;
+  const steward = client && typeof client.name === "string" ? client.name : null;
+  if (steward === null) return null;
+  const session = s.session as Record<string, unknown> | string | undefined;
+  const run = typeof session === "string" ? session : session && typeof session === "object" && typeof session.id === "string" ? session.id : null;
+  return { steward, run };
 }
 
 /** One answer record as a {@link QuestionView}, or null when its front matter can't be read. `point` is its point as declared now, when there is one. */
@@ -187,6 +213,7 @@ export function questionView(entry: RecordEntry, point: Point | undefined): Ques
     answeredBy: Array.isArray(d.answered_by) ? d.answered_by.filter((b): b is string => typeof b === "string") : [],
     askedOn: str(d.asked_on),
     answeredOn: str(d.answered_on),
+    askedBy: askedByOf(d),
     valid: entry.valid,
     warnings: entry.warnings,
   };
@@ -276,6 +303,13 @@ export interface AskPointOptions {
   via?: SourceVia;
   /** The client that asked, for its source block. */
   client?: { name: string; version?: string };
+  /**
+   * The steward whose turn asks (#2749), and its run. Recorded in the source
+   * block (harness `chant-steward`, the steward as the client, the run as the
+   * session), so the question says who is waiting on it and `points answer`
+   * never counts the steward toward its quorum. Takes the place of `client`.
+   */
+  steward?: { name: string; run?: string };
   /** The date written as asked_on, and answered_on for a table's answer, YYYY-MM-DD. Defaults to today, in UTC. */
   on?: string;
   dryRun?: boolean;
@@ -393,7 +427,14 @@ export async function askPoint(opts: AskPointOptions): Promise<PointsWriteDocume
     const answer = result.status === "escalated" ? undefined : result.answer;
     const title = titleFor(point, opts.subject, state, answer);
     const modelId = result.status === "proposed" ? result.decider.model : undefined;
-    const source = { via: opts.via ?? "cli", ...(opts.client ? { client: opts.client } : {}), ...(modelId ? { model: modelId } : {}) };
+    const client = opts.steward ? { name: opts.steward.name } : opts.client;
+    const source = {
+      via: opts.via ?? "cli",
+      ...(opts.steward ? { harness: STEWARD_HARNESS } : {}),
+      ...(client ? { client } : {}),
+      ...(modelId ? { model: modelId } : {}),
+      ...(opts.steward?.run ? { session: { id: opts.steward.run } } : {}),
+    };
     const data = recordData(o, {
       id,
       title,
@@ -453,9 +494,16 @@ function policyFor(root: string): TrustPolicy {
  * leaving out anyone holding the agent role in the trust policy at base, and,
  * when the quorum names roles, anyone holding none of them.
  */
-export function tallyQuorum(by: string[], quorum: { count: number; roles?: string[] }, policy: TrustPolicy): { counted: string[]; left: { name: string; why: string }[]; met: boolean } {
+export function tallyQuorum(
+  by: string[],
+  quorum: { count: number; roles?: string[] },
+  policy: TrustPolicy,
+  /** The steward that asked the question (#2749): it never counts toward the answer. */
+  steward?: string,
+): { counted: string[]; left: { name: string; why: string }[]; met: boolean } {
   const holders = (role: string) => new Set((policy.roles[role] ?? []).map(normalisePrincipal));
   const agents = holders(AGENT_ROLE);
+  const asker = steward !== undefined ? normalisePrincipal(steward) : undefined;
   const counted: string[] = [];
   const seen = new Set<string>();
   const left: { name: string; why: string }[] = [];
@@ -463,6 +511,10 @@ export function tallyQuorum(by: string[], quorum: { count: number; roles?: strin
     const p = normalisePrincipal(name);
     if (p === "" || seen.has(p)) continue;
     seen.add(p);
+    if (asker !== undefined && p === asker) {
+      left.push({ name, why: "is the steward that asked" });
+      continue;
+    }
     if (agents.has(p)) {
       left.push({ name, why: "holds the agent role" });
       continue;
@@ -484,6 +536,16 @@ export function tallyQuorum(by: string[], quorum: { count: number; roles?: strin
  */
 export async function answerPoint(opts: AnswerPointOptions): Promise<PointsWriteDocument> {
   try {
+    // A steward waits on a question and never answers one (#2749), as it never
+    // clears a gate: the answer has to come from a person, through hud or a
+    // shell, not from the steward's own turn or a process it started.
+    const turn = currentStewardTurn();
+    if (turn) {
+      throw new PointsWriteError(
+        "answer-in-steward-turn",
+        `this is the steward ${turn.steward}'s turn, and a steward never answers a decision point: a person answers ${opts.id} through hud or \`chant workspace points answer\` at a shell`,
+      );
+    }
     const kinds = await answerKindFiles(opts.cwd, opts.kind);
     if (kinds.length === 0) throw new PointsWriteError("points-undeclared", "no record kind with an answers block is declared: name one with --kind, or declare one in chant.workspace.json");
     let found: { opened: OpenedPoints; before: RecordEntry[]; target: RecordEntry & { data: Record<string, unknown> } } | undefined;
@@ -511,7 +573,7 @@ export async function answerPoint(opts: AnswerPointOptions): Promise<PointsWrite
       throw new PointsWriteError("answer-not-candidate", `${opts.id} takes one of ${allowed.map((c) => JSON.stringify(c)).join(", ")}, not ${JSON.stringify(opts.answer)}`);
     }
     const quorum = quorumOf(point);
-    const tally = tallyQuorum(opts.by, quorum, policyFor(o.root));
+    const tally = tallyQuorum(opts.by, quorum, policyFor(o.root), askedByOf(d)?.steward);
     if (!tally.met) {
       const got = tally.counted.length;
       const left = tally.left.length ? `; not counted: ${tally.left.map((l) => `${l.name}, who ${l.why}`).join("; ")}` : "";

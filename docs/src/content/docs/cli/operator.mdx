@@ -64,7 +64,9 @@ The command refuses to start when the steward's form in `--env` (default `local`
 
 An Op that declares a [work lease](/chant/guide/ops/#running-under-a-work-lease) runs under it in a steward round too, claimed as `<steward>/<op>@<holder>` ([#2748](https://github.com/INTENTIUS/chant/issues/2748)). An Op that changes the checkout and declares no work lease is refused when the steward is declared, and a scheduled Op whose lease leaves the item to the run is refused the same way, since a scheduled run can't name one.
 
-`chant workspace status --json` reports the steward with its lease, the last run of each Op, and the work lease each Op's turn holds. [The Steward](/chant/lexicons/fountain/steward/) covers the declaration and how the steward shares a checkout with a coding agent.
+A steward's Op that stops on an open [decision point](/chant/guide/decision-points/) ends its run as `waiting`, with the question on the run's ledger record ([#2749](https://github.com/INTENTIUS/chant/issues/2749)). The steward does not wait for it and never answers it. A person answers the question through hud or `chant workspace points answer`. Until then each round prints `operator: <op>@<env> waiting=1(point:<id>:<state>)` and leaves the Op alone, unless its cron fires, which asks again. The first round after the answer runs the Op again whatever its cron says. Its line names the question as `resumed="<id>"`. This also resumes an Op with no schedule, when its waiting run was the steward's.
+
+`chant workspace status --json` reports the steward with its lease and the last run of each Op. It also lists the work lease each Op's turn holds and the questions the steward waits on. [The Steward](/chant/lexicons/fountain/steward/) covers the declaration and how the steward shares a checkout with a coding agent.
 
 ### `operator status`
 

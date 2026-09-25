@@ -50,6 +50,9 @@ export function renderHuman(result: OpRunResult, write: Writer = stderr): void {
     if (record.refusal) {
       write(`    [refused] ${record.refusal}`);
     }
+    if (record.point) {
+      write(`    [waiting] decision point ${record.point.point}: ${record.point.id} is ${record.point.state}`);
+    }
     if (record.error) {
       write(`    ${record.error}`);
     }
@@ -71,6 +74,16 @@ export function renderHuman(result: OpRunResult, write: Writer = stderr): void {
   const total = `${(result.totalMs / 1000).toFixed(1)}s`;
   if (result.status === "ok") {
     write(`Op "${result.op}" completed in ${total}`);
+    return;
+  }
+  if (result.status === "waiting" && result.point) {
+    // An open decision point (#2749): a fact like a gate. A person answers the
+    // question, through hud or at a shell, and the next run reads the answer.
+    const { point } = result;
+    write(`Op "${result.op}" is waiting on decision point "${point.point}" after ${total}`);
+    write(`  question: ${point.id} (${point.state}) at ${point.path}`);
+    if (point.subject) write(`  subject : ${point.subject}`);
+    write(`  answer  : ${pointAnswerCommand(point.id)}`);
     return;
   }
   if (result.status === "fail" || !result.gate) {
@@ -126,3 +139,8 @@ export function renderJson(result: OpRunResult, write: Writer = stdout): void {
 }
 
 export type { OpRunResult, StepRecord };
+
+/** The command a person answers an open decision point with (#2749). */
+export function pointAnswerCommand(id: string): string {
+  return `chant workspace points answer ${id} --answer <answer> --by <your name>`;
+}

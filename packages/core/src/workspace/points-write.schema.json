@@ -465,6 +465,7 @@
                 "point-decider-failed",
                 "answer-not-candidate",
                 "quorum-not-met",
+                "answer-in-steward-turn",
                 "record-not-found",
                 "record-closed",
                 "record-id-taken",
