@@ -31,6 +31,7 @@ import { createRequire } from "node:module";
 import { dirname, posix, relative, resolve, sep } from "node:path";
 import schema from "./decision-points.schema.json";
 import type { ReasonCode } from "./reason-codes";
+import type { RecordSource } from "./record-source";
 import type { LoadedRecordKind, ReadRecordsOptions, RecordEntry } from "./records";
 
 export const DECISION_POINTS_SCHEMA_ID = schema.$id;
@@ -514,11 +515,16 @@ export function pointsFileOf(loaded: LoadedRecordKind, root: string): string {
   return relative(root, abs).split(sep).join(posix.sep);
 }
 
-/** The points an answer kind names, read through `read` (the tree read), or the problems reading them. */
-export function readPointsThrough(read: (path: string) => string, file: string): { points: Record<string, Point> } | { error: string; problems: PointProblem[] } {
+/** The points an answer kind names, read from `source` (the tree read), or the problems reading them. */
+export function readPointsThrough(source: RecordSource, file: string): { points: Record<string, Point> } | { error: string; problems: PointProblem[] } {
+  // A revision's source reads only files in a directory it has listed.
+  const names = source.list(posix.dirname(file));
+  if (!names?.includes(posix.basename(file))) {
+    return { error: `the points file ${file} does not exist${source.label}`, problems: [{ field: null, message: `does not exist${source.label}` }] };
+  }
   let text: string;
   try {
-    text = read(file);
+    text = source.read(file);
   } catch (err) {
     return { error: `the points file ${file} can't be read: ${err instanceof Error ? err.message : String(err)}`, problems: [{ field: null, message: "can't be read" }] };
   }
@@ -537,7 +543,7 @@ export function readPointsThrough(read: (path: string) => string, file: string):
  */
 export function applyAnswers(loaded: LoadedRecordKind, entries: RecordEntry[], options: ReadRecordsOptions): void {
   const file = pointsFileOf(loaded, options.root);
-  const read = readPointsThrough((p) => options.source.read(p), file);
+  const read = readPointsThrough(options.source, file);
   for (const e of entries) {
     if (e.data === null) continue;
     if ("error" in read) {

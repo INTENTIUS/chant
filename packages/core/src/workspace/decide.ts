@@ -252,7 +252,7 @@ async function openAnswers(kindFile: string, cwd: string): Promise<OpenedPoints>
   const o = await open(kindFile, cwd);
   if (!o.loaded.kind.answers) throw new PointsWriteError("points-undeclared", `the ${o.loaded.kind.name} kind has no answers block, so it holds no answers to decision points`);
   const pointsFile = pointsFileOf(o.loaded, o.root);
-  const read = readPointsThrough((p) => o.source.read(p), pointsFile);
+  const read = readPointsThrough(o.source, pointsFile);
   if ("error" in read) throw new PointsWriteError("points-invalid", read.error);
   return { o, points: read.points, pointsFile };
 }

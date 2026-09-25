@@ -746,6 +746,7 @@ describe("workspace init and ls (#2534)", () => {
       "workspace lint",
       "workspace ls",
       "workspace member-run",
+      "workspace points",
       "workspace records",
       "workspace status",
       "workspace upgrade",
@@ -766,6 +767,19 @@ describe("workspace init and ls (#2534)", () => {
     const source = readFileSync(join(import.meta.dirname, "main.ts"), "utf-8");
     expect(source).toMatch(/await import\("\.\.\/workspace\/init"\)/);
     expect(source).toMatch(/await import\("\.\.\/workspace\/ls"\)/);
+  });
+});
+
+describe("workspace points (ws-058, #2739)", () => {
+  test("ask and answer take their flags, and --by repeats", () => {
+    const ask = parseArgs(["workspace", "points", "ask", "slice-tier", "--inputs", "in.json", "--response", "r.json", "--subject", "W-001", "--dry-run"]);
+    expect(ask).toMatchObject({ path: "points", extraPositional: "ask", extraPositional2: "slice-tier", inputs: "in.json", response: "r.json", subject: "W-001", dryRun: true });
+    expect(resolveCommand(ask, commandRegistry)?.def.name).toBe("workspace points");
+    expect(parseArgs(["workspace", "points", "ask", "p", "--inputs", "-"]).inputs).toBe("-");
+    const answer = parseArgs(["workspace", "points", "answer", "slice-tier-0123456789ab", "--answer", "medium", "--by", "alice", "--by", "bob"]);
+    expect(answer).toMatchObject({ extraPositional: "answer", answer: "medium", bys: ["alice", "bob"] });
+    expect(parseArgs(["workspace", "points", "--open", "--json"])).toMatchObject({ open: true, json: true });
+    expect(() => parseArgs(["workspace", "points", "ask", "p", "--response", "--json"])).toThrow(/--response needs a JSON file/);
   });
 });
 

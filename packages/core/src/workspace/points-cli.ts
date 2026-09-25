@@ -139,7 +139,7 @@ export async function workspacePoints(query: PointsQuery): Promise<PointsDocumen
       const read = await readRecordsFor({ kind: k.file, cwd: query.cwd, at: query.at });
       const source = read.at !== null && read.top ? gitRevisionSource(read.top, read.at) : workingTreeSource(read.root);
       const file = pointsFileOf(read.loaded, read.root);
-      const parsed = readPointsThrough((p) => source.read(p), file);
+      const parsed = readPointsThrough(source, file);
       const declared = "points" in parsed ? parsed.points : {};
       sources.push({ kind: k.shown, points: file, reason: "error" in parsed ? { code: "points-invalid", message: parsed.error } : null });
       for (const [name, p] of Object.entries(declared)) {
