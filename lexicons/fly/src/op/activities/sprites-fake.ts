@@ -247,6 +247,11 @@ export function createSpritesFake(): Promise<{ url: string; close(): Promise<voi
       res.writeHead(status, { "content-type": "application/json" });
       res.end(JSON.stringify(body ?? {}));
     };
+    // No-body reply (real Sprites' 204s carry no content and no body): #2719.
+    const sendEmpty = (status: number): void => {
+      res.writeHead(status);
+      res.end();
+    };
     // NDJSON progress stream: an `info` line then a terminal `complete` line.
     const sendNdjson = (status: number, events: Array<Record<string, unknown>>): void => {
       res.writeHead(status, { "content-type": "application/x-ndjson" });
@@ -314,7 +319,8 @@ export function createSpritesFake(): Promise<{ url: string; close(): Promise<voi
       if (method === "POST") {
         const body = ((await readBody(req)) ?? {}) as { rules?: Array<{ domain: string; action: string }> };
         sprite.netPolicy = body.rules ?? [];
-        return send(200, { rules: sprite.netPolicy });
+        // 204 with no body — matches every official SDK and wisp (#2719).
+        return sendEmpty(204);
       }
       return send(404, { error: `not found: ${method} ${path}` });
     }
