@@ -387,6 +387,11 @@ export function parseArgs(args: string[]): ParsedArgs {
       // `chant workspace records review <id> --by <principal>` (#2670): whoever the caller says.
       result.by = args[++i];
       if (!result.by || result.by.startsWith("-")) throw new Error("--by needs the reviewer: --by <principal>");
+    } else if (arg === "--sign") {
+      // `chant workspace records review <id> --sign [<key file>]` (#2687): seal the verdict.
+      // With no key file, git's user.signingkey, as `git commit -S` reads it.
+      const next = args[i + 1];
+      result.sign = next !== undefined && !next.startsWith("-") ? args[++i] : true;
     } else if (arg === "--session") {
       // `chant workspace records review <id> --session <id>` (#2670)
       result.session = args[++i];
@@ -773,11 +778,13 @@ Workspace (level 1, #2524):
                         state (upward), pins and reviews; anything else is
                         refused with amend-supersede-instead. Prints
                         {path, id, changed}
-  workspace records review <id> [--kind <kind file>] --verdict agree|dissent|abstain --by <principal> [--note <text>] [--session <id>] [--dry-run]
+  workspace records review <id> [--kind <kind file>] --verdict agree|dissent|abstain --by <principal> [--note <text>] [--session <id>] [--sign [<key file>]] [--dry-run]
                         Append a review to one record, dated and bound to
                         the digest of the record text. A dissent needs
-                        --note. The principal is not checked; attestation is
-                        the seal's job. Prints {path, id, review}
+                        --note. --sign seals it with an ssh key (git's
+                        user.signingkey without a file); under a signers
+                        file at base only a sealed verdict counts. Prints
+                        {path, id, review}
   workspace verify [--base <rev>] [--head <rev>] [--require attested]
                         Check the commits in base..head against the signers
                         and roles read from base. A change to the signers file

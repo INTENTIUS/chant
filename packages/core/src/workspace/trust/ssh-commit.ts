@@ -65,8 +65,8 @@ function objectFormat(repo: string): string {
   }
 }
 
-/** Run ssh-keygen; `missing` is true when it is not installed. */
-function sshKeygen(args: string[], input?: Buffer): { status: number | null; stdout: string; stderr: string; missing: boolean } {
+/** Run ssh-keygen; `missing` is true when it is not installed. Shared with the verdict seals (./seal.ts). */
+export function sshKeygen(args: string[], input?: Buffer): { status: number | null; stdout: string; stderr: string; missing: boolean } {
   const r = spawnSync("ssh-keygen", args, { input, encoding: "buffer", timeout: 30_000 });
   const missing = (r.error as NodeJS.ErrnoException | undefined)?.code === "ENOENT";
   return { status: r.status, stdout: r.stdout?.toString("utf-8") ?? "", stderr: r.stderr?.toString("utf-8") ?? "", missing };

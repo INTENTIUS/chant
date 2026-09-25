@@ -75,7 +75,7 @@
             "reviewer": {
               "type": "string",
               "minLength": 1,
-              "description": "The principal given with --by, as given. chant does not check who it is; attestation of the commit that carries the review does (#2547)."
+              "description": "The principal given with --by, as given. The write does not check who it is. With --sign, the seal lets chant workspace records check it against the signers file at base (#2687)."
             },
             "verdict": {
               "enum": [
@@ -102,6 +102,30 @@
               "type": "string",
               "minLength": 1,
               "description": "The session given with --session. Absent when none was given."
+            },
+            "seal": {
+              "type": "object",
+              "description": "Added in contract 1 by #2687. With --sign only: an ssh signature by the key given (or git's user.signingkey) over <id>\\n<digest>\\n<verdict>\\n<reviewer>\\n<on>, in the ssh-keygen namespace chant-review. The write does not check the key against the signers file; chant workspace records reports whether the seal counts.",
+              "required": [
+                "signer",
+                "key",
+                "signature"
+              ],
+              "properties": {
+                "signer": {
+                  "type": "string",
+                  "description": "The reviewer given with --by."
+                },
+                "key": {
+                  "type": "string",
+                  "pattern": "^SHA256:[A-Za-z0-9+/]+=*$",
+                  "description": "The fingerprint of the key that signed, read back from the signature."
+                },
+                "signature": {
+                  "type": "string",
+                  "description": "The armored ssh signature."
+                }
+              }
             }
           }
         },
@@ -180,6 +204,7 @@
                 "review-unsupported",
                 "record-closed",
                 "review-note-required",
+                "review-sign-failed",
                 "record-unparseable",
                 "record-schema-invalid",
                 "record-id-duplicate",

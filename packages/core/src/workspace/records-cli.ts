@@ -42,6 +42,7 @@ import {
   type RecordEntry,
   type RecordFormat,
   type RecordHistory,
+  type SealInput,
 } from "./records";
 import { gitTree, workingTree, type WorkspaceTree } from "./tree";
 import type { DecisionWork } from "./work";
@@ -272,13 +273,16 @@ export async function queryRecords(query: RecordsQuery): Promise<RecordsDocument
       paths: result.records.map((r) => r.path),
       attestors: policy.active ? await activeAttestors() : [],
     });
-    // The quorum: the need from the declaration in the tree read, agents and
-    // whether verdicts need a seal from the policy at base (#2671).
-    const quorumOptions = loaded.kind.reviews
+    // The quorum: the need from the declaration in the tree read, agents,
+    // whether verdicts need a seal, and the keys a seal verifies against,
+    // all from the policy at base (#2671, #2687).
+    const checkVerdictSeal = loaded.kind.reviews ? (await import("./trust/seal")).checkVerdictSeal : undefined;
+    const quorumOptions = checkVerdictSeal
       ? {
           ...declaredQuorum(tree),
           agents: new Set((policy.roles[AGENT_ROLE] ?? []).map(normalisePrincipal)),
           attestation: policy.active,
+          verifySeal: (v: SealInput) => checkVerdictSeal(policy, v),
         }
       : undefined;
     const records: RecordView[] = result.records.map((r) => ({

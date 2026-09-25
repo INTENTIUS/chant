@@ -39,7 +39,7 @@ This page is generated from `docs/data/boundary.yaml`, which has one row for eac
 | record link kind | `RECORD_LINK_KINDS` in `record-assets.ts` | 2 | 0 | 0 |
 | intent node kind | the node kinds of `intent.schema.json` | 9 | 0 | 3 |
 | intent edge kind | the edge kinds of `intent.schema.json` | 9 | 0 | 3 |
-| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 76 | 0 | 0 |
+| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 81 | 0 | 0 |
 | finding code | the finding codes of `intent.schema.json` | 17 | 0 | 0 |
 | WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 35 | 0 | 0 |
 | hud view | the hud reader requirements H1 to H11 of #2650 | 0 | 11 | 0 |
@@ -73,7 +73,7 @@ Each row follows, in the order of the table above.
 | workspace command | `workspace records pin` | chant | chant workspace records pin &lt;path&gt; | Prints a file's path from the workspace root and its sha256, for a decision's evidence pin. |
 | workspace command | `workspace records new` | chant | records-new.schema.json | Writes one new record in a kind's directory from validated JSON fields, allocating the next id, and never commits. |
 | workspace command | `workspace records amend` | chant | records-amend.schema.json | Sets fields of one record under its schema and the approval rule, refusing a change to an approved record that only a superseding record can make. |
-| workspace command | `workspace records review` | chant | records-review.schema.json | Appends a dated review verdict to one record, bound to the digest of the record text, with a note required for a dissent. |
+| workspace command | `workspace records review` | chant | records-review.schema.json | Appends a dated review verdict to one record, bound to the digest of the record text, with a note required for a dissent, and with --sign an ssh seal by the reviewer. |
 | workspace command | `workspace verify` | chant | chant workspace verify | Checks the commits in base..head against the signers and roles read from base. |
 | workspace command | `workspace lineage` | chant | chant workspace lineage --json | Shows each scope in the lineage lock with its template, pin, edited files and open manual steps. |
 | workspace command | `workspace lineage resolve` | chant | chant workspace lineage resolve &lt;path&gt; | Closes a manual step once the file has been merged by hand. |
@@ -166,7 +166,11 @@ Each row follows, in the order of the table above.
 | reason code | `review-agent` | chant | records.schema.json | The reviewer holds the agent role in the trust policy at base. |
 | reason code | `review-duplicate` | chant | records.schema.json | A later verdict by the same principal replaces this one. Names are compared after NFKC, trimming and lower-casing. |
 | reason code | `review-older-digest` | chant | records.schema.json | The verdict names a digest other than the record's text now: the record changed after the verdict. |
-| reason code | `review-unattested` | chant | records.schema.json | An attestation policy is active at base, and the verdict carries no seal. |
+| reason code | `review-unattested` | chant | records.schema.json | An attestation policy is active at base, and the verdict carries no seal that verifies for its reviewer. |
+| reason code | `seal-missing` | chant | records.schema.json | The verdict carries no seal. |
+| reason code | `seal-signer-unlisted` | chant | records.schema.json | The reviewer has no key in the signers file at base, so the seal can't count. |
+| reason code | `seal-signature-invalid` | chant | records.schema.json | The seal is malformed, names a signer other than the reviewer, or its signature does not verify over the verdict. |
+| reason code | `seal-unverifiable` | chant | records.schema.json | Nothing here can say whose seal it is: there is no signers file at base, or ssh-keygen is not installed. |
 | reason code | `composites-no-chant-member` | chant | composites.schema.json | No member of kind chant was read, so nothing declares a composite instance or a component. |
 | reason code | `composites-none-declared` | chant | composites.schema.json | The members read declare no composite instance. |
 | reason code | `composites-no-component` | chant | composites.schema.json | The members read declare no component, so no composite instance has one. |
@@ -190,6 +194,7 @@ Each row follows, in the order of the table above.
 | reason code | `amend-supersede-instead` | chant | records-amend.schema.json | The record is approved, and the amendment changes a field the approval rule does not let change in place; a new record supersedes it instead. |
 | reason code | `review-unsupported` | chant | records-review.schema.json | The kind's schema has no reviews field, so its records take no review. |
 | reason code | `review-note-required` | chant | records-review.schema.json | A dissent was given with no note: a dissent needs a reason. |
+| reason code | `review-sign-failed` | chant | records-review.schema.json | --sign was given and no seal could be made: the key can't be read or used, git names no ssh signing key, or ssh-keygen is not installed. |
 | reason code | `since-rev-unknown` | chant | records-since.schema.json | --since names no commit. |
 | reason code | `intent-region-invalid` | chant | intent.schema.json | The region's path, or its line range, does not exist in the tree read. |
 | reason code | `intent-history-shallow` | chant | intent.schema.json | The repository is a shallow clone, so the region's history stops at the clone's boundary. |

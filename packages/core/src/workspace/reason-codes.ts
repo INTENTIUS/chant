@@ -86,7 +86,12 @@ export const REASONS = {
   "review-agent": "The reviewer holds the agent role in the trust policy at base.",
   "review-duplicate": "A later verdict by the same principal replaces this one. Names are compared after NFKC, trimming and lower-casing.",
   "review-older-digest": "The verdict names a digest other than the record's text now: the record changed after the verdict.",
-  "review-unattested": "An attestation policy is active at base, and the verdict carries no seal.",
+  "review-unattested": "An attestation policy is active at base, and the verdict carries no seal that verifies for its reviewer.",
+  // A verdict's seal that is not attested (records, #2687). Every verdict reports one of these in its attestation, unless its seal verified.
+  "seal-missing": "The verdict carries no seal.",
+  "seal-signer-unlisted": "The reviewer has no key in the signers file at base, so the seal can't count.",
+  "seal-signature-invalid": "The seal is malformed, names a signer other than the reviewer, or its signature does not verify over the verdict.",
+  "seal-unverifiable": "Nothing here can say whose seal it is: there is no signers file at base, or ssh-keygen is not installed.",
   // A records read that fails (records).
   "kind-unreadable": "The record kind file is missing or could not be imported.",
   "kind-invalid": "The record kind file exports no recordKind, or its shape is wrong.",
@@ -106,6 +111,7 @@ export const REASONS = {
   "amend-supersede-instead": "The record is approved, and the amendment changes a field the approval rule does not let change in place; a new record supersedes it instead.",
   "review-unsupported": "The kind's schema has no reviews field, so its records take no review.",
   "review-note-required": "A dissent was given with no note: a dissent needs a reason.",
+  "review-sign-failed": "--sign was given and no seal could be made: the key can't be read or used, git names no ssh signing key, or ssh-keygen is not installed.",
   // records --since that fails (#2673).
   "since-rev-unknown": "--since names no commit.",
   // The intent graph (graph --intent, #2651): a read that fails.

@@ -80,6 +80,7 @@ export const REVIEW_ERROR_CODES = [
   "review-unsupported",
   "record-closed",
   "review-note-required",
+  "review-sign-failed",
   ...RECORD_REASON_CODES,
 ] as const satisfies readonly ReasonCode[];
 
@@ -562,7 +563,7 @@ export interface ReviewRecordOptions {
   kind: string;
   id: string;
   verdict: string;
-  /** The reviewer, as the caller names them. chant does not check who it is; attestation does (#2547). */
+  /** The reviewer, as the caller names them. chant does not check who it is; a seal does, on read (#2687). */
   by: string;
   note?: string;
   /** The review session the verdict was given in. */
@@ -571,11 +572,18 @@ export interface ReviewRecordOptions {
   cwd: string;
   /** The date written as `on`, YYYY-MM-DD. Defaults to today, in UTC. */
   on?: string;
+  /**
+   * Seal the verdict (#2687): a key file, resolved against `cwd`, or true for
+   * git's `user.signingkey`. Without it the verdict is written unsealed.
+   */
+  sign?: string | true;
 }
 
 /**
  * `records review`: append one verdict to a record's reviews, with the date
  * and the digest of the record text it judged ({@link recordTextDigest}).
+ * With `sign`, the verdict carries a seal: an ssh signature over the record
+ * id, the digest, the verdict, the reviewer and the date (`trust/seal.ts`).
  */
 export async function reviewRecord(opts: ReviewRecordOptions): Promise<ReviewDocument> {
   try {
@@ -609,6 +617,7 @@ export async function reviewRecord(opts: ReviewRecordOptions): Promise<ReviewDoc
       digest: recordTextDigest(current, field),
       ...(opts.session !== undefined ? { session: opts.session } : {}),
     };
+    if (opts.sign !== undefined) review.seal = await seal(opts.sign, opts.cwd, { record: opts.id, digest: review.digest as string, verdict: opts.verdict, reviewer: opts.by, on: review.on as string });
     // Only the reviews block changes, so the digest the verdict names stays the record's digest (#2672).
     const list = [...reviews, review];
     const text = replaceFields(current, { [field]: list }, { ...target.data, [field]: list });
@@ -631,12 +640,28 @@ export async function reviewRecord(opts: ReviewRecordOptions): Promise<ReviewDoc
   }
 }
 
+/** A seal over one verdict, or a refusal with review-sign-failed. Loaded only when --sign is given. */
+async function seal(sign: string | true, cwd: string, v: { record: string; digest: string; verdict: string; reviewer: string; on: string }): Promise<Record<string, unknown>> {
+  const { resolveSigningKey, sealVerdict, SealError } = await import("./trust/seal");
+  try {
+    const key = resolveSigningKey(sign, cwd);
+    try {
+      return { ...sealVerdict(key.file, v) };
+    } finally {
+      key.cleanup();
+    }
+  } catch (err) {
+    if (err instanceof SealError) throw new RecordWriteError("review-sign-failed", err.message);
+    throw err;
+  }
+}
+
 // ── The command ──────────────────────────────────────────────────────────────
 
 export const WRITE_USAGE = [
   "chant workspace records new [<kind file or declared kind>] --from <file|-> [--prefix <prefix>] [--dry-run]",
   "chant workspace records amend <id> [--kind <kind file>] --set <file|-> [--dry-run]",
-  "chant workspace records review <id> [--kind <kind file>] --verdict agree|dissent|abstain --by <principal> [--note <text>] [--session <id>] [--dry-run]",
+  "chant workspace records review <id> [--kind <kind file>] --verdict agree|dissent|abstain --by <principal> [--note <text>] [--session <id>] [--sign [<key file>]] [--dry-run]",
 ].join("\n");
 
 function usage(schema: string, message: string): WriteFailure<"write-usage-invalid"> {
@@ -710,6 +735,10 @@ export async function runRecordsWrite(ctx: CommandContext): Promise<number> {
     console.log(JSON.stringify(doc, null, 2));
     return "error" in doc ? 1 : 0;
   };
+  if (args.sign !== undefined && verb !== "review") {
+    const schema = verb === "new" ? RECORDS_NEW_SCHEMA_ID : RECORDS_AMEND_SCHEMA_ID;
+    return print(usage(schema, `--sign seals a review verdict; sealing a record's author on ${verb} is not supported yet (#2688)`));
+  }
   if (verb === "new") {
     const named = args.extraPositional2 ?? args.kind;
     const kind = named !== undefined ? resolveWriteKind(named, cwd) : declaredWriteKind(RECORDS_NEW_SCHEMA_ID, cwd, "new needs the kind file");
@@ -731,6 +760,6 @@ export async function runRecordsWrite(ctx: CommandContext): Promise<number> {
   if (args.verdict === undefined) return print(usage(schema, "--verdict agree|dissent|abstain is required"));
   if (args.by === undefined) return print(usage(schema, "--by <principal> is required"));
   return print(
-    await reviewRecord({ kind, id, verdict: args.verdict, by: args.by, note: args.note, session: args.session, dryRun: args.dryRun, cwd }),
+    await reviewRecord({ kind, id, verdict: args.verdict, by: args.by, note: args.note, session: args.session, sign: args.sign, dryRun: args.dryRun, cwd }),
   );
 }

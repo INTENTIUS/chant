@@ -249,6 +249,20 @@
         "reviewer": { "type": "string", "description": "The reviewer as the record writes it." },
         "verdict": { "enum": ["agree", "dissent", "abstain"] },
         "digest": { "type": ["string", "null"], "description": "The digest the verdict names, or null when it names none (a warning review-undigested on the record)." },
+        "attested": {
+          "type": ["boolean", "null"],
+          "description": "Added in contract 1 by #2687. true when the verdict's seal verifies for its reviewer against the signers file at base. false when a signers file is active at base and the verdict has no seal, or when a seal fails, with or without one. null when nothing here can say: no seal and no signers file, a seal checked with no signers file (its signature is intact, and nothing says whose key it is), or no ssh-keygen. Under an active signers file only true counts."
+        },
+        "attestation": {
+          "description": "Added in contract 1 by #2687. What the verdict's seal establishes, and why when it is not attested.",
+          "type": "object",
+          "required": ["message"],
+          "properties": {
+            "code": { "enum": ["seal-missing", "seal-signer-unlisted", "seal-signature-invalid", "seal-unverifiable"], "description": "Absent exactly when attested is true." },
+            "message": { "type": "string" },
+            "key": { "type": "string", "description": "The fingerprint of the key that made the signature, when the signature was checked." }
+          }
+        },
         "reason": {
           "description": "Why the verdict does not count. Present exactly on the entries in notCounted.",
           "type": "object",

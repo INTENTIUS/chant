@@ -154,6 +154,17 @@
             "type": "string",
             "minLength": 1
           },
+          "seal": {
+            "description": "The reviewer's ssh signature over the verdict (#2687): the bytes <id>\\n<digest>\\n<verdict>\\n<reviewer>\\n<on>, in the ssh-keygen namespace chant-review. chant workspace records review --sign writes it. Once a signers file is active at base, a verdict counts toward the quorum only when its seal verifies for its reviewer against that file. A seal needs a digest.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["signer", "key", "signature"],
+            "properties": {
+              "signer": { "description": "Who signed: the reviewer, as the signers file names them.", "type": "string", "minLength": 1 },
+              "key": { "description": "The signing key's fingerprint. Reported, never trusted: the signature is the proof.", "type": "string", "pattern": "^SHA256:[A-Za-z0-9+/]+=*$" },
+              "signature": { "description": "The armored ssh signature, as ssh-keygen -Y sign prints it.", "type": "string", "pattern": "^-----BEGIN SSH SIGNATURE-----\\n" }
+            }
+          },
           "proposes": {
             "description": "With a dissent, the id of a new proposed decision the reviewer opened.",
             "$ref": "#/definitions/decisionId"
@@ -172,6 +183,7 @@
             "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
           }
         },
+        "dependencies": { "seal": ["digest"] },
         "if": {
           "required": ["verdict"],
           "properties": { "verdict": { "const": "dissent" } }
