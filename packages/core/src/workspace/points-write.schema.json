@@ -1,0 +1,489 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/points-write/v1/points-write.schema.json",
+  "title": "chant workspace points ask and answer output",
+  "description": "What `chant workspace points ask` and `points answer` print (ws-058, #2739): the answer record asked for or written, as `points --json` lists a question. ask returns the record that is there when the same point, declaration and inputs were answered or proposed before (reused), and otherwise writes one: answered from a table, proposed from a model at or above its threshold, escalated to people below it. answer records people's answer to an open question once the point's quorum is met. Nothing is committed, and nothing is written on a refusal or with --dry-run. The error codes are a closed list, each in the one closed list of `reason-codes.ts`. Written at contract version 1 of the write documents.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/result"
+    },
+    {
+      "$ref": "#/$defs/failure"
+    }
+  ],
+  "$defs": {
+    "result": {
+      "description": "The record was found or written. Exit code 0.",
+      "type": "object",
+      "required": [
+        "$schema",
+        "contract",
+        "verb",
+        "kind",
+        "id",
+        "path",
+        "reused",
+        "written",
+        "dryRun",
+        "question"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/points-write/v1/points-write.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "verb": {
+          "enum": [
+            "ask",
+            "answer"
+          ]
+        },
+        "kind": {
+          "type": "object",
+          "required": [
+            "name",
+            "schema",
+            "file"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "schema": {
+              "type": "string"
+            },
+            "file": {
+              "type": "string"
+            }
+          }
+        },
+        "id": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string",
+          "description": "The record file, from the repository root."
+        },
+        "reused": {
+          "type": "boolean",
+          "description": "The record was already there, and nothing new was written."
+        },
+        "written": {
+          "type": "boolean",
+          "description": "A file was written: false when reused, and with --dry-run."
+        },
+        "dryRun": {
+          "type": "boolean"
+        },
+        "question": {
+          "$ref": "#/$defs/question"
+        },
+        "text": {
+          "type": "string",
+          "description": "With --dry-run, the text that would be written."
+        },
+        "error": false
+      }
+    },
+    "question": {
+      "type": "object",
+      "required": [
+        "id",
+        "path",
+        "point",
+        "title",
+        "subject",
+        "state",
+        "open",
+        "questionType",
+        "candidates",
+        "inputs",
+        "inputsHash",
+        "pointVersion",
+        "current",
+        "answer",
+        "decider",
+        "probabilities",
+        "confidence",
+        "threshold",
+        "model",
+        "escalations",
+        "answeredBy",
+        "askedOn",
+        "answeredOn",
+        "valid",
+        "warnings"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "point": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "subject": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "What the question is about, such as a work item's id."
+        },
+        "state": {
+          "enum": [
+            "escalated",
+            "proposed",
+            "answered"
+          ]
+        },
+        "open": {
+          "type": "boolean",
+          "description": "Escalated to people, or proposed by a model and not yet confirmed."
+        },
+        "questionType": {
+          "type": "string"
+        },
+        "candidates": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "boolean"
+              }
+            ]
+          }
+        },
+        "inputs": {
+          "type": "object"
+        },
+        "inputsHash": {
+          "type": "string"
+        },
+        "pointVersion": {
+          "type": "string"
+        },
+        "current": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "The point is still declared as it was when asked; null when the points file no longer declares it."
+        },
+        "answer": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "decider": {
+          "type": "object",
+          "description": "Who answered: a table row, a model with its backend and model id, or a quorum, with who answered once people did. For an escalated question, the quorum it waits on."
+        },
+        "probabilities": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              }
+            }
+          ]
+        },
+        "confidence": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          ]
+        },
+        "threshold": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          ]
+        },
+        "model": {
+          "description": "Any model answer: the proposal (observed), or the last answer below a model decider's threshold (not observed). null when no model answered.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "answer",
+                "confidence",
+                "threshold",
+                "model",
+                "backend",
+                "observed"
+              ],
+              "properties": {
+                "answer": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "confidence": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    }
+                  ]
+                },
+                "threshold": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    }
+                  ]
+                },
+                "model": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "backend": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "observed": {
+                  "type": "boolean"
+                }
+              }
+            }
+          ]
+        },
+        "escalations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "kind",
+              "reason"
+            ],
+            "properties": {
+              "kind": {
+                "enum": [
+                  "table",
+                  "model"
+                ]
+              },
+              "reason": {
+                "type": "string"
+              },
+              "backend": {
+                "type": "string"
+              },
+              "model": {
+                "type": "string"
+              },
+              "answer": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "probabilities": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              },
+              "confidence": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "threshold": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              }
+            }
+          }
+        },
+        "answeredBy": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "askedOn": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "answeredOn": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "valid": {
+          "type": "boolean"
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "code",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "enum": [
+                  "asset-drift",
+                  "asset-missing",
+                  "asset-stale",
+                  "record-supersedes-pending",
+                  "record-no-evidence",
+                  "review-undigested",
+                  "source-transcript-drift",
+                  "answer-points-unreadable",
+                  "answer-point-unknown",
+                  "answer-point-changed",
+                  "record-unattested"
+                ]
+              },
+              "message": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "failure": {
+      "description": "Nothing was written. Exit code 1.",
+      "type": "object",
+      "required": [
+        "$schema",
+        "contract",
+        "verb",
+        "error"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/points-write/v1/points-write.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "verb": {
+          "enum": [
+            "ask",
+            "answer"
+          ]
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "enum": [
+                "kind-unreadable",
+                "kind-invalid",
+                "schema-unreadable",
+                "schema-id-mismatch",
+                "schema-invalid",
+                "location-missing",
+                "write-usage-invalid",
+                "write-input-invalid",
+                "points-undeclared",
+                "points-invalid",
+                "point-unknown",
+                "point-inputs-invalid",
+                "point-decider-failed",
+                "answer-not-candidate",
+                "quorum-not-met",
+                "record-not-found",
+                "record-closed",
+                "record-id-taken",
+                "record-unparseable",
+                "record-schema-invalid",
+                "record-id-duplicate",
+                "record-supersedes-unknown",
+                "record-supersedes-conflict",
+                "session-seal-mismatch",
+                "session-verdict-unknown-record"
+              ]
+            },
+            "message": {
+              "type": "string"
+            }
+          }
+        },
+        "question": false
+      }
+    }
+  }
+}

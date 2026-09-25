@@ -54,6 +54,7 @@ import type { LexiconPlugin } from "../lexicon";
  */
 const BOOLEAN_FLAGS = new Set([
   "--help",
+  "--open",
   "--version",
   "--agents",
   "--agent",
@@ -392,6 +393,27 @@ export function parseArgs(args: string[]): ParsedArgs {
       // `chant workspace records review <id> --by <principal>` (#2670): whoever the caller says.
       result.by = args[++i];
       if (!result.by || result.by.startsWith("-")) throw new Error("--by needs the reviewer: --by <principal>");
+      // Repeatable for `workspace points answer` (#2739): each person who answered.
+      (result.bys ??= []).push(result.by);
+    } else if (arg === "--open") {
+      // `chant workspace points --open` (#2739): only the questions still open.
+      result.open = true;
+    } else if (arg === "--inputs") {
+      // `chant workspace points ask <point> --inputs <file|->` (#2739)
+      result.inputs = args[++i];
+      if (!result.inputs || (result.inputs.startsWith("-") && result.inputs !== "-")) throw new Error("--inputs needs a JSON file, or - for standard input: --inputs <file|->");
+    } else if (arg === "--response") {
+      // `chant workspace points ask <point> --response <file>` (#2739): a POST /v1/systemone response the caller got.
+      result.response = args[++i];
+      if (!result.response || result.response.startsWith("-")) throw new Error("--response needs a JSON file: --response <file>");
+    } else if (arg === "--subject") {
+      // `chant workspace points ask <point> --subject <id>` (#2739): what the question is about.
+      result.subject = args[++i];
+      if (!result.subject || result.subject.startsWith("-")) throw new Error("--subject needs what the question is about, such as a work item id: --subject <id>");
+    } else if (arg === "--answer") {
+      // `chant workspace points answer <id> --answer <value>` (#2739)
+      result.answer = args[++i];
+      if (result.answer === undefined || result.answer === "") throw new Error("--answer needs one of the question's candidates: --answer <value>");
     } else if (arg === "--sign") {
       // `chant workspace records review <id> --sign [<key file>]` (#2687): seal the verdict.
       // `records new` and `records amend` take it too, to seal the record's author (#2688).
@@ -829,6 +851,18 @@ Workspace (level 1, #2524):
                         separate clones coordinate. A claim is refused, exit 2,
                         while anyone holds it live. Each change appends to
                         _leases/<id>.jsonl on chant/lifecycle
+  workspace points [--open] [--kind <kind file>] [--at <rev>] [--json]
+                        List the decision points the declared answer kinds'
+                        points files declare, and the questions asked of them;
+                        --open keeps the escalated and proposed ones (ws-058)
+  workspace points ask <point> --inputs <file|-> [--response <file>] [--subject <id>] [--kind <kind file>] [--dry-run]
+                        Ask a point's table, model and quorum deciders and
+                        record the answer: proposed from a model, escalated to
+                        people below its threshold. --response is a POST
+                        /v1/systemone response the caller got; chant calls no model
+  workspace points answer <id> --answer <value> --by <name>... [--kind <kind file>] [--dry-run]
+                        Record people's answer to an open question, or confirm
+                        a model's proposal, once the point's quorum is met
   workspace verify [--base <rev>] [--head <rev>] [--require attested]
                         Check the commits in base..head against the signers
                         and roles read from base. A change to the signers file
@@ -1359,6 +1393,8 @@ export const commandRegistry: CommandDef[] = [
   // Workspace reads (#2524). Imported on first use, so a level-0 command never
   // loads anything under workspace/ (#2525 rule 5, pinned by #2526's goldens).
   { name: "workspace records", handler: async (ctx) => (await import("../workspace/records-cli")).runWorkspaceRecords(ctx) },
+  // ws-058 (#2739) — decision points and the questions asked of them; never calls a model.
+  { name: "workspace points", handler: async (ctx) => (await import("../workspace/points-cli")).runWorkspacePoints(ctx) },
   { name: "workspace init", handler: async (ctx) => (await import("../workspace/init")).runWorkspaceInit(ctx) },
   { name: "workspace ls", handler: async (ctx) => (await import("../workspace/ls")).runWorkspaceLs(ctx) },
   // #2732 — the work lease: claim, renew and release a work item.

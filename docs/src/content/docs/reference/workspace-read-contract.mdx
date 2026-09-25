@@ -10,7 +10,7 @@ Tools that show a workspace read it through one contract ([#2536](https://github
 
 | Contract | chant floor | Declaration | Output schemas |
 |---|---|---|---|
-| 1 | 0.81.0 | schema 1 | `ls`, `graph`, `check`, `status`, `records`, `records-since`, `intent` and `composites`, each at `v1` |
+| 1 | 0.81.0 | schema 1 | `ls`, `graph`, `check`, `status`, `records`, `records-since`, `intent`, `composites` and `points`, each at `v1` |
 
 Every document carries `contract`, the version it follows, and `$schema`, its schema's `$id`. Most also carry `chant`, the version of the chant that wrote it. A reader that knows contract 1 refuses a document with any other `contract` value. Given a chant older than the floor, the reader can say so and name the version to install, since that chant doesn't write the contract at all.
 
@@ -30,6 +30,7 @@ Each schema ships in `@intentius/chant` at `src/workspace/<command>.schema.json`
 | [`chant workspace records --since`](/chant/cli/workspace-records/#what-changed-between-two-revisions) | `--json` | `https://intentius.io/chant/schemas/workspace/records-since/v1/records-since.schema.json` |
 | [`chant workspace graph --intent`](/chant/cli/workspace-graph/#the-intent-graph) | `--json` | `https://intentius.io/chant/schemas/workspace/intent/v1/intent.schema.json` |
 | [`chant workspace graph --composites`](/chant/cli/workspace-graph/#composites-and-components) | always | `https://intentius.io/chant/schemas/workspace/composites/v1/composites.schema.json` |
+| [`chant workspace points`](/chant/cli/workspace-points/#output) | `--json` | `https://intentius.io/chant/schemas/workspace/points/v1/points.schema.json` |
 
 Each schema is a `oneOf` of a result and a failure. The `records` schema has a third branch for the set it prints without `--kind` ([#2680](https://github.com/INTENTIUS/chant/issues/2680)). The set holds a result or a failure for each record kind the declaration names. A failure has `error: { code, message }`, plus `location` for the commands that read the declaration, and exits 1. A result may still hold entries that couldn't be read, each with a `reason: { code, message }`. Only `check` fails on those ([ws-020](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-020-unreadable.md)). In `check`, a declaration that can't be read is the finding `WSP001` with the same `code`, not a failure.
 
@@ -128,6 +129,9 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `work-done-unpinned` | warning, `records` and `graph --intent` | A work record is done and its evidence list is empty, so nothing shows the work was done. A work record never carries `record-no-evidence`. |
 | `work-closed-without-date` | warning, `records` and `graph --intent` | A work record is done or dropped and has no `closed_on`. |
 | `work-done-gap-open` | warning, `records` and `graph --intent` | A work record is done, and the finding its `source` names still fires on its region. `records` walks that region with `graph --intent` to raise it, when the repository is in git and has a workspace declaration. |
+| `answer-points-unreadable` | warning, `records` and `points` | The points file the answer kind names can't be read, or is not valid ([ws-058](https://github.com/INTENTIUS/chant/issues/2739)). |
+| `answer-point-unknown` | warning, `records` and `points` | The answer's point is not declared in the points file the answer kind names. |
+| `answer-point-changed` | warning, `records` and `points` | The point's declaration changed since the question was asked, so the answer is to an older version of the question. |
 | `review-decider` | verdict, `records` | The verdict is the decider's own, and the quorum counts verdicts besides the decider's. |
 | `review-agent` | verdict, `records` | The reviewer holds the `agent` role in `.chant/trust.json` at base. |
 | `review-duplicate` | verdict, `records` | A later verdict by the same principal replaces this one. Names are compared after NFKC, trimming and lower-casing. |
@@ -161,6 +165,13 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `record-state-not-initial` | error, `records new` through `chant serve mcp` | The fields give a state other than the kind's first: a record written through MCP opens `proposed`, and a person moves it on ([#2707](https://github.com/INTENTIUS/chant/issues/2707)). |
 | `session-unknown` | error, `records review` | `--session` names no session of a session kind whose subjects are the record's kind ([#2693](https://github.com/INTENTIUS/chant/issues/2693)). |
 | `session-not-open` | error, `records review` | `--session` names a closed session, which takes no more verdicts. |
+| `points-undeclared` | error, `points ask` and `points answer` | No record kind with an `answers` block is declared, or given with `--kind`, so there is no points file to ask. |
+| `points-invalid` | source, `points`; error, `points ask` and `points answer` | The points file an answer kind names can't be read, or does not match `decision-points.schema.json` and the rules checked in code. |
+| `point-unknown` | error, `points ask` and `points answer` | No points file declares the point asked, or the point an answer names. |
+| `point-inputs-invalid` | error, `points ask` | The inputs are not a JSON object of the point's declared inputs. |
+| `point-decider-failed` | error, `points ask` | A model decider that fails closed (`unreachable: "fail"`) could not answer, so nothing was written. |
+| `answer-not-candidate` | error, `points answer` | The answer is not one of the question's candidates. |
+| `quorum-not-met` | error, `points answer` | Too few of the people named count toward the point's quorum: distinct, not holding the agent role, and holding one of its roles when it names any. |
 | `since-rev-unknown` | error, `records --since` | `--since` names no commit, or names a session with no opening revision whose file no commit added. |
 | `since-session-unknown` | error, `records --since` | `--since` has a session id's shape and names no commit, and no session has that id ([#2693](https://github.com/INTENTIUS/chant/issues/2693)). |
 | `since-session-open` | reason, `records --since` | `--since` names a session that is still open, so the comparison runs to the working tree. |
@@ -263,6 +274,22 @@ A record kind with a `work` block is a work kind ([#2683](https://github.com/INT
 The decision kind is the file the work kind's `work.decisions` names, read at the same revision as the work records. A work record's `warnings` hold the `work-` codes above in place of `record-no-evidence`.
 
 A work lease is written by [`chant workspace work claim|renew|release`](/chant/cli/workspace-work/) to `refs/chant/lease/[_members/<member>/]work/<id>`, with a history in `_leases/<id>.jsonl` on `chant/lifecycle`. `status --json` lists every lease in `leases`, active and expired, each with its `item`, the `member` whose ledger holds it (`null` for the flat ledger), `ref`, `holder`, `token`, `acquiredAt`, `expiresAt` and `state`. Neither read fetches. A reader that needs the remote's leases fetches `refs/chant/lease/*` first, or runs a claim, which does.
+
+## Decision points
+
+A record kind with an `answers` block is an answer kind ([ws-058](https://github.com/INTENTIUS/chant/issues/2739)). Its `answers.points` names a JSON points file, validated against `decision-points.schema.json`, which `@intentius/chant` exports as `@intentius/chant/workspace/decision-points.schema.json`. Each input a point reads is named for one of this contract's outputs, optionally followed by dotted field names.
+
+| Input output | Read from |
+|---|---|
+| `record`, `decision`, `work-item` | a record in `records` |
+| `finding`, `region`, `commit` | `graph --intent` |
+| `member` | `ls` |
+| `gate`, `release`, `environment` | `status` |
+| `component` | `graph --composites` |
+
+[Decision Points](/chant/guide/decision-points/) describes the declaration and the answers.
+
+`chant workspace points --json` lists every point, and every answer record as a question. A question carries its state and any model's answer with its confidence. It also lists why each decider before the quorum did not answer. A question is `open` while it is `escalated` to people or `proposed` by a model and not yet confirmed, and `--open` lists only those. `chant serve mcp` serves the same document as the `workspace-points` tool. The answer records are ordinary records of the kind, so `records --json` reads them too, with the `answer-` warnings above. They follow `point-answer.schema.json`, which the package exports beside it.
 
 ## The intent graph
 

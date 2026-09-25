@@ -14,6 +14,7 @@
  * | WSP113 | a pinned file that a superseding record pins at the old hash: the artifact did not follow the decision |
  * | WSP114 | the records of `--kind` can't be read (fixed) |
  * | WSP115 | a record kind the declaration names is missing or does not load as one (fixed, #2680) |
+ * | WSP116 | an answer kind's decision points file is missing or not valid (fixed, ws-058, #2738) |
  */
 
 import type { WorkspaceCheck, WorkspaceDiagnostic } from "../checks";
@@ -97,6 +98,30 @@ export const RECORD_CHECKS: readonly WorkspaceCheck[] = [
           ...(k.declared.member !== null ? { entity: k.declared.member } : {}),
           pointer: `${k.declared.pointer}/kind`,
         }));
+    },
+  },
+  {
+    id: "WSP116",
+    name: "decision-points-invalid",
+    description:
+      "Every answer kind the declaration names has a decision points file that matches decision-points.schema.json: each input names a read-contract output, each table row tests declared inputs and answers a candidate, each model id is pinned, and the chain ends in its one quorum (ws-058).",
+    severity: "error",
+    configurable: false,
+    check(ctx) {
+      const out: WorkspaceDiagnostic[] = [];
+      for (const k of ctx.facts?.declaredKinds ?? []) {
+        if (!k.points) continue;
+        const where = k.declared.member === null ? "the workspace" : `member ${k.declared.member}`;
+        const finding = (message: string) => ({
+          checkId: this.id,
+          severity: this.severity,
+          message,
+          ...(k.declared.member !== null ? { entity: k.declared.member } : {}),
+          pointer: `${k.declared.pointer}/kind`,
+        });
+        for (const p of k.points.problems) out.push(finding(`${where} declares the answer kind ${k.declared.kind}, whose points file ${k.points.file} ${p.field ? `has ${p.field}, which ${p.message}` : p.message}`));
+      }
+      return out;
     },
   },
 ];

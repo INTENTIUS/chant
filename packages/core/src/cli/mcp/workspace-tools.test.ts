@@ -85,7 +85,7 @@ describe("which servers have the workspace tools", () => {
       const { tools } = (await rpc(server(cwd), "tools/list")) as { tools: { name: string }[] };
       expect(tools.map((t) => t.name)).toEqual(expect.arrayContaining(names));
     }
-    expect(names).toEqual(["workspace-ls", "workspace-status", "workspace-graph", "workspace-records", "records-new", "records-amend", "records-review", "records-close"]);
+    expect(names).toEqual(["workspace-ls", "workspace-status", "workspace-graph", "workspace-records", "workspace-points", "records-new", "records-amend", "records-review", "records-close", "points-answer"]);
   });
 
   test("a server outside any workspace, or given none, does not", async () => {
@@ -113,6 +113,19 @@ describe("reads", () => {
     expect(res.structuredContent).toEqual(cli(["workspace", "records", "--kind", KIND, "--json"]));
     const only = await call(s, "workspace-records", { kind: KIND, id: "fix-001" });
     expect(recordsOf(only.structuredContent).map((r) => r.id)).toEqual(["fix-001"]);
+  }, 120_000);
+
+  test("workspace-points returns the document chant workspace points --json prints, and points-answer the write's (ws-058)", async () => {
+    const s = server();
+    const res = await call(s, "workspace-points", { open: true });
+    expect(res.isError).toBeUndefined();
+    expect(res.structuredContent).toEqual(cli(["workspace", "points", "--open", "--json"]));
+    expect(res.structuredContent).toMatchObject({ open: true, sources: [], points: [], questions: [] });
+    // The generated workspace declares no answer kind, so there is nothing to answer.
+    const answered = await call(s, "points-answer", { id: "slice-tier-000000000000", answer: "small", by: ["alice"] });
+    expect(answered.structuredContent).toMatchObject({ verb: "answer", error: { code: "points-undeclared" } });
+    const bad = await call(s, "points-answer", { id: "slice-tier-000000000000", answer: "small", by: [] });
+    expect(bad.isError).toBe(true);
   }, 120_000);
 
   test("an error document is returned as a document, and a flag-shaped value is refused before chant runs", async () => {

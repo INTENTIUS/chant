@@ -6,15 +6,17 @@
  * is a thin call into the code the CLI runs:
  *
  * - The reads (`workspace-ls`, `workspace-status`, `workspace-graph`,
- *   `workspace-records`) run `chant workspace <command> ... --json` with the
- *   chant this server runs as, in the server's directory, and return the
+ *   `workspace-records`, `workspace-points`) run `chant workspace <command>
+ *   ... --json` with the chant this server runs as, in the server's
+ *   directory, and return the
  *   document it printed, unchanged, with its reason codes (#2536). Running the
  *   command, rather than calling into it, keeps every rule it has, handing the
  *   read to the workspace root's pinned chant included (ws-021), and keeps
  *   anything a command prints away from the protocol on stdout.
  * - The writes (`records-new`, `records-amend`, `records-review`,
- *   `records-close`) call the functions `chant workspace records new|amend|
- *   review|close` call, and return the same JSON result. They keep every rule
+ *   `records-close`, `points-answer`) call the functions `chant workspace
+ *   records new|amend|review|close` and `points answer` call, and return the
+ *   same JSON result. They keep every rule
  *   the CLI keeps: the kind's schema, a closed record never changing, an
  *   approved one changing only as its approval rule allows, a dissent needing
  *   a note, and `sign` using this host's configured key or refusing with the
@@ -119,6 +121,19 @@ export const workspaceReadTools: ToolDefinition[] = [
       },
     },
   },
+  {
+    name: "workspace-points",
+    description:
+      "The workspace's decision points and the questions asked of them: chant workspace points --json (points.schema.json, ws-058). A question is open while it is escalated to people, or proposed by a model and not yet confirmed; each lists any model's answer with its confidence and threshold. Returns the document unchanged. chant calls no model to answer this.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        open: { type: "boolean", description: "Only the open questions (--open)." },
+        kind: { type: "string", description: "One answer kind file, in place of the declared ones (--kind)." },
+        at: atProp,
+      },
+    },
+  },
 ];
 
 export const workspaceWriteTools: ToolDefinition[] = [
@@ -191,6 +206,23 @@ export const workspaceWriteTools: ToolDefinition[] = [
       required: ["id"],
     },
   },
+  {
+    name: "points-answer",
+    description:
+      "Record people's answer to an open decision point question, or confirm a model's proposal: chant workspace points answer. Refused unless the point's quorum is met: distinct people, none holding the agent role, each holding one of the quorum's roles when it names any. An answered question never changes. " +
+      PROTOCOL,
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "The question's id, as workspace-points lists it." },
+        answer: { type: ["string", "boolean"], description: "One of the question's candidates; for a noul, true or false." },
+        by: { type: "array", items: { type: "string" }, description: "Each person who answered (--by)." },
+        kind: { type: "string", description: "The answer kind file. Without it, the declared answer kinds." },
+        dryRun: dryRunProp,
+      },
+      required: ["id", "answer", "by"],
+    },
+  },
 ];
 
 /** A tool call that can't be made as given: the client gets it as an error result, and nothing runs. */
@@ -248,6 +280,10 @@ export function readArgv(tool: string, params: Record<string, unknown>): string[
       if (composites) return ["workspace", "graph", "--composites", ...kindArgs, ...(intent !== undefined ? ["--intent", intent] : []), ...atArgs, "--json"];
       if (intent !== undefined) return ["workspace", "graph", "--intent", intent, ...kindArgs, ...atArgs, "--json"];
       return ["workspace", "graph", ...kindArgs, ...atArgs, "--json"];
+    }
+    case "workspace-points": {
+      const kind = str(params, "kind");
+      return ["workspace", "points", ...(bool(params, "open") ? ["--open"] : []), ...(kind !== undefined ? ["--kind", kind] : []), ...atArgs, "--json"];
     }
     case "workspace-records": {
       const kind = str(params, "kind");
@@ -388,6 +424,14 @@ export function createWorkspaceTools(options: WorkspaceToolsOptions): WorkspaceT
         dryRun: bool(params, "dryRun"),
         cwd,
       });
+    },
+    "points-answer": async (params) => {
+      const { answerPoint } = await import("../../workspace/decide");
+      const answer = params.answer;
+      if (typeof answer !== "string" && typeof answer !== "boolean") throw new ToolInputError("answer must be a string, or true or false");
+      const by = params.by;
+      if (!Array.isArray(by) || by.length === 0 || !by.every((b) => typeof b === "string" && b.trim() !== "")) throw new ToolInputError("by must list each person who answered");
+      return answerPoint({ cwd, id: str(params, "id", true)!, answer, by: by as string[], kind: str(params, "kind"), dryRun: bool(params, "dryRun") });
     },
     "records-close": async (params) => {
       const w = await write();

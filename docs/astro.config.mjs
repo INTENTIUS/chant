@@ -142,6 +142,7 @@ export default defineConfig({
 							items: [
 								{ label: 'Asking How a File Got This Way', slug: 'guide/tracing-intent' },
 								{ label: 'Work Items', slug: 'guide/work-items' },
+								{ label: 'Decision Points', slug: 'guide/decision-points' },
 								{ label: 'Recording Decisions by Hand', slug: 'guide/recording-decisions-by-hand' },
 							],
 						},
@@ -237,6 +238,7 @@ export default defineConfig({
 								{ label: 'workspace status', slug: 'cli/workspace-status' },
 								{ label: 'workspace records', slug: 'cli/workspace-records' },
 								{ label: 'workspace work', slug: 'cli/workspace-work' },
+								{ label: 'workspace points', slug: 'cli/workspace-points' },
 								{ label: 'workspace verify', slug: 'cli/workspace-verify' },
 								{ label: 'workspace lineage', slug: 'cli/workspace-lineage' },
 								{ label: 'workspace upgrade', slug: 'cli/workspace-upgrade' },

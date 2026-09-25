@@ -13,7 +13,7 @@
  * kind file.
  */
 
-import { join } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { declaredRecordKinds, type Declaration, type RecordKindDeclaration } from "./declaration";
 import type { ReasonCode } from "./reason-codes";
 import type { WorkspaceTree } from "./tree";
@@ -30,6 +30,12 @@ export interface DeclaredKind {
   kind: string | null;
   /** Why it can't be loaded, or null. */
   reason: { code: DeclaredKindReasonCode; message: string } | null;
+  /**
+   * For an answer kind (ws-058, #2738): its points file from the workspace
+   * root, and what is wrong with it, empty when nothing is. Absent for any
+   * other kind, and when the kind wasn't loaded.
+   */
+  points?: { file: string; problems: { field: string | null; message: string }[] };
 }
 
 /** The kind file of `declared` on disk, under the workspace root `rootOnDisk`. */
@@ -65,7 +71,9 @@ export async function loadDeclaredKinds(
     }
     try {
       const loaded = await records.loadRecordKind(file);
-      out.push({ declared: d, file, kind: loaded.kind.name, reason: null });
+      const entry: DeclaredKind = { declared: d, file, kind: loaded.kind.name, reason: null };
+      if (loaded.kind.answers) entry.points = await checkPoints(resolve(dirname(file), loaded.kind.answers.points), rootOnDisk, tree);
+      out.push(entry);
     } catch (err) {
       if (!(err instanceof records.RecordReadError)) throw err;
       // loadRecordKind names the file as it was given, here an absolute path: name it from the workspace root instead.
@@ -73,4 +81,19 @@ export async function loadDeclaredKinds(
     }
   }
   return out;
+}
+
+/** An answer kind's points file (ws-058), read from `tree` and validated as `points ask` reads it. */
+async function checkPoints(abs: string, rootOnDisk: string, tree: WorkspaceTree): Promise<NonNullable<DeclaredKind["points"]>> {
+  const file = relative(rootOnDisk, abs).split(sep).join("/");
+  if (file.startsWith("../")) return { file, problems: [{ field: null, message: "is outside the workspace" }] };
+  if (tree.stat(file) !== "file") return { file, problems: [{ field: null, message: `does not exist${tree.label}` }] };
+  const { parsePoints, PointsError } = await import("./points");
+  try {
+    parsePoints(tree.read(file), file);
+    return { file, problems: [] };
+  } catch (err) {
+    if (err instanceof PointsError) return { file, problems: err.problems };
+    throw err;
+  }
 }

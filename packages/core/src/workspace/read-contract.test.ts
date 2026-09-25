@@ -36,13 +36,15 @@ import { queryRecords } from "./records-cli";
 import recordsSchema from "./records.schema.json";
 import { queryRecordsSince } from "./records-since";
 import recordsSinceSchema from "./records-since.schema.json";
+import { workspacePoints } from "./points-cli";
+import pointsSchema from "./points.schema.json";
 import { workspaceStatus } from "./status";
 import statusSchema from "./status.schema.json";
 
 const FIXTURE = join(REPO, "reference-workspace");
 const TIMEOUT = 240_000;
 
-const SCHEMAS = { ls: lsSchema, graph: graphSchema, check: checkSchema, status: statusSchema, records: recordsSchema, "records-since": recordsSinceSchema, intent: intentSchema, composites: compositesSchema };
+const SCHEMAS = { ls: lsSchema, graph: graphSchema, check: checkSchema, status: statusSchema, records: recordsSchema, "records-since": recordsSinceSchema, intent: intentSchema, composites: compositesSchema, points: pointsSchema };
 
 /** This checkout's chant, started the way the CLI starts it, for members with no toolchain of their own. */
 const reader: Toolchain = {
@@ -182,6 +184,21 @@ describe("every schema against the reference workspace (#2543)", () => {
     expectValid(sessions);
     if ("error" in sessions) throw new Error(sessions.error.message);
     expect(sessions.summary.invalid).toBe(0);
+  });
+
+  test("points, in the working tree and at HEAD (ws-058)", async () => {
+    const { expectValid } = contract(pointsSchema);
+    for (const at of [undefined, "HEAD"]) {
+      const doc = await workspacePoints({ cwd: FIXTURE, at });
+      expectValid(doc);
+      if ("error" in doc) throw new Error(doc.error.message);
+      expect(doc.points.map((p) => p.name)).toEqual(["slice-tier", "ship-skip"]);
+    }
+    const open = await workspacePoints({ cwd: FIXTURE, open: true });
+    expectValid(open);
+    if ("error" in open) throw new Error(open.error.message);
+    expect(open.sources).toEqual([{ kind: "answers/answer.kind.mjs", points: "reference-workspace/decisions/points.json", reason: null }]);
+    expect(open.questions.map((q) => [q.subject, q.state, q.model?.answer, q.model?.confidence])).toEqual([["W-002", "proposed", "medium", 0.865]]);
   });
 
   test("records --since HEAD, for decisions and sessions (#2673)", async () => {

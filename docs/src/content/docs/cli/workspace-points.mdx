@@ -1,0 +1,80 @@
+---
+title: "chant workspace points"
+description: The workspace's decision points and the questions asked of them, and the two writes that ask a point and record people's answer
+diataxis: reference
+---
+
+## Synopsis
+
+```
+chant workspace points [--open] [--kind <kind file>] [--at <rev>] [--json]
+chant workspace points ask <point> --inputs <file|-> [--response <file>] [--subject <id>] [--kind <kind file>] [--dry-run]
+chant workspace points answer <id> --answer <value> --by <name> [--by <name>...] [--kind <kind file>] [--dry-run]
+```
+
+## Description
+
+A decision point is a question the workspace asks of its own graph again and again, declared in a points file that an answer kind names ([ws-058](https://github.com/INTENTIUS/chant/issues/2738)). [Decision Points](/chant/guide/decision-points/) shows how to declare one. This page is the command reference.
+
+`chant workspace points` reads every record kind the declaration names with an `answers` block, or the one `--kind` names. For each kind it lists the declared points and the questions asked of them. Each question is one answer record. It is open while it is `escalated` to people or `proposed` by a model and not yet confirmed. `--open` lists only the open ones. `--at <rev>` reads the points file and the records at a commit, as [`records --at`](/chant/cli/workspace-records/) does.
+
+```
+slice-tier  choice  Which builder tier builds this work item  (table, model, quorum)
+ship-skip  noul  May this release skip the human gate  (table, quorum)
+
+slice-tier-01eb5382958d  answered  Which builder tier builds this work item (W-001): small
+slice-tier-074b660bbaad  proposed  Which builder tier builds this work item (W-002): medium, proposed  model "medium" at 0.865
+2 questions, 1 open
+```
+
+It never writes and never calls a model.
+
+## Asking a point
+
+`points ask <point> --inputs <file>` asks the point's deciders in order and records the answer in the answer kind's records directory. The inputs are a JSON object keyed by the point's declared input names. An input the point does not declare is refused with `point-inputs-invalid`.
+
+| Decider | What it does |
+|---|---|
+| `table` | The first row whose conditions all hold answers. The record is `answered`. |
+| `model` | Its answer at or above its threshold is a proposal, and the record is `proposed`. Below the threshold, the next decider is asked. |
+| `quorum` | Always last. The record is `escalated`, open for people. |
+
+chant calls no model. `--response <file>` hands it a `POST /v1/systemone` response the caller already got from a backend, `{ "model": ..., "answers": { "<point>": ... } }`, and a model decider reads its answer there. It is observed only when `model` is the pinned id the decider names. Without `--response` a model decider is not asked, so the question moves on to the quorum. The decide Op activity ([#2740](https://github.com/INTENTIUS/chant/issues/2740)) makes the call and passes the answer the same way.
+
+The record's id is the point's name and the first 12 hex digits of the sha256 of the point, its declaration and the inputs. So the same question is answered once. Asking again returns the record that is there, with `reused: true`, when it is `proposed` or `answered`. An `escalated` record is asked again, since a backend may answer now. It is rewritten only when the chain no longer escalates.
+
+`--subject <id>` says what the question is about, such as a work item's id, and is written to the record's `constrains`. `--dry-run` prints the document with the text it would write, and writes nothing.
+
+## Answering a question
+
+`points answer <id> --answer <value> --by <name>` records people's answer to an open question. The answer is one of the question's candidates, and for a `noul` it is `true`, `false`, `yes` or `no`. Each `--by` names one person who answered. The point's quorum counts distinct people, after trimming and lower-casing. It leaves out anyone holding the `agent` role in the trust policy at base, and when the quorum names roles, anyone holding none of them. Too few is `quorum-not-met`, and nothing is written.
+
+People who give the answer a model proposed confirm it, and the model stays the record's decider. Any other answer is the quorum's, and the model's proposal moves into the record's `escalations`. Either way the record becomes `answered`, with `answered_by` and `answered_on`, and it never changes again.
+
+## Output
+
+`--json` prints the read-contract document of [`points.schema.json`](/chant/reference/workspace-read-contract/#decision-points). Its `sources` hold one entry per answer kind read, with a `reason` when that kind could not be read. `points` lists each declared point with its inputs and deciders. `questions` lists each answer record.
+
+| Field | Meaning |
+|---|---|
+| `state`, `open` | `escalated`, `proposed` or `answered`. Open until answered. |
+| `answer`, `decider` | The answer and who gave it: a table row, a model with its backend and model id, or a quorum with who answered. |
+| `model` | Any model's answer, with `confidence`, `threshold`, `model` and `observed`. It is observed for a proposal. For an escalated question it is the last answer below a threshold. |
+| `escalations` | Each decider asked before the one that answered, and why it did not. |
+| `current` | The point is still declared as it was when asked. |
+| `warnings` | The `answer-` codes: the points file can't be read, the point is gone, or it changed. |
+
+`ask` and `answer` print one document of `points-write.schema.json`, with the question as `points` lists it, `reused` and `written`. A refusal has `error: { code, message }` and exits 1.
+
+| Code | When |
+|---|---|
+| `points-undeclared` | No answer kind is declared or named with `--kind`. |
+| `points-invalid` | The points file can't be read or is not valid. |
+| `point-unknown` | No points file declares the point. |
+| `point-inputs-invalid` | The inputs are not an object of the declared inputs. |
+| `point-decider-failed` | A model decider declared `unreachable: "fail"` could not answer. |
+| `answer-not-candidate` | The answer is not a candidate. |
+| `quorum-not-met` | Too few people count toward the quorum. |
+| `record-closed` | The question is already answered. |
+
+`chant serve mcp` serves the read as the `workspace-points` tool and the answer as `points-answer`.
