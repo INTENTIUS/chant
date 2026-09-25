@@ -2,7 +2,7 @@ import { describe, test, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { MACHINES_CONTRACT, normalizeEndpoint, contractKeys } from "./machines-contract";
+import { MACHINES_CONTRACT, MACHINE_RELEASE_CONTRACT, normalizeEndpoint, contractKeys } from "./machines-contract";
 
 describe("MACHINES_CONTRACT", () => {
   test("covers the flyApply resource operations (apps, machines, leases, volumes, ips, certs, secrets)", () => {
@@ -45,5 +45,15 @@ describe("MACHINES_CONTRACT", () => {
     for (const seg of segments) {
       expect(src, `path segment "${seg}" from the contract is absent from fly-apply.ts`).toContain(seg);
     }
+  });
+
+  test("every release-contract verb appears in the machine-release.ts source (drift anchor, #2736)", () => {
+    const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "machine-release.ts"), "utf-8");
+    for (const e of MACHINE_RELEASE_CONTRACT) {
+      expect(src, `${e.op} is absent from machine-release.ts`).toContain(e.op);
+    }
+    // exec is a literal path segment; restart and stop go through one `/${verb}` template.
+    expect(src).toContain("/exec");
+    for (const verb of ['"restart"', '"stop"']) expect(src).toContain(verb);
   });
 });

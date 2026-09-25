@@ -35,6 +35,29 @@ export {
 } from "./fly-apply";
 export type { FlyApplyArgs, FlyPlan, FlapsRequest, FlapsMachine, FlyHttp, WaitOpts, ApplyCtx } from "./fly-apply";
 
+// The release a Machine serves and the site steps over the Machines API
+// (#2736, ws-056): upload and start, exec (migrations), restart, stop, verify,
+// restore. `loadActivities(["fly"])` binds these by name; the `fly-release`
+// and `fly-rollback` capabilities compose them.
+export {
+  flyMachineRelease,
+  flyMachineExec,
+  flyMachineRestart,
+  flyMachineStop,
+  flyMachineVerify,
+  flyMachineRestore,
+} from "./machine-release";
+export type {
+  MachineRelease,
+  FlyMachineReleaseArgs,
+  FlyMachineReleaseResult,
+  FlyMachineExecArgs,
+  FlyMachineExecResult,
+  FlyMachineStateArgs,
+  FlyMachineVerifyArgs,
+  FlyMachineRestoreArgs,
+} from "./machine-release";
+
 // mudflaps (Fly Machines API emulator) lifecycle — boots/tears down the local
 // flaps target flyApply is exercised against.
 export {
