@@ -35,6 +35,7 @@ import type { CommandContext } from "../cli/registry";
 import { GATES_DIR } from "../lifecycle/gate-ledger";
 import { readPathSha } from "../lifecycle/git";
 import { latestPerComponent, readReleaseLedger, type ReleaseRecord } from "../lifecycle/release-ledger";
+import { readReleasePlan, type ReleasePlan } from "../lifecycle/plan-ledger";
 import { findWorkspaceRoot } from "../project-root";
 import { readDeclaration, readerVersion, WorkspaceReadError, type ErrorLocation, type Member } from "./declaration";
 import type { ReasonCode } from "./reason-codes";
@@ -104,6 +105,15 @@ export interface StatusRelease {
   actor: string;
   /** Read flags, such as `legacy-digest` (#2514). */
   flags: string[];
+  /**
+   * The release plan `digest` names, read from `_plans/<digest>.json` on
+   * chant/lifecycle (ws-055, #2733) — the work items and evidence this
+   * release shipped, without the runner's own files. Null when this
+   * checkout has no plan stored under that digest: an ordinary component
+   * release (most releases carry no plan at all), or a plan this checkout
+   * hasn't fetched yet.
+   */
+  plan: ReleasePlan | null;
 }
 
 export interface StatusLedger {
@@ -240,8 +250,16 @@ async function readEnvironment(member: Member, env: string, cwd: string, read: L
       reason: { code: "ledger-unreadable", message: `${ledger.path}: ${err instanceof Error ? err.message.split("\n")[0] : String(err)}` },
     };
   }
-  const releases = [...latestPerComponent(records).values()]
-    .map((r) => ({
+  // A member's plans live beside its other lifecycle stores (#2524 D7,
+  // #2538): _members/<member>/_plans/ for the "members" layout, the flat
+  // top-level _plans/ for "flat" — the same split ledger.path already
+  // resolved above for releases.jsonl, mirrored here since readReleasePlan
+  // reads through one process for every member without changing cwd per
+  // member (see plan-ledger.ts's readReleasePlan doc).
+  const planPrefix = ledger.layout === "members" ? `${MEMBERS_DIR}/${member.name}/` : "";
+  const latest = [...latestPerComponent(records).values()].sort((a, b) => (a.component < b.component ? -1 : a.component > b.component ? 1 : 0));
+  const releases: StatusRelease[] = await Promise.all(
+    latest.map(async (r) => ({
       component: r.component,
       digest: r.digest,
       gitSha: r.gitSha,
@@ -250,8 +268,9 @@ async function readEnvironment(member: Member, env: string, cwd: string, read: L
       timestamp: r.timestamp,
       actor: r.actor,
       flags: [...(r.flags ?? [])],
-    }))
-    .sort((a, b) => (a.component < b.component ? -1 : a.component > b.component ? 1 : 0));
+      plan: await readReleasePlan(r.digest, { cwd, prefix: planPrefix }),
+    })),
+  );
   return {
     env,
     ledger: { ...ledger, shared: false },

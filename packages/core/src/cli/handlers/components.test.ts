@@ -49,6 +49,16 @@ vi.mock("../../lifecycle/build-ledger-store", () => ({
   readBuildManifest: (...args: unknown[]) => readBuildManifestMock(...args),
 }));
 
+const persistReleasePlanMock = vi.fn();
+
+vi.mock("../../lifecycle/plan-ledger", async () => {
+  const actual = await vi.importActual<typeof import("../../lifecycle/plan-ledger")>("../../lifecycle/plan-ledger");
+  return {
+    ...actual,
+    persistReleasePlan: (...args: unknown[]) => persistReleasePlanMock(...args),
+  };
+});
+
 vi.mock("../../lifecycle/release-ledger", async () => {
   const actual = await vi.importActual<typeof import("../../lifecycle/release-ledger")>("../../lifecycle/release-ledger");
   return {
@@ -137,6 +147,7 @@ describe("components handlers", () => {
     discoverComponentsMock.mockReset().mockResolvedValue({ components: new Map(), sourceFiles: [], errors: [] });
     findBuildManifestByArtifactDigestMock.mockReset().mockResolvedValue(undefined);
     readBuildManifestMock.mockReset().mockResolvedValue(null);
+    persistReleasePlanMock.mockReset().mockResolvedValue({ commit: "a".repeat(40), written: true });
 
     delete process.env.GITHUB_RUN_ID;
     delete process.env.CI_PIPELINE_ID;
@@ -221,6 +232,88 @@ describe("components handlers", () => {
       };
       await runComponentsReleaseRecord(ctx);
       expect(JSON.parse(stdoutBuf.join(""))).toMatchObject(record);
+    });
+
+    describe("--plan (ws-055, #2733)", () => {
+      let planDir: string;
+
+      beforeEach(async () => {
+        planDir = await mkdtemp(join(tmpdir(), "chant-plan-"));
+      });
+
+      afterEach(async () => {
+        await rm(planDir, { recursive: true, force: true });
+      });
+
+      test("persists the plan and records its own digest, when --digest is omitted", async () => {
+        const planPath = join(planDir, "plan.json");
+        await writeFile(planPath, JSON.stringify({ digest: "sha256:fromplan", release: "r-1", units: [] }));
+        appendReleaseRecordMock.mockResolvedValue({
+          commit: "a".repeat(40),
+          record: { version: 1, component: "svc", env: "prod", digest: "sha256:fromplan", gitSha: "abc123headsha", runId: "local-123", timestamp: "2026-01-01T00:00:00.000Z", actor: "alice" },
+        });
+
+        const ctx = { args: makeArgs({ extraPositional: "prod", component: "svc", releasePlanFile: planPath, actor: "alice" }), plugins: [], serializers: [] };
+        const exit = await runComponentsReleaseRecord(ctx);
+
+        expect(exit).toBe(0);
+        expect(persistReleasePlanMock).toHaveBeenCalledTimes(1);
+        expect(persistReleasePlanMock.mock.calls[0][0]).toEqual({ digest: "sha256:fromplan", release: "r-1", units: [] });
+        const [input] = appendReleaseRecordMock.mock.calls[0];
+        expect(input).toMatchObject({ digest: "sha256:fromplan" });
+        // The plan is persisted before the release record is appended, so the
+        // record's digest always names a plan this checkout can resolve.
+        expect(persistReleasePlanMock.mock.invocationCallOrder[0]).toBeLessThan(appendReleaseRecordMock.mock.invocationCallOrder[0]);
+      });
+
+      test("--digest agreeing with the plan's own digest is accepted", async () => {
+        const planPath = join(planDir, "plan.json");
+        await writeFile(planPath, JSON.stringify({ digest: "sha256:agree", release: "r-1" }));
+        appendReleaseRecordMock.mockResolvedValue({ commit: "a".repeat(40), record: { version: 1, component: "svc", env: "prod", digest: "sha256:agree", gitSha: "x", runId: "y", timestamp: "z", actor: "alice" } });
+
+        const ctx = { args: makeArgs({ extraPositional: "prod", component: "svc", digest: "sha256:agree", releasePlanFile: planPath, actor: "alice" }), plugins: [], serializers: [] };
+        const exit = await runComponentsReleaseRecord(ctx);
+        expect(exit).toBe(0);
+      });
+
+      test("--digest disagreeing with the plan's own digest is refused", async () => {
+        const planPath = join(planDir, "plan.json");
+        await writeFile(planPath, JSON.stringify({ digest: "sha256:plandigest" }));
+
+        const ctx = { args: makeArgs({ extraPositional: "prod", component: "svc", digest: "sha256:other", releasePlanFile: planPath, actor: "alice" }), plugins: [], serializers: [] };
+        const exit = await runComponentsReleaseRecord(ctx);
+        expect(exit).toBe(1);
+        expect(stderrBuf.join("\n")).toContain("does not match --release-plan");
+        expect(persistReleasePlanMock).not.toHaveBeenCalled();
+        expect(appendReleaseRecordMock).not.toHaveBeenCalled();
+      });
+
+      test("a plan file with no digest field is refused", async () => {
+        const planPath = join(planDir, "plan.json");
+        await writeFile(planPath, JSON.stringify({ release: "r-1" }));
+
+        const ctx = { args: makeArgs({ extraPositional: "prod", component: "svc", releasePlanFile: planPath, actor: "alice" }), plugins: [], serializers: [] };
+        const exit = await runComponentsReleaseRecord(ctx);
+        expect(exit).toBe(1);
+        expect(stderrBuf.join("\n")).toContain("missing its own \"digest\" field");
+      });
+
+      test("a plan file that is not valid JSON is refused", async () => {
+        const planPath = join(planDir, "plan.json");
+        await writeFile(planPath, "{not json");
+
+        const ctx = { args: makeArgs({ extraPositional: "prod", component: "svc", releasePlanFile: planPath, actor: "alice" }), plugins: [], serializers: [] };
+        const exit = await runComponentsReleaseRecord(ctx);
+        expect(exit).toBe(1);
+        expect(stderrBuf.join("\n")).toContain("is not valid JSON");
+      });
+
+      test("a --plan path that can't be read is refused", async () => {
+        const ctx = { args: makeArgs({ extraPositional: "prod", component: "svc", releasePlanFile: join(planDir, "missing.json"), actor: "alice" }), plugins: [], serializers: [] };
+        const exit = await runComponentsReleaseRecord(ctx);
+        expect(exit).toBe(1);
+        expect(stderrBuf.join("\n")).toContain("Could not read --release-plan");
+      });
     });
   });
 

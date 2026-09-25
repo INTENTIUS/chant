@@ -38,6 +38,7 @@ import {
   resolveRunId,
   InvalidReleaseRecordError,
 } from "../../lifecycle/release-ledger";
+import { persistReleasePlan, InvalidReleasePlanError, type ReleasePlan } from "../../lifecycle/plan-ledger";
 import { reconcileStatus, liveEvidenceFromChangeSet, compareAcrossEnvironments, mergeLiveEvidence, type LiveComponentEvidence, type EntityLiveRead } from "../../lifecycle/status";
 import { commandBuildParams } from "../build-params-cli";
 import { buildChangeSet } from "../../lifecycle/change-set";
@@ -75,6 +76,14 @@ import { withoutReadFlags } from "../../lifecycle/legacy-digest";
  * never threaded in from elsewhere and never mocked in production code, per
  * #568: "the session cannot call Date.now() in some contexts; take the
  * timestamp from the environment/CLI at record time."
+ *
+ * `--release-plan <file>` (ws-055, #2733) takes `--digest`'s place: the file is a
+ * release plan JSON object naming its own `digest` field, persisted
+ * content-addressed to `_plans/<digest>.json` (../../lifecycle/plan-
+ * ledger.ts) before the release record is appended, so the record's digest
+ * always names a plan this checkout can resolve. Passing both requires them
+ * to agree — a plan is content-addressed by its own digest, so a caller
+ * naming a different one is a mistake, not an override.
  */
 export async function runComponentsReleaseRecord(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
@@ -87,11 +96,42 @@ export async function runComponentsReleaseRecord(ctx: CommandContext): Promise<n
   }
 
   const component = args.component;
-  const digest = args.digest;
+  let digest = args.digest;
+  let plan: ReleasePlan | undefined;
+  if (args.releasePlanFile) {
+    let raw: string;
+    try {
+      raw = await readFile(args.releasePlanFile, "utf-8");
+    } catch (err) {
+      console.error(formatError({ message: `Could not read --release-plan ${args.releasePlanFile}: ${err instanceof Error ? err.message : String(err)}` }));
+      return 1;
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (err) {
+      console.error(formatError({ message: `--release-plan ${args.releasePlanFile} is not valid JSON: ${err instanceof Error ? err.message : String(err)}` }));
+      return 1;
+    }
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      console.error(formatError({ message: `--release-plan ${args.releasePlanFile} must be a JSON object` }));
+      return 1;
+    }
+    plan = parsed as ReleasePlan;
+    if (typeof plan.digest !== "string" || plan.digest.length === 0) {
+      console.error(formatError({ message: `--release-plan ${args.releasePlanFile} is missing its own "digest" field — a release plan is content-addressed by its own digest` }));
+      return 1;
+    }
+    if (digest !== undefined && digest !== plan.digest) {
+      console.error(formatError({ message: `--digest ${digest} does not match --release-plan ${args.releasePlanFile}'s own digest ${plan.digest}` }));
+      return 1;
+    }
+    digest = plan.digest;
+  }
   if (!component || !digest) {
     console.error(formatError({
       message: "--component and --digest are required",
-      hint: "chant components release <env> --component <name> --digest <sha256:...> [--git-sha <sha>] [--run-id <id>] [--actor <name>] [--approver <name>]",
+      hint: "chant components release <env> --component <name> --digest <sha256:...> [--release-plan <file>] [--git-sha <sha>] [--run-id <id>] [--actor <name>] [--approver <name>]",
     }));
     return 1;
   }
@@ -121,6 +161,7 @@ export async function runComponentsReleaseRecord(ctx: CommandContext): Promise<n
   const timestamp = new Date().toISOString();
 
   try {
+    if (plan) await persistReleasePlan(plan);
     const { commit, record } = await appendReleaseRecord({
       component,
       env: environment,
@@ -142,7 +183,7 @@ export async function runComponentsReleaseRecord(ctx: CommandContext): Promise<n
     }
     return 0;
   } catch (err) {
-    if (err instanceof InvalidReleaseRecordError) {
+    if (err instanceof InvalidReleaseRecordError || err instanceof InvalidReleasePlanError) {
       console.error(formatError({ message: err.message }));
       return 1;
     }

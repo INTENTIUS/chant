@@ -5,8 +5,9 @@
  * A workspace member writes every lifecycle store under
  * `_members/<member>/` on the one existing branch: releases, snapshots, runs,
  * converge records and observation baselines under `<env>/`, gates under
- * `_gates/`, build records under `_builds/`. Its operator leases move the same
- * way, to `refs/chant/lease/_members/<member>/<op>`. Push, fetch, lease and
+ * `_gates/`, build records under `_builds/`, release plans under `_plans/`
+ * (ws-055, #2733). Its operator leases move the same way, to
+ * `refs/chant/lease/_members/<member>/<op>`. Push, fetch, lease and
  * staleness code are untouched: they still see one branch and plain refs.
  *
  * Everything else keeps today's flat layout, byte for byte:

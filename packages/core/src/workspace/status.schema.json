@@ -191,7 +191,7 @@
     },
     "release": {
       "type": "object",
-      "required": ["component", "digest", "gitSha", "inputDigest", "runId", "timestamp", "actor", "flags"],
+      "required": ["component", "digest", "gitSha", "inputDigest", "runId", "timestamp", "actor", "flags", "plan"],
       "properties": {
         "component": { "type": "string" },
         "digest": { "type": "string", "description": "The artifact digest the release deployed." },
@@ -200,7 +200,11 @@
         "runId": { "type": "string" },
         "timestamp": { "type": "string" },
         "actor": { "type": "string" },
-        "flags": { "type": "array", "items": { "enum": ["legacy-digest"] } }
+        "flags": { "type": "array", "items": { "enum": ["legacy-digest"] } },
+        "plan": {
+          "type": ["object", "null"],
+          "description": "The release plan digest names, read from _plans/<digest>.json on chant/lifecycle (ws-055, #2733): the work items and evidence this release shipped. Null when this checkout has no plan stored under that digest — most releases carry no plan, and a plan not yet fetched also reads null."
+        }
       }
     },
     "compare": {

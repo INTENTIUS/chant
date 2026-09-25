@@ -431,6 +431,8 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--digest") {
       result.digest = args[++i];
       if (result.digest !== undefined) (result.digests ??= []).push(result.digest);
+    } else if (arg === "--release-plan") {
+      result.releasePlanFile = args[++i];
     } else if (arg === "--git-sha") {
       result.gitSha = args[++i];
     } else if (arg === "--run-id") {
@@ -904,7 +906,11 @@ Component release ledger + status:
                              <file> finishes an attempt that stopped)
   components release <env> Append one immutable release record
                             (--component <name> --digest <sha256:...>
-                             [--git-sha <sha>] [--run-id <id>] [--actor <name>])
+                             [--git-sha <sha>] [--run-id <id>] [--actor <name>]);
+                            --release-plan <file> takes --digest's place,
+                            persisting the release plan the file holds to
+                            _plans/<digest>.json (ws-055) and recording its
+                            own digest
   components export <env>  Materialize a persisted build archive manifest to
                             a portable directory (--component <name>
                             [--digest <manifestDigest>] -o <dir> [--json]);
