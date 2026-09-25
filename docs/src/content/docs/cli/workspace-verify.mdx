@@ -38,7 +38,7 @@ Two files hold the policy. Both are optional, and both are read at base.
 }
 ```
 
-The same signers file checks sealed review verdicts, which are signed in the `chant-review` namespace ([#2687](https://github.com/INTENTIUS/chant/issues/2687)). A line restricted with `namespaces="git"` signs commits only. A reviewer's line needs `namespaces="git,chant-review"` or no `namespaces` option at all. [Sealing a verdict](/chant/cli/workspace-records/#sealing-a-verdict) has the rest.
+The same signers file checks sealed review verdicts, which are signed in the `chant-review` namespace ([#2687](https://github.com/INTENTIUS/chant/issues/2687)), and records sealed by their author, signed in the `chant-record` namespace ([#2688](https://github.com/INTENTIUS/chant/issues/2688)). A line restricted with `namespaces="git"` signs commits only. A reviewer's line needs `chant-review` in its `namespaces`, an author's needs `chant-record`, and a line with no `namespaces` option signs all three. [Sealing a verdict](/chant/cli/workspace-records/#sealing-a-verdict) and [Sealing a record](/chant/cli/workspace-records/#sealing-a-record) have the rest.
 
 Role grants live in `trust.json` for now. Once `chant.workspace.json` exists ([#2534](https://github.com/INTENTIUS/chant/issues/2534)), they move into the declaration.
 
@@ -90,4 +90,4 @@ The base has to be a revision the change can't move, which is the target branch 
 
 ## See also
 
-[`chant workspace records`](/chant/cli/workspace-records/) reports each record's provenance level, and can require `attested` too.
+[`chant workspace records`](/chant/cli/workspace-records/) reports each record's provenance level, and can require `attested` too. Beside it, a record's `attested` says whether its author sealed it, checked against the same signers file at base.

@@ -39,7 +39,7 @@ This page is generated from `docs/data/boundary.yaml`, which has one row for eac
 | record link kind | `RECORD_LINK_KINDS` in `record-assets.ts` | 2 | 0 | 0 |
 | intent node kind | the node kinds of `intent.schema.json` | 9 | 0 | 3 |
 | intent edge kind | the edge kinds of `intent.schema.json` | 9 | 0 | 3 |
-| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 81 | 0 | 0 |
+| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 83 | 0 | 0 |
 | finding code | the finding codes of `intent.schema.json` | 17 | 0 | 0 |
 | WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 35 | 0 | 0 |
 | hud view | the hud reader requirements H1 to H11 of #2650 | 0 | 11 | 0 |
@@ -71,8 +71,8 @@ Each row follows, in the order of the table above.
 | workspace command | `workspace status` | chant | status.schema.json | Shows each member's releases in one environment from the lifecycle ledgers, read-only. |
 | workspace command | `workspace records` | chant | records.schema.json, records-since.schema.json | Reads the records a record kind locates, or every kind the declaration names, validated against its schema, with provenance and reason codes; with --since, what changed in them between two revisions. |
 | workspace command | `workspace records pin` | chant | chant workspace records pin &lt;path&gt; | Prints a file's path from the workspace root and its sha256, for a decision's evidence pin. |
-| workspace command | `workspace records new` | chant | records-new.schema.json | Writes one new record in a kind's directory from validated JSON fields, allocating the next id, and never commits. |
-| workspace command | `workspace records amend` | chant | records-amend.schema.json | Sets fields of one record under its schema and the approval rule, refusing a change to an approved record that only a superseding record can make. |
+| workspace command | `workspace records new` | chant | records-new.schema.json | Writes one new record in a kind's directory from validated JSON fields, allocating the next id, and never commits; with --sign, sealed by its author. |
+| workspace command | `workspace records amend` | chant | records-amend.schema.json | Sets fields of one record under its schema and the approval rule, refusing a change to an approved record that only a superseding record can make; with --sign it seals the author again, and without it a change removes the author seal. |
 | workspace command | `workspace records review` | chant | records-review.schema.json | Appends a dated review verdict to one record, bound to the digest of the record text, with a note required for a dissent, and with --sign an ssh seal by the reviewer. |
 | workspace command | `workspace verify` | chant | chant workspace verify | Checks the commits in base..head against the signers and roles read from base. |
 | workspace command | `workspace lineage` | chant | chant workspace lineage --json | Shows each scope in the lineage lock with its template, pin, edited files and open manual steps. |
@@ -167,10 +167,11 @@ Each row follows, in the order of the table above.
 | reason code | `review-duplicate` | chant | records.schema.json | A later verdict by the same principal replaces this one. Names are compared after NFKC, trimming and lower-casing. |
 | reason code | `review-older-digest` | chant | records.schema.json | The verdict names a digest other than the record's text now: the record changed after the verdict. |
 | reason code | `review-unattested` | chant | records.schema.json | An attestation policy is active at base, and the verdict carries no seal that verifies for its reviewer. |
-| reason code | `seal-missing` | chant | records.schema.json | The verdict carries no seal. |
-| reason code | `seal-signer-unlisted` | chant | records.schema.json | The reviewer has no key in the signers file at base, so the seal can't count. |
-| reason code | `seal-signature-invalid` | chant | records.schema.json | The seal is malformed, names a signer other than the reviewer, or its signature does not verify over the verdict. |
+| reason code | `seal-missing` | chant | records.schema.json | The verdict, or the record, carries no seal. |
+| reason code | `seal-signer-unlisted` | chant | records.schema.json | The reviewer, or the record's author, has no key in the signers file at base, so the seal can't count. |
+| reason code | `seal-signature-invalid` | chant | records.schema.json | The seal is malformed, names a signer other than the reviewer or author, or its signature does not verify over the verdict or record. |
 | reason code | `seal-unverifiable` | chant | records.schema.json | Nothing here can say whose seal it is: there is no signers file at base, or ssh-keygen is not installed. |
+| reason code | `record-unattested` | chant | records.schema.json | A signers file is active at base, and the record names an author whose seal does not verify: it has none, the author has no key in the file, or the signature fails. |
 | reason code | `composites-no-chant-member` | chant | composites.schema.json | No member of kind chant was read, so nothing declares a composite instance or a component. |
 | reason code | `composites-none-declared` | chant | composites.schema.json | The members read declare no composite instance. |
 | reason code | `composites-no-component` | chant | composites.schema.json | The members read declare no component, so no composite instance has one. |
@@ -195,6 +196,7 @@ Each row follows, in the order of the table above.
 | reason code | `review-unsupported` | chant | records-review.schema.json | The kind's schema has no reviews field, so its records take no review. |
 | reason code | `review-note-required` | chant | records-review.schema.json | A dissent was given with no note: a dissent needs a reason. |
 | reason code | `review-sign-failed` | chant | records-review.schema.json | --sign was given and no seal could be made: the key can't be read or used, git names no ssh signing key, or ssh-keygen is not installed. |
+| reason code | `record-sign-failed` | chant | records-amend.schema.json, records-new.schema.json | --sign was given and no author seal could be made: the record names no author, the key can't be read or used, git names no ssh signing key, or ssh-keygen is not installed. |
 | reason code | `since-rev-unknown` | chant | records-since.schema.json | --since names no commit. |
 | reason code | `intent-region-invalid` | chant | intent.schema.json | The region's path, or its line range, does not exist in the tree read. |
 | reason code | `intent-history-shallow` | chant | intent.schema.json | The repository is a shallow clone, so the region's history stops at the clone's boundary. |

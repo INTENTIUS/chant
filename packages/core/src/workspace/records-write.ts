@@ -15,6 +15,9 @@
  * Every command writes one file or none, never commits, and prints one JSON
  * document with a closed error code on refusal. `--dry-run` prints the
  * document and the text it would write, and writes nothing.
+ *
+ * `new --sign` and `amend --sign` seal the record's author (#2688), and
+ * `review --sign` seals a verdict (#2687): see `trust/seal.ts`.
  */
 
 import { readFileSync, statSync, writeFileSync } from "node:fs";
@@ -28,6 +31,8 @@ import {
   readRecords,
   RECORD_REASON_CODES,
   RecordReadError,
+  RECORD_SEAL_FIELD,
+  digestFields,
   recordTextDigest,
   type LoadedRecordKind,
   type RecordEntry,
@@ -57,6 +62,7 @@ export const NEW_ERROR_CODES = [
   "record-id-taken",
   "record-id-unallocatable",
   "record-path-unmatched",
+  "record-sign-failed",
   ...RECORD_REASON_CODES,
 ] as const satisfies readonly ReasonCode[];
 
@@ -69,6 +75,7 @@ export const AMEND_ERROR_CODES = [
   "amend-id-immutable",
   "record-closed",
   "amend-supersede-instead",
+  "record-sign-failed",
   ...RECORD_REASON_CODES,
 ] as const satisfies readonly ReasonCode[];
 
@@ -130,8 +137,15 @@ interface WriteFailure<C> {
   error: { code: C; message: string };
 }
 
-export type NewDocument = WriteResult | WriteFailure<NewErrorCode>;
-export type AmendDocument = (WriteResult & { changed: string[] }) | WriteFailure<AmendErrorCode>;
+/** A record's author seal as `new` and `amend` write it with `--sign` (#2688). */
+export interface AuthorSeal {
+  signer: string;
+  key: string;
+  signature: string;
+}
+
+export type NewDocument = (WriteResult & { seal?: AuthorSeal }) | WriteFailure<NewErrorCode>;
+export type AmendDocument = (WriteResult & { changed: string[]; seal?: AuthorSeal; sealDropped?: string }) | WriteFailure<AmendErrorCode>;
 export type ReviewDocument = (WriteResult & { review: Record<string, unknown> }) | WriteFailure<ReviewErrorCode>;
 
 // ── Rendering ────────────────────────────────────────────────────────────────
@@ -236,6 +250,31 @@ export function replaceFields(text: string, set: Record<string, unknown>, expect
     while (end > at && lines[end] === "") end--;
     lines.splice(at, end - at + 1, ...rendered);
     close += rendered.length - (end - at + 1);
+  }
+  const out = lines.join("\n");
+  const back = parseFrontMatter(out);
+  return back.ok && stableJson(back.value) === stableJson(expected) ? out : undefined;
+}
+
+/**
+ * `text` with the top-level field `key` removed: its key line and the lines
+ * after it that {@link replaceFields} counts as its block, less the blank
+ * lines ending it, which stay. Returns undefined when the result does not
+ * read back as `expected`.
+ */
+export function removeField(text: string, key: string, expected: Record<string, unknown>): string | undefined {
+  const lines = text.replace(/\r\n?/g, "\n").split("\n");
+  if (lines[0] !== "---") return undefined;
+  const close = lines.indexOf("---", 1);
+  if (close < 0) return undefined;
+  const k = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const starts = new RegExp(`^(?:${k}|"${k}"|'${k}')[ \\t]*:(?:[ \\t]|$)`);
+  const at = lines.findIndex((l, i) => i > 0 && i < close && starts.test(l));
+  if (at >= 0) {
+    let end = at;
+    while (end + 1 < close && /^(?:$|[ \t#-])/.test(lines[end + 1])) end++;
+    while (end > at && lines[end] === "") end--;
+    lines.splice(at, end - at + 1);
   }
   const out = lines.join("\n");
   const back = parseFrontMatter(out);
@@ -355,6 +394,57 @@ function parseFields(text: string, flag: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
+/** Refuse fields that set the author seal by hand: only --sign writes it (#2688). */
+function refuseSealField(o: Opened, fields: Record<string, unknown>, flag: string): void {
+  if (o.loaded.kind.reviews && RECORD_SEAL_FIELD in fields) {
+    throw new RecordWriteError("write-input-invalid", `the fields given with ${flag} set ${RECORD_SEAL_FIELD}, and only --sign writes a record's seal`);
+  }
+}
+
+/**
+ * `text`, the record `data` holds, with its author sealed (#2688): an ssh
+ * signature by the key `sign` names over the record id, the digest of
+ * `text`, the author (the kind's `reviews.decider` field) and the state, in
+ * the `chant-record` namespace. The seal goes in the top-level `seal` field,
+ * replacing one already there, or added at the end of the front matter. The
+ * digest leaves that field out, so it is the same before and after.
+ */
+async function sealAuthor(o: Opened, text: string, data: Record<string, unknown>, id: string, sign: string | true, cwd: string): Promise<{ text: string; seal: AuthorSeal }> {
+  const { kind } = o.loaded;
+  if (!kind.reviews) {
+    throw new RecordWriteError(
+      "write-usage-invalid",
+      `--sign seals a record's author, named by the kind's reviews.decider field, and the ${kind.name} kind declares no reviews`,
+    );
+  }
+  const field = kind.reviews.decider;
+  const author = data[field];
+  if (typeof author !== "string" || author.trim() === "") {
+    throw new RecordWriteError("record-sign-failed", `${id} names no ${field}, so there is no author to seal: set ${field}, then seal it with records amend ${id} --sign`);
+  }
+  const state = kind.stateField !== undefined && typeof data[kind.stateField] === "string" ? (data[kind.stateField] as string) : null;
+  const digest = recordTextDigest(text, digestFields(kind), kind.format);
+  const { resolveSigningKey, sealRecord, SealError } = await import("./trust/seal");
+  let seal: AuthorSeal;
+  try {
+    const key = resolveSigningKey(sign, cwd);
+    try {
+      seal = { ...sealRecord(key.file, { record: id, digest, author, state }) };
+    } finally {
+      key.cleanup();
+    }
+  } catch (err) {
+    if (err instanceof SealError) throw new RecordWriteError("record-sign-failed", err.message);
+    throw err;
+  }
+  const sealed = replaceFields(text, { [RECORD_SEAL_FIELD]: seal }, { ...data, [RECORD_SEAL_FIELD]: seal });
+  if (sealed === undefined) throw new RecordWriteError("record-unparseable", `the ${RECORD_SEAL_FIELD} field can't be written into ${id} without changing the rest of the file`);
+  if (recordTextDigest(sealed, digestFields(kind), kind.format) !== digest) {
+    throw new Error(`sealing ${id} moved its digest; the seal block and the digest rule disagree`);
+  }
+  return { text: sealed, seal };
+}
+
 /** Keys in the schema's `required` order, then its `properties` order, then the rest as given. */
 function schemaOrder(data: Record<string, unknown>, schema: Record<string, unknown>): string[] {
   const required = Array.isArray(schema.required) ? (schema.required as unknown[]).filter((k): k is string => typeof k === "string") : [];
@@ -431,9 +521,15 @@ export interface NewRecordOptions {
   prefix?: string;
   dryRun?: boolean;
   cwd: string;
+  /**
+   * Seal the record's author (#2688): a key file, resolved against `cwd`, or
+   * true for git's `user.signingkey`. The author is the kind's
+   * `reviews.decider` field, which the fields must set.
+   */
+  sign?: string | true;
 }
 
-/** `records new`: write one new record from validated fields. */
+/** `records new`: write one new record from validated fields, sealed by its author with `sign`. */
 export async function newRecord(opts: NewRecordOptions): Promise<NewDocument> {
   try {
     if (opts.prefix !== undefined && !/^[A-Za-z][A-Za-z0-9]*$/.test(opts.prefix)) {
@@ -442,6 +538,7 @@ export async function newRecord(opts: NewRecordOptions): Promise<NewDocument> {
     const fields = parseFields(opts.fields, "--from");
     const o = await open(opts.kind, opts.cwd);
     const { kind, schema } = o.loaded;
+    refuseSealField(o, fields, "--from");
     const idField = kind.idField!;
     const before = await readAll(o, o.source);
     const given = fields[idField];
@@ -462,7 +559,9 @@ export async function newRecord(opts: NewRecordOptions): Promise<NewDocument> {
     if (!name) throw new RecordWriteError("record-path-unmatched", `the kind's location.match ${kind.location.match} matches none of ${names.join(", ")}`);
     const path = o.dirRel === "." ? name : `${o.dirRel}/${name}`;
     if (o.source.list(o.dirRel)?.includes(name)) throw new RecordWriteError("record-id-taken", `${path} already exists`);
-    const text = renderRecord(data, title ? `\n# ${title}\n` : "");
+    let text = renderRecord(data, title ? `\n# ${title}\n` : "");
+    let seal: AuthorSeal | undefined;
+    if (opts.sign !== undefined) ({ text, seal } = await sealAuthor(o, text, data, id, opts.sign, opts.cwd));
     const warnings = await validateWrite(o, before, path, text);
     if (!opts.dryRun) writeFileSync(abs(o, path), text, { flag: "wx" });
     return {
@@ -471,6 +570,7 @@ export async function newRecord(opts: NewRecordOptions): Promise<NewDocument> {
       kind: o.view,
       path,
       id,
+      ...(seal ? { seal } : {}),
       dryRun: !!opts.dryRun,
       warnings,
       ...(opts.dryRun ? { text } : {}),
@@ -489,6 +589,8 @@ export interface AmendRecordOptions {
   fields: string;
   dryRun?: boolean;
   cwd: string;
+  /** Seal the amended record's author, as `records new` does (#2688). */
+  sign?: string | true;
 }
 
 /**
@@ -497,12 +599,20 @@ export interface AmendRecordOptions {
  * a decided decision) changes in place only in its state, to one ranked at
  * least as high, its pins field and its reviews: anything else is a new
  * decision, written as a record that supersedes it (#2524 D4).
+ *
+ * An amendment moves the record's digest, so an author seal no longer holds
+ * (#2688). With `sign` the record is sealed again over the new text; without
+ * it, an amendment that moves the digest removes the seal and says so in
+ * `sealDropped`, so a record never carries a seal that fails. One that
+ * changes only the reviews leaves the digest, and the seal, as they were.
+ * `--sign` with nothing to change seals the record as it is.
  */
 export async function amendRecord(opts: AmendRecordOptions): Promise<AmendDocument> {
   try {
     const patch = parseFields(opts.fields, "--set");
     const o = await open(opts.kind, opts.cwd);
     const { kind } = o.loaded;
+    refuseSealField(o, patch, "--set");
     const before = await readAll(o, o.source);
     const target = findRecord(before, opts.id, kind.name);
     const old = target.data;
@@ -515,7 +625,7 @@ export async function amendRecord(opts: AmendRecordOptions): Promise<AmendDocume
     const state = target.state;
     const link = kind.supersedes?.key === undefined ? JSON.stringify(opts.id) : `[{"${kind.supersedes.key}": "${opts.id}"}]`;
     const supersede = kind.supersedes ? `chant workspace records new with ${kind.supersedes.field}: ${link}` : `chant workspace records new`;
-    if (changed.length > 0 && state !== null && (kind.closedStates ?? []).includes(state)) {
+    if ((changed.length > 0 || opts.sign !== undefined) && state !== null && (kind.closedStates ?? []).includes(state)) {
       throw new RecordWriteError("record-closed", `${opts.id} is ${state}, a closed state, so nothing in it changes. Write a new record that supersedes it: ${supersede}`);
     }
     const rank = (s: unknown): number => (typeof s === "string" ? (kind.approval?.[s] ?? 0) : 0);
@@ -538,7 +648,23 @@ export async function amendRecord(opts: AmendRecordOptions): Promise<AmendDocume
     }
     // Only the changed fields' blocks are rewritten, so the rest of the file keeps its bytes.
     const current = o.source.read(target.path);
-    const text = replaceFields(current, pick(merged, changed), merged) ?? renderRecord(merged, bodyOf(current));
+    let text = changed.length === 0 ? current : (replaceFields(current, pick(merged, changed), merged) ?? renderRecord(merged, bodyOf(current)));
+    // The author seal (#2688): signed again over the new text, or dropped once the text moves.
+    let seal: AuthorSeal | undefined;
+    let sealDropped: string | undefined;
+    const sealable = kind.reviews !== undefined && RECORD_SEAL_FIELD in old;
+    if (opts.sign !== undefined) {
+      ({ text, seal } = await sealAuthor(o, text, merged, opts.id, opts.sign, opts.cwd));
+      merged[RECORD_SEAL_FIELD] = seal;
+    } else if (sealable && recordTextDigest(text, digestFields(kind), kind.format) !== recordTextDigest(current, digestFields(kind), kind.format)) {
+      const signer = (old[RECORD_SEAL_FIELD] as { signer?: unknown } | null)?.signer;
+      delete merged[RECORD_SEAL_FIELD];
+      const dropped = removeField(text, RECORD_SEAL_FIELD, merged);
+      if (dropped === undefined) throw new RecordWriteError("record-unparseable", `${target.path}: the ${RECORD_SEAL_FIELD} block can't be removed without changing the rest of the file`);
+      text = dropped;
+      sealDropped = `${opts.id} was sealed${typeof signer === "string" ? ` by ${signer}` : ""}, and the amendment moves its digest, so the seal was removed: seal it again with records amend ${opts.id} --sign`;
+    }
+    if (stableJson(old[RECORD_SEAL_FIELD]) !== stableJson(merged[RECORD_SEAL_FIELD])) changed.push(RECORD_SEAL_FIELD);
     const warnings = changed.length === 0 ? target.warnings : await validateWrite(o, before, target.path, text);
     if (!opts.dryRun && changed.length > 0) writeFileSync(abs(o, target.path), text);
     return {
@@ -548,6 +674,8 @@ export async function amendRecord(opts: AmendRecordOptions): Promise<AmendDocume
       path: target.path,
       id: opts.id,
       changed,
+      ...(seal ? { seal } : {}),
+      ...(sealDropped ? { sealDropped } : {}),
       dryRun: !!opts.dryRun,
       warnings,
       ...(opts.dryRun ? { text } : {}),
@@ -614,11 +742,12 @@ export async function reviewRecord(opts: ReviewRecordOptions): Promise<ReviewDoc
       verdict: opts.verdict,
       ...(opts.note !== undefined ? { note: opts.note } : {}),
       on: opts.on ?? today(),
-      digest: recordTextDigest(current, field),
+      digest: recordTextDigest(current, digestFields(kind), kind.format),
       ...(opts.session !== undefined ? { session: opts.session } : {}),
     };
     if (opts.sign !== undefined) review.seal = await seal(opts.sign, opts.cwd, { record: opts.id, digest: review.digest as string, verdict: opts.verdict, reviewer: opts.by, on: review.on as string });
-    // Only the reviews block changes, so the digest the verdict names stays the record's digest (#2672).
+    // Only the reviews block changes, so the digest the verdict names stays the record's digest (#2672),
+    // and a record's author seal, which the digest leaves out too, still holds (#2688).
     const list = [...reviews, review];
     const text = replaceFields(current, { [field]: list }, { ...target.data, [field]: list });
     if (text === undefined) throw new RecordWriteError("record-unparseable", `${target.path}: the ${field} block can't be rewritten in place without changing the rest of the file`);
@@ -659,8 +788,8 @@ async function seal(sign: string | true, cwd: string, v: { record: string; diges
 // ── The command ──────────────────────────────────────────────────────────────
 
 export const WRITE_USAGE = [
-  "chant workspace records new [<kind file or declared kind>] --from <file|-> [--prefix <prefix>] [--dry-run]",
-  "chant workspace records amend <id> [--kind <kind file>] --set <file|-> [--dry-run]",
+  "chant workspace records new [<kind file or declared kind>] --from <file|-> [--prefix <prefix>] [--sign [<key file>]] [--dry-run]",
+  "chant workspace records amend <id> [--kind <kind file>] --set <file|-> [--sign [<key file>]] [--dry-run]",
   "chant workspace records review <id> [--kind <kind file>] --verdict agree|dissent|abstain --by <principal> [--note <text>] [--session <id>] [--sign [<key file>]] [--dry-run]",
 ].join("\n");
 
@@ -735,17 +864,13 @@ export async function runRecordsWrite(ctx: CommandContext): Promise<number> {
     console.log(JSON.stringify(doc, null, 2));
     return "error" in doc ? 1 : 0;
   };
-  if (args.sign !== undefined && verb !== "review") {
-    const schema = verb === "new" ? RECORDS_NEW_SCHEMA_ID : RECORDS_AMEND_SCHEMA_ID;
-    return print(usage(schema, `--sign seals a review verdict; sealing a record's author on ${verb} is not supported yet (#2688)`));
-  }
   if (verb === "new") {
     const named = args.extraPositional2 ?? args.kind;
     const kind = named !== undefined ? resolveWriteKind(named, cwd) : declaredWriteKind(RECORDS_NEW_SCHEMA_ID, cwd, "new needs the kind file");
     if (typeof kind !== "string") return print(kind);
     const input = readInput(RECORDS_NEW_SCHEMA_ID, "--from", args.migrateFrom, cwd);
     if (typeof input !== "string") return print(input);
-    return print(await newRecord({ kind, fields: input, prefix: args.prefix, dryRun: args.dryRun, cwd }));
+    return print(await newRecord({ kind, fields: input, prefix: args.prefix, sign: args.sign, dryRun: args.dryRun, cwd }));
   }
   const schema = verb === "amend" ? RECORDS_AMEND_SCHEMA_ID : RECORDS_REVIEW_SCHEMA_ID;
   const id = args.extraPositional2;
@@ -755,7 +880,7 @@ export async function runRecordsWrite(ctx: CommandContext): Promise<number> {
   if (verb === "amend") {
     const input = readInput(schema, "--set", args.set, cwd);
     if (typeof input !== "string") return print(input);
-    return print(await amendRecord({ kind, id, fields: input, dryRun: args.dryRun, cwd }));
+    return print(await amendRecord({ kind, id, fields: input, sign: args.sign, dryRun: args.dryRun, cwd }));
   }
   if (args.verdict === undefined) return print(usage(schema, "--verdict agree|dissent|abstain is required"));
   if (args.by === undefined) return print(usage(schema, "--by <principal> is required"));

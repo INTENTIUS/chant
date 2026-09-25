@@ -297,7 +297,10 @@ export interface ParsedArgs {
   verdict?: string;
   /** `chant workspace records review <id> --by <principal>` (#2670): the reviewer, as the caller names them. */
   by?: string;
-  /** `chant workspace records review <id> --sign [<key file>]` (#2687): the key that seals the verdict, or true for git's user.signingkey. */
+  /**
+   * `chant workspace records review <id> --sign [<key file>]` (#2687): the key that seals the verdict, or true for git's user.signingkey.
+   * On `records new` and `records amend`, the key that seals the record's author (#2688).
+   */
   sign?: string | true;
   /** `chant workspace records review <id> --session <id>` (#2670): the review session the verdict was given in. */
   session?: string;

@@ -389,6 +389,7 @@ export function parseArgs(args: string[]): ParsedArgs {
       if (!result.by || result.by.startsWith("-")) throw new Error("--by needs the reviewer: --by <principal>");
     } else if (arg === "--sign") {
       // `chant workspace records review <id> --sign [<key file>]` (#2687): seal the verdict.
+      // `records new` and `records amend` take it too, to seal the record's author (#2688).
       // With no key file, git's user.signingkey, as `git commit -S` reads it.
       const next = args[i + 1];
       result.sign = next !== undefined && !next.startsWith("-") ? args[++i] : true;
@@ -765,18 +766,21 @@ Workspace (level 1, #2524):
   workspace records pin <path>
                         Print the path from the workspace root and the
                         sha256 of a file, for a decision's evidence pin
-  workspace records new [<kind file>] --from <file|-> [--prefix <prefix>] [--dry-run]
+  workspace records new [<kind file>] --from <file|-> [--prefix <prefix>] [--sign [<key file>]] [--dry-run]
                         Write one new record in the kind's directory from
                         the JSON fields given, after validating them as
                         records would read them. Without a kind file, the one
                         kind the declaration names. Allocates the next id when
-                        the fields hold none. Prints {path, id} as JSON and
-                        never commits
-  workspace records amend <id> [--kind <kind file>] --set <file|-> [--dry-run]
+                        the fields hold none. --sign seals the record's author
+                        (decided_by for decisions) with an ssh key. Prints
+                        {path, id} as JSON and never commits
+  workspace records amend <id> [--kind <kind file>] --set <file|-> [--sign [<key file>]] [--dry-run]
                         Set top-level fields of one record. A closed record
                         never changes, and an approved one changes only its
                         state (upward), pins and reviews; anything else is
-                        refused with amend-supersede-instead. Prints
+                        refused with amend-supersede-instead. --sign seals
+                        the author again; without it an amendment removes
+                        the author seal and says so. Prints
                         {path, id, changed}
   workspace records review <id> [--kind <kind file>] --verdict agree|dissent|abstain --by <principal> [--note <text>] [--session <id>] [--sign [<key file>]] [--dry-run]
                         Append a review to one record, dated and bound to

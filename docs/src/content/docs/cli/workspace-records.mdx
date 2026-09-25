@@ -5,7 +5,7 @@ diataxis: reference
 ---
 
 :::note[First-test slice]
-This command is the first slice of workspace records ([#2546](https://github.com/INTENTIUS/chant/issues/2546)) and the read contract ([#2536](https://github.com/INTENTIUS/chant/issues/2536)). It exists so a hosted design studio built on hud can show the workspace design's decision files for review ([#2555](https://github.com/INTENTIUS/chant/issues/2555)). Each record reports its provenance level ([#2547](https://github.com/INTENTIUS/chant/issues/2547)). Seals come later. Kinds are named with `--kind`, or by [`chant.workspace.json`](/chant/reference/workspace-declaration/#record-kinds) when `--kind` is not given ([#2680](https://github.com/INTENTIUS/chant/issues/2680)).
+This command is the first slice of workspace records ([#2546](https://github.com/INTENTIUS/chant/issues/2546)) and the read contract ([#2536](https://github.com/INTENTIUS/chant/issues/2536)). It exists so a hosted design studio built on hud can show the workspace design's decision files for review ([#2555](https://github.com/INTENTIUS/chant/issues/2555)). Each record reports its provenance level ([#2547](https://github.com/INTENTIUS/chant/issues/2547)). A review verdict can carry a seal by its reviewer ([#2687](https://github.com/INTENTIUS/chant/issues/2687)), and a record a seal by its author ([#2688](https://github.com/INTENTIUS/chant/issues/2688)). Kinds are named with `--kind`, or by [`chant.workspace.json`](/chant/reference/workspace-declaration/#record-kinds) when `--kind` is not given ([#2680](https://github.com/INTENTIUS/chant/issues/2680)).
 :::
 
 ## Synopsis
@@ -14,8 +14,8 @@ This command is the first slice of workspace records ([#2546](https://github.com
 chant workspace records [--kind <kind file>] [--current] [--at <rev>] [--base <rev>] [--require attested] [--json]
 chant workspace records [--kind <kind file>] --since <rev> [--at <rev>] [--json]
 chant workspace records pin <path>
-chant workspace records new [<kind file>] --from <file|-> [--prefix <prefix>] [--dry-run]
-chant workspace records amend <id> [--kind <kind file>] --set <file|-> [--dry-run]
+chant workspace records new [<kind file>] --from <file|-> [--prefix <prefix>] [--sign [<key file>]] [--dry-run]
+chant workspace records amend <id> [--kind <kind file>] --set <file|-> [--sign [<key file>]] [--dry-run]
 chant workspace records review <id> [--kind <kind file>] --verdict agree|dissent|abstain --by <principal> [--note <text>] [--session <id>] [--sign [<key file>]] [--dry-run]
 ```
 
@@ -287,6 +287,8 @@ Signers and role grants are read from the base revision, never from the tree bei
 
 On a developer machine this detects problems. It doesn't enforce anything, because an agent running as you can sign with your unlocked key or skip the check. Enforcement is CI running `chant workspace verify` and `records --require attested` against the target branch.
 
+`provenance` judges the commit that last changed the file. A record of a kind with `reviews` can also carry its author's seal, which `records` reports apart from it in `attested` and `attestation` ([Sealing a record](#sealing-a-record)). A sealed record in an unsigned commit is `unattested` in `provenance` and `attested: true` beside it, so neither implies the other.
+
 ## Reviews and quorum
 
 A kind with `reviews`, which chant reads from 0.86.0 on, gives every record two more fields ([#2671](https://github.com/INTENTIUS/chant/issues/2671), [#2672](https://github.com/INTENTIUS/chant/issues/2672)). They are `digest`, a hash of the record's text, and `quorum`, which says which verdicts count. Each verdict is an entry in the reviews list with `reviewer`, `verdict` (`agree`, `dissent` or `abstain`) and `on`, and it should also carry `digest`, the record's digest when the reviewer read it:
@@ -304,16 +306,18 @@ reviews:
 `digest` is the lowercase hex SHA-256 of the record file after two changes:
 
 1. Line endings become LF. A CRLF or a lone CR becomes one LF.
-2. The reviews block is removed from the front matter. The front matter is the lines between a first line `---` and the next line that is exactly `---`. The block starts at the line whose first characters are the key (`reviews`, bare or quoted), optional spaces or tabs, and `:`. It runs on through every following line that is empty or starts with a space, a tab, `#` or `-`, and it ends at the first line that doesn't, or at the closing `---`. Every other byte stays, including the `---` lines and the body.
+2. The reviews block and the `seal` block are removed from the front matter. The front matter is the lines between a first line `---` and the next line that is exactly `---`. Each block starts at a line whose first characters are its key (`reviews` or `seal`, bare or quoted), optional spaces or tabs, and `:`. It runs on through every following line that is empty or starts with a space, a tab, `#` or `-`, and it ends at the first line that doesn't, or at the closing `---`. Every other byte stays, including the `---` lines and the body. Which block is removed first makes no difference.
 
-For a kind with `format: "json"`, step 2 removes the top-level reviews member instead. The removed text runs from the whitespace right before the member's name to the end of its value. One comma goes with it, along with the whitespace right before that comma. The comma is the one after the value when another member follows, and otherwise the one before the member. In a file written with one member per line, that is deleting the member's lines and the comma that separated it from its neighbour. Everything else stays byte for byte, the final newline included. A file that is not a JSON record, or has no top-level reviews member, is hashed after step 1 only.
+`seal` is the record's author seal ([#2688](https://github.com/INTENTIUS/chant/issues/2688)), only at column 0. A `seal` inside a verdict is part of the reviews block. A record with no top-level `seal` hashes exactly as it did before author seals existed, so no earlier digest moved.
 
-Text with no front matter or no reviews key is hashed after step 1 only. So adding, editing or removing a verdict leaves the digest unchanged, while any other edit to the file changes it. A verdict given before an amendment then names an older digest and stops counting. It follows that a tool which adds a verdict must change only the reviews block. If it reformats the rest of the front matter, every earlier verdict stops counting.
+For a kind with `format: "json"`, step 2 removes the top-level reviews member instead, and then the top-level `seal` member from what is left. The removed text runs from the whitespace right before the member's name to the end of its value. One comma goes with it, along with the whitespace right before that comma. The comma is the one after the value when another member follows, and otherwise the one before the member. In a file written with one member per line, that is deleting the member's lines and the comma that separated it from its neighbour. Everything else stays byte for byte, the final newline included. A file that is not a JSON record, or has neither member, is hashed after step 1 only.
+
+Text with no front matter, or neither key, is hashed after step 1 only. So adding, editing or removing a verdict leaves the digest unchanged, while any other edit to the file changes it. A verdict given before an amendment then names an older digest and stops counting. It follows that a tool which adds a verdict must change only the reviews block. If it reformats the rest of the front matter, every earlier verdict stops counting.
 
 `records --json` prints each record's `digest`, which is the value to copy into a new verdict. To check one by hand, for a file with LF line endings that ends in a newline, run this from the file's directory:
 
 ```bash
-awk 'NR==1&&$0=="---"{fm=1;print;next} fm&&$0=="---"{fm=0;skip=0;print;next} fm&&/^reviews[ \t]*:/{skip=1;next} fm&&skip&&/^([ \t#-]|$)/{next} {skip=0;print}' ws-003-seal-scope.md | shasum -a 256
+awk 'NR==1&&$0=="---"{fm=1;print;next} fm&&$0=="---"{fm=0;skip=0;print;next} fm&&/^(reviews|seal)[ \t]*:/{skip=1;next} fm&&skip&&/^([ \t#-]|$)/{next} {skip=0;print}' ws-003-seal-scope.md | shasum -a 256
 ```
 
 The digest in the example above is `ws-003`'s in the chant repo at the time of writing. A verdict with no `digest` still counts, which keeps records written before digests working. The record gets the warning `review-undigested`, which names the reviewers, since an amendment won't stop those verdicts counting.
@@ -366,7 +370,7 @@ chant workspace records review ws-052 --kind docs/design/decisions/decision.kind
   --verdict agree --by alice@example.com --sign
 ```
 
-`--sign` without a file reads `user.signingkey` the way `git commit -S` does when `gpg.format` is `ssh`, including a literal `key::ssh-ed25519 ...` held by the agent. The write doesn't check the key against the signers file. `records` does that on read. A key that can't sign is refused with `review-sign-failed`, and nothing is written. `records new` and `records amend` don't take `--sign` yet. Sealing a record's author is [#2688](https://github.com/INTENTIUS/chant/issues/2688).
+`--sign` without a file reads `user.signingkey` the way `git commit -S` does when `gpg.format` is `ssh`, including a literal `key::ssh-ed25519 ...` held by the agent. The write doesn't check the key against the signers file. `records` does that on read. A key that can't sign is refused with `review-sign-failed`, and nothing is written. `records new` and `records amend` take `--sign` too, to seal the record's author ([Sealing a record](#sealing-a-record)).
 
 On read, each verdict in `counted` and `notCounted` carries `attested` and `attestation: {code, message, key}`. The code is absent when the seal verified:
 
@@ -391,6 +395,63 @@ ssh-keygen -Y verify -f .chant/allowed_signers -I alice@example.com -n chant-rev
 ```
 
 `verdict.sig` holds the `signature` string with its `\n` escapes turned into line breaks.
+
+### Sealing a record
+
+`decided_by` is a name too, typed by whoever wrote the file. An author seal lets the record's author sign it ([#2688](https://github.com/INTENTIUS/chant/issues/2688)). It works like a verdict's seal, and it is kept in the record's top-level `seal` field:
+
+```yaml
+decided_by: "alice@example.com"
+decided_on: "2026-09-24"
+reviews: []
+constrains:
+  - "INTENTIUS/chant#2546"
+seal:
+  signer: "alice@example.com"
+  key: "SHA256:LrMzekQSoz7Im/LTvppqbuSxiuknp3zn3FqWtbogCB4"
+  signature: "-----BEGIN SSH SIGNATURE-----\nU1NIU0lH...\n-----END SSH SIGNATURE-----\n"
+```
+
+The author is the field the kind's `reviews.decider` names, `decided_by` for decisions, so only a kind with `reviews` has author seals. What gets signed is `<id>\n<digest>\n<author>\n<state>`, with nothing after the state, and an empty state for a kind without states. The ssh-keygen namespace is `chant-record`, where a commit signature or a verdict seal won't verify. The [digest rule](#digest-rule) leaves `seal` out, so writing the seal leaves the digest it signs where it was. A review leaves it where it was too, so reviews never break an author seal. `signer` must name the author.
+
+`records new --sign` and `records amend --sign` write the seal. `--sign` takes a key file, or no file for git's ssh `user.signingkey`, exactly as `records review --sign` does. The author's key must be in the signers file under the exact principal the author field names. If the author's line in that file has a `namespaces="..."` option, `chant-record` has to be in it.
+
+```bash
+# A new decision, sealed by its decider
+chant workspace records new docs/design/decisions/decision.kind.mjs --from decision.json --sign
+
+# Seal a decision that is already written, changing nothing else
+echo '{}' | chant workspace records amend ws-052 --kind docs/design/decisions/decision.kind.mjs --set - --sign
+```
+
+A record with no author, such as a proposed decision with `decided_by: null`, has nobody to seal it, so `--sign` is refused with `record-sign-failed`. The same code covers a key file ssh-keygen can't sign with. Either way the file is left untouched. A kind without `reviews` names no author, and `--sign` on it is `write-usage-invalid`. Only `--sign` writes the seal, and fields given with `--from` or `--set` that include `seal` are refused with `write-input-invalid`.
+
+An amendment moves the digest, so the old seal no longer covers the text. `amend --sign` signs the record again over the new digest. `amend` without `--sign` removes the seal, lists `seal` in `changed`, and says why in `sealDropped`, so a record never carries a seal that fails. An amendment that leaves the digest where it was keeps the seal, such as one that only changes `reviews`. On an approved record the seal may change along with what the approval rule allows. A record in a closed state takes no new seal (`record-closed`).
+
+On read, each parsed record of a kind with `reviews` carries `attested` and `attestation: {code, message, key}`, the same shape as a verdict's:
+
+| Signers file at base | The record | `attested` | Code | Warning |
+|---|---|---|---|---|
+| active | has a seal that verifies for its author | `true` | none | none |
+| active | names an author and has no seal | `false` | `seal-missing` | `record-unattested` |
+| active | its author has no key in the file | `false` | `seal-signer-unlisted` | `record-unattested` |
+| active | has a seal that is malformed, by another signer, or fails | `false` | `seal-signature-invalid` | `record-unattested` |
+| active | `ssh-keygen` isn't installed | `null` | `seal-unverifiable` | `record-unattested` |
+| either | names no author and has no seal | `null` | `seal-missing` | none |
+| none | has no seal | `null` | `seal-missing` | none |
+| none | has a seal whose signature is intact | `null` | `seal-unverifiable` | none |
+| none | has a seal whose signature fails | `false` | `seal-signature-invalid` | none |
+
+Sealing records is opt-in per workspace. Under an active signers file an unsealed record is still read, stays valid, and still counts for supersession and the quorum. The only sign is the warning `record-unattested`. A policy field that makes author seals required would change that, and there is none yet. A reader shows a record as signed by its author only when `attested` is `true`.
+
+The check by hand is `ssh-keygen -Y verify` over those four lines, in the `chant-record` namespace:
+
+```bash
+printf '%s\n%s\n%s\n%s' ws-052 "$DIGEST" alice@example.com decided > record.txt
+ssh-keygen -Y verify -f .chant/allowed_signers -I alice@example.com -n chant-record -s record.sig < record.txt
+```
+
+`$DIGEST` is the record's `digest` from `records --json`, or the `awk` pipeline above. Put the `signature` string in `record.sig`, turning each `\n` escape into a real line break.
 
 ## Exit codes
 
@@ -453,7 +514,7 @@ The output is part of the workspace [read contract](/chant/reference/workspace-r
 }
 ```
 
-`data` holds the whole front matter, or the whole object for a JSON kind; the example shortens it. `at` is the full commit id when `--at` is given. `trust` and `provenance` were added within contract 1 by [#2547](https://github.com/INTENTIUS/chant/issues/2547), and `workspaceRoot`, `assets` and `warnings` by [#2549](https://github.com/INTENTIUS/chant/issues/2549). `digest` and `quorum` were added by [#2672](https://github.com/INTENTIUS/chant/issues/2672) and [#2671](https://github.com/INTENTIUS/chant/issues/2671), and only a kind with `reviews` has `quorum`. `citedBy`, on a session kind's records only, was added by [#2673](https://github.com/INTENTIUS/chant/issues/2673). `kind.format` was added by [#2664](https://github.com/INTENTIUS/chant/issues/2664). `ready`, `blockedBy`, `implements` and the document's `decisions` were added by [#2683](https://github.com/INTENTIUS/chant/issues/2683), on a work kind only.
+`data` holds the whole front matter, or the whole object for a JSON kind; the example shortens it. `at` is the full commit id when `--at` is given. `trust` and `provenance` were added within contract 1 by [#2547](https://github.com/INTENTIUS/chant/issues/2547), and `workspaceRoot`, `assets` and `warnings` by [#2549](https://github.com/INTENTIUS/chant/issues/2549). `digest` and `quorum` were added by [#2672](https://github.com/INTENTIUS/chant/issues/2672) and [#2671](https://github.com/INTENTIUS/chant/issues/2671), and only a kind with `reviews` has `quorum`. `citedBy`, on a session kind's records only, was added by [#2673](https://github.com/INTENTIUS/chant/issues/2673). `kind.format` was added by [#2664](https://github.com/INTENTIUS/chant/issues/2664). `ready`, `blockedBy`, `implements` and the document's `decisions` were added by [#2683](https://github.com/INTENTIUS/chant/issues/2683), on a work kind only. Records of a kind with `reviews` also carry `attested` and `attestation`, and may carry the warning `record-unattested`, since [#2688](https://github.com/INTENTIUS/chant/issues/2688).
 
 A failed read prints `{ "$schema", "contract", "error": { "code", "message" } }` instead. Without `--kind`, the output is the set of [Declared kinds](#declared-kinds), added within contract 1 by [#2680](https://github.com/INTENTIUS/chant/issues/2680).
 
@@ -485,6 +546,7 @@ A failed read prints `{ "$schema", "contract", "error": { "code", "message" } }`
 | `work-implements-undecided` | is a work record implementing a decision whose state is not approved, such as `proposed` |
 | `work-done-unpinned` | is a done work record with an empty evidence list, so nothing shows the work was done |
 | `work-closed-without-date` | is a done or dropped work record with no `closed_on` |
+| `record-unattested` | names an author (the kind's `reviews.decider` field), and a signers file is active at base, and its author seal doesn't verify. It is still read, and stays valid ([Sealing a record](#sealing-a-record)) |
 | `work-done-gap-open` | is a done work record whose `source` names a finding that still fires on its region. `records` walks the region as `graph --intent` does, in a git repository with a workspace declaration ([#2686](https://github.com/INTENTIUS/chant/issues/2686)) |
 
 ### Error codes
@@ -507,8 +569,8 @@ A UI such as hud never writes a record file itself ([ws-052](https://github.com/
 
 | Command | Writes |
 |---|---|
-| `records new <kind file> --from <file\|->` | a new record in the kind's directory, from a JSON object of its fields |
-| `records amend <id> --kind <kind file> --set <file\|->` | the same record, with the top-level fields of a JSON object replacing its own |
+| `records new <kind file> --from <file\|->` | a new record in the kind's directory, from a JSON object of its fields, sealed by its author with `--sign` |
+| `records amend <id> --kind <kind file> --set <file\|->` | the same record, with the top-level fields of a JSON object replacing its own, sealed again with `--sign` |
 | `records review <id> --kind <kind file> --verdict <verdict> --by <principal>` | the same record, with one entry appended to `reviews` |
 
 A kind the declaration names can also be given by its declared name, or by its file's name without `.kind.mjs`, so `records new work --from -` writes through `work/work.kind.mjs` in the reference workspace. Without a kind, each command writes through the one [record kind the declaration names](#declared-kinds) ([#2680](https://github.com/INTENTIUS/chant/issues/2680)). When the declaration names several, the command is refused with `write-usage-invalid` and a message that lists them, so name the kind to write. With no declared kind it fails as before.
@@ -525,7 +587,7 @@ A kind the declaration names can also be given by its declared name, or by its f
 | approved (ranked above 0 in the kind's `approval`), such as `decided` | its state, to one ranked at least as high; its pins field (`evidence`); its reviews. Anything else is `amend-supersede-instead` |
 | anything else, such as `proposed` | any field but its id |
 
-The id never changes (`amend-id-immutable`). Both refusals say what to do instead: write the change as a new record whose `supersedes` names this one, which replaces it once it is approved at least as strongly. An amendment that changes nothing writes nothing and prints an empty `changed`.
+The id never changes (`amend-id-immutable`). Both refusals say what to do instead: write the change as a new record whose `supersedes` names this one, which replaces it once it is approved at least as strongly. An amendment that changes nothing writes nothing and prints an empty `changed`. The author seal follows its own rule, under [Sealing a record](#sealing-a-record): `--sign` writes it again, and without `--sign` a change that moves the digest removes it and `sealDropped` says so.
 
 `review` appends `{reviewer, verdict, note, on, digest, session, seal}`. `seal` is written only with `--sign`. `on` is today's date in UTC, `note` and `session` appear only when given, and a dissent without a non-empty `--note` is refused with `review-note-required`. `digest` is the record's digest by the [digest rule](#digest-rule), the one `records --json` prints for it. The command rewrites only the reviews block and keeps every other byte of the file, so after the review the record's digest is still the one the verdict names ([#2672](https://github.com/INTENTIUS/chant/issues/2672)). A record in a closed state takes no review, and a kind that declares no `reviews` takes none (`review-unsupported`).
 
