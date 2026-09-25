@@ -73,6 +73,18 @@ With `--json`, each member also lists its `box`: the [box block](/chant/referenc
   ]
 }
 ```
+### Stewards
+
+A steward is the one writer that runs a member's operational Ops, on Fountain or locally through `chant operator --steward` ([#2731](https://github.com/INTENTIUS/chant/issues/2731)). The JSON lists the stewards of each member of kind `chant` that has its own `chant.config.ts` or `.json`, read from their declarations in the member's `*.op.ts` files. This is the one part of the output that imports project code, and it imports only those files. Each Op's last run is the newest record in its run ledger on the local branch. The steward's `lease` is the one a local steward holds while it runs, read from the local ref and never fetched. The text view leaves stewards out.
+
+| Field | Meaning |
+|---|---|
+| `name`, `file` | The steward's name, and the `*.op.ts` file that declares it, relative to the member |
+| `form` | `fountain` or `local`: where the steward runs in the environment asked for |
+| `forms` | The declared default form, and the environments whose form differs from it |
+| `vault`, `capabilities` | The vault the steward holds, or `null`, and the box capabilities it reaches through a broker, each with the `broker` the member's box block gives it and `declared: false` when the block doesn't list it ([#2726](https://github.com/INTENTIUS/chant/issues/2726)) |
+| `lease` | The local steward's lease (`holder`, `acquiredAt`, `expiresAt`, `live`), or `null` when no local operator has held it |
+| `ops[]` | Each Op the steward runs, in declaration order, with `schedule` (`null` for an Op it runs only when asked), the `env` its runs are recorded under, and `lastRun` (`id`, `status`, `started`, `ended`, `gate`) or `null` |
 
 The command doesn't read live state. `--compare-to --live` is refused with a pointer to `chant components status <env> --live`, which reads one member's live state from that member's directory.
 
@@ -155,7 +167,28 @@ The output is part of the workspace [read contract](/chant/reference/workspace-r
           "approve": "chant approve api deploy --env prod"
         }
       ],
-      "box": null
+      "box": null,
+      "stewards": [
+        {
+          "name": "api-steward",
+          "file": "ops/steward.op.ts",
+          "form": "local",
+          "forms": { "default": "local", "environments": { "fountain-k3d": "fountain" } },
+          "vault": null,
+          "capabilities": [{ "name": "fountain", "broker": "lobby", "declared": true }],
+          "lease": { "holder": "box:4821:9f2c1a3b", "acquiredAt": "2026-09-21T08:00:00.000Z", "expiresAt": "2026-09-21T09:05:00.000Z", "live": true },
+          "ops": [
+            {
+              "name": "api-converge",
+              "schedule": { "cron": "*/5 * * * *", "overlap": "skip" },
+              "env": "local",
+              "lastRun": { "id": "0b6f...", "status": "ok", "started": "2026-09-21T09:00:00.000Z", "ended": "2026-09-21T09:00:04.000Z", "gate": null }
+            },
+            { "name": "api-release", "schedule": null, "env": "prod", "lastRun": null }
+          ]
+        }
+      ],
+      "stewardReasons": []
     }
   ],
   "summary": { "members": 3, "released": 2, "unreadable": 0, "differing": 1 }
@@ -184,6 +217,14 @@ Gates have a reason of their own, in `gateLedger.reason`. It doesn't change `rea
 | `gates-no-ledger` | aren't there, because the checkout has no `chant/lifecycle` branch |
 | `gates-no-gate-ledger` | don't exist on the branch, because no run of the member has reached a gate |
 | `gates-ledger-unreadable` | couldn't be read, so no gate is listed |
+
+Stewards have reasons of their own, in `stewardReasons`. They don't change `readable` or the summary.
+
+| Code | Meaning |
+|---|---|
+| `stewards-unreadable` | an `*.op.ts` file couldn't be imported, so a steward it declares may be missing |
+| `stewards-conflict` | a steward was dropped because its name, or an Op it lists, belongs to another steward |
+| `steward-runs-unreadable` | an Op's run ledger couldn't be read, so its `lastRun` is `null` |
 
 ### Error codes
 
@@ -220,4 +261,7 @@ chant workspace status prod --compare-to staging --json
 
 # The prod gates still waiting for an approval, with the command for each
 chant workspace status prod --json | jq -r '.members[].gates[] | select(.state == "pending") | .approve'
+
+# Which steward runs each member, and how its last runs went
+chant workspace status prod --json | jq -r '.members[].stewards[] | .name + " (" + .form + "): " + ([.ops[] | .name + "=" + (.lastRun.status // "never")] | join(" "))'
 ```

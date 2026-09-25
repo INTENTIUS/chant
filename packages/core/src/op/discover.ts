@@ -5,6 +5,7 @@ import type { OpConfig } from "./types";
 import { walkDiscovery, workspaceMemberDirs } from "../discovery/walk";
 import { hasDiscoveryMarkerSync } from "../discovery/files";
 import { resolveDiscoveryGlobs } from "../config";
+import { isStewardDeclaration, type StewardDeclaration } from "./steward";
 
 export interface DiscoveredOp {
   config: OpConfig;
@@ -152,6 +153,9 @@ export async function discoverOps(opts?: { cwd?: string }): Promise<OpDiscoveryR
       const mod = (await import(filePath)) as Record<string, unknown>;
       const exported = opsExportedBy(mod);
 
+      // A file may hold a steward and no Op (#2731): the steward sits beside
+      // the Ops it runs, and `discoverStewards` reads it from here.
+      if (exported.length === 0 && Object.values(mod).some(isStewardDeclaration)) continue;
       if (exported.length === 0) {
         errors.push(
           `${filePath}: exports no Op. Expected \`export default Op({...})\` or a named export such as \`export const deploy = Op({...})\``,
@@ -179,4 +183,71 @@ export async function discoverOps(opts?: { cwd?: string }): Promise<OpDiscoveryR
   }
 
   return { ops, errors };
+}
+
+export interface DiscoveredSteward {
+  declaration: StewardDeclaration;
+  filePath: string;
+  exportName: string;
+}
+
+export interface StewardDiscoveryResult {
+  stewards: Map<string, DiscoveredSteward>;
+  /** Files that could not be imported. */
+  errors: string[];
+  /** Stewards dropped because they would be a second writer: a name or an Op another steward already has. */
+  conflicts: string[];
+}
+
+/**
+ * Every steward declared in the project's `*.op.ts` files (#2731), found the
+ * way {@link discoverOps} finds Ops, keyed by the steward's name.
+ *
+ * Refuses, as errors, the two ways a project could end up with two writers:
+ * two stewards of one name, and one Op listed by two stewards. The steward
+ * declared first (in file walk order) keeps its entry; the other is dropped
+ * and reported in `conflicts`.
+ */
+export async function discoverStewards(opts?: { cwd?: string }): Promise<StewardDiscoveryResult> {
+  const errors: string[] = [];
+  const conflicts: string[] = [];
+  const stewards = new Map<string, DiscoveredSteward>();
+  const opOwner = new Map<string, string>();
+
+  const root = await findDiscoveryRoot(opts?.cwd);
+  const files = await collectOpFiles(root);
+
+  for (const filePath of files) {
+    let mod: Record<string, unknown>;
+    try {
+      mod = (await import(filePath)) as Record<string, unknown>;
+    } catch (err) {
+      errors.push(`${filePath}: ${err instanceof Error ? err.message : String(err)}`);
+      continue;
+    }
+    const seen = new Set<unknown>();
+    const exportNames = ["default", ...Object.keys(mod).filter((k) => k !== "default")];
+    for (const exportName of exportNames) {
+      const value = mod[exportName];
+      if (!isStewardDeclaration(value) || seen.has(value)) continue;
+      seen.add(value);
+      const prior = stewards.get(value.name);
+      if (prior) {
+        conflicts.push(`Duplicate steward "${value.name}" in ${filePath} and ${prior.filePath}`);
+        continue;
+      }
+      const claimed = value.ops.find((op) => opOwner.has(op.name));
+      if (claimed) {
+        conflicts.push(
+          `${filePath}: steward "${value.name}" lists op "${claimed.name}", which steward "${opOwner.get(claimed.name)}" already runs. ` +
+            `Two stewards running one Op are two writers; list it on one of them.`,
+        );
+        continue;
+      }
+      for (const op of value.ops) opOwner.set(op.name, value.name);
+      stewards.set(value.name, { declaration: value, filePath, exportName });
+    }
+  }
+
+  return { stewards, errors, conflicts };
 }

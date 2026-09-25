@@ -415,6 +415,13 @@ export interface ParsedArgs {
   interval?: string;
   /** `chant operator --lease-ttl <duration>` (#1485) — how long an acquired lease is valid before it's reclaimable by another operator. Default: 5m. */
   leaseTtl?: string;
+  /**
+   * `chant operator --steward [<name>]` (#2731) — run a declared steward's
+   * local form: its scheduled Ops on their crons, under the steward's own
+   * lease. `""` when the flag is given without a name, which picks the
+   * project's only steward.
+   */
+  steward?: string;
   /** `chant operator --once` (#1485) — run a single round and exit, instead of looping until Ctrl-C. Also the offline test/cron-invoker story. */
   once?: boolean;
   /** `chant approve <op> <gate> --note <text>` (#1485) — optional free-text prose recorded on the gate-resolution fact. The PR link belongs in `--url` since #2028; this is for everything that isn't the link. */

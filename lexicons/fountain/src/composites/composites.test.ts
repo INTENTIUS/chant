@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { WatchOp, type OpConfig } from "@intentius/chant/op";
+import { WatchOp, isStewardDeclaration, stewardFormFor, type OpConfig } from "@intentius/chant/op";
 import { ConciergeStack } from "./concierge-stack";
 import { Steward, stewardForOp, __resetStewardsForTests } from "./steward";
 import { Box, BOX_PORT_METADATA_KEY } from "./box";
@@ -235,6 +235,77 @@ describe("Steward", () => {
     // to the chant export name the entities map is keyed on.
     expect(yaml).toContain("environment: toolchain");
     expect(yaml).toMatch(/allowed_vault_ids:\n\s+- prod-creds/);
+  });
+});
+
+// ── Steward: the declaration core reads, and its form (#2731) ─────────────
+
+describe("Steward declaration and form", () => {
+  beforeEach(() => {
+    __resetStewardsForTests();
+  });
+
+  const toolchain = () => new Environment({ name: "toolchain" });
+
+  it("returns the declaration core reads: name, every op, and fountain as the default form", () => {
+    const { declaration } = Steward({
+      name: "box-steward",
+      environment: toolchain(),
+      ops: [op("box-converge", { cron: "* * * * *" }), op("box-release")],
+    });
+    expect(isStewardDeclaration(declaration)).toBe(true);
+    expect(declaration.name).toBe("box-steward");
+    expect(declaration.ops.map((o) => o.name)).toEqual(["box-converge", "box-release"]);
+    expect(declaration.form).toEqual({ default: "fountain", environments: {} });
+    expect(stewardFormFor(declaration, "prod")).toBe("fountain");
+  });
+
+  it("names the environments where the same steward runs locally", () => {
+    const { declaration, schedules } = Steward({
+      name: "box-steward",
+      environment: toolchain(),
+      ops: [op("box-converge", { cron: "* * * * *" })],
+      form: { default: "fountain", environments: { minimal: "local", spritzer: "local" } },
+    });
+    expect(stewardFormFor(declaration, "fountain-k3d")).toBe("fountain");
+    expect(stewardFormFor(declaration, "minimal")).toBe("local");
+    expect(stewardFormFor(declaration, "spritzer")).toBe("local");
+    // The Fountain resources are declared whatever the form: which environment
+    // they run in is the deploy's business, not the declaration's.
+    expect(schedules).toHaveLength(1);
+  });
+
+  it("refuses a form that is local everywhere, which needs none of the Fountain resources", () => {
+    expect(() =>
+      Steward({ name: "box-steward", environment: toolchain(), ops: [], form: "local" }),
+    ).toThrow(/local" in every environment/);
+  });
+
+  it("refuses an op listed twice, which would run twice per fire", () => {
+    const converge = op("box-converge", { cron: "* * * * *" });
+    expect(() =>
+      Steward({ name: "box-steward", environment: toolchain(), ops: [converge, converge] }),
+    ).toThrow(/listed twice/);
+  });
+
+  it("records the brokered capabilities, and refuses them beside a vault (#2726)", () => {
+    const { declaration } = Steward({ name: "box-steward", environment: toolchain(), ops: [], capabilities: ["fountain"] });
+    expect(declaration.capabilities).toEqual(["fountain"]);
+    expect(declaration.vault).toBeNull();
+    __resetStewardsForTests();
+    expect(
+      Steward({ name: "prod-steward", environment: toolchain(), vault: new Vault({ name: "prod-creds" }), ops: [] }).declaration.vault,
+    ).toBe("prod-creds");
+    __resetStewardsForTests();
+    expect(() =>
+      Steward({ name: "x", environment: toolchain(), vault: new Vault({ name: "v" }), ops: [], capabilities: ["fountain"] }),
+    ).toThrow(/holds no credential/);
+  });
+
+  it("refuses an unknown form", () => {
+    expect(() =>
+      Steward({ name: "box-steward", environment: toolchain(), ops: [], form: "cloud" as never }),
+    ).toThrow(/"local" or "fountain"/);
   });
 });
 

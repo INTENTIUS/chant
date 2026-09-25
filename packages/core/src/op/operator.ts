@@ -39,6 +39,8 @@ import type { ActivityFn, ActivityProfile } from "./activity-registry";
 import { discoverOps, type DiscoveredOp } from "./discover";
 import { runOpLocally, OpRunFailure, type OpRunResult } from "./local-executor";
 import { acquireLease, stillHoldsLease, currentHolderId, DEFAULT_LEASE_TTL_MS, type LeaseRecord, type AcquireLeaseResult } from "../lifecycle/lease";
+import { runEnvOf } from "../lifecycle/run-ledger";
+import { stewardLeaseName, type StewardDeclaration } from "./steward";
 import { StaleLockError } from "../lifecycle/git";
 import { cronMatches, cronDueBetween } from "./cron";
 import { createChangeSignalGate, DEFAULT_SIGNAL_FLOOR_MS, type WakeReason } from "./change-signal";
@@ -94,7 +96,14 @@ export type OperatorTickEvent =
    * back off silently forever instead of surfacing the fix. One op's lease
    * error never aborts the round for every other op.
    */
-  | { kind: "lease-error"; op: string; env: string; error: string };
+  | { kind: "lease-error"; op: string; env: string; error: string }
+  /**
+   * A local steward's round (#2731) found the steward's own lease held by
+   * another live holder: another `chant operator --steward` for the same
+   * steward. Nothing ticked. `op` is the steward's lease name and `env` is
+   * `-`, so a log line keyed on either still reads.
+   */
+  | { kind: "steward-busy"; op: string; env: string; steward: string; heldBy?: string };
 
 export interface OperatorRoundOptions {
   cwd?: string;
@@ -119,6 +128,30 @@ export interface OperatorRoundOptions {
    * round makes up exactly one tick rather than a backlog.
    */
   scheduleState?: Map<string, Date>;
+  /**
+   * Run a local steward's Ops instead of every discovered ConvergeOp (#2731).
+   * Only its scheduled Ops tick, each on its own cron, because that is what
+   * the same steward does on Fountain: an Op with no schedule runs when
+   * someone asks for it. The round first takes (or renews) the steward's own
+   * lease, and ticks nothing when another holder has it.
+   */
+  steward?: StewardDeclaration;
+}
+
+/** Take or renew a local steward's own lease (#2731). */
+export async function acquireStewardLease(
+  steward: string,
+  holder: string,
+  opts: { cwd?: string; ttlMs?: number; now?: () => Date } = {},
+): Promise<AcquireLeaseResult> {
+  return acquireLease(stewardLeaseName(steward), holder, { ...opts, ttlMs: opts.ttlMs ?? DEFAULT_LEASE_TTL_MS });
+}
+
+/** The Ops one round considers: a steward's scheduled ones, or every ConvergeOp. */
+async function roundOps(opts: OperatorRoundOptions): Promise<DiscoveredOp["config"][]> {
+  if (opts.steward) return opts.steward.ops.filter((op) => op.schedule !== undefined);
+  const { ops } = await discoverConvergeOps({ cwd: opts.cwd, env: opts.env });
+  return ops.map((d) => d.config);
 }
 
 /**
@@ -129,11 +162,42 @@ export interface OperatorRoundOptions {
  */
 export async function runOperatorRound(opts: OperatorRoundOptions): Promise<OperatorTickEvent[]> {
   const holder = opts.holder ?? currentHolderId();
-  const { ops } = await discoverConvergeOps({ cwd: opts.cwd, env: opts.env });
   const events: OperatorTickEvent[] = [];
+  const steward = opts.steward;
+  const leaseOpts = { cwd: opts.cwd, ttlMs: opts.leaseTtlMs, now: opts.now };
 
-  for (const { config } of ops) {
-    const env = envOf(config) ?? "unknown";
+  // A local steward is one writer (#2731): its round runs only while it holds
+  // its own lease, renewed here and again after every tick, so a turn longer
+  // than the lease's TTL still keeps it.
+  const holdSteward = async (): Promise<boolean> => {
+    if (!steward) return true;
+    let acquired: AcquireLeaseResult;
+    try {
+      acquired = await acquireStewardLease(steward.name, holder, leaseOpts);
+    } catch (err) {
+      events.push({
+        kind: "lease-error",
+        op: stewardLeaseName(steward.name),
+        env: "-",
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return false;
+    }
+    if (acquired.acquired) return true;
+    events.push({
+      kind: "steward-busy",
+      op: stewardLeaseName(steward.name),
+      env: "-",
+      steward: steward.name,
+      ...(acquired.heldBy?.holder ? { heldBy: acquired.heldBy.holder } : {}),
+    });
+    return false;
+  };
+
+  if (!(await holdSteward())) return events;
+
+  for (const config of await roundOps(opts)) {
+    const env = steward ? runEnvOf(config) : (envOf(config) ?? "unknown");
 
     // An Op that declares its own cadence (#2120) is ticked on that cron
     // rather than on every round. Level-triggered: the question is whether a
@@ -210,6 +274,7 @@ export async function runOperatorRound(opts: OperatorRoundOptions): Promise<Oper
             : String(err);
       events.push({ kind: "tick-failed", op: config.name, env, error: message });
     }
+    if (!(await holdSteward())) break;
   }
 
   return events;
@@ -430,5 +495,7 @@ export function formatRoundLine(event: OperatorTickEvent): string {
       return `operator: ${event.op}@${event.env} fenced=1(lease lost mid-tick — ledger record still written)`;
     case "lease-error":
       return `operator: ${event.op}@${event.env} error=1(lease acquire failed — ${event.error})`;
+    case "steward-busy":
+      return `operator: steward ${event.steward} skipped=1(steward-lease-held${event.heldBy ? `:${event.heldBy}` : ""})`;
   }
 }

@@ -57,6 +57,10 @@ export const REASONS = {
   "gates-no-ledger": "The checkout has no chant/lifecycle branch, so there is no gate ledger to read.",
   "gates-no-gate-ledger": "The branch has no gate ledger for the member: no run of it has reached a gate.",
   "gates-ledger-unreadable": "Reading the member's gate ledger failed, so no gate is listed.",
+  // A member's stewards status can't fully list (status, #2731).
+  "stewards-unreadable": "An *.op.ts file could not be imported, so a steward it declares may be missing.",
+  "stewards-conflict": "A steward was dropped: its name, or an Op it lists, belongs to another steward.",
+  "steward-runs-unreadable": "Reading an Op's run ledger failed, so its last run is null.",
   // A record that isn't valid (records).
   "record-unparseable": "No front matter, a YAML error or a value outside the JSON subset of YAML, or for a JSON kind a file that is not one object or repeats a member name.",
   "record-schema-invalid": "The record's front matter, or its JSON object, does not match the kind's schema.",

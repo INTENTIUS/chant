@@ -75,7 +75,7 @@ export const workspaceReadTools: ToolDefinition[] = [
   {
     name: "workspace-status",
     description:
-      "What each member has released to an environment, from the lifecycle ledgers: chant workspace status <env> --json. Returns that document unchanged (status.schema.json).",
+      "What each member has released to an environment, its gates, and the steward that runs it with each Op's last run, from the declaration and the lifecycle ledgers: chant workspace status <env> --json. Returns that document unchanged (status.schema.json).",
     inputSchema: {
       type: "object",
       properties: {

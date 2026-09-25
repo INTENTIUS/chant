@@ -44,8 +44,44 @@
  * the server does not keep. And a webhook url FTN022 would reject is refused
  * here rather than at synth, because a composite that constructed it would be
  * handing the author a lint error about a resource they never typed.
+ *
+ * ## One steward whatever the preset (#2731)
+ *
+ * The composite also returns `declaration`, the steward as core reads it
+ * (`declareSteward` in `@intentius/chant/op`): its name, its Ops and its
+ * `form`. A box whose preset has no Fountain in some environment (a docker
+ * compose box, a Sprites box) sets `form` so that environment is `local`, and
+ * there `chant operator --steward <name>` runs the same Ops on the same crons,
+ * one at a time, each under its operator lease and the whole process under the
+ * steward's own. `chant operator --steward` refuses an environment whose form
+ * is `fountain`, because this Agent and Teammate are the steward there. Export
+ * `declaration` from an `*.op.ts` file so the operator and `chant workspace
+ * status` find it.
+ *
+ * ## Credentials (#2726)
+ *
+ * A box's steward holds no credential. Name the box capabilities its Ops use
+ * in `capabilities` (the names the member's `box` block in the workspace
+ * declaration gives them) and leave `vault` out: the broker holds the key and
+ * enforces the scope. `vault` together with `capabilities` is refused.
+ * `chant workspace check` fails a box member whose files hold a literal secret
+ * (`box-credential-declared`), and `chant workspace status --json` lists each
+ * capability the steward names with the broker the box block gives it.
+ *
+ * ## The coding agent beside it
+ *
+ * A box also has a coding agent editing the app. They share the checkout by
+ * writing different things. The steward's writes are chant writes: run,
+ * converge and gate records on the `chant/lifecycle` branch and lease refs
+ * under `refs/chant/lease/`, made with git plumbing that never reads or writes
+ * the index or the working tree. The app's files, the index and commits on the
+ * working branch are the coding agent's. An Op a steward runs does not edit the
+ * app. A change to the checkout that an Op has to make (applying a build, a
+ * workspace upgrade) belongs under the work item's lease (ws-055), on a branch
+ * of its own, never in the coding agent's working tree.
  */
 
+import { declareSteward, type StewardDeclaration, type StewardFormSpec } from "@intentius/chant/op";
 import type { OpConfig, OpResource } from "@intentius/chant/op";
 import { Agent, Environment, Schedule, Teammate, Vault, Webhook } from "../generated/index";
 import { isPrivateHost } from "../lint/post-synth/ftn022-webhook-url-public-https";
@@ -84,8 +120,18 @@ export interface StewardOpts {
   name: string;
   /** The environment its computer is provisioned from: repo, chant, tooling. */
   environment: InstanceType<typeof Environment>;
-  /** Secrets layered on top. Omit under the egress broker, which holds them. */
+  /**
+   * Secrets layered on top, for a steward that isn't behind a broker. Omit it
+   * under a broker, which holds them, and name `capabilities` instead.
+   */
   vault?: InstanceType<typeof Vault>;
+  /**
+   * The box capabilities this steward's Ops reach through the box's broker
+   * (#2726), by the names the member's `box` block declares, such as
+   * `fountain` or `inference`. Refused together with `vault`: a brokered
+   * steward holds no credential.
+   */
+  capabilities?: string[];
   /**
    * The ops this steward runs. An op with a `schedule` gets a `Schedule`; one
    * without is still listed, so `chant run <op> --on fountain` knows which
@@ -95,6 +141,16 @@ export interface StewardOpts {
   webhook?: StewardWebhookOpts;
   /** Extra metadata merged over the `managed-by` marker on the Agent. */
   metadata?: Record<string, unknown>;
+  /**
+   * Where this steward runs (#2731). Default `fountain`: this composite's
+   * Agent and Teammate are the steward. A box whose preset has no Fountain in
+   * some environment names it here, e.g. `{ default: "fountain", environments:
+   * { minimal: "local" } }`, and `chant operator --steward <name> --env minimal`
+   * runs the same Ops there. The Fountain resources are declared either way; a
+   * form that is `local` everywhere is refused, since it needs none of them
+   * (use core's `declareSteward` for that).
+   */
+  form?: StewardFormSpec;
 }
 
 export interface StewardResources {
@@ -103,6 +159,12 @@ export interface StewardResources {
   /** One per op that carries a `schedule`, in `ops` order. */
   schedules: InstanceType<typeof Schedule>[];
   webhook?: InstanceType<typeof Webhook>;
+  /**
+   * The steward as core reads it (#2731): name, Ops and form. Export it from
+   * an `*.op.ts` file so `chant operator --steward` and `chant workspace
+   * status` find it.
+   */
+  declaration: StewardDeclaration;
 }
 
 /** The command an `acp` agent speaks the protocol over (#2125). */
@@ -195,6 +257,23 @@ export function Steward(opts: StewardOpts): StewardResources {
 
   if (opts.webhook) checkWebhookUrl(opts.name, opts.webhook.url);
 
+  // The declaration core reads. Built here, before any resource, so a bad
+  // name, a duplicate op or an unknown form is refused with nothing declared.
+  const declaration = declareSteward({
+    name: opts.name,
+    ops,
+    form: opts.form ?? "fountain",
+    ...(opts.capabilities ? { capabilities: opts.capabilities } : {}),
+    ...(opts.vault ? { vault: vaultName } : {}),
+  });
+  const envForms = [declaration.form.default, ...Object.values(declaration.form.environments)];
+  if (!envForms.includes("fountain")) {
+    throw new Error(
+      `Steward "${opts.name}": form is "local" in every environment, so none of the Fountain resources this ` +
+        `composite declares would ever run. Declare it with declareSteward from @intentius/chant/op instead.`,
+    );
+  }
+
   const agent = new Agent({
     name: opts.name,
     runtime: "acp",
@@ -247,5 +326,5 @@ export function Steward(opts: StewardOpts): StewardResources {
   bindings.set(binding, opts.name);
   for (const op of ops) opStewards.set(op.name, opts.name);
 
-  return { agent, teammate, schedules, ...(webhook ? { webhook } : {}) };
+  return { agent, teammate, schedules, ...(webhook ? { webhook } : {}), declaration };
 }

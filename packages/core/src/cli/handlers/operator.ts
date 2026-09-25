@@ -11,7 +11,8 @@ import { loadChantConfig } from "../../config";
 import { build } from "../../build";
 import { isResourceDeclarable } from "../../declarable";
 import { collectBuildRootContributors, collectChangeSubscribers } from "../plugins";
-import { discoverOps } from "../../op/discover";
+import { discoverOps, discoverStewards } from "../../op/discover";
+import { pickSteward, stewardFormFor, stewardLeaseName, DEFAULT_STEWARD_ENV } from "../../op/steward";
 import { loadActivities, loadProfiles } from "../../op/activity-registry";
 import { parseDuration } from "../../op/local-executor";
 import {
@@ -21,11 +22,12 @@ import {
   formatRoundLine,
   formatSignalLine,
   DEFAULT_OPERATOR_INTERVAL_MS,
+  acquireStewardLease,
   type ChangeSubscriber,
   type OperatorSignalEvent,
   type OperatorTickEvent,
 } from "../../op/operator";
-import { readLease, DEFAULT_LEASE_TTL_MS } from "../../lifecycle/lease";
+import { readLease, releaseLease, currentHolderId, DEFAULT_LEASE_TTL_MS } from "../../lifecycle/lease";
 import { readConvergeLedger, type ConvergeTickRecord } from "../../lifecycle/converge-ledger";
 import { readRunLedger } from "../../lifecycle/run-ledger";
 import type { OpRunRecord } from "../../op/runtime";
@@ -141,6 +143,7 @@ async function collectOperatorSubscribers(
  * leaving the daemon running); omitted, the daemon loops until Ctrl-C.
  */
 export async function runOperator(ctx: CommandContext): Promise<number> {
+  if (ctx.args.steward !== undefined) return runStewardOperator(ctx);
   const { ops, errors } = await discoverConvergeOps({ env: ctx.args.env });
   for (const err of errors) console.error(formatWarning({ message: err }));
 
@@ -202,6 +205,108 @@ export async function runOperator(ctx: CommandContext): Promise<number> {
     return 0;
   } finally {
     process.removeListener("SIGINT", onSigint);
+  }
+}
+
+// ── chant operator --steward ────────────────────────────────────────────────
+
+/**
+ * `chant operator --steward [<name>] [--env <env>] [--interval] [--lease-ttl]
+ * [--once]` (#2731) — a steward's local form. The same Ops the steward runs on
+ * Fountain, on the same crons, one at a time, each under its operator lease,
+ * and the whole process under the steward's own lease.
+ *
+ * Refuses, before ticking anything:
+ * - an environment whose form is `fountain`, because there the composite's
+ *   Agent and Teammate are the steward and this process would be a second
+ *   writer beside them;
+ * - a steward whose lease another live process holds (a second local
+ *   operator for it).
+ */
+export async function runStewardOperator(ctx: CommandContext): Promise<number> {
+  const { stewards, errors, conflicts } = await discoverStewards();
+  for (const err of errors) console.error(formatWarning({ message: err }));
+  for (const conflict of conflicts) console.error(formatError({ message: conflict }));
+
+  const picked = pickSteward(stewards, ctx.args.steward ?? "");
+  if (typeof picked === "string") {
+    console.error(formatError({ message: picked }));
+    return 1;
+  }
+  const steward = picked;
+  const env = ctx.args.env ?? DEFAULT_STEWARD_ENV;
+  const form = stewardFormFor(steward, env);
+  if (form !== "local") {
+    console.error(formatError({
+      message: `steward "${steward.name}" runs on ${form} in environment "${env}", so a local operator for it would be a second writer`,
+      hint: `Its turns run on the fountain teammate "${steward.name}". Run this in an environment the declaration's form makes local, or change the form.`,
+    }));
+    return 1;
+  }
+
+  let activities, profiles;
+  try {
+    [activities, profiles] = await loadOperatorActivities();
+  } catch (err) {
+    console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
+    return 1;
+  }
+
+  const intervalMs = ctx.args.interval ? parseDuration(ctx.args.interval) : DEFAULT_OPERATOR_INTERVAL_MS;
+  const leaseTtlMs = ctx.args.leaseTtl ? parseDuration(ctx.args.leaseTtl) : DEFAULT_LEASE_TTL_MS;
+  const holder = currentHolderId();
+
+  // Refuse a second local operator up front rather than letting it loop on
+  // `steward-busy` rounds: one steward is one writer.
+  const first = await acquireStewardLease(steward.name, holder, { ttlMs: leaseTtlMs });
+  if (!first.acquired) {
+    console.error(formatError({
+      message: `steward "${steward.name}" is already running (lease held by ${first.heldBy?.holder ?? "another process"} until ${first.heldBy?.expiresAt ?? "?"})`,
+      hint: "One steward is one writer. Stop the other operator, or wait for its lease to expire.",
+    }));
+    return 1;
+  }
+
+  const controller = new AbortController();
+  const onSigint = () => {
+    console.error(formatWarning({ message: "interrupted — stopping steward" }));
+    controller.abort();
+  };
+  process.once("SIGINT", onSigint);
+  process.once("SIGTERM", onSigint);
+
+  const printRound = (events: OperatorTickEvent[]) => {
+    for (const event of events) console.error(formatInfo(formatRoundLine(event)));
+  };
+
+  const scheduled = steward.ops.filter((op) => op.schedule !== undefined);
+  try {
+    if (ctx.args.once) {
+      const events = await runOperatorRound({ steward, holder, leaseTtlMs, activities, profiles, signal: controller.signal });
+      printRound(events);
+      return events.some((e) => e.kind === "tick-failed" || e.kind === "steward-busy") ? 1 : 0;
+    }
+    console.error(formatInfo(
+      `chant operator: steward ${steward.name} (local) runs ${scheduled.length} scheduled Op(s) of ${steward.ops.length}, ` +
+        `checking every ${intervalMs}ms (Ctrl-C to stop)`,
+    ));
+    await runOperatorForever({
+      steward,
+      holder,
+      intervalMs,
+      leaseTtlMs,
+      activities,
+      profiles,
+      signal: controller.signal,
+      onRound: printRound,
+    });
+    return 0;
+  } finally {
+    process.removeListener("SIGINT", onSigint);
+    process.removeListener("SIGTERM", onSigint);
+    // A courtesy: the lease expires on its own if this never runs.
+    const { record } = await readLease(stewardLeaseName(steward.name)).catch(() => ({ record: undefined }));
+    if (record?.holder === holder) await releaseLease(stewardLeaseName(steward.name), holder, record.token).catch(() => false);
   }
 }
 

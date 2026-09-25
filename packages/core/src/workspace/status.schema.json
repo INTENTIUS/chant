@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://intentius.io/chant/schemas/workspace/status/v1/status.schema.json",
   "title": "chant workspace status output",
-  "description": "What `chant workspace status <env> --json` prints, version 1 of the read contract for releases across members (#2524 D15, D19, #2544). Readers ignore fields they do not know; a field is only ever added within a version. The reason and error codes are closed lists: a new code is a new contract version. Contract version 1 is written by chant 0.81.0 and newer; a reader that needs it refuses output whose `contract` it doesn't know. Every code is in the one closed list of `reason-codes.ts`. Each member's gates, read from its gate ledger on the same branch, are in the JSON only (#2674), and so is each member's box block, from the declaration (#2726).",
+  "description": "What `chant workspace status <env> --json` prints, version 1 of the read contract for releases across members (#2524 D15, D19, #2544). Readers ignore fields they do not know; a field is only ever added within a version. The reason and error codes are closed lists: a new code is a new contract version. Contract version 1 is written by chant 0.81.0 and newer; a reader that needs it refuses output whose `contract` it doesn't know. Every code is in the one closed list of `reason-codes.ts`. Each member's gates, read from its gate ledger on the same branch, are in the JSON only (#2674), and so is each member's box block, from the declaration (#2726). So are its stewards, their Ops and each Op's last run (#2731).",
   "oneOf": [{ "$ref": "#/$defs/result" }, { "$ref": "#/$defs/failure" }],
   "$defs": {
     "result": {
@@ -67,7 +67,7 @@
     },
     "member": {
       "type": "object",
-      "required": ["name", "dir", "kind", "environments", "compare", "readable", "gateLedger", "gates", "box"],
+      "required": ["name", "dir", "kind", "environments", "compare", "readable", "gateLedger", "gates", "box", "stewards", "stewardReasons"],
       "properties": {
         "name": { "type": "string" },
         "dir": { "type": "string", "description": "Relative to the workspace root, with / separators; \".\" is the root member." },
@@ -93,6 +93,120 @@
           "description": "Each gate the member's gate ledger records, one per gate and environment, for env and compareTo. A gate that records no environment (an Op gate) is listed whatever the environment. Sorted by component, then gate. Empty when gateLedger has a reason.",
           "type": "array",
           "items": { "$ref": "#/$defs/gate" }
+        },
+        "stewards": {
+          "description": "The stewards the member declares in its *.op.ts files (#2731), sorted by name. Empty for a member that is not of kind chant, or has no chant.config.ts or .json in its own directory.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/steward" }
+        },
+        "stewardReasons": {
+          "description": "Why a steward or an Op's last run may be missing from stewards. Empty when every one was read.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["code", "message"],
+            "properties": {
+              "code": { "enum": ["stewards-unreadable", "stewards-conflict", "steward-runs-unreadable"] },
+              "message": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "stewardForm": { "enum": ["local", "fountain"] },
+    "steward": {
+      "type": "object",
+      "required": ["name", "file", "form", "forms", "vault", "capabilities", "lease", "ops"],
+      "properties": {
+        "name": { "type": "string", "description": "The steward's name; on Fountain, its Agent's and Teammate's." },
+        "file": { "type": "string", "description": "The *.op.ts file that declares it, relative to the member's directory." },
+        "form": { "$ref": "#/$defs/stewardForm", "description": "Its form in env: fountain (the fountain lexicon's Agent and Teammate) or local (chant operator --steward in the box)." },
+        "forms": {
+          "type": "object",
+          "required": ["default", "environments"],
+          "properties": {
+            "default": { "$ref": "#/$defs/stewardForm" },
+            "environments": {
+              "description": "The environments whose form differs from default.",
+              "type": "object",
+              "additionalProperties": { "$ref": "#/$defs/stewardForm" }
+            }
+          }
+        },
+        "vault": { "type": ["string", "null"], "description": "The vault the steward holds on Fountain, by name, or null. Never set when capabilities is non-empty." },
+        "capabilities": {
+          "description": "The box capabilities the steward reaches through a broker (#2726), in declaration order, joined with the member's box block. broker is the block's; declared is false when the block doesn't list the capability or the member has no block.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "broker", "declared"],
+            "properties": {
+              "name": { "type": "string" },
+              "broker": { "type": ["string", "null"] },
+              "declared": { "type": "boolean" }
+            }
+          }
+        },
+        "lease": {
+          "description": "The local steward's own lease ref, read locally and never fetched, or null when no local operator has held it. live is false once expiresAt has passed.",
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["holder", "acquiredAt", "expiresAt", "live"],
+              "properties": {
+                "holder": { "type": "string" },
+                "acquiredAt": { "type": "string" },
+                "expiresAt": { "type": "string" },
+                "live": { "type": "boolean" }
+              }
+            }
+          ]
+        },
+        "ops": {
+          "description": "The Ops it runs, in declaration order.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "schedule", "env", "lastRun"],
+            "properties": {
+              "name": { "type": "string" },
+              "schedule": {
+                "description": "The Op's cadence, or null for an Op the steward runs only when asked.",
+                "oneOf": [
+                  { "type": "null" },
+                  {
+                    "type": "object",
+                    "required": ["cron", "overlap"],
+                    "properties": { "cron": { "type": "string" }, "overlap": { "const": "skip" } }
+                  }
+                ]
+              },
+              "env": { "type": "string", "description": "The environment its runs are recorded under: its labels.Env, or local." },
+              "lastRun": {
+                "description": "The newest record in the Op's run ledger on chant/lifecycle, or null when it has none.",
+                "oneOf": [
+                  { "type": "null" },
+                  {
+                    "type": "object",
+                    "required": ["id", "status", "started", "ended", "gate"],
+                    "properties": {
+                      "id": { "type": "string" },
+                      "status": { "enum": ["ok", "fail", "gated"] },
+                      "started": { "type": "string" },
+                      "ended": { "type": "string" },
+                      "gate": {
+                        "oneOf": [
+                          { "type": "null" },
+                          { "type": "object", "required": ["name", "since"], "properties": { "name": { "type": "string" }, "since": { "type": "string" } } }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
         }
       }
     },
