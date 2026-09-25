@@ -48,10 +48,17 @@
  * checkout, and holding git's index lock while it commits, never collides with
  * a steward turn. The app's files are the coding agent's; the steward does not
  * edit them.
+ *
+ * An Op that has to change the checkout (applying a build, a workspace
+ * upgrade) says so with `changesCheckout` and runs under a work item's lease
+ * (`workLease`, #2748): its leased steps get a worktree of their own on
+ * `chant/work/<item>`. `declareSteward` refuses such an Op without the lease,
+ * and a scheduled Op whose lease leaves the item to the run.
  */
 
 import type { OpConfig } from "./types";
 import { isValidCronExpression, cronSyntaxMessage } from "./cron";
+import { workLeaseNeedsRunItem, workLeaseProblems } from "./work-lease-decl";
 
 /** The entity marker a steward declaration carries. */
 export const STEWARD_KIND = "Chant::Steward";
@@ -153,6 +160,17 @@ export function declareSteward(config: StewardDeclarationConfig): StewardDeclara
     }
     if (seen.has(op.name)) throw new Error(`Steward "${name}": op "${op.name}" is listed twice`);
     seen.add(op.name);
+    // An Op that changes the checkout runs under a work item's lease, on a
+    // branch of its own (#2748): one that doesn't declare the lease, or
+    // declares it badly, is refused here as the executor would refuse it.
+    const leaseProblems = workLeaseProblems(op);
+    if (leaseProblems.length > 0) throw new Error(`Steward "${name}": ${leaseProblems.join("; ")}`);
+    if (op.schedule && workLeaseNeedsRunItem(op)) {
+      throw new Error(
+        `Steward "${name}": op "${op.name}" is scheduled, but its workLease names no item, and a scheduled run can't be given one. ` +
+          `Name the item, candidates, or the step whose output picks it.`,
+      );
+    }
     const schedule = op.schedule;
     if (!schedule) continue;
     if (!isValidCronExpression(schedule.cron)) {

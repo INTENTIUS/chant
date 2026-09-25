@@ -763,6 +763,11 @@ describe("workspace init and ls (#2534)", () => {
     expect(() => parseArgs(["workspace", "work", "claim", "W-001", "--holder"])).toThrow(/--holder needs a value/);
   });
 
+  test("run takes --work <id> for an Op with a work lease (#2748)", () => {
+    expect(parseArgs(["run", "dispatch", "--work", "W-001", "--holder", "box/dispatch@h"])).toMatchObject({ command: "run", path: "dispatch", work: "W-001", holder: "box/dispatch@h" });
+    expect(() => parseArgs(["run", "dispatch", "--work"])).toThrow(/--work needs a work item id/);
+  });
+
   test("load their modules only when they run", () => {
     const source = readFileSync(join(import.meta.dirname, "main.ts"), "utf-8");
     expect(source).toMatch(/await import\("\.\.\/workspace\/init"\)/);

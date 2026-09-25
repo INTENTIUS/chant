@@ -199,6 +199,25 @@ describe("runOp dispatcher", () => {
     stderrWrite.mockRestore();
   });
 
+  test("--work on an Op with no work lease → exit 1, nothing run (#2748)", async () => {
+    discoverOpsMock.mockResolvedValue({ ops: new Map([makeOp("hello")]), errors: [] });
+    const stderr = makeStderrSpy();
+    const exit = await runOp({ args: makeArgs({ path: "hello", work: "W-1" }), plugins: [], serializers: [] });
+    expect(exit).toBe(1);
+    expect(stderr.join("\n")).toContain('--work W-1: Op "hello" declares no work lease');
+  });
+
+  test("an Op whose work lease leaves the item to the run, run without --work → exit 1 naming the flag (#2748)", async () => {
+    discoverOpsMock.mockResolvedValue({
+      ops: new Map([["leased", { config: { name: "leased", overview: "leased", phases: [], workLease: {} } }]]),
+      errors: [],
+    });
+    const stderr = makeStderrSpy();
+    const exit = await runOp({ args: makeArgs({ path: "leased", holder: "me" }), plugins: [], serializers: [] });
+    expect(exit).toBe(1);
+    expect(stderr.join("\n")).toContain("chant run leased --work <id>");
+  });
+
   test("--report → exit 1 naming the removal, nothing run (#2116)", async () => {
     discoverOpsMock.mockResolvedValue({ ops: new Map([makeOp("hello")]), errors: [] });
     const stderr = makeStderrSpy();

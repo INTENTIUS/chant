@@ -86,6 +86,7 @@ import type {
   OutcomeAttribute,
   OpConfig,
   OpSchedule,
+  OpWorkLease,
   PhaseDefinition,
   StepDefinition,
   ActivityStep,
@@ -187,6 +188,15 @@ export interface OpIR {
    * additive optional key, so it needs no `formatVersion` bump.
    */
   schedule?: OpSchedule;
+  /**
+   * The work item the Op runs under (#2748) — `OpConfig.workLease` verbatim,
+   * a step-output reference in `item` or `outcome` in the same
+   * `{ kind: "step-output-ref", step, path }` shape as in args. Absent when it
+   * declares none. A runtime that can't take the lease must not run the Op.
+   */
+  workLease?: OpWorkLease;
+  /** `OpConfig.changesCheckout` (#2748), present only when true. */
+  changesCheckout?: true;
   phases: OpIRPhase[];
   onFailure: OpIRPhase[];
   /** Every activity profile referenced by a step in this Op, keyed by profile name — from the registry passed to {@link buildOpIR}, empty when none was. */
@@ -350,6 +360,8 @@ export function buildOpIR(
     depends: config.depends ?? [],
     labels: config.labels ?? {},
     ...(config.schedule ? { schedule: config.schedule } : {}),
+    ...(config.workLease ? { workLease: config.workLease } : {}),
+    ...(config.changesCheckout ? { changesCheckout: true as const } : {}),
     phases: config.phases.map((p) => irPhase(p, contractRegistry)),
     onFailure: (config.onFailure ?? []).map((p) => irPhase(p, contractRegistry)),
     activityProfiles: sortedEntries(profiles),
@@ -428,5 +440,7 @@ export function opConfigFromIR(ir: OpIR): OpConfig {
     ...(ir.onFailure.length > 0 ? { onFailure: ir.onFailure.map(opPhaseFromIR) } : {}),
     ...(Object.keys(ir.labels).length > 0 ? { labels: ir.labels } : {}),
     ...(ir.schedule ? { schedule: ir.schedule } : {}),
+    ...(ir.workLease ? { workLease: ir.workLease } : {}),
+    ...(ir.changesCheckout ? { changesCheckout: true } : {}),
   };
 }

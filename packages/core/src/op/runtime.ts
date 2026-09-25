@@ -156,6 +156,12 @@ export interface OpRunStartOptions {
   progress?: (record: StepRecord) => void;
   /** Aborts in-flight work (Ctrl-C). */
   signal?: AbortSignal;
+  /**
+   * For an Op that declares `workLease` (#2748): the work item this run is
+   * for (`--work <id>`) and who holds its lease (`--holder`). Only the local
+   * runtime takes it; a hosted run's lease is taken where the run executes.
+   */
+  work?: { item?: string; holder?: string };
 }
 
 /**

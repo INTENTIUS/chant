@@ -16,17 +16,23 @@
  *   is the Op's own `labels.Env` or `local`;
  * - `lease` is the local steward's own lease ref
  *   (`refs/chant/lease/[<prefix>]_stewards/<name>`), present while a
- *   `chant operator --steward` holds it or until it expires.
+ *   `chant operator --steward` holds it or until it expires;
+ * - an Op's `workLease.held` is the work leases its turns hold (#2748): those
+ *   whose holder is `<steward>/<op>@...` (`stewardWorkHolder`), read from the
+ *   ledger of the Op's work kind, or the member's own.
  */
 
 import { existsSync, realpathSync } from "node:fs";
-import { join, relative } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { discoverStewards } from "../op/discover";
 import { stewardFormFor, stewardLeaseName, type StewardForm } from "../op/steward";
 import { readRunLedger, runEnvOf } from "../lifecycle/run-ledger";
 import { leaseRef } from "../lifecycle/lease";
 import { readBlobBySha, readRefSha } from "../lifecycle/git";
 import { resolveMemberLedger } from "../lifecycle/member-ledger";
+import { listWorkLeases } from "../lifecycle/work-lease";
+import { stewardWorkHolder } from "../op/work-lease-run";
+import type { OpConfig } from "../op/types";
 import type { OpRunRecord } from "../op/runtime";
 import type { ReasonCode } from "./reason-codes";
 
@@ -58,6 +64,24 @@ export interface StatusStewardOp {
   env: string;
   /** The newest run in its run ledger, or null when it has none. */
   lastRun: StatusStewardRun | null;
+  /** Whether the Op changes the checkout, and so runs under a work lease on a branch of its own (#2748). */
+  changesCheckout: boolean;
+  /**
+   * The Op's work lease (#2748), or null when it declares none: the work kind
+   * file whose ledger holds it (null for the member's own), and the leases
+   * the steward's turns of this Op hold, a live one while a turn runs.
+   */
+  workLease: { kind: string | null; held: StatusStewardWorkLease[] } | null;
+}
+
+/** A work lease a steward's turn holds (#2748). */
+export interface StatusStewardWorkLease {
+  item: string;
+  holder: string;
+  token: string;
+  acquiredAt: string;
+  expiresAt: string;
+  state: "active" | "expired";
 }
 
 export interface StatusSteward {
@@ -106,6 +130,21 @@ async function readStewardLease(name: string, memberDir: string, now: string): P
     };
   } catch {
     return null;
+  }
+}
+
+/** The work leases `steward`'s turns of `op` hold, from the ledger of the Op's kind or the member's. */
+async function readHeldWorkLeases(steward: string, op: OpConfig, memberDir: string, now: string): Promise<StatusStewardWorkLease[]> {
+  try {
+    const kind = op.workLease?.kind;
+    const cwd = kind ? dirname(resolve(memberDir, kind)) : memberDir;
+    const { prefix } = await resolveMemberLedger(cwd);
+    const mine = stewardWorkHolder(steward, op.name, "");
+    return (await listWorkLeases({ cwd, memberPrefix: prefix, now: new Date(now) }))
+      .filter((l) => l.holder.startsWith(mine))
+      .map((l) => ({ item: l.item, holder: l.holder, token: l.token, acquiredAt: l.acquiredAt, expiresAt: l.expiresAt, state: l.state }));
+  } catch {
+    return [];
   }
 }
 
@@ -162,6 +201,10 @@ export async function readMemberStewards(
         schedule: op.schedule ? { cron: op.schedule.cron, overlap: "skip" } : null,
         env: opEnv,
         lastRun,
+        changesCheckout: op.changesCheckout === true,
+        workLease: op.workLease
+          ? { kind: op.workLease.kind ?? null, held: await readHeldWorkLeases(declaration.name, op, memberDir, now) }
+          : null,
       });
     }
     stewards.push({

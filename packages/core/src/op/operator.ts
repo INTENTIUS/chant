@@ -41,6 +41,7 @@ import { runOpLocally, OpRunFailure, type OpRunResult } from "./local-executor";
 import { acquireLease, stillHoldsLease, currentHolderId, DEFAULT_LEASE_TTL_MS, type LeaseRecord, type AcquireLeaseResult } from "../lifecycle/lease";
 import { runEnvOf } from "../lifecycle/run-ledger";
 import { stewardLeaseName, type StewardDeclaration } from "./steward";
+import { stewardWorkHolder } from "./work-lease-run";
 import { StaleLockError } from "../lifecycle/git";
 import { cronMatches, cronDueBetween } from "./cron";
 import { createChangeSignalGate, DEFAULT_SIGNAL_FLOOR_MS, type WakeReason } from "./change-signal";
@@ -244,6 +245,9 @@ export async function runOperatorRound(opts: OperatorRoundOptions): Promise<Oper
     try {
       const result = await runOpLocally(config, opts.activities, opts.profiles, opts.signal, {
         ledger: { cwd: opts.cwd },
+        // A steward's turn claims work leases as `<steward>/<op>@<holder>`
+        // (#2748), which is how `workspace status` finds the lease it holds.
+        ...(steward ? { work: { holder: stewardWorkHolder(steward.name, config.name, holder) } } : {}),
         // #2301: without a sink, `settle` catches a failed ledger append and
         // drops it. That is the failure this tick can least afford to lose —
         // the message below points the reader at the ledger record, which is

@@ -29,6 +29,8 @@ import {
 import schema from "./status.schema.json";
 import { appendRunRecord } from "../lifecycle/run-ledger";
 import { acquireStewardLease } from "../op/operator";
+import { stewardWorkHolder } from "../op/work-lease-run";
+import { claimWorkLease } from "../lifecycle/work-lease";
 
 const REPO = join(import.meta.dirname, "..", "..", "..", "..");
 
@@ -532,7 +534,11 @@ describe("stewards in chant workspace status --json (#2731)", () => {
     const steward = {
       kind: "Chant::Steward",
       name: "box-steward",
-      ops: [op("box-converge", "* * * * *"), op("box-release")],
+      ops: [
+        op("box-converge", "* * * * *"),
+        op("box-release"),
+        { ...op("box-dispatch", "*/5 * * * *"), workLease: { item: ["W-1", "W-2"] }, changesCheckout: true },
+      ],
       form: { default: "local", environments: { "fountain-k3d": "fountain" } },
       capabilities: ["fountain", "inference"],
       vault: null,
@@ -558,6 +564,10 @@ describe("stewards in chant workspace status --json (#2731)", () => {
       { cwd: box },
     );
     expect((await acquireStewardLease("box-steward", "box-host:1:abc", { cwd: box, now: () => new Date("2026-09-25T10:00:00.000Z") })).acquired).toBe(true);
+    // #2748: the dispatch turn holds W-1; someone else holds W-2.
+    const turn = await claimWorkLease("W-1", stewardWorkHolder("box-steward", "box-dispatch", "box-host:1:abc"), { cwd: box, ttlMs: 600_000, now: () => new Date("2026-09-25T10:00:30.000Z") });
+    expect(turn.ok).toBe(true);
+    expect((await claimWorkLease("W-2", "someone-else", { cwd: box, ttlMs: 600_000, now: () => new Date("2026-09-25T10:00:30.000Z") })).ok).toBe(true);
 
     const doc = result(await workspaceStatus({ cwd: root, env: "minimal", now: "2026-09-25T10:01:00.000Z" }));
     expectValid(doc);
@@ -585,8 +595,30 @@ describe("stewards in chant workspace status --json (#2731)", () => {
         schedule: { cron: "* * * * *", overlap: "skip" },
         env: "local",
         lastRun: { id: expect.any(String), status: "ok", started: "2026-09-25T10:00:00.000Z", ended: "2026-09-25T10:00:05.000Z", gate: null },
+        changesCheckout: false,
+        workLease: null,
       },
-      { name: "box-release", schedule: null, env: "local", lastRun: null },
+      { name: "box-release", schedule: null, env: "local", lastRun: null, changesCheckout: false, workLease: null },
+      {
+        name: "box-dispatch",
+        schedule: { cron: "*/5 * * * *", overlap: "skip" },
+        env: "local",
+        lastRun: null,
+        changesCheckout: true,
+        workLease: {
+          kind: null,
+          held: [
+            {
+              item: "W-1",
+              holder: "box-steward/box-dispatch@box-host:1:abc",
+              token: turn.ok ? turn.lease.token : "",
+              acquiredAt: "2026-09-25T10:00:30.000Z",
+              expiresAt: "2026-09-25T10:10:30.000Z",
+              state: "active",
+            },
+          ],
+        },
+      },
     ]);
 
     const k3d = result(await workspaceStatus({ cwd: root, env: "fountain-k3d", now: "2026-09-25T11:00:00.000Z" }));

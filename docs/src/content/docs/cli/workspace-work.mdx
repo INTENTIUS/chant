@@ -26,6 +26,8 @@ The lease is the [operator lease](/chant/cli/operator/) under another key. Its r
 
 The command finds the item first, in the work kind `--kind` names or, without it, in the one work kind the [declaration](/chant/reference/workspace-declaration/#record-kinds) names that has a record with the id. An id no work record has is an error, and so is a claim on an item in a closed state such as `done` or `dropped`. Renew and release don't check the state, so a lease can always be given back.
 
+An Op that declares `workLease` claims, renews and releases an item's lease itself, with the same semantics as these verbs: a heartbeat at a third of the lease's time to live, a lost lease that stops the run, and a release carrying the run's outcome ([#2748](https://github.com/INTENTIUS/chant/issues/2748)). See [Running under a work lease](/chant/guide/ops/#running-under-a-work-lease). This command is for a runner outside an Op, and for closing out a lease by hand.
+
 ### Separate clones
 
 When the repository has a remote, a claim or renew fetches the lease ref from it before deciding. The write counts only once the remote has taken the push. If another clone claimed the item first, the remote refuses the push. The command then undoes the local write and refuses with `lease-push-rejected`. A release deletes the ref on the remote too. Workers in separate clones of one remote coordinate through it the way processes in one clone coordinate through the local ref. A repository with no remote coordinates only the processes that share its `.git` directory.
