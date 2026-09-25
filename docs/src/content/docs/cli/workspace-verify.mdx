@@ -38,6 +38,8 @@ Two files hold the policy. Both are optional, and both are read at base.
 }
 ```
 
+The same signers file checks sealed review verdicts, which are signed in the `chant-review` namespace ([#2687](https://github.com/INTENTIUS/chant/issues/2687)). A line restricted with `namespaces="git"` signs commits only. A reviewer's line needs `namespaces="git,chant-review"` or no `namespaces` option at all. [Sealing a verdict](/chant/cli/workspace-records/#sealing-a-verdict) has the rest.
+
 Role grants live in `trust.json` for now. Once `chant.workspace.json` exists ([#2534](https://github.com/INTENTIUS/chant/issues/2534)), they move into the declaration.
 
 Some signer lines are never used, and the command reports each one with the reason:

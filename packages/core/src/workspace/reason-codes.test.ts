@@ -19,7 +19,7 @@ import { GROUP_REASON_CODES, MEMBER_REASON_CODES } from "./ls";
 import intentSchema from "./intent.schema.json";
 import { isPluginCode, isReasonCode, REASON_CODES, REASONS } from "./reason-codes";
 import { contract } from "./__fixtures__/contract-repo";
-import { READ_ERROR_CODES, RECORD_REASON_CODES, RECORD_WARNING_CODES, REVIEW_REASON_CODES } from "./records";
+import { READ_ERROR_CODES, RECORD_REASON_CODES, RECORD_WARNING_CODES, REVIEW_REASON_CODES, SEAL_REASON_CODES } from "./records";
 import { AMEND_ERROR_CODES, NEW_ERROR_CODES, REVIEW_ERROR_CODES } from "./records-write";
 import { RECORDS_SINCE_ERROR_CODES } from "./records-since";
 import { STATUS_ERROR_CODES, STATUS_GATE_REASON_CODES, STATUS_REASON_CODES } from "./status";
@@ -41,6 +41,7 @@ const PER_COMMAND: Record<string, readonly string[]> = {
   RECORD_REASON_CODES,
   RECORD_WARNING_CODES,
   REVIEW_REASON_CODES,
+  SEAL_REASON_CODES,
   WORK_WARNING_CODES,
   READ_ERROR_CODES,
   NEW_ERROR_CODES,

@@ -100,10 +100,40 @@ export const REVIEW_REASON_CODES = [
   "review-duplicate",
   /** The verdict's digest is not the digest of the record's text now: the record changed after the verdict (#2672). */
   "review-older-digest",
-  /** An attestation policy is active at base, and the verdict carries no seal. */
+  /**
+   * An attestation policy is active at base, and the verdict's seal does not
+   * verify for its reviewer: it has none, the reviewer has no key in the
+   * signers file, or the signature fails (#2687).
+   */
   "review-unattested",
 ] as const satisfies readonly ReasonCode[];
 export type ReviewReasonCode = (typeof REVIEW_REASON_CODES)[number];
+
+/**
+ * Why a verdict's seal is not attested (#2687). Closed, like the reason
+ * codes. Every verdict in the quorum carries one of these in its
+ * `attestation`, unless its seal verified.
+ */
+export const SEAL_REASON_CODES = [
+  /** The verdict carries no seal. */
+  "seal-missing",
+  /** The reviewer has no key in the signers file at base. */
+  "seal-signer-unlisted",
+  /** The seal is malformed, names another signer, or its signature does not verify over the verdict. */
+  "seal-signature-invalid",
+  /** Nothing here can say whose seal it is: there is no signers file at base, or ssh-keygen is not installed. */
+  "seal-unverifiable",
+] as const satisfies readonly ReasonCode[];
+export type SealCode = (typeof SEAL_REASON_CODES)[number];
+
+/** What a verdict's seal establishes (#2687). See `trust/seal.ts`. */
+export interface VerdictAttestation {
+  /** Why the verdict is not attested. Absent when its seal verified. */
+  code?: SealCode;
+  message: string;
+  /** The fingerprint of the key that made the signature, when it was checked. */
+  key?: string;
+}
 
 export interface RecordWarning {
   /** A work kind's records also carry the codes of `WORK_WARNING_CODES` (#2683). */
@@ -664,6 +694,13 @@ export interface QuorumVerdict {
   verdict: "agree" | "dissent" | "abstain";
   /** The digest the verdict names, or null when it names none. */
   digest: string | null;
+  /**
+   * true when its seal verifies for the reviewer against the signers at base;
+   * false when a seal is missing under an active policy, or fails; null when
+   * nothing here can say (#2687).
+   */
+  attested: boolean | null;
+  attestation: VerdictAttestation;
   /** Why it does not count. Absent on a counted verdict. */
   reason?: { code: ReviewReasonCode; message: string };
 }
@@ -703,6 +740,30 @@ export interface QuorumOptions {
   agents: ReadonlySet<string>;
   /** Whether an attestation policy is active, so a verdict needs a seal to count. */
   attestation: boolean;
+  /**
+   * Checks one verdict's seal (#2687), as `trust/seal.ts` does against the
+   * policy at base. Without it no seal is checked: a sealed verdict is
+   * `seal-unverifiable`, so under an active policy none counts.
+   */
+  verifySeal?: (v: SealInput) => { attested: boolean | null } & VerdictAttestation;
+}
+
+/** What a seal check reads of one verdict. */
+export interface SealInput {
+  record: string | null;
+  reviewer: string;
+  verdict: string;
+  on: unknown;
+  digest: string | null;
+  seal: unknown;
+}
+
+/** The check used when {@link QuorumOptions.verifySeal} is not given. */
+function uncheckedSeal(attestation: boolean, v: SealInput): { attested: boolean | null } & VerdictAttestation {
+  if (v.seal === undefined || v.seal === null) {
+    return { attested: attestation ? false : null, code: "seal-missing", message: `the verdict by ${v.reviewer} carries no seal` };
+  }
+  return { attested: null, code: "seal-unverifiable", message: `the seal by ${v.reviewer} was not checked` };
 }
 
 const VERDICTS = new Set(["agree", "dissent", "abstain"]);
@@ -713,28 +774,36 @@ const VERDICTS = new Set(["agree", "dissent", "abstain"]);
  * Malformed entries are skipped; the schema reports them.
  *
  * A verdict is not counted when its reviewer is the decider, holds the agent
- * role, names a digest other than the record's own now, or carries no seal
- * under an active attestation policy, in that order. Of the rest, the latest
- * verdict per principal counts and each earlier one is a duplicate. No
- * verdict carries a seal yet (#2546), so under an active policy none counts.
+ * role, names a digest other than the record's own now, or, under an active
+ * attestation policy, carries no seal that verifies for its reviewer (#2687),
+ * in that order. Of the rest, the latest verdict per principal counts and
+ * each earlier one is a duplicate. Every verdict reports its seal's check in
+ * `attested` and `attestation`, whether it counts or not.
  */
-export function computeQuorum(kind: RecordKind, entry: Pick<RecordEntry, "data" | "digest">, options: QuorumOptions): Quorum | null {
+export function computeQuorum(kind: RecordKind, entry: Pick<RecordEntry, "data" | "digest"> & { id?: string | null }, options: QuorumOptions): Quorum | null {
   if (!kind.reviews || entry.data === null) return null;
   const list = entry.data[kind.reviews.field];
   const decidedBy = entry.data[kind.reviews.decider];
   const decider = typeof decidedBy === "string" ? normalisePrincipal(decidedBy) : null;
+  const idValue = entry.id !== undefined ? entry.id : kind.idField !== undefined ? entry.data[kind.idField] : null;
+  const record = typeof idValue === "string" ? idValue : null;
   const verdicts: QuorumVerdict[] = [];
   const openConcerns: OpenConcern[] = [];
   (Array.isArray(list) ? list : []).forEach((raw, index) => {
     if (raw === null || typeof raw !== "object") return;
     const r = raw as Record<string, unknown>;
     if (typeof r.reviewer !== "string" || typeof r.verdict !== "string" || !VERDICTS.has(r.verdict)) return;
+    const digest = typeof r.digest === "string" ? r.digest : null;
+    const input: SealInput = { record, reviewer: r.reviewer, verdict: r.verdict, on: r.on, digest, seal: r.seal };
+    const { attested, ...attestation } = options.verifySeal ? options.verifySeal(input) : uncheckedSeal(options.attestation, input);
     const v: QuorumVerdict = {
       index,
       principal: normalisePrincipal(r.reviewer),
       reviewer: r.reviewer,
       verdict: r.verdict as QuorumVerdict["verdict"],
-      digest: typeof r.digest === "string" ? r.digest : null,
+      digest,
+      attested,
+      attestation,
     };
     if (v.principal === decider) {
       v.reason = { code: "review-decider", message: `${v.reviewer} decided this record, and the quorum counts verdicts besides the decider's` };
@@ -742,8 +811,8 @@ export function computeQuorum(kind: RecordKind, entry: Pick<RecordEntry, "data" 
       v.reason = { code: "review-agent", message: `${v.reviewer} holds the agent role in the trust policy at base, and an agent's verdict does not count` };
     } else if (v.digest !== null && v.digest !== entry.digest) {
       v.reason = { code: "review-older-digest", message: `${v.reviewer} judged the text at digest ${v.digest.slice(0, 12)}, and the record's text is now at ${entry.digest.slice(0, 12)}` };
-    } else if (options.attestation) {
-      v.reason = { code: "review-unattested", message: `an attestation policy is active at base, and the verdict by ${v.reviewer} carries no seal` };
+    } else if (options.attestation && attested !== true) {
+      v.reason = { code: "review-unattested", message: `an attestation policy is active at base, and ${attestation.message}` };
     }
     verdicts.push(v);
     if (v.verdict === "dissent" && r.addressed_by == null && r.withdrawn_on == null) {

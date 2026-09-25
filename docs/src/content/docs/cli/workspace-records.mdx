@@ -16,7 +16,7 @@ chant workspace records [--kind <kind file>] --since <rev> [--at <rev>] [--json]
 chant workspace records pin <path>
 chant workspace records new [<kind file>] --from <file|-> [--prefix <prefix>] [--dry-run]
 chant workspace records amend <id> [--kind <kind file>] --set <file|-> [--dry-run]
-chant workspace records review <id> [--kind <kind file>] --verdict agree|dissent|abstain --by <principal> [--note <text>] [--session <id>] [--dry-run]
+chant workspace records review <id> [--kind <kind file>] --verdict agree|dissent|abstain --by <principal> [--note <text>] [--session <id>] [--sign [<key file>]] [--dry-run]
 ```
 
 ## Description
@@ -327,7 +327,7 @@ The digest in the example above is `ws-003`'s in the chant repo at the time of w
 | `review-decider` | is by the record's decider (the `decider` field of the kind's `reviews`, `decided_by` for decisions) |
 | `review-agent` | is by a principal the `agent` role lists in `.chant/trust.json` at base |
 | `review-older-digest` | names a `digest` that isn't the record's `digest` now |
-| `review-unattested` | was given while an attestation policy is active (a signers file exists at base), and it carries no seal. Verdicts carry no seal yet, so under an active policy no verdict counts |
+| `review-unattested` | was given while an attestation policy is active (a signers file exists at base), and it carries no seal that verifies for its reviewer. See [Sealing a verdict](#sealing-a-verdict) |
 | `review-duplicate` | has a later verdict by the same principal that passed the rules above, and only that later one counts |
 
 Names are compared in NFKC form with surrounding spaces trimmed and letters lower-cased. So `alice` and `Alice ` are one reviewer, just as `Lex00` is the decider `lex00`. Every other verdict goes in `counted`. `agreed` counts the ones whose verdict is `agree`, and `met` is true when `agreed` is at least `need`.
@@ -335,6 +335,62 @@ Names are compared in NFKC form with surrounding spaces trimmed and letters lowe
 `openConcerns` lists every dissent that has neither `addressed_by` nor `withdrawn_on`, counted or not. `metWithObjections` is true when `met` is true and `openConcerns` isn't empty. A met count with an open concern is never consensus (RFC 7282), so a reader should show consensus only when `met` is true and `metWithObjections` is false.
 
 Without `--json`, a record with any verdict gets one more line, such as `quorum 2 of 2 agreed, met with objections; 1 not counted, 1 open concern`.
+
+### Sealing a verdict
+
+`--by` is a name the caller types, so on its own a verdict proves nothing about who gave it. A seal fixes that ([#2687](https://github.com/INTENTIUS/chant/issues/2687)). It is an ssh signature by the reviewer, made and checked the way [`chant workspace verify`](/chant/cli/workspace-verify/) checks signed commits: `ssh-keygen -Y sign` makes it, and `ssh-keygen -Y verify` checks it against the signers file read at base. The seal is kept in the verdict's entry:
+
+```yaml
+reviews:
+  - reviewer: "alice@example.com"
+    verdict: "agree"
+    on: "2026-09-24"
+    digest: "00c53dedf2e2c1923c0ea24cba7895c0904beebe7d5be059b1d5fe839009728f"
+    seal:
+      signer: "alice@example.com"
+      key: "SHA256:LrMzekQSoz7Im/LTvppqbuSxiuknp3zn3FqWtbogCB4"
+      signature: "-----BEGIN SSH SIGNATURE-----\nU1NIU0lH...\n-----END SSH SIGNATURE-----\n"
+```
+
+The signature covers five lines joined by LF, with no final newline: the record's id, the verdict's `digest`, the verdict, the reviewer and `on`. It is made in the ssh-keygen namespace `chant-review`, so a commit signature can't stand in for one. Since it covers the digest, a seal binds the verdict to the text it judged. `note`, `session`, `addressed_by` and `withdrawn_on` are outside it. `signer` must name the reviewer, and `key` is the key's fingerprint, which is shown to people but never trusted. The seal sits inside the reviews block, so adding one leaves the record's digest where it was.
+
+To seal a verdict, the reviewer's key must be in the signers file on the target branch, under the exact principal given with `--by`. Names are compared after NFKC, trimming and lower-casing, as the quorum compares them. A line restricted with `namespaces="..."` must list `chant-review`. Adding a key is a protected write, so it goes through its own signed pull request first. The review is then signed with the reviewer's own key:
+
+```bash
+# With a key file: a private key, or a public key whose private half ssh-agent holds
+chant workspace records review ws-052 --kind docs/design/decisions/decision.kind.mjs \
+  --verdict agree --by alice@example.com --sign ~/.ssh/id_ed25519
+
+# With the key git signs commits with (gpg.format ssh and user.signingkey)
+chant workspace records review ws-052 --kind docs/design/decisions/decision.kind.mjs \
+  --verdict agree --by alice@example.com --sign
+```
+
+`--sign` without a file reads `user.signingkey` the way `git commit -S` does when `gpg.format` is `ssh`, including a literal `key::ssh-ed25519 ...` held by the agent. The write doesn't check the key against the signers file. `records` does that on read. A key that can't sign is refused with `review-sign-failed`, and nothing is written. `records new` and `records amend` don't take `--sign` yet. Sealing a record's author is [#2688](https://github.com/INTENTIUS/chant/issues/2688).
+
+On read, each verdict in `counted` and `notCounted` carries `attested` and `attestation: {code, message, key}`. The code is absent when the seal verified:
+
+| Signers file at base | Seal | `attested` | Code | Counts |
+|---|---|---|---|---|
+| active | verifies for the reviewer | `true` | none | yes, unless an earlier rule excludes it |
+| active | none | `false` | `seal-missing` | no, `review-unattested` |
+| active | the reviewer has no key in the file | `false` | `seal-signer-unlisted` | no, `review-unattested` |
+| active | malformed, by another signer, or the signature fails | `false` | `seal-signature-invalid` | no, `review-unattested` |
+| active | `ssh-keygen` isn't installed | `null` | `seal-unverifiable` | no, `review-unattested` |
+| none | none | `null` | `seal-missing` | yes |
+| none | the signature is intact over the verdict | `null` | `seal-unverifiable` | yes |
+| none | the signature fails | `false` | `seal-signature-invalid` | yes |
+
+Without a signers file the only check is that the signature is intact (`ssh-keygen -Y check-novalidate`), since nothing says whose key it is. Seals are reported then, and they don't change what counts. The message of `review-unattested` repeats the seal's message, which names the cause from the table above.
+
+An amendment moves the record's digest. A sealed verdict on the old text then stops counting as `review-older-digest`, and its seal still verifies over the text it judged. Editing the verdict's `digest` to the new one breaks the signature (`seal-signature-invalid`), so the reviewer seals a new verdict instead. To check a seal by hand, write the five lines and verify the signature against the signers file:
+
+```bash
+printf '%s\n%s\n%s\n%s\n%s' ws-052 "$DIGEST" agree alice@example.com 2026-09-24 > verdict.txt
+ssh-keygen -Y verify -f .chant/allowed_signers -I alice@example.com -n chant-review -s verdict.sig < verdict.txt
+```
+
+`verdict.sig` holds the `signature` string with its `\n` escapes turned into line breaks.
 
 ## Exit codes
 
@@ -471,9 +527,9 @@ A kind the declaration names can also be given by its declared name, or by its f
 
 The id never changes (`amend-id-immutable`). Both refusals say what to do instead: write the change as a new record whose `supersedes` names this one, which replaces it once it is approved at least as strongly. An amendment that changes nothing writes nothing and prints an empty `changed`.
 
-`review` appends `{reviewer, verdict, note, on, digest, session}`. `on` is today's date in UTC, `note` and `session` appear only when given, and a dissent without a non-empty `--note` is refused with `review-note-required`. `digest` is the record's digest by the [digest rule](#digest-rule), the one `records --json` prints for it. The command rewrites only the reviews block and keeps every other byte of the file, so after the review the record's digest is still the one the verdict names ([#2672](https://github.com/INTENTIUS/chant/issues/2672)). A record in a closed state takes no review, and a kind that declares no `reviews` takes none (`review-unsupported`).
+`review` appends `{reviewer, verdict, note, on, digest, session, seal}`. `seal` is written only with `--sign`. `on` is today's date in UTC, `note` and `session` appear only when given, and a dissent without a non-empty `--note` is refused with `review-note-required`. `digest` is the record's digest by the [digest rule](#digest-rule), the one `records --json` prints for it. The command rewrites only the reviews block and keeps every other byte of the file, so after the review the record's digest is still the one the verdict names ([#2672](https://github.com/INTENTIUS/chant/issues/2672)). A record in a closed state takes no review, and a kind that declares no `reviews` takes none (`review-unsupported`).
 
-The principal given with `--by` is recorded as given, and chant does not check who it is. Attestation is the seal's job ([#2547](https://github.com/INTENTIUS/chant/issues/2547)): the commit that carries the review is signed, and `records` reports its provenance.
+The principal given with `--by` is recorded as given, and the write does not check who it is. With `--sign`, the verdict carries a seal, and `records` checks it against the signers at base (see [Sealing a verdict](#sealing-a-verdict)). The commit that carries the review has its own provenance ([#2547](https://github.com/INTENTIUS/chant/issues/2547)).
 
 Each command prints one JSON document and exits 0 when it wrote, or would have with `--dry-run`, and 1 when it refused. The documents follow `records-new.schema.json`, `records-amend.schema.json` and `records-review.schema.json` beside `records.schema.json`, listed on the [read contract](/chant/reference/workspace-read-contract/#writing-records) page with their error codes:
 
@@ -518,4 +574,7 @@ chant workspace records new docs/design/decisions/decision.kind.mjs --from - --d
 
 # An agreeing review
 chant workspace records review ws-052 --kind docs/design/decisions/decision.kind.mjs --verdict agree --by alice
+
+# The same review, sealed with the key git signs commits with
+chant workspace records review ws-052 --kind docs/design/decisions/decision.kind.mjs --verdict agree --by alice@example.com --sign
 ```
