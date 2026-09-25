@@ -41,6 +41,7 @@ import { findWorkspaceRoot } from "../project-root";
 import { readDeclaration, readerVersion, WorkspaceReadError, type ErrorLocation, type Member } from "./declaration";
 import type { ReasonCode } from "./reason-codes";
 import { GATE_REASON_CODES, readMemberGates, type GateLedgerReader, type StatusGate, type StatusGateLedger } from "./status-gates";
+import { STEWARD_REASON_CODES, readMemberStewards, type StatusSteward, type StewardReasonCode } from "./status-stewards";
 import { gitTop, workingTree } from "./tree";
 import { handToRootChant } from "./which-chant";
 
@@ -72,6 +73,9 @@ export type StatusReasonCode = (typeof STATUS_REASON_CODES)[number];
 
 /** Why a member's gates can't be listed (#2674). Closed, like {@link STATUS_REASON_CODES}. */
 export const STATUS_GATE_REASON_CODES = GATE_REASON_CODES;
+
+/** Why a member's stewards can't be fully listed (#2731). Closed, like {@link STATUS_REASON_CODES}. */
+export const STATUS_STEWARD_REASON_CODES = STEWARD_REASON_CODES;
 
 /**
  * Why the status couldn't be read at all. The declaration's own codes, except
@@ -149,6 +153,10 @@ export interface StatusMember {
   gates: StatusGate[];
   /** The member's box block as declared, or null when it declares none (#2726). A broker reads the scopes it enforces here. */
   box: StatusBox | null;
+  /** The stewards the member declares (#2731), with their form in `env`, their Ops and each Op's last run. Sorted by name. */
+  stewards: StatusSteward[];
+  /** Why a steward or a last run may be missing from `stewards`. */
+  stewardReasons: { code: StewardReasonCode; message: string }[];
 }
 
 /** A box's brokered capabilities, from the declaration (#2726). */
@@ -188,6 +196,8 @@ export interface StatusQuery {
   readGates?: GateLedgerReader;
   /** The instant a gate's expiry is measured against; now by default. */
   now?: string;
+  /** Reads one member's stewards; the declaration and ledger reader unless a test swaps it. */
+  readStewards?: typeof readMemberStewards;
 }
 
 class StatusError extends Error {
@@ -318,6 +328,7 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
       for (const env of envs) environments.push(await readEnvironment(m, env, found.dir, read));
       const own = await hasMemberLedger(m, found.dir);
       const gates = await readMemberGates(own ? `${MEMBERS_DIR}/${m.name}/${GATES_DIR}` : GATES_DIR, own ? "members" : "flat", commit, envs, found.dir, now, query.readGates);
+      const stewards = await (query.readStewards ?? readMemberStewards)(resolve(found.dir, m.dir), query.env, now, m.kind);
       members.push({
         name: m.name,
         dir: m.dir,
@@ -328,6 +339,8 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
         gateLedger: gates.ledger,
         gates: gates.gates,
         box: m.box === null ? null : { capabilities: m.box.capabilities.map((c) => ({ name: c.name, broker: c.broker, scope: [...c.scope] })) },
+        stewards: stewards.stewards,
+        stewardReasons: stewards.reasons,
       });
     }
     // Several members read from one flat ledger see the same records; say so.

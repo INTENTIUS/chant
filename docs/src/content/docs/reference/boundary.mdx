@@ -39,7 +39,7 @@ This page is generated from `docs/data/boundary.yaml`, which has one row for eac
 | record link kind | `RECORD_LINK_KINDS` in `record-assets.ts` | 2 | 0 | 0 |
 | intent node kind | the node kinds of `intent.schema.json` | 9 | 0 | 3 |
 | intent edge kind | the edge kinds of `intent.schema.json` | 9 | 0 | 3 |
-| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 95 | 0 | 0 |
+| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 98 | 0 | 0 |
 | finding code | the finding codes of `intent.schema.json` | 17 | 0 | 0 |
 | WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 37 | 0 | 0 |
 | hud view | the hud reader requirements H1 to H11 of #2650 | 0 | 11 | 0 |
@@ -144,6 +144,9 @@ Each row follows, in the order of the table above.
 | reason code | `gates-no-ledger` | chant | status.schema.json | The checkout has no chant/lifecycle branch, so there is no gate ledger to read. |
 | reason code | `gates-no-gate-ledger` | chant | status.schema.json | The branch has no gate ledger for the member: no run of it has reached a gate. |
 | reason code | `gates-ledger-unreadable` | chant | status.schema.json | Reading the member's gate ledger failed, so no gate is listed. |
+| reason code | `stewards-unreadable` | chant | status.schema.json | An *.op.ts file could not be imported, so a steward it declares may be missing. |
+| reason code | `stewards-conflict` | chant | status.schema.json | A steward was dropped: its name, or an Op it lists, belongs to another steward. |
+| reason code | `steward-runs-unreadable` | chant | status.schema.json | Reading an Op's run ledger failed, so its last run is null. |
 | reason code | `record-unparseable` | chant | intent.schema.json, records-amend.schema.json, records-close.schema.json, records-new.schema.json, records-review.schema.json, records.schema.json | No front matter, a YAML error or a value outside the JSON subset of YAML, or for a JSON kind a file that is not one object or repeats a member name. |
 | reason code | `record-schema-invalid` | chant | intent.schema.json, records-amend.schema.json, records-close.schema.json, records-new.schema.json, records-review.schema.json, records.schema.json | The record's front matter, or its JSON object, does not match the kind's schema. |
 | reason code | `record-id-duplicate` | chant | intent.schema.json, records-amend.schema.json, records-close.schema.json, records-new.schema.json, records-review.schema.json, records.schema.json | Another record earlier in path order has the same id. |

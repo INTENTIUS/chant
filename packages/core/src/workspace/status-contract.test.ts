@@ -22,10 +22,13 @@ import {
   STATUS_GATE_REASON_CODES,
   STATUS_OUTPUT_SCHEMA_ID,
   STATUS_REASON_CODES,
+  STATUS_STEWARD_REASON_CODES,
   workspaceStatus,
   type StatusDocument,
 } from "./status";
 import schema from "./status.schema.json";
+import { appendRunRecord } from "../lifecycle/run-ledger";
+import { acquireStewardLease } from "../op/operator";
 
 const REPO = join(import.meta.dirname, "..", "..", "..", "..");
 
@@ -148,6 +151,7 @@ describe("status output schema", () => {
     expect(schema.$defs.environment.properties.reason.oneOf[1].properties!.code.enum).toEqual([...STATUS_REASON_CODES]);
     expect(schema.$defs.failure.properties.error.properties.code.enum).toEqual([...STATUS_ERROR_CODES]);
     expect(schema.$defs.gateLedger.properties.reason.oneOf[1].properties!.code.enum).toEqual([...STATUS_GATE_REASON_CODES]);
+    expect(schema.$defs.member.properties.stewardReasons.items.properties.code.enum).toEqual([...STATUS_STEWARD_REASON_CODES]);
   });
 });
 
@@ -482,6 +486,84 @@ describe("gate state in chant workspace status --json (#2674)", () => {
     } finally {
       log.mockRestore();
     }
+  });
+});
+
+describe("stewards in chant workspace status --json (#2731)", () => {
+  const op = (name: string, cron?: string) => ({
+    name,
+    overview: name,
+    phases: [{ name: "Run", steps: [{ kind: "activity", fn: "noop", args: {} }] }],
+    ...(cron ? { schedule: { cron, overlap: "skip" } } : {}),
+  });
+
+  /** A box member declaring one steward, local by default and fountain on fountain-k3d. */
+  function stewarded(): string {
+    const steward = {
+      kind: "Chant::Steward",
+      name: "box-steward",
+      ops: [op("box-converge", "* * * * *"), op("box-release")],
+      form: { default: "local", environments: { "fountain-k3d": "fountain" } },
+    };
+    const root = repo({
+      "chant.workspace.json": declaration([
+        { name: "box", dir: "box", kind: "chant" },
+        { name: "notes", dir: "notes", kind: "other", because: "prose" },
+      ]),
+      "box/chant.config.ts": "export default {};\n",
+      "box/ops/steward.op.ts": `export const steward = ${JSON.stringify(steward)};\n`,
+      "notes/README.md": "notes\n",
+    });
+    lifecycle(root, { "README": "ledger\n" });
+    return root;
+  }
+
+  test("names the steward, its form in the environment asked for, its Ops, schedules, last runs and lease", async () => {
+    const root = stewarded();
+    const box = join(root, "box");
+    await appendRunRecord(
+      { op: "box-converge", env: "local", started: "2026-09-25T10:00:00.000Z", ended: "2026-09-25T10:00:05.000Z", status: "ok", labels: {}, outcomes: {}, phases: [] },
+      { cwd: box },
+    );
+    expect((await acquireStewardLease("box-steward", "box-host:1:abc", { cwd: box, now: () => new Date("2026-09-25T10:00:00.000Z") })).acquired).toBe(true);
+
+    const doc = result(await workspaceStatus({ cwd: root, env: "minimal", now: "2026-09-25T10:01:00.000Z" }));
+    expectValid(doc);
+    const [boxMember, notes] = doc.members;
+    expect(notes.stewards).toEqual([]);
+    expect(boxMember.stewardReasons).toEqual([]);
+    expect(boxMember.stewards).toHaveLength(1);
+    const s = boxMember.stewards[0];
+    expect(s).toMatchObject({
+      name: "box-steward",
+      file: "ops/steward.op.ts",
+      form: "local",
+      forms: { default: "local", environments: { "fountain-k3d": "fountain" } },
+      lease: { holder: "box-host:1:abc", acquiredAt: "2026-09-25T10:00:00.000Z", live: true },
+    });
+    expect(s.ops).toEqual([
+      {
+        name: "box-converge",
+        schedule: { cron: "* * * * *", overlap: "skip" },
+        env: "local",
+        lastRun: { id: expect.any(String), status: "ok", started: "2026-09-25T10:00:00.000Z", ended: "2026-09-25T10:00:05.000Z", gate: null },
+      },
+      { name: "box-release", schedule: null, env: "local", lastRun: null },
+    ]);
+
+    const k3d = result(await workspaceStatus({ cwd: root, env: "fountain-k3d", now: "2026-09-25T11:00:00.000Z" }));
+    expectValid(k3d);
+    expect(k3d.members[0].stewards[0].form).toBe("fountain");
+    expect(k3d.members[0].stewards[0].lease!.live).toBe(false);
+  });
+
+  test("an op file that can't be imported is a reason, and the read still succeeds", async () => {
+    const root = stewarded();
+    writeFileSync(join(root, "box", "ops", "broken.op.ts"), "export const x = ;\n");
+    const doc = result(await workspaceStatus({ cwd: root, env: "minimal" }));
+    expectValid(doc);
+    expect(doc.members[0].stewards.map((s) => s.name)).toEqual(["box-steward"]);
+    expect(doc.members[0].stewardReasons.map((r) => r.code)).toEqual(["stewards-unreadable"]);
   });
 });
 

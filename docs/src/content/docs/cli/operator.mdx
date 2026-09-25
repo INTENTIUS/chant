@@ -37,6 +37,7 @@ chant operator --once
 | `--env <name>` | all | Scope discovery to ConvergeOps declaring this environment (`labels.Env`) |
 | `--interval <duration>` | `60s` | How often the daemon runs a round. Accepts the same duration syntax as an activity profile timeout (`30s`, `5m`, `1h30m`) |
 | `--lease-ttl <duration>` | `5m` | How long an acquired lease is valid before another operator can reclaim it |
+| `--steward [<name>]` | off | Run a declared steward's scheduled Ops instead of the ConvergeOps. See below |
 | `--once` | off | Run a single round and exit, instead of looping. Exits non-zero if any op's tick failed this round. What a cron job, CI step, systemd timer, or Kubernetes CronJob should pass — the daemon form (`--once` omitted) is for a machine that stays up |
 
 Each round prints one line per discovered `ConvergeOp`:
@@ -48,6 +49,20 @@ operator: nightly-converge@prod skipped=1(not-due:0 3 * * *)
 ```
 
 A `ConvergeOp` that declares its own `schedule` cron is ticked on that cron rather than on every round: the daemon still wakes on `--interval`, but an op whose cron has not fired since the operator last looked at it is skipped as `not-due`. `--interval` is the fallback for an op with no cron of its own, and the resolution at which any cron can be honoured — a round that runs every five minutes cannot see a per-minute cron.
+
+#### `operator --steward [<name>]`
+
+Run a declared steward's local form instead of every ConvergeOp ([#2731](https://github.com/INTENTIUS/chant/issues/2731)). A steward is the one writer for an environment: on Fountain it is the fountain lexicon's `Steward` Agent and Teammate, and on a box with no Fountain behind it, it is this command. The declaration is found in the project's `*.op.ts` files, from `declareSteward` in `@intentius/chant/op` or the fountain `Steward`'s `declaration`.
+
+```bash
+chant operator --steward                         # the project's only steward
+chant operator --steward box-steward --env minimal
+chant operator --steward box-steward --once
+```
+
+The command refuses to start when the steward's form in `--env` (default `local`) is `fountain`, since the Fountain teammate is the steward there, and when another live process holds the steward's lease, `refs/chant/lease/_stewards/<name>`. Each round renews that lease and then runs the steward's scheduled Ops, each on its own cron and under its own operator lease, as the ConvergeOp rounds above do. An Op with no schedule is left for someone to run by hand. Each run lands on the run ledger. A round that finds the steward's lease held by another process ticks nothing and prints `operator: steward <name> skipped=1(steward-lease-held:<holder>)`. `--interval`, `--lease-ttl` and `--once` work as they do without `--steward`. The lease is released on Ctrl-C or SIGTERM.
+
+`chant workspace status --json` reports the steward with its lease and the last run of each Op. [The Steward](/chant/lexicons/fountain/steward/) covers the declaration and how the steward shares a checkout with a coding agent.
 
 ### `operator status`
 

@@ -100,8 +100,17 @@ export type {
 } from "./converge-rule";
 export {
   discoverConvergeOps, runOperatorRound, runOperatorForever, formatRoundLine,
-  formatSignalLine, DEFAULT_OPERATOR_INTERVAL_MS,
+  formatSignalLine, DEFAULT_OPERATOR_INTERVAL_MS, acquireStewardLease,
 } from "./operator";
+export {
+  declareSteward, isStewardDeclaration, stewardFormFor, stewardOpConfig, normaliseStewardForm, stewardLeaseName,
+  STEWARD_KIND, STEWARD_FORMS, STEWARD_NAME_PATTERN, DEFAULT_STEWARD_ENV,
+} from "./steward";
+export type {
+  StewardDeclaration, StewardDeclarationConfig, StewardForm, StewardFormSpec, StewardOpInput,
+} from "./steward";
+export { discoverStewards } from "./discover";
+export type { DiscoveredSteward, StewardDiscoveryResult } from "./discover";
 export type {
   OperatorTickEvent, OperatorRoundOptions, OperatorLoopOptions,
   ChangeSubscriber, OperatorSignalEvent,

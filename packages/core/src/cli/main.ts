@@ -483,6 +483,16 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.interval = args[++i];
     } else if (arg === "--lease-ttl") {
       result.leaseTtl = args[++i];
+    } else if (arg === "--steward") {
+      // #2731 — the name is optional: a project with one steward runs it
+      // with a bare `--steward`.
+      const next = args[i + 1];
+      if (next !== undefined && !next.startsWith("-")) {
+        result.steward = next;
+        i++;
+      } else {
+        result.steward = "";
+      }
     } else if (arg === "--once") {
       result.once = true;
     } else if (arg === "--note") {
@@ -691,7 +701,10 @@ Ops:
                         environment; --interval <dur> (default 60s) and
                         --lease-ttl <dur> (default 5m) tune cadence; --once
                         runs a single round and exits (cron/systemd-timer/
-                        CronJob invokers use this instead of the daemon)
+                        CronJob invokers use this instead of the daemon).
+                        --steward [<name>] runs a declared steward's local
+                        form instead (#2731): its scheduled Ops on their
+                        crons, under the steward's own lease
   operator status        Last tick, outcomes, and pending gates per
                         ConvergeOp, read from the chant/lifecycle orphan
                         branch alone — no daemon needs to be running

@@ -104,6 +104,9 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `gates-no-ledger` | gate ledger, `status` | The checkout has no `chant/lifecycle` branch, so there is no gate ledger to read. |
 | `gates-no-gate-ledger` | gate ledger, `status` | The branch has no gate ledger for the member, because no run of it has reached a gate. |
 | `gates-ledger-unreadable` | gate ledger, `status` | Reading the member's gate ledger failed, so no gate is listed. |
+| `stewards-unreadable` | stewards, `status` | An `*.op.ts` file could not be imported, so a steward it declares may be missing. |
+| `stewards-conflict` | stewards, `status` | A steward was dropped: its name, or an Op it lists, belongs to another steward. |
+| `steward-runs-unreadable` | stewards, `status` | Reading an Op's run ledger failed, so its last run is null. |
 | `record-unparseable` | record, `records` | No front matter, a YAML error or a value outside the JSON subset of YAML, or for a JSON kind a file that is not one object or repeats a member name. |
 | `record-schema-invalid` | record, `records` | The record's front matter, or its JSON object, doesn't match the kind's schema. |
 | `record-id-duplicate` | record, `records` | An earlier record in path order has the same id. |
@@ -336,6 +339,10 @@ Each component also lists the environments it may be deployed to in `environment
 ## Boxes
 
 `chant workspace status --json` lists each member's `box`, the capabilities its [box block](/chant/reference/workspace-declaration/#boxes) declares, each with `name`, `broker` and `scope` ([#2726](https://github.com/INTENTIUS/chant/issues/2726)). It is `null` for a member with no block. A broker reads the scope it enforces for a box here. `chant workspace check` reports a box that holds a literal secret with `box-credential-declared` and a capability with no broker with `box-capability-unbrokered`, each carried as `code` on its `WSP` finding.
+
+## Stewards
+
+`chant workspace status --json` also lists each member's stewards in `stewards` ([#2731](https://github.com/INTENTIUS/chant/issues/2731)), a contract version 1 addition that readers who don't know it ignore. A steward is the one writer that runs a member's operational Ops: the fountain lexicon's Agent and Teammate, or `chant operator --steward` in the box. An entry names the steward and the file that declares it. `form` is where it runs in the environment asked for, and `forms` is the declared default with its per-environment exceptions. `lease` is the lease a local steward holds while it runs, or `null`. Each entry in `ops` has the Op's `schedule`, the `env` its runs are recorded under and its `lastRun` from the run ledger; the schedule is `null` for an Op run only on request, and `lastRun` is `null` before the first run. Only members of kind `chant` with a config of their own are read, and only their `*.op.ts` files are imported. `stewardReasons` says when a steward or a last run could not be read. hud and the studio read this to show which steward owns a box and what it last did.
 
 ## Joining the documents
 
