@@ -40,7 +40,7 @@ This page is generated from `docs/data/boundary.yaml`, which has one row for eac
 | intent node kind | the node kinds of `intent.schema.json` | 9 | 0 | 3 |
 | intent edge kind | the edge kinds of `intent.schema.json` | 9 | 0 | 3 |
 | reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 76 | 0 | 0 |
-| finding code | the finding codes of `intent.schema.json` | 15 | 0 | 0 |
+| finding code | the finding codes of `intent.schema.json` | 17 | 0 | 0 |
 | WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 35 | 0 | 0 |
 | hud view | the hud reader requirements H1 to H11 of #2650 | 0 | 11 | 0 |
 
@@ -161,7 +161,7 @@ Each row follows, in the order of the table above.
 | reason code | `work-implements-undecided` | chant | intent.schema.json, records.schema.json | A work record implements a decision whose state is not approved, such as proposed. |
 | reason code | `work-done-unpinned` | chant | intent.schema.json, records.schema.json | A work record is done and its evidence list is empty: nothing shows the work was done. |
 | reason code | `work-closed-without-date` | chant | intent.schema.json, records.schema.json | A work record is done or dropped and has no closing date. |
-| reason code | `work-done-gap-open` | chant | intent.schema.json | A work record is done, and the finding it came from still fires on its region. Only graph --intent raises it. |
+| reason code | `work-done-gap-open` | chant | intent.schema.json, records.schema.json | A work record is done, and the finding it came from still fires on its region. graph --intent raises it, and records does by walking that region. |
 | reason code | `review-decider` | chant | records.schema.json | The verdict is the decider's own, and the quorum counts verdicts besides the decider's. |
 | reason code | `review-agent` | chant | records.schema.json | The reviewer holds the agent role in the trust policy at base. |
 | reason code | `review-duplicate` | chant | records.schema.json | A later verdict by the same principal replaces this one. Names are compared after NFKC, trimming and lower-casing. |
@@ -200,9 +200,11 @@ Each row follows, in the order of the table above.
 | finding code | `intent-commit-bare` | chant | intent.schema.json | A commit names no unit, no pull request and no decision covering the region at its time. |
 | finding code | `intent-pin-drifted` | chant | intent.schema.json | A decision's pinned artifact no longer hashes to the pin. |
 | finding code | `intent-pin-missing` | chant | intent.schema.json | A decision's pinned artifact does not exist in the tree read. |
+| finding code | `intent-pin-stale` | chant | intent.schema.json | A current decision pins an artifact at the hash a record it supersedes pinned, and the artifact has not changed since: the decision moved on and the artifact did not. |
 | finding code | `intent-artifact-unpinned` | chant | intent.schema.json | An artifact decisions in the graph pinned, which no current decision pins. |
 | finding code | `intent-decision-superseded-live` | chant | intent.schema.json | Every decision constraining the region is superseded. |
 | finding code | `intent-decision-provisional` | chant | intent.schema.json | The current decisions constraining the region are all in states their kind does not close, such as decided. |
+| finding code | `intent-decision-contested` | chant | intent.schema.json | A current decision constraining the region has an open concern: a dissent neither addressed nor withdrawn. |
 | finding code | `intent-constraint-coarse` | chant | intent.schema.json | The region is constrained only through its member, not by path. |
 | finding code | `intent-constraint-lost` | chant | intent.schema.json | A decision's path constraint names a path that does not exist in the tree read. |
 | finding code | `intent-evidence-unpinned` | chant | intent.schema.json | A decision's evidence has no hash: a URL, or a path with no sha256. |

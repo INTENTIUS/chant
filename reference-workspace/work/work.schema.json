@@ -220,7 +220,7 @@
       }
     },
     "sourceGap": {
-      "description": "The gap the work closes, as chant workspace graph --intent reported it (#2683). The honest way to finish the work is to make the finding stop firing on the region; graph --intent warns work-done-gap-open on a done item whose finding still fires.",
+      "description": "The gap the work closes, as chant workspace graph --intent reported it (#2683). The honest way to finish the work is to make the finding stop firing on the region; graph --intent and records warn work-done-gap-open on a done item whose finding still fires.",
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -237,9 +237,11 @@
                 "intent-commit-bare",
                 "intent-pin-drifted",
                 "intent-pin-missing",
+                "intent-pin-stale",
                 "intent-artifact-unpinned",
                 "intent-decision-superseded-live",
                 "intent-decision-provisional",
+                "intent-decision-contested",
                 "intent-constraint-coarse",
                 "intent-constraint-lost",
                 "intent-evidence-unpinned",

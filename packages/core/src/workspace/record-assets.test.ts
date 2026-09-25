@@ -169,8 +169,8 @@ describe("chant workspace records checks each pin", () => {
   });
 
   test("the schema lists exactly the warning codes", () => {
-    // A work kind's records carry the work warnings too, except work-done-gap-open, which only graph --intent raises (#2683).
-    expect(recordsSchema.$defs.warning.properties.code.enum).toEqual([...RECORD_WARNING_CODES, ...WORK_WARNING_CODES.filter((c) => c !== "work-done-gap-open")]);
+    // A work kind's records carry the work warnings too (#2683), work-done-gap-open included since records walks a done item's region (#2686).
+    expect(recordsSchema.$defs.warning.properties.code.enum).toEqual([...RECORD_WARNING_CODES, ...WORK_WARNING_CODES]);
   });
 
   test("records pin <path> prints the entry's path from the workspace root and the file's hash", () => {

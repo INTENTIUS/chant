@@ -146,7 +146,9 @@ describe("work records on read (#2683)", () => {
     const by = Object.fromEntries(doc.records.map((r) => [r.id, r]));
     expect(by["W-001"]).toMatchObject({ ready: false, blockedBy: [], implements: [{ id: "dec-001", state: "decided" }], warnings: [] });
     expect(by["W-002"]).toMatchObject({ ready: false, blockedBy: [{ id: "W-001", state: "in-progress" }], implements: [], warnings: [] });
-    expect(by["W-003"]).toMatchObject({ ready: false, blockedBy: [], warnings: [] });
+    // W-003 is done, and intent-commit-undecided, its gap, still fires on app/server.mjs: c0 changed it before any decision (#2686).
+    expect(by["W-003"]).toMatchObject({ ready: false, blockedBy: [] });
+    expect(by["W-003"].warnings.map((w: { code: string }) => w.code)).toEqual(["work-done-gap-open"]);
     expect(doc.decisions).toEqual([
       { id: "dec-001", path: "decisions/dec-001-server.md", state: "decided", supersededBy: null, implementedBy: [{ id: "W-001", state: "in-progress" }] },
       { id: "dec-002", path: "decisions/dec-002-other.md", state: "decided", supersededBy: null, implementedBy: [{ id: "W-004", state: "dropped" }] },

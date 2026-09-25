@@ -118,6 +118,7 @@ The read warns about links it can't follow. The warnings leave the record valid:
 | `work-implements-undecided` | implements a decision that is still `proposed` or was `withdrawn` |
 | `work-done-unpinned` | is done with an empty evidence list |
 | `work-closed-without-date` | is done or dropped with no `closed_on` |
+| `work-done-gap-open` | is done, and the finding its `source` names still fires on its region |
 
 ## Pick ready work as an agent
 
@@ -151,7 +152,7 @@ The work kind adds three findings to `graph --intent`:
 
 ## Close one
 
-Work that came from a gap is done when the finding stops firing on its region. Walk the region again before you close it. If the finding still fires on a record marked `done`, the walk warns `work-done-gap-open` on that record. Only `graph --intent` walks a region, so `records` doesn't raise this warning.
+Work that came from a gap is done when the finding stops firing on its region. Walk the region again before you close it. If the finding still fires on a record marked `done`, the walk warns `work-done-gap-open` on that record. `records` raises the same warning ([#2686](https://github.com/INTENTIUS/chant/issues/2686)). For each done item whose `source` names a finding and a region, it walks that region at the revision it reads, so the queue shows a closed item whose gap is still open. That walk needs git and a workspace declaration. Where either is missing or the region is gone, `records` stays silent and only `graph --intent` can tell.
 
 Some gaps can't be walked again, such as one that came from an issue. For those, the evidence is the proof. Pin the file the work produced by its hash:
 

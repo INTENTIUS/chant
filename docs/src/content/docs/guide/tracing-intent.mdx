@@ -41,7 +41,9 @@ Each finding marks a place where the record is thin. None of them says the code 
 | `intent-commit-undecided` | Was this change meant to carry out a decision? If so, which one, and should it name this path? |
 | `intent-constraint-coarse` | Only a member-wide decision covers this code. Should a decision name the path? |
 | `intent-decision-provisional` | No one has ratified the decisions this code rests on. Should they be reviewed first? |
+| `intent-decision-contested` | A reviewer dissented from the decision this code rests on, and the concern has been neither answered nor withdrawn. Should someone answer it before more code builds on the decision? |
 | `intent-pin-drifted` | The artifact changed after the decision pinned it. Does the decision still hold for the new version? |
+| `intent-pin-stale` | A newer decision replaced the old one, and the artifact is still at the hash the old one pinned. Should the artifact change to match the new decision? |
 | `intent-artifact-unpinned` | Only a superseded decision pinned this artifact. Should the decision that replaced it pin it too? |
 | `intent-decision-superseded-live` | The decision covering this code was replaced, and nothing newer covers it. Does the replacement apply here? |
 | `intent-region-unconstrained` | No decision covers this code. Is one needed? |

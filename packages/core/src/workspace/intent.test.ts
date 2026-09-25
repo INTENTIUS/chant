@@ -443,6 +443,8 @@ describe("findings the fixture does not raise (#2651)", () => {
         expect(findings(doc).map(([c]) => c)).toEqual([
           "intent-commit-undecided",
           "intent-commit-bare",
+          // dec-002 supersedes dec-001 and pins the spec at the hash dec-001 pinned, unchanged since (#2686).
+          "intent-pin-stale",
           "intent-decision-provisional",
           "intent-constraint-coarse",
           "intent-constraint-lost",

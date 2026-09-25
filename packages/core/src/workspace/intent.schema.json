@@ -924,7 +924,7 @@
         },
         "warnings": {
           "type": "array",
-          "description": "The item's work warnings as records reports them, and work-done-gap-open, which only this walk raises: the item is done and the finding in its source still fires on its region.",
+          "description": "The item's work warnings as records reports them, and work-done-gap-open: the item is done and the finding in its source still fires on its region. records raises it too, by walking the source's region with this code (#2686).",
           "items": {
             "type": "object",
             "required": [
@@ -1088,9 +1088,11 @@
                 "intent-commit-bare",
                 "intent-pin-drifted",
                 "intent-pin-missing",
+                "intent-pin-stale",
                 "intent-artifact-unpinned",
                 "intent-decision-superseded-live",
                 "intent-decision-provisional",
+                "intent-decision-contested",
                 "intent-constraint-coarse",
                 "intent-constraint-lost",
                 "intent-evidence-unpinned",
@@ -1128,6 +1130,26 @@
             "type": "string"
           },
           "description": "For a plugin's finding: the refs as the plugin gave them. Those that name a node in the graph are resolved to its id in concerns, after the commit the finding was returned for."
+        },
+        "openConcerns": {
+          "type": "object",
+          "description": "Added by #2686, on intent-decision-contested only: how many open concerns the decision's quorum reports, dissents neither addressed nor withdrawn, and the principals who raised them, normalised as the quorum compares them.",
+          "required": [
+            "count",
+            "principals"
+          ],
+          "properties": {
+            "count": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "principals": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
         },
         "addressed": {
           "type": "boolean",

@@ -71,12 +71,16 @@ export const INTENT_FINDING_CODES = [
   "intent-pin-drifted",
   /** A pinned artifact does not exist in the tree read. */
   "intent-pin-missing",
+  /** A current decision's pin is unchanged at the hash a record it supersedes pinned: the decision moved on and the artifact did not (#2686). */
+  "intent-pin-stale",
   /** An artifact that decisions in the graph pinned, and that no current decision pins. */
   "intent-artifact-unpinned",
   /** Every decision constraining the region is superseded. */
   "intent-decision-superseded-live",
   /** The current decisions constraining the region are all in states their kind does not close, such as decided and not ratified. */
   "intent-decision-provisional",
+  /** A current decision constraining the region has an open concern: a dissent neither addressed nor withdrawn (#2686). */
+  "intent-decision-contested",
   /** The region is constrained only at member granularity. */
   "intent-constraint-coarse",
   /** A decision's path constraint names a path that does not exist. */
@@ -269,6 +273,8 @@ export interface FindingNode {
   plugin?: string;
   /** For a plugin's finding: the refs as the plugin gave them. The ones that name a node in the graph are in concerns. */
   refs?: string[];
+  /** For intent-decision-contested (#2686): how many open concerns the decision has, and whose, as its quorum reports them. */
+  openConcerns?: { count: number; principals: string[] };
   /** With a work kind read (#2683): whether a work item addresses the finding. */
   addressed?: boolean;
   /** With a work kind read: the work items addressing the finding, each with its state. */
@@ -618,7 +624,7 @@ async function loadKinds(query: IntentQuery, top: string): Promise<LoadedKind[]>
     if (typeof joins === "string") throw new IntentError("kind-invalid", `kind file ${k} has a commitJoins export that can't be read: ${joins}`);
     const kind: LoadedKind = { file, display, name: joins?.name ?? basename(file).replace(/(?:\.kind)?\.[cm]?[jt]s$/, ""), ...(joins ? { joins } : {}) };
     if (mod.recordKind !== undefined) {
-      const doc = await queryRecords({ kind: file, at: query.at, cwd: query.cwd });
+      const doc = await queryRecords({ kind: file, at: query.at, cwd: query.cwd, workGaps: false });
       if ("error" in doc) throw new IntentError(doc.error.code, doc.error.message);
       try {
         kind.records = { loaded: await loadRecordKind(file), views: doc.records, workspaceRoot: doc.workspaceRoot };
@@ -951,6 +957,18 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
       edges.push({ kind: "pins", from: p.decision.id, to: aid, pinnedSha256: p.sha256, pinState: p.state });
       if (p.state === "drifted") find("intent-pin-drifted", `${path} changed after ${p.decision.record} pinned it: sha256 ${p.sha256?.slice(0, 12)} is pinned, the file hashes to ${p.actual?.slice(0, 12)}`, [p.decision.id, aid]);
       if (p.state === "missing") find("intent-pin-missing", `${p.decision.record} pins ${path}, which does not exist${located.tree.label}`, [p.decision.id, aid]);
+      // Stale against a current decision constraining the region (#2686): the
+      // record it supersedes pinned the same hash, and the file has not
+      // changed since. A decision in the graph only through supersession
+      // does not govern the region, so its stale pin is not raised here.
+      if (p.state === "stale" && p.decision.supersededBy === null && p.decision.constrains.length > 0) {
+        const old = pins.find((o) => o.decision.supersededBy === p.decision.record && o.decision.recordKind === p.decision.recordKind && o.sha256 === p.sha256);
+        find(
+          "intent-pin-stale",
+          `${path} is pinned by ${p.decision.record} at sha256 ${p.sha256?.slice(0, 12)}, the hash ${old ? old.decision.record : "the record it supersedes"} pinned, and it has not changed since: the decision moved on and the artifact did not`,
+          [p.decision.id, aid, ...(old ? [old.decision.id] : [])],
+        );
+      }
     }
     if (!worst && pins.some((p) => p.state !== "unpinned")) {
       find("intent-artifact-unpinned", `${path} was pinned by ${[...new Set(pins.map((p) => p.decision.record))].join(", ")}, and no current decision pins it`, [aid, ...new Set(pins.map((p) => p.decision.id))]);
@@ -1143,6 +1161,20 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
     } else if (current.every((c) => !c.node.closed)) {
       find("intent-decision-provisional", `the decisions constraining ${region.path} are ${[...new Set(current.map((c) => c.node.state ?? "stateless"))].join(" or ")}, and none is in a closed state`, [rid, ...current.map((c) => c.node.id)]);
     }
+    // A current decision with a dissent nobody addressed or withdrew (#2686), from its quorum.
+    for (const c of current) {
+      const open = c.view.quorum?.openConcerns ?? [];
+      if (open.length === 0) continue;
+      const principals = [...new Set(open.map((o) => o.principal))];
+      findings.push({
+        id: `finding:intent-decision-contested:${findings.filter((f) => f.code === "intent-decision-contested").length + 1}`,
+        kind: "finding",
+        code: "intent-decision-contested",
+        message: `${c.node.record} constrains ${region.path} and has ${open.length} open ${open.length === 1 ? "concern" : "concerns"}, from ${open.map((o) => o.reviewer).join(", ")}: a dissent neither addressed nor withdrawn`,
+        concerns: [c.node.id, rid],
+        openConcerns: { count: open.length, principals },
+      });
+    }
     const granularities = new Set(covering.flatMap((c) => c.node.constrains.map((x) => x.granularity)));
     if (covering.length > 0 && !granularities.has("path") && granularities.has("member")) {
       find("intent-constraint-coarse", `${region.path} is constrained only through its member, ${member}`, [rid, ...covering.map((c) => c.node.id)]);
@@ -1222,7 +1254,7 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
     findings.push({ id: `finding:${code}:${findings.filter((f) => f.code === code).length + 1}`, kind: "finding", code, message: finding.message, concerns, plugin, refs });
   }
   // A finding a work item addresses (#2683): the item came from that gap on
-  // this region, or it implements the decision a drifted or missing pin, or a
+  // this region, or it implements the decision a drifted, missing or stale pin, or a
   // plugin's finding, is about. A done item whose gap still fires here gets
   // work-done-gap-open.
   if (readsWork) {
@@ -1230,7 +1262,7 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
     // artifacts, not gaps in the decision record itself (its review, its
     // granularity, its evidence), so only these findings, and a plugin's,
     // count as addressed through implements.
-    const CLOSED_BY_IMPLEMENTING = new Set<string>(["intent-pin-drifted", "intent-pin-missing"]);
+    const CLOSED_BY_IMPLEMENTING = new Set<string>(["intent-pin-drifted", "intent-pin-missing", "intent-pin-stale"]);
     const fromGap = (h: WorkHit, code: string): boolean => {
       const src = gapSource(h.view.data);
       if (src === null || src.finding !== code) return false;

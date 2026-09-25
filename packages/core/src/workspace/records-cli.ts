@@ -68,6 +68,12 @@ export interface RecordsQuery {
   base?: string;
   /** Where `kind` is resolved from and the repository is found. */
   cwd: string;
+  /**
+   * For a work kind: walk the region of each done item's `source` and raise
+   * `work-done-gap-open` when its finding still fires (#2686). On unless
+   * false; the intent graph passes false, since it raises the warning itself.
+   */
+  workGaps?: boolean;
 }
 
 /**
@@ -275,6 +281,12 @@ export async function queryRecords(query: RecordsQuery): Promise<RecordsDocument
           attestation: policy.active,
         }
       : undefined;
+    const records: RecordView[] = result.records.map((r) => ({
+      ...r,
+      provenance: provenance.get(r.path)!,
+      ...(quorumOptions ? { quorum: computeQuorum(loaded.kind, r, quorumOptions) } : {}),
+    }));
+    if (loaded.kind.work && query.workGaps !== false && top) await raiseWorkGaps(loaded, records, { root, workspaceRoot, at: query.at });
     return {
       $schema: RECORDS_OUTPUT_SCHEMA_ID,
       contract: RECORDS_CONTRACT_VERSION,
@@ -288,17 +300,63 @@ export async function queryRecords(query: RecordsQuery): Promise<RecordsDocument
       workspaceRoot,
       current: !!query.current,
       trust: { base: base.commit, baseFrom: base.from, active: policy.active, signersPath: policy.signersPath, problems: policy.problems },
-      records: result.records.map((r) => ({
-        ...r,
-        provenance: provenance.get(r.path)!,
-        ...(quorumOptions ? { quorum: computeQuorum(loaded.kind, r, quorumOptions) } : {}),
-      })),
+      records,
       summary: result.summary,
       ...(result.decisions ? { decisions: result.decisions } : {}),
     };
   } catch (err) {
     if (!(err instanceof RecordReadError)) throw err;
     return { $schema: RECORDS_OUTPUT_SCHEMA_ID, contract: RECORDS_CONTRACT_VERSION, error: { code: err.code, message: err.message } };
+  }
+}
+
+/**
+ * `work-done-gap-open` on a records read (#2686): for each done work record
+ * whose `source` names a finding and a region, walk that region with the
+ * intent graph, at the same revision, and copy the warning the walk raises
+ * on the record. One walk per region, and only a region some done item names.
+ * The walk reads the record kinds the declaration names, and the work kind
+ * and its decision kind if it names neither. It needs git and a workspace
+ * declaration; when the walk can't be made, for one without them or a region
+ * that no longer exists, the record is left as it was.
+ */
+async function raiseWorkGaps(loaded: LoadedRecordKind, records: RecordView[], opts: { root: string; workspaceRoot: string; at: string | undefined }): Promise<void> {
+  const work = loaded.kind.work!;
+  const byRegion = new Map<string, RecordView[]>();
+  for (const r of records) {
+    if (r.id === null || r.state !== work.done) continue;
+    const src = r.data?.source;
+    if (src === null || typeof src !== "object" || Array.isArray(src)) continue;
+    const { finding, region } = src as Record<string, unknown>;
+    if (typeof finding !== "string" || typeof region !== "string") continue;
+    byRegion.set(region, [...(byRegion.get(region) ?? []), r]);
+  }
+  if (byRegion.size === 0) return;
+  const cwd = opts.workspaceRoot === "." ? opts.root : join(opts.root, ...opts.workspaceRoot.split("/"));
+  let declared: string[];
+  try {
+    declared = declaredKindFiles(cwd, opts.at).map((k) => k.file);
+  } catch (err) {
+    if (err instanceof WorkspaceReadError) return;
+    throw err;
+  }
+  const kinds: string[] = [];
+  const seen = new Set<string>();
+  for (const file of [...declared, resolve(dirname(loaded.file), work.decisions), loaded.file]) {
+    const real = realpathOr(file);
+    if (seen.has(real)) continue;
+    seen.add(real);
+    kinds.push(file);
+  }
+  const { intentGraph } = await import("./intent");
+  for (const [region, items] of byRegion) {
+    const { doc } = await intentGraph({ cwd, region, at: opts.at, kinds });
+    if ("error" in doc) continue;
+    for (const r of items) {
+      const node = doc.nodes.find((n) => n.kind === "work" && n.id === `record:${loaded.kind.name}/${r.id}`);
+      const warning = node?.kind === "work" ? node.warnings.find((w) => w.code === "work-done-gap-open") : undefined;
+      if (warning && !r.warnings.some((w) => w.code === warning.code)) r.warnings.push(warning);
+    }
   }
 }
 
