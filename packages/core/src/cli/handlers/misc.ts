@@ -11,16 +11,8 @@ import { homedir } from "os";
 import type { ResourceSelector } from "../../lexicon";
 import { formatError, formatSuccess, formatWarning, formatBold } from "../format";
 import type { CommandContext } from "../registry";
-import { createRequire } from "module";
 import { listComponents, describeComponent } from "../../components/cli-support";
-
-const CHANT_VERSION: string = (() => {
-  try {
-    return createRequire(import.meta.url)("../../../package.json").version ?? "0.0.0";
-  } catch {
-    return "0.0.0";
-  }
-})();
+import { CHANT_VERSION } from "../version";
 
 const AUDIT_FORMATS: AuditFormat[] = ["stylish", "json", "sarif", "markdown", "html"];
 const AUDIT_TIERS: AuditTier[] = ["merge-worthy", "all"];
