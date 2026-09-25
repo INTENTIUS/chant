@@ -110,21 +110,53 @@ export const REVIEW_REASON_CODES = [
 export type ReviewReasonCode = (typeof REVIEW_REASON_CODES)[number];
 
 /**
- * Why a verdict's seal is not attested (#2687). Closed, like the reason
- * codes. Every verdict in the quorum carries one of these in its
- * `attestation`, unless its seal verified.
+ * Why a seal is not attested: a verdict's (#2687), or a record's author seal
+ * (#2688). Closed, like the reason codes. Every verdict in the quorum, and
+ * every parsed record of a kind with a reviews list, carries one of these in
+ * its `attestation`, unless its seal verified.
  */
 export const SEAL_REASON_CODES = [
-  /** The verdict carries no seal. */
+  /** The verdict or record carries no seal. */
   "seal-missing",
-  /** The reviewer has no key in the signers file at base. */
+  /** The reviewer or author has no key in the signers file at base. */
   "seal-signer-unlisted",
-  /** The seal is malformed, names another signer, or its signature does not verify over the verdict. */
+  /** The seal is malformed, names another signer, or its signature does not verify over the verdict or record. */
   "seal-signature-invalid",
   /** Nothing here can say whose seal it is: there is no signers file at base, or ssh-keygen is not installed. */
   "seal-unverifiable",
 ] as const satisfies readonly ReasonCode[];
 export type SealCode = (typeof SEAL_REASON_CODES)[number];
+
+/**
+ * A warning about a record's own seal (#2688), raised by `records` with the
+ * policy at base, never by a write. Closed, like the reason codes.
+ */
+export const SEAL_WARNING_CODES = [
+  /**
+   * A signers file is active at base, the record names its author (the
+   * kind's `reviews.decider` field), and its seal does not verify for that
+   * author: it has none, the author has no key in the file, or the signature
+   * fails. The record is still read, and still valid.
+   */
+  "record-unattested",
+] as const satisfies readonly ReasonCode[];
+export type SealWarningCode = (typeof SEAL_WARNING_CODES)[number];
+
+/**
+ * The top-level field that holds a record's author seal (#2688), on a kind
+ * with a reviews list. Like the reviews block, the record's digest leaves it
+ * out, so sealing a record never moves its digest.
+ */
+export const RECORD_SEAL_FIELD = "seal";
+
+/**
+ * The top-level fields {@link recordTextDigest} leaves out for a kind: its
+ * reviews list and {@link RECORD_SEAL_FIELD} when it has a reviews list, and
+ * nothing when it has none (#2672, #2688).
+ */
+export function digestFields(kind: Pick<RecordKind, "reviews">): string[] | null {
+  return kind.reviews ? [kind.reviews.field, RECORD_SEAL_FIELD] : null;
+}
 
 /** What a verdict's seal establishes (#2687). See `trust/seal.ts`. */
 export interface VerdictAttestation {
@@ -136,8 +168,8 @@ export interface VerdictAttestation {
 }
 
 export interface RecordWarning {
-  /** A work kind's records also carry the codes of `WORK_WARNING_CODES` (#2683). */
-  code: RecordWarningCode | WorkWarningCode;
+  /** A work kind's records also carry the codes of `WORK_WARNING_CODES` (#2683), and `records` adds `SEAL_WARNING_CODES` (#2688). */
+  code: RecordWarningCode | WorkWarningCode | SealWarningCode;
   message: string;
 }
 
@@ -584,34 +616,43 @@ function nonJson(v: unknown, at: string, seen: Set<object>): string | undefined 
  * to the file changes it, so a verdict given before an amendment stops
  * counting.
  *
+ * `field` names the top-level fields left out: one name, or a list. For a
+ * kind with a reviews list the list is the reviews field and `seal`, the
+ * record's author seal (#2688; {@link digestFields}), so sealing a record
+ * leaves its digest where it was too. A record with no `seal` hashes exactly
+ * as it did before author seals existed.
+ *
  * The rule, which a hand-editor can follow with a text editor and
  * `sha256sum`:
  *
  * 1. Line endings become LF (CRLF and a lone CR each become one LF).
  * 2. When the text starts with a `---` line and a later line is exactly
- *    `---`, the lines between them are the front matter. In it, the line
- *    that starts, at column 0, with the key `field` (bare, or in single or
+ *    `---`, the lines between them are the front matter. In it, each line
+ *    that starts, at column 0, with one of the keys (bare, or in single or
  *    double quotes), optional spaces or tabs and a `:`, is removed, and so
  *    is every line after it, up to the closing `---`, that is empty or
  *    starts with a space, a tab, `#` or `-`. Removal stops at the first
  *    other line. Everything else, the `---` lines and the body included, is
- *    kept byte for byte.
+ *    kept byte for byte. Which key is removed first makes no difference.
  * 3. The digest is the SHA-256 of the result's UTF-8 bytes.
  *
- * Text with no front matter, or no such key, is hashed after step 1 alone.
- * A writer that adds a verdict must change only the reviews block: a
+ * Text with no front matter, or none of the keys, is hashed after step 1
+ * alone. A writer that adds a verdict must change only the reviews block: a
  * reformatted front matter is a new digest, and every earlier verdict stops
  * counting.
  */
-export function recordTextDigest(text: string, field: string | null = "reviews", format: RecordFormat = "markdown-front-matter"): string {
+export function recordTextDigest(text: string, field: string | readonly string[] | null = "reviews", format: RecordFormat = "markdown-front-matter"): string {
   const lf = text.replace(/\r\n?/g, "\n");
-  const kept = field === null ? lf : format === "json" ? withoutMember(lf, field) : withoutBlock(lf, field);
+  const fields = field === null ? [] : typeof field === "string" ? [field] : field;
+  const kept = format === "json" ? fields.reduce(withoutMember, lf) : withoutBlocks(lf, fields);
   return createHash("sha256").update(kept, "utf8").digest("hex");
 }
 
 /**
  * `text` with the top-level member `field` removed from a JSON record, by the
- * rule a hand-editor follows for a JSON record (ws-053):
+ * rule a hand-editor follows for a JSON record (ws-053). With several fields
+ * (the reviews member, then `seal`, #2688) the rule is applied to each in
+ * turn, to the text the previous one left:
  *
  * 1. Line endings become LF, as for Markdown.
  * 2. When the text is a JSON record (one object, no repeated member name) and
@@ -654,14 +695,15 @@ function withoutMember(text: string, field: string): string {
   return text.slice(0, start) + text.slice(end);
 }
 
-/** `text` with the top-level `field` block removed from its front matter, by the rule {@link recordTextDigest} states. */
-function withoutBlock(text: string, field: string): string {
+/** `text` with the top-level blocks of `fields` removed from its front matter, by the rule {@link recordTextDigest} states. */
+function withoutBlocks(text: string, fields: readonly string[]): string {
+  if (fields.length === 0) return text;
   const lines = text.split("\n");
   if (lines[0] !== "---") return text;
   const close = lines.indexOf("---", 1);
   if (close < 0) return text;
-  const key = field.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const starts = new RegExp(`^(?:${key}|"${key}"|'${key}')[ \\t]*:(?:[ \\t]|$)`);
+  const keys = fields.map((f) => f.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).map((k) => `${k}|"${k}"|'${k}'`);
+  const starts = new RegExp(`^(?:${keys.join("|")})[ \\t]*:(?:[ \\t]|$)`);
   const out: string[] = [];
   for (let i = 0; i < lines.length; i++) {
     if (i > 0 && i < close && starts.test(lines[i])) {
@@ -876,7 +918,7 @@ export interface RecordEntry {
   assets: AssetPin[];
   /** Findings that leave the record valid, such as a pinned file that changed (#2549). */
   warnings: RecordWarning[];
-  /** {@link recordTextDigest} of the file's text, without the kind's reviews list when it has one (#2672). */
+  /** {@link recordTextDigest} of the file's text, without the kind's reviews list and author seal when it has a reviews list (#2672, #2688). */
   digest: string;
   /** For a session kind only: the subject records' review entries that name this session (#2673). */
   citedBy?: SessionCitation[];
@@ -1041,7 +1083,7 @@ export async function readRecords(loaded: LoadedRecordKind, options: ReadRecords
       data: null,
       assets: [],
       warnings: [],
-      digest: recordTextDigest(text, kind.reviews?.field ?? null, kind.format),
+      digest: recordTextDigest(text, digestFields(kind), kind.format),
     };
     entries.push(entry);
     if (kind.session) texts.set(path, text);

@@ -129,10 +129,11 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `review-duplicate` | verdict, `records` | A later verdict by the same principal replaces this one. Names are compared after NFKC, trimming and lower-casing. |
 | `review-older-digest` | verdict, `records` | The verdict's `digest` is not the record's digest now, so the record changed after the verdict. |
 | `review-unattested` | verdict, `records` | An attestation policy is active at base, and the verdict carries no seal that verifies for its reviewer. The verdict's `attestation` says which of the seal codes below applies. |
-| `seal-missing` | seal, `records` | The verdict carries no seal. |
-| `seal-signer-unlisted` | seal, `records` | The reviewer has no key in the signers file at base, so the seal can't count. |
-| `seal-signature-invalid` | seal, `records` | The seal is malformed, names a signer other than the reviewer, or its signature doesn't verify over the verdict. |
+| `seal-missing` | seal, `records` | The verdict, or the record, carries no seal. |
+| `seal-signer-unlisted` | seal, `records` | The reviewer, or the record's author, has no key in the signers file at base, so the seal can't count. |
+| `seal-signature-invalid` | seal, `records` | The seal is malformed, names a signer other than the reviewer or author, or its signature doesn't verify over the verdict or record. |
 | `seal-unverifiable` | seal, `records` | Nothing here can say whose seal it is: there is no signers file at base, or `ssh-keygen` isn't installed. |
+| `record-unattested` | warning, `records` | A signers file is active at base, and the record names an author whose seal doesn't verify. The record's `attestation` says which seal code applies. The record stays valid. |
 | `kind-unreadable` | error, `records`; reason, `ls` | The record kind file is missing or could not be imported. |
 | `kind-invalid` | error, `records`; reason, `ls` | The record kind file exports no `recordKind`, or its shape is wrong. |
 | `schema-unreadable` | error, `records`; reason, `ls` | The schema file the kind names is missing or isn't JSON. |
@@ -151,6 +152,7 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `review-unsupported` | error, `records review` | The kind's schema has no `reviews` field, so its records take no review. |
 | `review-note-required` | error, `records review` | A dissent was given with no note. |
 | `review-sign-failed` | error, `records review` | `--sign` was given and no seal could be made: the key can't be read or used, git names no ssh signing key, or `ssh-keygen` isn't installed. |
+| `record-sign-failed` | error, `records new` and `amend` | `--sign` was given and no author seal could be made: the record names no author, the key can't be read or used, git names no ssh signing key, or `ssh-keygen` isn't installed. |
 | `since-rev-unknown` | error, `records --since` | `--since` names no commit. |
 | `intent-region-invalid` | error, `graph --intent` | The region's path, or its line range, does not exist in the tree read. |
 | `intent-history-shallow` | reason, `graph --intent` | The repository is a shallow clone, so the region's history stops at the clone's boundary. |
@@ -193,6 +195,8 @@ A record kind says how its files hold their records, and `records --json` names 
 A record kind with a reviews list gives each record in `records --json` a `digest` and a `quorum` ([#2671](https://github.com/INTENTIUS/chant/issues/2671), [#2672](https://github.com/INTENTIUS/chant/issues/2672)). The digest is the SHA-256 of the record's text with its reviews block taken out, and a verdict names it in its own `digest`, so an amendment leaves earlier verdicts on an older digest. The quorum lists every verdict in `counted` or in `notCounted`, and each one in `notCounted` has a `review-` reason code. `need` comes from the declaration's `quorum`, or is 2. `met` says the counted agree verdicts reach `need`. When `met` is true and a dissent is still open, `metWithObjections` is true too, and a reader shows that as met with objections, not as consensus. The rule for the digest and the order the reasons are checked in are on the [`records` page](/chant/cli/workspace-records/#reviews-and-quorum). A reader never computes a digest itself: it reads `digest` from `records --json`.
 
 Each verdict in `counted` and `notCounted` also carries `attested` and `attestation` ([#2687](https://github.com/INTENTIUS/chant/issues/2687)). `attested` is `true` when the verdict's seal verifies for its reviewer against the signers file at base. A seal that fails gives `false`, and so does a missing seal while a signers file is active. When nothing here can say, the value is `null`. `attestation` holds a `message`, the key's fingerprint when a signature was checked, and a `seal-` code whenever `attested` isn't `true`. Once a signers file is active at base, only verdicts with `attested: true` count, and the rest are `review-unattested`. Without a signers file the seal doesn't gate counting. A reader shows a verdict as signed only when `attested` is `true`, and never checks a signature itself. These fields, the four `seal-` codes and `review-sign-failed` were added within contract 1 in the release after 0.86.0, the same way 0.86.0 added its fields and codes. A reader that finds no `attested` is reading an older chant, and treats every verdict as unsigned.
+
+A record of such a kind can carry its author's seal in a top-level `seal` field, and each parsed record then carries `attested` and `attestation` of its own, with the same meanings and codes ([#2688](https://github.com/INTENTIUS/chant/issues/2688)). The author is the field the kind's `reviews.decider` names, `decided_by` for decisions. The digest leaves `seal` out as it leaves the reviews block out, so a record with no seal has the digest it always had. Under an active signers file a record that names an author and isn't attested carries the warning `record-unattested`, and is read like any other. Sealing records is opt-in per workspace, and nothing requires it yet. hud calls a record author-signed only if that record's `attested` is `true`. Whether the commit that last changed the file was signed is `provenance`, a separate question. The release that brought verdict seals brought these too, still within contract 1.
 
 ## Record links and artifacts
 
@@ -340,13 +344,13 @@ A reader writes only through chant commands ([ws-052](https://github.com/INTENTI
 
 | Command | Schema `$id` | Result |
 |---|---|---|
-| `chant workspace records new` | `https://intentius.io/chant/schemas/workspace/records-new/v1/records-new.schema.json` | `path`, `id` |
-| `chant workspace records amend` | `https://intentius.io/chant/schemas/workspace/records-amend/v1/records-amend.schema.json` | `path`, `id`, `changed` |
+| `chant workspace records new` | `https://intentius.io/chant/schemas/workspace/records-new/v1/records-new.schema.json` | `path`, `id`, and `seal` with `--sign` |
+| `chant workspace records amend` | `https://intentius.io/chant/schemas/workspace/records-amend/v1/records-amend.schema.json` | `path`, `id`, `changed`, and `seal` with `--sign` or `sealDropped` when a change removed the seal |
 | `chant workspace records review` | `https://intentius.io/chant/schemas/workspace/records-review/v1/records-review.schema.json` | `path`, `id`, `review` |
 
 The schemas ship beside the read schemas and follow their shape: a `oneOf` of a result and a failure, `contract: 1`, and a closed list of error codes from the same list as every read. A result also carries `kind`, `dryRun`, the written record's `warnings`, and `text` under `--dry-run`. A failure exits 1 and writes nothing. chant 0.86.0 is the first release to print these documents.
 
-A write never makes the caller compute anything about the record. `new` allocates the id, `amend` applies the approval rule, and `review` computes the digest the verdict is bound to. The principal a review names is recorded as the caller gives it. `review --sign` seals the verdict with an ssh key, and `records` then reports whether the seal verifies for that principal against the signers at base ([#2687](https://github.com/INTENTIUS/chant/issues/2687)). The provenance of the commit that carries the file is reported apart from that ([#2547](https://github.com/INTENTIUS/chant/issues/2547)).
+A write never makes the caller compute anything about the record. `new` allocates the id, `amend` applies the approval rule, and `review` computes the digest the verdict is bound to. The principal a review names is recorded as the caller gives it. `review --sign` seals the verdict with an ssh key, and `records` then reports whether the seal verifies for that principal against the signers at base ([#2687](https://github.com/INTENTIUS/chant/issues/2687)). `new --sign` and `amend --sign` seal the record's author the same way ([#2688](https://github.com/INTENTIUS/chant/issues/2688)). The provenance of the commit that carries the file is reported apart from that ([#2547](https://github.com/INTENTIUS/chant/issues/2547)).
 
 ## Testing a reader
 

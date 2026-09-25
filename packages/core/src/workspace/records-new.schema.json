@@ -61,6 +61,30 @@
           "type": "string",
           "description": "The record's id."
         },
+        "seal": {
+          "type": "object",
+          "description": "Added in contract 1 by #2688. With --sign only: the author seal written into the record's top-level seal field, an ssh signature by the key given (or git's user.signingkey) over <id>\\n<digest>\\n<author>\\n<state>, in the ssh-keygen namespace chant-record. The author is the kind's reviews.decider field (decided_by for decisions), and the digest is the record's digest by the digest rule, which leaves the seal field out. The write does not check the key against the signers file; chant workspace records reports whether the seal verifies.",
+          "required": [
+            "signer",
+            "key",
+            "signature"
+          ],
+          "properties": {
+            "signer": {
+              "type": "string",
+              "description": "The record's author, as its reviews.decider field names them."
+            },
+            "key": {
+              "type": "string",
+              "pattern": "^SHA256:[A-Za-z0-9+/]+=*$",
+              "description": "The fingerprint of the key that signed, read back from the signature."
+            },
+            "signature": {
+              "type": "string",
+              "description": "The armored ssh signature."
+            }
+          }
+        },
         "dryRun": {
           "type": "boolean",
           "description": "True when --dry-run was given and nothing was written."
@@ -136,6 +160,7 @@
                 "record-id-taken",
                 "record-id-unallocatable",
                 "record-path-unmatched",
+                "record-sign-failed",
                 "record-unparseable",
                 "record-schema-invalid",
                 "record-id-duplicate",

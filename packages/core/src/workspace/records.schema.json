@@ -138,18 +138,26 @@
           "items": { "$ref": "#/$defs/asset" }
         },
         "warnings": {
-          "description": "Added in contract 1 by #2549. Findings that leave the record valid: a pinned file that changed, went missing or did not follow a superseding decision, a supersedes link that has no effect yet, (added by #2654) an evidence list that is empty, (added by #2672) a verdict that names no digest, or (added by #2683) a work record's links and dates. A work record never carries record-no-evidence; a done one with no evidence carries work-done-unpinned. valid and --current do not look at them.",
+          "description": "Added in contract 1 by #2549. Findings that leave the record valid: a pinned file that changed, went missing or did not follow a superseding decision, a supersedes link that has no effect yet, (added by #2654) an evidence list that is empty, (added by #2672) a verdict that names no digest, or (added by #2683) a work record's links and dates, or (added by #2688) a record whose author seal is not attested under a signers file at base. A work record never carries record-no-evidence; a done one with no evidence carries work-done-unpinned. valid and --current do not look at them.",
           "type": "array",
           "items": { "$ref": "#/$defs/warning" }
         },
         "digest": {
-          "description": "Added in contract 1 by #2672. The lowercase hex SHA-256 of the record file's text, with LF line endings and without the kind's reviews block in the front matter, or for a kind of format json without the top-level reviews member and one comma beside it (#2664). A review verdict names it in its digest field, and stops counting once the record's digest moves on. For a kind with no reviews list, the digest of the whole text.",
+          "description": "Added in contract 1 by #2672. The lowercase hex SHA-256 of the record file's text, with LF line endings and without the kind's reviews block and its top-level seal block (#2688) in the front matter, or for a kind of format json without the top-level reviews and seal members, each with one comma beside it (#2664). A record with no seal hashes as it did before #2688. A review verdict names it in its digest field, and stops counting once the record's digest moves on; a record's author seal signs it. For a kind with no reviews list, the digest of the whole text.",
           "type": "string",
           "pattern": "^[0-9a-f]{64}$"
         },
         "quorum": {
           "description": "Added in contract 1 by #2671, on every record of a kind with a reviews list. Null when the front matter could not be parsed.",
           "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/quorum" }]
+        },
+        "attested": {
+          "description": "Added in contract 1 by #2688, on every parsed record of a kind with a reviews list. true when the record's author seal (its top-level seal field) verifies, against the signers file at base, for the author the kind's reviews.decider field names (decided_by for decisions). false when a signers file is active at base and the record names an author and carries no seal, or when a seal fails. null when nothing here can say: no seal and no signers file, a seal checked with no signers file, no ssh-keygen, or a record that names no author and carries no seal. Independent of provenance, which judges the commit that last changed the file.",
+          "type": ["boolean", "null"]
+        },
+        "attestation": {
+          "description": "Added in contract 1 by #2688, beside attested. What the record's author seal establishes, and why when it is not attested. Under an active signers file, a record that names an author and is not attested also carries the warning record-unattested; it is still read and still valid.",
+          "$ref": "#/$defs/attestation"
         },
         "citedBy": {
           "description": "Added in contract 1 by #2673, on every record of a session kind and on no other. The review entries of the records the session kind names as its subjects (decisions, for the reference session kind) whose session field names this record's id, in path order and then list order.",
@@ -207,7 +215,8 @@
             "work-implements-undecided",
             "work-done-unpinned",
             "work-closed-without-date",
-            "work-done-gap-open"
+            "work-done-gap-open",
+            "record-unattested"
           ]
         },
         "message": { "type": "string" }
@@ -272,6 +281,16 @@
             "message": { "type": "string" }
           }
         }
+      }
+    },
+    "attestation": {
+      "description": "Added in contract 1 by #2688. What a record's author seal establishes, and why when it is not attested: the same shape as a verdict's attestation (#2687), which is kept inline in verdict.",
+      "type": "object",
+      "required": ["message"],
+      "properties": {
+        "code": { "enum": ["seal-missing", "seal-signer-unlisted", "seal-signature-invalid", "seal-unverifiable"], "description": "Absent exactly when attested is true." },
+        "message": { "type": "string" },
+        "key": { "type": "string", "description": "The fingerprint of the key that made the signature, when the signature was checked." }
       }
     },
     "concern": {

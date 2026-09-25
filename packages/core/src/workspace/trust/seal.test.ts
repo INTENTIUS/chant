@@ -16,7 +16,7 @@ import { parseArgs } from "../../cli/main";
 import recordsSchema from "../records.schema.json";
 import reviewSchema from "../records-review.schema.json";
 import { queryRecords, type RecordView } from "../records-cli";
-import { amendRecord, reviewRecord, runRecordsWrite, type ReviewDocument } from "../records-write";
+import { amendRecord, reviewRecord, type ReviewDocument } from "../records-write";
 import type { QuorumVerdict } from "../records";
 import { REVIEW_SEAL_NAMESPACE, reviewSealPayload } from "./seal";
 import { hasSshKeygen, TestRepo, type Key } from "./test-repo";
@@ -215,18 +215,8 @@ describe("--sign on the command line", () => {
     expect(parseArgs(["workspace", "records", "review", "ws-003", "--by", "a"]).sign).toBeUndefined();
   });
 
-  test("records new and amend refuse it: author seals are #2688", async () => {
-    const lines: string[] = [];
-    const log = console.log;
-    console.log = (s: string) => lines.push(s);
-    try {
-      for (const verb of ["new", "amend"]) {
-        const code = await runRecordsWrite({ args: { ...parseArgs(["workspace", "records", verb, "x", "--sign"]), extraPositional: verb, extraPositional2: "x" } } as never);
-        expect(code).toBe(1);
-      }
-    } finally {
-      console.log = log;
-    }
-    for (const l of lines) expect(JSON.parse(l).error).toMatchObject({ code: "write-usage-invalid", message: expect.stringMatching(/#2688/) });
+  test("records new and amend take it too, for the author seal (#2688)", () => {
+    expect(parseArgs(["workspace", "records", "new", "decisions/decision.kind.mjs", "--from", "-", "--sign"]).sign).toBe(true);
+    expect(parseArgs(["workspace", "records", "amend", "ws-003", "--set", "-", "--sign", "k"]).sign).toBe("k");
   });
 });

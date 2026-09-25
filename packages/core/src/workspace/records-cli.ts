@@ -34,6 +34,7 @@ import {
   loadRecordKind,
   normalisePrincipal,
   readRecords,
+  RECORD_SEAL_FIELD,
   RecordReadError,
   type LoadedRecordKind,
   type Quorum,
@@ -43,11 +44,14 @@ import {
   type RecordFormat,
   type RecordHistory,
   type SealInput,
+  type VerdictAttestation,
 } from "./records";
 import { gitTree, workingTree, type WorkspaceTree } from "./tree";
 import type { DecisionWork } from "./work";
 import { activeAttestors, type ProvenanceLevel } from "./trust/attestor";
 import { policyAtBase, recordProvenance, resolveBase, type BaseSource, type RecordProvenance } from "./trust/provenance";
+import type { TrustPolicy } from "./trust/policy";
+import type { SealedRecord } from "./trust/seal";
 
 /** The version of the `records` output this chant writes. */
 export const RECORDS_CONTRACT_VERSION = 1;
@@ -79,9 +83,16 @@ export interface RecordsQuery {
 
 /**
  * A record as the output carries it: the entry plus its provenance (#2547),
- * and its quorum when the kind has a reviews list (#2671).
+ * and, when the kind has a reviews list, its quorum (#2671) and what its
+ * author seal establishes (#2688).
  */
-export type RecordView = RecordEntry & { provenance: RecordProvenance; quorum?: Quorum | null };
+export type RecordView = RecordEntry & {
+  provenance: RecordProvenance;
+  quorum?: Quorum | null;
+  /** true when the record's seal verifies for its author against the signers at base; false when it fails, or is missing under an active policy; null when nothing here can say (#2688). */
+  attested?: boolean | null;
+  attestation?: VerdictAttestation;
+};
 
 /** The role in the trust policy whose holders' verdicts the quorum does not count (#2671). */
 export const AGENT_ROLE = "agent";
@@ -276,7 +287,8 @@ export async function queryRecords(query: RecordsQuery): Promise<RecordsDocument
     // The quorum: the need from the declaration in the tree read, agents,
     // whether verdicts need a seal, and the keys a seal verifies against,
     // all from the policy at base (#2671, #2687).
-    const checkVerdictSeal = loaded.kind.reviews ? (await import("./trust/seal")).checkVerdictSeal : undefined;
+    const seals = loaded.kind.reviews ? await import("./trust/seal") : undefined;
+    const checkVerdictSeal = seals?.checkVerdictSeal;
     const quorumOptions = checkVerdictSeal
       ? {
           ...declaredQuorum(tree),
@@ -289,6 +301,7 @@ export async function queryRecords(query: RecordsQuery): Promise<RecordsDocument
       ...r,
       provenance: provenance.get(r.path)!,
       ...(quorumOptions ? { quorum: computeQuorum(loaded.kind, r, quorumOptions) } : {}),
+      ...(seals ? authorSeal(loaded.kind, r, policy, seals.checkRecordSeal) : {}),
     }));
     if (loaded.kind.work && query.workGaps !== false && top) await raiseWorkGaps(loaded, records, { root, workspaceRoot, at: query.at });
     return {
@@ -312,6 +325,29 @@ export async function queryRecords(query: RecordsQuery): Promise<RecordsDocument
     if (!(err instanceof RecordReadError)) throw err;
     return { $schema: RECORDS_OUTPUT_SCHEMA_ID, contract: RECORDS_CONTRACT_VERSION, error: { code: err.code, message: err.message } };
   }
+}
+
+/**
+ * A record's author seal checked against the policy at base (#2688), for a
+ * kind with a reviews list: its author is the kind's `reviews.decider` field.
+ * Under an active signers file, a record that names an author and is not
+ * attested gains the warning `record-unattested`, and is still read: sealing
+ * records is opt-in for now. A record that can't be parsed gets neither field.
+ */
+function authorSeal(
+  kind: LoadedRecordKind["kind"],
+  r: RecordEntry,
+  policy: TrustPolicy,
+  check: (policy: TrustPolicy, r: SealedRecord) => { attested: boolean | null } & VerdictAttestation,
+): { attested?: boolean | null; attestation?: VerdictAttestation } {
+  if (r.data === null) return {};
+  const field = kind.reviews!.decider;
+  const author = typeof r.data[field] === "string" && (r.data[field] as string).trim() !== "" ? (r.data[field] as string) : null;
+  const { attested, ...attestation } = check(policy, { record: r.id, digest: r.digest, author, authorField: field, state: r.state, seal: r.data[RECORD_SEAL_FIELD] });
+  if (policy.active && author !== null && attested !== true) {
+    r.warnings.push({ code: "record-unattested", message: `an attestation policy is active at base, and ${attestation.message}` });
+  }
+  return { attested, attestation };
 }
 
 /**
@@ -555,7 +591,8 @@ function formatRecords(records: RecordView[], summary: { total: number; valid: n
     const flag = r.valid ? "" : "  INVALID";
     const superseded = r.supersededBy ? `  superseded by ${r.supersededBy}` : "";
     const attested = r.provenance.level === "attested" ? `  attested by ${r.provenance.principal}` : "";
-    lines.push(`${(r.id ?? "-").padEnd(idWidth)}  ${(r.state ?? "-").padEnd(stateWidth)}  ${title}${superseded}${attested}${flag}`);
+    const sealed = r.attested === true ? `  sealed by ${(r.data?.[RECORD_SEAL_FIELD] as { signer: string }).signer}` : "";
+    lines.push(`${(r.id ?? "-").padEnd(idWidth)}  ${(r.state ?? "-").padEnd(stateWidth)}  ${title}${superseded}${attested}${sealed}${flag}`);
     if (r.ready !== undefined) {
       const blocked = (r.blockedBy ?? []).map((b) => `${b.id} (${b.state ?? "unknown"})`).join(", ");
       const implemented = (r.implements ?? []).map((d) => `${d.id} (${d.state ?? "unknown"})`).join(", ");

@@ -87,11 +87,13 @@ export const REASONS = {
   "review-duplicate": "A later verdict by the same principal replaces this one. Names are compared after NFKC, trimming and lower-casing.",
   "review-older-digest": "The verdict names a digest other than the record's text now: the record changed after the verdict.",
   "review-unattested": "An attestation policy is active at base, and the verdict carries no seal that verifies for its reviewer.",
-  // A verdict's seal that is not attested (records, #2687). Every verdict reports one of these in its attestation, unless its seal verified.
-  "seal-missing": "The verdict carries no seal.",
-  "seal-signer-unlisted": "The reviewer has no key in the signers file at base, so the seal can't count.",
-  "seal-signature-invalid": "The seal is malformed, names a signer other than the reviewer, or its signature does not verify over the verdict.",
+  // A seal that is not attested (records): a verdict's (#2687) or a record's author seal (#2688). Each reports one of these in its attestation, unless its seal verified.
+  "seal-missing": "The verdict, or the record, carries no seal.",
+  "seal-signer-unlisted": "The reviewer, or the record's author, has no key in the signers file at base, so the seal can't count.",
+  "seal-signature-invalid": "The seal is malformed, names a signer other than the reviewer or author, or its signature does not verify over the verdict or record.",
   "seal-unverifiable": "Nothing here can say whose seal it is: there is no signers file at base, or ssh-keygen is not installed.",
+  // A record whose author seal is not attested under a signers file at base (records, #2688). A warning: the record is still read.
+  "record-unattested": "A signers file is active at base, and the record names an author whose seal does not verify: it has none, the author has no key in the file, or the signature fails.",
   // A records read that fails (records).
   "kind-unreadable": "The record kind file is missing or could not be imported.",
   "kind-invalid": "The record kind file exports no recordKind, or its shape is wrong.",
@@ -112,6 +114,7 @@ export const REASONS = {
   "review-unsupported": "The kind's schema has no reviews field, so its records take no review.",
   "review-note-required": "A dissent was given with no note: a dissent needs a reason.",
   "review-sign-failed": "--sign was given and no seal could be made: the key can't be read or used, git names no ssh signing key, or ssh-keygen is not installed.",
+  "record-sign-failed": "--sign was given and no author seal could be made: the record names no author, the key can't be read or used, git names no ssh signing key, or ssh-keygen is not installed.",
   // records --since that fails (#2673).
   "since-rev-unknown": "--since names no commit.",
   // The intent graph (graph --intent, #2651): a read that fails.

@@ -199,6 +199,17 @@
         }
       }
     },
+    "seal": {
+      "description": "The author's ssh signature over the record (#2688): the bytes <id>\\n<digest>\\n<decided_by>\\n<state>, in the ssh-keygen namespace chant-record, where digest is the record's digest, which leaves this field and reviews out. chant workspace records new --sign and amend --sign write it, and an amendment without --sign removes it. Optional: under a signers file at base, a record with decided_by and no seal that verifies is read with the warning record-unattested.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["signer", "key", "signature"],
+      "properties": {
+        "signer": { "description": "Who signed: decided_by, as the signers file names them.", "type": "string", "minLength": 1 },
+        "key": { "description": "The signing key's fingerprint. Reported, never trusted: the signature is the proof.", "type": "string", "pattern": "^SHA256:[A-Za-z0-9+/]+=*$" },
+        "signature": { "description": "The armored ssh signature, as ssh-keygen -Y sign prints it.", "type": "string", "pattern": "^-----BEGIN SSH SIGNATURE-----\\n" }
+      }
+    },
     "constrains": {
       "description": "What this decision governs: issues (owner/repo#n), other decisions (their ids), workspace members (member:<name>) or files and directories in the workspace (path:<path>, the grammar of an evidence path, #2549). At least one entry: a decision that governs nothing is refused.",
       "type": "array",
