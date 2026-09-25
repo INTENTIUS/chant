@@ -2,7 +2,7 @@
 schema: 1
 id: "ws-055"
 title: "What a development model tracks goes in the workspace's ledgers"
-state: "proposed"
+state: "decided"
 area: "D7"
 source:
   issue: "INTENTIUS/chant#2717"
@@ -22,8 +22,14 @@ options:
     label: "leases as fields on the work item record"
     how: "A claim sets `claimed_by` and `expires_at` on the work item through `records amend`, and a release clears them."
     tradeoff: "Nothing new to read. It is wrong in the ways chud's own leases.mjs lists: a commit on the working branch is not atomic across clones, two workers can both commit a claim, every heartbeat is a commit in the history, and the claim falls inside the release's nothing-to-ship test and the write-scope policy's range."
-choice: null
-rejected: []
+choice:
+  option: "a"
+  reason: "Each piece already has a chant home to extend. The operator lease already has the semantics a development model needs for work items (atomic across clones, expiry, fencing). The ledger shape on chant/lifecycle already holds releases and gates, and D7 already names leases and receipts among the scoped stores. The work kind already derives readiness. With it the workspace can say who is working on what and what a release contained, without the runner's code, which is the point of the chud retirement (#2715)."
+rejected:
+  - option: "b"
+    why: "It leaves the workspace unable to answer who holds a work item or what a release shipped without the runner's code, and a second runner would invent a second format."
+  - option: "c"
+    why: "A claim committed on the working branch is not atomic across clones, every heartbeat becomes a commit in the history, and claims fall inside the release's nothing-to-ship test and the write-scope policy."
 supersedes: []
 evidence:
   - title: "INTENTIUS/chant#2717, the workspace keeps what a development model tracks in ledgers"
@@ -56,8 +62,8 @@ evidence:
   - title: "chant's receipt store interface"
     path: "packages/core/src/op/receipt-store.ts"
     sha256: "275c3b3f9a2647a736058a055f0504318f44abca7e3de98d6bec9c55a8f495d3"
-decided_by: null
-decided_on: null
+decided_by: "lex00"
+decided_on: "2026-09-25"
 reviews: []
 constrains:
   - "INTENTIUS/chant#2717"
