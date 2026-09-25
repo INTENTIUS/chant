@@ -1,0 +1,13 @@
+---
+title: Serialization
+description: What chant build writes for the systemone lexicon, which is nothing
+diataxis: reference
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-systemone` — DO NOT EDIT.
+    Edit lexicons/systemone/docs/pages/serialization.mdx instead; changes here are overwritten. */}
+
+
+The systemone lexicon writes no output. It declares no resources: a decision point is workspace data in a points file, and its answers are records the `decide` activity writes when an Op runs.
+
+`chant build` still carries the lexicon's part of the build. Each backend in `systemone.backends` joins it as a `Systemone::Backend` entity, and each `decide` step is part of its Op. Core's OPS012 checks the step's arguments against the activity's contract, and SYS010 reads both the backends and the steps. The serializer returns an empty document for them.

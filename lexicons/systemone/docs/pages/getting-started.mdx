@@ -1,0 +1,110 @@
+---
+title: Getting Started
+description: Ask a decision point from an Op against the stub server, then confirm the model's proposal
+diataxis: tutorial
+---
+
+This page takes one decision point from its declaration to a confirmed answer. The backend is the stub server the lexicon ships for tests, so nothing here needs an account. Swap in a real backend at the end.
+
+## Install
+
+```bash
+npm install --save-dev @intentius/chant-lexicon-systemone
+```
+
+## Declare a point
+
+A workspace declares its decision points in a points file, and a record kind with an `answers` block names that file (ws-058). The reference workspace in the chant repository has both: `decisions/points.json` and `answers/answer.kind.mjs`. Copy the answer kind and its schema into your workspace, declare the kind in `chant.workspace.json`, and write one point:
+
+```json
+{
+  "points": {
+    "triage": {
+      "title": "Does this task need a person now",
+      "question": {
+        "type": "noul",
+        "instructions": "Does the task need a person to look at it today?",
+        "criteria": { "true": "A person looks at it today.", "false": "It can wait." }
+      },
+      "inputs": { "record.size": "the task's size in points", "record.risky": "whether the task touches production" },
+      "deciders": [
+        { "kind": "model", "backend": "systemone", "model": "jev-1.13.0", "threshold": 0.8 },
+        { "kind": "quorum", "count": 1 }
+      ]
+    }
+  }
+}
+```
+
+The model decider names a backend, `systemone`, and pins a versioned model id. An alias such as `jev-latest` is refused where the point is declared, because an alias moves when a new release ships.
+
+## Start the stub
+
+The stub is a real HTTP server on 127.0.0.1 that checks a request the way a Jev-compatible server would and answers with what you script:
+
+```ts
+import { startStubBackend } from "@intentius/chant-lexicon-systemone";
+
+const stub = await startStubBackend({ answers: { triage: { type: "noul", noul: 0.91 } } });
+console.log(stub.url);
+```
+
+## Configure the backend
+
+Name the backend in `chant.config.ts` the way the point does:
+
+```ts
+import type { ChantConfig } from "@intentius/chant/config";
+import "@intentius/chant-lexicon-systemone";
+
+export default {
+  lexicons: ["systemone"],
+  systemone: {
+    backends: {
+      systemone: { url: "http://127.0.0.1:<the stub's port>" },
+    },
+  },
+} satisfies ChantConfig;
+```
+
+## Ask from an Op
+
+```ts
+import { Op, phase } from "@intentius/chant/op";
+import { decide } from "@intentius/chant-lexicon-systemone";
+
+export default Op({
+  name: "triage-t1",
+  overview: "Ask whether T-1 needs a person today",
+  phases: [phase("Decide", [decide("triage", { read: { record: "T-1" }, subject: "T-1" })])],
+});
+```
+
+`read` reads record T-1 through the read contract, and each `record.*` input takes its field. Run it:
+
+```bash
+chant run triage-t1
+```
+
+The stub answered 0.91, which meets the threshold of 0.8. So the step writes an answer record in the `proposed` state, with the probabilities, the confidence and the threshold, and returns it.
+
+## Confirm the proposal
+
+A model's answer is never the decision. List the open questions and answer one as a person:
+
+```bash
+chant workspace points --open
+chant workspace points answer triage-<hash> --answer yes --by alex
+```
+
+Answering as the model did confirms it, and the record becomes `answered` with the model kept as its decider.
+
+## Use a real backend
+
+Point the backend at TypeSafe's API, or at any server that speaks the same wire format, and name the variable that holds the key:
+
+```ts
+systemone: { url: "https://api.typesafe.ai", key: { env: "TYPESAFE_API_KEY" } },
+```
+
+[Backends](../backends/) covers keys reached through a box's brokered capability, and what happens when the backend can't be reached.

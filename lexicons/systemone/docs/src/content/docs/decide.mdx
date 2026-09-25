@@ -1,0 +1,68 @@
+---
+title: The decide activity
+description: Ask a decision point from an Op step, with its inputs read through the read contract, and record the answer
+diataxis: how-to
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-systemone` — DO NOT EDIT.
+    Edit lexicons/systemone/docs/pages/decide.mdx instead; changes here are overwritten. */}
+
+
+`decide` is the lexicon's one Op activity. It asks a decision point for one set of inputs and records the answer. `loadActivities(["systemone"])` resolves it by name, and the typed builder is `decide` from `@intentius/chant-lexicon-systemone`.
+
+```ts
+decide("slice-tier", { read: { "work-item": "W-002" }, subject: "W-002" })
+```
+
+## Arguments
+
+| Argument | Meaning |
+|---|---|
+| `point` | The point's name, as its points file declares it. The builder takes it first. |
+| `inputs` | Input values by the point's input names, such as `{ "work-item.fits_small": false }`. They win over values read with `read`. |
+| `read` | What to read through the read contract, by output. `{ "work-item": "W-002" }` reads work item W-002 for every `work-item.*` input. |
+| `subject` | What the question is about, such as a work item's id. It is written to the answer's `constrains`. |
+| `kind` | The answer kind file, or a declared kind's name. Without it, the declared answer kind whose points file declares the point. |
+| `cwd` | Where the workspace is found. Defaults to the working directory. |
+| `backends` | Backends by name, in place of `systemone.backends` in `chant.config`. |
+| `dryRun` | Ask, but write nothing. |
+
+Core's OPS012 checks every step's arguments against the activity's contract at `chant build`, so a misspelled argument or a key written as a string fails the build.
+
+## Reading inputs
+
+A point names each input as a read-contract output, optionally with a dotted field. `read` reads these by id or name:
+
+| Output | Read as |
+|---|---|
+| `record`, `decision`, `work-item` | a record by id, from the declared record kinds, as `records --json` lists it |
+| `member` | a member by name, as `ls --json` lists it |
+
+A record's field is looked up in its front matter first, then in the record as the read contract lists it. A field the record lacks is left out and listed in the result's `missing`, so no table row matches on it. The other outputs a point may name (finding, region, commit, gate, release, environment, component) go in `inputs`, as the read contract printed them.
+
+## What the step does
+
+1. It checks every backend the point's model deciders name: each is configured, and a key that names a brokered capability is declared on a box with a broker. A problem fails the step before anything is asked or written.
+2. It reads the inputs.
+3. It asks the point through core's `points ask` path, with the backend call as the model decider. Core runs the chain: a table row answers, a model at or above its threshold proposes, and otherwise the question escalates to people.
+4. It returns the answer record.
+
+Because the answer is written by core, the same point, declaration and inputs are answered once. Asking again returns the record that is there, and the backend is not called.
+
+## The result
+
+| Field | Meaning |
+|---|---|
+| `id`, `path` | The answer record: the point's name and the first 12 hex digits of the inputs hash. |
+| `state`, `open` | `answered` by a table, `proposed` by a model, or `escalated` to people. Open until a person answers. |
+| `answer` | The answer, or null while the question is escalated. |
+| `reused`, `written` | Whether the record was already there, and whether a file was written. |
+| `decider`, `model`, `backend`, `confidence`, `threshold` | Who gave the state, and for a model, its pin, backend, confidence and threshold. |
+| `escalations` | Each decider asked that did not answer, and why. |
+| `missing` | Declared inputs the read value did not have. |
+
+A later step may read these through a step reference, such as `step.out.state`. A model's answer can route or report. It never authorizes anything: approvals stay with gates and people.
+
+## Failing closed
+
+A model decider declares `unreachable`. With `"escalate"`, the default, a backend that can't be reached leaves the question open for people with the reason. With `"fail"`, nothing is written and the step fails with `point-decider-failed`.

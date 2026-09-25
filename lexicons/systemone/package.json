@@ -1,0 +1,78 @@
+{
+  "name": "@intentius/chant-lexicon-systemone",
+  "version": "0.90.0",
+  "description": "systemone lexicon for chant: the decide Op activity, asking a workspace's decision points through a Jev-compatible POST /v1/systemone backend",
+  "license": "Apache-2.0",
+  "homepage": "https://intentius.io/chant",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/INTENTIUS/chant.git",
+    "directory": "lexicons/systemone"
+  },
+  "bugs": {
+    "url": "https://github.com/INTENTIUS/chant/issues"
+  },
+  "keywords": [
+    "chant",
+    "decision",
+    "jev",
+    "systemone",
+    "typed-decision"
+  ],
+  "type": "module",
+  "files": [
+    "src/",
+    "dist/"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "exports": {
+    ".": {
+      "development": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./src/index.ts"
+    },
+    "./*": {
+      "development": "./src/*.ts",
+      "types": "./dist/*.d.ts",
+      "default": "./src/*.ts"
+    },
+    "./lint/post-synth": {
+      "development": "./src/lint/post-synth/index.ts",
+      "types": "./dist/lint/post-synth/index.d.ts",
+      "default": "./src/lint/post-synth/index.ts"
+    },
+    "./op/activities": {
+      "development": "./src/op/activities/index.ts",
+      "types": "./dist/op/activities/index.d.ts",
+      "default": "./src/op/activities/index.ts"
+    },
+    "./op/activity-contracts": {
+      "development": "./src/op/activity-contracts.ts",
+      "types": "./dist/op/activity-contracts.d.ts",
+      "default": "./src/op/activity-contracts.ts"
+    },
+    "./manifest": "./dist/manifest.json",
+    "./meta": "./dist/meta.json",
+    "./types": "./dist/types/index.d.ts"
+  },
+  "scripts": {
+    "generate": "tsx src/codegen/generate-cli.ts",
+    "bundle": "tsx src/package-cli.ts",
+    "validate": "tsx src/validate-cli.ts",
+    "docs": "tsx src/codegen/docs-cli.ts",
+    "prepack": "npm run generate && npm run bundle && npm run validate && npm run build",
+    "build": "tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json && find dist -type f \\( -name \"*.js\" -o -name \"*.js.map\" \\) -delete"
+  },
+  "devDependencies": {
+    "@intentius/chant": "*",
+    "tsc-alias": "^1.8.17",
+    "typescript": "^5.9.3"
+  },
+  "peerDependencies": {
+    "zod": "^4.3.6",
+    "@intentius/chant": "^0.90.0",
+    "typescript": "^5.9.3"
+  }
+}

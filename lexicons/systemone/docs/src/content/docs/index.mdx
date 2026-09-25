@@ -1,0 +1,44 @@
+---
+title: "systemone"
+description: "Decision points asked through a Jev-compatible typed-decision backend"
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-systemone` — DO NOT EDIT.
+    Edit lexicons/systemone/src/codegen/docs.ts instead; changes here are overwritten. */}
+
+
+The systemone lexicon asks a workspace's decision points (ws-058) through a
+typed-decision model. It is verbs only: there is no resource to declare. A
+point's question, inputs and chain of deciders live in the workspace's points
+file, and its answers are records.
+
+It adds one Op activity, `decide`. Given a point and its inputs, read through
+the read contract, it calls the backend the point's model decider names over
+the `POST /v1/systemone` wire format (TypeSafe's Jev, or any server that
+implements the same request and response) and writes the answer record through
+core's `points ask` path. So the threshold, a model's answer being proposed
+rather than decided, the reuse of an existing answer and the escalation to
+people are core's, the same as for `chant workspace points ask`.
+
+A backend's key comes from an environment variable or a capability a box
+declares as brokered, never a literal. chant's reads never call a model.
+
+See [Getting Started](getting-started/) for a first point asked against the
+stub server, and [The decide activity](decide/) for its arguments.
+
+
+## At a Glance
+
+| Metric | Count |
+|--------|-------|
+| Resources | 0 |
+| Property types | 0 |
+| Services | 0 |
+| Intrinsic functions | 0 |
+| Pseudo-parameters | 0 |
+| Lint rules | 2 |
+
+**Lexicon version:** 0.90.0  
+**Namespace:** `Systemone`
+
+- [All Rules](./rules) — 2 rules

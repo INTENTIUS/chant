@@ -101,7 +101,7 @@ export const recordKind = {
 
 ## Ask a point
 
-chant never calls a model. The call belongs to the operations layer, in the decide Op activity ([#2740](https://github.com/INTENTIUS/chant/issues/2740)) or a runtime's decider, which hands chant the backend's response:
+chant never calls a model on a read. The call belongs to the operations layer: the `decide` Op activity of the [systemone lexicon](/chant/lexicons/systemone/decide/), or a runtime's decider, which hands chant the backend's response:
 
 ```bash
 chant workspace points ask slice-tier --inputs inputs.json --subject W-002 --response response.json
