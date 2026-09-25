@@ -241,7 +241,7 @@ export const BOX_CHECKS: readonly WorkspaceCheck[] = [
     id: WSP_BOX_CREDENTIAL,
     name: "box-credential-declared",
     description:
-      "A box holds no credential: no file in a box member's directory carries a literal secret, in its declarations, an env or a vault's defaults. ${VAR}, $VAR and secret-manager references (op://, bws://, infisical://) are not secrets.",
+      "A box holds no credential: no file in a box member's directory carries a literal secret, in its declarations, an env or a vault's defaults. Variable references and secret-manager references (op://, bws://, infisical://) are not secrets.",
     severity: "error",
     configurable: false,
     check(ctx) {
