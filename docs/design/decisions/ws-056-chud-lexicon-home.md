@@ -2,7 +2,7 @@
 schema: 1
 id: "ws-056"
 title: "Where the chud lexicon's parts go when chud retires"
-state: "proposed"
+state: "decided"
 area: "D19"
 source:
   issue: "INTENTIUS/chant#2713"
@@ -22,8 +22,14 @@ options:
     label: "move the whole chud lexicon into chant as a first-party lexicon"
     how: "The lexicon becomes `lexicons/site` (or similar) in INTENTIUS/chant, published with chant."
     tradeoff: "The site resources and release bookkeeping would be in chant, but so would the dispatch runtime and an Op runtime, which are not specification, and the duplicates of the starter verbs and the fly lexicon stay duplicated inside chant."
-choice: null
-rejected: []
+choice:
+  option: "a"
+  reason: "Each part of the chud lexicon already has a home that does its job (chant's starter verbs, the fly lexicon, the release ledger and ws-055's plans, decision points, the box's own lexicon, chant's executor); only the dispatch runtime is left, and it is the thin layer's."
+rejected:
+  - option: "b"
+    why: "It moves the duplicates of chant's starter verbs, the fly lexicon and chant's executor into the studio kit instead of removing them, and makes the thin layer carry specification."
+  - option: "c"
+    why: "It puts the dispatch runtime and an Op runtime, which are not specification, into chant, and keeps the duplicates inside chant."
 supersedes: []
 evidence:
   - title: "INTENTIUS/chant#2713, where the chud lexicon's site, deploy and Op activities go"
@@ -47,8 +53,8 @@ evidence:
   - title: "ws-055, decided option a: the development model's ledgers (leases and plans on chant/lifecycle), INTENTIUS/chant#2721"
     url: "https://github.com/INTENTIUS/chant/pull/2721"
     as_of: "2026-09-25T22:00:00Z"
-decided_by: null
-decided_on: null
+decided_by: "lex00"
+decided_on: "2026-09-25"
 reviews: []
 constrains:
   - "INTENTIUS/chant#2713"
