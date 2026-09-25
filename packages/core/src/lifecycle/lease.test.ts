@@ -285,6 +285,28 @@ describe("lifecycle/lease", () => {
       }
     });
 
+    // #2732: pushRef passed `--force` beside `--force-with-lease`, and git
+    // lets `--force` win, so every lease push was unconditional. It now pushes
+    // under the lease alone, expecting the value last fetched, so a renewal
+    // lands and a release deletes the ref on the remote.
+    test("a renewal and a release reach the remote, under the lease the last fetch saw (#2732)", async () => {
+      const { clonePath, remotePath, cleanup } = await setupClonePair();
+      try {
+        const ref = leaseRef("fountain-converge");
+        const first = await acquireLease("fountain-converge", "operator-a", { cwd: clonePath, ttlMs: 60_000 });
+        expect(first.acquired).toBe(true);
+        const renewed = await acquireLease("fountain-converge", "operator-a", { cwd: clonePath, ttlMs: 120_000 });
+        expect(renewed.lease?.token).toBe(first.lease?.token);
+        const local = git(["rev-parse", ref], clonePath).stdout.trim();
+        expect(git(["rev-parse", ref], remotePath).stdout.trim()).toBe(local);
+
+        expect(await releaseLease("fountain-converge", "operator-a", renewed.lease!.token, { cwd: clonePath })).toBe(true);
+        expect(git(["rev-parse", "--verify", ref], remotePath).exitCode).not.toBe(0);
+      } finally {
+        await cleanup();
+      }
+    });
+
     // ── #1959 finding 3 ──────────────────────────────────────────────────
     //
     // `readLease` used to fetch the remote lease ref directly into the same

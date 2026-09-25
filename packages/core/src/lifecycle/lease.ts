@@ -33,7 +33,7 @@
  */
 import { hostname } from "node:os";
 import { randomUUID } from "node:crypto";
-import { readRefSha, updateRefCAS, deleteRefCAS, writeBlob, readBlobBySha, pushRef, fetchRefInto, RefCASConflictError } from "./git";
+import { readRefSha, updateRefCAS, deleteRefCAS, writeBlob, readBlobBySha, pushRefStatus, fetchRefIntoStatus, RefCASConflictError, StaleLockError } from "./git";
 import { resolveMemberLedger } from "./member-ledger";
 
 export const LEASE_REF_PREFIX = "refs/chant/lease/";
@@ -95,7 +95,7 @@ function leaseFreshnessKey(record?: LeaseRecord): string {
   return record ? `${record.acquiredAt} ${record.expiresAt}` : "";
 }
 
-/** One lease's live state — the entire durable record; there is no history, only the current holder (see this module's doc on why no separate ledger). */
+/** One lease's live state: the current holder only. An operator lease keeps no history; a work lease (./work-lease.ts) appends each change to `_leases/<id>.jsonl` beside it. */
 export interface LeaseRecord {
   op: string;
   /** `<hostname>:<pid>:<random>` — a diagnostic identity, not itself the fencing mechanism (`token` is). */
@@ -137,6 +137,23 @@ export interface ReadLeaseResult {
   /** The ref's current SHA (the CAS anchor for the next write), or `null` if no lease has ever been written. */
   sha: string | null;
   record?: LeaseRecord;
+  /**
+   * The value of the remote-tracking ref (`refs/chant/lease-remote/<op>`)
+   * after the fetch: what the remote held when last seen, or `null` when it
+   * held nothing. The `--force-with-lease` expectation of the next push
+   * (#2732).
+   */
+  remoteSha: string | null;
+}
+
+/** Options every lease read and write takes. `cwd` also picks the ledger, and so the member prefix of the refs (./member-ledger.ts). */
+export interface LeaseOptions {
+  cwd?: string;
+}
+
+async function readRecordAt(ref: string, opts?: { cwd?: string }): Promise<{ sha: string | null; record?: LeaseRecord }> {
+  const sha = await readRefSha(ref, opts);
+  return { sha, record: sha ? parseLease((await readBlobBySha(sha, opts)) ?? "") : undefined };
 }
 
 /**
@@ -159,26 +176,76 @@ export interface ReadLeaseResult {
  * against — is always the local ref's own actual value; only the local
  * canonical ref is ever a valid basis for a `updateRefCAS`/`deleteRefCAS`
  * call against it, regardless of what the comparison decided about `record`.
+ *
+ * When the remote answers without the ref, the lease was released there, and
+ * the tracking ref is dropped so a stale copy of it no longer counts (#2732).
+ * A read-only report that must stay off the network reads the refs itself
+ * (`./work-lease.ts`'s `listWorkLeases`).
  */
-export async function readLease(opName: string, opts?: { cwd?: string }): Promise<ReadLeaseResult> {
+export async function readLease(opName: string, opts?: LeaseOptions): Promise<ReadLeaseResult> {
   const { ref, trackingRef } = await projectLeaseRefs(opName, opts);
-  await fetchRefInto(ref, trackingRef, opts).catch(() => undefined);
+  const fetched = await fetchRefIntoStatus(ref, trackingRef, opts).catch(() => "failed" as const);
+  if (fetched === "missing") {
+    const stale = await readRefSha(trackingRef, opts);
+    if (stale) await deleteRefCAS(trackingRef, stale, opts).catch(() => undefined);
+  }
 
-  const sha = await readRefSha(ref, opts);
-  const localRecord = sha ? parseLease((await readBlobBySha(sha, opts)) ?? "") : undefined;
-
-  const remoteSha = await readRefSha(trackingRef, opts);
-  const remoteRecord = remoteSha ? parseLease((await readBlobBySha(remoteSha, opts)) ?? "") : undefined;
+  const { sha, record: localRecord } = await readRecordAt(ref, opts);
+  const { sha: remoteSha, record: remoteRecord } = await readRecordAt(trackingRef, opts);
 
   const record = leaseFreshnessKey(remoteRecord) > leaseFreshnessKey(localRecord) ? remoteRecord : localRecord;
-  return { sha, record };
+  return { sha, record, remoteSha };
 }
+
+/** Why {@link acquireLease} did not acquire (#2732). */
+export type LeaseRefusal =
+  /** Someone holds it live: another holder, or, under `mode: "claim"`, anyone. */
+  | "held"
+  /** `mode: "renew"` and nobody holds it live any more: it expired or was released. */
+  | "not-held"
+  /** `mode: "renew"` and the live lease has another token than the one given. */
+  | "token-mismatch"
+  /** Another writer changed the ref between this call's read and its write. */
+  | "race"
+  /** `requirePush` and the remote refused the push: another clone got there first, or the remote could not be reached. */
+  | "push-rejected";
 
 export interface AcquireLeaseResult {
   acquired: boolean;
   lease?: LeaseRecord;
   /** Present when not acquired: the lease record currently held by someone else. */
   heldBy?: LeaseRecord;
+  /** Present when not acquired: why (#2732). */
+  reason?: LeaseRefusal;
+}
+
+/** Options for {@link acquireLease}. */
+export interface AcquireLeaseOptions extends LeaseOptions {
+  ttlMs?: number;
+  now?: () => Date;
+  /**
+   * `acquire` (the default, the operator's): take it when free or expired,
+   * renew it when `holder` already holds it. `claim`: take it only when free
+   * or expired, and refuse even its own holder. `renew`: only move the expiry
+   * of a live lease `holder` holds (#2732).
+   */
+  mode?: "acquire" | "claim" | "renew";
+  /** With `mode: "renew"`, the token the caller holds; a live lease with another token is refused. */
+  token?: string;
+  /**
+   * Count the write only once the remote has taken it, when there is a
+   * remote. A rejected push undoes the local write and refuses with
+   * `push-rejected`, so two clones racing for one lease cannot both hold it.
+   * The operator leaves it off: its push is best-effort (#2732).
+   */
+  requirePush?: boolean;
+  /**
+   * Wait out a `.lock` another process holds on the ref for up to this long,
+   * retrying, before surfacing it as a {@link StaleLockError}. A lock left by
+   * a killed process outlives the wait; one held by a racing writer does
+   * not. Off (0) by default, as the operator has always had it.
+   */
+  lockWaitMs?: number;
 }
 
 /**
@@ -198,22 +265,42 @@ export interface AcquireLeaseResult {
  * against a lease nobody can ever actually acquire again without manual
  * intervention. It propagates instead, so the caller (`../op/operator.ts`'s
  * `runOperatorRound`) can surface it as its own distinct, diagnosable event
- * rather than a silent, permanent skip.
+ * rather than a silent, permanent skip. `lockWaitMs` waits a racing writer's
+ * lock out first.
+ *
+ * `mode`, `token` and `requirePush` are the work lease's (#2732,
+ * ./work-lease.ts); the operator uses none of them.
  */
 export async function acquireLease(
   opName: string,
   holder: string,
-  opts?: { cwd?: string; ttlMs?: number; now?: () => Date },
+  opts?: AcquireLeaseOptions,
 ): Promise<AcquireLeaseResult> {
+  const deadline = Date.now() + (opts?.lockWaitMs ?? 0);
+  for (;;) {
+    try {
+      return await acquireOnce(opName, holder, opts);
+    } catch (err) {
+      if (!(err instanceof StaleLockError) || Date.now() >= deadline) throw err;
+      await new Promise((r) => setTimeout(r, 20 + Math.floor(Math.random() * 60)));
+    }
+  }
+}
+
+async function acquireOnce(opName: string, holder: string, opts?: AcquireLeaseOptions): Promise<AcquireLeaseResult> {
   const ttlMs = opts?.ttlMs ?? DEFAULT_LEASE_TTL_MS;
   const now = opts?.now?.() ?? new Date();
+  const mode = opts?.mode ?? "acquire";
 
-  const { sha, record: current } = await readLease(opName, opts);
+  const { sha, record: current, remoteSha } = await readLease(opName, opts);
   const expired = !current || isExpired(current, now);
   const ownedByUs = current?.holder === holder;
 
-  if (current && !expired && !ownedByUs) {
-    return { acquired: false, heldBy: current };
+  if (mode === "renew") {
+    if (!current || expired || !ownedByUs) return { acquired: false, reason: current && !expired ? "held" : "not-held", ...(current ? { heldBy: current } : {}) };
+    if (opts?.token !== undefined && current.token !== opts.token) return { acquired: false, reason: "token-mismatch", heldBy: current };
+  } else if (current && !expired && (!ownedByUs || mode === "claim")) {
+    return { acquired: false, heldBy: current, reason: "held" };
   }
 
   const renewing = !!current && ownedByUs && !expired;
@@ -225,21 +312,31 @@ export async function acquireLease(
     expiresAt: new Date(now.getTime() + ttlMs).toISOString(),
   };
 
-  const { ref } = await projectLeaseRefs(opName, opts);
+  const { ref, trackingRef } = await projectLeaseRefs(opName, opts);
   const blobSha = await writeBlob(JSON.stringify(record), opts);
   try {
     await updateRefCAS(ref, blobSha, sha, opts);
   } catch (err) {
     if (err instanceof RefCASConflictError) {
       const retry = await readLease(opName, opts);
-      return { acquired: false, heldBy: retry.record };
+      return { acquired: false, heldBy: retry.record, reason: "race" };
     }
     // A StaleLockError (or any other non-CAS failure) is NOT "someone else
     // has it" — propagate it as its own distinct error rather than folding
     // it into `heldBy`, per this function's doc.
     throw err;
   }
-  await pushRef(ref, opts).catch(() => undefined);
+  const pushed = await pushRefStatus(ref, { ...opts, expect: remoteSha }).catch(() => "rejected" as const);
+  if (pushed === "pushed") {
+    // What the remote holds now; the next push expects it.
+    await updateRefCAS(trackingRef, blobSha, remoteSha, opts).catch(() => undefined);
+  } else if (pushed === "rejected" && opts?.requirePush) {
+    // Undo the local write, which the remote refused, and report who has it there.
+    await (sha === null ? deleteRefCAS(ref, blobSha, opts) : updateRefCAS(ref, sha, blobSha, opts)).catch(() => undefined);
+    const retry = await readLease(opName, opts);
+    const heldBy = retry.record && retry.record.token !== record.token ? retry.record : undefined;
+    return { acquired: false, reason: "push-rejected", ...(heldBy ? { heldBy } : {}) };
+  }
   return { acquired: true, lease: record };
 }
 
@@ -249,23 +346,30 @@ export async function acquireLease(
  * silently drop someone else's. Best-effort courtesy: a lease nobody
  * releases is reclaimed anyway once its TTL passes, so a failed release
  * (returns `false`, never throws) is not itself a correctness problem.
+ *
+ * The deletion is pushed to the remote, expecting the value last fetched
+ * there, so another clone sees the lease free without waiting out its TTL
+ * (#2732).
  */
 export async function releaseLease(
   opName: string,
   holder: string,
   token: string,
-  opts?: { cwd?: string },
+  opts?: LeaseOptions,
 ): Promise<boolean> {
-  const { sha, record } = await readLease(opName, opts);
-  if (!sha || !record || record.holder !== holder || record.token !== token) return false;
-  const { ref } = await projectLeaseRefs(opName, opts);
-  try {
-    await deleteRefCAS(ref, sha, opts);
-  } catch {
-    return false;
+  const { sha, record, remoteSha } = await readLease(opName, opts);
+  if (!record || record.holder !== holder || record.token !== token) return false;
+  const { ref, trackingRef } = await projectLeaseRefs(opName, opts);
+  if (sha) {
+    try {
+      await deleteRefCAS(ref, sha, opts);
+    } catch {
+      return false;
+    }
   }
-  await pushRef(ref, opts).catch(() => undefined);
-  return true;
+  const pushed = await pushRefStatus(ref, { ...opts, expect: remoteSha }).catch(() => "rejected" as const);
+  if (pushed === "pushed" && remoteSha) await deleteRefCAS(trackingRef, remoteSha, opts).catch(() => undefined);
+  return sha !== null || pushed === "pushed";
 }
 
 /**
@@ -278,7 +382,7 @@ export async function stillHoldsLease(
   opName: string,
   holder: string,
   token: string,
-  opts?: { cwd?: string },
+  opts?: LeaseOptions,
 ): Promise<boolean> {
   const { record } = await readLease(opName, opts);
   return record?.holder === holder && record?.token === token;

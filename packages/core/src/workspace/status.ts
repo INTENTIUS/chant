@@ -38,6 +38,7 @@ import { GATES_DIR } from "../lifecycle/gate-ledger";
 import { readPathSha } from "../lifecycle/git";
 import { latestPerComponent, readReleaseLedger, type ReleaseRecord } from "../lifecycle/release-ledger";
 import { readReleasePlan, type ReleasePlan } from "../lifecycle/plan-ledger";
+import { listWorkLeases, type WorkLeaseState } from "../lifecycle/work-lease";
 import { findWorkspaceRoot } from "../project-root";
 import { readDeclaration, readerVersion, WorkspaceReadError, type ErrorLocation, type Member } from "./declaration";
 import type { ReasonCode } from "./reason-codes";
@@ -174,6 +175,16 @@ export interface StatusBox {
   capabilities: { name: string; broker: string | null; scope: string[] }[];
 }
 
+/**
+ * One work lease (#2732): a work item's lease ref in the ledger of the member
+ * that owns its work kind, read from the local refs without fetching.
+ */
+export interface StatusLease extends Omit<WorkLeaseState, "ref"> {
+  /** The member whose ledger holds the lease, or null for the flat ledger (the root member, or a kind no member owns). */
+  member: string | null;
+  ref: string;
+}
+
 export type StatusDocument =
   | {
       $schema: string;
@@ -184,6 +195,8 @@ export type StatusDocument =
       lifecycle: { ref: string; commit: string | null };
       workspace: { name: string; root: string; file: string };
       members: StatusMember[];
+      /** Every work lease in the workspace's ledgers, active and expired, by member then item (#2732). A released lease has no ref and is not listed. */
+      leases: StatusLease[];
       summary: { members: number; released: number; unreadable: number; differing: number | null };
     }
   | {
@@ -369,6 +382,8 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
     const flatGates = members.filter((m) => m.gateLedger.layout === "flat").length;
     for (const m of members) m.gateLedger.shared = m.gateLedger.layout === "flat" && flatGates > 1;
 
+    const leases = await readWorkspaceLeases(declaration.members, found.dir, new Date(now));
+
     return {
       ...head,
       env: query.env,
@@ -376,6 +391,7 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
       lifecycle: { ref: LIFECYCLE_REF, commit },
       workspace: { name: declaration.name, root: rootDir === "" ? "." : rootDir, file: declaration.file },
       members,
+      leases,
       summary: {
         members: members.length,
         released: members.filter((m) => m.environments[0].releases.length > 0).length,
@@ -391,6 +407,21 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
     if (err instanceof StatusError) return { ...head, error: { code: err.code, message: err.message, location: null } };
     throw err;
   }
+}
+
+/**
+ * The work leases of the flat ledger and of each member's (#2732). Leases are
+ * env-independent, so the environment asked for doesn't narrow them. Never
+ * fetches: the remote's leases are the ones last fetched.
+ */
+async function readWorkspaceLeases(members: Member[], cwd: string, now: Date): Promise<StatusLease[]> {
+  const ledgers: { member: string | null; prefix: string }[] = [{ member: null, prefix: "" }];
+  for (const m of members) if (m.dir !== ".") ledgers.push({ member: m.name, prefix: `${MEMBERS_DIR}/${m.name}/` });
+  const out: StatusLease[] = [];
+  for (const l of ledgers) {
+    for (const lease of await listWorkLeases({ cwd, memberPrefix: l.prefix, now })) out.push({ ...lease, member: l.member });
+  }
+  return out;
 }
 
 export async function runWorkspaceStatus(ctx: CommandContext): Promise<number> {
@@ -475,6 +506,12 @@ export function formatStatus(doc: Extract<StatusDocument, { members: unknown }>)
       lines.push(line);
       for (const n of notes.get(i) ?? []) lines.push(n);
     });
+  }
+  if (doc.leases.length > 0) {
+    lines.push("");
+    const rows: string[][] = [["WORK ITEM", "HOLDER", "EXPIRES", "STATE"]];
+    for (const l of doc.leases) rows.push([l.member ? `${l.member}/${l.item}` : l.item, l.holder, l.expiresAt, l.state]);
+    lines.push(...table(rows));
   }
   const s = doc.summary;
   lines.push("");

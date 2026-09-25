@@ -88,7 +88,7 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `placement-invalid` | error | A member or group match breaks a [placement rule](/chant/reference/workspace-declaration/#placement). |
 | `reader-too-old` | error | The declaration's `minReader` is newer than the chant reading it. |
 | `root-chant-required` | error | The declaration pins another chant, and it is not installed at the workspace root. |
-| `not-a-git-repository` | error | `--at`, or `status`, needs a git repository and there is none. |
+| `not-a-git-repository` | error | `--at`, `status` or `work` needs a git repository and there is none. |
 | `revision-unknown` | error | `--at` names no commit. |
 | `environment-invalid` | error, `status` | The environment name can't name a ledger directory. |
 | `dir-missing` | member, `ls` and `graph` | The member's directory does not exist. |
@@ -138,13 +138,13 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `seal-signature-invalid` | seal, `records` | The seal is malformed, names a signer other than the reviewer or author, or its signature doesn't verify over the verdict or record. |
 | `seal-unverifiable` | seal, `records` | Nothing here can say whose seal it is: there is no signers file at base, or `ssh-keygen` isn't installed. |
 | `record-unattested` | warning, `records` | A signers file is active at base, and the record names an author whose seal doesn't verify. The record's `attestation` says which seal code applies. The record stays valid. |
-| `kind-unreadable` | error, `records`; reason, `ls` | The record kind file is missing or could not be imported. |
+| `kind-unreadable` | error, `records` and `work`; reason, `ls` | The record kind file is missing or could not be imported. |
 | `kind-invalid` | error, `records`; reason, `ls` | The record kind file exports no `recordKind`, or its shape is wrong. |
 | `schema-unreadable` | error, `records`; reason, `ls` | The schema file the kind names is missing or isn't JSON. |
 | `schema-id-mismatch` | error, `records`; reason, `ls` | The schema's `$id` differs from the id the kind names. |
 | `schema-invalid` | error, `records` | The record schema doesn't compile. |
 | `location-missing` | error, `records` | The records directory does not exist, in the tree or at the revision. With `--since`, a directory missing at the `--since` revision is read as empty. |
-| `write-usage-invalid` | error, `records new`, `amend` and `review` | The command line lacks a value the write needs, or gives one it does not take. |
+| `write-usage-invalid` | error, `records new`, `amend`, `review` and `work` | The command line lacks a value the write needs, or gives one it does not take. |
 | `write-input-invalid` | error, `records new` and `amend` | The fields given with `--from` or `--set` can't be read, aren't JSON, or aren't a JSON object. |
 | `record-not-found` | error, `records amend` and `review` | No record of the kind has the id given. |
 | `record-id-taken` | error, `records new` | The id given for a new record is already used, by a record or a file name. |
@@ -196,6 +196,15 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `box-capability-unbrokered` | finding, `check` | `WSP122`: a capability in a member's box block names no broker, so the box would hold its credential. |
 | `lock-invalid` | finding, `check` | The lineage lock can't be read. |
 | `manual-step-open` | finding, `check` | A scope in the lineage lock has an open manual step. |
+| `work-kind-missing` | error, `work` | No work kind to find the item in: `--kind` names a kind with no work block, or the declaration names no work kind. |
+| `work-kind-ambiguous` | error, `work` | More than one declared work kind has a record with the id, so `--kind` must name one. |
+| `work-item-unknown` | error, `work` | No work record has the id, so there is nothing to lease. |
+| `work-item-closed` | error, `work claim` | A claim on a work item in a closed state, such as done or dropped: there is no work left to claim. |
+| `lease-held` | refusal, `work` | Someone holds a live lease on the work item: another worker, or, for a claim, the same one. |
+| `lease-not-held` | refusal, `work` | Nobody holds a live lease on the work item: it expired, was released or was never claimed. |
+| `lease-token-mismatch` | refusal, `work` | The live lease on the work item carries another fencing token than the one given. |
+| `lease-race` | refusal, `work` | Another writer changed the lease between this command's read and its write. |
+| `lease-push-rejected` | refusal, `work` | The remote refused the lease push: another clone claimed the item first, or the remote could not be reached. |
 
 `graph --intent` may also carry findings a plugin contributes through its [`commitJoins`](/chant/cli/workspace-graph/#commit-joins) ([#2656](https://github.com/INTENTIUS/chant/issues/2656)). Their codes are outside the list. Each is `plugin:<name>:<code>`, where `<name>` is the kind's name in the document's `kinds` (the kind file's `commitJoinsName` when it has one) and `<code>` is lower case words joined by dashes. The plugin owns its namespace, and chant only carries the finding. A reader that switches on codes can tell the two apart by the `plugin:` prefix.
 
@@ -247,8 +256,11 @@ A record kind with a `work` block is a work kind ([#2683](https://github.com/INT
 | `blockedBy` | each parsed record | Each need that is not done, as `{ id, state }`, with `state: null` for an id no record has. |
 | `implements` | each parsed record | Each decision the record names, as `{ id, state }`, with the decision's state now. |
 | `decisions` | the document | Every decision the work kind's decision kind reads, as `{ id, path, state, supersededBy, implementedBy }`. `implementedBy` lists the work records naming it as `{ id, state }`. An empty one means the decision has no work item yet. |
+| `lease` | each record with an id, in the working tree | The item's active work lease as `{ holder, token, acquiredAt, expiresAt }`, or `null` ([#2732](https://github.com/INTENTIUS/chant/issues/2732)). Absent under `--at`. |
 
 The decision kind is the file the work kind's `work.decisions` names, read at the same revision as the work records. A work record's `warnings` hold the `work-` codes above in place of `record-no-evidence`.
+
+A work lease is written by [`chant workspace work claim|renew|release`](/chant/cli/workspace-work/) to `refs/chant/lease/[_members/<member>/]work/<id>`, with a history in `_leases/<id>.jsonl` on `chant/lifecycle`. `status --json` lists every lease in `leases`, active and expired, each with its `item`, the `member` whose ledger holds it (`null` for the flat ledger), `ref`, `holder`, `token`, `acquiredAt`, `expiresAt` and `state`. Neither read fetches. A reader that needs the remote's leases fetches `refs/chant/lease/*` first, or runs a claim, which does.
 
 ## The intent graph
 
@@ -373,6 +385,8 @@ A reader writes only through chant commands ([ws-052](https://github.com/INTENTI
 | `chant workspace records amend` | `https://intentius.io/chant/schemas/workspace/records-amend/v1/records-amend.schema.json` | `path`, `id`, `changed`, and `seal` with `--sign` or `sealDropped` when a change removed the seal |
 | `chant workspace records review` | `https://intentius.io/chant/schemas/workspace/records-review/v1/records-review.schema.json` | `path`, `id`, `review`, and `session` with `--session` |
 | `chant workspace records close` | `https://intentius.io/chant/schemas/workspace/records-close/v1/records-close.schema.json` | `path`, `id`, `changed`, `seal`, `closedRev` |
+
+[`chant workspace work`](/chant/cli/workspace-work/) writes a work lease rather than a record, and prints a document following `https://intentius.io/chant/schemas/workspace/work-lease/v1/work-lease.schema.json` ([#2732](https://github.com/INTENTIUS/chant/issues/2732)). Its result carries `item`, `event`, `kind`, `ref`, `lease` and `history`, and a refusal carries `refused` with a `lease-` code and exits 2.
 
 The schemas ship beside the read schemas and follow their shape: a `oneOf` of a result and a failure, `contract: 1`, and a closed list of error codes from the same list as every read. A result also carries `kind`, `dryRun`, the written record's `warnings`, and `text` under `--dry-run`. A failure exits 1 and writes nothing. chant 0.86.0 is the first release to print these documents.
 

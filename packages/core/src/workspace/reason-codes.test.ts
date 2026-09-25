@@ -26,6 +26,7 @@ import { RECORDS_SINCE_ERROR_CODES, RECORDS_SINCE_REASON_CODES } from "./records
 import { STATUS_ERROR_CODES, STATUS_GATE_REASON_CODES, STATUS_REASON_CODES, STATUS_STEWARD_REASON_CODES } from "./status";
 import { WORK_WARNING_CODES } from "./work";
 import { BOX_FINDING_CODES } from "./checks/boxes";
+import { WORK_ERROR_CODES, WORK_LEASE_REFUSALS } from "./work-cli";
 
 const HERE = import.meta.dirname;
 
@@ -62,6 +63,8 @@ const PER_COMMAND: Record<string, readonly string[]> = {
   COMPOSITES_REASON_CODES,
   COMPOSITES_RUNTIME_REASON_CODES,
   COMPOSITES_ENVIRONMENT_REASON_CODES,
+  WORK_ERROR_CODES,
+  WORK_LEASE_REFUSALS,
 };
 
 /** Every string in an `enum` under a property named `code`, anywhere in a schema. */

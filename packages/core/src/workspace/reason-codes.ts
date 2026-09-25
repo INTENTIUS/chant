@@ -166,6 +166,17 @@ export const REASONS = {
   // A box that holds a credential (check, #2726). Each is also a WSP finding.
   "box-credential-declared": "A file in a box member's directory carries a literal secret: a credential's shape, or a literal where a credential goes. A variable or secret-manager reference is not one.",
   "box-capability-unbrokered": "A capability in a member's box block names no broker, so the box would hold its credential.",
+  // The work lease (chant workspace work claim|renew|release, #2732): why the command could not run.
+  "work-kind-missing": "No work kind to find the item in: --kind names a kind with no work block, or the declaration names no work kind.",
+  "work-kind-ambiguous": "More than one declared work kind has a record with the id, so --kind must name one.",
+  "work-item-unknown": "No work record has the id, so there is nothing to lease.",
+  "work-item-closed": "A claim on a work item in a closed state, such as done or dropped: there is no work left to claim.",
+  // The work lease: why a claim, renew or release was refused (exit 2).
+  "lease-held": "Someone holds a live lease on the work item: another worker, or, for a claim, the same one.",
+  "lease-not-held": "Nobody holds a live lease on the work item: it expired, was released or was never claimed.",
+  "lease-token-mismatch": "The live lease on the work item carries another fencing token than the one given.",
+  "lease-race": "Another writer changed the lease between this command's read and its write.",
+  "lease-push-rejected": "The remote refused the lease push: another clone claimed the item first, or the remote could not be reached.",
   // The lineage lock (check).
   "lock-invalid": "The lineage lock can't be read.",
   "manual-step-open": "A scope in the lineage lock has an open manual step.",

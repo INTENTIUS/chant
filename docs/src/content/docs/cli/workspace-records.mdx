@@ -141,7 +141,7 @@ A workspace whose declaration names no kinds, and a directory with no declaratio
 
 ## Work items
 
-On a work kind the output has four more fields. The guide page [Work items](/chant/guide/work-items/) shows how an agent picks ready work from them.
+On a work kind the output has five more fields. The guide page [Work items](/chant/guide/work-items/) shows how an agent picks ready work from them.
 
 | Field | On | Holds |
 |---|---|---|
@@ -149,8 +149,9 @@ On a work kind the output has four more fields. The guide page [Work items](/cha
 | `blockedBy` | each parsed record | each need that is not done, as `{ id, state }`, where `state` is `null` for an id no record has |
 | `implements` | each parsed record | each decision the record names, as `{ id, state }`, with the decision's state now |
 | `decisions` | the document | every decision the decision kind reads, with `implementedBy`, the work records naming it. An empty `implementedBy` means the decision has no work item yet |
+| `lease` | each record with an id, read in the working tree | the item's active [work lease](/chant/cli/workspace-work/) as `{ holder, token, acquiredAt, expiresAt }`, or `null` when nobody holds one live. It is read from the local lease refs and the remote's as last fetched, and is absent under `--at`, since a lease is not part of a revision |
 
-A work record doesn't get `record-no-evidence`, because an open item has no proof yet. A done record with an empty evidence list gets `work-done-unpinned` instead. The text output adds a line under each work record, `ready` or `blocked by W-001 (in-progress)`, with the decisions it implements.
+A work record doesn't get `record-no-evidence`, because an open item has no proof yet. A done record with an empty evidence list gets `work-done-unpinned` instead. The text output adds a line under each work record, `ready` or `blocked by W-001 (in-progress)`, with the decisions it implements. A work record with a lease also shows `held by <holder> until <time>`.
 
 ## Supersession
 
@@ -612,7 +613,7 @@ The output is part of the workspace [read contract](/chant/reference/workspace-r
 }
 ```
 
-`data` holds the whole front matter, or the whole object for a JSON kind; the example shortens it. `at` is the full commit id when `--at` is given. `trust` and `provenance` were added within contract 1 by [#2547](https://github.com/INTENTIUS/chant/issues/2547), and `workspaceRoot`, `assets` and `warnings` by [#2549](https://github.com/INTENTIUS/chant/issues/2549). `digest` and `quorum` were added by [#2672](https://github.com/INTENTIUS/chant/issues/2672) and [#2671](https://github.com/INTENTIUS/chant/issues/2671), and only a kind with `reviews` has `quorum`. `citedBy`, on a session kind's records only, was added by [#2673](https://github.com/INTENTIUS/chant/issues/2673). `kind.format` was added by [#2664](https://github.com/INTENTIUS/chant/issues/2664). `ready`, `blockedBy`, `implements` and the document's `decisions` were added by [#2683](https://github.com/INTENTIUS/chant/issues/2683), on a work kind only. Records of a kind with `reviews` also carry `attested` and `attestation`, and may carry the warning `record-unattested`, since [#2688](https://github.com/INTENTIUS/chant/issues/2688).
+`data` holds the whole front matter, or the whole object for a JSON kind; the example shortens it. `at` is the full commit id when `--at` is given. `trust` and `provenance` were added within contract 1 by [#2547](https://github.com/INTENTIUS/chant/issues/2547), and `workspaceRoot`, `assets` and `warnings` by [#2549](https://github.com/INTENTIUS/chant/issues/2549). `digest` and `quorum` were added by [#2672](https://github.com/INTENTIUS/chant/issues/2672) and [#2671](https://github.com/INTENTIUS/chant/issues/2671), and only a kind with `reviews` has `quorum`. `citedBy`, on a session kind's records only, was added by [#2673](https://github.com/INTENTIUS/chant/issues/2673). `kind.format` was added by [#2664](https://github.com/INTENTIUS/chant/issues/2664). `ready`, `blockedBy`, `implements` and the document's `decisions` were added by [#2683](https://github.com/INTENTIUS/chant/issues/2683), on a work kind only, and `lease` by [#2732](https://github.com/INTENTIUS/chant/issues/2732). Records of a kind with `reviews` also carry `attested` and `attestation`, and may carry the warning `record-unattested`, since [#2688](https://github.com/INTENTIUS/chant/issues/2688).
 
 A failed read prints `{ "$schema", "contract", "error": { "code", "message" } }` instead. Without `--kind`, the output is the set of [Declared kinds](#declared-kinds), added within contract 1 by [#2680](https://github.com/INTENTIUS/chant/issues/2680).
 

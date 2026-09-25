@@ -750,7 +750,16 @@ describe("workspace init and ls (#2534)", () => {
       "workspace status",
       "workspace upgrade",
       "workspace verify",
+      "workspace work",
     ]);
+  });
+
+  test("workspace work takes its verb, id and lease flags (#2732)", () => {
+    const claim = parseArgs(["workspace", "work", "claim", "W-001", "--holder", "a", "--ttl", "60", "--json"]);
+    expect(claim).toMatchObject({ command: "workspace", path: "work", extraPositional: "claim", extraPositional2: "W-001", holder: "a", ttl: "60", json: true });
+    expect(resolveCommand(claim, commandRegistry)?.def.name).toBe("workspace work");
+    expect(parseArgs(["workspace", "work", "release", "W-001", "--holder=a", "--token", "t", "--outcome", "done"])).toMatchObject({ holder: "a", token: "t", outcome: "done" });
+    expect(() => parseArgs(["workspace", "work", "claim", "W-001", "--holder"])).toThrow(/--holder needs a value/);
   });
 
   test("load their modules only when they run", () => {
