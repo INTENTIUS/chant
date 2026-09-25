@@ -1,0 +1,596 @@
+{
+  "schema": 1,
+  "id": "box-001",
+  "state": "proposed",
+  "author": "lex00",
+  "area": "hud access",
+  "title": "Who may do what in hud's chant views",
+  "eyebrow": "alecraso/hud#613, the integration of the chant stack, merged 2026-09-25 at da097e6. Drawn after the fact for INTENTIUS/chant#2698.",
+  "problem": "hud now shows chant's decisions, intent, work and sessions, and it can deploy, review and seal. The integration made eleven decisions about these, one at a time. Most of them are one question: which request may read, which may write, and whose name a write records. A request on loopback with no identity header counts as the owner, and several answers are safe only because of that rule. This box draws those answers together, so a later change to one of them shows what it breaks.",
+  "who": "The owner of a hud box, the players and spectators who join through the proxy, and the agent that runs on the same machine.",
+  "when": "Decided on 2026-09-25 in alecraso/hud#613. The box is drawn afterwards, as evidence for the chant design.",
+  "dims": [
+    {
+      "id": "reads",
+      "kind": "open",
+      "name": "Spectator reads",
+      "question": "Which chant routes and views may a spectator read?",
+      "problem": "A spectator joins a hud session to watch and may not act. The chant views read records, intent, work and sessions, and the deploy pane reads the menu and the runs. Before the integration the deploy runs routes refused a spectator, while their own refusal text said spectators can watch a deploy. This row sets one rule for every chant read.",
+      "constrains": [
+        "path:packages/daemon/src/http/deploy-menu-route.ts",
+        "path:packages/daemon/src/http/deploy-run-route.ts"
+      ],
+      "opts": [
+        {
+          "id": "read-all",
+          "label": "A spectator reads every chant route and view, and writes none.",
+          "short": "Every view",
+          "chosen": true,
+          "src": "alecraso/hud#613, decision 2"
+        },
+        {
+          "id": "read-some",
+          "label": "A spectator reads the views, and the deploy runs routes refuse a spectator.",
+          "short": "Runs refused",
+          "src": "alecraso/hud#599, before decision 2"
+        },
+        {
+          "id": "read-none",
+          "label": "A spectator reads no chant route. Only a player who may act sees chant data.",
+          "short": "No chant reads",
+          "strawman": true
+        }
+      ]
+    },
+    {
+      "id": "writes",
+      "kind": "open",
+      "name": "Guard on chant writes",
+      "question": "What must a request carry before a hud route writes through chant?",
+      "problem": "hud writes through chant when a person deploys, approves a gate, rolls back, gives a verdict or starts a work item. A route can check the role of the request, or it can also ask for a verified player: a signed identity header from the hud proxy that names a player on the roster. The two checks differ only for a request with no header. This row picks the check for every chant write.",
+      "constrains": [
+        "path:packages/daemon/src/http/verified-player.ts",
+        "path:packages/daemon/src/http/deploy-run-route.ts",
+        "path:packages/daemon/src/http/records-route.ts"
+      ],
+      "opts": [
+        {
+          "id": "write-verified",
+          "label": "Every chant write needs a verified player whose role may act.",
+          "short": "Verified player",
+          "chosen": true,
+          "src": "alecraso/hud#613, decision 2"
+        },
+        {
+          "id": "write-role",
+          "label": "A chant write needs only a role that may act. A request with no header passes.",
+          "short": "Role check only",
+          "src": "alecraso/hud#599, POST /api/deploy/run before decision 2"
+        },
+        {
+          "id": "write-open",
+          "label": "No guard. Any request that reaches the port writes.",
+          "short": "No guard",
+          "strawman": true
+        }
+      ]
+    },
+    {
+      "id": "loopback",
+      "kind": "open",
+      "name": "Unsigned loopback request",
+      "question": "Who is a request that arrives on loopback with no identity header?",
+      "problem": "hud listens only on loopback. A page loaded straight from the dev server carries no identity header, and neither does a request from any other process on the machine, the agent included. hud has to give such a request a role. The role decides whether a check of the role alone keeps a local process from writing in the owner's name.",
+      "constrains": [
+        "path:packages/daemon/src/http/actor.ts"
+      ],
+      "opts": [
+        {
+          "id": "lb-owner",
+          "label": "It counts as the owner. The loopback bind is the only protection.",
+          "short": "The owner",
+          "chosen": true,
+          "src": "hud actor.ts, resolveActor (hud#57, hud#186)"
+        },
+        {
+          "id": "lb-spectator",
+          "label": "It counts as a spectator. It reads and writes nothing.",
+          "short": "A spectator",
+          "strawman": true
+        },
+        {
+          "id": "lb-refused",
+          "label": "It gets a 401. Every request must carry the header.",
+          "short": "Refused",
+          "src": "hud actor.ts, the rule before hud#186"
+        }
+      ]
+    },
+    {
+      "id": "seal",
+      "kind": "open",
+      "name": "Who seals a verdict",
+      "question": "Who may seal a verdict from hud's decisions view?",
+      "problem": "chant can seal a verdict: the reviewer signs it with an ssh key, and chant counts it only when the seal verifies for that reviewer. hud offers a sign option on the decisions view. The daemon signs with a key on the machine it runs on. This row decides which viewers may ask it to sign.",
+      "constrains": [
+        "path:packages/daemon/src/http/records-route.ts"
+      ],
+      "opts": [
+        {
+          "id": "seal-owner",
+          "label": "Only the verified owner seals a verdict in hud.",
+          "short": "Owner only",
+          "chosen": true,
+          "src": "alecraso/hud#613, decision 6; sign-owner-only in hud#603"
+        },
+        {
+          "id": "seal-player",
+          "label": "Any verified player who may review seals a verdict in hud.",
+          "short": "Any reviewer",
+          "src": "drawn for this box"
+        },
+        {
+          "id": "seal-cli",
+          "label": "hud never seals. A reviewer seals with chant on their own machine.",
+          "short": "Only in chant",
+          "strawman": true
+        }
+      ]
+    },
+    {
+      "id": "key",
+      "kind": "open",
+      "name": "Key the daemon signs with",
+      "question": "Which ssh key does the daemon use when it seals a verdict?",
+      "problem": "A seal is only as good as the tie between the key and the person. The daemon runs on the owner's machine, and git on that machine has one signing key. The daemon can use that key, keep a key for each player, or keep none. This row decides what a seal made in hud proves.",
+      "constrains": [
+        "path:packages/daemon/src/http/records-route.ts"
+      ],
+      "opts": [
+        {
+          "id": "key-box",
+          "label": "The daemon signs with the key git signs commits with on this machine.",
+          "short": "Box's git key",
+          "chosen": true,
+          "src": "hud#603, the sign probe reads git's user.signingkey"
+        },
+        {
+          "id": "key-player",
+          "label": "The daemon keeps a signing key for each player.",
+          "short": "Key per player",
+          "src": "drawn for this box"
+        },
+        {
+          "id": "key-none",
+          "label": "The daemon keeps no signing key.",
+          "short": "No key",
+          "strawman": true
+        }
+      ]
+    },
+    {
+      "id": "owner",
+      "kind": "open",
+      "name": "Name on a started work item",
+      "question": "When a player starts a work item, whose name does hud write as its owner?",
+      "problem": "A work item is a chant record that people and agents share as one queue. Start moves an item to in-progress, and chant's guide says whoever takes an item writes their name on it. hud writes that amendment for the player. The name can come from the request body or from the roster entry of a verified player.",
+      "constrains": [
+        "path:packages/daemon/src/http/work-item-route.ts",
+        "path:packages/daemon/src/chant/work-item.ts"
+      ],
+      "opts": [
+        {
+          "id": "owner-roster",
+          "label": "Start writes the verified player's roster name as owner.",
+          "short": "Roster name",
+          "chosen": true,
+          "src": "alecraso/hud#613, decision 8"
+        },
+        {
+          "id": "owner-body",
+          "label": "Start writes the name the request body gives.",
+          "short": "Name from body",
+          "src": "alecraso/hud#610, before decision 8"
+        },
+        {
+          "id": "owner-none",
+          "label": "Start moves the item to in-progress and writes no owner.",
+          "short": "No owner",
+          "strawman": true
+        }
+      ]
+    },
+    {
+      "id": "mcp",
+      "kind": "open",
+      "name": "Approval of chant's MCP tools",
+      "question": "Does the agent need the owner's approval before it calls a chant MCP tool?",
+      "problem": "hud gives the agent chant's MCP tools, op-run and op-approve among them. The agent calls a tool without asking when the tool is auto-approved. op-run can start a deploy that stops at a gate, and op-approve can try to pass that gate. This row decides whether a person sees those calls before they run.",
+      "constrains": [
+        "path:packages/daemon/src/chant/mcp.ts"
+      ],
+      "opts": [
+        {
+          "id": "mcp-auto",
+          "label": "Every chant MCP tool is auto-approved, op-run and op-approve included.",
+          "short": "All auto",
+          "chosen": true,
+          "src": "alecraso/hud#613, decision 1"
+        },
+        {
+          "id": "mcp-ask",
+          "label": "The owner approves each op-run and op-approve call.",
+          "short": "Ask for op tools",
+          "src": "alecraso/hud#613, decision 1, the alternative"
+        },
+        {
+          "id": "mcp-off",
+          "label": "hud gives the agent no chant MCP tools.",
+          "short": "No chant tools",
+          "strawman": true
+        }
+      ]
+    },
+    {
+      "id": "gate",
+      "kind": "open",
+      "name": "Gate approval over MCP",
+      "question": "Can a gate that an Op reached over MCP be approved over MCP?",
+      "problem": "A gate stops an Op until a person approves it. When the agent runs an Op over MCP and then approves its own gate over MCP, the approval says nothing about a person. chant decides this rule, not hud. It is a row here because the answer on the MCP row is safe only under one of its options.",
+      "constrains": [
+        "path:packages/daemon/src/chant/mcp.ts"
+      ],
+      "opts": [
+        {
+          "id": "gate-other",
+          "label": "A gate reached over MCP needs an approval from another channel, such as chant approve at a shell.",
+          "short": "Other channel",
+          "chosen": true,
+          "src": "INTENTIUS/chant#2384"
+        },
+        {
+          "id": "gate-mcp",
+          "label": "An approval over MCP passes a gate that an Op reached over MCP.",
+          "short": "MCP approves",
+          "strawman": true,
+          "src": "chant before INTENTIUS/chant#2384"
+        }
+      ]
+    },
+    {
+      "id": "mount",
+      "kind": "open",
+      "name": "What the gear menu links",
+      "question": "Which chant pages does hud's gear menu link to?",
+      "problem": "The gear menu holds chant's status row and links to the chant pages. The first build of the menu probed each page and hid a link that answered 404, because the view pages were not merged yet. With the view pages present, the menu can link to all of them. Each linked page reads chant through a route, so a link is only useful to a viewer that route answers.",
+      "constrains": [
+        "path:packages/daemon/src/http/ui-app.ts"
+      ],
+      "opts": [
+        {
+          "id": "mount-all",
+          "label": "The menu links Decisions, Intent, Work and Sessions, and keeps the 404 probe for a daemon with no chant reads.",
+          "short": "All four pages",
+          "chosen": true,
+          "src": "alecraso/hud#613, decisions 7 and 11"
+        },
+        {
+          "id": "mount-probe",
+          "label": "The menu probes each page and hides a link that answers 404, as first built.",
+          "short": "Probe and hide",
+          "src": "alecraso/hud#609"
+        },
+        {
+          "id": "mount-deploy",
+          "label": "The menu shows the status row and the deploy pane, and links no chant page.",
+          "short": "Deploy only",
+          "strawman": true
+        }
+      ]
+    }
+  ],
+  "rel": {
+    "read-all": {
+      "why": "One rule for every chant read. The deploy pane stays hidden from spectators, because each control on it is an action.",
+      "rel": [
+        [
+          "write-open",
+          "conf",
+          "A spectator reaches every route, so a route with no guard lets a spectator write.",
+          "argued"
+        ]
+      ],
+      "notes": [
+        "The runs routes admit a spectator after decision 2. The pane is still hidden from roles that may not act."
+      ]
+    },
+    "read-some": {
+      "why": "The state before the integration. The runs routes refused a spectator, and their own refusal text said spectators can watch a deploy."
+    },
+    "read-none": {
+      "why": "Spectators see the session but no chant data.",
+      "rel": [
+        [
+          "mount-all",
+          "conf",
+          "With no chant reads, every page the menu links answers a spectator with 403.",
+          "argued"
+        ]
+      ]
+    },
+    "write-verified": {
+      "why": "The same guard as approve and rollback, on every chant write. The Deploy button is disabled, with the reason, for a viewer who is not verified."
+    },
+    "write-role": {
+      "why": "requireWrite refuses a spectator and admits every other role, including the owner role that a request with no header gets.",
+      "rel": [
+        [
+          "lb-owner",
+          "conf",
+          "A request with no header counts as the owner, so any local process passes a role check.",
+          "sourced",
+          "alecraso/hud@da097e6 packages/daemon/src/http/deploy-run-route.ts, requireVerifiedPlayer"
+        ]
+      ]
+    },
+    "write-open": {
+      "why": "The none answer. Nothing checks a write."
+    },
+    "lb-owner": {
+      "why": "A page loaded from the dev server on this machine is trusted, as in drop-in mode. The header adds who, not whether.",
+      "notes": [
+        "hud#186 made this the rule because refusal cost every direct localhost page its chat."
+      ]
+    },
+    "lb-spectator": {
+      "why": "The opposite answer. A request with no header may read, and only a verified player may act.",
+      "notes": [
+        "Nothing in this box rules it out. A direct localhost page would lose the chat, which no row here draws."
+      ]
+    },
+    "lb-refused": {
+      "why": "Every request must prove who it is.",
+      "notes": [
+        "hud#186 reversed this rule: a direct localhost page lost its chat when the proxy was on."
+      ]
+    },
+    "seal-owner": {
+      "why": "The key on this machine is the owner's, so a seal made with it can only vouch for the owner.",
+      "rel": [
+        [
+          "write-verified",
+          "req",
+          "The review route admits only a verified reviewer, so the owner must come through the proxy to seal.",
+          "sourced",
+          "alecraso/hud@da097e6 packages/daemon/src/http/records-route.ts, requireVerifiedReviewer"
+        ]
+      ]
+    },
+    "seal-player": {
+      "why": "Every reviewer could seal from the page.",
+      "rel": [
+        [
+          "key-box",
+          "conf",
+          "A guest's verdict signed with the owner's key makes the owner vouch for a name that is not theirs.",
+          "sourced",
+          "alecraso/hud@da097e6 packages/daemon/src/http/records-route.ts, viewerOf"
+        ],
+        [
+          "key-player",
+          "req",
+          "Each reviewer's seal must verify for that reviewer, so the daemon needs that reviewer's key.",
+          "argued"
+        ]
+      ]
+    },
+    "seal-cli": {
+      "why": "The by-hand answer. A reviewer runs chant workspace records review --sign with their own key.",
+      "notes": [
+        "Kept as a strawman: the sign option in the page shipped in hud#603, and nothing in this box rules this answer out."
+      ]
+    },
+    "key-box": {
+      "why": "The key git already uses for commits on this machine. hud#603 reads gpg.format and user.signingkey to find it."
+    },
+    "key-player": {
+      "why": "The daemon would hold private keys for people who are not at this machine."
+    },
+    "key-none": {
+      "why": "The none answer.",
+      "rel": [
+        [
+          "seal-owner",
+          "conf",
+          "The owner seals in the page with a key the daemon finds, so the daemon must have one.",
+          "argued"
+        ]
+      ]
+    },
+    "owner-roster": {
+      "why": "The name a route records comes from the roster entry of a verified player, never from the request body.",
+      "rel": [
+        [
+          "write-verified",
+          "req",
+          "Only a verified player has a roster entry, so start needs the verified guard.",
+          "sourced",
+          "alecraso/hud@da097e6 packages/daemon/src/http/verified-player.ts"
+        ]
+      ]
+    },
+    "owner-body": {
+      "why": "The default in the work item page before the integration.",
+      "rel": [
+        [
+          "lb-owner",
+          "conf",
+          "A request with no header counts as the owner, so a local process can start an item under any name.",
+          "sourced",
+          "alecraso/hud@da097e6 packages/daemon/src/http/verified-player.ts"
+        ]
+      ]
+    },
+    "owner-none": {
+      "why": "The none answer. Start changes the state and nothing else.",
+      "notes": [
+        "chant's guide asks whoever takes an item to write their name. That is a rule of the work kind, and no row here holds it."
+      ]
+    },
+    "mcp-auto": {
+      "why": "The agent calls chant's tools without a prompt. MCP_TIMEOUT covers a workspace where chant serve mcp takes about 30 seconds to start.",
+      "rel": [
+        [
+          "gate-other",
+          "req",
+          "The agent can reach a gate but not pass it, because chant never counts an approval that arrived over MCP.",
+          "sourced",
+          "alecraso/hud#613, decision 1; INTENTIUS/chant#2384"
+        ]
+      ]
+    },
+    "mcp-ask": {
+      "why": "The owner sees each op-run and op-approve call before it runs."
+    },
+    "mcp-off": {
+      "why": "The none answer. The agent has no chant tools."
+    },
+    "gate-other": {
+      "why": "chant records the channel a gate approval came through, and refuses an MCP approval of a gate reached over MCP.",
+      "notes": [
+        "In a chant box this is a fixed row: chant decided it, and hud cannot change it."
+      ]
+    },
+    "gate-mcp": {
+      "why": "The rule before INTENTIUS/chant#2384. The agent that produced a gate could approve it."
+    },
+    "mount-all": {
+      "why": "The view pages are merged, so the daemon serves them whenever it has chant reads. Sessions joins the links.",
+      "rel": [
+        [
+          "read-all",
+          "req",
+          "A spectator sees the same links, and each linked page reads through a route that must answer a spectator.",
+          "argued"
+        ]
+      ],
+      "notes": [
+        "The chain from here to No guard on the writes row goes through Spectator reads. The path is enough: a link is not the reason a write needs a guard.",
+        "Decision 7 keeps the rest of hud#609 as built: the status row, the menu read when the Deploy pane opens, the /healthz CORS change, and links in a new tab."
+      ]
+    },
+    "mount-probe": {
+      "why": "The first build, before the view pages existed."
+    },
+    "mount-deploy": {
+      "why": "The none answer for the chant pages."
+    }
+  },
+  "suspected": [
+    "insufficient: mcp-off conf write-verified. It holds only if the agent must be able to deploy, and no row says so. Why: \"With no chant tools and every write verified, the agent has no path to a deploy.\""
+  ],
+  "presets": [
+    {
+      "title": "As chosen",
+      "text": "The integration's set. Open the three rows the argument turns on.",
+      "steps": [
+        {
+          "label": "The write guard",
+          "open": "writes"
+        },
+        {
+          "label": "The loopback rule behind it",
+          "open": "loopback"
+        },
+        {
+          "label": "What sealing needs",
+          "open": "seal"
+        },
+        {
+          "label": "Back to findings",
+          "open": null,
+          "view": "findings"
+        }
+      ]
+    },
+    {
+      "title": "The break test",
+      "text": "The verified guard holds up two chosen options. Set the role check and read what breaks.",
+      "steps": [
+        {
+          "label": "Role check only",
+          "set": {
+            "writes": "write-role"
+          },
+          "open": "writes"
+        },
+        {
+          "label": "Read the loopback row",
+          "open": "loopback"
+        },
+        {
+          "label": "Back to findings",
+          "open": null,
+          "view": "findings"
+        }
+      ]
+    },
+    {
+      "title": "The loopback route",
+      "text": "An unsigned local request counts as a spectator, and the role check stays. Read which other rows still need the verified guard.",
+      "reframe": "The problem becomes whether a direct localhost page must keep the owner's chat.",
+      "steps": [
+        {
+          "label": "Loopback is a spectator, role check only",
+          "set": {
+            "loopback": "lb-spectator",
+            "writes": "write-role"
+          }
+        },
+        {
+          "label": "Work item owner",
+          "open": "owner"
+        },
+        {
+          "label": "Sealing",
+          "open": "seal"
+        }
+      ]
+    },
+    {
+      "title": "The strict route",
+      "text": "Every strict option at once. Read what it forbids.",
+      "steps": [
+        {
+          "label": "Strict reads, writes and loopback",
+          "set": {
+            "reads": "read-none",
+            "writes": "write-verified",
+            "loopback": "lb-refused"
+          }
+        },
+        {
+          "label": "Strict sealing and tools",
+          "set": {
+            "seal": "seal-cli",
+            "key": "key-none",
+            "mcp": "mcp-ask",
+            "mount": "mount-deploy"
+          }
+        },
+        {
+          "label": "Read the ruled-out list",
+          "open": "mount"
+        }
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "title": "alecraso/hud#613, Integration: the chant stack",
+      "url": "https://github.com/alecraso/hud/pull/613",
+      "as_of": "2026-09-25T11:35:56Z"
+    }
+  ],
+  "reviews": []
+}
