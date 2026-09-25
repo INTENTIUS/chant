@@ -142,6 +142,7 @@ export default defineConfig({
 							items: [
 								{ label: 'Asking How a File Got This Way', slug: 'guide/tracing-intent' },
 								{ label: 'Work Items', slug: 'guide/work-items' },
+								{ label: 'Recording Decisions by Hand', slug: 'guide/recording-decisions-by-hand' },
 							],
 						},
 						{

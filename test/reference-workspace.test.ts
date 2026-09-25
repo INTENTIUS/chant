@@ -41,6 +41,9 @@
  *   beside them, `records` reads W-002 as blocked by W-001, and
  *   `graph --intent design/screens/home.json` with the work kind shows both,
  *   with the implements and needs edges. `init --from` carries them.
+ * - the record-decisions skill and prompt (#2709) exist with skill
+ *   frontmatter, the skill's example record validates against the decision
+ *   schema, and `init --from` carries both files.
  *
  * The per-member workspace commands and their contract tests join here as
  * each phase lands (#2537, #2536).
@@ -378,6 +381,38 @@ describe("review sessions (#2673)", () => {
   });
 });
 
+describe("record-decisions skill and prompt (#2709)", () => {
+  const skillFile = join(fixture, "skills", "record-decisions", "SKILL.md");
+  const promptFile = join(fixture, "docs", "record-decisions.md");
+
+  test("the skill has the frontmatter every harness reads, and the prompt is a plain file beside it", () => {
+    const skill = readFileSync(skillFile, "utf-8");
+    expect(skill).toMatch(/^---\nname: record-decisions\ndescription: .+\n---\n/);
+    const prompt = readFileSync(promptFile, "utf-8");
+    expect(prompt.startsWith("# ")).toBe(true);
+  });
+
+  test("the skill's example record validates against docs/design/decisions/decision.schema.json", async () => {
+    const skill = readFileSync(skillFile, "utf-8");
+    const m = skill.match(/<!-- example-record[^>]*-->\r?\n```json\r?\n([\s\S]*?)\r?\n```/);
+    expect(m, "no example-record block found in skills/record-decisions/SKILL.md").not.toBeNull();
+    const record = JSON.parse(m![1]) as Record<string, unknown>;
+
+    const mod = (await import("ajv")) as unknown as { default: unknown };
+    const Ajv = ((mod.default as { default?: unknown }).default ?? mod.default) as new (opts: object) => {
+      compile(s: object): ((d: unknown) => boolean) & { errors?: unknown };
+    };
+    const schema = JSON.parse(readFileSync(join(chantDecisions, "decision.schema.json"), "utf-8")) as object;
+    const validate = new Ajv({ allErrors: true, strict: false }).compile(schema);
+    expect(validate(record), JSON.stringify(validate.errors, null, 2)).toBe(true);
+
+    // The example is a proposal, the only state this skill ever writes.
+    expect(record.state).toBe("proposed");
+    expect(record.choice).toBeNull();
+    expect(record.decided_by).toBeNull();
+  });
+});
+
 describe("workspace commands on the fixture", () => {
   test("workspace ls --json lists the four members with their kinds and roles", () => {
     const doc = lsJson(fixture);
@@ -592,6 +627,12 @@ describe("chant init --from on the fixture", () => {
         ["W-002", true, false],
       ]);
       expect(Object.keys(scope.files)).toContain("work/W-001-the-app-renders-the-home-screen-spec.md");
+
+      // The record-decisions skill and prompt come along too (#2709).
+      expect(existsSync(join(target, "skills", "record-decisions", "SKILL.md"))).toBe(true);
+      expect(existsSync(join(target, "docs", "record-decisions.md"))).toBe(true);
+      expect(Object.keys(scope.files)).toContain("skills/record-decisions/SKILL.md");
+      expect(Object.keys(scope.files)).toContain("docs/record-decisions.md");
 
       // The copy is a workspace of its own, outside any git repository.
       const ls = lsJson(target);
