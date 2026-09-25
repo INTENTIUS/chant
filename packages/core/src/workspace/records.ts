@@ -29,6 +29,7 @@ import type { ReasonCode } from "./reason-codes";
 import { checkPins, pinEntries, type AssetPin } from "./record-assets";
 import { joinSessions, type SessionCitation } from "./record-sessions";
 import type { RecordSource } from "./record-source";
+import { sourceBlock, sourceBlockProblems, transcriptDrift } from "./source-block";
 import type { WorkspaceTree } from "./tree";
 import type { DecisionWork, WorkLink, WorkWarningCode } from "./work";
 
@@ -84,6 +85,12 @@ export const RECORD_WARNING_CODES = [
    * amendment does not stop it counting (#2672).
    */
   "review-undigested",
+  /**
+   * The kind's source block pins a transcript by hash, the file it names can
+   * be read here, and its bytes hash to something else: it is not the
+   * transcript the record means (#2708).
+   */
+  "source-transcript-drift",
 ] as const satisfies readonly ReasonCode[];
 export type RecordWarningCode = (typeof RECORD_WARNING_CODES)[number];
 
@@ -299,6 +306,15 @@ export const recordKindSchema = z
      * `withdrawn_on`. Optional.
      */
     reviews: z.object({ field: z.string().min(1), decider: z.string().min(1) }).strict().optional(),
+    /**
+     * The front-matter object that says where a record came from, opted in
+     * to the stored source block (#2708): `via`, `client`, `harness`,
+     * `model`, `session`, `turns` and `transcript`, beside the kind's own
+     * fields in the same object. With it, those fields are checked for their
+     * shapes, a write with `via: "harvest"` must open in the kind's first
+     * state, and `records` warns `source-transcript-drift`. Optional.
+     */
+    source: z.object({ field: z.string().min(1) }).strict().optional(),
     /**
      * A review-session kind (#2673, #2650 C10): the front-matter list of the
      * verdicts a session produced, the field that seals a closed session, and
@@ -1076,6 +1092,8 @@ export async function readRecords(loaded: LoadedRecordKind, options: ReadRecords
   const match = new RegExp(kind.location.match);
   const validate = await compileSchema(loaded.schema, loaded.refs);
   const workspaceRoot = options.workspaceRoot ?? ".";
+  // Where a relative transcript path resolves (#2708): the workspace root in the working tree.
+  const workspaceDir = workspaceRoot === "." ? options.root : resolve(options.root, ...workspaceRoot.split("/"));
 
   const entries: RecordEntry[] = [];
   const texts = new Map<string, string>();
@@ -1126,6 +1144,16 @@ export async function readRecords(loaded: LoadedRecordKind, options: ReadRecords
     const result = validate(fm.value);
     if (!result.ok) {
       entry.reasons.push({ code: "record-schema-invalid", message: result.errors.join("; ") });
+    }
+    if (kind.source) {
+      // The stored source block (#2708): its proposal fields' shapes, and the transcript it pins.
+      const block = sourceBlock(fm.value, kind.source.field);
+      if (block) {
+        const problems = sourceBlockProblems(block, kind.source.field);
+        if (problems.length > 0) entry.reasons.push({ code: "record-schema-invalid", message: problems.join("; ") });
+        const drift = transcriptDrift(block, kind.source.field, workspaceDir);
+        if (drift) entry.warnings.push({ code: "source-transcript-drift", message: drift });
+      }
     }
     if (kind.pins) {
       const cited = fm.value[kind.pins.field];

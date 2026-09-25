@@ -73,6 +73,7 @@ export const REASONS = {
   "record-supersedes-pending": "A supersedes link from a record whose state is weaker than the record it names, so the link has no effect yet.",
   "record-no-evidence": "The record's evidence list is empty: it cites nothing and pins no file. Information for a reviewer, never an error.",
   "review-undigested": "A verdict names no digest of the text it judged. It still counts, and an amendment does not stop it counting.",
+  "source-transcript-drift": "The record's source block pins a transcript by hash, the file it names can be read here, and its bytes hash to something else: it is not the transcript the record means.",
   // A work record that is valid but warned about (records and graph --intent, #2683).
   "work-needs-unknown": "A work record's needs list names a work id no record has, so the item stays blocked.",
   "work-implements-unknown": "A work record's implements list names a decision id no decision has.",
@@ -114,6 +115,7 @@ export const REASONS = {
   "review-unsupported": "The kind's schema has no reviews field, so its records take no review.",
   "review-note-required": "A dissent was given with no note: a dissent needs a reason.",
   "review-sign-failed": "--sign was given and no seal could be made: the key can't be read or used, git names no ssh signing key, or ssh-keygen is not installed.",
+  "source-harvest-not-proposed": "A harvested record (source.via harvest) was written in a state other than the kind's first: a harvest proposes, and a person decides.",
   "record-sign-failed": "--sign was given and no author seal could be made: the record names no author, the key can't be read or used, git names no ssh signing key, or ssh-keygen is not installed.",
   // A review given in a session (records review --session, #2693).
   "session-unknown": "--session names no session of a session kind whose subjects are the record's kind.",

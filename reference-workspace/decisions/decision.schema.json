@@ -50,8 +50,8 @@
       "type": ["string", "null"]
     },
     "source": {
-      "description": "Where the decision was first recorded: a row of an issue's decisions table, or the workspace itself when no issue holds the decision (#2654).",
-      "oneOf": [{ "$ref": "#/definitions/sourceIssue" }, { "$ref": "#/definitions/sourceWorkspace" }]
+      "description": "Where the decision was first recorded: a row of an issue's decisions table, the workspace itself when no issue holds the decision (#2654), or a harness session when neither does (#2708). Each form may also say where the proposal came from: the fields via, client, harness, model, session, turns and transcript, which the kind opts in to with source: { field: \"source\" }.",
+      "oneOf": [{ "$ref": "#/definitions/sourceIssue" }, { "$ref": "#/definitions/sourceWorkspace" }, { "$ref": "#/definitions/sourceHarness" }]
     },
     "question": {
       "description": "One sentence. Null only in an importer draft.",
@@ -319,7 +319,14 @@
         "revision": {
           "description": "The design revision that last changed this row, such as \"v8\". Null when the row carries no marker.",
           "type": ["string", "null"]
-        }
+        },
+        "session": { "$ref": "#/definitions/sourceSession" },
+        "via": { "$ref": "#/definitions/sourceVia" },
+        "client": { "$ref": "#/definitions/sourceClient" },
+        "harness": { "$ref": "#/definitions/sourceHarnessId" },
+        "model": { "$ref": "#/definitions/sourceModel" },
+        "turns": { "$ref": "#/definitions/sourceTurns" },
+        "transcript": { "$ref": "#/definitions/sourceTranscript" }
       }
     },
     "sourceWorkspace": {
@@ -335,15 +342,102 @@
           "pattern": "^[a-z0-9][a-z0-9-]{0,39}$"
         },
         "session": {
-          "description": "The id of the session the decision was made in, as the member names it. Null or absent when there was none.",
-          "type": ["string", "null"],
-          "minLength": 1
+          "description": "The id of the session the decision was made in, as the member names it, or the harness's session with the chant session record it was held in. Null or absent when there was none.",
+          "$ref": "#/definitions/sourceSession"
         },
         "issue": {
           "description": "An issue the decision relates to, when there is one.",
           "$ref": "#/definitions/issueRef"
-        }
+        },
+        "via": { "$ref": "#/definitions/sourceVia" },
+        "client": { "$ref": "#/definitions/sourceClient" },
+        "harness": { "$ref": "#/definitions/sourceHarnessId" },
+        "model": { "$ref": "#/definitions/sourceModel" },
+        "turns": { "$ref": "#/definitions/sourceTurns" },
+        "transcript": { "$ref": "#/definitions/sourceTranscript" }
       }
+    },
+    "sourceHarness": {
+      "description": "A decision proposed in a harness session, with no issue row or workspace member behind it (#2708). It says how it arrived, in via, and may say the rest of where the proposal came from.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["via"],
+      "properties": {
+        "issue": {
+          "description": "An issue the decision relates to, when there is one.",
+          "$ref": "#/definitions/issueRef"
+        },
+        "session": { "$ref": "#/definitions/sourceSession" },
+        "via": { "$ref": "#/definitions/sourceVia" },
+        "client": { "$ref": "#/definitions/sourceClient" },
+        "harness": { "$ref": "#/definitions/sourceHarnessId" },
+        "model": { "$ref": "#/definitions/sourceModel" },
+        "turns": { "$ref": "#/definitions/sourceTurns" },
+        "transcript": { "$ref": "#/definitions/sourceTranscript" }
+      }
+    },
+    "sourceVia": {
+      "description": "How the record reached the workspace: cli, a person or script at chant workspace records new; mcp, a harness through chant serve mcp, which fills this and client itself; harvest, a transcript read after the fact. A harvested decision is written proposed, and a person decides it. Data about the proposal, not trust.",
+      "enum": ["cli", "mcp", "harvest"]
+    },
+    "sourceClient": {
+      "description": "What wrote the record: the MCP client's clientInfo, or the CLI.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "minLength": 1 },
+        "title": { "type": "string", "minLength": 1 }
+      }
+    },
+    "sourceHarnessId": {
+      "description": "The harness the decision was proposed in, such as claude-code, codex, gemini-cli, opencode, fountain or hud.",
+      "type": "string",
+      "minLength": 1
+    },
+    "sourceModel": {
+      "description": "The model id the harness reports.",
+      "type": "string",
+      "minLength": 1
+    },
+    "sourceSession": {
+      "description": "The session the decision was made in: its id as a string, or an object with the harness's session or conversation id and the chant session record it was held in (#2697). Null when there was none.",
+      "oneOf": [
+        { "type": "string", "minLength": 1 },
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "id": { "description": "The harness's session or conversation id.", "type": "string", "minLength": 1 },
+            "record": { "description": "The id of the chant session record the decision was held in.", "type": "string", "minLength": 1 }
+          }
+        }
+      ]
+    },
+    "sourceTurns": {
+      "description": "The turns of the session the decision was made in, from and to, counted as the harness counts them. to is not before from.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from", "to"],
+      "properties": {
+        "from": { "type": "integer", "minimum": 0 },
+        "to": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "sourceTranscript": {
+      "description": "The session's transcript, pinned by a path or URI and the lowercase hex SHA-256 of its bytes, never copied into the record. A reader checks the transcript it holds is the one meant; chant workspace records warns source-transcript-drift when the file can be read here and hashes to something else. A path is absolute, starts ~/ from the home directory, or starts at the workspace root; of URIs, only file: ones are read.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sha256"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "uri": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      },
+      "oneOf": [{ "required": ["path"] }, { "required": ["uri"] }]
     },
     "issueRef": {
       "type": "string",

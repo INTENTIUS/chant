@@ -29,4 +29,8 @@ export const recordKind = {
   // Verdicts, and the field naming the decider, for each record's digest and
   // quorum (#2671, #2672).
   reviews: { field: "reviews", decider: "decided_by" },
+  // source is where a decision came from, and says where its proposal came
+  // from too: via, client, harness, model, session, turns and a transcript
+  // pinned by hash (#2708).
+  source: { field: "source" },
 };

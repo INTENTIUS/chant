@@ -61,7 +61,7 @@ A decision can also be written through chant: `chant workspace records new`, `am
 | `title` | the topic as the source table names it |
 | `state` | `proposed`, `decided`, `ratified`, `superseded` or `withdrawn` |
 | `area` | the design section, such as `D4`; the review queue groups by it |
-| `source` | where the decision was first recorded: an issue's table row, or the workspace member it was made in (see [Source](#source)) |
+| `source` | where the decision was first recorded: an issue's table row, the workspace member it was made in, or the harness session it was proposed in (see [Source](#source)) |
 | `question` | one sentence |
 | `options` | every option, the chosen one included, each with a letter id, the table's label, how it works (`how`) and its trade-off (`tradeoff`) |
 | `choice` | the chosen option's id and the reason |
@@ -76,7 +76,7 @@ Unknown fields are refused, except ones starting with `x-`.
 
 ## Source
 
-`source` takes one of two forms. A decision taken from an issue's decisions table names the issue, the row's topic cell verbatim and the revision marker on that row, as the `ws-` decisions do:
+`source` takes one of three forms. A decision taken from an issue's decisions table names the issue, the row's topic cell verbatim and the revision marker on that row, as the `ws-` decisions do:
 
 ```yaml
 source:
@@ -94,7 +94,28 @@ source:
   session: "S-0001"
 ```
 
-`member` is the member's name in the workspace declaration. `session` is the id of the session the decision came from, in whatever form the member gives it, and it may be `null` or left out. `issue` may be added when an issue does relate to the decision, and it is never required in this form. The form takes no other fields, so a `row` or `revision` belongs to the issue form only.
+`member` is the member's name in the workspace declaration. `session` is the id of the session the decision came from, in whatever form the member gives it, and it may be `null` or left out. `issue` may be added when an issue does relate to the decision, and it is never required in this form. Beyond the proposal fields below, the form takes no other fields, so a `row` or `revision` belongs to the issue form only.
+
+A decision proposed in a harness session, with no issue row or member behind it, has a third form, which names how it arrived in `via` ([#2708](https://github.com/INTENTIUS/chant/issues/2708)):
+
+```yaml
+source:
+  via: "mcp"
+  client:
+    name: "claude-code"
+    version: "2.1.0"
+  harness: "claude-code"
+  model: "claude-opus-5-5"
+  session: "0f4c2a"
+  turns:
+    from: 12
+    to: 18
+  transcript:
+    path: "~/.claude/projects/app/0f4c2a.jsonl"
+    sha256: "<64 hex digits>"
+```
+
+The same fields may be added to either of the other forms, to say where the proposal came from. `via` is `cli`, `mcp` or `harvest`. `client` is the MCP client's `clientInfo`, or the CLI. `session` is the harness's session id, or `{ id, record }` with the chant session record it was held in. `transcript` pins the conversation by a `path` or `uri` and the SHA-256 of its bytes, and is never a copy of it. Every field is optional, none is trust, and a harvested decision (`via: "harvest"`) is written `proposed`. The kind opts in with `source: { field: "source" }`; [`chant workspace records`](https://intentius.io/chant/cli/workspace-records/#where-a-proposal-came-from) describes the checks.
 
 ## Evidence
 

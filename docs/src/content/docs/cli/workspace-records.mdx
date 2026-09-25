@@ -57,12 +57,13 @@ export const recordKind = {
   pins: { field: "evidence" },
   constrains: { field: "constrains" },
   reviews: { field: "reviews", decider: "decided_by" },
+  source: { field: "source" },
 };
 ```
 
 `location.dir` and `schema.path` are relative to the kind's own directory. Subdirectories are skipped, and a name has to match `location.match` to be read. The `$id` inside the schema must equal `schema.id`.
 
-`approval`, `pins`, `constrains`, `reviews` and `session` are optional, and `approval` ranks the states for [supersession](#supersession). `pins.field` names the list whose entries may pin a workspace file (see [Asset pins](#asset-pins)). `constrains.field` names the list of what a record governs, whose `member:<name>` and `path:<path>` entries become the record's links in [`chant workspace graph --kind`](/chant/cli/workspace-graph/#record-links). For `reviews`, `field` is the list of review verdicts and `decider` is the field holding the decider, and with them each record gets a digest and a quorum (see [Reviews and quorum](#reviews-and-quorum)). chant 0.82.0 and older refuse a kind file that has `approval`, `pins` or `constrains`. `session` makes the kind a [review-session kind](#review-sessions), and chant 0.81.0 and older refuse it too.
+`approval`, `pins`, `constrains`, `reviews` and `session` are optional, and `approval` ranks the states for [supersession](#supersession). `pins.field` names the list whose entries may pin a workspace file (see [Asset pins](#asset-pins)). `constrains.field` names the list of what a record governs, whose `member:<name>` and `path:<path>` entries become the record's links in [`chant workspace graph --kind`](/chant/cli/workspace-graph/#record-links). For `reviews`, `field` is the list of review verdicts and `decider` is the field holding the decider, and with them each record gets a digest and a quorum (see [Reviews and quorum](#reviews-and-quorum)). chant 0.82.0 and older refuse a kind file that has `approval`, `pins` or `constrains`. `session` makes the kind a [review-session kind](#review-sessions), and chant 0.81.0 and older refuse it too. `source.field` names the object that says where a record came from, and opts the kind in to the [source block](#where-a-proposal-came-from). A chant released before this block existed refuses a kind file that has `source`, as it refuses any key it does not know.
 
 A kind with a `work` block is a work kind ([#2683](https://github.com/INTENTIUS/chant/issues/2683)), such as the reference workspace's `work/work.kind.mjs`, whose block reads as follows.
 
@@ -347,6 +348,45 @@ On a developer machine this detects problems. It doesn't enforce anything, becau
 
 `provenance` judges the commit that last changed the file. A record of a kind with `reviews` can also carry its author's seal, which `records` reports apart from it in `attested` and `attestation` ([Sealing a record](#sealing-a-record)). A sealed record in an unsigned commit is `unattested` in `provenance` and `attested: true` beside it, so neither implies the other.
 
+### Where a proposal came from
+
+`provenance` is computed from git and says who committed a record. A kind with `source` can also store where the record was proposed ([#2708](https://github.com/INTENTIUS/chant/issues/2708)): the harness, the model and the session, and the conversation behind it. The fields sit in the kind's source object, beside what the kind itself puts there, such as a decision's issue row:
+
+```yaml
+source:
+  via: "mcp"
+  client:
+    name: "claude-code"
+    version: "2.1.0"
+  harness: "claude-code"
+  model: "claude-opus-5-5"
+  session:
+    id: "0f4c2a"
+    record: "S-0002"
+  turns:
+    from: 12
+    to: 18
+  transcript:
+    path: "~/.claude/projects/app/0f4c2a.jsonl"
+    sha256: "<64 hex digits>"
+```
+
+| Field | Holds |
+|---|---|
+| `via` | how the record arrived: `cli`, `mcp` (`chant serve mcp` fills it, and `client`) or `harvest`, read from a transcript afterwards |
+| `client` | the MCP client's `clientInfo` (`name`, and `version` and `title` when it gives them), or the CLI |
+| `harness` | the harness, such as `claude-code`, `codex`, `gemini-cli`, `opencode`, `fountain` or `hud` |
+| `model` | the model id the harness reports |
+| `session` | the harness's session or conversation id, or `{ id, record }` with the chant session record it was held in |
+| `turns` | `{ from, to }`, the turns the decision was made in; `to` is not before `from` |
+| `transcript` | a `path` or a `uri`, and the `sha256` of the transcript's bytes. The transcript itself is never copied into the repository |
+
+Every field is optional. The block is data about the proposal, and no field in it counts toward trust or the quorum. chant checks each field's shape, beside the kind's own schema, and a field of the wrong shape makes the record invalid with `record-schema-invalid`. `records new` writes the block as given and `records --json` returns it unchanged in `data`.
+
+A record whose `via` is `harvest` must be written in the kind's first state, `proposed` for a decision: a harvest proposes, and a person decides. `records new` refuses anything else with `source-harvest-not-proposed`.
+
+When the transcript can be read here and its bytes hash to something other than `sha256`, `records` warns `source-transcript-drift`: the file is not the transcript the record means. A `path` is absolute, starts `~/` from the home directory, or starts at the workspace root. Of URIs, only `file:` ones are read, and chant never fetches one over the network. A transcript that can't be read gives no warning.
+
 ## Reviews and quorum
 
 A kind with `reviews`, which chant reads from 0.86.0 on, gives every record two more fields ([#2671](https://github.com/INTENTIUS/chant/issues/2671), [#2672](https://github.com/INTENTIUS/chant/issues/2672)). They are `digest`, a hash of the record's text, and `quorum`, which says which verdicts count. Each verdict is an entry in the reviews list with `reviewer`, `verdict` (`agree`, `dissent` or `abstain`) and `on`, and it should also carry `digest`, the record's digest when the reviewer read it:
@@ -605,6 +645,7 @@ A failed read prints `{ "$schema", "contract", "error": { "code", "message" } }`
 | `work-done-unpinned` | is a done work record with an empty evidence list, so nothing shows the work was done |
 | `work-closed-without-date` | is a done or dropped work record with no `closed_on` |
 | `record-unattested` | names an author (the kind's `reviews.decider` field), and a signers file is active at base, and its author seal doesn't verify. It is still read, and stays valid ([Sealing a record](#sealing-a-record)) |
+| `source-transcript-drift` | pins a transcript in its source block that can be read here and hashes to something else ([Where a proposal came from](#where-a-proposal-came-from)) |
 | `work-done-gap-open` | is a done work record whose `source` names a finding that still fires on its region. `records` walks the region as `graph --intent` does, in a git repository with a workspace declaration ([#2686](https://github.com/INTENTIUS/chant/issues/2686)) |
 
 ### Error codes

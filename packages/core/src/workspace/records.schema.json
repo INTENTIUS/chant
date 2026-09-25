@@ -209,6 +209,7 @@
             "record-supersedes-pending",
             "record-no-evidence",
             "review-undigested",
+            "source-transcript-drift",
             "work-needs-unknown",
             "work-implements-unknown",
             "work-needs-cycle",
