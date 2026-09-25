@@ -145,8 +145,12 @@ export const REASONS = {
   "composites-none-declared": "The members read declare no composite instance.",
   "composites-no-component": "The members read declare no component, so no composite instance has one.",
   // The runtimes a member's components can deploy on (graph --composites, #2674).
-  "runtimes-config-unreadable": "The member's chant.config.ts could not be read, so only the built-in local runtime is listed.",
+  "runtimes-config-unreadable": "The member's chant.config.ts could not be read, so only the built-in local runtime is listed, and no environment from the config.",
   "runtimes-lexicon-unreadable": "A lexicon the member's config lists could not be loaded, so it is not listed as a runtime.",
+  // The environments a member's components may deploy to (graph --composites, #2695).
+  "environments-none-declared": "The member's chant.config.ts declares no environments, so only local and the environments in its ledger are listed.",
+  "environments-ledger-undeclared": "The member's ledger has releases in an environment its config's environments don't cover, so chant run --env would refuse it and it is not listed.",
+  "environments-ledger-unreadable": "The chant/lifecycle branch exists and the member's ledger environments could not be listed.",
   // The lineage lock (check).
   "lock-invalid": "The lineage lock can't be read.",
   "manual-step-open": "A scope in the lineage lock has an open manual step.",

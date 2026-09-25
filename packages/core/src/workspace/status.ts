@@ -91,7 +91,7 @@ export const STATUS_ERROR_CODES = [
 export type StatusErrorCode = (typeof STATUS_ERROR_CODES)[number];
 
 /** Environment names a ledger directory can have: no `/`, no leading `_` or `.` (those are chant's own directories). */
-const ENV_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
+export const ENV_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
 
 export interface StatusRelease {
   component: string;

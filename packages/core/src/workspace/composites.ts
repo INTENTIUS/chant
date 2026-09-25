@@ -32,6 +32,11 @@
  * Each component also lists the runtimes it can deploy on (#2674,
  * `runtimes.ts`): `local`, and each lexicon its member configures that hosts
  * `chant run --components`, with the command line for each.
+ *
+ * And each component lists the environments it may deploy to (#2695,
+ * `environments.ts`): `local`, the environments its member's config declares,
+ * and those with a release in the member's ledger on `chant/lifecycle`, with
+ * the command line for each.
  */
 
 import { formatError } from "../cli/format";
@@ -44,6 +49,7 @@ import type { LinkRow } from "./links";
 import { emitDocument, type UnitResult } from "./member-commands";
 import { readerVersion, type ErrorLocation, type WorkspaceErrorCode } from "./declaration";
 import type { ReasonCode } from "./reason-codes";
+import { componentEnvironments, ENVIRONMENT_REASON_CODES, memberEnvironments, readLedgerEnvironments, type ComponentEnvironment, type EnvironmentReason, type LedgerEnvironmentReader, type MemberEnvironments } from "./environments";
 import { componentRuntimes, readRuntimesIn, RUNTIME_REASON_CODES, type ComponentRuntime, type MemberRuntimes, type PluginLoader, type RuntimeReason } from "./runtimes";
 
 /** `$id` of the JSON Schema for the document, shipped beside this file. */
@@ -69,6 +75,9 @@ export type CompositesReasonCode = (typeof COMPOSITES_REASON_CODES)[number];
 /** Why a member's runtimes are only `local`, or leave out a lexicon its config lists (#2674). Closed. */
 export const COMPOSITES_RUNTIME_REASON_CODES = RUNTIME_REASON_CODES;
 
+/** Why a member's environments are only `local`, or leave out one its ledger has (#2695). Closed. */
+export const COMPOSITES_ENVIRONMENT_REASON_CODES = ENVIRONMENT_REASON_CODES;
+
 export interface CompositesMember {
   name: string;
   dir: string;
@@ -79,6 +88,8 @@ export interface CompositesMember {
   chant: string | null;
   /** Why its components' runtimes leave something out: its config, or a lexicon, couldn't be read. Empty for a member not of kind chant. */
   runtimeReasons: RuntimeReason[];
+  /** Why its components' environments are only `local`, or leave one out. Empty for a member not of kind chant. */
+  environmentReasons: EnvironmentReason[];
 }
 
 export interface ComponentEntry {
@@ -94,6 +105,8 @@ export interface ComponentEntry {
   file: string | null;
   /** The runtimes it can deploy on: `local` first, then each hosting lexicon its member configures. */
   runtimes: ComponentRuntime[];
+  /** The environments it may deploy to: `local` first, then the config's, then the ledger's. */
+  environments: ComponentEnvironment[];
 }
 
 export interface ComponentMatch {
@@ -145,7 +158,7 @@ export interface CompositesResult {
 }
 
 /** Read one member's component graph run into components, or the reason it can't be read. */
-function readComponents(member: string, dir: string, run: UnitResult, runtimes: MemberRuntimes | undefined): { components: ComponentEntry[] } | { reason: MemberReason } {
+function readComponents(member: string, dir: string, run: UnitResult, runtimes: MemberRuntimes | undefined, environments: MemberEnvironments | undefined): { components: ComponentEntry[] } | { reason: MemberReason } {
   if (run.exitCode !== 0) {
     const tail = run.stderr.trim().split("\n").slice(-5).join("\n");
     return { reason: { code: "command-failed", message: `chant graph --components exited ${run.exitCode}${tail ? `: ${tail}` : ""}` } };
@@ -166,6 +179,7 @@ function readComponents(member: string, dir: string, run: UnitResult, runtimes: 
       composites: composites && composites.length > 0 ? composites : null,
       file: file ? (dir === "." ? file : `${dir}/${file}`) : null,
       runtimes: componentRuntimes(n.id, runtimes),
+      environments: componentEnvironments(n.id, environments, runtimes?.default),
     });
   }
   return { components };
@@ -233,17 +247,19 @@ export function joinComponents(instances: CompositeInstanceRow[], components: Co
   });
 }
 
-function memberEntry(m: ComposedMember, componentReason: MemberReason | null, runtimes: MemberRuntimes | undefined): CompositesMember {
+function memberEntry(m: ComposedMember, componentReason: MemberReason | null, runtimes: MemberRuntimes | undefined, environments: MemberEnvironments | undefined): CompositesMember {
   const reason = m.reason ?? componentReason;
   const status = m.status === "composed" ? (componentReason ? "failed" : "read") : m.status;
-  return { name: m.name, dir: m.dir, kind: m.kind, status, reason, chant: m.chant, runtimeReasons: runtimes?.reasons ?? [] };
+  return { name: m.name, dir: m.dir, kind: m.kind, status, reason, chant: m.chant, runtimeReasons: runtimes?.reasons ?? [], environmentReasons: environments?.reasons ?? [] };
 }
 
 /** Read the workspace's composites and components, and build the document. Never throws a `WorkspaceReadError`. */
-export async function workspaceComposites(query: Omit<GraphQuery, "kind" | "components" | "inTree"> & { loadPlugin?: PluginLoader }): Promise<CompositesResult> {
+export async function workspaceComposites(
+  query: Omit<GraphQuery, "kind" | "components" | "inTree"> & { loadPlugin?: PluginLoader; readLedgerEnvironments?: LedgerEnvironmentReader },
+): Promise<CompositesResult> {
   const head: Head = { $schema: COMPOSITES_OUTPUT_SCHEMA_ID, contract: COMPOSITES_CONTRACT_VERSION, chant: readerVersion() };
   let runtimes = new Map<string, MemberRuntimes>();
-  const { loadPlugin, ...graphQuery } = query;
+  const { loadPlugin, readLedgerEnvironments: readLedger = readLedgerEnvironments, ...graphQuery } = query;
   const { doc: graph, failed, components: runs } = await workspaceGraph({
     ...graphQuery,
     components: true,
@@ -259,15 +275,18 @@ export async function workspaceComposites(query: Omit<GraphQuery, "kind" | "comp
   let componentsFailed = false;
   for (const m of graph.members) {
     const run = m.status === "composed" ? byMember.get(m.name) : undefined;
+    // The ledger is the local chant/lifecycle branch, read from the working tree even with --at, as workspace status reads it.
+    const memberRuntimes = runtimes.get(m.name);
+    const environments = memberRuntimes ? memberEnvironments(memberRuntimes, readLedger(m, query.cwd)) : undefined;
     let reason: MemberReason | null = null;
     if (run) {
-      const read = readComponents(m.name, m.dir, run, runtimes.get(m.name));
+      const read = readComponents(m.name, m.dir, run, memberRuntimes, environments);
       if ("reason" in read) {
         reason = read.reason;
         componentsFailed = true;
       } else components.push(...read.components);
     }
-    members.push(memberEntry(m, reason, runtimes.get(m.name)));
+    members.push(memberEntry(m, reason, memberRuntimes, environments));
   }
   components.sort((a, b) => a.id.localeCompare(b.id));
 

@@ -15,6 +15,7 @@
  */
 
 import { join } from "node:path";
+import type { EnvironmentDeclaration } from "../config";
 import { lexiconNames } from "../lexicon-module";
 import type { ReasonCode } from "./reason-codes";
 
@@ -54,6 +55,11 @@ export interface MemberRuntimes {
   /** The default runtime's name. */
   default: string;
   reasons: RuntimeReason[];
+  /**
+   * The config's `environments`, read in the same load (#2695): `[]` when it
+   * declares none, null when the config couldn't be read.
+   */
+  environments: EnvironmentDeclaration[] | null;
 }
 
 /** Loads a lexicon plugin by name; `loadPlugin` from the CLI unless a test swaps it. */
@@ -65,11 +71,14 @@ const firstLine = (err: unknown): string => (err instanceof Error ? err.message 
 export async function readMemberRuntimes(dir: string, load?: PluginLoader): Promise<MemberRuntimes> {
   const reasons: RuntimeReason[] = [];
   let names: string[];
+  let environments: EnvironmentDeclaration[];
   try {
     const { loadChantConfig } = await import("../config");
-    names = lexiconNames((await loadChantConfig(dir)).config.lexicons ?? []);
+    const { config } = await loadChantConfig(dir);
+    names = lexiconNames(config.lexicons ?? []);
+    environments = config.environments ?? [];
   } catch (err) {
-    return { lexicons: [], default: LOCAL_RUNTIME, reasons: [{ code: "runtimes-config-unreadable", message: `chant.config.ts: ${firstLine(err)}` }] };
+    return { lexicons: [], default: LOCAL_RUNTIME, reasons: [{ code: "runtimes-config-unreadable", message: `chant.config.ts: ${firstLine(err)}` }], environments: null };
   }
   const loader = load ?? (await import("../cli/plugins")).loadPlugin;
   const lexicons: string[] = [];
@@ -81,7 +90,7 @@ export async function readMemberRuntimes(dir: string, load?: PluginLoader): Prom
       reasons.push({ code: "runtimes-lexicon-unreadable", message: `lexicon "${name}": ${firstLine(err)}` });
     }
   }
-  return { lexicons, default: LOCAL_RUNTIME, reasons };
+  return { lexicons, default: LOCAL_RUNTIME, reasons, environments };
 }
 
 /** The runtimes one component can deploy on, `local` first, each with its command line. */

@@ -160,6 +160,9 @@ describe("every schema against the reference workspace (#2543)", () => {
         // #2674: the reference config's lexicons host no component runs, so local is the only runtime, read at HEAD too.
         expect(doc.components[0].runtimes).toEqual([{ name: "local", lexicon: null, default: true, command: "chant run --components app" }]);
         expect(doc.members.find((m) => m.name === "delivery")!.runtimeReasons).toEqual([]);
+        // #2695: the reference config declares no environments, so the app deploys to local only.
+        expect(doc.components[0].environments).toEqual([{ name: "local", default: true, source: "builtin", command: "chant run --components app" }]);
+        expect(doc.members.find((m) => m.name === "delivery")!.environmentReasons.map((r) => r.code)).toEqual(["environments-none-declared"]);
         expect(doc.reasons).toEqual([]);
       }
     },
