@@ -163,6 +163,8 @@ describe("chant workspace status on built workspaces", () => {
     expect(web.environments[0].ledger).toEqual({ layout: "members", path: "_members/web/staging/releases.jsonl", shared: false });
     // The later of the two records wins.
     expect(web.environments[0].releases.map((r) => [r.component, r.digest, r.gitSha])).toEqual([["web", D("a"), "a".repeat(40)]]);
+    // No plan was ever written for these digests (ws-055, #2733): the field is present, and null.
+    expect(web.environments[0].releases.map((r) => r.plan)).toEqual([null]);
     // api has no _members/api/ yet, so it falls back to the flat ledger, which the root member reads too.
     expect(api.environments[0].ledger).toEqual({ layout: "flat", path: "staging/releases.jsonl", shared: true });
     expect(site.environments[0].ledger).toEqual({ layout: "flat", path: "staging/releases.jsonl", shared: true });
@@ -197,6 +199,33 @@ describe("chant workspace status on built workspaces", () => {
     expect(text).toMatch(/api\s+api\s+sha256:bbbbbbbbbbbb bbbbbbbb\s+sha256:cccccccccccc cccccccc\s+differs/);
     expect(text).toMatch(/api\s+worker\s+sha256:dddddddddddd dddddddd\s+-\s+only-env/);
     expect(text).toContain("3 members, 3 with a release in staging, 2 differ from prod, 0 unreadable");
+  });
+
+  test("resolves a release's plan from _plans/<digest>.json, member-scoped per #2524 D7 (ws-055, #2733)", async () => {
+    const root = repo({
+      "chant.workspace.json": declaration([
+        { name: "site", dir: ".", kind: "other", because: "the root project" },
+        { name: "web", dir: "apps/web", kind: "chant" },
+      ]),
+      "apps/web/chant.config.ts": "",
+    });
+    const webPlan = { digest: D("a"), release: "r-web", units: [{ id: "w-1" }] };
+    const apiPlan = { digest: D("b"), release: "r-api", units: [] };
+    lifecycle(root, {
+      "_members/web/staging/releases.jsonl": jsonl(release("web", "staging", D("a"), "a".repeat(40))),
+      [`_members/web/_plans/sha256_${"a".repeat(64)}.json`]: JSON.stringify(webPlan),
+      "staging/releases.jsonl": jsonl(release("api", "staging", D("b"), "b".repeat(40)), release("worker", "staging", D("c"), "c".repeat(40))),
+      [`_plans/sha256_${"b".repeat(64)}.json`]: JSON.stringify(apiPlan),
+    });
+    const doc = result(await workspaceStatus({ cwd: root, env: "staging" }));
+    expectValid(doc);
+    const web = doc.members.find((m) => m.name === "web")!;
+    const site = doc.members.find((m) => m.name === "site")!;
+    expect(web.environments[0].releases[0].plan).toEqual(webPlan);
+    const byComponent = new Map(site.environments[0].releases.map((r) => [r.component, r]));
+    expect(byComponent.get("api")?.plan).toEqual(apiPlan);
+    // worker has no plan stored under its digest: reads null, not an error.
+    expect(byComponent.get("worker")?.plan).toBeNull();
   });
 
   test("compares on the input digest when a release has one", async () => {

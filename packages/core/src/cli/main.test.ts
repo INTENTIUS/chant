@@ -276,6 +276,18 @@ describe("parseArgs", () => {
     expect(result.actor).toBe("alice");
   });
 
+  test("parses --release-plan for components release, distinct from --plan (#2300)'s approval-digest flag (ws-055, #2733)", () => {
+    const result = parseArgs([
+      "components", "release", "prod",
+      "--component", "search-service",
+      "--release-plan", "plan.json",
+      "--actor", "alice",
+    ]);
+    expect(result.releasePlanFile).toBe("plan.json");
+    expect(result.digest).toBeUndefined();
+    expect(result.plan).toBeUndefined();
+  });
+
   test("--digest repeats for components promote, and --digest-file is parsed (#2602)", () => {
     const promote = parseArgs([
       "components", "promote", "--from", "staging", "--to", "prod",
