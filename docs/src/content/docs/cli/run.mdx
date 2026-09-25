@@ -55,6 +55,15 @@ Tool calls on the stream become phases, so `--progress-json` and the human rende
 
 `chant run approve <op> <gate> --on fountain` writes the resolution to the gate ledger as always. It then posts `chant run <op>` to the steward, with `--approver` and `--url` on it. The sandbox re-runs the op and walks through the gate, reading the resolution back off the ledger. `--durable-requests` is reserved for answering fountain's own pending request instead; the endpoint it needs has not shipped, and the flag currently refuses by naming the upstream issue rather than reporting a resolution it did not make.
 
+### An Op a declared steward lists
+
+`chant run <op>` for an Op a [declared steward](/chant/lexicons/fountain/steward/) lists is one of that steward's turns, not a run beside one ([#2750](https://github.com/INTENTIUS/chant/issues/2750)). Which rule applies depends on the steward's form in the run's environment (`--env`, default `local`):
+
+- **`fountain`**: the run belongs on the steward's thread. Without `--on fountain`, it is refused outright, naming the command that posts it there instead of running it here, unaware of the steward's own turns.
+- **`local`**: the run takes the steward's turn lease, the same one a `chant operator --steward` round holds for the length of its own scheduled tick (`refs/chant/lease/_turns/<name>`). Held already, `chant run <op>` waits briefly for it to clear (long enough to ride out a race with a turn that is just ending, never long enough to sit through a whole one), then refuses, naming the steward and, where known, who holds the turn. It never queues past that wait. A round's own leases skip and report rather than wait, and fountain's busy teammate above is refused rather than retried; this follows the same rule. Wait for the turn to finish and re-run the command, or check `chant operator status --steward <name>`. If it looks stuck, stopping the operator process holding it (Ctrl-C, or killing it) frees the lease immediately, and its own TTL frees it either way.
+
+An Op no steward lists is untouched by any of this.
+
 ## Subcommands
 
 ### `run <name>`

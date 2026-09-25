@@ -105,9 +105,11 @@ export type {
 export {
   discoverConvergeOps, runOperatorRound, runOperatorForever, formatRoundLine,
   formatSignalLine, DEFAULT_OPERATOR_INTERVAL_MS, acquireStewardLease,
+  acquireStewardTurn, STEWARD_TURN_WAIT_MS,
 } from "./operator";
 export {
   declareSteward, isStewardDeclaration, stewardFormFor, stewardOpConfig, normaliseStewardForm, stewardLeaseName,
+  stewardTurnLeaseName,
   STEWARD_KIND, STEWARD_FORMS, STEWARD_NAME_PATTERN, DEFAULT_STEWARD_ENV,
 } from "./steward";
 export type {

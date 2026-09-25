@@ -38,11 +38,11 @@
 import type { ActivityFn, ActivityProfile } from "./activity-registry";
 import { discoverOps, type DiscoveredOp } from "./discover";
 import { runOpLocally, OpRunFailure, type OpRunResult } from "./local-executor";
-import { acquireLease, stillHoldsLease, currentHolderId, DEFAULT_LEASE_TTL_MS, type LeaseRecord, type AcquireLeaseResult } from "../lifecycle/lease";
+import { acquireLease, releaseLease, stillHoldsLease, currentHolderId, DEFAULT_LEASE_TTL_MS, type LeaseRecord, type AcquireLeaseResult } from "../lifecycle/lease";
 import { randomUUID } from "node:crypto";
 import { readRunLedger, runEnvOf } from "../lifecycle/run-ledger";
 import { enterStewardTurn } from "./steward-turn";
-import { stewardLeaseName, type StewardDeclaration } from "./steward";
+import { stewardLeaseName, stewardTurnLeaseName, type StewardDeclaration } from "./steward";
 import { stewardWorkHolder } from "./work-lease-run";
 import { StaleLockError } from "../lifecycle/git";
 import { cronMatches, cronDueBetween } from "./cron";
@@ -117,7 +117,17 @@ export type OperatorTickEvent =
    * steward. Nothing ticked. `op` is the steward's lease name and `env` is
    * `-`, so a log line keyed on either still reads.
    */
-  | { kind: "steward-busy"; op: string; env: string; steward: string; heldBy?: string };
+  | { kind: "steward-busy"; op: string; env: string; steward: string; heldBy?: string }
+  /**
+   * A local steward's round (#2750) found its turn lease
+   * (`stewardTurnLeaseName`) held by someone else already mid-run — a `chant
+   * run <op>` typed by hand, or another round somehow still finishing one.
+   * Nothing ticked: the round stops here rather than trying its remaining
+   * ops, since every one of them would fail the same check (the turn is one
+   * lease for the whole steward, not one per op). The next round tries
+   * again.
+   */
+  | { kind: "turn-busy"; op: string; env: string; steward: string; heldBy?: string };
 
 export interface OperatorRoundOptions {
   cwd?: string;
@@ -220,6 +230,59 @@ export async function acquireStewardLease(
   opts: { cwd?: string; ttlMs?: number; now?: () => Date } = {},
 ): Promise<AcquireLeaseResult> {
   return acquireLease(stewardLeaseName(steward), holder, { ...opts, ttlMs: opts.ttlMs ?? DEFAULT_LEASE_TTL_MS });
+}
+
+/**
+ * How long a caller contending for a steward's turn lease
+ * (`acquireStewardTurn`) retries before giving up (#2750). Long enough to
+ * ride out a race with a turn that is just ending; short enough that a
+ * genuinely busy steward is reported back promptly. A round never waits
+ * (`waitMs` omitted there): it already runs on its own timer and simply
+ * tries the turn again next round, exactly as it already does for a busy
+ * per-op lease. `chant run <op>` (`../cli/handlers/run.ts`) is the caller
+ * that waits, since a human is standing at the terminal for the answer.
+ */
+export const STEWARD_TURN_WAIT_MS = 2_000;
+
+/** How often {@link acquireStewardTurn} retries while it waits. */
+const STEWARD_TURN_POLL_MS = 150;
+
+/**
+ * Take the steward's turn lease (#2750): the lease every run of one of its
+ * Ops — a round's scheduled tick, or `chant run <op>` typed by hand — holds
+ * for exactly as long as that one run takes, so the two are never beside each
+ * other. Distinct from {@link acquireStewardLease}, which one `chant operator
+ * --steward` process holds for its whole life: this one is held per-run, so a
+ * hand run succeeds the moment a round's tick ends, not only once the daemon
+ * itself stops.
+ *
+ * Contention never queues past `waitMs` (0 by default): consistent with a
+ * round's own leases, which skip and report rather than wait (see this
+ * module's doc), and with the fountain form, whose busy teammate is likewise
+ * refused rather than retried. A caller that wants to ride out a race with a
+ * turn about to end passes `waitMs`, and this polls every
+ * {@link STEWARD_TURN_POLL_MS} until it acquires or the wait runs out.
+ */
+export async function acquireStewardTurn(
+  steward: string,
+  holder: string,
+  opts: { cwd?: string; ttlMs?: number; now?: () => Date; waitMs?: number } = {},
+): Promise<AcquireLeaseResult> {
+  const deadline = Date.now() + (opts.waitMs ?? 0);
+  for (;;) {
+    const result = await acquireLease(stewardTurnLeaseName(steward), holder, {
+      cwd: opts.cwd,
+      ttlMs: opts.ttlMs ?? DEFAULT_LEASE_TTL_MS,
+      now: opts.now,
+    });
+    if (result.acquired || result.reason !== "held" || Date.now() >= deadline) return result;
+    await new Promise((r) => setTimeout(r, STEWARD_TURN_POLL_MS));
+  }
+}
+
+/** Release a steward's turn lease, best-effort — a run whose turn was never actually acquired (or already lost) has nothing to release. */
+async function releaseStewardTurn(steward: string, holder: string, token: string, opts: { cwd?: string } = {}): Promise<void> {
+  await releaseLease(stewardTurnLeaseName(steward), holder, token, opts).catch(() => false);
 }
 
 /**
@@ -340,6 +403,22 @@ export async function runOperatorRound(opts: OperatorRoundOptions): Promise<Oper
     }
 
     const lease = acquired.lease as LeaseRecord;
+
+    // A local steward is one turn at a time (#2750): a hand run (`chant run
+    // <op>`) holds this same lease for as long as it runs, so a round never
+    // ticks beside one. It is one lease for the whole steward, not one per
+    // op, so finding it held stops the round outright — every op still ahead
+    // of it in `roundOps` would fail the identical check.
+    let turn: AcquireLeaseResult | undefined;
+    if (steward) {
+      turn = await acquireStewardTurn(steward.name, holder, { cwd: opts.cwd, ttlMs: opts.leaseTtlMs, now: opts.now });
+      if (!turn.acquired) {
+        await releaseLease(config.name, holder, lease.token, { cwd: opts.cwd }).catch(() => false);
+        events.push({ kind: "turn-busy", op: config.name, env, steward: steward.name, heldBy: turn.heldBy?.holder });
+        break;
+      }
+    }
+
     // The run is the steward's turn (#2749): a decision point it asks names the
     // steward and makes its model call through the steward's broker, and an
     // answer from inside the turn is refused.
@@ -390,6 +469,7 @@ export async function runOperatorRound(opts: OperatorRoundOptions): Promise<Oper
       events.push({ kind: "tick-failed", op: config.name, env, error: message });
     } finally {
       restoreTurn?.();
+      if (steward && turn?.acquired) await releaseStewardTurn(steward.name, holder, turn.lease!.token, { cwd: opts.cwd });
     }
     if (!(await holdSteward())) break;
   }
@@ -618,5 +698,7 @@ export function formatRoundLine(event: OperatorTickEvent): string {
       return `operator: ${event.op}@${event.env} error=1(lease acquire failed — ${event.error})`;
     case "steward-busy":
       return `operator: steward ${event.steward} skipped=1(steward-lease-held${event.heldBy ? `:${event.heldBy}` : ""})`;
+    case "turn-busy":
+      return `operator: ${event.op}@${event.env} skipped=1(turn-held${event.heldBy ? `:${event.heldBy}` : ""}, steward "${event.steward}" is already mid-turn)`;
   }
 }
