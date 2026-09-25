@@ -16,6 +16,12 @@ chant serve mcp [path]
 
 Typically you don't run this directly. `chant init` detects your IDE and writes the MCP config to the appropriate global config file — `~/.claude/mcp.json` for Claude Code, `~/.cursor/mcp.json` for Cursor, or `~/.config/mcp/mcp.json` otherwise. Your agent picks it up automatically. See [Agent Integration](/chant/guide/agent-integration/).
 
+### At a workspace root
+
+A project with no lexicon refuses to start with "No lexicon detected". The root of a declared workspace (`chant.workspace.json`) with no lexicon of its own is the exception, as in a repo made from chud's template, whose lexicons are all in `delivery/`. There the server starts and serves the core tools and resources below, with the lexicons of the workspace's members of kind `chant`, each read from that member's own `chant.config.ts`. A member whose config does not load, or a lexicon this chant cannot import, is left out and the rest are served, down to core alone.
+
+The `initialize` result then carries `instructions`. They say which lexicons loaded and which did not, and that the tools taking a `path` want a member's directory.
+
 ## Tools
 
 These are the core tools the server registers. Lexicon plugins contribute more.
@@ -268,7 +274,7 @@ On the 2026-07-28 revision the requested version and the client identity travel 
 
 | Method | Description |
 |--------|-------------|
-| `initialize` | Handshake — returns the negotiated protocol version, capabilities, and server info: `name` is `chant`, and `version` is the installed chant's version |
+| `initialize` | Handshake — returns the negotiated protocol version, capabilities, and server info: `name` is `chant`, and `version` is the installed chant's version, the one `chant --version` prints. At a workspace root with no lexicon of its own it also returns `instructions` |
 | `server/discover` | The `initialize` result merged with the tool and resource listings, so a client can discover everything in one call |
 | `tools/list` | List all available tools (core + plugin-contributed) |
 | `tools/call` | Invoke a tool by name with parameters |

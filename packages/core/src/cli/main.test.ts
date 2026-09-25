@@ -71,6 +71,13 @@ describe("parseArgs", () => {
     expect(result.help).toBe(true);
   });
 
+  test("parses --version and -V (#2701)", () => {
+    expect(parseArgs(["--version"]).version).toBe(true);
+    expect(parseArgs(["-V"]).version).toBe(true);
+    expect(parseArgs(["build"]).version).toBeUndefined();
+    expect(() => parseArgs(["--version=1"])).toThrow();
+  });
+
   test("parses --output with value", () => {
     const result = parseArgs(["build", "--output", "stack.json"]);
     expect(result.output).toBe("stack.json");

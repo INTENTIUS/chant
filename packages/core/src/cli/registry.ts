@@ -18,6 +18,8 @@ export interface ParsedArgs {
   watch: boolean;
   verbose: boolean;
   help: boolean;
+  /** `--version` / `-V` (#2701): print the installed chant's version. */
+  version?: boolean;
   report?: boolean;
   /** `chant run` — force the local in-process executor (the default). */
   local?: boolean;

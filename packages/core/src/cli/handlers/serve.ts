@@ -11,7 +11,16 @@ export async function runServeLsp(ctx: CommandContext): Promise<number> {
 
 export async function runServeMcp(ctx: CommandContext): Promise<number> {
   const { McpServer } = await import("../mcp/server");
-  const server = new McpServer(ctx.plugins);
+  // #2700 — main() hands over no plugins only at a workspace root with no
+  // lexicon of its own (anywhere else it refuses first). There the lexicons
+  // are the chant members', and the server says which loaded.
+  let plugins = ctx.plugins;
+  let instructions: string | undefined;
+  if (plugins.length === 0) {
+    const { loadWorkspacePlugins } = await import("../mcp/workspace-plugins");
+    ({ plugins, instructions } = await loadWorkspacePlugins(process.cwd()));
+  }
+  const server = new McpServer(plugins, { instructions });
   await server.start();
   await new Promise(() => {});
   return 0; // unreachable

@@ -93,9 +93,17 @@ export class McpServer {
   private toolHandlers: Map<string, ToolHandler> = new Map();
   private pluginResources: Map<string, { definition: ResourceDefinition; handler: () => Promise<string> }> = new Map();
   private plugins: LexiconPlugin[];
+  private instructions: string | undefined;
 
-  constructor(plugins?: LexiconPlugin[]) {
+  /**
+   * `options.instructions` is sent as the `initialize` result's
+   * `instructions`, the text a client may give its model about this server.
+   * Only a workspace root with no lexicon of its own sets it (#2700), to say
+   * which members' lexicons were loaded.
+   */
+  constructor(plugins?: LexiconPlugin[], options: { instructions?: string } = {}) {
     this.plugins = plugins ?? [];
+    this.instructions = options.instructions;
     // Register core tools
     this.registerTool(buildTool, handleBuild);
     this.registerTool(lintTool, handleLint);
@@ -226,6 +234,7 @@ export class McpServer {
       capabilities: { tools: {}, resources: {} },
       // The installed chant's version, so a client can tell which chant it talks to (#2689).
       serverInfo: { name: "chant", version: CHANT_VERSION },
+      ...(this.instructions ? { instructions: this.instructions } : {}),
     };
   }
 
