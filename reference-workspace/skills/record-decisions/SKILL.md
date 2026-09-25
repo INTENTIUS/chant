@@ -159,10 +159,13 @@ Field notes:
 | `constrains` | At least one entry: `member:<name>` for a workspace member, `path:<path>` for a specific file, a decision id, or `owner/repo#123` for an issue. |
 | `rejected` | The options not chosen, each with why, if you know it. `[]` is fine if you only captured the winning option. |
 
-`records new` has no `--by` flag; there's nothing to name. Chant's own
-provenance comes from the git commit that adds the file, once it's committed:
-that's who chant already shows as having proposed the record, without you
-setting anything.
+Pass `--by <name>` naming whoever, or whatever session, is proposing the
+record — a person you're acting for, or your own harness session — and chant
+writes it into `proposed_by`, apart from `decided_by`, which stays `null`
+until someone decides it. Don't set `proposed_by` yourself in the JSON; give
+`--by` instead, and leave it out entirely when there's no one particular to
+name. Chant's own provenance still comes from the git commit that adds the
+file, once it's committed, whether or not `--by` was given.
 
 `source` says where the decision was made: a workspace member, an issue row,
 or neither. It can also say where the proposal itself came from, in the same

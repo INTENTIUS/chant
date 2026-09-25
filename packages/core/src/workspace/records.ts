@@ -308,6 +308,17 @@ export const recordKindSchema = z
      */
     reviews: z.object({ field: z.string().min(1), decider: z.string().min(1) }).strict().optional(),
     /**
+     * The front-matter field a new record's proposer is named on, when the
+     * kind opts in (#2756). `records new --by` and the MCP `records-new`
+     * tool's `by` write it for a record that opens in the kind's first
+     * state — a proposal naming who proposed it — instead of
+     * `reviews.decider`'s field, which `by` fills only when a new record
+     * opens straight into another state. Requires `states`. Optional: a kind
+     * without it keeps `by` writing `reviews.decider` for every new record,
+     * as before #2756.
+     */
+    proposedBy: z.object({ field: z.string().min(1) }).strict().optional(),
+    /**
      * The front-matter object that says where a record came from, opted in
      * to the stored source block (#2708): `via`, `client`, `harness`,
      * `model`, `session`, `turns` and `transcript`, beside the kind's own
@@ -393,6 +404,10 @@ export const recordKindSchema = z
   .refine((k) => k.states !== undefined || k.approval === undefined, {
     message: "a kind without states cannot have approval ranks",
     path: ["approval"],
+  })
+  .refine((k) => k.states !== undefined || k.proposedBy === undefined, {
+    message: "a kind without states cannot have proposedBy: there is no first state for a record to open in",
+    path: ["proposedBy"],
   })
   .refine((k) => (k.closedStates ?? []).every((s) => (k.states ?? []).includes(s)), {
     message: "every closed state must be listed in states",

@@ -225,6 +225,35 @@ describe("records new", () => {
   test("a kind that can't be read is its read error", async () => {
     expect(code(await newRecord({ kind: "missing.kind.mjs", fields: fields(fresh()), cwd: dir }))).toBe("kind-unreadable");
   });
+
+  test("--by names the proposer of a record that opens proposed, apart from decided_by (#2756)", async () => {
+    const { id: _id, ...freshProposal } = proposal({ title: "Filed by someone" });
+    const proposed = await newRecord({ kind: KIND, fields: fields(freshProposal), by: "carol", cwd: dir });
+    expect(code(proposed)).toBe("ok");
+    const proposedPath = (proposed as { path: string }).path.replace("decisions/", "");
+    expect(data(proposedPath)).toMatchObject({ proposed_by: "carol", decided_by: null });
+
+    // A conflicting proposed_by given in the fields is refused, same as a conflicting decided_by is today.
+    const conflict = await newRecord({ kind: KIND, fields: fields({ ...freshProposal, title: "Two proposers", proposed_by: "dave" }), by: "carol", cwd: dir });
+    expect(code(conflict)).toBe("write-input-invalid");
+  });
+
+  test("--by names the decider when a new record opens straight into a later state", async () => {
+    const { id: _id, decided_by: _db, ...freshDecided } = decision({ title: "Decided at once" });
+    const decidedDoc = await newRecord({ kind: KIND, fields: fields({ ...freshDecided, decided_by: null }), by: "dana", cwd: dir });
+    expect(code(decidedDoc)).toBe("ok");
+    const decidedPath = (decidedDoc as { path: string }).path.replace("decisions/", "");
+    expect(data(decidedPath)).toMatchObject({ decided_by: "dana" });
+    expect(data(decidedPath)).not.toHaveProperty("proposed_by");
+  });
+
+  test("--by is refused for a kind whose new record opens decided and declares no reviews", async () => {
+    const kindFile = join(dir, "decisions", "decision.kind.mjs");
+    writeFileSync(kindFile, readFileSync(kindFile, "utf-8").replace(/^\s*reviews: \{[^}]*\},?\n/m, ""));
+    const { id: _id, decided_by: _db, ...freshDecided } = decision({ title: "No reviews declared" });
+    const doc = await newRecord({ kind: KIND, fields: fields({ ...freshDecided, decided_by: null }), by: "erin", cwd: dir });
+    expect(code(doc)).toBe("write-usage-invalid");
+  });
 });
 
 describe("records amend", () => {
@@ -369,6 +398,23 @@ describe("the command line", () => {
       writeFileSync(join(dir, "patch.json"), JSON.stringify({ title: "Changed" }));
       expect(cli(["amend", "ws-004", "--kind", KIND, "--set", "patch.json"])).toMatchObject({ status: 1, doc: { error: { code: "amend-supersede-instead" } } });
       expect(cli(["amend", "ws-004", "--set", "patch.json"])).toMatchObject({ status: 1, doc: { error: { code: "write-usage-invalid" } } });
+    },
+    120_000,
+  );
+
+  test(
+    "new --by writes the proposer, not the decider, and amend --by is refused rather than dropped (#2756)",
+    () => {
+      const { id: _id, ...rest } = decision({ title: "Kept by a session", state: "proposed", choice: null, decided_by: null, decided_on: null });
+      const made = cli(["new", KIND, "--from", "-", "--by", "hud-session"], JSON.stringify(rest));
+      expect(made).toMatchObject({ status: 0, doc: { id: "ws-004" } });
+      const fm = parseFrontMatter(readFileSync(join(dir, "decisions", "ws-004-kept-by-a-session.md"), "utf-8"));
+      if (!fm.ok) throw new Error(fm.message);
+      expect(fm.value).toMatchObject({ proposed_by: "hud-session", decided_by: null });
+
+      writeFileSync(join(dir, "patch.json"), JSON.stringify({ title: "Changed" }));
+      const refused = cli(["amend", "ws-004", "--kind", KIND, "--set", "patch.json", "--by", "alice"]);
+      expect(refused).toMatchObject({ status: 1, doc: { error: { code: "write-usage-invalid", message: expect.stringContaining("--by is not taken by amend") } } });
     },
     120_000,
   );
