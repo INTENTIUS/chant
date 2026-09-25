@@ -163,11 +163,11 @@ A box also has a coding agent editing the app, in the same checkout as the stewa
 
 Chant enforces the steward's half. Every ledger and lease write goes through git plumbing (`hash-object`, `mktree`, `commit-tree`, `update-ref`), which reads and writes neither the index nor the working tree. A steward run succeeds while the coding agent holds git's index lock, and leaves the agent's uncommitted edits as they were. A core test edits `app/` and takes the index lock in the middle of a steward run to check this.
 
-An Op a steward runs doesn't edit the app. When an Op has to change the checkout, as applying a build or `chant workspace upgrade` does, that change belongs under the work item's lease (ws-055) on a branch of its own, not in the coding agent's working tree.
+An Op a steward runs doesn't edit the app. When an Op has to change the checkout, as applying a build or `chant workspace upgrade` does, it declares `changesCheckout: true` and a `workLease`, and chant enforces the rest ([#2748](https://github.com/INTENTIUS/chant/issues/2748)). `declareSteward`, and so this composite, refuses such an Op without a work lease, and the executor refuses to run it. The run claims the work item's lease before its leased steps, which then work in a git worktree of their own on `chant/work/<item>`, under the repository's git directory. The coding agent's working tree, index and uncommitted edits stay as they were, and a core test checks that with the agent's edit and its index lock in place while a steward applies a build. The branch keeps what the steps committed, for the runner to deliver. [Running under a work lease](/chant/guide/ops/#running-under-a-work-lease) covers the declaration, and the dispatcher's lease semantics: a second dispatcher is refused, a lost lease stops the run, and the release records the outcome.
 
 ## Reading its state
 
-`chant workspace status <env> --json` lists each member's stewards: the name, the file that declares it, its form in `<env>` and its declared forms, the local lease (holder, expiry, and whether it is live), and each Op with its schedule and its last run from the run ledger. See [workspace status](/chant/cli/workspace-status/).
+`chant workspace status <env> --json` lists each member's stewards: the name, the file that declares it, its form in `<env>` and its declared forms, the local lease (holder, expiry, and whether it is live), and each Op with its schedule, its last run from the run ledger and the work lease its turn holds. See [workspace status](/chant/cli/workspace-status/).
 
 ## What `chant build` emits
 

@@ -42,6 +42,59 @@ export interface OpConfig {
    * local one-shot executor ignores it.
    */
   schedule?: OpSchedule;
+  /**
+   * The work item this Op runs under (#2748, ws-055). The executor claims the
+   * item's work lease (`../lifecycle/work-lease.ts`) before the steps that run
+   * under it, renews it as a heartbeat while they run, stops the run when the
+   * lease is lost, and gives it back when the run ends. See
+   * {@link OpWorkLease} and `./work-lease-run.ts`.
+   */
+  workLease?: OpWorkLease;
+  /**
+   * The Op changes the checkout: it applies a build, or upgrades the
+   * workspace (#2748). Such an Op must declare {@link OpConfig.workLease}: the
+   * executor refuses to run it otherwise, and `declareSteward` refuses to list
+   * it. Its leased steps get a git worktree of their own, on the branch
+   * `chant/work/<item>`, so the change never lands in the working tree a
+   * coding agent is editing.
+   */
+  changesCheckout?: boolean;
+}
+
+/**
+ * The id under which a run's work lease is published to its steps (#2748):
+ * `stepOutput(WORK_LEASE_STEP_ID, "token")`, or `workLeaseOutput("token")`
+ * from `./work-lease-run.ts`. No step of an Op with a `workLease` may use it.
+ */
+export const WORK_LEASE_STEP_ID = "workLease";
+
+/**
+ * Which work item an Op runs under, and how (#2748).
+ *
+ * `item` is an id, a list of candidate ids (the first one nobody holds is
+ * claimed, as chud's dispatcher took the first ready contract nobody held), a
+ * reference to an earlier step's output that resolves to either, or omitted,
+ * in which case the run names it (`chant run <op> --work <id>`). A literal or
+ * run-time item is claimed before the first step; a referenced one right
+ * after the step that produces it. A run that finds nothing to claim (the
+ * reference resolved to nothing, or every candidate is held) ends `ok` with
+ * the rest of its steps skipped, and the claim's record says why.
+ */
+export interface OpWorkLease {
+  item?: string | string[] | StepOutputRef;
+  /**
+   * The work kind file whose member owns the lease (#2524 D7), relative to
+   * the project directory. Omitted, the lease is in the project's own ledger.
+   */
+  kind?: string;
+  /** How long a claim lasts unless renewed, as a duration ("10m"). Renewed every third of it. Default 10m. */
+  ttl?: string;
+  /**
+   * How the release records a run that ended `ok`: a reference to a step
+   * output holding a short string (`done`, `not_done`, ...). Default `done`;
+   * a failed run releases `not_done` and a gated one `gated`.
+   */
+  outcome?: StepOutputRef;
 }
 
 /**

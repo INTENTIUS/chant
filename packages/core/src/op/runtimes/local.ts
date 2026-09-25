@@ -166,6 +166,9 @@ export function createLocalOpRuntime(opts: { projectPath?: string } = {}): OpRun
                     `appended to the run ledger: ${err instanceof Error ? err.message : String(err)}\n`,
                 ),
               ...(startOpts.progress ? { onRecord: startOpts.progress } : {}),
+              ...(startOpts.work ? { work: startOpts.work } : {}),
+              onWorkLeaseWarning: (message) =>
+                process.stderr.write(`warning: "${op.name}" could not renew its work lease, retrying at the next beat: ${message}\n`),
             },
           );
           const status = statusFrom(op.name, runId, startedAt, result);

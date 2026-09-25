@@ -32,6 +32,8 @@ import type { PendingGateRecord } from "../lifecycle/gate-ledger";
 import { appendRunRecord, buildRunRecord } from "../lifecycle/run-ledger";
 import type { OpRunRecord } from "./runtime";
 import { randomUUID } from "node:crypto";
+import { RunWorkLease, LEASE_LOST, workLeaseProblems, workLeaseNeedsRunItem, type WorkLeaseRunResult } from "./work-lease-run";
+import { WORK_LEASE_STEP_ID } from "./types";
 
 export { parseDuration } from "./duration";
 
@@ -110,6 +112,12 @@ export interface OpRunResult {
    * document.
    */
   record: OpRunRecord;
+  /**
+   * How the run's work lease went, for an Op that declares `workLease`
+   * (#2748): the item it claimed, or why it claimed none, whether the lease
+   * was released and with which outcome, or why it was lost.
+   */
+  workLease?: WorkLeaseRunResult;
 }
 
 // ── Errors ────────────────────────────────────────────────────────────────��─
@@ -162,6 +170,23 @@ class GateStop extends Error {
   ) {
     super(`gate "${pending.gate}" is pending approval`);
     this.name = "GateStop";
+  }
+}
+
+/**
+ * Internal: a step boundary found the run can't go on under its work lease
+ * (#2748). `lost` false is a claim that found nothing to claim: not a
+ * failure, the run ends `ok` with the rest skipped. `lost` true is a lease
+ * that was lost: the run fails with `lease-lost`.
+ */
+class WorkStop extends Error {
+  constructor(
+    public readonly records: StepRecord[],
+    public readonly phase: string,
+    public readonly lost: boolean,
+  ) {
+    super(lost ? LEASE_LOST : "nothing to claim");
+    this.name = "WorkStop";
   }
 }
 
@@ -391,6 +416,68 @@ interface GateContext {
   runId?: string;
   /** Called once per settled step, in production order (#2121) — what `--progress-json` streams from. */
   onRecord?: (record: StepRecord) => void;
+  /** The run's hold on its work item's lease (#2748). Absent in compensation phases, which run whatever the lease did. */
+  work?: RunWorkLease;
+}
+
+/**
+ * The work lease at a step boundary (#2748): claim it when it is due, and
+ * say whether the run can go on. The claim's record is pushed onto `sink`.
+ * Returns `undefined` to go on, `"unclaimed"` when nothing could be claimed,
+ * and `"lost"` when the lease was lost.
+ */
+async function workBoundary(
+  phaseName: string,
+  ctx: GateContext,
+  resultsById: Map<string, unknown>,
+  sink: StepRecord[],
+): Promise<"unclaimed" | "lost" | undefined> {
+  const work = ctx.work;
+  if (!work) return undefined;
+  if (work.due(resultsById)) {
+    const start = Date.now();
+    let claimed: Awaited<ReturnType<RunWorkLease["claim"]>>;
+    try {
+      claimed = await work.claim(resultsById);
+    } catch (err) {
+      pushRecord(sink, ctx, {
+        phase: phaseName,
+        fn: "workLease:claim",
+        args: {},
+        status: "fail",
+        durationMs: Date.now() - start,
+        error: errMessage(err),
+      });
+      throw new PhaseFailure(sink);
+    }
+    if (claimed.kind === "unclaimed") {
+      pushRecord(sink, ctx, {
+        phase: phaseName,
+        fn: "workLease:claim",
+        args: { items: claimed.tried },
+        status: "skipped",
+        durationMs: Date.now() - start,
+        refusal: claimed.refusal,
+        outcome: { name: "WorkItem", value: null },
+        outcomes: [{ name: "WorkItem", value: null }],
+      });
+      return "unclaimed";
+    }
+    resultsById.set(WORK_LEASE_STEP_ID, claimed.lease);
+    pushRecord(sink, ctx, {
+      phase: phaseName,
+      fn: "workLease:claim",
+      args: { items: claimed.tried },
+      status: "ok",
+      durationMs: Date.now() - start,
+      outcome: { name: "WorkItem", value: claimed.lease.item },
+      outcomes: [
+        { name: "WorkItem", value: claimed.lease.item },
+        { name: "WorkLeaseToken", value: claimed.lease.token },
+      ],
+    });
+  }
+  return work.lost !== undefined ? "lost" : undefined;
 }
 
 /** Collect records and hand each to the caller's progress sink in one move. */
@@ -666,6 +753,13 @@ async function runPhase(
     // read of the ledger, not work, and starting activities that a pending
     // gate is about to strand would defeat the point of stopping at it.
     const gateRecords: StepRecord[] = [];
+    const stop = await workBoundary(phase.name, gates, resultsById, gateRecords);
+    if (stop) {
+      for (const skipped of phase.steps) {
+        pushRecord(gateRecords, gates, isGate(skipped) ? skippedRecord(phase.name, gateFn(skipped)) : skippedRecord(phase.name, (skipped as ActivityStep).fn, (skipped as ActivityStep).args));
+      }
+      throw new WorkStop(gateRecords, phase.name, stop === "lost");
+    }
     for (const step of phase.steps.filter(isGate)) {
       const { record, pending, pushed, pushWarning } = await runGateStep(step, phase.name, gates, resultsById);
       pushRecord(gateRecords, gates, record);
@@ -711,6 +805,13 @@ async function runPhase(
 
   for (let i = 0; i < steps.length; i++) {
     const step = steps[i];
+    // The work lease (#2748): claimed here when it is due, and checked before
+    // every step, so no step starts once the lease is lost.
+    const stop = await workBoundary(phase.name, gates, resultsById, records);
+    if (stop) {
+      skipRemaining(i);
+      throw new WorkStop(records, phase.name, stop === "lost");
+    }
     if (isGate(step)) {
       const { record, pending, pushed, pushWarning } = await runGateStep(step, phase.name, gates, resultsById);
       pushRecord(records, gates, record);
@@ -789,6 +890,15 @@ export interface RunOpOptions {
    * never promoted into a run failure.
    */
   onLedgerError?: (err: unknown) => void;
+  /**
+   * For an Op that declares `workLease` (#2748): the item this run is for
+   * (`chant run <op> --work <id>`), which takes the place of the Op's own, and
+   * who holds the lease (a steward's turn passes `stewardWorkHolder`).
+   * Defaults: the Op's item, and this process's holder id.
+   */
+  work?: { item?: string; holder?: string };
+  /** Called when a work-lease renewal fails without losing the lease; the next beat retries it. */
+  onWorkLeaseWarning?: (message: string) => void;
 }
 
 /**
@@ -839,6 +949,68 @@ export async function runOpLocally(
     }
   }
 
+  // The work lease (#2748). An Op that changes the checkout without one, or
+  // whose lease names no item and whose run names none, is refused before
+  // anything runs.
+  const workProblems = workLeaseProblems(config);
+  if (workProblems.length > 0) throw new Error(workProblems.join("\n"));
+  if (workLeaseNeedsRunItem(config) && !options.work?.item) {
+    throw new Error(
+      `Op "${config.name}" runs under a work item's lease and names no item: pass one with \`chant run ${config.name} --work <id>\``,
+    );
+  }
+  const work = config.workLease
+    ? new RunWorkLease(config, {
+        cwd: options.ledger?.cwd ?? options.cwd ?? process.cwd(),
+        ...(options.work?.holder ? { holder: options.work.holder } : {}),
+        ...(options.work?.item ? { item: options.work.item } : {}),
+        ...(options.onWorkLeaseWarning ? { onRenewError: options.onWorkLeaseWarning } : {}),
+      })
+    : undefined;
+  if (work) gates.work = work;
+
+  // Steps run under a signal that also fires when the work lease is lost, so
+  // the step in flight stops (chud's dispatcher stopped its agent the same way).
+  let stepSignal = signal;
+  if (work) {
+    const both = new AbortController();
+    const forward = () => both.abort();
+    if (signal?.aborted) both.abort();
+    else signal?.addEventListener("abort", forward, { once: true });
+    work.lostSignal.addEventListener("abort", forward, { once: true });
+    stepSignal = both.signal;
+  }
+
+  /** Release (or not) the work lease once the run's outcome is settled. */
+  const finishWork = async (status: OpRunResult["status"]): Promise<{ workLease?: WorkLeaseRunResult }> =>
+    work ? { workLease: await work.finish(status, resultsById) } : {};
+
+  /** The record a lost lease leaves, naming why. */
+  const lostRecord = (): StepRecord => ({
+    phase: UNATTRIBUTED_PHASE,
+    fn: "workLease:lost",
+    args: {},
+    status: "fail",
+    durationMs: 0,
+    error: `${LEASE_LOST}: ${work?.lost ?? "the lease was lost"}. The run stopped and was not recorded as done.`,
+  });
+
+  const skipLaterPhases = (after: string) => {
+    const stoppedAt = config.phases.findIndex((p) => p.name === after);
+    if (stoppedAt < 0) return;
+    for (const phase of config.phases.slice(stoppedAt + 1)) {
+      for (const step of phase.steps) {
+        records.push(
+          isEffect(step)
+            ? skippedRecord(phase.name, `effect:${step.receipt.name}`)
+            : isGate(step)
+              ? skippedRecord(phase.name, gateFn(step))
+              : skippedRecord(phase.name, step.fn, step.args),
+        );
+      }
+    }
+  };
+
   const records: StepRecord[] = [];
   const start = Date.now();
   const startedAt = options.now ?? new Date(start).toISOString();
@@ -877,25 +1049,35 @@ export async function runOpLocally(
   try {
     for (const phase of config.phases) {
       if (signal?.aborted) throw new PhaseFailure([]);
-      records.push(...(await runPhase(phase, activities, profiles, resultsById, gates, signal)));
+      records.push(...(await runPhase(phase, activities, profiles, resultsById, gates, stepSignal)));
     }
+    // The last renewal before the run is recorded (#2748): a run whose lease
+    // was lost is never recorded as done.
+    if (work && !(await work.fence())) throw new WorkStop([], UNATTRIBUTED_PHASE, true);
   } catch (err) {
+    // Nothing to claim, or every candidate held (#2748): not a failure. The
+    // rest of the run is skipped and the claim's record says why.
+    if (err instanceof WorkStop && !err.lost) {
+      records.push(...err.records);
+      skipLaterPhases(err.phase);
+      const record = await settle(records, "ok");
+      return {
+        op: config.name,
+        records,
+        totalMs: Date.now() - start,
+        status: "ok",
+        startedAt,
+        record,
+        ...(await finishWork("ok")),
+      };
+    }
+
     // A pending gate ends the run where it stands: no later phase, and no
     // `onFailure` compensation — nothing failed, so there is nothing to undo.
     if (err instanceof GateStop) {
       records.push(...err.records);
-      const stoppedAt = config.phases.findIndex((p) => p.name === err.phase);
-      for (const phase of config.phases.slice(stoppedAt + 1)) {
-        for (const step of phase.steps) {
-          records.push(
-            isEffect(step)
-              ? skippedRecord(phase.name, `effect:${step.receipt.name}`)
-              : isGate(step)
-                ? skippedRecord(phase.name, gateFn(step))
-                : skippedRecord(phase.name, step.fn, step.args),
-          );
-        }
-      }
+      skipLaterPhases(err.phase);
+      const record = await settle(records, "gated", err.pending);
       return {
         op: config.name,
         records,
@@ -905,11 +1087,17 @@ export async function runOpLocally(
         gate: err.pending,
         ...(err.pushed !== undefined ? { gatePushed: err.pushed } : {}),
         ...(err.pushWarning ? { gatePushWarning: err.pushWarning } : {}),
-        record: await settle(records, "gated", err.pending),
+        record,
+        ...(await finishWork("gated")),
       };
     }
 
-    if (err instanceof PhaseFailure) {
+    if (err instanceof WorkStop) {
+      // The lease was lost (#2748): the rest is skipped, and the lost record
+      // below says why.
+      records.push(...err.records);
+      skipLaterPhases(err.phase);
+    } else if (err instanceof PhaseFailure) {
       records.push(...err.records);
     } else {
       // Everything else the phase loop can throw (#2301). `PhaseFailure` and
@@ -934,12 +1122,18 @@ export async function runOpLocally(
       });
     }
 
+    // A step that failed because the lease was lost mid-step, or a lease lost
+    // at any boundary: one record names it (#2748).
+    if (work?.lost !== undefined) records.push(lostRecord());
+
     // Compensation: run onFailure phases in reverse order (best-effort). Skipped
     // on abort (Ctrl-C) — the user asked to stop, so don't start new work.
+    // It runs whatever the work lease did, so it takes no work boundary.
+    const compensation: GateContext = { ...gates, work: undefined };
     if (!signal?.aborted) {
       for (const phase of [...(config.onFailure ?? [])].reverse()) {
         try {
-          records.push(...(await runPhase(phase, activities, profiles, resultsById, gates, signal)));
+          records.push(...(await runPhase(phase, activities, profiles, resultsById, compensation, signal)));
         } catch (compErr) {
           if (compErr instanceof PhaseFailure || compErr instanceof GateStop) {
             records.push(...compErr.records);
@@ -959,6 +1153,7 @@ export async function runOpLocally(
       }
     }
 
+    const failed = await settle(records, "fail");
     throw new OpRunFailure(
       {
         op: config.name,
@@ -966,19 +1161,22 @@ export async function runOpLocally(
         totalMs: Date.now() - start,
         status: "fail",
         startedAt,
-        record: await settle(records, "fail"),
+        record: failed,
+        ...(await finishWork("fail")),
       },
       { cause: err },
     );
   }
 
+  const record = await settle(records, "ok");
   return {
     op: config.name,
     records,
     totalMs: Date.now() - start,
     status: "ok",
     startedAt,
-    record: await settle(records, "ok"),
+    record,
+    ...(await finishWork("ok")),
   };
 }
 

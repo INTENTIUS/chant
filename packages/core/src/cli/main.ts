@@ -497,6 +497,11 @@ export function parseArgs(args: string[]): ParsedArgs {
       }
     } else if (arg === "--once") {
       result.once = true;
+    } else if (arg === "--work") {
+      // `chant run <op> --work <id>` (#2748)
+      const value = args[++i];
+      if (!value || value.startsWith("-")) throw new Error("--work needs a work item id: --work <id>");
+      result.work = value;
     } else if (arg === "--holder" || arg === "--ttl" || arg === "--token" || arg === "--outcome") {
       // `chant workspace work claim|renew|release <id>` (#2732)
       const value = args[++i];
@@ -681,6 +686,8 @@ Commands:
 
 Ops:
   run <name>            Run an Op on the resolved runtime (--on; local by default)
+                        [--work <id>] [--holder <name>]: the work item an Op
+                        with a work lease runs under, and who holds it
   run list              List all Ops with the runtime's state for each
   run status <name>     Show the runtime's state for one Op's latest run
   run approve <op> <gate>  Record a gate's resolution and wake the runtime

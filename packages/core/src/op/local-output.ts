@@ -55,6 +55,19 @@ export function renderHuman(result: OpRunResult, write: Writer = stderr): void {
     }
   }
 
+  // The work lease (#2748): which item the run held, and how it ended.
+  const work = result.workLease;
+  if (work?.item) {
+    const end = work.lost
+      ? `lost (${work.lost})`
+      : work.released
+        ? `released ${work.outcome}`
+        : "not released; it runs out on its own";
+    write(`[work] ${work.item} held by ${work.holder}${work.branch ? ` on ${work.branch}` : ""}: ${end}`);
+  } else if (work?.refusal) {
+    write(`[work] nothing claimed: ${work.refusal}`);
+  }
+
   const total = `${(result.totalMs / 1000).toFixed(1)}s`;
   if (result.status === "ok") {
     write(`Op "${result.op}" completed in ${total}`);

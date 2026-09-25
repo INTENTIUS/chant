@@ -1,4 +1,5 @@
 import { OpResource } from "./resource";
+import { workLeaseProblems } from "./work-lease-decl";
 import type { OpConfig, PhaseDefinition, StepDefinition, ActivityStep, GateStep, EffectStep } from "./types";
 import { isEffectReceipt, type EffectReceiptDeclaration } from "../effect-receipt";
 import { receiptCheckInput } from "./receipt-store";
@@ -51,6 +52,10 @@ export function Op(config: OpConfig): InstanceType<typeof OpResource> {
   if (config.schedule && !isValidCronExpression(config.schedule.cron)) {
     throw new Error(`Op "${config.name}": ${cronSyntaxMessage(config.schedule.cron)}`);
   }
+  // #2748: a work lease declared badly, or a change to the checkout with none,
+  // fails on `chant build` rather than on the first run.
+  const leaseProblems = workLeaseProblems(config);
+  if (leaseProblems.length > 0) throw new Error(leaseProblems.join("\n"));
   return new OpResource(config as unknown as Record<string, unknown>);
 }
 

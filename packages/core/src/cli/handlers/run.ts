@@ -2,7 +2,8 @@ import { lexiconNames } from "../../lexicon-module";
 import { resolve, dirname } from "node:path";
 import { writeFileSync, mkdirSync, readFileSync } from "node:fs";
 import { loadChantConfig, resolveAutoReleaseDisabled, type ChantConfig } from "../../config";
-import { discoverOps } from "../../op/discover";
+import { discoverOps, discoverStewards } from "../../op/discover";
+import { stewardWorkHolder } from "../../op/work-lease-run";
 import type { OpConfig } from "../../op/types";
 import { loadActivities, loadProfiles } from "../../op/activity-registry";
 import { runOpLocally, findPolicyGateStep, OpRunFailure, type StepRecord } from "../../op/local-executor";
@@ -866,6 +867,12 @@ export async function runOpOnRuntime(ctx: CommandContext): Promise<number> {
   const runtime = await resolveOpRuntime(ctx);
   if (!runtime) return 1;
 
+  // The work lease (#2748). `--work` names the item an Op with a work lease
+  // runs under; it is taken where the run executes, which for a hosted
+  // runtime is not this process.
+  const work = await resolveRunWork(ctx, config, runtime.name);
+  if (work === null) return 1;
+
   // `--progress-json` streams one NDJSON StepRecord per settled step, fed by
   // whatever the runtime reports through `progress`.
   const progress = ctx.args.progressJson ? ndjsonProgressSink<StepRecord>() : undefined;
@@ -885,6 +892,7 @@ export async function runOpOnRuntime(ctx: CommandContext): Promise<number> {
       ...(ctx.args.profile !== undefined ? { profile: ctx.args.profile } : {}),
       progress,
       signal: controller.signal,
+      ...(work ? { work } : {}),
     });
     const status = await handle.result();
 
@@ -943,6 +951,50 @@ export async function runOpOnRuntime(ctx: CommandContext): Promise<number> {
   } finally {
     process.removeListener("SIGINT", onSigint);
   }
+}
+
+/**
+ * The work item and holder a `chant run` passes to the runtime (#2748), or
+ * `null` after printing why the run is refused. The holder is `--holder`, or,
+ * for an Op a steward lists, `<steward>/<op>@<process>` so `workspace status`
+ * shows the lease beside the steward's Ops, or this process's id.
+ */
+async function resolveRunWork(
+  ctx: CommandContext,
+  config: OpConfig,
+  runtime: string,
+): Promise<{ item?: string; holder?: string } | undefined | null> {
+  const item = ctx.args.work;
+  if (!config.workLease) {
+    if (item === undefined) return undefined;
+    console.error(formatError({
+      message: `--work ${item}: Op "${config.name}" declares no work lease`,
+      hint: "Declare workLease on the Op to run it under a work item's lease.",
+    }));
+    return null;
+  }
+  if (runtime !== "local" && (item !== undefined || ctx.args.holder !== undefined)) {
+    console.error(formatError({
+      message: `--work and --holder run on the local runtime; "${runtime}" takes the work lease where it executes the run`,
+      hint: "Omit --on, or name the item in the Op's workLease.",
+    }));
+    return null;
+  }
+  let holder = ctx.args.holder;
+  if (holder === undefined) {
+    try {
+      const { stewards } = await discoverStewards();
+      for (const { declaration } of stewards.values()) {
+        if (declaration.ops.some((op) => op.name === config.name)) {
+          holder = stewardWorkHolder(declaration.name, config.name);
+          break;
+        }
+      }
+    } catch {
+      // No steward can be read: the run holds the lease as this process.
+    }
+  }
+  return { ...(item !== undefined ? { item } : {}), ...(holder !== undefined ? { holder } : {}) };
 }
 
 // ── fallback ────────────────────────────────────────────────────────────────���─

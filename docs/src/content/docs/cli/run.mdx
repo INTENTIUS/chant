@@ -71,6 +71,18 @@ A `gate` in the Op stops the run pending a resolution on the gate ledger. The ru
 
 Recording the pending fact is two steps: an append to the local `chant/lifecycle` branch, then a push. The append always lands; that is a correct local answer on its own, and the run is right to gate on it even offline. The push can still fail (no remote configured, or the branch moved under it since the run started), and when it does the run stays gated rather than failing: nothing about the local fact was wrong. What changes is the report. The run prints a line naming the push failure and its reason, so the operator running it knows their `chant approve` from another checkout will not see anything to resolve until the fact actually reaches the remote. `--json` carries the same information as `pushed: false` and `pushWarning` alongside the record.
 
+#### Under a work item's lease: `--work`
+
+An Op that declares `workLease` runs its steps under one work item's [work lease](/chant/cli/workspace-work/) ([#2748](https://github.com/INTENTIUS/chant/issues/2748)). The run claims the lease before the steps it covers and renews it every third of its time to live while they run. One more renewal comes before the run is recorded. When the run ends the lease is released with its outcome: `done` after a completed run, `not_done` after a failed one and `gated` after a gate stopped it. A lease the heartbeat finds lost (it ran out and another worker claimed the item) stops the step in flight, and the run fails with a `workLease:lost` record that starts `lease-lost`. The run never releases a lease it lost. [Running under a work lease](/chant/guide/ops/#running-under-a-work-lease) covers the declaration.
+
+```bash
+chant run dispatch                    # the item the Op picks, or names
+chant run apply-build --work W-017    # an Op whose lease leaves the item to the run
+chant run apply-build --work W-017 --holder box-steward/apply-build@host
+```
+
+`--work <id>` takes the place of the Op's own item. An Op that leaves the item to the run is refused without it, and `--work` on an Op with no work lease is refused too. `--holder` names who holds the lease. Without it, an Op a steward lists is held as `<steward>/<op>@<process>`, the name `chant workspace status --json` uses to show the lease a steward's turn holds. Any other Op is held as this process. A run that finds the item held claims nothing, runs none of the leased steps, and exits 0 with the refusal on the claim's record, naming the holder. Both flags work on the local runtime only: a hosted run takes its lease where it executes.
+
 #### A gated run in CI: `--gated-exit`
 
 GitHub Actions has no neutral conclusion for a `run:` step, so a push-to-main apply that stops at its gate is a failed workflow run until someone approves. `--gated-exit <code>` maps that one outcome to a code of your choosing:
@@ -246,6 +258,8 @@ The `--no-release-record` flag always wins over config for that one invocation. 
 | `--env <name>` | Target [environment](/chant/configuration/config-file/#environments), threaded into every capability's context (`run --components`); defaults to `local` |
 | `--json` | Emit the run's ledger record as JSON on stdout (`run <name>`); the structured run result for `run --components` |
 | `--gated-exit <code>` | Exit code for a run that stopped at an unapproved gate, instead of the default 3. Only that outcome is remapped; a failure is still 1 |
+| `--work <id>` | The work item an Op with a `workLease` runs under, in place of the Op's own (`run <name>`, local runtime) |
+| `--holder <name>` | Who holds the run's work lease; `<steward>/<op>@<process>` for an Op a steward lists, this process's id otherwise (`run <name>`, local runtime) |
 | `--force` | Required for `run cancel` |
 | `--progress-json` | Stream one NDJSON progress record per line to stdout while the run executes |
 | `--dump-outputs <file>` | After the run, write the accumulated cross-component outputs as JSON to `file` (`run --components`) |

@@ -15,8 +15,12 @@ export { emulatorLifecycle, emulatorsOf, endpointEnvVars } from "./emulator-life
 export type { EmulatorSpec, EmulatorCapability, EmulatorDeclaration, EmulatorUpArgs, EmulatorLifecycle } from "./emulator-lifecycle";
 export { checkFreshness, compare, formatResult, latestRelease, parseVersion, unpinned } from "./emulator-freshness";
 export type { FreshnessResult } from "./emulator-freshness";
-export type { OpConfig, OpSchedule, PhaseDefinition, StepDefinition, ActivityStep, GateStep, EffectStep, OutcomeAttribute } from "./types";
-export { outcomeAttributesOf } from "./types";
+export type { OpConfig, OpSchedule, OpWorkLease, PhaseDefinition, StepDefinition, ActivityStep, GateStep, EffectStep, OutcomeAttribute } from "./types";
+export { outcomeAttributesOf, WORK_LEASE_STEP_ID } from "./types";
+export {
+  RunWorkLease, workLeaseOutput, stewardWorkHolder, workLeaseProblems, workLeaseNeedsRunItem, LEASE_LOST, WORK_BRANCH_PREFIX,
+} from "./work-lease-run";
+export type { WorkLeaseOutput, WorkLeaseRunResult, WorkClaimOutcome, RunWorkLeaseOptions } from "./work-lease-run";
 export { isValidCronExpression, cronSyntaxMessage, cronMatches, cronDueBetween } from "./cron";
 export {
   WatchOp, ReconcileOp, ApplyOp, ConvergeOp,

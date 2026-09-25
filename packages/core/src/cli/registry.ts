@@ -424,6 +424,8 @@ export interface ParsedArgs {
   steward?: string;
   /** `chant workspace work claim|renew|release <id> --holder <name>` (#2732): who holds, or releases, the work lease. */
   holder?: string;
+  /** `chant run <op> --work <id>` (#2748): the work item an Op with a work lease runs under. */
+  work?: string;
   /** `chant workspace work claim|renew <id> --ttl <seconds|duration>` (#2732): how long the lease lasts unless renewed. */
   ttl?: string;
   /** `chant workspace work renew|release <id> --token <token>` (#2732): the fencing token the caller holds. */

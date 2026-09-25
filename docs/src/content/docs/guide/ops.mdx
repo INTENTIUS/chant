@@ -221,6 +221,44 @@ The typed `Policy` scopes accept only entity types and actions from the project'
 
 OPS015 rejects an `approval` block at build when it is malformed, for example a policy that is not a gate policy set or `enforce` with no policy.
 
+## Running under a work lease
+
+An Op that works on one work item at a time, such as a dispatcher that builds the next ready item, declares `workLease` ([#2748](https://github.com/INTENTIUS/chant/issues/2748)). The executor claims the item's [work lease](/chant/cli/workspace-work/) before the steps it covers and gives it back when the run ends, so two dispatchers never build the same item.
+
+```typescript
+import { Op, phase, activity, workLeaseOutput } from "@intentius/chant/op";
+
+// The runner's activities (the studio kit's, say): pick ready items, build, apply, record.
+const pick = activity("readyItems", { kind: "work/items.ts" }, { id: "pick" });
+const record = activity("recordItem", { item: workLeaseOutput("item") }, { id: "record" });
+
+export default Op({
+  name: "dispatch",
+  overview: "Build the next ready work item",
+  schedule: { cron: "*/5 * * * *" },
+  workLease: { item: pick.out.ids, kind: "work/items.ts", ttl: "10m", outcome: record.out.outcome },
+  changesCheckout: true,
+  phases: [
+    phase("Pick", [pick]),
+    phase("Build", [
+      activity("runBuilder", { item: workLeaseOutput("item"), token: workLeaseOutput("token") }),
+      activity("applyBuild", { worktree: workLeaseOutput("worktree") }),
+    ]),
+    phase("Record", [record]),
+  ],
+});
+```
+
+`item` is a work item id, a list of candidate ids, or a reference to an earlier step's output that resolves to either. A literal item is claimed before the first step, and a referenced one right after the step that produces it. From a list, the first candidate nobody holds is claimed. Omit `item` and the run names it with `chant run <op> --work <id>`. When the reference resolves to nothing or every candidate is held, the run claims nothing. It ends `ok` with the rest of its steps skipped, and the claim's record says who holds what.
+
+While the steps run, the lease is renewed every third of its `ttl` (default `10m`), keeping its fencing token. Steps read the lease through `workLeaseOutput`: its `item`, `holder`, `token` and `expiresAt`, and for an Op that changes the checkout its `worktree` and `branch`. An activity that writes somewhere a token can fence passes `token` along. If a renewal is refused because the lease ran out and another worker took the item, the lease is lost: the step in flight gets its abort signal, no later step starts, and the run fails with `lease-lost`. The lease is renewed once more before the run's record is written, so a run whose lease was lost is never recorded as done. `onFailure` phases still run.
+
+When the run ends the lease is released with an outcome. A completed run records `done`, or the string returned by the step that `outcome` references. A failed run records `not_done`, and a run stopped at a gate records `gated`. The outcome lands on `_leases/<id>.jsonl`. `kind` names the work kind file whose member owns the lease; without it the lease is in the project's own ledger.
+
+### An Op that changes the checkout
+
+`changesCheckout: true` says the Op changes the checkout, as applying a build or `chant workspace upgrade` does. Such an Op must declare `workLease`: the executor refuses to run it otherwise, and `declareSteward` refuses to list it. Its leased steps get a git worktree of their own on the branch `chant/work/<item>` (`chant/work/<member>/<item>` in a workspace member). The worktree sits under the repository's git directory and starts from HEAD, or from the branch where an earlier run left it. The steps write and commit there. When the run ends the worktree is removed and the branch keeps the commits, for the runner to deliver. The working tree a coding agent is editing, its index and its uncommitted files, stay as they were.
+
 ## Compensation on failure
 
 `onFailure` phases run in order if the run terminates with an unhandled error:
