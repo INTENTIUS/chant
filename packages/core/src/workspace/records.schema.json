@@ -206,7 +206,8 @@
             "work-needs-cycle",
             "work-implements-undecided",
             "work-done-unpinned",
-            "work-closed-without-date"
+            "work-closed-without-date",
+            "work-done-gap-open"
           ]
         },
         "message": { "type": "string" }

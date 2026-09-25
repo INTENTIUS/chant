@@ -429,6 +429,7 @@ A failed read prints `{ "$schema", "contract", "error": { "code", "message" } }`
 | `work-implements-undecided` | is a work record implementing a decision whose state is not approved, such as `proposed` |
 | `work-done-unpinned` | is a done work record with an empty evidence list, so nothing shows the work was done |
 | `work-closed-without-date` | is a done or dropped work record with no `closed_on` |
+| `work-done-gap-open` | is a done work record whose `source` names a finding that still fires on its region. `records` walks the region as `graph --intent` does, in a git repository with a workspace declaration ([#2686](https://github.com/INTENTIUS/chant/issues/2686)) |
 
 ### Error codes
 

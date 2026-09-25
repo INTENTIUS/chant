@@ -123,7 +123,7 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `work-implements-undecided` | warning, `records` and `graph --intent` | A work record implements a decision whose state is not approved, such as `proposed`. The record stays valid. |
 | `work-done-unpinned` | warning, `records` and `graph --intent` | A work record is done and its evidence list is empty, so nothing shows the work was done. A work record never carries `record-no-evidence`. |
 | `work-closed-without-date` | warning, `records` and `graph --intent` | A work record is done or dropped and has no `closed_on`. |
-| `work-done-gap-open` | warning, `graph --intent` | A work record is done, and the finding its `source` names still fires on its region. Only `graph --intent` walks a region, so only it raises this. |
+| `work-done-gap-open` | warning, `records` and `graph --intent` | A work record is done, and the finding its `source` names still fires on its region. `records` walks that region with `graph --intent` to raise it, when the repository is in git and has a workspace declaration. |
 | `review-decider` | verdict, `records` | The verdict is the decider's own, and the quorum counts verdicts besides the decider's. |
 | `review-agent` | verdict, `records` | The reviewer holds the `agent` role in `.chant/trust.json` at base. |
 | `review-duplicate` | verdict, `records` | A later verdict by the same principal replaces this one. Names are compared after NFKC, trimming and lower-casing. |
@@ -154,9 +154,11 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `intent-commit-bare` | finding, `graph --intent` | A commit names no unit, no pull request and no decision covering the region at its time. |
 | `intent-pin-drifted` | finding, `graph --intent` | A decision's pinned artifact no longer hashes to the pin. |
 | `intent-pin-missing` | finding, `graph --intent` | A decision's pinned artifact does not exist in the tree read. |
+| `intent-pin-stale` | finding, `graph --intent` | A current decision constraining the region pins an artifact at the hash a record it supersedes pinned, and the artifact has not changed since. |
 | `intent-artifact-unpinned` | finding, `graph --intent` | Decisions in the graph pinned the artifact, and no current decision pins it. |
 | `intent-decision-superseded-live` | finding, `graph --intent` | Every decision constraining the region is superseded. |
 | `intent-decision-provisional` | finding, `graph --intent` | The current decisions constraining the region are all in states their kind does not close, such as `decided`. |
+| `intent-decision-contested` | finding, `graph --intent` | A current decision constraining the region has an open concern: a dissent neither addressed nor withdrawn. The finding's `openConcerns` gives the count and the principals. |
 | `intent-constraint-coarse` | finding, `graph --intent` | The region is constrained only through its member, not by path. |
 | `intent-constraint-lost` | finding, `graph --intent` | A decision's `path:` constraint names a path that does not exist in the tree read. |
 | `intent-evidence-unpinned` | finding, `graph --intent` | A decision's evidence has no hash: a URL, or a path with no `sha256`. |

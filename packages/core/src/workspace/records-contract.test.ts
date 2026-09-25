@@ -148,8 +148,8 @@ describe("records output schema", () => {
   });
 
   test("lists exactly the warning codes the code can return", () => {
-    // A work kind's records carry the work warnings too, except work-done-gap-open, which only graph --intent raises (#2683).
-    expect(schema.$defs.warning.properties.code.enum).toEqual([...RECORD_WARNING_CODES, ...WORK_WARNING_CODES.filter((c) => c !== "work-done-gap-open")]);
+    // A work kind's records carry the work warnings too (#2683), work-done-gap-open included since records walks a done item's region (#2686).
+    expect(schema.$defs.warning.properties.code.enum).toEqual([...RECORD_WARNING_CODES, ...WORK_WARNING_CODES]);
   });
 
   test("every failure validates with its code", async () => {

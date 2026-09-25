@@ -17,9 +17,9 @@
  * - `implements`: each decision it names, with that decision's state;
  *
  * and each decision `implementedBy`, the work records naming it. The
- * warnings are closed codes. `work-done-gap-open` is not raised here: only
- * `graph --intent` walks a region, so only it can tell whether the finding a
- * done item came from still fires. It never writes a record.
+ * warnings are closed codes. `work-done-gap-open` is not raised here: it
+ * takes a walk of the item's region, which `graph --intent` makes and
+ * `records` asks it for (#2686). It never writes a record.
  */
 
 import { dirname } from "node:path";
@@ -40,7 +40,7 @@ export const WORK_WARNING_CODES = [
   "work-done-unpinned",
   /** The record is in a closed state and has no closing date. */
   "work-closed-without-date",
-  /** The record is done, and the finding it came from (`source.finding`) still fires on its region. Raised by `graph --intent` only. */
+  /** The record is done, and the finding it came from (`source.finding`) still fires on its region. Raised by `graph --intent`, and by `records` through a walk of that region (#2686). */
   "work-done-gap-open",
 ] as const satisfies readonly ReasonCode[];
 export type WorkWarningCode = (typeof WORK_WARNING_CODES)[number];
