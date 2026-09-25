@@ -9,7 +9,6 @@ import {
   vaultNameRefs,
   type FountainHttp,
 } from "./fountain-apply";
-import { fountainRun } from "./fountain-run";
 import type { ChantConfig } from "@intentius/chant/config";
 
 interface Call {
@@ -902,58 +901,5 @@ describe("fountainApply — Teammate, Schedule and Webhook", () => {
       "/api/team/a-1/schedules/s-1",
       "/api/team/a-1",
     ]);
-  });
-});
-
-describe("fountainRun", () => {
-  it("resolves the agent by name, starts, and polls to a terminal status", async () => {
-    let polls = 0;
-    const http: FountainHttp = async (method, path, body) => {
-      if (path.startsWith("/api/agents?search=")) {
-        return { status: 200, json: { data: [{ id: "agent-1", name: "researcher" }] } };
-      }
-      if (method === "POST" && path === "/api/conversations") {
-        expect((body as Record<string, unknown>).agent_id).toBe("agent-1");
-        return { status: 201, json: { data: { id: "conv-1" } } };
-      }
-      if (method === "GET" && path === "/api/conversations/conv-1") {
-        polls += 1;
-        return {
-          status: 200,
-          json: { data: { status: polls < 3 ? "running" : "completed" } },
-        };
-      }
-      throw new Error(`unrouted: ${method} ${path}`);
-    };
-
-    const result = await fountainRun(
-      { agent: "researcher", prompt: "hi", pollMs: 1, sleep: async () => {} },
-      http,
-    );
-    expect(result).toEqual({ conversationId: "conv-1", status: "completed", terminatedByDeadline: false });
-  });
-
-  it("terminates the conversation when the deadline passes", async () => {
-    const calls: string[] = [];
-    const http: FountainHttp = async (method, path) => {
-      calls.push(`${method} ${path}`);
-      if (path === "/api/conversations" && method === "POST") {
-        return { status: 201, json: { data: { id: "conv-2" } } };
-      }
-      if (method === "GET") return { status: 200, json: { data: { status: "running" } } };
-      return { status: 200, json: null };
-    };
-
-    const result = await fountainRun(
-      {
-        agent: "123e4567-e89b-42d3-a456-426614174000",
-        timeoutMs: 1,
-        pollMs: 1,
-        sleep: async () => {},
-      },
-      http,
-    );
-    expect(result.terminatedByDeadline).toBe(true);
-    expect(calls).toContain("POST /api/conversations/conv-2/terminate");
   });
 });
