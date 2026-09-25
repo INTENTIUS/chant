@@ -75,6 +75,8 @@ An in-process guard says nothing about a child process, so the offline phases' s
 | `lexicons/gcp/src/op/activities/gcp-apply.ts` | `fetch` | Google Cloud REST APIs, or a declared endpoint override | `gcpApply` performs the REST calls a Config Connector manifest implies. |
 | `lexicons/cpln/src/api.ts` | `fetch` | the Control Plane API, or a declared endpoint | The cpln lexicon's read transport, injectable through `CplnHttp` so tests need no network. |
 | `lexicons/fly/src/op/activities/fly-apply.ts` | `fetch` | the Fly Machines API, or `FLY_API_HOSTNAME` (the mudflaps emulator) | `flyApply` creates, updates and destroys Machines; pointing it at the emulator is how the Fly tutorials run offline. |
+| `lexicons/fly/src/op/activities/machine-release.ts` | `fetch` | the app's own health endpoint, at the URL a release step is given | `flyMachineVerify` checks that a released Machine's app answers its health endpoint with that release (#2736). The Machines API calls go through fly-apply.ts's client. |
+| `lexicons/fly/src/components/fly-release.ts` | `fetch` | the app's own health endpoint, through `flyMachineVerify` | The `fly-release` and `fly-rollback` capabilities hand an injectable `fetch` to `flyMachineVerify`, so tests reach no network (#2736). |
 | `lexicons/fly/src/op/activities/sprites.ts` | `fetch` | the Sprites API, or `SPRITES_BASE_URL` | Sprite lifecycle activities — create, exec, destroy — for the Sprites Ops. |
 | `lexicons/fly/src/op/activities/sprite-fs.ts` | `fetch` | the Sprites filesystem API, or `SPRITES_BASE_URL` | Stages an input file into a sprite and reads a result out, without shelling it through `spriteExec`. |
 | `lexicons/fountain/src/op/activities/fountain-apply.ts` | `fetch` | the fountain control-plane API, or a declared endpoint | `fountainApply` performs the lexicon's resource CRUD. |
@@ -144,7 +146,7 @@ Freshness checks that run in this repository's own CI, against `api.github.com`.
 | `scripts/dogwood-freshness.ts` | `fetch` | `api.github.com` commit and tree metadata | Compares the committed dogwood pin against upstream for `scripts/check-dogwood-freshness.ts`. The transport is injectable, which is why the comparison half is unit-tested without a network. |
 | `scripts/prior-art-sweep.ts` | `fetch` | the rule indexes of the tools the audit rules credit: `raw.githubusercontent.com`, `api.github.com` directory listings, and a few tools' own docs sites (checkov.io, PSRule for Azure, the Bicep linter page) | Diffs each credited tool's published rule list against `scripts/prior-art/snapshot.json` so a rule that appears or disappears upstream, or a credit whose upstream id no longer resolves, is reported. Run by the monthly `prior-art-sweep` workflow and by hand; never by a CLI command or a test. |
 
-**34 modules** across `packages/`, `lexicons/`, `scripts/`, `ops/` call a network primitive directly. Every other module that reaches the network does so through one of them, or through a child process listed on this page.
+**36 modules** across `packages/`, `lexicons/`, `scripts/`, `ops/` call a network primitive directly. Every other module that reaches the network does so through one of them, or through a child process listed on this page.
 
 {/* GENERATED:egress-catalogue:end */}
 
