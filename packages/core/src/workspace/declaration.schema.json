@@ -269,6 +269,9 @@
             "$ref": "#/$defs/recordKind"
           }
         },
+        "box": {
+          "$ref": "#/$defs/box"
+        },
         "upstream": {
           "type": "string",
           "minLength": 1,
@@ -353,6 +356,58 @@
       "type": "string",
       "description": "A file or directory path with / separators: no leading /, no . or .. segments and no trailing /.",
       "pattern": "^(?!\\.\\.?(/|$))[^/\\\\]+(/(?!\\.\\.?(/|$))[^/\\\\]+)*$"
+    },
+    "box": {
+      "type": "object",
+      "description": "The member is a box, or holds a box's declarations (#2726). A box holds no credential: each capability it needs outside itself is reached through a broker, a runtime such as a lobby or a door, which holds the credential and enforces the scope. chant workspace check fails when a file in the member's directory carries a literal secret (WSP121) and when a capability names no broker (WSP122). chant workspace status --json lists the capabilities, so a broker can read the scopes. Added in schema 1 by chant 0.91.0, so a declaration that uses it sets minReader to 0.91.0 or newer.",
+      "required": [
+        "capabilities"
+      ],
+      "properties": {
+        "capabilities": {
+          "type": "array",
+          "description": "Each capability the box reaches outside itself, named once.",
+          "items": {
+            "$ref": "#/$defs/capability"
+          }
+        }
+      },
+      "patternProperties": {
+        "^x-": true
+      },
+      "additionalProperties": false
+    },
+    "capability": {
+      "type": "object",
+      "description": "A capability a box needs and does not hold the credential for, such as inference, fountain or a third-party API (#2726).",
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/kindName",
+          "description": "The capability, such as inference or fountain. Unique within the box."
+        },
+        "broker": {
+          "type": "string",
+          "minLength": 1,
+          "description": "What brokers the capability: the runtime that holds the credential and swaps the box's own token for it, such as lobby or door. It may name a member of this workspace, or a runtime outside it. Without it the capability is unbrokered, and chant workspace check fails with WSP122."
+        },
+        "scope": {
+          "type": "array",
+          "uniqueItems": true,
+          "description": "What of the box's own the broker lets it reach, which the broker enforces. For Fountain: agent (start conversations with its own agent), vault (attach its own vault), conversations and sandboxes (its own). The words are the broker's; chant records them.",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[^\\u0000-\\u001f]+$"
+          }
+        }
+      },
+      "patternProperties": {
+        "^x-": true
+      },
+      "additionalProperties": false
     },
     "recordKind": {
       "type": "object",

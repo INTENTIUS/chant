@@ -159,6 +159,9 @@ export const REASONS = {
   "environments-none-declared": "The member's chant.config.ts declares no environments, so only local and the environments in its ledger are listed.",
   "environments-ledger-undeclared": "The member's ledger has releases in an environment its config's environments don't cover, so chant run --env would refuse it and it is not listed.",
   "environments-ledger-unreadable": "The chant/lifecycle branch exists and the member's ledger environments could not be listed.",
+  // A box that holds a credential (check, #2726). Each is also a WSP finding.
+  "box-credential-declared": "A file in a box member's directory carries a literal secret: a credential's shape, or a literal where a credential goes. A ${VAR}, $VAR or secret-manager reference is not one.",
+  "box-capability-unbrokered": "A capability in a member's box block names no broker, so the box would hold its credential.",
   // The lineage lock (check).
   "lock-invalid": "The lineage lock can't be read.",
   "manual-step-open": "A scope in the lineage lock has an open manual step.",

@@ -28,6 +28,7 @@
  * | WSP101 to WSP106 | generated files |
  * | WSP111 to WSP114 | records read with `--kind` (#2549) |
  * | WSP115 | the record kinds the declaration names (#2680) |
+ * | WSP121, WSP122 | boxes: no literal credential, every capability brokered (#2726) |
  */
 
 import { realpathSync } from "node:fs";
@@ -45,6 +46,7 @@ import { gatherGeneratedFacts, GENERATED_CHECKS, type GeneratedFileFacts } from 
 import { gatherLedgerFacts, LEDGER_CHECKS, type MemberLedgerFacts } from "./checks/ledgers";
 import { gatherPipelineFacts, PIPELINE_CHECKS, type MemberPipelineFacts } from "./checks/pipelines";
 import { RECORD_CHECKS, type RecordFacts } from "./checks/records";
+import { BOX_CHECKS } from "./checks/boxes";
 import { loadDeclaredKinds, type DeclaredKind } from "./declared-kinds";
 
 /**
@@ -87,6 +89,12 @@ export interface WorkspaceDiagnostic extends PostSynthDiagnostic {
   pointer: string;
   /** An absolute path, for a finding about a file other than the declaration, such as a record (#2549). It is reported at its first line. */
   file?: string;
+  /** A path in the tree checked, relative to the workspace root, for a finding about a file there (#2726). It is reported at `line` and `column`. */
+  treeFile?: string;
+  line?: number;
+  column?: number;
+  /** The read contract's code for the finding, when it has one (#2726). */
+  code?: ReasonCode;
 }
 
 export interface WorkspaceCheck {
@@ -104,7 +112,7 @@ export interface WorkspaceCheck {
 /** A diagnostic ready for lint's reporters, with the entry it is about. */
 export interface WorkspaceFinding extends LintDiagnostic {
   entity?: string;
-  /** The read contract's reason code, for a WSP001 finding: why the declaration can't be read (#2536). */
+  /** The read contract's reason code: for a WSP001 finding, why the declaration can't be read (#2536); for a box check, its finding code (#2726). */
   code?: ReasonCode;
 }
 
@@ -307,6 +315,8 @@ export const WORKSPACE_CHECKS: readonly WorkspaceCheck[] = [
   ...GENERATED_CHECKS,
   // Records read with --kind (#2549).
   ...RECORD_CHECKS,
+  // Boxes and their brokered capabilities (#2726).
+  ...BOX_CHECKS,
 ];
 
 const BY_ID = new Map(WORKSPACE_CHECKS.map((c) => [c.id, c]));
@@ -459,11 +469,16 @@ export async function runDeclarationChecks(
   const locate = (pointer: string): TextLocation => (parsed.ok ? parsed.locate(pointer) : { line: 1, column: 1 });
   const file = display(declaration.file);
   const toFinding = (d: WorkspaceDiagnostic): WorkspaceFinding => ({
-    ...(d.file !== undefined ? { file: display(relative(root, d.file).split(sep).join("/")), line: 1, column: 1 } : { file, ...locate(d.pointer) }),
+    ...(d.treeFile !== undefined
+      ? { file: display(d.treeFile), line: d.line ?? 1, column: d.column ?? 1 }
+      : d.file !== undefined
+        ? { file: display(relative(root, d.file).split(sep).join("/")), line: 1, column: 1 }
+        : { file, ...locate(d.pointer) }),
     ruleId: d.checkId,
     severity: d.severity,
     message: d.message,
     ...(d.entity !== undefined ? { entity: d.entity } : {}),
+    ...(d.code !== undefined ? { code: d.code } : {}),
   });
   const order = (a: LintDiagnostic, b: LintDiagnostic) => a.line - b.line || a.column - b.column || (a.ruleId < b.ruleId ? -1 : a.ruleId > b.ruleId ? 1 : 0);
   const diagnostics = active.map(toFinding).sort(order);

@@ -84,7 +84,7 @@ export const { environment, agent, vault } = Box({
   setupScript: readFileSync("box/provision-template.sh", "utf8"),
   permissionPolicy: { default: "auto_allow" },
   allowedHosts: ["registry.npmjs.org", "github.com"],
-  vault: { secrets: [{ key: "STUDIO_SECRET", value: process.env.STUDIO_SECRET! }] },
+  vault: { secrets: [{ key: "STUDIO_SECRET", value: "${STUDIO_SECRET}" }] },
 });
 ```
 
@@ -104,6 +104,10 @@ export const { environment, agent, vault } = Box({
 | `managed-by: chant` on every resource | owned-only reconcile, prune, and drift filtering see them | extra `metadata` merges over it |
 
 `allowedVaults: "any"` leaves the list unset, which fountain reads as any vault the tenant owns. A runtime that makes a vault per box, as hud's box runtime does for each box's identity, needs it. A persistent sandbox is keyed on (agent, environment, vault), so a vault per box is also a machine per box.
+
+### Credentials
+
+A box holds no credential ([#2726](https://github.com/INTENTIUS/chant/issues/2726)). A vault secret's value and an `envVars` value are references that resolve at apply: `${VAR}`, or a secret-manager reference such as `op://`, `bws://` or `infisical://`. Avoid `process.env.X` too: it writes the secret into the built manifest, and no check sees it in the source. What the box reaches outside itself, such as inference or Fountain's own API, goes through a broker like a studio's lobby, which holds the key. Those capabilities and their scopes are declared in the [`box` block](https://intentius.io/chant/reference/workspace-declaration/#boxes) of the workspace member that holds the composite. `chant workspace check` reads that member's files and fails with `box-credential-declared` on a literal secret, and with `box-capability-unbrokered` on a capability that names no broker.
 
 ### The port
 

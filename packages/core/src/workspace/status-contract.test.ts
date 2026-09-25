@@ -253,6 +253,32 @@ describe("chant workspace status on built workspaces", () => {
     expect(formatStatus(doc)).toContain("web     -          no release");
   });
 
+  test("each member lists its box block: the capability, its broker and its scope (#2726)", async () => {
+    const root = repo({
+      "chant.workspace.json": declaration([
+        { name: "web", dir: "web", kind: "chant" },
+        {
+          name: "box",
+          dir: "box",
+          kind: "other",
+          because: "the box's declarations",
+          box: { capabilities: [{ name: "fountain", broker: "lobby", scope: ["agent", "vault", "conversations", "sandboxes"] }, { name: "inference" }] },
+        },
+      ]),
+    });
+    const doc = result(await workspaceStatus({ cwd: root, env: "prod" }));
+    expectValid(doc);
+    expect(doc.members.map((m) => m.box)).toEqual([
+      null,
+      {
+        capabilities: [
+          { name: "fountain", broker: "lobby", scope: ["agent", "vault", "conversations", "sandboxes"] },
+          { name: "inference", broker: null, scope: [] },
+        ],
+      },
+    ]);
+  });
+
   test("every failure validates with its code", async () => {
     const empty = repo({});
     const outside = realpathSync(mkdtempSync(join(tmpdir(), "chant-status-nogit-")));

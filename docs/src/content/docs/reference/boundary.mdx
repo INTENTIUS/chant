@@ -39,9 +39,9 @@ This page is generated from `docs/data/boundary.yaml`, which has one row for eac
 | record link kind | `RECORD_LINK_KINDS` in `record-assets.ts` | 2 | 0 | 0 |
 | intent node kind | the node kinds of `intent.schema.json` | 9 | 0 | 3 |
 | intent edge kind | the edge kinds of `intent.schema.json` | 9 | 0 | 3 |
-| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 93 | 0 | 0 |
+| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 95 | 0 | 0 |
 | finding code | the finding codes of `intent.schema.json` | 17 | 0 | 0 |
-| WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 35 | 0 | 0 |
+| WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 37 | 0 | 0 |
 | hud view | the hud reader requirements H1 to H11 of #2650 | 0 | 11 | 0 |
 
 Each row follows, in the order of the table above.
@@ -212,6 +212,8 @@ Each row follows, in the order of the table above.
 | reason code | `intent-region-invalid` | chant | intent.schema.json | The region's path, or its line range, does not exist in the tree read. |
 | reason code | `intent-history-shallow` | chant | intent.schema.json | The repository is a shallow clone, so the region's history stops at the clone's boundary. |
 | reason code | `intent-plugin-failed` | chant | intent.schema.json | A kind file's commitJoins, which joins commits to units, contracts and evidence, failed for a commit. |
+| reason code | `box-credential-declared` | chant | check.schema.json | A file in a box member's directory carries a literal secret: a credential's shape, or a literal where a credential goes. A ${VAR}, $VAR or secret-manager reference is not one. |
+| reason code | `box-capability-unbrokered` | chant | check.schema.json | A capability in a member's box block names no broker, so the box would hold its credential. |
 | reason code | `lock-invalid` | chant | check.schema.json | The lineage lock can't be read. |
 | reason code | `manual-step-open` | chant | check.schema.json | A scope in the lineage lock has an open manual step. |
 | finding code | `intent-commit-undecided` | chant | intent.schema.json | A commit changed the region when no decision constrained it at path granularity. |
@@ -266,6 +268,8 @@ Each row follows, in the order of the table above.
 | WSP check | `WSP113` `record-asset-stale` | chant | check.schema.json | No current record pins a file at the same hash as a record it supersedes while the file is unchanged since: when a decision changes, the artifacts it rests on follow. |
 | WSP check | `WSP114` `records-unreadable` | chant | check.schema.json | The records of the kind named with --kind can be read. |
 | WSP check | `WSP115` `record-kind-unloadable` | chant | check.schema.json | Every record kind the declaration names is a file that exports a valid recordKind, with the schema it names. |
+| WSP check | `WSP121` `box-credential-declared` | chant | check.schema.json | A box holds no credential: no file in a box member's directory carries a literal secret, in its declarations, an env or a vault's defaults. ${VAR}, $VAR and secret-manager references (op://, bws://, infisical://) are not secrets. |
+| WSP check | `WSP122` `box-capability-unbrokered` | chant | check.schema.json | Every capability a box declares names the broker that holds its credential and enforces its scope. |
 | hud view | H1 | hud | alecraso/hud | Review queue: decided records grouped by area, oldest first, each as a decision card. It reads records --current --json. |
 | hud view | H2 | hud | alecraso/hud | Decision page: options side by side with rejected options kept, the supersession chain, amendment history and provenance. It reads records --json, records --at. |
 | hud view | H3 | hud | alecraso/hud | Review actions: agree, dissent with a required reason, abstain and propose, each verdict a pull request under the signed-in principal. It reads records, and writes through records review and records new in a pull request. |
