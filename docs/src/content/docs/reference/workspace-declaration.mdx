@@ -54,6 +54,7 @@ chant finds the file by walking up from the current directory to the git root, t
 | `checks` | no | Severities for the [declaration checks](/chant/cli/workspace-check/#severity-and-suppression), keyed by `WSP` id: `error`, `warning`, `info` or `off`. |
 | `records` | no | The workspace's own [record kinds](#record-kinds), each `{ "kind": "<path>" }` with the path from the workspace root. It was added in chant 0.86.0. |
 | `hosts` | no | The [hosts](#isolation) boxes run on, each with the port range its boxes share. It was added in chant 0.91.0. |
+| `diagrams` | no | The workspace's own [diagram artifacts](#diagrams), each pinned to the renderer its render was made with. It was added in chant 0.91.0. |
 | `changes` | no | The [forward coverage check](/chant/cli/workspace-check/#the-forward-coverage-check) of `chant workspace check --changes`: `severity` (`off`, `warn` or `fail`, default `warn`) and `ignore`, globs over file paths from the workspace root whose changes need no record, such as lockfiles and generated output. It was added in chant 0.92.0. |
 | `quorum` | no | How many agree verdicts besides the decider's a record needs, as an integer from 0. [`chant workspace records`](/chant/cli/workspace-records/#reviews-and-quorum) reports each record's quorum against it, and it applies to every record kind with a reviews list. The default is 2. It was added in chant 0.86.0, so a declaration that sets it should set `minReader` to `"0.86.0"`. |
 | `$schema`, `$comment` | no | Editor hints and notes. chant ignores them. |
@@ -75,6 +76,7 @@ A member is an object with `name`, `dir` and `kind`.
 | `links` | no | The [member links](#member-links) this member reads, each `{ "member": "...", "output": "..." }`. |
 | `outputs` | no | For a member of kind `other` or a kind from a package, the outputs it exposes to [links](#member-links). A `chant` member's outputs are read from its source instead. |
 | `records` | no | The [record kinds](#record-kinds) the member holds, each `{ "kind": "<path>" }` with the path from the member's directory. It was added in chant 0.86.0. |
+| `diagrams` | no | The [diagram artifacts](#diagrams) this member holds. It was added in chant 0.91.0. |
 | `box` | no | The member is a [box](#boxes), or holds a box's declarations: the capabilities it reaches through a broker, each with its broker and scope. It was added in chant 0.91.0. |
 | `upstream` | no | Where an embedded member's files come from. Versions live in the lock, not here. |
 | `because` | for `other` | Why the member is there. |
@@ -158,6 +160,49 @@ Readers take the top-level list first. The members' lists follow in file order.
 | [`chant workspace graph --intent`](/chant/cli/workspace-graph/#the-intent-graph) | reads every one of them, and runs each one's commit joins, when `--kind` is not given |
 
 `--kind` still overrides the declaration in `records` and `graph --intent`. A kind file is looked for in the tree read, which is the revision under `--at`. It is loaded from the working tree, the way a `--kind` file is. A declaration that uses `records` should set `minReader` to `"0.86.0"`. An older chant then reports `reader-too-old`, where it would otherwise refuse the field as unknown.
+
+## Diagrams
+
+The declaration names the workspace's diagram artifacts, so hud and other readers can list and draw them without guessing which file is a diagram's source and which is its render, or which renderer made it ([#2764](https://github.com/INTENTIUS/chant/issues/2764)). Studio's `docs/diagrams/*.d2` rendered by `docs/diagrams/render.sh` is the motivating case: a `.d2` source beside the `.svg` render.sh writes, pinned to an exact D2 release and a fixed set of flags. Like [record kinds](#record-kinds), a diagram that belongs to no one member goes in the top-level `diagrams`, and a member names the ones it holds in its own `diagrams`. chant never runs the renderer, on any command ([ws-052](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-052-chant-hud-boundary.md)): it only records the pin, so a reader that has that renderer installed can reproduce the render, and `chant workspace check` can compare a content hash instead of re-rendering.
+
+```json
+{
+  "name": "studio",
+  "schema": 1,
+  "minReader": "0.91.0",
+  "members": [
+    { "name": "docs", "dir": "docs", "kind": "other", "because": "the docs site" }
+  ],
+  "diagrams": [
+    {
+      "name": "architecture",
+      "title": "Studio architecture",
+      "source": "docs/diagrams/architecture.d2",
+      "render": "docs/diagrams/architecture.svg",
+      "renderer": { "tool": "d2", "version": "0.9.0", "args": ["--layout=elk", "--theme=0", "--pad=40", "--omit-version"] },
+      "sourceHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ]
+}
+```
+
+| Field | Required | Value |
+|---|---|---|
+| `name` | yes | The diagram's name, in the [name grammar](#names). Unique across the declaration. |
+| `title` | yes | Shown above the diagram. |
+| `source` | no | The source file, from the workspace root, with `/` separators. Null, the default, for an SVG with no source. |
+| `render` | yes | The rendered image, from the workspace root, with `/` separators. |
+| `renderer` | yes | The renderer the render was made with: `tool` (`d2`, `mermaid` or `graphviz`), `version` (the exact release, such as `"0.9.0"`) and `args`, the arguments passed before the input and output paths. |
+| `sourceHash` | no | sha256 hex of the source's bytes when the render was last produced from it. With it, `chant workspace check` fails ([`WSP133`](/chant/cli/workspace-check/#diagrams)) when the source's bytes now hash to something else: the render is stale for its source. Without it, or without a source, the render is never checked for drift. |
+
+Unlike a [generated file](#generated-files) or a [record kind](#record-kinds), a diagram's `source` and `render` are workspace-root-relative wherever they are declared: a diagram's files need not sit inside the directory of the member that declares it.
+
+| Command | Uses the declared diagrams |
+|---|---|
+| [`chant workspace ls`](/chant/cli/workspace-ls/#output) | lists every one, flattened across the workspace and its members into one `diagrams` array, each with the member that declares it |
+| [`chant workspace check`](/chant/cli/workspace-check/#diagrams) | fails with `WSP131` when a named source doesn't exist, `WSP132` when the render doesn't exist, and, when the entry records a `sourceHash`, `WSP133` when the source's hash no longer matches it |
+
+The example above sets `minReader` for that reason: without it, a chant older than 0.91.0 meets an unknown `diagrams` field and refuses the whole file, rather than naming the version gap with `reader-too-old`.
 
 ## Boxes
 

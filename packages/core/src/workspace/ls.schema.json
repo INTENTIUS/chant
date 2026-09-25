@@ -8,7 +8,7 @@
     "result": {
       "description": "The declaration was read. Exit code 0, even when some members can't be read.",
       "type": "object",
-      "required": ["$schema", "contract", "chant", "at", "workspace", "members", "groups", "summary"],
+      "required": ["$schema", "contract", "chant", "at", "workspace", "members", "groups", "diagrams", "summary"],
       "properties": {
         "$schema": { "const": "https://intentius.io/chant/schemas/workspace/ls/v1/ls.schema.json" },
         "contract": { "const": 1 },
@@ -60,6 +60,11 @@
           "description": "Every example group (ws-051), in declaration order. Their matches are not members.",
           "type": "array",
           "items": { "$ref": "#/$defs/group" }
+        },
+        "diagrams": {
+          "description": "Added in contract 1 by #2764. Every declared diagram artifact, flattened across the workspace and its members: the workspace's own first, then each member's, in file order.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/diagram" }
         },
         "summary": {
           "type": "object",
@@ -158,6 +163,27 @@
             }
           ]
         }
+      }
+    },
+    "diagram": {
+      "description": "A diagram artifact the declaration names (#2764), pinned to the renderer its render was made with. chant runs no renderer; everything here comes straight from the declaration.",
+      "type": "object",
+      "required": ["name", "title", "source", "render", "renderer", "member"],
+      "properties": {
+        "name": { "type": "string" },
+        "title": { "type": "string" },
+        "source": { "type": ["string", "null"], "description": "From the workspace root, with / separators. Null for an SVG with no source." },
+        "render": { "type": "string", "description": "From the workspace root, with / separators." },
+        "renderer": {
+          "type": "object",
+          "required": ["tool", "version", "args"],
+          "properties": {
+            "tool": { "enum": ["d2", "mermaid", "graphviz"] },
+            "version": { "type": "string", "description": "The exact release the render was made with, such as 0.9.0." },
+            "args": { "type": "array", "items": { "type": "string" }, "description": "Passed before the input and output paths, in order." }
+          }
+        },
+        "member": { "type": ["string", "null"], "description": "The member that declares it, or null for the workspace's own." }
       }
     },
     "group": {

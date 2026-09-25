@@ -135,6 +135,63 @@ describe("chant workspace ls on built workspaces", () => {
     expect(doc.summary).toEqual({ members: 5, unreadable: 3, groups: 1, matches: 0 });
   });
 
+  test("lists declared diagrams flattened across the workspace and its members (#2764)", () => {
+    const root = repo({
+      "chant.workspace.json": JSON.stringify({
+        name: "acme",
+        schema: 1,
+        members: [
+          {
+            name: "docs",
+            dir: "docs",
+            kind: "other",
+            because: "the docs site",
+            diagrams: [
+              {
+                name: "architecture",
+                title: "Studio architecture",
+                source: "docs/diagrams/architecture.d2",
+                render: "docs/diagrams/architecture.svg",
+                renderer: { tool: "d2", version: "0.9.0", args: ["--layout=elk", "--theme=0", "--pad=40", "--omit-version"] },
+                sourceHash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              },
+            ],
+          },
+        ],
+        diagrams: [
+          {
+            name: "boundary",
+            title: "chant and hud",
+            source: null,
+            render: "docs/diagrams/boundary.svg",
+            renderer: { tool: "graphviz", version: "9.0.0", args: [] },
+          },
+        ],
+      }),
+      "docs/README.md": "",
+    });
+    const doc = result(listWorkspace({ cwd: root }));
+    expectValid(doc);
+    expect(doc.diagrams).toEqual([
+      {
+        name: "boundary",
+        title: "chant and hud",
+        source: null,
+        render: "docs/diagrams/boundary.svg",
+        renderer: { tool: "graphviz", version: "9.0.0", args: [] },
+        member: null,
+      },
+      {
+        name: "architecture",
+        title: "Studio architecture",
+        source: "docs/diagrams/architecture.d2",
+        render: "docs/diagrams/architecture.svg",
+        renderer: { tool: "d2", version: "0.9.0", args: ["--layout=elk", "--theme=0", "--pad=40", "--omit-version"] },
+        member: "docs",
+      },
+    ]);
+  });
+
   test("a nested workspace member is readable by its own declaration, and ls inside it lists the inner one", () => {
     const root = repo({
       "chant.workspace.json": declaration([{ name: "kit", dir: "vendor/kit", kind: "workspace" }]),
