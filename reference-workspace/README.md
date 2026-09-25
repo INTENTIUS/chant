@@ -43,6 +43,18 @@ chant workspace records --kind work/work.kind.mjs --json
 chant workspace graph --intent design/screens/home.json
 ```
 
+[`skills/record-decisions/`](skills/record-decisions) and
+[`docs/record-decisions.md`](docs/record-decisions.md) are a harness-neutral
+way to write decision records by hand from a session, before anything
+harvests them automatically ([#2709](https://github.com/INTENTIUS/chant/issues/2709)).
+The skill is plain Markdown with the frontmatter Claude Code, Codex, Gemini
+CLI and opencode all read; the doc is the same ask as one prompt, for a
+harness with no skill mechanism. Both walk the same loop: list what the
+session decided, check it against `chant workspace records --current --json`
+for duplicates and contests, show the list, and write only what's kept with
+`chant workspace records new`. See [Recording Decisions by Hand](https://intentius.io/chant/guide/recording-decisions-by-hand/)
+for the loop end to end.
+
 ## What switches on here, and when
 
 | Issue | What it adds to this workspace |
@@ -61,10 +73,11 @@ chant workspace graph --intent design/screens/home.json
 | [#2627](https://github.com/INTENTIUS/chant/issues/2627) | landed: [`chant.template.json`](chant.template.json) declares a `name` parameter, the app's display name. `chant init --from ... --param name="Untitled app"` puts it in the home page and the screen spec, and the lock records it |
 | [#2683](https://github.com/INTENTIUS/chant/issues/2683) | landed: [`work/`](work) holds two work items read through `work/work.kind.mjs`. `W-001` implements `ref-002`, and `W-002` needs `W-001`. `chant workspace records` gives each one `ready` and `blockedBy`, and `graph --intent` shows them beside the decisions |
 | [#2662](https://github.com/INTENTIUS/chant/issues/2662) | landed: delivery declares the app as a `DockerWebService` composite instance, and [`delivery/src/app.component.ts`](delivery/src/app.component.ts) is the component that deploys it, naming that kind in `composites`. `chant workspace graph --composites` lists the instance `delivery/app` with the component, matched in the same member. Compose names the service `appService` |
+| [#2709](https://github.com/INTENTIUS/chant/issues/2709) | landed: [`skills/record-decisions/SKILL.md`](skills/record-decisions/SKILL.md) and [`docs/record-decisions.md`](docs/record-decisions.md), a harness-neutral way to propose decision records by hand from a session. Names `chant workspace records new` (or the `records-new` MCP tool from #2707, once it exists); the `source` provenance block from #2708 is filled in once that lands |
 
 ## Tests
 
-[`test/reference-workspace.test.ts`](../test/reference-workspace.test.ts) runs in chant's test job. It validates the declaration against chant's declaration schema, checks that its members are on disk, runs `chant workspace ls --json` and `chant workspace check` from the commit under test, runs the app's test, builds and lints delivery with no findings, runs `chant workspace graph --composites` and checks the app's row, validates the decision files against chant's schema and reads them with `chant workspace records`, and validates and reads the work items the same way. It also runs `chant init --from` on this directory at `HEAD` and checks that the copy is a working workspace: it has a lock, reads its own decisions, lists the same four members with `chant workspace ls`, and passes `chant workspace check`. The per-member workspace commands and their contract tests join the test as their issues land (#2537, #2536).
+[`test/reference-workspace.test.ts`](../test/reference-workspace.test.ts) runs in chant's test job. It validates the declaration against chant's declaration schema, checks that its members are on disk, runs `chant workspace ls --json` and `chant workspace check` from the commit under test, runs the app's test, builds and lints delivery with no findings, runs `chant workspace graph --composites` and checks the app's row, validates the decision files against chant's schema and reads them with `chant workspace records`, and validates and reads the work items the same way. It also runs `chant init --from` on this directory at `HEAD` and checks that the copy is a working workspace: it has a lock, reads its own decisions, lists the same four members with `chant workspace ls`, and passes `chant workspace check`, and that the copy carries the record-decisions skill and prompt, whose example record validates against the decision schema. The per-member workspace commands and their contract tests join the test as their issues land (#2537, #2536).
 
 ## Ownership and support
 
@@ -86,3 +99,4 @@ Until `chant workspace upgrade` exists (#2550), no command performs an upgrade. 
 | the first tag, `reference-workspace-v<minor>` for the first chant minor after the declaration landed | 0.81.0 | the four members declared in `chant.workspace.json` at level 1, two decision files | none |
 | the tag after `reference-workspace-v0.85` | 0.85.0, and 0.86.0 for the work kind | adds [`work/`](work), the work kind with two work items ([#2683](https://github.com/INTENTIUS/chant/issues/2683)). A chant older than 0.86.0 refuses `work/work.kind.mjs` as `kind-invalid`, and everything else still reads | none |
 | `reference-workspace-v0.85`, with chant 0.85.0 | 0.85.0 | delivery declares the app with the docker lexicon's `DockerWebService` composite and adds `delivery/src/app.component.ts`, the component that deploys it ([#2662](https://github.com/INTENTIUS/chant/issues/2662)) | Compose now names the service `appService` instead of `app`, so a command that names the service, such as `docker compose logs app`, needs the new name |
+| the tag after `reference-workspace-v0.89` | 0.89.0 | adds [`skills/record-decisions/`](skills/record-decisions) and [`docs/record-decisions.md`](docs/record-decisions.md) ([#2709](https://github.com/INTENTIUS/chant/issues/2709)), plain files with no schema or command either depends on | none |

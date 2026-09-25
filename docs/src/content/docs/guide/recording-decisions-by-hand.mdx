@@ -1,0 +1,128 @@
+---
+title: Recording Decisions by Hand
+description: Turn a session's choices into proposed decision records, in whatever AI harness you're in, before anything harvests them automatically.
+diataxis: how-to
+---
+
+A choice gets made in a session, for a stated reason, and then nothing
+carries it into the workspace. The next session doesn't know it happened, and
+a later reader can't tell whether it was ever decided or just done. Chant
+reads decisions as records ([`chant workspace records`](/chant/cli/workspace-records/)),
+but nothing in a generated workspace tells a model how to write one, so
+whether a session's decisions get captured depends on who's driving and
+which harness they're in.
+
+The [reference workspace](https://github.com/INTENTIUS/chant/tree/main/reference-workspace)
+ships a harness-neutral way to do it by hand, in two files that
+`chant init --from` copies into every workspace made from it:
+
+- [`skills/record-decisions/SKILL.md`](https://github.com/INTENTIUS/chant/blob/main/reference-workspace/skills/record-decisions/SKILL.md),
+  plain Markdown with the short frontmatter chant's other skills use. Claude
+  Code and Codex both read skill files this way, and Gemini CLI and opencode
+  do too; a person just asks to record the session's decisions.
+- [`docs/record-decisions.md`](https://github.com/INTENTIUS/chant/blob/main/reference-workspace/docs/record-decisions.md),
+  the same ask written as one prompt, for a harness with no skill mechanism.
+  Paste it into the chat.
+
+Both describe the same loop. This page walks it once, end to end.
+
+## List what was actually decided
+
+Not everything that happened in a session is a decision. A decision is a
+choice between options, made for a stated reason. Drop one-way tasks, fixes,
+and anything that just applied a rule someone else already settled.
+
+## Check it against what the workspace already has
+
+```bash
+chant workspace records --kind decisions/decision.kind.mjs --current --json
+```
+
+Compare each candidate's title and question against the current records. One
+that says the same thing as an existing record is a duplicate, so drop it
+and don't write it again. One that reaches the opposite conclusion on the
+same topic contests that record; keep the candidate, but say so.
+
+Then show the whole list, duplicates and contests marked, to a person. Only
+they decide which candidates are worth a record; nothing gets written
+without that.
+
+## Write each kept one as `proposed`
+
+```bash
+chant workspace records new decisions/decision.kind.mjs --from - <<'JSON'
+{
+  "schema": 1,
+  "title": "Where request logs go",
+  "state": "proposed",
+  "area": "app",
+  "source": { "kind": "workspace", "member": "app", "via": "cli", "harness": "claude-code" },
+  "question": "Where does the app write its structured request logs?",
+  "options": [
+    { "id": "a", "label": "stdout, newline-delimited JSON", "how": "One JSON object per request to stdout.", "tradeoff": "No dependency; nothing rotates it." },
+    { "id": "b", "label": "a local log file", "how": "Appends to app.log.", "tradeoff": "Easy to tail; needs rotation." }
+  ],
+  "choice": null,
+  "rejected": [],
+  "supersedes": [],
+  "evidence": [],
+  "decided_by": null,
+  "decided_on": null,
+  "reviews": [],
+  "constrains": ["member:app"]
+}
+JSON
+```
+
+`records new` picks the next id and refuses one already taken, so leave `id`
+out. It writes the file and prints the path, the id, and any warnings, such
+as `record-no-evidence` for a record with an empty `evidence` list, which is
+normal for a quick capture. `state` stays `"proposed"` and `choice` stays
+`null`; nobody but a later review moves it to `decided`.
+
+There's no `--by` flag on `records new`. The record's provenance is the git
+commit that adds the file, chant's own provenance model, without anything
+else to set.
+
+## Where a decision, and its proposal, came from
+
+`source` says where a decision was first recorded. A row in an issue's
+decisions table uses `{"issue": "owner/repo#123", "row": "...", "revision":
+null}`. A decision made directly in the workspace, with no issue behind it,
+uses `{"kind": "workspace", "member": "<name>"}`, naming the member it
+concerns.
+
+The same object can also say where the proposal came from
+([#2708](https://github.com/INTENTIUS/chant/issues/2708)): `via` (`"cli"`
+for the shell command above, `"mcp"` for the tool below, `"harvest"` for a
+transcript read after the fact), `harness` (`"claude-code"`, `"codex"`,
+`"gemini-cli"`, `"opencode"`, `"fountain"`, `"hud"`, or another id), `model`,
+`session`, `turns` and a `transcript` pinned by a path or URI and the SHA-256
+of its bytes, never its content. Every one of these is optional, and none of
+them changes a record's standing; it's data about the proposal, not trust.
+`chant workspace records` warns `source-transcript-drift` when a pinned
+transcript is reachable and its bytes no longer match.
+
+## When your chant serves more
+
+[#2707](https://github.com/INTENTIUS/chant/issues/2707) adds a `records-new`
+MCP tool, so a harness that speaks MCP but has no shell can propose a
+decision the same way. It fills in `source.via` (`"mcp"`) and `source.client`
+itself, from the MCP client's own `clientInfo`; the skill and the prompt both
+use it once it's there, and fall back to the shell command above when it
+isn't.
+
+## Reviewing what gets proposed
+
+This loop only proposes. Moving a record to `decided` is a separate act, by
+a person, with `chant workspace records amend`:
+
+```bash
+chant workspace records amend ref-003 --kind decisions/decision.kind.mjs --set - <<'JSON'
+{ "state": "decided", "decided_by": "lex00", "decided_on": "2026-09-25", "choice": { "option": "a", "reason": "..." } }
+JSON
+```
+
+See [`chant workspace records`](/chant/cli/workspace-records/) for the read
+side, and `docs/design/decisions/README.md` in the chant repo for the full
+shape of a decision record.

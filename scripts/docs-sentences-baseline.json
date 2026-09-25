@@ -681,6 +681,10 @@
   "claude/colon-reveal": 4,
   "tricolon/comma-series": 1
  },
+ "docs/src/content/docs/guide/recording-decisions-by-hand.mdx": {
+  "formatting/em-dash-density": 2,
+  "claude/colon-reveal": 2
+ },
  "docs/src/content/docs/guide/resource-naming.mdx": {
   "formatting/em-dash-density": 13,
   "claude/colon-reveal": 3,
