@@ -60,6 +60,8 @@ describe("the WSP catalog", () => {
       "records-unreadable",
       // A declared record kind that doesn't load breaks every reader's default (#2680).
       "record-kind-unloadable",
+      // An answer kind's points file that isn't valid can't be asked (ws-058).
+      "decision-points-invalid",
       // A credential in a box's files is in git (#2726).
       "box-credential-declared",
       // Two boxes sharing a value, or a box that only holds on one machine, is never the fix (#2727).

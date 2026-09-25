@@ -231,6 +231,9 @@
             "work-done-unpinned",
             "work-closed-without-date",
             "work-done-gap-open",
+            "answer-points-unreadable",
+            "answer-point-unknown",
+            "answer-point-changed",
             "record-unattested"
           ]
         },

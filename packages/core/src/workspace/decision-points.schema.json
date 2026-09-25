@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/decision-points/v1/decision-points.schema.json",
+  "title": "Decision points",
+  "description": "A workspace's decision points (ws-058, #2738): the recurring questions it asks of its own graph, declared as data in a JSON file that an answer record kind names in `answers.points`. Each point is a typed question (`noul`, `choice` with 2 to 255 options, or `score` with 2 to 10 ordered levels, the question types of the POST /v1/systemone wire format, #2491), the inputs it reads, each named as a read-contract output, and an ordered chain of deciders: `table` rows, `model` deciders with a backend, a pinned model id and a threshold, and a `quorum` of people, always last. Taken from chud's decision-points.schema.json; `boolean` is read as `noul`. What JSON Schema cannot say is checked in code (`points.ts`): an input's output is one the read contract has, a table row tests declared inputs and answers a candidate, a field belongs to its decider's kind, a model id is pinned rather than an alias, and the chain ends in its one quorum. Unknown fields are refused, except fields whose names start with x-.",
+  "type": "object",
+  "required": ["points"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "points": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "pattern": "^[a-z][a-z0-9-]*$" },
+      "additionalProperties": { "$ref": "#/$defs/point" }
+    }
+  },
+  "patternProperties": { "^x-": true },
+  "additionalProperties": false,
+  "$defs": {
+    "text": { "type": "string", "minLength": 1 },
+    "point": {
+      "type": "object",
+      "required": ["title", "question", "inputs", "deciders"],
+      "properties": {
+        "title": { "$ref": "#/$defs/text" },
+        "question": { "$ref": "#/$defs/question" },
+        "inputs": {
+          "type": "object",
+          "description": "The state the deciders see, input name to description. A name is a read-contract output (record, decision, work-item, finding, region, commit, member, gate, release, environment, component), optionally followed by dotted field names, such as work-item.fits_small: a field of that output, or a value the caller derives from it. The caller supplies the values; a table row can only test these names.",
+          "minProperties": 1,
+          "propertyNames": { "pattern": "^[A-Za-z_][A-Za-z0-9_-]*(\\.[A-Za-z_][A-Za-z0-9_]*)*$" },
+          "additionalProperties": { "type": "string" }
+        },
+        "deciders": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/decider" }
+        }
+      },
+      "patternProperties": { "^x-": true },
+      "additionalProperties": false
+    },
+    "question": {
+      "type": "object",
+      "required": ["type", "instructions", "criteria"],
+      "properties": {
+        "type": { "enum": ["noul", "boolean", "choice", "score"], "description": "boolean is chud's name for noul, read as noul." },
+        "instructions": { "$ref": "#/$defs/text" },
+        "criteria": {
+          "description": "The candidates. noul: {true, false} descriptions. choice: option to description, 2 to 255 options. score: 2 to 10 ordered levels.",
+          "type": ["object", "array"]
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "enum": ["noul", "boolean"] } } },
+          "then": {
+            "properties": {
+              "criteria": {
+                "type": "object",
+                "required": ["true", "false"],
+                "properties": { "true": { "type": "string" }, "false": { "type": "string" } },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "type": { "const": "choice" } } },
+          "then": { "properties": { "criteria": { "type": "object", "minProperties": 2, "maxProperties": 255, "additionalProperties": { "type": "string" } } } }
+        },
+        {
+          "if": { "properties": { "type": { "const": "score" } } },
+          "then": { "properties": { "criteria": { "type": "array", "minItems": 2, "maxItems": 10, "uniqueItems": true, "items": { "$ref": "#/$defs/text" } } } }
+        }
+      ]
+    },
+    "scalar": { "type": ["string", "number", "boolean", "null"] },
+    "condition": {
+      "description": "A value the input must equal, or one comparison.",
+      "oneOf": [
+        { "$ref": "#/$defs/scalar" },
+        {
+          "type": "object",
+          "minProperties": 1,
+          "maxProperties": 1,
+          "properties": {
+            "eq": { "$ref": "#/$defs/scalar" },
+            "ne": { "$ref": "#/$defs/scalar" },
+            "lt": { "type": "number" },
+            "lte": { "type": "number" },
+            "gt": { "type": "number" },
+            "gte": { "type": "number" },
+            "in": { "type": "array", "items": { "$ref": "#/$defs/scalar" } }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "row": {
+      "type": "object",
+      "required": ["when", "answer"],
+      "properties": {
+        "when": {
+          "type": "object",
+          "description": "Every named input must meet its condition. An empty object matches every state.",
+          "additionalProperties": { "$ref": "#/$defs/condition" }
+        },
+        "answer": { "type": ["string", "boolean"] },
+        "note": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "decider": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["table", "model", "quorum"] },
+        "rows": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/row" } },
+        "backend": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$", "description": "model: which backend answers, such as systemone (any server with the POST /v1/systemone wire format). chant never calls it: the decide Op activity or a runtime's decider does." },
+        "model": { "type": "string", "minLength": 1, "description": "model: the pinned model id the backend is asked for, such as jev-1.13.0. An alias such as jev-latest is refused." },
+        "threshold": { "type": "number", "exclusiveMinimum": 0, "maximum": 1, "description": "model: the least confidence that makes the answer a proposal. Below it the answer is not observed and the next decider is asked." },
+        "unreachable": { "enum": ["escalate", "fail"], "description": "model: what happens when the backend can't be reached or gives no usable answer: escalate to the next decider (the default), or fail the ask and write nothing." },
+        "count": { "type": "integer", "minimum": 1, "description": "quorum: how many distinct people must answer." },
+        "roles": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/text" }, "description": "quorum: the trust policy roles whose holders count." },
+        "note": { "type": "string" }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        { "if": { "properties": { "kind": { "const": "table" } } }, "then": { "required": ["rows"] } },
+        { "if": { "properties": { "kind": { "const": "model" } } }, "then": { "required": ["backend", "model", "threshold"] } },
+        { "if": { "properties": { "kind": { "const": "quorum" } } }, "then": { "required": ["count"] } }
+      ]
+    }
+  }
+}

@@ -86,6 +86,10 @@ export const REASONS = {
   "work-done-unpinned": "A work record is done and its evidence list is empty: nothing shows the work was done.",
   "work-closed-without-date": "A work record is done or dropped and has no closing date.",
   "work-done-gap-open": "A work record is done, and the finding it came from still fires on its region. graph --intent raises it, and records does by walking that region.",
+  // An answer to a decision point that is valid but warned about (records, points, ws-058, #2739).
+  "answer-points-unreadable": "The points file the answer kind names can't be read, or is not valid.",
+  "answer-point-unknown": "The answer's point is not declared in the points file the answer kind names.",
+  "answer-point-changed": "The point's declaration changed since the question was asked, so the answer is to an older version of the question.",
   // A verdict the quorum does not count (records, #2671, #2672).
   "review-decider": "The verdict is the decider's own, and the quorum counts verdicts besides the decider's.",
   "review-agent": "The reviewer holds the agent role in the trust policy at base.",
@@ -125,6 +129,14 @@ export const REASONS = {
   // A review given in a session (records review --session, #2693).
   "session-unknown": "--session names no session of a session kind whose subjects are the record's kind.",
   "session-not-open": "--session names a session in a closed state, which takes no more verdicts.",
+  // Decision points (points, points ask, points answer, ws-058, #2739).
+  "points-undeclared": "No record kind with an answers block is declared, or given with --kind, so there is no points file to ask.",
+  "points-invalid": "The points file an answer kind names can't be read, or does not match decision-points.schema.json and the rules checked in code.",
+  "point-unknown": "No points file declares the point asked, or the one an answer names.",
+  "point-inputs-invalid": "The inputs given to an ask are not a JSON object of the point's declared inputs.",
+  "point-decider-failed": "A model decider that fails closed (unreachable: fail) could not answer, so the ask wrote nothing.",
+  "answer-not-candidate": "The people's answer is not one of the question's candidates.",
+  "quorum-not-met": "Too few of the people who answered count toward the point's quorum: distinct, not holding the agent role, and holding one of its roles when it names any.",
   // records --since that fails (#2673).
   "since-rev-unknown": "--since names no commit, or a session with no opening revision and no commit that added it.",
   "since-session-unknown": "--since has the shape of a session id and names no commit, and no session the kind or the declaration reads has that id.",

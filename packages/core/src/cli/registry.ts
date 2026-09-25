@@ -287,6 +287,18 @@ export interface ParsedArgs {
   kind?: string;
   /** Every `--kind` given, in order: `chant workspace graph --intent` reads each (#2651). */
   kinds?: string[];
+  /** Every `--by` given, in order: `chant workspace points answer` counts each person toward the quorum (#2739). */
+  bys?: string[];
+  /** `chant workspace points --open` (#2739): only the questions still open. */
+  open?: boolean;
+  /** `chant workspace points ask <point> --inputs <file|->` (#2739): the inputs, as a JSON object. */
+  inputs?: string;
+  /** `chant workspace points ask <point> --response <file>` (#2739): a POST /v1/systemone response the caller got from a backend. */
+  response?: string;
+  /** `chant workspace points ask <point> --subject <id>` (#2739): what the question is about. */
+  subject?: string;
+  /** `chant workspace points answer <id> --answer <value>` (#2739): the people's answer. */
+  answer?: string;
   /** `chant workspace graph --composites` (#2662): print each composite instance with the components that can deploy it. */
   composites?: boolean;
   /** `chant workspace graph --intent <path[:start-end]>` (#2651): the region the intent graph is over. */

@@ -259,6 +259,11 @@
   "formatting/em-dash-density": 2,
   "claude/colon-reveal": 2
  },
+ "docs/src/content/docs/cli/workspace-points.mdx": {
+  "formatting/em-dash-density": 2,
+  "claude/colon-reveal": 2,
+  "dead-metaphor/rare-lemma": 1
+ },
  "docs/src/content/docs/cli/workspace-records.mdx": {
   "formatting/em-dash-density": 2,
   "claude/colon-reveal": 2
@@ -606,6 +611,11 @@
   "claude/colon-reveal": 2,
   "anaphora/repeated-opening": 2,
   "repetition/near-duplicate": 2
+ },
+ "docs/src/content/docs/guide/decision-points.mdx": {
+  "discourse/punchy-fragments": 1,
+  "claude/colon-reveal": 3,
+  "dead-metaphor/rare-lemma": 1
  },
  "docs/src/content/docs/guide/importing-templates.mdx": {
   "formatting/em-dash-density": 2,

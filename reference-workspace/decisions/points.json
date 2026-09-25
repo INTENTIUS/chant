@@ -1,0 +1,60 @@
+{
+  "$schema": "https://intentius.io/chant/schemas/workspace/decision-points/v1/decision-points.schema.json",
+  "points": {
+    "slice-tier": {
+      "title": "Which builder tier builds this work item",
+      "question": {
+        "type": "choice",
+        "instructions": "Pick the smallest builder tier that can build this work item. The state is how much the work item holds and whether that fits each tier's sizing limits.",
+        "criteria": {
+          "small": "A haiku-class builder. The work item fits the small limits.",
+          "medium": "A mid-size builder. The work item fits the medium limits.",
+          "large": "The largest builder. The work item is bigger than the medium limits."
+        }
+      },
+      "inputs": {
+        "work-item.criteria": "acceptance criteria in the work item",
+        "work-item.files": "distinct paths the work item names",
+        "work-item.words": "words in the body outside headings",
+        "work-item.fits_small": "whether it is within the small tier's limits",
+        "work-item.fits_medium": "whether it is within the medium tier's limits"
+      },
+      "deciders": [
+        {
+          "kind": "table",
+          "rows": [
+            { "when": { "work-item.fits_small": true }, "answer": "small" },
+            { "when": { "work-item.fits_medium": true }, "answer": "medium" }
+          ]
+        },
+        { "kind": "model", "backend": "systemone", "model": "bosun-v3.1-1.7b", "threshold": 0.8 },
+        { "kind": "quorum", "count": 1 }
+      ]
+    },
+    "ship-skip": {
+      "title": "May this release skip the human gate",
+      "question": {
+        "type": "noul",
+        "instructions": "May this release pass the ship gate without a person approving it? The state is what the release would change.",
+        "criteria": {
+          "true": "An agent may pass the gate for this release.",
+          "false": "A person approves the release at the gate."
+        }
+      },
+      "inputs": {
+        "release.first_release": "nothing has shipped yet",
+        "release.new_migrations": "migrations that would fire",
+        "release.files_changed": "files changed since the serving release",
+        "release.app_changed": "whether any file under the app directory changed",
+        "release.units": "work items the release ships"
+      },
+      "deciders": [
+        {
+          "kind": "table",
+          "rows": [{ "when": {}, "answer": false, "note": "Never, until someone adds a row above this one that says when." }]
+        },
+        { "kind": "quorum", "count": 1 }
+      ]
+    }
+  }
+}

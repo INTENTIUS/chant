@@ -325,11 +325,12 @@ describe("decision files", () => {
     for (const r of doc.records) expect(dirname(r.path)).toBe("reference-workspace/decisions");
   });
 
-  test("the declaration names the decision, work and session kinds, so ls lists them and records reads them without --kind (#2680, #2683)", async () => {
+  test("the declaration names the decision, work, answer and session kinds, so ls lists them and records reads them without --kind (#2680, #2683, ws-058)", async () => {
     const ls = lsJson(fixture) as unknown as { workspace: { records: unknown[] }; members: { name: string; records: unknown[] }[] };
     expect(ls.workspace.records).toEqual([
       { name: "decision", path: "decisions/decision.kind.mjs", kind: "decision", reason: null },
       { name: "work", path: "work/work.kind.mjs", kind: "work", reason: null },
+      { name: "answer", path: "answers/answer.kind.mjs", kind: "answer", reason: null },
     ]);
     expect(ls.members.find((m) => m.name === "design")!.records).toEqual([{ name: "session", path: "design/sessions/session.kind.mjs", kind: "session", reason: null }]);
     const run = chant(fixture, "workspace", "records", "--current", "--json");
@@ -338,6 +339,7 @@ describe("decision files", () => {
     expect(set.kinds.map((k) => [k.kind.name, k.declared])).toEqual([
       ["decision", { member: null, path: "decisions/decision.kind.mjs", name: null }],
       ["work", { member: null, path: "work/work.kind.mjs", name: null }],
+      ["answer", { member: null, path: "answers/answer.kind.mjs", name: null }],
       ["session", { member: "design", path: "design/sessions/session.kind.mjs", name: null }],
     ]);
     expect(set.kinds[0].records.map((r) => r.id)).toEqual(files.map((f) => f.slice(0, "ref-000".length)));
@@ -586,7 +588,7 @@ describe("the intent graph on the fixture (#2651)", () => {
     };
     const validate = compile2020(intentSchema);
     expect(validate(doc), JSON.stringify(validate.errors, null, 2)).toBe(true);
-    expect(doc.kinds.map((k) => k.records)).toEqual(["decision", "work", "session"]);
+    expect(doc.kinds.map((k) => k.records)).toEqual(["decision", "work", "answer", "session"]);
     // W-001 constrains member:app. W-002 constrains paths outside this file and only needs W-001, so it stays out.
     expect(doc.nodes.filter((n) => n.kind === "work").map((n) => n.id)).toEqual(["record:work/W-001"]);
     expect(doc.edges).toContainEqual({ kind: "constrains", from: "record:work/W-001", to: doc.region, granularity: "member", entry: "member:app" });

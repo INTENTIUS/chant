@@ -1,0 +1,134 @@
+---
+title: Decision Points
+description: Declare the questions a workspace asks of its own graph with the deciders that answer them, and keep each answer as a record that stays proposed until a person confirms a model's.
+diataxis: how-to
+---
+
+Some questions come up again and again, such as which builder tier builds a work item or whether a release may skip the human gate. A decision point declares one such question as data, with the inputs it reads and the deciders that answer it, and every answer it gets is a record in the workspace ([ws-058](https://github.com/INTENTIUS/chant/issues/2723)).
+
+The questions become part of the workspace's specification, reviewable like any file. Every answer can be traced to its inputs. When a model gave it, the record also holds the model's confidence and threshold. A model never settles anything alone. Its answer is a proposal until a person confirms it.
+
+## Declare the points
+
+Points live in a JSON file that follows `decision-points.schema.json`, which `@intentius/chant` exports as `@intentius/chant/workspace/decision-points.schema.json`. The reference workspace keeps its points in `decisions/points.json`, and its `slice-tier` point reads as follows.
+
+```json
+{
+  "points": {
+    "slice-tier": {
+      "title": "Which builder tier builds this work item",
+      "question": {
+        "type": "choice",
+        "instructions": "Pick the smallest builder tier that can build this work item.",
+        "criteria": {
+          "small": "A haiku-class builder. The work item fits the small limits.",
+          "medium": "A mid-size builder. The work item fits the medium limits.",
+          "large": "The largest builder. The work item is bigger than the medium limits."
+        }
+      },
+      "inputs": {
+        "work-item.criteria": "acceptance criteria in the work item",
+        "work-item.fits_small": "whether it is within the small tier's limits",
+        "work-item.fits_medium": "whether it is within the medium tier's limits"
+      },
+      "deciders": [
+        {
+          "kind": "table",
+          "rows": [
+            { "when": { "work-item.fits_small": true }, "answer": "small" },
+            { "when": { "work-item.fits_medium": true }, "answer": "medium" }
+          ]
+        },
+        { "kind": "model", "backend": "systemone", "model": "bosun-v3.1-1.7b", "threshold": 0.8 },
+        { "kind": "quorum", "count": 1 }
+      ]
+    }
+  }
+}
+```
+
+The question has one of the three types of the `POST /v1/systemone` wire format ([#2491](https://github.com/INTENTIUS/chant/issues/2491)).
+
+| Type | Criteria |
+|---|---|
+| `noul` | `true` and `false`, each with a description. chud's `boolean` is read as `noul`. |
+| `choice` | 2 to 255 options, each with a description. |
+| `score` | 2 to 10 ordered levels. |
+
+### Inputs name read-contract outputs
+
+Each input is named for the output of the [read contract](/chant/reference/workspace-read-contract/#decision-points) it comes from, optionally followed by dotted field names. `work-item.fits_small` is a value the caller derives from a work item. `finding` alone is a whole finding.
+
+| Output | Where a reader finds it |
+|---|---|
+| `record`, `decision`, `work-item` | a record in `chant workspace records --json` |
+| `finding`, `region`, `commit` | `chant workspace graph --intent --json` |
+| `member` | `chant workspace ls --json` |
+| `gate`, `release`, `environment` | `chant workspace status --json` |
+| `component` | `chant workspace graph --composites` |
+
+An input naming anything else is refused. The caller supplies the values, and a table row can test only the declared names.
+
+### The deciders
+
+The deciders are asked in order.
+
+- A `table` answers with the first row whose `when` holds. `when` names inputs and a value each must equal, or one comparison (`eq`, `ne`, `lt`, `lte`, `gt`, `gte` or `in`). `{}` matches everything.
+- A `model` names a `backend`, a pinned `model` id and a `threshold`. An alias such as `jev-latest` is refused, since it moves when a new release ships. `unreachable` says what happens when the backend can't answer. With `escalate`, the default, the next decider is asked. With `fail`, the ask fails and writes nothing.
+- A `quorum` of people is always last, with a `count` and optionally the trust policy `roles` whose holders count. A chain that does not end in one is refused.
+
+## Declare the answer kind
+
+The answers are records of a kind with an `answers` block naming the points file. The reference workspace's is `answers/answer.kind.mjs`, named in the top-level `records` of its `chant.workspace.json`:
+
+```js
+export const recordKind = {
+  name: "answer",
+  location: { dir: ".", match: "^[a-z][a-z0-9-]*-[0-9a-f]{12}\\.md$" },
+  format: "markdown-front-matter",
+  schema: { id: "urn:intentius:chant:point-answer:1", path: "answer.schema.json" },
+  idField: "id",
+  stateField: "state",
+  states: ["escalated", "proposed", "answered"],
+  closedStates: ["answered"],
+  constrains: { field: "constrains" },
+  source: { field: "source" },
+  answers: { points: "../decisions/points.json" },
+};
+```
+
+`answer.schema.json` is a copy of `@intentius/chant/workspace/point-answer.schema.json`. `chant workspace check` validates the points file of every declared answer kind, and reports a broken one as WSP116.
+
+## Ask a point
+
+chant never calls a model. The call belongs to the operations layer, in the decide Op activity ([#2740](https://github.com/INTENTIUS/chant/issues/2740)) or a runtime's decider, which hands chant the backend's response:
+
+```bash
+chant workspace points ask slice-tier --inputs inputs.json --subject W-002 --response response.json
+```
+
+`inputs.json` holds the values, keyed by input name. `response.json` is the backend's `POST /v1/systemone` response. Without `--response` the model decider is not asked, and a question the table doesn't answer escalates to people.
+
+The answer is written as a record in `answers/`, named for the point and its inputs' hash. Its state depends on who answered.
+
+| Answered by | State |
+|---|---|
+| a table row | `answered` |
+| a model at or above its threshold | `proposed`, whatever its confidence, with its probabilities, confidence and threshold |
+| nobody before the quorum | `escalated`, with each decider's reason and any model's answer below its threshold |
+
+Every record carries a `source` block ([#2708](https://github.com/INTENTIUS/chant/issues/2708)) with `via` and, when a model answered, its `model`. The same point, declaration and inputs are answered once. Asking again returns the record that is there. Editing the point changes its version, which asks the question anew, and the old answers get `answer-point-changed`.
+
+## Answer the open questions
+
+A question is open while it is escalated or proposed. `chant workspace points --open --json` lists them with any model's answer and confidence, so hud can prompt a person. `chant serve mcp` serves the same list as the `workspace-points` tool.
+
+```bash
+chant workspace points answer slice-tier-074b660bbaad --answer medium --by alice
+```
+
+Giving the answer the model proposed confirms it. Any other answer is the quorum's, and the proposal is kept in the record's `escalations`. The quorum counts distinct people. It never counts anyone holding the `agent` role in the trust policy, and when it names roles it counts only their holders. An answered question never changes.
+
+## Moving from chud
+
+chud's `decisions/points.yaml` validates unchanged apart from the input names. Write it as JSON and give each input a read-contract output as its prefix. chud's `fits_small` becomes `work-item.fits_small`, and its `first_release` becomes `release.first_release`. The `when` keys of its table rows follow. chud's `chud/decisions` records stay chud's. New answers are chant records.

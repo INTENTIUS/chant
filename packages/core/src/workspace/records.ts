@@ -32,6 +32,7 @@ import type { RecordSource } from "./record-source";
 import { sourceBlock, sourceBlockProblems, transcriptDrift } from "./source-block";
 import type { WorkspaceTree } from "./tree";
 import type { DecisionWork, WorkLink, WorkWarningCode } from "./work";
+import type { AnswerWarningCode } from "./points";
 
 // ── Reason codes ─────────────────────────────────────────────────────────────
 
@@ -175,8 +176,8 @@ export interface VerdictAttestation {
 }
 
 export interface RecordWarning {
-  /** A work kind's records also carry the codes of `WORK_WARNING_CODES` (#2683), and `records` adds `SEAL_WARNING_CODES` (#2688). */
-  code: RecordWarningCode | WorkWarningCode | SealWarningCode;
+  /** A work kind's records also carry the codes of `WORK_WARNING_CODES` (#2683), an answer kind's those of `ANSWER_WARNING_CODES` (#2739), and `records` adds `SEAL_WARNING_CODES` (#2688). */
+  code: RecordWarningCode | WorkWarningCode | SealWarningCode | AnswerWarningCode;
   message: string;
 }
 
@@ -360,6 +361,17 @@ export const recordKindSchema = z
       })
       .strict()
       .optional(),
+    /**
+     * An answer kind (ws-058, #2739): the decision points file its records
+     * answer, relative to this kind file. The records are written by `chant
+     * workspace points ask` and `points answer` in the shape of
+     * `point-answer.schema.json`, with an `id`, the states `escalated`,
+     * `proposed` and `answered`, and `answered` closed. With it, `records`
+     * warns about an answer whose point is gone or changed, `check` validates
+     * the points file (WSP116), and `points` lists the open questions.
+     * Optional.
+     */
+    answers: z.object({ points: z.string().min(1) }).strict().optional(),
   })
   .strict()
   .refine((k) => (k.idField === undefined) !== (k.idFrom === undefined), {
@@ -393,7 +405,23 @@ export const recordKindSchema = z
   .refine((k) => !k.work || (k.states !== undefined && k.states.includes(k.work.open) && k.states.includes(k.work.done)), {
     message: "a work kind must have states, and its work open and done states must be listed in them",
     path: ["work"],
-  });
+  })
+  .refine(
+    (k) =>
+      !k.answers ||
+      (k.format === "markdown-front-matter" &&
+        k.idField === "id" &&
+        k.stateField === "state" &&
+        ANSWER_STATES.every((s) => k.states?.includes(s)) &&
+        (k.closedStates ?? []).includes("answered")),
+    {
+      message: 'an answer kind is markdown-front-matter with idField "id", stateField "state", the states escalated, proposed and answered, and answered closed',
+      path: ["answers"],
+    },
+  );
+
+/** The states of an answer kind's records (ws-058): open for people, proposed by a model, answered by a table, people, or a confirmed proposal. */
+export const ANSWER_STATES = ["escalated", "proposed", "answered"] as const;
 
 export type RecordKind = z.infer<typeof recordKindSchema>;
 
@@ -1250,6 +1278,8 @@ export async function readRecords(loaded: LoadedRecordKind, options: ReadRecords
   joinSessions(kind, entries, texts, options.subjects ?? null);
   // A work kind's links, ready and blocked (#2683), from every record before --current.
   const work = kind.work ? await (await import("./work")).applyWork(loaded, entries, options) : undefined;
+  // An answer kind's points (ws-058): an answer whose point is gone or changed is warned about.
+  if (kind.answers) (await import("./points")).applyAnswers(loaded, entries, options);
 
   for (const e of entries) e.valid = e.reasons.length === 0;
   const records = options.current ? entries.filter((e) => e.supersededBy === null) : entries;

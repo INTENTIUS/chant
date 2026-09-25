@@ -1,0 +1,710 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/points/v1/points.schema.json",
+  "title": "chant workspace points output",
+  "description": "What `chant workspace points --json` prints (ws-058, #2739): the decision points each declared answer kind's points file declares, and the questions asked of them, each an answer record. A question is open while it is escalated to people, or proposed by a model and not yet confirmed; it carries any model's answer with its confidence and threshold, so a reader can prompt a person. With --open only open questions are listed. chant never calls a model to print this. Readers ignore fields they do not know; a field is only ever added within a version. The reason and error codes are closed lists, each in the one closed list of `reason-codes.ts`. Contract version 1 is written by chant 0.81.0 and newer, and this document was added to it by #2739; a chant without it refuses the command.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/result"
+    },
+    {
+      "$ref": "#/$defs/failure"
+    }
+  ],
+  "$defs": {
+    "result": {
+      "description": "The declaration was read. Exit code 0; an answer kind whose points or records could not be read is listed in sources with its reason.",
+      "type": "object",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "at",
+        "workspace",
+        "open",
+        "sources",
+        "points",
+        "questions",
+        "summary"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/points/v1/points.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string",
+          "description": "The chant that wrote the document."
+        },
+        "at": {
+          "description": "The full commit id read (--at), or null for the working tree.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{40,64}$"
+        },
+        "workspace": {
+          "type": "object",
+          "required": [
+            "name",
+            "root"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "root": {
+              "type": "string"
+            }
+          }
+        },
+        "error": false,
+        "open": {
+          "type": "boolean",
+          "description": "Whether only open questions are listed (--open)."
+        },
+        "sources": {
+          "type": "array",
+          "description": "Each answer kind read, declared or given with --kind.",
+          "items": {
+            "$ref": "#/$defs/source"
+          }
+        },
+        "points": {
+          "type": "array",
+          "description": "Every point the points files declare, in file order.",
+          "items": {
+            "$ref": "#/$defs/point"
+          }
+        },
+        "questions": {
+          "type": "array",
+          "description": "The answer records, in path order; with --open, only the open ones.",
+          "items": {
+            "$ref": "#/$defs/question"
+          }
+        },
+        "summary": {
+          "type": "object",
+          "required": [
+            "points",
+            "questions",
+            "open",
+            "escalated",
+            "proposed",
+            "answered"
+          ],
+          "properties": {
+            "points": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "questions": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "open": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "escalated": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "proposed": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "answered": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "required": [
+        "kind",
+        "points",
+        "reason"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "description": "The answer kind file, from the workspace root as declared, or as given with --kind."
+        },
+        "points": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The points file from the repository root, or null when the kind could not be loaded."
+        },
+        "reason": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/reason"
+            }
+          ]
+        }
+      }
+    },
+    "reason": {
+      "type": "object",
+      "required": [
+        "code",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "enum": [
+            "kind-unreadable",
+            "kind-invalid",
+            "schema-unreadable",
+            "schema-id-mismatch",
+            "schema-invalid",
+            "location-missing",
+            "points-invalid"
+          ]
+        },
+        "message": {
+          "type": "string"
+        }
+      }
+    },
+    "point": {
+      "type": "object",
+      "required": [
+        "name",
+        "title",
+        "kind",
+        "file",
+        "version",
+        "questionType",
+        "instructions",
+        "candidates",
+        "inputs",
+        "deciders",
+        "quorum"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "file": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "sha256 of the point's declaration."
+        },
+        "questionType": {
+          "enum": [
+            "noul",
+            "choice",
+            "score"
+          ]
+        },
+        "instructions": {
+          "type": "string"
+        },
+        "candidates": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "boolean"
+              }
+            ]
+          }
+        },
+        "inputs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "output",
+              "description"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "output": {
+                "type": "string",
+                "description": "The read-contract output the input names: record, decision, work-item, finding, region, commit, member, gate, release, environment or component."
+              },
+              "description": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "deciders": {
+          "type": "array",
+          "description": "The chain as declared: table, model and quorum deciders, the quorum last.",
+          "items": {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "enum": [
+                  "table",
+                  "model",
+                  "quorum"
+                ]
+              }
+            }
+          }
+        },
+        "quorum": {
+          "type": "object",
+          "required": [
+            "count"
+          ],
+          "properties": {
+            "count": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "roles": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "question": {
+      "type": "object",
+      "required": [
+        "id",
+        "path",
+        "point",
+        "title",
+        "subject",
+        "state",
+        "open",
+        "questionType",
+        "candidates",
+        "inputs",
+        "inputsHash",
+        "pointVersion",
+        "current",
+        "answer",
+        "decider",
+        "probabilities",
+        "confidence",
+        "threshold",
+        "model",
+        "escalations",
+        "answeredBy",
+        "askedOn",
+        "answeredOn",
+        "valid",
+        "warnings"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "point": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "subject": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "What the question is about, such as a work item's id."
+        },
+        "state": {
+          "enum": [
+            "escalated",
+            "proposed",
+            "answered"
+          ]
+        },
+        "open": {
+          "type": "boolean",
+          "description": "Escalated to people, or proposed by a model and not yet confirmed."
+        },
+        "questionType": {
+          "type": "string"
+        },
+        "candidates": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "boolean"
+              }
+            ]
+          }
+        },
+        "inputs": {
+          "type": "object"
+        },
+        "inputsHash": {
+          "type": "string"
+        },
+        "pointVersion": {
+          "type": "string"
+        },
+        "current": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "The point is still declared as it was when asked; null when the points file no longer declares it."
+        },
+        "answer": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "decider": {
+          "type": "object",
+          "description": "Who answered: a table row, a model with its backend and model id, or a quorum, with who answered once people did. For an escalated question, the quorum it waits on."
+        },
+        "probabilities": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              }
+            }
+          ]
+        },
+        "confidence": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          ]
+        },
+        "threshold": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          ]
+        },
+        "model": {
+          "description": "Any model answer: the proposal (observed), or the last answer below a model decider's threshold (not observed). null when no model answered.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "answer",
+                "confidence",
+                "threshold",
+                "model",
+                "backend",
+                "observed"
+              ],
+              "properties": {
+                "answer": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "confidence": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    }
+                  ]
+                },
+                "threshold": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    }
+                  ]
+                },
+                "model": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "backend": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "observed": {
+                  "type": "boolean"
+                }
+              }
+            }
+          ]
+        },
+        "escalations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "kind",
+              "reason"
+            ],
+            "properties": {
+              "kind": {
+                "enum": [
+                  "table",
+                  "model"
+                ]
+              },
+              "reason": {
+                "type": "string"
+              },
+              "backend": {
+                "type": "string"
+              },
+              "model": {
+                "type": "string"
+              },
+              "answer": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "probabilities": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              },
+              "confidence": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "threshold": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              }
+            }
+          }
+        },
+        "answeredBy": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "askedOn": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "answeredOn": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "valid": {
+          "type": "boolean"
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "code",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "enum": [
+                  "asset-drift",
+                  "asset-missing",
+                  "asset-stale",
+                  "record-supersedes-pending",
+                  "record-no-evidence",
+                  "review-undigested",
+                  "source-transcript-drift",
+                  "answer-points-unreadable",
+                  "answer-point-unknown",
+                  "answer-point-changed",
+                  "record-unattested"
+                ]
+              },
+              "message": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "failure": {
+      "description": "The declaration could not be read, and nothing was read. Exit code 1.",
+      "type": "object",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "error"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/points/v1/points.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string"
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message",
+            "location"
+          ],
+          "properties": {
+            "code": {
+              "enum": [
+                "declaration-missing",
+                "declaration-ambiguous",
+                "declaration-unparseable",
+                "declaration-invalid",
+                "placement-invalid",
+                "reader-too-old",
+                "root-chant-required",
+                "not-a-git-repository",
+                "revision-unknown"
+              ]
+            },
+            "message": {
+              "type": "string"
+            },
+            "location": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "file",
+                    "line",
+                    "column"
+                  ],
+                  "properties": {
+                    "file": {
+                      "type": "string"
+                    },
+                    "line": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "column": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "points": false
+      }
+    }
+  }
+}

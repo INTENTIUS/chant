@@ -27,6 +27,9 @@ import { STATUS_ERROR_CODES, STATUS_GATE_REASON_CODES, STATUS_REASON_CODES, STAT
 import { WORK_WARNING_CODES } from "./work";
 import { BOX_FINDING_CODES } from "./checks/boxes";
 import { WORK_ERROR_CODES, WORK_LEASE_REFUSALS } from "./work-cli";
+import { ANSWER_WARNING_CODES } from "./points";
+import { POINTS_ERROR_CODES, POINTS_SOURCE_REASON_CODES } from "./points-cli";
+import { POINTS_WRITE_ERROR_CODES } from "./decide";
 
 const HERE = import.meta.dirname;
 
@@ -65,6 +68,10 @@ const PER_COMMAND: Record<string, readonly string[]> = {
   COMPOSITES_ENVIRONMENT_REASON_CODES,
   WORK_ERROR_CODES,
   WORK_LEASE_REFUSALS,
+  ANSWER_WARNING_CODES,
+  POINTS_ERROR_CODES,
+  POINTS_SOURCE_REASON_CODES,
+  POINTS_WRITE_ERROR_CODES,
 };
 
 /** Every string in an `enum` under a property named `code`, anywhere in a schema. */
