@@ -2,7 +2,7 @@
 schema: 1
 id: "ws-057"
 title: "How the factory's builds on Fountain divide between the spec and the thin layer"
-state: "proposed"
+state: "decided"
 area: "D17"
 source:
   issue: "INTENTIUS/chant#2714"
@@ -22,8 +22,12 @@ options:
     label: "the dispatcher as a Steward"
     how: "The dispatcher Teammate becomes a `Steward` (an agent running `chant acp` on a persistent sandbox), which runs `chant run dispatch` as one of its Ops. The builders stay ephemeral agents."
     tradeoff: "It uses the existing composite for 'the machine an environment is operated from', and the dispatch loop gets a persistent home on Fountain. It is compatible with option a and can be added to it; it is listed separately because it changes what the dispatcher is, from a scheduled prompt to an operator."
-choice: null
-rejected: []
+choice:
+  option: "a"
+  reason: "The builders are already specification, declared with chant's fountain lexicon, so the runner moves to the studio kit on ws-055's ledgers, fountainRun and decision points. Option c is adopted with it: the dispatcher becomes a Steward, because every box's operational work runs through chant's Steward (lex00, 2026-09-25; INTENTIUS/chant#2731, arugula-salad/studio#46)."
+rejected:
+  - option: "b"
+    why: "Builds of different contracts would share a machine and its state, and each tier would pay for an idle machine; Box is for serving an app."
 supersedes: []
 evidence:
   - title: "INTENTIUS/chant#2714, research: chud's factory builds on Fountain, through chant's fountain lexicon"
@@ -50,8 +54,8 @@ evidence:
   - title: "fountainRun, which returns when a persistent agent's turn ends (#2718)"
     path: "lexicons/fountain/src/op/activities/fountain-run.ts"
     sha256: "c71ed870b7e3593aff4ac8cee0ac40a80afe57ec4874b1a51e4693346de9de1e"
-decided_by: null
-decided_on: null
+decided_by: "lex00"
+decided_on: "2026-09-25"
 reviews: []
 constrains:
   - "INTENTIUS/chant#2714"
