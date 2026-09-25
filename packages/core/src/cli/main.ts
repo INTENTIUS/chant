@@ -7,6 +7,8 @@ import { loadPlugins, resolveProjectLexicons } from "./plugins";
 import { resolveCommand, type CommandDef, type ParsedArgs } from "./registry";
 import { loadChantConfigUpward } from "../config";
 import { findProjectRoot, findWorkspaceRoot } from "../project-root";
+import { isNoLexiconDetected } from "../detectLexicon";
+import { CHANT_VERSION } from "./version";
 import { validateLexiconConfig, formatLexiconConfigProblems } from "../lexicon-config";
 import { armSandboxConfigEvaluation } from "../config-sandbox";
 import { armSandboxPolicyExecution } from "../lint/policy-import";
@@ -52,6 +54,7 @@ import type { LexiconPlugin } from "../lexicon";
  */
 const BOOLEAN_FLAGS = new Set([
   "--help",
+  "--version",
   "--agents",
   "--agent",
   "--all-projects",
@@ -167,6 +170,8 @@ export function parseArgs(args: string[]): ParsedArgs {
 
     if (arg === "--help" || arg === "-h") {
       result.help = true;
+    } else if (arg === "--version" || arg === "-V") {
+      result.version = true;
     } else if (arg === "--output" || arg === "-o") {
       result.output = args[++i];
     } else if (arg === "--format" || arg === "-f") {
@@ -971,6 +976,7 @@ Options:
                         resolved build parameter and per-file fold decision
                         instead of the one-line summaries
   -h, --help            Show this help message
+  -V, --version         Print the installed chant's version
   --on <lexicon>        Which runtime hosts the run: a configured lexicon with
                         an opRuntime, or the built-in local runtime when
                         omitted (every run subcommand; #2121)
@@ -1183,6 +1189,28 @@ async function loadPluginsOrExit(path: string): Promise<import("../lexicon").Lex
   return plugins;
 }
 
+/**
+ * #2700 — whether `path` is the root of a declared workspace and holds no
+ * lexicon of its own: no `lexicons` in a root config, and no lexicon import in
+ * the root's source, which leaves the members' directories out (#2527). A
+ * generated chud repo is this shape: its lexicons are all in `delivery/`.
+ * `chant serve mcp` starts there instead of refusing with "No lexicon
+ * detected", and serves core with the chant members' lexicons.
+ *
+ * A directory with no workspace declaration costs only `findWorkspaceRoot`'s
+ * existence checks, so a level-0 project reaches `loadPluginsOrExit` as before.
+ */
+async function isLexiconlessWorkspaceRoot(path: string): Promise<boolean> {
+  const target = resolve(path);
+  if (findWorkspaceRoot(target)?.dir !== target) return false;
+  try {
+    await resolveProjectLexicons(target);
+    return false;
+  } catch (error) {
+    return isNoLexiconDetected(error);
+  }
+}
+
 /** Whether `def` must run without evaluating the project's `chant.config.ts` (chant#2591). */
 function commandRunsNoConfig(def: CommandDef, args: ParsedArgs): boolean {
   return typeof def.runsNoConfig === "function" ? def.runsNoConfig(args) : def.runsNoConfig === true;
@@ -1388,6 +1416,15 @@ async function main(): Promise<void> {
     throw err;
   }
 
+  // #2701 — `chant --version` / `-V` prints the installed chant's version, the
+  // one the MCP server reports (./version.ts). With a command word it answers
+  // only for one of core's own commands; a lexicon-mounted verb keeps the flag.
+  if (args.version && (!args.command || resolveCommand(args, commandRegistry))) {
+    console.log(CHANT_VERSION);
+    await flushAndExit(0);
+    return;
+  }
+
   if (args.help || !args.command) {
     const groups = await loadPluginsBestEffort().then(collectCommandGroups).catch(() => []);
     printHelp(groups);
@@ -1515,7 +1552,9 @@ async function main(): Promise<void> {
   const plugins = match.def.requiresPlugins
     ? isGenerateComponents || isComponentsStatus || isEmulator || isFanOutFromFile
       ? await loadPlugins(await resolveProjectLexicons(resolve(projectPath)).catch(() => [])).catch(() => [])
-      : await loadPluginsOrExit(projectPath)
+      : match.def.name === "serve mcp" && (await isLexiconlessWorkspaceRoot(projectPath))
+        ? [] // #2700 — runServeMcp loads the chant members' lexicons itself.
+        : await loadPluginsOrExit(projectPath)
     : [];
   const serializers = plugins.map((p) => p.serializer);
   const ctx = { args, plugins, serializers };
