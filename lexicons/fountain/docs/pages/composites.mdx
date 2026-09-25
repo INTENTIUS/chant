@@ -74,7 +74,9 @@ The composite also returns `declaration`, the steward as core reads it: its name
 
 ## Box
 
-A persistent machine that serves an app repo and its tools: an Environment that clones the app repo and runs a provisioning script as its `setup_script`, an Agent on a persistent sandbox provisioned from it, and optionally a Vault for the secrets every box of this kind shares. An arugula studio box is the case it was written for: `box/provision-template.sh` is the setup, and the door serves on :8080 with hud and chud box behind it.
+A persistent machine that serves an app repo and its tools: an Environment that runs a provisioning script as its `setup_script`, an Agent on a persistent sandbox provisioned from it, and optionally a Vault for the secrets every box of this kind shares. An arugula studio box is the case it was written for: `box/provision-template.sh` is the setup, and the door serves on :8080 with hud and chud box behind it.
+
+`repo` is optional. Given, the Environment clones it in (`repositories`) before `setup_script` runs. Omitted — a blank-slate app, such as the one hud's `init` makes, has no git remote yet — the Environment declares no `repositories` at all, and `setup_script` runs against whatever working tree the sandbox already has (a self-hosted `runner`'s own).
 
 ```typescript
 import { readFileSync } from "node:fs";
@@ -94,14 +96,15 @@ export const { environment, agent, vault } = Box({
 
 | Declared | Name | What it carries |
 |---|---|---|
-| Environment | `<name>-env` | the app repo at `/workspace/app` (or `repo.mountPath`), the setup script, `packages`, `env_vars` and networking, passed through |
-| Agent | `<name>` | `runtime` (default `claude`), `model` (fountain's default when omitted), `sandbox_mode: persistent`, the given `permission_policy` |
+| Environment | `<name>-env` | the app repo at `/workspace/app` (or `repo.mountPath`) when `repo` is given, else no `repositories`; the setup script, `packages`, `env_vars` and networking, passed through |
+| Agent | `<name>` | `runtime` (default `claude`), `model` (fountain's default when omitted), `sandbox_mode: persistent`, `sandbox_provider` (unset — the instance default — unless `sandboxProvider` names one), the given `permission_policy` |
 | Vault (with `vault`) | `<name>-secrets` (or `vault.name`) | the shared secrets, written inline at apply |
 
 | Default | Effect | Loosened by |
 |---|---|---|
 | `networking_type: limited` with an empty allowlist | deny-all egress | `allowedHosts`, or `unrestrictedNetworking: true` (FTN011 warns) |
 | `allowed_vault_ids` scoped to the box's vault, `[]` with none | no conversation attaches a vault the box was not given | `allowedVaults`, a list or `"any"` |
+| `sandbox_provider` unset | the instance's configured default backend | `sandboxProvider`: `sprites`, `e2b`, `daytona` or `runner` |
 | no `permission_policy` default | fountain's unset policy is `auto_allow`, so the choice is written down | `permissionPolicy` is required |
 | `managed-by: chant` on every resource | owned-only reconcile, prune, and drift filtering see them | extra `metadata` merges over it |
 
@@ -114,6 +117,10 @@ A box holds no credential ([#2726](https://github.com/INTENTIUS/chant/issues/272
 ### The port
 
 fountain's Environment and Agent have no field for a served port at the pinned spec (v0.21.0). `port` (default 8080) is recorded as `box-port` in the metadata of the Environment and the Agent, and returned as `port`. Whatever builds the box's URL reads it from there, from the declaration or from fountain's own record of the agent, rather than assuming 8080. `BOX_PORT_METADATA_KEY` names the key.
+
+### Allowed vaults in the read contract
+
+`sandbox_provider` is a plain Agent field, so `chant workspace graph --json` already carries it on the agent's node like any other declared attribute. `allowed_vault_ids` is not as plain to read: fountain's own convention, and this composite's, is that an *unset* list means "any vault the tenant owns", so a graph reader can't tell "no vaults declared" from "any vault" from the key's absence alone ([#2759](https://github.com/INTENTIUS/chant/issues/2759)) — which a runtime that creates a vault per box, such as hud's, needs to check before it acts. The resolved list, or the literal string `"any"`, is also recorded in the agent's metadata under `box-allowed-vault-ids` (`BOX_ALLOWED_VAULTS_METADATA_KEY`), so it shows up on the agent's node without a reader having to know that convention. It is read-only bookkeeping alongside `box-port`: the manifest's real `allowed_vault_ids` field is what fountain applies.
 
 ### Box and Steward
 

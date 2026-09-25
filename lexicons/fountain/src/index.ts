@@ -41,8 +41,15 @@ export { ConciergeStack } from "./composites/concierge-stack";
 export type { ConciergeStackOpts, ConciergeStackResources } from "./composites/concierge-stack";
 export { Steward, stewardForOp, STEWARD_RUNTIME_COMMAND } from "./composites/steward";
 export type { StewardOp, StewardOpts, StewardResources, StewardWebhookOpts } from "./composites/steward";
-export { Box, BOX_PORT_METADATA_KEY, BOX_DEFAULT_PORT, BOX_DEFAULT_MOUNT_PATH } from "./composites/box";
-export type { BoxOpts, BoxResources, BoxRepositoryOpts, BoxVaultOpts, BoxPermissionPolicy } from "./composites/box";
+export {
+  Box,
+  BOX_PORT_METADATA_KEY,
+  BOX_ALLOWED_VAULTS_METADATA_KEY,
+  BOX_DEFAULT_PORT,
+  BOX_DEFAULT_MOUNT_PATH,
+  BOX_SANDBOX_PROVIDERS,
+} from "./composites/box";
+export type { BoxOpts, BoxResources, BoxRepositoryOpts, BoxVaultOpts, BoxPermissionPolicy, BoxSandboxProvider } from "./composites/box";
 
 // `chant acp` (#2125) — the ACP server, mounted through the plugin's command
 // group. Exported so an embedder can serve it over its own transport.
