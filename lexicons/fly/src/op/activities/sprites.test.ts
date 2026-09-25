@@ -214,6 +214,26 @@ describe("spriteExecWsUrl", () => {
   test("https → wss", () => {
     expect(spriteExecWsUrl("https://api.sprites.dev", "s", "ls").startsWith("wss://api.sprites.dev/")).toBe(true);
   });
+
+  test("dir → a single dir param (#2765)", () => {
+    const url = new URL(spriteExecWsUrl("http://x", "task-1", "pwd", { dir: "/work" }));
+    expect(url.searchParams.get("dir")).toBe("/work");
+  });
+
+  test("no dir → no dir param (#2765)", () => {
+    const url = new URL(spriteExecWsUrl("http://x", "task-1", "pwd"));
+    expect(url.searchParams.has("dir")).toBe(false);
+  });
+
+  test("env → repeated KEY=VALUE params, matching wisp's optsFromValues (#2765)", () => {
+    const url = new URL(spriteExecWsUrl("http://x", "task-1", "env", { env: { FOO: "1", BAR: "two" } }));
+    expect(url.searchParams.getAll("env")).toEqual(["FOO=1", "BAR=two"]);
+  });
+
+  test("no env → no env params (#2765)", () => {
+    const url = new URL(spriteExecWsUrl("http://x", "task-1", "echo hi"));
+    expect(url.searchParams.has("env")).toBe(false);
+  });
 });
 
 // ── Activity request shapes (injected SpritesHttp; no real sockets) ───────────

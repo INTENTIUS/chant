@@ -14,6 +14,7 @@ import {
   type OpConfig,
 } from "@intentius/chant/op";
 import { createSpritesFake } from "./sprites-fake";
+import { spriteCreate as createImpl, spriteExec as execImpl } from "./sprites";
 
 // End-to-end against the in-process fake (S7) — no Docker, runs in CI. The
 // activities resolve by name through `loadActivities(["fly"])` and reach
@@ -152,5 +153,34 @@ describe("guarded-task — checkpoint-as-compensation (S5)", () => {
     await expect(runOpLocally(op, activities, PROFILES)).rejects.toBeInstanceOf(OpRunFailure);
     const state = await inspect("unguard-1");
     expect(state.fs).toEqual({ "/state": "bad" });
+  });
+});
+
+describe("spriteExec: timeoutMs, env, dir (#2765)", () => {
+  test("timeoutMs aborts a hung exec and throws a clear timeout error", async () => {
+    await createImpl({ name: "to-1", endpoint: fake.url });
+    // The fake's fake-only `sleep <ms>` form holds the response open past the
+    // timeout, so this proves the abort — not a slow real command.
+    await expect(execImpl({ id: "to-1", cmd: "sleep 500", timeoutMs: 30, endpoint: fake.url })).rejects.toThrow(
+      /timed out after 30ms/,
+    );
+  });
+
+  test("an exec that finishes under timeoutMs still succeeds", async () => {
+    await createImpl({ name: "to-2", endpoint: fake.url });
+    const res = await execImpl({ id: "to-2", cmd: "echo hi", timeoutMs: 5000, endpoint: fake.url });
+    expect(res.stdout).toBe("hi\n");
+  });
+
+  test("env reaches the command", async () => {
+    await createImpl({ name: "env-1", endpoint: fake.url });
+    const res = await execImpl({ id: "env-1", cmd: "env", env: { FOO: "bar", BAZ: "qux" }, endpoint: fake.url });
+    expect(res.stdout.split("\n").filter(Boolean).sort()).toEqual(["BAZ=qux", "FOO=bar"]);
+  });
+
+  test("dir reaches the command", async () => {
+    await createImpl({ name: "dir-1", endpoint: fake.url });
+    const res = await execImpl({ id: "dir-1", cmd: "pwd", dir: "/work/app", endpoint: fake.url });
+    expect(res.stdout).toBe("/work/app\n");
   });
 });

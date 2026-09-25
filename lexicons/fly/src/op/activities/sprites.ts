@@ -179,10 +179,19 @@ export function splitCommand(cmd: string): string[] {
 }
 
 /**
- * Build the `wss://.../exec?cmd=...&path=...&stdin=false&cc=true` URL for a
- * command (http→ws, https→wss). Pure.
+ * Build the `wss://.../exec?cmd=...&path=...&stdin=false&cc=true[&dir=...][&env=K=V]*`
+ * URL for a command (http→ws, https→wss). `dir` and `env` (#2765) are sent the
+ * way wisp's and spritzer's real exec API take them: `dir` is a single query
+ * param, and each `env` entry is its own repeated `env=KEY=VALUE` param — see
+ * wisp's `optsFromValues` (`Dir: q.Get("dir")`, `Env: q["env"]`) and spritzer's
+ * container-mode wrapping (`--dir`/`--env` per `real.go`). Pure.
  */
-export function spriteExecWsUrl(base: string, id: string, cmd: string): string {
+export function spriteExecWsUrl(
+  base: string,
+  id: string,
+  cmd: string,
+  opts: { env?: Record<string, string>; dir?: string } = {},
+): string {
   const wsBase = base.replace(/^http(s?):\/\//i, (_m, s: string) => `ws${s}://`);
   const argv = splitCommand(cmd);
   const params = new URLSearchParams();
@@ -190,6 +199,10 @@ export function spriteExecWsUrl(base: string, id: string, cmd: string): string {
   params.set("path", argv[0] ?? "");
   params.set("stdin", "false");
   params.set("cc", "true");
+  if (opts.dir) params.set("dir", opts.dir);
+  if (opts.env) {
+    for (const [k, v] of Object.entries(opts.env)) params.append("env", `${k}=${v}`);
+  }
   return `${wsBase}/v1/sprites/${encodeURIComponent(id)}/exec?${params.toString()}`;
 }
 
@@ -281,8 +294,16 @@ export interface SpriteExecArgs {
   id: string;
   /** Command to run inside the sprite (tokenized into argv, quotes respected). */
   cmd: string;
-  /** Per-exec timeout in ms. */
+  /**
+   * Per-exec timeout in ms (#2765). When it elapses before the command exits,
+   * the exec WebSocket is aborted and the activity throws a timeout error —
+   * previously declared and never enforced.
+   */
   timeoutMs?: number;
+  /** Extra environment variables for the command, on top of the sprite's own (#2765). */
+  env?: Record<string, string>;
+  /** Working directory to run the command in (#2765). */
+  dir?: string;
   endpoint?: string;
   token?: string;
 }
@@ -405,15 +426,20 @@ export async function spriteCreate(
 
 /**
  * Run a command in the sprite over the control WebSocket (non-PTY stream
- * framing, per superfly/sprites-go). Connects to `wss://.../exec`, sends a
- * single `[4]` (stdin EOF), accumulates stdout/stderr frames, and reads the
- * exit code from the `[3]` frame. A non-zero exit is a failed activity (it
- * throws) so a risky step fails its phase and triggers `onFailure`
- * compensation (S5).
+ * framing, per superfly/sprites-go). Connects to `wss://.../exec` (`dir`/`env`
+ * riding on the URL — #2765), sends a single `[4]` (stdin EOF), accumulates
+ * stdout/stderr frames, and reads the exit code from the `[3]` frame. A
+ * non-zero exit is a failed activity (it throws) so a risky step fails its
+ * phase and triggers `onFailure` compensation (S5).
+ *
+ * `timeoutMs` (#2765) bounds the whole exec: a timer set at connect time
+ * terminates the WebSocket and rejects with a timeout error once it elapses
+ * without the command finishing. Previously declared on `SpriteExecArgs` and
+ * never read.
  */
 export async function spriteExec(args: SpriteExecArgs, signal?: AbortSignal): Promise<SpriteExecResult> {
   const base = resolveSpritesEndpoint(args);
-  const url = spriteExecWsUrl(base, args.id, args.cmd);
+  const url = spriteExecWsUrl(base, args.id, args.cmd, { env: args.env, dir: args.dir });
   const token = resolveSpritesToken(args.token);
   const headers: Record<string, string> = {};
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -423,10 +449,12 @@ export async function spriteExec(args: SpriteExecArgs, signal?: AbortSignal): Pr
     const frames: Uint8Array[] = [];
     const ws = new WebSocket(url, { headers });
     let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const finish = (fn: () => void): void => {
       if (settled) return;
       settled = true;
       if (signal) signal.removeEventListener("abort", onAbort);
+      if (timer !== undefined) clearTimeout(timer);
       fn();
     };
     const onAbort = (): void => {
@@ -440,6 +468,18 @@ export async function spriteExec(args: SpriteExecArgs, signal?: AbortSignal): Pr
     if (signal) {
       if (signal.aborted) return onAbort();
       signal.addEventListener("abort", onAbort);
+    }
+    if (args.timeoutMs !== undefined) {
+      timer = setTimeout(() => {
+        try {
+          ws.terminate();
+        } catch {
+          /* already closed */
+        }
+        finish(() =>
+          reject(new Error(`sprite ${args.id} exec "${args.cmd}" timed out after ${args.timeoutMs}ms`)),
+        );
+      }, args.timeoutMs);
     }
     ws.on("open", () => {
       // No stdin: signal EOF immediately (belt and braces with stdin=false).
