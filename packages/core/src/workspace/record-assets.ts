@@ -81,7 +81,10 @@ export function checkPins(pins: { path: string; sha256: string }[], tree: Worksp
     const state: PinState = actual === null ? "missing" : actual === pin.sha256 ? "pinned" : "drifted";
     assets.push({ ...pin, actual, state });
     if (state === "missing") {
-      warnings.push({ code: "asset-missing", message: `evidence pins ${pin.path}, which does not exist${tree.label}` });
+      // Worded the same for the working tree and a revision (#2745): a missing
+      // file is missing either way, and `tree.label` would otherwise make the
+      // same finding read differently depending on which one was read.
+      warnings.push({ code: "asset-missing", message: `evidence pins ${pin.path}, which does not exist` });
     } else if (state === "drifted") {
       warnings.push({
         code: "asset-drift",

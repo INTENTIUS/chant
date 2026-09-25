@@ -23,7 +23,14 @@ interface RecordsDoc {
   contract: number;
   at: string | null;
   current: boolean;
-  records: Array<{ id: string | null; path: string; valid: boolean; reasons: Array<{ code: string }>; supersededBy: string | null }>;
+  records: Array<{
+    id: string | null;
+    path: string;
+    valid: boolean;
+    reasons: Array<{ code: string }>;
+    warnings: Array<{ code: string; message: string }>;
+    supersededBy: string | null;
+  }>;
   summary: { total: number; valid: number; invalid: number; superseded: number };
   error?: { code: string; message: string };
 }
@@ -31,16 +38,36 @@ interface RecordsDoc {
 /**
  * A git repo holding a copy of the chant repo's decisions, kind and schema,
  * and the design notes a decision pins by hash (ws-053 pins its note).
+ * `extraRecords` adds more decision files (name to content) before the commit,
+ * for a case the repo's own decisions don't happen to cover.
  */
-function decisionRepo(label: string): string {
+function decisionRepo(label: string, extraRecords: Record<string, string> = {}): string {
   const root = makeScratch(label);
   mkdirSync(join(root, "docs", "design"), { recursive: true });
   cpSync(DECISIONS, join(root, "docs", "design", "decisions"), { recursive: true });
   cpSync(join(REPO_ROOT, "docs", "design", "workspace"), join(root, "docs", "design", "workspace"), { recursive: true });
+  for (const [name, text] of Object.entries(extraRecords)) {
+    writeFileSync(join(root, "docs", "design", "decisions", name), text);
+  }
   git(root, ["init", "-q", "-b", "main"]);
   git(root, ["add", "-A"]);
   git(root, ["commit", "-q", "-m", "decisions"]);
   return root;
+}
+
+/**
+ * ws-001 with a fresh id and an evidence pin on a workspace file this fixture
+ * never copies in (#2745): the asset is missing in both the working tree and
+ * `--at` readings, and the two readings must word that the same way.
+ */
+function recordWithMissingPin(): string {
+  return readFileSync(join(DECISIONS, "ws-001-trust-root.md"), "utf-8")
+    .replace(/^id: .*$/m, 'id: "ws-901"')
+    .replace(/^title: .*$/m, 'title: "A record whose evidence pins a file outside this fixture"')
+    .replace(
+      /^evidence:\n(?:  .*\n)*decided_by:/m,
+      `evidence:\n  - title: "a workspace file this fixture does not hold"\n    path: "packages/core/src/workspace/records.ts"\n    sha256: "${"0".repeat(64)}"\ndecided_by:`,
+    );
 }
 
 describe("chant #2546 — workspace records", () => {
@@ -81,7 +108,7 @@ describe("chant #2546 — workspace records", () => {
   test(
     "--at reads the committed files and matches a clean working tree",
     async () => {
-      const root = decisionRepo("records-at");
+      const root = decisionRepo("records-at", { "ws-901-missing-pin.md": recordWithMissingPin() });
       const tree = await runChant(root, ["workspace", "records", "--kind", KIND, "--current", "--json"]);
       const head = git(root, ["rev-parse", "HEAD"]).trim();
       const at = await runChant(root, ["workspace", "records", "--kind", KIND, "--current", "--json", "--at", "HEAD"]);
@@ -91,6 +118,11 @@ describe("chant #2546 — workspace records", () => {
       expect(a.at).toBeNull();
       expect(b.at).toBe(head);
       expect(b.records).toEqual(a.records);
+
+      // The missing pin warns the same way whether it's read from the tree or
+      // from the revision (#2745): the message names no revision either way.
+      const pinned = a.records.find((r) => r.id === "ws-901")!;
+      expect(pinned.warnings).toEqual([{ code: "asset-missing", message: "evidence pins packages/core/src/workspace/records.ts, which does not exist" }]);
 
       // An edit to the working tree changes the tree read, not the read at HEAD.
       writeFileSync(join(root, "docs/design/decisions/ws-001-trust-root.md"), "not a record any more\n");
