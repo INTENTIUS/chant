@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { WatchOp, type OpConfig } from "@intentius/chant/op";
 import { ConciergeStack } from "./concierge-stack";
 import { Steward, stewardForOp, __resetStewardsForTests } from "./steward";
+import { Box, BOX_PORT_METADATA_KEY } from "./box";
+import { postSynthChecks } from "../lint/post-synth/index";
+import spec from "../spec/fountain-openapi.snapshot.json";
 import { Environment, Vault } from "../generated/index";
 import { fountainSerializer } from "../serializer";
 import type { Declarable } from "@intentius/chant";
@@ -232,5 +235,135 @@ describe("Steward", () => {
     // to the chant export name the entities map is keyed on.
     expect(yaml).toContain("environment: toolchain");
     expect(yaml).toMatch(/allowed_vault_ids:\n\s+- prod-creds/);
+  });
+});
+
+// ── Box ───────────────────────────────────────────────────────────────────
+
+describe("Box", () => {
+  const base = {
+    name: "studio-box",
+    repo: { url: "https://github.com/arugula-salad/studio" },
+    setupScript: "#!/bin/bash\nexec ~/box/provision-template.sh\n",
+    permissionPolicy: { default: "auto_allow" as const },
+  };
+
+  it("declares a closed Environment and a persistent claude Agent, with the port in metadata", () => {
+    const { environment, agent, vault, port } = Box(base);
+
+    const env = props(environment);
+    expect(env.name).toBe("studio-box-env");
+    expect(env.repositories).toEqual([{ url: "https://github.com/arugula-salad/studio", mount_path: "/workspace/app" }]);
+    expect(env.setup_script).toBe(base.setupScript);
+    expect(env.networking_type).toBe("limited");
+    expect(env.networking_config).toEqual({ allowed_hosts: [] });
+    expect(env.metadata).toEqual({ "managed-by": "chant", [BOX_PORT_METADATA_KEY]: 8080 });
+
+    const a = props(agent);
+    expect(a.name).toBe("studio-box");
+    expect(a.runtime).toBe("claude");
+    expect(a.model).toBeUndefined();
+    expect(a.sandbox_mode).toBe("persistent");
+    expect(a.environment).toBe(environment);
+    expect(a.permission_policy).toEqual({ default: "auto_allow" });
+    expect(a.allowed_vault_ids).toEqual([]);
+    expect(a.metadata).toEqual({ "managed-by": "chant", "box-port": 8080 });
+
+    expect(vault).toBeUndefined();
+    expect(port).toBe(8080);
+  });
+
+  it("declares the shared vault and scopes the agent to it", () => {
+    const { agent, vault } = Box({
+      ...base,
+      vault: { secrets: [{ key: "STUDIO_SECRET", value: "${STUDIO_SECRET}" }] },
+    });
+    expect(props(vault).name).toBe("studio-box-secrets");
+    expect(props(vault).secrets).toEqual([{ key: "STUDIO_SECRET", value: "${STUDIO_SECRET}" }]);
+    expect(props(vault).metadata).toEqual({ "managed-by": "chant" });
+    expect(props(agent).allowed_vault_ids).toEqual([vault]);
+  });
+
+  it("loosening is a visible parameter", () => {
+    const open = Box({
+      ...base,
+      runtime: "codex",
+      model: "openai/gpt-5",
+      port: 3000,
+      unrestrictedNetworking: true,
+      allowedVaults: "any",
+      repo: { url: "https://github.com/o/app", mountPath: "/srv/app", ref: "v1", secretKey: "GH_TOKEN" },
+      envVars: { NODE_ENV: "production" },
+      packages: { apt: ["podman"] },
+      setupTimeoutSeconds: 900,
+      metadata: { team: "studio" },
+    });
+    const env = props(open.environment);
+    expect(env.networking_type).toBe("unrestricted");
+    expect(env.networking_config).toBeUndefined();
+    expect(env.repositories).toEqual([{ url: "https://github.com/o/app", mount_path: "/srv/app", ref: "v1", secret_key: "GH_TOKEN" }]);
+    expect(env.env_vars).toEqual({ NODE_ENV: "production" });
+    expect(env.packages).toEqual({ apt: ["podman"] });
+    expect(env.setup_timeout_seconds).toBe(900);
+    expect(env.metadata).toEqual({ "managed-by": "chant", team: "studio", "box-port": 3000 });
+    const a = props(open.agent);
+    expect(a.runtime).toBe("codex");
+    expect(a.model).toBe("openai/gpt-5");
+    // "any" leaves the list unset: fountain reads null as any vault the tenant owns.
+    expect("allowed_vault_ids" in a).toBe(false);
+    expect(open.port).toBe(3000);
+
+    const listed = Box({ ...base, allowedHosts: ["registry.npmjs.org"] });
+    expect(props(listed.environment).networking_config).toEqual({ allowed_hosts: ["registry.npmjs.org"] });
+  });
+
+  it("refuses what it cannot mean", () => {
+    expect(() => Box({ ...base, port: 0 })).toThrow(/not a TCP port/);
+    expect(() => Box({ ...base, port: 8080.5 })).toThrow(/not a TCP port/);
+    expect(() => Box({ ...base, unrestrictedNetworking: true, allowedHosts: ["github.com"] })).toThrow(
+      /allowedHosts and unrestrictedNetworking/,
+    );
+    expect(() => Box({ ...base, setupScript: "  " })).toThrow(/setupScript is empty/);
+  });
+
+  it("serializes to a manifest whose specs the pinned API accepts, clean under every post-synth check", () => {
+    const { environment, agent, vault } = Box({
+      ...base,
+      allowedHosts: ["registry.npmjs.org", "github.com"],
+      vault: { secrets: [{ key: "STUDIO_SECRET", value: "${STUDIO_SECRET}" }] },
+    });
+    const entities = new Map<string, Declarable>([
+      ["boxAgent", agent as unknown as Declarable],
+      ["boxVault", vault as unknown as Declarable],
+      ["boxEnv", environment as unknown as Declarable],
+    ]);
+
+    const yaml = fountainSerializer.serialize(entities) as string;
+    expect([...yaml.matchAll(/^kind: (\w+)$/gm)].map((m) => m[1])).toEqual(["Environment", "Vault", "Agent"]);
+    expect(yaml).toContain("environment: studio-box-env");
+    expect(yaml).toMatch(/allowed_vault_ids:\n\s+- studio-box-secrets/);
+    expect(yaml).toContain("box-port: 8080");
+
+    // Every spec key is a field of the pinned create request, or one of the
+    // two manifest-level forms fountainApply and `fountain apply -f` resolve:
+    // a name reference to the agent's environment, and inline secrets.
+    const schemas = (spec as unknown as { components: { schemas: Record<string, { properties: Record<string, unknown> }> } })
+      .components.schemas;
+    const manifestOnly = new Set(["environment", "secrets"]);
+    for (const [kind, entity] of [
+      ["EnvironmentRequest", environment],
+      ["VaultRequest", vault],
+      ["AgentRequest", agent],
+    ] as const) {
+      const fields = Object.keys(schemas[kind].properties);
+      for (const key of Object.keys(props(entity))) {
+        if (key === "name" || manifestOnly.has(key)) continue;
+        expect(fields, `${kind} has no field ${key}`).toContain(key);
+      }
+    }
+
+    const ctx = { outputs: new Map(), entities, buildResult: { warnings: [], errors: [] } } as unknown as PostSynthContext;
+    const diagnostics = postSynthChecks.flatMap((c) => c.check(ctx));
+    expect(diagnostics).toEqual([]);
   });
 });

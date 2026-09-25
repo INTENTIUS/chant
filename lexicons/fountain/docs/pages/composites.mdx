@@ -1,6 +1,6 @@
 ---
 title: "Composites"
-description: "ConciergeStack, a locked-down Environment and Agent pair, and Steward, an environment's one writer."
+description: "ConciergeStack, a locked-down Environment and Agent pair; Steward, an environment's one writer; and Box, a persistent machine that serves an app repo and its tools."
 diataxis: reference
 ---
 
@@ -69,3 +69,48 @@ Three things are refused at construction rather than at apply:
 - A webhook url FTN022 would reject: plaintext http, or a loopback, link-local or RFC1918 target. Refusing here rather than at synth keeps the author from reading a lint error about a resource they never typed.
 
 `chant build` emits all six to the manifest in dependency order: Environment, Vault, Agent, Teammate, Schedule, Webhook. `fountainApply` reconciles them. The first three go through fountain's bulk `POST /api/apply`. Before v0.21.0 it reported each resource as `created` or `updated` and nothing else, so it could not tell you an Environment was already right; v0.21.0 adds `unchanged`. The other three go through their own routes afterwards, even though v0.21.0's bulk apply accepts them too ([fountain#1636](https://github.com/managoat/fountain/issues/1636)), matched by name and by url, reading live state and comparing before they write, so a second apply of an unchanged manifest makes no Teammate, Schedule or Webhook writes.
+
+## Box
+
+A persistent machine that serves an app repo and its tools: an Environment that clones the app repo and runs a provisioning script as its `setup_script`, an Agent on a persistent sandbox provisioned from it, and optionally a Vault for the secrets every box of this kind shares. An arugula studio box is the case it was written for: `box/provision-template.sh` is the setup, and the door serves on :8080 with hud and chud box behind it.
+
+```typescript
+import { readFileSync } from "node:fs";
+import { Box } from "@intentius/chant-lexicon-fountain";
+
+export const { environment, agent, vault } = Box({
+  name: "studio-box",
+  repo: { url: "https://github.com/arugula-salad/studio", ref: "main" },
+  setupScript: readFileSync("box/provision-template.sh", "utf8"),
+  permissionPolicy: { default: "auto_allow" },
+  allowedHosts: ["registry.npmjs.org", "github.com"],
+  vault: { secrets: [{ key: "STUDIO_SECRET", value: process.env.STUDIO_SECRET! }] },
+});
+```
+
+`setupScript` is the script's text, because fountain's `setup_script` is a string it runs, not a path it reads.
+
+| Declared | Name | What it carries |
+|---|---|---|
+| Environment | `<name>-env` | the app repo at `/workspace/app` (or `repo.mountPath`), the setup script, `packages`, `env_vars` and networking, passed through |
+| Agent | `<name>` | `runtime` (default `claude`), `model` (fountain's default when omitted), `sandbox_mode: persistent`, the given `permission_policy` |
+| Vault (with `vault`) | `<name>-secrets` (or `vault.name`) | the shared secrets, written inline at apply |
+
+| Default | Effect | Loosened by |
+|---|---|---|
+| `networking_type: limited` with an empty allowlist | deny-all egress | `allowedHosts`, or `unrestrictedNetworking: true` (FTN011 warns) |
+| `allowed_vault_ids` scoped to the box's vault, `[]` with none | no conversation attaches a vault the box was not given | `allowedVaults`, a list or `"any"` |
+| no `permission_policy` default | fountain's unset policy is `auto_allow`, so the choice is written down | `permissionPolicy` is required |
+| `managed-by: chant` on every resource | owned-only reconcile, prune, and drift filtering see them | extra `metadata` merges over it |
+
+`allowedVaults: "any"` leaves the list unset, which fountain reads as any vault the tenant owns. A runtime that makes a vault per box, as hud's box runtime does for each box's identity, needs it. A persistent sandbox is keyed on (agent, environment, vault), so a vault per box is also a machine per box.
+
+### The port
+
+fountain's Environment and Agent have no field for a served port at the pinned spec (v0.21.0). `port` (default 8080) is recorded as `box-port` in the metadata of the Environment and the Agent, and returned as `port`. Whatever builds the box's URL reads it from there, from the declaration or from fountain's own record of the agent, rather than assuming 8080. `BOX_PORT_METADATA_KEY` names the key.
+
+### Box and Steward
+
+A Steward is an environment's one writer: an `acp` agent whose every turn is a chant command line, bound to a Teammate with a standing thread and a Schedule per op. A Box is where people and their agents work on an app, with a conversational runtime, the app repo checked out, a provisioning script, and a served port. It declares no Teammate and no Schedule, and no two-writers refusal applies, because each conversation on a box is someone working on the app rather than a turn on an environment's operational history.
+
+Nothing in a Box starts a conversation. `chant build` emits Environment, Vault and Agent, and `fountainApply` applies them through fountain's bulk `POST /api/apply`. Starting a box and reaping it stay runtime acts: a conversation launched on the agent provisions the sandbox, which clones the repo and runs the setup script.
