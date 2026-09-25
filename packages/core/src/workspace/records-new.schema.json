@@ -163,6 +163,7 @@
                 "record-path-unmatched",
                 "record-sign-failed",
                 "source-harvest-not-proposed",
+                "record-state-not-initial",
                 "record-unparseable",
                 "record-schema-invalid",
                 "record-id-duplicate",

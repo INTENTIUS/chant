@@ -73,6 +73,23 @@ To configure manually, add the chant MCP server to your IDE's MCP config:
 
 The parameters each one takes, and what it returns, are in the [`chant serve mcp` reference](/chant/cli/mcp/). Read the `op-approve` entry there before wiring up an approval flow: a gate an agent's own `op-run` reached cannot be resolved over MCP, which keeps the two halves of an approval in different hands.
 
+### Workspace Tools
+
+A server started inside a declared workspace also has tools for the workspace's records ([#2707](https://github.com/INTENTIUS/chant/issues/2707)). A harness with no shell reads decisions and proposes new ones through them.
+
+| MCP tool | Description |
+|----------|-------------|
+| `workspace-ls` | The members and groups, as `chant workspace ls --json` prints them |
+| `workspace-status` | What each member has released to an environment |
+| `workspace-graph` | The workspace graph, the intent graph over a region, or the composites joined to components |
+| `workspace-records` | The records of a kind, with quorum and warnings, or what changed since a revision |
+| `records-new` | Propose a record; it opens `proposed` and says it came through MCP |
+| `records-amend` | Set fields of a record, under the same approval rule as the CLI |
+| `records-review` | Give a verdict, which moves the record's quorum |
+| `records-close` | Close and seal a review session |
+
+A record written this way is a proposal until people review it. `by` must name whoever actually decided.
+
 ### Resources
 
 | MCP resource | Description |

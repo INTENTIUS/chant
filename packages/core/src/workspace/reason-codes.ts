@@ -115,6 +115,7 @@ export const REASONS = {
   "review-unsupported": "The kind's schema has no reviews field, so its records take no review.",
   "review-note-required": "A dissent was given with no note: a dissent needs a reason.",
   "review-sign-failed": "--sign was given and no seal could be made: the key can't be read or used, git names no ssh signing key, or ssh-keygen is not installed.",
+  "record-state-not-initial": "A record written through chant serve mcp gives a state other than the kind's first: a new record opens proposed, and a person moves it on.",
   "source-harvest-not-proposed": "A harvested record (source.via harvest) was written in a state other than the kind's first: a harvest proposes, and a person decides.",
   "record-sign-failed": "--sign was given and no author seal could be made: the record names no author, the key can't be read or used, git names no ssh signing key, or ssh-keygen is not installed.",
   // A review given in a session (records review --session, #2693).

@@ -20,7 +20,8 @@ export async function runServeMcp(ctx: CommandContext): Promise<number> {
     const { loadWorkspacePlugins } = await import("../mcp/workspace-plugins");
     ({ plugins, instructions } = await loadWorkspacePlugins(process.cwd()));
   }
-  const server = new McpServer(plugins, { instructions });
+  // #2707 — at or inside a declared workspace, the workspace tools are served too.
+  const server = new McpServer(plugins, { instructions, workspace: { cwd: process.cwd() } });
   await server.start();
   await new Promise(() => {});
   return 0; // unreachable

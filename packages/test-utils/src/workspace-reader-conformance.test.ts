@@ -26,6 +26,10 @@ function minimalReader(chant: ChantTransport) {
 
 describeWorkspaceReaderConformance({ name: "the minimal reader", reader: minimalReader });
 
+// The same reader, its calls answered by chant serve mcp's workspace tools (#2707): each tool's
+// document must be the one the command prints.
+describeWorkspaceReaderConformance({ name: "the minimal reader", reader: minimalReader, over: "mcp" });
+
 describe("readerCallProblems", () => {
   const kind = ["--kind", "decisions/decision.kind.mjs"];
 

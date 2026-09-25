@@ -202,6 +202,31 @@ Return a markdown report for an Op's latest run.
 
 Lexicon plugins can contribute additional tools. Plugin tools are namespaced as `{pluginName}:{toolName}` to avoid conflicts with core tools.
 
+## Workspace tools
+
+Started at or inside a declared workspace (`chant.workspace.json` in the directory or above it, up to the git root), the server also serves the workspace's read contract and its record writes ([#2707](https://github.com/INTENTIUS/chant/issues/2707)). A harness that speaks MCP but has no shell can then read decisions and propose them. The same test ties these sections to the tools a server inside a workspace registers.
+
+Each tool is a thin call into what the CLI runs. A read runs `chant workspace <command> ... --json` with the chant the server runs as, in the server's directory, and returns the document it printed, unchanged. The document follows that command's output schema in the [read contract](/chant/reference/workspace-read-contract/), reason codes included, and an error document is returned as a document. A read handed to the workspace root's pinned chant by the CLI is handed on the same way. The [reader conformance suite](/chant/reference/workspace-read-contract/#testing-a-reader) runs over MCP as well, and requires each tool's document to equal the command's.
+
+A write calls the function `chant workspace records new`, `amend`, `review` or `close` calls, and returns the same JSON result, refusals included. It keeps the CLI's rules. The kind's schema judges the record, and a closed record never changes. An approved record changes only in its state, evidence and reviews, and a dissent needs a note. Through MCP, two things are added. A new record opens in the kind's first state, `proposed` for a decision, and any other state is refused with `record-state-not-initial`. The record's [source block](/chant/cli/workspace-records/#where-a-proposal-came-from) gets `via: "mcp"` and `client`, the client's `clientInfo` from `initialize` or from the request's `_meta`. An amendment gets them only when its fields set the source block, since the block says where the proposal came from. Computed provenance, from git, is unchanged. `sign: true` seals with this host's configured key, git's `user.signingkey` with `gpg.format ssh`, and is refused with the CLI's remedy when none is set.
+
+Records are proposals until they are reviewed, and `by` must name the person or agent that actually decided. Each write tool's description says so, for the model that reads it. The server listens on no port and authenticates nobody: it speaks over stdio, and `by` is recorded as given, as `--by` is.
+
+A value that starts with `-` is refused before any command runs, so no argument can be read as a flag.
+
+| Tool | Parameters | Returns |
+|---|---|---|
+| `workspace-ls` | `at` | the document of `chant workspace ls --json` (`ls.schema.json`) |
+| `workspace-status` | `env` (required), `compareTo` | the document of `chant workspace status <env> --json` (`status.schema.json`) |
+| `workspace-graph` | `kind` (a list), `intent`, `composites`, `at` | the document of `chant workspace graph --json` (`graph.schema.json`); with `intent`, the intent graph over that region (`intent.schema.json`); with `composites`, the composites joined to components (`composites.schema.json`) |
+| `workspace-records` | `kind`, `current`, `since`, `id`, `at` | the document of `chant workspace records --json` (`records.schema.json`), or with `since` the changes since a revision or session (`records-since.schema.json`); with `id`, only that record is kept in `records`, and `summary` stays the command's |
+| `records-new` | `record` (required), `kind`, `prefix`, `by`, `sign`, `dryRun` | the result of `chant workspace records new` (`records-new.schema.json`) |
+| `records-amend` | `id` and `fields` (required), `kind`, `by`, `sign`, `dryRun` | the result of `chant workspace records amend` (`records-amend.schema.json`) |
+| `records-review` | `id`, `verdict` and `by` (required), `kind`, `note`, `session`, `sign`, `dryRun` | the result of `chant workspace records review` (`records-review.schema.json`), whose verdict moves the record's quorum |
+| `records-close` | `id` (required), `kind`, `dryRun` | the result of `chant workspace records close` (`records-close.schema.json`) |
+
+Each parameter stands for the CLI flag of the same name, written in camel case, so `compareTo` is `--compare-to`. `kind` names a kind file from the server's directory or a kind the declaration names. Without `kind`, a write goes through the one kind the declaration names, as the CLI's does. `record` and `fields` are JSON objects, the text `--from` and `--set` would read. `by` on `records-new` and `records-amend` is written to the kind's decider field, `decided_by` for a decision, and signing needs it. Without `state`, `records-new` gives the record the kind's first.
+
 ## Resources
 
 The server provides resources that agents can read for context:
