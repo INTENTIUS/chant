@@ -497,6 +497,11 @@ export function parseArgs(args: string[]): ParsedArgs {
       }
     } else if (arg === "--once") {
       result.once = true;
+    } else if (arg === "--holder" || arg === "--ttl" || arg === "--token" || arg === "--outcome") {
+      // `chant workspace work claim|renew|release <id>` (#2732)
+      const value = args[++i];
+      if (!value || value.startsWith("-")) throw new Error(`${arg} needs a value: ${arg} <${arg.slice(2)}>`);
+      result[arg.slice(2) as "holder" | "ttl" | "token" | "outcome"] = value;
     } else if (arg === "--note") {
       result.note = args[++i];
     } else if (arg === "--expire") {
@@ -817,6 +822,13 @@ Workspace (level 1, #2524):
                         closing commit and seal, in one write. Without
                         --kind, the one session kind the declaration names.
                         Prints {path, id, changed, seal, closedRev}
+  workspace work claim|renew|release <id> --holder <name> [--kind <kind file>] [--ttl <seconds|duration>] [--token <token>] [--outcome <text>] [--note <text>] [--json]
+                        Take, heartbeat or give back the lease on a work item:
+                        refs/chant/lease/work/<id>, a compare-and-set ref with a
+                        fencing token and an expiry, pushed to the remote so
+                        separate clones coordinate. A claim is refused, exit 2,
+                        while anyone holds it live. Each change appends to
+                        _leases/<id>.jsonl on chant/lifecycle
   workspace verify [--base <rev>] [--head <rev>] [--require attested]
                         Check the commits in base..head against the signers
                         and roles read from base. A change to the signers file
@@ -1349,6 +1361,8 @@ export const commandRegistry: CommandDef[] = [
   { name: "workspace records", handler: async (ctx) => (await import("../workspace/records-cli")).runWorkspaceRecords(ctx) },
   { name: "workspace init", handler: async (ctx) => (await import("../workspace/init")).runWorkspaceInit(ctx) },
   { name: "workspace ls", handler: async (ctx) => (await import("../workspace/ls")).runWorkspaceLs(ctx) },
+  // #2732 — the work lease: claim, renew and release a work item.
+  { name: "workspace work", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/work-cli")).runWorkspaceWork(ctx) },
   { name: "workspace status", handler: async (ctx) => (await import("../workspace/status")).runWorkspaceStatus(ctx) },
   { name: "workspace lineage", handler: async (ctx) => (await import("../workspace/lineage-cli")).runWorkspaceLineage(ctx) },
   { name: "workspace upgrade", handler: async (ctx) => (await import("../workspace/lineage-upgrade-cli")).runWorkspaceUpgrade(ctx) },

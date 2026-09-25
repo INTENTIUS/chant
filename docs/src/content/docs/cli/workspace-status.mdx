@@ -86,6 +86,10 @@ A steward is the one writer that runs a member's operational Ops, on Fountain or
 | `lease` | The local steward's lease (`holder`, `acquiredAt`, `expiresAt`, `live`), or `null` when no local operator has held it |
 | `ops[]` | Each Op the steward runs, in declaration order, with `schedule` (`null` for an Op it runs only when asked), the `env` its runs are recorded under, and `lastRun` (`id`, `status`, `started`, `ended`, `gate`) or `null` |
 
+### Work leases
+
+With `--json`, the document also lists every [work lease](/chant/cli/workspace-work/) in `leases` ([#2732](https://github.com/INTENTIUS/chant/issues/2732)): the flat ledger's first, then each member's, by item. A lease is `active` until its `expiresAt` passes and `expired` after, when anyone may claim the item again. A released lease has no ref and is not listed; its history stays in `_leases/<id>.jsonl`. The leases are read from the local refs and the remote's as last fetched, like everything else here. The text view lists them in a table after the releases.
+
 The command doesn't read live state. `--compare-to --live` is refused with a pointer to `chant components status <env> --live`, which reads one member's live state from that member's directory.
 
 ## Options
@@ -189,6 +193,18 @@ The output is part of the workspace [read contract](/chant/reference/workspace-r
         }
       ],
       "stewardReasons": []
+    }
+  ],
+  "leases": [
+    {
+      "item": "W-001",
+      "member": null,
+      "ref": "refs/chant/lease/work/W-001",
+      "holder": "worker-a",
+      "token": "6f0c...",
+      "acquiredAt": "2026-09-21T09:00:00.000Z",
+      "expiresAt": "2026-09-21T09:10:00.000Z",
+      "state": "active"
     }
   ],
   "summary": { "members": 3, "released": 2, "unreadable": 0, "differing": 1 }

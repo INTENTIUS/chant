@@ -1100,33 +1100,69 @@ export async function readBlobBySha(sha: string, opts?: { cwd?: string }): Promi
  * Push one arbitrary ref (e.g. a lease ref) to the remote, guarded the same
  * way {@link pushLifecycle} guards the ledger branch: `--force-with-lease`
  * keyed to the remote SHA last observed locally, so a concurrent push from a
- * second machine is rejected rather than silently clobbered. Plain `--force`
- * underneath that lease — a lease ref's value is a bare blob SHA, not a
- * commit descending from the previous one, so there is no "fast-forward" to
- * preserve, only the CAS the lease guard already provides.
+ * second machine is rejected rather than silently clobbered. The lease alone
+ * lets a push replace a value that is not an ancestor — a lease ref's value is
+ * a bare blob SHA, not a commit descending from the previous one — as long as
+ * the remote still holds the expected value. No `--force` beside it: git lets
+ * `--force` override `--force-with-lease`, which made every lease push
+ * unconditional before #2732.
  *
  * Returns `false` (never throws) when no remote is configured — a
  * remote-less project's lease is local-only by construction (see
  * `./lease.ts`'s module doc), or when the push itself is rejected (the
- * caller re-reads and retries; see `acquireLease`).
+ * caller re-reads and retries; see `acquireLease`). {@link pushRefStatus}
+ * tells those two apart.
  */
-export async function pushRef(ref: string, opts?: { cwd?: string }): Promise<boolean> {
+export async function pushRef(ref: string, opts?: { cwd?: string; expect?: string | null }): Promise<boolean> {
+  return (await pushRefStatus(ref, opts)) === "pushed";
+}
+
+/** What {@link pushRefStatus} did: the remote took the ref, there is no remote, or the remote refused it. */
+export type PushRefStatus = "pushed" | "no-remote" | "rejected";
+
+/**
+ * {@link pushRef}, saying why a push did not land (#2732).
+ *
+ * `opts.expect` is the value the caller last saw the ref at on the remote
+ * (`null`: absent there), and becomes the `--force-with-lease` expectation.
+ * Without it the expectation is `refs/remotes/<remote>/<ref>`, which nothing
+ * fetches a lease ref into, so it reads as "absent" and only a first push
+ * lands. A lease passes the value of its own remote-tracking ref instead
+ * (`./lease.ts`'s `readLease`).
+ *
+ * A ref that no longer exists locally is pushed as a deletion, under the same
+ * expectation, so a released lease is released on the remote too. Deleting a
+ * ref the caller expects to be absent already is a no-op that reports
+ * `pushed`.
+ */
+export async function pushRefStatus(ref: string, opts?: { cwd?: string; expect?: string | null }): Promise<PushRefStatus> {
   const rt = getRuntime();
   const remoteResult = await rt.spawn(["git", "remote"], { cwd: opts?.cwd });
-  if (remoteResult.exitCode !== 0 || !remoteResult.stdout.trim()) return false;
+  if (remoteResult.exitCode !== 0 || !remoteResult.stdout.trim()) return "no-remote";
   const remote = remoteResult.stdout.trim().split("\n")[0];
 
-  const remoteRef = `refs/remotes/${remote}/${ref.replace(/^refs\//, "")}`;
-  const expectedResult = await rt.spawn(["git", "rev-parse", "--verify", remoteRef], { cwd: opts?.cwd });
-  const expected = expectedResult.exitCode === 0 ? expectedResult.stdout.trim() : null;
+  let expected: string | null;
+  if (opts?.expect !== undefined) {
+    expected = opts.expect;
+  } else {
+    const remoteRef = `refs/remotes/${remote}/${ref.replace(/^refs\//, "")}`;
+    const expectedResult = await rt.spawn(["git", "rev-parse", "--verify", remoteRef], { cwd: opts?.cwd });
+    expected = expectedResult.exitCode === 0 ? expectedResult.stdout.trim() : null;
+  }
   const lease = `${ref}:${expected ?? ""}`;
 
+  const local = await readRefSha(ref, opts);
+  if (local === null && expected === null) return "pushed";
+  const refspec = local === null ? `:${ref}` : `${ref}:${ref}`;
   const pushResult = await rt.spawn(
-    ["git", "push", "--force", `--force-with-lease=${lease}`, remote, `${ref}:${ref}`],
+    ["git", "push", `--force-with-lease=${lease}`, remote, refspec],
     { cwd: opts?.cwd },
   );
-  return pushResult.exitCode === 0;
+  return pushResult.exitCode === 0 ? "pushed" : "rejected";
 }
+
+/** What {@link fetchRefIntoStatus} found: the ref fetched, no remote, the remote answered without the ref, or the fetch failed. */
+export type FetchRefStatus = "fetched" | "no-remote" | "missing" | "failed";
 
 /**
  * Fetch one arbitrary remote ref into a local ref of a possibly *different*
@@ -1145,12 +1181,26 @@ export async function fetchRefInto(
   localRef: string,
   opts?: { cwd?: string },
 ): Promise<boolean> {
+  return (await fetchRefIntoStatus(remoteRef, localRef, opts)) === "fetched";
+}
+
+/**
+ * {@link fetchRefInto}, saying why nothing was fetched (#2732). `missing`
+ * means the remote answered and does not carry the ref, which for a lease is
+ * the news that it was released there.
+ */
+export async function fetchRefIntoStatus(
+  remoteRef: string,
+  localRef: string,
+  opts?: { cwd?: string },
+): Promise<FetchRefStatus> {
   const rt = getRuntime();
   const remoteResult = await rt.spawn(["git", "remote"], { cwd: opts?.cwd });
-  if (remoteResult.exitCode !== 0 || !remoteResult.stdout.trim()) return false;
+  if (remoteResult.exitCode !== 0 || !remoteResult.stdout.trim()) return "no-remote";
   const remote = remoteResult.stdout.trim().split("\n")[0];
-  const fetchResult = await rt.spawn(["git", "fetch", remote, `+${remoteRef}:${localRef}`], { cwd: opts?.cwd });
-  return fetchResult.exitCode === 0;
+  const fetchResult = await rt.spawn(["git", "fetch", remote, `+${remoteRef}:${localRef}`], { cwd: opts?.cwd, env: C_LOCALE_ENV });
+  if (fetchResult.exitCode === 0) return "fetched";
+  return NO_SUCH_REMOTE_REF_RE.test(fetchResult.stderr ?? "") ? "missing" : "failed";
 }
 
 /**

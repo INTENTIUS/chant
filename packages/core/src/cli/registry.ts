@@ -422,6 +422,14 @@ export interface ParsedArgs {
    * project's only steward.
    */
   steward?: string;
+  /** `chant workspace work claim|renew|release <id> --holder <name>` (#2732): who holds, or releases, the work lease. */
+  holder?: string;
+  /** `chant workspace work claim|renew <id> --ttl <seconds|duration>` (#2732): how long the lease lasts unless renewed. */
+  ttl?: string;
+  /** `chant workspace work renew|release <id> --token <token>` (#2732): the fencing token the caller holds. */
+  token?: string;
+  /** `chant workspace work release <id> --outcome <text>` (#2732): how the work ended, such as done or not_done. */
+  outcome?: string;
   /** `chant operator --once` (#1485) — run a single round and exit, instead of looping until Ctrl-C. Also the offline test/cron-invoker story. */
   once?: boolean;
   /** `chant approve <op> <gate> --note <text>` (#1485) — optional free-text prose recorded on the gate-resolution fact. The PR link belongs in `--url` since #2028; this is for everything that isn't the link. */

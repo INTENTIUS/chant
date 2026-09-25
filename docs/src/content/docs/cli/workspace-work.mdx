@@ -1,0 +1,147 @@
+---
+title: "chant workspace work"
+description: Claim, renew and release a lease on a work item, so two workers never take the same one, with each change kept in a history on chant/lifecycle
+diataxis: reference
+---
+
+## Synopsis
+
+```
+chant workspace work claim <id> --holder <name> [--kind <kind file>] [--ttl <seconds|duration>] [--note <text>] [--json]
+chant workspace work renew <id> --holder <name> [--kind <kind file>] [--ttl <seconds|duration>] [--token <token>] [--note <text>] [--json]
+chant workspace work release <id> --holder <name> [--kind <kind file>] [--token <token>] [--outcome <text>] [--note <text>] [--json]
+```
+
+## Description
+
+A work lease says who is working on a [work item](/chant/guide/work-items/) right now ([ws-055](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-055-dev-model-ledgers.md), [#2732](https://github.com/INTENTIUS/chant/issues/2732)). A runner claims an item before it starts and renews the lease while its agent works. It releases the lease when the work ends. The item's record doesn't change. The lease lives outside the working branch, so it never shows up in a release's diff or in a write-scope check.
+
+The lease is the [operator lease](/chant/cli/operator/) under another key. Its ref is `refs/chant/lease/work/<id>`. The ref points at a lease record holding the holder and a fencing token, with the times it was claimed and expires. A claim is one compare-and-set of that ref. When two workers claim the same item at once, one wins and the other is refused with the winner named.
+
+| Verb | Effect |
+|---|---|
+| `claim` | Takes an item nobody holds. Anyone holding a live lease on it refuses the claim, the same holder included. An expired lease doesn't refuse it, and the new claim gets a new token. |
+| `renew` | Moves the expiry of a live lease the holder already has and keeps its token. With `--token`, the live lease must carry that token. After a lease has expired or been released, `renew` is refused and the holder claims the item again. |
+| `release` | Gives the lease back. The holder releases a live lease. Anyone may release an expired one, which is how a runner closes out a claim whose worker went away. `--outcome` says how the work ended, such as `done` or `not_done`. |
+
+The command finds the item first, in the work kind `--kind` names or, without it, in the one work kind the [declaration](/chant/reference/workspace-declaration/#record-kinds) names that has a record with the id. An id no work record has is an error, and so is a claim on an item in a closed state such as `done` or `dropped`. Renew and release don't check the state, so a lease can always be given back.
+
+### Separate clones
+
+When the repository has a remote, a claim or renew fetches the lease ref from it before deciding. The write counts only once the remote has taken the push. If another clone claimed the item first, the remote refuses the push. The command then undoes the local write and refuses with `lease-push-rejected`. A release deletes the ref on the remote too. Workers in separate clones of one remote coordinate through it the way processes in one clone coordinate through the local ref. A repository with no remote coordinates only the processes that share its `.git` directory.
+
+### History
+
+Every claim, renew and release appends a line to `_leases/<id>.jsonl` on the `chant/lifecycle` branch, the append-only shape of the gate ledger. The command fetches the branch first when it fast-forwards and pushes it afterwards. The lease ref is what coordinates, so this push is best-effort. A history push the remote refuses is reported as `pushed: false` and doesn't undo the lease.
+
+```json
+{"acquiredAt":"2026-09-25T10:00:00.000Z","by":"worker-a","event":"claim","expiresAt":"2026-09-25T10:10:00.000Z","holder":"worker-a","item":"W-001","timestamp":"2026-09-25T10:00:00.000Z","token":"6f0c...","version":1}
+{"acquiredAt":"2026-09-25T10:00:00.000Z","by":"worker-a","event":"renew","expiresAt":"2026-09-25T10:13:20.000Z","holder":"worker-a","item":"W-001","timestamp":"2026-09-25T10:03:20.000Z","token":"6f0c...","version":1}
+{"acquiredAt":"2026-09-25T10:00:00.000Z","by":"worker-a","event":"release","expiresAt":"2026-09-25T10:13:20.000Z","holder":"worker-a","item":"W-001","outcome":"done","timestamp":"2026-09-25T10:09:00.000Z","token":"6f0c...","version":1}
+```
+
+`holder` is the lease's holder and `by` is who wrote the line: they differ only when someone releases another worker's expired lease.
+
+### Members
+
+The lease lives in the ledger of the member that owns the work kind file ([D7](https://github.com/INTENTIUS/chant/issues/2524)), whichever directory the command runs in. A work kind no member owns, such as the reference workspace's `work/work.kind.mjs`, uses the flat ledger: `refs/chant/lease/work/<id>` and `_leases/<id>.jsonl`. A kind inside member `api` uses `refs/chant/lease/_members/api/work/<id>` and `_members/api/_leases/<id>.jsonl`.
+
+### Reading leases
+
+[`chant workspace records --json`](/chant/cli/workspace-records/#work-items) gives each work record its active lease in `lease`, or `null`. [`chant workspace status --json`](/chant/cli/workspace-status/#work-leases) lists every lease in `leases`, active and expired. Both read the local refs and the remote's as last fetched, and never fetch. The MCP tools `workspace-records` and `workspace-status` return the same documents.
+
+## Options
+
+| Option | Effect |
+|---|---|
+| `id` | The work item's id, such as `W-001`. Letters, digits, `.`, `_` and `-`. |
+| `--holder <name>` | Required. Who claims, renews or releases, recorded as given. |
+| `--kind <kind file>` | The work kind. Without it, the declared work kind that has the id. |
+| `--ttl <seconds\|duration>` | How long a claim or renew lasts: a whole number of seconds, or a duration such as `10m`. Default 10 minutes. |
+| `--token <token>` | For `renew` and `release`: the fencing token the caller holds. A lease with another token is refused with `lease-token-mismatch`. |
+| `--outcome <text>` | For `release`: how the work ended, written to the history line. |
+| `--note <text>` | Free text written to the history line. |
+| `--json` | Print the result as JSON. |
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | The lease was written. |
+| 1 | The command could not run: a usage error, an unreadable kind, an id no work record has, or a claim on a closed item. |
+| 2 | The lease was refused. `refused.code` says why. |
+
+## Output
+
+With `--json`, a written lease prints:
+
+```json
+{
+  "$schema": "https://intentius.io/chant/schemas/workspace/work-lease/v1/work-lease.schema.json",
+  "contract": 1,
+  "item": "W-001",
+  "event": "claim",
+  "kind": "work/work.kind.mjs",
+  "ref": "refs/chant/lease/work/W-001",
+  "lease": { "holder": "worker-a", "token": "6f0c...", "acquiredAt": "2026-09-25T10:00:00.000Z", "expiresAt": "2026-09-25T10:10:00.000Z" },
+  "history": { "path": "_leases/W-001.jsonl", "commit": "3f2a91c0...", "pushed": true }
+}
+```
+
+For `release`, `lease` is the lease that was released. A refusal prints `refused` in place of `lease` and `history`, with the live lease in `heldBy` when there is one:
+
+```json
+{
+  "$schema": "https://intentius.io/chant/schemas/workspace/work-lease/v1/work-lease.schema.json",
+  "contract": 1,
+  "item": "W-001",
+  "event": "claim",
+  "kind": "work/work.kind.mjs",
+  "ref": "refs/chant/lease/work/W-001",
+  "refused": {
+    "code": "lease-held",
+    "message": "W-001 is held by worker-a until 2026-09-25T10:10:00.000Z",
+    "heldBy": { "holder": "worker-a", "token": "6f0c...", "acquiredAt": "2026-09-25T10:00:00.000Z", "expiresAt": "2026-09-25T10:10:00.000Z" }
+  }
+}
+```
+
+An error prints `{ "$schema", "contract", "error": { "code", "message" } }`. The document follows `work-lease.schema.json`, shipped in `@intentius/chant` at `src/workspace/work-lease.schema.json`, and every code is in the one closed list of the [read contract](/chant/reference/workspace-read-contract/#reason-codes).
+
+### Refusal codes
+
+| Code | Cause |
+|---|---|
+| `lease-held` | Someone holds a live lease on the item: another worker, or, for a claim, the same one. |
+| `lease-not-held` | Nobody holds a live lease: it expired, was released or was never claimed. |
+| `lease-token-mismatch` | The live lease carries another token than `--token`. |
+| `lease-race` | Another writer changed the lease between the read and the write. `heldBy` names who has it now. |
+| `lease-push-rejected` | The remote refused the push, because another clone claimed the item first or the remote could not be reached. |
+
+### Error codes
+
+| Code | Cause |
+|---|---|
+| `write-usage-invalid` | A missing verb, id or `--holder`, or a flag the verb doesn't take. |
+| `kind-unreadable` | The work kind or its records could not be read. |
+| `work-kind-missing` | `--kind` is not a work kind, or the declaration names none. |
+| `work-kind-ambiguous` | More than one declared work kind has a record with the id; pass `--kind`. |
+| `work-item-unknown` | No work record has the id. |
+| `work-item-closed` | A claim on an item in a closed state. |
+| `not-a-git-repository` | The directory is not in a git repository, so there is no ref to write. |
+
+## Examples
+
+```bash
+# Take W-001 for ten minutes
+chant workspace work claim W-001 --holder "$(hostname):$$"
+
+# Heartbeat while the agent works, with the token the claim printed
+chant workspace work renew W-001 --holder "$(hostname):$$" --token 6f0c... --ttl 10m
+
+# Give it back when the work is done
+chant workspace work release W-001 --holder "$(hostname):$$" --outcome done
+
+# Which items are taken, and by whom
+chant workspace records --kind work/work.kind.mjs --json | jq '.records[] | select(.lease) | {id, holder: .lease.holder}'
+```

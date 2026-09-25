@@ -92,6 +92,13 @@ export type RecordView = RecordEntry & {
   /** true when the record's seal verifies for its author against the signers at base; false when it fails, or is missing under an active policy; null when nothing here can say (#2688). */
   attested?: boolean | null;
   attestation?: VerdictAttestation;
+  /**
+   * For a work kind read in the working tree (#2732): the item's active work
+   * lease, or null when nobody holds one. Read from the local lease refs of
+   * the ledger owning the kind, without fetching. Absent under `--at`, since a
+   * lease is live state and not part of a revision.
+   */
+  lease?: { holder: string; token: string; acquiredAt: string; expiresAt: string } | null;
 };
 
 /** The role in the trust policy whose holders' verdicts the quorum does not count (#2671). */
@@ -304,6 +311,11 @@ export async function queryRecords(query: RecordsQuery): Promise<RecordsDocument
       ...(seals ? authorSeal(loaded.kind, r, policy, seals.checkRecordSeal) : {}),
     }));
     if (loaded.kind.work && query.workGaps !== false && top) await raiseWorkGaps(loaded, records, { root, workspaceRoot, at: query.at });
+    if (loaded.kind.work && at === null && top) {
+      const { activeWorkLeases } = await import("../lifecycle/work-lease");
+      const leases = await activeWorkLeases(loaded.file);
+      for (const r of records) if (r.id !== null) r.lease = leases.get(r.id) ?? null;
+    }
     return {
       $schema: RECORDS_OUTPUT_SCHEMA_ID,
       contract: RECORDS_CONTRACT_VERSION,
@@ -596,7 +608,8 @@ function formatRecords(records: RecordView[], summary: { total: number; valid: n
     if (r.ready !== undefined) {
       const blocked = (r.blockedBy ?? []).map((b) => `${b.id} (${b.state ?? "unknown"})`).join(", ");
       const implemented = (r.implements ?? []).map((d) => `${d.id} (${d.state ?? "unknown"})`).join(", ");
-      const status = [r.ready ? "ready" : blocked ? `blocked by ${blocked}` : "", implemented ? `implements ${implemented}` : ""].filter(Boolean).join("; ");
+      const held = r.lease ? `held by ${r.lease.holder} until ${r.lease.expiresAt}` : "";
+      const status = [r.ready ? "ready" : blocked ? `blocked by ${blocked}` : "", implemented ? `implements ${implemented}` : "", held].filter(Boolean).join("; ");
       if (status) lines.push(`${" ".repeat(idWidth + 2)}${status}`);
     }
     for (const reason of r.reasons) lines.push(`${" ".repeat(idWidth + 2)}${reason.code}: ${reason.message} (${r.path})`);
@@ -620,7 +633,7 @@ export async function runWorkspaceUnknown(ctx: CommandContext): Promise<number> 
   console.error(
     formatError({
       message: sub ? `Unknown workspace subcommand: ${sub}` : "chant workspace needs a subcommand",
-      hint: `Workspace subcommands: audit, build, check, graph, init, lineage, lint, ls, records, status, upgrade, verify. Run "chant --help" for their options.`,
+      hint: `Workspace subcommands: audit, build, check, graph, init, lineage, lint, ls, records, status, upgrade, verify, work. Run "chant --help" for their options.`,
     }),
   );
   return 1;

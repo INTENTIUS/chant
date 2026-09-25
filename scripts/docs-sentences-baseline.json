@@ -275,6 +275,11 @@
   "formatting/em-dash-density": 2,
   "claude/colon-reveal": 2
  },
+ "docs/src/content/docs/cli/workspace-work.mdx": {
+  "formatting/em-dash-density": 2,
+  "claude/colon-reveal": 2,
+  "dead-metaphor/rare-lemma": 1
+ },
  "docs/src/content/docs/components/attestation-reference.mdx": {
   "formatting/em-dash-density": 37,
   "discourse/punchy-fragments": 2,

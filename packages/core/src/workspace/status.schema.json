@@ -45,6 +45,11 @@
           "type": "array",
           "items": { "$ref": "#/$defs/member" }
         },
+        "leases": {
+          "description": "Added in contract 1 by #2732. Every work lease (chant workspace work claim) in the flat ledger and each member's, active and expired, by member (flat first) and then item. Read from the local lease refs, refs/chant/lease/[_members/<member>/]work/<id> and the remote's as last fetched; the command never fetches. A released lease has no ref and is not listed; its history is _leases/<id>.jsonl on chant/lifecycle.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/lease" }
+        },
         "summary": {
           "type": "object",
           "required": ["members", "released", "unreadable", "differing"],
@@ -59,6 +64,20 @@
             }
           }
         }
+      }
+    },
+    "lease": {
+      "type": "object",
+      "required": ["item", "member", "ref", "holder", "token", "acquiredAt", "expiresAt", "state"],
+      "properties": {
+        "item": { "type": "string", "description": "The work item's id." },
+        "member": { "type": ["string", "null"], "description": "The member whose ledger holds the lease: the one owning the work kind file, or null for the flat ledger." },
+        "ref": { "type": "string", "description": "The lease ref, refs/chant/lease/work/<id> or refs/chant/lease/_members/<member>/work/<id>." },
+        "holder": { "type": "string" },
+        "token": { "type": "string", "description": "The fencing token: new on every claim, kept by every renew." },
+        "acquiredAt": { "type": "string" },
+        "expiresAt": { "type": "string" },
+        "state": { "enum": ["active", "expired"], "description": "expired once expiresAt has passed: the item can be claimed again, with a new token." }
       }
     },
     "env": {

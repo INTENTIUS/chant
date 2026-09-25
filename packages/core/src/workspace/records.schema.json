@@ -177,6 +177,10 @@
           "description": "Added in contract 1 by #2683, on every parsed record of a work kind. Each decision the record implements, with its state now; null for an id no decision has.",
           "type": "array",
           "items": { "$ref": "#/$defs/workLink" }
+        },
+        "lease": {
+          "description": "Added in contract 1 by #2732, on every record of a work kind with an id, read in the working tree (absent under --at). The item's active work lease (chant workspace work claim), or null when nobody holds one live. Read from the local lease refs, refs/chant/lease/[_members/<member>/]work/<id> and the remote's as last fetched, of the ledger owning the work kind file; records never fetches.",
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/workLease" }]
         }
       },
       "allOf": [
@@ -186,6 +190,16 @@
           "else": { "properties": { "reasons": { "type": "array", "minItems": 1 } } }
         }
       ]
+    },
+    "workLease": {
+      "type": "object",
+      "required": ["holder", "token", "acquiredAt", "expiresAt"],
+      "properties": {
+        "holder": { "type": "string", "description": "Who holds the lease, as --holder gave it." },
+        "token": { "type": "string", "description": "The fencing token: new on every claim, kept by every renew." },
+        "acquiredAt": { "type": "string", "description": "When the lease was claimed, ISO 8601." },
+        "expiresAt": { "type": "string", "description": "When the lease expires unless renewed, ISO 8601." }
+      }
     },
     "asset": {
       "type": "object",

@@ -138,6 +138,8 @@ chant workspace records --kind work/work.kind.mjs --json \
 
 Two agents that take the same record change the same lines of the same file, so the second pull request conflicts and one of them picks again.
 
+A runner that dispatches agents doesn't have to wait for that conflict. It claims the item first with [`chant workspace work claim`](/chant/cli/workspace-work/), which takes a lease with an expiry that only one worker can hold. It renews the lease while the agent works and releases it at the end. `records --json` then shows the holder in each record's `lease`.
+
 ## The window and the three findings
 
 The window of W-001 runs from the commit that added its record to the commit that moved it to `done` or `dropped`. While it is open, the window runs to the revision the walk reads. A commit that changes the region inside the window has a `within` edge to W-001 with the state `worked`. The commit's own state still comes from the decisions, because a work record says who is doing something, and a decision says what was chosen.

@@ -32,14 +32,14 @@ This page is generated from `docs/data/boundary.yaml`, which has one row for eac
 | Category | Where the code keeps it | chant | hud | plugin |
 |---|---|---|---|---|
 | boundary cell | the table of #2657, one row per cell | 6 | 5 | 3 |
-| workspace command | `commandRegistry` in `cli/main.ts`, and each sub-verb its help names | 21 | 0 | 0 |
+| workspace command | `commandRegistry` in `cli/main.ts`, and each sub-verb its help names | 22 | 0 | 0 |
 | member kind | `BUILTIN_KIND_NAMES` in `kinds.ts` | 4 | 0 | 0 |
 | record kind | none in core; `decision` and `session` are this repository's, the rest a plugin's | 3 | 0 | 4 |
 | member link kind | `LINK_KINDS` in `links.ts` | 1 | 0 | 0 |
 | record link kind | `RECORD_LINK_KINDS` in `record-assets.ts` | 2 | 0 | 0 |
 | intent node kind | the node kinds of `intent.schema.json` | 9 | 0 | 3 |
 | intent edge kind | the edge kinds of `intent.schema.json` | 9 | 0 | 3 |
-| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 98 | 0 | 0 |
+| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 107 | 0 | 0 |
 | finding code | the finding codes of `intent.schema.json` | 17 | 0 | 0 |
 | WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 37 | 0 | 0 |
 | hud view | the hud reader requirements H1 to H11 of #2650 | 0 | 11 | 0 |
@@ -70,6 +70,7 @@ Each row follows, in the order of the table above.
 | workspace command | `workspace check` | chant | check.schema.json | Checks the declaration with WSP ids and the lineage lock with reason codes, and prints the result as a read-contract document. |
 | workspace command | `workspace status` | chant | status.schema.json | Shows each member's releases in one environment from the lifecycle ledgers, read-only. |
 | workspace command | `workspace records` | chant | records.schema.json, records-since.schema.json | Reads the records a record kind locates, or every kind the declaration names, validated against its schema, with provenance and reason codes; with --since, what changed in them between two revisions. |
+| workspace command | `workspace work` | chant | work-lease.schema.json | Claims, renews and releases the lease on a work item: a compare-and-set ref with a fencing token and an expiry, pushed to the remote so separate clones coordinate, with each change appended to _leases/&lt;id&gt;.jsonl on chant/lifecycle (#2732, ws-055). |
 | workspace command | `workspace records pin` | chant | chant workspace records pin &lt;path&gt; | Prints a file's path from the workspace root and its sha256, for a decision's evidence pin. |
 | workspace command | `workspace records new` | chant | records-new.schema.json | Writes one new record in a kind's directory from validated JSON fields, allocating the next id, and never commits; with --sign, sealed by its author. |
 | workspace command | `workspace records amend` | chant | records-amend.schema.json | Sets fields of one record under its schema and the approval rule, refusing a change to an approved record that only a superseding record can make; with --sign it seals the author again, and without it a change removes the author seal. |
@@ -128,7 +129,7 @@ Each row follows, in the order of the table above.
 | reason code | `placement-invalid` | chant | check.schema.json, composites.schema.json, graph.schema.json, intent.schema.json, ls.schema.json, status.schema.json | A member or group match breaks a placement rule. |
 | reason code | `reader-too-old` | chant | check.schema.json, composites.schema.json, graph.schema.json, intent.schema.json, ls.schema.json, status.schema.json | The declaration's minReader is newer than the chant reading it. |
 | reason code | `root-chant-required` | chant | check.schema.json, composites.schema.json, graph.schema.json, intent.schema.json, ls.schema.json, status.schema.json | The declaration pins a chant version other than the reader's, and that chant is not installed at the workspace root. |
-| reason code | `not-a-git-repository` | chant | check.schema.json, composites.schema.json, graph.schema.json, intent.schema.json, ls.schema.json, records-since.schema.json, records.schema.json, status.schema.json | --at, or a ledger read, needs a git repository and there is none. |
+| reason code | `not-a-git-repository` | chant | check.schema.json, composites.schema.json, graph.schema.json, intent.schema.json, ls.schema.json, records-since.schema.json, records.schema.json, status.schema.json, work-lease.schema.json | --at, or a ledger read, needs a git repository and there is none. |
 | reason code | `revision-unknown` | chant | check.schema.json, composites.schema.json, graph.schema.json, intent.schema.json, ls.schema.json, records-since.schema.json, records.schema.json | --at names no commit. |
 | reason code | `environment-invalid` | chant | status.schema.json | An environment name that can't name a ledger directory. |
 | reason code | `dir-missing` | chant | composites.schema.json, graph.schema.json, ls.schema.json | The member's directory does not exist. |
@@ -186,13 +187,13 @@ Each row follows, in the order of the table above.
 | reason code | `environments-ledger-undeclared` | chant | composites.schema.json | The member's ledger has releases in an environment its config's environments don't cover, so chant run --env would refuse it and it is not listed. |
 | reason code | `environments-ledger-unreadable` | chant | composites.schema.json | The chant/lifecycle branch exists and the member's ledger environments could not be listed. |
 | reason code | `record-supersedes-pending` | chant | records-amend.schema.json, records-close.schema.json, records-new.schema.json, records-review.schema.json, records.schema.json | A supersedes link from a record whose state is weaker than the record it names, so the link has no effect yet. |
-| reason code | `kind-unreadable` | chant | intent.schema.json, ls.schema.json, records-amend.schema.json, records-close.schema.json, records-new.schema.json, records-review.schema.json, records-since.schema.json, records.schema.json | The record kind file is missing or could not be imported. |
+| reason code | `kind-unreadable` | chant | intent.schema.json, ls.schema.json, records-amend.schema.json, records-close.schema.json, records-new.schema.json, records-review.schema.json, records-since.schema.json, records.schema.json, work-lease.schema.json | The record kind file is missing or could not be imported. |
 | reason code | `kind-invalid` | chant | intent.schema.json, ls.schema.json, records-amend.schema.json, records-close.schema.json, records-new.schema.json, records-review.schema.json, records-since.schema.json, records.schema.json | The record kind file exports no recordKind, or its shape is wrong. |
 | reason code | `schema-unreadable` | chant | intent.schema.json, ls.schema.json, records-amend.schema.json, records-close.schema.json, records-new.schema.json, records-review.schema.json, records-since.schema.json, records.schema.json | The schema file the record kind names is missing or is not JSON. |
 | reason code | `schema-id-mismatch` | chant | intent.schema.json, ls.schema.json, records-amend.schema.json, records-close.schema.json, records-new.schema.json, records-review.schema.json, records-since.schema.json, records.schema.json | The schema's $id differs from the id the record kind names. |
 | reason code | `schema-invalid` | chant | intent.schema.json, records-amend.schema.json, records-close.schema.json, records-new.schema.json, records-review.schema.json, records-since.schema.json, records.schema.json | The record schema itself does not compile. |
 | reason code | `location-missing` | chant | intent.schema.json, records-amend.schema.json, records-close.schema.json, records-new.schema.json, records-review.schema.json, records-since.schema.json, records.schema.json | The records directory does not exist, in the tree or at the revision. |
-| reason code | `write-usage-invalid` | chant | records-amend.schema.json, records-close.schema.json, records-new.schema.json, records-review.schema.json | The command line lacks a value the write needs, or gives one it does not take. |
+| reason code | `write-usage-invalid` | chant | records-amend.schema.json, records-close.schema.json, records-new.schema.json, records-review.schema.json, work-lease.schema.json | The command line lacks a value the write needs, or gives one it does not take. |
 | reason code | `write-input-invalid` | chant | records-amend.schema.json, records-new.schema.json | The fields given with --from or --set can't be read, are not JSON, or are not a JSON object. |
 | reason code | `record-not-found` | chant | records-amend.schema.json, records-close.schema.json, records-review.schema.json | No record of the kind has the id given. |
 | reason code | `record-id-taken` | chant | records-new.schema.json | The id given for a new record is already used, by a record or a file name. |
@@ -219,6 +220,15 @@ Each row follows, in the order of the table above.
 | reason code | `box-capability-unbrokered` | chant | check.schema.json | A capability in a member's box block names no broker, so the box would hold its credential. |
 | reason code | `lock-invalid` | chant | check.schema.json | The lineage lock can't be read. |
 | reason code | `manual-step-open` | chant | check.schema.json | A scope in the lineage lock has an open manual step. |
+| reason code | `work-kind-missing` | chant | work-lease.schema.json | No work kind to find the item in: --kind names a kind with no work block, or the declaration names no work kind. |
+| reason code | `work-kind-ambiguous` | chant | work-lease.schema.json | More than one declared work kind has a record with the id, so --kind must name one. |
+| reason code | `work-item-unknown` | chant | work-lease.schema.json | No work record has the id, so there is nothing to lease. |
+| reason code | `work-item-closed` | chant | work-lease.schema.json | A claim on a work item in a closed state, such as done or dropped: there is no work left to claim. |
+| reason code | `lease-held` | chant | work-lease.schema.json | Someone holds a live lease on the work item: another worker, or, for a claim, the same one. |
+| reason code | `lease-not-held` | chant | work-lease.schema.json | Nobody holds a live lease on the work item: it expired, was released or was never claimed. |
+| reason code | `lease-token-mismatch` | chant | work-lease.schema.json | The live lease on the work item carries another fencing token than the one given. |
+| reason code | `lease-race` | chant | work-lease.schema.json | Another writer changed the lease between this command's read and its write. |
+| reason code | `lease-push-rejected` | chant | work-lease.schema.json | The remote refused the lease push: another clone claimed the item first, or the remote could not be reached. |
 | finding code | `intent-commit-undecided` | chant | intent.schema.json | A commit changed the region when no decision constrained it at path granularity. |
 | finding code | `intent-commit-bare` | chant | intent.schema.json | A commit names no unit, no pull request and no decision covering the region at its time. |
 | finding code | `intent-pin-drifted` | chant | intent.schema.json | A decision's pinned artifact no longer hashes to the pin. |
