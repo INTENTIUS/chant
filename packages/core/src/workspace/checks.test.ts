@@ -60,6 +60,8 @@ describe("the WSP catalog", () => {
       "records-unreadable",
       // A declared record kind that doesn't load breaks every reader's default (#2680).
       "record-kind-unloadable",
+      // A credential in a box's files is in git (#2726).
+      "box-credential-declared",
     ]);
   });
 

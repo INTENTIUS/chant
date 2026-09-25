@@ -189,6 +189,8 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `environments-none-declared` | member, `graph --composites` | The member's `chant.config.ts` declares no environments, so only `local` and the environments in its ledger are listed. |
 | `environments-ledger-undeclared` | member, `graph --composites` | The member's ledger has releases in an environment its config doesn't cover, so `chant run --env` would refuse it and it isn't listed. |
 | `environments-ledger-unreadable` | member, `graph --composites` | The `chant/lifecycle` branch exists and the member's ledger environments couldn't be listed. |
+| `box-credential-declared` | finding, `check` | `WSP121`: a file in a box member's directory carries a literal secret, a credential's shape or a literal where a credential goes. A `${VAR}`, `$VAR` or secret-manager reference isn't one. |
+| `box-capability-unbrokered` | finding, `check` | `WSP122`: a capability in a member's box block names no broker, so the box would hold its credential. |
 | `lock-invalid` | finding, `check` | The lineage lock can't be read. |
 | `manual-step-open` | finding, `check` | A scope in the lineage lock has an open manual step. |
 
@@ -330,6 +332,10 @@ Each component also lists the environments it may be deployed to in `environment
 | `superseded` | The gate isn't approved, and an approval recorded since it was reached names a different plan, so that approval doesn't count. |
 
 `gateLedger` names the directory the gates were read from. Its `reason` holds a code from the closed list when there is no ledger branch, no gate ledger for the member, or a gate ledger that can't be read.
+
+## Boxes
+
+`chant workspace status --json` lists each member's `box`, the capabilities its [box block](/chant/reference/workspace-declaration/#boxes) declares, each with `name`, `broker` and `scope` ([#2726](https://github.com/INTENTIUS/chant/issues/2726)). It is `null` for a member with no block. A broker reads the scope it enforces for a box here. `chant workspace check` reports a box that holds a literal secret with `box-credential-declared` and a capability with no broker with `box-capability-unbrokered`, each carried as `code` on its `WSP` finding.
 
 ## Joining the documents
 

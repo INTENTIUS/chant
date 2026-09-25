@@ -77,6 +77,8 @@ chant.workspace.json
 | `WSP113` | record-asset-stale | warning | yes | A current record pins a file at the hash a record it supersedes pinned, and the file has not changed since: the artifact did not follow the decision |
 | `WSP114` | records-unreadable | error | no | The records of the kind named with `--kind` can't be read |
 | `WSP115` | record-kind-unloadable | error | no | A [record kind the declaration names](/chant/reference/workspace-declaration/#record-kinds) is missing, or doesn't export a valid `recordKind` with the schema it names. The finding gives the reason code. Under `--at`, only whether the file exists at the revision is checked |
+| `WSP121` | box-credential-declared | error | no | A file in a [box](#boxes) member's directory carries a literal secret. The finding carries the code `box-credential-declared` and sits on the file and line |
+| `WSP122` | box-capability-unbrokered | error | yes | A capability in a member's [box block](/chant/reference/workspace-declaration/#boxes) names no broker. The finding carries the code `box-capability-unbrokered` |
 
 A finding's location is the entry it is about, the link for `WSP091` to `WSP094` and `WSP096`, or the pin for `WSP002`. A finding about two or more members sits at the first of them in the declaration, and that member's entry is where a `suppress` for it goes.
 
@@ -151,6 +153,22 @@ With `--kind <kind file>`, the command reads the records that kind locates, as [
 
 ```
 warning  WSP111  ref-002: design/screens/home.json changed since it was pinned: sha256 074e55f52470 is pinned, the file hashes to 9874903227b3
+```
+
+## Boxes
+
+A member with a [`box` block](/chant/reference/workspace-declaration/#boxes) is a box, or holds a box's declarations, and a box holds no credential ([#2726](https://github.com/INTENTIUS/chant/issues/2726)). `WSP121` reads every file in the member's directory from the tree it checks, including under `--at`. It skips `node_modules` and dot-directories, and runs nothing. It reports a literal secret, which is one of these:
+
+- A value with a well-known credential shape, wherever it is. The shapes are the ones the fountain lexicon's `FTN001` knows, with Anthropic keys added.
+- A literal string where a credential goes: under a key named like one (`API_KEY`, `GITHUB_TOKEN`, `apiKey`, `token`, `credential`, `password`), or as the `value` of a `{ key, value }` vault secret. TypeScript, JavaScript and JSON are read as syntax. Any other file is read line by line, and prose files (`.md`, `.txt`, `.html`) only for credential shapes.
+
+A reference is not a secret: `${VAR}`, `$VAR`, a secret-manager reference (`op://`, `bws://`, `infisical://`), a `{{...}}` template placeholder, and any expression that isn't a string literal, such as `process.env.TOKEN`. A key that names where a secret is kept, such as `secretKey` or `TOKEN_FILE`, isn't a credential key. The message names what was found and never prints the value. `WSP121` is fixed, since a credential in a box's files is in git.
+
+`WSP122` fails on a capability that names no broker. It can be turned down while a box moves to a broker.
+
+```text
+error  WSP121  box-credential-declared: spec/box.ts holds a literal value for ANTHROPIC_API_KEY, and member spec is a box, which holds no credential; replace it with a ${VAR} or secret-manager reference, or declare the capability as brokered in the member's box block
+error  WSP122  box-capability-unbrokered: member spec's box needs inference and names no broker for it, so the box would hold its credential; set broker to the runtime that holds it, such as the lobby
 ```
 
 ## Options

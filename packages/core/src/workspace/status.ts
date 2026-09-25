@@ -24,7 +24,9 @@
  * The JSON also lists each member's gates, read from its gate ledger on the
  * same branch (#2674, `status-gates.ts`): the state of each, the approvals
  * that count, and the `chant approve` line that answers it. The text view
- * doesn't show them.
+ * doesn't show them. So does each member's box block (#2726): the
+ * capabilities it reaches through a broker, with the broker and the scope a
+ * broker enforces.
  */
 
 import { execFileSync } from "node:child_process";
@@ -145,6 +147,13 @@ export interface StatusMember {
   gateLedger: StatusGateLedger;
   /** Each gate in the member's gate ledger, one per environment asked for, sorted by component then gate. */
   gates: StatusGate[];
+  /** The member's box block as declared, or null when it declares none (#2726). A broker reads the scopes it enforces here. */
+  box: StatusBox | null;
+}
+
+/** A box's brokered capabilities, from the declaration (#2726). */
+export interface StatusBox {
+  capabilities: { name: string; broker: string | null; scope: string[] }[];
 }
 
 export type StatusDocument =
@@ -318,6 +327,7 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
         readable: environments.every((e) => e.reason === null),
         gateLedger: gates.ledger,
         gates: gates.gates,
+        box: m.box === null ? null : { capabilities: m.box.capabilities.map((c) => ({ name: c.name, broker: c.broker, scope: [...c.scope] })) },
       });
     }
     // Several members read from one flat ledger see the same records; say so.

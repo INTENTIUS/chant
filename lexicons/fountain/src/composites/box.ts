@@ -14,7 +14,7 @@
  *   setupScript: readFileSync("box/provision-template.sh", "utf8"),
  *   permissionPolicy: { default: "auto_allow" },
  *   allowedHosts: ["registry.npmjs.org", "github.com"],
- *   vault: { secrets: [{ key: "STUDIO_SECRET", value: process.env.STUDIO_SECRET! }] },
+ *   vault: { secrets: [{ key: "STUDIO_SECRET", value: "${STUDIO_SECRET}" }] },
  * });
  * ```
  *
@@ -34,6 +34,20 @@
  * vault, or nothing, until `allowedVaults` widens it. `permission_policy` has
  * no default at all, because fountain's unset policy is `auto_allow` and that
  * should be a choice someone wrote down.
+ *
+ * ## Credentials
+ *
+ * A box holds no credential (#2726). What it reaches outside itself
+ * (inference, Fountain's own API) goes through a broker, such as a studio's
+ * lobby, that holds the key and enforces a scope. Those capabilities are
+ * declared in the workspace declaration's `box` block on the member that
+ * holds this composite, not here: `chant workspace check` and the read
+ * contract read the declaration without running this code. Here, a vault
+ * secret's value and an `envVars` value are references (`${VAR}`, `op://`,
+ * `bws://`, `infisical://`) that resolve at apply, never a literal, and never
+ * `process.env.X`, which writes the secret into the built manifest. `chant
+ * workspace check` fails a box member whose files hold one
+ * (`box-credential-declared`).
  *
  * ## The port
  *
@@ -74,7 +88,7 @@ export interface BoxVaultOpts {
   /** Vault name. Default `<name>-secrets`. */
   name?: string;
   description?: string;
-  /** Written at apply. A reference that resolves at build, never a literal (FTN001). */
+  /** Written at apply. A reference such as `${VAR}` or `op://...` that resolves at apply, never a literal (FTN001, and `box-credential-declared` in `chant workspace check`). */
   secrets?: { key: string; value: string }[];
 }
 

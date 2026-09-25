@@ -145,6 +145,28 @@ export interface RecordKindDeclaration {
   pointer: string;
 }
 
+/**
+ * A capability a box reaches through a broker (#2726): inference, Fountain,
+ * a third-party API. The broker is runtime (a lobby, a door, a studio) and
+ * holds the credential; the declaration names it and the scope it enforces.
+ */
+export interface BoxCapability {
+  name: string;
+  /** What brokers it, such as `lobby`, or null when the entry names no broker (WSP122). */
+  broker: string | null;
+  /** What of the box's own the broker lets it reach, such as `agent`, `vault`, `conversations`, `sandboxes`. */
+  scope: string[];
+  /** The entry's JSON Pointer in the file, for messages. */
+  pointer: string;
+}
+
+/** A member that is a box, or a box's declarations (#2726). */
+export interface BoxDeclaration {
+  capabilities: BoxCapability[];
+  /** The block's JSON Pointer in the file, for messages. */
+  pointer: string;
+}
+
 export interface Member {
   type: "member";
   name: string;
@@ -160,6 +182,8 @@ export interface Member {
   links: LinkDeclaration[];
   /** The record kinds this member declares, in file order (#2680). */
   records: RecordKindDeclaration[];
+  /** The member's box block, or null when it declares none (#2726). */
+  box: BoxDeclaration | null;
   upstream: string | null;
   because: string | null;
   suppress: Suppression[];
@@ -414,6 +438,7 @@ export function parseDeclaration(text: string, file: string, reader: string = re
       pointer: `${pointer}/links/${j}`,
     }));
     const records = recordKindsOf(e.records, e.dir as string, e.name as string, `${pointer}/records`);
+    const box = boxOf(e.box, `${pointer}/box`);
     return {
       type: "member",
       name: e.name as string,
@@ -424,6 +449,7 @@ export function parseDeclaration(text: string, file: string, reader: string = re
       outputs: e.outputs === undefined ? null : [...(e.outputs as string[])],
       links,
       records,
+      box,
       upstream: (e.upstream as string | undefined) ?? null,
       because: (e.because as string | undefined) ?? null,
       suppress,
@@ -508,6 +534,16 @@ export function parseDeclaration(text: string, file: string, reader: string = re
     byName.set(r.name, r);
   }
 
+  // A box names each capability once (#2726): a broker reads its scope by name.
+  for (const m of members) {
+    const seen = new Map<string, BoxCapability>();
+    for (const c of m.box?.capabilities ?? []) {
+      const first = seen.get(c.name);
+      if (first) throw new WorkspaceReadError("declaration-invalid", `member ${m.name}'s box lists the capability ${c.name} twice; the first is at ${first.pointer}`, at(`${c.pointer}/name`));
+      seen.set(c.name, c);
+    }
+  }
+
   const pins = ((obj.pins as Record<string, string>[] | undefined) ?? []).map((p) => ({
     package: p.package ?? null,
     version: p.version ?? null,
@@ -539,6 +575,16 @@ function recordKindsOf(raw: unknown, dir: string, member: string | null, pointer
     member,
     pointer: `${pointer}/${i}`,
   }));
+}
+
+/** The `box` block at `pointer`, already validated, or null when there is none (#2726). */
+function boxOf(raw: unknown, pointer: string): BoxDeclaration | null {
+  if (raw === undefined) return null;
+  const caps = (raw as { capabilities: { name: string; broker?: string; scope?: string[] }[] }).capabilities;
+  return {
+    capabilities: caps.map((c, i) => ({ name: c.name, broker: c.broker ?? null, scope: [...(c.scope ?? [])], pointer: `${pointer}/capabilities/${i}` })),
+    pointer,
+  };
 }
 
 /**

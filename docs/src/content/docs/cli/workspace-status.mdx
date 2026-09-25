@@ -62,6 +62,18 @@ A gate is listed for each environment the command shows, once a run has reached 
 
 Each gate carries `approve`, the exact command that approves it, to run in the member's directory: `chant approve <component> <gate> --env <env>`, without `--env` for a gate that records no environment.
 
+### Boxes
+
+With `--json`, each member also lists its `box`: the [box block](/chant/reference/workspace-declaration/#boxes) from the declaration, or `null` when it has none ([#2726](https://github.com/INTENTIUS/chant/issues/2726)). Each capability has its `name`, its `broker` (`null` when the declaration names none) and its `scope`. A broker, such as a lobby, reads the scope it enforces for a box from here, so the scopes aren't hard-coded in the broker. Boxes appear in the JSON only.
+
+```json
+"box": {
+  "capabilities": [
+    { "name": "fountain", "broker": "lobby", "scope": ["agent", "vault", "conversations", "sandboxes"] }
+  ]
+}
+```
+
 The command doesn't read live state. `--compare-to --live` is refused with a pointer to `chant components status <env> --live`, which reads one member's live state from that member's directory.
 
 ## Options
@@ -142,7 +154,8 @@ The output is part of the workspace [read contract](/chant/reference/workspace-r
           "needed": 2,
           "approve": "chant approve api deploy --env prod"
         }
-      ]
+      ],
+      "box": null
     }
   ],
   "summary": { "members": 3, "released": 2, "unreadable": 0, "differing": 1 }

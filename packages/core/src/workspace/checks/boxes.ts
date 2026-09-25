@@ -1,0 +1,301 @@
+/**
+ * The box checks, WSP121 and WSP122 (#2726).
+ *
+ * A member whose entry has a `box` block is a box, or holds a box's
+ * declarations. A box holds no credential: each capability it needs outside
+ * itself (inference, Fountain, a third-party API) is reached through a
+ * broker, a runtime such as a lobby or a door, which holds the credential
+ * and enforces the scope the block declares. chant only states and checks
+ * this; it never runs a broker (ws-052).
+ *
+ * | Id | Code | Fails when |
+ * |---|---|---|
+ * | WSP121 | `box-credential-declared` | a file in the box member's directory carries a literal secret (fixed) |
+ * | WSP122 | `box-capability-unbrokered` | a capability in the block names no broker |
+ *
+ * WSP121 reads the member's files from the tree checked, so it works under
+ * `--at`, and runs no member code. A literal secret is either a value with a
+ * well-known credential shape (an AWS key id, a GitHub or Slack token, an
+ * `sk-` key, private key material), wherever it sits, or a literal string
+ * where a credential goes: under a key named like one (`API_KEY`, `token`,
+ * `credential`, `password`, ...), or the `value` of a `{ key, value }` vault
+ * secret. A reference is never one: `${VAR}` and `$VAR`, a secret-manager
+ * reference (`op://`, `bws://`, `infisical://`), a `{{...}}` template
+ * placeholder, and any expression, such as `process.env.X`, that is not a
+ * string literal. WSP121 is fixed: a credential in a box's files is in git.
+ */
+
+import * as ts from "typescript";
+import type { WorkspaceCheck, WorkspaceCheckContext, WorkspaceDiagnostic } from "../checks";
+import type { Member } from "../declaration";
+import type { ReasonCode } from "../reason-codes";
+import { joinPath, skippedDir, type WorkspaceTree } from "../tree";
+
+/** The read contract's codes for the box findings, carried as `code` on each. */
+export const BOX_FINDING_CODES = ["box-credential-declared", "box-capability-unbrokered"] as const satisfies readonly ReasonCode[];
+
+export const WSP_BOX_CREDENTIAL = "WSP121";
+export const WSP_BOX_UNBROKERED = "WSP122";
+
+/** Values whose shape alone says they are a credential. The list FTN001 uses, plus Anthropic keys. */
+export const CREDENTIAL_SHAPES: readonly { pattern: RegExp; label: string }[] = [
+  { pattern: /\bAKIA[0-9A-Z]{16}\b/, label: "an AWS access key id" },
+  { pattern: /\b(?:ghp|gho|ghs|ghu)_[A-Za-z0-9]{20,}/, label: "a GitHub token" },
+  { pattern: /\bgithub_pat_[A-Za-z0-9_]{20,}/, label: "a GitHub fine-grained token" },
+  { pattern: /\bsk-ant-[A-Za-z0-9_-]{20,}/, label: "an Anthropic API key" },
+  { pattern: /\bsk-[A-Za-z0-9_-]{20,}/, label: "a secret API key (sk-)" },
+  { pattern: /\bftn_[A-Za-z0-9]{16,}/, label: "a Fountain API key" },
+  { pattern: /\bxox[baprs]-[A-Za-z0-9-]{10,}/, label: "a Slack token" },
+  { pattern: /-----BEGIN [A-Z ]*PRIVATE KEY-----/, label: "private key material" },
+];
+
+/** Secret-manager references a value may be instead of the secret. */
+export const SECRET_REFERENCE_SCHEMES = ["op://", "bws://", "infisical://"] as const;
+
+/**
+ * A key whose value is a credential: `API_KEY`, `GITHUB_TOKEN`, `apiKey`,
+ * `token`, `credential`, `password`, `AWS_SECRET_ACCESS_KEY`. A key that
+ * names where a secret is (`secretKey`, `TOKEN_FILE`, `tokenHash`) is not.
+ */
+const CREDENTIAL_KEY = /(?:^|[_-])(?:API_?KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?|PRIVATE_?KEY|ACCESS_?KEY)$|^(?:apiKey|token|secret|password|credentials?|privateKey|accessKey|authToken)$|[a-z](?:ApiKey|Token|Secret|Password|Credentials?|PrivateKey|AccessKey)$/i;
+
+/** Whether `key` names a credential. Exported for tests. */
+export function isCredentialKey(key: string): boolean {
+  return CREDENTIAL_KEY.test(key);
+}
+
+/** Whether `value` refers to a secret rather than being one. Exported for tests. */
+export function isSecretReference(value: string): boolean {
+  const v = value.trim();
+  if (v === "") return true;
+  if (v.includes("${")) return true;
+  // $VAR, $1, $(command): the shell fills it in.
+  if (v.startsWith("$")) return true;
+  if (/^\{\{[^}]*\}\}$/.test(v)) return true;
+  return SECRET_REFERENCE_SCHEMES.some((s) => v.startsWith(s));
+}
+
+/**
+ * Whether a value under a credential key says where a secret is rather than
+ * being one: a path (`~/box/llm-token`, `/run/secrets/token`), a URL, or an
+ * environment variable's name (`GIT_TOKEN`).
+ */
+function namesWhereSecretIs(value: string): boolean {
+  const v = value.trim();
+  return /^(?:\/|~|\.\.?\/)/.test(v) || /^[a-z][a-z0-9+.-]*:\/\//i.test(v) || /^[A-Z][A-Z0-9_]*$/.test(v);
+}
+
+/** The credential shape `value` has, or undefined. */
+export function credentialShape(value: string): string | undefined {
+  return CREDENTIAL_SHAPES.find((s) => s.pattern.test(value))?.label;
+}
+
+/** One literal secret found in a file. */
+export interface LiteralSecret {
+  /** 1-based. */
+  line: number;
+  column: number;
+  /** What was found, for the message: never the value itself. */
+  what: string;
+}
+
+const CODE_EXTENSIONS: Record<string, ts.ScriptKind> = {
+  ".ts": ts.ScriptKind.TS,
+  ".mts": ts.ScriptKind.TS,
+  ".cts": ts.ScriptKind.TS,
+  ".tsx": ts.ScriptKind.TSX,
+  ".js": ts.ScriptKind.JS,
+  ".mjs": ts.ScriptKind.JS,
+  ".cjs": ts.ScriptKind.JS,
+  ".jsx": ts.ScriptKind.JSX,
+  ".json": ts.ScriptKind.JSON,
+  ".jsonc": ts.ScriptKind.JSON,
+};
+
+const PROSE_EXTENSIONS = new Set([".md", ".mdx", ".txt", ".html", ".rst"]);
+
+/** Files larger than this are not read: a box's declarations are small, and a large file is data or a build. */
+const MAX_FILE_BYTES = 1024 * 1024;
+
+function propertyName(name: ts.PropertyName | undefined): string | undefined {
+  if (!name) return undefined;
+  if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNoSubstitutionTemplateLiteral(name)) return name.text;
+  return undefined;
+}
+
+const isStringLiteral = (n: ts.Node): n is ts.StringLiteral | ts.NoSubstitutionTemplateLiteral => ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n);
+
+/**
+ * The literal secrets in a TypeScript, JavaScript or JSON file, read as
+ * syntax and never run.
+ */
+export function literalSecretsInCode(text: string, file: string, kind: ts.ScriptKind): LiteralSecret[] {
+  const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, kind);
+  const out: LiteralSecret[] = [];
+  const at = (node: ts.Node, what: string) => {
+    const { line, character } = source.getLineAndCharacterOfPosition(node.getStart(source));
+    out.push({ line: line + 1, column: character + 1, what });
+  };
+  const reported = new Set<ts.Node>();
+  const visit = (node: ts.Node) => {
+    if (isStringLiteral(node) && !reported.has(node)) {
+      const shape = credentialShape(node.text);
+      if (shape && !isSecretReference(node.text)) {
+        reported.add(node);
+        at(node, shape);
+      }
+    }
+    if (ts.isPropertyAssignment(node) && isStringLiteral(node.initializer) && !reported.has(node.initializer)) {
+      const key = propertyName(node.name);
+      const value = node.initializer.text;
+      // A value with a credential's shape is reported by that shape, below.
+      if (key !== undefined && !isSecretReference(value) && !namesWhereSecretIs(value) && credentialShape(value) === undefined) {
+        if (isCredentialKey(key)) {
+          reported.add(node.initializer);
+          at(node.initializer, `a literal value for ${key}`);
+        } else if (key === "value" && ts.isObjectLiteralExpression(node.parent) && isVaultSecret(node.parent)) {
+          reported.add(node.initializer);
+          at(node.initializer, `a literal vault secret value for ${vaultSecretKey(node.parent) ?? "a key"}`);
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return out;
+}
+
+/** `{ key, value }` with nothing else but a description: the shape of a vault secret. */
+function isVaultSecret(obj: ts.ObjectLiteralExpression): boolean {
+  const names = obj.properties.map((p) => (ts.isPropertyAssignment(p) || ts.isShorthandPropertyAssignment(p) ? propertyName(p.name) : undefined));
+  return names.includes("key") && names.includes("value") && names.every((n) => n === "key" || n === "value" || n === "description");
+}
+
+function vaultSecretKey(obj: ts.ObjectLiteralExpression): string | undefined {
+  for (const p of obj.properties) {
+    if (ts.isPropertyAssignment(p) && propertyName(p.name) === "key" && isStringLiteral(p.initializer)) return p.initializer.text;
+  }
+  return undefined;
+}
+
+/** `KEY=value`, `export KEY=value` or `KEY: value`, the value optionally quoted. */
+const ASSIGNMENT = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_.-]*)\s*[=:]\s*(["']?)([^"'\s#]+)\2\s*(?:#.*)?$/;
+
+/**
+ * The literal secrets in any other text file, such as a shell script, an
+ * env file or YAML: a credential shape anywhere, or a line assigning a
+ * literal to a credential-named key.
+ */
+export function literalSecretsInText(text: string, assignments = true): LiteralSecret[] {
+  const out: LiteralSecret[] = [];
+  text.split(/\r?\n/).forEach((lineText, i) => {
+    for (const { pattern, label } of CREDENTIAL_SHAPES) {
+      const m = pattern.exec(lineText);
+      if (m && !isSecretReference(m[0])) {
+        out.push({ line: i + 1, column: m.index + 1, what: label });
+        return;
+      }
+    }
+    const a = assignments ? ASSIGNMENT.exec(lineText) : null;
+    if (a && isCredentialKey(a[1]) && !isSecretReference(a[3]) && !namesWhereSecretIs(a[3])) {
+      out.push({ line: i + 1, column: lineText.indexOf(a[3]) + 1, what: `a literal value for ${a[1]}` });
+    }
+  });
+  return out;
+}
+
+function extension(path: string): string {
+  const base = path.slice(path.lastIndexOf("/") + 1);
+  const dot = base.lastIndexOf(".");
+  return dot > 0 ? base.slice(dot).toLowerCase() : "";
+}
+
+/** The literal secrets in one file, or none when the file is binary or too large. */
+export function literalSecretsInFile(text: string, path: string): LiteralSecret[] {
+  if (text.length > MAX_FILE_BYTES || text.includes("\0")) return [];
+  const kind = CODE_EXTENSIONS[extension(path)];
+  if (kind !== undefined) return literalSecretsInCode(text, path, kind);
+  // Prose says "Token: ..." without meaning one, so only a credential's shape counts there.
+  return literalSecretsInText(text, !PROSE_EXTENSIONS.has(extension(path)));
+}
+
+/** Every file under `dir` in `tree`, skipping node_modules and dot-directories, sorted. */
+function filesUnder(tree: WorkspaceTree, dir: string): string[] {
+  const out: string[] = [];
+  const walk = (d: string) => {
+    for (const e of tree.list(d) ?? []) {
+      const p = joinPath(d, e.name);
+      if (e.type === "dir") {
+        if (!skippedDir(e.name)) walk(p);
+      } else out.push(p);
+    }
+  };
+  walk(dir);
+  return out.sort();
+}
+
+const boxMembers = (ctx: WorkspaceCheckContext): Member[] => ctx.declaration.members.filter((m) => m.box !== null);
+
+export const BOX_CHECKS: readonly WorkspaceCheck[] = [
+  {
+    id: WSP_BOX_CREDENTIAL,
+    name: "box-credential-declared",
+    description:
+      "A box holds no credential: no file in a box member's directory carries a literal secret, in its declarations, an env or a vault's defaults. Variable references and secret-manager references (op://, bws://, infisical://) are not secrets.",
+    severity: "error",
+    configurable: false,
+    check(ctx) {
+      const out: WorkspaceDiagnostic[] = [];
+      for (const m of boxMembers(ctx)) {
+        const dir = m.dir === "." ? "" : m.dir;
+        if (ctx.tree.stat(dir) !== "dir") continue;
+        for (const path of filesUnder(ctx.tree, dir)) {
+          let text: string;
+          try {
+            text = ctx.tree.read(path);
+          } catch {
+            continue;
+          }
+          for (const s of literalSecretsInFile(text, path)) {
+            out.push({
+              checkId: this.id,
+              severity: this.severity,
+              code: "box-credential-declared",
+              message: `box-credential-declared: ${path} holds ${s.what}, and member ${m.name} is a box, which holds no credential; replace it with a \${VAR} or secret-manager reference, or declare the capability as brokered in the member's box block`,
+              entity: m.name,
+              pointer: m.box!.pointer,
+              treeFile: path,
+              line: s.line,
+              column: s.column,
+            });
+          }
+        }
+      }
+      return out;
+    },
+  },
+  {
+    id: WSP_BOX_UNBROKERED,
+    name: "box-capability-unbrokered",
+    description: "Every capability a box declares names the broker that holds its credential and enforces its scope.",
+    severity: "error",
+    configurable: true,
+    check(ctx) {
+      const out: WorkspaceDiagnostic[] = [];
+      for (const m of boxMembers(ctx)) {
+        for (const c of m.box!.capabilities) {
+          if (c.broker !== null) continue;
+          out.push({
+            checkId: this.id,
+            severity: this.severity,
+            code: "box-capability-unbrokered",
+            message: `box-capability-unbrokered: member ${m.name}'s box needs ${c.name} and names no broker for it, so the box would hold its credential; set broker to the runtime that holds it, such as the lobby`,
+            entity: m.name,
+            pointer: c.pointer,
+          });
+        }
+      }
+      return out;
+    },
+  },
+];

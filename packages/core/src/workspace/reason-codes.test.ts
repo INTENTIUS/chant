@@ -25,6 +25,7 @@ import { CLOSE_ERROR_CODES } from "./records-close";
 import { RECORDS_SINCE_ERROR_CODES, RECORDS_SINCE_REASON_CODES } from "./records-since";
 import { STATUS_ERROR_CODES, STATUS_GATE_REASON_CODES, STATUS_REASON_CODES } from "./status";
 import { WORK_WARNING_CODES } from "./work";
+import { BOX_FINDING_CODES } from "./checks/boxes";
 
 const HERE = import.meta.dirname;
 
@@ -36,6 +37,7 @@ const PER_COMMAND: Record<string, readonly string[]> = {
   GRAPH_ERROR_CODES,
   CHECK_CODES,
   CHECK_ERROR_CODES,
+  BOX_FINDING_CODES,
   STATUS_REASON_CODES,
   STATUS_ERROR_CODES,
   STATUS_GATE_REASON_CODES,
