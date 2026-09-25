@@ -141,6 +141,21 @@ A box that never runs on Fountain doesn't need this lexicon for its steward. `de
 
 The declaration refuses the same things in both forms: an Op listed twice, a schedule whose overlap isn't `skip`, a cron that doesn't parse. Discovery refuses one Op listed by two stewards, and two stewards with one name.
 
+## Credentials
+
+A box's steward holds no credential ([#2726](https://github.com/INTENTIUS/chant/issues/2726)). The box's member in the workspace declaration lists the capabilities the box reaches through a broker, such as `fountain` and `inference`, and the broker holds the keys. The steward names the capabilities its Ops use and takes no `vault`:
+
+```typescript
+export const { agent, teammate, schedules, declaration } = Steward({
+  name: "box-steward",
+  environment: boxToolchain,
+  ops: [converge, dispatch, release, upgrade],
+  capabilities: ["fountain", "inference"],
+});
+```
+
+`vault` together with `capabilities` is refused at construction. `vault` alone still works for a steward that isn't behind a broker. `chant workspace check` fails a box member whose files hold a literal secret (`box-credential-declared`), which covers a steward's vault declared there. `chant workspace status --json` lists each capability the steward names with the broker the box block gives it, and `declared: false` for one the block doesn't list.
+
 ## The coding agent beside it
 
 A box also has a coding agent editing the app, in the same checkout as the steward. They share it by writing different things:

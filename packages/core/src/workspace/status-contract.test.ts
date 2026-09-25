@@ -504,10 +504,12 @@ describe("stewards in chant workspace status --json (#2731)", () => {
       name: "box-steward",
       ops: [op("box-converge", "* * * * *"), op("box-release")],
       form: { default: "local", environments: { "fountain-k3d": "fountain" } },
+      capabilities: ["fountain", "inference"],
+      vault: null,
     };
     const root = repo({
       "chant.workspace.json": declaration([
-        { name: "box", dir: "box", kind: "chant" },
+        { name: "box", dir: "box", kind: "chant", box: { capabilities: [{ name: "fountain", broker: "lobby", scope: ["agent", "vault"] }] } },
         { name: "notes", dir: "notes", kind: "other", because: "prose" },
       ]),
       "box/chant.config.ts": "export default {};\n",
@@ -539,6 +541,12 @@ describe("stewards in chant workspace status --json (#2731)", () => {
       file: "ops/steward.op.ts",
       form: "local",
       forms: { default: "local", environments: { "fountain-k3d": "fountain" } },
+      // #2726: the steward holds no credential; its capabilities join the box block.
+      vault: null,
+      capabilities: [
+        { name: "fountain", broker: "lobby", declared: true },
+        { name: "inference", broker: null, declared: false },
+      ],
       lease: { holder: "box-host:1:abc", acquiredAt: "2026-09-25T10:00:00.000Z", live: true },
     });
     expect(s.ops).toEqual([

@@ -82,6 +82,15 @@ export interface StewardDeclarationConfig {
   ops: StewardOpInput[];
   /** Where it runs. Default `local`. */
   form?: StewardFormSpec;
+  /**
+   * The box capabilities its Ops reach through the box's broker (#2726), by
+   * the names the member's `box` block in the workspace declaration gives
+   * them, such as `fountain` or `inference`. A steward that names any holds no
+   * credential of its own, so it takes no `vault`.
+   */
+  capabilities?: string[];
+  /** The vault the steward holds on Fountain, by name, for a steward that isn't behind a broker. */
+  vault?: string;
 }
 
 /** A steward's declaration, normalised. Plain data: see the module doc. */
@@ -90,6 +99,10 @@ export interface StewardDeclaration {
   readonly name: string;
   readonly ops: readonly OpConfig[];
   readonly form: { readonly default: StewardForm; readonly environments: Readonly<Record<string, StewardForm>> };
+  /** Brokered box capabilities its Ops use (#2726). Empty when it names none. */
+  readonly capabilities: readonly string[];
+  /** The vault it holds, by name, or null. Never set together with `capabilities`. */
+  readonly vault: string | null;
 }
 
 /** The config inside an op, whether it arrived as a declaration or as itself. */
@@ -152,11 +165,24 @@ export function declareSteward(config: StewardDeclarationConfig): StewardDeclara
       );
     }
   }
+  const capabilities = [...new Set(config.capabilities ?? [])];
+  for (const c of capabilities) {
+    if (typeof c !== "string" || c.trim() === "") throw new Error(`Steward "${name}": a capability is named by a non-empty string`);
+  }
+  const vault = config.vault ?? null;
+  if (vault !== null && capabilities.length > 0) {
+    throw new Error(
+      `Steward "${name}": it reaches ${capabilities.join(", ")} through the box's broker and also holds the vault "${vault}". ` +
+        `A brokered steward holds no credential of its own: drop the vault, or name no capabilities.`,
+    );
+  }
   return Object.freeze({
     kind: STEWARD_KIND,
     name,
     ops: Object.freeze([...ops]),
     form: normaliseStewardForm(name, config.form),
+    capabilities: Object.freeze(capabilities),
+    vault,
   });
 }
 

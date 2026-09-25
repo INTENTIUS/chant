@@ -58,6 +58,16 @@
  * `declaration` from an `*.op.ts` file so the operator and `chant workspace
  * status` find it.
  *
+ * ## Credentials (#2726)
+ *
+ * A box's steward holds no credential. Name the box capabilities its Ops use
+ * in `capabilities` (the names the member's `box` block in the workspace
+ * declaration gives them) and leave `vault` out: the broker holds the key and
+ * enforces the scope. `vault` together with `capabilities` is refused.
+ * `chant workspace check` fails a box member whose files hold a literal secret
+ * (`box-credential-declared`), and `chant workspace status --json` lists each
+ * capability the steward names with the broker the box block gives it.
+ *
  * ## The coding agent beside it
  *
  * A box also has a coding agent editing the app. They share the checkout by
@@ -110,8 +120,18 @@ export interface StewardOpts {
   name: string;
   /** The environment its computer is provisioned from: repo, chant, tooling. */
   environment: InstanceType<typeof Environment>;
-  /** Secrets layered on top. Omit under the egress broker, which holds them. */
+  /**
+   * Secrets layered on top, for a steward that isn't behind a broker. Omit it
+   * under a broker, which holds them, and name `capabilities` instead.
+   */
   vault?: InstanceType<typeof Vault>;
+  /**
+   * The box capabilities this steward's Ops reach through the box's broker
+   * (#2726), by the names the member's `box` block declares, such as
+   * `fountain` or `inference`. Refused together with `vault`: a brokered
+   * steward holds no credential.
+   */
+  capabilities?: string[];
   /**
    * The ops this steward runs. An op with a `schedule` gets a `Schedule`; one
    * without is still listed, so `chant run <op> --on fountain` knows which
@@ -239,7 +259,13 @@ export function Steward(opts: StewardOpts): StewardResources {
 
   // The declaration core reads. Built here, before any resource, so a bad
   // name, a duplicate op or an unknown form is refused with nothing declared.
-  const declaration = declareSteward({ name: opts.name, ops, form: opts.form ?? "fountain" });
+  const declaration = declareSteward({
+    name: opts.name,
+    ops,
+    form: opts.form ?? "fountain",
+    ...(opts.capabilities ? { capabilities: opts.capabilities } : {}),
+    ...(opts.vault ? { vault: vaultName } : {}),
+  });
   const envForms = [declaration.form.default, ...Object.values(declaration.form.environments)];
   if (!envForms.includes("fountain")) {
     throw new Error(

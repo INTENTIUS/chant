@@ -328,7 +328,7 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
       for (const env of envs) environments.push(await readEnvironment(m, env, found.dir, read));
       const own = await hasMemberLedger(m, found.dir);
       const gates = await readMemberGates(own ? `${MEMBERS_DIR}/${m.name}/${GATES_DIR}` : GATES_DIR, own ? "members" : "flat", commit, envs, found.dir, now, query.readGates);
-      const stewards = await (query.readStewards ?? readMemberStewards)(resolve(found.dir, m.dir), query.env, now, m.kind);
+      const stewards = await (query.readStewards ?? readMemberStewards)(resolve(found.dir, m.dir), query.env, now, m.kind, m.box);
       members.push({
         name: m.name,
         dir: m.dir,

@@ -81,6 +81,14 @@ describe("declareSteward", () => {
     expect(s.ops.map((o) => o.name)).toEqual(["box-release"]);
   });
 
+  test("a brokered steward names its capabilities and holds no vault (#2726)", () => {
+    const s = declareSteward({ name: "a", ops: [], capabilities: ["fountain", "inference", "fountain"] });
+    expect(s.capabilities).toEqual(["fountain", "inference"]);
+    expect(s.vault).toBeNull();
+    expect(declareSteward({ name: "b", ops: [], vault: "creds" }).vault).toBe("creds");
+    expect(() => declareSteward({ name: "c", ops: [], capabilities: ["fountain"], vault: "creds" })).toThrow(/holds no credential/);
+  });
+
   test("refuses what would make two writers or a promise it can't keep", () => {
     expect(() => declareSteward({ name: "a", ops: [op("x"), op("x")] })).toThrow(/listed twice/);
     expect(() => declareSteward({ name: "a", ops: [{ ...op("x"), schedule: { cron: "* * * * *", overlap: "buffer" as never } }] })).toThrow(/overlap "buffer"/);

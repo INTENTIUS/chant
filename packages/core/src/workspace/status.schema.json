@@ -116,7 +116,7 @@
     "stewardForm": { "enum": ["local", "fountain"] },
     "steward": {
       "type": "object",
-      "required": ["name", "file", "form", "forms", "lease", "ops"],
+      "required": ["name", "file", "form", "forms", "vault", "capabilities", "lease", "ops"],
       "properties": {
         "name": { "type": "string", "description": "The steward's name; on Fountain, its Agent's and Teammate's." },
         "file": { "type": "string", "description": "The *.op.ts file that declares it, relative to the member's directory." },
@@ -130,6 +130,20 @@
               "description": "The environments whose form differs from default.",
               "type": "object",
               "additionalProperties": { "$ref": "#/$defs/stewardForm" }
+            }
+          }
+        },
+        "vault": { "type": ["string", "null"], "description": "The vault the steward holds on Fountain, by name, or null. Never set when capabilities is non-empty." },
+        "capabilities": {
+          "description": "The box capabilities the steward reaches through a broker (#2726), in declaration order, joined with the member's box block. broker is the block's; declared is false when the block doesn't list the capability or the member has no block.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "broker", "declared"],
+            "properties": {
+              "name": { "type": "string" },
+              "broker": { "type": ["string", "null"] },
+              "declared": { "type": "boolean" }
             }
           }
         },

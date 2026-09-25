@@ -288,6 +288,20 @@ describe("Steward declaration and form", () => {
     ).toThrow(/listed twice/);
   });
 
+  it("records the brokered capabilities, and refuses them beside a vault (#2726)", () => {
+    const { declaration } = Steward({ name: "box-steward", environment: toolchain(), ops: [], capabilities: ["fountain"] });
+    expect(declaration.capabilities).toEqual(["fountain"]);
+    expect(declaration.vault).toBeNull();
+    __resetStewardsForTests();
+    expect(
+      Steward({ name: "prod-steward", environment: toolchain(), vault: new Vault({ name: "prod-creds" }), ops: [] }).declaration.vault,
+    ).toBe("prod-creds");
+    __resetStewardsForTests();
+    expect(() =>
+      Steward({ name: "x", environment: toolchain(), vault: new Vault({ name: "v" }), ops: [], capabilities: ["fountain"] }),
+    ).toThrow(/holds no credential/);
+  });
+
   it("refuses an unknown form", () => {
     expect(() =>
       Steward({ name: "box-steward", environment: toolchain(), ops: [], form: "cloud" as never }),

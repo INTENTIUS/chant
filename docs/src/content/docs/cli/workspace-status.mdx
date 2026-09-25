@@ -75,13 +75,14 @@ With `--json`, each member also lists its `box`: the [box block](/chant/referenc
 ```
 ### Stewards
 
-A steward is the one writer that runs a member's operational Ops, on Fountain or locally through `chant operator --steward` ([#2731](https://github.com/INTENTIUS/chant/issues/2731)). The JSON lists the stewards of each member of kind `chant` that has its own `chant.config.ts` or `.json`, read from their declarations in the member's `*.op.ts` files. This is the one part of the output that imports project code, and it imports only those files. Each Op's last run is the newest record in its run ledger on the local branch. The steward's `lease` is the one a local steward holds while it runs, read from the local ref and never fetched. Stewards appear in the JSON only.
+A steward is the one writer that runs a member's operational Ops, on Fountain or locally through `chant operator --steward` ([#2731](https://github.com/INTENTIUS/chant/issues/2731)). The JSON lists the stewards of each member of kind `chant` that has its own `chant.config.ts` or `.json`, read from their declarations in the member's `*.op.ts` files. This is the one part of the output that imports project code, and it imports only those files. Each Op's last run is the newest record in its run ledger on the local branch. The steward's `lease` is the one a local steward holds while it runs, read from the local ref and never fetched. The text view leaves stewards out.
 
 | Field | Meaning |
 |---|---|
 | `name`, `file` | The steward's name, and the `*.op.ts` file that declares it, relative to the member |
 | `form` | `fountain` or `local`: where the steward runs in the environment asked for |
 | `forms` | The declared default form, and the environments whose form differs from it |
+| `vault`, `capabilities` | The vault the steward holds, or `null`, and the box capabilities it reaches through a broker, each with the `broker` the member's box block gives it and `declared: false` when the block doesn't list it ([#2726](https://github.com/INTENTIUS/chant/issues/2726)) |
 | `lease` | The local steward's lease (`holder`, `acquiredAt`, `expiresAt`, `live`), or `null` when no local operator has held it |
 | `ops[]` | Each Op the steward runs, in declaration order, with `schedule` (`null` for an Op it runs only when asked), the `env` its runs are recorded under, and `lastRun` (`id`, `status`, `started`, `ended`, `gate`) or `null` |
 
@@ -173,6 +174,8 @@ The output is part of the workspace [read contract](/chant/reference/workspace-r
           "file": "ops/steward.op.ts",
           "form": "local",
           "forms": { "default": "local", "environments": { "fountain-k3d": "fountain" } },
+          "vault": null,
+          "capabilities": [{ "name": "fountain", "broker": "lobby", "declared": true }],
           "lease": { "holder": "box:4821:9f2c1a3b", "acquiredAt": "2026-09-21T08:00:00.000Z", "expiresAt": "2026-09-21T09:05:00.000Z", "live": true },
           "ops": [
             {

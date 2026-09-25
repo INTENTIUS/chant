@@ -68,6 +68,14 @@ export interface StatusSteward {
   form: StewardForm;
   /** The declared form: a default and the environments that differ from it. */
   forms: { default: StewardForm; environments: Record<string, StewardForm> };
+  /** The vault the steward holds on Fountain, by name, or null. */
+  vault: string | null;
+  /**
+   * The box capabilities the steward reaches through a broker (#2726), joined
+   * with the member's box block: `broker` is the block's, and `declared` is
+   * false when the block doesn't list the capability (or there is no block).
+   */
+  capabilities: { name: string; broker: string | null; declared: boolean }[];
   /** The local steward's own lease, or null when no local operator has held it. */
   lease: { holder: string; acquiredAt: string; expiresAt: string; live: boolean } | null;
   ops: StatusStewardOp[];
@@ -105,7 +113,13 @@ async function readStewardLease(name: string, memberDir: string, now: string): P
  * The stewards declared in one member, for `env`. `memberDir` is absolute.
  * Only a member of kind `chant` with a config of its own is read.
  */
-export async function readMemberStewards(memberDir: string, env: string, now: string, kind = "chant"): Promise<MemberStewards> {
+export async function readMemberStewards(
+  memberDir: string,
+  env: string,
+  now: string,
+  kind = "chant",
+  box: { capabilities: { name: string; broker: string | null }[] } | null = null,
+): Promise<MemberStewards> {
   const reasons: MemberStewards["reasons"] = [];
   if (kind !== "chant" || !isChantProject(memberDir)) return { stewards: [], reasons };
 
@@ -155,6 +169,11 @@ export async function readMemberStewards(memberDir: string, env: string, now: st
       file: relative(realpathSync(memberDir), realpathSync(filePath)).split("\\").join("/"),
       form: stewardFormFor(declaration, env),
       forms: { default: declaration.form.default, environments: { ...declaration.form.environments } },
+      vault: typeof declaration.vault === "string" ? declaration.vault : null,
+      capabilities: (Array.isArray(declaration.capabilities) ? declaration.capabilities : []).map((name) => {
+        const declared = box?.capabilities.find((c) => c.name === name);
+        return { name, broker: declared?.broker ?? null, declared: declared !== undefined };
+      }),
       lease: await readStewardLease(declaration.name, memberDir, now),
       ops,
     });
