@@ -5,7 +5,8 @@
  * `scan-vulnerabilities` capability over an injected scanner.
  */
 
-import { readFileSync } from "node:fs";
+import { readFileSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, test, expect } from "vitest";
 import {
@@ -15,8 +16,13 @@ import {
   createToolVulnScanner,
   createScanVulnerabilitiesCapability,
   autoDetectVulnScanner,
+  sbomPackages,
+  compareVersions,
+  scanWithDatabase,
+  createDatabaseVulnScanner,
   type VulnFinding,
   type VulnScanner,
+  type AdvisoryDatabase,
 } from "./vuln-scan";
 import { ToolNotAvailableError } from "./process-runner";
 import type { SbomDocument } from "./sbom-generator";
@@ -175,6 +181,123 @@ describe("exploitability parsing (#1463)", () => {
     const [f] = parseGrypeOutput(doc);
     expect(f.inKev).toBe(true);
     expect(f.kevRansomware).toBeUndefined();
+  });
+});
+
+// ── offline advisory database (ws-056, INTENTIUS/chant#2735) ─────────────────
+// Ported from chud's supply-chain.mjs tests: an SBOM's purl-derived packages
+// matched against a local, offline advisory database — no scanner binary, no
+// network.
+
+const SPDX_SBOM: SbomDocument = {
+  format: "spdx",
+  mediaType: "application/spdx+json",
+  bytes: JSON.stringify({
+    packages: [
+      { name: "lodash", externalRefs: [{ referenceCategory: "PACKAGE-MANAGER", referenceType: "purl", referenceLocator: "pkg:npm/lodash@4.17.20" }] },
+      { name: "left-pad", externalRefs: [{ referenceCategory: "PACKAGE-MANAGER", referenceType: "purl", referenceLocator: "pkg:npm/left-pad@1.3.0" }] },
+      { name: "no-purl" },
+    ],
+  }),
+  generator: "lockfile",
+};
+
+const CYCLONEDX_SBOM: SbomDocument = {
+  format: "cyclonedx",
+  mediaType: "application/vnd.cyclonedx+json",
+  bytes: JSON.stringify({
+    components: [{ name: "lodash", purl: "pkg:npm/lodash@4.17.20" }, { name: "left-pad", purl: "pkg:npm/left-pad@1.3.0" }],
+  }),
+  generator: "lockfile",
+};
+
+const DB: AdvisoryDatabase = {
+  advisories: [
+    { id: "CVE-2024-0001", package: "lodash", severity: "critical", introduced: "4.0.0", fixed: "4.17.21" },
+    { id: "CVE-2024-0002", package: "left-pad", severity: "low" },
+    { id: "CVE-2024-0003", package: "lodash", ecosystem: "pypi", severity: "high" },
+  ],
+};
+
+describe("sbomPackages", () => {
+  test("reads purls from an SPDX document's externalRefs, skipping entries with none", () => {
+    const packages = sbomPackages(SPDX_SBOM);
+    expect(packages).toEqual([
+      { ecosystem: "npm", name: "lodash", version: "4.17.20" },
+      { ecosystem: "npm", name: "left-pad", version: "1.3.0" },
+    ]);
+  });
+
+  test("reads purls from a CycloneDX document's components", () => {
+    expect(sbomPackages(CYCLONEDX_SBOM)).toEqual([
+      { ecosystem: "npm", name: "lodash", version: "4.17.20" },
+      { ecosystem: "npm", name: "left-pad", version: "1.3.0" },
+    ]);
+  });
+
+  test("deduplicates identical ecosystem/name/version", () => {
+    const doc = { bytes: JSON.stringify({ components: [{ purl: "pkg:npm/x@1.0.0" }, { purl: "pkg:npm/x@1.0.0" }] }) };
+    expect(sbomPackages(doc)).toHaveLength(1);
+  });
+});
+
+describe("compareVersions", () => {
+  test("compares numerically, not lexically (1.9.0 < 1.10.0)", () => {
+    expect(compareVersions("1.9.0", "1.10.0")).toBe(-1);
+    expect(compareVersions("1.10.0", "1.9.0")).toBe(1);
+    expect(compareVersions("1.2.3", "1.2.3")).toBe(0);
+  });
+
+  test("a pre-release sorts before its release", () => {
+    expect(compareVersions("1.2.0-rc.1", "1.2.0")).toBe(-1);
+    expect(compareVersions("1.2.0", "1.2.0-rc.1")).toBe(1);
+  });
+});
+
+describe("scanWithDatabase", () => {
+  test("matches an SBOM's packages against the database by ecosystem + name, introduced <= version < fixed", () => {
+    const findings = scanWithDatabase(SPDX_SBOM, DB);
+    expect(findings).toHaveLength(2);
+    const lodash = findings.find((f) => f.cveId === "CVE-2024-0001");
+    expect(lodash).toEqual({ cveId: "CVE-2024-0001", severity: "critical", package: "lodash", installedVersion: "4.17.20", fixedVersion: "4.17.21", fixable: true });
+    const leftPad = findings.find((f) => f.cveId === "CVE-2024-0002");
+    expect(leftPad).toMatchObject({ package: "left-pad", fixable: false });
+    expect(leftPad!.fixedVersion).toBeUndefined();
+  });
+
+  test("a version at or after `fixed` is not affected", () => {
+    const doc = { bytes: JSON.stringify({ components: [{ purl: "pkg:npm/lodash@4.17.21" }] }) };
+    expect(scanWithDatabase(doc, DB)).toHaveLength(0);
+  });
+
+  test("an ecosystem mismatch does not match (pypi advisory, npm package)", () => {
+    const findings = scanWithDatabase(SPDX_SBOM, DB);
+    expect(findings.some((f) => f.cveId === "CVE-2024-0003")).toBe(false);
+  });
+
+  test("accepts a bare advisories array as well as { advisories: [...] }", () => {
+    expect(scanWithDatabase(SPDX_SBOM, DB.advisories)).toHaveLength(2);
+  });
+});
+
+describe("createDatabaseVulnScanner", () => {
+  test("scans by reading the database file at scan time", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "chant-vulndb-"));
+    const dbFile = join(dir, "advisories.json");
+    writeFileSync(dbFile, JSON.stringify(DB));
+    const scanner = createDatabaseVulnScanner(dbFile);
+    const findings = await scanner.scan({ sbom: SPDX_SBOM });
+    expect(findings).toHaveLength(2);
+  });
+
+  test("composes with scan-vulnerabilities like any other VulnScanner", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "chant-vulndb-"));
+    const dbFile = join(dir, "advisories.json");
+    writeFileSync(dbFile, JSON.stringify(DB));
+    const cap = createScanVulnerabilitiesCapability(createDatabaseVulnScanner(dbFile));
+    const out = await cap.run(ctx, { sbom: SPDX_SBOM, digest: "sha256:abc" });
+    expect(out.findings).toHaveLength(2);
+    expect(out.digest).toBe("sha256:abc");
   });
 });
 
