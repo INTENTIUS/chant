@@ -2,11 +2,12 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { WatchOp, isStewardDeclaration, stewardFormFor, type OpConfig } from "@intentius/chant/op";
 import { ConciergeStack } from "./concierge-stack";
 import { Steward, stewardForOp, __resetStewardsForTests } from "./steward";
-import { Box, BOX_PORT_METADATA_KEY } from "./box";
+import { Box, BOX_ALLOWED_VAULTS_METADATA_KEY, BOX_PORT_METADATA_KEY } from "./box";
 import { postSynthChecks } from "../lint/post-synth/index";
 import spec from "../spec/fountain-openapi.snapshot.json";
 import { Environment, Vault } from "../generated/index";
 import { fountainSerializer } from "../serializer";
+import { buildGraphIr, resolveAttrRefs } from "@intentius/chant";
 import type { Declarable } from "@intentius/chant";
 import type { PostSynthContext } from "@intentius/chant/lint/post-synth";
 import { runtimeModelValidCheck } from "../lint/post-synth/ftn016-runtime-model-valid";
@@ -338,13 +339,18 @@ describe("Box", () => {
     expect(a.environment).toBe(environment);
     expect(a.permission_policy).toEqual({ default: "auto_allow" });
     expect(a.allowed_vault_ids).toEqual([]);
-    expect(a.metadata).toEqual({ "managed-by": "chant", "box-port": 8080 });
+    expect(a.sandbox_provider).toBeUndefined();
+    expect(a.metadata).toEqual({
+      "managed-by": "chant",
+      "box-port": 8080,
+      [BOX_ALLOWED_VAULTS_METADATA_KEY]: [],
+    });
 
     expect(vault).toBeUndefined();
     expect(port).toBe(8080);
   });
 
-  it("declares the shared vault and scopes the agent to it", () => {
+  it("declares the shared vault and scopes the agent to it, named in the read contract", () => {
     const { agent, vault } = Box({
       ...base,
       vault: { secrets: [{ key: "STUDIO_SECRET", value: "${STUDIO_SECRET}" }] },
@@ -353,6 +359,18 @@ describe("Box", () => {
     expect(props(vault).secrets).toEqual([{ key: "STUDIO_SECRET", value: "${STUDIO_SECRET}" }]);
     expect(props(vault).metadata).toEqual({ "managed-by": "chant" });
     expect(props(agent).allowed_vault_ids).toEqual([vault]);
+    expect((props(agent).metadata as Record<string, unknown>)[BOX_ALLOWED_VAULTS_METADATA_KEY]).toEqual([
+      "studio-box-secrets",
+    ]);
+  });
+
+  it("resolves an explicit allowedVaults list to names in the read contract", () => {
+    const { agent } = Box({ ...base, allowedVaults: ["other-secrets", "studio-box-secrets"] });
+    expect(props(agent).allowed_vault_ids).toEqual(["other-secrets", "studio-box-secrets"]);
+    expect((props(agent).metadata as Record<string, unknown>)[BOX_ALLOWED_VAULTS_METADATA_KEY]).toEqual([
+      "other-secrets",
+      "studio-box-secrets",
+    ]);
   });
 
   it("loosening is a visible parameter", () => {
@@ -363,6 +381,7 @@ describe("Box", () => {
       port: 3000,
       unrestrictedNetworking: true,
       allowedVaults: "any",
+      sandboxProvider: "e2b",
       repo: { url: "https://github.com/o/app", mountPath: "/srv/app", ref: "v1", secretKey: "GH_TOKEN" },
       envVars: { NODE_ENV: "production" },
       packages: { apt: ["podman"] },
@@ -380,12 +399,30 @@ describe("Box", () => {
     const a = props(open.agent);
     expect(a.runtime).toBe("codex");
     expect(a.model).toBe("openai/gpt-5");
-    // "any" leaves the list unset: fountain reads null as any vault the tenant owns.
+    expect(a.sandbox_provider).toBe("e2b");
+    // "any" leaves the manifest's own list unset: fountain reads that as any
+    // vault the tenant owns. The read contract still names it explicitly.
     expect("allowed_vault_ids" in a).toBe(false);
+    expect((a.metadata as Record<string, unknown>)[BOX_ALLOWED_VAULTS_METADATA_KEY]).toBe("any");
     expect(open.port).toBe(3000);
 
     const listed = Box({ ...base, allowedHosts: ["registry.npmjs.org"] });
     expect(props(listed.environment).networking_config).toEqual({ allowed_hosts: ["registry.npmjs.org"] });
+  });
+
+  it("builds with no repo — no clone, the Environment declares no repositories", () => {
+    const { environment, agent, port } = Box({
+      name: "blank-slate",
+      setupScript: "#!/bin/bash\nnpm install\n",
+      permissionPolicy: { default: "auto_allow" as const },
+      sandboxProvider: "runner",
+    });
+    const env = props(environment);
+    expect("repositories" in env).toBe(false);
+    expect(env.setup_script).toBe("#!/bin/bash\nnpm install\n");
+    const a = props(agent);
+    expect(a.sandbox_provider).toBe("runner");
+    expect(port).toBe(8080);
   });
 
   it("refuses what it cannot mean", () => {
@@ -436,5 +473,63 @@ describe("Box", () => {
     const ctx = { outputs: new Map(), entities, buildResult: { warnings: [], errors: [] } } as unknown as PostSynthContext;
     const diagnostics = postSynthChecks.flatMap((c) => c.check(ctx));
     expect(diagnostics).toEqual([]);
+  });
+
+  it("a no-repo, sandboxProvider: runner box builds a manifest whose every field exists in the pinned spec, clean under every post-synth check", () => {
+    const { environment, agent } = Box({
+      name: "blank-slate",
+      setupScript: "#!/bin/bash\nnpm install\n",
+      permissionPolicy: { default: "auto_allow" as const },
+      sandboxProvider: "runner",
+    });
+    const entities = new Map<string, Declarable>([
+      ["boxAgent", agent as unknown as Declarable],
+      ["boxEnv", environment as unknown as Declarable],
+    ]);
+
+    const yaml = fountainSerializer.serialize(entities) as string;
+    expect([...yaml.matchAll(/^kind: (\w+)$/gm)].map((m) => m[1])).toEqual(["Environment", "Agent"]);
+    expect(yaml).not.toContain("repositories:");
+    expect(yaml).toContain("sandbox_provider: runner");
+
+    const schemas = (spec as unknown as { components: { schemas: Record<string, { properties: Record<string, unknown> }> } })
+      .components.schemas;
+    const manifestOnly = new Set(["environment", "secrets"]);
+    for (const [kind, entity] of [
+      ["EnvironmentRequest", environment],
+      ["AgentRequest", agent],
+    ] as const) {
+      const fields = Object.keys(schemas[kind].properties);
+      for (const key of Object.keys(props(entity))) {
+        if (key === "name" || manifestOnly.has(key)) continue;
+        expect(fields, `${kind} has no field ${key}`).toContain(key);
+      }
+    }
+
+    const ctx = { outputs: new Map(), entities, buildResult: { warnings: [], errors: [] } } as unknown as PostSynthContext;
+    const diagnostics = postSynthChecks.flatMap((c) => c.check(ctx));
+    expect(diagnostics).toEqual([]);
+  });
+
+  it("shows the agent's sandbox provider and allowed vaults on the graph node (#2759)", () => {
+    const { agent, environment } = Box({
+      ...base,
+      sandboxProvider: "runner",
+      allowedVaults: "any",
+    });
+    const entities = new Map<string, Declarable>([
+      ["boxAgent", agent as unknown as Declarable],
+      ["boxEnv", environment as unknown as Declarable],
+    ]);
+    resolveAttrRefs(entities);
+
+    const ir = buildGraphIr(entities);
+    const agentNode = ir.nodes.find((n) => n.id === "boxAgent")!;
+    expect(agentNode.attrs.sandbox_provider).toBe("runner");
+    // "any" leaves the manifest's allowed_vault_ids unset, so it's the
+    // metadata marker a graph reader checks, not an absent key it has to
+    // interpret.
+    expect(agentNode.attrs.allowed_vault_ids).toBeUndefined();
+    expect((agentNode.attrs.metadata as Record<string, unknown>)[BOX_ALLOWED_VAULTS_METADATA_KEY]).toBe("any");
   });
 });

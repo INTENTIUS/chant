@@ -1,11 +1,15 @@
 /**
  * Box — a persistent machine that serves an app repo and its tools (#2705).
  *
- * A box is an `Environment` whose repositories hold the app repo and whose
- * `setup_script` provisions the machine (for an arugula studio box, the
- * studio's `box/provision-template.sh`), an `Agent` on a persistent sandbox
- * provisioned from it, and optionally a `Vault` for the secrets every box of
- * this kind shares.
+ * A box is an `Environment` whose `setup_script` provisions the machine (for
+ * an arugula studio box, the studio's `box/provision-template.sh`), an
+ * `Agent` on a persistent sandbox provisioned from it, and optionally a
+ * `Vault` for the secrets every box of this kind shares. `repo` is optional:
+ * when given, the Environment's `repositories` clones it in before setup
+ * runs; when omitted (#2759 — a blank-slate app, such as the one hud's
+ * `init` makes, has no git remote yet), the Environment holds no
+ * `repositories` at all and `setup_script` still runs, against whatever
+ * working tree is already on the sandbox (a self-hosted `runner`'s own).
  *
  * ```ts
  * export const { environment, agent, vault } = Box({
@@ -22,18 +26,20 @@
  * whose every turn is a chant command line, bound to a teammate with a
  * standing thread and schedules. A box is where people and their agents work
  * on an app: a conversational runtime (`claude` by default), the app repo
- * cloned in, the provisioning script run as setup, and one served port. It
- * declares no teammate and no schedule, and nothing here starts a
- * conversation. Starting and reaping a box stays a runtime act, as it is in
- * hud's box runtime.
+ * cloned in (when there is one), the provisioning script run as setup, and
+ * one served port. It declares no teammate and no schedule, and nothing here
+ * starts a conversation. Starting and reaping a box stays a runtime act, as
+ * it is in hud's box runtime.
  *
  * The defaults are the closed ones, as `ConciergeStack`'s are, and loosening
  * one is a visible parameter: networking is `limited` with an empty allowlist
  * until `allowedHosts` names hosts or `unrestrictedNetworking: true` opens it
  * (which FTN011 then warns about); `allowed_vault_ids` holds the box's own
- * vault, or nothing, until `allowedVaults` widens it. `permission_policy` has
- * no default at all, because fountain's unset policy is `auto_allow` and that
- * should be a choice someone wrote down.
+ * vault, or nothing, until `allowedVaults` widens it; `sandbox_provider` is
+ * unset (the instance default) until `sandboxProvider` names one of the
+ * pinned spec's `sprites`, `e2b`, `daytona` or `runner`. `permission_policy`
+ * has no default at all, because fountain's unset policy is `auto_allow` and
+ * that should be a choice someone wrote down.
  *
  * ## Credentials
  *
@@ -55,12 +61,36 @@
  * pinned spec, v0.21.0). The port is recorded in the metadata of both, under
  * `box-port`, and returned as `port`, so whatever builds the box's URL reads
  * it from the declaration or from fountain's own record without a guess.
+ *
+ * ## Allowed vaults in the read contract
+ *
+ * `sandbox_provider` is a plain `Agent` field, so `chant workspace graph
+ * --json` (and `chant graph`) already carry it on the agent's node like any
+ * other declared attribute. `allowed_vault_ids` is not as plain to read:
+ * fountain's own convention (and this composite's, per `allowedVaults`
+ * above) is that an *unset* list means "any vault the tenant owns", so a
+ * graph reader can't tell "no vaults declared" from "any vault" just by the
+ * key's absence. #2759 — a runtime that creates a vault per box (hud's box
+ * runtime) needs to check that the declaration permits it — so the resolved
+ * list, or the literal string `"any"`, is also recorded in the agent's
+ * metadata under `box-allowed-vault-ids` (`BOX_ALLOWED_VAULTS_METADATA_KEY`).
+ * It is read-only bookkeeping, alongside `box-port`: the manifest's real
+ * `allowed_vault_ids` field is what fountain applies.
  */
 
 import { Agent, Environment, Vault } from "../generated/index";
 
 /** The metadata key a box's served port is recorded under, on its Environment and Agent. */
 export const BOX_PORT_METADATA_KEY = "box-port";
+
+/** The metadata key a box agent's resolved allowed vaults (or `"any"`) are recorded under, for the read contract. */
+export const BOX_ALLOWED_VAULTS_METADATA_KEY = "box-allowed-vault-ids";
+
+/** `Agent.sandbox_provider`'s values at the pinned spec. */
+export const BOX_SANDBOX_PROVIDERS = ["sprites", "e2b", "daytona", "runner"] as const;
+
+/** A sandbox backend, per the pinned spec's `sandbox_provider` enum. */
+export type BoxSandboxProvider = (typeof BOX_SANDBOX_PROVIDERS)[number];
 
 /** The port a box serves when none is given: the door's. */
 export const BOX_DEFAULT_PORT = 8080;
@@ -95,8 +125,8 @@ export interface BoxVaultOpts {
 export interface BoxOpts {
   /** The Agent's name. The Environment is `<name>-env`. */
   name: string;
-  /** The app repo the box serves, cloned into the sandbox before setup runs. */
-  repo: BoxRepositoryOpts;
+  /** The app repo the box serves, cloned into the sandbox before setup runs. Omit for a blank-slate app with no repo yet: the Environment declares no `repositories`, and `setupScript` runs against whatever working tree the sandbox already has. */
+  repo?: BoxRepositoryOpts;
   /** The provisioning script's text, run as the Environment's `setup_script`. */
   setupScript: string;
   /** Setup exec timeout, 1 to 900 seconds (FTN024). fountain's default is 120. */
@@ -105,6 +135,8 @@ export interface BoxOpts {
   runtime?: "claude" | "codex" | "gemini" | "opencode";
   /** Canonical provider/model_id. Omitted, fountain's default for the runtime. */
   model?: string;
+  /** Sandbox backend override. Omitted, the instance default (`SANDBOX_PROVIDER`). A plain `Agent.sandbox_provider` field, so it is already visible on the graph node without extra bookkeeping (unlike `allowedVaults`; see "Allowed vaults in the read contract" above). */
+  sandboxProvider?: BoxSandboxProvider;
   /** Per-tool permission policy. Required: fountain's unset policy is `auto_allow`. */
   permissionPolicy: BoxPermissionPolicy;
   /** Environment packages, passed through. */
@@ -158,16 +190,18 @@ export function Box(opts: BoxOpts): BoxResources {
   const owned = { "managed-by": "chant", ...(opts.metadata ?? {}) };
   const metadata = { ...owned, [BOX_PORT_METADATA_KEY]: port };
 
-  const repository = {
-    url: opts.repo.url,
-    mount_path: opts.repo.mountPath ?? BOX_DEFAULT_MOUNT_PATH,
-    ...(opts.repo.ref !== undefined ? { ref: opts.repo.ref } : {}),
-    ...(opts.repo.secretKey !== undefined ? { secret_key: opts.repo.secretKey } : {}),
-  };
+  const repository = opts.repo
+    ? {
+        url: opts.repo.url,
+        mount_path: opts.repo.mountPath ?? BOX_DEFAULT_MOUNT_PATH,
+        ...(opts.repo.ref !== undefined ? { ref: opts.repo.ref } : {}),
+        ...(opts.repo.secretKey !== undefined ? { secret_key: opts.repo.secretKey } : {}),
+      }
+    : undefined;
 
   const environment = new Environment({
     name: `${opts.name}-env`,
-    repositories: [repository],
+    ...(repository ? { repositories: [repository] } : {}),
     setup_script: opts.setupScript,
     ...(opts.setupTimeoutSeconds !== undefined ? { setup_timeout_seconds: opts.setupTimeoutSeconds } : {}),
     ...(opts.packages ? { packages: opts.packages } : {}),
@@ -193,18 +227,28 @@ export function Box(opts: BoxOpts): BoxResources {
   const allowedVaults =
     opts.allowedVaults === "any" ? undefined : (opts.allowedVaults ?? (vault ? [vault] : []));
 
+  // The resolved allowed-vaults value, for the read contract (see "Allowed
+  // vaults in the read contract" above) — "any" when the list is left unset,
+  // otherwise each entry's own declared name.
+  const allowedVaultsForReadContract: "any" | string[] =
+    opts.allowedVaults === "any"
+      ? "any"
+      : allowedVaults!.map((v) => (typeof v === "string" ? v : (v as unknown as { props: { name: string } }).props.name));
+  const agentMetadata = { ...metadata, [BOX_ALLOWED_VAULTS_METADATA_KEY]: allowedVaultsForReadContract };
+
   const agent = new Agent({
     name: opts.name,
     runtime: opts.runtime ?? "claude",
     ...(opts.model !== undefined ? { model: opts.model } : {}),
     sandbox_mode: "persistent",
+    ...(opts.sandboxProvider !== undefined ? { sandbox_provider: opts.sandboxProvider } : {}),
     environment,
     permission_policy: opts.permissionPolicy,
     ...(allowedVaults !== undefined ? { allowed_vault_ids: allowedVaults } : {}),
     ...(opts.skills ? { skills: opts.skills } : {}),
     ...(opts.mcpServers ? { mcp_servers: opts.mcpServers } : {}),
     ...(opts.system !== undefined ? { system: opts.system } : {}),
-    metadata,
+    metadata: agentMetadata,
   });
 
   return { environment, agent, ...(vault ? { vault } : {}), port };
