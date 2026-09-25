@@ -3,6 +3,8 @@
 //
 // chant workspace records --kind design/sessions/session.kind.mjs --json
 // chant workspace records --kind design/sessions/session.kind.mjs --since <open commit> --at <close commit> --json
+// chant workspace records --since S-0002 --json
+// chant workspace records close S-0002
 //
 // A session is a group walking an agenda of records together. It keeps who
 // attended and the verdicts it produced, and it is sealed when it closes.
@@ -30,9 +32,15 @@ export const recordKind = {
   // without the closed_digest line, written when the session closes.
   // subjects: the decisions the verdicts name. Entries of their reviews list
   // (the decision kind's reviews.field) name a session.
+  // openedRev, closedRev and closedOn (#2693): the fields records new and
+  // records close write, the commits the session opened and closed at and
+  // the time it closed. records --since <session id> reads the commits.
   session: {
     verdicts: "verdicts",
     seal: "closed_digest",
     subjects: { kind: "../../decisions/decision.kind.mjs" },
+    openedRev: "opened_rev",
+    closedRev: "closed_rev",
+    closedOn: "closed",
   },
 };

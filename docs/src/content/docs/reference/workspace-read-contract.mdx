@@ -153,7 +153,11 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `review-note-required` | error, `records review` | A dissent was given with no note. |
 | `review-sign-failed` | error, `records review` | `--sign` was given and no seal could be made: the key can't be read or used, git names no ssh signing key, or `ssh-keygen` isn't installed. |
 | `record-sign-failed` | error, `records new` and `amend` | `--sign` was given and no author seal could be made: the record names no author, the key can't be read or used, git names no ssh signing key, or `ssh-keygen` isn't installed. |
-| `since-rev-unknown` | error, `records --since` | `--since` names no commit. |
+| `session-unknown` | error, `records review` | `--session` names no session of a session kind whose subjects are the record's kind ([#2693](https://github.com/INTENTIUS/chant/issues/2693)). |
+| `session-not-open` | error, `records review` | `--session` names a closed session, which takes no more verdicts. |
+| `since-rev-unknown` | error, `records --since` | `--since` names no commit, or names a session with no opening revision whose file no commit added. |
+| `since-session-unknown` | error, `records --since` | `--since` has a session id's shape and names no commit, and no session has that id ([#2693](https://github.com/INTENTIUS/chant/issues/2693)). |
+| `since-session-open` | reason, `records --since` | `--since` names a session that is still open, so the comparison runs to the working tree. |
 | `intent-region-invalid` | error, `graph --intent` | The region's path, or its line range, does not exist in the tree read. |
 | `intent-history-shallow` | reason, `graph --intent` | The repository is a shallow clone, so the region's history stops at the clone's boundary. |
 | `intent-plugin-failed` | reason, `graph --intent` | A kind file's `commitJoins` failed for a commit. |
@@ -337,7 +341,7 @@ A reader such as behold or hud builds one view from several commands. The join k
 
 A reader starts with `ls`, which lists every member whether it can be read or not. It then reads `graph` for the nodes in `groups.byMember`, and matches each graph entry to the `ls` member of the same name. `check` findings attach to a member through `entity`, and `status` releases and gates attach through the member name. A gate's `component`, or a `status` release's, matches a `graph --composites` component's `name` in the same member. Node ids in `graph` are `<member>/<id>`, so a node never collides with another member's.
 
-A live review session view (H5 of [#2650](https://github.com/INTENTIUS/chant/issues/2650)) reads three documents. `records` on the session kind gives the agenda, the attendance and the verdicts. `records` on the decision kind gives each agenda decision, and `citedBy` on the session links the two through the decisions' review entries. At close, `records --since <open commit> --at <close commit>` on each kind gives what the session changed. The open and close commits are the ones that first wrote the session file and that set it to `closed`, which `git log` on the file gives.
+A live review session view (H5 of [#2650](https://github.com/INTENTIUS/chant/issues/2650)) reads three documents. `records` on the session kind gives the agenda, the attendance and the verdicts. `records` on the decision kind gives each agenda decision, and `citedBy` on the session links the two through the decisions' review entries. What the session changed comes from `records --since <session id>` on each kind, from the commit it opened at to the commit that carried its close, or to the working tree while it is open ([#2693](https://github.com/INTENTIUS/chant/issues/2693)). chant reads both commits from the session record and from git, so the reader passes only the id. A session written before chant 0.88.0 has no revision fields, and chant falls back to the commits that added its file and last changed it.
 
 Documents read at the same `at` belong together. Mixing a working-tree `ls` with a `graph --at` of an older commit can list members the graph doesn't have, and each document names its own `at` so a reader can tell.
 
@@ -345,17 +349,18 @@ hud reads exactly as behold does, and caches per member. At a commit, a member's
 
 ## Writing records
 
-A reader writes only through chant commands ([ws-052](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-052-chant-hud-boundary.md)). For records those are [`records new`, `amend` and `review`](/chant/cli/workspace-records/#writing-records) ([#2670](https://github.com/INTENTIUS/chant/issues/2670)). Each validates the record it would write the way `records` reads it and then writes one file or none, leaving the commit to the caller. The document each prints follows its own schema:
+A reader writes only through chant commands ([ws-052](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-052-chant-hud-boundary.md)). For records those are [`records new`, `amend`, `review` and `close`](/chant/cli/workspace-records/#writing-records) ([#2670](https://github.com/INTENTIUS/chant/issues/2670), [#2693](https://github.com/INTENTIUS/chant/issues/2693)). Each validates the record it would write the way `records` reads it and then writes one file or none, leaving the commit to the caller. `review --session` is the one exception, and it writes the decision and the session together. The document each prints follows its own schema:
 
 | Command | Schema `$id` | Result |
 |---|---|---|
 | `chant workspace records new` | `https://intentius.io/chant/schemas/workspace/records-new/v1/records-new.schema.json` | `path`, `id`, and `seal` with `--sign` |
 | `chant workspace records amend` | `https://intentius.io/chant/schemas/workspace/records-amend/v1/records-amend.schema.json` | `path`, `id`, `changed`, and `seal` with `--sign` or `sealDropped` when a change removed the seal |
-| `chant workspace records review` | `https://intentius.io/chant/schemas/workspace/records-review/v1/records-review.schema.json` | `path`, `id`, `review` |
+| `chant workspace records review` | `https://intentius.io/chant/schemas/workspace/records-review/v1/records-review.schema.json` | `path`, `id`, `review`, and `session` with `--session` |
+| `chant workspace records close` | `https://intentius.io/chant/schemas/workspace/records-close/v1/records-close.schema.json` | `path`, `id`, `changed`, `seal`, `closedRev` |
 
 The schemas ship beside the read schemas and follow their shape: a `oneOf` of a result and a failure, `contract: 1`, and a closed list of error codes from the same list as every read. A result also carries `kind`, `dryRun`, the written record's `warnings`, and `text` under `--dry-run`. A failure exits 1 and writes nothing. chant 0.86.0 is the first release to print these documents.
 
-A write never makes the caller compute anything about the record. `new` allocates the id, `amend` applies the approval rule, and `review` computes the digest the verdict is bound to. The principal a review names is recorded as the caller gives it. `review --sign` seals the verdict with an ssh key, and `records` then reports whether the seal verifies for that principal against the signers at base ([#2687](https://github.com/INTENTIUS/chant/issues/2687)). `new --sign` and `amend --sign` seal the record's author the same way ([#2688](https://github.com/INTENTIUS/chant/issues/2688)). The provenance of the commit that carries the file is reported apart from that ([#2547](https://github.com/INTENTIUS/chant/issues/2547)).
+A write never makes the caller compute anything about the record. `new` allocates the id, and for a session it records the commit the session opened at. `amend` applies the approval rule and `review` computes the digest the verdict is bound to. `close` computes a session's seal ([#2693](https://github.com/INTENTIUS/chant/issues/2693)). `review --session` writes the verdict to the decision and to the session in one command, so the two lists never differ. The principal a review names is recorded as the caller gives it. `review --sign` seals the verdict with an ssh key, and `records` then reports whether the seal verifies for that principal against the signers at base ([#2687](https://github.com/INTENTIUS/chant/issues/2687)). `new --sign` and `amend --sign` seal the record's author the same way ([#2688](https://github.com/INTENTIUS/chant/issues/2688)). The provenance of the commit that carries the file is reported apart from that ([#2547](https://github.com/INTENTIUS/chant/issues/2547)).
 
 ## Testing a reader
 

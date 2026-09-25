@@ -60,7 +60,7 @@ export const RECORDS_CONTRACT_VERSION = 1;
 export const RECORDS_OUTPUT_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace/records/v1/records.schema.json";
 
 const USAGE =
-  "chant workspace records [--kind <kind file>] [--current] [--at <rev>] [--base <rev>] [--require attested] [--json] | chant workspace records [--kind <kind file>] --since <rev> [--at <rev>] [--json] | chant workspace records pin <path> | chant workspace records new|amend|review (#2670)";
+  "chant workspace records [--kind <kind file>] [--current] [--at <rev>] [--base <rev>] [--require attested] [--json] | chant workspace records [--kind <kind file>] --since <rev|session id> [--at <rev>] [--json] | chant workspace records pin <path> | chant workspace records new|amend|review|close (#2670, #2693)";
 
 /** Exit code when the read worked and a record falls below `--require`. */
 export const EXIT_BELOW_REQUIRED = 2;
@@ -419,7 +419,7 @@ export function pinFile(file: string, cwd: string): { path: string; sha256: stri
 
 export async function runWorkspaceRecords(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
-  if (args.extraPositional === "new" || args.extraPositional === "amend" || args.extraPositional === "review") {
+  if (args.extraPositional === "new" || args.extraPositional === "amend" || args.extraPositional === "review" || args.extraPositional === "close") {
     return (await import("./records-write")).runRecordsWrite(ctx);
   }
   if (args.extraPositional === "pin") {
@@ -436,7 +436,7 @@ export async function runWorkspaceRecords(ctx: CommandContext): Promise<number> 
     return 0;
   }
   if (args.extraPositional) {
-    console.error(formatError({ message: `chant workspace records takes no argument but pin, new, amend or review (got ${args.extraPositional})`, hint: USAGE }));
+    console.error(formatError({ message: `chant workspace records takes no argument but pin, new, amend, review or close (got ${args.extraPositional})`, hint: USAGE }));
     return 1;
   }
   if (!args.kind) return runDeclaredRecords(args);

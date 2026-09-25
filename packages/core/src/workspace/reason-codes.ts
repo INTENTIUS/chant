@@ -115,8 +115,13 @@ export const REASONS = {
   "review-note-required": "A dissent was given with no note: a dissent needs a reason.",
   "review-sign-failed": "--sign was given and no seal could be made: the key can't be read or used, git names no ssh signing key, or ssh-keygen is not installed.",
   "record-sign-failed": "--sign was given and no author seal could be made: the record names no author, the key can't be read or used, git names no ssh signing key, or ssh-keygen is not installed.",
+  // A review given in a session (records review --session, #2693).
+  "session-unknown": "--session names no session of a session kind whose subjects are the record's kind.",
+  "session-not-open": "--session names a session in a closed state, which takes no more verdicts.",
   // records --since that fails (#2673).
-  "since-rev-unknown": "--since names no commit.",
+  "since-rev-unknown": "--since names no commit, or a session with no opening revision and no commit that added it.",
+  "since-session-unknown": "--since has the shape of a session id and names no commit, and no session the kind or the declaration reads has that id.",
+  "since-session-open": "--since names a session that is still open, so the comparison runs to the working tree.",
   // The intent graph (graph --intent, #2651): a read that fails.
   "intent-region-invalid": "The region's path, or its line range, does not exist in the tree read.",
   // The intent graph: part of the walk that can't be read. The document is still printed.

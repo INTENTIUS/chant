@@ -21,7 +21,8 @@ import { isPluginCode, isReasonCode, REASON_CODES, REASONS } from "./reason-code
 import { contract } from "./__fixtures__/contract-repo";
 import { READ_ERROR_CODES, RECORD_REASON_CODES, RECORD_WARNING_CODES, REVIEW_REASON_CODES, SEAL_REASON_CODES, SEAL_WARNING_CODES } from "./records";
 import { AMEND_ERROR_CODES, NEW_ERROR_CODES, REVIEW_ERROR_CODES } from "./records-write";
-import { RECORDS_SINCE_ERROR_CODES } from "./records-since";
+import { CLOSE_ERROR_CODES } from "./records-close";
+import { RECORDS_SINCE_ERROR_CODES, RECORDS_SINCE_REASON_CODES } from "./records-since";
 import { STATUS_ERROR_CODES, STATUS_GATE_REASON_CODES, STATUS_REASON_CODES } from "./status";
 import { WORK_WARNING_CODES } from "./work";
 
@@ -48,7 +49,9 @@ const PER_COMMAND: Record<string, readonly string[]> = {
   NEW_ERROR_CODES,
   AMEND_ERROR_CODES,
   REVIEW_ERROR_CODES,
+  CLOSE_ERROR_CODES,
   RECORDS_SINCE_ERROR_CODES,
+  RECORDS_SINCE_REASON_CODES,
   INTENT_ERROR_CODES,
   INTENT_FINDING_CODES,
   INTENT_REASON_CODES,

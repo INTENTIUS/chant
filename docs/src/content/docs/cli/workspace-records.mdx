@@ -12,16 +12,17 @@ This command is the first slice of workspace records ([#2546](https://github.com
 
 ```
 chant workspace records [--kind <kind file>] [--current] [--at <rev>] [--base <rev>] [--require attested] [--json]
-chant workspace records [--kind <kind file>] --since <rev> [--at <rev>] [--json]
+chant workspace records [--kind <kind file>] --since <rev|session id> [--at <rev>] [--json]
 chant workspace records pin <path>
 chant workspace records new [<kind file>] --from <file|-> [--prefix <prefix>] [--sign [<key file>]] [--dry-run]
 chant workspace records amend <id> [--kind <kind file>] --set <file|-> [--sign [<key file>]] [--dry-run]
 chant workspace records review <id> [--kind <kind file>] --verdict agree|dissent|abstain --by <principal> [--note <text>] [--session <id>] [--sign [<key file>]] [--dry-run]
+chant workspace records close <session id> [--kind <session kind file>] [--dry-run]
 ```
 
 ## Description
 
-`chant workspace records` reads every file that a record kind locates and prints what it found. It parses each file's structured core and checks it against the kind's JSON Schema. For a Markdown kind the core is the front matter, and for a JSON kind it is the whole file. The command also works out which entries a later one supersedes. The read never writes a file, and it needs no `chant.workspace.json`. The kind file is named on the command line or by the declaration, so nothing is inferred. Its `new`, `amend` and `review` verbs are the only ones that write, as [Writing records](#writing-records) describes.
+`chant workspace records` reads every file that a record kind locates and prints what it found. It parses each file's structured core and checks it against the kind's JSON Schema. For a Markdown kind the core is the front matter, and for a JSON kind it is the whole file. The command also works out which entries a later one supersedes. The read never writes a file, and it needs no `chant.workspace.json`. The kind file is named on the command line or by the declaration, so nothing is inferred. Its `new`, `amend`, `review` and `close` verbs are the only ones that write, as [Writing records](#writing-records) describes.
 
 The command loads only when it runs. A project without workspace files never loads any of its code.
 
@@ -34,7 +35,7 @@ The command loads only when it runs. A project without workspace files never loa
 | `--at <rev>` | Read the records as they were at a commit, from the local git object store, and check their pins against the files at that commit. No checkout or network is needed. The kind file and its schema still come from the working tree. |
 | `--base <rev>` | The revision the trust policy is read from (see [Provenance](#provenance)). Defaults to the target branch: `origin/HEAD`, then `main`, then `master`. |
 | `--require attested` | Exit 2 unless every record printed is `attested`. |
-| `--since <rev>` | Compare the records at `<rev>` with the records at `--at`, or in the working tree without it, and print what changed (see [What changed between two revisions](#what-changed-between-two-revisions)). It takes no `--current`, `--base` or `--require`. |
+| `--since <rev>` | Compare the records at `<rev>` with the records at `--at`, or in the working tree without it, and print what changed (see [What changed between two revisions](#what-changed-between-two-revisions)). A review session's id in place of `<rev>` compares the commits the session opened and closed at (see [What a session changed](#what-a-session-changed)). It takes no `--current`, `--base` or `--require`. |
 | `--json` | Print the result as JSON (see [Output](#output)). Without it, one line per record and a summary. |
 
 ## Record kinds
@@ -168,9 +169,19 @@ session: {
 },
 ```
 
-`verdicts` is the list of verdicts the session produced, each `{record, principal, verdict}` with an optional `digest`. `seal` is the field that seals a closed session. `subjects.kind` is the kind file of the records the verdicts name, relative to the session kind's directory. The entries of that kind's `reviews` list (the field its `reviews` declaration names, or `reviews` without one) may name a session in `session`. The same verdict is written twice: once in the session, and once as a review entry on the decision it judged.
+`verdicts` is the list of verdicts the session produced, each `{record, principal, verdict}` with an optional `digest`. `seal` is the field that seals a closed session. `subjects.kind` is the kind file of the records the verdicts name, relative to the session kind's directory. The entries of that kind's `reviews` list (the field its `reviews` declaration names, or `reviews` without one) may name a session in `session`. The same verdict is written twice: once in the session, and once as a review entry on the decision it judged. [`records review --session`](#sessions-from-a-ui) writes both in one command.
 
-A session file's front matter holds the agenda (each item `{record: <id>}` or `{text: <free text>}`), the attendance (each `{principal, class}`, where `class` is `person` or `agent`, with optional `roles`), `opened`, `closed` (null while open), `verdicts`, `state` (`open` or `closed`) and, once closed, the seal. chud's session files, such as `design/sessions/S-0001.json`, are the shape it started from. A session kind may also use `format: "json"` ([#2664](https://github.com/INTENTIUS/chant/issues/2664)), as chud's files do. A session kind must declare states, because a session is sealed when it closes, and a `session` block on a kind without states is `kind-invalid`.
+Three more entries are optional ([#2693](https://github.com/INTENTIUS/chant/issues/2693)), and the reference session kind has all three:
+
+```js
+openedRev: "opened_rev",
+closedRev: "closed_rev",
+closedOn: "closed",
+```
+
+`openedRev` names the field for the commit the session opened at, which `records new` writes. `closedRev` names the field for the commit it closed at, and `closedOn` the field for when it closed, both written by `records close`. A kind without them gets none of these fields written. chant 0.87.0 and older refuse a `session` block that has any of the three.
+
+A session file's front matter holds the agenda (each item `{record: <id>}` or `{text: <free text>}`), the attendance (each `{principal, class}`, where `class` is `person` or `agent`, with optional `roles`), `opened`, `closed` (null while open), `verdicts`, `state` (`open` or `closed`) and, once closed, the seal. The reference schema also allows `opened_rev` and `closed_rev`, each a full commit id or null. Both are optional, so a session written before them, such as `S-0001`, stays valid. chud's session files, such as `design/sessions/S-0001.json`, are the shape it started from. A session kind may also use `format: "json"` ([#2664](https://github.com/INTENTIUS/chant/issues/2664)), as chud's files do. A session kind must declare states, because a session is sealed when it closes, and a `session` block on a kind without states is `kind-invalid`.
 
 ```yaml
 ---
@@ -200,6 +211,38 @@ awk 'NR==1&&/^---$/{f=1;print;next} f&&/^---$/{f=0} f&&/^closed_digest:/{next} {
 ```
 
 The recipe assumes the file already uses LF and ends in one. Reading a session kind also reads its subject records from the same tree, the working tree or the commit under `--at`. A closed session whose text no longer hashes to its seal gets `session-seal-mismatch`, and a verdict naming a record the subjects don't have gets `session-verdict-unknown-record`. Both make the session invalid. Each session record in the output also carries `citedBy`: the subjects' review entries whose `session` names it, each as `{id, path, index, reviewer, verdict}`.
+
+### Sessions from a UI
+
+A UI such as hud runs a session through four commands and never computes a revision or a seal ([#2693](https://github.com/INTENTIUS/chant/issues/2693)). The commands below run in the reference workspace.
+
+```bash
+# Open: allocates S-0002 and writes opened_rev, the commit HEAD names
+chant workspace records new session --from - < session.json
+
+# A verdict given in the session, written to the decision's reviews and the session's verdicts
+chant workspace records review ref-001 --kind decisions/decision.kind.mjs --verdict agree --by alice --session S-0002
+
+# What the session has changed so far
+chant workspace records --since S-0002 --json
+
+# Close: state, close time, closed_rev and the seal, in one write
+chant workspace records close S-0002
+```
+
+`session.json` holds the new session's fields: `schema`, `title`, `state: "open"`, `agenda`, `attendance`, `opened`, `closed: null` and `verdicts: []`. `records new` adds the id and `opened_rev`. `opened_rev` is null when the repository has no commit yet. Any later write to the session fills it in. A caller that sets `opened_rev` or `closed_rev` itself is refused with `write-input-invalid`.
+
+`review --session <id>` looks for the session in the session kinds the declaration names whose `subjects.kind` is the kind being reviewed. A session no such kind has is refused with `session-unknown`, and a closed one with `session-not-open`. An open session gets `{record, principal, verdict, digest}` appended to its verdicts, carrying the review entry's digest. The result prints that entry as `session`. Both files are checked before either is written, so the two lists never differ.
+
+`records close <session id>` goes through the one session kind the declaration names, or the kind given with `--kind`. It sets these fields and then writes the seal over the text, by the rule below.
+
+- the state, to the kind's first closed state
+- `closedOn`, to the time in UTC to the second
+- `closedRev`, to the commit HEAD names
+
+ A session already closed is refused with `record-closed`. One with a verdict naming a record the subjects lack is refused with `session-verdict-unknown-record`. The result names the fields it set in `changed`, and adds `seal: {field, digest}` and `closedRev`. It follows `records-close.schema.json`. As with every write, the caller commits the close.
+
+`amend` can't close a session, because the schema needs the seal. A closed session changes no more: `amend` refuses it with `record-closed`, and the message says to open a new session.
 
 ## What changed between two revisions
 
@@ -234,6 +277,21 @@ Records are matched by id, and a record whose id can't be read is left out of th
 The document follows `https://intentius.io/chant/schemas/workspace/records-since/v1/records-since.schema.json`, shipped at `src/workspace/records-since.schema.json`. A failure prints `{ "$schema", "contract", "error": { "code", "message" } }` and exits 1, with any of the [error codes](#error-codes) below. A `<rev>` that names no commit is `since-rev-unknown`, and an `--at` that names none is `revision-unknown`. Without `--json`, each change is one line, followed by a summary.
 
 Without `--kind`, `--since` compares every [declared kind](#declared-kinds), by the same rule as a read ([#2680](https://github.com/INTENTIUS/chant/issues/2680)). The output is then a set, `{ "$schema", "contract", "kinds" }`, with one `records-since` document per kind and each carrying `declared`. A kind whose read fails is a failure in the list, the others are still compared, and the command exits 1.
+
+### What a session changed
+
+A review session's id, such as `S-0002`, works in place of the revision ([#2693](https://github.com/INTENTIUS/chant/issues/2693)). A value shaped like `<prefix>-<number>` is looked up as a session first. The search covers the kind read, if it is a session kind, and every session kind in the declaration. The table gives the source of each revision once a session is found.
+
+| Revision | Taken from | `session` names it |
+|---|---|---|
+| `since` | the session's `openedRev` field | `sinceFrom: "opened-rev"` |
+| `since`, for a session without that field | the latest commit that added its file | `sinceFrom: "history"` |
+| `at` | the first commit after the `closedRev` field that changed the session file, which is the commit that carried the close | `atFrom: "close-commit"` |
+| `at`, for a closed session without that field | the last commit that changed its file | `atFrom: "history"` |
+| `at`, with `--at` | `--at` | `atFrom: "at"` |
+| `at`, for an open session or a close not yet committed | the working tree | `atFrom: "working-tree"` |
+
+`closed_rev` is HEAD when `records close` wrote the close, before the caller committed it, so the commit that carries the close comes after it. An open session also has `since-session-open` in `session.reasons`, since its comparison runs to the working tree. The result carries `session: {id, path, state, sinceFrom, atFrom, reasons}`, added within contract 1. A value of that shape that names no session and no commit is `since-session-unknown`. A session with no opening revision whose file no commit added is `since-rev-unknown`. Any other value is read as a revision, as before.
 
 ## Asset pins
 
@@ -561,21 +619,23 @@ A failed read prints `{ "$schema", "contract", "error": { "code", "message" } }`
 | `location-missing` | the records directory doesn't exist, in the tree or at the revision |
 | `not-a-git-repository` | `--at` was given outside a git repository |
 | `revision-unknown` | `--at` names no commit |
-| `since-rev-unknown` | `--since` names no commit (only with `--since`) |
+| `since-rev-unknown` | `--since` names no commit, or a session with no opening revision whose file no commit added (only with `--since`) |
+| `since-session-unknown` | `--since` has a session id's shape and names no commit, and no session has that id (only with `--since`) |
 
 ## Writing records
 
-A UI such as hud never writes a record file itself ([ws-052](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-052-chant-hud-boundary.md)). It calls one of three commands ([#2670](https://github.com/INTENTIUS/chant/issues/2670)):
+A UI such as hud never writes a record file itself ([ws-052](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-052-chant-hud-boundary.md)). It calls one of four commands ([#2670](https://github.com/INTENTIUS/chant/issues/2670), [#2693](https://github.com/INTENTIUS/chant/issues/2693)):
 
 | Command | Writes |
 |---|---|
 | `records new <kind file> --from <file\|->` | a new record in the kind's directory, from a JSON object of its fields, sealed by its author with `--sign` |
 | `records amend <id> --kind <kind file> --set <file\|->` | the same record, with the top-level fields of a JSON object replacing its own, sealed again with `--sign` |
-| `records review <id> --kind <kind file> --verdict <verdict> --by <principal>` | the same record, with one entry appended to `reviews` |
+| `records review <id> --kind <kind file> --verdict <verdict> --by <principal>` | the same record, with one entry appended to `reviews`, and with `--session` the session's verdicts too |
+| `records close <session id>` | an open session, closed and sealed |
 
 A kind the declaration names can also be given by its declared name, or by its file's name without `.kind.mjs`, so `records new work --from -` writes through `work/work.kind.mjs` in the reference workspace. Without a kind, each command writes through the one [record kind the declaration names](#declared-kinds) ([#2680](https://github.com/INTENTIUS/chant/issues/2680)). When the declaration names several, the command is refused with `write-usage-invalid` and a message that lists them, so name the kind to write. With no declared kind it fails as before.
 
-`-` reads the JSON from standard input. Each command reads the records first, builds the one file it would write, and reads the records again with that file in place. The write happens only when the written record comes back valid and no other record gains a reason code, so a write is refused for anything a later read would report. Warnings such as `record-no-evidence` never refuse a write, and the result lists them. Each command writes one file or none, and it never runs git: the caller commits, so the pull request stays the unit of review. `--dry-run` prints the result with `text`, the whole file it would write, and writes nothing. The commands write Markdown front matter with an `idField` only. A kind with `format: "json"` or `idFrom` is refused with `write-usage-invalid`, whether it is named with `--kind` or is the declared kind, and its records are written by the tool that owns the kind.
+`-` reads the JSON from standard input. Each command reads the records first, builds the one file it would write, and reads the records again with that file in place. The write happens only when the written record comes back valid and no other record gains a reason code, so a write is refused for anything a later read would report. Warnings such as `record-no-evidence` never refuse a write, and the result lists them. Each command writes one file or none. The exception is `review --session`, which writes the record and the session. None of them runs git: the caller commits, so the pull request stays the unit of review. `--dry-run` prints the result with `text`, the whole file it would write, and writes nothing. The commands write Markdown front matter with an `idField` only. A kind with `format: "json"` or `idFrom` is refused with `write-usage-invalid`, whether it is named with `--kind` or is the declared kind, and its records are written by the tool that owns the kind.
 
 `new` allocates the id when the fields hold none. The new id is the prefix every record in the directory shares, a dash, and one more than the highest number with that prefix, padded to at least three digits or to the width the records use: `ws-054` after `ws-053`, and `W-003` after `W-002` for a work kind, with the prefix's case kept ([#2683](https://github.com/INTENTIUS/chant/issues/2683)). The kind's schema then judges the id like any other field. A file that can't be read still holds its id through its name, so an id is never handed out twice. When the records use more than one prefix, or there are none yet, `--prefix <prefix>` names it, such as `--prefix W`. A caller may give the id in the fields instead, and an id already in use is refused with `record-id-taken`. The file is named `<id>-<slug>.md`, with the slug made from `title` as the decision README describes, and it must match the kind's `location.match`. The front matter is laid out in the schema's field order, with every string double-quoted, and the body is the title as a heading.
 
@@ -587,13 +647,13 @@ A kind the declaration names can also be given by its declared name, or by its f
 | approved (ranked above 0 in the kind's `approval`), such as `decided` | its state, to one ranked at least as high; its pins field (`evidence`); its reviews. Anything else is `amend-supersede-instead` |
 | anything else, such as `proposed` | any field but its id |
 
-The id never changes (`amend-id-immutable`). Both refusals say what to do instead: write the change as a new record whose `supersedes` names this one, which replaces it once it is approved at least as strongly. An amendment that changes nothing writes nothing and prints an empty `changed`. The author seal follows its own rule, under [Sealing a record](#sealing-a-record): `--sign` writes it again, and without `--sign` a change that moves the digest removes it and `sealDropped` says so.
+The id never changes (`amend-id-immutable`). Both refusals say what to do instead: write the change as a new record whose `supersedes` names this one, which replaces it once it is approved at least as strongly. The session schema has no field for that link. For such a kind, `record-closed` says to write a new record in its place. For a session it says to open a new session. An amendment that changes nothing writes nothing and prints an empty `changed`. The author seal follows its own rule, under [Sealing a record](#sealing-a-record): `--sign` writes it again, and without `--sign` a change that moves the digest removes it and `sealDropped` says so.
 
-`review` appends `{reviewer, verdict, note, on, digest, session, seal}`. `seal` is written only with `--sign`. `on` is today's date in UTC, `note` and `session` appear only when given, and a dissent without a non-empty `--note` is refused with `review-note-required`. `digest` is the record's digest by the [digest rule](#digest-rule), the one `records --json` prints for it. The command rewrites only the reviews block and keeps every other byte of the file, so after the review the record's digest is still the one the verdict names ([#2672](https://github.com/INTENTIUS/chant/issues/2672)). A record in a closed state takes no review, and a kind that declares no `reviews` takes none (`review-unsupported`).
+`review` appends `{reviewer, verdict, note, on, digest, session, seal}`. `seal` is written only with `--sign`. `on` is today's date in UTC, `note` and `session` appear only when given, and a dissent without a non-empty `--note` is refused with `review-note-required`. `digest` is the record's digest by the [digest rule](#digest-rule), the one `records --json` prints for it. The command rewrites only the reviews block and keeps every other byte of the file, so after the review the record's digest is still the one the verdict names ([#2672](https://github.com/INTENTIUS/chant/issues/2672)). A record in a closed state takes no review, and a kind that declares no `reviews` takes none (`review-unsupported`). With `--session`, the session has to exist and be open, and the verdict goes on its list too (see [Sessions from a UI](#sessions-from-a-ui)).
 
 The principal given with `--by` is recorded as given, and the write does not check who it is. With `--sign`, the verdict carries a seal, and `records` checks it against the signers at base (see [Sealing a verdict](#sealing-a-verdict)). The commit that carries the review has its own provenance ([#2547](https://github.com/INTENTIUS/chant/issues/2547)).
 
-Each command prints one JSON document and exits 0 when it wrote, or would have with `--dry-run`, and 1 when it refused. The documents follow `records-new.schema.json`, `records-amend.schema.json` and `records-review.schema.json` beside `records.schema.json`, listed on the [read contract](/chant/reference/workspace-read-contract/#writing-records) page with their error codes:
+Each command prints one JSON document and exits 0 when it wrote, or would have with `--dry-run`, and 1 when it refused. The documents follow `records-new.schema.json`, `records-amend.schema.json`, `records-review.schema.json` and `records-close.schema.json` beside `records.schema.json`, listed on the [read contract](/chant/reference/workspace-read-contract/#writing-records) page with their error codes:
 
 ```json
 {
@@ -622,6 +682,12 @@ chant workspace records --kind docs/design/decisions/decision.kind.mjs --current
 # What a review session did, between its open and close commits
 chant workspace records --kind design/sessions/session.kind.mjs --since <open> --at <close> --json
 chant workspace records --kind decisions/decision.kind.mjs --since <open> --at <close> --json
+# The same, with chant reading the commits from the session
+chant workspace records --since S-0002 --json
+
+# Close a review session and seal it
+chant workspace records close S-0002
+
 # Every kind the workspace declaration names
 chant workspace records --current --json
 

@@ -64,3 +64,44 @@ export function reviewed(root: string, reviewers: string[], session: string, sta
       .replace(/^reviews: .*$/m, reviewers.length ? `reviews:\n${reviews}` : "reviews: []"),
   );
 }
+
+/**
+ * Declare the fixture's two kinds in a chant.workspace.json (#2693): the
+ * decisions at the root and the session kind in the design member, as the
+ * reference workspace declares them, so review --session, close and
+ * --since <session id> find the session kind.
+ */
+export function declareSessions(root: string): void {
+  writeFileSync(
+    join(root, "chant.workspace.json"),
+    `${JSON.stringify(
+      {
+        name: "sessions",
+        schema: 1,
+        members: [{ name: "design", dir: "design", kind: "other", because: "the session fixture", records: [{ kind: "sessions/session.kind.mjs" }] }],
+        records: [{ kind: DECISIONS_KIND }],
+        pins: [],
+      },
+      null,
+      2,
+    )}\n`,
+  );
+}
+
+/** The fields of a new open session, as a UI sends them to records new. */
+export function newSessionFields(over: Record<string, unknown> = {}): string {
+  return JSON.stringify({
+    schema: 1,
+    title: "Second walk",
+    state: "open",
+    agenda: [{ record: "ref-001" }, { record: "ref-002" }],
+    attendance: [
+      { principal: "lex00", class: "person" },
+      { principal: "alice", class: "person" },
+    ],
+    opened: "2026-09-25T09:00:00Z",
+    closed: null,
+    verdicts: [],
+    ...over,
+  });
+}

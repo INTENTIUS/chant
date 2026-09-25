@@ -758,11 +758,12 @@ Workspace (level 1, #2524):
                         --require attested exits 2 if any record is not
                         attested. A pinned file that changed is a warning,
                         asset-drift or asset-missing
-  workspace records [--kind <kind file>] --since <rev> [--at <rev>] [--json]
+  workspace records [--kind <kind file>] --since <rev|session id> [--at <rev>] [--json]
                         What changed in the records between <rev> and --at
                         (default: the working tree): new and removed records,
                         state transitions, new verdicts, new supersessions
-                        and changed pins
+                        and changed pins. A session id compares the commits
+                        the session opened and closed at
   workspace records pin <path>
                         Print the path from the workspace root and the
                         sha256 of a file, for a decision's evidence pin
@@ -787,8 +788,15 @@ Workspace (level 1, #2524):
                         the digest of the record text. A dissent needs
                         --note. --sign seals it with an ssh key (git's
                         user.signingkey without a file); under a signers
-                        file at base only a sealed verdict counts. Prints
+                        file at base only a sealed verdict counts. With
+                        --session, the session must be open, and the verdict
+                        is appended to its verdicts too. Prints
                         {path, id, review}
+  workspace records close <session id> [--kind <session kind file>] [--dry-run]
+                        Close an open review session: its state, close time,
+                        closing commit and seal, in one write. Without
+                        --kind, the one session kind the declaration names.
+                        Prints {path, id, changed, seal, closedRev}
   workspace verify [--base <rev>] [--head <rev>] [--require attested]
                         Check the commits in base..head against the signers
                         and roles read from base. A change to the signers file

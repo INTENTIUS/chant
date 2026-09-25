@@ -51,9 +51,17 @@
       }
     },
     "opened": { "$ref": "#/definitions/dateTime" },
+    "opened_rev": {
+      "description": "The commit HEAD named when chant workspace records new wrote the session (#2693), or null when the repository had no commit yet; the next records amend, review --session or close fills it. chant writes it, and records --since <session id> reads it. Optional, so a session written before #2693 stays valid.",
+      "oneOf": [{ "type": "null" }, { "$ref": "#/definitions/rev" }]
+    },
     "closed": {
       "description": "When the session closed, or null while it is open.",
       "oneOf": [{ "type": "null" }, { "$ref": "#/definitions/dateTime" }]
+    },
+    "closed_rev": {
+      "description": "The commit HEAD named when chant workspace records close closed the session (#2693), or null when the repository had no commit. Only a closed session has it. Optional, so a session closed before #2693 stays valid.",
+      "oneOf": [{ "type": "null" }, { "$ref": "#/definitions/rev" }]
     },
     "verdicts": {
       "description": "The verdicts the session produced, in the order they were given.",
@@ -81,6 +89,7 @@
     }
   },
   "definitions": {
+    "rev": { "type": "string", "pattern": "^[0-9a-f]{40,64}$" },
     "dateTime": {
       "type": "string",
       "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}(:[0-9]{2}(\\.[0-9]+)?)?(Z|[+-][0-9]{2}:[0-9]{2})$"
@@ -93,7 +102,7 @@
     "properties": { "closed": { "$ref": "#/definitions/dateTime" } }
   },
   "else": {
-    "description": "An open session has no closed time and no seal.",
-    "properties": { "closed": { "type": "null" }, "closed_digest": false }
+    "description": "An open session has no closed time, no closing revision and no seal.",
+    "properties": { "closed": { "type": "null" }, "closed_rev": false, "closed_digest": false }
   }
 }

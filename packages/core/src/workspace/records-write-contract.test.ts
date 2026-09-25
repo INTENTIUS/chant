@@ -13,6 +13,7 @@ import { afterAll, describe, expect, test } from "vitest";
 import { RECORD_WARNING_CODES } from "./records";
 import amendSchema from "./records-amend.schema.json";
 import newSchema from "./records-new.schema.json";
+import closeSchema from "./records-close.schema.json";
 import reviewSchema from "./records-review.schema.json";
 import {
   AMEND_ERROR_CODES,
@@ -26,6 +27,7 @@ import {
   REVIEW_ERROR_CODES,
   reviewRecord,
 } from "./records-write";
+import { CLOSE_ERROR_CODES, RECORDS_CLOSE_SCHEMA_ID } from "./records-close";
 
 const REPO = join(import.meta.dirname, "..", "..", "..", "..");
 const KIND = "docs/design/decisions/decision.kind.mjs";
@@ -50,6 +52,7 @@ const SCHEMAS = [
   { name: "records-new", schema: newSchema, id: RECORDS_NEW_SCHEMA_ID, codes: NEW_ERROR_CODES },
   { name: "records-amend", schema: amendSchema, id: RECORDS_AMEND_SCHEMA_ID, codes: AMEND_ERROR_CODES },
   { name: "records-review", schema: reviewSchema, id: RECORDS_REVIEW_SCHEMA_ID, codes: REVIEW_ERROR_CODES },
+  { name: "records-close", schema: closeSchema, id: RECORDS_CLOSE_SCHEMA_ID, codes: CLOSE_ERROR_CODES },
 ] as const;
 
 function expectValid(schema: object, doc: unknown): void {
@@ -118,8 +121,9 @@ describe("real output validates", () => {
     expectValid(amendSchema, await amendRecord({ kind: KIND, id: "ws-003", fields: JSON.stringify({ title: "x" }), cwd: root }));
 
     for (const dryRun of [true, false]) {
-      expectValid(reviewSchema, await reviewRecord({ kind: KIND, id: made.id, verdict: "dissent", by: "alice", note: "Not yet.", session: "S-0001", dryRun, cwd: root }));
+      expectValid(reviewSchema, await reviewRecord({ kind: KIND, id: made.id, verdict: "dissent", by: "alice", note: "Not yet.", dryRun, cwd: root }));
     }
     expectValid(reviewSchema, await reviewRecord({ kind: KIND, id: made.id, verdict: "dissent", by: "alice", cwd: root }));
+    expectValid(reviewSchema, await reviewRecord({ kind: KIND, id: made.id, verdict: "agree", by: "alice", session: "S-0001", cwd: root }));
   });
 });

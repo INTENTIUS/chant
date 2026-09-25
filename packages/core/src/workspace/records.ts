@@ -306,12 +306,21 @@ export const recordKindSchema = z
      * (relative to this kind file's directory). The entries of that kind's
      * reviews list (its `reviews.field`, or `reviews`) name a session in
      * `session`. Optional.
+     *
+     * `openedRev`, `closedRev` and `closedOn` (#2693) name the fields that
+     * hold the commit a session opened at, the commit it closed at, and when
+     * it closed. `records new` writes the first, `records close` the other
+     * two, and `records --since <session id>` reads the revisions. Each is
+     * optional: without it, nothing writes that field.
      */
     session: z
       .object({
         verdicts: z.string().min(1),
         seal: z.string().min(1),
         subjects: z.object({ kind: z.string().min(1) }).strict(),
+        openedRev: z.string().min(1).optional(),
+        closedRev: z.string().min(1).optional(),
+        closedOn: z.string().min(1).optional(),
       })
       .strict()
       .optional(),
