@@ -2,7 +2,7 @@
 schema: 1
 id: "ws-058"
 title: "Decision points: typed questions over the workspace graph, with table, model and quorum deciders"
-state: "proposed"
+state: "decided"
 area: "D20"
 source:
   issue: "INTENTIUS/chant#2723"
@@ -22,8 +22,14 @@ options:
     label: "points stay in the thin layer's code"
     how: "Each runtime (the studio kit, chaff, hud) keeps its own points and thresholds in code and writes answers as ordinary decision records."
     tradeoff: "No chant change. The same questions and thresholds are written three times, only the runtime that owns a point can see it, and nothing tells a reader which model answered with what confidence. That is today's state: chud's decide.mjs, chaff's kernel/decide.mjs, and hud's Decider."
-choice: null
-rejected: []
+choice:
+  option: "a"
+  reason: "An answer is a decision, so it belongs in the records machinery with review, quorum and the intent graph; the points are the questions a workspace asks of its own graph, so they belong in its specification; the model call stays in an Op activity or a runtime's decider, which keeps ws-052's line."
+rejected:
+  - option: "b"
+    why: "A ledger line has no review, no quorum and no place in the intent graph, and a model's answer is a decision a person may confirm or contest."
+  - option: "c"
+    why: "It keeps the same questions and thresholds in three runtimes' code, where only the owning runtime can see them."
 supersedes: []
 evidence:
   - title: "INTENTIUS/chant#2723, decision points as workspace specification, prompting decisions on the work graph"
@@ -44,8 +50,8 @@ evidence:
   - title: "chaff's understand point: table, Jev, then the person (kernel/decide.mjs in arugula-salad/chaff, proposal #48)"
     url: "https://github.com/arugula-salad/chaff/issues/48"
     as_of: "2026-09-25T22:20:00Z"
-decided_by: null
-decided_on: null
+decided_by: "lex00"
+decided_on: "2026-09-25"
 reviews: []
 constrains:
   - "INTENTIUS/chant#2723"
