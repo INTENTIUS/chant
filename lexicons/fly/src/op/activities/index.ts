@@ -61,7 +61,10 @@ export {
   spriteRestore,
   listCheckpoints,
   spriteDestroy,
+  spriteDelete,
+  spriteUrl,
   resolveSpritesEndpoint,
+  resolveSpritesToken,
   defaultSpritesHttp,
   spriteCreateBody,
   parseCreateResponse,
@@ -84,7 +87,38 @@ export type {
   ListCheckpointsArgs,
   Checkpoint,
   SpriteDestroyArgs,
+  SpriteDeleteArgs,
+  SpriteUrlArgs,
+  SpriteUrlResult,
 } from "./sprites";
+
+// Sprite Services activities (#2711) — imperative create/get/list/start/stop/
+// delete/logs for one background service at a time, the single-service
+// primitives underneath `spriteApplyServices`'s batch reconcile.
+// `loadActivities(["fly"])` binds these; the step builders live in core.
+export {
+  spriteServiceCreate,
+  spriteServiceGet,
+  spriteServiceList,
+  spriteServiceStart,
+  spriteServiceStop,
+  spriteServiceDelete,
+  spriteServiceLogs,
+  spriteServiceCreateBody,
+  parseServiceLogNdjson,
+} from "./sprite-services";
+export type {
+  SpriteService,
+  SpriteServiceState,
+  SpriteServiceCreateArgs,
+  SpriteServiceGetArgs,
+  SpriteServiceListArgs,
+  SpriteServiceStartArgs,
+  SpriteServiceStopArgs,
+  SpriteServiceDeleteArgs,
+  SpriteServiceLogsArgs,
+  SpriteServiceLogsResult,
+} from "./sprite-services";
 
 // Sprite filesystem activities (#848) — imperative file I/O over the fs API.
 // `loadActivities(["fly"])` binds these; the step builders live in core.

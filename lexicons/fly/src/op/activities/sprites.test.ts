@@ -1,6 +1,7 @@
 import { describe, test, expect } from "vitest";
 import {
   resolveSpritesEndpoint,
+  resolveSpritesToken,
   DEFAULT_SPRITES_BASE_URL,
   accumulateExecFrames,
   parseCheckpointNdjson,
@@ -13,6 +14,8 @@ import {
   spriteRestore,
   listCheckpoints,
   spriteDestroy,
+  spriteDelete,
+  spriteUrl,
   type SpritesHttp,
   type Checkpoint,
 } from "./sprites";
@@ -141,6 +144,50 @@ describe("resolveSpritesEndpoint (S3)", () => {
   test("default is real Sprites", () => {
     expect(resolveSpritesEndpoint({}, {} as NodeJS.ProcessEnv)).toBe(DEFAULT_SPRITES_BASE_URL);
   });
+
+  // #2711 — the studio and wisp call it SPRITES_API_URL.
+  test("SPRITES_API_URL alias when SPRITES_BASE_URL is unset", () => {
+    expect(resolveSpritesEndpoint({}, { SPRITES_API_URL: "http://alias:9000" } as NodeJS.ProcessEnv)).toBe(
+      "http://alias:9000",
+    );
+  });
+
+  test("SPRITES_BASE_URL wins over SPRITES_API_URL", () => {
+    expect(
+      resolveSpritesEndpoint(
+        {},
+        { SPRITES_BASE_URL: "http://base:1", SPRITES_API_URL: "http://alias:2" } as NodeJS.ProcessEnv,
+      ),
+    ).toBe("http://base:1");
+  });
+});
+
+describe("resolveSpritesToken (#2711)", () => {
+  test("explicit arg wins", () => {
+    expect(resolveSpritesToken("arg-token", { SPRITES_API_TOKEN: "env" } as NodeJS.ProcessEnv)).toBe("arg-token");
+  });
+
+  test("SPRITES_API_TOKEN env when no arg", () => {
+    expect(resolveSpritesToken(undefined, { SPRITES_API_TOKEN: "env-token" } as NodeJS.ProcessEnv)).toBe(
+      "env-token",
+    );
+  });
+
+  test("SPRITE_TOKEN alias when SPRITES_API_TOKEN is unset", () => {
+    expect(resolveSpritesToken(undefined, { SPRITE_TOKEN: "alias-token" } as NodeJS.ProcessEnv)).toBe(
+      "alias-token",
+    );
+  });
+
+  test("SPRITES_API_TOKEN wins over SPRITE_TOKEN", () => {
+    expect(
+      resolveSpritesToken(undefined, { SPRITES_API_TOKEN: "orig", SPRITE_TOKEN: "alias" } as NodeJS.ProcessEnv),
+    ).toBe("orig");
+  });
+
+  test("undefined when nothing is set", () => {
+    expect(resolveSpritesToken(undefined, {} as NodeJS.ProcessEnv)).toBeUndefined();
+  });
 });
 
 // ── Command tokenizing + exec WS url ──────────────────────────────────────────
@@ -260,6 +307,61 @@ describe("spriteDestroy", () => {
   test("a 404 is idempotent (already gone), not an error", async () => {
     const { http } = recorder(() => ({ status: 404, text: "gone" }));
     await expect(spriteDestroy({ id: "task-1", endpoint: "http://x" }, undefined, http)).resolves.toEqual({});
+  });
+});
+
+describe("spriteDelete (#2711)", () => {
+  test("is spriteDestroy under another name — same DELETE, same idempotence", async () => {
+    expect(spriteDelete).toBe(spriteDestroy);
+    const { http, calls } = recorder(() => ({ status: 200, text: "{}" }));
+    await spriteDelete({ id: "task-1", endpoint: "http://x" }, undefined, http);
+    expect(calls[0].method).toBe("DELETE");
+    expect(calls[0].url).toBe("http://x/v1/sprites/task-1");
+  });
+});
+
+describe("spriteUrl (#2711)", () => {
+  test("GETs /v1/sprites/{id} and returns its url", async () => {
+    const { http, calls } = recorder(() => ({ status: 200, text: JSON.stringify({ url: "http://h/s/task-1" }) }));
+    const res = await spriteUrl({ id: "task-1", endpoint: "http://x" }, undefined, http);
+    expect(res).toEqual({ url: "http://h/s/task-1" });
+    expect(calls[0].method).toBe("GET");
+    expect(calls[0].url).toBe("http://x/v1/sprites/task-1");
+  });
+
+  test("throws when the sprite has no url", async () => {
+    const { http } = recorder(() => ({ status: 200, text: "{}" }));
+    await expect(spriteUrl({ id: "task-1", endpoint: "http://x" }, undefined, http)).rejects.toThrow(/no url/);
+  });
+
+  test("with a path: returns immediately once the check answers 2xx", async () => {
+    let checks = 0;
+    const { http, calls } = recorder((method, url) => {
+      if (method === "GET" && url === "http://x/v1/sprites/task-1") {
+        return { status: 200, text: JSON.stringify({ url: "http://h/s/task-1" }) };
+      }
+      checks += 1;
+      return { status: checks < 2 ? 503 : 200, text: "" };
+    });
+    const res = await spriteUrl(
+      { id: "task-1", endpoint: "http://x", path: "/", intervalMs: 1 },
+      undefined,
+      http,
+    );
+    expect(res).toEqual({ url: "http://h/s/task-1" });
+    expect(checks).toBe(2); // one 503, then 200
+    expect(calls.at(-1)?.url).toBe("http://h/s/task-1/");
+  });
+
+  test("with a path: throws once timeoutMs elapses without a match", async () => {
+    const { http } = recorder((method, url) =>
+      url === "http://x/v1/sprites/task-1"
+        ? { status: 200, text: JSON.stringify({ url: "http://h/s/task-1" }) }
+        : { status: 503, text: "nothing is answering" },
+    );
+    await expect(
+      spriteUrl({ id: "task-1", endpoint: "http://x", path: "/", timeoutMs: 5, intervalMs: 1 }, undefined, http),
+    ).rejects.toThrow(/did not answer/);
   });
 });
 
