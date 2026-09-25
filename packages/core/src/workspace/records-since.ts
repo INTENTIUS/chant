@@ -9,6 +9,18 @@
  *
  * Records are matched by id. A record whose id could not be read is left
  * out of the comparison, since nothing says which record it was before.
+ *
+ * `--since <session id>` (#2693) compares the commit a review session
+ * opened at with the commit that carries its close. The first is the
+ * record's opening revision (the kind's `session.openedRev` field). The
+ * record's closing revision (`session.closedRev`) is HEAD when `records
+ * close` wrote the close, before the caller committed it, so the close and
+ * the verdicts committed with it are in the first commit after it that
+ * changed the session file. A session written before chant wrote these
+ * fields falls back to its file's history: the commit that added it and the
+ * last commit that changed it. An open session, or one whose close is not
+ * committed yet, is compared with the working tree, and an open one says so
+ * with `since-session-open`.
  */
 
 import { realpathSync } from "node:fs";
@@ -16,8 +28,9 @@ import { relative } from "node:path";
 import { pinEntries } from "./record-assets";
 import { gitRoot, resolveRevision } from "./record-source";
 import { READ_ERROR_CODES, RecordReadError, type LoadedRecordKind, type ReadErrorCode, type RecordEntry, type RecordKind } from "./records";
-import { readRecordsFor, RECORDS_CONTRACT_VERSION } from "./records-cli";
+import { readRecordsFor, realpathOr, RECORDS_CONTRACT_VERSION } from "./records-cli";
 import type { ReasonCode } from "./reason-codes";
+import { commitsTouching, findSessionKinds, SESSION_ID } from "./session-kinds";
 
 /** `$id` of the JSON Schema for `records --since --json`, shipped beside this file. */
 export const RECORDS_SINCE_OUTPUT_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace/records-since/v1/records-since.schema.json";
@@ -27,8 +40,37 @@ export const RECORDS_SINCE_ERROR_CODES = [
   ...READ_ERROR_CODES,
   /** `--since` names no commit. */
   "since-rev-unknown",
+  /** `--since` has a session id's shape, names no commit, and no session has the id (#2693). */
+  "since-session-unknown",
 ] as const satisfies readonly ReasonCode[];
 export type RecordsSinceErrorCode = (typeof RECORDS_SINCE_ERROR_CODES)[number];
+
+/** Why a session's comparison is not the one between its open and close commits (#2693). Closed. */
+export const RECORDS_SINCE_REASON_CODES = [
+  /** The session is open, so the comparison runs to the working tree. */
+  "since-session-open",
+] as const satisfies readonly ReasonCode[];
+
+/**
+ * The session `--since` named (#2693), and where the two revisions came
+ * from: the record's own fields, or git's history of its file for a session
+ * written before chant wrote them.
+ */
+export interface SinceSession {
+  id: string;
+  /** The session file, from the repository root, with / separators. */
+  path: string;
+  state: string | null;
+  /** Where `since` came from: the session's opening revision field, or the last commit that added its file. */
+  sinceFrom: "opened-rev" | "history";
+  /**
+   * Where `at` came from: the first commit after the closing revision that
+   * changed the session file (the commit carrying the close), the last
+   * commit that changed the file, --at, or the working tree.
+   */
+  atFrom: "close-commit" | "history" | "at" | "working-tree";
+  reasons: { code: (typeof RECORDS_SINCE_REASON_CODES)[number]; message: string }[];
+}
 
 /** The kinds of change, in the order the output lists them. */
 export const SINCE_CHANGE_KINDS = ["new", "removed", "state", "verdict", "supersession", "pin"] as const;
@@ -52,6 +94,8 @@ export type RecordsSinceDocument =
       kind: { name: string; schema: string; file: string };
       since: string;
       at: string | null;
+      /** With `--since <session id>` only. */
+      session?: SinceSession;
       changes: SinceChange[];
       summary: Record<SinceChangeKind, number>;
     }
@@ -81,8 +125,10 @@ export async function queryRecordsSince(query: RecordsSinceQuery): Promise<Recor
     error: { code, message },
   });
   try {
-    const since = resolveSince(query.cwd, query.since);
-    const after = await readRecordsFor({ kind: query.kind, at: query.at, cwd: query.cwd });
+    const found = await findSinceSession(query);
+    const since = resolveSince(query.cwd, found ? found.since : query.since, found?.session.id);
+    const at = found ? (found.at ?? undefined) : query.at;
+    const after = await readRecordsFor({ kind: query.kind, at, cwd: query.cwd });
     let before: RecordEntry[];
     try {
       before = (await readRecordsFor({ kind: query.kind, at: since, cwd: query.cwd })).result.records;
@@ -99,6 +145,7 @@ export async function queryRecordsSince(query: RecordsSinceQuery): Promise<Recor
       kind: kindView(after.loaded, after.root),
       since,
       at: after.at,
+      ...(found ? { session: found.session } : {}),
       changes,
       summary,
     };
@@ -113,8 +160,71 @@ function kindView(loaded: LoadedRecordKind, root: string): { name: string; schem
   return { name: loaded.kind.name, schema: loaded.kind.schema.id, file: relative(root, loaded.file).split("\\").join("/") };
 }
 
-/** The full commit id `rev` names, from the repository holding `cwd`. */
-function resolveSince(cwd: string, rev: string): string {
+/**
+ * The session `query.since` names, with the revisions to compare, or null
+ * when it names none and is to be read as a revision. It is looked up only
+ * in a git repository, when it has a session id's shape, in the kind read
+ * when that is a session kind and in the session kinds the declaration
+ * names. An id-shaped value that is neither a session nor a commit is
+ * `since-session-unknown`.
+ */
+async function findSinceSession(query: RecordsSinceQuery): Promise<{ since: string; at: string | null; session: SinceSession } | null> {
+  const top = gitRoot(realpathOr(query.cwd));
+  if (!top || !SESSION_ID.test(query.since)) return null;
+  const kinds = await findSessionKinds(query.cwd, [query.kind]);
+  for (const k of kinds) {
+    let records: RecordEntry[];
+    try {
+      records = (await readRecordsFor({ kind: k.file, cwd: query.cwd })).result.records;
+    } catch (err) {
+      if (err instanceof RecordReadError) continue;
+      throw err;
+    }
+    const s = records.find((r) => r.id === query.since);
+    if (!s) continue;
+    const decl = k.kind.session!;
+    const field = (f: string | undefined): string | null => (f !== undefined && typeof s.data?.[f] === "string" ? (s.data[f] as string) : null);
+    const closed = s.state !== null && (k.kind.closedStates ?? []).includes(s.state);
+    const session: SinceSession = { id: s.id!, path: s.path, state: s.state, sinceFrom: "opened-rev", atFrom: "working-tree", reasons: [] };
+    let since = field(decl.openedRev);
+    if (since === null) {
+      since = commitsTouching(top, s.path, ["--diff-filter=A"])[0] ?? null;
+      session.sinceFrom = "history";
+      if (since === null) {
+        throw new SinceError("since-rev-unknown", `session ${s.id} (${s.path}) names no commit it opened at${decl.openedRev ? ` in ${decl.openedRev}` : ""}, and no commit added its file`);
+      }
+    }
+    let at: string | null = null;
+    if (query.at !== undefined) {
+      at = query.at;
+      session.atFrom = "at";
+    } else if (closed) {
+      const closedRev = field(decl.closedRev);
+      if (closedRev !== null && /^[0-9a-f]{40,64}$/.test(closedRev)) {
+        // The oldest of these is the commit that carried the close. None yet means the close is only in the working tree.
+        at = commitsTouching(top, s.path, [`${closedRev}..HEAD`]).slice(-1)[0] ?? null;
+        session.atFrom = at === null ? "working-tree" : "close-commit";
+      } else {
+        at = commitsTouching(top, s.path, ["-1"])[0] ?? null;
+        session.atFrom = at === null ? "working-tree" : "history";
+      }
+    } else {
+      session.reasons.push({ code: "since-session-open", message: `session ${s.id} is ${s.state ?? "not closed"}, so it has no closing revision, and the comparison runs to the working tree` });
+    }
+    return { since, at, session };
+  }
+  try {
+    resolveRevision(top, query.since);
+    return null;
+  } catch (err) {
+    if (!(err instanceof RecordReadError)) throw err;
+  }
+  if (kinds.length === 0) return null;
+  throw new SinceError("since-session-unknown", `--since ${query.since} names no commit, and no ${[...new Set(kinds.map((k) => k.kind.name))].join(" or ")} record has that id`);
+}
+
+/** The full commit id `rev` names, from the repository holding `cwd`; `session` names the session it came from. */
+function resolveSince(cwd: string, rev: string, session?: string): string {
   let dir = cwd;
   try {
     dir = realpathSync(cwd);
@@ -127,7 +237,7 @@ function resolveSince(cwd: string, rev: string): string {
     return resolveRevision(top, rev);
   } catch (err) {
     if (err instanceof RecordReadError && err.code === "revision-unknown") {
-      throw new SinceError("since-rev-unknown", `--since ${rev} names no commit in this repository`);
+      throw new SinceError("since-rev-unknown", session ? `session ${session} names ${rev}, which is no commit in this repository` : `--since ${rev} names no commit in this repository`);
     }
     throw err;
   }
@@ -252,6 +362,10 @@ export function formatSince(doc: Extract<RecordsSinceDocument, { changes: SinceC
     }
   });
   const s = doc.summary;
+  if (doc.session) {
+    const x = doc.session;
+    lines.unshift(`session ${x.id} (${x.state ?? "no state"}): opened at ${doc.since.slice(0, 8)} (${x.sinceFrom}), compared to ${doc.at ? `${doc.at.slice(0, 8)} (${x.atFrom})` : "the working tree"}`);
+  }
   lines.push(
     `${doc.changes.length} changes since ${doc.since.slice(0, 8)}${doc.at ? ` to ${doc.at.slice(0, 8)}` : " to the working tree"}: ${s.new} new, ${s.removed} removed, ${s.state} state, ${s.verdict} verdicts, ${s.supersession} supersessions, ${s.pin} pins`,
   );

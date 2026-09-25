@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://intentius.io/chant/schemas/workspace/records-since/v1/records-since.schema.json",
   "title": "chant workspace records --since output",
-  "description": "What `chant workspace records --kind <kind file> --since <rev> --json` prints (#2673, #2650 C11): what changed in a kind's records between the commit --since names and the tree --at names, or the working tree without it. Records are matched by id; a record whose id could not be read is not compared. Between a review session's open and close commits, the changes are what the session did. Readers ignore fields they do not know; a field is only ever added within a version. The change kinds and the error codes are closed lists. Contract version 1 is written by chant 0.81.0 and newer, and this document was added to it by #2673; a chant without --since on records refuses the flag. Every code is in the one closed list of `reason-codes.ts`.",
+  "description": "What `chant workspace records --kind <kind file> --since <rev|session id> --json` prints (#2673, #2650 C11): what changed in a kind's records between the commit --since names and the tree --at names, or the working tree without it. Records are matched by id; a record whose id could not be read is not compared. Between a review session's open and close commits, the changes are what the session did. Readers ignore fields they do not know; a field is only ever added within a version. The change kinds and the error codes are closed lists. Contract version 1 is written by chant 0.81.0 and newer, and this document was added to it by #2673; a chant without --since on records refuses the flag. Every code is in the one closed list of `reason-codes.ts`.",
   "oneOf": [{ "$ref": "#/$defs/result" }, { "$ref": "#/$defs/failure" }, { "$ref": "#/$defs/set" }],
   "$defs": {
     "set": {
@@ -59,6 +59,7 @@
         },
         "since": { "type": "string", "pattern": "^[0-9a-f]{40,64}$", "description": "The full commit id --since names." },
         "at": { "type": ["string", "null"], "pattern": "^[0-9a-f]{40,64}$", "description": "The full commit id --at names, or null for the working tree." },
+        "session": { "$ref": "#/$defs/session" },
         "error": false,
         "changes": {
           "description": "In the order new, removed, state, verdict, supersession, pin, and by id within each.",
@@ -76,6 +77,29 @@
             "verdict": { "type": "integer", "minimum": 0 },
             "supersession": { "type": "integer", "minimum": 0 },
             "pin": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "session": {
+      "description": "Added in contract 1 by #2693, with --since <session id> only: the session named, and where since and at came from. since is the commit the session opened at: its opening revision field (the kind's session.openedRev), or, for a session without one, the latest commit that added its file (history). at is the commit that carries the close: the first commit after its closing revision field (session.closedRev, HEAD when records close wrote the close) that changed the session file (close-commit), or, for a session without that field, the last commit that changed its file (history); --at overrides it (at). An open session, or one whose close is not committed yet, is compared with the working tree (working-tree), and an open one carries since-session-open.",
+      "type": "object",
+      "required": ["id", "path", "state", "sinceFrom", "atFrom", "reasons"],
+      "properties": {
+        "id": { "type": "string" },
+        "path": { "type": "string", "description": "The session file, from the repository root, with / separators." },
+        "state": { "type": ["string", "null"] },
+        "sinceFrom": { "enum": ["opened-rev", "history"] },
+        "atFrom": { "enum": ["close-commit", "history", "at", "working-tree"] },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["code", "message"],
+            "properties": {
+              "code": { "enum": ["since-session-open"] },
+              "message": { "type": "string" }
+            }
           }
         }
       }
@@ -180,7 +204,8 @@
                 "location-missing",
                 "not-a-git-repository",
                 "revision-unknown",
-                "since-rev-unknown"
+                "since-rev-unknown",
+                "since-session-unknown"
               ]
             },
             "message": { "type": "string" }

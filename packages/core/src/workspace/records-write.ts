@@ -14,14 +14,17 @@
  *
  * Every command writes one file or none, never commits, and prints one JSON
  * document with a closed error code on refusal. `--dry-run` prints the
- * document and the text it would write, and writes nothing.
+ * document and the text it would write, and writes nothing. The exception is
+ * `review --session` (#2693), which appends the verdict to the open session
+ * as well, after checking both files, so the two lists never differ.
+ * `records close` is in `records-close.ts`.
  *
  * `new --sign` and `amend --sign` seal the record's author (#2688), and
  * `review --sign` seals a verdict (#2687): see `trust/seal.ts`.
  */
 
 import { readFileSync, statSync, writeFileSync } from "node:fs";
-import { join, posix, relative, resolve } from "node:path";
+import { dirname, join, posix, relative, resolve } from "node:path";
 import type { CommandContext } from "../cli/registry";
 import type { ReasonCode } from "./reason-codes";
 import { gitRoot, workingTreeSource, type RecordSource } from "./record-source";
@@ -40,6 +43,7 @@ import {
 } from "./records";
 import { declaredKindFiles, pinRoot, realpathOr } from "./records-cli";
 import { WorkspaceReadError } from "./declaration";
+import { findSessionKinds, headCommit, sessionKindsFor } from "./session-kinds";
 import { workingTree } from "./tree";
 
 // ── Contract ─────────────────────────────────────────────────────────────────
@@ -52,7 +56,7 @@ export const RECORDS_AMEND_SCHEMA_ID = "https://intentius.io/chant/schemas/works
 export const RECORDS_REVIEW_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace/records-review/v1/records-review.schema.json";
 
 /** Loading the kind and reading its records, as `records` reads them. */
-const LOAD_ERROR_CODES = ["kind-unreadable", "kind-invalid", "schema-unreadable", "schema-id-mismatch", "schema-invalid", "location-missing"] as const;
+export const LOAD_ERROR_CODES = ["kind-unreadable", "kind-invalid", "schema-unreadable", "schema-id-mismatch", "schema-invalid", "location-missing"] as const;
 
 /** Why `records new` wrote nothing. Closed: a reader may switch on it. */
 export const NEW_ERROR_CODES = [
@@ -88,18 +92,20 @@ export const REVIEW_ERROR_CODES = [
   "record-closed",
   "review-note-required",
   "review-sign-failed",
+  "session-unknown",
+  "session-not-open",
   ...RECORD_REASON_CODES,
 ] as const satisfies readonly ReasonCode[];
 
 export type NewErrorCode = (typeof NEW_ERROR_CODES)[number];
 export type AmendErrorCode = (typeof AMEND_ERROR_CODES)[number];
 export type ReviewErrorCode = (typeof REVIEW_ERROR_CODES)[number];
-type WriteErrorCode = NewErrorCode | AmendErrorCode | ReviewErrorCode;
+type WriteErrorCode = NewErrorCode | AmendErrorCode | ReviewErrorCode | import("./records-close").CloseErrorCode;
 
 export const VERDICTS = ["agree", "dissent", "abstain"] as const;
 export type Verdict = (typeof VERDICTS)[number];
 
-class RecordWriteError extends Error {
+export class RecordWriteError extends Error {
   constructor(
     readonly code: WriteErrorCode,
     message: string,
@@ -109,14 +115,14 @@ class RecordWriteError extends Error {
   }
 }
 
-interface KindView {
+export interface KindView {
   name: string;
   schema: string;
   file: string;
 }
 
 /** What every write result carries. */
-interface WriteResult {
+export interface WriteResult {
   $schema: string;
   contract: number;
   kind: KindView;
@@ -131,7 +137,7 @@ interface WriteResult {
   text?: string;
 }
 
-interface WriteFailure<C> {
+export interface WriteFailure<C> {
   $schema: string;
   contract: number;
   error: { code: C; message: string };
@@ -146,7 +152,17 @@ export interface AuthorSeal {
 
 export type NewDocument = (WriteResult & { seal?: AuthorSeal }) | WriteFailure<NewErrorCode>;
 export type AmendDocument = (WriteResult & { changed: string[]; seal?: AuthorSeal; sealDropped?: string }) | WriteFailure<AmendErrorCode>;
-export type ReviewDocument = (WriteResult & { review: Record<string, unknown> }) | WriteFailure<ReviewErrorCode>;
+/** With --session (#2693): the session the verdict was also appended to. */
+export interface ReviewSession {
+  id: string;
+  path: string;
+  /** The entry appended to the session's verdicts list. */
+  verdict: Record<string, unknown>;
+  /** With --dry-run, the whole text the session file would hold. */
+  text?: string;
+}
+
+export type ReviewDocument = (WriteResult & { review: Record<string, unknown>; session?: ReviewSession }) | WriteFailure<ReviewErrorCode>;
 
 // ── Rendering ────────────────────────────────────────────────────────────────
 
@@ -210,7 +226,7 @@ function bodyOf(text: string): string {
 }
 
 /** JSON with object keys sorted, for comparing two values whatever their key order. */
-function stableJson(value: unknown): string {
+export function stableJson(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
   const obj = value as Record<string, unknown>;
@@ -294,7 +310,7 @@ export function slug(title: string): string {
 
 // ── Shared steps ─────────────────────────────────────────────────────────────
 
-interface Opened {
+export interface Opened {
   loaded: LoadedRecordKind;
   root: string;
   /** Where pinned paths resolve, from `root`. */
@@ -305,7 +321,7 @@ interface Opened {
   dirRel: string;
 }
 
-async function open(kind: string, cwd: string): Promise<Opened> {
+export async function open(kind: string, cwd: string): Promise<Opened> {
   const real = realpathOr(cwd);
   const root = gitRoot(real) ?? real;
   const loaded = await loadRecordKind(kind, real);
@@ -326,13 +342,23 @@ async function open(kind: string, cwd: string): Promise<Opened> {
   };
 }
 
-async function readAll(o: Opened, source: RecordSource): Promise<RecordEntry[]> {
+/**
+ * The kind's records as `records` reads them from `source`. A session kind's
+ * subject records are read from the same source (#2693), so a write is
+ * refused for a verdict naming a record that does not exist.
+ */
+export async function readAll(o: Opened, source: RecordSource): Promise<RecordEntry[]> {
   const assets = workingTree(o.workspaceRoot === "." ? o.root : join(o.root, ...o.workspaceRoot.split("/")));
-  return (await readRecords(o.loaded, { root: o.root, source, assets })).records;
+  let subjects: { records: RecordEntry[]; reviews: string } | undefined;
+  if (o.loaded.kind.session) {
+    const subjectKind = await loadRecordKind(resolve(dirname(o.loaded.file), o.loaded.kind.session.subjects.kind), o.root);
+    subjects = { records: (await readRecords(subjectKind, { root: o.root, source })).records, reviews: subjectKind.kind.reviews?.field ?? "reviews" };
+  }
+  return (await readRecords(o.loaded, { root: o.root, source, assets, ...(subjects ? { subjects } : {}) })).records;
 }
 
 /** `base` with the file at `path` holding `text`, added to its directory when new. */
-function overlay(base: RecordSource, path: string, text: string): RecordSource {
+export function overlay(base: RecordSource, path: string, text: string): RecordSource {
   const dir = posix.dirname(path);
   const name = posix.basename(path);
   return {
@@ -352,12 +378,13 @@ function overlay(base: RecordSource, path: string, text: string): RecordSource {
 }
 
 /**
- * Read the records again with `text` at `path`. The written record must come
+ * Read the records again with `text` at `path`, over `base` (the working
+ * tree unless another write goes with this one). The written record must come
  * back with no reason, and no other record may gain one. Returns the written
  * record's warnings.
  */
-async function validateWrite(o: Opened, before: RecordEntry[], path: string, text: string): Promise<RecordWarning[]> {
-  const after = await readAll(o, overlay(o.source, path, text));
+export async function validateWrite(o: Opened, before: RecordEntry[], path: string, text: string, base: RecordSource = o.source): Promise<RecordWarning[]> {
+  const after = await readAll(o, overlay(base, path, text));
   const written = after.find((e) => e.path === path);
   if (!written) throw new RecordWriteError("record-path-unmatched", `${path} is not a file the kind ${o.view.name} reads`);
   if (written.reasons.length > 0) {
@@ -372,7 +399,7 @@ async function validateWrite(o: Opened, before: RecordEntry[], path: string, tex
   return written.warnings;
 }
 
-function findRecord(entries: RecordEntry[], id: string, kind: string): RecordEntry & { data: Record<string, unknown> } {
+export function findRecord(entries: RecordEntry[], id: string, kind: string): RecordEntry & { data: Record<string, unknown> } {
   const hits = entries.filter((e) => e.id === id);
   if (hits.length === 0) throw new RecordWriteError("record-not-found", `no ${kind} record has id ${id}`);
   if (hits.length > 1) {
@@ -398,6 +425,19 @@ function parseFields(text: string, flag: string): Record<string, unknown> {
 function refuseSealField(o: Opened, fields: Record<string, unknown>, flag: string): void {
   if (o.loaded.kind.reviews && RECORD_SEAL_FIELD in fields) {
     throw new RecordWriteError("write-input-invalid", `the fields given with ${flag} set ${RECORD_SEAL_FIELD}, and only --sign writes a record's seal`);
+  }
+}
+
+/**
+ * Refuse fields that set a session's opening or closing revision by hand
+ * (#2693): `new` writes the first from HEAD and `close` the second. A field
+ * given with the value the record already holds is not a change, so an
+ * amendment that sends the whole record back is taken.
+ */
+function refuseRevisionFields(kind: LoadedRecordKind["kind"], fields: Record<string, unknown>, old: Record<string, unknown>, flag: string): void {
+  for (const f of [kind.session?.openedRev, kind.session?.closedRev]) {
+    if (f === undefined || !(f in fields) || (f in old && stableJson(old[f]) === stableJson(fields[f]))) continue;
+    throw new RecordWriteError("write-input-invalid", `the fields given with ${flag} set ${f}, and chant writes it: records new writes the commit a session opened at, and records close the one it closed at`);
   }
 }
 
@@ -445,8 +485,33 @@ async function sealAuthor(o: Opened, text: string, data: Record<string, unknown>
   return { text: sealed, seal };
 }
 
+/**
+ * What to do instead of changing a closed record. A supersedes link is
+ * advice only when the kind's schema has the field: the session schema has
+ * none, so a closed session is followed by a new session (#2693).
+ */
+function closedAdvice(o: Opened, id: string, supersede: string): string {
+  const { kind, schema } = o.loaded;
+  if (kind.session) return `A closed session is sealed and stays as it is: open a new session for what follows, with chant workspace records new ${o.view.file}`;
+  const props = schema.properties !== null && typeof schema.properties === "object" ? (schema.properties as Record<string, unknown>) : {};
+  if (kind.supersedes && (schema.additionalProperties !== false || kind.supersedes.field in props)) return `Write a new record that supersedes it: ${supersede}`;
+  return `Write a new record in its place with chant workspace records new ${o.view.file}; the ${kind.name} schema has no field that links it to ${id}`;
+}
+
+/**
+ * The opening revision a session lacks (#2693): when the kind names one and
+ * the record holds null there, HEAD, once the repository has a commit.
+ * Every write to the session fills it.
+ */
+export function openedRevFill(kind: LoadedRecordKind["kind"], data: Record<string, unknown>, root: string): Record<string, unknown> {
+  const f = kind.session?.openedRev;
+  if (f === undefined || data[f] !== null) return {};
+  const head = headCommit(root);
+  return head === null ? {} : { [f]: head };
+}
+
 /** Keys in the schema's `required` order, then its `properties` order, then the rest as given. */
-function schemaOrder(data: Record<string, unknown>, schema: Record<string, unknown>): string[] {
+export function schemaOrder(data: Record<string, unknown>, schema: Record<string, unknown>): string[] {
   const required = Array.isArray(schema.required) ? (schema.required as unknown[]).filter((k): k is string => typeof k === "string") : [];
   const props = schema.properties !== null && typeof schema.properties === "object" ? Object.keys(schema.properties as object) : [];
   const order = [...new Set([...required, ...props])];
@@ -454,11 +519,11 @@ function schemaOrder(data: Record<string, unknown>, schema: Record<string, unkno
   return [...order.filter((k) => keys.includes(k)), ...keys.filter((k) => !order.includes(k))];
 }
 
-function pick(data: Record<string, unknown>, keys: string[]): Record<string, unknown> {
+export function pick(data: Record<string, unknown>, keys: string[]): Record<string, unknown> {
   return Object.fromEntries(keys.map((k) => [k, data[k]]));
 }
 
-function abs(o: Opened, path: string): string {
+export function abs(o: Opened, path: string): string {
   return join(o.root, ...path.split("/"));
 }
 
@@ -466,7 +531,7 @@ function today(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-function failure<C>(schema: string, err: unknown): WriteFailure<C> {
+export function failure<C>(schema: string, err: unknown): WriteFailure<C> {
   if (err instanceof RecordWriteError || err instanceof RecordReadError) {
     return { $schema: schema, contract: RECORDS_WRITE_CONTRACT_VERSION, error: { code: err.code as C, message: err.message } };
   }
@@ -539,6 +604,7 @@ export async function newRecord(opts: NewRecordOptions): Promise<NewDocument> {
     const o = await open(opts.kind, opts.cwd);
     const { kind, schema } = o.loaded;
     refuseSealField(o, fields, "--from");
+    refuseRevisionFields(kind, fields, {}, "--from");
     const idField = kind.idField!;
     const before = await readAll(o, o.source);
     const given = fields[idField];
@@ -551,7 +617,10 @@ export async function newRecord(opts: NewRecordOptions): Promise<NewDocument> {
       if (taken) throw new RecordWriteError("record-id-taken", `id ${given} is already used by ${taken.path}; ids are never reused, so leave ${idField} out to have the next one allocated`);
       id = given;
     }
-    const data = pick({ ...fields, [idField]: id }, schemaOrder({ ...fields, [idField]: id }, schema));
+    // A session records the commit it opened at (#2693): HEAD now, or null before the first commit.
+    const opened = kind.session?.openedRev ? { [kind.session.openedRev]: headCommit(o.root) } : {};
+    const full = { ...fields, ...opened, [idField]: id };
+    const data = pick(full, schemaOrder(full, schema));
     const title = typeof data.title === "string" ? data.title : "";
     const match = new RegExp(kind.location.match);
     const names = [slug(title) ? `${id}-${slug(title)}.md` : null, `${id}.md`].filter((n): n is string => n !== null);
@@ -609,13 +678,16 @@ export interface AmendRecordOptions {
  */
 export async function amendRecord(opts: AmendRecordOptions): Promise<AmendDocument> {
   try {
-    const patch = parseFields(opts.fields, "--set");
+    const given = parseFields(opts.fields, "--set");
     const o = await open(opts.kind, opts.cwd);
     const { kind } = o.loaded;
-    refuseSealField(o, patch, "--set");
+    refuseSealField(o, given, "--set");
     const before = await readAll(o, o.source);
     const target = findRecord(before, opts.id, kind.name);
     const old = target.data;
+    refuseRevisionFields(kind, given, old, "--set");
+    const isClosed = target.state !== null && (kind.closedStates ?? []).includes(target.state);
+    const patch = { ...(isClosed ? {} : openedRevFill(kind, old, o.root)), ...given };
     const added = Object.keys(patch).filter((k) => !(k in old));
     const merged = pick({ ...old, ...patch }, [...Object.keys(old), ...schemaOrder(pick(patch, added), o.loaded.schema)]);
     const changed = Object.keys(merged).filter((k) => stableJson(old[k]) !== stableJson(merged[k]));
@@ -626,7 +698,7 @@ export async function amendRecord(opts: AmendRecordOptions): Promise<AmendDocume
     const link = kind.supersedes?.key === undefined ? JSON.stringify(opts.id) : `[{"${kind.supersedes.key}": "${opts.id}"}]`;
     const supersede = kind.supersedes ? `chant workspace records new with ${kind.supersedes.field}: ${link}` : `chant workspace records new`;
     if ((changed.length > 0 || opts.sign !== undefined) && state !== null && (kind.closedStates ?? []).includes(state)) {
-      throw new RecordWriteError("record-closed", `${opts.id} is ${state}, a closed state, so nothing in it changes. Write a new record that supersedes it: ${supersede}`);
+      throw new RecordWriteError("record-closed", `${opts.id} is ${state}, a closed state, so nothing in it changes. ${closedAdvice(o, opts.id, supersede)}`);
     }
     const rank = (s: unknown): number => (typeof s === "string" ? (kind.approval?.[s] ?? 0) : 0);
     if (changed.length > 0 && kind.approval && rank(state) > 0) {
@@ -734,6 +806,7 @@ export async function reviewRecord(opts: ReviewRecordOptions): Promise<ReviewDoc
     if (opts.verdict === "dissent" && !(opts.note ?? "").trim()) {
       throw new RecordWriteError("review-note-required", `a dissent needs a reason: pass --note <text> with the concern`);
     }
+    const inSession = opts.session !== undefined ? await openSession(o, opts.session, opts.cwd) : undefined;
     const reviews = target.data[field] ?? [];
     if (!Array.isArray(reviews)) throw new RecordWriteError("record-schema-invalid", `${target.path}: ${field} is not a list`);
     const current = o.source.read(target.path);
@@ -752,7 +825,24 @@ export async function reviewRecord(opts: ReviewRecordOptions): Promise<ReviewDoc
     const text = replaceFields(current, { [field]: list }, { ...target.data, [field]: list });
     if (text === undefined) throw new RecordWriteError("record-unparseable", `${target.path}: the ${field} block can't be rewritten in place without changing the rest of the file`);
     const warnings = await validateWrite(o, before, target.path, text);
-    if (!opts.dryRun) writeFileSync(abs(o, target.path), text);
+    // The same verdict on the session's own list (#2693), validated with the review in place, so the two lists never differ.
+    let session: { path: string; text: string; out: ReviewSession } | undefined;
+    if (inSession) {
+      const { so, before: sessions, target: st } = inSession;
+      const decl = so.loaded.kind.session!;
+      const verdicts = st.data[decl.verdicts] ?? [];
+      if (!Array.isArray(verdicts)) throw new RecordWriteError("record-schema-invalid", `${st.path}: ${decl.verdicts} is not a list`);
+      const verdict = { record: opts.id, principal: opts.by, verdict: opts.verdict, digest: review.digest };
+      const set = { ...openedRevFill(so.loaded.kind, st.data, so.root), [decl.verdicts]: [...verdicts, verdict] };
+      const sText = replaceFields(so.source.read(st.path), set, { ...st.data, ...set });
+      if (sText === undefined) throw new RecordWriteError("record-unparseable", `${st.path}: the ${decl.verdicts} block can't be rewritten in place without changing the rest of the file`);
+      await validateWrite(so, sessions, st.path, sText, overlay(o.source, target.path, text));
+      session = { path: st.path, text: sText, out: { id: opts.session!, path: st.path, verdict, ...(opts.dryRun ? { text: sText } : {}) } };
+    }
+    if (!opts.dryRun) {
+      writeFileSync(abs(o, target.path), text);
+      if (session) writeFileSync(abs(o, session.path), session.text);
+    }
     return {
       $schema: RECORDS_REVIEW_SCHEMA_ID,
       contract: RECORDS_WRITE_CONTRACT_VERSION,
@@ -760,6 +850,7 @@ export async function reviewRecord(opts: ReviewRecordOptions): Promise<ReviewDoc
       path: target.path,
       id: opts.id,
       review,
+      ...(session ? { session: session.out } : {}),
       dryRun: !!opts.dryRun,
       warnings,
       ...(opts.dryRun ? { text } : {}),
@@ -767,6 +858,33 @@ export async function reviewRecord(opts: ReviewRecordOptions): Promise<ReviewDoc
   } catch (err) {
     return failure<ReviewErrorCode>(RECORDS_REVIEW_SCHEMA_ID, err);
   }
+}
+
+/**
+ * The open session `id` of a session kind whose subjects are the kind `o`
+ * writes (#2693), found through the workspace declaration. Refused with
+ * session-unknown when no such session exists, and session-not-open when it
+ * is in a closed state.
+ */
+async function openSession(o: Opened, id: string, cwd: string): Promise<{ so: Opened; before: RecordEntry[]; target: RecordEntry & { data: Record<string, unknown> } }> {
+  const kinds = await sessionKindsFor(o.loaded.file, cwd);
+  for (const k of kinds) {
+    const so = await open(k.file, cwd);
+    const before = await readAll(so, so.source);
+    if (!before.some((e) => e.id === id)) continue;
+    const target = findRecord(before, id, so.view.name);
+    if (target.data === null) throw new RecordWriteError("record-unparseable", `session ${id} (${target.path}) can't be read, so the verdict can't be added to it`);
+    if (target.state !== null && (so.loaded.kind.closedStates ?? []).includes(target.state)) {
+      throw new RecordWriteError("session-not-open", `session ${id} is ${target.state}, so it takes no more verdicts: give the verdict in an open session, or without --session`);
+    }
+    return { so, before, target };
+  }
+  throw new RecordWriteError(
+    "session-unknown",
+    kinds.length === 0
+      ? `no session kind the workspace declaration names has ${o.view.file} as its subjects, so there is no session ${id} to give the verdict in`
+      : `no ${kinds.map((k) => k.kind.name).join(" or ")} record has id ${id}`,
+  );
 }
 
 /** A seal over one verdict, or a refusal with review-sign-failed. Loaded only when --sign is given. */
@@ -791,6 +909,7 @@ export const WRITE_USAGE = [
   "chant workspace records new [<kind file or declared kind>] --from <file|-> [--prefix <prefix>] [--sign [<key file>]] [--dry-run]",
   "chant workspace records amend <id> [--kind <kind file>] --set <file|-> [--sign [<key file>]] [--dry-run]",
   "chant workspace records review <id> [--kind <kind file>] --verdict agree|dissent|abstain --by <principal> [--note <text>] [--session <id>] [--sign [<key file>]] [--dry-run]",
+  "chant workspace records close <session id> [--kind <session kind file>] [--dry-run]",
 ].join("\n");
 
 function usage(schema: string, message: string): WriteFailure<"write-usage-invalid"> {
@@ -855,7 +974,18 @@ function readInput(schema: string, flag: string, value: string | undefined, cwd:
   }
 }
 
-/** `chant workspace records new|amend|review`. Prints one JSON document; exits 0 when it wrote, or would have with --dry-run. */
+/**
+ * The session kind `records close` goes through when none is named (#2693):
+ * the one session kind the declaration names.
+ */
+async function declaredSessionKind(schema: string, cwd: string): Promise<string | WriteFailure<"write-usage-invalid">> {
+  const kinds = (await findSessionKinds(cwd)).map((k) => k.file);
+  if (kinds.length === 1) return kinds[0];
+  if (kinds.length === 0) return usage(schema, "--kind <session kind file> is required: the declaration names no session kind");
+  return usage(schema, `the declaration names ${kinds.length} session kinds (${kinds.join(", ")}), so name the one to close with --kind`);
+}
+
+/** `chant workspace records new|amend|review|close`. Prints one JSON document; exits 0 when it wrote, or would have with --dry-run. */
 export async function runRecordsWrite(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
   const cwd = process.cwd();
@@ -864,6 +994,15 @@ export async function runRecordsWrite(ctx: CommandContext): Promise<number> {
     console.log(JSON.stringify(doc, null, 2));
     return "error" in doc ? 1 : 0;
   };
+  if (verb === "close") {
+    const { closeRecord, RECORDS_CLOSE_SCHEMA_ID } = await import("./records-close");
+    if (args.sign !== undefined) return print(usage(RECORDS_CLOSE_SCHEMA_ID, "--sign is not taken by close: the seal close writes is the digest of the session text"));
+    const id = args.extraPositional2;
+    if (!id) return print(usage(RECORDS_CLOSE_SCHEMA_ID, "close needs the session's id"));
+    const kind = args.kind !== undefined ? resolveWriteKind(args.kind, cwd) : await declaredSessionKind(RECORDS_CLOSE_SCHEMA_ID, cwd);
+    if (typeof kind !== "string") return print(kind);
+    return print(await closeRecord({ kind, id, dryRun: args.dryRun, cwd }));
+  }
   if (verb === "new") {
     const named = args.extraPositional2 ?? args.kind;
     const kind = named !== undefined ? resolveWriteKind(named, cwd) : declaredWriteKind(RECORDS_NEW_SCHEMA_ID, cwd, "new needs the kind file");

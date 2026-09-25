@@ -311,8 +311,10 @@ describe("records review", () => {
     expect(code(await reviewRecord({ kind: KIND, id: "ws-001", verdict: "dissent", by: "bob", cwd: dir }))).toBe("review-note-required");
     expect(code(await reviewRecord({ kind: KIND, id: "ws-001", verdict: "dissent", by: "bob", note: "  ", cwd: dir }))).toBe("review-note-required");
     expect(touched(before, snapshot())).toEqual([]);
-    const doc = await reviewRecord({ kind: KIND, id: "ws-001", verdict: "dissent", by: "bob", note: "It leaves out X.", session: "S-0001", cwd: dir });
-    expect(doc).toMatchObject({ review: { reviewer: "bob", verdict: "dissent", note: "It leaves out X.", session: "S-0001" } });
+    const doc = await reviewRecord({ kind: KIND, id: "ws-001", verdict: "dissent", by: "bob", note: "It leaves out X.", cwd: dir });
+    expect(doc).toMatchObject({ review: { reviewer: "bob", verdict: "dissent", note: "It leaves out X." } });
+    // No session kind names these decisions as its subjects, so no session exists to give a verdict in (#2693).
+    expect(code(await reviewRecord({ kind: KIND, id: "ws-001", verdict: "agree", by: "carol", session: "S-0001", cwd: dir }))).toBe("session-unknown");
   });
 
   test("reviews accumulate on a proposal too", async () => {
