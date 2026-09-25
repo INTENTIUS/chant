@@ -27,7 +27,9 @@ export const SPRITZER_IMAGE = "ghcr.io/intentius/spritzer:0.4.1";
  * processes, a real sprite URL); the default `SPRITZER_IMAGE` above stays on
  * the interpreter-mode pin everything else is tested against. 0.6.0 is the
  * first release with container mode at all, so this can't move to a shared
- * pin until interpreter mode also needs 0.6.0 for something else (#808 bump
- * policy).
+ * pin until interpreter mode also needs 0.6.1 for something else (#808 bump
+ * policy). 0.6.1 fixes `POST /policy/network` to answer 204 with no body, as
+ * the real Sprites API and every official SDK expect (#2719,
+ * INTENTIUS/spritzer#26/#27) — a fidelity fix the activities exercise.
  */
-export const SPRITZER_CONTAINER_IMAGE = "ghcr.io/intentius/spritzer:0.6.0";
+export const SPRITZER_CONTAINER_IMAGE = "ghcr.io/intentius/spritzer:0.6.1";
