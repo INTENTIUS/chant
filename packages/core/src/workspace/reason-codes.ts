@@ -177,6 +177,9 @@ export const REASONS = {
   "lease-token-mismatch": "The live lease on the work item carries another fencing token than the one given.",
   "lease-race": "Another writer changed the lease between this command's read and its write.",
   "lease-push-rejected": "The remote refused the lease push: another clone claimed the item first, or the remote could not be reached.",
+  // A box whose isolation fails (check, #2727). Each is also a WSP finding.
+  "box-isolation-collision": "Two boxes on one host resolve to the same port, state path or cookie name, or two ports in one box share an offset.",
+  "box-isolation-literal": "A host's stateRoot or a box's state entry is a literal machine path instead of one derived from an environment reference and the box's name.",
   // The lineage lock (check).
   "lock-invalid": "The lineage lock can't be read.",
   "manual-step-open": "A scope in the lineage lock has an open manual step.",

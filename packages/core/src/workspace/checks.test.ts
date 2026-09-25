@@ -62,6 +62,9 @@ describe("the WSP catalog", () => {
       "record-kind-unloadable",
       // A credential in a box's files is in git (#2726).
       "box-credential-declared",
+      // Two boxes sharing a value, or a box that only holds on one machine, is never the fix (#2727).
+      "box-isolation-collision",
+      "box-isolation-literal",
     ]);
   });
 

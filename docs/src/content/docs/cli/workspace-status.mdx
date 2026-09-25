@@ -64,13 +64,25 @@ Each gate carries `approve`, the exact command that approves it, to run in the m
 
 ### Boxes
 
-With `--json`, each member also lists its `box`: the [box block](/chant/reference/workspace-declaration/#boxes) from the declaration, or `null` when it has none ([#2726](https://github.com/INTENTIUS/chant/issues/2726)). Each capability has its `name`, its `broker` (`null` when the declaration names none) and its `scope`. A broker, such as a lobby, reads the scope it enforces for a box from here, so the scopes aren't hard-coded in the broker. Boxes appear in the JSON only.
+With `--json`, each member also lists its `box`: the [box block](/chant/reference/workspace-declaration/#boxes) from the declaration, or `null` when it has none ([#2726](https://github.com/INTENTIUS/chant/issues/2726)). Each capability has its `name`, its `broker` (`null` when the declaration names none) and its `scope`. A broker, such as a lobby, reads the scope it enforces for a box from here, so the scopes aren't hard-coded in the broker. The capabilities appear in the JSON only.
 
 ```json
 "box": {
   "capabilities": [
     { "name": "fountain", "broker": "lobby", "scope": ["agent", "vault", "conversations", "sandboxes"] }
-  ]
+  ],
+  "isolation": {
+    "host": "local",
+    "slot": 0,
+    "portRange": { "from": 7100, "to": 7119 },
+    "ports": { "app": 7100, "door": 7101, "proxy": 7102, "inject": 7103 },
+    "stateDir": "${XDG_STATE_HOME}/chant/boxes/fern",
+    "state": {
+      "HUD_IDENTITY_PATH": "${XDG_STATE_HOME}/chant/boxes/fern/hud/identity.json",
+      "HUD_DB_PATH": "${XDG_STATE_HOME}/chant/boxes/fern/hud/events.db"
+    },
+    "cookies": { "hud_session": "hud_session_fern", "chaff_door": "chaff_door_fern" }
+  }
 }
 ```
 ### Stewards
@@ -89,6 +101,8 @@ A steward is the one writer that runs a member's operational Ops, on Fountain or
 ### Work leases
 
 With `--json`, the document also lists every [work lease](/chant/cli/workspace-work/) in `leases` ([#2732](https://github.com/INTENTIUS/chant/issues/2732)): the flat ledger's first, then each member's, by item. A lease is `active` until its `expiresAt` passes and `expired` after, when anyone may claim the item again. A released lease has no ref and is not listed; its history stays in `_leases/<id>.jsonl`. The leases are read from the local refs and the remote's as last fetched, like everything else here. The text view lists them in a table after the releases.
+
+A box block with a host also has its [isolation](/chant/reference/workspace-declaration/#isolation) resolved, and `isolation` is `null` in a block without one ([#2727](https://github.com/INTENTIUS/chant/issues/2727)). It comes from the declaration alone, so it is the same whatever environment is asked for. A runtime that plants or starts a box sets these values instead of choosing its own. A state path keeps its environment reference, such as `${XDG_STATE_HOME}`, for the runtime to expand on its machine. The text view shows one line for each box with a host. It gives the host and slot, then the port block and the state directory.
 
 The command doesn't read live state. `--compare-to --live` is refused with a pointer to `chant components status <env> --live`, which reads one member's live state from that member's directory.
 

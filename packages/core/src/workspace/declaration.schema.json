@@ -56,6 +56,13 @@
         "$ref": "#/$defs/recordKind"
       }
     },
+    "hosts": {
+      "type": "array",
+      "description": "The hosts boxes run on (#2727). A host is one machine reached under one hostname: boxes on it share its ports, its state root and, in a browser, its cookie jar, so chant workspace check compares the boxes on one host and never boxes on different hosts. A member's box block names its host. Added in schema 1 by chant 0.91.0, so a declaration that uses it sets minReader to 0.91.0 or newer.",
+      "items": {
+        "$ref": "#/$defs/host"
+      }
+    },
     "checks": {
       "type": "object",
       "description": "Severity for the declaration checks that allow it, keyed by WSP id (#2535, ws-028): error, warning, info or off. chant workspace check refuses an id it does not know, and one whose severity is fixed.",
@@ -359,18 +366,74 @@
     },
     "box": {
       "type": "object",
-      "description": "The member is a box, or holds a box's declarations (#2726). A box holds no credential: each capability it needs outside itself is reached through a broker, a runtime such as a lobby or a door, which holds the credential and enforces the scope. chant workspace check fails when a file in the member's directory carries a literal secret (WSP121) and when a capability names no broker (WSP122). chant workspace status --json lists the capabilities, so a broker can read the scopes. Added in schema 1 by chant 0.91.0, so a declaration that uses it sets minReader to 0.91.0 or newer.",
-      "required": [
-        "capabilities"
-      ],
+      "description": "The member is a box, or holds a box's declarations (#2726). A box holds no credential: each capability it needs outside itself is reached through a broker, a runtime such as a lobby or a door, which holds the credential and enforces the scope. chant workspace check fails when a file in the member's directory carries a literal secret (WSP121) and when a capability names no broker (WSP122). chant workspace status --json lists the capabilities, so a broker can read the scopes. Its host, slot, ports, state and cookies state the box's isolation (#2727): chant derives each value from the box's identity, its host, the member's name and its slot, and prints them in chant workspace status --json, so a runtime reads them instead of choosing its own. chant workspace check fails when two boxes on a host resolve to the same value (WSP123) and when a box hard-codes a machine path (WSP124). Added in schema 1 by chant 0.91.0, so a declaration that uses it sets minReader to 0.91.0 or newer.",
       "properties": {
         "capabilities": {
           "type": "array",
-          "description": "Each capability the box reaches outside itself, named once.",
+          "description": "Each capability the box reaches outside itself, named once. None when omitted.",
           "items": {
             "$ref": "#/$defs/capability"
           }
+        },
+        "host": {
+          "$ref": "#/$defs/name",
+          "description": "The host the box runs on, one of the top-level hosts (#2727). The box's name is the member's name."
+        },
+        "slot": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The box's number on its host (#2727). Its ports come from the slot's block of the host's range."
+        },
+        "ports": {
+          "type": "object",
+          "description": "The ports the box listens on, each a name and its offset in the box's block (#2727). The port is the block's first port plus the offset.",
+          "propertyNames": {
+            "$ref": "#/$defs/kindName"
+          },
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 65534
+          }
+        },
+        "state": {
+          "type": "object",
+          "description": "State the box keeps outside its checkout, such as hud's identity and database, each a name and a path relative to the box's state directory (#2727). The name is usually the environment variable the runtime sets, such as HUD_IDENTITY_PATH. A path that is absolute, starts with ~ or an environment reference, or has a .. segment is a WSP124 finding.",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_-]{0,63}$"
+          },
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "cookies": {
+          "type": "array",
+          "description": "Session cookie names the box's runtimes set, such as hud_session (#2727). A browser scopes a cookie to a host, not a port, so each resolves to <cookie>_<member name>.",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$"
+          }
         }
+      },
+      "dependentRequired": {
+        "host": [
+          "slot"
+        ],
+        "slot": [
+          "host"
+        ],
+        "ports": [
+          "host"
+        ],
+        "state": [
+          "host"
+        ],
+        "cookies": [
+          "host"
+        ]
       },
       "patternProperties": {
         "^x-": true
@@ -524,6 +587,60 @@
           "additionalProperties": false
         }
       ]
+    },
+    "host": {
+      "type": "object",
+      "description": "A host boxes run on (#2727).",
+      "required": [
+        "name",
+        "ports"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/name",
+          "description": "The host's name, unique among hosts. A box block names it in host."
+        },
+        "ports": {
+          "type": "object",
+          "description": "The TCP ports boxes on this host take theirs from. Slot n owns the block from + n * perBox to from + (n + 1) * perBox - 1, which must end at or before to.",
+          "required": [
+            "from",
+            "to",
+            "perBox"
+          ],
+          "properties": {
+            "from": {
+              "$ref": "#/$defs/port",
+              "description": "The first port of the range."
+            },
+            "to": {
+              "$ref": "#/$defs/port",
+              "description": "The last port of the range, inclusive."
+            },
+            "perBox": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535,
+              "description": "How many ports each box's block holds. A box's port offsets are below it."
+            }
+          },
+          "additionalProperties": false
+        },
+        "stateRoot": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Where boxes on this host keep state, as an environment reference such as ${XDG_STATE_HOME}/chant/boxes, which the runtime expands on the machine. A box's state directory is <stateRoot>/<member name>. A literal machine path, such as /Users/... or anything under $HOME, is a WSP124 finding. Default ${XDG_STATE_HOME}/chant/boxes."
+        }
+      },
+      "patternProperties": {
+        "^x-": true
+      },
+      "additionalProperties": false
+    },
+    "port": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65535
     }
   }
 }
