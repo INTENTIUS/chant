@@ -9,6 +9,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   conformanceTarget,
+  MCP_READ_TOOLS,
   READ_CONTRACT_COMMANDS,
   READ_CONTRACT_SCHEMAS,
   readAndCheck,
@@ -20,25 +21,33 @@ import {
 } from "./index";
 
 export function describeWorkspaceReaderConformance(config: WorkspaceReaderConformanceConfig): void {
-  const { checked } = selectCommands(config.commands);
+  const { checked } = selectCommands(config.commands, config.over);
   let target: ReturnType<typeof conformanceTarget> | undefined;
-  const recorder = recordingTransport(() => {
-    if (!target) throw new Error("the conformance workspace is not ready");
-    return target;
-  }, config.timeoutMs);
+  const recorder = recordingTransport(
+    () => {
+      if (!target) throw new Error("the conformance workspace is not ready");
+      return target;
+    },
+    config.timeoutMs,
+    config.over,
+  );
+  const over = config.over === "mcp" ? " over MCP (#2707)" : "";
 
-  describe(`workspace reader conformance (#2657): ${config.name}`, () => {
+  describe(`workspace reader conformance (#2657)${over}: ${config.name}`, () => {
     let before: Record<string, string> | undefined;
     const reader = config.reader(recorder.transport);
 
     beforeAll(() => {
       target = conformanceTarget(config);
     }, 300_000);
-    afterAll(() => target?.dispose());
+    afterAll(async () => {
+      await recorder.close();
+      target?.dispose();
+    });
 
     for (const command of READ_CONTRACT_COMMANDS) {
       if (!checked.includes(command)) {
-        it.skip(`${command}: not applicable, the reader does not list it in commands`, () => {});
+        it.skip(`${command}: not applicable, ${config.over === "mcp" && !MCP_READ_TOOLS[command] ? "chant serve mcp has no tool for it" : "the reader does not list it in commands"}`, () => {});
         continue;
       }
       it(

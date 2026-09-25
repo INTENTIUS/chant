@@ -39,8 +39,9 @@ const guideDoc = readFileSync(join(repoRoot, GUIDE_DOC), "utf8");
 const serverSrc = readFileSync(join(repoRoot, SERVER_SRC), "utf8");
 
 /** What a client is told when it asks, built from a server with no plugins loaded. */
-async function servedListing(method: "tools/list" | "resources/list"): Promise<string[]> {
-  const response = await new McpServer().handleRequest({ jsonrpc: "2.0", id: 1, method });
+async function servedListing(method: "tools/list" | "resources/list", inWorkspace = false): Promise<string[]> {
+  const server = inWorkspace ? new McpServer([], { workspace: { cwd: repoRoot } }) : new McpServer();
+  const response = await server.handleRequest({ jsonrpc: "2.0", id: 1, method });
   const result = response.result as { tools?: ToolDefinition[]; resources?: ResourceDefinition[] };
   const names = result.tools?.map((t) => t.name) ?? result.resources?.map((r) => r.uri);
   if (!names || names.length === 0) {
@@ -80,6 +81,23 @@ describe("the MCP docs describe the server that ships (#2385)", () => {
         `Registered: ${sorted(registered).join(", ")}. Documented: ${sorted(documented).join(", ")}. ` +
         `Give every registered tool a "### \`name\`" section on that page, and delete the sections for tools that no longer exist.`,
     ).toEqual(sorted(registered));
+  });
+
+  test("cli/mcp.mdx's Workspace tools table lists exactly the tools a server inside a workspace adds (#2707)", async () => {
+    const core = await servedListing("tools/list");
+    // This repository declares a workspace, so a server started in it has them.
+    const registered = (await servedListing("tools/list", true)).filter((n) => !core.includes(n));
+    expect(registered.length).toBeGreaterThan(0);
+    const listed = firstColumnCells(section(mcpDoc, "## Workspace tools", MCP_DOC));
+    expect(sorted(listed), `${MCP_DOC}'s "Workspace tools" table and the workspace tools disagree`).toEqual(sorted(registered));
+  });
+
+  test("guide/agent-integration.mdx lists exactly the workspace tools (#2707)", async () => {
+    const core = await servedListing("tools/list");
+    const registered = (await servedListing("tools/list", true)).filter((n) => !core.includes(n));
+    expect(registered.length).toBeGreaterThan(0);
+    const listed = firstColumnCells(section(guideDoc, "### Workspace Tools", GUIDE_DOC));
+    expect(sorted(listed), `${GUIDE_DOC}'s "Workspace Tools" table and the workspace tools a server inside a workspace registers disagree`).toEqual(sorted(registered));
   });
 
   test("guide/agent-integration.mdx lists exactly the tools the server registers", async () => {

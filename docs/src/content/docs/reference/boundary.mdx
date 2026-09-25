@@ -39,7 +39,7 @@ This page is generated from `docs/data/boundary.yaml`, which has one row for eac
 | record link kind | `RECORD_LINK_KINDS` in `record-assets.ts` | 2 | 0 | 0 |
 | intent node kind | the node kinds of `intent.schema.json` | 9 | 0 | 3 |
 | intent edge kind | the edge kinds of `intent.schema.json` | 9 | 0 | 3 |
-| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 92 | 0 | 0 |
+| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 93 | 0 | 0 |
 | finding code | the finding codes of `intent.schema.json` | 17 | 0 | 0 |
 | WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 35 | 0 | 0 |
 | hud view | the hud reader requirements H1 to H11 of #2650 | 0 | 11 | 0 |
@@ -202,6 +202,7 @@ Each row follows, in the order of the table above.
 | reason code | `review-note-required` | chant | records-review.schema.json | A dissent was given with no note: a dissent needs a reason. |
 | reason code | `review-sign-failed` | chant | records-review.schema.json | --sign was given and no seal could be made: the key can't be read or used, git names no ssh signing key, or ssh-keygen is not installed. |
 | reason code | `record-sign-failed` | chant | records-amend.schema.json, records-new.schema.json | --sign was given and no author seal could be made: the record names no author, the key can't be read or used, git names no ssh signing key, or ssh-keygen is not installed. |
+| reason code | `record-state-not-initial` | chant | records-new.schema.json | A record written through chant serve mcp gives a state other than the kind's first: a new record opens proposed, and a person moves it on. |
 | reason code | `source-harvest-not-proposed` | chant | records-new.schema.json | A harvested record (source.via harvest) was written in a state other than the kind's first: a harvest proposes, and a person decides. |
 | reason code | `session-unknown` | chant | records-review.schema.json | --session names no session of a session kind whose subjects are the record's kind. |
 | reason code | `session-not-open` | chant | records-review.schema.json | --session names a session in a closed state, which takes no more verdicts. |

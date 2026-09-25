@@ -68,6 +68,7 @@ export const NEW_ERROR_CODES = [
   "record-path-unmatched",
   "record-sign-failed",
   "source-harvest-not-proposed",
+  "record-state-not-initial",
   ...RECORD_REASON_CODES,
 ] as const satisfies readonly ReasonCode[];
 
@@ -613,14 +614,71 @@ export interface NewRecordOptions {
   sign?: string | true;
 }
 
+/**
+ * A write made through a channel other than the command line (#2707), such
+ * as `chant serve mcp`. The CLI never sets one.
+ */
+export interface WriteChannel {
+  /**
+   * Laid over the kind's source block (#2708) when the kind declares one:
+   * `via` and `client`. A new record gets the block, made when the fields
+   * give none; an amendment only when its fields set the block.
+   */
+  source: Record<string, unknown>;
+  /** A new record opens in the kind's first state: filled in when the fields give no state, and refused with record-state-not-initial when they give another. */
+  opensInitial?: boolean;
+}
+
+/** What a channel's write adds to the command line's: who the author is, and how it came. */
+export interface ChannelOptions {
+  /** The record's author, written to the kind's `reviews.decider` field: the person or agent that decided. */
+  by?: string;
+  through?: WriteChannel;
+}
+
+/** `fields` with the channel's author and source laid over them (#2707). `isNew` for `records new`. */
+function applyChannel(o: Opened, fields: Record<string, unknown>, opts: ChannelOptions, isNew: boolean, flag: string): Record<string, unknown> {
+  const { kind } = o.loaded;
+  const out = { ...fields };
+  if (opts.by !== undefined) {
+    if (!kind.reviews) throw new RecordWriteError("write-usage-invalid", `by names a record's author, the kind's reviews.decider field, and the ${kind.name} kind declares no reviews`);
+    if (opts.by.trim() === "") throw new RecordWriteError("write-usage-invalid", "by needs the name of the person or agent that decided");
+    const f = kind.reviews.decider;
+    if (out[f] !== undefined && out[f] !== null && out[f] !== opts.by) {
+      throw new RecordWriteError("write-input-invalid", `the fields given with ${flag} set ${f} to ${JSON.stringify(out[f])}, and by names ${JSON.stringify(opts.by)}: give one author`);
+    }
+    out[f] = opts.by;
+  }
+  const through = opts.through;
+  if (!through) return out;
+  if (isNew && through.opensInitial && kind.states && kind.stateField !== undefined) {
+    const first = kind.states[0];
+    const state = out[kind.stateField];
+    if (state === undefined) out[kind.stateField] = first;
+    else if (state !== first) {
+      throw new RecordWriteError(
+        "record-state-not-initial",
+        `a new ${kind.name} opens ${first}, and the fields give ${kind.stateField} ${JSON.stringify(state)}: write it ${first}, and let the person who decides it move it on with a review or an amendment`,
+      );
+    }
+  }
+  if (kind.source && (isNew || kind.source.field in out)) {
+    const f = kind.source.field;
+    const block = out[f];
+    if (block === undefined || block === null) out[f] = { ...through.source };
+    else if (typeof block === "object" && !Array.isArray(block)) out[f] = { ...(block as Record<string, unknown>), ...through.source };
+  }
+  return out;
+}
+
 /** `records new`: write one new record from validated fields, sealed by its author with `sign`. */
-export async function newRecord(opts: NewRecordOptions): Promise<NewDocument> {
+export async function newRecord(opts: NewRecordOptions & ChannelOptions): Promise<NewDocument> {
   try {
     if (opts.prefix !== undefined && !/^[A-Za-z][A-Za-z0-9]*$/.test(opts.prefix)) {
       throw new RecordWriteError("write-usage-invalid", `--prefix takes letters and digits, starting with a letter, not ${JSON.stringify(opts.prefix)}`);
     }
-    const fields = parseFields(opts.fields, "--from");
     const o = await open(opts.kind, opts.cwd);
+    const fields = applyChannel(o, parseFields(opts.fields, "--from"), opts, true, "--from");
     const { kind, schema } = o.loaded;
     refuseSealField(o, fields, "--from");
     refuseRevisionFields(kind, fields, {}, "--from");
@@ -696,10 +754,10 @@ export interface AmendRecordOptions {
  * changes only the reviews leaves the digest, and the seal, as they were.
  * `--sign` with nothing to change seals the record as it is.
  */
-export async function amendRecord(opts: AmendRecordOptions): Promise<AmendDocument> {
+export async function amendRecord(opts: AmendRecordOptions & ChannelOptions): Promise<AmendDocument> {
   try {
-    const given = parseFields(opts.fields, "--set");
     const o = await open(opts.kind, opts.cwd);
+    const given = applyChannel(o, parseFields(opts.fields, "--set"), opts, false, "--set");
     const { kind } = o.loaded;
     refuseSealField(o, given, "--set");
     const before = await readAll(o, o.source);
@@ -942,7 +1000,7 @@ function usage(schema: string, message: string): WriteFailure<"write-usage-inval
  * message the verb has always given; several are refused, since a write
  * never guesses which kind it means.
  */
-function declaredWriteKind(schema: string, cwd: string, missing: string): string | WriteFailure<"write-usage-invalid"> {
+export function declaredWriteKind(schema: string, cwd: string, missing: string): string | WriteFailure<"write-usage-invalid"> {
   let kinds: ReturnType<typeof declaredKindFiles>;
   try {
     kinds = declaredKindFiles(cwd);
@@ -998,7 +1056,7 @@ function readInput(schema: string, flag: string, value: string | undefined, cwd:
  * The session kind `records close` goes through when none is named (#2693):
  * the one session kind the declaration names.
  */
-async function declaredSessionKind(schema: string, cwd: string): Promise<string | WriteFailure<"write-usage-invalid">> {
+export async function declaredSessionKind(schema: string, cwd: string): Promise<string | WriteFailure<"write-usage-invalid">> {
   const kinds = (await findSessionKinds(cwd)).map((k) => k.file);
   if (kinds.length === 1) return kinds[0];
   if (kinds.length === 0) return usage(schema, "--kind <session kind file> is required: the declaration names no session kind");

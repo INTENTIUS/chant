@@ -131,6 +131,14 @@ export interface WorkspaceReaderConformanceOptions {
   chantCommand?: string[];
   /** How long one chant run may take, in milliseconds. Default 120000. */
   timeoutMs?: number;
+  /**
+   * How the reader's chant calls reach chant (#2707). `cli`, the default,
+   * runs the command. `mcp` answers each call with the matching tool of one
+   * `chant serve mcp` session started in the workspace, and also runs the
+   * command, so the suite holds the tool's document to the command's: they
+   * must be equal. `check` has no tool and is not applicable over MCP.
+   */
+  over?: "cli" | "mcp";
 }
 
 export interface WorkspaceReaderConformanceConfig extends WorkspaceReaderConformanceOptions {
@@ -289,12 +297,149 @@ export function checkReaderRead(command: ReadContractCommand, args: string[], ca
 }
 
 /** The commands to exercise and the ones skipped, from `commands`. Throws on a name that is not a contract command. */
-export function selectCommands(commands?: readonly ReadContractCommand[]): { checked: ReadContractCommand[]; skipped: ReadContractCommand[] } {
-  if (commands === undefined) return { checked: [...READ_CONTRACT_COMMANDS], skipped: [] };
+export function selectCommands(commands?: readonly ReadContractCommand[], over: "cli" | "mcp" = "cli"): { checked: ReadContractCommand[]; skipped: ReadContractCommand[] } {
+  const served = over === "mcp" ? READ_CONTRACT_COMMANDS.filter((c) => MCP_READ_TOOLS[c] !== undefined) : [...READ_CONTRACT_COMMANDS];
+  if (commands === undefined) return { checked: served, skipped: READ_CONTRACT_COMMANDS.filter((c) => !served.includes(c)) };
   const unknown = commands.filter((c) => !(READ_CONTRACT_COMMANDS as readonly string[]).includes(c));
   if (unknown.length > 0) throw new Error(`not read-contract commands: ${unknown.join(", ")}; the commands are ${READ_CONTRACT_COMMANDS.join(", ")}`);
   if (commands.length === 0) throw new Error("commands is empty; list at least one read-contract command");
+  const toolless = commands.filter((c) => !served.includes(c));
+  if (toolless.length > 0) throw new Error(`chant serve mcp has no tool for ${toolless.join(", ")}; over MCP the commands are ${served.join(", ")}`);
   return { checked: READ_CONTRACT_COMMANDS.filter((c) => commands.includes(c)), skipped: READ_CONTRACT_COMMANDS.filter((c) => !commands.includes(c)) };
+}
+
+// ── Over MCP (#2707) ─────────────────────────────────────────────────────────
+
+/** The `chant serve mcp` tool that answers each read-contract command. `check` has none. */
+export const MCP_READ_TOOLS: Partial<Record<ReadContractCommand, string>> = {
+  ls: "workspace-ls",
+  graph: "workspace-graph",
+  status: "workspace-status",
+  records: "workspace-records",
+  "graph --intent": "workspace-graph",
+  "graph --composites": "workspace-graph",
+};
+
+/**
+ * The tool call that answers `chant <argv>`, a read-contract command with its
+ * arguments and JSON flag, or undefined when no tool does. Flags map to the
+ * tool's arguments of the same meaning; the JSON flag is dropped, since a tool
+ * always returns the document.
+ */
+export function mcpToolCall(argv: readonly string[]): { name: string; arguments: Record<string, unknown> } | undefined {
+  if (argv[0] !== "workspace") return undefined;
+  const verb = argv[1];
+  const rest = argv.slice(2);
+  const args: Record<string, unknown> = {};
+  const positional: string[] = [];
+  const kinds: string[] = [];
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i];
+    const value = (): string | undefined => rest[++i];
+    if (a === "--json") continue;
+    if (a === "--format" && rest[i + 1] === "json") {
+      i++;
+      continue;
+    }
+    if (a === "--kind") kinds.push(value() ?? "");
+    else if (a === "--at") args.at = value();
+    else if (a === "--since") args.since = value();
+    else if (a === "--compare-to") args.compareTo = value();
+    else if (a === "--intent") args.intent = value();
+    else if (a === "--current") args.current = true;
+    else if (a === "--composites") args.composites = true;
+    else if (a.startsWith("-")) return undefined;
+    else positional.push(a);
+  }
+  switch (verb) {
+    case "ls":
+      return positional.length === 0 && kinds.length === 0 ? { name: "workspace-ls", arguments: args } : undefined;
+    case "status":
+      return positional.length === 1 && kinds.length === 0 ? { name: "workspace-status", arguments: { ...args, env: positional[0] } } : undefined;
+    case "records":
+      return positional.length === 0 && kinds.length <= 1 ? { name: "workspace-records", arguments: { ...args, ...(kinds.length ? { kind: kinds[0] } : {}) } } : undefined;
+    case "graph":
+      return positional.length === 0 ? { name: "workspace-graph", arguments: { ...args, ...(kinds.length ? { kind: kinds } : {}) } } : undefined;
+    default:
+      return undefined;
+  }
+}
+
+/** One `chant serve mcp` session over stdio: JSON-RPC lines in, one response line per request out. */
+export interface McpSession {
+  /** Call a tool and return its structured result, or reject with the error the server gave. */
+  call(name: string, args: Record<string, unknown>): Promise<unknown>;
+  close(): void;
+}
+
+/**
+ * Start `chant serve mcp` in `cwd` and initialize it as `clientInfo`. The
+ * server speaks over stdio only (ws-052): nothing here opens a port.
+ */
+export async function startMcpSession(
+  command: string[],
+  cwd: string,
+  options: { clientInfo?: { name: string; version?: string }; timeoutMs?: number } = {},
+): Promise<McpSession> {
+  const child = spawn(command[0], [...command.slice(1), "serve", "mcp"], { cwd, env: { ...process.env, NO_COLOR: "1" }, stdio: ["pipe", "pipe", "pipe"] });
+  const pending = new Map<number, { settle: (v: unknown) => void; fail: (e: Error) => void; timer: ReturnType<typeof setTimeout> }>();
+  let stderr = "";
+  let buffered = "";
+  let next = 1;
+  const failAll = (e: Error) => {
+    for (const p of pending.values()) {
+      clearTimeout(p.timer);
+      p.fail(e);
+    }
+    pending.clear();
+  };
+  child.stderr.setEncoding("utf-8").on("data", (s: string) => (stderr += s));
+  child.stdout.setEncoding("utf-8").on("data", (s: string) => {
+    buffered += s;
+    let nl: number;
+    while ((nl = buffered.indexOf("\n")) >= 0) {
+      const line = buffered.slice(0, nl).trim();
+      buffered = buffered.slice(nl + 1);
+      if (!line) continue;
+      let msg: { id?: number; result?: unknown; error?: { message: string } };
+      try {
+        msg = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      const p = msg.id !== undefined ? pending.get(msg.id) : undefined;
+      if (!p) continue;
+      pending.delete(msg.id!);
+      clearTimeout(p.timer);
+      if (msg.error) p.fail(new Error(msg.error.message));
+      else p.settle(msg.result);
+    }
+  });
+  child.on("error", (e) => failAll(new Error(`could not start chant serve mcp: ${e.message}`)));
+  child.on("close", (code) => failAll(new Error(`chant serve mcp exited (${code})${stderr.trim() ? `: ${stderr.trim()}` : ""}`)));
+  const request = (method: string, params: Record<string, unknown>): Promise<unknown> =>
+    new Promise((settle, fail) => {
+      const id = next++;
+      const timer = setTimeout(() => {
+        pending.delete(id);
+        fail(new Error(`chant serve mcp did not answer ${method} in time`));
+      }, options.timeoutMs ?? 120_000);
+      pending.set(id, { settle, fail, timer });
+      child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
+    });
+  await request("initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: options.clientInfo ?? { name: "chant-reader-conformance" } });
+  child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`);
+  return {
+    async call(name, args) {
+      const result = (await request("tools/call", { name, arguments: args })) as { isError?: boolean; structuredContent?: unknown; content?: { text?: string }[] };
+      if (result.isError) throw new Error(result.content?.[0]?.text ?? `${name} failed`);
+      return result.structuredContent ?? JSON.parse(result.content?.[0]?.text ?? "null");
+    },
+    close() {
+      child.stdin.end();
+      child.kill();
+    },
+  };
 }
 
 const GIT_ENV = { GIT_CONFIG_GLOBAL: process.platform === "win32" ? "NUL" : "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
@@ -381,14 +526,39 @@ function runChant(command: string[], argv: string[], cwd: string, timeoutMs: num
  * A transport that runs chant in the workspace `target()` names and records
  * every call and what it printed. `reset()` clears the record before a read.
  */
-export function recordingTransport(target: () => { workspaceDir: string; chantCommand: string[] }, timeoutMs = 120_000) {
+export function recordingTransport(target: () => { workspaceDir: string; chantCommand: string[] }, timeoutMs = 120_000, over: "cli" | "mcp" = "cli") {
   const calls: string[][] = [];
   const printed: ChantRun[] = [];
+  /** Over MCP: where a tool's document and the command's differ. */
+  const problems: string[] = [];
+  let session: Promise<McpSession> | undefined;
+  const viaMcp = async (argv: string[]): Promise<ChantRun> => {
+    const t = target();
+    const call = mcpToolCall(argv);
+    if (!call) return { argv: [...argv], status: null, stdout: "", stderr: `no chant serve mcp tool answers chant ${argv.join(" ")}` };
+    session ??= startMcpSession(t.chantCommand, t.workspaceDir, { timeoutMs });
+    let doc: unknown;
+    try {
+      doc = await (await session).call(call.name, call.arguments);
+    } catch (e) {
+      return { argv: [...argv], status: 1, stdout: "", stderr: `${call.name}: ${(e as Error).message}` };
+    }
+    // The command the tool stands for, run directly: the two documents must be equal.
+    const cli = await runChant(t.chantCommand, argv, t.workspaceDir, timeoutMs);
+    let printedDoc: unknown;
+    try {
+      printedDoc = JSON.parse(cli.stdout);
+    } catch {
+      printedDoc = undefined;
+    }
+    if (!isDeepStrictEqual(doc, printedDoc)) problems.push(`${argv.slice(1).join(" ")}: the MCP tool ${call.name} returned a document other than chant ${argv.join(" ")} printed`);
+    return { argv: [...argv], status: 0, stdout: JSON.stringify(doc), stderr: "" };
+  };
   const transport: ChantTransport = {
     async run(argv) {
       calls.push([...argv]);
       const t = target();
-      const run = await runChant(t.chantCommand, argv, t.workspaceDir, timeoutMs);
+      const run = over === "mcp" ? await viaMcp(argv) : await runChant(t.chantCommand, argv, t.workspaceDir, timeoutMs);
       printed.push(run);
       return run;
     },
@@ -397,9 +567,16 @@ export function recordingTransport(target: () => { workspaceDir: string; chantCo
     transport,
     calls,
     printed,
+    problems,
     reset() {
       calls.length = 0;
       printed.length = 0;
+      problems.length = 0;
+    },
+    /** Stop the MCP session, when one was started. */
+    async close() {
+      if (session) (await session.catch(() => undefined))?.close();
+      session = undefined;
     },
   };
 }
@@ -415,7 +592,7 @@ export async function readAndCheck(reader: WorkspaceReader, recorder: ReturnType
     const stderr = recorder.printed[0]?.stderr.trim();
     return { command, args, problems: [`${command}: the reader threw: ${(e as Error).message}${stderr ? `; chant's stderr: ${stderr}` : ""}`] };
   }
-  return { command, args, problems: checkReaderRead(command, args, recorder.calls, recorder.printed, doc) };
+  return { command, args, problems: [...checkReaderRead(command, args, recorder.calls, recorder.printed, doc), ...recorder.problems] };
 }
 
 /**
@@ -435,10 +612,10 @@ export async function readAndCheck(reader: WorkspaceReader, recorder: ReturnType
  * ```
  */
 export async function runWorkspaceReaderConformance(reader: WorkspaceReaderFactory, options: WorkspaceReaderConformanceOptions = {}): Promise<WorkspaceReaderConformanceReport> {
-  const { checked, skipped } = selectCommands(options.commands);
+  const { checked, skipped } = selectCommands(options.commands, options.over);
   const target = conformanceTarget(options);
+  const recorder = recordingTransport(() => target, options.timeoutMs, options.over);
   try {
-    const recorder = recordingTransport(() => target, options.timeoutMs);
     const built = reader(recorder.transport);
     const before = treeDigest(target.workspaceDir);
     const results: ReaderReadResult[] = [];
@@ -448,6 +625,7 @@ export async function runWorkspaceReaderConformance(reader: WorkspaceReaderFacto
     if (changed.length > 0) problems.push(`workspace: the reads changed files: ${changed.join(", ")}`);
     return { problems, checked, skipped, results, workspaceDir: target.workspaceDir };
   } finally {
+    await recorder.close();
     target.dispose();
   }
 }

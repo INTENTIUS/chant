@@ -8,7 +8,9 @@ import { scaffoldTool, createScaffoldHandler } from "./tools/scaffold";
 import { searchTool, createSearchHandler } from "./tools/search";
 import { compositesTool, createCompositesHandler } from "./tools/composites";
 import type { LexiconPlugin } from "../../lexicon";
-import type { McpRequest, McpResponse, McpRequestMeta, ToolDefinition, ToolHandler, ResourceDefinition } from "./types";
+import type { McpClientInfo, McpRequest, McpResponse, McpRequestMeta, ToolDefinition, ToolHandler, ResourceDefinition } from "./types";
+import { findWorkspaceRoot } from "../../project-root";
+import { createWorkspaceTools, type WorkspaceToolsOptions } from "./workspace-tools";
 import { createSnapshotTool, createDiffTool } from "./lifecycle-tools";
 import { setGateOrigin } from "../../lifecycle/gate-origin";
 import { createOpListTool, createOpRunTool, createOpStatusTool, createOpApproveTool, createOpReportTool } from "./op-tools";
@@ -47,14 +49,14 @@ export function negotiateProtocolVersion(requested: string | undefined): string 
  * sends on `initialize`. Read-side only — the server holds no handshake
  * state to update (#1194).
  */
-export function parseMeta(params: Record<string, unknown>): { protocolVersion?: string; clientInfo?: { name: string; version?: string } } {
+export function parseMeta(params: Record<string, unknown>): { protocolVersion?: string; clientInfo?: McpClientInfo } {
   const meta = (params._meta ?? {}) as McpRequestMeta;
   const protocolVersion =
     (typeof meta.protocolVersion === "string" ? meta.protocolVersion : undefined) ??
     (typeof params.protocolVersion === "string" ? params.protocolVersion : undefined);
   const clientInfo =
     meta["io.modelcontextprotocol/clientInfo"] ??
-    (params.clientInfo as { name: string; version?: string } | undefined);
+    (params.clientInfo as McpClientInfo | undefined);
   return { protocolVersion, clientInfo };
 }
 
@@ -94,14 +96,20 @@ export class McpServer {
   private pluginResources: Map<string, { definition: ResourceDefinition; handler: () => Promise<string> }> = new Map();
   private plugins: LexiconPlugin[];
   private instructions: string | undefined;
+  /** The `clientInfo` the client gave on `initialize`, for a request that carries none in `_meta` (#2707). */
+  private clientInfo: McpClientInfo | undefined;
 
   /**
    * `options.instructions` is sent as the `initialize` result's
    * `instructions`, the text a client may give its model about this server.
    * Only a workspace root with no lexicon of its own sets it (#2700), to say
    * which members' lexicons were loaded.
+   *
+   * `options.workspace` names the directory the server serves (#2707). When
+   * it is at or inside a declared workspace, the workspace read-contract and
+   * record-write tools are served too.
    */
-  constructor(plugins?: LexiconPlugin[], options: { instructions?: string } = {}) {
+  constructor(plugins?: LexiconPlugin[], options: { instructions?: string; workspace?: WorkspaceToolsOptions } = {}) {
     this.plugins = plugins ?? [];
     this.instructions = options.instructions;
     // Register core tools
@@ -124,6 +132,11 @@ export class McpServer {
     for (const factory of [createOpListTool, createOpRunTool, createOpStatusTool, createOpApproveTool, createOpReportTool]) {
       const t = factory();
       this.registerTool(t.definition, t.handler);
+    }
+
+    // Workspace reads and record writes (#2707), inside a declared workspace only.
+    if (options.workspace && findWorkspaceRoot(options.workspace.cwd)) {
+      for (const t of createWorkspaceTools(options.workspace)) this.registerTool(t.definition, t.handler);
     }
 
     // Register plugin contributions
@@ -244,6 +257,8 @@ export class McpServer {
   private async dispatch(method: string, params: Record<string, unknown>): Promise<unknown> {
     switch (method) {
       case "initialize":
+        // Kept for a write's source block (#2707): a prior-revision client names itself only here.
+        this.clientInfo = parseMeta(params).clientInfo ?? this.clientInfo;
         // Answered for prior-revision clients too — negotiated, not hard-coded (#1194).
         return this.buildInitializeResult(params);
 
@@ -290,7 +305,9 @@ export class McpServer {
     }
 
     try {
-      const result = await handler(toolParams);
+      // The client, from this request's _meta (2026-07-28) or else from initialize.
+      const clientInfo = parseMeta(params).clientInfo ?? this.clientInfo;
+      const result = await handler(toolParams, clientInfo ? { clientInfo } : {});
       const isStructured = typeof result === "object" && result !== null;
       return {
         content: [
@@ -374,6 +391,6 @@ export async function startMcpServer(): Promise<void> {
     // Start without plugins if resolution fails
   }
 
-  const server = new McpServer(plugins);
+  const server = new McpServer(plugins, { workspace: { cwd: process.cwd() } });
   server.start();
 }

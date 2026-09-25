@@ -155,6 +155,7 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `review-sign-failed` | error, `records review` | `--sign` was given and no seal could be made: the key can't be read or used, git names no ssh signing key, or `ssh-keygen` isn't installed. |
 | `record-sign-failed` | error, `records new` and `amend` | `--sign` was given and no author seal could be made: the record names no author, the key can't be read or used, git names no ssh signing key, or `ssh-keygen` isn't installed. |
 | `source-harvest-not-proposed` | error, `records new` | The fields' source block says `via: "harvest"` and the state isn't the kind's first, such as `proposed`: a harvest proposes, and a person decides ([#2708](https://github.com/INTENTIUS/chant/issues/2708)). |
+| `record-state-not-initial` | error, `records new` through `chant serve mcp` | The fields give a state other than the kind's first: a record written through MCP opens `proposed`, and a person moves it on ([#2707](https://github.com/INTENTIUS/chant/issues/2707)). |
 | `session-unknown` | error, `records review` | `--session` names no session of a session kind whose subjects are the record's kind ([#2693](https://github.com/INTENTIUS/chant/issues/2693)). |
 | `session-not-open` | error, `records review` | `--session` names a closed session, which takes no more verdicts. |
 | `since-rev-unknown` | error, `records --since` | `--since` names no commit, or names a session with no opening revision whose file no commit added. |
@@ -411,5 +412,7 @@ For each command it reads, the suite fails when any of these is false:
 | no file in the workspace changed | every file is hashed before the first read and after the last |
 
 The reader never gets the workspace's path, so the transport is its only route to the workspace, and the transport records everything that goes through it.
+
+With `over: "mcp"`, the same reader's calls are answered by `chant serve mcp` ([#2707](https://github.com/INTENTIUS/chant/issues/2707)). The transport starts one server session in the workspace and turns each call into the workspace tool that answers it, such as `workspace-records` for `workspace records --kind <kind> --json`. It also runs the command itself, and the suite fails when the tool's document differs from the command's. `check` has no tool, so over MCP it is not applicable.
 
 Outside the chant repository the suite writes a workspace to a temporary directory and removes it afterwards. The workspace is copied from the fixture in `src/workspace/conformance/__fixture__/` of `@intentius/chant`. Its chant member declares one composite and the component that deploys it, and its `decisions/` directory holds one decision. `chant workspace init --yes` declares it, and git commits it. Inside the chant repository the suite reads `reference-workspace/`. Both have the files the suite's arguments name, such as `decisions/decision.kind.mjs` and `app/src/server.mjs:19`. `workspaceDir` names another workspace with those files. `chantCommand` names the chant to run. By default that is the first `node_modules/.bin/chant` above the current directory, then the chant the suite came with.
