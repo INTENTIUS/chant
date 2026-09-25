@@ -23,6 +23,9 @@
  * reference (`op://`, `bws://`, `infisical://`), a `{{...}}` template
  * placeholder, and any expression, such as `process.env.X`, that is not a
  * string literal. WSP121 is fixed: a credential in a box's files is in git.
+ *
+ * WSP123 and WSP124, box isolation (#2727), are in `./box-isolation.ts` and
+ * listed here after these two.
  */
 
 import * as ts from "typescript";
@@ -30,9 +33,10 @@ import type { WorkspaceCheck, WorkspaceCheckContext, WorkspaceDiagnostic } from 
 import type { Member } from "../declaration";
 import type { ReasonCode } from "../reason-codes";
 import { joinPath, skippedDir, type WorkspaceTree } from "../tree";
+import { BOX_ISOLATION_CHECKS } from "./box-isolation";
 
 /** The read contract's codes for the box findings, carried as `code` on each. */
-export const BOX_FINDING_CODES = ["box-credential-declared", "box-capability-unbrokered"] as const satisfies readonly ReasonCode[];
+export const BOX_FINDING_CODES = ["box-credential-declared", "box-capability-unbrokered", "box-isolation-collision", "box-isolation-literal"] as const satisfies readonly ReasonCode[];
 
 export const WSP_BOX_CREDENTIAL = "WSP121";
 export const WSP_BOX_UNBROKERED = "WSP122";
@@ -298,4 +302,6 @@ export const BOX_CHECKS: readonly WorkspaceCheck[] = [
       return out;
     },
   },
+  // Box isolation (#2727), WSP123 and WSP124.
+  ...BOX_ISOLATION_CHECKS,
 ];

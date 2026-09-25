@@ -163,9 +163,35 @@ export interface BoxCapability {
 /** A member that is a box, or a box's declarations (#2726). */
 export interface BoxDeclaration {
   capabilities: BoxCapability[];
+  /** The host and slot of the box's isolation, or null when the block declares none (#2727). The values are derived in `boxes.ts`. */
+  isolation: BoxIsolationDeclaration | null;
   /** The block's JSON Pointer in the file, for messages. */
   pointer: string;
 }
+
+/** What a box declares about its isolation (#2727): its identity on a host, and the names of what it needs kept apart. */
+export interface BoxIsolationDeclaration {
+  host: string;
+  slot: number;
+  /** Port name to offset in the box's block, in file order. */
+  ports: Record<string, number>;
+  /** State name to a path relative to the box's state directory, in file order. */
+  state: Record<string, string>;
+  cookies: string[];
+}
+
+/** A host boxes run on (#2727): one machine under one hostname. */
+export interface Host {
+  name: string;
+  ports: { from: number; to: number; perBox: number };
+  /** As written, or null for the default ({@link DEFAULT_STATE_ROOT}). */
+  stateRoot: string | null;
+  /** The entry's JSON Pointer in the file, for messages. */
+  pointer: string;
+}
+
+/** Where boxes keep state when their host names no stateRoot (#2727). */
+export const DEFAULT_STATE_ROOT = "${XDG_STATE_HOME}/chant/boxes";
 
 export interface Member {
   type: "member";
@@ -226,6 +252,8 @@ export interface Declaration {
   quorum: number | null;
   /** The workspace's own record kinds, from the top-level `records`, in file order (#2680). A member's are on the member. */
   records: RecordKindDeclaration[];
+  /** The hosts boxes run on, in file order (#2727). */
+  hosts: Host[];
   /** The file, relative to the workspace root's tree (`chant.workspace.json` or `.jsonc`). */
   file: string;
 }
@@ -544,6 +572,8 @@ export function parseDeclaration(text: string, file: string, reader: string = re
     }
   }
 
+  const hosts = hostsOf(obj, members, at);
+
   const pins = ((obj.pins as Record<string, string>[] | undefined) ?? []).map((p) => ({
     package: p.package ?? null,
     version: p.version ?? null,
@@ -562,6 +592,7 @@ export function parseDeclaration(text: string, file: string, reader: string = re
     checks: { ...((obj.checks as Record<string, CheckSeverity> | undefined) ?? {}) },
     quorum: typeof obj.quorum === "number" ? obj.quorum : null,
     records: ownRecords,
+    hosts,
     file,
   };
 }
@@ -577,14 +608,74 @@ function recordKindsOf(raw: unknown, dir: string, member: string | null, pointer
   }));
 }
 
-/** The `box` block at `pointer`, already validated, or null when there is none (#2726). */
+/** The `box` block at `pointer`, already validated, or null when there is none (#2726, #2727). */
 function boxOf(raw: unknown, pointer: string): BoxDeclaration | null {
   if (raw === undefined) return null;
-  const caps = (raw as { capabilities: { name: string; broker?: string; scope?: string[] }[] }).capabilities;
+  const b = raw as {
+    capabilities?: { name: string; broker?: string; scope?: string[] }[];
+    host?: string;
+    slot?: number;
+    ports?: Record<string, number>;
+    state?: Record<string, string>;
+    cookies?: string[];
+  };
   return {
-    capabilities: caps.map((c, i) => ({ name: c.name, broker: c.broker ?? null, scope: [...(c.scope ?? [])], pointer: `${pointer}/capabilities/${i}` })),
+    capabilities: (b.capabilities ?? []).map((c, i) => ({ name: c.name, broker: c.broker ?? null, scope: [...(c.scope ?? [])], pointer: `${pointer}/capabilities/${i}` })),
+    // The schema requires host and slot together, and host for ports, state and cookies.
+    isolation:
+      b.host === undefined
+        ? null
+        : { host: b.host, slot: b.slot!, ports: { ...(b.ports ?? {}) }, state: { ...(b.state ?? {}) }, cookies: [...(b.cookies ?? [])] },
     pointer,
   };
+}
+
+/**
+ * The hosts, already validated, with the rules the schema can't say (#2727):
+ * host names are unique, a box's host is declared, its slot's block fits the
+ * host's range and its offsets fit the block. What two boxes resolve to is
+ * `chant workspace check`'s question (WSP123), not a read error.
+ */
+function hostsOf(obj: Record<string, unknown>, members: Member[], at: (pointer: string, key?: boolean) => ErrorLocation): Host[] {
+  const hosts = ((obj.hosts as Record<string, unknown>[] | undefined) ?? []).map((h, i): Host => ({
+    name: h.name as string,
+    ports: { ...(h.ports as Host["ports"]) },
+    stateRoot: (h.stateRoot as string | undefined) ?? null,
+    pointer: `/hosts/${i}`,
+  }));
+  const invalid = (message: string, pointer: string) => new WorkspaceReadError("declaration-invalid", message, at(pointer));
+  const byName = new Map<string, Host>();
+  for (const h of hosts) {
+    const first = byName.get(h.name);
+    if (first) throw invalid(`the host name ${JSON.stringify(h.name)} is already used by the host at ${first.pointer}`, `${h.pointer}/name`);
+    byName.set(h.name, h);
+    if (h.ports.from > h.ports.to) throw invalid(`host ${h.name}'s port range starts at ${h.ports.from}, after its end ${h.ports.to}`, `${h.pointer}/ports`);
+  }
+  for (const m of members) {
+    const iso = m.box?.isolation;
+    if (!iso) continue;
+    const box = m.box!.pointer;
+    const host = byName.get(iso.host);
+    if (!host) {
+      const known = hosts.map((h) => h.name).join(", ") || "none are declared";
+      throw invalid(`member ${m.name}'s box names the host ${JSON.stringify(iso.host)}, which hosts does not declare; declared hosts: ${known}`, `${box}/host`);
+    }
+    const { from, to, perBox } = host.ports;
+    const last = from + (iso.slot + 1) * perBox - 1;
+    if (last > to) {
+      const slots = Math.floor((to - from + 1) / perBox);
+      throw invalid(
+        `member ${m.name}'s box has slot ${iso.slot} on host ${host.name}, which needs ports ${from + iso.slot * perBox} to ${last}, past the end of the host's range (${to}); the range holds ${slots} slot${slots === 1 ? "" : "s"}`,
+        `${box}/slot`,
+      );
+    }
+    for (const [port, offset] of Object.entries(iso.ports)) {
+      if (offset >= perBox) {
+        throw invalid(`member ${m.name}'s box gives port ${port} offset ${offset}, and host ${host.name} gives each box ${perBox} port${perBox === 1 ? "" : "s"} (offsets 0 to ${perBox - 1})`, `${box}/ports/${pointerToken(port)}`);
+      }
+    }
+  }
+  return hosts;
 }
 
 /**

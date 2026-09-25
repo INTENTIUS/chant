@@ -26,7 +26,9 @@
  * that count, and the `chant approve` line that answers it. The text view
  * doesn't show them. So does each member's box block (#2726): the
  * capabilities it reaches through a broker, with the broker and the scope a
- * broker enforces.
+ * broker enforces, and, when the block names a host, the box's ports, state
+ * paths and cookie names resolved from its identity (#2727,
+ * `box-isolation.ts`), so a runtime reads them instead of choosing its own.
  */
 
 import { execFileSync } from "node:child_process";
@@ -40,6 +42,7 @@ import { latestPerComponent, readReleaseLedger, type ReleaseRecord } from "../li
 import { readReleasePlan, type ReleasePlan } from "../lifecycle/plan-ledger";
 import { listWorkLeases, type WorkLeaseState } from "../lifecycle/work-lease";
 import { findWorkspaceRoot } from "../project-root";
+import { resolveBoxes, type ResolvedIsolation } from "./box-isolation";
 import { readDeclaration, readerVersion, WorkspaceReadError, type ErrorLocation, type Member } from "./declaration";
 import type { ReasonCode } from "./reason-codes";
 import { GATE_REASON_CODES, readMemberGates, type GateLedgerReader, type StatusGate, type StatusGateLedger } from "./status-gates";
@@ -173,6 +176,8 @@ export interface StatusMember {
 /** A box's brokered capabilities, from the declaration (#2726). */
 export interface StatusBox {
   capabilities: { name: string; broker: string | null; scope: string[] }[];
+  /** The box's ports, state paths and cookie names, resolved from its identity, or null when the block declares no host (#2727). */
+  isolation: ResolvedIsolation | null;
 }
 
 /**
@@ -354,6 +359,7 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
     const commit = lifecycleTip(found.dir);
     const now = query.now ?? new Date().toISOString();
 
+    const isolation = new Map(resolveBoxes(declaration).map((b) => [b.member.name, b.isolation]));
     const members: StatusMember[] = [];
     for (const m of declaration.members) {
       const environments: StatusEnvironment[] = [];
@@ -370,7 +376,13 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
         readable: environments.every((e) => e.reason === null),
         gateLedger: gates.ledger,
         gates: gates.gates,
-        box: m.box === null ? null : { capabilities: m.box.capabilities.map((c) => ({ name: c.name, broker: c.broker, scope: [...c.scope] })) },
+        box:
+          m.box === null
+            ? null
+            : {
+                capabilities: m.box.capabilities.map((c) => ({ name: c.name, broker: c.broker, scope: [...c.scope] })),
+                isolation: isolation.get(m.name) ?? null,
+              },
         stewards: stewards.stewards,
         stewardReasons: stewards.reasons,
       });
@@ -511,6 +523,16 @@ export function formatStatus(doc: Extract<StatusDocument, { members: unknown }>)
     lines.push("");
     const rows: string[][] = [["WORK ITEM", "HOLDER", "EXPIRES", "STATE"]];
     for (const l of doc.leases) rows.push([l.member ? `${l.member}/${l.item}` : l.item, l.holder, l.expiresAt, l.state]);
+    lines.push(...table(rows));
+  }
+  const boxes = doc.members.filter((m) => m.box?.isolation);
+  if (boxes.length > 0) {
+    lines.push("");
+    const rows: string[][] = [["BOX", "HOST", "SLOT", "PORTS", "STATE"]];
+    for (const m of boxes) {
+      const i = m.box!.isolation!;
+      rows.push([m.name, i.host, String(i.slot), `${i.portRange.from}-${i.portRange.to}`, i.stateDir]);
+    }
     lines.push(...table(rows));
   }
   const s = doc.summary;

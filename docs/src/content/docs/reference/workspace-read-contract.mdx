@@ -194,6 +194,8 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `environments-ledger-unreadable` | member, `graph --composites` | The `chant/lifecycle` branch exists and the member's ledger environments couldn't be listed. |
 | `box-credential-declared` | finding, `check` | `WSP121`: a file in a box member's directory carries a literal secret, a credential's shape or a literal where a credential goes. A `${VAR}`, `$VAR` or secret-manager reference isn't one. |
 | `box-capability-unbrokered` | finding, `check` | `WSP122`: a capability in a member's box block names no broker, so the box would hold its credential. |
+| `box-isolation-collision` | finding, `check` | `WSP123`: two boxes on one host resolve to the same port, state path or cookie name, or two ports in one box share an offset. |
+| `box-isolation-literal` | finding, `check` | `WSP124`: a host's `stateRoot` or a box's state entry is a literal machine path instead of one derived from an environment reference and the box's name. |
 | `lock-invalid` | finding, `check` | The lineage lock can't be read. |
 | `manual-step-open` | finding, `check` | A scope in the lineage lock has an open manual step. |
 | `work-kind-missing` | error, `work` | No work kind to find the item in: `--kind` names a kind with no work block, or the declaration names no work kind. |
@@ -351,6 +353,8 @@ Each component also lists the environments it may be deployed to in `environment
 ## Boxes
 
 `chant workspace status --json` lists each member's `box`, the capabilities its [box block](/chant/reference/workspace-declaration/#boxes) declares, each with `name`, `broker` and `scope` ([#2726](https://github.com/INTENTIUS/chant/issues/2726)). It is `null` for a member with no block. A broker reads the scope it enforces for a box here. `chant workspace check` reports a box that holds a literal secret with `box-credential-declared` and a capability with no broker with `box-capability-unbrokered`, each carried as `code` on its `WSP` finding.
+
+A box block with a host also carries `isolation`: the ports, state paths and cookie names chant derives from the box's identity ([#2727](https://github.com/INTENTIUS/chant/issues/2727)), or `null` without a host. A runtime that plants or starts a box sets these values instead of choosing its own. `check` reports two boxes on a host sharing one with `box-isolation-collision`, and a hard-coded machine path with `box-isolation-literal`. The derivation is on the [declaration page](/chant/reference/workspace-declaration/#isolation). chant never expands the environment reference in a state path and never opens a port.
 
 ## Stewards
 

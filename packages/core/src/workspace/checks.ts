@@ -29,6 +29,7 @@
  * | WSP111 to WSP114 | records read with `--kind` (#2549) |
  * | WSP115 | the record kinds the declaration names (#2680) |
  * | WSP121, WSP122 | boxes: no literal credential, every capability brokered (#2726) |
+ * | WSP123, WSP124 | box isolation: no shared port, state path or cookie, no literal machine path (#2727) |
  */
 
 import { realpathSync } from "node:fs";

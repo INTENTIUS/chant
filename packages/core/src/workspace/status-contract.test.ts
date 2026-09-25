@@ -308,6 +308,7 @@ describe("chant workspace status on built workspaces", () => {
           { name: "fountain", broker: "lobby", scope: ["agent", "vault", "conversations", "sandboxes"] },
           { name: "inference", broker: null, scope: [] },
         ],
+        isolation: null,
       },
     ]);
   });

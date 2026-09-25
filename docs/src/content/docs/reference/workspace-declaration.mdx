@@ -53,6 +53,7 @@ chant finds the file by walking up from the current directory to the git root, t
 | `pins` | no | An array of [pins](#pins). |
 | `checks` | no | Severities for the [declaration checks](/chant/cli/workspace-check/#severity-and-suppression), keyed by `WSP` id: `error`, `warning`, `info` or `off`. |
 | `records` | no | The workspace's own [record kinds](#record-kinds), each `{ "kind": "<path>" }` with the path from the workspace root. It was added in chant 0.86.0. |
+| `hosts` | no | The [hosts](#isolation) boxes run on, each with the port range its boxes share. It was added in chant 0.91.0. |
 | `quorum` | no | How many agree verdicts besides the decider's a record needs, as an integer from 0. [`chant workspace records`](/chant/cli/workspace-records/#reviews-and-quorum) reports each record's quorum against it, and it applies to every record kind with a reviews list. The default is 2. It was added in chant 0.86.0, so a declaration that sets it should set `minReader` to `"0.86.0"`. |
 | `$schema`, `$comment` | no | Editor hints and notes. chant ignores them. |
 | `x-...` | no | Any field whose name starts with `x-`, for people and other tools. Allowed on every object in the file. |
@@ -186,7 +187,7 @@ The member that holds the box's declarations carries a `box` block:
 
 | Field | Required | Value |
 |---|---|---|
-| `capabilities` | yes | Each capability the box reaches outside itself. |
+| `capabilities` | no | Each capability the box reaches outside itself. None when omitted. |
 | `capabilities[].name` | yes | The capability, in the kind-name grammar, such as `inference` or `fountain`. A box names each capability once. |
 | `capabilities[].broker` | no | What brokers it, such as `lobby` or `door`. It may be a member of this workspace or a runtime outside it, as a planted box's lobby is. Without it the capability is unbrokered, and `chant workspace check` fails with `WSP122`. |
 | `capabilities[].scope` | no | The parts of the box's own that the broker lets it reach. The broker enforces the words, and chant records them. For Fountain these are `agent` (start conversations with its own agent), `vault` (attach its own vault), and `conversations` and `sandboxes` (its own). |
@@ -199,6 +200,74 @@ The block goes in the workspace declaration and not in the box's TypeScript. `ch
 | [`chant workspace status --json`](/chant/cli/workspace-status/#boxes) | lists each member's `box`, with every capability's `name`, `broker` and `scope` |
 
 Set `minReader` to `"0.91.0"` or newer when the file has a `box` block, so an older chant reports `reader-too-old` instead of an unknown field.
+
+### Isolation
+
+Several boxes on one machine collide unless something keeps them apart. When two boxes keep hud's identity in one file, they share one owner ([arugula-salad/studio#39](https://github.com/arugula-salad/studio/issues/39)). A browser scopes a cookie to a host and not to a port. So when two boxes set one cookie name on one hostname, signing into one signs you out of the other. The box block states the box's isolation, and chant derives the values from the box's identity ([#2727](https://github.com/INTENTIUS/chant/issues/2727)). A runtime that plants or starts boxes reads them from [`chant workspace status --json`](/chant/cli/workspace-status/#boxes) instead of choosing its own.
+
+```json
+{
+  "name": "lobby",
+  "schema": 1,
+  "minReader": "0.91.0",
+  "hosts": [
+    { "name": "local", "ports": { "from": 7100, "to": 7999, "perBox": 20 } }
+  ],
+  "members": [
+    {
+      "name": "fern",
+      "dir": "boxes/fern",
+      "kind": "chant",
+      "box": {
+        "host": "local",
+        "slot": 0,
+        "ports": { "app": 0, "door": 1, "proxy": 2, "inject": 3 },
+        "state": { "HUD_IDENTITY_PATH": "hud/identity.json", "HUD_DB_PATH": "hud/events.db" },
+        "cookies": ["hud_session", "chaff_door"],
+        "capabilities": [{ "name": "inference", "broker": "lobby", "scope": ["agent"] }]
+      }
+    },
+    { "name": "moss", "dir": "boxes/moss", "kind": "chant", "box": { "host": "local", "slot": 1, "ports": { "app": 0, "door": 1 } } }
+  ]
+}
+```
+
+A host is one machine reached under one hostname. Everything a box could collide on belongs to its host, so `chant workspace check` compares boxes with the other boxes on their host and never across hosts. A box that runs on a machine of its own, such as a Fountain sandbox, is the only box on its host.
+
+| Host field | Required | Value |
+|---|---|---|
+| `name` | yes | The host's name, in the [name grammar](#names), unique among hosts. |
+| `ports` | yes | `{ "from", "to", "perBox" }`: the range boxes on the host take their ports from, inclusive, and the size of each box's block. |
+| `stateRoot` | no | Where boxes on the host keep state, starting with an environment reference that the runtime expands on the machine. The default is `${XDG_STATE_HOME}/chant/boxes`. |
+
+| Box block field | Required | Value |
+|---|---|---|
+| `host` | with `slot` | The host the box runs on, one of `hosts`. A block without it declares no isolation. |
+| `slot` | with `host` | The box's number on its host, from 0. Its ports come from the slot's block. |
+| `ports` | no | Each port the box listens on, as a name and its offset in the block, from 0 to `perBox - 1`. |
+| `state` | no | State the box keeps outside its checkout, as a name and a path relative to the box's state directory. The name is usually the environment variable the runtime sets, such as `HUD_IDENTITY_PATH`. |
+| `cookies` | no | The session cookie names the box's runtimes set, such as `hud_session`. |
+
+`ports`, `state` and `cookies` need a `host`. A box's identity is its host, the member's name and its slot. The values follow from those and the host's declaration, and from nothing else:
+
+| Value | Derived as | `fern` above |
+|---|---|---|
+| port block | `from + slot * perBox` to `from + (slot + 1) * perBox - 1` | 7100 to 7119 |
+| port `p` | the block's first port plus `p`'s offset | `door` is 7101 |
+| state directory | `<stateRoot>/<member name>` | `${XDG_STATE_HOME}/chant/boxes/fern` |
+| state entry | the state directory, then the entry's path | `HUD_IDENTITY_PATH` is `${XDG_STATE_HOME}/chant/boxes/fern/hud/identity.json` |
+| cookie `c` | `<c>_<member name>` | `hud_session_fern` |
+
+The same declaration gives the same values on every machine. Adding a box changes no other box's values, and neither does removing or moving one. chant leaves the environment reference in a state path for the runtime to expand. It never reads the machine, and it listens on no port. Distinct names give distinct state paths and cookie names, since a member name has no `_`, so ports are the value two boxes can share by mistake: two boxes on a host with one slot.
+
+Some mistakes stop the read with `declaration-invalid`. A box may only name a declared host, and its slot's block has to end at or before the host's `to`. Each offset is below `perBox`, and a host name is used once. [`chant workspace check`](/chant/cli/workspace-check/#box-isolation) then reports what the boxes resolve to:
+
+| Id | Code | Fails when |
+|---|---|---|
+| `WSP123` | `box-isolation-collision` | two boxes on one host resolve to the same port, state path or cookie name, or two ports in one box share an offset. Two state entries in one box may name one file, as hud and a door that reads hud's identity do |
+| `WSP124` | `box-isolation-literal` | a host's `stateRoot` is a literal machine path, such as `/Users/...`, `~/...` or anything under `$HOME`, or a box's state entry is absolute, starts with `~` or an environment reference, or has a `..` segment |
+
+Both are fixed errors, and each finding carries its code.
 
 ## Example groups
 
