@@ -7,7 +7,8 @@
  * (`read-contract.test.ts`).
  */
 
-import { mkdirSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, describe, expect, test } from "vitest";
 import type { GraphIR, IRNode } from "../graph-ir";
@@ -15,6 +16,7 @@ import { cleanScratch, commitAll, contract, declaration, FAKE_FILE_GRAPH_CHANT, 
 import { MEMBER_RUN_REASON_CODES } from "./compose-graph";
 import {
   COMPOSITES_CONTRACT_VERSION,
+  COMPOSITES_ENVIRONMENT_REASON_CODES,
   COMPOSITES_ERROR_CODES,
   COMPOSITES_OUTPUT_SCHEMA_ID,
   COMPOSITES_REASON_CODES,
@@ -57,6 +59,9 @@ const componentIr = (components: { name: string; composites?: string[]; archetyp
 
 /** The built-in runtime every component has. */
 const local = (name: string) => ({ name: "local", lexicon: null, default: true, command: `chant run --components ${name}` });
+
+/** The default environment, named by nothing but chant itself. */
+const localEnv = (name: string) => ({ name: "local", default: true, source: "builtin", command: `chant run --components ${name}` });
 
 /**
  * app declares three instances and exports ImageUri; delivery links to it and
@@ -111,6 +116,7 @@ describe("composites output schema", () => {
     expect(COMPOSITES_ERROR_CODES).toEqual(GRAPH_ERROR_CODES);
     expect(schema.$defs.member.properties.reason.oneOf[1].properties!.code.enum).toEqual([...MEMBER_RUN_REASON_CODES]);
     expect(schema.$defs.member.properties.runtimeReasons.items.properties.code.enum).toEqual([...COMPOSITES_RUNTIME_REASON_CODES]);
+    expect(schema.$defs.member.properties.environmentReasons.items.properties.code.enum).toEqual([...COMPOSITES_ENVIRONMENT_REASON_CODES]);
   });
 });
 
@@ -122,7 +128,7 @@ describe("the join", () => {
       { ...composite("a/billingTable", "Table", "a/billing"), member: "a" },
     ],
   });
-  const component = (member: string, name: string, composites: string[] | null = null): ComponentEntry => ({ id: `${member}/${name}`, name, member, archetype: null, composites, file: null, runtimes: [] });
+  const component = (member: string, name: string, composites: string[] | null = null): ComponentEntry => ({ id: `${member}/${name}`, name, member, archetype: null, composites, file: null, runtimes: [], environments: [] });
 
   test("an instance carries every kind and lexicon of its nodes", () => {
     expect(instances.map((i) => [i.id, i.instance, i.kinds, i.lexicons])).toEqual([
@@ -165,9 +171,9 @@ describe("chant workspace graph --composites on a built workspace", () => {
       ["docs", "skipped", "kind-not-run"],
     ]);
     expect(g.components).toEqual([
-      { id: "delivery/edge", name: "edge", member: "delivery", archetype: "infra", composites: ["StaticSite"], file: "delivery/src/edge.component.ts", runtimes: [local("edge")] },
-      { id: "delivery/loom-backend", name: "loom-backend", member: "delivery", archetype: "service", composites: null, file: "delivery/src/loom-backend.component.ts", runtimes: [local("loom-backend")] },
-      { id: "jobs/queue-runner", name: "queue-runner", member: "jobs", archetype: null, composites: ["WorkQueue", "CacheCluster"], file: "jobs/src/queue-runner.component.ts", runtimes: [local("queue-runner")] },
+      { id: "delivery/edge", name: "edge", member: "delivery", archetype: "infra", composites: ["StaticSite"], file: "delivery/src/edge.component.ts", runtimes: [local("edge")], environments: [localEnv("edge")] },
+      { id: "delivery/loom-backend", name: "loom-backend", member: "delivery", archetype: "service", composites: null, file: "delivery/src/loom-backend.component.ts", runtimes: [local("loom-backend")], environments: [localEnv("loom-backend")] },
+      { id: "jobs/queue-runner", name: "queue-runner", member: "jobs", archetype: null, composites: ["WorkQueue", "CacheCluster"], file: "jobs/src/queue-runner.component.ts", runtimes: [local("queue-runner")], environments: [localEnv("queue-runner")] },
     ]);
     const rows = Object.fromEntries(g.composites.map((c) => [c.id, c]));
     expect(Object.keys(rows)).toEqual(["app/backend", "app/cache", "app/site", "jobs/queue"]);
@@ -330,5 +336,113 @@ describe("the runtimes each component can deploy on (#2674)", () => {
       ["local", null, true],
       ["hosted", "hosted", false],
     ]);
+  });
+});
+
+/**
+ * Write `files` as the whole tree of a `chant/lifecycle` commit, the way the
+ * lifecycle code stores ledgers, without touching the working tree or index.
+ */
+function lifecycle(root: string, files: Record<string, string>): void {
+  const index = join(root, ".git", "composites-test-index");
+  const run = (args: string[], input?: string) =>
+    execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.com", ...args], {
+      cwd: root,
+      encoding: "utf-8",
+      input,
+      env: { ...process.env, GIT_INDEX_FILE: index },
+    }).trim();
+  rmSync(index, { force: true });
+  for (const [path, text] of Object.entries(files)) run(["update-index", "--add", "--cacheinfo", `100644,${run(["hash-object", "-w", "--stdin"], text)},${path}`]);
+  run(["update-ref", "refs/heads/chant/lifecycle", run(["commit-tree", run(["write-tree"]), "-m", "ledger"])]);
+  rmSync(index, { force: true });
+}
+
+/** One release line; the environment list reads only which ledgers exist. */
+const release = (component: string, env: string) => `${JSON.stringify({ version: 1, component, env, digest: `sha256:${"a".repeat(64)}`, gitSha: "b".repeat(40), runId: "r1", timestamp: "2026-09-24T00:00:00.000Z", actor: "t" })}\n`;
+
+describe("the environments each component may deploy to (#2695)", () => {
+  /** jobs declares staging, prod and the pattern pr-*; its ledger has releases in staging, pr-42 and retired. */
+  function declared(): string {
+    const root = fixture();
+    writeFileSync(join(root, "jobs", "chant.config.ts"), 'export default { environments: ["staging", { name: "prod", endpoint: "https://prod.example" }, "pr-*"] };\n');
+    lifecycle(root, {
+      "_members/jobs/staging/releases.jsonl": release("queue-runner", "staging"),
+      "_members/jobs/pr-42/releases.jsonl": release("queue-runner", "pr-42"),
+      "_members/jobs/retired/releases.jsonl": release("queue-runner", "retired"),
+      "_members/jobs/_gates/queue-runner.jsonl": "",
+      "_members/jobs/notes/README.md": "not a ledger\n",
+      "staging/releases.jsonl": release("edge", "staging"),
+    });
+    return root;
+  }
+
+  test("local is the default, then the config's names in order, then the ledger's, each with its --env line", async () => {
+    const g = result((await workspaceComposites({ cwd: declared() })).doc);
+    expectValid(g);
+    expect(g.components.find((c) => c.id === "jobs/queue-runner")!.environments).toEqual([
+      { name: "local", default: true, source: "builtin", command: "chant run --components queue-runner" },
+      { name: "staging", default: false, source: "config", command: "chant run --components queue-runner --env staging" },
+      { name: "prod", default: false, source: "config", command: "chant run --components queue-runner --env prod" },
+      // The pattern pr-* is no environment by itself, and it covers the ledger's pr-42.
+      { name: "pr-42", default: false, source: "ledger", command: "chant run --components queue-runner --env pr-42" },
+    ]);
+    const jobs = g.members.find((m) => m.name === "jobs")!;
+    expect(jobs.environmentReasons).toEqual([{ code: "environments-ledger-undeclared", message: expect.stringContaining("retired") }]);
+    expect(jobs.runtimeReasons).toEqual([]);
+  });
+
+  test("a member with no _members directory reads the flat ledger, and a config that declares none says so", async () => {
+    const g = result((await workspaceComposites({ cwd: declared() })).doc);
+    // delivery has no _members/delivery, so the flat staging ledger is its; its config declares nothing, so anything goes.
+    expect(g.components.find((c) => c.id === "delivery/edge")!.environments).toEqual([
+      localEnv("edge"),
+      { name: "staging", default: false, source: "ledger", command: "chant run --components edge --env staging" },
+    ]);
+    expect(g.members.find((m) => m.name === "delivery")!.environmentReasons.map((r) => r.code)).toEqual(["environments-none-declared"]);
+    expect(g.members.find((m) => m.name === "docs")!.environmentReasons).toEqual([]);
+  });
+
+  test("with no chant/lifecycle branch, the config's names are the list", async () => {
+    const root = fixture();
+    writeFileSync(join(root, "jobs", "chant.config.ts"), 'export default { environments: ["local", "prod"] };\n');
+    const g = result((await workspaceComposites({ cwd: root })).doc);
+    expectValid(g);
+    expect(g.components.find((c) => c.id === "jobs/queue-runner")!.environments).toEqual([
+      { name: "local", default: true, source: "config", command: "chant run --components queue-runner" },
+      { name: "prod", default: false, source: "config", command: "chant run --components queue-runner --env prod" },
+    ]);
+    expect(g.members.find((m) => m.name === "jobs")!.environmentReasons).toEqual([]);
+  });
+
+  test("a config that can't be read lists local and the ledger's, with the runtimes' code", async () => {
+    const root = declared();
+    writeFileSync(join(root, "jobs", "chant.config.ts"), 'throw new Error("no config here");\nexport default {};\n');
+    const g = result((await workspaceComposites({ cwd: root })).doc);
+    expectValid(g);
+    const jobs = g.members.find((m) => m.name === "jobs")!;
+    expect(jobs.environmentReasons).toEqual([{ code: "runtimes-config-unreadable", message: expect.stringContaining("no config here") }]);
+    expect(g.components.find((c) => c.id === "jobs/queue-runner")!.environments.map((e) => [e.name, e.source])).toEqual([
+      ["local", "builtin"],
+      ["pr-42", "ledger"],
+      ["retired", "ledger"],
+      ["staging", "ledger"],
+    ]);
+  });
+
+  test("a ledger that can't be listed says so, and the config's names are still listed", async () => {
+    const root = fixture();
+    writeFileSync(join(root, "jobs", "chant.config.ts"), 'export default { environments: ["prod"] };\n');
+    const g = result(
+      (
+        await workspaceComposites({
+          cwd: root,
+          readLedgerEnvironments: (m) => (m.name === "jobs" ? { envs: [], reason: { code: "environments-ledger-unreadable", message: "boom" } } : { envs: [], reason: null }),
+        })
+      ).doc,
+    );
+    expectValid(g);
+    expect(g.members.find((m) => m.name === "jobs")!.environmentReasons).toEqual([{ code: "environments-ledger-unreadable", message: "boom" }]);
+    expect(g.components.find((c) => c.id === "jobs/queue-runner")!.environments.map((e) => e.name)).toEqual(["local", "prod"]);
   });
 });

@@ -177,8 +177,11 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `composites-no-chant-member` | reason, `graph --composites` | No member of kind `chant` was read, so nothing declares a composite instance or a component. |
 | `composites-none-declared` | reason, `graph --composites` | The members read declare no composite instance. |
 | `composites-no-component` | reason, `graph --composites` | The members read declare no component, so no composite instance has one. |
-| `runtimes-config-unreadable` | member, `graph --composites` | The member's `chant.config.ts` couldn't be read, so its components list only the built-in `local` runtime. |
+| `runtimes-config-unreadable` | member, `graph --composites` | The member's `chant.config.ts` couldn't be read, so its components list only the built-in `local` runtime, and no environment from the config. |
 | `runtimes-lexicon-unreadable` | member, `graph --composites` | A lexicon the member's config lists couldn't be loaded, so it isn't listed as a runtime. |
+| `environments-none-declared` | member, `graph --composites` | The member's `chant.config.ts` declares no environments, so only `local` and the environments in its ledger are listed. |
+| `environments-ledger-undeclared` | member, `graph --composites` | The member's ledger has releases in an environment its config doesn't cover, so `chant run --env` would refuse it and it isn't listed. |
+| `environments-ledger-unreadable` | member, `graph --composites` | The `chant/lifecycle` branch exists and the member's ledger environments couldn't be listed. |
 | `lock-invalid` | finding, `check` | The lineage lock can't be read. |
 | `manual-step-open` | finding, `check` | A scope in the lineage lock has an open manual step. |
 
@@ -305,6 +308,8 @@ An instance's `id` is the composed graph's `compositeInstance`, `<member>/<insta
 An instance no component matches has an empty `components`. When the whole list is empty, or no instance has a component, `reasons` holds a code from the closed list that says why.
 
 Each component also lists the runtimes that can host its deploy in `runtimes` ([#2674](https://github.com/INTENTIUS/chant/issues/2674)). The list starts with the built-in `local` runtime and adds each lexicon in the member's `chant.config.ts` whose `opRuntime` hosts component runs, which is the list `chant run --components <name> --on <runtime>` accepts in that member. Each entry has `name`, `lexicon` (`null` for `local`), `default` and `command`, the exact command line to run in the member's directory. A reader offers only these runtimes and never guesses one. When the member's config or one of its lexicons can't be read, the member's `runtimeReasons` says so.
+
+Each component also lists the environments it may be deployed to in `environments` ([#2695](https://github.com/INTENTIUS/chant/issues/2695)). This is a contract version 1 addition, like `runtimes`: a reader that doesn't know the field ignores it. The list starts with `local`, the default, which `chant run --components` deploys to without `--env`. It goes on with the names the member's `chant.config.ts` declares in `environments`, then the environments with a release ledger for the member on `chant/lifecycle`. An entry's `source` says where its name came from: `config`, `ledger`, or `builtin` for `local` when neither names it. Its `command` deploys the component there and carries `--env` unless the environment is the default. The component contract declares no environments, so the list is the member's. A ledger environment the config doesn't cover is left out, because `chant run --env` would refuse it. The member's `environmentReasons` says so, and says when the config declares none or can't be read.
 
 ## Gates
 

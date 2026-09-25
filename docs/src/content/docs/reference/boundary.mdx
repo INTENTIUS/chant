@@ -39,7 +39,7 @@ This page is generated from `docs/data/boundary.yaml`, which has one row for eac
 | record link kind | `RECORD_LINK_KINDS` in `record-assets.ts` | 2 | 0 | 0 |
 | intent node kind | the node kinds of `intent.schema.json` | 9 | 0 | 3 |
 | intent edge kind | the edge kinds of `intent.schema.json` | 9 | 0 | 3 |
-| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 83 | 0 | 0 |
+| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 86 | 0 | 0 |
 | finding code | the finding codes of `intent.schema.json` | 17 | 0 | 0 |
 | WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 35 | 0 | 0 |
 | hud view | the hud reader requirements H1 to H11 of #2650 | 0 | 11 | 0 |
@@ -175,8 +175,11 @@ Each row follows, in the order of the table above.
 | reason code | `composites-no-chant-member` | chant | composites.schema.json | No member of kind chant was read, so nothing declares a composite instance or a component. |
 | reason code | `composites-none-declared` | chant | composites.schema.json | The members read declare no composite instance. |
 | reason code | `composites-no-component` | chant | composites.schema.json | The members read declare no component, so no composite instance has one. |
-| reason code | `runtimes-config-unreadable` | chant | composites.schema.json | The member's chant.config.ts could not be read, so only the built-in local runtime is listed. |
+| reason code | `runtimes-config-unreadable` | chant | composites.schema.json | The member's chant.config.ts could not be read, so only the built-in local runtime is listed, and no environment from the config. |
 | reason code | `runtimes-lexicon-unreadable` | chant | composites.schema.json | A lexicon the member's config lists could not be loaded, so it is not listed as a runtime. |
+| reason code | `environments-none-declared` | chant | composites.schema.json | The member's chant.config.ts declares no environments, so only local and the environments in its ledger are listed. |
+| reason code | `environments-ledger-undeclared` | chant | composites.schema.json | The member's ledger has releases in an environment its config's environments don't cover, so chant run --env would refuse it and it is not listed. |
+| reason code | `environments-ledger-unreadable` | chant | composites.schema.json | The chant/lifecycle branch exists and the member's ledger environments could not be listed. |
 | reason code | `record-supersedes-pending` | chant | records-amend.schema.json, records-new.schema.json, records-review.schema.json, records.schema.json | A supersedes link from a record whose state is weaker than the record it names, so the link has no effect yet. |
 | reason code | `kind-unreadable` | chant | intent.schema.json, ls.schema.json, records-amend.schema.json, records-new.schema.json, records-review.schema.json, records-since.schema.json, records.schema.json | The record kind file is missing or could not be imported. |
 | reason code | `kind-invalid` | chant | intent.schema.json, ls.schema.json, records-amend.schema.json, records-new.schema.json, records-review.schema.json, records-since.schema.json, records.schema.json | The record kind file exports no recordKind, or its shape is wrong. |

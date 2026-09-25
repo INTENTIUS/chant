@@ -406,8 +406,8 @@ describe("the composite graph on the fixture (#2662)", () => {
     expect(run.status, run.stderr).toBe(0);
     const doc = JSON.parse(run.stdout) as {
       composites: { id: string; member: string; instance: string; kinds: string[]; lexicons: string[]; nodes: string[]; components: unknown[] }[];
-      components: { id: string; archetype: string | null; composites: string[] | null; file: string | null; runtimes: unknown[] }[];
-      members: { name: string; runtimeReasons: unknown[] }[];
+      components: { id: string; archetype: string | null; composites: string[] | null; file: string | null; runtimes: unknown[]; environments: unknown[] }[];
+      members: { name: string; runtimeReasons: unknown[]; environmentReasons: { code: string }[] }[];
       reasons: unknown[];
       summary: unknown;
     };
@@ -434,9 +434,12 @@ describe("the composite graph on the fixture (#2662)", () => {
         file: "delivery/src/app.component.ts",
         // #2674: delivery configures no lexicon that hosts component runs, so the app deploys locally only.
         runtimes: [{ name: "local", lexicon: null, default: true, command: "chant run --components app" }],
+        // #2695: delivery's config declares no environments and chant's own ledger holds no release of it, so local only.
+        environments: [{ name: "local", default: true, source: "builtin", command: "chant run --components app" }],
       },
     ]);
     expect(doc.members.find((m) => m.name === "delivery")!.runtimeReasons).toEqual([]);
+    expect(doc.members.find((m) => m.name === "delivery")!.environmentReasons.map((r) => r.code)).toEqual(["environments-none-declared"]);
     expect(doc.reasons).toEqual([]);
     expect(doc.summary).toEqual({ composites: 1, withComponent: 1, withoutComponent: 0, components: 1 });
   });

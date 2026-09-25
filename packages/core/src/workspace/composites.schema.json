@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://intentius.io/chant/schemas/workspace/composites/v1/composites.schema.json",
   "title": "chant workspace graph --composites output",
-  "description": "What `chant workspace graph --composites` prints: each composite instance the workspace's members declare, joined to the components whose contract can deploy it (#2662). Each member of kind chant is read through its own `chant graph --format ir` and `chant graph --components --format ir`, under its own toolchain. An instance with no component is listed with an empty `components` array. chant supplies the rows and never picks one: each match says how it was made and how it crosses members. Readers ignore fields they do not know; a field is only ever added within a version. The reason and error codes are closed lists. Contract version 1 is written by chant 0.81.0 and newer, and this document was added to it by #2662; a chant without --composites refuses the flag. Each component lists the runtimes it can deploy on, read from its member's chant.config.ts (#2674). Every code is in the one closed list of `reason-codes.ts`.",
+  "description": "What `chant workspace graph --composites` prints: each composite instance the workspace's members declare, joined to the components whose contract can deploy it (#2662). Each member of kind chant is read through its own `chant graph --format ir` and `chant graph --components --format ir`, under its own toolchain. An instance with no component is listed with an empty `components` array. chant supplies the rows and never picks one: each match says how it was made and how it crosses members. Readers ignore fields they do not know; a field is only ever added within a version. The reason and error codes are closed lists. Contract version 1 is written by chant 0.81.0 and newer, and this document was added to it by #2662; a chant without --composites refuses the flag. Each component lists the runtimes it can deploy on, read from its member's chant.config.ts (#2674), and the environments it may deploy to, from that config and the member's release ledger on chant/lifecycle (#2695). Every code is in the one closed list of `reason-codes.ts`.",
   "oneOf": [
     {
       "$ref": "#/$defs/result"
@@ -131,7 +131,8 @@
         "status",
         "reason",
         "chant",
-        "runtimeReasons"
+        "runtimeReasons",
+        "environmentReasons"
       ],
       "properties": {
         "name": {
@@ -203,6 +204,30 @@
                 "enum": [
                   "runtimes-config-unreadable",
                   "runtimes-lexicon-unreadable"
+                ]
+              },
+              "message": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "environmentReasons": {
+          "description": "Why the environments of the member's components are only local, or leave out one its ledger has: its chant.config.ts could not be read (the same read and code as runtimeReasons), declares no environments, or doesn't cover an environment the ledger has, or the ledger couldn't be listed. Empty for a member not of kind chant, and when nothing needs saying.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "code",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "enum": [
+                  "runtimes-config-unreadable",
+                  "environments-none-declared",
+                  "environments-ledger-undeclared",
+                  "environments-ledger-unreadable"
                 ]
               },
               "message": {
@@ -351,7 +376,8 @@
         "archetype",
         "composites",
         "file",
-        "runtimes"
+        "runtimes",
+        "environments"
       ],
       "properties": {
         "id": {
@@ -399,6 +425,14 @@
           "minItems": 1,
           "items": {
             "$ref": "#/$defs/runtime"
+          }
+        },
+        "environments": {
+          "description": "The environments the component may deploy to with chant run --components --env in its member: local first, the default, then each name the member's chant.config.ts declares in environments (patterns left out), in config order, then each environment with a release ledger for the member on chant/lifecycle that the config covers, sorted. The component contract declares no environments.",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/environment"
           }
         }
       }
@@ -526,6 +560,37 @@
         "command": {
           "type": "string",
           "description": "The command that deploys the component on this runtime, run in the member's directory: chant run --components <name>, with --on <runtime> for any runtime but local."
+        }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "required": [
+        "name",
+        "default",
+        "source",
+        "command"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "What --env takes."
+        },
+        "default": {
+          "type": "boolean",
+          "description": "True for the environment chant run --components deploys to without --env. That is local, since chant.config.ts names no default environment."
+        },
+        "source": {
+          "enum": [
+            "config",
+            "ledger",
+            "builtin"
+          ],
+          "description": "Where the name came from, the first of these that names it: config for the member's chant.config.ts environments, ledger for a release ledger on chant/lifecycle, builtin for local when neither names it."
+        },
+        "command": {
+          "type": "string",
+          "description": "The command that deploys the component to this environment on its default runtime, run in the member's directory: chant run --components <name>, with --on <runtime> when the default runtime isn't local, and --env <env> for any environment but the default."
         }
       }
     }
