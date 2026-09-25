@@ -126,13 +126,28 @@ describe("describeResources: live machines → ResourceMetadata verdicts", () =>
   });
 
   test("with no readable plan, declared entities are unobserved rather than absent (#1089)", async () => {
+    // Nothing a plan can be rebuilt from (a Secret keys no read): no plan at all.
+    const secrets = entities([["token", "Fly::Machines::Secret"]]);
     const res = await describeResources(
-      { environment: "prod", buildOutput: "", entityNames: ["web"], entities: ENTS, endpoint: ENDPOINT },
+      { environment: "prod", buildOutput: "", entityNames: ["token"], entities: secrets, endpoint: ENDPOINT },
       fakeHttp([]),
     );
     expect(res.resources).toEqual({});
-    expect(res.unobserved?.web?.reason).toBe("read-failed");
-    expect(res.unobserved?.app?.reason).toBe("read-failed");
+    expect(res.unobserved?.token?.reason).toBe("read-failed");
+  });
+
+  test("with no build output, the plan is rebuilt from the declared entities (status --live, #2736)", async () => {
+    const declared = new Map([
+      ["shopApp", { entityType: "Fly::Machines::App", props: { name: APP, org_slug: "personal" } as Record<string, unknown> }],
+      ["web", { entityType: "Fly::Machines::Machine", props: { name: "web" } as Record<string, unknown> }],
+    ]);
+    const res = await describeResources(
+      { environment: "prod", buildOutput: "", entityNames: ["shopApp", "web"], entities: declared, endpoint: ENDPOINT },
+      fakeHttp([liveMachine("web", "nginx:1", { id: "m-web" })]),
+    );
+    expect(res.resources.web?.physicalId).toBe("m-web");
+    expect(res.resources.shopApp?.physicalId).toBe(APP);
+    expect(res.unobserved ?? {}).toEqual({});
   });
 
   test("the owned filter records a withheld declared machine as `filtered`, not absent (#1089)", async () => {

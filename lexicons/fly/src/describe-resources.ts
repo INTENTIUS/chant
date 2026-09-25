@@ -31,6 +31,7 @@ import type { ObservationResult, ResourceMetadata, UnobservedEntity } from "@int
 import { normalizeObservation, observation, unobservedAll } from "@intentius/chant/observation";
 import { readOwnership } from "@intentius/chant/ownership";
 import { FLY_METADATA_OWNERSHIP_KEYS } from "./ownership";
+import { readMachineRelease } from "./release-metadata";
 import {
   buildChangeSet,
   renderChangeSet,
@@ -99,6 +100,59 @@ function serializedName(req: FlapsRequest, entityName: string): string {
   return typeof req.body.name === "string" && req.body.name ? req.body.name : entityName;
 }
 
+/** The release attributes of a Machine whose metadata names one (#2736). */
+function releaseAttributes(metadata: Record<string, string> | undefined): Record<string, unknown> {
+  const release = readMachineRelease(metadata);
+  return release ? { digest: release.digest, release } : {};
+}
+
+/** A string prop, or undefined. */
+function stringProp(props: Record<string, unknown>, key: string): string | undefined {
+  const v = props[key];
+  return typeof v === "string" && v ? v : undefined;
+}
+
+/**
+ * A plan rebuilt from declared entities (#2736), for a caller that has the
+ * entities and no serialized build. It holds only what a read is keyed by:
+ * each App's name, and each Machine, Volume, IP and Certificate with the App it
+ * belongs to (an `app` prop naming it, else the sole declared App). Returns ""
+ * when there are no entities to rebuild from.
+ */
+export function planFromEntities(
+  entities: Map<string, { entityType: string; props: Record<string, unknown> }>,
+): string {
+  const plan: FlyPlan = {};
+  const apps: string[] = [];
+  for (const [name, { entityType, props }] of entities) {
+    if (entityType !== TYPE.app) continue;
+    const appName = stringProp(props, "name") ?? name;
+    apps.push(appName);
+    plan[name] = { endpoint: "/v1/apps", method: "POST", body: { app_name: appName } };
+  }
+  const soleApp = apps.length === 1 ? apps[0] : "{app}";
+  const owning = (props: Record<string, unknown>): string => {
+    const app = props.app;
+    if (typeof app === "string" && app) return app;
+    const ref = app && typeof app === "object" ? (app as { props?: Record<string, unknown> }).props : undefined;
+    return (ref && stringProp(ref, "name")) ?? soleApp;
+  };
+  for (const [name, { entityType, props }] of entities) {
+    const app = owning(props);
+    const base = `/v1/apps/${app}`;
+    if (entityType === TYPE.machine) {
+      plan[name] = { endpoint: `${base}/machines`, method: "POST", body: { name: stringProp(props, "name") ?? name } };
+    } else if (entityType === TYPE.volume) {
+      plan[name] = { endpoint: `${base}/volumes`, method: "POST", body: { name: stringProp(props, "name") ?? name } };
+    } else if (entityType === TYPE.ip) {
+      plan[name] = { endpoint: `${base}/ip_assignments`, method: "POST", body: { type: props.type } };
+    } else if (entityType === TYPE.cert) {
+      plan[name] = { endpoint: `${base}/certificates`, method: "POST", body: { hostname: props.hostname } };
+    }
+  }
+  return Object.keys(plan).length ? JSON.stringify(plan) : "";
+}
+
 /**
  * List live Fly resources over flaps and return them keyed by chant entity name,
  * each tagged with an ownership verdict the core change set reads to decide
@@ -116,10 +170,13 @@ export async function describeResources(
   const result: Record<string, ResourceMetadata> = {};
   const unobserved: Record<string, UnobservedEntity> = {};
 
-  // Without a readable plan there is nothing to key a read by, so chant never
-  // asks flaps anything — every declared entity is unobserved, not absent
-  // (#1089). Returning an empty map here used to plan a create for each.
-  if (!options.buildOutput) {
+  // `chant components status --live` hands over the declared entities with no
+  // serialized build (#2736): the plan is rebuilt from their props, enough to
+  // key each read by. Without either there is nothing to key a read by, so
+  // chant never asks flaps anything — every declared entity is unobserved, not
+  // absent (#1089). Returning an empty map here used to plan a create for each.
+  const buildOutput = options.buildOutput || planFromEntities(options.entities);
+  if (!buildOutput) {
     return observation(
       result,
       unobservedAll(options.entities.keys(), "read-failed", "no fly plan in the build output to read back", options.entities),
@@ -128,7 +185,7 @@ export async function describeResources(
 
   let plan: FlyPlan;
   try {
-    plan = parsePlan(options.buildOutput);
+    plan = parsePlan(buildOutput);
   } catch (err) {
     return observation(
       result,
@@ -318,11 +375,18 @@ export async function describeResources(
         // boundary types (volumes/ips/certs) get their verdict inferred at the
         // app boundary and carry no marker of their own — absent, not guessed.
         marker: readOwnership(m.config?.metadata, FLY_METADATA_OWNERSHIP_KEYS),
+        // The release the Machine serves (#2736): `digest` is the identity
+        // attribute core's status join compares with the release ledger
+        // (LIVE_IDENTITY_ATTRIBUTES); `release` carries the rest of what its
+        // metadata records. The commit is reported inside `release`, not as
+        // the `gitSha` identity: a rollback serves an earlier commit under the
+        // digest the ledger records again, so only the digest is the join.
         attributes: pruneUndefined({
           app,
           machineName: m.name,
           instanceId: m.instance_id,
           config: m.config,
+          ...releaseAttributes(m.config?.metadata),
         }),
       };
     }

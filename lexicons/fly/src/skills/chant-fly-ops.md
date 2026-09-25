@@ -53,3 +53,36 @@ Each prune logs the resource and endpoint it removed, so a prune run is auditabl
 ## Re-applying is safe
 
 A re-apply of an unchanged stack is a no-op per resource: machines whose config is structurally equal to live are skipped, volumes and certificates that already exist are skipped, and an IP of an already-present family is skipped. Only apply-only secrets are always re-set, because flaps exposes no value to diff against.
+
+## Releases on a Machine
+
+A component can deploy to Fly with this lexicon alone. It declares an `App` and the `Machine` that serves, builds them with `chant build --lexicon fly -o dist/fly.json`, and deploys with the `fly-release` step. Here a `Publish` phase (`publish-image`, elided) pushes the image, and the release serves it by digest:
+
+```ts
+import { phase, type Component } from "@intentius/chant/components";
+
+export const web: Component = {
+  name: "web",
+  deploy: [
+    phase("Publish", [/* publish-image */]),
+    phase("Release", [
+      {
+        kind: "fly-release",
+        plan: "dist/fly.json",
+        digest: "@Publish.digest",
+        image: "@Publish.uri",
+        migrations: [{ name: "001_init.sql", command: "node migrate.js 001_init.sql" }],
+        verify: { url: "https://web.example.com", healthPath: "/health" },
+      },
+    ]),
+  ],
+};
+```
+
+The step updates the Machine in place with the release in its `config.metadata`: `chant-release-digest`, `chant-release-git-sha` (the commit, `git rev-parse HEAD` unless given), and `chant-release-previous-digest` (the release it replaced). Each migration then runs inside the Machine through the Machines API's exec, once per environment: its receipt is kept on `chant/lifecycle` at `<env>/receipts/`, and a migration fires again only when its `sha` (or command) changes. After a migration fires, the Machine restarts, and the step checks that it is started with this release and, given a `url`, that its health endpoint answers with this commit or digest. If anything fails after the Machine changed, the step puts back the config the Machine served before (on a first release, it stops the Machine) and fails.
+
+The step's output carries `uri` and `digest`, so `chant run --components web --env prod` records the release in the ledger. `chant components status prod --live` reads the Machine's metadata back and compares its digest with the ledger's: the row is `reconciled` when they agree and `drifted` when the Machine serves something the ledger does not name. The component joins the Machine by name: name the component after the Machine entity, or list it in `liveNames`.
+
+Each release's Machine config is kept on `chant/lifecycle` at `<env>/fly/<app>/<machine>/<digest>.json`. `fly-rollback` puts back the config of the release the serving one replaced (or the digest given as `to`), checks it, and outputs that digest so the ledger records it again. `fly-release`'s own saga compensation does the same.
+
+The steps are also Op activities, for an Op that composes them itself: `flyMachineRelease`, `flyMachineExec`, `flyMachineRestart`, `flyMachineStop`, `flyMachineVerify` and `flyMachineRestore`. Wrap a migration's `flyMachineExec` in `effect()` so it fires once.

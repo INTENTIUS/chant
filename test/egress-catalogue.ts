@@ -411,6 +411,20 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     why: "`flyApply` creates, updates and destroys Machines; pointing it at the emulator is how the Fly tutorials run offline.",
   },
   {
+    file: "lexicons/fly/src/op/activities/machine-release.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "the app's own health endpoint, at the URL a release step is given",
+    why: "`flyMachineVerify` checks that a released Machine's app answers its health endpoint with that release (#2736). The Machines API calls go through fly-apply.ts's client.",
+  },
+  {
+    file: "lexicons/fly/src/components/fly-release.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "the app's own health endpoint, through `flyMachineVerify`",
+    why: "The `fly-release` and `fly-rollback` capabilities hand an injectable `fetch` to `flyMachineVerify`, so tests reach no network (#2736).",
+  },
+  {
     file: "lexicons/fly/src/op/activities/sprites.ts",
     primitives: ["fetch"],
     phase: "apply",

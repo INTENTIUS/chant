@@ -42,6 +42,13 @@ import type {
 } from "./activities/sprite-services";
 import type { SpriteTaskCreateArgs, SpriteTaskRefreshArgs, SpriteTaskReleaseArgs } from "./activities/sprite-tasks";
 import type { SpritesUpArgs, SpritesDownArgs } from "./activities/sprites-emulator";
+import type {
+  FlyMachineReleaseArgs,
+  FlyMachineExecArgs,
+  FlyMachineStateArgs,
+  FlyMachineVerifyArgs,
+  FlyMachineRestoreArgs,
+} from "./activities/machine-release";
 
 type StepOpts = { profile?: ActivityStep["profile"] };
 
@@ -127,3 +134,21 @@ export const spritesUp = (args: WithStepRefs<SpritesUpArgs> & StepOpts = {}): Na
 /** Stop and remove the local spritzer container — the fully typed twin of core's `spritesDown`. Defaults to the `fastIdempotent` profile. */
 export const spritesDown = (args: WithStepRefs<SpritesDownArgs> & StepOpts = {}): NamedActivityStep =>
   spriteStep<SpritesDownArgs>("spritesDown", "fastIdempotent")(args);
+
+// ── Machines release activities (#2736, ws-056) ──────────────────────────────
+// The site steps as Op steps: upload and start, a migration inside the
+// Machine, restart, stop, verify and restore. Wrap a migration's
+// `flyMachineExec` in `effect()` so it fires once per environment.
+
+/** Apply the plan with the Machine serving a release (its digest in the Machine's metadata). Defaults to the `longInfra` profile. */
+export const flyMachineRelease = spriteStep<FlyMachineReleaseArgs>("flyMachineRelease", "longInfra");
+/** Run a command inside a Machine (a migration). Defaults to the `atMostOnce` profile: chant cannot know the command is safe to repeat. */
+export const flyMachineExec = spriteStep<FlyMachineExecArgs>("flyMachineExec", "atMostOnce");
+/** Restart a Machine under a lease and wait for it to be started. Defaults to the `longInfra` profile. */
+export const flyMachineRestart = spriteStep<FlyMachineStateArgs>("flyMachineRestart", "longInfra");
+/** Stop a Machine under a lease. Defaults to the `longInfra` profile. */
+export const flyMachineStop = spriteStep<FlyMachineStateArgs>("flyMachineStop", "longInfra");
+/** Check a Machine is started with a release, and its health endpoint answers. Defaults to the `longInfra` profile. */
+export const flyMachineVerify = spriteStep<FlyMachineVerifyArgs>("flyMachineVerify", "longInfra");
+/** Put a recorded Machine config back (restore, rollback). Defaults to the `longInfra` profile. */
+export const flyMachineRestore = spriteStep<FlyMachineRestoreArgs>("flyMachineRestore", "longInfra");

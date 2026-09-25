@@ -16,6 +16,12 @@ export { Fly, Region, OrgSlug, AppName, PseudoParameter } from "./pseudo";
 // Ownership marker convention (machine config.metadata keys)
 export { FLY_METADATA_OWNERSHIP_KEYS } from "./ownership";
 
+// The release a Machine serves, in its metadata (#2736): read by
+// describeResources and compared with the release ledger by
+// `chant components status --live`.
+export { RELEASE_METADATA_KEYS, readMachineRelease, withReleaseMetadata } from "./release-metadata";
+export type { MachineRelease } from "./release-metadata";
+
 // Deploy Op composite + typed step builders (#744). `flyDeploy` returns a
 // `boot → build → flyApply → wait → teardown` Op; the step builders wrap the
 // generic `activity()` so the fly activities resolve by name without a core change.
@@ -63,6 +69,12 @@ export {
   spriteTaskRelease,
   spritesUp,
   spritesDown,
+  flyMachineRelease,
+  flyMachineExec,
+  flyMachineRestart,
+  flyMachineStop,
+  flyMachineVerify,
+  flyMachineRestore,
 } from "./op/builders";
 
 // Generated resources — export everything from generated index.

@@ -797,7 +797,14 @@ export async function pruneSecrets(
 
 export interface FlyApplyArgs {
   /** Path to the #738 serializer's JSON output (entity name → flaps request). */
-  planPath: string;
+  planPath?: string;
+  /**
+   * The plan itself, in place of `planPath` (#2736): a caller that changes the
+   * declared plan before applying it (the release a Machine serves, stamped
+   * into its metadata) passes it here rather than writing a file that may
+   * hold Secret values.
+   */
+  plan?: FlyPlan;
   /** flaps endpoint override (D3). Default: `FLY_FLAPS_BASE_URL` env, else real Fly. */
   endpoint?: string;
   /** Bearer token for real Fly. Default: `FLY_API_TOKEN`. mudflaps ignores it. */
@@ -835,6 +842,11 @@ export interface FlyApplyArgs {
  * because the serializer produced it and the two being out of sync is a bug in
  * the lexicon, not a resource the user declined.
  */
+function readPlanFile(planPath: string | undefined): FlyPlan {
+  if (!planPath) throw new Error("flyApply needs a plan: pass planPath (the fly build output) or plan");
+  return parsePlan(readFileSync(planPath, "utf8"));
+}
+
 export function toApplyResult(result: {
   apps: Array<{ app: string; created: boolean }>;
   machines: Array<{ app: string; name: string; action: "created" | "updated" | "noop" }>;
@@ -892,7 +904,7 @@ export async function flyApply(
   prunedCerts: Array<{ app: string; hostname: string }>;
   prunedSecrets: Array<{ app: string; name: string }>;
 }> {
-  const plan = parsePlan(readFileSync(args.planPath, "utf8"));
+  const plan = args.plan ?? readPlanFile(args.planPath);
   const ctx: ApplyCtx = { base: resolveEndpoint(args) };
   const opts = args.wait ?? {};
 
@@ -1046,7 +1058,7 @@ export async function flyDelete(
   signal?: AbortSignal,
   http: FlyHttp = defaultFlyHttp(args.token),
 ): Promise<{ machines: Array<{ app: string; name: string }>; apps: Array<{ app: string; deleted: boolean }> }> {
-  const plan = parsePlan(readFileSync(args.planPath, "utf8"));
+  const plan = args.plan ?? readPlanFile(args.planPath);
   const ctx: ApplyCtx = { base: resolveEndpoint(args) };
   const opts = args.wait ?? {};
 
