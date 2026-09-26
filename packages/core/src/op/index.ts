@@ -120,6 +120,7 @@ export {
   askPointInRun, brokeredModelAsk, isPointWait, PointWait, DEFAULT_INFERENCE_CAPABILITY,
 } from "./steward-points";
 export type { AskPointInRunOptions, BrokeredModelAsk, WaitingPoint } from "./steward-points";
+export { GateWait, isGateWait } from "./gate-wait";
 export {
   currentStewardTurn, enterStewardTurn, setStewardTurn, resetStewardTurn, STEWARD_ENV,
 } from "./steward-turn";

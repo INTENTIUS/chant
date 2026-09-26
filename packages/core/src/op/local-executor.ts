@@ -30,6 +30,7 @@ import { gateName } from "./gate-name";
 import type { ResolvedGateApproval } from "./gate-approval";
 import type { PendingGateRecord } from "../lifecycle/gate-ledger";
 import { isPointWait, type WaitingPoint } from "./steward-points";
+import { isGateWait } from "./gate-wait";
 import { currentStewardTurn, enterStewardTurn } from "./steward-turn";
 import { appendRunRecord, buildRunRecord } from "../lifecycle/run-ledger";
 import type { OpRunRecord } from "./runtime";
@@ -86,6 +87,12 @@ export interface StepRecord {
    * run's is `waiting`: nothing broke, and a person answers the question.
    */
   point?: WaitingPoint;
+  /**
+   * Set on an activity step whose command stopped at a gate of its own
+   * (#2779): the op the gate is recorded under and its name, what `chant
+   * approve` takes. The step's status is `skipped` and the run's is `gated`.
+   */
+  gate?: { op: string; gate: string };
 }
 
 export interface OpRunResult {
@@ -338,6 +345,8 @@ async function callWithTimeout(
 interface RanStep {
   record: StepRecord;
   result?: unknown;
+  /** The pending fact a step's command stopped at (#2779), when it threw {@link GateWait}. */
+  pending?: PendingGateRecord;
 }
 
 /**
@@ -398,6 +407,12 @@ async function runStep(
       // the answer comes from a person, on a later run.
       if (isPointWait(err)) {
         return { record: { ...base, status: "skipped", durationMs: Date.now() - start, point: err.question } };
+      }
+      // Nor is a command that stopped at a gate of its own (#2779): the run
+      // ends `gated` there, and the next run asks the command again.
+      if (isGateWait(err)) {
+        const gate = { op: err.pending.op, gate: err.pending.gate };
+        return { record: { ...base, status: "skipped", durationMs: Date.now() - start, gate }, pending: err.pending };
       }
       lastErr = err;
       // Stop retrying on abort (Ctrl-C / timeout cascade) or a non-retryable error.
@@ -737,6 +752,12 @@ async function runEffectStep(
     }
     const ran = await runStep(nested, phaseName, activities, profiles, resultsById, signal);
     pushRecord(records, gates, ran.record);
+    if (ran.pending) {
+      // A command's own gate (#2779): the receipt is left untouched, as for a
+      // pending gate step.
+      skipRest(i + 1);
+      return { records, failed: false, pending: ran.pending };
+    }
     if (ran.record.point) {
       // Receipt left untouched, as for a pending gate: the next run re-proposes
       // the effect and asks the point again, and finds the answer by then.
@@ -817,12 +838,15 @@ async function runPhase(
       }
     }
     const steps = phase.steps.filter(isActivity);
-    const ran = (
-      await Promise.all(steps.map((s) => runStep(s, phase.name, activities, profiles, resultsById, signal)))
-    ).map((r) => r.record);
+    const settled = await Promise.all(steps.map((s) => runStep(s, phase.name, activities, profiles, resultsById, signal)));
+    const ran = settled.map((r) => r.record);
     for (const r of ran) gates.onRecord?.(r);
     const records = gateRecords.concat(ran);
     if (records.some((r) => r.status === "fail")) throw new PhaseFailure(records);
+    // A step whose command stopped at its own gate (#2779) stops the run at
+    // this phase, as a gate step would, once its siblings have finished.
+    const gated = settled.find((r) => r.pending)?.pending;
+    if (gated) throw new GateStop(records, gated, phase.name);
     // The fan-out has already run, so the siblings of an open decision point
     // finished; the run still stops at this phase (#2749).
     const waiting = ran.find((r) => r.point);
@@ -888,8 +912,14 @@ async function runPhase(
       }
       continue;
     }
-    const { record } = await runStep(step, phase.name, activities, profiles, resultsById, signal);
+    const { record, pending } = await runStep(step, phase.name, activities, profiles, resultsById, signal);
     pushRecord(records, gates, record);
+    if (pending) {
+      // The step's command stopped at its own gate (#2779): the run ends
+      // `gated` there, as at a pending gate step.
+      skipRemaining(i + 1);
+      throw new GateStop(records, pending, phase.name);
+    }
     if (record.point) {
       // An open decision point (#2749) ends the run as a pending gate does.
       skipRemaining(i + 1);
@@ -1106,7 +1136,8 @@ async function runOpInTurn(
       ended,
       status,
       id: runId,
-      ...(gate ? { gate: { name: gate.gate, since: gate.timestamp } } : {}),
+      // A gate recorded under another op (#2779: a command's own gate) names it.
+      ...(gate ? { gate: { name: gate.gate, since: gate.timestamp, ...(gate.op !== config.name ? { op: gate.op } : {}) } } : {}),
       ...(point ? { point: { ...point, since: ended } } : {}),
       ...(options.steward ? { steward: options.steward } : {}),
     });

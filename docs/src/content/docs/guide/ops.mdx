@@ -114,6 +114,30 @@ A non-zero exit still fails the step. `okExit` names the codes that do not, whic
 const changed = shell("git diff --quiet HEAD~1 -- migrations/", { okExit: [0, 1], id: "changed" });
 ```
 
+### A command that stops at its own gate
+
+Some commands decide a gate themselves. `chant workspace upgrade` stages its patch, records `workspace-upgrade` / `<scope>` pending on the gate ledger, and exits 3 until someone runs `chant approve workspace-upgrade <scope>`. Name that exit code in `gatedExit` and the step stops its run at the command's gate ([#2779](https://github.com/INTENTIUS/chant/issues/2779)). The run ends `gated` there as it would at a pending `gate` step. Nothing after the step runs and a work lease is released `gated`. The run ledger records the gate with the op it is recorded under.
+
+```typescript
+const upgrade = shell("chant workspace upgrade . --to ~/box/template --json", {
+  id: "upgrade",
+  cwd: workLeaseOutput("worktree"),
+  gatedExit: 3,
+});
+
+export default Op({
+  name: "upgrade",
+  overview: "Upgrade the workspace in a work-lease worktree once a person approves the patch.",
+  changesCheckout: true,
+  workLease: { item: "workspace-upgrade" },
+  phases: [phase("Upgrade", [upgrade])],
+});
+```
+
+The step reads the gate from the command's stdout when that is JSON with a `pending` fact, which `chant workspace upgrade --json` prints. A command that prints something else names its gate in `gate`, as `{ op: "workspace-upgrade", gate: "." }`, and the step stops at the newest pending fact for it on the gate ledger. With neither, the step fails, since a run can't wait at a gate nobody can approve. `gatedExit` is checked before `okExit`.
+
+After `chant approve workspace-upgrade .` the next run runs the command again. This time the command finds the approval and applies the patch, and the run ends `ok`. A local steward runs its own gated run again on its first round after the approval (see [`operator --steward`](/chant/cli/operator/#operator---steward-name)). `chant workspace status --json` shows the gate on the Op's `lastRun` while it waits.
+
 ## Gate steps
 
 A gate is a fact on the gate ledger: a run that reaches one with no resolution records that it is waiting and ends there. Typical gate scenarios:

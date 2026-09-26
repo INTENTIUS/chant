@@ -52,7 +52,7 @@ function statusFrom(
     endedAt: new Date().toISOString(),
     records: result.records,
     result,
-    ...(result.gate ? { gate: { name: result.gate.gate, since: result.gate.timestamp } } : {}),
+    ...(result.gate ? { gate: { name: result.gate.gate, since: result.gate.timestamp, ...(result.gate.op !== op ? { op: result.gate.op } : {}) } } : {}),
     ...(result.record.point ? { point: result.record.point } : {}),
   };
 }
