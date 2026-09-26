@@ -14,7 +14,11 @@
  * (../op/activities/machine-release.ts):
  *
  * 1. upload and start: apply the plan with the Machine serving the release,
- *    its digest and commit in the Machine's metadata;
+ *    its digest and commit in the Machine's metadata, and the commit in its
+ *    `APP_REVISION` env var (#2834, as chud's fly-site.mjs set it), so the
+ *    app's own `/health` can report it. A caller's `env.APP_REVISION`
+ *    overrides it. `fly-rollback` restores it for free: it puts back the
+ *    whole recorded config, env included;
  * 2. migrate: each migration runs inside the Machine once per environment,
  *    witnessed by a receipt in chant's lifecycle receipt store
  *    (`@intentius/chant/op/lifecycle-receipt-store`), then the Machine restarts
@@ -139,7 +143,7 @@ export interface FlyReleaseInput {
   release?: string;
   /** An image to run in place of the declared one. */
   image?: string;
-  /** Env added to the declared Machine's env. */
+  /** Env added to the declared Machine's env, over `APP_REVISION` (the commit, #2834) unless this names its own. */
   env?: Record<string, string>;
   /**
    * A source tree to put on the Machine (#2782), for an app shipped as its
@@ -282,13 +286,18 @@ export function createFlyReleaseCapability(deps: FlyReleaseDeps = {}): Capabilit
       // The tree is checked against its digest before the Machine changes.
       const source = input.source ? await sourceMachineFiles(input.source) : undefined;
 
+      // APP_REVISION carries the commit into the Machine's env, as chud's
+      // fly-site.mjs did (chant#2834), so the app's own /health can report
+      // it. A caller's own APP_REVISION (input.env) wins over the commit.
+      const env = { APP_REVISION: gitSha, ...(input.env ?? {}) };
+
       const released = await flyMachineRelease(
         {
           plan,
           machine: input.machine,
           release: { digest: input.digest, gitSha, ...(input.release ? { release: input.release } : {}) },
           image: input.image,
-          env: input.env,
+          env,
           ...(source ? { files: source.files, cmd: source.cmd } : {}),
           endpoint: input.endpoint,
           wait: input.wait,
