@@ -1,6 +1,6 @@
 {
   "name": "@intentius/chant-lexicon-systemone",
-  "version": "0.91.0",
+  "version": "0.92.0",
   "description": "systemone lexicon for chant: the decide Op activity, asking a workspace's decision points through a Jev-compatible POST /v1/systemone backend",
   "license": "Apache-2.0",
   "homepage": "https://intentius.io/chant",
@@ -72,7 +72,7 @@
   },
   "peerDependencies": {
     "zod": "^4.3.6",
-    "@intentius/chant": "^0.91.0",
+    "@intentius/chant": "^0.92.0",
     "typescript": "^5.9.3"
   }
 }
