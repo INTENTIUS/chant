@@ -10,6 +10,9 @@
  * this checkout's chant: to the ship gate, then, once the plan is approved,
  * through Ship to the fly lexicon's in-memory Machines API and Record (#2782);
  * then a second release, and the rollback Op back to the first (#2800).
+ * That test runs the Machines API's running mode (#2831), so each release is
+ * also checked over HTTP: the shipped tree serves, the migration's table is
+ * there, and the rollback serves the first release's page again.
  */
 
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
@@ -541,8 +544,24 @@ describe("the migrated delivery project, with this checkout's chant", () => {
     });
   }
 
-  /** The fly lexicon's in-memory Machines API, served on a local port. */
-  async function flaps(): Promise<{ endpoint: string; fake: { execs: Array<{ command: string[] }>; machines: Map<string, Array<{ name: string; config: Record<string, unknown> & { metadata?: Record<string, string> } }>> }; close(): Promise<void> }> {
+  type FakeFlaps = {
+    execs: Array<{ command: string[] }>;
+    machines: Map<string, Array<{ name: string; config: Record<string, unknown> & { metadata?: Record<string, string> } }>>;
+    endpoint(app: string, name: string): string | undefined;
+    processes(): Array<{ pid: number | undefined }>;
+  };
+  /**
+   * The fly lexicon's in-memory Machines API, served on a local port. With `run`, its running mode (#2831): each
+   * started Machine's files are written under `run`, its start command runs, and its service answers over HTTP.
+   */
+  async function flaps(run?: string): Promise<{ endpoint: string; fake: FakeFlaps; close(): Promise<void> }> {
+    if (run) {
+      const { serveLocalMachines } = (await import(pathToFileURL(join(repoRoot, "lexicons/fly/src/op/activities/machines-local.ts")).href)) as {
+        serveLocalMachines(o: { port: number; root: string; log: string }): Promise<{ url: string; machines: FakeFlaps; close(): Promise<void> }>;
+      };
+      const served = await serveLocalMachines({ port: 0, root: run, log: join(run, "machines.log") });
+      return { endpoint: served.url, fake: served.machines, close: served.close };
+    }
     const { createMachinesFake } = (await import(pathToFileURL(join(repoRoot, "lexicons/fly/src/op/activities/machines-fake.ts")).href)) as {
       createMachinesFake(): { http(method: string, url: string, body?: unknown): Promise<{ status: number; text: string }> } & Record<string, never>;
     };
@@ -574,8 +593,16 @@ describe("the migrated delivery project, with this checkout's chant", () => {
     const delivery = join(proj, "delivery");
     symlinkSync(join(repoRoot, "node_modules"), join(delivery, "node_modules"));
     writeFileSync(join(proj, ".git/info/exclude"), "node_modules\n");
-    const fly = await flaps();
+    const fly = await flaps(join(root, "fly"));
     const env = { FLY_FLAPS_BASE_URL: fly.endpoint, FLY_API_TOKEN: "test", CHUD_FLY_APP_SECRET: "s3cret", GITHUB_ACTOR: "releaser" };
+    /** The Machine's app over HTTP, on the host port its service is published on. */
+    const site = async (path: string) => {
+      const [app] = [...fly.fake.machines.keys()];
+      const url = fly.fake.endpoint(app, "web");
+      expect(url, read(root, "fly/machines.log")).toBeDefined();
+      const res = await fetch(`${url}${path}`);
+      return { status: res.status, text: await res.text() };
+    };
     try {
       const build = await chant(delivery, env, "build", "-o", join(root, "build.out"));
       expect(build.status, build.out).toBe(0);
@@ -614,6 +641,15 @@ describe("the migrated delivery project, with this checkout's chant", () => {
       expect(Buffer.from((machine.config.files as Array<{ guest_path: string; raw_value: string }>).find((f) => f.guest_path === "/srv/app/server.js")!.raw_value, "base64").toString()).toBe(read(proj, "app/server.js"));
       expect((machine.config.init as { cmd: string[] }).cmd).toEqual(["sh", "-c", "cd /srv/app && exec node --disable-warning=ExperimentalWarning server.js"]);
       expect(fly.fake.execs.map((e) => e.command.join(" "))).toEqual(["sh -c cd /srv/app && node --disable-warning=ExperimentalWarning migrate.js 0001_init.sql"]);
+      // The shipped tree runs (#2831): the app answers on its port, its page is the committed one, and /health reads
+      // the table the migration created in the data Volume.
+      const health = await site("/health");
+      expect(health.status, health.text).toBe(200);
+      expect(JSON.parse(health.text)).toMatchObject({ status: "healthy", services: { database: "healthy" } });
+      expect((await site("/")).text).toBe(read(proj, "app/public/index.html"));
+      const note = await site("/api/notes");
+      expect(JSON.parse(note.text)).toEqual([]);
+      const [{ pid: pidA }] = fly.fake.processes();
       const ledger = await readReleaseLedger("fly", { cwd: delivery });
       expect(ledger.records).toHaveLength(1);
       expect(ledger.records[0]).toMatchObject({ component: "app", env: "fly", digest: plan.digest, gitSha: plan.gitSha, actor: "releaser", approver: "alice" });
@@ -626,7 +662,9 @@ describe("the migrated delivery project, with this checkout's chant", () => {
       expect((await readReleaseLedger("fly", { cwd: delivery })).records).toHaveLength(1);
 
       // A new commit is a new tree, so a new plan digest: the approval of the old one does not pass it (#2808).
+      const pageA = read(proj, "app/public/index.html");
       put(proj, "app/server.js", `${read(proj, "app/server.js")}// a change\n`);
+      put(proj, "app/public/index.html", `${pageA}<!-- release B -->\n`);
       commit("change the app");
       const changed = await chant(delivery, env, "run", "release");
       expect(changed.status, changed.out).toBe(3);
@@ -652,6 +690,12 @@ describe("the migrated delivery project, with this checkout's chant", () => {
       expect(served().config.metadata?.["chant-release-digest"]).toBe(nextPlan.digest);
       expect(servedFile("/srv/app/server.js")).toBe(read(proj, "app/server.js"));
       expect((await readReleaseLedger("fly", { cwd: delivery })).records).toHaveLength(2);
+      // B runs in a new process on the same port, over the same data.
+      expect((await site("/")).text).toBe(read(proj, "app/public/index.html"));
+      expect((await site("/")).text).not.toBe(pageA);
+      expect((await site("/health")).status).toBe(200);
+      const [{ pid: pidB }] = fly.fake.processes();
+      expect(pidB).not.toBe(pidA);
 
       // Roll back (#2800): the rollback Op plans release A again, its tree archived again from its commit, and stops at its gate.
       const plansBefore = new Set(readdirSync(join(delivery, "dist/plans")));
@@ -673,6 +717,10 @@ describe("the migrated delivery project, with this checkout's chant", () => {
       expect(served().config.metadata?.["chant-release-git-sha"]).toBe(plan.gitSha);
       expect(servedFile("/srv/app/server.js")).toBe(serverA);
       expect(fly.fake.execs).toHaveLength(1);
+      // Over HTTP: A's page again, from a new process.
+      expect((await site("/")).text).toBe(pageA);
+      expect((await site("/health")).status).toBe(200);
+      expect(fly.fake.processes()[0].pid).not.toBe(pidB);
       const afterBack = (await readReleaseLedger("fly", { cwd: delivery })).records;
       expect(afterBack).toHaveLength(3);
       expect(afterBack[2]).toMatchObject({

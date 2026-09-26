@@ -6,6 +6,8 @@
  * call, answered from memory with the response shapes flaps and mudflaps use.
  * Unit tests inject it where the default client would reach the network; the
  * docker-gated tests run the same activities against the pinned mudflaps.
+ * It runs nothing; ./machines-local.ts is the opt-in mode that runs each
+ * started Machine's files and command on this host (#2831).
  *
  * Not an activity: nothing in ./index.ts exports it, so `loadActivities`
  * never binds it.
@@ -42,8 +44,8 @@ export interface MachinesFake {
 }
 
 export interface MachinesFakeOptions {
-  /** Answer an exec. Default: exit 0 with no output. */
-  exec?: (app: string, machine: FakeMachine, command: string[]) => FakeExecResult;
+  /** Answer an exec. Default: exit 0 with no output. The running mode (./machines-local.ts) answers it by running the command. */
+  exec?: (app: string, machine: FakeMachine, command: string[]) => FakeExecResult | Promise<FakeExecResult>;
   /** The state a created or updated machine settles in. Default `started`. */
   settle?: (machine: FakeMachine) => string;
 }
@@ -144,7 +146,7 @@ export function createMachinesFake(options: MachinesFakeOptions = {}): MachinesF
       if (action === "exec" && method === "POST") {
         const command = (b.command as string[] | undefined) ?? String(b.cmd ?? "").split(" ");
         execs.push({ app, id: m.id, command });
-        return json(200, options.exec?.(app, m, command) ?? { exit_code: 0, stdout: "", stderr: "" });
+        return json(200, (await options.exec?.(app, m, command)) ?? { exit_code: 0, stdout: "", stderr: "" });
       }
       return json(404, { error: `no ${method} ${action}` });
     }
