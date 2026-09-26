@@ -158,7 +158,7 @@ describe("chant workspace work (#2732)", () => {
     expect(json(closed).error.code).toBe("work-item-closed");
     const verb = await chant(root, ["workspace", "work", "grab", "W-001", "--holder", "a"]);
     expect(verb.code).toBe(1);
-    expect(verb.stderr).toContain("claim, renew or release");
+    expect(verb.stderr).toContain("claim, renew, release or history");
     const noHolder = await chant(root, ["workspace", "work", "claim", "W-001"]);
     expect(noHolder.code).toBe(1);
     expect(noHolder.stderr).toContain("--holder");

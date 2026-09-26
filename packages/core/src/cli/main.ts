@@ -866,6 +866,10 @@ Workspace (level 1, #2524):
                         separate clones coordinate. A claim is refused, exit 2,
                         while anyone holds it live. Each change appends to
                         _leases/<id>.jsonl on chant/lifecycle
+  workspace work history <id> [--kind <kind file>] [--json]
+                        A work item's lease history: each claim with its token
+                        and holder, and how it ended, released with an outcome
+                        or never released (expired or lost). Read-only
   workspace points [--open] [--kind <kind file>] [--at <rev>] [--json]
                         List the decision points the declared answer kinds'
                         points files declare, and the questions asked of them;

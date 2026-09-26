@@ -1,6 +1,6 @@
 ---
 title: "chant workspace work"
-description: Claim, renew and release a lease on a work item, so two workers never take the same one, with each change kept in a history on chant/lifecycle
+description: Claim, renew and release a lease on a work item so two workers never take the same one, and read back the history of those changes that chant/lifecycle keeps
 diataxis: reference
 ---
 
@@ -10,6 +10,7 @@ diataxis: reference
 chant workspace work claim <id> --holder <name> [--kind <kind file>] [--ttl <seconds|duration>] [--note <text>] [--json]
 chant workspace work renew <id> --holder <name> [--kind <kind file>] [--ttl <seconds|duration>] [--token <token>] [--note <text>] [--json]
 chant workspace work release <id> --holder <name> [--kind <kind file>] [--token <token>] [--outcome <text>] [--note <text>] [--json]
+chant workspace work history <id> [--kind <kind file>] [--json]
 ```
 
 ## Description
@@ -52,12 +53,23 @@ The lease lives in the ledger of the member that owns the work kind file ([D7](h
 
 [`chant workspace records --json`](/chant/cli/workspace-records/#work-items) gives each work record its active lease in `lease`, or `null`. [`chant workspace status --json`](/chant/cli/workspace-status/#work-leases) lists every lease in `leases`, active and expired. Both read the local refs and the remote's as last fetched, and never fetch. The MCP tools `workspace-records` and `workspace-status` return the same documents.
 
+`work history <id>` reads the item's `_leases/<id>.jsonl` back from the ledger of the member that owns the work kind ([#2785](https://github.com/INTENTIUS/chant/issues/2785)). A reader then doesn't have to work out the member prefix or run git itself. The lines are folded into claims, one per fencing token and oldest first. Each claim carries its `holder` and `token` and the time it was acquired. It also carries the `expiresAt` that its last claim or renew set and its count of `renewals`. `ended` says how it ended, as the table below lists.
+
+| `ended` | Meaning |
+|---|---|
+| `released` | Given back. `release` has `by`, `at`, `outcome` and `note`. |
+| `held` | It is the live lease now. |
+| `expired` | It ran out, and nobody released it or claimed the item since. |
+| `lost` | It ran out unreleased, and a later claim took the item. |
+
+A runner that leaves an item to people after a number of failed builds counts the claims that ended other than `released` with outcome `done`, leaving out one that is `held`. `summary` counts the claims by how they ended, and `outcomes` counts the released ones by outcome. `events` holds every line as written. The read is a [read-contract](/chant/reference/workspace-read-contract/#work-items) output, `work-history.schema.json`, and the MCP tool `workspace-work-history` returns the same document. Like the other reads, it reads the local branch and refs and never fetches. It takes no `--holder`, `--ttl`, `--token`, `--outcome` or `--note`.
+
 ## Options
 
 | Option | Effect |
 |---|---|
 | `id` | The work item's id, such as `W-001`. Letters, digits, `.`, `_` and `-`. |
-| `--holder <name>` | Required. Who claims, renews or releases, recorded as given. |
+| `--holder <name>` | Required for `claim`, `renew` and `release`. Who claims, renews or releases, recorded as given. |
 | `--kind <kind file>` | The work kind. Without it, the declared work kind that has the id. |
 | `--ttl <seconds\|duration>` | How long a claim or renew lasts: a whole number of seconds, or a duration such as `10m`. Default 10 minutes. |
 | `--token <token>` | For `renew` and `release`: the fencing token the caller holds. A lease with another token is refused with `lease-token-mismatch`. |
@@ -71,7 +83,7 @@ The lease lives in the ledger of the member that owns the work kind file ([D7](h
 |---|---|
 | 0 | The lease was written. |
 | 1 | The command could not run: a usage error, an unreadable kind, an id no work record has, or a claim on a closed item. |
-| 2 | The lease was refused. `refused.code` says why. |
+| 2 | The lease was refused. `refused.code` says why. `history` never exits 2. |
 
 ## Output
 
@@ -109,6 +121,37 @@ For `release`, `lease` is the lease that was released. A refusal prints `refused
 ```
 
 An error prints `{ "$schema", "contract", "error": { "code", "message" } }`. The document follows `work-lease.schema.json`, shipped in `@intentius/chant` at `src/workspace/work-lease.schema.json`, and every code is in the one closed list of the [read contract](/chant/reference/workspace-read-contract/#reason-codes).
+
+`work history --json` prints the document below.
+
+```json
+{
+  "$schema": "https://intentius.io/chant/schemas/workspace/work-history/v1/work-history.schema.json",
+  "contract": 1,
+  "chant": "0.91.0",
+  "item": "W-001",
+  "kind": "work/work.kind.mjs",
+  "ref": "refs/chant/lease/work/W-001",
+  "ledger": { "branch": "chant/lifecycle", "path": "_leases/W-001.jsonl" },
+  "lease": null,
+  "claims": [
+    {
+      "token": "6f0c...",
+      "holder": "worker-a",
+      "acquiredAt": "2026-09-25T10:00:00.000Z",
+      "expiresAt": "2026-09-25T10:13:20.000Z",
+      "renewals": 1,
+      "ended": "released",
+      "release": { "by": "worker-a", "at": "2026-09-25T10:09:00.000Z", "outcome": "done", "note": null }
+    }
+  ],
+  "events": [],
+  "malformed": 0,
+  "summary": { "claims": 1, "released": 1, "held": 0, "expired": 0, "lost": 0, "outcomes": { "done": 1 } }
+}
+```
+
+`events` is shortened here. `lease` is the lease ref's record now, with `state` `active` or `expired`, or `null` when there is none. `malformed` counts lines that are not lease events, which are left out. An error prints `{ "$schema", "contract", "chant", "error": { "code", "message" } }` with one of `kind-unreadable`, `work-kind-missing`, `work-kind-ambiguous`, `work-item-unknown` or `not-a-git-repository`, and exits 1.
 
 ### Refusal codes
 
