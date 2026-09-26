@@ -39,60 +39,35 @@ jobs:
       - uses: actions/checkout@v6
       - run: bash scripts/audit-trusted-publishers.sh
 
+  # The CI gate (#2817). This job ran the whole suite again, about 15
+  # minutes, on a commit whose `chant` run had already passed: `just release`
+  # only tags a bump commit on top of a green commit (#2816). It now checks
+  # that run through the API instead. For a bump commit, which only moves
+  # version fields and has no run of its own, the run checked is its parent's
+  # (scripts/publish-verify-ci.sh). Each `npm publish` below still re-runs the
+  # package's prepack under CHANT_RELEASE_GATE, so the build and the release
+  # gate run on what ships. The job keeps the name `test` so `publish` and
+  # `untag` read its result as before.
   test:
-    # Full validation gate for tag releases and manual dispatch. Skipped on the
-    # publish-on-merge (branch) path: that code already passed PR CI, and each
-    # `npm publish` re-runs the package's prepack (build + validate) anyway.
     if: ${{ startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
-    # 12 lexicon prepacks (build + validate) plus the full vitest suite — the
-    # suite alone runs ~5m, so a 5m cap gets killed mid-run and skips publish.
-    timeout-minutes: 20
-    # #1481 — same gate `npm publish` arms in the publish job below, so the
-    # prepacks here prove the thing that publish will actually check rather
-    # than a looser version of it.
-    env:
-      CHANT_RELEASE_GATE: "1"
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
         with:
-          node-version: '24'
-          cache: 'npm'
-      - run: npm install
-
-      - name: Cache lexicon schemas
-        uses: actions/cache@v5
-        with:
-          path: ~/.chant
-          key: lexicon-schemas-${{ hashFiles('lexicons/*/src/**/fetch.ts', 'lexicons/*/src/**/versions.ts') }}
-          restore-keys: |
-            lexicon-schemas-
-
-      - run: npm run --prefix lexicons/aws prepack
-      - run: npm run --prefix lexicons/azure prepack
-      - run: npm run --prefix lexicons/gitlab prepack
-      - run: npm run --prefix lexicons/github prepack
-      - run: npm run --prefix lexicons/forgejo prepack
-      - run: npm run --prefix lexicons/otel prepack
-      - run: npm run --prefix lexicons/k8s prepack
-      - run: npm run --prefix lexicons/gcp prepack
-      - run: npm run --prefix lexicons/helm prepack
-      - run: npm run --prefix lexicons/docker prepack
-      - run: npm run --prefix lexicons/fly prepack
-      - run: npm run --prefix lexicons/fountain prepack
-      - run: npm run --prefix lexicons/k3d prepack
-      - run: npm run --prefix lexicons/k3s prepack
-      - run: npm run --prefix lexicons/cedar prepack
-      - run: npm run --prefix lexicons/render prepack
-      - run: npm run --prefix lexicons/cpln prepack
-      - run: npm run --prefix lexicons/systemone prepack
-      - run: npm run --prefix lexicons/terraform prepack
-      - run: npx vitest run
+          # The bump commit and its parent, the commit `chant` ran on.
+          fetch-depth: 2
+      - name: Require a green chant run on the released commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/publish-verify-ci.sh
 
   publish:
     needs: [test]
-    # Run when the test gate passed (tag / dispatch) or was skipped (merge path).
+    # Run when the CI gate passed (tag / dispatch) or was skipped (merge path).
     # Never runs if test actually failed.
     if: ${{ always() && (needs.test.result == 'success' || needs.test.result == 'skipped') }}
     runs-on: ubuntu-latest
