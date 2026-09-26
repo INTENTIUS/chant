@@ -139,6 +139,40 @@ export interface LinkDeclaration {
   pointer: string;
 }
 
+/** A renderer a diagram is pinned to (#2764): a closed list of tools chant does not run. */
+export const DIAGRAM_TOOLS = ["d2", "mermaid", "graphviz"] as const;
+export type DiagramTool = (typeof DIAGRAM_TOOLS)[number];
+
+/** The renderer a diagram's render was made with (#2764). chant never runs it; it is recorded so a reader can. */
+export interface DiagramRenderer {
+  tool: DiagramTool;
+  /** The exact release the render was made with, such as "0.9.0". */
+  version: string;
+  /** Passed before the input and output paths, in order. */
+  args: string[];
+}
+
+/**
+ * A diagram artifact the declaration names (#2764): the workspace's own, in
+ * the top-level `diagrams`, or a member's, in that member's `diagrams`. A
+ * name is given once across the declaration, like a record kind's.
+ */
+export interface DiagramDeclaration {
+  name: string;
+  title: string;
+  /** From the workspace root, with / separators. Null for an SVG with no source. */
+  source: string | null;
+  /** From the workspace root, with / separators. */
+  render: string;
+  renderer: DiagramRenderer;
+  /** sha256 hex of the source's bytes when the render was last produced, for `chant workspace check`'s drift finding. Null when not recorded, or when source is null: the render is then never checked for drift. */
+  sourceHash: string | null;
+  /** The member that declares it, or null for the workspace's own. */
+  member: string | null;
+  /** The entry's JSON Pointer in the file, for messages. */
+  pointer: string;
+}
+
 /**
  * A record kind the declaration names (#2680): the workspace's own, in the
  * top-level `records`, or a member's, in that member's `records`.
@@ -219,6 +253,8 @@ export interface Member {
   links: LinkDeclaration[];
   /** The record kinds this member declares, in file order (#2680). */
   records: RecordKindDeclaration[];
+  /** The diagram artifacts this member declares, in file order (#2764). */
+  diagrams: DiagramDeclaration[];
   /** The member's box block, or null when it declares none (#2726). */
   box: BoxDeclaration | null;
   upstream: string | null;
@@ -263,6 +299,8 @@ export interface Declaration {
   quorum: number | null;
   /** The workspace's own record kinds, from the top-level `records`, in file order (#2680). A member's are on the member. */
   records: RecordKindDeclaration[];
+  /** The workspace's own diagram artifacts, from the top-level `diagrams`, in file order (#2764). A member's are on the member. */
+  diagrams: DiagramDeclaration[];
   /** The hosts boxes run on, in file order (#2727). */
   hosts: Host[];
   /** The forward coverage check's policy (#2773), or null when the declaration has no `changes` block. */
@@ -479,6 +517,7 @@ export function parseDeclaration(text: string, file: string, reader: string = re
       pointer: `${pointer}/links/${j}`,
     }));
     const records = recordKindsOf(e.records, e.dir as string, e.name as string, `${pointer}/records`);
+    const diagrams = diagramsOf(e.diagrams, e.name as string, `${pointer}/diagrams`);
     const box = boxOf(e.box, `${pointer}/box`);
     return {
       type: "member",
@@ -490,6 +529,7 @@ export function parseDeclaration(text: string, file: string, reader: string = re
       outputs: e.outputs === undefined ? null : [...(e.outputs as string[])],
       links,
       records,
+      diagrams,
       box,
       upstream: (e.upstream as string | undefined) ?? null,
       because: (e.because as string | undefined) ?? null,
@@ -585,6 +625,17 @@ export function parseDeclaration(text: string, file: string, reader: string = re
     }
   }
 
+  // A diagram name is given once across the declaration (#2764): a reader keys diagrams by name.
+  const ownDiagrams = diagramsOf(obj.diagrams, null, "/diagrams");
+  const byDiagramName = new Map<string, DiagramDeclaration>();
+  for (const d of [...ownDiagrams, ...members.flatMap((m) => m.diagrams)]) {
+    const first = byDiagramName.get(d.name);
+    if (first) {
+      throw new WorkspaceReadError("declaration-invalid", `the diagram name ${JSON.stringify(d.name)} is already used by the diagram at ${first.pointer}`, at(`${d.pointer}/name`));
+    }
+    byDiagramName.set(d.name, d);
+  }
+
   const hosts = hostsOf(obj, members, at);
 
   const pins = ((obj.pins as Record<string, string>[] | undefined) ?? []).map((p) => ({
@@ -605,6 +656,7 @@ export function parseDeclaration(text: string, file: string, reader: string = re
     checks: { ...((obj.checks as Record<string, CheckSeverity> | undefined) ?? {}) },
     quorum: typeof obj.quorum === "number" ? obj.quorum : null,
     records: ownRecords,
+    diagrams: ownDiagrams,
     hosts,
     changes: changesOf(obj.changes as Record<string, unknown> | undefined),
     file,
@@ -623,6 +675,29 @@ function recordKindsOf(raw: unknown, dir: string, member: string | null, pointer
     kind: r.kind,
     path: dir === "." ? r.kind : `${dir}/${r.kind}`,
     name: r.name ?? null,
+    member,
+    pointer: `${pointer}/${i}`,
+  }));
+}
+
+/**
+ * The `diagrams` list at `pointer`, already validated. `source` and `render`
+ * are workspace-root-relative as written: unlike a generated file or a
+ * record kind, a diagram's files need not sit inside the declaring member's
+ * directory, so there is no member-relative form to resolve (#2764).
+ */
+function diagramsOf(raw: unknown, member: string | null, pointer: string): DiagramDeclaration[] {
+  return (
+    (raw as
+      | { name: string; title: string; source?: string | null; render: string; renderer: { tool: DiagramTool; version: string; args?: string[] }; sourceHash?: string | null }[]
+      | undefined) ?? []
+  ).map((d, i) => ({
+    name: d.name,
+    title: d.title,
+    source: d.source ?? null,
+    render: d.render,
+    renderer: { tool: d.renderer.tool, version: d.renderer.version, args: [...(d.renderer.args ?? [])] },
+    sourceHash: d.sourceHash ?? null,
     member,
     pointer: `${pointer}/${i}`,
   }));
@@ -705,6 +780,15 @@ function hostsOf(obj: Record<string, unknown>, members: Member[], at: (pointer: 
  */
 export function declaredRecordKinds(declaration: Declaration): RecordKindDeclaration[] {
   return [...declaration.records, ...declaration.members.flatMap((m) => m.records)];
+}
+
+/**
+ * Every diagram artifact the declaration names (#2764), in the order readers
+ * use them: the workspace's own first, then each member's, members in file
+ * order and each list in its own order.
+ */
+export function declaredDiagrams(declaration: Declaration): DiagramDeclaration[] {
+  return [...declaration.diagrams, ...declaration.members.flatMap((m) => m.diagrams)];
 }
 
 /** Whether `path` is `dir` or sits under it. Both are tree-relative; `"."` is the root. */

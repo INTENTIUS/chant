@@ -181,6 +181,10 @@ export const REASONS = {
   "environments-none-declared": "The member's chant.config.ts declares no environments, so only local and the environments in its ledger are listed.",
   "environments-ledger-undeclared": "The member's ledger has releases in an environment its config's environments don't cover, so chant run --env would refuse it and it is not listed.",
   "environments-ledger-unreadable": "The chant/lifecycle branch exists and the member's ledger environments could not be listed.",
+  // A declared diagram's source or render (check, #2764). Each is also a WSP finding.
+  "diagram-source-missing": "A declared diagram's source file does not exist in the tree read.",
+  "diagram-render-missing": "A declared diagram's render file does not exist in the tree read.",
+  "diagram-render-drift": "A declared diagram records a sourceHash, and the source's bytes now hash to something else: the render is stale for its source.",
   // A box that holds a credential (check, #2726). Each is also a WSP finding.
   "box-credential-declared": "A file in a box member's directory carries a literal secret: a credential's shape, or a literal where a credential goes. A variable or secret-manager reference is not one.",
   "box-capability-unbrokered": "A capability in a member's box block names no broker, so the box would hold its credential.",

@@ -6,6 +6,7 @@ import { afterAll, describe, expect, test } from "vitest";
 import {
   compareVersions,
   DECLARATION_SCHEMA_ID,
+  declaredDiagrams,
   ownerOf,
   parseDeclaration,
   readDeclaration,
@@ -343,5 +344,62 @@ describe("generated files (#2541)", () => {
 
   test("a group has no generated files", () => {
     expect(failure(base([{ name: "g", kind: "examples", glob: "examples/*", generated: [] }])).message).toContain('unknown field "generated"');
+  });
+});
+
+describe("diagram artifacts (#2764)", () => {
+  const renderer = { tool: "d2", version: "0.9.0", args: ["--layout=elk", "--theme=0", "--pad=40", "--omit-version"] };
+  const diagram = (extra: Record<string, unknown> = {}) => ({
+    name: "architecture",
+    title: "Studio architecture",
+    source: "docs/diagrams/architecture.d2",
+    render: "docs/diagrams/architecture.svg",
+    renderer,
+    ...extra,
+  });
+  const member = (diagrams: unknown[], extra: Record<string, unknown> = {}) => ({ name: "docs", dir: "docs", kind: "other", because: "the docs site", diagrams, ...extra });
+
+  test("a member's diagram is read with the workspace-relative source and render, and a null source is the default", () => {
+    const d = parse(base([member([diagram()])]));
+    expect(d.members[0].diagrams).toEqual([
+      { name: "architecture", title: "Studio architecture", source: "docs/diagrams/architecture.d2", render: "docs/diagrams/architecture.svg", renderer, sourceHash: null, member: "docs", pointer: "/members/0/diagrams/0" },
+    ]);
+    const noSource = parse(base([member([diagram({ source: undefined })])]));
+    expect(noSource.members[0].diagrams[0].source).toBeNull();
+  });
+
+  test("the workspace's own diagrams are in the top-level diagrams, with member null", () => {
+    const d = parse(base([{ name: "x", dir: "x", kind: "chant" }], { diagrams: [diagram({ name: "boundary" })] }));
+    expect(d.diagrams).toEqual([{ ...diagram({ name: "boundary" }), sourceHash: null, member: null, pointer: "/diagrams/0" }]);
+    expect(declaredDiagrams(d)).toEqual(d.diagrams);
+  });
+
+  test("declaredDiagrams lists the workspace's own first, then each member's, in file order", () => {
+    const d = parse(base([member([diagram()]), { name: "app", dir: "app", kind: "chant" }], { diagrams: [diagram({ name: "boundary", render: "docs/diagrams/boundary.svg" })] }));
+    expect(declaredDiagrams(d).map((x) => x.name)).toEqual(["boundary", "architecture"]);
+  });
+
+  test("a diagram name is unique across the declaration, workspace and members together", () => {
+    const clash = failure(base([member([diagram()])], { diagrams: [diagram()] }));
+    expect(clash.code).toBe("declaration-invalid");
+    expect(clash.message).toContain('the diagram name "architecture" is already used by the diagram at /diagrams/0');
+  });
+
+  test("renderer.tool is a closed list, and title, render and renderer are required", () => {
+    expect(failure(base([member([diagram({ renderer: { tool: "mscgen", version: "1.0.0" } })])])).code).toBe("declaration-invalid");
+    expect(failure(base([member([{ name: "a", source: null, render: "a.svg", renderer }])])).message).toContain('missing required field "title"');
+    expect(failure(base([member([{ name: "a", title: "A", source: null, renderer }])])).message).toContain('missing required field "render"');
+    expect(failure(base([member([{ name: "a", title: "A", source: null, render: "a.svg" }])])).message).toContain('missing required field "renderer"');
+  });
+
+  test("a sourceHash is a 64-character lowercase hex string, or absent", () => {
+    const hash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    expect(parse(base([member([diagram({ sourceHash: hash })])])).members[0].diagrams[0].sourceHash).toBe(hash);
+    expect(failure(base([member([diagram({ sourceHash: "not-a-hash" })])])).code).toBe("declaration-invalid");
+  });
+
+  test("source and render stay inside the workspace, like every other path", () => {
+    expect(failure(base([member([diagram({ source: "/etc/passwd" })])])).code).toBe("declaration-invalid");
+    expect(failure(base([member([diagram({ render: "../out.svg" })])])).code).toBe("declaration-invalid");
   });
 });

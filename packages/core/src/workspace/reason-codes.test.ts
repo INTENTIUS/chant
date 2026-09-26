@@ -27,6 +27,7 @@ import { RECORDS_SINCE_ERROR_CODES, RECORDS_SINCE_REASON_CODES } from "./records
 import { STATUS_ERROR_CODES, STATUS_GATE_REASON_CODES, STATUS_REASON_CODES, STATUS_STEWARD_REASON_CODES } from "./status";
 import { WORK_WARNING_CODES } from "./work";
 import { BOX_FINDING_CODES } from "./checks/boxes";
+import { DIAGRAM_FINDING_CODES } from "./checks/diagrams";
 import { WORK_ERROR_CODES, WORK_LEASE_REFUSALS } from "./work-cli";
 import { WORK_EVIDENCE_ERROR_CODES } from "./work-evidence";
 import { RECORD_FINDING_CODES } from "./checks/records";
@@ -45,6 +46,7 @@ const PER_COMMAND: Record<string, readonly string[]> = {
   CHECK_CODES,
   CHECK_ERROR_CODES,
   BOX_FINDING_CODES,
+  DIAGRAM_FINDING_CODES,
   STATUS_REASON_CODES,
   STATUS_ERROR_CODES,
   STATUS_GATE_REASON_CODES,

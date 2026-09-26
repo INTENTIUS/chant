@@ -227,9 +227,12 @@
             "box-capability-unbrokered",
             "box-isolation-collision",
             "box-isolation-literal",
-            "work-acceptance-unmet"
+            "work-acceptance-unmet",
+            "diagram-source-missing",
+            "diagram-render-missing",
+            "diagram-render-drift"
           ],
-          "description": "For WSP001: why the declaration can't be read. For WSP121 to WSP124, the box finding (#2726, #2727). For WSP117, work-acceptance-unmet (#2772)."
+          "description": "For WSP001: why the declaration can't be read. For WSP121 to WSP124, the box finding (#2726, #2727). For WSP117, work-acceptance-unmet (#2772). For WSP131 to WSP133, the diagram finding (#2764)."
         }
       }
     },
@@ -299,9 +302,12 @@
             "box-capability-unbrokered",
             "box-isolation-collision",
             "box-isolation-literal",
-            "work-acceptance-unmet"
+            "work-acceptance-unmet",
+            "diagram-source-missing",
+            "diagram-render-missing",
+            "diagram-render-drift"
           ],
-          "description": "For WSP001: why the declaration can't be read. For WSP121 to WSP124, the box finding (#2726, #2727). For WSP117, work-acceptance-unmet (#2772)."
+          "description": "For WSP001: why the declaration can't be read. For WSP121 to WSP124, the box finding (#2726, #2727). For WSP117, work-acceptance-unmet (#2772). For WSP131 to WSP133, the diagram finding (#2764)."
         },
         "reason": {
           "type": "string"

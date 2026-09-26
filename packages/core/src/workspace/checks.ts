@@ -32,6 +32,7 @@
  * | WSP117 | a done work item's acceptance criteria all met (#2772) |
  * | WSP121, WSP122 | boxes: no literal credential, every capability brokered (#2726) |
  * | WSP123, WSP124 | box isolation: no shared port, state path or cookie, no literal machine path (#2727) |
+ * | WSP131 to WSP133 | diagram artifacts: source and render exist, a recorded source hash still matches (#2764) |
  */
 
 import { realpathSync } from "node:fs";
@@ -50,6 +51,7 @@ import { gatherLedgerFacts, LEDGER_CHECKS, type MemberLedgerFacts } from "./chec
 import { gatherPipelineFacts, PIPELINE_CHECKS, type MemberPipelineFacts } from "./checks/pipelines";
 import { RECORD_CHECKS, type RecordFacts } from "./checks/records";
 import { BOX_CHECKS } from "./checks/boxes";
+import { DIAGRAM_CHECKS } from "./checks/diagrams";
 import { loadDeclaredKinds, type DeclaredKind } from "./declared-kinds";
 
 /**
@@ -320,6 +322,8 @@ export const WORKSPACE_CHECKS: readonly WorkspaceCheck[] = [
   ...RECORD_CHECKS,
   // Boxes and their brokered capabilities (#2726).
   ...BOX_CHECKS,
+  // Diagram artifacts (#2764).
+  ...DIAGRAM_CHECKS,
 ];
 
 const BY_ID = new Map(WORKSPACE_CHECKS.map((c) => [c.id, c]));

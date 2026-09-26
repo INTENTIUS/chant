@@ -13,6 +13,11 @@
  * and each member's, with each kind file's own name when it loads (#2680).
  * Loading one imports it, so {@link listWorkspace} lists them unloaded and
  * {@link listWorkspaceWithKinds}, which the command runs, loads them.
+ *
+ * The declared diagram artifacts are listed too, flattened across the
+ * workspace and its members into one `diagrams` array (#2764). Unlike record
+ * kinds, nothing about a diagram is loaded: everything printed comes
+ * straight from the declaration, and chant runs no renderer to list it.
  */
 
 import { existsSync } from "node:fs";
@@ -20,11 +25,13 @@ import { resolve } from "node:path";
 import { formatError } from "../cli/format";
 import type { CommandContext } from "../cli/registry";
 import {
+  declaredDiagrams,
   readDeclaration,
   readerVersion,
   resolveGroups,
   WorkspaceReadError,
   type Declaration,
+  type DiagramDeclaration,
   type ErrorLocation,
   type Member,
   type WorkspaceErrorCode,
@@ -103,6 +110,25 @@ export interface LsMember {
   records: LsRecordKind[];
 }
 
+/**
+ * A diagram artifact the declaration names (#2764), flattened across the
+ * workspace and its members: hud reads one list, the way it already reads
+ * `records --json`'s flat `assets[]`. `sourceHash`, the declaration's own
+ * bookkeeping for `chant workspace check`'s drift finding, is not printed
+ * here; a reader that draws diagrams has no use for it.
+ */
+export interface LsDiagram {
+  name: string;
+  title: string;
+  /** From the workspace root, with / separators. Null for an SVG with no source. */
+  source: string | null;
+  /** From the workspace root, with / separators. */
+  render: string;
+  renderer: DiagramDeclaration["renderer"];
+  /** The member that declares it, or null for the workspace's own. */
+  member: string | null;
+}
+
 export interface LsGroup {
   name: string;
   kind: "examples";
@@ -131,6 +157,8 @@ export type LsDocument =
       };
       members: LsMember[];
       groups: LsGroup[];
+      /** Every declared diagram, the workspace's own first, then each member's, in file order (#2764). */
+      diagrams: LsDiagram[];
       summary: { members: number; unreadable: number; groups: number; matches: number };
     }
   | {
@@ -228,6 +256,14 @@ function readListing(query: LsQuery): { doc: LsDocument; declaration?: Declarati
           ? { code: "no-matches", message: `no directory ${g.group.globs.join(" or ")} matches${tree.label} holds a chant project` }
           : null,
     }));
+    const diagrams: LsDiagram[] = declaredDiagrams(declaration).map((d) => ({
+      name: d.name,
+      title: d.title,
+      source: d.source,
+      render: d.render,
+      renderer: d.renderer,
+      member: d.member,
+    }));
     const doc: LsDocument = {
       ...head,
       at,
@@ -242,6 +278,7 @@ function readListing(query: LsQuery): { doc: LsDocument; declaration?: Declarati
       },
       members,
       groups: lsGroups,
+      diagrams,
       summary: {
         members: members.length,
         unreadable: members.filter((m) => !m.readable).length,
@@ -313,6 +350,12 @@ function formatLs(doc: Extract<LsDocument, { members: unknown }>): string {
       if (r.reason) lines.push(`  ${r.reason.code}: ${r.reason.message}`);
       for (const a of r.acceptance ?? []) lines.push(`  ${a.item} ${a.state ?? "-"}: ${a.met}/${a.total} criteria met`);
     });
+  }
+  if (doc.diagrams.length > 0) {
+    lines.push("");
+    const rows = [["DIAGRAM", "MEMBER", "SOURCE", "RENDER", "RENDERER"]];
+    for (const d of doc.diagrams) rows.push([d.name, d.member ?? "(workspace)", d.source ?? "-", d.render, `${d.renderer.tool} ${d.renderer.version}`]);
+    lines.push(...table(rows));
   }
   if (doc.groups.length > 0) {
     lines.push("");

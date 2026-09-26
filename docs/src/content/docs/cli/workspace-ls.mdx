@@ -91,6 +91,16 @@ The output is part of the workspace [read contract](/chant/reference/workspace-r
       "reason": null
     }
   ],
+  "diagrams": [
+    {
+      "name": "architecture",
+      "title": "Studio architecture",
+      "source": "docs/diagrams/architecture.d2",
+      "render": "docs/diagrams/architecture.svg",
+      "renderer": { "tool": "d2", "version": "0.9.0", "args": ["--layout=elk", "--theme=0", "--pad=40", "--omit-version"] },
+      "member": "docs"
+    }
+  ],
   "summary": { "members": 22, "unreadable": 0, "groups": 3, "matches": 130 }
 }
 ```
@@ -108,6 +118,8 @@ The example shortens the lists. `chant` is the version that read the workspace. 
 | `acceptance` | for a work kind with [acceptance criteria](/chant/guide/work-items/#acceptance-criteria), each current item that lists criteria as `{ item, state, met, total }`, read in the tree read ([#2772](https://github.com/INTENTIUS/chant/issues/2772)). `null` for any other kind, and when the kind or its records can't be read |
 
 The kind file is looked for in the tree read, which is the revision under `--at`. It is loaded from the working tree, which imports it. A kind that can't be loaded leaves its member readable, and `chant workspace check` fails on it with `WSP115`.
+
+`diagrams` is one flat array for every declared [diagram artifact](/chant/reference/workspace-declaration/#diagrams), a contract 1 addition from [#2764](https://github.com/INTENTIUS/chant/issues/2764). `member` on each entry says who declares it, `null` for the workspace's own. `name`, `title`, `source`, `render` and `renderer` come straight off the declaration. `source` and `render` are paths from the workspace root. chant loads nothing to print this and runs no renderer. A missing source or render, or one that drifted, is `chant workspace check`'s job: it reports those as `WSP131` to `WSP133`.
 
 A failed read prints `{ "$schema", "contract", "chant", "error": { "code", "message", "location" } }` instead. `location` is `{ "file", "line", "column" }` when the problem is in the file, and `null` otherwise.
 

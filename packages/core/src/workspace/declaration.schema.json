@@ -63,6 +63,13 @@
         "$ref": "#/$defs/host"
       }
     },
+    "diagrams": {
+      "type": "array",
+      "description": "The workspace's own diagram artifacts (#2764): the diagrams that belong to no one member, such as a diagrams directory at the root. A member names its own in its diagrams. chant workspace ls lists every declared diagram, and chant workspace check reports one whose render is stale for its source when the entry records a sourceHash. Added in schema 1 by chant 0.91.0, so a declaration that uses it sets minReader to 0.91.0 or newer.",
+      "items": {
+        "$ref": "#/$defs/diagram"
+      }
+    },
     "checks": {
       "type": "object",
       "description": "Severity for the declaration checks that allow it, keyed by WSP id (#2535, ws-028): error, warning, info or off. chant workspace check refuses an id it does not know, and one whose severity is fixed.",
@@ -298,6 +305,13 @@
             "$ref": "#/$defs/recordKind"
           }
         },
+        "diagrams": {
+          "type": "array",
+          "description": "The diagram artifacts this member holds (#2764). chant workspace ls lists every declared diagram, and chant workspace check reports one whose render is stale for its source when the entry records a sourceHash. Added in schema 1 by chant 0.91.0, so a declaration that uses it sets minReader to 0.91.0 or newer.",
+          "items": {
+            "$ref": "#/$defs/diagram"
+          }
+        },
         "box": {
           "$ref": "#/$defs/box"
         },
@@ -508,6 +522,78 @@
         "name": {
           "$ref": "#/$defs/kindName",
           "description": "The name readers show for the kind. Without it, the kind file's own recordKind.name. Unique across the declaration."
+        }
+      },
+      "patternProperties": {
+        "^x-": true
+      },
+      "additionalProperties": false
+    },
+    "diagram": {
+      "type": "object",
+      "description": "A diagram artifact the workspace declares (#2764): a rendered image with a source, pinned to the renderer that made it. chant never runs the renderer.",
+      "required": [
+        "name",
+        "title",
+        "render",
+        "renderer"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/name",
+          "description": "Unique across the declaration."
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Shown above the diagram."
+        },
+        "source": {
+          "oneOf": [
+            { "$ref": "#/$defs/path" },
+            { "type": "null" }
+          ],
+          "description": "The source file, from the workspace root, with / separators. Null for an SVG with no source. Default null."
+        },
+        "render": {
+          "$ref": "#/$defs/path",
+          "description": "The rendered image, from the workspace root, with / separators."
+        },
+        "renderer": {
+          "$ref": "#/$defs/diagramRenderer"
+        },
+        "sourceHash": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "sha256 hex of the source's bytes when render was last produced from it. chant workspace check compares this against the source in the tree read and reports drift (WSP133) on a mismatch; without it, or without a source, the render is never checked for drift. Default null."
+        }
+      },
+      "patternProperties": {
+        "^x-": true
+      },
+      "additionalProperties": false
+    },
+    "diagramRenderer": {
+      "type": "object",
+      "description": "The renderer a diagram's render was made with. chant records the pin; it never installs or runs the renderer (ws-052).",
+      "required": [
+        "tool",
+        "version"
+      ],
+      "properties": {
+        "tool": {
+          "enum": ["d2", "mermaid", "graphviz"]
+        },
+        "version": {
+          "$ref": "#/$defs/version",
+          "description": "The exact release the render was made with, such as 0.9.0."
+        },
+        "args": {
+          "type": "array",
+          "description": "Passed before the input and output paths, in order, such as [\"--layout=elk\", \"--theme=0\", \"--pad=40\", \"--omit-version\"]. Empty when absent.",
+          "items": {
+            "type": "string"
+          }
         }
       },
       "patternProperties": {
