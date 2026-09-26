@@ -56,7 +56,7 @@
  */
 
 import { describe, expect, test } from "vitest";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
@@ -119,13 +119,30 @@ function compile2020(schema: object): Validate {
   return new Ajv({ strict: true, allErrors: true }).compile(schema);
 }
 
+/** node's own argv for a `chant` invocation: the tsx loader hook, then the CLI entry, then `args`. */
+function chantArgv(...args: string[]): string[] {
+  return ["--import", pathToFileURL(join(repoRoot, "node_modules/tsx/dist/loader.mjs")).href, join(repoRoot, "packages/core/src/cli/main.ts"), ...args];
+}
+
 /** Run this checkout's chant CLI in `cwd`, as a user would. */
 function chant(cwd: string, ...args: string[]) {
-  return spawnSync(
-    process.execPath,
-    ["--import", pathToFileURL(join(repoRoot, "node_modules/tsx/dist/loader.mjs")).href, join(repoRoot, "packages/core/src/cli/main.ts"), ...args],
-    { cwd, encoding: "utf-8", timeout: CLI_TIMEOUT_MS, env: { ...process.env, NO_COLOR: "1" } },
-  );
+  return spawnSync(process.execPath, chantArgv(...args), { cwd, encoding: "utf-8", timeout: CLI_TIMEOUT_MS, env: { ...process.env, NO_COLOR: "1" } });
+}
+
+/**
+ * Same as `chant`, but non-blocking: the child runs while the caller does other
+ * work on the main thread, instead of the two serializing (chant #2777, ws-058).
+ */
+function chantAsync(cwd: string, ...args: string[]): Promise<{ status: number | null; stdout: string; stderr: string }> {
+  return new Promise((res, rej) => {
+    const child = spawn(process.execPath, chantArgv(...args), { cwd, timeout: CLI_TIMEOUT_MS, env: { ...process.env, NO_COLOR: "1" } });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk: Buffer) => (stdout += chunk));
+    child.stderr.on("data", (chunk: Buffer) => (stderr += chunk));
+    child.on("error", rej);
+    child.on("close", (status) => res({ status, stdout, stderr }));
+  });
 }
 
 interface LsMemberJson {
@@ -664,24 +681,10 @@ describe("decision points on the work graph (#2741, ws-058)", () => {
   });
 
   test("a finding produces a triage question, the stub decider's answer becomes a proposed work item, and a person keeps it", async () => {
-    // 1. graph --intent reports the finding, on the fixture as committed.
-    const graph = chant(fixture, "workspace", "graph", "--intent", "app/src/server.mjs", "--json");
-    expect(graph.status, graph.stderr).toBe(0);
-    type Node = { id: string; kind: string; code?: string; message?: string; addressed?: boolean; addressedBy?: { id: string; state: string }[]; path?: string; member?: string; generated?: boolean };
-    const nodesOf = (text: string) => (JSON.parse(text) as { region: string; nodes: Node[] });
-    const g = nodesOf(graph.stdout);
-    const region = g.nodes.find((n) => n.id === g.region)!;
-    const finding = g.nodes.find((n) => n.kind === "finding" && n.code === "intent-constraint-coarse")!;
-    expect(finding, "graph --intent app/src/server.mjs reports intent-constraint-coarse").toBeDefined();
-    expect(finding.addressed).toBe(false);
-    const inputs = {
-      "finding.code": finding.code,
-      "finding.message": finding.message,
-      "finding.addressed": finding.addressed,
-      "region.path": region.path,
-      "region.member": region.member,
-      "region.generated": region.generated,
-    };
+    // 1. graph --intent reports the finding, on the fixture as committed. This read does
+    // not depend on the scratch repo built below, so it runs concurrently with that setup
+    // instead of serializing in front of it (chant #2777, ws-058).
+    const graphPromise = chantAsync(fixture, "workspace", "graph", "--intent", "app/src/server.mjs", "--json");
 
     // The rest writes, so it runs on a copy of the fixture in its own repository.
     const scratch = mkdtempSync(join(tmpdir(), "chant-2741-triage-"));
@@ -695,6 +698,24 @@ describe("decision points on the work graph (#2741, ws-058)", () => {
       git("init", "-q");
       git("add", "-A");
       git("commit", "-q", "-m", "the reference workspace");
+
+      const graph = await graphPromise;
+      expect(graph.status, graph.stderr).toBe(0);
+      type Node = { id: string; kind: string; code?: string; message?: string; addressed?: boolean; addressedBy?: { id: string; state: string }[]; path?: string; member?: string; generated?: boolean };
+      const nodesOf = (text: string) => (JSON.parse(text) as { region: string; nodes: Node[] });
+      const g = nodesOf(graph.stdout);
+      const region = g.nodes.find((n) => n.id === g.region)!;
+      const finding = g.nodes.find((n) => n.kind === "finding" && n.code === "intent-constraint-coarse")!;
+      expect(finding, "graph --intent app/src/server.mjs reports intent-constraint-coarse").toBeDefined();
+      expect(finding.addressed).toBe(false);
+      const inputs = {
+        "finding.code": finding.code,
+        "finding.message": finding.message,
+        "finding.addressed": finding.addressed,
+        "region.path": region.path,
+        "region.member": region.member,
+        "region.generated": region.generated,
+      };
 
       // 2. The decide activity asks finding-triage. No table row matches, the stub decider answers
       //    work-item above the threshold, and the answer is a proposal: the run waits on it.
@@ -767,9 +788,15 @@ describe("decision points on the work graph (#2741, ws-058)", () => {
       await stub.close();
       rmSync(scratch, { recursive: true, force: true });
     }
-  // Six chant CLI runs and two decide calls: 15 to 19s on CI, so the suite default of 20s fails it on a busy
-  // shard. One CLI run's own bound, CLI_TIMEOUT_MS, is the limit for the whole case.
-  }, CLI_TIMEOUT_MS);
+    // Six chant CLI spawns (five of them serial by data dependency) plus two in-process
+    // decide calls: on CI, each spawn cold-transforms the CLI's TypeScript from source (no
+    // build step runs before `vitest run` there, and this repo ships no compiled CLI at
+    // all, chant #2803), so the cost does not amortize across the six. Sharing a runner
+    // with three other vitest shards, this case was seen past the suite's global 20s
+    // default twice on 2026-09-25 (chant #2803, ws-058). #2784 gave it CLI_TIMEOUT_MS
+    // (60s) as a stopgap; the read overlap above plus 35s here comfortably replace that
+    // once #2803 lands, without carrying a 60s allowance for a case that no longer needs it.
+  }, 35_000);
 });
 
 describe("chant init --from on the fixture", () => {
