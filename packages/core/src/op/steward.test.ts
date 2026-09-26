@@ -4,16 +4,16 @@
  * scheduled Ops under its own lease, and the rule that a steward turn and a
  * coding agent share one checkout without colliding.
  */
-import { describe, test, expect } from "vitest";
+import { describe, test, expect, vi } from "vitest";
 import { withTestDir } from "@intentius/chant-test-utils";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ActivityFn, ActivityProfile } from "./activity-registry";
 import type { OpConfig } from "./types";
-import { declareSteward, isStewardDeclaration, pickSteward, stewardFormFor, stewardLeaseName } from "./steward";
+import { declareSteward, isStewardDeclaration, pickSteward, stewardFormFor, stewardLeaseName, stewardTurnLeaseName } from "./steward";
 import { discoverOps, discoverStewards } from "./discover";
-import { runOperatorRound, acquireStewardLease, formatRoundLine } from "./operator";
+import { runOperatorRound, acquireStewardLease, acquireStewardTurn, formatRoundLine } from "./operator";
 import { readLease } from "../lifecycle/lease";
 import { readRunLedger } from "../lifecycle/run-ledger";
 
@@ -207,6 +207,90 @@ describe("a local steward round", () => {
       expect(git(["rev-parse", "HEAD"], dir).stdout.trim()).toBe(head);
       expect(git(["status", "--porcelain"], dir).stdout).toBe(" M app/index.ts\n");
       expect(git(["diff", "--cached", "--name-only"], dir).stdout).toBe("");
+    });
+  });
+});
+
+describe("a hand run waits its turn (#2750)", () => {
+  test("a round holds the turn lease for exactly the length of its tick — a concurrent hand run sees it held, then free again once the tick ends", async () => {
+    await withTestDir(async (dir) => {
+      await initRepo(dir);
+      let releaseTurn: () => void = () => {};
+      const gate = new Promise<void>((resolve) => { releaseTurn = resolve; });
+      const steward = declareSteward({ name: "box-steward", ops: [op("box-converge", "* * * * *", "slowTurn")] });
+      const activities = new Map<string, ActivityFn>([
+        ["slowTurn", async () => { await gate; return { ok: true }; }],
+      ]);
+      // Real time on both sides here, deliberately: a fixed `now` on only one
+      // of the round's and the hand run's leases would make one see the
+      // other's lease as already expired by wall-clock time, which is not
+      // the race this test is about.
+      const roundPromise = runOperatorRound({ cwd: dir, holder: "steward-proc", steward, activities, profiles: PROFILES });
+
+      // Wait for the round to actually be mid-tick, holding the turn lease.
+      await vi.waitFor(async () => {
+        const turn = await readLease(stewardTurnLeaseName("box-steward"), { cwd: dir });
+        expect(turn.record?.holder).toBe("steward-proc");
+      });
+
+      // A hand run's own attempt (no `waitMs`) sees it taken and gives up
+      // without retrying — this is what `chant run <op>` names in its refusal.
+      const midTurn = await acquireStewardTurn("box-steward", "hand-run", { cwd: dir });
+      expect(midTurn.acquired).toBe(false);
+      expect(midTurn.heldBy?.holder).toBe("steward-proc");
+
+      releaseTurn();
+      const events = await roundPromise;
+      expect(events.map((e) => e.kind)).toEqual(["ticked"]);
+
+      // The tick released the turn the moment it finished — succeeds again
+      // right away, not only once the whole steward process stops.
+      const afterTurn = await acquireStewardTurn("box-steward", "hand-run", { cwd: dir });
+      expect(afterTurn.acquired).toBe(true);
+    });
+  });
+
+  test("a hand run's turn blocks a round: it reports turn-busy and ticks nothing, and releases the op lease it had just taken", async () => {
+    await withTestDir(async (dir) => {
+      await initRepo(dir);
+      const steward = declareSteward({ name: "box-steward", ops: [op("box-converge", "* * * * *")] });
+      const held = await acquireStewardTurn("box-steward", "hand-run", { cwd: dir });
+      expect(held.acquired).toBe(true);
+
+      const log: string[] = [];
+      const now = () => new Date(2026, 8, 25, 10, 1, 0);
+      const events = await runOperatorRound({ cwd: dir, holder: "steward-proc", steward, activities: turns(log), profiles: PROFILES, now });
+
+      expect(events).toEqual([{ kind: "turn-busy", op: "box-converge", env: "local", steward: "box-steward", heldBy: "hand-run" }]);
+      expect(formatRoundLine(events[0])).toContain("turn-held:hand-run");
+      expect(log).toEqual([]);
+      // The op's own lease, freshly acquired before the turn check, was let go again.
+      expect((await readLease("box-converge", { cwd: dir })).record).toBeUndefined();
+    });
+  });
+
+  test("a stale .lock on the turn ref reports lease-error, never a thrown exception out of the round, and still releases the op lease it had just taken (#1959 finding 2, applied to #2750's turn lease)", async () => {
+    await withTestDir(async (dir) => {
+      await initRepo(dir);
+      const steward = declareSteward({ name: "box-steward", ops: [op("box-converge", "* * * * *")] });
+
+      // A previous holder of the turn lease was killed mid-write — its
+      // `.lock` file is still sitting there, blocking every future write to
+      // `_turns/box-steward`, the same way #1959 finding 2 covers the
+      // per-op lease.
+      mkdirSync(join(dir, ".git", "refs", "chant", "lease", "_turns"), { recursive: true });
+      writeFileSync(join(dir, ".git", "refs", "chant", "lease", "_turns", "box-steward.lock"), "");
+
+      const log: string[] = [];
+      const now = () => new Date(2026, 8, 25, 10, 1, 0);
+      const events = await runOperatorRound({ cwd: dir, holder: "steward-proc", steward, activities: turns(log), profiles: PROFILES, now });
+
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({ kind: "lease-error", op: "_turns/box-steward", env: "local" });
+      expect((events[0] as { error: string }).error).toContain("box-steward.lock");
+      expect(log).toEqual([]);
+      // The op's own lease, freshly acquired before the failed turn attempt, was let go again.
+      expect((await readLease("box-converge", { cwd: dir })).record).toBeUndefined();
     });
   });
 });

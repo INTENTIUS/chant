@@ -234,6 +234,29 @@ export function stewardLeaseName(steward: string): string {
 }
 
 /**
+ * The lease a local steward holds for as long as one of its Ops is actually
+ * running: one turn (#2750). Distinct from {@link stewardLeaseName}, which one
+ * `chant operator --steward` process holds for its whole life (renewed
+ * between ticks, released only when the process stops) — this one is taken
+ * right before a run starts and released right after it ends, whether the
+ * run is a round's scheduled tick or `chant run <op>` typed by hand. That is
+ * what makes an on-request run wait its turn behind a turn already in
+ * progress, and succeed again the moment that turn ends, rather than only
+ * once the whole steward process stops.
+ *
+ * `_turns/<name>`, not `_stewards/<name>/turn`: a git ref name is a path
+ * component in the loose-refs tree, and `refs/chant/lease/_stewards/<name>`
+ * (the lease {@link stewardLeaseName} names) already exists as a *leaf* —
+ * git refuses to also create anything *under* it (`fatal: ... exists;
+ * cannot create ...`), so nesting the turn lease inside the steward lease's
+ * own name is unusable the moment both are live at once. A sibling
+ * top-level segment sidesteps that entirely.
+ */
+export function stewardTurnLeaseName(steward: string): string {
+  return `_turns/${steward}`;
+}
+
+/**
  * Pick the steward `--steward [<name>]` names, or the project's only one.
  * Returns the steward, or the message to refuse with.
  */

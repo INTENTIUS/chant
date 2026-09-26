@@ -66,6 +66,8 @@ An Op that declares a [work lease](/chant/guide/ops/#running-under-a-work-lease)
 
 A steward's Op that stops on an open [decision point](/chant/guide/decision-points/) ends its run as `waiting`, with the question on the run's ledger record ([#2749](https://github.com/INTENTIUS/chant/issues/2749)). The steward does not wait for it and never answers it. A person answers the question through hud or `chant workspace points answer`. Until then each round prints `operator: <op>@<env> waiting=1(point:<id>:<state>)` and leaves the Op alone, unless its cron fires, which asks again. The first round after the answer runs the Op again whatever its cron says. Its line names the question as `resumed="<id>"`. This also resumes an Op with no schedule, when its waiting run was the steward's.
 
+A local steward is one turn at a time ([#2750](https://github.com/INTENTIUS/chant/issues/2750)). Around every run of one of its Ops, a round's own scheduled tick or a `chant run <op>` typed by hand, it holds a second lease, `refs/chant/lease/_turns/<name>`, for exactly as long as that one run takes. A round that finds the turn already held (by a hand run in progress) stops rather than ticking its remaining ops this round, and prints `operator: <op>@<env> skipped=1(turn-held:<holder>, steward "<name>" is already mid-turn)`; the next round tries again. See [`chant run <op>`](/chant/cli/run/) for what a hand run does with the same lease.
+
 `chant workspace status --json` reports the steward with its lease and the last run of each Op. It also lists the work lease each Op's turn holds and the questions the steward waits on. [The Steward](/chant/lexicons/fountain/steward/) covers the declaration and how the steward shares a checkout with a coding agent.
 
 ### `operator status`

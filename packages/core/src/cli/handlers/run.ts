@@ -17,6 +17,10 @@ import { recordGateApproval } from "./operator";
 import { formatError, formatWarning, formatSuccess, formatBold, formatInfo } from "../format";
 import { resolveCliBuildParams, parseParamFlags } from "../build-params-cli";
 import type { CommandContext } from "../registry";
+import { stewardFormFor, stewardTurnLeaseName, DEFAULT_STEWARD_ENV, type StewardDeclaration } from "../../op/steward";
+import { acquireStewardTurn, STEWARD_TURN_WAIT_MS } from "../../op/operator";
+import { releaseLease, currentHolderId, type AcquireLeaseResult } from "../../lifecycle/lease";
+import { StaleLockError } from "../../lifecycle/git";
 import { renderDriverHuman, renderDriverJson } from "../../components/driver-output";
 import { ndjsonProgressSink } from "../../components/run-progress";
 import { maybeRecordAutoRelease } from "../../components/auto-release";
@@ -527,6 +531,94 @@ function refusesPolicyGateUnderSandbox(ctx: CommandContext, config: OpConfig, op
   return true;
 }
 
+/** What `stewardTurnGate` decided before `chant run <op>` is allowed to start. */
+type StewardTurnGate =
+  | { ok: true; release?: () => Promise<void> }
+  | { ok: false; message: string; hint: string };
+
+/**
+ * `chant run <op>` for an Op a declared steward lists is one of that
+ * steward's turns, not a run beside it (#2750, follow-up to #2731).
+ *
+ * On fountain, the run belongs on the steward's thread: without `--on
+ * fountain` this refuses outright, naming the command that posts it there
+ * instead (the fountain runtime's own turn already refuses a busy teammate,
+ * unretried — see chant-fountain-ops).
+ *
+ * In the local form, the run takes the steward's turn lease
+ * (`../../op/operator.ts`'s `acquireStewardTurn`) — the same lease a round's
+ * scheduled tick holds for the length of its own run. Held already, this
+ * waits up to {@link STEWARD_TURN_WAIT_MS} (long enough to ride out a race
+ * with a turn that's just ending) and then refuses, naming the steward and
+ * its holder. It never queues past that: a round's own leases skip and
+ * report rather than wait (`../../op/operator.ts`'s module doc), and a
+ * foreground CLI blocked with no visibility for however long a scheduled
+ * turn takes would be a worse answer than a clear refusal with a retry in
+ * hand. Ctrl-C already means "abort my own run" here; it must not also mean
+ * "give up waiting for someone else's turn".
+ *
+ * `undefined` (via the caller checking `owner`) when no steward lists this
+ * op — the ordinary, untouched path.
+ */
+async function stewardTurnGate(opName: string, ctx: CommandContext): Promise<StewardTurnGate | undefined> {
+  const { stewards } = await discoverStewards().catch(() => ({ stewards: new Map<string, { declaration: StewardDeclaration }>() }));
+  let owner: StewardDeclaration | undefined;
+  for (const { declaration } of stewards.values()) {
+    if (declaration.ops.some((op) => op.name === opName)) {
+      owner = declaration;
+      break;
+    }
+  }
+  if (!owner) return undefined;
+
+  const env = ctx.args.env ?? DEFAULT_STEWARD_ENV;
+  const form = stewardFormFor(owner, env);
+
+  if (form === "fountain") {
+    if (ctx.args.on === "fountain") return { ok: true };
+    return {
+      ok: false,
+      message: `Op "${opName}" is one of steward "${owner.name}"'s Ops, which runs on fountain in environment "${env}"`,
+      hint:
+        `Run \`chant run ${opName} --on fountain\` so it posts to "${owner.name}"'s thread. ` +
+        `A plain \`chant run ${opName}\` would run it outside that thread, beside the steward instead of one of its turns.`,
+    };
+  }
+
+  const holder = currentHolderId();
+  let turn: AcquireLeaseResult;
+  try {
+    turn = await acquireStewardTurn(owner.name, holder, { waitMs: STEWARD_TURN_WAIT_MS });
+  } catch (err) {
+    // Not turn contention — the acquire attempt itself failed (most likely a
+    // StaleLockError, a `.lock` left behind by a killed operator process).
+    // Report it as a refusal rather than letting it propagate uncaught out
+    // of `runOpOnRuntime`, before that function's own try/catch even starts.
+    return {
+      ok: false,
+      message: `Op "${opName}" is one of steward "${owner.name}"'s turns, and its lease could not be read`,
+      hint:
+        `${err instanceof StaleLockError ? err.message : err instanceof Error ? err.message : String(err)} ` +
+        `This can happen when an operator process was killed mid-write; check refs/chant/lease/_turns/${owner.name} for a stale lock.`,
+    };
+  }
+  if (!turn.acquired) {
+    const heldBy = turn.heldBy?.holder;
+    return {
+      ok: false,
+      message:
+        `Op "${opName}" is one of steward "${owner.name}"'s turns, and a turn is in progress` +
+        (heldBy ? ` (held by ${heldBy})` : ""),
+      hint:
+        `Wait for the turn to finish and re-run \`chant run ${opName}\`, or check \`chant operator status --steward ${owner.name}\`. ` +
+        `If it looks stuck, stop the operator process holding it (Ctrl-C, or kill it) — its lease also expires on its own.`,
+    };
+  }
+  const lease = turn.lease!;
+  const stewardName = owner.name;
+  return { ok: true, release: async () => { await releaseLease(stewardTurnLeaseName(stewardName), holder, lease.token).catch(() => false); } };
+}
+
 export async function runOp(ctx: CommandContext): Promise<number> {
   if (ctx.args.generate) {
     if (ctx.args.components) {
@@ -864,8 +956,20 @@ export async function runOpOnRuntime(ctx: CommandContext): Promise<number> {
   // Pre-flight: --sandbox cannot cover a policyGate step (#2003).
   if (refusesPolicyGateUnderSandbox(ctx, config, opName)) return 1;
 
+  // A hand run of an Op a declared steward lists is one of that steward's
+  // turns, not a run beside it (#2750). `undefined` when no steward lists
+  // this op at all — the ordinary path.
+  const stewardGate = await stewardTurnGate(opName, ctx);
+  if (stewardGate && !stewardGate.ok) {
+    console.error(formatError({ message: stewardGate.message, hint: stewardGate.hint }));
+    return 1;
+  }
+
   const runtime = await resolveOpRuntime(ctx);
-  if (!runtime) return 1;
+  if (!runtime) {
+    await stewardGate?.release?.();
+    return 1;
+  }
 
   // The work lease (#2748). `--work` names the item an Op with a work lease
   // runs under; it is taken where the run executes, which for a hosted
@@ -962,6 +1066,9 @@ export async function runOpOnRuntime(ctx: CommandContext): Promise<number> {
     return 1;
   } finally {
     process.removeListener("SIGINT", onSigint);
+    // The turn is over, win or lose — free it so the steward's next round,
+    // or the next hand run, doesn't wait out this run's own TTL (#2750).
+    await stewardGate?.release?.();
   }
 }
 
