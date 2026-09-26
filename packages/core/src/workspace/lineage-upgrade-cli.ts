@@ -71,7 +71,7 @@ export async function upgradeCommand(opts: UpgradeCommandOptions): Promise<Upgra
         }),
       );
     }
-    if (!staged.changed) {
+    if (!staged.changed && staged.checksOk) {
       if (!opts.json) console.error(formatSuccess(`scope "${staged.scope}" is already at ${staged.to ?? "its source"}; nothing to upgrade`));
       return report("up-to-date", 0);
     }
