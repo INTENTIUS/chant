@@ -475,7 +475,7 @@
           }
         },
         "needed": { "type": "integer", "minimum": 1, "description": "The human approvals the gate needs: its quorum's count, 1 without one." },
-        "approve": { "type": "string", "description": "The chant approve line for the gate, run in the member's directory: chant approve <component> <gate>, with --env <env> when env is not null." }
+        "approve": { "type": "string", "description": "The chant approve line for the gate, run in the member's directory: chant approve <component> <gate>, with --env <env> when env is not null and --plan <planDigest> when planDigest is not null (#2832), so the line approves the plan this read showed." }
       }
     },
     "environment": {

@@ -75,6 +75,23 @@ const GATED: OpRunResult = withRecord({
   ],
 });
 
+/** A gate bound to a plan (#2300), for the --plan tests (#2832). */
+const GATED_WITH_PLAN: OpRunResult = withRecord({
+  op: "prod-apply",
+  totalMs: 300,
+  status: "gated",
+  startedAt: "2026-09-05T12:00:00.000Z",
+  gate: {
+    version: 1, kind: "pending", op: "prod-apply", gate: "rollout-gate",
+    timestamp: "2026-09-05T12:00:00.000Z",
+    expiresAt: "2026-09-07T12:00:00.000Z",
+    planDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  },
+  records: [
+    { phase: "Apply", fn: "gate:rollout-gate", args: {}, status: "skipped", durationMs: 0 },
+  ],
+});
+
 describe("renderHuman — gated (#2119)", () => {
   test("names the gate, the approve line and the expiry, and points at no other runtime", () => {
     const lines: string[] = [];
@@ -86,6 +103,14 @@ describe("renderHuman — gated (#2119)", () => {
     expect(out).toContain("https://github.com/org/repo/pull/7");
     expect(out).toContain("expires : 2026-09-07T12:00:00.000Z");
     expect(out).not.toContain("--on");
+  });
+
+  test("a gate bound to a plan (#2300) carries --plan on the approve line (#2832)", () => {
+    const lines: string[] = [];
+    renderHuman(GATED_WITH_PLAN, (l) => lines.push(l));
+    const out = lines.join("\n");
+    expect(out).toContain(`plan    : ${GATED_WITH_PLAN.gate!.planDigest}`);
+    expect(out).toContain(`approve : chant approve prod-apply rollout-gate --plan ${GATED_WITH_PLAN.gate!.planDigest}`);
   });
 
   test("shows the approver on a gate that passed", () => {
@@ -155,6 +180,14 @@ describe("renderJson", () => {
     expect(parsed.status).toBe("gated");
     expect(parsed.gate).toEqual({ name: "rollout-gate", since: "2026-09-05T12:00:00.000Z" });
     expect(parsed.approve).toBe("chant approve prod-apply rollout-gate");
+  });
+
+  test("a gate bound to a plan (#2300) carries --plan on the approve line (#2832)", () => {
+    const lines: string[] = [];
+    renderJson(GATED_WITH_PLAN, (l) => lines.push(l));
+    const parsed = JSON.parse(lines[0]) as OpRunRecord & { approve: string };
+    expect(parsed.status).toBe("gated");
+    expect(parsed.approve).toBe(`chant approve prod-apply rollout-gate --plan ${GATED_WITH_PLAN.gate!.planDigest}`);
   });
 
   // #2310: a JSON consumer (CI tooling reading `chant run --json`) needs the

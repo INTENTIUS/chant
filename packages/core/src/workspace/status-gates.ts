@@ -103,9 +103,14 @@ export const defaultGateLedgerReader: GateLedgerReader = async (dir, commit, cwd
   return files;
 };
 
-/** The exact `chant approve` line for a gate. */
-export function approveCommand(component: string, gate: string, env: string | null): string {
-  return `chant approve ${component} ${gate}${env !== null ? ` --env ${env}` : ""}`;
+/**
+ * The exact `chant approve` line for a gate. A gate bound to a plan (#2300)
+ * gets `--plan <digest>` too (#2832), so running the line back approves the
+ * plan this read showed and not whatever happens to be pending by the time
+ * someone runs it.
+ */
+export function approveCommand(component: string, gate: string, env: string | null, planDigest?: string | null): string {
+  return `chant approve ${component} ${gate}${env !== null ? ` --env ${env}` : ""}${planDigest ? ` --plan ${planDigest}` : ""}`;
 }
 
 const approvalOf = (r: GateResolutionRecord): StatusGateApproval => ({ principal: r.resolvedBy, channel: r.origin ?? null, at: r.timestamp });
@@ -150,7 +155,7 @@ function decide(component: string, standing: PendingGateRecord, resolutions: Gat
     expiresAt: standing.expiresAt,
     approvals: approvals.map(approvalOf),
     needed,
-    approve: approveCommand(component, gate, env),
+    approve: approveCommand(component, gate, env, planDigest),
   };
 }
 

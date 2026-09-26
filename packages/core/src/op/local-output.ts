@@ -100,7 +100,7 @@ export function renderHuman(result: OpRunResult, write: Writer = stderr): void {
   // #2300: the plan the approval will be bound to. Printed before the
   // command, because it is what the command approves.
   if (gate.planDigest) write(`  plan    : ${gate.planDigest}`);
-  write(`  approve : ${approveCommand(gate.op, gate.gate)}`);
+  write(`  approve : ${approveCommand(gate.op, gate.gate, undefined, gate.planDigest)}`);
   if (gate.url) write(`  approve at: ${gate.url}`);
   write(`  expires : ${gate.expiresAt}`);
   // #2310: this run's own append reached only the local chant/lifecycle
@@ -128,7 +128,7 @@ export function renderHuman(result: OpRunResult, write: Writer = stderr): void {
  * the gate doesn't have to reassemble it from the op and gate names.
  */
 export function renderJson(result: OpRunResult, write: Writer = stdout): void {
-  const approve = result.gate ? { approve: approveCommand(result.gate.op, result.gate.gate) } : {};
+  const approve = result.gate ? { approve: approveCommand(result.gate.op, result.gate.gate, undefined, result.gate.planDigest) } : {};
   // #2310: whether this run's own append reached the remote — not part of
   // the persisted ledger record (a replay has nothing new to report), but a
   // live run's JSON consumer needs it exactly where the human render shows it.

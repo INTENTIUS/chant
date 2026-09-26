@@ -419,7 +419,7 @@ describe("gate state in chant workspace status --json (#2674)", () => {
         expiresAt: "2026-12-31T00:00:00.000Z",
         approvals: [{ principal: "alice", channel: "cli", at: "2026-09-20T01:00:00.000Z" }],
         needed: 1,
-        approve: "chant approve web deploy --env staging",
+        approve: `chant approve web deploy --env staging --plan ${D("1")}`,
       },
       {
         component: "web",
@@ -431,7 +431,7 @@ describe("gate state in chant workspace status --json (#2674)", () => {
         expiresAt: "2026-12-31T00:00:00.000Z",
         approvals: [],
         needed: 1,
-        approve: "chant approve web deploy --env prod",
+        approve: `chant approve web deploy --env prod --plan ${D("2")}`,
       },
       {
         component: "web",
@@ -444,15 +444,15 @@ describe("gate state in chant workspace status --json (#2674)", () => {
         // The agent's approval doesn't count toward the quorum.
         approvals: [{ principal: "bob", channel: "cli", at: "2026-09-20T02:00:00.000Z" }],
         needed: 2,
-        approve: "chant approve web review --env staging",
+        approve: `chant approve web review --env staging --plan ${D("4")}`,
       },
     ]);
     // api and the root member both read the flat _gates/.
     expect(api.gateLedger).toEqual({ layout: "flat", path: "_gates", shared: true, malformed: 1, reason: null });
     expect(site.gates).toEqual(api.gates);
     expect(api.gates.map((g) => [g.component, g.name, g.env, g.state, g.approve])).toEqual([
-      ["api", "deploy", "staging", "expired", "chant approve api deploy --env staging"],
-      ["api", "smoke", "staging", "superseded", "chant approve api smoke --env staging"],
+      ["api", "deploy", "staging", "expired", `chant approve api deploy --env staging --plan ${D("5")}`],
+      ["api", "smoke", "staging", "superseded", `chant approve api smoke --env staging --plan ${D("6")}`],
       ["nightly", "confirm", null, "approved", "chant approve nightly confirm"],
     ]);
     // The superseding approval named another plan, so it isn't listed as one that counts.
@@ -514,7 +514,7 @@ describe("gate state in chant workspace status --json (#2674)", () => {
       expect(await runWorkspaceStatus({ args: { extraPositional: "staging", extraPositional2: root, json: true } } as unknown as CommandContext)).toBe(0);
       const printed = JSON.parse(String(log.mock.calls.at(-1)?.[0])) as StatusDocument;
       expectValid(printed);
-      expect(result(printed).members.find((m) => m.name === "web")!.gates.map((g) => g.approve)).toContain("chant approve web deploy --env staging");
+      expect(result(printed).members.find((m) => m.name === "web")!.gates.map((g) => g.approve)).toContain(`chant approve web deploy --env staging --plan ${D("1")}`);
     } finally {
       log.mockRestore();
     }
