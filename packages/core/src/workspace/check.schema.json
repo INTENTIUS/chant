@@ -226,9 +226,10 @@
             "box-credential-declared",
             "box-capability-unbrokered",
             "box-isolation-collision",
-            "box-isolation-literal"
+            "box-isolation-literal",
+            "work-acceptance-unmet"
           ],
-          "description": "For WSP001: why the declaration can't be read. For WSP121 to WSP124, the box finding (#2726, #2727)."
+          "description": "For WSP001: why the declaration can't be read. For WSP121 to WSP124, the box finding (#2726, #2727). For WSP117, work-acceptance-unmet (#2772)."
         }
       }
     },
@@ -297,9 +298,10 @@
             "box-credential-declared",
             "box-capability-unbrokered",
             "box-isolation-collision",
-            "box-isolation-literal"
+            "box-isolation-literal",
+            "work-acceptance-unmet"
           ],
-          "description": "For WSP001: why the declaration can't be read. For WSP121 to WSP124, the box finding (#2726, #2727)."
+          "description": "For WSP001: why the declaration can't be read. For WSP121 to WSP124, the box finding (#2726, #2727). For WSP117, work-acceptance-unmet (#2772)."
         },
         "reason": {
           "type": "string"

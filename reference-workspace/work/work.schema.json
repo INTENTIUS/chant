@@ -79,7 +79,7 @@
       "uniqueItems": true
     },
     "evidence": {
-      "description": "The proof of done: public links, or workspace files pinned by the hash of their bytes (chant workspace records pin <path>). May be empty while the work is open; a done item with none gets the warning work-done-unpinned.",
+      "description": "The proof of done: public links, or workspace files pinned by the hash of their bytes (chant workspace records pin <path>). May be empty while the work is open; a done item with none gets the warning work-done-unpinned. An entry that names a criterion from acceptance carries the verification it is and its result, and a manual verdict names who gave it in by (#2772).",
       "type": "array",
       "items": {
         "oneOf": [
@@ -98,6 +98,13 @@
         "string",
         "null"
       ]
+    },
+    "acceptance": {
+      "description": "What done means for this item, stated up front (#2772): each criterion with an id, its text and the verification it expects. Optional; an item without it is read as before. A done item whose criterion has no evidence naming it, with result pass and the same verification, gets the warning work-acceptance-unmet, and chant workspace check fails on it (WSP117). A manual verdict counts only when its by is someone other than the owner.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/criterion"
+      }
     },
     "owner": {
       "description": "Who has taken the work: a principal, such as a forge login or an agent's name. Null or absent while nobody has.",
@@ -200,7 +207,33 @@
             "null"
           ],
           "pattern": "^[0-9a-f]{64}$"
+        },
+        "criterion": {
+          "description": "The acceptance criterion this evidence is for, by id (#2772).",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+        },
+        "verification": {
+          "$ref": "#/definitions/verification"
+        },
+        "result": {
+          "description": "Whether the evidence shows the criterion met.",
+          "enum": [
+            "pass",
+            "fail"
+          ]
+        },
+        "by": {
+          "description": "Who produced the evidence: the lease holder for a steward's, the person for a manual verdict.",
+          "type": "string",
+          "minLength": 1
         }
+      },
+      "dependencies": {
+        "criterion": [
+          "verification",
+          "result"
+        ]
       }
     },
     "evidencePin": {
@@ -232,7 +265,33 @@
             "string",
             "null"
           ]
+        },
+        "criterion": {
+          "description": "The acceptance criterion this evidence is for, by id (#2772).",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+        },
+        "verification": {
+          "$ref": "#/definitions/verification"
+        },
+        "result": {
+          "description": "Whether the evidence shows the criterion met.",
+          "enum": [
+            "pass",
+            "fail"
+          ]
+        },
+        "by": {
+          "description": "Who produced the evidence: the lease holder for a steward's, the person for a manual verdict.",
+          "type": "string",
+          "minLength": 1
         }
+      },
+      "dependencies": {
+        "criterion": [
+          "verification",
+          "result"
+        ]
       }
     },
     "sourceGap": {
@@ -343,6 +402,41 @@
           "$ref": "#/definitions/issueRef"
         }
       }
+    },
+    "criterion": {
+      "description": "One acceptance criterion.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "text",
+        "verification"
+      ],
+      "properties": {
+        "id": {
+          "description": "Stable within the item, such as AC-1. Evidence names it in criterion.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+        },
+        "text": {
+          "description": "What must be true, in a sentence.",
+          "type": "string",
+          "minLength": 1
+        },
+        "verification": {
+          "$ref": "#/definitions/verification"
+        }
+      }
+    },
+    "verification": {
+      "description": "How a criterion is verified: unit, integration or e2e by a test of that level, runtime by the running system, manual by a person other than the implementer.",
+      "enum": [
+        "unit",
+        "integration",
+        "e2e",
+        "runtime",
+        "manual"
+      ]
     }
   }
 }

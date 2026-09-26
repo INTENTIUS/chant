@@ -66,7 +66,7 @@ The output is part of the workspace [read contract](/chant/reference/workspace-r
     "schema": 1,
     "minReader": null,
     "pins": [],
-    "records": [{ "name": "decision", "path": "decisions/decision.kind.mjs", "kind": "decision", "reason": null }]
+    "records": [{ "name": "decision", "path": "decisions/decision.kind.mjs", "kind": "decision", "reason": null, "acceptance": null }]
   },
   "members": [
     {
@@ -105,6 +105,7 @@ The example shortens the lists. `chant` is the version that read the workspace. 
 | `path` | the kind file from the workspace root |
 | `kind` | the kind file's `recordKind.name`, or `null` when it can't be loaded |
 | `reason` | `null`, or why the kind file can't be loaded: `kind-unreadable`, `kind-invalid`, `schema-unreadable` or `schema-id-mismatch`, the codes [`records`](/chant/cli/workspace-records/#error-codes) fails with |
+| `acceptance` | for a work kind with [acceptance criteria](/chant/guide/work-items/#acceptance-criteria), each current item that lists criteria as `{ item, state, met, total }`, read in the tree read ([#2772](https://github.com/INTENTIUS/chant/issues/2772)). `null` for any other kind, and when the kind or its records can't be read |
 
 The kind file is looked for in the tree read, which is the revision under `--at`. It is loaded from the working tree, which imports it. A kind that can't be loaded leaves its member readable, and `chant workspace check` fails on it with `WSP115`.
 

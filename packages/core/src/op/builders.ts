@@ -1,10 +1,10 @@
 import { OpResource } from "./resource";
 import { workLeaseProblems } from "./work-lease-decl";
-import type { OpConfig, PhaseDefinition, StepDefinition, ActivityStep, GateStep, EffectStep } from "./types";
+import { WORK_LEASE_STEP_ID, type OpConfig, type PhaseDefinition, type StepDefinition, type ActivityStep, type GateStep, type EffectStep } from "./types";
 import { isEffectReceipt, type EffectReceiptDeclaration } from "../effect-receipt";
 import { receiptCheckInput } from "./receipt-store";
 import { gateApprovalProblems } from "./gate-approval";
-import { makeOutProxy, type StepOutputRef, type WithStepRefs } from "./step-output-ref";
+import { makeOutProxy, stepOutput, type StepOutputRef, type WithStepRefs } from "./step-output-ref";
 import type { ChantBuildArgs } from "./activities/build";
 import type { ShellCmdArgs } from "./activities/shell";
 import type { WaitForStackArgs } from "./activities/wait";
@@ -14,6 +14,7 @@ import type { EnvTeardownArgs } from "./activities/env-teardown";
 import type { HttpCheckArgs } from "./activities/http-check";
 import type { PolicyGateArgs } from "./activities/policy";
 import type { GuardValidateArgs } from "./activities/guard-validate";
+import type { WorkEvidenceArgs } from "./activities/work-evidence";
 import { isValidCronExpression, cronSyntaxMessage } from "./cron";
 
 /** An `activity()` result — the plain `ActivityStep` shape plus the `.out` reference sugar (#1290). */
@@ -922,6 +923,22 @@ export const policyGate = (opts?: WithStepRefs<PolicyGateArgs> & { id?: string }
     { path, ...(env !== undefined ? { env } : {}) },
     { profile: "policyCheck", ...(opts?.id ? { id: opts.id } : {}) },
   );
+};
+
+/**
+ * Attach evidence to an acceptance criterion of the work item the run holds
+ * the lease on (#2772), for an Op that declares `workLease`. The run's lease
+ * is passed for it, so the write happens only while the lease is still the
+ * run's. `opts` takes the `result` (pass or fail), a `title`, and a `url` or a
+ * workspace `path` to pin by hash. A `manual` criterion is refused: the run
+ * is the item's implementer. The `atMostOnce` profile: each attempt appends.
+ */
+export const workEvidence = (
+  criterion: string,
+  opts: WithStepRefs<Omit<WorkEvidenceArgs, "criterion" | "lease">> & { id?: string },
+): NamedActivityStep => {
+  const { id, ...rest } = opts as Omit<WorkEvidenceArgs, "criterion" | "lease"> & { id?: string };
+  return activity("workEvidence", { criterion, lease: stepOutput(WORK_LEASE_STEP_ID), ...rest }, { profile: "atMostOnce", ...(id ? { id } : {}) });
 };
 
 /**

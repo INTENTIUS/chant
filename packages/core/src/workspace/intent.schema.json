@@ -941,6 +941,8 @@
                   "work-done-unpinned",
                   "work-closed-without-date",
                   "work-done-gap-open",
+                  "work-acceptance-unmet",
+                  "work-acceptance-self-verified",
                   "answer-points-unreadable",
                   "answer-point-unknown",
                   "answer-point-changed"

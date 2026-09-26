@@ -138,7 +138,7 @@
           "items": { "$ref": "#/$defs/asset" }
         },
         "warnings": {
-          "description": "Added in contract 1 by #2549. Findings that leave the record valid: a pinned file that changed, went missing or did not follow a superseding decision, a supersedes link that has no effect yet, (added by #2654) an evidence list that is empty, (added by #2672) a verdict that names no digest, or (added by #2683) a work record's links and dates, or (added by #2688) a record whose author seal is not attested under a signers file at base. A work record never carries record-no-evidence; a done one with no evidence carries work-done-unpinned. valid and --current do not look at them.",
+          "description": "Added in contract 1 by #2549. Findings that leave the record valid: a pinned file that changed, went missing or did not follow a superseding decision, a supersedes link that has no effect yet, (added by #2654) an evidence list that is empty, (added by #2672) a verdict that names no digest, or (added by #2683) a work record's links and dates, or (added by #2688) a record whose author seal is not attested under a signers file at base, or (added by #2772) a work record's acceptance criteria unmet when it is done, or met by a manual verdict from its implementer. A work record never carries record-no-evidence; a done one with no evidence carries work-done-unpinned. valid and --current do not look at them.",
           "type": "array",
           "items": { "$ref": "#/$defs/warning" }
         },
@@ -178,6 +178,10 @@
           "type": "array",
           "items": { "$ref": "#/$defs/workLink" }
         },
+        "acceptance": {
+          "description": "Added in contract 1 by #2772, on every parsed record of a work kind whose work block names acceptance criteria. How many of the record's criteria passing evidence meets: evidence naming the criterion, with result pass and the criterion's verification, and for a manual criterion a by other than the implementer. Null when the record lists no criteria, so a record without them reads as before.",
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/workAcceptance" }]
+        },
         "lease": {
           "description": "Added in contract 1 by #2732, on every record of a work kind with an id, read in the working tree (absent under --at). The item's active work lease (chant workspace work claim), or null when nobody holds one live. Read from the local lease refs, refs/chant/lease/[_members/<member>/]work/<id> and the remote's as last fetched, of the ledger owning the work kind file; records never fetches.",
           "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/workLease" }]
@@ -190,6 +194,27 @@
           "else": { "properties": { "reasons": { "type": "array", "minItems": 1 } } }
         }
       ]
+    },
+    "workAcceptance": {
+      "type": "object",
+      "required": ["met", "total", "criteria"],
+      "properties": {
+        "met": { "type": "integer", "minimum": 0, "description": "How many criteria passing evidence meets." },
+        "total": { "type": "integer", "minimum": 0, "description": "How many criteria the record lists." },
+        "criteria": {
+          "type": "array",
+          "description": "Each criterion, in the record's order.",
+          "items": {
+            "type": "object",
+            "required": ["id", "verification", "met"],
+            "properties": {
+              "id": { "type": "string" },
+              "verification": { "enum": ["unit", "integration", "e2e", "runtime", "manual"], "description": "The verification the criterion expects." },
+              "met": { "type": "boolean" }
+            }
+          }
+        }
+      }
     },
     "workLease": {
       "type": "object",
@@ -231,6 +256,8 @@
             "work-done-unpinned",
             "work-closed-without-date",
             "work-done-gap-open",
+            "work-acceptance-unmet",
+            "work-acceptance-self-verified",
             "answer-points-unreadable",
             "answer-point-unknown",
             "answer-point-changed",

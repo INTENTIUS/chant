@@ -36,7 +36,7 @@ import {
 import { resolveMemberLedger } from "../lifecycle/member-ledger";
 import { WorkspaceReadError } from "./declaration";
 import { declaredKindFiles, readRecordsFor } from "./records-cli";
-import { loadRecordKind, RecordReadError, type LoadedRecordKind } from "./records";
+import { loadRecordKind, RecordReadError, type LoadedRecordKind, type RecordEntry } from "./records";
 import { gitRoot } from "./record-source";
 import type { ReasonCode } from "./reason-codes";
 
@@ -94,7 +94,8 @@ export type WorkLeaseDocument = DocHead &
   | { error: { code: WorkErrorCode; message: string } }
   );
 
-class WorkError extends Error {
+/** Why a work command could not run, with its code. */
+export class WorkError extends Error {
   constructor(
     readonly code: WorkErrorCode,
     message: string,
@@ -103,8 +104,19 @@ class WorkError extends Error {
   }
 }
 
-/** The work kind holding `id`: the one `kind` names, or the one declared work kind with a record `id`. */
-async function findWorkItem(id: string, cwd: string, kind: string | undefined): Promise<{ loaded: LoadedRecordKind; state: string | null; root: string }> {
+/** A work item found by id: its kind, its state, its record, and the repository root its path is from. */
+export interface FoundWorkItem {
+  loaded: LoadedRecordKind;
+  state: string | null;
+  record: RecordEntry;
+  root: string;
+}
+
+/**
+ * The work kind holding `id`: the one `kind` names, or the one declared work
+ * kind with a record `id`. Throws a {@link WorkError}.
+ */
+export async function findWorkItem(id: string, cwd: string, kind: string | undefined): Promise<FoundWorkItem> {
   let candidates: string[];
   if (kind !== undefined) {
     candidates = [kind];
@@ -116,7 +128,7 @@ async function findWorkItem(id: string, cwd: string, kind: string | undefined): 
       throw new WorkError("work-kind-missing", `${err.code}: ${err.describe()}; without --kind, the declaration names the work kind`);
     }
   }
-  const found: { loaded: LoadedRecordKind; state: string | null; root: string }[] = [];
+  const found: FoundWorkItem[] = [];
   let workKinds = 0;
   for (const file of candidates) {
     let loaded: LoadedRecordKind;
@@ -140,7 +152,7 @@ async function findWorkItem(id: string, cwd: string, kind: string | undefined): 
       throw err;
     }
     const record = read.result.records.find((r) => r.id === id);
-    if (record) found.push({ loaded, state: record.state, root: read.root });
+    if (record) found.push({ loaded, state: record.state, record, root: read.root });
   }
   if (workKinds === 0) throw new WorkError("work-kind-missing", "the declaration names no work kind; pass --kind <kind file>");
   if (found.length === 0) throw new WorkError("work-item-unknown", `no work record has the id ${id}`);

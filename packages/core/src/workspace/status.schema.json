@@ -50,6 +50,11 @@
           "type": "array",
           "items": { "$ref": "#/$defs/lease" }
         },
+        "acceptance": {
+          "description": "Added in contract 1 by #2772. Each current work item of a declared work kind whose work block names acceptance criteria, when the item lists some, by declared kind and then item, read in the working tree: how many of its criteria passing evidence meets. Empty when no declared work kind has criteria. A done item with a criterion unmet is what chant workspace check fails on (WSP117).",
+          "type": "array",
+          "items": { "$ref": "#/$defs/acceptance" }
+        },
         "summary": {
           "type": "object",
           "required": ["members", "released", "unreadable", "differing"],
@@ -64,6 +69,18 @@
             }
           }
         }
+      }
+    },
+    "acceptance": {
+      "type": "object",
+      "required": ["member", "kind", "item", "state", "met", "total"],
+      "properties": {
+        "member": { "type": ["string", "null"], "description": "The member that declares the work kind, or null for the workspace's own." },
+        "kind": { "type": "string", "description": "The work kind file, from the workspace root." },
+        "item": { "type": "string", "description": "The work item's id." },
+        "state": { "type": ["string", "null"], "description": "The item's state." },
+        "met": { "type": "integer", "minimum": 0, "description": "Criteria met by evidence naming them, with result pass and the criterion's verification; a manual verdict counts only from someone other than the implementer." },
+        "total": { "type": "integer", "minimum": 0, "description": "Criteria the item lists." }
       }
     },
     "lease": {

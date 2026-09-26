@@ -86,6 +86,8 @@ export const REASONS = {
   "work-done-unpinned": "A work record is done and its evidence list is empty: nothing shows the work was done.",
   "work-closed-without-date": "A work record is done or dropped and has no closing date.",
   "work-done-gap-open": "A work record is done, and the finding it came from still fires on its region. graph --intent raises it, and records does by walking that region.",
+  "work-acceptance-unmet": "A work record is done, and one of its acceptance criteria has no passing evidence of the verification it expects. check fails on it (WSP117).",
+  "work-acceptance-self-verified": "A passing manual verdict on a work record's criterion names the record's implementer, so it does not count: a manual verdict comes from someone else.",
   // An answer to a decision point that is valid but warned about (records, points, ws-058, #2739).
   "answer-points-unreadable": "The points file the answer kind names can't be read, or is not valid.",
   "answer-point-unknown": "The answer's point is not declared in the points file the answer kind names.",
@@ -187,6 +189,8 @@ export const REASONS = {
   "work-kind-ambiguous": "More than one declared work kind has a record with the id, so --kind must name one.",
   "work-item-unknown": "No work record has the id, so there is nothing to lease.",
   "work-item-closed": "A claim on a work item in a closed state, such as done or dropped: there is no work left to claim.",
+  // Evidence attached to a criterion under the run's work lease (#2772): why it was refused. Nothing is written.
+  "work-criterion-unknown": "The work record lists no acceptance criterion with the id the evidence names, or its kind has no acceptance criteria.",
   // The work lease: why a claim, renew or release was refused (exit 2).
   "lease-held": "Someone holds a live lease on the work item: another worker, or, for a claim, the same one.",
   "lease-not-held": "Nobody holds a live lease on the work item: it expired, was released or was never claimed.",

@@ -3,7 +3,7 @@ export { Op, phase, activity, gate, effect, build, kubectlApply, helmInstall, he
          k3sInstall, k3sUninstall, flociUp, flociDown,
          flociAzUp, flociAzDown, flociGcpUp, flociGcpDown, httpCheck,
          azGroupEnsure, azGroupDelete, azApply, azDelete, awsApply, awsDelete, gcpApply, gcpDelete, policyGate,
-         guardValidate,
+         guardValidate, workEvidence,
          spriteCreate, spriteExec, spriteCheckpoint, spriteRestore, listCheckpoints, spriteDestroy,
          spriteWriteFile, spriteReadFile, spriteListDir, spriteRemove,
          spriteApplyNetworkPolicy, spriteApplyServices,
