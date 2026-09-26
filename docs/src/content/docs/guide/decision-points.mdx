@@ -101,7 +101,7 @@ export const recordKind = {
 
 ## Ask a point
 
-chant never calls a model on a read. The call belongs to the operations layer: the `decide` Op activity of the [systemone lexicon](/chant/lexicons/systemone/decide/), or a runtime's decider, which hands chant the backend's response:
+chant never calls a model on a read. The call belongs to the operations layer: chant's [`decide` Op activity](#the-decide-activity), or a runtime's decider, which hands chant the backend's response:
 
 ```bash
 chant workspace points ask slice-tier --inputs inputs.json --subject W-002 --response response.json
@@ -131,7 +131,7 @@ Giving the answer the model proposed confirms it. Any other answer is the quorum
 
 ## Ask a point from an Op
 
-An Op asks a point from one of its activities with `askPointInRun` from `@intentius/chant/op` ([#2749](https://github.com/INTENTIUS/chant/issues/2749)). The `decide` activity of the [systemone lexicon](/chant/lexicons/systemone/decide/) calls it. An answered question returns its answer, and the Op goes on. An escalated or proposed question is still open, so the activity throws `PointWait`. The run then ends with status `waiting`, the way a gate ends it with `gated`. No later step runs, no `onFailure` phase runs, and the run's ledger record names the question as `point`. `chant run` exits 3. Nothing waits in the meantime. Once a person has answered, the next run asks the same point with the same inputs and reads the answer from its record.
+An Op asks a point from one of its activities with `askPointInRun` from `@intentius/chant/op` ([#2749](https://github.com/INTENTIUS/chant/issues/2749)). The [`decide` activity](#the-decide-activity) calls it. An answered question returns its answer, and the Op goes on. An escalated or proposed question is still open, so the activity throws `PointWait`. The run then ends with status `waiting`, the way a gate ends it with `gated`. No later step runs, no `onFailure` phase runs, and the run's ledger record names the question as `point`. `chant run` exits 3. Nothing waits in the meantime. Once a person has answered, the next run asks the same point with the same inputs and reads the answer from its record.
 
 ```ts
 import { askPointInRun, type BrokeredModelAsk } from "@intentius/chant/op";
@@ -156,6 +156,72 @@ A [steward](/chant/lexicons/fountain/steward/) runs unattended, so a point asked
 - The question is written on the `chant/lifecycle` branch, not in the checkout ([#2786](https://github.com/INTENTIUS/chant/issues/2786)). A steward never writes the checkout's working tree, which belongs to the coding agent, and an Op's leased worktree is removed when the run ends. The record goes under `_answers/<kind name>/<id>.md` in the ledger of the member that owns the answer kind. `points` reads it as if it were in the kind's directory and gives its place on the branch as `ledger`. A person's answer to it is written there too. `points ask` run as a child process of the turn (with `CHANT_STEWARD` set) does the same.
 - The question names the steward and its run in its source block, and `points --open` shows them as `askedBy`. `workspace status --json` lists the question in the steward's `waiting`, and hud asks a person there. The question never goes to the steward's own thread.
 - The steward never answers it. `points answer` is refused with `answer-in-steward-turn` during a steward's turn and in any process the turn starts, and the quorum never counts the steward that asked. A local steward runs the Op again on the first round after a person answers.
+
+## The decide activity
+
+`decide` is chant's Op activity for asking a point ([#2740](https://github.com/INTENTIUS/chant/issues/2740)). The step builder comes from `@intentius/chant/op`, and `chant run` resolves the activity in any project without a lexicon ([#2828](https://github.com/INTENTIUS/chant/issues/2828)).
+
+```ts
+import { Op, phase, decide } from "@intentius/chant/op";
+
+export default Op({
+  name: "tier-work",
+  overview: "Ask which builder tier builds W-002",
+  phases: [phase("Decide", [decide("slice-tier", { read: { "work-item": "W-002" }, subject: "W-002" })])],
+});
+```
+
+| Argument | Meaning |
+|---|---|
+| `point` | The point's name, as its points file declares it. The builder takes it first. |
+| `inputs` | Input values by the point's input names, such as `{ "work-item.fits_small": false }`. They win over values read with `read`. |
+| `read` | What to read through the read contract, by output. `{ "work-item": "W-002" }` reads work item W-002 for every `work-item.*` input. `record`, `decision` and `work-item` are read by id, and `member` by name. Other outputs go in `inputs`, as the read contract printed them. |
+| `subject` | What the question is about, such as a work item's id. It is written to the answer's `constrains`. |
+| `kind` | The answer kind file, or a declared kind's name. Without it, the declared answer kind whose points file declares the point. |
+| `cwd` | Where the workspace is found. Defaults to the working directory. |
+| `backends` | Backends by name, in place of `decide.backends` in `chant.config.ts`. |
+| `dryRun` | Ask, but write nothing, and return the question whatever its state. |
+
+OPS012 checks a step's arguments against the activity's contract at `chant build`, so a misspelled argument or a key written as a string fails the build. Before anything is asked, the step checks that every backend the point's model deciders name is configured, and that a brokered key's capability is declared with a broker. It then reads the inputs and asks the point through `askPointInRun`, as above. An answered question is the step's result: `{ id, path, state, open, answer, decider, model, backend, confidence, threshold, answeredBy, escalations, missing }`, where `missing` lists declared inputs the read value did not have.
+
+### Backends
+
+The backends live in `chant.config.ts` under `decide.backends`. A model decider's `backend` is a name in this map.
+
+```ts
+export default {
+  decide: {
+    backends: {
+      systemone: { url: "https://api.typesafe.ai", key: { env: "TYPESAFE_API_KEY" } },
+      local: { url: "http://127.0.0.1:8080" },
+      studio: { url: "http://127.0.0.1:7071", key: { capability: "inference", member: "box" } },
+    },
+  },
+} satisfies ChantConfig;
+```
+
+| Field | Meaning |
+|---|---|
+| `url` | The server's base URL. `/v1/systemone` is appended. |
+| `key` | Where the bearer key comes from. Omitted for a server that takes none. |
+| `timeoutMs` | How long to wait before the backend counts as unreachable. Default 30000. |
+
+A key is `{ env: "VARIABLE" }`, read when the step runs, or a capability a box member declares as brokered, `{ capability, member?, env? }` ([#2726](https://github.com/INTENTIUS/chant/issues/2726)). With `env`, the broker sets that variable for the Op's process. Without it, the broker is the endpoint and adds the key itself, so none is sent. A key is never a string: the config fails to load, and so does a step whose `backends` holds one.
+
+The request is the wire format's: `POST <url>/v1/systemone` with `{ "model", "state", "questions": { "<point>": { "type", "instructions", "criteria" } } }`, the point's inputs as the state. The answer is read from `answers["<point>"]`, where `points ask --response` reads it. The backend counts as unreachable when the call fails or times out, when the key's variable is unset, or when the response is not a 2xx with the answer in it. The model decider's `unreachable` then decides: `"escalate"`, the default, leaves the question open for people with the reason, and `"fail"` writes nothing and fails the step with `point-decider-failed`. In a steward's turn a backend keyed by an environment variable is not called, since the steward would hold its key.
+
+### Lint rules
+
+| Rule | Fires on |
+|---|---|
+| SYS001 | A string or template literal where a key goes, in `decide.backends` or in a `decide` step's `backends`. |
+| SYS010 | A backend with a key and an `http://` URL whose host is not loopback, in `decide.backends` or in a `decide` step's `backends`. The bearer key would cross the network in clear text. `127.0.0.1`, `::1` and `localhost` are exempt. |
+
+`chant lint` reports SYS001 over source as an error, and `chant build` and `chant lint` report SYS010 as an error along with the Op checks.
+
+### Testing against a stub
+
+`startStubBackend()` from `@intentius/chant/op/__fixtures__/decide-stub-backend` starts a server on a free loopback port that speaks the wire format. It answers 401 to a wrong bearer when a key is set, 422 to a body outside the wire format, and a forced status when the test sets one. Otherwise it answers each question with what the test scripts, or with a confident answer of the question's own type, and keeps every request in `requests`. `packages/core/src/op/activities/decide.live.test.ts` runs against a real server when `TYPESAFE_API_KEY` is set.
 
 ## The reference workspace's points
 

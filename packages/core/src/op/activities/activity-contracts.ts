@@ -25,6 +25,7 @@
 
 import { z } from "zod";
 import { activityContract } from "../activity-contract";
+import { backendSchema } from "../decide-config";
 
 export const lifecycleSnapshotContract = activityContract(
   "lifecycleSnapshot",
@@ -274,4 +275,42 @@ export const releaseRecordContract = activityContract(
     cwd: z.string().optional(),
   }),
   z.object({ recorded: z.boolean(), digest: z.string(), env: z.string(), component: z.string(), approver: z.string().nullable() }),
+);
+
+/**
+ * `decide` (#2740, core's since #2828). OPS012 checks a step's args against
+ * it and OPS013 a later step's reference into its result, so a misspelled
+ * `point` or a key written as a literal string fails `chant build` rather
+ * than a run.
+ */
+const decideEscalation = z.object({ kind: z.enum(["table", "model"]), reason: z.string() }).loose();
+
+export const decideContract = activityContract(
+  "decide",
+  z.strictObject({
+    point: z.string().min(1),
+    inputs: z.record(z.string(), z.unknown()).optional(),
+    read: z.record(z.string(), z.string()).optional(),
+    subject: z.string().optional(),
+    kind: z.string().optional(),
+    cwd: z.string().optional(),
+    backends: z.record(z.string(), backendSchema).optional(),
+    dryRun: z.boolean().optional(),
+  }),
+  z.strictObject({
+    id: z.string(),
+    path: z.string(),
+    state: z.enum(["escalated", "proposed", "answered"]),
+    open: z.boolean(),
+    answer: z.union([z.string(), z.boolean(), z.null()]),
+    decider: z.string(),
+    model: z.string().nullable(),
+    backend: z.string().nullable(),
+    confidence: z.number().nullable(),
+    threshold: z.number().nullable(),
+    answeredBy: z.array(z.string()),
+    escalations: z.array(decideEscalation),
+    missing: z.array(z.string()),
+  }),
+  { entities: ["point"] },
 );

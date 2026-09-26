@@ -168,3 +168,11 @@ export type {
 // workspace code on first call only, like proposeWorkspaceUpgrade.
 export { changeCoverage } from "./change-coverage";
 export type { ChangeCoverageArgs, ChangeCoverageResult } from "./change-coverage";
+
+// Ask a decision point and record the answer (ws-058, #2740). Core's since
+// #2828, next to the decision points: the systemone lexicon that held it is
+// gone. Only the activity is re-exported, since the registry collects every
+// exported function; `runDecide` and its seams stay on the module, which
+// loads the workspace code on first call.
+export { decide } from "./decide";
+export type { DecideArgs, DecideResult } from "./decide";

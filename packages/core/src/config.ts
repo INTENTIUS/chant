@@ -11,6 +11,7 @@ import type { BuildParamProvenance } from "./provenance";
 import { findProjectConfig } from "./project-root";
 import { evaluateProjectConfig } from "./config-sandbox";
 import { lexiconNames, pathLexiconRoot, registerLexiconDeclarations, type LexiconDeclaration } from "./lexicon-module";
+import { decideConfigSchema, type DecideConfig } from "./op/decide-config";
 
 /**
  * One project-declared environment (chant #1166). Historically always a bare
@@ -194,6 +195,7 @@ export const ChantConfigSchema = z.object({
   knowledge: z.object({
     dir: z.string().min(1).optional(),
   }).optional(),
+  decide: decideConfigSchema.optional(),
   exclude: z.array(z.string().min(1)).optional(),
   include: z.array(z.string().min(1)).optional(),
   rootOnly: z.boolean().optional(),
@@ -448,6 +450,15 @@ export interface ChantConfig {
     /** Bundle directory, relative to the project root. Defaults to `"knowledge"`. */
     dir?: string;
   };
+
+  /**
+   * The backends the `decide` Op activity calls (#2828): backend name, as a
+   * decision point's model decider names it, to `{ url, key?, timeoutMs? }`.
+   * A key is `{ env }` or a brokered capability, never a literal (SYS001). A
+   * `decide` step's own `backends` take the place of these. See
+   * `./op/decide-config.ts`.
+   */
+  decide?: DecideConfig;
 
   /**
    * Globs, relative to the directory holding this config, naming files that

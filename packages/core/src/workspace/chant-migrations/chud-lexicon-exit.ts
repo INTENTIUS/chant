@@ -10,9 +10,9 @@
  *   points file, `decisions/points.json` at the workspace root, with each
  *   input named for the read-contract output it comes from, and an answer
  *   kind in `answers/` (ws-058, #2757, #2777);
- * - the release Op asks `ship-skip` through the systemone lexicon's `decide`
- *   activity (#2769), and its ship gate takes the point's quorum and the Cedar
- *   policy as before;
+ * - the release Op asks `ship-skip` through chant's `decide` activity
+ *   (#2769, core's since #2828, so the repo installs no package for it), and
+ *   its ship gate takes the point's quorum and the Cedar policy as before;
  * - the app component runs chant's own supply-chain verbs (SBOM, scan,
  *   vuln-gate) on the app member;
  * - the Fly site's resources stay on the fly lexicon, without chud's
@@ -128,7 +128,7 @@ function releaseOp(pointsRel: string, appRel: string): string {
  *   sha256), and builds the Fly app's requests (\`npm run build:fly\`, from
  *   deploy/fly.ts and deploy/fly-machine.ts, into dist/fly.json).
  * - Plan asks the ship-skip point, declared in decisions/points.json at the
- *   workspace root, through the systemone lexicon's \`decide\` activity, and
+ *   workspace root, through chant's \`decide\` activity, and
  *   writes the release plan: the archive's digest, the commit, and the
  *   point's answer, named by the sha256 of its own content. Its table says no
  *   to every release until someone adds a row, and each answer is a record in
@@ -166,9 +166,8 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { Op, phase, gate, shell, build, sourceArchive, releasePlan, releaseRecord } from "@intentius/chant/op";
+import { Op, phase, gate, shell, build, sourceArchive, releasePlan, releaseRecord, decide } from "@intentius/chant/op";
 import { parsePoints, quorumOf } from "@intentius/chant/workspace/points";
-import { decide } from "@intentius/chant-lexicon-systemone";
 import { flyRelease } from "@intentius/chant-lexicon-fly";
 import project from "../chant.config.ts";
 import { shipSkipPolicy } from "../decisions/ship-skip.cedar.ts";
@@ -329,9 +328,9 @@ const CONFIG_HEADER_NEW = `// The workspace's chant project (the \`delivery\` me
 // \`design\` member). The fountain lexicon for the agents in agents/, the Ops in
 // ops/ (found by their *.op.ts names), the fly lexicon for the Fly app
 // (deploy/fly.ts), the cedar lexicon for the ship gate's approval policy
-// (decisions/ship-skip.cedar.ts), and the systemone lexicon for the release
-// Op's \`decide\` step, which asks the ship-skip decision point in
-// decisions/points.json at the workspace root. The github lexicon is for this
+// (decisions/ship-skip.cedar.ts). The release Op's \`decide\` step, chant's
+// own, asks the ship-skip decision point in decisions/points.json at the
+// workspace root. The github lexicon is for this
 // repo's CI (ci/ci.ts), which \`npm run ci:build\` writes to
 // .github/workflows/ci.yml. The app is a chant component
 // (deploy/app.component.ts); \`sourceDir\` is where chant finds it, so
@@ -365,11 +364,10 @@ function configEdits(): Edit[] {
   ];
 }
 
-/** The `lexicons` list without "chud" and with "systemone", and no `sizing` const once nothing reads it. */
+/** The `lexicons` list without "chud", and no `sizing` const once nothing reads it. */
 function fixConfig(text: string): string {
   text = text.replace(/lexicons:\s*\[([^\]]*)\]/, (_all, inner: string) => {
     const names = [...inner.matchAll(/["']([^"']+)["']/g)].map((m) => m[1]).filter((n) => n !== "chud");
-    if (!names.includes("systemone")) names.push("systemone");
     return `lexicons: [${names.map((n) => JSON.stringify(n)).join(", ")}]`;
   });
   const sizing = /const sizing = \{\n  small: \{[^\n]*\},\n  medium: \{[^\n]*\},\n\};\n\n/;
@@ -569,12 +567,6 @@ function fixPackageJson(text: string, chantVersion: string, appRel: string): { t
       }
     }
     pkg[field] = Object.fromEntries(Object.entries(deps).sort(([a], [b]) => a.localeCompare(b)));
-  }
-  const deps = (pkg.dependencies ??= {}) as Record<string, string>;
-  if (!("@intentius/chant-lexicon-systemone" in deps)) {
-    deps["@intentius/chant-lexicon-systemone"] = floor ? `^${chantVersion}` : (deps["@intentius/chant"] ?? "*");
-    pkg.dependencies = Object.fromEntries(Object.entries(deps).sort(([a], [b]) => a.localeCompare(b)));
-    notes.push("adds @intentius/chant-lexicon-systemone for the decide step");
   }
   const scripts = pkg.scripts as Record<string, string> | undefined;
   if (scripts) {
@@ -820,7 +812,7 @@ function planExit(ctx: ChantMigrationContext): ChantMigrationPlan | null {
     }
 
     // Files the project keeps, edited.
-    edit(at("chant.config.ts"), configEdits(), "lexicons without chud and with systemone; no chud lint rules", fixConfig);
+    edit(at("chant.config.ts"), configEdits(), "lexicons without chud; no chud lint rules", fixConfig);
     edit(at("deploy/fly.ts"), FLY_EDITS, "the Fly app on the fly lexicon alone, without chud's FlySite");
     edit(at("deploy/fly-machine.ts"), FLY_MACHINE_EDITS, "a comment that named chud-runtime's fly-site.mjs");
     edit(at("decisions/ship-skip.cedar.ts"), CEDAR_EDITS, "the policy reads the decide step's answer and decider");

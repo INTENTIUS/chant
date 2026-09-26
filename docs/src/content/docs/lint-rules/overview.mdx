@@ -16,6 +16,7 @@ chant includes a semantic lint system that validates the meaning of your declara
 | **Correctness** | COR003, COR004, COR007, COR008, COR017, COR021, COR022–COR026, OPS012–OPS015 | Single file / post-synth | Structural errors |
 | **Composite** | EVL009, EVL010, COR017, COR018 | Single file | Best practices for Composite() factories |
 | **Composition** | COMP001–COMP007 | Whole component graph | Semantic checks over the discovered `Component` graph (epic #551 Phase 2) |
+| **Decide backends** | SYS001, SYS010 | Single file / post-synth | A `decide` backend's key is never a literal, and never crosses plain HTTP to a remote host |
 | **Lexicon** | Varies by lexicon | Varies | Provider-specific rules (see lexicon docs) |
 
 ## Severity Levels
@@ -92,6 +93,7 @@ See [Disable Directives](/chant/lint-rules/disable-directives/) for details.
 - [Correctness Rules](/chant/lint-rules/correctness/) — COR003, COR004, COR007, COR008, COR021, COR022–COR024 (effect-receipt guards), COR025 (stringified reference), COR026 (stale knowledge binding), OPS012–OPS015 (Op model: activity contracts, step-output references, ConvergeOp rule-table refusals, gate approval blocks)
 - [Composite Rules](/chant/lint-rules/composite/) — EVL009, EVL010, COR017, COR018
 - [Composition Rules](/chant/lint-rules/composition/) — COMP001–COMP007, over the discovered `Component` graph
+- [Decide backends](/chant/guide/decision-points/#lint-rules): SYS001 and SYS010, over the `decide` activity's backends
 - [Custom Rules](/chant/lint-rules/custom-rules/) — project-specific rules
 - [Configuration](/chant/lint-rules/configuration/) — severity, presets, overrides
 - [Auto-Fix](/chant/lint-rules/auto-fix/) — automatic fixes

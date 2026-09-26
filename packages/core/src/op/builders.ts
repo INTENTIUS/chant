@@ -16,6 +16,7 @@ import type { SourceArchiveArgs, ReleasePlanArgs, ReleaseRecordArgs } from "./ac
 import type { PolicyGateArgs } from "./activities/policy";
 import type { GuardValidateArgs } from "./activities/guard-validate";
 import type { WorkEvidenceArgs } from "./activities/work-evidence";
+import type { DecideArgs } from "./activities/decide";
 import { isValidCronExpression, cronSyntaxMessage } from "./cron";
 
 /** An `activity()` result — the plain `ActivityStep` shape plus the `.out` reference sugar (#1290). */
@@ -404,6 +405,23 @@ export const releasePlan = (args: WithStepRefs<ReleasePlanArgs> & StepOpts): Nam
 export const releaseRecord = (args: WithStepRefs<ReleaseRecordArgs> & StepOpts): NamedActivityStep => {
   const { args: rest, profile, id } = takeProfileAndId(args as Record<string, unknown>);
   return activity("releaseRecord", rest, { profile: profile ?? "fastIdempotent", ...(id ? { id } : {}) });
+};
+
+/**
+ * Ask a decision point and record its answer (ws-058, #2740): the `decide`
+ * activity, core's since #2828. `opts` is the activity's own
+ * {@link DecideArgs}, minus the positional `point`, so the builder and the
+ * activity cannot drift. Defaults to the `fastIdempotent` profile: asking
+ * again with the same point, declaration and inputs returns the record
+ * already written. An open question stops the run `waiting`.
+ *
+ * ```ts
+ * decide("slice-tier", { read: { "work-item": "W-002" }, subject: "W-002" })
+ * ```
+ */
+export const decide = (point: string, opts?: WithStepRefs<Omit<DecideArgs, "point">> & StepOpts): NamedActivityStep => {
+  const { args, profile, id } = takeProfileAndId(opts as Record<string, unknown> | undefined);
+  return activity("decide", { point, ...args }, { profile: profile ?? "fastIdempotent", ...(id ? { id } : {}) });
 };
 
 /**

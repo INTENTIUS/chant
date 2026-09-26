@@ -546,8 +546,14 @@ async function runOpCheckDiagnostics(
       ? await loadActivityContracts(plugins)
       : await loadActivityContracts(await resolveProjectLexicons(infraPath).catch(() => [] as string[]));
 
+  // SYS010 (#2828) also reads `decide.backends` from the project's config.
+  // A directory whose config does not load simply has none to check.
+  const decideBackends = await loadChantConfig(findProjectRoot(infraPath))
+    .then((loaded) => loaded.config.decide?.backends)
+    .catch(() => undefined);
+
   const raw = runPostSynthChecks(
-    coreOpChecks(),
+    coreOpChecks({ decideBackends }),
     {
       outputs: new Map(),
       entities: entities as Map<string, never>,

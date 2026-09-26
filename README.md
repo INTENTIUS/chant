@@ -54,5 +54,4 @@ It separates PR-worthy security findings (with ready-to-apply fix diffs) from hy
 | [@intentius/chant-lexicon-helm](lexicons/helm) | Helm lexicon — charts, releases, values |
 | [@intentius/chant-lexicon-k8s](lexicons/k8s) | Kubernetes lexicon — Deployments, Services, ConfigMaps + YAML import |
 | [@intentius/chant-lexicon-otel](lexicons/otel) | OpenTelemetry Collector lexicon — typed receivers, processors, exporters and pipelines, emitted as collector YAML |
-| [@intentius/chant-lexicon-systemone](lexicons/systemone) | systemone lexicon — the `decide` Op activity, asking decision points through a Jev-compatible backend |
 | [@intentius/chant-lexicon-render](lexicons/render) | Render lexicon — services, datastores, env groups, projects; applied straight to the Public API |

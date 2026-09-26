@@ -169,7 +169,8 @@ describe.each(["dir", "git"] as const)("chud-lexicon-exit, from a %s source", (f
     // delivery/ takes the chant doing the upgrade, and nothing holds it below that.
     expect(pkg.dependencies["@intentius/chant"]).toBe(`^${readerVersion()}`);
     expect(pkg.dependencies["@intentius/chant-lexicon-fly"]).toBe(`^${readerVersion()}`);
-    expect(pkg.dependencies["@intentius/chant-lexicon-systemone"]).toBe(`^${readerVersion()}`);
+    // decide is chant's own (#2828): no package joins for it.
+    expect(Object.keys(pkg.dependencies).filter((d) => /lexicon-systemone/.test(d))).toEqual([]);
     expect(pkg.scripts.release).toBe("chant run release");
     expect(pkg.scripts["build:fly"]).toBe("chant build deploy --lexicon fly -o dist/fly.json");
     const release = read(proj, "delivery/ops/release.op.ts");
@@ -179,7 +180,9 @@ describe.each(["dir", "git"] as const)("chud-lexicon-exit, from a %s source", (f
     expect(Object.values(pkg.scripts).join("\n")).not.toMatch(/--on chud|\bchud (dev|design)\b/);
 
     const config = read(proj, "delivery/chant.config.ts");
-    expect(config).toContain('lexicons: ["fountain", "fly", "cedar", "github", "systemone"]');
+    expect(config).toContain('lexicons: ["fountain", "fly", "cedar", "github"]');
+    expect(release).toContain('import { Op, phase, gate, shell, build, sourceArchive, releasePlan, releaseRecord, decide } from "@intentius/chant/op";');
+    expect(sources(proj).filter((f) => read(proj, f).includes("chant-lexicon-systemone"))).toEqual([]);
     expect(config).not.toMatch(/CHUD00[12]|write-scope\.ts|const sizing/);
     // The template's parameters stay where they were.
     expect(config).toContain('issue: "acme/notes#1"');
