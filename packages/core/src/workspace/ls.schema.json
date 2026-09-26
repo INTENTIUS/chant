@@ -138,6 +138,25 @@
               }
             }
           ]
+        },
+        "acceptance": {
+          "description": "Added in contract 1 by #2772. For a work kind whose work block names acceptance criteria: each current work item that lists some, in path order, with how many of its criteria passing evidence meets, read in the tree read. Null for any other kind, and when the kind or its records can't be read.",
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["item", "state", "met", "total"],
+                "properties": {
+                  "item": { "type": "string", "description": "The work item's id." },
+                  "state": { "type": ["string", "null"], "description": "The item's state." },
+                  "met": { "type": "integer", "minimum": 0, "description": "Criteria met by evidence naming them, with result pass and the criterion's verification; a manual verdict counts only from someone other than the implementer." },
+                  "total": { "type": "integer", "minimum": 0, "description": "Criteria the item lists." }
+                }
+              }
+            }
+          ]
         }
       }
     },

@@ -31,7 +31,7 @@ import { joinSessions, type SessionCitation } from "./record-sessions";
 import type { RecordSource } from "./record-source";
 import { sourceBlock, sourceBlockProblems, transcriptDrift } from "./source-block";
 import type { WorkspaceTree } from "./tree";
-import type { DecisionWork, WorkLink, WorkWarningCode } from "./work";
+import type { DecisionWork, WorkAcceptance, WorkLink, WorkWarningCode } from "./work";
 import type { AnswerWarningCode } from "./points";
 
 // ── Reason codes ─────────────────────────────────────────────────────────────
@@ -369,6 +369,15 @@ export const recordKindSchema = z
      * date. With it, `work.ts` gives each record `ready`, `blockedBy` and
      * `implements`, and the read lists each decision with `implementedBy`.
      * Optional.
+     *
+     * `acceptance` (#2772) names the front-matter list of a record's
+     * acceptance criteria, each an `id`, `text` and the `verification` it
+     * expects (`unit`, `integration`, `e2e`, `runtime` or `manual`), and the
+     * field naming the record's implementer, whose own `manual` verdict never
+     * counts. With it, each record gets `acceptance` (met and total), and a
+     * done record with a criterion that no passing evidence meets is warned
+     * `work-acceptance-unmet`, which `check` fails on (WSP117). Optional, and
+     * a record without the list is read as before.
      */
     work: z
       .object({
@@ -378,6 +387,7 @@ export const recordKindSchema = z
         open: z.string().min(1),
         done: z.string().min(1),
         closedOn: z.string().min(1),
+        acceptance: z.object({ field: z.string().min(1), implementer: z.string().min(1) }).strict().optional(),
       })
       .strict()
       .optional(),
@@ -429,6 +439,10 @@ export const recordKindSchema = z
   .refine((k) => !k.work || (k.states !== undefined && k.states.includes(k.work.open) && k.states.includes(k.work.done)), {
     message: "a work kind must have states, and its work open and done states must be listed in them",
     path: ["work"],
+  })
+  .refine((k) => !k.work?.acceptance || k.pins !== undefined, {
+    message: "a work kind with acceptance criteria must have pins: a criterion is met by the evidence in its pins field",
+    path: ["work", "acceptance"],
   })
   .refine(
     (k) =>
@@ -1005,6 +1019,8 @@ export interface RecordEntry {
   blockedBy?: WorkLink[];
   /** For a work kind: each decision the record implements, with its state, or null when no decision has the id. */
   implements?: WorkLink[];
+  /** For a work kind with acceptance criteria (#2772): how many of the record's criteria passing evidence meets, or null when it lists none. */
+  acceptance?: WorkAcceptance | null;
 }
 
 export interface ReadRecordsOptions {

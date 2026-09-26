@@ -255,6 +255,8 @@ While the steps run, the lease is renewed every third of its `ttl` (default `10m
 
 When the run ends the lease is released with an outcome. A completed run records `done`, or the string returned by the step that `outcome` references. A failed run records `not_done`, a run stopped at a gate records `gated`, and a run stopped on an open decision point records `waiting`. The outcome lands on `_leases/<id>.jsonl`. `kind` names the work kind file whose member owns the lease; without it the lease is in the project's own ledger.
 
+The `workEvidence` step attaches evidence to one of the item's [acceptance criteria](/chant/guide/work-items/#acceptance-criteria) under the run's lease ([#2772](https://github.com/INTENTIUS/chant/issues/2772)). It writes only while the lease is still the run's, and it refuses a `manual` criterion, because the run is the item's implementer. Name the work kind in `kind` so the step and the lease read the same ledger.
+
 ### An Op that changes the checkout
 
 `changesCheckout: true` says the Op changes the checkout, as applying a build or `chant workspace upgrade` does. Such an Op must declare `workLease`: the executor refuses to run it otherwise, and `declareSteward` refuses to list it. Its leased steps get a git worktree of their own on the branch `chant/work/<item>` (`chant/work/<member>/<item>` in a workspace member). The worktree sits under the repository's git directory and starts from HEAD, or from the branch where an earlier run left it. The steps write and commit there. When the run ends the worktree is removed and the branch keeps the commits, for the runner to deliver. The working tree a coding agent is editing, its index and its uncommitted files, stay as they were.

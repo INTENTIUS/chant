@@ -10,6 +10,13 @@ constrains:
   - "path:design/screens/home.json"
   - "member:app"
 evidence: []
+acceptance:
+  - id: "AC-1"
+    text: "The app builds each region of its home page from the region design/screens/home.json lists"
+    verification: "unit"
+  - id: "AC-2"
+    text: "Someone other than the implementer compares the rendered home page with the spec and finds them the same"
+    verification: "manual"
 owner: "lex00"
 opened_on: "2026-09-24"
 source:

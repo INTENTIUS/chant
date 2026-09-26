@@ -1,0 +1,212 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/work-evidence/v1/work-evidence.schema.json",
+  "title": "workEvidence result",
+  "description": "What attachWorkEvidence, which the workEvidence Op activity runs, returns (#2772): the evidence entry it appended to a work item's acceptance criterion, under the run's work lease, or the reason nothing was written. Version 1. The activity returns the result and fails its step with the refusal's code. Readers ignore fields they do not know; a field is only ever added within a version. The error codes are a closed list, each in the one closed list of `reason-codes.ts`.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/result"
+    },
+    {
+      "$ref": "#/$defs/failure"
+    }
+  ],
+  "$defs": {
+    "result": {
+      "description": "The entry was appended to the record's pins field, through records amend.",
+      "type": "object",
+      "required": [
+        "$schema",
+        "contract",
+        "item",
+        "kind",
+        "path",
+        "evidence",
+        "acceptance"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/work-evidence/v1/work-evidence.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "item": {
+          "type": "string",
+          "description": "The work item's id."
+        },
+        "kind": {
+          "type": "string",
+          "description": "The work kind file, from the repository root."
+        },
+        "path": {
+          "type": "string",
+          "description": "The work record, from the repository root."
+        },
+        "evidence": {
+          "type": "object",
+          "description": "The entry appended: a title, a url or a path pinned by sha256, as_of, and the criterion, its verification, the result and by, the lease holder.",
+          "required": [
+            "title",
+            "criterion",
+            "verification",
+            "result",
+            "by"
+          ],
+          "properties": {
+            "title": {
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "as_of": {
+              "type": "string"
+            },
+            "criterion": {
+              "type": "string"
+            },
+            "verification": {
+              "enum": [
+                "unit",
+                "integration",
+                "e2e",
+                "runtime"
+              ],
+              "description": "The criterion's verification. Never manual: a run under the lease is the implementer."
+            },
+            "result": {
+              "enum": [
+                "pass",
+                "fail"
+              ]
+            },
+            "by": {
+              "type": "string",
+              "description": "The lease holder that attached it."
+            }
+          }
+        },
+        "acceptance": {
+          "type": "object",
+          "description": "The record's criteria with the entry counted, as records --json reports them.",
+          "required": [
+            "met",
+            "total",
+            "criteria"
+          ],
+          "properties": {
+            "met": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "total": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "criteria": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "id",
+                  "verification",
+                  "met"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "verification": {
+                    "enum": [
+                      "unit",
+                      "integration",
+                      "e2e",
+                      "runtime",
+                      "manual"
+                    ]
+                  },
+                  "met": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "error": false
+      }
+    },
+    "failure": {
+      "description": "Nothing was written: the input, the item, the criterion or the lease refused it, or records amend did.",
+      "type": "object",
+      "required": [
+        "$schema",
+        "contract",
+        "error"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/work-evidence/v1/work-evidence.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "enum": [
+                "kind-unreadable",
+                "kind-invalid",
+                "schema-unreadable",
+                "schema-id-mismatch",
+                "schema-invalid",
+                "location-missing",
+                "write-usage-invalid",
+                "write-input-invalid",
+                "record-not-found",
+                "amend-id-immutable",
+                "record-closed",
+                "amend-supersede-instead",
+                "record-sign-failed",
+                "record-unparseable",
+                "record-schema-invalid",
+                "record-id-duplicate",
+                "record-supersedes-unknown",
+                "record-supersedes-conflict",
+                "session-seal-mismatch",
+                "session-verdict-unknown-record",
+                "work-kind-missing",
+                "work-kind-ambiguous",
+                "work-item-unknown",
+                "work-item-closed",
+                "work-criterion-unknown",
+                "work-acceptance-self-verified",
+                "lease-held",
+                "lease-not-held",
+                "lease-token-mismatch",
+                "not-a-git-repository"
+              ]
+            },
+            "message": {
+              "type": "string"
+            }
+          }
+        },
+        "evidence": false
+      }
+    }
+  }
+}

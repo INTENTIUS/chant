@@ -15,10 +15,19 @@
  * | WSP114 | the records of `--kind` can't be read (fixed) |
  * | WSP115 | a record kind the declaration names is missing or does not load as one (fixed, #2680) |
  * | WSP116 | an answer kind's decision points file is missing or not valid (fixed, ws-058, #2738) |
+ * | WSP117 | a done work item has an acceptance criterion no passing evidence meets (#2772) |
+ *
+ * WSP117 reads the records of every declared work kind with acceptance
+ * criteria, in the working tree, and the records of `--kind`. It carries the
+ * reason code `work-acceptance-unmet`.
  */
 
 import type { WorkspaceCheck, WorkspaceDiagnostic } from "../checks";
+import type { ReasonCode } from "../reason-codes";
 import type { ReadErrorCode, RecordEntry } from "../records";
+
+/** The read contract's codes the record checks carry as `code`: WSP117's (#2772). */
+export const RECORD_FINDING_CODES = ["work-acceptance-unmet"] as const satisfies readonly ReasonCode[];
 
 /** The records `check --kind` read, or why they could not be read. */
 export type RecordFacts =
@@ -120,6 +129,44 @@ export const RECORD_CHECKS: readonly WorkspaceCheck[] = [
           pointer: `${k.declared.pointer}/kind`,
         });
         for (const p of k.points.problems) out.push(finding(`${where} declares the answer kind ${k.declared.kind}, whose points file ${k.points.file} ${p.field ? `has ${p.field}, which ${p.message}` : p.message}`));
+      }
+      return out;
+    },
+  },
+  {
+    id: "WSP117",
+    name: "work-acceptance-unmet",
+    description:
+      "Every done work item meets its acceptance criteria: each has evidence that names it, passed, and has the verification the criterion expects, and a manual verdict is from someone other than the implementer (#2772).",
+    severity: "error",
+    configurable: true,
+    check(ctx) {
+      const out: WorkspaceDiagnostic[] = [];
+      const seen = new Set<string>();
+      const facts = ctx.facts?.records;
+      if (facts && !("error" in facts)) {
+        for (const r of facts.records) {
+          if (r.supersededBy !== null) continue;
+          const w = r.warnings.find((x) => x.code === "work-acceptance-unmet");
+          if (!w || seen.has(r.file)) continue;
+          seen.add(r.file);
+          out.push({ checkId: this.id, severity: this.severity, message: w.message, pointer: "", file: r.file, code: "work-acceptance-unmet" });
+        }
+      }
+      for (const k of ctx.facts?.declaredKinds ?? []) {
+        for (const a of k.acceptance ?? []) {
+          if (a.unmet === null || seen.has(a.file)) continue;
+          seen.add(a.file);
+          out.push({
+            checkId: this.id,
+            severity: this.severity,
+            message: a.unmet,
+            ...(k.declared.member !== null ? { entity: k.declared.member } : {}),
+            pointer: "",
+            file: a.file,
+            code: "work-acceptance-unmet",
+          });
+        }
       }
       return out;
     },

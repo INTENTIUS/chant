@@ -29,6 +29,7 @@
  * | WSP111 to WSP114 | records read with `--kind` (#2549) |
  * | WSP115 | the record kinds the declaration names (#2680) |
  * | WSP116 | the decision points file of each declared answer kind (ws-058) |
+ * | WSP117 | a done work item's acceptance criteria all met (#2772) |
  * | WSP121, WSP122 | boxes: no literal credential, every capability brokered (#2726) |
  * | WSP123, WSP124 | box isolation: no shared port, state path or cookie, no literal machine path (#2727) |
  */
@@ -461,7 +462,8 @@ export async function runDeclarationChecks(
   const { registry, problems } = loadKindRegistry(declaration.pins, root);
   const gathered = options.gather === false || options.tree ? {} : await gatherWorkspaceFacts(root, declaration, options);
   // The declared record kinds load from the working tree; under --at only whether each exists at the revision is checked (#2680).
-  const declaredKinds = options.gather === false ? undefined : await loadDeclaredKinds(declaration, tree, root, { load: !options.tree });
+  // A declared work kind's acceptance criteria are counted in the working tree too (#2772).
+  const declaredKinds = options.gather === false ? undefined : await loadDeclaredKinds(declaration, tree, root, { load: !options.tree, acceptance: !options.tree });
   const facts: WorkspaceFacts = { ...gathered, ...(options.records ? { records: options.records } : {}), ...(declaredKinds ? { declaredKinds } : {}) };
   const ctx: WorkspaceCheckContext = { declaration, tree, groups, kinds: registry, kindProblems: problems, facts };
   const findings = runWorkspaceChecks(ctx);

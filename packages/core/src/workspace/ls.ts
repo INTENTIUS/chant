@@ -74,6 +74,20 @@ export interface LsRecordKind {
   kind: string | null;
   /** Why the kind file can't be loaded, or null. */
   reason: { code: DeclaredKindReasonCode; message: string } | null;
+  /**
+   * For a work kind with acceptance criteria (#2772): each current work item
+   * that lists criteria, with how many passing evidence meets. Null for any
+   * other kind, and when the kind or its records can't be read.
+   */
+  acceptance: LsAcceptance[] | null;
+}
+
+/** A work item's acceptance criteria, counted (#2772). */
+export interface LsAcceptance {
+  item: string;
+  state: string | null;
+  met: number;
+  total: number;
 }
 
 export interface LsMember {
@@ -162,11 +176,12 @@ export async function listWorkspaceWithKinds(query: LsQuery): Promise<LsDocument
   const { doc, declaration, tree, rootOnDisk } = readListing(query);
   if (!declaration || "error" in doc) return doc;
   const { loadDeclaredKinds } = await import("./declared-kinds");
-  const loaded = await loadDeclaredKinds(declaration, tree!, rootOnDisk!);
+  const loaded = await loadDeclaredKinds(declaration, tree!, rootOnDisk!, { acceptance: true, ...(doc.at !== null ? { at: doc.at } : {}) });
   const byPath = new Map(loaded.map((k) => [k.declared.path, k]));
   const fill = (r: LsRecordKind): LsRecordKind => {
     const k = byPath.get(r.path)!;
-    return { ...r, name: r.name ?? k.kind, kind: k.kind, reason: k.reason };
+    const acceptance = k.acceptance ? k.acceptance.map((a) => ({ item: a.item, state: a.state, met: a.met, total: a.total })) : null;
+    return { ...r, name: r.name ?? k.kind, kind: k.kind, reason: k.reason, acceptance };
   };
   return {
     ...doc,
@@ -175,7 +190,7 @@ export async function listWorkspaceWithKinds(query: LsQuery): Promise<LsDocument
   };
 }
 
-const unloaded = (records: Declaration["records"]): LsRecordKind[] => records.map((r) => ({ name: r.name, path: r.path, kind: null, reason: null }));
+const unloaded = (records: Declaration["records"]): LsRecordKind[] => records.map((r) => ({ name: r.name, path: r.path, kind: null, reason: null, acceptance: null }));
 
 function readListing(query: LsQuery): { doc: LsDocument; declaration?: Declaration; tree?: WorkspaceTree; rootOnDisk?: string } {
   const chant = readerVersion();
@@ -296,6 +311,7 @@ function formatLs(doc: Extract<LsDocument, { members: unknown }>): string {
     kinds.forEach(({ r }, i) => {
       lines.push(rendered[i + 1]);
       if (r.reason) lines.push(`  ${r.reason.code}: ${r.reason.message}`);
+      for (const a of r.acceptance ?? []) lines.push(`  ${a.item} ${a.state ?? "-"}: ${a.met}/${a.total} criteria met`);
     });
   }
   if (doc.groups.length > 0) {

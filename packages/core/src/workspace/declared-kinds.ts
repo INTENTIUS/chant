@@ -36,6 +36,25 @@ export interface DeclaredKind {
    * other kind, and when the kind wasn't loaded.
    */
   points?: { file: string; problems: { field: string | null; message: string }[] };
+  /**
+   * For a work kind with acceptance criteria (#2772), read with
+   * `acceptance: true`: each current record that lists criteria, with how
+   * many are met. Absent for any other kind, when the kind wasn't loaded,
+   * and when its records can't be read (`records` reports why).
+   */
+  acceptance?: DeclaredAcceptance[];
+}
+
+/** One work record's acceptance criteria, counted, as `ls`, `status` and `check` read them (#2772). */
+export interface DeclaredAcceptance {
+  item: string;
+  state: string | null;
+  met: number;
+  total: number;
+  /** The record file on disk, absolute. */
+  file: string;
+  /** The record's `work-acceptance-unmet` warning, when it is done with a criterion unmet; null otherwise. */
+  unmet: string | null;
 }
 
 /** The kind file of `declared` on disk, under the workspace root `rootOnDisk`. */
@@ -53,7 +72,7 @@ export async function loadDeclaredKinds(
   declaration: Declaration,
   tree: WorkspaceTree,
   rootOnDisk: string,
-  options: { load?: boolean } = {},
+  options: { load?: boolean; acceptance?: boolean; at?: string } = {},
 ): Promise<DeclaredKind[]> {
   const declared = declaredRecordKinds(declaration);
   if (declared.length === 0) return [];
@@ -73,6 +92,10 @@ export async function loadDeclaredKinds(
       const loaded = await records.loadRecordKind(file);
       const entry: DeclaredKind = { declared: d, file, kind: loaded.kind.name, reason: null };
       if (loaded.kind.answers) entry.points = await checkPoints(resolve(dirname(file), loaded.kind.answers.points), rootOnDisk, tree);
+      if (loaded.kind.work?.acceptance && options.acceptance) {
+        const counted = await countAcceptance(file, rootOnDisk, options.at);
+        if (counted) entry.acceptance = counted;
+      }
       out.push(entry);
     } catch (err) {
       if (!(err instanceof records.RecordReadError)) throw err;
@@ -81,6 +104,28 @@ export async function loadDeclaredKinds(
     }
   }
   return out;
+}
+
+/** The acceptance counts of a work kind's current records, or undefined when they can't be read. */
+async function countAcceptance(file: string, rootOnDisk: string, at: string | undefined): Promise<DeclaredAcceptance[] | undefined> {
+  const { readRecordsFor } = await import("./records-cli");
+  const { RecordReadError } = await import("./records");
+  try {
+    const read = await readRecordsFor({ kind: file, cwd: rootOnDisk, current: true, ...(at !== undefined ? { at } : {}) });
+    return read.result.records
+      .filter((r): r is typeof r & { id: string; acceptance: NonNullable<typeof r.acceptance> } => r.id !== null && r.acceptance != null)
+      .map((r) => ({
+        item: r.id,
+        state: r.state,
+        met: r.acceptance.met,
+        total: r.acceptance.total,
+        file: join(read.root, ...r.path.split("/")),
+        unmet: r.warnings.find((w) => w.code === "work-acceptance-unmet")?.message ?? null,
+      }));
+  } catch (err) {
+    if (err instanceof RecordReadError) return undefined;
+    throw err;
+  }
 }
 
 /** An answer kind's points file (ws-058), read from `tree` and validated as `points ask` reads it. */

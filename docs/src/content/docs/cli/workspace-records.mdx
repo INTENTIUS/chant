@@ -77,10 +77,11 @@ work: {
   open: "open",
   done: "done",
   closedOn: "closed_on",
+  acceptance: { field: "acceptance", implementer: "owner" },
 },
 ```
 
-The `needs` and `implements` entries name the front-matter lists that hold work ids and decision ids. The `decisions` entry names the decision kind file those decision ids belong to, relative to the work kind's directory, and chant reads it at the same revision as the work records. The `open` entry is the state a ready record is in, `done` is the state that satisfies a need, and `closedOn` names the field that holds the closing date. [Work items](#work-items) describes what the read adds for such a kind, and reading one takes chant `0.86.0` or newer.
+The `needs` and `implements` entries name the front-matter lists that hold work ids and decision ids. The `decisions` entry names the decision kind file those decision ids belong to, relative to the work kind's directory, and chant reads it at the same revision as the work records. The `open` entry is the state a ready record is in, `done` is the state that satisfies a need, and `closedOn` names the field that holds the closing date. Optionally, `acceptance` names the list of a record's [acceptance criteria](/chant/guide/work-items/#acceptance-criteria) and the field naming its implementer, whose own `manual` verdict never counts ([#2772](https://github.com/INTENTIUS/chant/issues/2772)). A kind with `acceptance` must have `pins`, since criteria are met by evidence. [Work items](#work-items) describes what the read adds for such a kind, and reading one takes chant `0.86.0` or newer. A chant older than this block refuses a kind file that has `acceptance`.
 
 Answers to decision points are kept by an answer kind ([ws-058](https://github.com/INTENTIUS/chant/issues/2739)). `answers: { points: "../decisions/points.json" }` in `answers/answer.kind.mjs` names the points file its records answer, relative to the kind's directory. An answer kind is Markdown front matter with `idField: "id"` and `stateField: "state"`. Its states include `escalated`, `proposed` and `answered`, and `answered` is closed. [`chant workspace points`](/chant/cli/workspace-points/) writes its records and lists them as questions, and `records` warns about an answer whose point is gone or changed. [Decision Points](/chant/guide/decision-points/) describes it.
 
@@ -154,6 +155,7 @@ On a work kind the output has five more fields. The guide page [Work items](/cha
 | `implements` | each parsed record | each decision the record names, as `{ id, state }`, with the decision's state now |
 | `decisions` | the document | every decision the decision kind reads, with `implementedBy`, the work records naming it. An empty `implementedBy` means the decision has no work item yet |
 | `lease` | each record with an id, read in the working tree | the item's active [work lease](/chant/cli/workspace-work/) as `{ holder, token, acquiredAt, expiresAt }`, or `null` when nobody holds one live. It is read from the local lease refs and the remote's as last fetched, and is absent under `--at`, since a lease is not part of a revision |
+| `acceptance` | each parsed record, when the `work` block names `acceptance` | `{ met, total, criteria }`, each criterion as `{ id, verification, met }`. A criterion is met by evidence naming it, with `result: pass` and the criterion's `verification`, and a `manual` one only by a verdict whose `by` is not the implementer. `null` when the record lists no criteria |
 
 A work record doesn't get `record-no-evidence`, because an open item has no proof yet. A done record with an empty evidence list gets `work-done-unpinned` instead. The text output adds a line under each work record, `ready` or `blocked by W-001 (in-progress)`, with the decisions it implements. A work record with a lease also shows `held by <holder> until <time>`.
 
@@ -665,6 +667,8 @@ A failed read prints `{ "$schema", "contract", "error": { "code", "message" } }`
 | `work-closed-without-date` | is a done or dropped work record with no `closed_on` |
 | `record-unattested` | names an author (the kind's `reviews.decider` field), and a signers file is active at base, and its author seal doesn't verify. It is still read, and stays valid ([Sealing a record](#sealing-a-record)) |
 | `source-transcript-drift` | pins a transcript in its source block that can be read here and hashes to something else ([Where a proposal came from](#where-a-proposal-came-from)) |
+| `work-acceptance-unmet` | is a done work record with an acceptance criterion that no passing evidence of its verification meets. `check` fails on it as `WSP117` |
+| `work-acceptance-self-verified` | is a work record with a passing `manual` verdict by its implementer, which does not count |
 | `work-done-gap-open` | is a done work record whose `source` names a finding that still fires on its region. `records` walks the region as `graph --intent` does, in a git repository with a workspace declaration ([#2686](https://github.com/INTENTIUS/chant/issues/2686)) |
 
 ### Error codes

@@ -78,6 +78,9 @@ export type { PolicyGateArgs } from "./policy";
 export { guardValidate, parseGuardFindings } from "./guard-validate";
 export type { GuardValidateArgs, GuardValidateResult, GuardFinding } from "./guard-validate";
 
+export { workEvidence } from "./work-evidence";
+export type { WorkEvidenceArgs, WorkEvidenceResult } from "./work-evidence";
+
 export { workflowSupplyChainAudit, collectAuditRefs, defaultActionRefResolver } from "./workflow-audit";
 export type {
   WorkflowAuditArgs,

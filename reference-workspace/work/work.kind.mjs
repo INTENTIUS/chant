@@ -41,5 +41,8 @@ export const recordKind = {
     open: "open",
     done: "done",
     closedOn: "closed_on",
+    // What done means, stated on the record (#2772): each criterion expects
+    // a verification, and a manual verdict never comes from the owner.
+    acceptance: { field: "acceptance", implementer: "owner" },
   },
 };

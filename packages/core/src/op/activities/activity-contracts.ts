@@ -206,3 +206,29 @@ export const changeCoverageContract = activityContract(
     }),
   }),
 );
+
+/**
+ * Evidence for an acceptance criterion, under the run's work lease (#2772).
+ * `lease` is the run's lease, a reference the builder fills in, so it is not
+ * checked here. `returns` names what a step reads: the item, the record's
+ * path, the entry appended and the criteria counted with it.
+ */
+export const workEvidenceContract = activityContract(
+  "workEvidence",
+  z.strictObject({
+    lease: z.unknown(),
+    criterion: z.string(),
+    result: z.enum(["pass", "fail"]),
+    title: z.string(),
+    url: z.string().optional(),
+    path: z.string().optional(),
+    kind: z.string().optional(),
+    cwd: z.string().optional(),
+  }),
+  z.object({
+    item: z.string(),
+    path: z.string(),
+    evidence: z.record(z.string(), z.unknown()),
+    acceptance: z.object({ met: z.number(), total: z.number(), criteria: z.array(z.object({ id: z.string(), verification: z.string(), met: z.boolean() })) }),
+  }),
+);

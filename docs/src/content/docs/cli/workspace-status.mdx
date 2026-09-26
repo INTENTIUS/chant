@@ -104,6 +104,19 @@ A steward is the one writer that runs a member's operational Ops, on Fountain or
 
 With `--json`, the document also lists every [work lease](/chant/cli/workspace-work/) in `leases` ([#2732](https://github.com/INTENTIUS/chant/issues/2732)): the flat ledger's first, then each member's, by item. A lease is `active` until its `expiresAt` passes and `expired` after, when anyone may claim the item again. A released lease has no ref and is not listed; its history stays in `_leases/<id>.jsonl`. The leases are read from the local refs and the remote's as last fetched, like everything else here. The text view lists them in a table after the releases.
 
+### Acceptance criteria
+
+`acceptance` counts each work item's [acceptance criteria](/chant/guide/work-items/#acceptance-criteria) ([#2772](https://github.com/INTENTIUS/chant/issues/2772)). Only current items that state criteria are listed, sorted by kind and then item. With no declared work kind that has criteria, the list is empty. Records come from the working tree, and the text view shows a CRITERIA MET column for each item.
+
+| Field | Value |
+|---|---|
+| `member` | the member that declares the work kind, or `null` for the workspace's own |
+| `kind` | the work kind file from the workspace root |
+| `item` | the work item's id |
+| `state` | the item's state |
+| `met` | criteria met by passing evidence of their verification |
+| `total` | criteria the item lists |
+
 A box block with a host also has its [isolation](/chant/reference/workspace-declaration/#isolation) resolved, and `isolation` is `null` in a block without one ([#2727](https://github.com/INTENTIUS/chant/issues/2727)). It comes from the declaration alone, so it is the same whatever environment is asked for. A runtime that plants or starts a box sets these values instead of choosing its own. A state path keeps its environment reference, such as `${XDG_STATE_HOME}`, for the runtime to expand on its machine. The text view shows one line for each box with a host. It gives the host and slot, then the port block and the state directory.
 
 The command doesn't read live state. `--compare-to --live` is refused with a pointer to `chant components status <env> --live`, which reads one member's live state from that member's directory.
@@ -238,6 +251,9 @@ The output is part of the workspace [read contract](/chant/reference/workspace-r
       "expiresAt": "2026-09-21T09:10:00.000Z",
       "state": "active"
     }
+  ],
+  "acceptance": [
+    { "member": null, "kind": "work/work.kind.mjs", "item": "W-001", "state": "in-progress", "met": 1, "total": 2 }
   ],
   "summary": { "members": 3, "released": 2, "unreadable": 0, "differing": 1 }
 }

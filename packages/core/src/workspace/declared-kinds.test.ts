@@ -111,20 +111,20 @@ describe("workspace ls lists the declared kinds (#2680)", () => {
     ]);
     const doc = result(await listWorkspaceWithKinds({ cwd: root }));
     expect(doc.contract).toBe(1);
-    expect(doc.workspace.records).toEqual([{ name: "decision", path: "decisions/decision.kind.mjs", kind: "decision", reason: null }]);
+    expect(doc.workspace.records).toEqual([{ name: "decision", path: "decisions/decision.kind.mjs", kind: "decision", reason: null, acceptance: null }]);
     const design = doc.members.find((m) => m.name === "design")!;
     expect(design.readable).toBe(true);
     expect(design.records).toEqual([
-      { name: "notes", path: "design/notes/note.kind.mjs", kind: "note", reason: null },
-      { name: null, path: "design/gone.kind.mjs", kind: null, reason: { code: "kind-unreadable", message: "kind file design/gone.kind.mjs does not exist" } },
-      { name: null, path: "design/broken.kind.mjs", kind: null, reason: { code: "kind-invalid", message: "kind file design/broken.kind.mjs is not a record kind: it has no recordKind export" } },
+      { name: "notes", path: "design/notes/note.kind.mjs", kind: "note", reason: null, acceptance: null },
+      { name: null, path: "design/gone.kind.mjs", kind: null, reason: { code: "kind-unreadable", message: "kind file design/gone.kind.mjs does not exist" }, acceptance: null },
+      { name: null, path: "design/broken.kind.mjs", kind: null, reason: { code: "kind-invalid", message: "kind file design/broken.kind.mjs is not a record kind: it has no recordKind export" }, acceptance: null },
     ]);
     expect(doc.members.find((m) => m.name === "app")!.records).toEqual([]);
   });
 
   test("listWorkspace lists them unloaded, and a workspace that names none lists empty arrays", async () => {
     const doc = result(listWorkspace({ cwd: workspace() }));
-    expect(doc.workspace.records).toEqual([{ name: null, path: "decisions/decision.kind.mjs", kind: null, reason: null }]);
+    expect(doc.workspace.records).toEqual([{ name: null, path: "decisions/decision.kind.mjs", kind: null, reason: null, acceptance: null }]);
     const none = result(await listWorkspaceWithKinds({ cwd: repo({ "chant.workspace.json": decl(members()), "app/x": "", "design/x": "" }) }));
     expect(none.workspace.records).toEqual([]);
     expect(none.members.map((m) => m.records)).toEqual([[], []]);

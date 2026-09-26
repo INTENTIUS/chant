@@ -15,6 +15,8 @@
  *   record is valid and not superseded;
  * - `blockedBy`: each need that is not done, with its state;
  * - `implements`: each decision it names, with that decision's state;
+ * - `acceptance`, for a kind with acceptance criteria (#2772): how many of the
+ *   record's criteria passing evidence of the expected verification meets;
  *
  * and each decision `implementedBy`, the work records naming it. The
  * warnings are closed codes. `work-done-gap-open` is not raised here: it
@@ -24,7 +26,7 @@
 
 import { dirname } from "node:path";
 import type { ReasonCode } from "./reason-codes";
-import { loadRecordKind, readRecords, type LoadedRecordKind, type ReadRecordsOptions, type RecordEntry } from "./records";
+import { loadRecordKind, normalisePrincipal, readRecords, type LoadedRecordKind, type ReadRecordsOptions, type RecordEntry } from "./records";
 
 /** Why a work record carries a warning. Closed, like the record warning codes. */
 export const WORK_WARNING_CODES = [
@@ -42,6 +44,10 @@ export const WORK_WARNING_CODES = [
   "work-closed-without-date",
   /** The record is done, and the finding it came from (`source.finding`) still fires on its region. Raised by `graph --intent`, and by `records` through a walk of that region (#2686). */
   "work-done-gap-open",
+  /** The record is done, and an acceptance criterion has no passing evidence of the verification it expects (#2772). `check` fails on it (WSP117). */
+  "work-acceptance-unmet",
+  /** A passing `manual` verdict on a criterion names the record's implementer, so it does not count: a manual verdict comes from someone else (#2772). */
+  "work-acceptance-self-verified",
 ] as const satisfies readonly ReasonCode[];
 export type WorkWarningCode = (typeof WORK_WARNING_CODES)[number];
 
@@ -59,6 +65,82 @@ export interface DecisionWork {
   state: string | null;
   supersededBy: string | null;
   implementedBy: WorkLink[];
+}
+
+/** How a criterion is to be verified (#2772): by a unit, integration or end-to-end test, by the running system, or by a person. */
+export const VERIFICATION_TYPES = ["unit", "integration", "e2e", "runtime", "manual"] as const;
+export type VerificationType = (typeof VERIFICATION_TYPES)[number];
+
+/** The results a piece of evidence for a criterion can carry. */
+export const EVIDENCE_RESULTS = ["pass", "fail"] as const;
+export type EvidenceResult = (typeof EVIDENCE_RESULTS)[number];
+
+/** One acceptance criterion as a work record states it. */
+export interface Criterion {
+  id: string;
+  text: string;
+  verification: VerificationType;
+}
+
+/** One criterion on read: whether passing evidence of its verification meets it. */
+export interface CriterionState {
+  id: string;
+  verification: VerificationType;
+  met: boolean;
+}
+
+/** A work record's acceptance criteria on read (#2772): how many are met, of how many. */
+export interface WorkAcceptance {
+  met: number;
+  total: number;
+  criteria: CriterionState[];
+}
+
+/** The acceptance criteria a record lists in `field`, leaving out entries without a string id and a known verification (the schema reports those). */
+export function acceptanceCriteria(data: Record<string, unknown> | null, field: string): Criterion[] {
+  const v = data?.[field];
+  if (!Array.isArray(v)) return [];
+  return v.filter(
+    (c): c is Criterion =>
+      c !== null && typeof c === "object" && typeof c.id === "string" && typeof c.text === "string" && (VERIFICATION_TYPES as readonly string[]).includes(c.verification),
+  );
+}
+
+/**
+ * Which of a record's criteria its evidence meets. Evidence meets a criterion
+ * when it names the criterion, its result is `pass` and its verification is
+ * the criterion's. A `manual` verdict also names who gave it in `by`, and
+ * counts only when that is not the record's implementer; one that is lands in
+ * `selfVerified`. `acceptance` is null when the record lists no criteria.
+ */
+export function workAcceptance(
+  data: Record<string, unknown> | null,
+  spec: { field: string; implementer: string },
+  pinsField: string,
+): { acceptance: WorkAcceptance | null; selfVerified: string[] } {
+  if (!Array.isArray(data?.[spec.field])) return { acceptance: null, selfVerified: [] };
+  const criteria = acceptanceCriteria(data, spec.field);
+  const implementer = typeof data?.[spec.implementer] === "string" ? normalisePrincipal(data[spec.implementer] as string) : null;
+  const evidence = Array.isArray(data?.[pinsField]) ? (data![pinsField] as unknown[]) : [];
+  const selfVerified: string[] = [];
+  const states = criteria.map((c): CriterionState => {
+    let met = false;
+    for (const e of evidence) {
+      if (e === null || typeof e !== "object") continue;
+      const ev = e as Record<string, unknown>;
+      if (ev.criterion !== c.id || ev.result !== "pass" || ev.verification !== c.verification) continue;
+      if (c.verification === "manual") {
+        if (typeof ev.by !== "string") continue;
+        if (implementer !== null && normalisePrincipal(ev.by) === implementer) {
+          if (!selfVerified.includes(c.id)) selfVerified.push(c.id);
+          continue;
+        }
+      }
+      met = true;
+    }
+    return { id: c.id, verification: c.verification, met };
+  });
+  return { acceptance: { met: states.filter((c) => c.met).length, total: states.length, criteria: states }, selfVerified };
 }
 
 /** The strings of a front-matter list, or none. */
@@ -142,6 +224,23 @@ export async function applyWork(loaded: LoadedRecordKind, entries: RecordEntry[]
     const evidence = kind.pins ? e.data[kind.pins.field] : undefined;
     if (e.state === work.done && kind.pins && !(Array.isArray(evidence) && evidence.length > 0)) {
       e.warnings.push({ code: "work-done-unpinned", message: `${e.id ?? e.path} is ${work.done} and ${kind.pins.field} is empty or missing: nothing shows the work was done` });
+    }
+    if (work.acceptance && kind.pins) {
+      const { acceptance, selfVerified } = workAcceptance(e.data, work.acceptance, kind.pins.field);
+      e.acceptance = acceptance;
+      if (selfVerified.length > 0) {
+        e.warnings.push({
+          code: "work-acceptance-self-verified",
+          message: `the manual verdict on ${selfVerified.join(", ")} is by ${String(e.data[work.acceptance.implementer])}, the implementer, so it does not count: a manual verdict comes from someone else`,
+        });
+      }
+      const unmet = acceptance?.criteria.filter((c) => !c.met) ?? [];
+      if (e.state === work.done && unmet.length > 0) {
+        e.warnings.push({
+          code: "work-acceptance-unmet",
+          message: `${e.id ?? e.path} is ${work.done}, and no passing evidence meets ${unmet.map((c) => `${c.id} (${c.verification})`).join(", ")}`,
+        });
+      }
     }
     if (e.state !== null && closed.has(e.state) && typeof e.data[work.closedOn] !== "string") {
       e.warnings.push({ code: "work-closed-without-date", message: `${e.id ?? e.path} is ${e.state} and has no ${work.closedOn}` });

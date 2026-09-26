@@ -43,7 +43,7 @@ import { readReleasePlan, type ReleasePlan } from "../lifecycle/plan-ledger";
 import { listWorkLeases, type WorkLeaseState } from "../lifecycle/work-lease";
 import { findWorkspaceRoot } from "../project-root";
 import { resolveBoxes, type ResolvedIsolation } from "./box-isolation";
-import { readDeclaration, readerVersion, WorkspaceReadError, type ErrorLocation, type Member } from "./declaration";
+import { declaredRecordKinds, readDeclaration, readerVersion, WorkspaceReadError, type Declaration, type ErrorLocation, type Member } from "./declaration";
 import type { ReasonCode } from "./reason-codes";
 import { GATE_REASON_CODES, readMemberGates, type GateLedgerReader, type StatusGate, type StatusGateLedger } from "./status-gates";
 import { STEWARD_REASON_CODES, readMemberStewards, type StatusSteward, type StewardReasonCode } from "./status-stewards";
@@ -190,6 +190,21 @@ export interface StatusLease extends Omit<WorkLeaseState, "ref"> {
   ref: string;
 }
 
+/**
+ * One work item's acceptance criteria, counted (#2772): each current record
+ * of a declared work kind with acceptance criteria that lists some.
+ */
+export interface StatusAcceptance {
+  /** The member that declares the work kind, or null for the workspace's own. */
+  member: string | null;
+  /** The work kind file, from the workspace root. */
+  kind: string;
+  item: string;
+  state: string | null;
+  met: number;
+  total: number;
+}
+
 export type StatusDocument =
   | {
       $schema: string;
@@ -202,6 +217,8 @@ export type StatusDocument =
       members: StatusMember[];
       /** Every work lease in the workspace's ledgers, active and expired, by member then item (#2732). A released lease has no ref and is not listed. */
       leases: StatusLease[];
+      /** Each work item's acceptance criteria, met of total, by declared kind then item (#2772). Empty when no declared work kind has criteria. */
+      acceptance: StatusAcceptance[];
       summary: { members: number; released: number; unreadable: number; differing: number | null };
     }
   | {
@@ -395,6 +412,7 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
     for (const m of members) m.gateLedger.shared = m.gateLedger.layout === "flat" && flatGates > 1;
 
     const leases = await readWorkspaceLeases(declaration.members, found.dir, new Date(now));
+    const acceptance = await readWorkspaceAcceptance(declaration, found.dir);
 
     return {
       ...head,
@@ -404,6 +422,7 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
       workspace: { name: declaration.name, root: rootDir === "" ? "." : rootDir, file: declaration.file },
       members,
       leases,
+      acceptance,
       summary: {
         members: members.length,
         released: members.filter((m) => m.environments[0].releases.length > 0).length,
@@ -434,6 +453,16 @@ async function readWorkspaceLeases(members: Member[], cwd: string, now: Date): P
     for (const lease of await listWorkLeases({ cwd, memberPrefix: l.prefix, now })) out.push({ ...lease, member: l.member });
   }
   return out;
+}
+
+/** The acceptance counts of every declared work kind with criteria (#2772), read in the working tree. */
+async function readWorkspaceAcceptance(declaration: Declaration, root: string): Promise<StatusAcceptance[]> {
+  if (declaredRecordKinds(declaration).length === 0) return [];
+  const { loadDeclaredKinds } = await import("./declared-kinds");
+  const kinds = await loadDeclaredKinds(declaration, workingTree(root), root, { acceptance: true });
+  return kinds.flatMap((k) =>
+    (k.acceptance ?? []).map((a) => ({ member: k.declared.member, kind: k.declared.path, item: a.item, state: a.state, met: a.met, total: a.total })),
+  );
 }
 
 export async function runWorkspaceStatus(ctx: CommandContext): Promise<number> {
@@ -523,6 +552,12 @@ export function formatStatus(doc: Extract<StatusDocument, { members: unknown }>)
     lines.push("");
     const rows: string[][] = [["WORK ITEM", "HOLDER", "EXPIRES", "STATE"]];
     for (const l of doc.leases) rows.push([l.member ? `${l.member}/${l.item}` : l.item, l.holder, l.expiresAt, l.state]);
+    lines.push(...table(rows));
+  }
+  if (doc.acceptance.length > 0) {
+    lines.push("");
+    const rows: string[][] = [["WORK ITEM", "STATE", "CRITERIA MET"]];
+    for (const a of doc.acceptance) rows.push([a.member ? `${a.member}/${a.item}` : a.item, a.state ?? "-", `${a.met}/${a.total}`]);
     lines.push(...table(rows));
   }
   const boxes = doc.members.filter((m) => m.box?.isolation);

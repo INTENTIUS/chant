@@ -125,6 +125,8 @@ The read warns about links it can't follow. The warnings leave the record valid:
 | `work-done-unpinned` | is done with an empty evidence list |
 | `work-closed-without-date` | is done or dropped with no `closed_on` |
 | `work-done-gap-open` | is done, and the finding its `source` names still fires on its region |
+| `work-acceptance-unmet` | is done, and an [acceptance criterion](#acceptance-criteria) has no passing evidence of the verification it expects |
+| `work-acceptance-self-verified` | has a passing `manual` verdict by its own `owner`, which does not count |
 
 ## Pick ready work as an agent
 
@@ -169,3 +171,66 @@ chant workspace records pin design/screens/home.json
 ```
 
 Copy the `path` and `sha256` it prints into `evidence` with a `title`, set `state: "done"` and `closed_on`, and open the pull request. `records` then reports drift if the file changes after the work was closed, as it does for a decision's pins.
+
+## Acceptance criteria
+
+A work item can say up front what done means ([#2772](https://github.com/INTENTIUS/chant/issues/2772)). The reference kind's `work` block names the list and the implementer's field:
+
+```js
+acceptance: { field: "acceptance", implementer: "owner" },
+```
+
+A criterion pairs its `id` and `text` with the kind of check that proves it, in `verification`: one of `unit`, `integration`, `e2e`, `runtime` and `manual`. The home screen item has two:
+
+```yaml
+acceptance:
+  - id: "AC-1"
+    text: "The app builds each region of its home page from the region design/screens/home.json lists"
+    verification: "unit"
+  - id: "AC-2"
+    text: "Someone other than the implementer compares the rendered home page with the spec and finds them the same"
+    verification: "manual"
+```
+
+An evidence entry meets a criterion when it names it in `criterion`, carries `result: "pass"`, and has the criterion's `verification`. A `manual` verdict also names who gave it in `by`, and it counts only when that is not the `owner`:
+
+```yaml
+evidence:
+  - title: "Home page unit test"
+    url: "https://github.com/INTENTIUS/chant/actions/runs/1"
+    criterion: "AC-1"
+    verification: "unit"
+    result: "pass"
+  - title: "Design review"
+    url: "https://github.com/INTENTIUS/chant/pull/2"
+    criterion: "AC-2"
+    verification: "manual"
+    result: "pass"
+    by: "a-designer"
+```
+
+`records --json` gives each record `acceptance: { met, total, criteria }`, or `null` when it lists none. `ls --json` counts each item's criteria under its kind, and `status --json` lists them for the whole workspace in `acceptance`. A done item with a criterion unmet is warned `work-acceptance-unmet`, and [`chant workspace check`](/chant/cli/workspace-check/#declaration-checks) fails on it as `WSP117`. An item without the list reads as before, and so does a kind without the `acceptance` entry.
+
+A kind of your own opts in the same way. Its schema needs the `acceptance` list and the evidence fields `criterion`, `verification`, `result` and `by`; the reference `work.schema.json` has them.
+
+### From a steward's Op
+
+An Op that runs under a work item's [lease](/chant/cli/workspace-work/) can attach evidence with the `workEvidence` step. The step passes the run's lease, and the write goes through only while that lease is still the run's:
+
+```ts
+import { Op, phase, shell, workEvidence } from "@intentius/chant/op";
+
+export default Op({
+  name: "verify-home",
+  overview: "Run the home page test and record it against AC-1",
+  workLease: { item: "W-001", kind: "work/work.kind.mjs" },
+  phases: [
+    phase("Verify", [
+      shell("npm test --prefix app"),
+      workEvidence("AC-1", { result: "pass", title: "Home page unit test", url: "https://github.com/INTENTIUS/chant/actions/runs/1" }),
+    ]),
+  ],
+});
+```
+
+`workEvidence` takes a `url`, or a workspace `path` that it pins by hash. It writes the run's lease holder as `by`. It refuses a criterion the record doesn't list (`work-criterion-unknown`), a lease the run no longer holds, and any `manual` criterion (`work-acceptance-self-verified`): the run holding the lease is the implementer. A person records a manual verdict with `chant workspace records amend`. Add the evidence before the item moves to `done`, since a closed record never changes.
