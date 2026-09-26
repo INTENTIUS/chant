@@ -40,7 +40,6 @@
     "@intentius/chant-lexicon-k8s": "*",
     "@intentius/chant-lexicon-otel": "workspace:*",
     "@intentius/chant-lexicon-render": "workspace:*",
-    "@intentius/chant-lexicon-systemone": "workspace:*",
     "@intentius/chant-lexicon-terraform": "workspace:*"
   },
   "devDependencies": {

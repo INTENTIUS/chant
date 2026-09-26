@@ -350,7 +350,6 @@ export default defineConfig({
 								{ label: 'Docker', link: '/lexicons/docker/' },
 								{ label: 'OpenTelemetry Collector', link: '/lexicons/otel/' },
 								{ label: 'Render', link: '/lexicons/render/' },
-								{ label: 'systemone', link: '/lexicons/systemone/' },
 								{ label: 'Terraform', link: '/lexicons/terraform/' },
 								{ label: 'augur (behaviour)', link: '/lexicons/augur/' },
 							],

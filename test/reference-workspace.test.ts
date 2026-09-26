@@ -75,8 +75,8 @@ import { candidates, parsePoints, quorumOf } from "@intentius/chant/workspace/po
 import { askPoint } from "@intentius/chant/workspace/decide";
 import { changeFindingTriageInputs, checkChanges, type ChangesDocument } from "@intentius/chant/workspace/changes";
 import { isPointWait } from "@intentius/chant/op";
-import { startStubBackend } from "@intentius/chant-lexicon-systemone";
-import { runDecide } from "@intentius/chant-lexicon-systemone/op/activities/decide";
+import { startStubBackend } from "@intentius/chant/op/__fixtures__/decide-stub-backend";
+import { runDecide } from "@intentius/chant/op/activities/decide";
 
 const repoRoot = resolve(import.meta.dirname, "..");
 const fixture = join(repoRoot, "reference-workspace");

@@ -506,12 +506,13 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
 
   // Core-owned post-synth checks over the Op model (#2122, epic #2114
   // sub-issue 6) — OPS012/OPS013/OPS014, ported from a hosting lexicon's
-  // own TMP012/TMP013/TMP014. An Op is recognized by entity type
+  // own TMP012/TMP013/TMP014, and SYS010 over the decide steps and the
+  // backends in `decide.backends` (#2828). An Op is recognized by entity type
   // (`OpResource`), not by which lexicon declared it, so this runs over the
   // FULL build result regardless of which plugins loaded — same as the
   // receipt/output/knowledge checks above.
   if (result.errors.length === 0) {
-    const opDiags = runPostSynthChecks(coreOpChecks(), result, env, { activityContracts });
+    const opDiags = runPostSynthChecks(coreOpChecks({ decideBackends: config.decide?.backends }), result, env, { activityContracts });
     const { diagnostics: activeDiags, suppressed } = applyConfiguredSeverity(opDiags, config.lint?.rules);
     suppressedPostSynthCount += suppressed.length;
     for (const diag of activeDiags) {
