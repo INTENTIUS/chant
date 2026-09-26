@@ -481,8 +481,13 @@ export async function evaluateGate(port: GateLedgerPort, input: GateCheckInput):
 /**
  * The line every renderer prints to say how a pending gate is cleared. A
  * component gate names its environment (#2574), so the approval picks that
- * environment's pending fact when others stand beside it.
+ * environment's pending fact when others stand beside it. A gate bound to a
+ * plan (#2300) gets `--plan <digest>` too (#2832), so the line approves the
+ * plan the reader was shown and not whatever is pending by the time they run
+ * it.
  */
-export function approveCommand(op: string, gate: string, environment?: string): string {
-  return environment === undefined ? `chant approve ${op} ${gate}` : `chant approve ${op} ${gate} --env ${environment}`;
+export function approveCommand(op: string, gate: string, environment?: string, planDigest?: string): string {
+  return `chant approve ${op} ${gate}` +
+    (environment === undefined ? "" : ` --env ${environment}`) +
+    (planDigest === undefined ? "" : ` --plan ${planDigest}`);
 }
