@@ -168,7 +168,7 @@ The [reference workspace](https://github.com/INTENTIUS/chant/tree/main/reference
 | `slice-tier` | a `choice` of builder tier for a work item ([ws-057](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-057-factory-fountain-builds.md)) | the work item's size and whether it fits each tier | table, model, quorum |
 | `ship-skip` | a `noul`: may a release pass the ship gate without a person | what the release would change | table, quorum |
 
-A finding that a work item already addresses is left by the triage table. `intent-decision-unimplemented` becomes a work item, while `intent-region-unconstrained`, `intent-decision-contested` and `intent-decision-superseded-live` go to a decision. Any other finding goes to the model, then to people. For `needs-a-decision`, the table says no when nothing changed in the window, or when every commit in it is a decision's own work.
+A finding that a work item already addresses is left by the triage table. `intent-decision-unimplemented` becomes a work item, while `intent-region-unconstrained`, `intent-decision-contested` and `intent-decision-superseded-live` go to a decision. So does `change-out-of-scope` from `check --changes`, because the change crossed a boundary that a record draws, and someone decides whether the boundary moves or the change goes. Any other finding goes to the model, then to people. That includes `change-uncovered`, since the right answer for an uncovered change depends on what the path is. For `needs-a-decision`, the table says no when nothing changed in the window, or when every commit in it is a decision's own work.
 
 `ship-skip` came from chud's `points.yaml`. Its table says no to every release until someone adds a row above the last one, and its quorum is the approver count a ship gate reads, as chud's release Op read it. It has no model decider, because a model's answer may route or report and never authorizes a release. chud's `contracts_changed` became `release.work_changed`, since chud's contracts are work items here.
 
@@ -188,6 +188,10 @@ chant workspace records amend W-003 --kind work --set keep.json   # {"state": "o
 ```
 
 Or the person gives another answer and drops the item. Once the item is committed, `graph --intent` shows the finding addressed by it, and asking the triage again for that finding, the table answers `leave`. `test/reference-workspace.test.ts` runs this flow against the stub backend.
+
+### From a change finding
+
+[`chant workspace check --changes`](/chant/cli/workspace-check/#the-forward-coverage-check) reports `change-uncovered` and `change-out-of-scope` findings, and the same point triages them ([#2794](https://github.com/INTENTIUS/chant/issues/2794)). Each finding in its `--json` document carries `addressed`, read the way `graph --intent` reads it: a work item addresses the finding when its `source.finding` is the finding's code and its `source.region` is the path or a directory above it. Each changed path carries `member` and `generated`. A runtime builds the inputs from the finding and its path, or in TypeScript with `changeFindingTriageInputs(finding, path)` from `@intentius/chant/workspace/changes`, and asks the point through the `decide` activity as above. The work item it writes names the finding's `triage` as its `source`. Once the item is committed, a check whose head includes it covers the path when the item's `constrains` names it, and otherwise shows the finding addressed, so the table leaves it.
 
 ## Moving from chud
 

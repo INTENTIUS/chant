@@ -22,6 +22,7 @@
 import { relative, resolve, sep } from "node:path";
 import { findWorkspaceRoot } from "../project-root";
 import { isInside, readDeclaration, type Declaration } from "./declaration";
+import { memberHolding } from "./record-assets";
 import { workingTree } from "./tree";
 
 /** What `chant update` rewrites, registered as implicit generated entries. */
@@ -77,6 +78,19 @@ export function declaredFilesUnder(declaration: Declaration, dir: string): Map<s
     }
   }
   return out;
+}
+
+/**
+ * Whether a workspace path (from the workspace root) is a generated file:
+ * declared in its member's `generated` entries, or one core registers. The
+ * `generated` of `graph --intent`'s region and file nodes and of `check
+ * --changes`'s paths.
+ */
+export function isGeneratedPath(declaration: Declaration, path: string): boolean {
+  const m = declaration.members.find((x) => x.name === memberHolding(path, declaration.members));
+  const dir = m?.dir ?? ".";
+  const rel = dir === "." ? path : path.slice(dir.length + 1);
+  return classifyFile(rel, declaredFilesUnder(declaration, dir)).class === "generated";
 }
 
 /**

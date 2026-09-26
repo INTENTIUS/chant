@@ -61,7 +61,7 @@
       "title": "What to do about this finding",
       "question": {
         "type": "choice",
-        "instructions": "A finding from chant workspace graph --intent is a gap between what the workspace decided and what it holds. Pick what happens to it. The state is the finding and the region it fired on.",
+        "instructions": "A finding from chant workspace graph --intent, or from chant workspace check --changes, is a gap between what the workspace decided and what it holds. Pick what happens to it. The state is the finding and the region it fired on.",
         "criteria": {
           "work-item": "Someone closes the gap. It becomes a work item whose source names the finding and its region.",
           "needs-a-decision": "The gap is a choice nobody has made. Someone writes a decision before any work starts.",
@@ -86,6 +86,11 @@
               "when": { "finding.code": { "in": ["intent-region-unconstrained", "intent-decision-contested", "intent-decision-superseded-live"] } },
               "answer": "needs-a-decision",
               "note": "No current decision that everyone agrees with covers the region."
+            },
+            {
+              "when": { "finding.code": "change-out-of-scope" },
+              "answer": "needs-a-decision",
+              "note": "A change crossed a boundary a record draws. Someone decides whether the boundary moves or the change goes, and no model answers leave for it. change-uncovered has no row: whether an uncovered change is work, a decision or nothing depends on what the path is, which the model reads."
             }
           ]
         },

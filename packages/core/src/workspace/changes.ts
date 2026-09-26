@@ -28,8 +28,12 @@
  * it is covered. Each finding carries `triage`, the `{ finding, region }` a
  * work item's `source` takes (`work.schema.json`'s `sourceGap`), so the
  * finding-triage decision point (#2741) can seed a work item or a decision
- * from it; see {@link changeFindingSource}. Git is read through a local `git`
- * subprocess only: no fetch, no network.
+ * from it; see {@link changeFindingSource}. When a work kind is read, each
+ * finding also says whether a work item already addresses it, the way `graph
+ * --intent` says it for its own findings (#2683), and
+ * {@link changeFindingTriageInputs} turns a finding into that point's inputs
+ * (#2794). Git is read through a local `git` subprocess only: no fetch, no
+ * network.
  */
 
 import { execFileSync } from "node:child_process";
@@ -38,6 +42,8 @@ import { relative, resolve, sep } from "node:path";
 import picomatch from "picomatch";
 import { declaredRecordKinds, readDeclaration, readerVersion, WORKSPACE_ERROR_CODES, WorkspaceReadError, type ChangeSeverity } from "./declaration";
 import { declaredKindFile } from "./declared-kinds";
+import { isGeneratedPath } from "./generated-files";
+import { parseRegion } from "./intent";
 import { constraintCovers, isWorkspacePath, memberHolding } from "./record-assets";
 import { RecordReadError, type LoadedRecordKind, type RecordEntry } from "./records";
 import { readRecordsFor } from "./records-cli";
@@ -106,6 +112,8 @@ export interface ChangedPath {
   from: string | null;
   /** The member whose directory holds the path, or null. */
   member: string | null;
+  /** Whether the path is a generated file, as `graph --intent` reads a region's `generated` (#2794). */
+  generated: boolean;
   status: ChangeStatus;
   /** The current records covering the path, with the entry that covers it. */
   coveredBy: ChangeRecordRef[];
@@ -126,7 +134,25 @@ export interface ChangeFinding {
   records: string[];
   /** What a work item's `source` takes to name this gap (#2741): `{ finding, region }`. */
   triage: { finding: ChangesFindingCode; region: string };
+  /**
+   * Present when a work kind was read (#2794): whether a work item addresses
+   * the finding, because its `source.finding` is this code and its
+   * `source.region` is this path or a directory above it.
+   */
+  addressed?: boolean;
+  /** Present when a work kind was read: the work items addressing the finding, as `<kind name>/<id>`, each with its state. */
+  addressedBy?: { record: string; state: string | null }[];
 }
+
+/** The inputs of the finding-triage decision point (#2741), by the names `decisions/points.json` declares. */
+export type ChangeFindingTriageInputs = {
+  "finding.code": ChangesFindingCode;
+  "finding.message": string;
+  "finding.addressed": boolean;
+  "region.path": string;
+  "region.member": string | null;
+  "region.generated": boolean;
+};
 
 interface Head {
   $schema: string;
@@ -173,6 +199,29 @@ export interface ChangesResult {
 /** The `source` a work item seeded from this finding carries (`work.schema.json`'s `sourceGap`): the seam for the finding-triage point (#2741). */
 export function changeFindingSource(finding: Pick<ChangeFinding, "code" | "path">): { finding: ChangesFindingCode; region: string } {
   return { finding: finding.code, region: finding.path };
+}
+
+/**
+ * The finding-triage point's inputs for a change finding and the entry in
+ * `paths` it fired on (#2794), for `askPoint` or the `decide` activity. The
+ * same names a caller fills from `graph --intent`'s finding and region nodes.
+ * The region is the changed file, so `region.generated` is never null. A
+ * document that read no work kind has no `addressed`, and it is passed as
+ * false: nothing that was read addresses the finding.
+ */
+export function changeFindingTriageInputs(
+  finding: Pick<ChangeFinding, "code" | "message" | "path" | "addressed">,
+  path: Pick<ChangedPath, "path" | "member" | "generated">,
+): ChangeFindingTriageInputs {
+  if (path.path !== finding.path) throw new Error(`the finding fired on ${finding.path}, and the path given is ${path.path}`);
+  return {
+    "finding.code": finding.code,
+    "finding.message": finding.message,
+    "finding.addressed": finding.addressed ?? false,
+    "region.path": path.path,
+    "region.member": path.member,
+    "region.generated": path.generated,
+  };
 }
 
 // ── Git ──────────────────────────────────────────────────────────────────────
@@ -236,6 +285,14 @@ interface ReadKind {
   /** The kind's workspace root, from the repository root; "" for the top. */
   prefix: string;
   role: "decision" | "work" | "other";
+}
+
+/** A work record's `source` when it names the gap it came from, as `{ finding, region }`, or null. */
+function gapSource(data: Record<string, unknown> | null): { finding: string; region: string } | null {
+  const src = data?.source;
+  if (src === null || typeof src !== "object" || Array.isArray(src)) return null;
+  const s = src as Record<string, unknown>;
+  return typeof s.finding === "string" && typeof s.region === "string" ? { finding: s.finding, region: s.region } : null;
 }
 
 /** A record's list field, as strings. */
@@ -333,7 +390,8 @@ async function run(query: ChangesQuery, head: Head): Promise<Exclude<ChangesDocu
     }
     const ignoredBy = isMatch.find((m) => m.match(path))?.glob ?? null;
     const status: ChangeStatus = recordFiles.has(c.path) ? "record" : ignoredBy !== null ? "ignored" : coveredBy.length > 0 ? "covered" : "uncovered";
-    return { path, change: c.change, from: c.from === null ? null : inWorkspace(c.from), member, status, coveredBy, outOfScopeBy: [], ignoredBy };
+    const generated = isGeneratedPath(declaration, path);
+    return { path, change: c.change, from: c.from === null ? null : inWorkspace(c.from), member, generated, status, coveredBy, outOfScopeBy: [], ignoredBy };
   });
 
   // The records in hand: the work item and what it implements, or every current record covering some changed path.
@@ -359,16 +417,49 @@ async function run(query: ChangesQuery, head: Head): Promise<Exclude<ChangesDocu
     if (p.outOfScopeBy.length > 0) p.status = "out-of-scope";
   }
 
+  // A work item addresses a finding when it came from that gap (#2794), as
+  // graph --intent's fromGap reads it (#2683): the item's source names the
+  // finding's code, on a region that is the path or a directory above it.
+  // Every work item with an id counts, in any state, as there: a done item
+  // whose gap fires again still says the gap was taken once. Only the gap
+  // source counts. graph --intent also counts an item that implements a
+  // decision a pin finding concerns, and no change finding concerns a
+  // decision that way.
+  const workKinds = kinds.filter((k) => k.role === "work");
+  const addressing = (code: ChangesFindingCode, full: string): { record: string; state: string | null }[] => {
+    const by: { record: string; state: string | null }[] = [];
+    for (const k of workKinds) {
+      for (const r of k.records) {
+        if (r.id === null) continue;
+        const src = gapSource(r.data);
+        if (src === null || src.finding !== code) continue;
+        const parsed = parseRegion(src.region);
+        if ("error" in parsed) continue;
+        const named = joinPath(k.prefix, parsed.path);
+        // A change finding is about a whole file, so a line range on the same file still names it.
+        if (named === full || named === "" || full.startsWith(`${named}/`)) by.push({ record: ref(k, r), state: r.state });
+      }
+    }
+    return by;
+  };
+
   const findings: ChangeFinding[] = [];
   if (severity !== "off") {
-    for (const p of paths) {
+    for (const [i, p] of paths.entries()) {
+      let f: ChangeFinding | null = null;
       if (p.status === "uncovered") {
         const where = p.member ? `, in member ${p.member},` : "";
-        findings.push(finding("change-uncovered", p, severity, `${p.path}${where} is ${p.change}, and no current decided record or open work item covers it by path or member`, []));
+        f = finding("change-uncovered", p, severity, `${p.path}${where} is ${p.change}, and no current decided record or open work item covers it by path or member`, []);
       } else if (p.status === "out-of-scope") {
         const by = p.outOfScopeBy.map((o) => `${o.record} (${o.entry})`).join(", ");
-        findings.push(finding("change-out-of-scope", p, severity, `${p.path} is ${p.change}, and ${by} ${p.outOfScopeBy.length === 1 ? "puts" : "put"} it out of scope`, p.outOfScopeBy.map((o) => o.record)));
+        f = finding("change-out-of-scope", p, severity, `${p.path} is ${p.change}, and ${by} ${p.outOfScopeBy.length === 1 ? "puts" : "put"} it out of scope`, p.outOfScopeBy.map((o) => o.record));
       }
+      if (f === null) continue;
+      if (workKinds.length > 0) {
+        f.addressedBy = addressing(f.code, changed[i].path);
+        f.addressed = f.addressedBy.length > 0;
+      }
+      findings.push(f);
     }
   }
   const count = (s: ChangeStatus) => paths.filter((p) => p.status === s).length;

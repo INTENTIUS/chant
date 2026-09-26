@@ -48,7 +48,7 @@ export const POINT_INPUT_OUTPUTS = {
   record: { schema: "records", def: "record", description: "a record of any kind, as records --json lists it" },
   decision: { schema: "records", def: "record", description: "a decision record, as records --json lists it" },
   "work-item": { schema: "records", def: "record", description: "a work item record, as records --json lists it (#2683)" },
-  finding: { schema: "intent", def: "finding", description: "a finding of graph --intent" },
+  finding: { schema: "intent", def: "finding", description: "a finding of graph --intent, or of check --changes (#2794)" },
   region: { schema: "intent", def: "region", description: "the region an intent graph covers" },
   commit: { schema: "intent", def: "commit", description: "a commit in an intent graph's window" },
   member: { schema: "ls", def: "member", description: "a member, as ls lists it" },
