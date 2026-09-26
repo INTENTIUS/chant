@@ -253,7 +253,7 @@ export default Op({
 
 While the steps run, the lease is renewed every third of its `ttl` (default `10m`), keeping its fencing token. Steps read the lease through `workLeaseOutput`: its `item`, `holder`, `token` and `expiresAt`, and for an Op that changes the checkout its `worktree` and `branch`. An activity that writes somewhere a token can fence passes `token` along. If a renewal is refused because the lease ran out and another worker took the item, the lease is lost: the step in flight gets its abort signal, no later step starts, and the run fails with `lease-lost`. The lease is renewed once more before the run's record is written, so a run whose lease was lost is never recorded as done. `onFailure` phases still run.
 
-When the run ends the lease is released with an outcome. A completed run records `done`, or the string returned by the step that `outcome` references. A failed run records `not_done`, and a run stopped at a gate records `gated`. The outcome lands on `_leases/<id>.jsonl`. `kind` names the work kind file whose member owns the lease; without it the lease is in the project's own ledger.
+When the run ends the lease is released with an outcome. A completed run records `done`, or the string returned by the step that `outcome` references. A failed run records `not_done`, a run stopped at a gate records `gated`, and a run stopped on an open decision point records `waiting`. The outcome lands on `_leases/<id>.jsonl`. `kind` names the work kind file whose member owns the lease; without it the lease is in the project's own ledger.
 
 ### An Op that changes the checkout
 

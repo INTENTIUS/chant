@@ -129,6 +129,33 @@ chant workspace points answer slice-tier-074b660bbaad --answer medium --by alice
 
 Giving the answer the model proposed confirms it. Any other answer is the quorum's, and the proposal is kept in the record's `escalations`. The quorum counts distinct people. It never counts anyone holding the `agent` role in the trust policy, and when it names roles it counts only their holders. An answered question never changes.
 
+## Ask a point from an Op
+
+An Op asks a point from one of its activities with `askPointInRun` from `@intentius/chant/op` ([#2749](https://github.com/INTENTIUS/chant/issues/2749)). The decide activity ([#2740](https://github.com/INTENTIUS/chant/issues/2740)) calls it. An answered question returns its answer, and the Op goes on. An escalated or proposed question is still open, so the activity throws `PointWait`. The run then ends with status `waiting`, the way a gate ends it with `gated`. No later step runs, no `onFailure` phase runs, and the run's ledger record names the question as `point`. `chant run` exits 3. Nothing waits in the meantime. Once a person has answered, the next run asks the same point with the same inputs and reads the answer from its record.
+
+```ts
+import { askPointInRun, type BrokeredModelAsk } from "@intentius/chant/op";
+
+// The caller's own call to the backend, through the broker for via.capability.
+// It holds no key: the broker does.
+const ask: BrokeredModelAsk = async (request, via) => postThroughBroker(via, request);
+
+export async function chooseTier(args: { item: string; inputs: Record<string, unknown> }) {
+  const { answer } = await askPointInRun({ cwd: process.cwd(), point: "slice-tier", inputs: args.inputs, subject: args.item, ask });
+  return { tier: answer };
+}
+```
+
+The model call is a `BrokeredModelAsk` the caller supplies. It is handed the box capability to reach the model through, `inference` unless `capability` names another, and the broker the caller read for it. chant makes no model call of its own.
+
+### In a steward's turn
+
+A [steward](/chant/lexicons/fountain/steward/) runs unattended, so a point asked during its turn follows three more rules:
+
+- The model call goes through the steward's broker. It is made only when the steward names the capability in `capabilities` ([#2726](https://github.com/INTENTIUS/chant/issues/2726)). A steward that names none makes no model call. Neither does one that holds a vault. The model decider is then recorded as not reached, and the question goes to people.
+- The question names the steward and its run in its source block, and `points --open` shows them as `askedBy`. `workspace status --json` lists the question in the steward's `waiting`, and hud asks a person there. The question never goes to the steward's own thread.
+- The steward never answers it. `points answer` is refused with `answer-in-steward-turn` during a steward's turn and in any process the turn starts, and the quorum never counts the steward that asked. A local steward runs the Op again on the first round after a person answers.
+
 ## Moving from chud
 
 chud's `decisions/points.yaml` validates unchanged apart from the input names. Write it as JSON and give each input a read-contract output as its prefix. chud's `fits_small` becomes `work-item.fits_small`, and its `first_release` becomes `release.first_release`. The `when` keys of its table rows follow. chud's `chud/decisions` records stay chud's. New answers are chant records.

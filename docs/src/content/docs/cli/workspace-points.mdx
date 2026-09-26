@@ -47,7 +47,7 @@ The record's id is the point's name and the first 12 hex digits of the sha256 of
 
 ## Answering a question
 
-`points answer <id> --answer <value> --by <name>` records people's answer to an open question. The answer is one of the question's candidates, and for a `noul` it is `true`, `false`, `yes` or `no`. Each `--by` names one person who answered. The point's quorum counts distinct people, after trimming and lower-casing. It leaves out anyone holding the `agent` role in the trust policy at base, and when the quorum names roles, anyone holding none of them. Too few is `quorum-not-met`, and nothing is written.
+`points answer <id> --answer <value> --by <name>` records people's answer to an open question. The answer is one of the question's candidates, and for a `noul` it is `true`, `false`, `yes` or `no`. Each `--by` names one person who answered. The point's quorum counts distinct people, after trimming and lower-casing. It leaves out anyone holding the `agent` role in the trust policy at base, the steward that asked the question, and when the quorum names roles, anyone holding none of them. Too few is `quorum-not-met`, and nothing is written. An answer given during a steward's turn, or by a process the turn started, is refused with `answer-in-steward-turn`: a steward waits on a question and never answers it ([Steward](/chant/lexicons/fountain/steward/)).
 
 People who give the answer a model proposed confirm it, and the model stays the record's decider. Any other answer is the quorum's, and the model's proposal moves into the record's `escalations`. Either way the record becomes `answered`, with `answered_by` and `answered_on`, and it never changes again.
 
@@ -75,6 +75,7 @@ People who give the answer a model proposed confirm it, and the model stays the 
 | `point-decider-failed` | A model decider declared `unreachable: "fail"` could not answer. |
 | `answer-not-candidate` | The answer is not a candidate. |
 | `quorum-not-met` | Too few people count toward the quorum. |
+| `answer-in-steward-turn` | The answer came from a steward's turn, which never answers a question. |
 | `record-closed` | The question is already answered. |
 
 `chant serve mcp` serves the read as the `workspace-points` tool and the answer as `points-answer`.

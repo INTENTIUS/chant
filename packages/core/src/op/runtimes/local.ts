@@ -53,6 +53,7 @@ function statusFrom(
     records: result.records,
     result,
     ...(result.gate ? { gate: { name: result.gate.gate, since: result.gate.timestamp } } : {}),
+    ...(result.record.point ? { point: result.record.point } : {}),
   };
 }
 
@@ -70,6 +71,7 @@ function statusFromRecord(record: OpRunRecord): OpRunStatus {
     startedAt: record.started,
     endedAt: record.ended,
     ...(record.gate ? { gate: record.gate } : {}),
+    ...(record.point ? { point: record.point } : {}),
   };
 }
 

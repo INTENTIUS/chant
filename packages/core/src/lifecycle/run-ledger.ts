@@ -85,6 +85,8 @@ export function buildRunRecord(
     status: OpRunRecord["status"];
     id?: string;
     gate?: OpRunRecord["gate"];
+    point?: OpRunRecord["point"];
+    steward?: string;
   },
 ): OpRunRecordInput {
   const phases: OpRunPhaseRecord[] = [];
@@ -106,6 +108,7 @@ export function buildRunRecord(
       ...(record.approval ? { approval: record.approval } : {}),
       ...(record.error !== undefined ? { error: record.error } : {}),
       ...(record.refusal !== undefined ? { refusal: record.refusal } : {}),
+      ...(record.point ? { point: record.point } : {}),
     });
     if (record.outcome) outcomes[record.outcome.name] = record.outcome.value;
   }
@@ -122,6 +125,8 @@ export function buildRunRecord(
     outcomes,
     phases,
     ...(times.gate ? { gate: times.gate } : {}),
+    ...(times.point ? { point: times.point } : {}),
+    ...(times.steward ? { steward: times.steward } : {}),
   };
 }
 

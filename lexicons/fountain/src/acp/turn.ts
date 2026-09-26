@@ -236,6 +236,18 @@ async function runOpTurn(
     return gatedReply(opts, command, status);
   }
 
+  // chant#2749 — an open decision point ends the turn as a gate does. The
+  // question is a record in the workspace, where hud asks a person; it is not
+  // asked here, because this thread is the steward's and nobody reads it for
+  // questions, and the steward never answers one itself.
+  const point = status.result?.record.point ?? status.point;
+  if (status.state === "waiting" && point) {
+    sink.message(
+      `Op "${command.op}" is waiting on decision point "${point.point}": question ${point.id} is ${point.state}.\n` +
+        `A person answers it through hud or \`chant workspace points answer ${point.id}\`, and the next run reads the answer.\n`,
+    );
+  }
+
   sink.message(JSON.stringify(status.result?.record ?? status, null, 2) + "\n");
   return { stopReason: "end_turn" };
 }

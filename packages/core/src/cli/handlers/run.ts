@@ -11,7 +11,7 @@ import { approveCommand, describeGateMismatch } from "../../op/gate";
 import { summaryLedgerPrefix, writeGatedRunSummary, type GatedRunSummary } from "../../op/gate-summary";
 import { createLocalOpRuntime } from "../../op/runtimes/local";
 import type { OpRuntimeProvider, OpRunStatus } from "../../op/runtime";
-import { renderHuman, renderJson } from "../../op/local-output";
+import { pointAnswerCommand, renderHuman, renderJson } from "../../op/local-output";
 import { loadPlugins } from "../plugins";
 import { recordGateApproval } from "./operator";
 import { formatError, formatWarning, formatSuccess, formatBold, formatInfo } from "../format";
@@ -937,6 +937,18 @@ export async function runOpOnRuntime(ctx: CommandContext): Promise<number> {
           },
           gatedExit,
         );
+      }
+      return gatedExit;
+    }
+    // A run waiting on an open decision point (#2749) is waiting on a person,
+    // like a gated one, and exits with the same code. Its answer comes through
+    // hud or `points answer`, never a `chant approve`.
+    if (status.state === "waiting") {
+      if (!status.result && status.point) {
+        console.error(formatWarning({
+          message: `Op "${opName}" is waiting on decision point "${status.point.point}" (${status.point.id})`,
+          hint: `A person answers it with: ${pointAnswerCommand(status.point.id)}`,
+        }));
       }
       return gatedExit;
     }

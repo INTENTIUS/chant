@@ -136,7 +136,8 @@ export const REASONS = {
   "point-inputs-invalid": "The inputs given to an ask are not a JSON object of the point's declared inputs.",
   "point-decider-failed": "A model decider that fails closed (unreachable: fail) could not answer, so the ask wrote nothing.",
   "answer-not-candidate": "The people's answer is not one of the question's candidates.",
-  "quorum-not-met": "Too few of the people who answered count toward the point's quorum: distinct, not holding the agent role, and holding one of its roles when it names any.",
+  "quorum-not-met": "Too few of the people who answered count toward the point's quorum: distinct, not holding the agent role, not the steward that asked, and holding one of its roles when it names any.",
+  "answer-in-steward-turn": "The answer was given during a steward's turn, or by a process it started: a steward never answers a decision point, and a person answers it through hud or at a shell.",
   // records --since that fails (#2673).
   "since-rev-unknown": "--since names no commit, or a session with no opening revision and no commit that added it.",
   "since-session-unknown": "--since has the shape of a session id and names no commit, and no session the kind or the declaration reads has that id.",

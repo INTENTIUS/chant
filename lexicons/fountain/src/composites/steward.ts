@@ -68,6 +68,18 @@
  * (`box-credential-declared`), and `chant workspace status --json` lists each
  * capability the steward names with the broker the box block gives it.
  *
+ * ## Decision points (chant#2749)
+ *
+ * The Agent runs `chant acp --steward <name>`, so every turn is this
+ * steward's. An Op that asks a decision point during a turn
+ * (`askPointInRun` in `@intentius/chant/op`) makes its model call only
+ * through a capability named in `capabilities`, and a question that is still
+ * open ends the run as `waiting`, as a gate ends it as `gated`. The question
+ * stays in the workspace, where `points --open`, `workspace status --json`
+ * and hud find it, and a person answers it. It is never asked on this
+ * thread, and `points answer` from this session is refused. The Op's next
+ * turn reads the answer.
+ *
  * ## The coding agent beside it
  *
  * A box also has a coding agent editing the app. They share the checkout by
@@ -169,6 +181,16 @@ export interface StewardResources {
 
 /** The command an `acp` agent speaks the protocol over (#2125). */
 export const STEWARD_RUNTIME_COMMAND = "chant acp";
+
+/**
+ * A steward's Agent command: `chant acp --steward <name>` (chant#2749), so the
+ * session knows whose turns it serves. A steward's name is letters, digits,
+ * `.`, `_` and `-` (`declareSteward` refuses anything else), so it needs no
+ * quoting.
+ */
+export function stewardRuntimeCommand(name: string): string {
+  return `${STEWARD_RUNTIME_COMMAND} --steward ${name}`;
+}
 
 // ── The declaration registry ──────────────────────────────────────────────
 //
@@ -277,7 +299,8 @@ export function Steward(opts: StewardOpts): StewardResources {
   const agent = new Agent({
     name: opts.name,
     runtime: "acp",
-    runtime_command: STEWARD_RUNTIME_COMMAND,
+    // The session is this steward's turn (chant#2749): see "Decision points".
+    runtime_command: stewardRuntimeCommand(opts.name),
     sandbox_mode: "persistent",
     environment: opts.environment,
     permission_policy: { default: "auto_allow" },

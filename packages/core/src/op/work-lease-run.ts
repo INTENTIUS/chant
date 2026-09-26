@@ -354,7 +354,7 @@ export class RunWorkLease {
    * keeps what was committed), and give the lease back with the outcome
    * unless it was lost.
    */
-  async finish(status: "ok" | "fail" | "gated", resultsById: ReadonlyMap<string, unknown>): Promise<WorkLeaseRunResult> {
+  async finish(status: "ok" | "fail" | "gated" | "waiting", resultsById: ReadonlyMap<string, unknown>): Promise<WorkLeaseRunResult> {
     this.stopHeartbeat();
     await this.beat;
     const lease = this.lease;
@@ -375,7 +375,7 @@ export class RunWorkLease {
       await git(["worktree", "prune"], this.opts.cwd).catch(() => undefined);
     }
     if (this.lost !== undefined) return base;
-    let outcome = status === "ok" ? "done" : status === "gated" ? "gated" : "not_done";
+    let outcome = status === "ok" ? "done" : status === "gated" || status === "waiting" ? status : "not_done";
     if (status === "ok" && this.spec.outcome && isStepOutputRef(this.spec.outcome)) {
       const declared = resolvePath(resultsById.get(this.spec.outcome.step), this.spec.outcome.path);
       if (typeof declared === "string" && declared.trim() !== "") outcome = declared.trim();

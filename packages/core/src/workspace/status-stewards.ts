@@ -14,6 +14,9 @@
  * - each Op's last run is the newest record in its run ledger,
  *   `<env>/runs__<op>.jsonl` under the member's ledger prefix, where `<env>`
  *   is the Op's own `labels.Env` or `local`;
+ * - `waiting` lists the open decision points the steward waits on (#2749):
+ *   each Op whose newest run is the steward's own and stopped on a question,
+ *   as the run ledger records it. The question's state now is `points`'s;
  * - `lease` is the local steward's own lease ref
  *   (`refs/chant/lease/[<prefix>]_stewards/<name>`), present while a
  *   `chant operator --steward` holds it or until it expires;
@@ -54,6 +57,20 @@ export interface StatusStewardRun {
   ended: string;
   /** The gate the run stopped at, for a `gated` run. */
   gate: { name: string; since: string } | null;
+  /** The open decision point the run stopped on, for a `waiting` run (#2749). */
+  point: StatusStewardWait | null;
+}
+
+/** An open decision point a steward's run stopped on (#2749), as the run ledger records it. */
+export interface StatusStewardWait {
+  /** The answer record's id: what `points --open` lists and `points answer` names. */
+  id: string;
+  point: string;
+  /** The question's state when the run stopped. */
+  state: "escalated" | "proposed";
+  path: string;
+  subject: string | null;
+  since: string;
 }
 
 export interface StatusStewardOp {
@@ -103,11 +120,27 @@ export interface StatusSteward {
   /** The local steward's own lease, or null when no local operator has held it. */
   lease: { holder: string; acquiredAt: string; expiresAt: string; live: boolean } | null;
   ops: StatusStewardOp[];
+  /**
+   * The open decision points the steward waits on (#2749): each Op whose
+   * newest run is the steward's own and stopped on a question.
+   */
+  waiting: (StatusStewardWait & { op: string; run: string })[];
 }
 
 export interface MemberStewards {
   stewards: StatusSteward[];
   reasons: { code: StewardReasonCode; message: string }[];
+}
+
+function waitOf(p: NonNullable<OpRunRecord["point"]>): StatusStewardWait {
+  return {
+    id: p.id,
+    point: p.point,
+    state: p.state === "proposed" ? "proposed" : "escalated",
+    path: p.path,
+    subject: p.subject ?? null,
+    since: p.since,
+  };
 }
 
 /** Whether a directory is a chant project of its own. */
@@ -176,6 +209,7 @@ export async function readMemberStewards(
   const stewards: StatusSteward[] = [];
   for (const { declaration, filePath } of [...found.values()].sort((a, b) => a.declaration.name.localeCompare(b.declaration.name))) {
     const ops: StatusStewardOp[] = [];
+    const waiting: StatusSteward["waiting"] = [];
     for (const op of declaration.ops) {
       const opEnv = runEnvOf(op);
       let lastRun: StatusStewardRun | null = null;
@@ -188,7 +222,11 @@ export async function readMemberStewards(
             started: newest.started,
             ended: newest.ended,
             gate: newest.gate ? { name: newest.gate.name, since: newest.gate.since } : null,
+            point: newest.point ? waitOf(newest.point) : null,
           };
+          if (newest.status === "waiting" && lastRun.point && newest.steward === declaration.name) {
+            waiting.push({ op: op.name, run: newest.id, ...lastRun.point });
+          }
         }
       } catch (err) {
         reasons.push({
@@ -219,6 +257,7 @@ export async function readMemberStewards(
       }),
       lease: await readStewardLease(declaration.name, memberDir, now),
       ops,
+      waiting,
     });
   }
   return { stewards, reasons };

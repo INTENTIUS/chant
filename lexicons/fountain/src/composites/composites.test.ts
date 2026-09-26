@@ -98,7 +98,7 @@ describe("Steward", () => {
     const a = props(agent);
     expect(a.name).toBe("prod-steward");
     expect(a.runtime).toBe("acp");
-    expect(a.runtime_command).toBe("chant acp");
+    expect(a.runtime_command).toBe("chant acp --steward prod-steward");
     expect(a.sandbox_mode).toBe("persistent");
     expect(a.model).toBeUndefined();
     expect(a.skills).toBeUndefined();

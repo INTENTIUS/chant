@@ -72,7 +72,7 @@ export const { agent, teammate, schedules } = Steward({
 
 | Default | Effect |
 |---|---|
-| `runtime: acp`, `runtime_command: "chant acp"` | the sandbox launches chant's own ACP server, so a prompt is a chant command line |
+| `runtime: acp`, `runtime_command: "chant acp --steward <name>"` | the sandbox launches chant's own ACP server, so a prompt is a chant command line, and every turn is this steward's (see [Decision points](#decision-points)) |
 | `sandbox_mode: persistent` | one computer per steward: the checkout and the tool cache survive a turn ending |
 | `permission_policy: { default: "auto_allow" }` | nobody is at the keyboard to answer a permission card; chant's gates are where a human belongs |
 | no `model` | an acp agent's model is whatever the command on the other end of the protocol chooses |
@@ -169,9 +169,23 @@ Chant enforces the steward's half. Every ledger and lease write goes through git
 
 An Op a steward runs doesn't edit the app. When an Op has to change the checkout, as applying a build or `chant workspace upgrade` does, it declares `changesCheckout: true` and a `workLease`, and chant enforces the rest ([#2748](https://github.com/INTENTIUS/chant/issues/2748)). `declareSteward`, and so this composite, refuses such an Op without a work lease, and the executor refuses to run it. The run claims the work item's lease before its leased steps, which then work in a git worktree of their own on `chant/work/<item>`, under the repository's git directory. The coding agent's working tree, index and uncommitted edits stay as they were, and a core test checks that with the agent's edit and its index lock in place while a steward applies a build. The branch keeps what the steps committed, for the runner to deliver. [Running under a work lease](/chant/guide/ops/#running-under-a-work-lease) covers the declaration, and the dispatcher's lease semantics: a second dispatcher is refused, a lost lease stops the run, and the release records the outcome.
 
+## Decision points
+
+An Op the steward runs may ask a [decision point](/chant/guide/decision-points/), such as the factory's builder tier ([#2749](https://github.com/INTENTIUS/chant/issues/2749)). The activity asks it with `askPointInRun` from `@intentius/chant/op`. The steward runs unattended. On Fountain its thread is its own, and in the local form nobody is at the terminal. So a question it reaches follows the rules below, in both forms.
+
+| Rule | How |
+|---|---|
+| The model call goes through the broker | The caller supplies the call as a `BrokeredModelAsk`, which is handed the capability to reach the model through. In a steward's turn it is made only through a capability the steward names in `capabilities`, `inference` by default. A steward that names none, or holds a vault, makes no model call: the model decider is recorded as not reached, and the question goes to people. |
+| An open question ends the turn | An escalated or proposed question stops the run with status `waiting`, as a gate stops it with `gated`. The run ledger names the question as `point`, and the run names the steward as `steward`. No later step or `onFailure` phase runs. |
+| People answer it, not the steward's thread | The question is a record in the workspace. `chant workspace points --open` and MCP's `workspace-points` list it with `askedBy`, the steward and the run that asked it. `workspace status --json` lists it in the steward's `waiting`, beside its Ops. hud reads those and asks a person, who answers through hud or `chant workspace points answer`. |
+| The steward never answers | `points answer` is refused with `answer-in-steward-turn` during the steward's turn and in any process the turn starts, and the quorum never counts the steward that asked. A steward can't clear a gate either. |
+| The next run reads the answer | The next run asks the same point with the same inputs, finds the answered record and goes on. The local form runs a waiting Op again on the first round after its question is answered, whatever its cron says, and prints `resumed="<id>"`. Until then each round prints `waiting=1(point:<id>:<state>)`. On Fountain the Op's next scheduled turn reads the answer. |
+
+The Agent's command is `chant acp --steward <name>`, which marks every turn in the session as the steward's. In the local form, `chant operator --steward` marks each run it starts. Both export `CHANT_STEWARD` to the processes a run starts.
+
 ## Reading its state
 
-`chant workspace status <env> --json` lists each member's stewards: the name, the file that declares it, its form in `<env>` and its declared forms, the local lease (holder, expiry, and whether it is live), and each Op with its schedule, its last run from the run ledger and the work lease its turn holds. See [workspace status](/chant/cli/workspace-status/).
+`chant workspace status <env> --json` lists each member's stewards: the name, the file that declares it, its form in `<env>` and its declared forms, the local lease (holder, expiry, and whether it is live), each Op with its schedule, its last run from the run ledger and the work lease its turn holds, and `waiting`, the open decision points the steward waits on. See [workspace status](/chant/cli/workspace-status/).
 
 ## What `chant build` emits
 

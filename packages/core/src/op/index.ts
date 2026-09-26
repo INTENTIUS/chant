@@ -114,6 +114,14 @@ export type {
   StewardDeclaration, StewardDeclarationConfig, StewardForm, StewardFormSpec, StewardOpInput,
 } from "./steward";
 export { discoverStewards } from "./discover";
+export {
+  askPointInRun, brokeredModelAsk, isPointWait, PointWait, DEFAULT_INFERENCE_CAPABILITY,
+} from "./steward-points";
+export type { AskPointInRunOptions, BrokeredModelAsk, WaitingPoint } from "./steward-points";
+export {
+  currentStewardTurn, enterStewardTurn, setStewardTurn, resetStewardTurn, STEWARD_ENV,
+} from "./steward-turn";
+export type { StewardTurn } from "./steward-turn";
 export type { DiscoveredSteward, StewardDiscoveryResult } from "./discover";
 export type {
   OperatorTickEvent, OperatorRoundOptions, OperatorLoopOptions,

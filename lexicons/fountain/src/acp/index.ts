@@ -34,19 +34,31 @@ export function acpCommandGroup(): CommandGroup {
 
 async function serveHandler(ctx: CommandGroupContext): Promise<number> {
   let durableRequests = false;
-  for (const arg of splitJoinedFlags(ctx.rawArgs, BOOLEAN_FLAGS)) {
+  let steward: string | undefined;
+  const args = splitJoinedFlags(ctx.rawArgs, BOOLEAN_FLAGS);
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
     if (arg === "--durable-requests") durableRequests = true;
-    else {
+    else if (arg === "--steward") {
+      // The Steward composite's Agent runs `chant acp --steward <name>`
+      // (chant#2749), so every turn in this session is that steward's.
+      const name = args[++i];
+      if (!name || name.startsWith("--")) {
+        console.error(`"chant acp --steward" takes the steward's name.`);
+        return 1;
+      }
+      steward = name;
+    } else {
       // stdout carries the protocol and nothing else, so a usage error goes
       // to stderr — the one place a spawned agent can say anything.
       console.error(
-        unknownFlagError(arg, `"chant acp" accepts --durable-requests.`).message,
+        unknownFlagError(arg, `"chant acp" accepts --durable-requests and --steward <name>.`).message,
       );
       return 1;
     }
   }
 
   const { serveAcpOverStdio } = await import("./serve");
-  await serveAcpOverStdio({ durableRequests });
+  await serveAcpOverStdio({ durableRequests, ...(steward ? { steward } : {}) });
   return 0;
 }
