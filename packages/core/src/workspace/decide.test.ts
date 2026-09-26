@@ -134,7 +134,7 @@ describe("points ask (#2739)", () => {
     expect(q).toMatchObject({ state: "escalated", open: true, current: true, model: { answer: "medium", confidence: 0.175, threshold: 0.8, model: "bosun-v3.1-1.7b", observed: false } });
     expect(q.escalations.map((e) => e.reason)).toEqual(["no row matches these inputs", "not observed: confidence 0.175 is below the threshold 0.8"]);
     expect(listed.questions.every((x) => x.open)).toBe(true);
-    expect(listed.points.map((p) => p.name)).toEqual(["slice-tier", "ship-skip", "needs-decision"]);
+    expect(listed.points.map((p) => p.name)).toEqual(["slice-tier", "ship-skip", "finding-triage", "needs-a-decision", "needs-decision"]);
     expect(listed.points[0].inputs[0]).toEqual({ name: "work-item.criteria", output: "work-item", description: "acceptance criteria in the work item" });
 
     // A later ask still escalating keeps the standing record; one a model answers rewrites it, as proposed.

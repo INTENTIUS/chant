@@ -45,6 +45,12 @@
  *   frontmatter, the skill's example record validates against the decision
  *   schema, and `init --from` carries both files.
  *
+ * - the decision points (ws-058, #2741) validate: finding triage, needs a
+ *   decision, slice tier and ship skip. On a copy, a finding graph --intent
+ *   reports is asked through the decide activity, a stub decider's answer is
+ *   a proposal, the work item written from it opens proposed with its
+ *   proposer in proposed_by, and a person keeps both.
+ *
  * The per-member workspace commands and their contract tests join here as
  * each phase lands (#2537, #2536).
  */
@@ -65,6 +71,11 @@ import { parseFrontMatter } from "@intentius/chant/workspace/records";
 import { queryRecords } from "@intentius/chant/workspace/records-cli";
 import { initFromCommand } from "@intentius/chant/workspace/lineage-init";
 import { parseDeclaration } from "@intentius/chant/workspace/declaration";
+import { candidates, parsePoints, quorumOf } from "@intentius/chant/workspace/points";
+import { askPoint } from "@intentius/chant/workspace/decide";
+import { isPointWait } from "@intentius/chant/op";
+import { startStubBackend } from "@intentius/chant-lexicon-systemone";
+import { runDecide } from "@intentius/chant-lexicon-systemone/op/activities/decide";
 
 const repoRoot = resolve(import.meta.dirname, "..");
 const fixture = join(repoRoot, "reference-workspace");
@@ -593,6 +604,166 @@ describe("the intent graph on the fixture (#2651)", () => {
     expect(doc.nodes.filter((n) => n.kind === "work").map((n) => n.id)).toEqual(["record:work/W-001"]);
     expect(doc.edges).toContainEqual({ kind: "constrains", from: "record:work/W-001", to: doc.region, granularity: "member", entry: "member:app" });
     expect(doc.edges).toContainEqual({ kind: "implements", from: "record:work/W-001", to: "record:decision/ref-002" });
+  });
+});
+
+describe("decision points on the work graph (#2741, ws-058)", () => {
+  const on = "2026-09-25";
+  const pointsText = () => readFileSync(join(fixture, "decisions", "points.json"), "utf-8");
+
+  test("finding triage, needs a decision, slice tier and ship skip are declared, validate, and points lists them", () => {
+    const points = parsePoints(pointsText(), "decisions/points.json");
+    expect(Object.entries(points).map(([name, p]) => [name, p.question.type, p.deciders.map((d) => d.kind).join(">")])).toEqual([
+      ["slice-tier", "choice", "table>model>quorum"],
+      ["ship-skip", "noul", "table>quorum"],
+      ["finding-triage", "choice", "table>model>quorum"],
+      ["needs-a-decision", "noul", "table>model>quorum"],
+    ]);
+    expect(candidates(points["finding-triage"].question)).toEqual(["work-item", "needs-a-decision", "leave"]);
+    // Every input names a read-contract output: the triage reads a finding and its region, the window its commits.
+    expect(Object.keys(points["finding-triage"].inputs).map((i) => i.split(".")[0])).toEqual(["finding", "finding", "finding", "region", "region", "region"]);
+    expect([...new Set(Object.keys(points["needs-a-decision"].inputs).map((i) => i.split(".")[0]))]).toEqual(["commit", "region", "work-item"]);
+
+    const run = chant(fixture, "workspace", "points", "--json");
+    expect(run.status, run.stderr).toBe(0);
+    const doc = JSON.parse(run.stdout) as { points: { name: string }[]; sources: { reason: unknown }[] };
+    expect(doc.points.map((p) => p.name)).toEqual(["slice-tier", "ship-skip", "finding-triage", "needs-a-decision"]);
+    expect(doc.sources.map((s) => s.reason)).toEqual([null]);
+  });
+
+  test("ship skip, moved from chud: its table says no to every release, no model answers it, and its quorum is the gate's", async () => {
+    const points = parsePoints(pointsText(), "decisions/points.json");
+    expect(points["ship-skip"].deciders.some((d) => d.kind === "model")).toBe(false);
+    expect(quorumOf(points["ship-skip"])).toEqual({ count: 1 });
+    const inputs = {
+      "release.first_release": false,
+      "release.new_migrations": 0,
+      "release.files_changed": 1,
+      "release.app_changed": false,
+      "release.work_changed": false,
+      "release.units": 1,
+    };
+    const doc = await askPoint({ cwd: fixture, point: "ship-skip", inputs, subject: "release 1", on, dryRun: true });
+    if ("error" in doc) throw new Error(`${doc.error.code}: ${doc.error.message}`);
+    expect(doc.question).toMatchObject({ state: "answered", answer: false, decider: { kind: "table", row: 0 } });
+    expect(doc.written).toBe(false);
+  });
+
+  test("needs a decision: a window whose commits are all a decision's own work needs none, and one with an undecided commit goes to people", async () => {
+    const window = { "commit.count": 2, "commit.undecided": 0, "commit.decided_by_window": 0, "region.path": "app/src/server.mjs", "region.generated": false, "work-item.implements": 1 };
+    const covered = await askPoint({ cwd: fixture, point: "needs-a-decision", inputs: window, subject: "W-001", on, dryRun: true });
+    if ("error" in covered) throw new Error(`${covered.error.code}: ${covered.error.message}`);
+    expect(covered.question).toMatchObject({ state: "answered", answer: false, decider: { kind: "table", row: 1 } });
+    // With no model call, an undecided commit escalates past the table and the model to the quorum.
+    const open = await askPoint({ cwd: fixture, point: "needs-a-decision", inputs: { ...window, "commit.undecided": 1 }, subject: "W-001", on, dryRun: true });
+    if ("error" in open) throw new Error(`${open.error.code}: ${open.error.message}`);
+    expect(open.question).toMatchObject({ state: "escalated", open: true, decider: { kind: "quorum", count: 1 } });
+  });
+
+  test("a finding produces a triage question, the stub decider's answer becomes a proposed work item, and a person keeps it", async () => {
+    // 1. graph --intent reports the finding, on the fixture as committed.
+    const graph = chant(fixture, "workspace", "graph", "--intent", "app/src/server.mjs", "--json");
+    expect(graph.status, graph.stderr).toBe(0);
+    type Node = { id: string; kind: string; code?: string; message?: string; addressed?: boolean; addressedBy?: { id: string; state: string }[]; path?: string; member?: string; generated?: boolean };
+    const nodesOf = (text: string) => (JSON.parse(text) as { region: string; nodes: Node[] });
+    const g = nodesOf(graph.stdout);
+    const region = g.nodes.find((n) => n.id === g.region)!;
+    const finding = g.nodes.find((n) => n.kind === "finding" && n.code === "intent-constraint-coarse")!;
+    expect(finding, "graph --intent app/src/server.mjs reports intent-constraint-coarse").toBeDefined();
+    expect(finding.addressed).toBe(false);
+    const inputs = {
+      "finding.code": finding.code,
+      "finding.message": finding.message,
+      "finding.addressed": finding.addressed,
+      "region.path": region.path,
+      "region.member": region.member,
+      "region.generated": region.generated,
+    };
+
+    // The rest writes, so it runs on a copy of the fixture in its own repository.
+    const scratch = mkdtempSync(join(tmpdir(), "chant-2741-triage-"));
+    const root = join(scratch, "ws");
+    const git = (...args: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", ...args], { cwd: root, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] });
+    const stub = await startStubBackend({
+      answers: { "finding-triage": { type: "choice", choice: "work-item", probabilities: { "work-item": 0.9, "needs-a-decision": 0.06, leave: 0.04 }, confidence: 0.86 } },
+    });
+    try {
+      cpSync(fixture, root, { recursive: true, filter: (src) => !/(^|\/)(node_modules|dist)(\/|$)/.test(src.slice(fixture.length)) });
+      git("init", "-q");
+      git("add", "-A");
+      git("commit", "-q", "-m", "the reference workspace");
+
+      // 2. The decide activity asks finding-triage. No table row matches, the stub decider answers
+      //    work-item above the threshold, and the answer is a proposal: the run waits on it.
+      const backends = { systemone: { url: stub.url } };
+      const wait = await runDecide({ cwd: root, point: "finding-triage", inputs, subject: "app/src/server.mjs", backends }, { on }).then(
+        (r) => {
+          throw new Error(`expected the run to wait on a proposal, and decide returned ${JSON.stringify(r)}`);
+        },
+        (err: unknown) => {
+          if (!isPointWait(err)) throw err;
+          return err.question;
+        },
+      );
+      expect(wait).toMatchObject({ point: "finding-triage", state: "proposed", subject: "app/src/server.mjs" });
+      expect(stub.requests.map((r) => [r.model, Object.keys(r.questions)])).toEqual([["jev-1.13.0", ["finding-triage"]]]);
+
+      // The read contract lists it as an open question with the model's answer, for hud to prompt a person.
+      const listed = chant(root, "workspace", "points", "--open", "--json");
+      expect(listed.status, listed.stderr).toBe(0);
+      const open = (JSON.parse(listed.stdout) as { questions: { id: string; state: string; answer: unknown; confidence: number; decider: { kind: string; model?: string } }[] }).questions;
+      // The fixture's own slice-tier proposal for W-002 is open too.
+      expect(open.map((q) => [q.id, q.state, q.answer, q.decider.kind, q.decider.model, q.confidence])).toEqual([
+        [wait.id, "proposed", "work-item", "model", "jev-1.13.0", 0.86],
+        ["slice-tier-074b660bbaad", "proposed", "medium", "model", "bosun-v3.1-1.7b", 0.865],
+      ]);
+
+      // 3. The runtime writes the work item the answer proposes, naming the decider as its proposer.
+      const fields = {
+        schema: 1,
+        title: "Constrain app/src/server.mjs by path",
+        implements: [],
+        needs: [],
+        constrains: ["path:app/src/server.mjs"],
+        evidence: [],
+        opened_on: on,
+        source: { finding: finding.code, region: region.path, answer: wait.id },
+        supersedes: [],
+      };
+      writeFileSync(join(scratch, "work.json"), JSON.stringify({ ...fields, state: "proposed" }));
+      const made = chant(root, "workspace", "records", "new", "work", "--from", join(scratch, "work.json"), "--by", "jev-1.13.0", "--json");
+      expect(made.status, made.stderr + made.stdout).toBe(0);
+      expect(JSON.parse(made.stdout)).toMatchObject({ id: "W-003" });
+      const work = async () => {
+        const doc = await queryRecords({ kind: "work/work.kind.mjs", cwd: root });
+        if ("error" in doc) throw new Error(`${doc.error.code}: ${doc.error.message}`);
+        return doc.records.find((r) => r.id === "W-003") as unknown as { state: string; valid: boolean; ready: boolean; data: Record<string, unknown> };
+      };
+      expect(await work()).toMatchObject({ state: "proposed", valid: true, ready: false, data: { proposed_by: "jev-1.13.0", source: { answer: wait.id } } });
+
+      // 4. A person keeps it: confirms the triage answer, and moves the work item to open.
+      const answered = chant(root, "workspace", "points", "answer", wait.id, "--answer", "work-item", "--by", "alice", "--json");
+      expect(answered.status, answered.stderr + answered.stdout).toBe(0);
+      expect(JSON.parse(answered.stdout)).toMatchObject({ question: { state: "answered", answer: "work-item", answeredBy: ["alice"] } });
+      writeFileSync(join(scratch, "keep.json"), JSON.stringify({ state: "open" }));
+      const kept = chant(root, "workspace", "records", "amend", "W-003", "--kind", "work", "--set", join(scratch, "keep.json"), "--json");
+      expect(kept.status, kept.stderr + kept.stdout).toBe(0);
+      expect(await work()).toMatchObject({ state: "open", valid: true, ready: true, data: { proposed_by: "jev-1.13.0" } });
+
+      // 5. Once committed, the finding reads as addressed by W-003, and asking the triage for it again, the table leaves it.
+      git("add", "-A");
+      git("commit", "-q", "-m", "W-003 kept");
+      const after = chant(root, "workspace", "graph", "--intent", "app/src/server.mjs", "--json");
+      expect(after.status, after.stderr).toBe(0);
+      const again = nodesOf(after.stdout).nodes.find((n) => n.kind === "finding" && n.code === "intent-constraint-coarse")!;
+      expect([again.addressed, again.addressedBy]).toEqual([true, [{ id: "W-003", state: "open" }]]);
+      const left = await runDecide({ cwd: root, point: "finding-triage", inputs: { ...inputs, "finding.addressed": true }, subject: "app/src/server.mjs", backends }, { on });
+      expect(left).toMatchObject({ state: "answered", answer: "leave", decider: "table" });
+      expect(stub.requests).toHaveLength(1);
+    } finally {
+      await stub.close();
+      rmSync(scratch, { recursive: true, force: true });
+    }
   });
 });
 

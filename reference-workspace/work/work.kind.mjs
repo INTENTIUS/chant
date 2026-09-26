@@ -17,10 +17,15 @@ export const recordKind = {
   schema: { id: "urn:intentius:chant:work:1", path: "work.schema.json" },
   idField: "id",
   stateField: "state",
-  states: ["open", "in-progress", "done", "dropped"],
+  // A proposal opens proposed: an item an agent or a decision point's model
+  // suggested (ws-058, #2741). A person keeps it by moving it to open, or drops it.
+  states: ["proposed", "open", "in-progress", "done", "dropped"],
   closedStates: ["done", "dropped"],
   // Takes effect from a done or dropped item, the closed states.
   supersedes: { field: "supersedes", key: "work" },
+  // records new --by and the MCP records-new tool's by name a proposal's
+  // proposer here (#2756).
+  proposedBy: { field: "proposed_by" },
   // Evidence is the proof of done: links, or workspace files pinned by hash.
   pins: { field: "evidence" },
   // The same grammar as a decision's: member:, path:, issues and decision ids.
