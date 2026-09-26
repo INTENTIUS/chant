@@ -37,11 +37,20 @@
  * imports `Box` from `@intentius/chant-lexicon-fountain` and calls it, read as
  * syntax and never run. Upstream, managoat/fountain#2497 asks for a way to run
  * a persistent agent with no callback token.
+ *
+ * WSP126 (`box-intent-unknown`) and WSP127 (`box-intent-unconstrained`), #2850,
+ * read the decision record a box block names as its intent (`box-intent.ts`).
+ * WSP126 fails when no record of a declared kind named decision has the id.
+ * WSP127 warns when the record's constrains has no `member:` entry for the box
+ * and no `path:` entry at, above or inside its directory, since then
+ * `chant workspace graph --intent` never shows it for the box's files. Both
+ * read the working tree's records, so neither runs under `--at`.
  */
 
 import * as ts from "typescript";
 import type { WorkspaceCheck, WorkspaceCheckContext, WorkspaceDiagnostic } from "../checks";
 import type { Member } from "../declaration";
+import { constrainsBox } from "../box-intent";
 import type { ReasonCode } from "../reason-codes";
 import { joinPath, skippedDir, type WorkspaceTree } from "../tree";
 import { BOX_ISOLATION_CHECKS } from "./box-isolation";
@@ -53,11 +62,15 @@ export const BOX_FINDING_CODES = [
   "box-isolation-collision",
   "box-isolation-literal",
   "box-fountain-callback-undeclared",
+  "box-intent-unknown",
+  "box-intent-unconstrained",
 ] as const satisfies readonly ReasonCode[];
 
 export const WSP_BOX_CREDENTIAL = "WSP121";
 export const WSP_BOX_UNBROKERED = "WSP122";
 export const WSP_BOX_FOUNTAIN_CALLBACK = "WSP125";
+export const WSP_BOX_INTENT_UNKNOWN = "WSP126";
+export const WSP_BOX_INTENT_UNCONSTRAINED = "WSP127";
 
 /** The fountain lexicon's package, whose `Box` composite runs a persistent sandbox. */
 const FOUNTAIN_LEXICON = "@intentius/chant-lexicon-fountain";
@@ -434,6 +447,57 @@ export const BOX_CHECKS: readonly WorkspaceCheck[] = [
           treeFile: at.path,
           line: at.call.line,
           column: at.call.column,
+        });
+      }
+      return out;
+    },
+  },
+  {
+    id: WSP_BOX_INTENT_UNKNOWN,
+    name: "box-intent-unknown",
+    description: "The intent a box block names is the id of a decision record: a record of a declared kind named decision.",
+    severity: "error",
+    configurable: true,
+    check(ctx) {
+      const out: WorkspaceDiagnostic[] = [];
+      for (const i of ctx.facts?.boxIntents ?? []) {
+        if (i.record) continue;
+        out.push({
+          checkId: this.id,
+          severity: this.severity,
+          code: "box-intent-unknown",
+          message: `box-intent-unknown: member ${i.member}'s box names the intent ${i.id}, and ${i.why}; propose the decision with chant workspace records new, or fix the id`,
+          entity: i.member,
+          pointer: i.pointer,
+        });
+      }
+      return out;
+    },
+  },
+  {
+    id: WSP_BOX_INTENT_UNCONSTRAINED,
+    name: "box-intent-unconstrained",
+    description:
+      "The decision record a box names as its intent constrains the box: member:<the member's name>, or a path: entry at, above or inside its directory, so graph --intent shows it for the box's files.",
+    severity: "warning",
+    configurable: true,
+    check(ctx) {
+      const out: WorkspaceDiagnostic[] = [];
+      const members = new Map(ctx.declaration.members.map((m) => [m.name, m]));
+      for (const i of ctx.facts?.boxIntents ?? []) {
+        const m = members.get(i.member);
+        if (!i.record || !m) continue;
+        if (i.record.constrains.some((c) => constrainsBox(c, m))) continue;
+        out.push({
+          checkId: this.id,
+          severity: this.severity,
+          code: "box-intent-unconstrained",
+          message:
+            `box-intent-unconstrained: member ${i.member}'s box names the intent ${i.id} (${i.record.path}), which constrains ` +
+            (i.record.constrains.length === 0 ? "nothing" : i.record.constrains.join(", ")) +
+            ` and nothing of the box; add member:${m.name} to its constrains`,
+          entity: i.member,
+          pointer: i.pointer,
         });
       }
       return out;

@@ -311,6 +311,7 @@ describe("chant workspace status on built workspaces", () => {
           { name: "inference", broker: null, scope: [] },
         ],
         isolation: null,
+        intent: null,
       },
     ]);
   });

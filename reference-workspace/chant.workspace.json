@@ -6,7 +6,8 @@
       "name": "app",
       "dir": "app",
       "kind": "other",
-      "because": "a Node HTTP server with its own Dockerfile and test; no app kind exists yet (#2535)"
+      "because": "a Node HTTP server with its own Dockerfile and test; no app kind exists yet (#2535)",
+      "box": { "intent": "ref-003" }
     },
     {
       "name": "delivery",

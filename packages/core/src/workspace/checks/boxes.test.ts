@@ -156,6 +156,7 @@ describe("the box block in the declaration", () => {
     expect(d.members[0].box).toEqual({
       pointer: "/members/0/box",
       isolation: null,
+      intent: null,
       capabilities: [
         { name: "fountain", broker: "lobby", scope: ["agent", "vault"], pointer: "/members/0/box/capabilities/0" },
         { name: "inference", broker: null, scope: [], pointer: "/members/0/box/capabilities/1" },
