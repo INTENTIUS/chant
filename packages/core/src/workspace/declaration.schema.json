@@ -72,6 +72,28 @@
       "additionalProperties": {
         "$ref": "#/$defs/severity"
       }
+    },
+    "changes": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The forward coverage check, chant workspace check --changes <base>..<head> (#2773): each path a diff changes is mapped to the current records whose constrains cover it. severity says what a finding does: off reports none, warn (the default) reports them and passes, fail reports them and fails. ignore lists globs over files whose changes need no record, such as lockfiles and generated output. Added in schema 1 by chant 0.92.0, so a declaration that uses it sets minReader to 0.92.0 or newer.",
+      "properties": {
+        "severity": {
+          "enum": [
+            "off",
+            "warn",
+            "fail"
+          ],
+          "description": "What a change-uncovered or change-out-of-scope finding does. warn when absent."
+        },
+        "ignore": {
+          "type": "array",
+          "description": "Globs over file paths from the workspace root: * and ? within one segment, ** across segments. A changed path one matches is listed as ignored and never reported.",
+          "items": {
+            "$ref": "#/$defs/fileGlob"
+          }
+        }
+      }
     }
   },
   "patternProperties": {
@@ -641,6 +663,11 @@
       "type": "integer",
       "minimum": 1,
       "maximum": 65535
+    },
+    "fileGlob": {
+      "type": "string",
+      "description": "A glob over file paths, relative to the workspace root: * and ? within one segment, ** across segments, [...] classes and {a,b} alternatives. No leading /, no . or .. segments.",
+      "pattern": "^(?!\\.\\.?(/|$))[^/\\\\]+(/(?!\\.\\.?(/|$))[^/\\\\]+)*$"
     }
   }
 }

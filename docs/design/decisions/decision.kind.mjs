@@ -24,6 +24,9 @@ export const recordKind = {
   pins: { field: "evidence" },
   // member:<name> and path:<path> entries are the record's links in workspace graph (#2549).
   constrains: { field: "constrains" },
+  // Workspace paths a change carrying the decision out must not touch
+  // (#2773): chant workspace check --changes reports change-out-of-scope.
+  outOfScope: { field: "out_of_scope" },
   // Verdicts, and the field naming the decider, for each record's digest and
   // quorum (#2671, #2672).
   reviews: { field: "reviews", decider: "decided_by" },

@@ -6,7 +6,7 @@
  * is a thin call into the code the CLI runs:
  *
  * - The reads (`workspace-ls`, `workspace-status`, `workspace-graph`,
- *   `workspace-records`, `workspace-points`) run `chant workspace <command>
+ *   `workspace-changes`, `workspace-records`, `workspace-points`) run `chant workspace <command>
  *   ... --json` with the chant this server runs as, in the server's
  *   directory, and return the
  *   document it printed, unchanged, with its reason codes (#2536). Running the
@@ -103,6 +103,25 @@ export const workspaceReadTools: ToolDefinition[] = [
         composites: { type: "boolean", description: "The composites document instead (--composites). Takes no kind or intent." },
         at: atProp,
       },
+    },
+  },
+  {
+    name: "workspace-changes",
+    description:
+      "The forward coverage check over a diff: chant workspace check --changes <range> --json (changes.schema.json, #2773). Each changed path with the current records whose constrains cover it, and a change-uncovered or change-out-of-scope finding for each gap, at the severity the declaration's changes block sets. Returns the document unchanged.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        range: { type: "string", description: "The diff: <base>..<head>, <base>...<head> (from their merge base), or <base> alone, to HEAD (--changes)." },
+        work: { type: "string", description: "The id of the work item in hand, whose out_of_scope and whose decisions' out_of_scope apply (--work)." },
+        severity: { type: "string", enum: ["off", "warn", "fail"], description: "In place of the declaration's changes.severity (--severity)." },
+        kind: {
+          type: "array",
+          items: { type: "string" },
+          description: "Record kind files to read in place of the declared ones (--kind).",
+        },
+      },
+      required: ["range"],
     },
   },
   {
@@ -284,6 +303,22 @@ export function readArgv(tool: string, params: Record<string, unknown>): string[
       if (composites) return ["workspace", "graph", "--composites", ...kindArgs, ...(intent !== undefined ? ["--intent", intent] : []), ...atArgs, "--json"];
       if (intent !== undefined) return ["workspace", "graph", "--intent", intent, ...kindArgs, ...atArgs, "--json"];
       return ["workspace", "graph", ...kindArgs, ...atArgs, "--json"];
+    }
+    case "workspace-changes": {
+      const range = str(params, "range", true)!;
+      const work = str(params, "work");
+      const severity = str(params, "severity");
+      if (severity !== undefined && !["off", "warn", "fail"].includes(severity)) throw new ToolInputError("severity must be off, warn or fail");
+      return [
+        "workspace",
+        "check",
+        "--changes",
+        range,
+        ...(work !== undefined ? ["--work", work] : []),
+        ...(severity !== undefined ? ["--severity", severity] : []),
+        ...kinds(params).flatMap((k) => ["--kind", k]),
+        "--json",
+      ];
     }
     case "workspace-points": {
       const kind = str(params, "kind");

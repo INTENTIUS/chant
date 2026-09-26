@@ -30,6 +30,9 @@ export const recordKind = {
   pins: { field: "evidence" },
   // The same grammar as a decision's: member:, path:, issues and decision ids.
   constrains: { field: "constrains" },
+  // Workspace paths the change doing the work must not touch (#2773):
+  // chant workspace check --changes --work <id> reports change-out-of-scope.
+  outOfScope: { field: "out_of_scope" },
   // needs and implements, the decisions they name, and when an item is ready.
   work: {
     needs: "needs",

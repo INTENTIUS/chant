@@ -10,7 +10,7 @@ Tools that show a workspace read it through one contract ([#2536](https://github
 
 | Contract | chant floor | Declaration | Output schemas |
 |---|---|---|---|
-| 1 | 0.81.0 | schema 1 | `ls`, `graph`, `check`, `status`, `records`, `records-since`, `intent`, `composites` and `points`, each at `v1` |
+| 1 | 0.81.0 | schema 1 | `ls`, `graph`, `check`, `status`, `records`, `records-since`, `intent`, `composites`, `points` and `changes`, each at `v1` |
 
 Every document carries `contract`, the version it follows, and `$schema`, its schema's `$id`. Most also carry `chant`, the version of the chant that wrote it. A reader that knows contract 1 refuses a document with any other `contract` value. Given a chant older than the floor, the reader can say so and name the version to install, since that chant doesn't write the contract at all.
 
@@ -30,6 +30,7 @@ Each schema ships in `@intentius/chant` at `src/workspace/<command>.schema.json`
 | [`chant workspace records --since`](/chant/cli/workspace-records/#what-changed-between-two-revisions) | `--json` | `https://intentius.io/chant/schemas/workspace/records-since/v1/records-since.schema.json` |
 | [`chant workspace graph --intent`](/chant/cli/workspace-graph/#the-intent-graph) | `--json` | `https://intentius.io/chant/schemas/workspace/intent/v1/intent.schema.json` |
 | [`chant workspace graph --composites`](/chant/cli/workspace-graph/#composites-and-components) | always | `https://intentius.io/chant/schemas/workspace/composites/v1/composites.schema.json` |
+| [`chant workspace check --changes`](/chant/cli/workspace-check/#the-forward-coverage-check) | `--json` | `https://intentius.io/chant/schemas/workspace/changes/v1/changes.schema.json` |
 | [`chant workspace points`](/chant/cli/workspace-points/#output) | `--json` | `https://intentius.io/chant/schemas/workspace/points/v1/points.schema.json` |
 
 Each schema is a `oneOf` of a result and a failure. The `records` schema has a third branch for the set it prints without `--kind` ([#2680](https://github.com/INTENTIUS/chant/issues/2680)). The set holds a result or a failure for each record kind the declaration names. A failure has `error: { code, message }`, plus `location` for the commands that read the declaration, and exits 1. A result may still hold entries that couldn't be read, each with a `reason: { code, message }`. Only `check` fails on those ([ws-020](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-020-unreadable.md)). In `check`, a declaration that can't be read is the finding `WSP001` with the same `code`, not a failure.
@@ -196,6 +197,8 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `intent-decision-unimplemented` | finding, `graph --intent` | A decided decision constrains the region, no work item that is not dropped implements it, and no commit falls in its window. Only with a work kind read. |
 | `intent-work-blocked` | finding, `graph --intent` | A work item constraining the region has commits in its window while a work item it needs is not done. |
 | `intent-work-open-decided-code` | finding, `graph --intent` | Commits in the region are a decision's own work while the work item implementing that decision is still open. |
+| `change-uncovered` | finding, `check --changes` | A path the diff changes is covered by no current decided record and no open work item, by path or by its member. |
+| `change-out-of-scope` | finding, `check --changes` | A record in hand for the change, such as the work item it is for or a decision that item implements, lists a path the diff changes in its `out_of_scope`. |
 | `composites-no-chant-member` | reason, `graph --composites` | No member of kind `chant` was read, so nothing declares a composite instance or a component. |
 | `composites-none-declared` | reason, `graph --composites` | The members read declare no composite instance. |
 | `composites-no-component` | reason, `graph --composites` | The members read declare no component, so no composite instance has one. |
@@ -212,7 +215,7 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `manual-step-open` | finding, `check` | A scope in the lineage lock has an open manual step. |
 | `work-kind-missing` | error, `work` | No work kind to find the item in: `--kind` names a kind with no work block, or the declaration names no work kind. |
 | `work-kind-ambiguous` | error, `work` | More than one declared work kind has a record with the id, so `--kind` must name one. |
-| `work-item-unknown` | error, `work` | No work record has the id, so there is nothing to lease. |
+| `work-item-unknown` | error, `work` and `check --changes` | No work record has the id, so there is nothing to lease, or no work item in hand for `--changes --work`. |
 | `work-item-closed` | error, `work claim` | A claim on a work item in a closed state, such as done or dropped: there is no work left to claim. |
 | `lease-held` | refusal, `work` | Someone holds a live lease on the work item: another worker, or, for a claim, the same one. |
 | `lease-not-held` | refusal, `work` | Nobody holds a live lease on the work item: it expired, was released or was never claimed. |
@@ -345,6 +348,26 @@ A work item's window runs from the commit that added its record to the commit th
 A plugin's finding is about the commit it was returned for, so that commit's id comes first in `concerns`. Each of its `refs` that names a node in the graph follows as that node's id. chant first tries a ref as a node id, and then behind each node kind's prefix, such as `commit:` or `artifact:`. After that it tries the ref as a decision's record id or the start of a commit sha. A ref that names nothing in the graph stays in `refs` only. Plugin findings come after chant's own, in commit order. A decision that constrains a path below a directory region has a `constrains` edge to each file under that path, and it does not count as constraining the whole region.
 
 The document joins the others by the member name (`member` on region and file nodes, and `member:<name>` nodes), by the record id (`record` on a decision node, `records[].id` in `graph --kind` and `records`), and by the commit id (`at` and `provenance.commit`).
+
+## The forward coverage check
+
+`chant workspace check --changes <base>..<head> --json` reads the join between records and code forwards ([#2773](https://github.com/INTENTIUS/chant/issues/2773)), where `graph --intent` reads it backwards. It maps each path the diff changes to the current records whose `constrains` cover it. A decision is current when nothing supersedes it and its state is decided, `decided` or `ratified` for the decision kind. A work item is current while it is not in a closed state. A `path:` entry covers the path it names and everything under it, and a `member:` entry covers every path in the member's directory. `<base>...<head>` diffs from the merge base, and `<base>` alone diffs to `HEAD`. The declaration and the records are read at `<head>`, so a change that adds the work item for itself is covered.
+
+A record kind may name an `outOfScope` field ([`out_of_scope`](/chant/cli/workspace-records/#record-kinds) on the decision and work kinds): workspace paths, files or directories, that a change carried out under the record must not touch. The records in hand for the change are the work item `--work <id>` names and the decisions it implements. Without `--work`, they are every current record that covers some path the diff changes. A path any of them lists is `out-of-scope`, and a record never covers a path its own `out_of_scope` lists.
+
+Beside the head every document carries, `range` gives the range as it was given (`spec`) and the `base` and `head` commits. `severity` and `ignore` come from the declaration's [`changes` block](/chant/reference/workspace-declaration/), and `--severity` replaces the severity. `work` is the work item in hand, or `null`. `kinds` lists each kind read with its `role`: `decision`, `work`, or `other` for a kind that covers nothing. Each entry in `paths` has the path from the workspace root, its `change` (`added`, `modified`, `deleted` or `renamed`, with the old path in `from`), its `member`, its `status`, the records in `coveredBy` and `outOfScopeBy` with the entry that ties each to the path, and the glob in `ignoredBy`.
+
+| `status` | Meaning | Finding |
+|---|---|---|
+| `covered` | a current record covers the path | none |
+| `uncovered` | no current record covers it | `change-uncovered` |
+| `out-of-scope` | a record in hand lists it in `out_of_scope` | `change-out-of-scope` |
+| `ignored` | a `changes.ignore` glob matches it | none |
+| `record` | it is a record file of a kind read: the change is to the records themselves | none |
+
+A finding's `id` is `finding:<code>:<path>`, one per path. Its `severity` is `warn` or `fail`. `records` lists the records an out-of-scope finding concerns. `triage` is `{ finding, region }`, the gap source a work item takes. The finding-triage decision point ([#2741](https://github.com/INTENTIUS/chant/issues/2741)) reads it to seed a work item or a decision. The work kind's `source.finding` accepts both codes. With severity `off` there are no findings, and `ok` is `false` only when severity is `fail` and there is a finding, which also exits 1. When the check can't run, the document holds only `error`. Its code is `revision-unknown` for a range that names no commit and `work-item-unknown` for a `--work` id no record has; otherwise it is the declaration's or the record kind's code.
+
+`chant serve mcp` serves the document as the `workspace-changes` tool, and an Op that changes the checkout runs the same check on its own branch with the [`changeCoverage` activity](/chant/guide/ops/#checking-the-change-against-the-records).
 
 ## Composites and components
 

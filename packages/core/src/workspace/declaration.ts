@@ -96,6 +96,17 @@ export interface Suppression {
 /** What `checks` may set a declaration check's severity to. */
 export type CheckSeverity = "error" | "warning" | "info" | "off";
 
+/** How `chant workspace check --changes` treats its findings (#2773): not at all, as warnings, or as failures. */
+export type ChangeSeverity = "off" | "warn" | "fail";
+
+/** The declaration's `changes` block (#2773): the severity of the forward coverage check, and the paths it never reports. */
+export interface ChangesPolicy {
+  /** Absent from the declaration, `warn`. */
+  severity: ChangeSeverity;
+  /** Globs over files, relative to the workspace root, whose changes need no record: lockfiles, generated output. */
+  ignore: string[];
+}
+
 export interface MemberRole {
   name: string;
   /** Relative to the member's directory, or null for the whole member. */
@@ -254,6 +265,8 @@ export interface Declaration {
   records: RecordKindDeclaration[];
   /** The hosts boxes run on, in file order (#2727). */
   hosts: Host[];
+  /** The forward coverage check's policy (#2773), or null when the declaration has no `changes` block. */
+  changes: ChangesPolicy | null;
   /** The file, relative to the workspace root's tree (`chant.workspace.json` or `.jsonc`). */
   file: string;
 }
@@ -593,8 +606,15 @@ export function parseDeclaration(text: string, file: string, reader: string = re
     quorum: typeof obj.quorum === "number" ? obj.quorum : null,
     records: ownRecords,
     hosts,
+    changes: changesOf(obj.changes as Record<string, unknown> | undefined),
     file,
   };
+}
+
+/** The `changes` block, already validated, with its defaults (#2773). */
+function changesOf(block: Record<string, unknown> | undefined): ChangesPolicy | null {
+  if (block === undefined) return null;
+  return { severity: (block.severity as ChangeSeverity | undefined) ?? "warn", ignore: [...((block.ignore as string[] | undefined) ?? [])] };
 }
 
 /** The `records` list at `pointer`, already validated, with each kind file's path from the workspace root. */

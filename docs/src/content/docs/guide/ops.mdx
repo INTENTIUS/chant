@@ -259,6 +259,16 @@ When the run ends the lease is released with an outcome. A completed run records
 
 `changesCheckout: true` says the Op changes the checkout, as applying a build or `chant workspace upgrade` does. Such an Op must declare `workLease`: the executor refuses to run it otherwise, and `declareSteward` refuses to list it. Its leased steps get a git worktree of their own on the branch `chant/work/<item>` (`chant/work/<member>/<item>` in a workspace member). The worktree sits under the repository's git directory and starts from HEAD, or from the branch where an earlier run left it. The steps write and commit there. When the run ends the worktree is removed and the branch keeps the commits, for the runner to deliver. The working tree a coding agent is editing, its index and its uncommitted files, stay as they were.
 
+### Checking the change against the records
+
+Before the branch is delivered, a step can check what the Op changed against the workspace's records with the `changeCoverage` activity ([#2773](https://github.com/INTENTIUS/chant/issues/2773)). It runs [`chant workspace check --changes`](/chant/cli/workspace-check/#the-forward-coverage-check) in the worktree. With no `range`, it checks the commits the work branch holds beyond the main worktree's HEAD, with the branch's item as the work item in hand. A change the item or its decisions put out of scope is `change-out-of-scope`, and a path no current record covers is `change-uncovered`.
+
+```typescript
+activity("changeCoverage", { cwd: workLeaseOutput("worktree") }, { id: "coverage" }),
+```
+
+The step fails when the workspace's `changes.severity` is `fail` and there is a finding, or when the check can't run. Otherwise it returns `ok`, the `range` and `work` it checked, `summary`, and each finding with its `triage`: the `{ finding, region }` a work item seeded from it carries as its `source`. `range`, `work` and `severity` given as arguments replace what the branch and the declaration say.
+
 ## Compensation on failure
 
 `onFailure` phases run in order if the run terminates with an unhandled error:

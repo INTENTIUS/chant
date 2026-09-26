@@ -157,3 +157,8 @@ export type {
   ProposeUpgradeMode,
   CommandRunner,
 } from "./propose-upgrade";
+
+// The forward coverage check over an Op's own diff (#2773). Loads the
+// workspace code on first call only, like proposeWorkspaceUpgrade.
+export { changeCoverage } from "./change-coverage";
+export type { ChangeCoverageArgs, ChangeCoverageResult } from "./change-coverage";

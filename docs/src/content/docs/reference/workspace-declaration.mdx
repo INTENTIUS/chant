@@ -54,6 +54,7 @@ chant finds the file by walking up from the current directory to the git root, t
 | `checks` | no | Severities for the [declaration checks](/chant/cli/workspace-check/#severity-and-suppression), keyed by `WSP` id: `error`, `warning`, `info` or `off`. |
 | `records` | no | The workspace's own [record kinds](#record-kinds), each `{ "kind": "<path>" }` with the path from the workspace root. It was added in chant 0.86.0. |
 | `hosts` | no | The [hosts](#isolation) boxes run on, each with the port range its boxes share. It was added in chant 0.91.0. |
+| `changes` | no | The [forward coverage check](/chant/cli/workspace-check/#the-forward-coverage-check) of `chant workspace check --changes`: `severity` (`off`, `warn` or `fail`, default `warn`) and `ignore`, globs over file paths from the workspace root whose changes need no record, such as lockfiles and generated output. It was added in chant 0.92.0. |
 | `quorum` | no | How many agree verdicts besides the decider's a record needs, as an integer from 0. [`chant workspace records`](/chant/cli/workspace-records/#reviews-and-quorum) reports each record's quorum against it, and it applies to every record kind with a reviews list. The default is 2. It was added in chant 0.86.0, so a declaration that sets it should set `minReader` to `"0.86.0"`. |
 | `$schema`, `$comment` | no | Editor hints and notes. chant ignores them. |
 | `x-...` | no | Any field whose name starts with `x-`, for people and other tools. Allowed on every object in the file. |

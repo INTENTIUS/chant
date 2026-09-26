@@ -379,6 +379,14 @@ export function parseArgs(args: string[]): ParsedArgs {
       // `chant workspace graph --intent <path[:start-end]>` (#2651)
       result.intent = args[++i];
       if (!result.intent || result.intent.startsWith("-")) throw new Error("--intent needs a region: --intent <path[:start-end]>");
+    } else if (arg === "--changes") {
+      // `chant workspace check --changes <base>..<head>` (#2773)
+      result.changes = args[++i];
+      if (!result.changes || result.changes.startsWith("-")) throw new Error("--changes needs a range: --changes <base>..<head>");
+    } else if (arg === "--severity") {
+      // `chant workspace check --changes <range> --severity off|warn|fail` (#2773)
+      result.severity = args[++i];
+      if (!result.severity || result.severity.startsWith("-")) throw new Error("--severity needs off, warn or fail");
     } else if (arg === "--current") {
       result.current = true;
     } else if (arg === "--set") {
@@ -896,6 +904,13 @@ Workspace (level 1, #2524):
                         whose pinned files changed. Needs no workspace file.
                         --at reads a commit's git objects; --format json
                         prints the read-contract document
+  workspace check --changes <base>..<head> [--work <id>] [--severity off|warn|fail] [--kind <kind file>...] [--json]
+                        Map each path the diff changes to the current records
+                        whose constrains cover it: change-uncovered when none
+                        does, change-out-of-scope when a record in hand (the
+                        --work item and its decisions) lists it in
+                        out_of_scope. The declaration's changes block sets
+                        the severity (warn by default) and ignore globs
   workspace build [dir] [--member <name>] [-o <dir>] [--dry-run]
                         Build every chant member and example project, each with
                         its own chant, one process per toolchain. -o <dir>

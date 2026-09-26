@@ -85,7 +85,7 @@ describe("which servers have the workspace tools", () => {
       const { tools } = (await rpc(server(cwd), "tools/list")) as { tools: { name: string }[] };
       expect(tools.map((t) => t.name)).toEqual(expect.arrayContaining(names));
     }
-    expect(names).toEqual(["workspace-ls", "workspace-status", "workspace-graph", "workspace-records", "workspace-points", "records-new", "records-amend", "records-review", "records-close", "points-answer"]);
+    expect(names).toEqual(["workspace-ls", "workspace-status", "workspace-graph", "workspace-changes", "workspace-records", "workspace-points", "records-new", "records-amend", "records-review", "records-close", "points-answer"]);
   });
 
   test("a server outside any workspace, or given none, does not", async () => {
@@ -128,6 +128,18 @@ describe("reads", () => {
     expect(bad.isError).toBe(true);
   }, 120_000);
 
+  test("workspace-changes returns the document chant workspace check --changes --json prints (#2773)", async () => {
+    const s = server();
+    const res = await call(s, "workspace-changes", { range: "HEAD", severity: "fail" });
+    expect(res.isError).toBeUndefined();
+    expect(res.structuredContent).toEqual(cli(["workspace", "check", "--changes", "HEAD", "--severity", "fail", "--json"]));
+    expect(res.structuredContent).toMatchObject({ severity: "fail", paths: [], findings: [], ok: true });
+    const unknown = await call(s, "workspace-changes", { range: "HEAD", work: "W-999" });
+    expect(unknown.structuredContent).toMatchObject({ error: { code: "work-item-unknown" } });
+    const bad = await call(s, "workspace-changes", { range: "HEAD", severity: "loud" });
+    expect(bad.isError).toBe(true);
+  }, 120_000);
+
   test("an error document is returned as a document, and a flag-shaped value is refused before chant runs", async () => {
     const s = server();
     const missing = await call(s, "workspace-records", { kind: "nowhere/none.kind.mjs" });
@@ -143,6 +155,7 @@ describe("reads", () => {
     expect(mcpToolCall(["workspace", "graph", "--intent", "a.mjs:1", "--kind", KIND, "--json"])).toEqual({ name: "workspace-graph", arguments: { intent: "a.mjs:1", kind: [KIND] } });
     expect(mcpToolCall(["workspace", "graph", "--composites", "--json"])).toEqual({ name: "workspace-graph", arguments: { composites: true } });
     expect(mcpToolCall(["workspace", "check", "--format", "json"])).toBeUndefined();
+    expect(mcpToolCall(["workspace", "check", "--changes", "main..HEAD", "--work", "W-001", "--json"])).toEqual({ name: "workspace-changes", arguments: { range: "main..HEAD", work: "W-001" } });
   });
 });
 

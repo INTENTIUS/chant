@@ -32,6 +32,7 @@ import { queryRecords } from "./records-cli";
 import { amendRecord, newRecord, resolveWriteKind, reviewRecord } from "./records-write";
 import recordsSchema from "./records.schema.json";
 import { WORK_WARNING_CODES } from "./work";
+import { CHANGES_FINDING_CODES } from "./changes";
 
 const REF = join(REPO, "reference-workspace");
 const DECISION = (() => {
@@ -227,9 +228,9 @@ describe("work records on read (#2683)", () => {
     expect("error" in doc && doc.error.code).toBe("kind-invalid");
   });
 
-  test("the reference work schema's finding codes are the intent graph's", () => {
+  test("the reference work schema's finding codes are the intent graph's and the change check's (#2773)", () => {
     const schema = JSON.parse(readFileSync(join(REF, "work", "work.schema.json"), "utf-8")) as { definitions: { sourceGap: { properties: { finding: { anyOf: [{ enum: string[] }] } } } } };
-    expect(schema.definitions.sourceGap.properties.finding.anyOf[0].enum).toEqual([...INTENT_FINDING_CODES]);
+    expect(schema.definitions.sourceGap.properties.finding.anyOf[0].enum).toEqual([...INTENT_FINDING_CODES, ...CHANGES_FINDING_CODES]);
   });
 });
 

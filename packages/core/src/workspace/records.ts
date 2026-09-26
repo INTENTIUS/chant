@@ -299,6 +299,15 @@ export const recordKindSchema = z
      */
     constrains: z.object({ field: z.string().min(1) }).strict().optional(),
     /**
+     * The front-matter list of workspace paths a record puts out of scope
+     * (#2773): a file or a directory, from the workspace root. `chant
+     * workspace check --changes` reports a change to one as
+     * `change-out-of-scope` when the record is in hand for the change, and
+     * the record does not cover it even where its constrains would.
+     * Optional.
+     */
+    outOfScope: z.object({ field: z.string().min(1) }).strict().optional(),
+    /**
      * The front-matter list of review verdicts and the field naming the
      * decider (#2671, #2672). With it, each record gets a digest of its text
      * without that list, and `records --json` computes its quorum. Each

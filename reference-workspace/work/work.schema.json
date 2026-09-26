@@ -70,6 +70,14 @@
         "pattern": "^([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[0-9]+|[a-z][a-z0-9]{0,15}-[0-9]{3,}|member:[a-z0-9][a-z0-9-]{0,39}|path:(?!/)(?!(?:[^/]*/)*\\.{1,2}(?:/|$))(?!.*//)[^\\\\\\u0000-\\u001f]*[^/\\\\\\u0000-\\u001f])$"
       }
     },
+    "out_of_scope": {
+      "description": "Workspace paths this work puts out of scope (#2773): files or directories, from the workspace root, that the change doing the work must not touch. chant workspace check --changes --work <id> reports a change to one as change-out-of-scope, and the item does not cover it even where its constrains would. Optional.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/workspacePath"
+      },
+      "uniqueItems": true
+    },
     "evidence": {
       "description": "The proof of done: public links, or workspace files pinned by the hash of their bytes (chant workspace records pin <path>). May be empty while the work is open; a done item with none gets the warning work-done-unpinned.",
       "type": "array",
@@ -237,7 +245,7 @@
       ],
       "properties": {
         "finding": {
-          "description": "The finding's code: one of chant's intent finding codes, or a plugin's plugin:<name>:<code>.",
+          "description": "The finding's code: one of chant's intent finding codes, a change finding of chant workspace check --changes (#2773), or a plugin's plugin:<name>:<code>.",
           "anyOf": [
             {
               "enum": [
@@ -257,7 +265,9 @@
                 "intent-region-unconstrained",
                 "intent-decision-unimplemented",
                 "intent-work-blocked",
-                "intent-work-open-decided-code"
+                "intent-work-open-decided-code",
+                "change-uncovered",
+                "change-out-of-scope"
               ]
             },
             {

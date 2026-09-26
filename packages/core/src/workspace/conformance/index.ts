@@ -346,6 +346,9 @@ export function mcpToolCall(argv: readonly string[]): { name: string; arguments:
     else if (a === "--since") args.since = value();
     else if (a === "--compare-to") args.compareTo = value();
     else if (a === "--intent") args.intent = value();
+    else if (a === "--changes") args.range = value();
+    else if (a === "--work") args.work = value();
+    else if (a === "--severity") args.severity = value();
     else if (a === "--current") args.current = true;
     else if (a === "--composites") args.composites = true;
     else if (a.startsWith("-")) return undefined;
@@ -358,6 +361,8 @@ export function mcpToolCall(argv: readonly string[]): { name: string; arguments:
       return positional.length === 1 && kinds.length === 0 ? { name: "workspace-status", arguments: { ...args, env: positional[0] } } : undefined;
     case "records":
       return positional.length === 0 && kinds.length <= 1 ? { name: "workspace-records", arguments: { ...args, ...(kinds.length ? { kind: kinds[0] } : {}) } } : undefined;
+    case "check":
+      return positional.length === 0 && args.range !== undefined ? { name: "workspace-changes", arguments: { ...args, ...(kinds.length ? { kind: kinds } : {}) } } : undefined;
     case "graph":
       return positional.length === 0 ? { name: "workspace-graph", arguments: { ...args, ...(kinds.length ? { kind: kinds } : {}) } } : undefined;
     default:

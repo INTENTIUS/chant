@@ -48,6 +48,7 @@ ref-002 puts the home screen's spec in the design member, and the app is to impl
 | `implements` | The decisions the work carries out, by id. May be empty. |
 | `needs` | The work that must be done first, by id. May be empty. |
 | `constrains` | What the work touches, in the grammar decisions use: `path:<path>`, `member:<name>`, `owner/repo#n` or a decision id. At least one entry. |
+| `out_of_scope` | Optional. Workspace files or directories the change doing the work must not touch. [`chant workspace check --changes --work <id>`](/chant/cli/workspace-check/#the-forward-coverage-check) reports a change to one as `change-out-of-scope` ([#2773](https://github.com/INTENTIUS/chant/issues/2773)). |
 | `evidence` | The proof of done: links, or workspace files pinned by hash. Empty while the work is open. |
 | `owner` | Who has taken the work, a forge login or an agent's name. Optional. |
 | `opened_on`, `closed_on` | Dates as `YYYY-MM-DD`. `closed_on` is set on `done` or `dropped`. |

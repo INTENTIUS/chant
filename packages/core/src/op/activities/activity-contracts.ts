@@ -166,3 +166,43 @@ export const proposeWorkspaceUpgradeContract = activityContract(
     summary: z.string(),
   }),
 );
+
+/**
+ * The forward coverage check over an Op's own diff (#2773). `args` mirrors
+ * `ChangeCoverageArgs`. `returns` names what a step reads: whether the check
+ * passed, the range and work item checked, and each finding with the
+ * `triage` a work item seeded from it takes as its `source`.
+ */
+export const changeCoverageContract = activityContract(
+  "changeCoverage",
+  z.strictObject({
+    cwd: z.string().optional(),
+    range: z.string().optional(),
+    work: z.string().optional(),
+    severity: z.enum(["off", "warn", "fail"]).optional(),
+  }),
+  z.object({
+    ok: z.boolean(),
+    range: z.object({ spec: z.string(), base: z.string(), head: z.string() }),
+    work: z.string().nullable(),
+    severity: z.enum(["off", "warn", "fail"]),
+    findings: z.array(
+      z.object({
+        code: z.enum(["change-uncovered", "change-out-of-scope"]),
+        path: z.string(),
+        message: z.string(),
+        severity: z.enum(["warn", "fail"]),
+        records: z.array(z.string()),
+        triage: z.object({ finding: z.enum(["change-uncovered", "change-out-of-scope"]), region: z.string() }),
+      }),
+    ),
+    summary: z.object({
+      paths: z.number(),
+      covered: z.number(),
+      uncovered: z.number(),
+      outOfScope: z.number(),
+      ignored: z.number(),
+      records: z.number(),
+    }),
+  }),
+);

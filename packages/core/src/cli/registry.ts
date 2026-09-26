@@ -303,6 +303,10 @@ export interface ParsedArgs {
   composites?: boolean;
   /** `chant workspace graph --intent <path[:start-end]>` (#2651): the region the intent graph is over. */
   intent?: string;
+  /** `chant workspace check --changes <base>..<head>` (#2773): the diff the forward coverage check maps to records. */
+  changes?: string;
+  /** `chant workspace check --changes ... --severity off|warn|fail` (#2773): in place of the declaration's `changes.severity`. */
+  severity?: string;
   /** `chant workspace records --current` (#2546): leave out records a closed record supersedes. */
   current?: boolean;
   /** `chant workspace records amend <id> --set <file|->` (#2670): the JSON fields to set. */
@@ -442,7 +446,7 @@ export interface ParsedArgs {
   steward?: string;
   /** `chant workspace work claim|renew|release <id> --holder <name>` (#2732): who holds, or releases, the work lease. */
   holder?: string;
-  /** `chant run <op> --work <id>` (#2748): the work item an Op with a work lease runs under. */
+  /** `chant run <op> --work <id>` (#2748): the work item an Op with a work lease runs under. `chant workspace check --changes --work <id>` (#2773): the work item in hand. */
   work?: string;
   /** `chant workspace work claim|renew <id> --ttl <seconds|duration>` (#2732): how long the lease lasts unless renewed. */
   ttl?: string;
