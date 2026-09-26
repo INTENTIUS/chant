@@ -25,9 +25,14 @@
  * local site (the box's service), the write-scope policy and the
  * contract-sizing rules, and `chud dev` / `chud design` (hud on the box).
  *
- * chud's steps after the ship gate have no chant home yet for an app shipped
- * as a source tree (#2782). The release Op stops at the gate, and the
- * rollback Op is deleted; the plan says so.
+ * chud's steps after the ship gate move to chant's (#2782): the release Op
+ * archives the app member (`sourceArchive`), plans the release
+ * (`releasePlan`), gates on the plan's digest, ships the approved tree to the
+ * Fly Machine with the fly lexicon's `flyRelease` (each migration once per
+ * environment, under a receipt), and records it in the release ledger with
+ * its plan (`releaseRecord`). Signing the archive (#2515) and the rollback Op
+ * (#2800) have no chant home yet: the rollback Op is deleted, and the plan
+ * says so.
  *
  * Files are matched by what they hold, not by the template version the scope
  * is pinned at, so a repo from any chud template commit or the studio kit's
@@ -57,12 +62,15 @@ const CHUD_IMPORT = /(?:\bfrom\s*|\bimport\s*\(?\s*|\brequire\s*\(\s*)["']@inten
 
 /** The studio kit's template, where the runtime half of chud's template lives. */
 const KIT = "the studio kit (arugula-salad/studio, template/)";
-const SHIP_ISSUE = "INTENTIUS/chant#2782";
+/** Signing a source archive, and checking the signature before the Machine runs it. */
+const SIGN_ISSUE = "INTENTIUS/chant#2515";
+/** Rolling a Fly site shipped by the release Op back to its previous release. */
+const ROLLBACK_ISSUE = "INTENTIUS/chant#2800";
 
 /** Where each chud-only file of the delivery project went, relative to the delivery member. */
 const DELETED: Array<{ path: string; why: string; notMoved?: NotMoved }> = [
   { path: "ops/dispatch.op.ts", why: "the dispatch Op is the kit's runtime (ws-057)", notMoved: { what: "the dispatch Op (ops/dispatch.op.ts) and `chud factory run`", where: `${KIT}: the runner and its dispatch Op (arugula-salad/studio#47); the dispatcher is a Steward (ws-057), and work leases are chant's (INTENTIUS/chant#2762)` } },
-  { path: "ops/rollback.op.ts", why: "chud's site rollback has no chant home yet", notMoved: { what: "the rollback Op (ops/rollback.op.ts)", where: `${SHIP_ISSUE}: \`chant components rollback\` once a release ships through chant` } },
+  { path: "ops/rollback.op.ts", why: "chud's site rollback has no chant home yet", notMoved: { what: "the rollback Op (ops/rollback.op.ts)", where: `${ROLLBACK_ISSUE}: \`chant components rollback\` over a release the release Op shipped` } },
   { path: "ops/upgrade.op.ts", why: "replaced by chant workspace upgrade" },
   { path: "ops/upgrade.mjs", why: "replaced by chant workspace upgrade" },
   { path: "ops/site.mjs", why: "npm run check runs the app's tests itself", notMoved: { what: "the approved contracts' checks in `npm run check` and the release's Check phase, and the evidence they record", where: `${KIT}: the development model's checks and evidence records` } },
@@ -107,53 +115,118 @@ export const recordKind = {
 
 function releaseOp(pointsRel: string, appRel: string): string {
   return `/**
- * Release: check what is committed on HEAD, ask the ship-skip decision point,
- * and stop at the ship gate.
+ * Release: check what is committed on HEAD, plan it, stop at the ship gate,
+ * and once the plan is approved, ship it to the Fly site and record it.
  *
  * \`chant workspace upgrade\` wrote this from chud's release Op, with chant's
  * own parts in place of the chud lexicon (its migration ${CHUD_LEXICON_EXIT}):
  *
  * - Check runs the app's own tests (\`appTest\` in chant.config.ts's
  *   buildParams) in the app member.
+ * - Build archives the app member as committed on HEAD (\`sourceArchive\`,
+ *   \`git archive\`: the same commit is always the same bytes, named by their
+ *   sha256), and builds the Fly app's requests (\`npm run build:fly\`, from
+ *   deploy/fly.ts and deploy/fly-machine.ts, into dist/fly.json).
  * - Plan asks the ship-skip point, declared in decisions/points.json at the
- *   workspace root, through the systemone lexicon's \`decide\` activity. Its
- *   table says no to every release until someone adds a row, and each answer
- *   is a record in answers/. An open question stops the run \`waiting\` until a
- *   person answers it (\`chant workspace points --open\`).
- * - The \`ship\` gate takes its approver count from the point's quorum, and
- *   puts every approval to the Cedar policy in decisions/ship-skip.cedar.ts,
- *   with the point's answer and the decider that gave it. The policy runs
+ *   workspace root, through the systemone lexicon's \`decide\` activity, and
+ *   writes the release plan: the archive's digest, the commit, and the
+ *   point's answer, named by the sha256 of its own content. Its table says no
+ *   to every release until someone adds a row, and each answer is a record in
+ *   answers/. An open question stops the run \`waiting\` until a person answers
+ *   it (\`chant workspace points --open\`).
+ * - The \`ship\` gate approves that plan's digest: \`chant approve release ship
+ *   --plan <digest>\`. Its approver count is the point's quorum, and every
+ *   approval is put to the Cedar policy in decisions/ship-skip.cedar.ts, with
+ *   the point's answer and the decider that gave it. The policy runs
  *   \`log-only\`: its decision is recorded on each approval, and only people
- *   pass the gate.
+ *   pass the gate. A run whose plan differs (another commit, another answer)
+ *   is refused by name.
+ * - Ship runs the fly lexicon's \`fly-release\` steps for the \`fly\`
+ *   environment: the archive is read only if its bytes still hash to the
+ *   planned digest, and its files go onto the declared Machine under
+ *   /srv/app with \`appStart\` as its command; each migration in the app's
+ *   migrations folder runs once per environment inside the Machine, under a
+ *   receipt in chant's lifecycle receipt store; then the Machine must be
+ *   started with this release (and healthy at \`chud.sites.fly.url\` when set).
+ *   A failure after the Machine changed puts back what it served before.
+ * - Record appends the release to the \`fly\` release ledger with its plan
+ *   (ws-055), and the gate's approver.
  *
- * Nothing ships yet. chud's steps after the gate (upload, sign, verify,
- * migrate, start, verify, record) and its rollback Op have no chant home for
- * an app shipped as a source tree: ${SHIP_ISSUE}. The supply chain chant
- * runs today is the app component's (deploy/app.component.ts). The local site
- * is the studio kit's box service (arugula-salad/studio, template/), and so
- * are the approved contracts' checks and their evidence.
+ * A retry is safe: the same commit plans the same digest, so its approval
+ * holds; the Machine already serving it is left as it is, every migration's
+ * receipt matches, and the ledger is written once.
+ *
+ * Not yet chant's: signing the archive and checking the signature before the
+ * Machine runs it (${SIGN_ISSUE}), and rolling the site back to the previous
+ * release (${ROLLBACK_ISSUE}). The local site is the studio kit's box service
+ * (arugula-salad/studio, template/), and so are the approved contracts'
+ * checks and their evidence.
  */
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { Op, phase, gate, shell } from "@intentius/chant/op";
+import { Op, phase, gate, shell, build, sourceArchive, releasePlan, releaseRecord } from "@intentius/chant/op";
 import { parsePoints, quorumOf } from "@intentius/chant/workspace/points";
 import { decide } from "@intentius/chant-lexicon-systemone";
+import { flyRelease } from "@intentius/chant-lexicon-fly";
 import project from "../chant.config.ts";
 import { shipSkipPolicy } from "../decisions/ship-skip.cedar.ts";
 
+/** The environment this Op ships to: the Fly app deploy/fly.ts declares. */
+const ENV = "fly";
+/** Where the release's files go on the Machine. */
+const INTO = "/srv/app";
+const params = project.buildParams;
+/** The Fly site's public URL, when chant.config.ts gives one: the release is verified at its health endpoint too. */
+const siteUrl = (project as { chud?: { sites?: { fly?: { url?: string } } } }).chud?.sites?.fly?.url;
+
 const pointsFile = fileURLToPath(new URL(${JSON.stringify(pointsRel)}, import.meta.url));
 const shipSkipPoint = parsePoints(readFileSync(pointsFile, "utf-8"), pointsFile)["ship-skip"];
+
+/** The migrations committed on HEAD, in order, each with the sha256 of its content. */
+function migrations() {
+  const appDir = fileURLToPath(new URL(${JSON.stringify(`../${appRel}/`)}, import.meta.url));
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: appDir, encoding: "utf-8" });
+  const dir = params.appMigrations.default;
+  return git("ls-tree", "--name-only", "HEAD", \`\${dir}/\`)
+    .split("\\n")
+    .filter((path) => path.endsWith(".sql"))
+    .sort()
+    .map((path) => {
+      const name = path.slice(dir.length + 1);
+      return {
+        name,
+        command: \`cd \${INTO} && \${params.appMigrate.default} \${name}\`,
+        sha: \`sha256:\${createHash("sha256").update(git("show", \`HEAD:./\${path}\`)).digest("hex")}\`,
+      };
+    });
+}
+
 const shipSkip = decide("ship-skip", { id: "shipSkip" });
+const archive = sourceArchive(${JSON.stringify(appRel)}, { id: "archive" });
+const plan = releasePlan({
+  id: "plan",
+  component: "app",
+  env: ENV,
+  gitSha: archive.out.commit,
+  content: {
+    artifact: { kind: "source-tree", digest: archive.out.digest, dir: archive.out.dir },
+    shipSkip: { answer: shipSkip.out.answer, decider: shipSkip.out.decider },
+  },
+});
 
 export default Op({
   name: "release",
-  overview: \`Check HEAD of \${project.buildParams.name.default} and stop at the ship gate.\`,
+  overview: \`Check HEAD of \${params.name.default}, plan it, and ship it to Fly once the plan is approved.\`,
   phases: [
-    phase("Check", [shell(project.buildParams.appTest.default, { cwd: ${JSON.stringify(appRel)} })]),
-    phase("Plan", [shipSkip]),
+    phase("Check", [shell(params.appTest.default, { cwd: ${JSON.stringify(appRel)} })]),
+    phase("Build", [archive, build(".", { script: "build:fly" })]),
+    phase("Plan", [shipSkip, plan]),
     phase("Gate", [
       gate("ship", {
-        description: \`Ship \${project.buildParams.name.default}\`,
+        plan: plan.out.digest,
+        description: \`Ship \${params.name.default} to \${ENV}\`,
         approval: {
           quorum: quorumOf(shipSkipPoint),
           policy: shipSkipPolicy,
@@ -162,6 +235,19 @@ export default Op({
         },
       }),
     ]),
+    phase("Ship", [
+      flyRelease({
+        environment: ENV,
+        component: "app",
+        plan: "dist/fly.json",
+        digest: plan.out.digest,
+        gitSha: archive.out.commit,
+        source: { archive: archive.out.archive, digest: archive.out.digest, dir: archive.out.dir, into: INTO, start: params.appStart.default },
+        migrations: migrations(),
+        verify: { url: siteUrl, healthPath: params.appHealth.default },
+      }),
+    ]),
+    phase("Record", [releaseRecord({ plan: plan.out.file, digest: plan.out.digest, approval: { op: "release", gate: "ship" } })]),
   ],
 });
 `;
@@ -177,11 +263,13 @@ function appComponent(appRel: string): string {
  *
  * \`chant workspace upgrade\` wrote this from chud's app component (its
  * migration ${CHUD_LEXICON_EXIT}). chud built the app into an archive, signed
- * it and shipped it to a site with the chud lexicon's steps. chant has no home
- * for those yet, for an app shipped as a source tree (${SHIP_ISSUE}), so
- * the component publishes nothing and records no release. The local site is
- * the studio kit's box service (arugula-salad/studio, template/), and the Fly
- * site's resources stay in fly.ts and fly-machine.ts.
+ * it and shipped it to a site with the chud lexicon's steps. The release Op
+ * (ops/release.op.ts) does the shipping now: it archives the app member,
+ * plans and gates the release, and puts it on the Fly Machine with the fly
+ * lexicon's \`fly-release\` steps, so this component publishes nothing and
+ * records no release. The local site is the studio kit's box service
+ * (arugula-salad/studio, template/), and the Fly site's resources stay in
+ * fly.ts and fly-machine.ts.
  */
 import { phase, type Component } from "@intentius/chant/components/component";
 import { generateSbom, scanVulnerabilities, vulnGate } from "@intentius/chant/components/builders";
@@ -272,7 +360,7 @@ function configEdits(): Edit[] {
     },
     {
       find: "  // Where releases ship: prod, the local site under .chud/site, and fly, a Fly\n  // app (deploy/fly.ts). `npm run release` ships to prod; `npm run release --\n  // --env fly` to fly, with FLY_API_TOKEN set (FLY_FLAPS_BASE_URL points it at\n  // mudflaps, the Machines API emulator, instead of Fly).\n",
-      replace: `  // The environments: prod, the local site (the studio kit's box), and fly, the\n  // Fly app (deploy/fly.ts). \`npm run release\` stops at the ship gate until\n  // shipping to them has a chant home (${SHIP_ISSUE}).\n`,
+      replace: "  // The environments: prod, the local site (the studio kit's box), and fly, the\n  // Fly app (deploy/fly.ts). `npm run release` ships to fly once its plan is\n  // approved (ops/release.op.ts), with FLY_API_TOKEN set (FLY_FLAPS_BASE_URL\n  // points it at mudflaps, the Machines API emulator, instead of Fly).\n",
     },
   ];
 }
@@ -304,14 +392,14 @@ const FLY_EDITS: Edit[] = [
   },
   {
     find: /\(@intentius\/chud-runtime's fly-site\.mjs\)/g,
-    replace: `(chud's fly-site.mjs did; its chant home is ${SHIP_ISSUE})`,
+    replace: "(the release Op's Ship phase, ops/release.op.ts)",
   },
 ];
 
 const FLY_MACHINE_EDITS: Edit[] = [
   {
     find: /\(@intentius\/chud-runtime's fly-site\.mjs\)/g,
-    replace: `(chud's fly-site.mjs did; its chant home is ${SHIP_ISSUE})`,
+    replace: "(the release Op's Ship phase, ops/release.op.ts)",
   },
 ];
 
@@ -424,6 +512,8 @@ function fixPackageJson(text: string, chantVersion: string, appRel: string): { t
       if (move.notMoved) notMoved.push(move.notMoved);
     }
     if (scripts.check === "node ops/site.mjs ci") scripts.check = `npm --prefix ${appRel} test --silent`;
+    // The release Op's Build phase writes the Fly app's requests with it.
+    if (scripts.release === "chant run release" && !("build:fly" in scripts)) scripts["build:fly"] = "chant build deploy --lexicon fly -o dist/fly.json";
     for (const [name, cmd] of Object.entries(scripts)) {
       if (/--on chud\b/.test(cmd)) scripts[name] = cmd.replace(/\s*--on chud\b/g, "");
       else if (/(^|[;&|]\s*)chud\s/.test(cmd)) notMoved.push({ what: `\`npm run ${name}\` (${cmd})`, where: `${KIT}: the chud CLI is not installed once the runtime is gone` });
@@ -636,8 +726,8 @@ function planExit(ctx: ChantMigrationContext): ChantMigrationPlan | null {
 
     // The release Op and the app component.
     if (readText(dir, at("ops/release.op.ts")) !== undefined) {
-      write(at("ops/release.op.ts"), releaseOp(pointsRel, appRel), "chant's release Op: Check, the ship-skip point through decide, and the ship gate");
-      notMoved.push({ what: "the release's steps after the ship gate (upload, sign, verify, migrate, start, verify, record) and its restore on failure", where: SHIP_ISSUE });
+      write(at("ops/release.op.ts"), releaseOp(pointsRel, appRel), "chant's release Op: Check, Build, Plan with the ship-skip point through decide, the ship gate on the plan's digest, Ship to Fly, and Record");
+      notMoved.push({ what: "signing the release archive, and checking the signature before the Machine runs it (chud's release-sign and release-verify)", where: `${SIGN_ISSUE}: blob signing for a source archive` });
     }
     if (readText(dir, at("deploy/app.component.ts")) !== undefined) {
       write(at("deploy/app.component.ts"), appComponent(appRel), "the app component on chant's supply-chain verbs (SBOM, scan, vuln-gate)");

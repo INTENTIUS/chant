@@ -139,7 +139,24 @@ export interface FlyMachineReleaseArgs extends FlapsTarget {
   image?: string;
   /** Env to add to the declared Machine's env. */
   env?: Record<string, string>;
+  /**
+   * Files the release puts on the Machine, added to the declared ones: a
+   * source release's tree (#2782). A declared file at the same path is
+   * replaced.
+   */
+  files?: MachineFile[];
+  /** The command the Machine starts, in place of the image's: an argv, or a string run with `sh -c`. */
+  cmd?: string[] | string;
   wait?: WaitOpts;
+}
+
+/** One file a Machine's config carries, as the Machines API takes it. */
+export interface MachineFile {
+  guest_path: string;
+  /** The file's bytes, base64. */
+  raw_value: string;
+  /** Unix mode, such as 0o755 for an executable. */
+  mode?: number;
 }
 
 export interface FlyMachineReleaseResult {
@@ -180,11 +197,16 @@ export async function flyMachineRelease(
   if (!previousDigest) delete release.previousDigest;
 
   const declared = (target.request.body.config ?? {}) as MachineConfig;
+  const declaredFiles = (declared.files as MachineFile[] | undefined) ?? [];
+  const releasePaths = new Set((args.files ?? []).map((f) => f.guest_path));
+  const cmd = typeof args.cmd === "string" ? ["sh", "-c", args.cmd] : args.cmd;
   const config = withReleaseMetadata(
     {
       ...declared,
       ...(args.image ? { image: args.image } : {}),
       ...(args.env ? { env: { ...(declared.env ?? {}), ...args.env } } : {}),
+      ...(args.files ? { files: [...declaredFiles.filter((f) => !releasePaths.has(f.guest_path)), ...args.files] } : {}),
+      ...(cmd ? { init: { ...((declared.init as Record<string, unknown> | undefined) ?? {}), cmd } } : {}),
     },
     release,
   );

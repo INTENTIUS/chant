@@ -1,5 +1,7 @@
 import { describe, test, expect } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { archiveSourceTree } from "@intentius/chant/op/source-archive";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach } from "vitest";
@@ -240,5 +242,47 @@ describe("components status --live over a Fly release", () => {
       ref: { name: "fly-migration:shop/001.sql", effect: "fly-migrate", flavor: "hash" },
       expectation: "sha256:1",
     });
+  });
+});
+
+describe("fly-release with a source tree (#2782)", () => {
+  function archived() {
+    const repo = join(dir, "repo");
+    const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, stdio: "pipe" });
+    mkdirSync(join(repo, "app/migrations"), { recursive: true });
+    writeFileSync(join(repo, "app/server.js"), "console.log('serving');\n");
+    writeFileSync(join(repo, "app/migrations/0001_init.sql"), "CREATE TABLE t (id INTEGER);\n");
+    git("init", "-q", "-b", "main");
+    git("-c", "user.email=t@t", "-c", "user.name=t", "add", "-A");
+    git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "app");
+    return archiveSourceTree({ dir: "app", cwd: repo });
+  }
+
+  test("puts the approved tree on the Machine with its start command, and a retry changes nothing", async () => {
+    const s = setup();
+    const a = archived();
+    const source = { archive: a.archive, digest: a.digest, dir: a.dir, start: "node server.js" };
+    const first = await s.release.run(CTX, input("sha256:aaaaaaaaaaaa", { source }));
+    const m = s.fake.machine("shop", "web")!;
+    const files = m.config.files as Array<{ guest_path: string; raw_value: string }>;
+    expect(files.map((f) => f.guest_path).sort()).toEqual(["/srv/app/migrations/0001_init.sql", "/srv/app/server.js"]);
+    expect(Buffer.from(files.find((f) => f.guest_path === "/srv/app/server.js")!.raw_value, "base64").toString()).toBe("console.log('serving');\n");
+    expect(m.config.init).toEqual({ cmd: ["sh", "-c", "cd /srv/app && exec node server.js"] });
+    expect(m.config.image).toBe("shop:declared");
+    expect(first.digest).toBe("sha256:aaaaaaaaaaaa");
+
+    const calls = s.fake.calls.length;
+    await s.release.run(CTX, input("sha256:aaaaaaaaaaaa", { source }));
+    // The same release again: the Machine's config is unchanged, so nothing is updated.
+    expect(s.fake.calls.slice(calls).filter((c) => c.startsWith("POST") && !c.endsWith("/wait"))).toEqual([]);
+  });
+
+  test("an archive that is not the approved digest is refused before the Machine changes", async () => {
+    const s = setup();
+    const a = archived();
+    await expect(
+      s.release.run(CTX, input("sha256:aaaaaaaaaaaa", { source: { archive: a.archive, digest: "sha256:0000", dir: a.dir, start: "node server.js" } })),
+    ).rejects.toThrow(/not the approved sha256:0000/);
+    expect(s.fake.calls.filter((c) => c.startsWith("POST"))).toEqual([]);
   });
 });

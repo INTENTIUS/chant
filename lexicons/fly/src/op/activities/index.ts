@@ -47,10 +47,14 @@ export {
   flyMachineVerify,
   flyMachineRestore,
 } from "./machine-release";
+// The fly-release capability as an Op step (#2782): a release Op's ship phase.
+export { flyRelease } from "./fly-release-step";
+export type { FlyReleaseArgs, FlyReleaseResult } from "./fly-release-step";
 export type {
   MachineRelease,
   FlyMachineReleaseArgs,
   FlyMachineReleaseResult,
+  MachineFile,
   FlyMachineExecArgs,
   FlyMachineExecResult,
   FlyMachineStateArgs,

@@ -49,6 +49,7 @@ import type {
   FlyMachineVerifyArgs,
   FlyMachineRestoreArgs,
 } from "./activities/machine-release";
+import type { FlyReleaseArgs } from "./activities/fly-release-step";
 
 type StepOpts = { profile?: ActivityStep["profile"] };
 
@@ -152,3 +153,11 @@ export const flyMachineStop = spriteStep<FlyMachineStateArgs>("flyMachineStop", 
 export const flyMachineVerify = spriteStep<FlyMachineVerifyArgs>("flyMachineVerify", "longInfra");
 /** Put a recorded Machine config back (restore, rollback). Defaults to the `longInfra` profile. */
 export const flyMachineRestore = spriteStep<FlyMachineRestoreArgs>("flyMachineRestore", "longInfra");
+/**
+ * Ship a release to a Fly Machine from an Op (#2782): the `fly-release`
+ * capability's steps (upload and start, each migration once per environment,
+ * verify, restore on failure), for the environment `environment` names. With `source`
+ * it puts an approved source tree on the Machine. Defaults to the `longInfra`
+ * profile.
+ */
+export const flyRelease = spriteStep<FlyReleaseArgs>("flyRelease", "longInfra");

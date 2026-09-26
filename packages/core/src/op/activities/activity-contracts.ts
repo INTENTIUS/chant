@@ -232,3 +232,40 @@ export const workEvidenceContract = activityContract(
     acceptance: z.object({ met: z.number(), total: z.number(), criteria: z.array(z.object({ id: z.string(), verification: z.string(), met: z.boolean() })) }),
   }),
 );
+
+/**
+ * The source-release activities (#2782, ./source-release.ts). A release Op
+ * reads `archive.out.digest` into its plan, `plan.out.digest` into its gate
+ * and its ship step, and `plan.out.file` into its record step.
+ */
+export const sourceArchiveContract = activityContract(
+  "sourceArchive",
+  z.strictObject({ path: z.string(), ref: z.string().optional(), out: z.string().optional(), cwd: z.string().optional() }),
+  z.object({ digest: z.string(), archive: z.string(), commit: z.string(), dir: z.string(), files: z.number(), bytes: z.number() }),
+);
+
+export const releasePlanContract = activityContract(
+  "releasePlan",
+  z.strictObject({
+    component: z.string(),
+    env: z.string(),
+    gitSha: z.string(),
+    content: z.record(z.string(), z.unknown()),
+    dir: z.string().optional(),
+    cwd: z.string().optional(),
+  }),
+  z.object({ digest: z.string(), file: z.string(), gitSha: z.string() }),
+);
+
+export const releaseRecordContract = activityContract(
+  "releaseRecord",
+  z.strictObject({
+    plan: z.string(),
+    digest: z.string().optional(),
+    approval: z.strictObject({ op: z.string(), gate: z.string() }).optional(),
+    actor: z.string().optional(),
+    runId: z.string().optional(),
+    cwd: z.string().optional(),
+  }),
+  z.object({ recorded: z.boolean(), digest: z.string(), env: z.string(), component: z.string(), approver: z.string().nullable() }),
+);

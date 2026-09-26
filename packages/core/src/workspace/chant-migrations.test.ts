@@ -7,11 +7,14 @@
  * jhgaylor/chud@<ref>#template` did.
  *
  * The last test builds, lints and runs the migrated delivery project with
- * this checkout's chant, up to the ship gate.
+ * this checkout's chant: to the ship gate, then, once the plan is approved,
+ * through Ship to the fly lexicon's in-memory Machines API and Record (#2782).
  */
 
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -27,6 +30,8 @@ import { readLock } from "./lineage-lock";
 import { stageUpgrade, type ChantRunner } from "./lineage-upgrade";
 import { upgradeCommand } from "./lineage-upgrade-cli";
 import { parsePoints } from "./points";
+import { readReleaseLedger } from "../lifecycle/release-ledger";
+import { readReleasePlan } from "../lifecycle/plan-ledger";
 
 const ENV = { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" };
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
@@ -137,8 +142,9 @@ describe.each(["dir", "git"] as const)("chud-lexicon-exit, from a %s source", (f
     expect(out).toContain("write: delivery/ops/release.op.ts");
     expect(out).toContain("write: decisions/points.json");
     expect(out).toMatch(/not moved: the dispatch Op .* -> the studio kit \(arugula-salad\/studio, template\/\)/);
-    expect(out).toContain("not moved: the release's steps after the ship gate");
-    expect(out).toContain("INTENTIUS/chant#2782");
+    expect(out).toMatch(/not moved: signing the release archive.* -> INTENTIUS\/chant#2515/);
+    expect(out).toMatch(/not moved: the rollback Op \(ops\/rollback\.op\.ts\) -> INTENTIUS\/chant#2800/);
+    expect(out).not.toContain("not moved: the release's steps after the ship gate");
     expect(read(proj, "delivery/package.json")).toContain("@intentius/chud-runtime");
     expect(git(proj, ["status", "--porcelain"])).toBe("");
   });
@@ -160,6 +166,9 @@ describe.each(["dir", "git"] as const)("chud-lexicon-exit, from a %s source", (f
     expect(pkg.dependencies["@intentius/chant-lexicon-fly"]).toBe(`^${readerVersion()}`);
     expect(pkg.dependencies["@intentius/chant-lexicon-systemone"]).toBe(`^${readerVersion()}`);
     expect(pkg.scripts.release).toBe("chant run release");
+    expect(pkg.scripts["build:fly"]).toBe("chant build deploy --lexicon fly -o dist/fly.json");
+    const release = read(proj, "delivery/ops/release.op.ts");
+    for (const step of ["sourceArchive(", "releasePlan(", "plan: plan.out.digest", "flyRelease(", "releaseRecord("]) expect(release).toContain(step);
     expect(pkg.scripts.check).toBe("npm --prefix ../app test --silent");
     expect(pkg.scripts).not.toHaveProperty("dispatch");
     expect(Object.values(pkg.scripts).join("\n")).not.toMatch(/--on chud|\bchud (dev|design)\b/);
@@ -276,12 +285,45 @@ describe("convertPoints", () => {
 });
 
 describe("the migrated delivery project, with this checkout's chant", () => {
-  function chant(cwd: string, ...args: string[]) {
-    return spawnSync(
-      process.execPath,
-      ["--import", pathToFileURL(join(repoRoot, "node_modules/tsx/dist/loader.mjs")).href, join(repoRoot, "packages/core/src/cli/main.ts"), ...args],
-      { cwd, encoding: "utf-8", timeout: 120_000, env: { ...process.env, NO_COLOR: "1" } },
-    );
+  /** Run this checkout's chant without blocking the event loop, so the in-process flaps below can answer it. */
+  function chant(cwd: string, env: Record<string, string>, ...args: string[]): Promise<{ status: number | null; out: string }> {
+    return new Promise((done) => {
+      const child = spawn(
+        process.execPath,
+        ["--import", pathToFileURL(join(repoRoot, "node_modules/tsx/dist/loader.mjs")).href, join(repoRoot, "packages/core/src/cli/main.ts"), ...args],
+        { cwd, env: { ...process.env, NO_COLOR: "1", ...env } },
+      );
+      let out = "";
+      child.stdout.on("data", (d) => (out += d));
+      child.stderr.on("data", (d) => (out += d));
+      const timer = setTimeout(() => child.kill(), 240_000);
+      child.on("close", (status) => {
+        clearTimeout(timer);
+        done({ status, out });
+      });
+    });
+  }
+
+  /** The fly lexicon's in-memory Machines API, served on a local port. */
+  async function flaps(): Promise<{ endpoint: string; fake: { execs: Array<{ command: string[] }>; machines: Map<string, Array<{ name: string; config: Record<string, unknown> & { metadata?: Record<string, string> } }>> }; close(): Promise<void> }> {
+    const { createMachinesFake } = (await import(pathToFileURL(join(repoRoot, "lexicons/fly/src/op/activities/machines-fake.ts")).href)) as {
+      createMachinesFake(): { http(method: string, url: string, body?: unknown): Promise<{ status: number; text: string }> } & Record<string, never>;
+    };
+    const fake = createMachinesFake();
+    const server = createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on("data", (c: Buffer) => chunks.push(c));
+      req.on("end", () => {
+        const text = Buffer.concat(chunks).toString("utf-8");
+        void fake.http(req.method ?? "GET", `http://flaps${req.url}`, text ? JSON.parse(text) : undefined).then((r) => {
+          res.writeHead(r.status, { "content-type": "application/json" });
+          res.end(r.text);
+        });
+      });
+    });
+    await new Promise<void>((ok) => server.listen(0, "127.0.0.1", ok));
+    const { port } = server.address() as AddressInfo;
+    return { endpoint: `http://127.0.0.1:${port}`, fake: fake as never, close: () => new Promise((ok) => server.close(() => ok())) };
   }
 
   beforeEach(async () => {
@@ -290,27 +332,78 @@ describe("the migrated delivery project, with this checkout's chant", () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
   });
 
-  test("builds, lints, rebuilds its CI, and runs the release Op to the ship gate", { timeout: 300_000 }, async () => {
+  test("builds, lints, rebuilds its CI, stops at the ship gate, and once its plan is approved ships it to Fly and records it, once", { timeout: 1_200_000 }, async () => {
     await upgrade();
     const delivery = join(proj, "delivery");
     symlinkSync(join(repoRoot, "node_modules"), join(delivery, "node_modules"));
     writeFileSync(join(proj, ".git/info/exclude"), "node_modules\n");
+    const fly = await flaps();
+    const env = { FLY_FLAPS_BASE_URL: fly.endpoint, FLY_API_TOKEN: "test", CHUD_FLY_APP_SECRET: "s3cret", GITHUB_ACTOR: "releaser" };
+    try {
+      const build = await chant(delivery, env, "build", "-o", join(root, "build.out"));
+      expect(build.status, build.out).toBe(0);
+      const lint = await chant(delivery, env, "lint");
+      expect(lint.status, lint.out).toBe(0);
+      // `npm run ci:check`: the committed workflow is what ci/ci.ts builds.
+      const ci = await chant(delivery, env, "build", "ci", "--lexicon", "github", "-o", join(root, "ci.yml"));
+      expect(ci.status, ci.out).toBe(0);
+      expect(read(root, "ci.yml")).toBe(read(proj, ".github/workflows/ci.yml"));
 
-    const build = chant(delivery, "build", "-o", join(root, "build.out"));
-    expect(build.status, build.stderr).toBe(0);
-    const lint = chant(delivery, "lint");
-    expect(lint.status, lint.stdout + lint.stderr).toBe(0);
-    // `npm run ci:check`: the committed workflow is what ci/ci.ts builds.
-    const ci = chant(delivery, "build", "ci", "--lexicon", "github", "-o", join(root, "ci.yml"));
-    expect(ci.status, ci.stderr).toBe(0);
-    expect(read(root, "ci.yml")).toBe(read(proj, ".github/workflows/ci.yml"));
+      // Check (the app's tests), Build, Plan with the ship-skip point through decide, then the gate on the plan.
+      const gated = await chant(delivery, env, "run", "release");
+      expect(gated.status, gated.out).toBe(3);
+      expect(gated.out).toContain(`gated on "ship"`);
+      const answers = readdirSync(join(proj, "answers")).filter((f) => f.startsWith("ship-skip-"));
+      expect(answers).toHaveLength(1);
+      expect(read(proj, `answers/${answers[0]}`)).toMatch(/state: "answered"\nanswer: false/);
+      const plans = readdirSync(join(delivery, "dist/plans"));
+      expect(plans).toHaveLength(1);
+      const plan = JSON.parse(read(delivery, `dist/plans/${plans[0]}`)) as { digest: string; gitSha: string; artifact: { digest: string } };
+      expect(plan).toMatchObject({ component: "app", env: "fly", gitSha: git(proj, ["rev-parse", "HEAD"]), shipSkip: { answer: false, decider: "table" } });
+      expect(fly.fake.machines.size).toBe(0);
 
-    // Check (the app's tests), the ship-skip point through decide, then the gate.
-    const run = chant(delivery, "run", "release");
-    expect(run.status, run.stdout + run.stderr).toBe(3);
-    expect(run.stdout + run.stderr).toContain(`gated on "ship"`);
-    const answers = readdirSync(join(proj, "answers")).filter((f) => f.startsWith("ship-skip-"));
-    expect(answers).toHaveLength(1);
-    expect(read(proj, `answers/${answers[0]}`)).toMatch(/state: "answered"\nanswer: false/);
+      const approve = await chant(delivery, env, "approve", "release", "ship", "--plan", plan.digest, "--approver", "alice");
+      expect(approve.status, approve.out).toBe(0);
+
+      // Ship: the approved tree on the Machine, the migration run once inside it, then Record.
+      const shipped = await chant(delivery, env, "run", "release");
+      expect(shipped.status, shipped.out).toBe(0);
+      const [machine] = [...fly.fake.machines.values()].flat();
+      expect(machine.name).toBe("web");
+      expect(machine.config.metadata?.["chant-release-digest"]).toBe(plan.digest);
+      expect(machine.config.metadata?.["chant-release-git-sha"]).toBe(plan.gitSha);
+      const files = (machine.config.files as Array<{ guest_path: string; raw_value: string }>).map((f) => f.guest_path);
+      expect(files).toEqual(expect.arrayContaining(["/srv/app/server.js", "/srv/app/migrate.js", "/srv/app/migrations/0001_init.sql"]));
+      expect(Buffer.from((machine.config.files as Array<{ guest_path: string; raw_value: string }>).find((f) => f.guest_path === "/srv/app/server.js")!.raw_value, "base64").toString()).toBe(read(proj, "app/server.js"));
+      expect((machine.config.init as { cmd: string[] }).cmd).toEqual(["sh", "-c", "cd /srv/app && exec node --disable-warning=ExperimentalWarning server.js"]);
+      expect(fly.fake.execs.map((e) => e.command.join(" "))).toEqual(["sh -c cd /srv/app && node --disable-warning=ExperimentalWarning migrate.js 0001_init.sql"]);
+      const ledger = await readReleaseLedger("fly", { cwd: delivery });
+      expect(ledger.records).toHaveLength(1);
+      expect(ledger.records[0]).toMatchObject({ component: "app", env: "fly", digest: plan.digest, gitSha: plan.gitSha, actor: "releaser", approver: "alice" });
+      expect(await readReleasePlan(plan.digest, { cwd: delivery })).toMatchObject({ digest: plan.digest, artifact: { digest: plan.artifact.digest } });
+
+      // A retry: the same plan, still approved; the Machine is left as it is, the migration's receipt matches, and nothing more is recorded.
+      const again = await chant(delivery, env, "run", "release");
+      expect(again.status, again.out).toBe(0);
+      expect(fly.fake.execs).toHaveLength(1);
+      expect((await readReleaseLedger("fly", { cwd: delivery })).records).toHaveLength(1);
+
+      // A new commit is a new tree, so a new plan digest: the approval of the old one does not pass it (#2808).
+      put(proj, "app/server.js", `${read(proj, "app/server.js")}// a change\n`);
+      commit("change the app");
+      const changed = await chant(delivery, env, "run", "release");
+      expect(changed.status, changed.out).toBe(3);
+      expect(changed.out).toContain(`gated on "ship"`);
+      const next = readdirSync(join(delivery, "dist/plans")).filter((f) => f !== plans[0]);
+      expect(next).toHaveLength(1);
+      const nextPlan = JSON.parse(read(delivery, `dist/plans/${next[0]}`)) as { digest: string };
+      expect(nextPlan.digest).not.toBe(plan.digest);
+      expect(changed.out).toContain(nextPlan.digest);
+      expect(machine.config.metadata?.["chant-release-digest"]).toBe(plan.digest);
+      expect(fly.fake.execs).toHaveLength(1);
+      expect((await readReleaseLedger("fly", { cwd: delivery })).records).toHaveLength(1);
+    } finally {
+      await fly.close();
+    }
   });
 });
