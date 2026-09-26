@@ -34,9 +34,9 @@
  */
 
 import { execFileSync, spawn } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { computePlanDigest } from "../lifecycle/plan-digest";
 import type { ResolvedGateApproval } from "../op/gate-approval";
 import { checkLineage, findingKey, type CheckFinding } from "./lineage-check";
@@ -657,6 +657,15 @@ export async function stageUpgrade(options: UpgradeOptions): Promise<StagedUpgra
       if (targets.length > 0) {
         const run = options.runChant ?? spawnChant;
         const namedMember = targets.length > 1 || targets[0] !== ".";
+        // A member that installs its packages in its own directory resolves them from its node_modules, which is not
+        // an ancestor of the staging worktree: link it in from the project (#2847). The patch and its digest are
+        // computed above, so the links never reach them, and dispose() removes them with the worktree.
+        for (const member of targets) {
+          if (member === ".") continue;
+          const from = join(root, member, "node_modules");
+          const to = join(worktreeProject, member, "node_modules");
+          if (existsSync(from) && !existsSync(to) && existsSync(dirname(to))) symlinkSync(from, to, "dir");
+        }
         for (const member of targets) {
           const dir = member === "." ? worktreeProject : join(worktreeProject, member);
           const at = namedMember ? { member } : {};
