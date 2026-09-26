@@ -27,6 +27,7 @@ const BASE = (() => {
 
 const QUESTION = "What is this box for?";
 const CHOICE = { option: "a", reason: "The person who planted the box answered it." };
+const ANSWER = "a chant project with the docker lexicon";
 
 /** A decision record from ref-001: proposed with no choice, or decided by alex. JSON is YAML, so the front matter is JSON. */
 function decision(id: string, state: "proposed" | "decided", constrains: string[]): string {
@@ -94,13 +95,13 @@ describe("the box block's intent", () => {
 describe("a box planted as a question", () => {
   test("a proposed intent reports its question and no answer, and passes the checks", async () => {
     const root = workspace({ intent: "box-001" }, { "decisions/box-001-what-app-is-for.md": decision("box-001", "proposed", ["member:app"]) });
-    expect((await boxOf(root))?.intent).toEqual({ id: "box-001", state: "proposed", question: QUESTION, choice: null, decided_by: null, decided_on: null });
+    expect((await boxOf(root))?.intent).toEqual({ id: "box-001", state: "proposed", question: QUESTION, choice: null, answer: null, decided_by: null, decided_on: null });
     expect(await intentFindings(root)).toEqual([]);
   });
 
   test("a decided intent reports the answer and who gave it, and graph --intent shows it for the box's files", async () => {
     const root = workspace({ intent: "box-001" }, { "decisions/box-001-what-app-is-for.md": decision("box-001", "decided", ["member:app"]) });
-    expect((await boxOf(root))?.intent).toEqual({ id: "box-001", state: "decided", question: QUESTION, choice: CHOICE, decided_by: "alex", decided_on: "2026-09-26" });
+    expect((await boxOf(root))?.intent).toEqual({ id: "box-001", state: "decided", question: QUESTION, choice: CHOICE, answer: ANSWER, decided_by: "alex", decided_on: "2026-09-26" });
     expect(await intentFindings(root)).toEqual([]);
     commitAll(root, "plant the box");
     const { doc } = await intentGraph({ cwd: root, region: "app" });
@@ -108,9 +109,16 @@ describe("a box planted as a question", () => {
     expect(doc.nodes.filter((n) => n.kind === "decision").map((n) => (n.kind === "decision" ? [n.record, n.state, n.decided_by] : []))).toEqual([["box-001", "decided", "alex"]]);
   });
 
+  test("a decided intent whose choice names an option not in options[] reports a null answer", async () => {
+    const data = { ...BASE, id: "box-001", title: "Intent box-001", state: "decided", question: QUESTION, choice: { option: "z", reason: "no such option" }, rejected: [], evidence: [], decided_by: "alex", decided_on: "2026-09-26", constrains: ["member:app"] };
+    const record = `---\n${JSON.stringify(data, null, 2)}\n---\n\n# box-001\n`;
+    const root = workspace({ intent: "box-001" }, { "decisions/box-001-what-app-is-for.md": record });
+    expect((await boxOf(root))?.intent?.answer).toBeNull();
+  });
+
   test("an intent no decision record has fails WSP126, and status reports only its id", async () => {
     const root = workspace({ intent: "box-009" }, { "decisions/box-001-what-app-is-for.md": decision("box-001", "proposed", ["member:app"]) });
-    expect((await boxOf(root))?.intent).toEqual({ id: "box-009", state: null, question: null, choice: null, decided_by: null, decided_on: null });
+    expect((await boxOf(root))?.intent).toEqual({ id: "box-009", state: null, question: null, choice: null, answer: null, decided_by: null, decided_on: null });
     expect(await intentFindings(root)).toEqual([["WSP126", "error", "box-intent-unknown", "app"]]);
     const [d] = (await runDeclarationChecks(root)).diagnostics.filter((x) => x.ruleId === "WSP126");
     expect(d.message).toContain("no record of decisions/decision.kind.mjs has that id");

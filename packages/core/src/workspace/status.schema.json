@@ -364,12 +364,13 @@
     },
     "intent": {
       "type": "object",
-      "required": ["id", "state", "question", "choice", "decided_by", "decided_on"],
+      "required": ["id", "state", "question", "choice", "answer", "decided_by", "decided_on"],
       "properties": {
         "id": { "type": "string", "description": "The record's id, as the box block names it." },
         "state": { "type": ["string", "null"], "description": "The record's state as written, such as proposed or decided, or null when no decision record has the id." },
         "question": { "type": ["string", "null"], "description": "The question the record answers." },
         "choice": { "description": "The record's choice as written, such as { option, reason }, or null while the record is proposed." },
+        "answer": { "type": ["string", "null"], "description": "The chosen option's label, from options[]'s entry whose id is choice.option, or null while no option is chosen (#2855). Added by chant 0.94.0." },
         "decided_by": { "type": ["string", "null"], "description": "Who decided it, or null while it is proposed." },
         "decided_on": { "type": ["string", "null"], "description": "The day it was decided, or null while it is proposed." }
       }

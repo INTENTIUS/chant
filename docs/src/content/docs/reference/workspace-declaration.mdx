@@ -277,7 +277,7 @@ echo '{ "state": "decided", "choice": { "option": "a", "reason": "A review queue
   | chant workspace records amend box-001 --kind decisions/decision.kind.mjs --set -
 ```
 
-[`status --json`](/chant/cli/workspace-status/#boxes) reports the record under the member's `box.intent` as `{ id, state, question, choice, decided_by, decided_on }`, before and after it is decided. `check` fails when no decision record has the id (`WSP126`), and warns when the record's `constrains` has no `member:` entry for the box and no `path:` entry at, above or inside its directory (`WSP127`). With the box constrained, [`graph --intent fern`](/chant/cli/workspace-graph/) shows the decision for the box's files. Set `minReader` to `"0.94.0"` or newer when a box block has an `intent`.
+[`status --json`](/chant/cli/workspace-status/#boxes) reports the record under the member's `box.intent` as `{ id, state, question, choice, answer, decided_by, decided_on }`, before and after it is decided. `answer` is the label of the `options[]` entry `choice.option` names, or `null` while none is chosen ([#2855](https://github.com/INTENTIUS/chant/issues/2855)). `check` fails when no decision record has the id (`WSP126`), and warns when the record's `constrains` has no `member:` entry for the box and no `path:` entry at, above or inside its directory (`WSP127`). With the box constrained, [`graph --intent fern`](/chant/cli/workspace-graph/) shows the decision for the box's files. Set `minReader` to `"0.94.0"` or newer when a box block has an `intent`.
 
 ### Isolation
 

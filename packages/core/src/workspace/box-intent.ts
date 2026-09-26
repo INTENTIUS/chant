@@ -31,6 +31,8 @@ export interface BoxIntent {
   question: string | null;
   /** The record's choice as written, such as `{ option, reason }`, or null while it is proposed. */
   choice: unknown;
+  /** The chosen option's label, from `options[]`, or null while no option is chosen. */
+  answer: string | null;
   decided_by: string | null;
   decided_on: string | null;
 }
@@ -57,9 +59,17 @@ export interface ResolvedBoxIntent {
 
 const str = (v: unknown): string | null => (typeof v === "string" ? v : null);
 
+/** The label of `options[]`'s entry whose id is `choice.option`, or null when no option is chosen. */
+function answerOf(choice: unknown, options: unknown): string | null {
+  const chosen = choice && typeof choice === "object" ? (choice as { option?: unknown }).option : null;
+  if (typeof chosen !== "string" || !Array.isArray(options)) return null;
+  const found = options.find((o): o is { id: unknown; label: unknown } => !!o && typeof o === "object" && (o as { id?: unknown }).id === chosen);
+  return found && typeof found.label === "string" ? found.label : null;
+}
+
 /** The intent of `id` with no record: every field but the id null. */
 export function unresolvedIntent(id: string): BoxIntent {
-  return { id, state: null, question: null, choice: null, decided_by: null, decided_on: null };
+  return { id, state: null, question: null, choice: null, answer: null, decided_by: null, decided_on: null };
 }
 
 /**
@@ -97,6 +107,7 @@ export async function resolveBoxIntents(declaration: Declaration, root: string, 
             state: r.state,
             question: str(data.question),
             choice: data.choice ?? null,
+            answer: answerOf(data.choice, data.options),
             decided_by: str(data.decided_by),
             decided_on: str(data.decided_on),
           },
