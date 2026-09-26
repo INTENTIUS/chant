@@ -33,6 +33,7 @@
  * | WSP121, WSP122 | boxes: no literal credential, every capability brokered (#2726) |
  * | WSP123, WSP124 | box isolation: no shared port, state path or cookie, no literal machine path (#2727) |
  * | WSP125 | boxes: a fountain Box declares the callback token fountain gives its sandbox (#2780) |
+ * | WSP126, WSP127 | box intent: the decision record a box names exists, and constrains the box (#2850) |
  * | WSP131 to WSP133 | diagram artifacts: source and render exist, a recorded source hash still matches (#2764) |
  */
 
@@ -54,6 +55,7 @@ import { RECORD_CHECKS, type RecordFacts } from "./checks/records";
 import { BOX_CHECKS } from "./checks/boxes";
 import { DIAGRAM_CHECKS } from "./checks/diagrams";
 import { loadDeclaredKinds, type DeclaredKind } from "./declared-kinds";
+import { resolveBoxIntents, type ResolvedBoxIntent } from "./box-intent";
 
 /**
  * What the checks beyond the declaration read, gathered from the checkout
@@ -71,6 +73,8 @@ export interface WorkspaceFacts {
   records?: RecordFacts;
   /** The record kinds the declaration names, each loaded, or only looked for under `--at` (#2680). */
   declaredKinds?: readonly DeclaredKind[];
+  /** The decision record each box's intent names, read from the working tree (#2850). */
+  boxIntents?: readonly ResolvedBoxIntent[];
 }
 
 /** What every declaration check reads. */
@@ -469,7 +473,14 @@ export async function runDeclarationChecks(
   // The declared record kinds load from the working tree; under --at only whether each exists at the revision is checked (#2680).
   // A declared work kind's acceptance criteria are counted in the working tree too (#2772).
   const declaredKinds = options.gather === false ? undefined : await loadDeclaredKinds(declaration, tree, root, { load: !options.tree, acceptance: !options.tree });
-  const facts: WorkspaceFacts = { ...gathered, ...(options.records ? { records: options.records } : {}), ...(declaredKinds ? { declaredKinds } : {}) };
+  // A box's intent is read from the working tree's records, so not under --at (#2850).
+  const boxIntents = declaredKinds && !options.tree ? await resolveBoxIntents(declaration, root, declaredKinds) : undefined;
+  const facts: WorkspaceFacts = {
+    ...gathered,
+    ...(options.records ? { records: options.records } : {}),
+    ...(declaredKinds ? { declaredKinds } : {}),
+    ...(boxIntents ? { boxIntents } : {}),
+  };
   const ctx: WorkspaceCheckContext = { declaration, tree, groups, kinds: registry, kindProblems: problems, facts };
   const findings = runWorkspaceChecks(ctx);
   const { active, suppressed } = applyCheckSettings(declaration, findings);

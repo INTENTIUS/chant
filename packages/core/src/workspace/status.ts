@@ -43,6 +43,7 @@ import { readReleasePlan, type ReleasePlan } from "../lifecycle/plan-ledger";
 import { listWorkLeases, type WorkLeaseState } from "../lifecycle/work-lease";
 import { findWorkspaceRoot } from "../project-root";
 import { resolveBoxes, type ResolvedIsolation } from "./box-isolation";
+import { resolveBoxIntents, unresolvedIntent, type BoxIntent } from "./box-intent";
 import { declaredRecordKinds, readDeclaration, readerVersion, WorkspaceReadError, type Declaration, type ErrorLocation, type Member } from "./declaration";
 import type { ReasonCode } from "./reason-codes";
 import { GATE_REASON_CODES, readMemberGates, type GateLedgerReader, type StatusGate, type StatusGateLedger } from "./status-gates";
@@ -178,6 +179,13 @@ export interface StatusBox {
   capabilities: { name: string; broker: string | null; scope: string[] }[];
   /** The box's ports, state paths and cookie names, resolved from its identity, or null when the block declares no host (#2727). */
   isolation: ResolvedIsolation | null;
+  /**
+   * The decision record the block names as the box's intent (#2850): its id,
+   * state, question, choice, decided_by and decided_on. Null when the block
+   * names none; every field but the id is null when no decision record has
+   * the id (WSP126).
+   */
+  intent: BoxIntent | null;
 }
 
 /**
@@ -377,6 +385,7 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
     const now = query.now ?? new Date().toISOString();
 
     const isolation = new Map(resolveBoxes(declaration).map((b) => [b.member.name, b.isolation]));
+    const intents = new Map((await resolveBoxIntents(declaration, found.dir)).map((i) => [i.member, i.record?.intent ?? unresolvedIntent(i.id)]));
     const members: StatusMember[] = [];
     for (const m of declaration.members) {
       const environments: StatusEnvironment[] = [];
@@ -399,6 +408,7 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
             : {
                 capabilities: m.box.capabilities.map((c) => ({ name: c.name, broker: c.broker, scope: [...c.scope] })),
                 isolation: isolation.get(m.name) ?? null,
+                intent: intents.get(m.name) ?? null,
               },
         stewards: stewards.stewards,
         stewardReasons: stewards.reasons,

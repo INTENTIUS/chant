@@ -221,6 +221,8 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `diagram-render-missing` | finding, `check` | `WSP132`: a diagram's render doesn't exist in the tree read. |
 | `diagram-render-drift` | finding, `check` | `WSP133`: a diagram records a `sourceHash`, and the source's bytes now hash to something else. `check` never runs the renderer to find this; it compares the recorded hash against the source in the tree read. |
 | `box-fountain-callback-undeclared` | finding, `check` | `WSP125`: a box member builds a fountain `Box`, whose persistent sandbox fountain gives a callback token scoped to its owner, and its box block doesn't declare `fountain-callback` brokered by `fountain` with scope `owner`. |
+| `box-intent-unknown` | finding, `check` | `WSP126`: a box block names an intent, and no record of a declared kind named `decision` has that id. |
+| `box-intent-unconstrained` | finding, `check` | `WSP127`: the decision record a box names as its intent constrains nothing of the box. |
 | `lock-invalid` | finding, `check` | The lineage lock can't be read. |
 | `manual-step-open` | finding, `check` | A scope in the lineage lock has an open manual step. |
 | `work-kind-missing` | error, `work` | No work kind to find the item in: `--kind` names a kind with no work block, or the declaration names no work kind. |

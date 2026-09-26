@@ -234,6 +234,7 @@ The member that holds the box's declarations carries a `box` block:
 | Field | Required | Value |
 |---|---|---|
 | `capabilities` | no | Each capability the box reaches outside itself. None when omitted. |
+| `intent` | no | The id of the decision record that says what the box is for. See [Intent](#intent). |
 | `capabilities[].name` | yes | The capability, in the kind-name grammar, such as `inference` or `fountain`. A box names each capability once. |
 | `capabilities[].broker` | no | What brokers it, such as `lobby` or `door`. It may be a member of this workspace or a runtime outside it, as a planted box's lobby is. Without it the capability is unbrokered, and `chant workspace check` fails with `WSP122`. |
 | `capabilities[].scope` | no | The parts of the box's own that the broker lets it reach. The broker enforces the words, and chant records them. For Fountain these are `agent` (start conversations with its own agent), `vault` (attach its own vault), and `conversations` and `sandboxes` (its own). |
@@ -244,10 +245,39 @@ The block goes in the workspace declaration and not in the box's TypeScript. `ch
 
 | Command | Uses the box block |
 |---|---|
-| [`chant workspace check`](/chant/cli/workspace-check/#boxes) | reads every file in the member's directory and fails with `WSP121` (`box-credential-declared`) on a literal secret. It fails with `WSP122` (`box-capability-unbrokered`) on a capability that names no broker, and with `WSP125` (`box-fountain-callback-undeclared`) when a member that builds a fountain `Box` doesn't declare `fountain-callback` |
-| [`chant workspace status --json`](/chant/cli/workspace-status/#boxes) | lists each member's `box`, with every capability's `name`, `broker` and `scope` |
+| [`chant workspace check`](/chant/cli/workspace-check/#boxes) | reads every file in the member's directory and fails with `WSP121` (`box-credential-declared`) on a literal secret. It fails with `WSP122` (`box-capability-unbrokered`) on a capability that names no broker, and with `WSP125` (`box-fountain-callback-undeclared`) when a member that builds a fountain `Box` doesn't declare `fountain-callback`. It fails with `WSP126` (`box-intent-unknown`) when the intent names no decision record, and warns with `WSP127` (`box-intent-unconstrained`) when that record doesn't constrain the box |
+| [`chant workspace status --json`](/chant/cli/workspace-status/#boxes) | lists each member's `box`, with every capability's `name`, `broker` and `scope`, and the box's `intent` |
 
 Set `minReader` to `"0.91.0"` or newer when the file has a `box` block, so an older chant reports `reader-too-old` instead of an unknown field.
+
+### Intent
+
+A new box starts as a question, and its first answer is what the box is for ([#2850](https://github.com/INTENTIUS/chant/issues/2850)). That answer is a decision record, so every reader of the box sees the same answer: the intent graph and hud as much as the runtime that plants it. The box block names the record's id in `intent`, and chant looks for it among the records of every declared [record kind](#record-kinds) named `decision`:
+
+```json
+{
+  "name": "fern",
+  "dir": "fern",
+  "kind": "other",
+  "because": "a box planted from a question",
+  "box": { "intent": "box-001" }
+}
+```
+
+The record starts `proposed` with a `null` choice. It holds the question and its options, and its `constrains` names `member:fern`. [`records new`](/chant/cli/workspace-records/#writing-records) writes it from a JSON file of its fields:
+
+```sh
+chant workspace records new decisions/decision.kind.mjs --from box-001.json --prefix box --by alex
+```
+
+The person who answers the question decides the record with `records amend`. The fields given with `--set` set the choice, `decided_by` and `decided_on`, and move the state to `decided`:
+
+```sh
+echo '{ "state": "decided", "choice": { "option": "a", "reason": "A review queue for the design team." }, "decided_by": "sam", "decided_on": "2026-09-26" }' \
+  | chant workspace records amend box-001 --kind decisions/decision.kind.mjs --set -
+```
+
+[`status --json`](/chant/cli/workspace-status/#boxes) reports the record under the member's `box.intent` as `{ id, state, question, choice, decided_by, decided_on }`, before and after it is decided. `check` fails when no decision record has the id (`WSP126`), and warns when the record's `constrains` has no `member:` entry for the box and no `path:` entry at, above or inside its directory (`WSP127`). With the box constrained, [`graph --intent fern`](/chant/cli/workspace-graph/) shows the decision for the box's files. Set `minReader` to `"0.94.0"` or newer when a box block has an `intent`.
 
 ### Isolation
 

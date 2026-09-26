@@ -210,6 +210,12 @@ export interface BoxDeclaration {
   capabilities: BoxCapability[];
   /** The host and slot of the box's isolation, or null when the block declares none (#2727). The values are derived in `boxes.ts`. */
   isolation: BoxIsolationDeclaration | null;
+  /**
+   * The id of the decision record that says what the box is for, or null when
+   * the block names none (#2850). A box starts as a question: the record is
+   * proposed with no choice until the person who answers it decides it.
+   */
+  intent: string | null;
   /** The block's JSON Pointer in the file, for messages. */
   pointer: string;
 }
@@ -713,6 +719,7 @@ function boxOf(raw: unknown, pointer: string): BoxDeclaration | null {
     ports?: Record<string, number>;
     state?: Record<string, string>;
     cookies?: string[];
+    intent?: string;
   };
   return {
     capabilities: (b.capabilities ?? []).map((c, i) => ({ name: c.name, broker: c.broker ?? null, scope: [...(c.scope ?? [])], pointer: `${pointer}/capabilities/${i}` })),
@@ -721,6 +728,7 @@ function boxOf(raw: unknown, pointer: string): BoxDeclaration | null {
       b.host === undefined
         ? null
         : { host: b.host, slot: b.slot!, ports: { ...(b.ports ?? {}) }, state: { ...(b.state ?? {}) }, cookies: [...(b.cookies ?? [])] },
+    intent: b.intent ?? null,
     pointer,
   };
 }
