@@ -425,6 +425,13 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     why: "The `fly-release` and `fly-rollback` capabilities hand an injectable `fetch` to `flyMachineVerify`, so tests reach no network (#2736).",
   },
   {
+    file: "lexicons/fly/src/op/activities/machines-local.ts",
+    primitives: ["node:net"],
+    phase: "emulator",
+    destination: "127.0.0.1 only: a free port for a Machine's service, and a connect that waits for it to listen",
+    why: "The opt-in running mode of the local Machines API runs each started Machine on this host and publishes its service on a loopback port (#2831). Only tests and a local runner reach it.",
+  },
+  {
     file: "lexicons/fly/src/op/activities/sprites.ts",
     primitives: ["fetch"],
     phase: "apply",
