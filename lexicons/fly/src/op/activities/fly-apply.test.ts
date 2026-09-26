@@ -1,4 +1,4 @@
-import { describe, test, expect } from "vitest";
+import { describe, test, expect, vi, afterEach } from "vitest";
 import { describeApplyConformance } from "@intentius/chant-test-utils";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -38,6 +38,7 @@ import {
   withLease,
   waitForMachine,
   flyApply,
+  flyDelete,
   toApplyResult,
   DEFAULT_FLAPS_BASE_URL,
   LEASE_NONCE_HEADER,
@@ -511,6 +512,109 @@ describe("flyApply orders volumes before the machines that mount them", () => {
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
+  });
+});
+
+/**
+ * #2516 — a Secret declared without a value is set outside chant. Posting it
+ * as `{}` on every apply clobbered or no-oped the real secret. Apply checks the
+ * app has it instead, and fails naming it when the app does not.
+ */
+describe("flyApply never sends a value-less secret (#2516)", () => {
+  const planWith = (entry: Record<string, unknown>): string => {
+    const dir = mkdtempSync(join(tmpdir(), "fly-2516-"));
+    const planPath = join(dir, "plan.json");
+    writeFileSync(planPath, JSON.stringify(entry));
+    return planPath;
+  };
+  const app = { endpoint: "/v1/apps", method: "POST", body: { app_name: "demo" } };
+  const valueless = { endpoint: "/v1/apps/demo/secrets/DATABASE_URL", method: "POST", body: {}, applyOnly: true, mustExist: true };
+  const scripted = (liveSecrets: string[], calls: string[]): FlyHttp => async (method, url) => {
+    calls.push(`${method} ${url}`);
+    if (method === "GET" && /\/apps\/demo$/.test(url)) return { status: 200, text: JSON.stringify({ name: "demo" }) };
+    if (method === "GET" && url.endsWith("/secrets")) {
+      return { status: 200, text: JSON.stringify({ secrets: liveSecrets.map((name) => ({ name })) }) };
+    }
+    return { status: 200, text: "{}" };
+  };
+
+  test("an existing value-less secret is checked, never posted, and reports unchanged", async () => {
+    const calls: string[] = [];
+    const out = await flyApply(
+      { planPath: planWith({ app, db: valueless }), endpoint: "http://localhost:4280" },
+      undefined,
+      scripted(["DATABASE_URL"], calls),
+    );
+    expect(out.secrets).toEqual([{ app: "demo", name: "DATABASE_URL", action: "exists" }]);
+    expect(calls.filter((c) => c.includes("/secrets"))).toEqual(["GET http://localhost:4280/v1/apps/demo/secrets"]);
+    expect(toApplyResult(out).applied).toContainEqual({ kind: "secret", name: "DATABASE_URL", action: "unchanged" });
+  });
+
+  test("a missing value-less secret fails with its name and posts nothing", async () => {
+    const calls: string[] = [];
+    await expect(
+      flyApply({ planPath: planWith({ app, db: valueless }), endpoint: "http://localhost:4280" }, undefined, scripted([], calls)),
+    ).rejects.toThrow(/secret demo\/DATABASE_URL is declared without a value.*does not have it/);
+    expect(calls.some((c) => c.startsWith("POST") && c.includes("/secrets"))).toBe(false);
+  });
+
+  test("a plan from before mustExist, with an empty body, is treated the same", async () => {
+    const calls: string[] = [];
+    const legacy = { endpoint: "/v1/apps/demo/secrets/DATABASE_URL", method: "POST", body: {}, applyOnly: true };
+    await flyApply({ planPath: planWith({ app, db: legacy }), endpoint: "http://localhost:4280" }, undefined, scripted(["DATABASE_URL"], calls));
+    expect(calls.some((c) => c.startsWith("POST") && c.includes("/secrets"))).toBe(false);
+  });
+
+  test("a secret with a value is still set", async () => {
+    const calls: string[] = [];
+    const withValue = { endpoint: "/v1/apps/demo/secrets/API_KEY", method: "POST", body: { value: "k" }, applyOnly: true };
+    const out = await flyApply({ planPath: planWith({ app, key: withValue }), endpoint: "http://localhost:4280" }, undefined, scripted([], calls));
+    expect(out.secrets).toEqual([{ app: "demo", name: "API_KEY", action: "set" }]);
+    expect(calls).toContain("POST http://localhost:4280/v1/apps/demo/secrets/API_KEY");
+  });
+});
+
+/**
+ * #2516 — an Op step's stdout is its output, so the applier writes progress to
+ * stderr and leaves stdout clean.
+ */
+describe("flyApply keeps stdout clean (#2516)", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  test("apply, prune and delete write progress to stderr only", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "fly-2516-out-"));
+    const planPath = join(dir, "plan.json");
+    writeFileSync(
+      planPath,
+      JSON.stringify({
+        app: { endpoint: "/v1/apps", method: "POST", body: { app_name: "demo" } },
+        key: { endpoint: "/v1/apps/demo/secrets/API_KEY", method: "POST", body: { value: "k" }, applyOnly: true },
+      }),
+    );
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const stderr: string[] = [];
+    vi.spyOn(process.stderr, "write").mockImplementation((chunk: string | Uint8Array) => {
+      stderr.push(String(chunk));
+      return true;
+    });
+    const http: FlyHttp = async (method, url) => {
+      if (method === "GET" && /\/apps\/demo$/.test(url)) return { status: 404, text: "" };
+      if (method === "GET" && url.endsWith("/secrets")) return { status: 200, text: JSON.stringify({ secrets: [{ name: "OLD" }] }) };
+      if (method === "GET" && /\/(volumes|machines)$/.test(url)) return { status: 200, text: "[]" };
+      return { status: 200, text: "{}" };
+    };
+    try {
+      await flyApply({ planPath, endpoint: "http://localhost:4280", prune: true }, undefined, http);
+      await flyDelete({ planPath, endpoint: "http://localhost:4280" }, undefined, http);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+    expect(stdout).not.toHaveBeenCalled();
+    expect(log).not.toHaveBeenCalled();
+    expect(stderr.join("")).toMatch(/created: app\/demo/);
+    expect(stderr.join("")).toMatch(/set: secret\/demo\/API_KEY/);
+    expect(stderr.join("")).toMatch(/pruned: secret\/demo\/OLD/);
   });
 });
 

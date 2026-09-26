@@ -172,6 +172,21 @@ describe("fly serializer", () => {
       applyOnly: true,
     });
   });
+
+  it("marks a value-less Secret mustExist and takes its name from `name` (#2516)", () => {
+    const entities = stack(
+      ["app", new App({ name: "my-app" })],
+      ["dbUrl", new Secret({ name: "DATABASE_URL" })],
+    );
+    const out = JSON.parse(flySerializer.serialize(entities) as string);
+    expect(out.dbUrl).toEqual({
+      endpoint: "/v1/apps/my-app/secrets/DATABASE_URL",
+      method: "POST",
+      body: {},
+      applyOnly: true,
+      mustExist: true,
+    });
+  });
 });
 
 // ── Pseudo-parameters (Fly.Region / Fly.OrgSlug) ────────────────────────────
