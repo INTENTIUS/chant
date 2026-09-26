@@ -35,6 +35,7 @@
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { normalizeApply, type ApplyResult } from "../../apply";
+import { importLexiconPackage } from "../../lexicon-module";
 
 const execAsync = promisify(exec);
 
@@ -241,7 +242,7 @@ async function loadK8sApplier(): Promise<K8sApplier> {
   const spec = "@intentius/chant-lexicon-k8s/op/activities";
   let mod: { applyManifest?: K8sApplier };
   try {
-    mod = (await import(spec)) as { applyManifest?: K8sApplier };
+    mod = (await importLexiconPackage(spec)) as { applyManifest?: K8sApplier };
   } catch (err) {
     throw new Error(
       `apply target "kubectl" needs @intentius/chant-lexicon-k8s, which could not be loaded ` +
@@ -269,7 +270,7 @@ async function loadAzureApplier(): Promise<AzureApplier> {
   };
   let mod: AzureModule;
   try {
-    mod = (await import(spec)) as AzureModule;
+    mod = (await importLexiconPackage(spec)) as AzureModule;
   } catch (err) {
     throw new Error(
       `apply target "arm" needs @intentius/chant-lexicon-azure, which could not be loaded ` +
@@ -304,7 +305,7 @@ async function loadGcpApplier(): Promise<GcpApplier> {
   };
   let mod: GcpModule;
   try {
-    mod = (await import(spec)) as GcpModule;
+    mod = (await importLexiconPackage(spec)) as GcpModule;
   } catch (err) {
     throw new Error(
       `apply target "gcp" needs @intentius/chant-lexicon-gcp, which could not be loaded ` +
@@ -339,7 +340,7 @@ async function loadFlyApplier(): Promise<FlyApplier> {
   };
   let mod: FlyModule;
   try {
-    mod = (await import(spec)) as FlyModule;
+    mod = (await importLexiconPackage(spec)) as FlyModule;
   } catch (err) {
     throw new Error(
       `apply target "fly" needs @intentius/chant-lexicon-fly, which could not be loaded ` +
@@ -370,7 +371,7 @@ async function loadAwsApplier(): Promise<AwsApplier> {
   const spec = "@intentius/chant-lexicon-aws/op/activities";
   let mod: { awsApply?: AwsApplier };
   try {
-    mod = (await import(spec)) as { awsApply?: AwsApplier };
+    mod = (await importLexiconPackage(spec)) as { awsApply?: AwsApplier };
   } catch (err) {
     throw new Error(
       `apply target "cloudformation" needs @intentius/chant-lexicon-aws, which could not be loaded ` +
@@ -395,7 +396,7 @@ async function loadAwsRollback(): Promise<AwsRollback> {
   const spec = "@intentius/chant-lexicon-aws/op/activities";
   let mod: { rollbackStack?: AwsRollback };
   try {
-    mod = (await import(spec)) as { rollbackStack?: AwsRollback };
+    mod = (await importLexiconPackage(spec)) as { rollbackStack?: AwsRollback };
   } catch (err) {
     throw new Error(
       `rollback for target "cloudformation" needs @intentius/chant-lexicon-aws, which could not be ` +
