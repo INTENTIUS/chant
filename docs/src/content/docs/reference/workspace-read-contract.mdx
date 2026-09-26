@@ -116,6 +116,8 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `record-id-duplicate` | record, `records` | An earlier record in path order has the same id. |
 | `record-supersedes-unknown` | record, `records` | A `supersedes` link names an id no record has. |
 | `record-supersedes-conflict` | record, `records` | A second closed record supersedes one another record already superseded. |
+| `record-remediates-unknown` | record, `records` | A `remediates` link names an id no record has. |
+| `record-remediates-not-closed` | record, `records` | A `remediates` link names a record that isn't closed; a record still open is amended instead. |
 | `session-seal-mismatch` | record, `records` | A closed session's seal is not the digest of its text: the session changed after it closed. |
 | `session-verdict-unknown-record` | record, `records` | A session's verdict names a record that none of the session kind's subject records has. |
 | `asset-drift` | warning, `records` | A file the record pins by hash has changed: its bytes no longer hash to the pinned `sha256`. The record stays valid. |
@@ -256,7 +258,7 @@ Artifact relationships are derived from decisions ([#2549](https://github.com/IN
 
 `chant workspace records` checks every pin against the tree it reads. A pin whose file still hashes to `sha256` is `pinned`. One whose file changed is `drifted` and carries the warning `asset-drift`. One whose file is gone is `missing` and carries `asset-missing`. A matching pin is `stale` and carries `asset-stale` when a record this one supersedes pinned the same hash and the file's last commit is older than the commit that added this record. The decision changed and the artifact did not follow. Each record carries its pins in `assets` and those warnings in `warnings`. A warning never makes the record invalid, and `--current` still lists it: the decision is still what was decided, and the drift asks for it to be looked at again. The paths resolve in `workspaceRoot`, the workspace whose declaration sits nearest above the kind file.
 
-`chant workspace graph --kind <kind file>` fills `records` with the records it reads and adds their links to `links`, after the member links. A superseded record has no link rows.
+`chant workspace graph --kind <kind file>` fills `records` with the records it reads and adds their links to `links`, after the member links. A superseded record has no link rows. Each record also carries `remediatedBy` (#2774), the ids of records whose `remediates` link names it. A remediates link never changes the target's state or `supersededBy`, so a remediated record keeps its link rows and stays current.
 
 | Field | `asset` row | `constrains` row |
 |---|---|---|

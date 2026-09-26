@@ -220,7 +220,7 @@ export async function workspaceGraph(query: GraphQuery): Promise<GraphResult> {
       try {
         const read = await readRecordsFor({ kind: query.kind, cwd: query.cwd, at: query.at });
         const name = read.loaded.kind.name;
-        graph.records = read.result.records.map((r) => ({ kind: name, id: r.id, path: r.path, state: r.state, valid: r.valid, supersededBy: r.supersededBy }));
+        graph.records = read.result.records.map((r) => ({ kind: name, id: r.id, path: r.path, state: r.state, valid: r.valid, supersededBy: r.supersededBy, remediatedBy: r.remediatedBy }));
         graph.links.push(...recordLinkRows(name, read.result.records, read.loaded.kind.constrains?.field, located.tree, declaration.members));
       } catch (err) {
         if (!(err instanceof RecordReadError)) throw err;

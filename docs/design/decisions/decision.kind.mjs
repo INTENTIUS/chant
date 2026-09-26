@@ -15,6 +15,9 @@ export const recordKind = {
   // Sealed once reached (#2555).
   closedStates: ["ratified", "superseded"],
   supersedes: { field: "supersedes", key: "decision" },
+  // A remediates link names a closed decision this one fixes the consequence
+  // of, without replacing it: the target's state never changes (#2774).
+  remediates: { field: "remediates", key: "decision" },
   // A supersedes link takes effect under an equal or stricter approval rule
   // (#2524 D4): from a record ranked above 0 and at least as high as the one it
   // names. A decided record supersedes a decided or proposed one, a ratified

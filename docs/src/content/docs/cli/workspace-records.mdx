@@ -53,6 +53,7 @@ export const recordKind = {
   states: ["proposed", "decided", "ratified", "superseded", "withdrawn"],
   closedStates: ["ratified", "superseded"],
   supersedes: { field: "supersedes", key: "decision" },
+  remediates: { field: "remediates", key: "decision" },
   approval: { proposed: 0, withdrawn: 0, decided: 1, ratified: 2, superseded: 2 },
   pins: { field: "evidence" },
   constrains: { field: "constrains" },
@@ -65,7 +66,7 @@ export const recordKind = {
 
 `location.dir` and `schema.path` are relative to the kind's own directory. Subdirectories are skipped, and a name has to match `location.match` to be read. The `$id` inside the schema must equal `schema.id`.
 
-`approval`, `pins`, `constrains`, `reviews`, `proposedBy` and `session` are optional, and `approval` ranks the states for [supersession](#supersession). `pins.field` names the list whose entries may pin a workspace file (see [Asset pins](#asset-pins)). `constrains.field` names the list of what a record governs, whose `member:<name>` and `path:<path>` entries become the record's links in [`chant workspace graph --kind`](/chant/cli/workspace-graph/#record-links). For `reviews`, `field` is the list of review verdicts and `decider` is the field holding the decider, and with them each record gets a digest and a quorum (see [Reviews and quorum](#reviews-and-quorum)). `proposedBy` works the other end of a record's life: its `field` says where a new record's proposer goes, apart from the decider (see [Naming a proposer](#naming-a-proposer)). chant 0.82.0 and older refuse a kind file that has `approval`, `pins` or `constrains`. `session` makes the kind a [review-session kind](#review-sessions), and chant 0.81.0 and older refuse it too. `source.field` names the object that says where a record came from, and opts the kind in to the [source block](#where-a-proposal-came-from). A chant released before this block existed refuses a kind file that has `source`, as it refuses any key it does not know. `outOfScope.field` names the list of paths a change under the record must leave alone, and the [forward coverage check](/chant/cli/workspace-check/#the-forward-coverage-check) reports a change to one of them as `change-out-of-scope` ([#2773](https://github.com/INTENTIUS/chant/issues/2773)). The decision and work kinds both call that list `out_of_scope`, a key that chant releases before this check refuse.
+`approval`, `pins`, `constrains`, `reviews`, `proposedBy`, `remediates`, `outOfScope` and `session` are optional, and `approval` ranks the states for [supersession](#supersession). `remediates` is shaped like `supersedes` and names a closed record a later one fixes the consequence of, without replacing it (see [Remediation](#remediation)). `pins.field` names the list whose entries may pin a workspace file (see [Asset pins](#asset-pins)). `constrains.field` names the list of what a record governs, whose `member:<name>` and `path:<path>` entries become the record's links in [`chant workspace graph --kind`](/chant/cli/workspace-graph/#record-links). For `reviews`, `field` is the list of review verdicts and `decider` is the field holding the decider, and with them each record gets a digest and a quorum (see [Reviews and quorum](#reviews-and-quorum)). `proposedBy` works the other end of a record's life: its `field` says where a new record's proposer goes, apart from the decider (see [Naming a proposer](#naming-a-proposer)). chant 0.82.0 and older refuse a kind file that has `approval`, `pins` or `constrains`. `session` makes the kind a [review-session kind](#review-sessions), and chant 0.81.0 and older refuse it too. `source.field` names the object that says where a record came from, and opts the kind in to the [source block](#where-a-proposal-came-from). `outOfScope.field` names the list of paths a change under the record must leave alone, and the [forward coverage check](/chant/cli/workspace-check/#the-forward-coverage-check) reports a change to one of them as `change-out-of-scope` ([#2773](https://github.com/INTENTIUS/chant/issues/2773)). The decision and work kinds both call that list `out_of_scope`. A chant released before `remediates`, `outOfScope` or the source block existed refuses a kind file that has any of them, as it refuses any key it does not know.
 
 A kind with a `work` block is a work kind ([#2683](https://github.com/INTENTIUS/chant/issues/2683)), such as the reference workspace's `work/work.kind.mjs`, whose block reads as follows.
 
@@ -95,7 +96,7 @@ A kind file can also use the four options described below, which chant reads fro
 
 ### Kinds without states or supersession
 
-`stateField`, `states` and `closedStates` are given together or not at all. A kind without them has no lifecycle, as chud's evidence and driver closures have none, and each of its records has `state: null`. `supersedes` is optional as well. With `key`, the field is a list of objects, and each one's `key` holds the id it replaces, as in the decision kind. Without `key`, the field holds one id or a list of ids, as a chud contract's `supersedes: "C-001"` does. Each id is a link under the same [supersession](#supersession) rule. A kind that has `supersedes` or `approval` but no states is `kind-invalid`, because a link takes effect only from a closed or ranked state.
+`stateField`, `states` and `closedStates` are given together or not at all. A kind without them has no lifecycle, as chud's evidence and driver closures have none, and each of its records has `state: null`. `supersedes` and `remediates` are optional as well, and both are shaped the same way. With `key`, the field is a list of objects, and each one's `key` holds the target id, as in the decision kind. Without `key`, the field holds one id or a list of ids, as a chud contract's `supersedes: "C-001"` does. Each id in `supersedes` is a link under the [supersession](#supersession) rule, and each id in `remediates` is a link under the [remediation](#remediation) rule. A kind with `approval` or a `supersedes` or `remediates` link needs states too. Without them it is `kind-invalid`, because a link only ever takes effect from a closed or ranked state.
 
 ### Schema references
 
@@ -164,6 +165,14 @@ A work record doesn't get `record-no-evidence`, because an open item has no proo
 An entry is superseded when another entry lists its id under `supersedes` and the link takes effect. It takes effect under an equal or stricter approval rule (D4 of [#2524](https://github.com/INTENTIUS/chant/issues/2524)): the new entry's rank in the kind's `approval` is above 0 and at least the old entry's. For decisions that means a `decided` record supersedes a `decided` or `proposed` one, a `ratified` record supersedes any, and a `proposed` or `withdrawn` record supersedes nothing. A link that doesn't take effect leaves the old entry current, and the new entry gets the warning `record-supersedes-pending`, which leaves it valid. A kind without `approval` keeps the earlier rule: a link takes effect only from an entry in a closed state.
 
 The old file's own `state` field plays no part. Each id can be superseded once, and a second claim that takes effect gets `record-supersedes-conflict`.
+
+## Remediation
+
+A `remediates` link (#2774) names a closed record whose consequence a later one fixes, without replacing it, similar to [Atomic's remediation records](https://docs.atomic.dev/getting-started/atomic-vault) outside chant. It never touches the target's `state` or `supersededBy`, so the target stays exactly as current as it was. The link takes effect only when the target exists and is in one of `closedStates`, with no `approval` rank involved. A target that is `null` or not yet closed gets `record-remediates-not-closed`, since an open record is amended in place rather than remediated. A target no record has gets `record-remediates-unknown`.
+
+Several records may remediate the same one, and each adds its id to that record's `remediatedBy` ([Output](#output)), in path order. `chant workspace check`'s asset checks ([`WSP111` to `WSP113`](/chant/cli/workspace-check/#declaration-checks)) read a remediated record the same as any other current one; remediation never changes what counts as current.
+
+Choose `supersedes` when a later record replaces the decision itself, and `remediates` when the decision still holds and only something downstream of it, such as a pinned artifact, needs a fix.
 
 ## Review sessions
 
@@ -603,6 +612,7 @@ The output is part of the workspace [read contract](/chant/reference/workspace-r
       "valid": true,
       "reasons": [],
       "supersededBy": null,
+      "remediatedBy": [],
       "data": { "id": "ws-003", "title": "Seal scope", "state": "decided" },
       "provenance": { "level": "unattested", "commit": null, "reason": "no signers file (.chant/allowed_signers) at base 5b30a8fb; attestation is off" },
       "assets": [],
@@ -633,7 +643,7 @@ The output is part of the workspace [read contract](/chant/reference/workspace-r
 }
 ```
 
-`data` holds the whole front matter, or the whole object for a JSON kind; the example shortens it. `at` is the full commit id when `--at` is given. `trust` and `provenance` were added within contract 1 by [#2547](https://github.com/INTENTIUS/chant/issues/2547), and `workspaceRoot`, `assets` and `warnings` by [#2549](https://github.com/INTENTIUS/chant/issues/2549). `digest` and `quorum` were added by [#2672](https://github.com/INTENTIUS/chant/issues/2672) and [#2671](https://github.com/INTENTIUS/chant/issues/2671), and only a kind with `reviews` has `quorum`. `citedBy`, on a session kind's records only, was added by [#2673](https://github.com/INTENTIUS/chant/issues/2673). `kind.format` was added by [#2664](https://github.com/INTENTIUS/chant/issues/2664). `ready`, `blockedBy`, `implements` and the document's `decisions` were added by [#2683](https://github.com/INTENTIUS/chant/issues/2683), on a work kind only, and `lease` by [#2732](https://github.com/INTENTIUS/chant/issues/2732). Records of a kind with `reviews` also carry `attested` and `attestation`, and may carry the warning `record-unattested`, since [#2688](https://github.com/INTENTIUS/chant/issues/2688).
+`data` holds the whole front matter, or the whole object for a JSON kind; the example shortens it. `at` is the full commit id when `--at` is given. `trust` and `provenance` were added within contract 1 by [#2547](https://github.com/INTENTIUS/chant/issues/2547), and `workspaceRoot`, `assets` and `warnings` by [#2549](https://github.com/INTENTIUS/chant/issues/2549). `digest` and `quorum` were added by [#2672](https://github.com/INTENTIUS/chant/issues/2672) and [#2671](https://github.com/INTENTIUS/chant/issues/2671), and only a kind with `reviews` has `quorum`. `citedBy`, on a session kind's records only, was added by [#2673](https://github.com/INTENTIUS/chant/issues/2673). `kind.format` was added by [#2664](https://github.com/INTENTIUS/chant/issues/2664). `ready`, `blockedBy`, `implements` and the document's `decisions` were added by [#2683](https://github.com/INTENTIUS/chant/issues/2683), on a work kind only, and `lease` by [#2732](https://github.com/INTENTIUS/chant/issues/2732). Records of a kind with `reviews` also carry `attested` and `attestation`, and may carry the warning `record-unattested`, since [#2688](https://github.com/INTENTIUS/chant/issues/2688). `remediatedBy` was added by [#2774](https://github.com/INTENTIUS/chant/issues/2774), holding the ids of records whose `remediates` link names this one; it is empty on a kind without `remediates`, and on a record nothing remediates.
 
 A failed read prints `{ "$schema", "contract", "error": { "code", "message" } }` instead. Without `--kind`, the output is the set of [Declared kinds](#declared-kinds), added within contract 1 by [#2680](https://github.com/INTENTIUS/chant/issues/2680).
 
@@ -646,6 +656,8 @@ A failed read prints `{ "$schema", "contract", "error": { "code", "message" } }`
 | `record-id-duplicate` | repeats an id an earlier file in path order already has |
 | `record-supersedes-unknown` | names an id in `supersedes` that no record has |
 | `record-supersedes-conflict` | supersedes a record another closed record already supersedes |
+| `record-remediates-unknown` | names an id in `remediates` that no record has |
+| `record-remediates-not-closed` | remediates a record that isn't closed; a record still open is amended instead |
 | `session-seal-mismatch` | is a closed session whose text no longer hashes to its seal, so it changed after it closed |
 | `session-verdict-unknown-record` | is a session with a verdict naming a record that none of the kind's subject records has |
 

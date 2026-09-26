@@ -600,7 +600,9 @@
                   "record-schema-invalid",
                   "record-id-duplicate",
                   "record-supersedes-unknown",
-                  "record-supersedes-conflict"
+                  "record-supersedes-conflict",
+                  "record-remediates-unknown",
+                  "record-remediates-not-closed"
                 ]
               },
               "message": {
@@ -794,7 +796,9 @@
                   "record-schema-invalid",
                   "record-id-duplicate",
                   "record-supersedes-unknown",
-                  "record-supersedes-conflict"
+                  "record-supersedes-conflict",
+                  "record-remediates-unknown",
+                  "record-remediates-not-closed"
                 ]
               },
               "message": {

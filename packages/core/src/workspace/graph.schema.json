@@ -752,7 +752,8 @@
         "path",
         "state",
         "valid",
-        "supersededBy"
+        "supersededBy",
+        "remediatedBy"
       ],
       "properties": {
         "kind": {
@@ -784,6 +785,13 @@
             "string",
             "null"
           ]
+        },
+        "remediatedBy": {
+          "description": "Added in contract 1 by #2774. The ids of records whose remediates link names this one.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         }
       }
     }

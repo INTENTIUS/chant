@@ -67,6 +67,8 @@ export const REASONS = {
   "record-id-duplicate": "Another record earlier in path order has the same id.",
   "record-supersedes-unknown": "A supersedes link names an id no record has.",
   "record-supersedes-conflict": "A second closed record supersedes a record another one already superseded.",
+  "record-remediates-unknown": "A remediates link names an id no record has.",
+  "record-remediates-not-closed": "A remediates link names a record that isn't closed; a record still open is amended instead.",
   // A review session that isn't valid (records, #2673).
   "session-seal-mismatch": "A closed session's seal is not the digest of its text: the session changed after it closed.",
   "session-verdict-unknown-record": "A session's verdict names a record that none of the session kind's subject records has.",

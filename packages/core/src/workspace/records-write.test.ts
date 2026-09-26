@@ -187,7 +187,7 @@ describe("records new", () => {
   });
 
   test("keeps the width of the ids it follows", () => {
-    const entry = (id: string) => ({ id, path: `d/${id}-x.md`, state: null, valid: true, reasons: [], supersededBy: null, data: {}, digest: "", assets: [], warnings: [] });
+    const entry = (id: string) => ({ id, path: `d/${id}-x.md`, state: null, valid: true, reasons: [], supersededBy: null, remediatedBy: [], data: {}, digest: "", assets: [], warnings: [] });
     expect(allocateId([entry("s-0009"), entry("s-0010")], undefined, "k")).toBe("s-0011");
     expect(allocateId([entry("s-999")], undefined, "k")).toBe("s-1000");
     // Case and padding come from the records (#2683).
