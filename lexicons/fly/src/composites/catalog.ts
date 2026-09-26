@@ -79,5 +79,103 @@ export const compositeCatalog: CompositeEntry[] = [
         "description": "Per-member defaults for fine-grained overrides."
       }
     ]
+  },
+  {
+    "name": "FlySite",
+    "lexicon": "fly",
+    "description": "Create a FlySite composite.",
+    "bundles": [
+      "App",
+      "IPAddress",
+      "Machine",
+      "Secret",
+      "Volume"
+    ],
+    "params": [
+      {
+        "name": "app",
+        "type": "string",
+        "required": true,
+        "description": "The App's name."
+      },
+      {
+        "name": "org",
+        "type": "string | Declarable",
+        "required": false,
+        "description": "The owning org (default: `Fly.OrgSlug`, which the build resolves from `FLY_ORG`)."
+      },
+      {
+        "name": "region",
+        "type": "string | Declarable",
+        "required": false,
+        "description": "Region of the Machine and the Volume (default: `Fly.Region`, from `FLY_REGION`)."
+      },
+      {
+        "name": "machine",
+        "type": "string",
+        "required": false,
+        "description": "The Machine's name (default: \"web\")."
+      },
+      {
+        "name": "image",
+        "type": "string",
+        "required": true,
+        "description": "The image the Machine runs until a release replaces it."
+      },
+      {
+        "name": "port",
+        "type": "number",
+        "required": false,
+        "description": "The port the app listens on inside the Machine (default: 8080)."
+      },
+      {
+        "name": "env",
+        "type": "Record<string, string>",
+        "required": false,
+        "description": "The Machine's env."
+      },
+      {
+        "name": "cpuKind",
+        "type": "string",
+        "required": false,
+        "description": "Guest CPU kind (default: \"shared\")."
+      },
+      {
+        "name": "cpus",
+        "type": "number",
+        "required": false,
+        "description": "Guest CPUs (default: 1)."
+      },
+      {
+        "name": "memoryMb",
+        "type": "number",
+        "required": false,
+        "description": "Guest memory in MB (default: 256)."
+      },
+      {
+        "name": "volume",
+        "type": "{ name: string; sizeGb: number; path: string }",
+        "required": false,
+        "description": "A Volume for the app's data, mounted at `path`."
+      },
+      {
+        "name": "ip",
+        "type": "\"shared_v4\" | \"v4\" | \"v6\"",
+        "required": false,
+        "description": "A public IP of this type (for example \"shared_v4\")."
+      },
+      {
+        "name": "secrets",
+        "type": "Record<string, string | undefined>",
+        "required": false,
+        "description": "The app's Secrets, by name."
+      },
+      {
+        "name": "defaults",
+        "type": "{ app?: Partial<Record<string, unknown>>; machine?: Partial<Record<string, unknown>>; volume?: Partial<Record<string,...",
+        "required": false,
+        "description": "Per-member defaults for fine-grained overrides."
+      }
+    ]
   }
 ];

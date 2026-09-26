@@ -11,10 +11,11 @@ import { describe, expect, test } from "vitest";
 import { isCompositeDefinition } from "@intentius/chant";
 import * as flyDeployModule from "./fly-deploy";
 import * as flyOtelCollectorModule from "./fly-otel-collector";
+import * as flySiteModule from "./fly-site";
 import { compositeCatalog } from "./catalog";
 import { flyPlugin } from "../plugin";
 
-const exported = Object.entries({ ...flyDeployModule, ...flyOtelCollectorModule })
+const exported = Object.entries({ ...flyDeployModule, ...flyOtelCollectorModule, ...flySiteModule })
   .filter(([, value]) => isCompositeDefinition(value))
   .map(([name]) => name)
   .sort();

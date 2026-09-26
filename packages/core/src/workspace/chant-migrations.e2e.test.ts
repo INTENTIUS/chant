@@ -32,6 +32,7 @@ import { CHUD_LEXICON_EXIT, chudLexiconExit, convertPoints } from "./chant-migra
 import { CHUD_LEXICON_EXIT_SHIP_INPUTS } from "./chant-migrations/chud-lexicon-exit-ship-inputs";
 import { CHUD_LEXICON_EXIT_ROLLBACK } from "./chant-migrations/chud-lexicon-exit-rollback";
 import { CHUD_LEXICON_EXIT_SHIP_POLICY } from "./chant-migrations/chud-lexicon-exit-ship-policy";
+import { CHUD_LEXICON_EXIT_FLY_SITE, chudLexiconExitFlySite } from "./chant-migrations/chud-lexicon-exit-fly-site";
 import { readerVersion } from "./declaration";
 import { runChecks } from "./lineage-check";
 import { initFromCommand } from "./lineage-init";
@@ -185,7 +186,7 @@ describe.each(["dir", "git"] as const)("chud-lexicon-exit, from a %s source", (f
 
     const imports = sources(proj).filter((f) => CHUD_IMPORT.test(read(proj, f)));
     expect(imports).toEqual([]);
-    for (const gone of ["delivery/ops/chant-lexicon-chud", "delivery/ops/dispatch.op.ts", "delivery/ops/upgrade.op.ts", "delivery/deploy/site.ts", "delivery/.chant", "delivery/.npmrc", "delivery/decisions/points.yaml"]) {
+    for (const gone of ["delivery/ops/chant-lexicon-chud", "delivery/ops/dispatch.op.ts", "delivery/ops/upgrade.op.ts", "delivery/deploy/site.ts", "delivery/deploy/fly-machine.ts", "delivery/.chant", "delivery/.npmrc", "delivery/decisions/points.yaml"]) {
       expect(existsSync(join(proj, gone)), gone).toBe(false);
     }
 
@@ -213,6 +214,15 @@ describe.each(["dir", "git"] as const)("chud-lexicon-exit, from a %s source", (f
     expect(pkg.scripts.check).toBe("npm --prefix ../app test --silent");
     expect(pkg.scripts).not.toHaveProperty("dispatch");
     expect(Object.values(pkg.scripts).join("\n")).not.toMatch(/--on chud|\bchud (dev|design)\b/);
+
+    // The Fly site is the fly lexicon's FlySite composite, and the app component names it (#2809).
+    const fly = read(proj, "delivery/deploy/fly.ts");
+    expect(fly).toContain('import { Fly, FlySite } from "@intentius/chant-lexicon-fly";');
+    expect(fly).toContain('import { appSlug } from "../app-name.ts";');
+    expect(fly).toContain("export const flySite = FlySite({\n  app: appSlug,\n  org: Fly.OrgSlug,\n  region: \"iad\",\n  machine: \"web\",\n  image: \"node:22-slim\",\n  port: 8080,");
+    expect(fly).toContain('volume: { name: "data", sizeGb: 1, path: "/data" },');
+    expect(fly).toContain("secrets: { APP_SECRET: process.env.CHUD_FLY_APP_SECRET || undefined },");
+    expect(read(proj, "delivery/deploy/app.component.ts")).toContain('composites: ["FlySite"],');
 
     const config = read(proj, "delivery/chant.config.ts");
     expect(config).toContain('lexicons: ["fountain", "fly", "cedar", "github"]');
@@ -463,6 +473,48 @@ describe("chud-lexicon-exit-ship-policy, over a repo chud-lexicon-exit migrated 
   });
 });
 
+describe("chud-lexicon-exit-fly-site, over a repo chud-lexicon-exit migrated before it existed (#2809)", () => {
+  const FILES = ["delivery/deploy/fly.ts", "delivery/deploy/fly-machine.ts", "delivery/deploy/app.component.ts"];
+  const RELEASE = "delivery/ops/release.op.ts";
+  beforeEach(async () => {
+    await makeProject("dir");
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const released = exitWrote(FILES);
+    await upgrade();
+    // The release Op as the other follow-ons left it, with 0.92.0's line on where the Fly requests come from.
+    released[RELEASE] = read(proj, RELEASE).replace("the FlySite composite in deploy/fly.ts, into dist/fly.json", "deploy/fly.ts and deploy/fly-machine.ts, into dist/fly.json");
+    asReleased(released, readLock(proj)!.scopes["."].migrations.filter((id) => id !== CHUD_LEXICON_EXIT_FLY_SITE));
+  });
+
+  test("the dry run lists it; the upgrade declares the FlySite and the component names it; a second plans nothing", async () => {
+    expect(read(proj, "delivery/deploy/fly.ts")).toContain("export const flyApp = new App(");
+    const lines: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((s: string) => void lines.push(s));
+    const dry = await upgradeCommand({ root: proj, to: target(), dryRun: true, runChant: passing });
+    expect(dry.outcome).toBe("dry-run");
+    const out = lines.join("\n");
+    expect(out).toContain(`chant migration: ${CHUD_LEXICON_EXIT_FLY_SITE} (applied)`);
+    expect(out).toContain("write: delivery/deploy/fly.ts");
+    expect(out).toContain("delete: delivery/deploy/fly-machine.ts");
+
+    await upgrade();
+    expect(read(proj, "delivery/deploy/fly.ts")).toContain("export const flySite = FlySite({");
+    expect(existsSync(join(proj, "delivery/deploy/fly-machine.ts"))).toBe(false);
+    expect(read(proj, "delivery/deploy/app.component.ts")).toContain('composites: ["FlySite"],');
+    expect(read(proj, "delivery/ops/release.op.ts")).toContain("the FlySite composite in deploy/fly.ts, into dist/fly.json");
+    expect(readLock(proj)!.scopes["."].migrations).toContain(CHUD_LEXICON_EXIT_FLY_SITE);
+
+    const again = await stageUpgrade({ root: proj, to: target(), runChant: passing });
+    try {
+      expect(again.chantMigrations).toEqual([]);
+      expect(again.changed).toBe(false);
+    } finally {
+      again.dispose();
+    }
+  });
+});
+
 describe("chud-lexicon-exit, with the project's own edits", () => {
   beforeEach(async () => {
     await makeProject("dir");
@@ -484,6 +536,23 @@ describe("chud-lexicon-exit, with the project's own edits", () => {
     } finally {
       staged.dispose();
     }
+  });
+
+  test("a Fly site the project changed keeps its resources, and the plan says it is not a composite instance (#2809)", async () => {
+    put(proj, "delivery/deploy/fly-machine.ts", read(proj, "delivery/deploy/fly-machine.ts").replace('region: "iad",\n  config', 'region: "ord",\n  config'));
+    commit("the Machine in another region");
+    await upgrade();
+    expect(read(proj, "delivery/deploy/fly.ts")).toContain("export const flyApp = new App(");
+    expect(read(proj, "delivery/deploy/fly.ts")).not.toContain("FlySite");
+    expect(read(proj, "delivery/deploy/fly-machine.ts")).toContain('region: "ord",');
+    const component = read(proj, "delivery/deploy/app.component.ts");
+    expect(component).toContain('composites: ["FlySite"],');
+    expect(readLock(proj)!.scopes["."].migrations).toContain(CHUD_LEXICON_EXIT_FLY_SITE);
+    // What its plan said: only the component is written, and the composite is not moved.
+    put(proj, "delivery/deploy/app.component.ts", component.replace('  composites: ["FlySite"],\n', ""));
+    const plan = chudLexiconExitFlySite.plan({ dir: proj, lineage: readLock(proj)!.scopes["."], chantVersion: readerVersion() })!;
+    expect(plan.changes.map((c) => c.path)).toEqual(["delivery/deploy/app.component.ts"]);
+    expect(plan.notMoved.map((n) => n.what)).toContain("the Fly site as a composite instance (delivery/deploy/fly.ts is not the template's, so its resources are kept as they are)");
   });
 
   test("a file it does not know that imports chud is a conflict: nothing is applied, and the checks fail", async () => {
@@ -612,6 +681,33 @@ describe("the migrated delivery project, with this checkout's chant", () => {
       const ci = await chant(delivery, env, "build", "ci", "--lexicon", "github", "-o", join(root, "ci.yml"));
       expect(ci.status, ci.out).toBe(0);
       expect(read(root, "ci.yml")).toBe(read(proj, ".github/workflows/ci.yml"));
+
+      // The Fly site is a composite instance, deployed by the app component (#2809): what the studio smoke's checks 27, 28 and 55 read.
+      const graph = await chant(proj, env, "workspace", "graph", "--composites", "--json");
+      expect(graph.status, graph.out).toBe(0);
+      const doc = JSON.parse(graph.out.slice(graph.out.indexOf("{"))) as { composites: Array<{ id: string; member: string; kinds: string[]; lexicons: string[]; components: Array<{ component: string; by: string; via: string }> }>; components: Array<{ id: string; archetype: string }>; reasons: unknown[] };
+      expect(doc.reasons).toEqual([]);
+      expect(doc.composites).toHaveLength(1);
+      expect(doc.composites[0]).toMatchObject({ id: "delivery/flySite", member: "delivery", kinds: ["FlySite"], lexicons: ["fly"], components: [{ component: "delivery/app", by: "composites", via: "member" }] });
+      expect(doc.components.find((c) => c.id === "delivery/app")?.archetype).toBe("service");
+      // The plan a release ships with has the one Machine, with the resources fly.ts and fly-machine.ts declared.
+      const flyPlan = await chant(delivery, env, "build", "deploy", "--lexicon", "fly", "-o", join(root, "fly.json"));
+      expect(flyPlan.status, flyPlan.out).toBe(0);
+      const requests = Object.values(JSON.parse(read(root, "fly.json")) as Record<string, { endpoint: string; body: Record<string, unknown> }>);
+      const machines = requests.filter((r) => /\/machines$/.test(r.endpoint));
+      expect(machines).toHaveLength(1);
+      expect(machines[0].body).toMatchObject({
+        name: "web",
+        region: "iad",
+        config: {
+          image: "node:22-slim",
+          guest: { cpu_kind: "shared", cpus: 1, memory_mb: 256 },
+          mounts: [{ volume: "data", path: "/data" }],
+          services: [{ protocol: "tcp", internal_port: 8080, ports: [{ port: 443, handlers: ["tls", "http"] }, { port: 80, handlers: ["http"] }] }],
+          env: { PORT: "8080", APP_DATA: "/data" },
+        },
+      });
+      expect(requests.map((r) => r.endpoint).sort()).toEqual(["/v1/apps", "/v1/apps/notes/ip_assignments", "/v1/apps/notes/machines", "/v1/apps/notes/secrets/APP_SECRET", "/v1/apps/notes/volumes"].sort());
 
       // Check (the app's tests), Build, Plan with the ship-skip point through decide, then the gate on the plan.
       const gated = await chant(delivery, env, "run", "release");
