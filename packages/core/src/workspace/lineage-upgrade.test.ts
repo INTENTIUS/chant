@@ -151,6 +151,32 @@ describe("chant workspace upgrade", () => {
     }
   });
 
+  test("a member's own node_modules is linked into the staging worktree for its checks, and stays out of the patch (#2847)", async () => {
+    release("v2.0.0", {
+      "chant.workspace.json": JSON.stringify({ name: "proj", schema: 1, members: [{ name: "delivery", dir: "delivery", kind: "chant" }] }, null, 2) + "\n",
+      "delivery/chant.config.ts": "export default {};\n",
+    });
+    // The member installs its packages itself; git never sees them.
+    put(proj, "delivery/node_modules/member-only/package.json", JSON.stringify({ name: "member-only", version: "1.0.0" }) + "\n");
+    writeFileSync(join(proj, ".git", "info", "exclude"), "node_modules\n");
+    const seen: string[] = [];
+    const recording: ChantRunner = async (command, cwd) => {
+      if (existsSync(join(cwd, "node_modules", "member-only", "package.json"))) seen.push(command);
+      return { exitCode: 0, output: "" };
+    };
+
+    const staged = await stageUpgrade({ root: proj, to: "v2.0.0", runChant: recording });
+    try {
+      expect(seen.sort()).toEqual(["build", "lint"]);
+      expect(staged.changedPaths.some((p) => p.includes("node_modules"))).toBe(false);
+      expect(staged.patch).not.toContain("node_modules");
+    } finally {
+      staged.dispose();
+    }
+    // Disposing the worktree removes the link, never the member's own packages.
+    expect(existsSync(join(proj, "delivery", "node_modules", "member-only", "package.json"))).toBe(true);
+  });
+
   test("a member's failing build fails the upgrade's checks before the gate (#2804)", async () => {
     release("v2.0.0", {
       "chant.workspace.json": JSON.stringify({ name: "proj", schema: 1, members: [{ name: "delivery", dir: "delivery", kind: "chant" }] }, null, 2) + "\n",
