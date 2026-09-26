@@ -28,6 +28,13 @@
       "records": [{ "kind": "sessions/session.kind.mjs" }]
     }
   ],
-  "records": [{ "kind": "decisions/decision.kind.mjs" }, { "kind": "work/work.kind.mjs" }, { "kind": "answers/answer.kind.mjs" }],
+  "records": [
+    { "kind": "decisions/decision.kind.mjs" },
+    { "kind": "work/work.kind.mjs" },
+    { "kind": "answers/answer.kind.mjs" },
+    { "kind": "lessons/lesson.kind.mjs" },
+    { "kind": "constraints/constraint.kind.mjs" },
+    { "kind": "preferences/preference.kind.mjs" }
+  ],
   "pins": []
 }

@@ -354,13 +354,16 @@ describe("decision files", () => {
     for (const r of doc.records) expect(dirname(r.path)).toBe("reference-workspace/decisions");
   });
 
-  test("the declaration names the decision, work, answer and session kinds, so ls lists them and records reads them without --kind (#2680, #2683, ws-058)", async () => {
+  test("the declaration names the decision, work, answer, lesson, constraint, preference and session kinds, so ls lists them and records reads them without --kind (#2680, #2683, ws-058, #2771)", async () => {
     const ls = lsJson(fixture) as unknown as { workspace: { records: unknown[] }; members: { name: string; records: unknown[] }[] };
     expect(ls.workspace.records).toEqual([
       { name: "decision", path: "decisions/decision.kind.mjs", kind: "decision", reason: null, acceptance: null },
       // W-001 states two acceptance criteria and has no evidence for them yet (#2772).
       { name: "work", path: "work/work.kind.mjs", kind: "work", reason: null, acceptance: [{ item: "W-001", state: "in-progress", met: 0, total: 2 }] },
       { name: "answer", path: "answers/answer.kind.mjs", kind: "answer", reason: null, acceptance: null },
+      { name: "lesson", path: "lessons/lesson.kind.mjs", kind: "lesson", reason: null, acceptance: null },
+      { name: "constraint", path: "constraints/constraint.kind.mjs", kind: "constraint", reason: null, acceptance: null },
+      { name: "preference", path: "preferences/preference.kind.mjs", kind: "preference", reason: null, acceptance: null },
     ]);
     expect(ls.members.find((m) => m.name === "design")!.records).toEqual([
       { name: "session", path: "design/sessions/session.kind.mjs", kind: "session", reason: null, acceptance: null },
@@ -372,6 +375,9 @@ describe("decision files", () => {
       ["decision", { member: null, path: "decisions/decision.kind.mjs", name: null }],
       ["work", { member: null, path: "work/work.kind.mjs", name: null }],
       ["answer", { member: null, path: "answers/answer.kind.mjs", name: null }],
+      ["lesson", { member: null, path: "lessons/lesson.kind.mjs", name: null }],
+      ["constraint", { member: null, path: "constraints/constraint.kind.mjs", name: null }],
+      ["preference", { member: null, path: "preferences/preference.kind.mjs", name: null }],
       ["session", { member: "design", path: "design/sessions/session.kind.mjs", name: null }],
     ]);
     expect(set.kinds[0].records.map((r) => r.id)).toEqual(files.map((f) => f.slice(0, "ref-000".length)));
@@ -412,6 +418,95 @@ describe("review sessions (#2673)", () => {
     expect(doc.kind).toMatchObject({ name: "session", file: "reference-workspace/design/sessions/session.kind.mjs" });
     expect(doc.records.map((r) => [r.id, r.state, r.valid, r.reasons])).toEqual([["S-0001", "closed", true, []]]);
     expect(doc.records[0].citedBy).toEqual([]);
+  });
+});
+
+describe("lesson, constraint and preference records (#2771)", () => {
+  function validateAgainst(schemaFile: string, record: unknown): void {
+    const mod = createRequire(join(repoRoot, "packages", "core", "package.json"))("ajv") as { default?: unknown };
+    const Ajv = (mod.default ?? mod) as new (opts: object) => { compile(s: object): Validate };
+    const schema = JSON.parse(readFileSync(schemaFile, "utf-8")) as object;
+    const validate = new Ajv({ allErrors: true, strict: false }).compile(schema);
+    expect(validate(record), JSON.stringify(validate.errors, null, 2)).toBe(true);
+  }
+
+  test("lsn-001 validates against lesson.schema.json and records reads it, derived from ref-002 and W-001", async () => {
+    const dir = join(fixture, "lessons");
+    const file = "lsn-001-pin-the-spec-before-trusting-a-decision.md";
+    const fm = parseFrontMatter(readFileSync(join(dir, file), "utf-8"));
+    expect(fm.ok, fm.ok ? "" : fm.message).toBe(true);
+    if (!fm.ok) return;
+    validateAgainst(join(dir, "lesson.schema.json"), fm.value);
+    expect(fm.value.derived_from).toEqual(["ref-002", "W-001"]);
+
+    const doc = await queryRecords({ kind: "lessons/lesson.kind.mjs", cwd: fixture });
+    if ("error" in doc) throw new Error(`${doc.error.code}: ${doc.error.message}`);
+    expect(doc.kind).toMatchObject({ name: "lesson", schema: "urn:intentius:chant:lesson:1", file: "reference-workspace/lessons/lesson.kind.mjs" });
+    expect(doc.records.map((r) => [r.id, r.state, r.valid, r.reasons])).toEqual([["lsn-001", "confirmed", true, []]]);
+  });
+
+  test("con-001 validates against constraint.schema.json, constrains member:delivery and member:app, and records reads it", async () => {
+    const dir = join(fixture, "constraints");
+    const file = "con-001-delivery-never-runs-the-app-test.md";
+    const fm = parseFrontMatter(readFileSync(join(dir, file), "utf-8"));
+    expect(fm.ok, fm.ok ? "" : fm.message).toBe(true);
+    if (!fm.ok) return;
+    validateAgainst(join(dir, "constraint.schema.json"), fm.value);
+    expect(fm.value.constrains).toEqual(["member:delivery", "member:app"]);
+
+    const doc = await queryRecords({ kind: "constraints/constraint.kind.mjs", cwd: fixture });
+    if ("error" in doc) throw new Error(`${doc.error.code}: ${doc.error.message}`);
+    expect(doc.kind).toMatchObject({ name: "constraint", schema: "urn:intentius:chant:constraint:1", file: "reference-workspace/constraints/constraint.kind.mjs" });
+    expect(doc.records.map((r) => [r.id, r.state, r.valid, r.reasons])).toEqual([["con-001", "active", true, []]]);
+  });
+
+  test("pref-001 validates against preference.schema.json and records reads it", async () => {
+    const dir = join(fixture, "preferences");
+    const file = "pref-001-new-decisions-default-to-workspace-source.md";
+    const fm = parseFrontMatter(readFileSync(join(dir, file), "utf-8"));
+    expect(fm.ok, fm.ok ? "" : fm.message).toBe(true);
+    if (!fm.ok) return;
+    validateAgainst(join(dir, "preference.schema.json"), fm.value);
+
+    const doc = await queryRecords({ kind: "preferences/preference.kind.mjs", cwd: fixture });
+    if ("error" in doc) throw new Error(`${doc.error.code}: ${doc.error.message}`);
+    expect(doc.kind).toMatchObject({ name: "preference", schema: "urn:intentius:chant:preference:1", file: "reference-workspace/preferences/preference.kind.mjs" });
+    expect(doc.records.map((r) => [r.id, r.state, r.valid, r.reasons])).toEqual([["pref-001", "active", true, []]]);
+  });
+
+  test("records new writes a proposed record of each kind, named for its proposer with --by", () => {
+    const cases: [string, Record<string, unknown>, string][] = [
+      [
+        "lessons/lesson.kind.mjs",
+        { schema: 1, title: "A fresh lesson", state: "proposed", source: { kind: "workspace", member: "design" }, situation: "x", learned: "y", derived_from: ["ref-001"], confirmed_by: null, confirmed_on: null, evidence: [], supersedes: [] },
+        "lsn",
+      ],
+      [
+        "constraints/constraint.kind.mjs",
+        { schema: 1, title: "A fresh constraint", state: "proposed", source: { kind: "workspace", member: "delivery" }, rule: "x", constrains: ["member:delivery"], decided_by: null, decided_on: null, evidence: [] },
+        "con",
+      ],
+      [
+        "preferences/preference.kind.mjs",
+        { schema: 1, title: "A fresh preference", state: "proposed", source: { kind: "workspace", member: "design" }, default: "x", rationale: null, chosen_by: null, chosen_on: null, evidence: [] },
+        "pref",
+      ],
+    ];
+    const scratch = mkdtempSync(join(tmpdir(), "chant-2771-fields-"));
+    try {
+      for (const [kindFile, fields, prefix] of cases) {
+        const fieldsFile = join(scratch, "fields.json");
+        writeFileSync(fieldsFile, JSON.stringify(fields));
+        const run = chant(fixture, "workspace", "records", "new", kindFile, "--from", fieldsFile, "--by", "carol", "--dry-run", "--json");
+        expect(run.status, run.stderr).toBe(0);
+        const doc = JSON.parse(run.stdout) as { id: string; dryRun: boolean; text: string };
+        expect(doc.id.startsWith(`${prefix}-`)).toBe(true);
+        expect(doc.dryRun).toBe(true);
+        expect(doc.text).toContain('proposed_by: "carol"');
+      }
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
   });
 });
 
@@ -620,11 +715,13 @@ describe("the intent graph on the fixture (#2651)", () => {
     };
     const validate = compile2020(intentSchema);
     expect(validate(doc), JSON.stringify(validate.errors, null, 2)).toBe(true);
-    expect(doc.kinds.map((k) => k.records)).toEqual(["decision", "work", "answer", "session"]);
+    expect(doc.kinds.map((k) => k.records)).toEqual(["decision", "work", "answer", "lesson", "constraint", "preference", "session"]);
     // W-001 constrains member:app. W-002 constrains paths outside this file and only needs W-001, so it stays out.
     expect(doc.nodes.filter((n) => n.kind === "work").map((n) => n.id)).toEqual(["record:work/W-001"]);
     expect(doc.edges).toContainEqual({ kind: "constrains", from: "record:work/W-001", to: doc.region, granularity: "member", entry: "member:app" });
     expect(doc.edges).toContainEqual({ kind: "implements", from: "record:work/W-001", to: "record:decision/ref-002" });
+    // con-001 constrains member:app too, joining the graph the way a decision's constrains does (#2771).
+    expect(doc.edges).toContainEqual({ kind: "constrains", from: "record:constraint/con-001", to: doc.region, granularity: "member", entry: "member:app" });
   });
 });
 
