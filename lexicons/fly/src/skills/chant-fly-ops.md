@@ -86,3 +86,39 @@ The step's output carries `uri` and `digest`, so `chant run --components web --e
 Each release's Machine config is kept on `chant/lifecycle` at `<env>/fly/<app>/<machine>/<digest>.json`. `fly-rollback` puts back the config of the release the serving one replaced (or the digest given as `to`), checks it, and outputs that digest so the ledger records it again. `fly-release`'s own saga compensation does the same.
 
 The steps are also Op activities, for an Op that composes them itself: `flyMachineRelease`, `flyMachineExec`, `flyMachineRestart`, `flyMachineStop`, `flyMachineVerify` and `flyMachineRestore`. Wrap a migration's `flyMachineExec` in `effect()` so it fires once.
+
+### A source tree instead of an image
+
+An app with no image of its own ships as its files on the declared runtime image. Give `fly-release` a `source` in place of `image`: an archive made by core's `sourceArchive` step (`git archive` of one directory of a commit, the same bytes for the same commit), the sha256 it must have, the directory it holds, where the files go (default `/srv/app`) and the command that starts the app there. The archive is read only once its bytes hash to that digest, before the Machine changes, so the Machine never gets a tree nobody approved. The files go into the Machine's config, up to 1 MiB base64. A larger app needs an image.
+
+An Op runs the same steps with the `flyRelease` activity, which takes the environment it ships to as `environment` (`env` stays the Machine's env vars). A release Op gates on the plan core's `releasePlan` writes and records the release with `releaseRecord`:
+
+```ts
+import { Op, phase, gate, build, sourceArchive, releasePlan, releaseRecord } from "@intentius/chant/op";
+import { flyRelease } from "@intentius/chant-lexicon-fly";
+
+const archive = sourceArchive("../app", { id: "archive" });
+const plan = releasePlan({ id: "plan", component: "app", env: "fly", gitSha: archive.out.commit, content: { artifact: { digest: archive.out.digest } } });
+
+export default Op({
+  name: "release",
+  overview: "Ship the app member to Fly once its plan is approved",
+  phases: [
+    phase("Build", [archive, build(".", { script: "build:fly" })]),
+    phase("Plan", [plan]),
+    phase("Gate", [gate("ship", { plan: plan.out.digest })]),
+    phase("Ship", [
+      flyRelease({
+        environment: "fly",
+        plan: "dist/fly.json",
+        digest: plan.out.digest,
+        gitSha: archive.out.commit,
+        source: { archive: archive.out.archive, digest: archive.out.digest, dir: archive.out.dir, start: "node server.js" },
+      }),
+    ]),
+    phase("Record", [releaseRecord({ plan: plan.out.file, digest: plan.out.digest, approval: { op: "release", gate: "ship" } })]),
+  ],
+});
+```
+
+The Machine's metadata names the plan's digest, and so does the ledger record, so `chant components status fly --live` reconciles them. Running the Op again for the same commit plans the same digest, leaves the Machine as it is, and records nothing twice.

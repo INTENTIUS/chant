@@ -17,6 +17,9 @@ export { shellCmd } from "./shell";
 export type { ShellCmdArgs, ShellCmdResult } from "./shell";
 
 export { httpCheck, statusOk } from "./http-check";
+
+export { sourceArchive, releasePlan, releaseRecord } from "./source-release";
+export type { SourceArchiveArgs, SourceArchiveResult, ReleasePlanArgs, ReleasePlanResult, ReleaseRecordArgs, ReleaseRecordResult } from "./source-release";
 export type { HttpCheckArgs, HttpFetch } from "./http-check";
 
 export { lifecycleSnapshot, lifecycleDiff } from "./lifecycle";

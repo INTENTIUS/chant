@@ -48,6 +48,7 @@ import {
   flyMachineVerify,
   readMachineRelease,
   releaseTarget,
+  type MachineFile,
   type MachineRelease,
 } from "../op/activities/machine-release";
 import { defaultFlyHttp, parsePlan, resolveEndpoint, type FlyHttp, type WaitOpts } from "../op/activities/fly-apply";
@@ -63,6 +64,45 @@ export interface FlyMigration {
   /** A digest of the migration's content. A migration whose content changes fires again. Default: a digest of the command. */
   sha?: string;
 }
+
+/** A source tree a release puts on the Machine. */
+export interface FlySource {
+  /** The archive (`sourceArchive`'s `archive`, a `git archive` tar). */
+  archive: string;
+  /** The sha256 the archive must have (`sha256:...`). */
+  digest: string;
+  /** The directory the archive holds, stripped from each path (`sourceArchive`'s `dir`). */
+  dir?: string;
+  /** Where the files go on the Machine. Default `/srv/app`. */
+  into?: string;
+  /** The command that starts the app, run in `into`: an argv, or a string run with `sh -c`. */
+  start: string[] | string;
+}
+
+/** Most bytes of files, base64, a release puts in a Machine's config (as chud's fly-site.mjs capped them). */
+export const SOURCE_FILES_LIMIT = 1024 * 1024;
+
+/** A source tree as Machine files and the start command, once its archive is the approved one. */
+export async function sourceMachineFiles(source: FlySource): Promise<{ files: MachineFile[]; cmd: string[] }> {
+  const { readSourceArchive } = await import("@intentius/chant/op/source-archive");
+  const into = (source.into ?? "/srv/app").replace(/\/+$/, "");
+  const files: MachineFile[] = readSourceArchive(source).map((f) => ({
+    guest_path: `${into}/${f.path}`,
+    raw_value: f.data.toString("base64"),
+    ...(f.executable ? { mode: 0o755 } : {}),
+  }));
+  if (files.length === 0) throw new Error(`fly-release: ${source.archive} holds no files`);
+  const bytes = files.reduce((n, f) => n + f.raw_value.length, 0);
+  if (bytes > SOURCE_FILES_LIMIT) {
+    throw new Error(
+      `fly-release: the source tree is ${Math.round(bytes / 1024)} KiB encoded; a Machine's config carries at most ${SOURCE_FILES_LIMIT / 1024} KiB of files. Ship a larger app as an image (\`image\`).`,
+    );
+  }
+  const start = typeof source.start === "string" ? source.start : source.start.map(shellQuote).join(" ");
+  return { files, cmd: ["sh", "-c", `cd ${shellQuote(into)} && exec ${start}`] };
+}
+
+const shellQuote = (v: string) => (/^[A-Za-z0-9_./:=@%+-]+$/.test(v) ? v : `'${v.replaceAll("'", "'\\''")}'`);
 
 /** Health check after the release serves. */
 export interface FlyVerify {
@@ -89,6 +129,13 @@ export interface FlyReleaseInput {
   image?: string;
   /** Env added to the declared Machine's env. */
   env?: Record<string, string>;
+  /**
+   * A source tree to put on the Machine (#2782), for an app shipped as its
+   * own files on a declared runtime image rather than as an image of its own.
+   * The archive is read only once its bytes hash to `digest` (the digest the
+   * release plan carries), so the Machine never gets a tree nobody approved.
+   */
+  source?: FlySource;
   /** Migrations, in order. */
   migrations?: FlyMigration[];
   verify?: FlyVerify;
@@ -210,6 +257,8 @@ export function createFlyReleaseCapability(deps: FlyReleaseDeps = {}): Capabilit
       const { plan } = loadTarget(input.plan, input.machine);
       const gitSha = input.gitSha ?? (await (deps.headCommit ?? defaultHeadCommit)());
       const configs = await (deps.configStore ?? defaultConfigStore)(ctx);
+      // The tree is checked against its digest before the Machine changes.
+      const source = input.source ? await sourceMachineFiles(input.source) : undefined;
 
       const released = await flyMachineRelease(
         {
@@ -218,6 +267,7 @@ export function createFlyReleaseCapability(deps: FlyReleaseDeps = {}): Capabilit
           release: { digest: input.digest, gitSha, ...(input.release ? { release: input.release } : {}) },
           image: input.image,
           env: input.env,
+          ...(source ? { files: source.files, cmd: source.cmd } : {}),
           endpoint: input.endpoint,
           wait: input.wait,
         },

@@ -75,6 +75,7 @@ export {
   flyMachineStop,
   flyMachineVerify,
   flyMachineRestore,
+  flyRelease,
 } from "./op/builders";
 
 // Generated resources — export everything from generated index.

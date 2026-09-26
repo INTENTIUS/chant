@@ -12,6 +12,7 @@ import type { LifecycleSnapshotArgs } from "./activities/lifecycle";
 import type { ChantTeardownArgs } from "./activities/teardown";
 import type { EnvTeardownArgs } from "./activities/env-teardown";
 import type { HttpCheckArgs } from "./activities/http-check";
+import type { SourceArchiveArgs, ReleasePlanArgs, ReleaseRecordArgs } from "./activities/source-release";
 import type { PolicyGateArgs } from "./activities/policy";
 import type { GuardValidateArgs } from "./activities/guard-validate";
 import type { WorkEvidenceArgs } from "./activities/work-evidence";
@@ -349,6 +350,43 @@ export const shell = (
 ): NamedActivityStep => {
   const { args, profile, id } = takeProfileAndId(opts as Record<string, unknown> | undefined);
   return activity("shellCmd", { cmd, ...args }, { profile: profile ?? "atMostOnce", ...(id ? { id } : {}) });
+};
+
+/**
+ * Archive one directory of HEAD as a release artifact (#2782): a tar written by
+ * `git archive`, named by its sha256, the same bytes for the same commit.
+ * Defaults to the `fastIdempotent` profile.
+ *
+ * ```ts
+ * const archive = sourceArchive("../app", { id: "archive" });
+ * ```
+ */
+export const sourceArchive = (
+  path: string,
+  opts?: WithStepRefs<Omit<SourceArchiveArgs, "path">> & StepOpts,
+): NamedActivityStep => {
+  const { args, profile, id } = takeProfileAndId(opts as Record<string, unknown> | undefined);
+  return activity("sourceArchive", { path, ...args }, { profile: profile ?? "fastIdempotent", ...(id ? { id } : {}) });
+};
+
+/**
+ * Plan a release (#2782): a JSON object named by the sha256 of its canonical
+ * form, which the ship gate binds to (`gate("ship", { plan: plan.out.digest })`)
+ * and the release ledger records. Defaults to the `fastIdempotent` profile.
+ */
+export const releasePlan = (args: WithStepRefs<ReleasePlanArgs> & StepOpts): NamedActivityStep => {
+  const { args: rest, profile, id } = takeProfileAndId(args as Record<string, unknown>);
+  return activity("releasePlan", rest, { profile: profile ?? "fastIdempotent", ...(id ? { id } : {}) });
+};
+
+/**
+ * Record a release in the release ledger with its plan (#2782, ws-055), once:
+ * a retry whose release the ledger already names records nothing. Defaults to
+ * the `fastIdempotent` profile.
+ */
+export const releaseRecord = (args: WithStepRefs<ReleaseRecordArgs> & StepOpts): NamedActivityStep => {
+  const { args: rest, profile, id } = takeProfileAndId(args as Record<string, unknown>);
+  return activity("releaseRecord", rest, { profile: profile ?? "fastIdempotent", ...(id ? { id } : {}) });
 };
 
 /**
