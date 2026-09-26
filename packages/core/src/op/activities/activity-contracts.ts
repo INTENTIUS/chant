@@ -56,8 +56,12 @@ export const shellCmdContract = activityContract(
     okExit: z.array(z.number()).optional(),
     gatedExit: z.number().optional(),
     gate: z.strictObject({ op: z.string(), gate: z.string() }).optional(),
+    json: z.boolean().optional(),
   }),
-  z.object({ stdout: z.string(), stderr: z.string(), exitCode: z.number() }),
+  // `json` is stdout parsed, when the step sets `json` (#2787): whatever the
+  // command printed, so its shape is the author's and only the whole value is
+  // a reference target (`sh.out.json`).
+  z.object({ stdout: z.string(), stderr: z.string(), exitCode: z.number(), json: z.unknown().optional() }),
 );
 
 export const httpCheckContract = activityContract(

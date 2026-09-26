@@ -112,6 +112,16 @@ describe("op.json IR", () => {
     expect(serializeOpIR(reconstructed)).toBe(text);
   });
 
+  it("carries a step's own timeout, and round-trips it (#2787)", () => {
+    const original: OpConfig = { name: "dispatch", overview: "o", phases: [phase("Build", [shell("./build.sh", { timeout: "45m" }), shell("echo hi")])] };
+    const ir = buildOpIR(original);
+    const steps = ir.phases[0].steps as { profile: string; timeout?: string }[];
+    expect(steps[0]).toMatchObject({ profile: "atMostOnce", timeout: "45m" });
+    expect(steps[1]).not.toHaveProperty("timeout");
+    const text = serializeOpIR(original);
+    expect(serializeOpIR(opConfigFromIR(JSON.parse(text) as OpIR))).toBe(text);
+  });
+
   it("two serializations of the same config are byte-identical (determinism)", () => {
     const config = representativeOp();
     expect(serializeOpIR(config)).toBe(serializeOpIR(config));

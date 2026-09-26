@@ -118,6 +118,8 @@ export interface OpIRActivityStep {
   args: Record<string, unknown>;
   /** Resolved to its effective value — `ActivityStep.profile ?? "fastIdempotent"`. */
   profile: string;
+  /** The step's own timeout, replacing its profile's (#2787). Absent when the profile's applies. */
+  timeout?: string;
   /**
    * What this step's effect touches in the estate (#2022): the string values
    * of the args its contract declares as entity-identifying
@@ -240,6 +242,7 @@ function irActivityStep(step: ActivityStep, contracts: ReadonlyMap<string, Activ
     fn: step.fn,
     args: step.args ?? {},
     profile: effectiveProfile(step),
+    ...(step.timeout !== undefined ? { timeout: step.timeout } : {}),
     ...(entities ? { entities } : {}),
     ...(step.outcomeAttribute ? { outcomeAttribute: step.outcomeAttribute } : {}),
   };
@@ -394,6 +397,7 @@ function opStepFromIR(step: OpIRStep): StepDefinition {
       fn: step.fn,
       args: step.args,
       profile: step.profile as ActivityStep["profile"],
+      ...(step.timeout !== undefined ? { timeout: step.timeout } : {}),
       ...(step.outcomeAttribute ? { outcomeAttribute: step.outcomeAttribute } : {}),
     };
   }

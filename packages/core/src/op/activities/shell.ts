@@ -40,6 +40,14 @@ export interface ShellCmdArgs {
    * `chant approve` takes (`{ op: "workspace-upgrade", gate: "." }`).
    */
   gate?: { op: string; gate: string };
+  /**
+   * Parse stdout as JSON and publish it as `json` (#2787), so a later step,
+   * or `workLease.item`, reads a list or an object rather than a string:
+   * `pick.out.json`. Stdout that is not JSON fails the step, since a value
+   * the author said was JSON and isn't would otherwise reach the next step as
+   * something else. Empty stdout is `null`.
+   */
+  json?: boolean;
 }
 
 /**
@@ -72,6 +80,20 @@ export interface ShellCmdResult {
   stdout: string;
   stderr: string;
   exitCode: number;
+  /** Stdout parsed as JSON, present when the step set `json` (#2787). */
+  json?: unknown;
+}
+
+/** `result` with its stdout parsed as JSON, when the step asked for it. */
+function withJson(result: ShellCmdResult, args: ShellCmdArgs): ShellCmdResult {
+  if (!args.json) return result;
+  if (result.stdout === "") return { ...result, json: null };
+  try {
+    return { ...result, json: JSON.parse(result.stdout) };
+  } catch (err) {
+    const shown = result.stdout.length > 200 ? `${result.stdout.slice(0, 200)}...` : result.stdout;
+    throw new Error(`the step sets json, and its stdout is not JSON (${err instanceof Error ? err.message : String(err)}): ${shown}`);
+  }
 }
 
 /** Node hangs the exit status off the error as `code`, and a signal kill as `signal`. */
@@ -99,7 +121,7 @@ export async function shellCmd(args: ShellCmdArgs, signal?: AbortSignal): Promis
       signal,
     });
     if (stderr) console.error(stderr);
-    return { stdout: stdout.trim(), stderr: stderr.trim(), exitCode: 0 };
+    return withJson({ stdout: stdout.trim(), stderr: stderr.trim(), exitCode: 0 }, args);
   } catch (err) {
     const failure = err as ExecFailure;
     const exitCode = typeof failure.code === "number" ? failure.code : undefined;
@@ -115,7 +137,7 @@ export async function shellCmd(args: ShellCmdArgs, signal?: AbortSignal): Promis
     if (exitCode !== undefined && !died && okExit.includes(exitCode)) {
       const stderrText = (failure.stderr ?? "").trim();
       if (stderrText) console.error(stderrText);
-      return { stdout: (failure.stdout ?? "").trim(), stderr: stderrText, exitCode };
+      return withJson({ stdout: (failure.stdout ?? "").trim(), stderr: stderrText, exitCode }, args);
     }
     if (exitCode !== undefined && !died) {
       // `local-executor` records `error` as message text, so the code has to

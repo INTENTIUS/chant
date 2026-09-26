@@ -114,6 +114,15 @@ A non-zero exit still fails the step. `okExit` names the codes that do not, whic
 const changed = shell("git diff --quiet HEAD~1 -- migrations/", { okExit: [0, 1], id: "changed" });
 ```
 
+With `json: true`, stdout is parsed as JSON and published as `json` ([#2787](https://github.com/INTENTIUS/chant/issues/2787)). A list or an object then reaches the next step, or the Op's `workLease.item`, as itself rather than as a string. Stdout that is not JSON fails the step, and empty stdout is `null`. The parsed value's shape is the command's own, so OPS013 accepts a reference to the whole of it, `pick.out.json`, and not to a path inside it. A command that has more than one thing to say prints an object. A later command gets the same text through `env` from `pick.out.stdout`, since an environment value is a string.
+
+A shell step runs under `atMostOnce`: twenty minutes, one attempt. `timeout` gives the step a longer or shorter attempt, up to six hours, and keeps the one attempt. See [Retry profiles](/chant/guide/ops-reference/#retry-profiles).
+
+```typescript
+const pick = shell("node ops/pick.mjs", { id: "pick", json: true }); // prints ["W-3","W-7"]
+const build = shell("node ops/build.mjs", { id: "build", timeout: "45m" });
+```
+
 ### A command that stops at its own gate
 
 Some commands decide a gate themselves. `chant workspace upgrade` stages its patch, records `workspace-upgrade` / `<scope>` pending on the gate ledger, and exits 3 until someone runs `chant approve workspace-upgrade <scope>`. Name that exit code in `gatedExit` and the step stops its run at the command's gate ([#2779](https://github.com/INTENTIUS/chant/issues/2779)). The run ends `gated` there as it would at a pending `gate` step. Nothing after the step runs and a work lease is released `gated`. The run ledger records the gate with the op it is recorded under.
@@ -273,7 +282,7 @@ export default Op({
 });
 ```
 
-`item` is a work item id, a list of candidate ids, or a reference to an earlier step's output that resolves to either. A literal item is claimed before the first step, and a referenced one right after the step that produces it. From a list, the first candidate nobody holds is claimed. Omit `item` and the run names it with `chant run <op> --work <id>`. When the reference resolves to nothing or every candidate is held, the run claims nothing. It ends `ok` with the rest of its steps skipped, and the claim's record says who holds what.
+`item` is a work item id, a list of candidate ids, or a reference to an earlier step's output that resolves to either. A `shell` step hands over a list by printing it as JSON with `json: true`, and `item: pick.out.json` then reads it. A literal item is claimed before the first step, and a referenced one right after the step that produces it. From a list, the first candidate nobody holds is claimed. Omit `item` and the run names it with `chant run <op> --work <id>`. When the reference resolves to nothing or every candidate is held, the run claims nothing. It ends `ok` with the rest of its steps skipped, and the claim's record says who holds what.
 
 While the steps run, the lease is renewed every third of its `ttl` (default `10m`), keeping its fencing token. Steps read the lease through `workLeaseOutput`: its `item`, `holder`, `token` and `expiresAt`, and for an Op that changes the checkout its `worktree` and `branch`. An activity that writes somewhere a token can fence passes `token` along. If a renewal is refused because the lease ran out and another worker took the item, the lease is lost: the step in flight gets its abort signal, no later step starts, and the run fails with `lease-lost`. The lease is renewed once more before the run's record is written, so a run whose lease was lost is never recorded as done. `onFailure` phases still run.
 

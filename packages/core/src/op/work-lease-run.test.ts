@@ -14,7 +14,8 @@ import type { OpConfig, StepDefinition } from "./types";
 import { runOpLocally, OpRunFailure, type OpRunResult } from "./local-executor";
 import { workLeaseOutput, workLeaseProblems, stewardWorkHolder, WORK_LEASE_STEP_ID } from "./work-lease-run";
 import { declareSteward } from "./steward";
-import { Op } from "./builders";
+import { Op, shell } from "./builders";
+import { shellCmd } from "./activities/shell";
 import { WORK_LEASE_ITEM_PATTERN } from "./work-lease-decl";
 import { runOperatorRound } from "./operator";
 import { stepOutput, validateStepOutputRefScope } from "./step-output-ref";
@@ -161,6 +162,24 @@ describe("a run under a work lease", () => {
       expect(none.status).toBe("ok");
       expect(none.records.map((r) => [r.fn, r.status])).toEqual([["pick", "ok"], ["workLease:claim", "skipped"], ["build", "skipped"]]);
       expect(none.workLease?.refusal).toMatch(/nothing to claim/);
+    });
+  });
+
+  test("a shell pick step that prints JSON hands the lease its candidates, and the next is claimed when the first is held (#2787)", async () => {
+    await withTestDir(async (dir) => {
+      await initRepo(dir);
+      await claimWorkLease("W-4", "other", { cwd: dir, ttlMs: 60_000 });
+      const pick = shell(`echo '["W-4","W-5"]'`, { id: "pick", json: true });
+      const op = dispatchOp({ workLease: { item: pick.out.json } }, [pick, step("build", { item: workLeaseOutput("item") })]);
+      const activities = new Map<string, ActivityFn>([
+        ["shellCmd", shellCmd as unknown as ActivityFn],
+        ["build", async () => ({})],
+      ]);
+      const result = await run(op, activities, dir);
+      expect(result.status).toBe("ok");
+      expect(result.records.map((r) => r.fn)).toEqual(["shellCmd", "workLease:claim", "build"]);
+      expect(result.records[2].args).toEqual({ item: "W-5" });
+      expect(result.workLease).toMatchObject({ item: "W-5", released: true });
     });
   });
 
