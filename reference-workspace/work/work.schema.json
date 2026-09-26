@@ -128,7 +128,7 @@
       "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
     },
     "source": {
-      "description": "Where the work came from: a gap the intent graph reported, an issue, or the workspace itself.",
+      "description": "Where the work came from: a gap the intent graph reported, an issue, the workspace itself, or a person's ask.",
       "oneOf": [
         {
           "$ref": "#/definitions/sourceGap"
@@ -138,6 +138,9 @@
         },
         {
           "$ref": "#/definitions/sourceWorkspace"
+        },
+        {
+          "$ref": "#/definitions/sourceAsk"
         }
       ]
     },
@@ -400,6 +403,53 @@
         "issue": {
           "description": "An issue the work relates to, when there is one.",
           "$ref": "#/definitions/issueRef"
+        }
+      }
+    },
+    "sourceAsk": {
+      "description": "A person's ask, taken up as work with no gap, issue or workspace session behind it (chaff#39, chant#2851): what they said and who said it, recorded so hud's sidebar and the kit's ask flow can read it as an ordinary work record.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ask"
+      ],
+      "properties": {
+        "ask": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "said",
+            "by"
+          ],
+          "properties": {
+            "said": {
+              "description": "The person's words, verbatim.",
+              "type": "string",
+              "minLength": 1
+            },
+            "by": {
+              "description": "Who asked.",
+              "type": "string",
+              "minLength": 1
+            },
+            "at": {
+              "description": "When the ask was made, as an ISO 8601 timestamp.",
+              "type": "string"
+            },
+            "via": {
+              "description": "Where the ask came in: hud's sidebar, a shell command, or an MCP tool call.",
+              "enum": [
+                "hud",
+                "shell",
+                "mcp"
+              ]
+            },
+            "session": {
+              "description": "The id of the session the ask came up in, as the client names it. Absent when there was none.",
+              "type": "string",
+              "minLength": 1
+            }
+          }
         }
       }
     },

@@ -52,7 +52,7 @@ ref-002 puts the home screen's spec in the design member, and the app is to impl
 | `evidence` | The proof of done: links, or workspace files pinned by hash. Empty while the work is open. |
 | `owner` | Who has taken the work, a forge login or an agent's name. Optional. |
 | `opened_on`, `closed_on` | Dates as `YYYY-MM-DD`. `closed_on` is set on `done` or `dropped`. |
-| `source` | Where the work came from: a gap, an issue (`issue`), or the workspace (`kind: workspace` with a `member`). A gap may name the `finding-triage` answer that made it work as `answer`. |
+| `source` | Where the work came from: a gap, an issue (`issue`), the workspace (`kind: workspace` with a `member`), or a person's ask (`ask`). A gap may name the `finding-triage` answer that made it work as `answer`. |
 | `supersedes` | Earlier work this one replaces, as `{ work: <id> }`. |
 
 To write one without an editor, pass its fields as JSON to `records new` and leave out `id`. The command picks the next id (`W-003` after `W-002`) and writes the file once the schema accepts it:
@@ -87,7 +87,46 @@ source:
 chant workspace graph --intent design/screens/home.json
 ```
 
-A finding somebody has taken ends with `addressed by W-001 (in-progress)`, and the rest are the queue nobody has picked from yet. Work that didn't come from a finding uses the `issue` or `workspace` source that decisions use.
+A finding somebody has taken ends with `addressed by W-001 (in-progress)`, and the rest are the queue nobody has picked from yet. Work that didn't come from a finding uses the `issue` or `workspace` source that decisions use, or an ask, when what started it was a person's own words.
+
+## Start from an ask
+
+A person's ask can become work with no gap or issue behind it, the way hud's sidebar and the kit's ask flow take one up (chaff#39, [#2851](https://github.com/INTENTIUS/chant/issues/2851)). `source.ask` names what they said and who said it:
+
+```yaml
+source:
+  ask:
+    said: "Can the home screen remember the last tab I had open?"
+    by: "morgan"
+    at: "2026-09-25T16:04:00Z"
+    via: "hud"
+```
+
+`said` and `by` are required; the schema rejects an ask with neither. `at`, `via` (`hud`, `shell` or `mcp`) and `session` are optional, and name when the ask came in, where from, and the session it came up in. An item built from an ask opens `proposed` too, the [same first state](#proposed-work) any other suggestion does.
+
+```bash
+chant workspace records new work --from - <<'JSON'
+{
+  "schema": 1,
+  "title": "Remember the last open tab on the home screen",
+  "state": "proposed",
+  "implements": [],
+  "needs": [],
+  "constrains": ["path:design/screens/home.json"],
+  "evidence": [],
+  "opened_on": "2026-09-25",
+  "source": {
+    "ask": {
+      "said": "Can the home screen remember the last tab I had open?",
+      "by": "morgan",
+      "at": "2026-09-25T16:04:00Z",
+      "via": "hud"
+    }
+  },
+  "supersedes": []
+}
+JSON
+```
 
 ## Ready and blocked
 

@@ -370,6 +370,13 @@ describe("writing work items on a copy of the reference workspace (#2683)", () =
     expect("error" in doc && doc.error.code).toBe("record-schema-invalid");
   });
 
+  test("records new refuses an ask source with no said or by (#2851)", async () => {
+    const noSaid = await newRecord({ kind: "work/work.kind.mjs", fields: fresh({ source: { ask: { by: "morgan", at: "2026-09-25T10:00:00Z", via: "hud" } } }), dryRun: true, cwd: copy });
+    expect("error" in noSaid && noSaid.error.code).toBe("record-schema-invalid");
+    const noBy = await newRecord({ kind: "work/work.kind.mjs", fields: fresh({ source: { ask: { said: "Can we add a dark mode toggle?", at: "2026-09-25T10:00:00Z", via: "hud" } } }), dryRun: true, cwd: copy });
+    expect("error" in noBy && noBy.error.code).toBe("record-schema-invalid");
+  });
+
   test("records new with a fresh prefix takes --prefix W", async () => {
     const doc = await newRecord({ kind: "work/work.kind.mjs", fields: fresh(), prefix: "W", dryRun: true, cwd: copy });
     expect(doc).toMatchObject({ id: "W-004" });
@@ -387,5 +394,15 @@ describe("writing work items on a copy of the reference workspace (#2683)", () =
   test("records review on a work item is refused with review-unsupported: the kind declares no reviews", async () => {
     const doc = await reviewRecord({ kind: "work/work.kind.mjs", id: "W-003", verdict: "agree", by: "alice", cwd: copy });
     expect("error" in doc && doc.error.code).toBe("review-unsupported");
+  });
+
+  test("records new with an ask source round-trips through records --json (#2851)", async () => {
+    const ask = { said: "Can we add a dark mode toggle to the wireframe?", by: "morgan", at: "2026-09-25T10:00:00Z", via: "hud", session: "hud-9f2" };
+    const doc = await newRecord({ kind: resolveWriteKind("work", copy), fields: fresh({ source: { ask } }), cwd: copy });
+    if ("error" in doc) throw new Error(`${doc.error.code}: ${doc.error.message}`);
+    const read = await queryRecords({ kind: "work/work.kind.mjs", cwd: copy });
+    records.expectValid(read);
+    if ("error" in read) throw new Error(read.error.message);
+    expect(read.records.find((r) => r.id === doc.id)).toMatchObject({ valid: true, data: { source: { ask } } });
   });
 });
