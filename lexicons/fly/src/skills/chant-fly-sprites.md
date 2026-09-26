@@ -17,7 +17,7 @@ Each activity is a direct REST call over an injectable HTTP client, imported fro
 | Activity | What it does |
 |----------|--------------|
 | `spriteCreate` | Create a sandbox. The caller-chosen `name` becomes the sprite `id` that every later activity keys on |
-| `spriteExec` | Run a command inside the sprite. A non-zero exit throws, so the phase fails and any `onFailure` compensation runs |
+| `spriteExec` | Run a command inside the sprite, with optional `env`, `dir` and `timeoutMs` (#2765). A non-zero exit or a `timeoutMs` overrun throws, so the phase fails and any `onFailure` compensation runs |
 | `spriteCheckpoint` | Snapshot the sprite under a caller-chosen `label` |
 | `spriteRestore` | Rewind the sprite to a labeled checkpoint |
 | `spriteDestroy` | Destroy the sprite (idempotent; an already-gone sprite is a no-op) |

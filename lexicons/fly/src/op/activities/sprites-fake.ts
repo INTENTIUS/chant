@@ -70,6 +70,12 @@ interface ExecResult {
   stdout: string;
   stderr: string;
   exitCode: number;
+  /**
+   * Fake-only timing hook (#2765): how long `runExec` should hold the frames
+   * before sending them, set by the `sleep` form below. Lets a test prove
+   * `spriteExec`'s `timeoutMs` fires without a slow real exec.
+   */
+  delayMs?: number;
 }
 
 /**
@@ -77,11 +83,24 @@ interface ExecResult {
  * small set of forms so a test (and the example `guarded-task` Op) can write a
  * key, then overwrite/fail it, and prove restore rewinds. Segments split on
  * `;` run in order; the exit code is the last segment's (shell `;` semantics).
+ *
+ * `opts.env`/`opts.dir` (#2765) are the `env`/`dir` exec options after they
+ * cross the wire (`env` as `KEY=VALUE` strings, mirroring what the query
+ * params carry) — `env` and `pwd` below echo them back so a test can prove
+ * they reached the command. Real spritzer only wires `env`/`dir` through in
+ * container exec mode (real processes); its interpreter mode — what
+ * `fakeExec` otherwise mirrors — has no notion of either, so this pair of
+ * forms is fake-only, proven separately from the container-mode docker test.
  */
-export function fakeExec(sprite: SpriteState, cmd: string): ExecResult {
+export function fakeExec(
+  sprite: SpriteState,
+  cmd: string,
+  opts: { env?: string[]; dir?: string } = {},
+): ExecResult {
   let stdout = "";
   let stderr = "";
   let exitCode = 0;
+  let delayMs: number | undefined;
 
   for (const raw of cmd.split(";")) {
     const seg = raw.trim();
@@ -109,6 +128,19 @@ export function fakeExec(sprite: SpriteState, cmd: string): ExecResult {
       exitCode = 1;
     } else if (seg === "true") {
       exitCode = 0;
+    } else if (seg === "env") {
+      // Prints the passed env, sorted `KEY=VALUE` lines, like the real command.
+      stdout += [...(opts.env ?? [])].sort().map((kv) => `${kv}\n`).join("");
+      exitCode = 0;
+    } else if (seg === "pwd") {
+      stdout += `${opts.dir ?? "/"}\n`;
+      exitCode = 0;
+    } else if ((m = seg.match(/^sleep\s+(\d+)$/))) {
+      // Fake-only timing hook (#2765): the argument is milliseconds, not
+      // seconds like the real command — just enough to hold the exec open
+      // past a short `timeoutMs` without a slow test.
+      exitCode = 0;
+      delayMs = Number(m[1]);
     } else if (seg === "./risky.sh") {
       // A scripted failing job: mutates the workspace, then exits non-zero, so
       // the example guarded-task Op demonstrates checkpoint-as-compensation.
@@ -122,7 +154,7 @@ export function fakeExec(sprite: SpriteState, cmd: string): ExecResult {
     }
   }
 
-  return { stdout, stderr, exitCode };
+  return { stdout, stderr, exitCode, ...(delayMs !== undefined ? { delayMs } : {}) };
 }
 
 function unquote(s: string): string {
@@ -228,14 +260,25 @@ export function createSpritesFake(): Promise<{ url: string; close(): Promise<voi
     }
     // argv arrives as repeated `cmd` params; reconstruct the script the small
     // interpreter understands (the tokens round-trip for the space-separated
-    // command forms the example Ops use).
+    // command forms the example Ops use). `dir`/`env` (#2765) mirror
+    // spriteExecWsUrl's encoding: `dir` a single param, `env` repeated
+    // `KEY=VALUE` params.
     const argv = url.searchParams.getAll("cmd");
     const script = argv.join(" ");
-    const result = fakeExec(sprite, script);
-    if (result.stdout) ws.send(frame(STREAM_STDOUT, Buffer.from(result.stdout)));
-    if (result.stderr) ws.send(frame(STREAM_STDERR, Buffer.from(result.stderr)));
-    ws.send(frame(STREAM_EXIT, Buffer.of(result.exitCode & 0xff)));
-    ws.close();
+    const dir = url.searchParams.get("dir") ?? undefined;
+    const env = url.searchParams.getAll("env");
+    const result = fakeExec(sprite, script, { dir, env });
+    const send = (): void => {
+      // The client may already have aborted/timed out and closed its end;
+      // sending on a closed socket would throw, so this is a plain no-op.
+      if (ws.readyState !== ws.OPEN) return;
+      if (result.stdout) ws.send(frame(STREAM_STDOUT, Buffer.from(result.stdout)));
+      if (result.stderr) ws.send(frame(STREAM_STDERR, Buffer.from(result.stderr)));
+      ws.send(frame(STREAM_EXIT, Buffer.of(result.exitCode & 0xff)));
+      ws.close();
+    };
+    if (result.delayMs) setTimeout(send, result.delayMs);
+    else send();
   }
 
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
