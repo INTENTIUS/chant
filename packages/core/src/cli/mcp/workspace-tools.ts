@@ -6,7 +6,8 @@
  * is a thin call into the code the CLI runs:
  *
  * - The reads (`workspace-ls`, `workspace-status`, `workspace-graph`,
- *   `workspace-changes`, `workspace-records`, `workspace-points`) run `chant workspace <command>
+ *   `workspace-changes`, `workspace-records`, `workspace-points`,
+ *   `workspace-work-history`) run `chant workspace <command>
  *   ... --json` with the chant this server runs as, in the server's
  *   directory, and return the
  *   document it printed, unchanged, with its reason codes (#2536). Running the
@@ -151,6 +152,19 @@ export const workspaceReadTools: ToolDefinition[] = [
         kind: { type: "string", description: "One answer kind file, in place of the declared ones (--kind)." },
         at: atProp,
       },
+    },
+  },
+  {
+    name: "workspace-work-history",
+    description:
+      "One work item's lease history, from the lifecycle ledger of the member that owns its work kind: chant workspace work history <item> --json (work-history.schema.json, #2785). Each claim has its fencing token and holder and how it ended: released with an outcome, still held, or never released (expired, or lost to a later claim). Returns the document unchanged.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        item: { type: "string", description: "The work item's id." },
+        kind: { type: "string", description: "The work kind file, when more than one declared work kind has the id (--kind)." },
+      },
+      required: ["item"],
     },
   },
 ];
@@ -319,6 +333,11 @@ export function readArgv(tool: string, params: Record<string, unknown>): string[
         ...kinds(params).flatMap((k) => ["--kind", k]),
         "--json",
       ];
+    }
+    case "workspace-work-history": {
+      const item = str(params, "item", true)!;
+      const kind = str(params, "kind");
+      return ["workspace", "work", "history", item, ...(kind !== undefined ? ["--kind", kind] : []), "--json"];
     }
     case "workspace-points": {
       const kind = str(params, "kind");

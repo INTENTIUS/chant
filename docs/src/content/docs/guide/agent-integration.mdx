@@ -85,6 +85,7 @@ A server started inside a declared workspace also has tools for the workspace's 
 | `workspace-changes` | The forward coverage check over a diff: each changed path with the records covering it, and the uncovered or out-of-scope ones |
 | `workspace-records` | The records of a kind, with quorum and warnings, or what changed since a revision |
 | `workspace-points` | The workspace's decision points, and the questions asked of them, with the open ones a person answers |
+| `workspace-work-history` | A work item's lease history: each claim, and whether it was released, with what outcome, or never released |
 | `records-new` | Propose a record; it opens `proposed` and says it came through MCP |
 | `records-amend` | Set fields of a record, under the same approval rule as the CLI |
 | `records-review` | Give a verdict, which moves the record's quorum |

@@ -85,7 +85,7 @@ describe("which servers have the workspace tools", () => {
       const { tools } = (await rpc(server(cwd), "tools/list")) as { tools: { name: string }[] };
       expect(tools.map((t) => t.name)).toEqual(expect.arrayContaining(names));
     }
-    expect(names).toEqual(["workspace-ls", "workspace-status", "workspace-graph", "workspace-changes", "workspace-records", "workspace-points", "records-new", "records-amend", "records-review", "records-close", "points-answer"]);
+    expect(names).toEqual(["workspace-ls", "workspace-status", "workspace-graph", "workspace-changes", "workspace-records", "workspace-points", "workspace-work-history", "records-new", "records-amend", "records-review", "records-close", "points-answer"]);
   });
 
   test("a server outside any workspace, or given none, does not", async () => {
@@ -125,6 +125,16 @@ describe("reads", () => {
     const answered = await call(s, "points-answer", { id: "slice-tier-000000000000", answer: "small", by: ["alice"] });
     expect(answered.structuredContent).toMatchObject({ verb: "answer", error: { code: "points-undeclared" } });
     const bad = await call(s, "points-answer", { id: "slice-tier-000000000000", answer: "small", by: [] });
+    expect(bad.isError).toBe(true);
+  }, 120_000);
+
+  test("workspace-work-history returns the document chant workspace work history --json prints (#2785)", async () => {
+    const s = server();
+    const res = await call(s, "workspace-work-history", { item: "W-1" });
+    expect(res.isError).toBeUndefined();
+    expect(res.structuredContent).toEqual(cli(["workspace", "work", "history", "W-1", "--json"]));
+    expect(res.structuredContent).toMatchObject({ contract: 1, error: { code: expect.any(String) } });
+    const bad = await call(s, "workspace-work-history", {});
     expect(bad.isError).toBe(true);
   }, 120_000);
 

@@ -10,7 +10,7 @@ Tools that show a workspace read it through one contract ([#2536](https://github
 
 | Contract | chant floor | Declaration | Output schemas |
 |---|---|---|---|
-| 1 | 0.81.0 | schema 1 | `ls`, `graph`, `check`, `status`, `records`, `records-since`, `intent`, `composites`, `points` and `changes`, each at `v1` |
+| 1 | 0.81.0 | schema 1 | `ls`, `graph`, `check`, `status`, `records`, `records-since`, `intent`, `composites`, `points`, `changes` and `work-history`, each at `v1` |
 
 Every document carries `contract`, the version it follows, and `$schema`, its schema's `$id`. Most also carry `chant`, the version of the chant that wrote it. A reader that knows contract 1 refuses a document with any other `contract` value. Given a chant older than the floor, the reader can say so and name the version to install, since that chant doesn't write the contract at all.
 
@@ -33,6 +33,7 @@ Each schema ships in `@intentius/chant` at `src/workspace/<command>.schema.json`
 | [`chant workspace check --changes`](/chant/cli/workspace-check/#the-forward-coverage-check) | `--json` | `https://intentius.io/chant/schemas/workspace/changes/v1/changes.schema.json` |
 | [`chant workspace points`](/chant/cli/workspace-points/#output) | `--json` | `https://intentius.io/chant/schemas/workspace/points/v1/points.schema.json` |
 | the [`workEvidence`](/chant/guide/work-items/#acceptance-criteria) Op activity | its result, or the refusal it fails with | `https://intentius.io/chant/schemas/workspace/work-evidence/v1/work-evidence.schema.json` |
+| [`chant workspace work history`](/chant/cli/workspace-work/#reading-leases) | `--json` | `https://intentius.io/chant/schemas/workspace/work-history/v1/work-history.schema.json` |
 
 Each schema is a `oneOf` of a result and a failure. The `records` schema has a third branch for the set it prints without `--kind` ([#2680](https://github.com/INTENTIUS/chant/issues/2680)). The set holds a result or a failure for each record kind the declaration names. A failure has `error: { code, message }`, plus `location` for the commands that read the declaration, and exits 1. A result may still hold entries that couldn't be read, each with a `reason: { code, message }`. Only `check` fails on those ([ws-020](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-020-unreadable.md)). In `check`, a declaration that can't be read is the finding `WSP001` with the same `code`, not a failure.
 
@@ -288,6 +289,8 @@ The decision kind is the file the work kind's `work.decisions` names, read at th
 A criterion is met by evidence that names it in `criterion`, has `result: pass`, and has the criterion's `verification`. A `manual` verdict also names its giver in `by`, and it counts only when that is not the record's implementer. For a declared work kind with criteria, `ls --json` gives each kind an `acceptance` list of `{ item, state, met, total }`, and `status --json` gives the workspace one of `{ member, kind, item, state, met, total }`. Both list only the current items that state criteria. `check` reads the same records and fails a done item with a criterion unmet as `WSP117`.
 
 A work lease is written by [`chant workspace work claim|renew|release`](/chant/cli/workspace-work/) to `refs/chant/lease/[_members/<member>/]work/<id>`, with a history in `_leases/<id>.jsonl` on `chant/lifecycle`. `status --json` lists every lease in `leases`, active and expired, each with its `item`, the `member` whose ledger holds it (`null` for the flat ledger), `ref`, `holder`, `token`, `acquiredAt`, `expiresAt` and `state`. Neither read fetches. A reader that needs the remote's leases fetches `refs/chant/lease/*` first, or runs a claim, which does.
+
+`chant workspace work history <id> --json` reads one item's history back from the ledger of the member that owns its work kind ([#2785](https://github.com/INTENTIUS/chant/issues/2785)). The document follows `work-history.schema.json`. The history file's place on the branch is `ledger`, and the lease ref's record now is `lease`. `events` holds every line, and `claims` folds the lines into one entry per fencing token. Each claim says how it `ended`: `released` with its `release` (`by`, `at`, `outcome`, `note`), `held`, `expired`, or `lost` to a later claim. A runner counts failed builds from `claims`, as the studio kit's queue does, instead of reading `_leases/<id>.jsonl` with git. It never fetches either. `chant serve mcp` serves it as `workspace-work-history`.
 
 ## Decision points
 
