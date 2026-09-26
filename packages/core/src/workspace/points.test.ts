@@ -24,10 +24,11 @@ import {
 } from "./points";
 
 /**
- * chud's points, as template/delivery/decisions/points.yaml declares them at
- * jhgaylor/chud@43afcf1, as JSON.
+ * Points shaped like an externally authored template's decisions file
+ * (ported from chud, jhgaylor/chud@43afcf1's
+ * template/delivery/decisions/points.yaml), as JSON.
  */
-const CHUD = {
+const IMPORTED = {
   points: {
     "slice-tier": {
       title: "Which builder tier builds this contract",
@@ -63,7 +64,7 @@ const CHUD = {
     "ship-skip": {
       title: "May this release skip the human gate",
       question: {
-        type: "boolean",
+        type: "noul",
         instructions: "May this release pass the ship gate without a person approving it? The state is what the release plan would change.",
         criteria: {
           true: "An agent may pass the gate for this release (only in enforce mode).",
@@ -86,9 +87,9 @@ const CHUD = {
   },
 };
 
-/** chud's points with each input named as a read-contract output: the slice tier reads a work item, the ship gate a release. */
-function renamed(): typeof CHUD {
-  const copy = JSON.parse(JSON.stringify(CHUD)) as typeof CHUD;
+/** The imported points with each input named as a read-contract output: the slice tier reads a work item, the ship gate a release. */
+function renamed(): typeof IMPORTED {
+  const copy = JSON.parse(JSON.stringify(IMPORTED)) as typeof IMPORTED;
   const prefix: Record<string, string> = { "slice-tier": "work-item", "ship-skip": "release" };
   for (const [name, point] of Object.entries(copy.points) as [string, { inputs: Record<string, string>; deciders: { rows?: { when: Record<string, unknown> }[] }[] }][]) {
     const to = (k: string) => `${prefix[name]}.${k}`;
@@ -123,14 +124,14 @@ describe("the decision points schema (#2738)", () => {
     }
   });
 
-  test("chud's slice-tier and ship-skip validate unchanged, apart from the input names", () => {
-    // As chud declares them, only the input names are refused: each names no read-contract output.
-    const found = problems(CHUD);
+  test("the imported slice-tier and ship-skip validate unchanged, apart from the input names", () => {
+    // As the template declares them, only the input names are refused: each names no read-contract output.
+    const found = problems(IMPORTED);
     expect(found.length).toBeGreaterThan(0);
     for (const p of found) expect(p.message).toMatch(/is not a read-contract output|is not one of this point's inputs/);
     expect(found.filter((p) => p.message.includes("read-contract output")).map((p) => p.field)).toEqual([
-      ...Object.keys(CHUD.points["slice-tier"].inputs).map((k) => `points.slice-tier.inputs.${k}`),
-      ...Object.keys(CHUD.points["ship-skip"].inputs).map((k) => `points.ship-skip.inputs.${k}`),
+      ...Object.keys(IMPORTED.points["slice-tier"].inputs).map((k) => `points.slice-tier.inputs.${k}`),
+      ...Object.keys(IMPORTED.points["ship-skip"].inputs).map((k) => `points.ship-skip.inputs.${k}`),
     ]);
     // With the inputs renamed, nothing else changes and both validate.
     const points = parsePoints(text(renamed()), "points.json");
@@ -156,7 +157,7 @@ describe("the decision points schema (#2738)", () => {
 
   test("a point with an unknown input is refused, and so is a row testing an undeclared one", () => {
     const v = renamed() as unknown as { points: Record<string, { inputs: Record<string, string>; deciders: { rows?: { when: Record<string, unknown> }[] }[] }> };
-    v.points["slice-tier"].inputs["contract.size"] = "chud's contract, which the read contract has no output for";
+    v.points["slice-tier"].inputs["contract.size"] = "a contract, which the read contract has no output for";
     expect(problems(v)).toEqual([
       {
         field: "points.slice-tier.inputs.contract.size",
@@ -168,7 +169,7 @@ describe("the decision points schema (#2738)", () => {
     expect(problems(w)).toEqual([{ field: "points.slice-tier.deciders.0.rows.0.when.work-item.tier", message: expect.stringContaining("is not one of this point's inputs") }]);
   });
 
-  test("the schema and the code refuse the rest of what chud refused, and an alias model id", () => {
+  test("the schema and the code refuse the rest of what an imported points file can get wrong, and an alias model id", () => {
     const cases: [(p: Record<string, unknown>) => void, RegExp][] = [
       [(p) => ((p.deciders as Record<string, unknown>[])[1].model = "jev-latest"), /is an alias/],
       [(p) => ((p.deciders as Record<string, unknown>[])[1].count = 2), /is only for a quorum decider/],

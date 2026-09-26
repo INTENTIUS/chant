@@ -36,7 +36,7 @@ describe("the data form reads every trailer value (#2663)", () => {
   });
 
   test("trailerValues keeps git's order, trims, and drops empty values and repeats", () => {
-    expect(trailerValues({ "Chud-Evidence": ["h1", "h2"], "chud-evidence": ["h2", " h3", "  "] }, "CHUD-EVIDENCE")).toEqual(["h1", "h2", "h3"]);
+    expect(trailerValues({ "Acme-Evidence": ["h1", "h2"], "acme-evidence": ["h2", " h3", "  "] }, "ACME-EVIDENCE")).toEqual(["h1", "h2", "h3"]);
     expect(trailerValues({}, "X")).toEqual([]);
     expect(trailerValue({ X: ["  "] }, "x")).toBeUndefined();
   });
@@ -45,16 +45,16 @@ describe("the data form reads every trailer value (#2663)", () => {
 describe("commitJoinsName (#2663)", () => {
   test("names the findings of either form, and leaves the data form's own keys alone", () => {
     const join = () => undefined;
-    expect(readCommitJoins({ commitJoins: join, commitJoinsName: "chud" })).toEqual({ form: "function", join, name: "chud" });
-    expect(readCommitJoins({ commitJoins: { trailers: { unit: "Unit" } }, commitJoinsName: "chud" })).toEqual({ form: "data", data: { trailers: { unit: "Unit" } }, name: "chud" });
+    expect(readCommitJoins({ commitJoins: join, commitJoinsName: "acme" })).toEqual({ form: "function", join, name: "acme" });
+    expect(readCommitJoins({ commitJoins: { trailers: { unit: "Unit" } }, commitJoinsName: "acme" })).toEqual({ form: "data", data: { trailers: { unit: "Unit" } }, name: "acme" });
     expect(readCommitJoins({ commitJoins: join })).toEqual({ form: "function", join });
     // A name inside the data form is still a key the data form does not have.
-    expect(readCommitJoins({ commitJoins: { name: "chud", trailers: {} } })).toMatch(/Unrecognized key/);
+    expect(readCommitJoins({ commitJoins: { name: "acme", trailers: {} } })).toMatch(/Unrecognized key/);
   });
 
   test("a name that can't be a plugin:<name>: segment, or one with no joins, is refused", () => {
     for (const bad of ["a:b", "a b", "", 7]) expect(readCommitJoins({ commitJoins: () => undefined, commitJoinsName: bad }), String(bad)).toMatch(/^commitJoinsName:/);
-    expect(readCommitJoins({ commitJoinsName: "chud" })).toMatch(/no commitJoins/);
+    expect(readCommitJoins({ commitJoinsName: "acme" })).toMatch(/no commitJoins/);
     expect(readCommitJoins({})).toBeUndefined();
   });
 });

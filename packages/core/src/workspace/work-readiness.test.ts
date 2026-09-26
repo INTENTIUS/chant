@@ -1,11 +1,10 @@
 /**
- * The work kind's `ready`/`blockedBy` against chud's ready queue (ws-055,
- * #2734).
- *
- * chud's `readyQueue` (packages/runtime/src/ready.mjs at jhgaylor/chud
- * 43afcf1) puts a contract in the ready set once it is approved and in
- * force, every `depends_on` id is `met` (drivers.mjs's `memberState`), and no
- * unit is open against it; a contract that is itself met leaves the queue.
+ * The work kind's `ready`/`blockedBy` against a reference ready-queue rule
+ * (ws-055, #2734), ported from chud's `readyQueue`
+ * (packages/runtime/src/ready.mjs at jhgaylor/chud 43afcf1): a contract
+ * enters the ready set once it is approved and in force, every `depends_on`
+ * id is `met` (drivers.mjs's `memberState`), and no unit is open against it;
+ * a contract that is itself met leaves the queue.
  *
  * Of those rules, the work kind's `ready` and `blockedBy` (work.ts) can
  * express two directly, with no new field:
@@ -17,22 +16,21 @@
  *   retired contract does.
  * - a record that is itself already `done` (or `dropped`, or merely
  *   `in-progress`) is not `ready`: `ready` requires `state === "open"`, the
- *   same "already met/already running leaves the queue" rule ready.mjs
- *   states for a contract that is itself met.
+ *   same "already met/already running leaves the queue" rule the reference
+ *   rule states for a contract that is itself met.
  *
- * The rules ready.mjs adds on top -- approval before a dependency counts
- * (memberState's draft/failing cases), re-checking that a `met` dependency's
- * newest evidence still passes, and refusing a contract while a unit is open
- * against it -- have no equivalent in a `needs` link. The full table of
- * every ready.mjs rule and its home (a `needs` link, the runner, or "not
+ * The rules the reference rule adds on top -- approval before a dependency
+ * counts (memberState's draft/failing cases), re-checking that a `met`
+ * dependency's newest evidence still passes, and refusing a contract while a
+ * unit is open against it -- have no equivalent in a `needs` link. The full
+ * table of every rule and its home (a `needs` link, the runner, or "not
  * applicable") is on INTENTIUS/chant#2734.
  *
- * This fixture mirrors a small chud contract graph as work items and checks
- * `queryRecords`'s `ready`/`blockedBy` against a minimal, local
- * re-implementation of the expressible subset of ready.mjs's rule (met
- * depends_on, self not already met), so a regression in either the work
- * kind's readiness formula or this reading of ready.mjs's rule shows up as a
- * mismatch.
+ * This fixture mirrors a small reference contract graph as work items and
+ * checks `queryRecords`'s `ready`/`blockedBy` against a minimal, local
+ * re-implementation of the expressible subset of that rule (met depends_on,
+ * self not already met), so a regression in either the work kind's readiness
+ * formula or this reading of the reference rule shows up as a mismatch.
  */
 
 import { readFileSync } from "node:fs";
@@ -63,13 +61,13 @@ function work(id: string, fields: Record<string, unknown>): string {
 }
 
 /**
- * The expressible subset of ready.mjs's rule, on a graph shaped like
+ * The expressible subset of the reference rule, on a graph shaped like
  * `depends_on`: ready once the item is `open` (not already met, not already
- * running) and every dependency is `done` (chud's "met"). A dependency that
- * is `dropped` never becomes done, so it blocks forever -- the same effect
- * ready.mjs gets from a retired dependency.
+ * running) and every dependency is `done` (the reference rule's "met"). A
+ * dependency that is `dropped` never becomes done, so it blocks forever --
+ * the same effect the reference rule gets from a retired dependency.
  */
-function chudReadyIsh(items: { id: string; state: string; needs: string[] }[]): { ready: Set<string>; blockedBy: Map<string, string[]> } {
+function referenceReadyIsh(items: { id: string; state: string; needs: string[] }[]): { ready: Set<string>; blockedBy: Map<string, string[]> } {
   const stateOf = new Map(items.map((i) => [i.id, i.state]));
   const ready = new Set<string>();
   const blockedBy = new Map<string, string[]>();
@@ -90,13 +88,13 @@ beforeAll(() => {
     "decisions/decision.schema.json": readFileSync(join(REF, "decisions", "decision.schema.json"), "utf-8"),
     "work/work.kind.mjs": readFileSync(join(REF, "work", "work.kind.mjs"), "utf-8"),
     "work/work.schema.json": readFileSync(join(REF, "work", "work.schema.json"), "utf-8"),
-    // W-001: already done, so it leaves the ready queue -- ready.mjs's "a
-    // contract that is itself met is done, not ready".
+    // W-001: already done, so it leaves the ready queue -- the reference
+    // rule's "a contract that is itself met is done, not ready".
     "work/W-001-base.md": work("W-001", { state: "done", closed_on: "2026-09-24", evidence: [{ title: "shipped", url: "https://example.com/w1" }] }),
     // W-002: needs W-001, which is done -- both rules agree this is ready.
     "work/W-002-after-base.md": work("W-002", { needs: ["W-001"] }),
     // W-003: needs W-004, which is dropped and so never turns done -- blocked
-    // forever, the same as a retired dependency in ready.mjs.
+    // forever, the same as a retired dependency in the reference rule.
     "work/W-003-needs-dropped.md": work("W-003", { needs: ["W-004"] }),
     "work/W-004-dropped.md": work("W-004", { state: "dropped", closed_on: "2026-09-24" }),
     // W-005: needs W-002, which is open (not done yet) -- blocked.
@@ -111,22 +109,22 @@ beforeAll(() => {
 });
 afterAll(cleanScratch);
 
-describe("work kind ready/blockedBy vs. chud's ready queue, expressible rules (#2734)", () => {
+describe("work kind ready/blockedBy vs. a reference ready-queue rule, expressible rules (#2734)", () => {
   test("matches on every item, for the rules a needs link can express", async () => {
     const doc = await queryRecords({ kind: WORK, cwd: root });
     if ("error" in doc) throw new Error(doc.error.message);
     expect(doc.summary).toEqual({ total: 7, valid: 7, invalid: 0, superseded: 0 });
 
     const items = doc.records.map((r) => ({ id: r.id!, state: r.state!, needs: (r.data as { needs?: string[] }).needs ?? [] }));
-    const chud = chudReadyIsh(items);
+    const reference = referenceReadyIsh(items);
 
     for (const r of doc.records) {
       const id = r.id!;
-      expect(r.ready, `${id}.ready`).toBe(chud.ready.has(id));
+      expect(r.ready, `${id}.ready`).toBe(reference.ready.has(id));
       expect(
         (r.blockedBy ?? []).map((b) => b.id),
         `${id}.blockedBy`,
-      ).toEqual(chud.blockedBy.get(id));
+      ).toEqual(reference.blockedBy.get(id));
     }
   });
 

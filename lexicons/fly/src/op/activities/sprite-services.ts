@@ -1,7 +1,7 @@
 /**
  * Sprite Services activities (#2711) — imperative create/get/list/start/stop/
- * delete/logs over a Sprite's background services, the surface a box's door,
- * hud and chud run as long-lived services through (`sprite-env services`
+ * delete/logs over a Sprite's background services, the surface a box's door
+ * and hud run as long-lived services through (`sprite-env services`
  * inside the sprite, `/v1/sprites/{id}/services/...` outside). Shared by the
  * Sprites API, wisp (arugula-salad/wisp) and spritzer 0.6.0's container mode
  * (INTENTIUS/spritzer#22).

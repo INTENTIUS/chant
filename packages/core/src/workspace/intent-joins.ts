@@ -2,10 +2,10 @@
  * The commit-join hook of the intent graph (#2651; #2650 C1 and C13).
  *
  * Commits, decisions and artifacts come from core. Units of work, contracts
- * and evidence come from a plugin, such as chud's development model, because
- * core ships no model of them (#2555, "Core ships no decision kind"). A kind
- * file passed to `chant workspace graph --intent --kind <file>` supplies them
- * through one export, `commitJoins`, in one of two forms:
+ * and evidence come from a plugin, such as a workspace's own development
+ * model, because core ships no model of them (#2555, "Core ships no decision
+ * kind"). A kind file passed to `chant workspace graph --intent --kind <file>`
+ * supplies them through one export, `commitJoins`, in one of two forms:
  *
  * - A function `commitJoins(commit, context)` that returns the unit, contract
  *   and evidence for one commit, or nothing. It is given the commit's sha,
@@ -36,7 +36,7 @@
  * `<name>` is the kind's name by default: its record kind's name, or the
  * file's name without `.kind.mjs`. A kind file may name its findings itself
  * with a sibling export, `commitJoinsName` (#2663), so joins that live beside
- * a record kind called `decision` can still report `plugin:chud:<code>`. It is
+ * a record kind called `decision` can still report `plugin:acme:<code>`. It is
  * a sibling export rather than a property because the data form is a closed
  * object whose keys are all joins, and a function's `name` property is
  * already its own name.

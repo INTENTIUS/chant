@@ -26,6 +26,11 @@
  * still the template's, so to a later upgrade they are the project's own
  * edits, merged per file like any other (ws-005). A deleted file keeps its
  * entry too, so a template version that still has it leaves it deleted.
+ *
+ * chant itself carries no chud lexicon or chud-shaped code (#2830, once
+ * #2715's proof passed): `chud-lexicon-exit` and its follow-ons are the
+ * retirement tool, not a remaining dependency. They stay until no known repo
+ * still depends on chud, and are removed only in a major version.
  */
 
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";

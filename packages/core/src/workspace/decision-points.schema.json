@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://intentius.io/chant/schemas/workspace/decision-points/v1/decision-points.schema.json",
   "title": "Decision points",
-  "description": "A workspace's decision points (ws-058, #2738): the recurring questions it asks of its own graph, declared as data in a JSON file that an answer record kind names in `answers.points`. Each point is a typed question (`noul`, `choice` with 2 to 255 options, or `score` with 2 to 10 ordered levels, the question types of the POST /v1/systemone wire format, #2491), the inputs it reads, each named as a read-contract output, and an ordered chain of deciders: `table` rows, `model` deciders with a backend, a pinned model id and a threshold, and a `quorum` of people, always last. Taken from chud's decision-points.schema.json; `boolean` is read as `noul`. What JSON Schema cannot say is checked in code (`points.ts`): an input's output is one the read contract has, a table row tests declared inputs and answers a candidate, a field belongs to its decider's kind, a model id is pinned rather than an alias, and the chain ends in its one quorum. Unknown fields are refused, except fields whose names start with x-.",
+  "description": "A workspace's decision points (ws-058, #2738): the recurring questions it asks of its own graph, declared as data in a JSON file that an answer record kind names in `answers.points`. Each point is a typed question (`noul`, `choice` with 2 to 255 options, or `score` with 2 to 10 ordered levels, the question types of the POST /v1/systemone wire format, #2491), the inputs it reads, each named as a read-contract output, and an ordered chain of deciders: `table` rows, `model` deciders with a backend, a pinned model id and a threshold, and a `quorum` of people, always last. What JSON Schema cannot say is checked in code (`points.ts`): an input's output is one the read contract has, a table row tests declared inputs and answers a candidate, a field belongs to its decider's kind, a model id is pinned rather than an alias, and the chain ends in its one quorum. Unknown fields are refused, except fields whose names start with x-.",
   "type": "object",
   "required": ["points"],
   "properties": {
@@ -44,7 +44,7 @@
       "type": "object",
       "required": ["type", "instructions", "criteria"],
       "properties": {
-        "type": { "enum": ["noul", "boolean", "choice", "score"], "description": "boolean is chud's name for noul, read as noul." },
+        "type": { "enum": ["noul", "choice", "score"] },
         "instructions": { "$ref": "#/$defs/text" },
         "criteria": {
           "description": "The candidates. noul: {true, false} descriptions. choice: option to description, 2 to 255 options. score: 2 to 10 ordered levels.",
@@ -54,7 +54,7 @@
       "additionalProperties": false,
       "allOf": [
         {
-          "if": { "properties": { "type": { "enum": ["noul", "boolean"] } } },
+          "if": { "properties": { "type": { "const": "noul" } } },
           "then": {
             "properties": {
               "criteria": {

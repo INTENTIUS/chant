@@ -89,6 +89,8 @@ Each one lists every file it writes or deletes and why, what it does not move an
 
 The migrations run in the order of this table, and each one plans from the tree the ones before it left, so a repo migrated now gets all of them in one upgrade. A repo migrated before `chud-lexicon-exit-rollback` existed already has `chud-lexicon-exit` in its lock, and its next upgrade plans only the rollback migration, which the dry run lists.
 
+The `chud-lexicon-exit` family is the retirement tool, not a remaining chud dependency: chant itself carries no chud lexicon or chud-derived code ([#2830](https://github.com/INTENTIUS/chant/issues/2830)). These migrations stay until no known repo still depends on chud, and are removed only in a major version.
+
 `chud-lexicon-exit` finds the `chant` member whose `package.json` depends on either package, usually `delivery/`, and makes these changes:
 
 - Both packages leave `package.json`. Every `@intentius/chant` and `@intentius/chant-lexicon-*` range below the running chant is raised to `^<that version>`. No package is added: `decide` is chant's own. Scripts run chant alone: `--on chud` goes, and `upgrade` becomes `chant workspace upgrade`.
