@@ -32,6 +32,10 @@ export type { FlyDeployOpts, FlyApplyStepOpts, FlapsStepOpts } from "./composite
 export { FlyOtelCollector } from "./composites/fly-otel-collector";
 export type { FlyOtelCollectorProps } from "./composites/fly-otel-collector";
 
+// A Fly app that serves one app's releases: App, Machine, and its Volume, IP and Secrets (#2809, ws-056).
+export { FlySite } from "./composites/fly-site";
+export type { FlySiteProps } from "./composites/fly-site";
+
 // Sprite Op step builders. chant #1288 Stage 2: these author
 // `activity("spriteCreate", ...)` steps with authoring-time types derived
 // from this lexicon's own `Sprite*Args` interfaces (`./op/builders.ts`),
