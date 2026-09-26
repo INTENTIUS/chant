@@ -193,6 +193,14 @@ describe("every schema against the reference workspace (#2543)", () => {
       expectValid(doc);
       if ("error" in doc) throw new Error(doc.error.message);
       expect(doc.points.map((p) => p.name)).toEqual(["slice-tier", "ship-skip", "finding-triage", "needs-a-decision"]);
+      const sliceTier = doc.points.find((p) => p.name === "slice-tier")!;
+      expect(sliceTier.criteria).toEqual({
+        small: "A haiku-class builder. The work item fits the small limits.",
+        medium: "A mid-size builder. The work item fits the medium limits.",
+        large: "The largest builder. The work item is bigger than the medium limits.",
+      });
+      const shipSkip = doc.points.find((p) => p.name === "ship-skip")!;
+      expect(shipSkip.criteria).toEqual({ true: "An agent may pass the gate for this release.", false: "A person approves the release at the gate." });
     }
     const open = await workspacePoints({ cwd: FIXTURE, open: true });
     expectValid(open);
