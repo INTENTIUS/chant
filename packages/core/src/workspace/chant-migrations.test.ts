@@ -13,6 +13,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import yaml from "js-yaml";
 import { execFileSync, spawn } from "node:child_process";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -23,7 +24,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import type { GateLedgerPort } from "../op/gate";
 import type { GateResolutionRecord, PendingGateRecord } from "../lifecycle/gate-ledger";
 import { WORKSPACE_UPGRADE_GATE_OP } from "../op/gate-name";
-import { CHUD_LEXICON_EXIT, convertPoints } from "./chant-migrations/chud-lexicon-exit";
+import { CHANT_MIGRATIONS } from "./chant-migrations";
+import { CHUD_LEXICON_EXIT, chudLexiconExit, convertPoints } from "./chant-migrations/chud-lexicon-exit";
+import { CHUD_LEXICON_EXIT_SHIP_INPUTS } from "./chant-migrations/chud-lexicon-exit-ship-inputs";
 import { CHUD_LEXICON_EXIT_ROLLBACK } from "./chant-migrations/chud-lexicon-exit-rollback";
 import { readerVersion } from "./declaration";
 import { runChecks } from "./lineage-check";
@@ -119,6 +122,20 @@ async function makeProject(from: "dir" | "git"): Promise<void> {
   expect(made.error).toBeUndefined();
   git(proj, ["init", "-q", "-b", "main"]);
   commit("init from the studio kit's template");
+}
+
+/** `paths` as 0.92.0's `chud-lexicon-exit` writes them over the project as it is now. */
+function exitWrote(paths: string[]): Record<string, string> {
+  const plan = chudLexiconExit.plan({ dir: proj, lineage: readLock(proj)?.scopes["."] ?? ({ migrations: [], files: {} } as never), chantVersion: readerVersion() })!;
+  return Object.fromEntries(paths.map((p) => [p, plan.changes.find((c) => c.path === p)!.data!.toString("utf-8")]));
+}
+/** Put files back as a release left them, with the lock naming only `migrations`, and commit. */
+function asReleased(files: Record<string, string>, migrations: string[]): void {
+  for (const [p, text] of Object.entries(files)) put(proj, p, text);
+  const lock = JSON.parse(read(proj, ".chant/workspace.lock.json")) as { scopes: Record<string, { migrations: string[] }> };
+  lock.scopes["."].migrations = migrations;
+  put(proj, ".chant/workspace.lock.json", JSON.stringify(lock, null, 2) + "\n");
+  commit("as 0.92.0 migrated it");
 }
 
 afterEach(() => {
@@ -228,7 +245,8 @@ describe.each(["dir", "git"] as const)("chud-lexicon-exit, from a %s source", (f
     expect(read(proj, "design/CLAUDE.md")).toMatch(/chud-runtime\/design\/`\. That package is\ngone/);
 
     const lineage = readLock(proj)!.scopes["."];
-    expect(lineage.migrations).toEqual([CHUD_LEXICON_EXIT, CHUD_LEXICON_EXIT_ROLLBACK]);
+    // A repo migrated from chud gets every follow-on in the same upgrade.
+    expect(lineage.migrations).toEqual(CHANT_MIGRATIONS.map((m) => m.id));
     expect(lineage.manualSteps).toEqual([]);
 
     // chant workspace check is clean: the lock, the declaration and the points file.
@@ -325,6 +343,63 @@ describe("chud-lexicon-exit-rollback, over a repo chud-lexicon-exit migrated bef
     try {
       const [m] = staged.chantMigrations;
       expect(m).toMatchObject({ id: CHUD_LEXICON_EXIT_ROLLBACK, applied: false, conflicts: [{ path: "delivery/ops/rollback.op.ts" }] });
+    } finally {
+      staged.dispose();
+    }
+  });
+});
+
+describe("chud-lexicon-exit-ship-inputs, over a repo chud-lexicon-exit migrated before it existed (#2811)", () => {
+  const RELEASE = "delivery/ops/release.op.ts";
+  beforeEach(async () => {
+    await makeProject("dir");
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const released = exitWrote([RELEASE]);
+    await upgrade();
+    const lock = readLock(proj)!.scopes["."].migrations.filter((id) => id !== CHUD_LEXICON_EXIT_SHIP_INPUTS);
+    // As 0.92.0 wrote it: decide from the systemone lexicon (#2829 moved it into core since).
+    const at092 = released[RELEASE]
+      .replace("releasePlan, releaseRecord, decide } from \"@intentius/chant/op\";", "releasePlan, releaseRecord } from \"@intentius/chant/op\";")
+      .replace('import { flyRelease } from "@intentius/chant-lexicon-fly";', 'import { decide } from "@intentius/chant-lexicon-systemone";\nimport { flyRelease } from "@intentius/chant-lexicon-fly";')
+      .replace("through chant's `decide` activity, and", "through the systemone lexicon's `decide` activity, and");
+    expect(at092).toContain('import { decide } from "@intentius/chant-lexicon-systemone";');
+    asReleased({ [RELEASE]: at092 }, lock);
+  });
+
+  test("the dry run lists it; the upgrade passes the inputs and the lock records it; a second plans nothing", async () => {
+    expect(read(proj, RELEASE)).toContain('const shipSkip = decide("ship-skip", { id: "shipSkip" });');
+    const lines: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((s: string) => void lines.push(s));
+    const dry = await upgradeCommand({ root: proj, to: target(), dryRun: true, runChant: passing });
+    expect(dry.outcome).toBe("dry-run");
+    expect(lines.join("\n")).toContain(`chant migration: ${CHUD_LEXICON_EXIT_SHIP_INPUTS} (applied)`);
+    expect(lines.join("\n")).toContain(`write: ${RELEASE}`);
+
+    await upgrade();
+    const release = read(proj, RELEASE);
+    expect(release).toContain('const shipSkip = decide("ship-skip", { id: "shipSkip", inputs });');
+    expect(release).toContain('import { readReleaseLedger } from "@intentius/chant/lifecycle/release-ledger";');
+    expect(release).toContain('const WORK: Array<{ dir: string; match: string }> = [{"dir":"work","match":"^W-[0-9]{3,}-.+\\\\.md$"}];');
+    expect(release).toContain('const APP = "app";');
+    expect(release).toContain("with\n *   the inputs it declares");
+    expect(readLock(proj)!.scopes["."].migrations).toContain(CHUD_LEXICON_EXIT_SHIP_INPUTS);
+
+    const again = await stageUpgrade({ root: proj, to: target(), runChant: passing });
+    try {
+      expect(again.chantMigrations).toEqual([]);
+      expect(again.changed).toBe(false);
+    } finally {
+      again.dispose();
+    }
+  });
+
+  test("a release Op the project changed so the decide step is gone is left alone", async () => {
+    put(proj, RELEASE, read(proj, RELEASE).replace('const shipSkip = decide("ship-skip", { id: "shipSkip" });', 'const shipSkip = decide("ship-skip", { id: "shipSkip", inputs: { "release.units": 0 } });'));
+    commit("our own inputs");
+    const staged = await stageUpgrade({ root: proj, to: target(), runChant: passing });
+    try {
+      expect(staged.chantMigrations.find((m) => m.id === CHUD_LEXICON_EXIT_SHIP_INPUTS)).toBeUndefined();
     } finally {
       staged.dispose();
     }
@@ -561,6 +636,91 @@ describe("the migrated delivery project, with this checkout's chant", () => {
       expect(backAgain.status, backAgain.out).toBe(0);
       expect(served().config.metadata?.["chant-release-digest"]).toBe(plan.digest);
       expect((await readReleaseLedger("fly", { cwd: delivery })).records).toHaveLength(3);
+    } finally {
+      await fly.close();
+    }
+  });
+
+  test("asks ship-skip with the inputs the point declares, from the diff since the release the site serves (#2811)", { timeout: 1_200_000 }, async () => {
+    await upgrade();
+    // A row above the default: a release that is not the first and changes no work item may skip the gate.
+    const pointsDoc = JSON.parse(read(proj, "decisions/points.json")) as { points: Record<string, { deciders: Array<{ kind: string; rows?: unknown[] }> }> };
+    pointsDoc.points["ship-skip"].deciders[0].rows!.unshift({ when: { "release.first_release": false, "release.work_changed": false }, answer: true, note: "the app alone changed" });
+    put(proj, "decisions/points.json", JSON.stringify(pointsDoc, null, 2) + "\n");
+    commit("a ship-skip row for the test");
+    const delivery = join(proj, "delivery");
+    symlinkSync(join(repoRoot, "node_modules"), join(delivery, "node_modules"));
+    writeFileSync(join(proj, ".git/info/exclude"), "node_modules\n");
+
+    const seen = new Set<string>();
+    /** The ship-skip answer record the last run wrote: its inputs, answer and table row. */
+    const answered = (): { inputs: Record<string, unknown>; answer: unknown; decider: { kind: string; row: number } } => {
+      const fresh = readdirSync(join(proj, "answers")).filter((f) => f.startsWith("ship-skip-") && !seen.has(f));
+      expect(fresh).toHaveLength(1);
+      seen.add(fresh[0]);
+      return yaml.load(read(proj, `answers/${fresh[0]}`).split("---\n")[1]) as never;
+    };
+    const count = (text: string) => text.split("\n").filter(Boolean).length;
+    const fly = await flaps();
+    const env = { FLY_FLAPS_BASE_URL: fly.endpoint, FLY_API_TOKEN: "test", CHUD_FLY_APP_SECRET: "s3cret", GITHUB_ACTOR: "releaser" };
+    try {
+      const first = await chant(delivery, env, "run", "release");
+      expect(first.status, first.out).toBe(3);
+      // The first release: every file on HEAD counts.
+      expect(answered()).toMatchObject({
+        inputs: {
+          "release.first_release": true,
+          "release.new_migrations": 1,
+          "release.files_changed": count(git(proj, ["ls-tree", "-r", "--name-only", "HEAD"])),
+          "release.app_changed": true,
+          "release.work_changed": true,
+          "release.units": 0,
+        },
+        answer: false,
+        decider: { kind: "table", row: 1 },
+      });
+      const approve = await chant(delivery, env, "approve", "release", "ship", "--approver", "alice");
+      expect(approve.status, approve.out).toBe(0);
+      const shipped = await chant(delivery, env, "run", "release");
+      expect(shipped.status, shipped.out).toBe(0);
+      const serving = git(proj, ["rev-parse", "HEAD"]);
+
+      put(proj, "app/server.js", `${read(proj, "app/server.js")}// a change\n`);
+      commit("change the app");
+      const second = await chant(delivery, env, "run", "release");
+      expect(second.status, second.out).toBe(3);
+      // The app alone changed since the serving release: the row above the default answers yes.
+      expect(answered()).toMatchObject({
+        inputs: {
+          "release.first_release": false,
+          "release.new_migrations": 0,
+          "release.files_changed": count(git(proj, ["diff", "--name-only", serving, "HEAD"])),
+          "release.app_changed": true,
+          "release.work_changed": false,
+          "release.units": 0,
+        },
+        answer: true,
+        decider: { kind: "table", row: 0 },
+      });
+
+      put(proj, "work/W-001-notes-search.md", "---\nid: W-001\n---\nSearch notes.\n");
+      put(proj, "app/migrations/0002_search.sql", "-- search\n");
+      commit("a work item and its migration");
+      const third = await chant(delivery, env, "run", "release");
+      expect(third.status, third.out).toBe(3);
+      // A work item changed too, with a migration that would fire: the default row answers no.
+      expect(answered()).toMatchObject({
+        inputs: {
+          "release.first_release": false,
+          "release.new_migrations": 1,
+          "release.files_changed": count(git(proj, ["diff", "--name-only", serving, "HEAD"])),
+          "release.app_changed": true,
+          "release.work_changed": true,
+          "release.units": 1,
+        },
+        answer: false,
+        decider: { kind: "table", row: 1 },
+      });
     } finally {
       await fly.close();
     }
