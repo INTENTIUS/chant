@@ -510,6 +510,14 @@ export async function runWorkspaceRecords(ctx: CommandContext): Promise<number> 
  * names, or, when it names none or there is no declaration, the error it has
  * always been. A kind whose read fails is listed with its error, the others
  * are still read, and the exit code is 1.
+ *
+ * Locating the declaration itself can fail before any kind is known. For
+ * `not-a-git-repository` and `revision-unknown`, the codes a single kind's
+ * read can also fail with (#2860), `--json` prints the same
+ * `{ $schema, contract, error: { code, message } }` document that read
+ * failure would, so a reader of `--json` never sees a silent exit 1. A
+ * declaration-level code the schema doesn't carry (`declaration-invalid` and
+ * the rest of `WorkspaceErrorCode`) still prints text on stderr only.
  */
 async function runDeclaredRecords(args: CommandContext["args"]): Promise<number> {
   if (args.require !== undefined && args.require !== "attested") {
@@ -521,7 +529,12 @@ async function runDeclaredRecords(args: CommandContext["args"]): Promise<number>
     declared = declaredKindFiles(process.cwd(), args.at);
   } catch (err) {
     if (!(err instanceof WorkspaceReadError)) throw err;
-    console.error(formatError({ message: `${err.code}: ${err.describe()}; without --kind, the declaration names the record kinds`, hint: USAGE }));
+    const message = `${err.describe()}; without --kind, the declaration names the record kinds`;
+    if (args.json && (err.code === "not-a-git-repository" || err.code === "revision-unknown")) {
+      console.log(JSON.stringify({ $schema: RECORDS_OUTPUT_SCHEMA_ID, contract: RECORDS_CONTRACT_VERSION, error: { code: err.code, message } }, null, 2));
+    } else {
+      console.error(formatError({ message: `${err.code}: ${message}`, hint: USAGE }));
+    }
     return 1;
   }
   if (declared.length === 0) {

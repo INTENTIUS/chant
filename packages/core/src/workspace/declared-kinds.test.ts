@@ -242,6 +242,32 @@ describe("records without --kind reads every declared kind (#2680)", () => {
     expect(await run(workspace(), "--current")).toBe(0);
     expect(out.filter((l) => l.includes("("))).toEqual(["decision (decisions/decision.kind.mjs)", "notes (design/notes/note.kind.mjs)"]);
   });
+
+  test("--at an unknown revision with --json prints the error document, not just text on stderr (#2860)", async () => {
+    const root = workspace();
+    expect(await run(root, "--at", "refs/heads/no-such-branch", "--json")).toBe(1);
+    expect(err).toEqual([]);
+    const printed = JSON.parse(out.join("\n"));
+    expectValid(printed);
+    expect(printed).toEqual({
+      $schema: recordsSchema.$id,
+      contract: 1,
+      error: { code: "revision-unknown", message: expect.stringContaining("refs/heads/no-such-branch") as unknown as string },
+    });
+
+    out.length = 0;
+    err.length = 0;
+    expect(await run(root, "--at", "refs/heads/no-such-branch")).toBe(1);
+    expect(out).toEqual([]);
+    expect(err.join("\n")).toContain("revision-unknown");
+  });
+
+  test("a declaration-level code the records schema doesn't carry, such as declaration-invalid, stays text-only even with --json (#2860)", async () => {
+    const root = repo({ "chant.workspace.json": decl(members(), { records: [{ kind: "a.kind.mjs", file: "b" }] }), "app/x": "", "design/x": "" });
+    expect(await run(root, "--json")).toBe(1);
+    expect(out).toEqual([]);
+    expect(err.join("\n")).toContain("declaration-invalid");
+  });
 });
 
 describe("records new, amend and review without --kind (#2680)", () => {
