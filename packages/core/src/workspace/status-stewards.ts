@@ -37,7 +37,7 @@ import { listWorkLeases } from "../lifecycle/work-lease";
 import { stewardWorkHolder } from "../op/work-lease-run";
 import type { OpConfig } from "../op/types";
 import type { OpRunRecord } from "../op/runtime";
-import { approveCommand } from "../op/gate";
+import { approveCommand } from "./status-gates";
 import type { ReasonCode } from "./reason-codes";
 
 /** Why a member's stewards can't be fully listed. Closed: a new code is a contract change. */
@@ -151,7 +151,7 @@ function waitOf(p: NonNullable<OpRunRecord["point"]>): StatusStewardWait {
 
 function gateOf(g: NonNullable<OpRunRecord["gate"]>, opName: string): NonNullable<StatusStewardRun["gate"]> {
   const op = g.op ?? opName;
-  return { name: g.name, since: g.since, op, approve: approveCommand(op, g.name) };
+  return { name: g.name, since: g.since, op, approve: approveCommand(op, g.name, null) };
 }
 
 /** Whether a directory is a chant project of its own. */
