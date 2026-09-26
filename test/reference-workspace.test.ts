@@ -764,7 +764,9 @@ describe("decision points on the work graph (#2741, ws-058)", () => {
       await stub.close();
       rmSync(scratch, { recursive: true, force: true });
     }
-  });
+  // Six chant CLI runs and two decide calls: 15 to 19s on CI, so the suite default of 20s fails it on a busy
+  // shard. One CLI run's own bound, CLI_TIMEOUT_MS, is the limit for the whole case.
+  }, CLI_TIMEOUT_MS);
 });
 
 describe("chant init --from on the fixture", () => {
