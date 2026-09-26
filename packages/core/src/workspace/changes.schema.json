@@ -243,6 +243,10 @@
           ],
           "description": "The member whose directory holds the path."
         },
+        "generated": {
+          "type": "boolean",
+          "description": "Added by #2794: whether the path is a generated file, declared in a member's generated entries or one core registers, as graph --intent reads a region's generated. The finding-triage point reads it as region.generated."
+        },
         "status": {
           "enum": [
             "covered",
@@ -379,6 +383,34 @@
               "type": "string"
             }
           }
+        },
+        "addressed": {
+          "type": "boolean",
+          "description": "Added by #2794, present when a work kind was read: whether a work item addresses the finding, because the item's source.finding is this code and its source.region is this path or a directory above it, in any state, as graph --intent reads a gap source (#2683). The finding-triage point reads it as finding.addressed."
+        },
+        "addressedBy": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "record",
+              "state"
+            ],
+            "properties": {
+              "record": {
+                "type": "string",
+                "description": "The work item, as <kind name>/<id>."
+              },
+              "state": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          },
+          "description": "Added by #2794, present when a work kind was read: the work items addressing the finding, each with its state."
         }
       }
     },

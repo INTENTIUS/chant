@@ -20,7 +20,7 @@ import { join } from "node:path";
 import Ajv from "ajv";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { cleanScratch, contract, git, REPO, repo, writeFiles } from "./__fixtures__/contract-repo";
-import { changeFindingSource, checkChanges, CHANGES_FINDING_CODES, workBranchChanges, type ChangesDocument } from "./changes";
+import { changeFindingSource, changeFindingTriageInputs, checkChanges, CHANGES_FINDING_CODES, workBranchChanges, type ChangesDocument } from "./changes";
 import { formatChanges } from "./changes-cli";
 import { changeCoverage } from "../op/activities/change-coverage";
 import changesSchema from "./changes.schema.json";
@@ -121,7 +121,7 @@ beforeAll(() => {
 });
 afterAll(cleanScratch);
 
-async function check(range: string, options: { work?: string; severity?: "off" | "warn" | "fail" } = {}): Promise<{ doc: Result; failed: boolean }> {
+async function check(range: string, options: { work?: string; severity?: "off" | "warn" | "fail"; kinds?: string[] } = {}): Promise<{ doc: Result; failed: boolean }> {
   const { doc, failed } = await checkChanges({ cwd: root, range, ...options });
   changes.expectValid(doc);
   if ("error" in doc) throw new Error(`${doc.error.code}: ${doc.error.message}`);
@@ -231,6 +231,64 @@ describe("the forward coverage check (#2773)", () => {
       expect(workSchema(seeded.value), JSON.stringify(workSchema.errors)).toBe(true);
     }
     for (const c of CHANGES_FINDING_CODES) expect(REASONS[c].length).toBeGreaterThan(10);
+  });
+
+  test("a finding reads as addressed when a work item's source names its gap, and maps to the finding-triage inputs (#2794)", async () => {
+    // Before any work item names a gap, every finding reads addressed false, and each path says whether it is generated.
+    const { doc: before } = await check(`${sha.c0}..${sha.c1}`);
+    expect(before.findings.map((f) => [f.path, f.addressed, f.addressedBy])).toEqual([
+      ["app/lib/legacy.mjs", false, []],
+      ["app/src/vendor/lib.mjs", false, []],
+      ["docs/readme.md", false, []],
+      ["tools/t.mjs", false, []],
+    ]);
+    expect(before.paths.every((p) => p.generated === false)).toBe(true);
+
+    // c2: W-004 came from the uncovered gap on docs, a directory above docs/readme.md, and is done; W-005 came from the
+    // out-of-scope gap on app/lib/legacy.mjs, by a line range; W-006 names the right path under the wrong code.
+    // A skill's SKILL.md is a generated file.
+    const gap = (finding: string, region: string) => ({ source: { finding, region } });
+    writeFiles(root, {
+      "work/W-004-docs.md": work("W-004", { state: "done", closed_on: "2026-09-25", constrains: ["path:docs"], evidence: [{ title: "The run", url: "https://example.com/run" }], ...gap("change-uncovered", "docs") }),
+      "work/W-005-legacy.md": work("W-005", { constrains: ["path:app/lib/a.mjs"], ...gap("change-out-of-scope", "app/lib/legacy.mjs:1-2") }),
+      "work/W-006-tools.md": work("W-006", { constrains: ["path:app/lib/a.mjs"], ...gap("change-out-of-scope", "tools/t.mjs") }),
+      "skills/review/SKILL.md": "# Review\n",
+    });
+    const c2 = commit("work from the gaps");
+    try {
+      const { doc } = await check(`${sha.c0}..${c2}`);
+      expect(doc.findings.map((f) => [f.path, f.addressed, f.addressedBy])).toEqual([
+        ["app/lib/legacy.mjs", true, [{ record: "work/W-005", state: "open" }]],
+        ["app/src/vendor/lib.mjs", false, []],
+        ["docs/readme.md", true, [{ record: "work/W-004", state: "done" }]],
+        ["skills/review/SKILL.md", false, []],
+        ["tools/t.mjs", false, []],
+      ]);
+      const skill = doc.paths.find((p) => p.path === "skills/review/SKILL.md")!;
+      expect([skill.status, skill.generated]).toEqual(["uncovered", true]);
+
+      // The point's inputs, by the names decisions/points.json declares, as graph --intent's finding and region give them.
+      const readme = doc.findings.find((f) => f.path === "docs/readme.md")!;
+      expect(changeFindingTriageInputs(readme, doc.paths.find((p) => p.path === readme.path)!)).toEqual({
+        "finding.code": "change-uncovered",
+        "finding.message": readme.message,
+        "finding.addressed": true,
+        "region.path": "docs/readme.md",
+        "region.member": "docs",
+        "region.generated": false,
+      });
+      const points = JSON.parse(readFileSync(join(REF, "decisions", "points.json"), "utf-8")) as { points: Record<string, { inputs: Record<string, string> }> };
+      expect(Object.keys(changeFindingTriageInputs(readme, doc.paths.find((p) => p.path === readme.path)!))).toEqual(Object.keys(points.points["finding-triage"].inputs));
+      expect(() => changeFindingTriageInputs(readme, skill)).toThrow(/fired on docs\/readme.md/);
+    } finally {
+      git(root, "reset", "-q", "--hard", sha.c1);
+    }
+
+    // With no work kind read, a finding has no addressed, and the inputs pass it as false.
+    const { doc: decisionsOnly } = await check(`${sha.c0}..${sha.c1}`, { kinds: ["decisions/decision.kind.mjs"] });
+    expect(decisionsOnly.findings.every((f) => !("addressed" in f) && !("addressedBy" in f))).toBe(true);
+    const f = decisionsOnly.findings[0];
+    expect(changeFindingTriageInputs(f, decisionsOnly.paths.find((p) => p.path === f.path)!)["finding.addressed"]).toBe(false);
   });
 
   test("on a work branch, the range and the item come from the branch (an Op under changesCheckout)", async () => {

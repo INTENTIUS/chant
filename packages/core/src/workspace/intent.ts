@@ -38,7 +38,7 @@ import { realpathSync } from "node:fs";
 import { basename, dirname, relative, resolve, sep } from "node:path";
 import { declaredRecordKinds, readDeclaration, readerVersion, resolveGroups, WORKSPACE_ERROR_CODES, WorkspaceReadError, type Declaration } from "./declaration";
 import { declaredKindFile } from "./declared-kinds";
-import { classifyFile, declaredFilesUnder } from "./generated-files";
+import { isGeneratedPath } from "./generated-files";
 import { entityDecisions, hasTrailer, readCommitJoins, runCommitJoins, type CommitJoins, type IntentCommit, type JoinedEntity, type PluginFinding } from "./intent-joins";
 import { loadKindRegistry } from "./kinds";
 import { resolveLinks, type LinkTableRow } from "./links";
@@ -541,13 +541,6 @@ function filesUnder(tree: WorkspaceTree, dir: string): string[] {
   return out;
 }
 
-function isGenerated(declaration: Declaration, path: string): boolean {
-  const m = declaration.members.find((x) => x.name === memberHolding(path, declaration.members));
-  const dir = m?.dir ?? ".";
-  const rel = dir === "." ? path : path.slice(dir.length + 1);
-  return classifyFile(rel, declaredFilesUnder(declaration, dir)).class === "generated";
-}
-
 function stringOr(v: unknown): string | null {
   return typeof v === "string" ? v : null;
 }
@@ -707,9 +700,9 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
   // The region, its files and its member.
   const member = region.path === "." ? (declaration.members.find((m) => m.dir === ".")?.name ?? null) : memberHolding(region.path, declaration.members);
   const rid = regionId(region.path, region.lines);
-  add<RegionNode>({ id: rid, kind: "region", path: region.path, lines: region.lines, member, at: located.at, type, generated: type === "file" ? isGenerated(declaration, region.path) : null, node: region.node });
+  add<RegionNode>({ id: rid, kind: "region", path: region.path, lines: region.lines, member, at: located.at, type, generated: type === "file" ? isGeneratedPath(declaration, region.path) : null, node: region.node });
   const files = type === "dir" ? filesUnder(located.tree, region.path) : [];
-  for (const f of files) add<FileNode>({ id: `file:${f}`, kind: "file", path: f, member: memberHolding(f, declaration.members), generated: isGenerated(declaration, f) });
+  for (const f of files) add<FileNode>({ id: `file:${f}`, kind: "file", path: f, member: memberHolding(f, declaration.members), generated: isGeneratedPath(declaration, f) });
   const memberNode = (name: string) => {
     const m = declaration.members.find((x) => x.name === name);
     return add<MemberNode>({ id: `member:${name}`, kind: "member", name, dir: m?.dir ?? "", memberKind: m?.kind ?? "" });

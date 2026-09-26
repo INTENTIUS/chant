@@ -235,7 +235,7 @@ warning   change-uncovered: docs/readme.md, in member docs, is modified, and no 
 5 changed paths: 1 covered, 1 uncovered, 1 out of scope, 1 ignored, 1 records; 2 findings
 ```
 
-`--json` prints the [read contract](/chant/reference/workspace-read-contract/#the-forward-coverage-check) document, which follows `https://intentius.io/chant/schemas/workspace/changes/v1/changes.schema.json`. `chant serve mcp` serves it as the `workspace-changes` tool. Each finding's `triage` is the gap source a work item seeded from it takes, for the finding-triage decision point ([#2741](https://github.com/INTENTIUS/chant/issues/2741)). An Op that changes the checkout runs the check on its own branch with the [`changeCoverage` activity](/chant/guide/ops/#checking-the-change-against-the-records).
+`--json` prints the [read contract](/chant/reference/workspace-read-contract/#the-forward-coverage-check) document, which follows `https://intentius.io/chant/schemas/workspace/changes/v1/changes.schema.json`. `chant serve mcp` serves it as the `workspace-changes` tool. Each finding's `triage` is the gap source a work item seeded from it takes, for the finding-triage decision point ([#2741](https://github.com/INTENTIUS/chant/issues/2741)). When a work kind is read, `addressed` says whether a work item already came from that gap, and each path's `member` and `generated` fill the rest of the point's inputs ([#2794](https://github.com/INTENTIUS/chant/issues/2794)). See [From a change finding](/chant/guide/decision-points/#from-a-change-finding). An Op that changes the checkout runs the check on its own branch with the [`changeCoverage` activity](/chant/guide/ops/#checking-the-change-against-the-records).
 
 ## Options
 
