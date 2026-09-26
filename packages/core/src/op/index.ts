@@ -37,6 +37,10 @@ export type {
   LexiconUpgradeOpConfig, LexiconUpgradeOpResources,
   BehaviourOpConfig, BehaviourOpResources,
 } from "./composites";
+export type {
+  ConvergeSymptom, ResourceSymptom, ResourceObservation, ObservedResource, ResourceStatus,
+} from "../lifecycle/symptoms";
+export { parseResourceObservation, CONVERGE_RESOURCE_ENV } from "../lifecycle/symptoms";
 export { receiptActivities, receiptCheckInput } from "./receipt-store";
 export type {
   ReceiptStore, EffectReceiptRef, ReceiptCheckInput, ReceiptActivities, ReceiptActivityOptions,

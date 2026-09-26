@@ -204,7 +204,7 @@
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["name", "schedule", "env", "lastRun", "changesCheckout", "workLease"],
+            "required": ["name", "schedule", "env", "lastRun", "lastTick", "changesCheckout", "workLease"],
             "properties": {
               "name": { "type": "string" },
               "schedule": {
@@ -249,6 +249,54 @@
                       "point": {
                         "description": "The open decision point a waiting run stopped on (#2749), as the run ledger records it, or null.",
                         "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/stewardWait" }]
+                      }
+                    }
+                  }
+                ]
+              },
+              "lastTick": {
+                "description": "For a ConvergeOp, its newest tick on the converge ledger (#2778): the rules that fired, what each did and for which resource, and what its observer step reported. null for any other Op, or before its first tick.",
+                "oneOf": [
+                  { "type": "null" },
+                  {
+                    "type": "object",
+                    "required": ["id", "timestamp", "log", "firedRuleIds", "outcomes", "resources"],
+                    "properties": {
+                      "id": { "type": ["string", "null"] },
+                      "timestamp": { "type": "string" },
+                      "log": { "type": "string" },
+                      "firedRuleIds": { "type": "array", "items": { "type": "string" } },
+                      "outcomes": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "required": ["ruleId", "action", "op", "resource", "reason"],
+                          "properties": {
+                            "ruleId": { "type": "string" },
+                            "action": { "enum": ["ran", "reported", "skipped-budget", "skipped-flap", "gated"] },
+                            "op": { "type": ["string", "null"] },
+                            "resource": { "type": ["string", "null"], "description": "The resource the rule fired for, on a ConvergeOp with an observer step." },
+                            "reason": { "type": ["string", "null"] }
+                          }
+                        }
+                      },
+                      "resources": {
+                        "description": "What the observer step reported, or null for a ConvergeOp that observes a lexicon environment.",
+                        "oneOf": [
+                          { "type": "null" },
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "required": ["name", "status", "detail"],
+                              "properties": {
+                                "name": { "type": "string" },
+                                "status": { "enum": ["in-sync", "drifted", "unknown"] },
+                                "detail": { "type": ["string", "null"] }
+                              }
+                            }
+                          }
+                        ]
                       }
                     }
                   }

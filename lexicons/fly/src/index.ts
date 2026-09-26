@@ -64,6 +64,8 @@ export {
   spriteServiceStop,
   spriteServiceDelete,
   spriteServiceLogs,
+  spriteServicesObserve,
+  spriteServiceRestart,
   spriteTaskCreate,
   spriteTaskRefresh,
   spriteTaskRelease,

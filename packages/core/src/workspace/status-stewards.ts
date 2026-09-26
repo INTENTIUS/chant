@@ -30,6 +30,7 @@ import { dirname, join, relative, resolve } from "node:path";
 import { discoverStewards } from "../op/discover";
 import { stewardFormFor, stewardLeaseName, type StewardForm } from "../op/steward";
 import { readRunLedger, runEnvOf } from "../lifecycle/run-ledger";
+import { readConvergeLedger, type ConvergeTickRecord } from "../lifecycle/converge-ledger";
 import { leaseRef } from "../lifecycle/lease";
 import { readBlobBySha, readRefSha } from "../lifecycle/git";
 import { resolveMemberLedger } from "../lifecycle/member-ledger";
@@ -46,7 +47,7 @@ export const STEWARD_REASON_CODES = [
   "stewards-unreadable",
   /** A steward was dropped: its name, or an Op it lists, belongs to another steward. */
   "stewards-conflict",
-  /** Reading an Op's run ledger failed, so its last run is null. */
+  /** Reading an Op's run ledger, or a ConvergeOp's converge ledger, failed, so its last run or last tick is null. */
   "steward-runs-unreadable",
 ] as const satisfies readonly ReasonCode[];
 export type StewardReasonCode = (typeof STEWARD_REASON_CODES)[number];
@@ -79,6 +80,27 @@ export interface StatusStewardWait {
   since: string;
 }
 
+/** A ConvergeOp's newest tick on the converge ledger (#2778). */
+export interface StatusStewardTick {
+  /** The tick's id, or null for a tick recorded before ticks had ids. */
+  id: string | null;
+  timestamp: string;
+  /** The tick's one log line. */
+  log: string;
+  /** Every rule that fired. */
+  firedRuleIds: string[];
+  /** What each fired rule did, and for which resource on a ConvergeOp with an observer step. */
+  outcomes: {
+    ruleId: string;
+    action: ConvergeTickRecord["outcomes"][number]["action"];
+    op: string | null;
+    resource: string | null;
+    reason: string | null;
+  }[];
+  /** What the observer step reported, or null for a ConvergeOp that observes a lexicon environment. */
+  resources: { name: string; status: "in-sync" | "drifted" | "unknown"; detail: string | null }[] | null;
+}
+
 export interface StatusStewardOp {
   name: string;
   /** The Op's cadence, or null for an Op the steward runs only when asked. */
@@ -87,6 +109,8 @@ export interface StatusStewardOp {
   env: string;
   /** The newest run in its run ledger, or null when it has none. */
   lastRun: StatusStewardRun | null;
+  /** For a ConvergeOp, its newest tick on the converge ledger (#2778); null for any other Op, or before its first tick. */
+  lastTick: StatusStewardTick | null;
   /** Whether the Op changes the checkout, and so runs under a work lease on a branch of its own (#2748). */
   changesCheckout: boolean;
   /**
@@ -152,6 +176,23 @@ function waitOf(p: NonNullable<OpRunRecord["point"]>): StatusStewardWait {
 function gateOf(g: NonNullable<OpRunRecord["gate"]>, opName: string): NonNullable<StatusStewardRun["gate"]> {
   const op = g.op ?? opName;
   return { name: g.name, since: g.since, op, approve: approveCommand(op, g.name, null) };
+}
+
+function tickOf(t: ConvergeTickRecord): StatusStewardTick {
+  return {
+    id: t.id ?? null,
+    timestamp: t.timestamp,
+    log: t.log,
+    firedRuleIds: [...t.firedRuleIds],
+    outcomes: t.outcomes.map((o) => ({
+      ruleId: o.ruleId,
+      action: o.action,
+      op: o.op ?? null,
+      resource: o.resource ?? null,
+      reason: o.reason ?? null,
+    })),
+    resources: t.resources ? t.resources.map((r) => ({ name: r.name, status: r.status, detail: r.detail ?? null })) : null,
+  };
 }
 
 /** Whether a directory is a chant project of its own. */
@@ -245,11 +286,24 @@ export async function readMemberStewards(
           message: `${opEnv}/runs__${op.name}.jsonl: ${err instanceof Error ? err.message.split("\n")[0] : String(err)}`,
         });
       }
+      let lastTick: StatusStewardTick | null = null;
+      if (op.labels?.Converge === "true") {
+        try {
+          const newest = (await readConvergeLedger(opEnv, { cwd: memberDir })).records.filter((r) => r.op === op.name).at(-1);
+          if (newest) lastTick = tickOf(newest);
+        } catch (err) {
+          reasons.push({
+            code: "steward-runs-unreadable",
+            message: `${opEnv}/converge.jsonl: ${err instanceof Error ? err.message.split("\n")[0] : String(err)}`,
+          });
+        }
+      }
       ops.push({
         name: op.name,
         schedule: op.schedule ? { cron: op.schedule.cron, overlap: "skip" } : null,
         env: opEnv,
         lastRun,
+        lastTick,
         changesCheckout: op.changesCheckout === true,
         workLease: op.workLease
           ? { kind: op.workLease.kind ?? null, held: await readHeldWorkLeases(declaration.name, op, memberDir, now) }

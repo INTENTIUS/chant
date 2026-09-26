@@ -143,6 +143,24 @@ export type {
   SpriteServiceLogsResult,
 } from "./sprite-services";
 
+// A sprite's services as resources a ConvergeOp observes and converges (#2778):
+// the observer step and the restart a converge rule dispatches.
+export {
+  spriteServicesObserve,
+  spriteServiceRestart,
+  declaredServices,
+  findSpriteEnv,
+  parseServicesList,
+  probeHealth,
+} from "./sprite-service-converge";
+export type {
+  DeclaredSpriteService,
+  SpriteServicesObserveArgs,
+  SpriteServicesObserveResult,
+  SpriteServiceRestartArgs,
+  SpriteServiceRestartResult,
+} from "./sprite-service-converge";
+
 // Sprite filesystem activities (#848) — imperative file I/O over the fs API.
 // `loadActivities(["fly"])` binds these; the step builders live in core.
 export {

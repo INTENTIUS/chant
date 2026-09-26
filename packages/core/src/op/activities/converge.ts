@@ -40,7 +40,14 @@ import {
 } from "../converge-rule";
 import { classifyOpVerbClass, type OpVerbClass } from "../op-verb-class";
 import { discoverOps } from "../discover";
-import { deriveSymptoms, type ConvergeSymptom } from "../../lifecycle/symptoms";
+import {
+  deriveSymptoms,
+  parseResourceObservation,
+  CONVERGE_RESOURCE_ENV,
+  type ConvergeSymptom,
+  type ObservedResource,
+  type ResourceSymptom,
+} from "../../lifecycle/symptoms";
 import {
   appendConvergeRecord,
   readConvergeLedger,
@@ -88,6 +95,14 @@ export interface ConvergeTickArgs {
    * (this activity re-derives its own symptom independently).
    */
   preflightDrift?: boolean;
+  /**
+   * The observer step's result, for a ConvergeOp declared with `observe`
+   * (#2778): a {@link ResourceObservation}, or a `shell()` result whose
+   * stdout is one. Present, the tick observes nothing itself: it evaluates
+   * `rules` once per reported resource, against a `ResourceSymptom`, and
+   * dispatches a fired `run()` for that resource.
+   */
+  observed?: unknown;
 }
 
 export interface ConvergeTickResult {
@@ -209,9 +224,10 @@ export function classifyDispatchFailure(raw: string): { gateName: string } | und
 async function dispatchOp(
   opName: string,
   signal?: AbortSignal,
+  env?: Record<string, string>,
 ): Promise<{ ok: true } | { ok: false; error: string; gateName?: string }> {
   try {
-    await execAsync(`chant run ${shellQuote(opName)} --json`, { signal });
+    await execAsync(`chant run ${shellQuote(opName)} --json`, { signal, ...(env ? { env: { ...process.env, ...env } } : {}) });
     return { ok: true };
   } catch (err) {
     const e = err as { code?: number; stdout?: string; stderr?: string; message?: string };
@@ -383,25 +399,106 @@ function renderLog(env: string, s: ConvergeSymptom, counts: ReturnType<typeof su
   );
 }
 
-export async function convergeTick(args: ConvergeTickArgs, signal?: AbortSignal): Promise<ConvergeTickResult> {
-  await fetchLifecycle().catch(() => undefined);
+// ── Resources an observer step reports (#2778) ──────────────────────────────
 
-  const [cs, statusRows, ledger] = await Promise.all([
-    observeChangeSet(args.env, signal),
-    observeStatusRows(args.env, signal),
-    readConvergeLedger(args.env),
-  ]);
+/**
+ * How many consecutive most-recent ticks of `op` fired `ruleId` for
+ * `resource`. A rule of a ConvergeOp with an observer step fires once per
+ * resource, so its flap damping is counted per resource: a rule that
+ * restarts `app` on one tick and `hud` on the next is not flapping.
+ */
+export function consecutiveResourceFires(records: ConvergeTickRecord[], op: string, ruleId: string, resource: string): number {
+  let count = 0;
+  for (let i = records.length - 1; i >= 0; i--) {
+    if (records[i].op !== op) continue;
+    if (!records[i].outcomes.some((o) => o.ruleId === ruleId && o.resource === resource)) break;
+    count++;
+  }
+  return count;
+}
 
-  const symptom = deriveSymptoms(args.env, cs, statusRows);
-  const plan = planConvergeTick(symptom, args.rules, ledger.records, args.dial, args.budget);
+/**
+ * The pure planning core of a resource tick (#2778): every rule against every
+ * observed resource, in authored order within each resource. The rules of
+ * {@link planConvergeTick} hold per resource: `unknown` never remediates, a
+ * `report()` never dispatches, the dial decides whether a `run()` may, and
+ * `budget` bounds the dispatches across the whole tick.
+ */
+export function planResourceTick(
+  env: string,
+  resources: ObservedResource[],
+  rules: ConvergeRule<ResourceSymptom>[],
+  priorRecords: ConvergeTickRecord[],
+  op: string,
+  dial: ConvergeTickArgs["dial"],
+  budget: number,
+): ConvergeTickPlan {
+  const fired = new Set<string>();
+  const outcomes: ConvergeRuleOutcome[] = [];
+  let dispatched = 0;
 
-  // Execute: only "ran" outcomes cause a subprocess dispatch. Before that
-  // dispatch, the runtime backstop (Finding A, #1954 pre-merge review)
-  // re-classifies the target and downgrades to "reported" if this dial/verb
-  // class pairing was never supposed to reach dispatch — OPS014 (build time)
-  // is the primary defense; this is what catches a rule table that reached
-  // `convergeTick` without going through it.
-  for (const outcome of plan.outcomes) {
+  for (const resource of resources) {
+    const symptom: ResourceSymptom = { env, resource: resource.name, status: resource.status, detail: resource.detail ?? "" };
+    for (const rule of rules) {
+      if (!evaluatePredicate(rule.when, symptom)) continue;
+      fired.add(rule.id);
+      const base = { ruleId: rule.id, resource: resource.name };
+
+      const threshold = rule.flapThreshold ?? DEFAULT_FLAP_THRESHOLD;
+      const consecutive = consecutiveResourceFires(priorRecords, op, rule.id, resource.name);
+      if (consecutive >= threshold) {
+        outcomes.push({
+          ...base,
+          action: "skipped-flap",
+          reason: `fired for ${resource.name} ${consecutive + 1} consecutive ticks without clearing (threshold ${threshold}) — escalated to report`,
+        });
+        continue;
+      }
+
+      const action: RuleAction = rule.then;
+      if (resource.status === "unknown" && action.kind === "run") {
+        outcomes.push({
+          ...base,
+          action: "reported",
+          reason: `${resource.name} is unknown (${resource.detail || "unobserved"}) — unknown never remediates`,
+        });
+        continue;
+      }
+      if (action.kind === "report") {
+        outcomes.push({ ...base, action: "reported", reason: action.reason });
+        continue;
+      }
+      if (!dialAllowsDispatch(dial)) {
+        outcomes.push({ ...base, action: "reported", reason: `dial "${dial}" does not permit dispatch — report only`, op: action.op });
+        continue;
+      }
+      if (dispatched >= budget) {
+        outcomes.push({ ...base, action: "skipped-budget", op: action.op });
+        continue;
+      }
+      dispatched++;
+      outcomes.push({ ...base, action: "ran", op: action.op });
+    }
+  }
+  return { firedRuleIds: [...fired], outcomes };
+}
+
+function renderResourceLog(env: string, resources: ObservedResource[], counts: ReturnType<typeof summarizeOutcomes>): string {
+  const n = (status: ObservedResource["status"]) => resources.filter((r) => r.status === status).length;
+  return (
+    `converge(${env}): resources=${resources.length} in-sync=${n("in-sync")} drifted=${n("drifted")} unknown=${n("unknown")} ` +
+    `remediated=${counts.remediated} reported=${counts.reported} skipped-budget=${counts.skippedBudget} ` +
+    `skipped-flap=${counts.skippedFlap} gated=${counts.gated}`
+  );
+}
+
+/** Run the planned dispatches of a tick, in place: the verb-class backstop, then `chant run`, then what came of it. */
+async function dispatchPlanned(
+  outcomes: ConvergeRuleOutcome[],
+  args: ConvergeTickArgs,
+  signal?: AbortSignal,
+): Promise<void> {
+  for (const outcome of outcomes) {
     if (outcome.action !== "ran" || !outcome.op) continue;
 
     const verbClass = await classifyDispatchTarget(outcome.op);
@@ -410,7 +507,9 @@ export async function convergeTick(args: ConvergeTickArgs, signal?: AbortSignal)
     outcome.reason = backstopped.reason;
     if (outcome.action !== "ran") continue;
 
-    const result = await dispatchOp(outcome.op, signal);
+    // A rule fired for one resource (#2778) hands the dispatched Op its name.
+    const env = outcome.resource !== undefined ? { [CONVERGE_RESOURCE_ENV]: outcome.resource } : undefined;
+    const result = await dispatchOp(outcome.op, signal, env);
     if (!result.ok && result.gateName) {
       // Gate-as-fact (#1485, closed by #2119): a terminal, durable,
       // non-blocking fact — not an ordinary dispatch failure the operator
@@ -432,6 +531,95 @@ export async function convergeTick(args: ConvergeTickArgs, signal?: AbortSignal)
       outcome.reason = `dispatch of "${outcome.op}" failed: ${result.error}`;
     }
   }
+}
+
+/** Push the tick's ledger record, and say whether it reached the remote (chant#2337). */
+async function pushTick(): Promise<{ pushed: boolean; pushWarning?: string }> {
+  try {
+    const pushed = await pushLifecycle();
+    return pushed ? { pushed } : { pushed, pushWarning: "no remote is configured for chant/lifecycle — the tick record was recorded locally only" };
+  } catch (err) {
+    return { pushed: false, pushWarning: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/** A tick of a ConvergeOp with an observer step (#2778): the observation is already in `args.observed`. */
+async function resourceTick(args: ConvergeTickArgs, signal?: AbortSignal): Promise<ConvergeTickResult> {
+  const { resources } = parseResourceObservation(args.observed);
+  const ledger = await readConvergeLedger(args.env);
+  const plan = planResourceTick(
+    args.env,
+    resources,
+    args.rules as unknown as ConvergeRule<ResourceSymptom>[],
+    ledger.records,
+    args.opName,
+    args.dial,
+    args.budget,
+  );
+  await dispatchPlanned(plan.outcomes, args, signal);
+
+  const counts = summarizeOutcomes(plan.outcomes);
+  const log = renderResourceLog(args.env, resources, counts);
+  const drifted = resources.filter((r) => r.status === "drifted").length;
+  const { record } = await appendConvergeRecord({
+    op: args.opName,
+    env: args.env,
+    timestamp: new Date().toISOString(),
+    firedRuleIds: plan.firedRuleIds,
+    outcomes: plan.outcomes,
+    resources: resources.map((r) => ({
+      name: r.name,
+      status: r.status,
+      ...(r.detail ? { detail: sanitizeLedgerText(r.detail) } : {}),
+    })),
+    summary: {
+      drifted,
+      remediated: counts.remediated,
+      reported: counts.reported,
+      skippedBudget: counts.skippedBudget,
+      skippedFlap: counts.skippedFlap,
+      gated: counts.gated,
+      unobserved: resources.filter((r) => r.status === "unknown").length,
+      adopted: 0,
+    },
+    log,
+  });
+  const push = await pushTick();
+  return {
+    id: record.id,
+    drifted: drifted > 0,
+    remediated: record.summary.remediated,
+    reported: record.summary.reported,
+    skippedBudget: record.summary.skippedBudget,
+    skippedFlap: record.summary.skippedFlap,
+    gated: record.summary.gated ?? 0,
+    unobserved: record.summary.unobserved,
+    adopted: 0,
+    log: record.log,
+    ...push,
+  };
+}
+
+export async function convergeTick(args: ConvergeTickArgs, signal?: AbortSignal): Promise<ConvergeTickResult> {
+  await fetchLifecycle().catch(() => undefined);
+  if (args.observed !== undefined) return resourceTick(args, signal);
+
+  const [cs, statusRows, ledger] = await Promise.all([
+    observeChangeSet(args.env, signal),
+    observeStatusRows(args.env, signal),
+    readConvergeLedger(args.env),
+  ]);
+
+  const symptom = deriveSymptoms(args.env, cs, statusRows);
+  const plan = planConvergeTick(symptom, args.rules, ledger.records, args.dial, args.budget);
+
+  // Execute: only "ran" outcomes cause a subprocess dispatch. Before that
+  // dispatch, the runtime backstop (Finding A, #1954 pre-merge review)
+  // re-classifies the target and downgrades to "reported" if this dial/verb
+  // class pairing was never supposed to reach dispatch — OPS014 (build time)
+  // is the primary defense; this is what catches a rule table that reached
+  // `convergeTick` without going through it.
+  await dispatchPlanned(plan.outcomes, args, signal);
 
   const counts = summarizeOutcomes(plan.outcomes);
   const log = renderLog(args.env, symptom, counts);
@@ -461,16 +649,7 @@ export async function convergeTick(args: ConvergeTickArgs, signal?: AbortSignal)
   // chant#2337 — reported rather than swallowed, the way #2336 does it for the
   // gate. A push that did not land leaves a correct local record nobody else
   // can read, and the caller is the only one positioned to say so.
-  let pushed = false;
-  let pushWarning: string | undefined;
-  try {
-    pushed = await pushLifecycle();
-    if (!pushed) {
-      pushWarning = "no remote is configured for chant/lifecycle — the tick record was recorded locally only";
-    }
-  } catch (err) {
-    pushWarning = err instanceof Error ? err.message : String(err);
-  }
+  const { pushed, pushWarning } = await pushTick();
 
   return {
     id: record.id,
