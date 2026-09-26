@@ -154,6 +154,13 @@ export interface ActivityStep {
    */
   profile?: ActivityProfileName;
   /**
+   * How long one attempt may run, such as `"45m"`, in place of the
+   * profile's timeout (#2787). The profile's retry policy is kept, so a
+   * `shell` step stays one attempt. At most `MAX_STEP_TIMEOUT` (six hours); a longer
+   * wait is a gate, not a step.
+   */
+  timeout?: string;
+  /**
    * Surface this activity's return value as a named run outcome.
    *
    * The local executor captures it into the step's record and folds it into

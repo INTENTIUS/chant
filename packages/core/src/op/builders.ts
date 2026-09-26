@@ -84,16 +84,18 @@ export function phase(
 export function activity(
   fn: string,
   args?: Record<string, unknown>,
-  opts?: ActivityStep["profile"] | { profile?: ActivityStep["profile"]; id?: string },
+  opts?: ActivityStep["profile"] | { profile?: ActivityStep["profile"]; id?: string; timeout?: string },
 ): NamedActivityStep {
   const profile = typeof opts === "string" ? opts : opts?.profile;
   const id = typeof opts === "string" ? undefined : opts?.id;
+  const timeout = typeof opts === "string" ? undefined : opts?.timeout;
   const step = {
     kind: "activity",
     fn,
     ...(args && Object.keys(args).length > 0 ? { args } : {}),
     ...(profile ? { profile } : {}),
     ...(id ? { id } : {}),
+    ...(timeout !== undefined ? { timeout } : {}),
   } as NamedActivityStep;
   Object.defineProperty(step, "out", {
     enumerable: false,
@@ -339,6 +341,20 @@ export const lifecycleSnapshot = (env: string, opts?: { id?: string }): NamedAct
  * shell("./smoke.sh", { env: { HOST: host.out.stdout } });
  * ```
  *
+ * With `json: true`, stdout is parsed as JSON and published as `json`
+ * (#2787), so a list or an object reaches the next step or the Op's work
+ * lease as itself. A pick step that prints `["W-3","W-7"]` hands
+ * `workLease.item` its candidates:
+ *
+ * ```ts
+ * const pick = shell("node pick.mjs", { id: "pick", json: true });
+ * Op({ workLease: { item: pick.out.json }, ... });
+ * ```
+ *
+ * `timeout` sets how long the one attempt may run, in place of the profile's
+ * twenty minutes, and keeps the profile's retries: `shell("./build.sh", {
+ * timeout: "45m" })`. At most six hours (`MAX_STEP_TIMEOUT`).
+ *
  * `cmd` stays a plain `string` and takes no references. A value spliced into
  * a command line is a quoting decision chant would then be making on the
  * author's behalf, and `env` carries the same value into the same command
@@ -346,10 +362,11 @@ export const lifecycleSnapshot = (env: string, opts?: { id?: string }): NamedAct
  */
 export const shell = (
   cmd: string,
-  opts?: WithStepRefs<Omit<ShellCmdArgs, "cmd">> & StepOpts,
+  opts?: WithStepRefs<Omit<ShellCmdArgs, "cmd">> & StepOpts & { timeout?: string },
 ): NamedActivityStep => {
-  const { args, profile, id } = takeProfileAndId(opts as Record<string, unknown> | undefined);
-  return activity("shellCmd", { cmd, ...args }, { profile: profile ?? "atMostOnce", ...(id ? { id } : {}) });
+  const { timeout, ...rest } = (opts ?? {}) as Record<string, unknown> & { timeout?: string };
+  const { args, profile, id } = takeProfileAndId(rest);
+  return activity("shellCmd", { cmd, ...args }, { profile: profile ?? "atMostOnce", ...(id ? { id } : {}), ...(timeout !== undefined ? { timeout } : {}) });
 };
 
 /**

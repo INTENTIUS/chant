@@ -55,7 +55,7 @@ export { loadActivities, loadProfiles, resolveActivity } from "./activity-regist
 export type { ActivityFn } from "./activity-registry";
 export { loadActivityContracts, mergeActivityContracts } from "./activity-contract-registry";
 export type { LexiconActivityContractContributor } from "./activity-contract-registry";
-export { ACTIVITY_PROFILES, ACTIVITY_PROFILE_NAMES } from "./activity-profiles";
+export { ACTIVITY_PROFILES, ACTIVITY_PROFILE_NAMES, MAX_STEP_TIMEOUT } from "./activity-profiles";
 export type { ActivityProfile, ActivityProfileName } from "./activity-profiles";
 export { NonRetryableActivityError, nonRetryableFailure } from "./activity-failure";
 export { runOpLocally, parseDuration, OpRunFailure } from "./local-executor";

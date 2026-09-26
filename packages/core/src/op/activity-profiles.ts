@@ -15,6 +15,8 @@
  * heartbeats to anything.
  */
 
+import { parseDuration } from "./duration";
+
 export interface ActivityProfile {
   /** Maximum time allowed for a single activity execution attempt (e.g. `"20m"`). */
   timeout: string;
@@ -132,3 +134,30 @@ export type ActivityProfileName = keyof typeof ACTIVITY_PROFILES;
 
 /** Every profile name, as a runtime list (`KNOWN_ACTIVITY_PROFILES`'s source). */
 export const ACTIVITY_PROFILE_NAMES = Object.keys(ACTIVITY_PROFILES) as ActivityProfileName[];
+
+/**
+ * The longest timeout one step may declare for itself (#2787): six hours, the
+ * ceiling hosted CI puts on a single job. A step's own `timeout` replaces its
+ * profile's and keeps the profile's retries, so a builder `shell` step can
+ * run 45 minutes on its one attempt. Anything that waits longer is waiting on
+ * someone, which is a gate's job (`humanGate`, 48 hours), not a step's.
+ */
+export const MAX_STEP_TIMEOUT = "6h";
+
+/** {@link MAX_STEP_TIMEOUT} in milliseconds. */
+export const MAX_STEP_TIMEOUT_MS = 6 * 3_600_000;
+
+/**
+ * Why `timeout` can't be a step's own timeout, or null when it can: it must
+ * be a duration such as `45m` or `1h30m`, more than zero, and at most
+ * {@link MAX_STEP_TIMEOUT}.
+ */
+export function stepTimeoutProblem(timeout: unknown): string | null {
+  if (typeof timeout !== "string" || !/^(\d+(ms|s|m|h|d))+$/.test(timeout)) {
+    return `timeout ${JSON.stringify(timeout)} is not a duration such as "45m" or "1h30m"`;
+  }
+  const ms = parseDuration(timeout);
+  if (ms <= 0) return `timeout "${timeout}" must be more than zero`;
+  if (ms > MAX_STEP_TIMEOUT_MS) return `timeout "${timeout}" is longer than a step may run (${MAX_STEP_TIMEOUT}); a longer wait is a gate's`;
+  return null;
+}

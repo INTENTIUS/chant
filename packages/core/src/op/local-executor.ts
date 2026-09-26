@@ -25,6 +25,7 @@ import { resolveActivity, type ActivityFn, type ActivityProfile } from "./activi
 import type { ReceiptReadResult } from "./receipt-store";
 import { isStepOutputRef } from "./step-output-ref";
 import { parseDuration } from "./duration";
+import { stepTimeoutProblem } from "./activity-profiles";
 import { describeGateMismatch, evaluateGate, gitGateLedgerPort, type GateCheck, type GateLedgerPort } from "./gate";
 import { gateName } from "./gate-name";
 import type { ResolvedGateApproval } from "./gate-approval";
@@ -376,9 +377,16 @@ async function runStep(
   }
 
   const profile = profiles[step.profile ?? DEFAULT_PROFILE] ?? {};
-  const timeoutMs = profile.timeout
-    ? parseDuration(profile.timeout)
-    : FALLBACK_TIMEOUT_MS;
+  // A step's own timeout (#2787) replaces the profile's and keeps its retries.
+  if (step.timeout !== undefined) {
+    const problem = stepTimeoutProblem(step.timeout);
+    if (problem) return { record: { ...base, status: "fail", durationMs: 0, error: problem } };
+  }
+  const timeoutMs = step.timeout !== undefined
+    ? parseDuration(step.timeout)
+    : profile.timeout
+      ? parseDuration(profile.timeout)
+      : FALLBACK_TIMEOUT_MS;
   const maxAttempts =
     profile.retry?.maximumAttempts && profile.retry.maximumAttempts > 0
       ? profile.retry.maximumAttempts

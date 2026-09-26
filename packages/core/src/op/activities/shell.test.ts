@@ -13,7 +13,7 @@ import { z } from "zod";
 import { shellCmd } from "./shell";
 import { shellCmdContract } from "./activity-contracts";
 import { shell } from "../builders";
-import { phase } from "../builders";
+import { activity, phase } from "../builders";
 import { collectStepOutputRefs, stepOutput, validateStepOutputRefs } from "../step-output-ref";
 import { ACTIVITY_PROFILES } from "../activity-profiles";
 import { runOpLocally } from "../local-executor";
@@ -152,5 +152,95 @@ describe("a reference reaching the command (#2414)", () => {
 
     expect(result.status).toBe("ok");
     expect(seen.map((s) => s.stdout)).toEqual(["db.internal", "reached db.internal"]);
+  });
+});
+
+describe("structured output (#2787)", () => {
+  test("with json, stdout is parsed and published as json; empty stdout is null", async () => {
+    expect(await shellCmd({ cmd: `echo '["W-3","W-7"]'`, json: true })).toMatchObject({ stdout: '["W-3","W-7"]', json: ["W-3", "W-7"] });
+    expect(await shellCmd({ cmd: `echo '{"ids":["W-1"],"tier":"small"}'`, json: true })).toMatchObject({ json: { ids: ["W-1"], tier: "small" } });
+    expect((await shellCmd({ cmd: "true", json: true })).json).toBeNull();
+    // Without json, nothing is parsed, and there is no json field.
+    expect(await shellCmd({ cmd: `echo '[1]'` })).toEqual({ stdout: "[1]", stderr: "", exitCode: 0 });
+  });
+
+  test("stdout that is not JSON fails the step rather than reaching the next one as a string", async () => {
+    await expect(shellCmd({ cmd: "echo W-3", json: true })).rejects.toThrow(/stdout is not JSON.*W-3/);
+  });
+
+  test("an okExit code still publishes the parsed output", async () => {
+    expect(await shellCmd({ cmd: `echo '[]'; exit 3`, okExit: [0, 3], json: true })).toMatchObject({ exitCode: 3, json: [] });
+  });
+
+  test("the contract takes json, and a reference to the whole parsed value passes OPS013", () => {
+    const pick = shell("node pick.mjs", { id: "pick", json: true });
+    expect(pick.args).toEqual({ cmd: "node pick.mjs", json: true });
+    expect(shellCmdContract.args.safeParse(pick.args).success).toBe(true);
+    const contracts = new Map([["shellCmd", shellCmdContract]]);
+    const whole = activity("recordItems", { items: pick.out.json });
+    expect(validateStepOutputRefs({ name: "dispatch", phases: [phase("Pick", [pick]), phase("Build", [whole])] }, contracts)).toEqual([]);
+    expect(stepOutput(pick, "json")).toMatchObject({ step: "pick", path: "json" });
+    // The parsed value's shape is the command's, so a path under it can't be checked at build time.
+    const deeper = activity("recordItems", { items: pick.out["json.ids"] });
+    const issues = validateStepOutputRefs({ name: "dispatch", phases: [phase("Pick", [pick]), phase("Build", [deeper])] }, contracts);
+    expect(issues.map((i) => i.message)).toEqual([expect.stringMatching(/path "json.ids", which does not exist/)]);
+  });
+});
+
+describe("a step's own timeout (#2787)", () => {
+  test("shell() carries it on the step, beside the profile it keeps", () => {
+    const build = shell("./build.sh", { id: "build", timeout: "45m" });
+    expect(build).toMatchObject({ fn: "shellCmd", profile: "atMostOnce", timeout: "45m", id: "build" });
+    expect(build.args).toEqual({ cmd: "./build.sh" });
+  });
+
+  test("the executor stops the one attempt at the step's timeout, not the profile's", async () => {
+    const slow = shell("sleep 5", { timeout: "300ms" });
+    const started = Date.now();
+    const result = await runOpLocally(
+      { name: "build", overview: "", phases: [phase("Go", [slow])] },
+      new Map([["shellCmd", shellCmd as unknown as ActivityFn]]),
+      ACTIVITY_PROFILES,
+      undefined,
+      { gates: memoryGateLedgerPort() },
+    ).catch((err: { result?: { status: string; records: { error?: string }[] } }) => err.result!);
+    expect(Date.now() - started).toBeLessThan(4_000);
+    expect(result.status).toBe("fail");
+    expect(result.records[0].error).toMatch(/timed out after 300ms/);
+  });
+
+  test("the profile's retries are kept: a retrying profile retries each attempt under the step's timeout", async () => {
+    let calls = 0;
+    const flaky: ActivityFn = async (_args, signal) => {
+      calls++;
+      await new Promise((resolve, reject) => {
+        const t = setTimeout(resolve, 1_000);
+        signal?.addEventListener("abort", () => { clearTimeout(t); reject(new Error("aborted")); });
+      });
+      return {};
+    };
+    const result = await runOpLocally(
+      { name: "retry", overview: "", phases: [{ name: "Go", steps: [{ kind: "activity", fn: "flaky", profile: "fastIdempotent", timeout: "100ms" }] }] },
+      new Map([["flaky", flaky]]),
+      { fastIdempotent: { timeout: "10s", retry: { maximumAttempts: 2, initialInterval: "10ms" } } },
+      undefined,
+      { gates: memoryGateLedgerPort() },
+    ).catch((err: { result?: { status: string } }) => err.result!);
+    expect(result.status).toBe("fail");
+    expect(calls).toBe(2);
+  });
+
+  test("a timeout that is not a duration, or longer than six hours, fails the step at run time", async () => {
+    for (const timeout of ["forever", "7h", "0m"]) {
+      const result = await runOpLocally(
+        { name: "bad", overview: "", phases: [phase("Go", [shell("true", { timeout })])] },
+        new Map([["shellCmd", shellCmd as unknown as ActivityFn]]),
+        ACTIVITY_PROFILES,
+        undefined,
+        { gates: memoryGateLedgerPort() },
+      ).catch((err: { result?: { status: string; records: { error?: string }[] } }) => err.result!);
+      expect(result.status, timeout).toBe("fail");
+      expect(result.records[0].error, timeout).toMatch(/timeout/);
+    }
   });
 });

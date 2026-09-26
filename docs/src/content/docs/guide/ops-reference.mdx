@@ -14,7 +14,7 @@ Pre-built step builders:
 
 | Builder | What it does |
 |---------|-------------|
-| `shell(cmd, opts?)` | Run an arbitrary shell command; returns `stdout`, `stderr`, `exitCode` |
+| `shell(cmd, opts?)` | Run an arbitrary shell command; returns `stdout`, `stderr`, `exitCode`, and with `json: true` the parsed stdout as `json` |
 | `build(path)` | Run `chant build` |
 | `kubectlApply(manifest, opts?)` | Server-side apply a manifest as chant's field manager |
 | `helmInstall(name, chart, opts?)` | `helm upgrade --install` |
@@ -35,6 +35,10 @@ Each step takes an optional `profile` that controls the step's retry and timeout
 | `longInfra` | Slow infra changes (cluster create, Helm install) |
 | `k8sWait` | Polling until K8s resources are ready |
 | `humanGate` | Steps that may take hours |
+
+`shell()` defaults to `atMostOnce`, twenty minutes and one attempt, because chant can't know whether the command is safe to repeat.
+
+A step's own `timeout` sets how long one attempt may run, in place of its profile's, and keeps the profile's retries ([#2787](https://github.com/INTENTIUS/chant/issues/2787)). `shell("./build.sh", { timeout: "45m" })` is still one attempt, now of 45 minutes. `activity(fn, args, { timeout })` and a step literal's `timeout` field do the same. The value is a duration such as `45m` or `1h30m`, more than zero and at most six hours (`MAX_STEP_TIMEOUT`). A longer wait is waiting on a person, which a gate step is for. OPS012 flags a bad value at `chant build`, and the run fails the step if one gets that far. `op.json` carries the value on the step beside its `profile`.
 
 ## Labels
 
