@@ -190,6 +190,8 @@ export const REASONS = {
   // A box that holds a credential (check, #2726). Each is also a WSP finding.
   "box-credential-declared": "A file in a box member's directory carries a literal secret: a credential's shape, or a literal where a credential goes. A variable or secret-manager reference is not one.",
   "box-capability-unbrokered": "A capability in a member's box block names no broker, so the box would hold its credential.",
+  // The credential fountain itself hands a persistent box (check, #2780). Also a WSP finding.
+  "box-fountain-callback-undeclared": "A box member builds a fountain Box, whose persistent sandbox fountain gives a callback token scoped to its owner, and the member's box block does not declare the fountain-callback capability brokered by fountain with scope owner.",
   // The work lease (chant workspace work claim|renew|release, #2732): why the command could not run.
   "work-kind-missing": "No work kind to find the item in: --kind names a kind with no work block, or the declaration names no work kind.",
   "work-kind-ambiguous": "More than one declared work kind has a record with the id, so --kind must name one.",

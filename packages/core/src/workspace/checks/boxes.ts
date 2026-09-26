@@ -26,6 +26,17 @@
  *
  * WSP123 and WSP124, box isolation (#2727), are in `./box-isolation.ts` and
  * listed here after these two.
+ *
+ * WSP125 (`box-fountain-callback-undeclared`, #2780) is the one credential a
+ * box gets without asking. fountain v0.21.0 gives every persistent sandbox a
+ * callback token scoped to its owner (`FOUNTAIN_TOKEN`, `sandbox_api_access:
+ * owner`), and a fountain `Box` is always persistent, so its member's block
+ * has to say so: the capability `fountain-callback`, brokered by `fountain`,
+ * with scope `owner`. It is named apart from `fountain`, the API access a
+ * lobby may broker for the same box. A member builds a Box when one of its TypeScript or JavaScript files
+ * imports `Box` from `@intentius/chant-lexicon-fountain` and calls it, read as
+ * syntax and never run. Upstream, managoat/fountain#2497 asks for a way to run
+ * a persistent agent with no callback token.
  */
 
 import * as ts from "typescript";
@@ -36,10 +47,77 @@ import { joinPath, skippedDir, type WorkspaceTree } from "../tree";
 import { BOX_ISOLATION_CHECKS } from "./box-isolation";
 
 /** The read contract's codes for the box findings, carried as `code` on each. */
-export const BOX_FINDING_CODES = ["box-credential-declared", "box-capability-unbrokered", "box-isolation-collision", "box-isolation-literal"] as const satisfies readonly ReasonCode[];
+export const BOX_FINDING_CODES = [
+  "box-credential-declared",
+  "box-capability-unbrokered",
+  "box-isolation-collision",
+  "box-isolation-literal",
+  "box-fountain-callback-undeclared",
+] as const satisfies readonly ReasonCode[];
 
 export const WSP_BOX_CREDENTIAL = "WSP121";
 export const WSP_BOX_UNBROKERED = "WSP122";
+export const WSP_BOX_FOUNTAIN_CALLBACK = "WSP125";
+
+/** The fountain lexicon's package, whose `Box` composite runs a persistent sandbox. */
+const FOUNTAIN_LEXICON = "@intentius/chant-lexicon-fountain";
+
+/**
+ * The capability a box block declares for fountain's callback token (#2780).
+ * The fountain lexicon exports the same value as `BOX_FOUNTAIN_CALLBACK_CAPABILITY`.
+ */
+export const FOUNTAIN_CALLBACK_CAPABILITY = { name: "fountain-callback", broker: "fountain", scope: ["owner"] } as const;
+
+/** Where a file calls the fountain lexicon's `Box`, 1-based. */
+export interface FountainBoxCall {
+  line: number;
+  column: number;
+}
+
+/**
+ * The first call of the fountain lexicon's `Box` in a TypeScript or
+ * JavaScript file, read as syntax and never run: `Box` imported by name
+ * (aliased or not) and called, or called through a namespace import. Any
+ * other `Box` is not the composite.
+ */
+export function fountainBoxCall(text: string, file: string, kind: ts.ScriptKind): FountainBoxCall | undefined {
+  if (!text.includes(FOUNTAIN_LEXICON)) return undefined;
+  const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, kind);
+  const names = new Set<string>();
+  const namespaces = new Set<string>();
+  for (const stmt of source.statements) {
+    if (!ts.isImportDeclaration(stmt) || !ts.isStringLiteral(stmt.moduleSpecifier)) continue;
+    const from = stmt.moduleSpecifier.text;
+    if (from !== FOUNTAIN_LEXICON && !from.startsWith(`${FOUNTAIN_LEXICON}/`)) continue;
+    const bindings = stmt.importClause?.namedBindings;
+    if (!bindings) continue;
+    if (ts.isNamespaceImport(bindings)) namespaces.add(bindings.name.text);
+    else for (const el of bindings.elements) if ((el.propertyName ?? el.name).text === "Box") names.add(el.name.text);
+  }
+  if (names.size === 0 && namespaces.size === 0) return undefined;
+  let found: ts.Node | undefined;
+  const visit = (node: ts.Node) => {
+    if (found) return;
+    if (ts.isCallExpression(node)) {
+      const callee = node.expression;
+      if (
+        (ts.isIdentifier(callee) && names.has(callee.text)) ||
+        (ts.isPropertyAccessExpression(callee) &&
+          callee.name.text === "Box" &&
+          ts.isIdentifier(callee.expression) &&
+          namespaces.has(callee.expression.text))
+      ) {
+        found = node;
+        return;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  if (!found) return undefined;
+  const { line, character } = source.getLineAndCharacterOfPosition(found.getStart(source));
+  return { line: line + 1, column: character + 1 };
+}
 
 /** Values whose shape alone says they are a credential. The list FTN001 uses, plus Anthropic keys. */
 export const CREDENTIAL_SHAPES: readonly { pattern: RegExp; label: string }[] = [
@@ -304,4 +382,61 @@ export const BOX_CHECKS: readonly WorkspaceCheck[] = [
   },
   // Box isolation (#2727), WSP123 and WSP124.
   ...BOX_ISOLATION_CHECKS,
+  {
+    id: WSP_BOX_FOUNTAIN_CALLBACK,
+    name: "box-fountain-callback-undeclared",
+    description:
+      "A box member that builds a fountain Box declares the callback token fountain gives its persistent sandbox: the fountain-callback capability, brokered by fountain, with scope owner.",
+    severity: "error",
+    configurable: true,
+    check(ctx) {
+      const out: WorkspaceDiagnostic[] = [];
+      const want = FOUNTAIN_CALLBACK_CAPABILITY;
+      const expected = `{ "name": "${want.name}", "broker": "${want.broker}", "scope": ["${want.scope[0]}"] }`;
+      for (const m of boxMembers(ctx)) {
+        const dir = m.dir === "." ? "" : m.dir;
+        if (ctx.tree.stat(dir) !== "dir") continue;
+        let at: { path: string; call: FountainBoxCall } | undefined;
+        for (const path of filesUnder(ctx.tree, dir)) {
+          const kind = CODE_EXTENSIONS[extension(path)];
+          if (kind === undefined || kind === ts.ScriptKind.JSON) continue;
+          let text: string;
+          try {
+            text = ctx.tree.read(path);
+          } catch {
+            continue;
+          }
+          if (text.length > MAX_FILE_BYTES) continue;
+          const call = fountainBoxCall(text, path, kind);
+          if (call) {
+            at = { path, call };
+            break;
+          }
+        }
+        if (!at) continue;
+        const declared = m.box!.capabilities.find((c) => c.name === want.name);
+        if (declared && declared.broker === want.broker && declared.scope.includes(want.scope[0])) continue;
+        const why = !declared
+          ? "the member's box block does not declare it"
+          : declared.broker !== want.broker
+            ? `the box block's ${want.name} capability names the broker ${declared.broker ?? "(none)"}, but fountain hands this token to the sandbox itself`
+            : `the box block's ${want.name} capability has scope [${declared.scope.join(", ")}], not ${want.scope[0]}`;
+        out.push({
+          checkId: this.id,
+          severity: this.severity,
+          code: "box-fountain-callback-undeclared",
+          message:
+            `box-fountain-callback-undeclared: member ${m.name} builds a fountain Box (${at.path}), and fountain v0.21.0 gives a persistent box's sandbox ` +
+            `a callback token scoped to its owner (FOUNTAIN_TOKEN); ${why}. Declare ${expected} in the box block ` +
+            `(managoat/fountain#2497 tracks running without it)`,
+          entity: m.name,
+          pointer: declared?.pointer ?? m.box!.pointer,
+          treeFile: at.path,
+          line: at.call.line,
+          column: at.call.column,
+        });
+      }
+      return out;
+    },
+  },
 ];

@@ -56,6 +56,21 @@
  * workspace check` fails a box member whose files hold one
  * (`box-credential-declared`).
  *
+ * One credential reaches the box anyway (#2780). fountain v0.21.0 gives every
+ * sandbox a callback token, `FOUNTAIN_TOKEN`, in the environment of each exec
+ * it makes into it (the setup script's included), scoped to the owner
+ * (`sandbox_api_access: owner`). Its opt-out, `sandbox_api_access: none`, is
+ * refused for a persistent sandbox, and a box is always persistent, so no
+ * option here can turn it off (managoat/fountain#2497). The composite records
+ * it instead: the Agent's metadata carries `box-sandbox-api-access: owner`
+ * (`BOX_SANDBOX_API_ACCESS_METADATA_KEY`), and the member's `box` block is
+ * expected to declare the capability that stands for it,
+ * `BOX_FOUNTAIN_CALLBACK_CAPABILITY`: `fountain-callback`, brokered by fountain
+ * itself, with scope `owner`. It is named apart from a `fountain` capability a
+ * lobby brokers, which a box may declare as well. `chant workspace check`
+ * reports a box member that builds a `Box` and does not declare it
+ * (`box-fountain-callback-undeclared`).
+ *
  * ## The port
  *
  * fountain's `Environment` and `Agent` have no field for a served port (the
@@ -86,6 +101,30 @@ export const BOX_PORT_METADATA_KEY = "box-port";
 
 /** The metadata key a box agent's resolved allowed vaults (or `"any"`) are recorded under, for the read contract. */
 export const BOX_ALLOWED_VAULTS_METADATA_KEY = "box-allowed-vault-ids";
+
+/**
+ * The metadata key a box agent's sandbox callback access is recorded under
+ * (#2780): `owner`, the scope of the `FOUNTAIN_TOKEN` fountain v0.21.0 gives
+ * every persistent sandbox.
+ */
+export const BOX_SANDBOX_API_ACCESS_METADATA_KEY = "box-sandbox-api-access";
+
+/**
+ * The sandbox callback access a box has on the pinned spec: `owner`. fountain
+ * v0.21.0 accepts `none` only for a fresh ephemeral sandbox (managoat/fountain#2497).
+ */
+export const BOX_SANDBOX_API_ACCESS = "owner";
+
+/**
+ * The capability a box member's `box` block declares for fountain's callback
+ * token (#2780), as `chant workspace check` expects it: fountain brokers it
+ * itself, and its scope is the owner's.
+ */
+export const BOX_FOUNTAIN_CALLBACK_CAPABILITY = {
+  name: "fountain-callback",
+  broker: "fountain",
+  scope: [BOX_SANDBOX_API_ACCESS],
+} as const;
 
 /** `Agent.sandbox_provider`'s values at the pinned spec. */
 export const BOX_SANDBOX_PROVIDERS = ["sprites", "e2b", "daytona", "runner"] as const;
@@ -248,7 +287,11 @@ export function Box(opts: BoxOpts): BoxResources {
     opts.allowedVaults === "any"
       ? "any"
       : allowedVaults!.map((v) => (typeof v === "string" ? v : (v as unknown as { props: { name: string } }).props.name));
-  const agentMetadata = { ...metadata, [BOX_ALLOWED_VAULTS_METADATA_KEY]: allowedVaultsForReadContract };
+  const agentMetadata = {
+    ...metadata,
+    [BOX_ALLOWED_VAULTS_METADATA_KEY]: allowedVaultsForReadContract,
+    [BOX_SANDBOX_API_ACCESS_METADATA_KEY]: BOX_SANDBOX_API_ACCESS,
+  };
 
   const agent = new Agent({
     name: opts.name,

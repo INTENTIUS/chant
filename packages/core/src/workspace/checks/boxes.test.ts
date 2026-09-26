@@ -7,7 +7,7 @@ import { afterAll, describe, expect, test } from "vitest";
 import { runDeclarationChecks } from "../checks";
 import { parseDeclaration, WorkspaceReadError } from "../declaration";
 import { gitTree } from "../tree";
-import { isCredentialKey, isSecretReference, literalSecretsInCode, literalSecretsInText } from "./boxes";
+import { fountainBoxCall, isCredentialKey, isSecretReference, literalSecretsInCode, literalSecretsInText } from "./boxes";
 
 const scratch: string[] = [];
 afterAll(() => {
@@ -193,5 +193,84 @@ describe("what counts as a literal secret", () => {
     const code = `const a = [${JSON.stringify(GITHUB_TOKEN)}];\nconst b = \`\${prefix}${"x".repeat(3)}\`;\n`;
     expect(literalSecretsInCode(code, "a.ts", ts.ScriptKind.TS).map((s) => [s.line, s.what])).toEqual([[1, "a GitHub token"]]);
     expect(literalSecretsInText(`# nothing\nkey: ${GITHUB_TOKEN}\n`).map((s) => s.line)).toEqual([2]);
+  });
+});
+
+describe("box-fountain-callback-undeclared (WSP125, #2780)", () => {
+  /** A studio-style fountain Box declaration. */
+  const fountainBox = `import { readFileSync } from "node:fs";
+import { Box } from "@intentius/chant-lexicon-fountain";
+
+export const { environment, agent } = Box({
+  name: "studio-box",
+  setupScript: readFileSync("box/setup.sh", "utf8"),
+  model: "anthropic/claude-sonnet-4-6",
+  permissionPolicy: { default: "auto_allow" },
+});
+`;
+  const CALLBACK = { name: "fountain-callback", broker: "fountain", scope: ["owner"] };
+
+  test("a box member that builds a fountain Box and does not declare the callback token fails, at the Box call", async () => {
+    const root = repo({ "chant.workspace.json": declaration(BROKERED), "spec/box.ts": fountainBox });
+    const d = await found(root);
+    expect(d.map((x) => [x.ruleId, x.code, x.entity, x.file, x.line])).toEqual([
+      ["WSP125", "box-fountain-callback-undeclared", "spec", "spec/box.ts", 4],
+    ]);
+    expect(d[0].message).toContain("callback token scoped to its owner (FOUNTAIN_TOKEN); the member's box block does not declare it");
+    expect(d[0].message).toContain('{ "name": "fountain-callback", "broker": "fountain", "scope": ["owner"] }');
+  });
+
+  test("declaring fountain-callback, brokered by fountain with scope owner, passes, beside a fountain capability a lobby brokers", async () => {
+    const root = repo({
+      "chant.workspace.json": declaration({
+        capabilities: [...BROKERED.capabilities, { name: "fountain", broker: "lobby", scope: ["agent", "conversations"] }, CALLBACK],
+      }),
+      "spec/box.ts": fountainBox,
+    });
+    expect(await found(root)).toEqual([]);
+  });
+
+  test("fountain-callback behind another broker, or without owner in its scope, fails", async () => {
+    const lobby = repo({
+      "chant.workspace.json": declaration({ capabilities: [{ name: "fountain-callback", broker: "lobby", scope: ["conversations"] }] }),
+      "spec/box.ts": fountainBox,
+    });
+    const d = await found(lobby);
+    expect(d.map((x) => [x.ruleId, x.file])).toEqual([["WSP125", "spec/box.ts"]]);
+    expect(d[0].message).toContain("names the broker lobby, but fountain hands this token to the sandbox itself");
+    const narrow = repo({
+      "chant.workspace.json": declaration({ capabilities: [{ name: "fountain-callback", broker: "fountain", scope: ["conversations"] }] }),
+      "spec/box.ts": fountainBox,
+    });
+    expect((await found(narrow))[0].message).toContain("has scope [conversations], not owner");
+  });
+
+  test("a box member that builds no fountain Box, and a member with no box block, are not flagged", async () => {
+    const other = repo({ "chant.workspace.json": declaration(BROKERED), "spec/box.ts": spec("${ANTHROPIC_API_KEY}") });
+    expect(await found(other)).toEqual([]);
+    const plain = repo({
+      "chant.workspace.json": JSON.stringify({ name: "acme", schema: 1, members: [{ name: "spec", dir: "spec", kind: "other", because: "x" }] }),
+      "spec/box.ts": fountainBox,
+    });
+    expect(await found(plain)).toEqual([]);
+  });
+
+  test("it can be turned down while fountain has no way to drop the token (managoat/fountain#2497)", async () => {
+    const root = repo({
+      "chant.workspace.json": declaration(BROKERED, { suppress: [{ check: "WSP125", because: "waiting on fountain" }] }),
+      "spec/box.ts": fountainBox,
+    });
+    expect((await found(root)).filter((x) => x.ruleId === "WSP125")).toEqual([]);
+  });
+
+  test("fountainBoxCall finds the composite imported by name, aliased or through a namespace, and nothing else", () => {
+    const at = (text: string) => fountainBoxCall(text, "box.ts", ts.ScriptKind.TS);
+    expect(at(fountainBox)).toEqual({ line: 4, column: 39 });
+    expect(at(`import { Box as FBox } from "@intentius/chant-lexicon-fountain";\nFBox({});\n`)).toEqual({ line: 2, column: 1 });
+    expect(at(`import * as fountain from "@intentius/chant-lexicon-fountain";\nfountain.Box({});\n`)).toEqual({ line: 2, column: 1 });
+    // Imported but never called, another package's Box, or a Box of one's own.
+    expect(at(`import { Box } from "@intentius/chant-lexicon-fountain";\nexport { Box };\n`)).toBeUndefined();
+    expect(at(`import { Box } from "@intentius/chant-lexicon-chaff";\nBox({});\n`)).toBeUndefined();
+    expect(at(`const Box = (o: object) => o;\nBox({}); // @intentius/chant-lexicon-fountain\n`)).toBeUndefined();
   });
 });

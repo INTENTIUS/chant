@@ -40,6 +40,7 @@ An empty `prompt` counts as no prompt. The result also carries `sandboxId` and `
 |---|---|
 | `timeoutMs` | Deadline for the wait. Default 10 minutes. |
 | `pollMs` | Poll interval. Default 5 seconds. |
+| `sandboxApiAccess` | fountain's `sandbox_api_access`. `owner`, fountain's default, gives the sandbox a callback token (`FOUNTAIN_TOKEN`) scoped to the owner. `none` gives it none. fountain v0.21.0 accepts `none` only for a fresh ephemeral sandbox, so `fountainRun` refuses it for a persistent agent before starting anything ([managoat/fountain#2497](https://github.com/managoat/fountain/issues/2497)). |
 | `terminate` | What happens to the conversation's machine when the wait ends: `on-deadline` (the ephemeral default) terminates only a run whose turn never ended, `never` (the persistent default) leaves it, `always` terminates it either way. |
 
 Under `chant run` the executor calls both activities as `fn(args, signal)`. When the signal fires (the step's timeout, or Ctrl-C) `fountainRun` stops polling, applies the `terminate` policy as it does at its deadline, and the step fails.
