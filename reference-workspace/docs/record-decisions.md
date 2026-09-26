@@ -56,6 +56,12 @@ Record the decisions made in this session as chant decision records.
 
    Tell me the path and id it wrote, and read out any warnings.
 
+   Name whoever, or whatever session, is proposing it with `--by <name>`;
+   chant writes that into `proposed_by`, apart from `decided_by`, which
+   stays `null` until someone decides it later. Don't set `proposed_by`
+   yourself in the JSON fields; give `--by` instead, and leave it out when
+   there's no one particular to name.
+
 If the workspace's chant serves an MCP `records-new` tool
 ([#2707](https://github.com/INTENTIUS/chant/issues/2707)), use it instead of
 the shell command in step 5; same fields, minus `via` and `client`, which it

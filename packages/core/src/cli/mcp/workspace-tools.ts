@@ -52,7 +52,7 @@ export interface WorkspaceToolsOptions {
 
 const PROTOCOL =
   "Records are proposals until they are reviewed: a new record opens proposed, and people decide it through reviews and amendments. " +
-  "by must name the person or agent that actually decided, as it is recorded as given.";
+  "by must name the person or agent that actually proposed or decided it, as it is recorded as given.";
 
 const kindProp = {
   type: "string",
@@ -148,7 +148,11 @@ export const workspaceWriteTools: ToolDefinition[] = [
         kind: kindProp,
         record: { type: "object", description: "The record's fields, as the kind's schema describes them. The id is allocated when left out." },
         prefix: { type: "string", description: "The id prefix to allocate under, when the records use several (--prefix)." },
-        by: { type: "string", description: "Who decided: written to the kind's decider field, such as decided_by. Required to sign." },
+        by: {
+          type: "string",
+          description:
+            "Who proposed it: written to the kind's proposedBy field, such as proposed_by, since a record opens proposed. Written to its decider field, such as decided_by, only when the record's fields open it straight into a later state. Required to sign.",
+        },
         sign: signProp,
         dryRun: dryRunProp,
       },

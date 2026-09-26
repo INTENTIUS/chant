@@ -309,7 +309,13 @@ export interface ParsedArgs {
   set?: string;
   /** `chant workspace records review <id> --verdict <v>` (#2670): agree, dissent or abstain. */
   verdict?: string;
-  /** `chant workspace records review <id> --by <principal>` (#2670): the reviewer, as the caller names them. */
+  /**
+   * `chant workspace records review <id> --by <principal>` (#2670): the
+   * reviewer, as the caller names them. Also `chant workspace records new
+   * --by <name>` (#2756): the record's proposer, or its decider when it
+   * opens straight into a later state; see {@link ChannelOptions.by} in
+   * `records-write.ts`.
+   */
   by?: string;
   /**
    * `chant workspace records review <id> --sign [<key file>]` (#2687): the key that seals the verdict, or true for git's user.signingkey.

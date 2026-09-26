@@ -127,6 +127,10 @@
       "description": "Who chose. A forge login. Null in state proposed or withdrawn.",
       "type": ["string", "null"]
     },
+    "proposed_by": {
+      "description": "Who proposed this decision: the name chant workspace records new --by or the MCP records-new tool's by wrote, for a decision that opened proposed (#2756). Null or absent when nobody named a proposer, or the decision opened straight into a later state. Never cleared by a later decide, ratify or supersede.",
+      "type": ["string", "null"]
+    },
     "decided_on": {
       "description": "When the choice was made, as YYYY-MM-DD. Quoted, so YAML reads it as a string.",
       "type": ["string", "null"],

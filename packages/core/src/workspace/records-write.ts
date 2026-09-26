@@ -629,9 +629,15 @@ export interface WriteChannel {
   opensInitial?: boolean;
 }
 
-/** What a channel's write adds to the command line's: who the author is, and how it came. */
+/** What a channel's write adds to the command line's: who named the author, and how it came. */
 export interface ChannelOptions {
-  /** The record's author, written to the kind's `reviews.decider` field: the person or agent that decided. */
+  /**
+   * Who the caller names as the record's author (#2756). Written to the
+   * kind's `proposedBy` field when the kind declares one and the record
+   * opens (or stays) in its first state — a proposal naming its proposer.
+   * Otherwise written to `reviews.decider`, as before: a record opening (or
+   * moving) straight to another state names who decided it.
+   */
   by?: string;
   through?: WriteChannel;
 }
@@ -640,18 +646,8 @@ export interface ChannelOptions {
 function applyChannel(o: Opened, fields: Record<string, unknown>, opts: ChannelOptions, isNew: boolean, flag: string): Record<string, unknown> {
   const { kind } = o.loaded;
   const out = { ...fields };
-  if (opts.by !== undefined) {
-    if (!kind.reviews) throw new RecordWriteError("write-usage-invalid", `by names a record's author, the kind's reviews.decider field, and the ${kind.name} kind declares no reviews`);
-    if (opts.by.trim() === "") throw new RecordWriteError("write-usage-invalid", "by needs the name of the person or agent that decided");
-    const f = kind.reviews.decider;
-    if (out[f] !== undefined && out[f] !== null && out[f] !== opts.by) {
-      throw new RecordWriteError("write-input-invalid", `the fields given with ${flag} set ${f} to ${JSON.stringify(out[f])}, and by names ${JSON.stringify(opts.by)}: give one author`);
-    }
-    out[f] = opts.by;
-  }
   const through = opts.through;
-  if (!through) return out;
-  if (isNew && through.opensInitial && kind.states && kind.stateField !== undefined) {
+  if (isNew && through?.opensInitial && kind.states && kind.stateField !== undefined) {
     const first = kind.states[0];
     const state = out[kind.stateField];
     if (state === undefined) out[kind.stateField] = first;
@@ -662,6 +658,27 @@ function applyChannel(o: Opened, fields: Record<string, unknown>, opts: ChannelO
       );
     }
   }
+  if (opts.by !== undefined) {
+    if (opts.by.trim() === "") throw new RecordWriteError("write-usage-invalid", "by needs the name of the person or agent that proposed or decided");
+    // A new record that opens in the kind's first state is a proposal, when the kind opts in with proposedBy (#2756):
+    // by names the proposer, kept apart from reviews.decider, which stays null until the record is decided.
+    const opensInitial = isNew && !!kind.states && kind.stateField !== undefined && (out[kind.stateField] === undefined || out[kind.stateField] === kind.states[0]);
+    if (kind.proposedBy && opensInitial) {
+      const f = kind.proposedBy.field;
+      if (out[f] !== undefined && out[f] !== null && out[f] !== opts.by) {
+        throw new RecordWriteError("write-input-invalid", `the fields given with ${flag} set ${f} to ${JSON.stringify(out[f])}, and by names ${JSON.stringify(opts.by)}: give one proposer`);
+      }
+      out[f] = opts.by;
+    } else {
+      if (!kind.reviews) throw new RecordWriteError("write-usage-invalid", `by names a record's author, the kind's reviews.decider field, and the ${kind.name} kind declares no reviews`);
+      const f = kind.reviews.decider;
+      if (out[f] !== undefined && out[f] !== null && out[f] !== opts.by) {
+        throw new RecordWriteError("write-input-invalid", `the fields given with ${flag} set ${f} to ${JSON.stringify(out[f])}, and by names ${JSON.stringify(opts.by)}: give one author`);
+      }
+      out[f] = opts.by;
+    }
+  }
+  if (!through) return out;
   if (kind.source && (isNew || kind.source.field in out)) {
     const f = kind.source.field;
     const block = out[f];
@@ -984,7 +1001,7 @@ async function seal(sign: string | true, cwd: string, v: { record: string; diges
 // ── The command ──────────────────────────────────────────────────────────────
 
 export const WRITE_USAGE = [
-  "chant workspace records new [<kind file or declared kind>] --from <file|-> [--prefix <prefix>] [--sign [<key file>]] [--dry-run]",
+  "chant workspace records new [<kind file or declared kind>] --from <file|-> [--prefix <prefix>] [--by <name>] [--sign [<key file>]] [--dry-run]",
   "chant workspace records amend <id> [--kind <kind file>] --set <file|-> [--sign [<key file>]] [--dry-run]",
   "chant workspace records review <id> [--kind <kind file>] --verdict agree|dissent|abstain --by <principal> [--note <text>] [--session <id>] [--sign [<key file>]] [--dry-run]",
   "chant workspace records close <session id> [--kind <session kind file>] [--dry-run]",
@@ -1087,7 +1104,7 @@ export async function runRecordsWrite(ctx: CommandContext): Promise<number> {
     if (typeof kind !== "string") return print(kind);
     const input = readInput(RECORDS_NEW_SCHEMA_ID, "--from", args.migrateFrom, cwd);
     if (typeof input !== "string") return print(input);
-    return print(await newRecord({ kind, fields: input, prefix: args.prefix, sign: args.sign, dryRun: args.dryRun, cwd }));
+    return print(await newRecord({ kind, fields: input, prefix: args.prefix, by: args.by, sign: args.sign, dryRun: args.dryRun, cwd }));
   }
   const schema = verb === "amend" ? RECORDS_AMEND_SCHEMA_ID : RECORDS_REVIEW_SCHEMA_ID;
   const id = args.extraPositional2;
@@ -1095,6 +1112,7 @@ export async function runRecordsWrite(ctx: CommandContext): Promise<number> {
   const kind = args.kind !== undefined ? resolveWriteKind(args.kind, cwd) : declaredWriteKind(schema, cwd, "--kind <kind file> is required");
   if (typeof kind !== "string") return print(kind);
   if (verb === "amend") {
+    if (args.by !== undefined) return print(usage(schema, "--by is not taken by amend: set decided_by, or a kind's proposedBy field, with --set"));
     const input = readInput(schema, "--set", args.set, cwd);
     if (typeof input !== "string") return print(input);
     return print(await amendRecord({ kind, id, fields: input, sign: args.sign, dryRun: args.dryRun, cwd }));

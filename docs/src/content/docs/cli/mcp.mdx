@@ -212,7 +212,7 @@ A write calls the function `chant workspace records new`, `amend`, `review` or `
 
 `points-answer` calls what `chant workspace points answer` calls ([ws-058](/chant/guide/decision-points/)). It records people's answer to an open decision point question once the point's quorum is met. The quorum never counts anyone holding the agent role. No tool asks a point's deciders: chant calls no model, so an ask runs in the operations layer.
 
-Records are proposals until they are reviewed, and `by` must name the person or agent that actually decided. Each write tool's description says so, for the model that reads it. The server listens on no port and authenticates nobody: it speaks over stdio, and `by` is recorded as given, as `--by` is.
+Records are proposals until they are reviewed, and `by` must name the person or agent that actually proposed or decided it. Each write tool's description says so, for the model that reads it. The server listens on no port and authenticates nobody: it speaks over stdio, and `by` is recorded as given, as `--by` is.
 
 A value that starts with `-` is refused before any command runs, so no argument can be read as a flag.
 
@@ -229,7 +229,9 @@ A value that starts with `-` is refused before any command runs, so no argument 
 | `records-close` | `id` (required), `kind`, `dryRun` | the result of `chant workspace records close` (`records-close.schema.json`) |
 | `points-answer` | `id`, `answer`, `by` (all required), `kind`, `dryRun` | the result of `chant workspace points answer` (`points-write.schema.json`): people's answer to an open question, refused with `quorum-not-met` until the point's quorum is met |
 
-Each parameter stands for the CLI flag of the same name, written in camel case, so `compareTo` is `--compare-to`. `kind` names a kind file from the server's directory or a kind the declaration names. Without `kind`, a write goes through the one kind the declaration names, as the CLI's does. `record` and `fields` are JSON objects, the text `--from` and `--set` would read. `by` on `records-new` and `records-amend` is written to the kind's decider field, `decided_by` for a decision, and signing needs it. Without `state`, `records-new` gives the record the kind's first.
+Each parameter stands for the CLI flag of the same name, written in camel case, so `compareTo` is `--compare-to`. `kind` names a kind file from the server's directory or a kind the declaration names. Without `kind`, a write goes through the one kind the declaration names, as the CLI's does. `record` and `fields` are JSON objects, the text `--from` and `--set` would read. Without `state`, `records-new` gives the record the kind's first.
+
+`by` on `records-new` names a proposer when the kind declares `proposedBy` ([#2756](https://github.com/INTENTIUS/chant/issues/2756)): it fills that field, `proposed_by` for a decision, whenever the record opens in the kind's first state. A kind with no `proposedBy` skips that and fills the decider field, `decided_by` for a decision, the way it always has; so does a record whose own fields set its state past the first one. Signing needs a decider. `by` on `records-amend` always writes the decider field, unchanged from before.
 
 ## Resources
 

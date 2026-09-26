@@ -80,9 +80,12 @@ as `record-no-evidence` for a record with an empty `evidence` list, which is
 normal for a quick capture. `state` stays `"proposed"` and `choice` stays
 `null`; nobody but a later review moves it to `decided`.
 
-There's no `--by` flag on `records new`. The record's provenance is the git
-commit that adds the file, chant's own provenance model, without anything
-else to set.
+Pass `--by <name>` to name whoever, or whatever session, is proposing it
+([#2756](https://github.com/INTENTIUS/chant/issues/2756)); chant writes that
+into `proposed_by`, apart from `decided_by`, which stays `null` until a
+later review decides it. Leave `--by` out, and the record's proposer is
+unnamed; either way, its provenance is still the git commit that adds the
+file, chant's own provenance model.
 
 ## Where a decision, and its proposal, came from
 

@@ -69,6 +69,7 @@ A decision can also be written through chant: `chant workspace records new`, `am
 | `supersedes` | earlier choices this decision replaced |
 | `evidence` | the design sections, issues, audits and workspace files behind it: each a public link or a file pinned by hash (see [Evidence](#evidence)); may be empty |
 | `decided_by`, `decided_on` | the forge login and the date |
+| `proposed_by` | who proposed the decision, when `chant workspace records new --by <name>` or the MCP `records-new` tool's `by` named one for a decision that opened `proposed`; null or absent otherwise, and never cleared once set (see [Naming a proposer](#naming-a-proposer)) |
 | `reviews` | each reviewer's verdict (`agree`, `dissent` or `abstain`), a note, a date and the digest of the text it judged; a dissent must have a note; empty until a review happens |
 | `constrains` | the issues (`owner/repo#n`), decisions (their ids), members (`member:<name>`) or workspace files and directories (`path:<path>`) the decision governs; at least one, since a decision that governs nothing is refused |
 
@@ -116,6 +117,12 @@ source:
 ```
 
 The same fields may be added to either of the other forms, to say where the proposal came from. `via` is `cli`, `mcp` or `harvest`. `client` is the MCP client's `clientInfo`, or the CLI. `session` is the harness's session id, or `{ id, record }` with the chant session record it was held in. `transcript` pins the conversation by a `path` or `uri` and the SHA-256 of its bytes, and is never a copy of it. Every field is optional, none is trust, and a harvested decision (`via: "harvest"`) is written `proposed`. The kind opts in with `source: { field: "source" }`; [`chant workspace records`](https://intentius.io/chant/cli/workspace-records/#where-a-proposal-came-from) describes the checks.
+
+## Naming a proposer
+
+`chant workspace records new --by <name>` and the MCP `records-new` tool's `by` name who is proposing the decision ([#2756](https://github.com/INTENTIUS/chant/issues/2756)). Since a new decision opens `proposed`, `by` is written to `proposed_by`, apart from `decided_by`, which stays null until a person decides it through an amendment. `by` is written to `decided_by` instead only when the fields given with `--from` open the decision straight into a later state, such as `decided`, which only `chant workspace records new` at the CLI can do; a record made through the MCP tool always opens `proposed`. `records amend` and `records-amend` take no `by`: a person names a decider in the fields given to `--set`, such as `decided_by`, the way they always have. `proposed_by` is never cleared once written, including once the decision is decided, ratified or superseded, and `--sign` still seals `decided_by`, not `proposed_by`: a proposal with no decider yet has no author to seal.
+
+The kind opts in with `proposedBy: { field: "proposed_by" }`; a kind that leaves it out keeps `by` writing `reviews.decider` for every new record, as it always has.
 
 ## Evidence
 

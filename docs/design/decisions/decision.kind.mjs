@@ -27,6 +27,10 @@ export const recordKind = {
   // Verdicts, and the field naming the decider, for each record's digest and
   // quorum (#2671, #2672).
   reviews: { field: "reviews", decider: "decided_by" },
+  // records new --by and the MCP records-new tool's by name a proposal's
+  // proposer here, apart from decided_by, which stays null until the
+  // decision is decided (#2756).
+  proposedBy: { field: "proposed_by" },
   // source is where a decision came from, and says where its proposal came
   // from too: via, client, harness, model, session, turns and a transcript
   // pinned by hash (#2708).

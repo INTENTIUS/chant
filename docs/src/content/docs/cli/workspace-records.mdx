@@ -14,7 +14,7 @@ This command is the first slice of workspace records ([#2546](https://github.com
 chant workspace records [--kind <kind file>] [--current] [--at <rev>] [--base <rev>] [--require attested] [--json]
 chant workspace records [--kind <kind file>] --since <rev|session id> [--at <rev>] [--json]
 chant workspace records pin <path>
-chant workspace records new [<kind file>] --from <file|-> [--prefix <prefix>] [--sign [<key file>]] [--dry-run]
+chant workspace records new [<kind file>] --from <file|-> [--prefix <prefix>] [--by <name>] [--sign [<key file>]] [--dry-run]
 chant workspace records amend <id> [--kind <kind file>] --set <file|-> [--sign [<key file>]] [--dry-run]
 chant workspace records review <id> [--kind <kind file>] --verdict agree|dissent|abstain --by <principal> [--note <text>] [--session <id>] [--sign [<key file>]] [--dry-run]
 chant workspace records close <session id> [--kind <session kind file>] [--dry-run]
@@ -57,13 +57,14 @@ export const recordKind = {
   pins: { field: "evidence" },
   constrains: { field: "constrains" },
   reviews: { field: "reviews", decider: "decided_by" },
+  proposedBy: { field: "proposed_by" },
   source: { field: "source" },
 };
 ```
 
 `location.dir` and `schema.path` are relative to the kind's own directory. Subdirectories are skipped, and a name has to match `location.match` to be read. The `$id` inside the schema must equal `schema.id`.
 
-`approval`, `pins`, `constrains`, `reviews` and `session` are optional, and `approval` ranks the states for [supersession](#supersession). `pins.field` names the list whose entries may pin a workspace file (see [Asset pins](#asset-pins)). `constrains.field` names the list of what a record governs, whose `member:<name>` and `path:<path>` entries become the record's links in [`chant workspace graph --kind`](/chant/cli/workspace-graph/#record-links). For `reviews`, `field` is the list of review verdicts and `decider` is the field holding the decider, and with them each record gets a digest and a quorum (see [Reviews and quorum](#reviews-and-quorum)). chant 0.82.0 and older refuse a kind file that has `approval`, `pins` or `constrains`. `session` makes the kind a [review-session kind](#review-sessions), and chant 0.81.0 and older refuse it too. `source.field` names the object that says where a record came from, and opts the kind in to the [source block](#where-a-proposal-came-from). A chant released before this block existed refuses a kind file that has `source`, as it refuses any key it does not know.
+`approval`, `pins`, `constrains`, `reviews`, `proposedBy` and `session` are optional, and `approval` ranks the states for [supersession](#supersession). `pins.field` names the list whose entries may pin a workspace file (see [Asset pins](#asset-pins)). `constrains.field` names the list of what a record governs, whose `member:<name>` and `path:<path>` entries become the record's links in [`chant workspace graph --kind`](/chant/cli/workspace-graph/#record-links). For `reviews`, `field` is the list of review verdicts and `decider` is the field holding the decider, and with them each record gets a digest and a quorum (see [Reviews and quorum](#reviews-and-quorum)). `proposedBy` works the other end of a record's life: its `field` says where a new record's proposer goes, apart from the decider (see [Naming a proposer](#naming-a-proposer)). chant 0.82.0 and older refuse a kind file that has `approval`, `pins` or `constrains`. `session` makes the kind a [review-session kind](#review-sessions), and chant 0.81.0 and older refuse it too. `source.field` names the object that says where a record came from, and opts the kind in to the [source block](#where-a-proposal-came-from). A chant released before this block existed refuses a kind file that has `source`, as it refuses any key it does not know.
 
 A kind with a `work` block is a work kind ([#2683](https://github.com/INTENTIUS/chant/issues/2683)), such as the reference workspace's `work/work.kind.mjs`, whose block reads as follows.
 
@@ -390,6 +391,20 @@ A record whose `via` is `harvest` must be written in the kind's first state, `pr
 
 When the transcript can be read here and its bytes hash to something other than `sha256`, `records` warns `source-transcript-drift`: the file is not the transcript the record means. A `path` is absolute, starts `~/` from the home directory, or starts at the workspace root. Of URIs, only `file:` ones are read, and chant never fetches one over the network. A transcript that can't be read gives no warning.
 
+### Naming a proposer
+
+A kind may opt a field in to hold a new record's proposer, apart from the decider ([#2756](https://github.com/INTENTIUS/chant/issues/2756)):
+
+```js
+proposedBy: { field: "proposed_by" },
+```
+
+`records new --by <name>` names `<name>` as who proposed the record. Since a new decision starts `proposed`, that name lands in `proposed_by`, not `decided_by`. `--by` fills `reviews.decider` instead, `decided_by` for a decision, only when the fields given with `--from` set the record past that starting state; a harvested record can't do this, since #2708 requires it to start there too. Either way, `--by` conflicting with a value the fields already set on its target field is refused with `write-input-invalid`. A kind without `proposedBy` keeps `--by` writing `reviews.decider` for every new record, as it always has. `--by` on a kind with neither field declared is `write-usage-invalid`.
+
+`records amend` and the MCP `records-amend` tool take no `by`: a person or a harness names a decider by setting the kind's decider field, such as `decided_by`, in the fields given to `--set`. `--by` given to `records amend` is refused rather than dropped.
+
+A proposer's name is recorded as given, the same as a reviewer's or a decider's, and the write does not check who it is. `--sign` still seals only the decider field: a record with a proposer and no decider yet has no author to seal (see [Sealing a record](#sealing-a-record)).
+
 ## Reviews and quorum
 
 A kind with `reviews`, which chant reads from 0.86.0 on, gives every record two more fields ([#2671](https://github.com/INTENTIUS/chant/issues/2671), [#2672](https://github.com/INTENTIUS/chant/issues/2672)). They are `digest`, a hash of the record's text, and `quorum`, which says which verdicts count. Each verdict is an entry in the reviews list with `reviewer`, `verdict` (`agree`, `dissent` or `abstain`) and `on`, and it should also carry `digest`, the record's digest when the reviewer read it:
@@ -672,7 +687,7 @@ A UI such as hud never writes a record file itself ([ws-052](https://github.com/
 
 | Command | Writes |
 |---|---|
-| `records new <kind file> --from <file\|->` | a new record in the kind's directory, from a JSON object of its fields, sealed by its author with `--sign` |
+| `records new <kind file> --from <file\|->` | a new record in the kind's directory, from a JSON object of its fields, named for its proposer or decider with `--by` (see [Naming a proposer](#naming-a-proposer)) and sealed by its author with `--sign` |
 | `records amend <id> --kind <kind file> --set <file\|->` | the same record, with the top-level fields of a JSON object replacing its own, sealed again with `--sign` |
 | `records review <id> --kind <kind file> --verdict <verdict> --by <principal>` | the same record, with one entry appended to `reviews`, and with `--session` the session's verdicts too |
 | `records close <session id>` | an open session, closed and sealed |

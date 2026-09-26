@@ -100,8 +100,8 @@ describe("which servers have the workspace tools", () => {
     }
   });
 
-  test("the descriptions say records are proposals and by names who decided", () => {
-    for (const t of workspaceWriteTools) expect(t.description).toMatch(/proposals until they are reviewed.*by must name the person or agent that actually decided/s);
+  test("the descriptions say records are proposals and by names who proposed or decided", () => {
+    for (const t of workspaceWriteTools) expect(t.description).toMatch(/proposals until they are reviewed.*by must name the person or agent that actually proposed or decided it/s);
   });
 });
 
@@ -186,25 +186,18 @@ describe("writes", () => {
     const reasoning = await call(s, "records-amend", { kind: KIND, id: "fix-001", fields: { question: "Something else?" } });
     expect(reasoning.structuredContent).toMatchObject({ error: { code: "amend-supersede-instead" } });
 
-    const both = await call(s, "records-new", { kind: KIND, record: { ...proposal("Two authors"), decided_by: "alice" }, by: "bob", dryRun: true });
+    // A new record opens proposed (MCP forces it), so by names the proposer, in proposedBy's field, not the decider (#2756).
+    const both = await call(s, "records-new", { kind: KIND, record: { ...proposal("Two proposers"), proposed_by: "alice" }, by: "bob", dryRun: true });
     expect(both.structuredContent).toMatchObject({ error: { code: "write-input-invalid" } });
-    const by = await call(s, "records-new", { kind: KIND, record: proposal("One author"), by: "alice", dryRun: true });
+    const by = await call(s, "records-new", { kind: KIND, record: proposal("One proposer"), by: "alice", dryRun: true });
     expect(by.structuredContent, JSON.stringify(by.structuredContent)).toHaveProperty("text");
-    expect((by.structuredContent as { text: string }).text).toContain('decided_by: "alice"');
+    expect((by.structuredContent as { text: string }).text).toContain('proposed_by: "alice"');
+    expect((by.structuredContent as { text: string }).text).toContain("decided_by: null");
 
-    // No key configured on this host: the CLI's refusal and remedy.
-    const home = { GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
-    const saved = { ...process.env };
-    Object.assign(process.env, home);
-    try {
-      const signed = await call(s, "records-new", { kind: KIND, record: proposal("Signed"), by: "alice", sign: true, dryRun: true });
-      expect(signed.structuredContent).toMatchObject({ error: { code: "record-sign-failed", message: expect.stringContaining("pass --sign <key file>") } });
-    } finally {
-      for (const k of Object.keys(home)) {
-        if (saved[k] === undefined) delete process.env[k];
-        else process.env[k] = saved[k];
-      }
-    }
+    // --sign seals the decider, and a record by names as proposed carries no decided_by yet.
+    const signed = await call(s, "records-new", { kind: KIND, record: proposal("Signed"), by: "alice", sign: true, dryRun: true });
+    expect(signed.structuredContent).toMatchObject({ error: { code: "record-sign-failed", message: expect.stringContaining("names no decided_by") } });
+
     // Nothing above wrote a file.
     expect(readFileSync(join(ws.dir, "decisions", "fix-001-how-the-app-is-deployed.md"), "utf-8")).toContain('question: "What declares the app\'s deployment?"');
   }, 180_000);
