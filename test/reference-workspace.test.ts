@@ -339,11 +339,14 @@ describe("decision files", () => {
   test("the declaration names the decision, work, answer and session kinds, so ls lists them and records reads them without --kind (#2680, #2683, ws-058)", async () => {
     const ls = lsJson(fixture) as unknown as { workspace: { records: unknown[] }; members: { name: string; records: unknown[] }[] };
     expect(ls.workspace.records).toEqual([
-      { name: "decision", path: "decisions/decision.kind.mjs", kind: "decision", reason: null },
-      { name: "work", path: "work/work.kind.mjs", kind: "work", reason: null },
-      { name: "answer", path: "answers/answer.kind.mjs", kind: "answer", reason: null },
+      { name: "decision", path: "decisions/decision.kind.mjs", kind: "decision", reason: null, acceptance: null },
+      // W-001 states two acceptance criteria and has no evidence for them yet (#2772).
+      { name: "work", path: "work/work.kind.mjs", kind: "work", reason: null, acceptance: [{ item: "W-001", state: "in-progress", met: 0, total: 2 }] },
+      { name: "answer", path: "answers/answer.kind.mjs", kind: "answer", reason: null, acceptance: null },
     ]);
-    expect(ls.members.find((m) => m.name === "design")!.records).toEqual([{ name: "session", path: "design/sessions/session.kind.mjs", kind: "session", reason: null }]);
+    expect(ls.members.find((m) => m.name === "design")!.records).toEqual([
+      { name: "session", path: "design/sessions/session.kind.mjs", kind: "session", reason: null, acceptance: null },
+    ]);
     const run = chant(fixture, "workspace", "records", "--current", "--json");
     expect(run.status, run.stderr).toBe(0);
     const set = JSON.parse(run.stdout) as { kinds: { kind: { name: string }; declared: unknown; records: { id: string }[] }[] };
