@@ -8,7 +8,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, describe, expect, test } from "vitest";
 import { cleanScratch, commitAll, contract, REPO, repo } from "./__fixtures__/contract-repo";
-import { constrainsBox } from "./box-intent";
+import { constrainsBox, constrainsWorkspace } from "./box-intent";
 import { runDeclarationChecks } from "./checks";
 import { parseDeclaration } from "./declaration";
 import { intentGraph } from "./intent";
@@ -66,6 +66,35 @@ function workspace(box: Record<string, unknown>, records: Record<string, string>
   });
 }
 
+/**
+ * A workspace shaped like the studio template (studio#112, #2857): the box
+ * block sits on member `box`, the steward and its Ops, and a separate
+ * member `app` is the app the box runs. `records` overlays the decision
+ * files, keyed the same way `repo()` takes every other file.
+ */
+function studioShapedWorkspace(records: Record<string, string>): string {
+  return repo({
+    "chant.workspace.json": JSON.stringify(
+      {
+        name: "acme",
+        schema: 1,
+        members: [
+          { name: "box", dir: "box", kind: "other", because: "the box's steward and its Ops", box: { intent: "box-001" } },
+          { name: "app", dir: "app", kind: "other", because: "the app the box runs" },
+        ],
+        records: [{ kind: "decisions/decision.kind.mjs" }],
+      },
+      null,
+      2,
+    ),
+    "box/ops.mjs": "export const ops = true;\n",
+    "app/server.mjs": "export const port = 8080;\n",
+    "decisions/decision.kind.mjs": readFileSync(join(REF, "decision.kind.mjs"), "utf-8"),
+    "decisions/decision.schema.json": readFileSync(join(REF, "decision.schema.json"), "utf-8"),
+    ...records,
+  });
+}
+
 const intentFindings = async (root: string) =>
   (await runDeclarationChecks(root)).diagnostics.filter((d) => d.ruleId === "WSP126" || d.ruleId === "WSP127").map((d) => [d.ruleId, d.severity, d.code, d.entity]);
 
@@ -89,6 +118,16 @@ describe("the box block's intent", () => {
     const m = { name: "app", dir: "apps/app" };
     expect(["member:app", "path:apps/app", "path:apps", "path:apps/app/server.mjs"].map((c) => constrainsBox(c, m))).toEqual([true, true, true, true]);
     expect(["member:web", "path:apps/application", "path:web", "issue:1"].map((c) => constrainsBox(c, m))).toEqual([false, false, false, false]);
+  });
+
+  test("constrainsWorkspace: an entry names a member or path of the workspace whether or not it's the box's own (#2857)", () => {
+    const members = [
+      { name: "box", dir: "box" },
+      { name: "app", dir: "app" },
+    ];
+    expect(["member:box", "member:app", "path:app", "path:box/ops.mjs"].map((c) => constrainsWorkspace(c, members))).toEqual([true, true, true, true]);
+    expect(["member:web", "path:docs", "issue:1"].map((c) => constrainsWorkspace(c, members))).toEqual([false, false, false]);
+    expect(constrainsWorkspace("member:app", [])).toBe(false);
   });
 });
 
@@ -130,9 +169,32 @@ describe("a box planted as a question", () => {
     expect(d.message).toContain("the declaration names no record kind called decision");
   });
 
-  test("an intent that constrains nothing of the box warns WSP127", async () => {
+  test("an intent whose constrains names no member or path of the workspace warns WSP127", async () => {
     const root = workspace({ intent: "box-001" }, { "decisions/box-001-what-app-is-for.md": decision("box-001", "proposed", ["path:docs"]) });
     expect(await intentFindings(root)).toEqual([["WSP127", "warning", "box-intent-unconstrained", "app"]]);
+  });
+
+  test("an intent with empty constrains warns WSP127", async () => {
+    const root = studioShapedWorkspace({ "decisions/box-001-what-app-is-for.md": decision("box-001", "proposed", []) });
+    expect(await intentFindings(root)).toEqual([["WSP127", "warning", "box-intent-unconstrained", "box"]]);
+    const d = (await runDeclarationChecks(root)).diagnostics.find((x) => x.ruleId === "WSP127")!;
+    expect(d.message).toContain("whose constrains is empty");
+    expect(d.message).toContain("add member:<name> for the member the intent is about");
+  });
+
+  test("an intent naming an unknown member warns WSP127", async () => {
+    const root = studioShapedWorkspace({ "decisions/box-001-what-app-is-for.md": decision("box-001", "proposed", ["member:web"]) });
+    expect(await intentFindings(root)).toEqual([["WSP127", "warning", "box-intent-unconstrained", "box"]]);
+  });
+
+  test("an intent that constrains the app a box runs passes WSP127, on a workspace shaped like the studio template (#2857)", async () => {
+    const root = studioShapedWorkspace({ "decisions/box-001-what-app-is-for.md": decision("box-001", "proposed", ["member:app"]) });
+    expect(await intentFindings(root)).toEqual([]);
+  });
+
+  test("an intent with a path: entry inside another member's directory passes WSP127 (#2857)", async () => {
+    const root = studioShapedWorkspace({ "decisions/box-001-what-app-is-for.md": decision("box-001", "proposed", ["path:app/server.mjs"]) });
+    expect(await intentFindings(root)).toEqual([]);
   });
 
   test("a box with no intent reports null", async () => {
