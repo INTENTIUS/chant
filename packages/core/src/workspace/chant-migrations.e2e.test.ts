@@ -539,8 +539,11 @@ describe("chud-lexicon-exit-live-names, over a repo chud-lexicon-exit migrated b
 
     await upgrade();
     const component = read(proj, COMPONENT);
-    expect(component).toContain('dependsOn: [],\n  liveNames: ["server"],\n');
-    expect(component).toContain("Its live name is the Machine the release Op\n * ships to, the entity fly-machine.ts calls server (chant#2833)");
+    // deploy/fly.ts is already the FlySite composite (chant#2809 plans before
+    // this one), so the derived name is the Machine it expands, not the old
+    // hardcoded "server" (#2839).
+    expect(component).toContain('dependsOn: [],\n  liveNames: ["flySiteMachine"],\n');
+    expect(component).toContain("Its live name is the Machine the release Op\n * ships to, the entity flySiteMachine (chant#2833)");
     expect(readLock(proj)!.scopes["."].migrations).toContain(CHUD_LEXICON_EXIT_LIVE_NAMES);
 
     const again = await stageUpgrade({ root: proj, to: target(), runChant: passing });
@@ -570,6 +573,47 @@ describe("chud-lexicon-exit-live-names, over a repo chud-lexicon-exit migrated b
     const staged = await stageUpgrade({ root: proj, to: target(), runChant: passing });
     try {
       expect(staged.chantMigrations.find((m) => m.id === CHUD_LEXICON_EXIT_LIVE_NAMES)).toBeUndefined();
+    } finally {
+      staged.dispose();
+    }
+  });
+
+  test("a component already holding the right liveNames (hand-corrected, arugula-salad/studio cfd4522) plans nothing", async () => {
+    put(proj, COMPONENT, read(proj, COMPONENT).replace("  dependsOn: [],\n", '  dependsOn: [],\n  liveNames: ["flySiteMachine"],\n'));
+    commit("hand-corrected liveNames");
+    const staged = await stageUpgrade({ root: proj, to: target(), runChant: passing });
+    try {
+      expect(staged.chantMigrations.find((m) => m.id === CHUD_LEXICON_EXIT_LIVE_NAMES)).toBeUndefined();
+    } finally {
+      staged.dispose();
+    }
+  });
+
+  test("a component holding this migration's own bad default (#2839) is corrected once FlySite names the Machine", async () => {
+    put(proj, COMPONENT, read(proj, COMPONENT).replace("  dependsOn: [],\n", '  dependsOn: [],\n  liveNames: ["server"],\n'));
+    commit("the bad default, as the unfixed migration wrote it");
+    await upgrade();
+    const component = read(proj, COMPONENT);
+    expect(component).toContain('dependsOn: [],\n  liveNames: ["flySiteMachine"],\n');
+    expect(component).not.toContain('liveNames: ["server"]');
+
+    const again = await stageUpgrade({ root: proj, to: target(), runChant: passing });
+    try {
+      expect(again.chantMigrations).toEqual([]);
+      expect(again.changed).toBe(false);
+    } finally {
+      again.dispose();
+    }
+  });
+
+  test("neither deploy/fly.ts nor deploy/fly-machine.ts says the Machine's live name: a conflict, not a guess", async () => {
+    put(proj, "delivery/deploy/fly.ts", read(proj, "delivery/deploy/fly.ts").replace("export const flySite = FlySite(", "const flySite = FlySite("));
+    commit("the site under a name this migration cannot see");
+    const staged = await stageUpgrade({ root: proj, to: target(), runChant: passing });
+    try {
+      const m = staged.chantMigrations.find((x) => x.id === CHUD_LEXICON_EXIT_LIVE_NAMES);
+      expect(m).toMatchObject({ applied: false, conflicts: [{ path: COMPONENT }] });
+      expect(m!.conflicts[0].reason).toContain("cannot tell the Machine's live name");
     } finally {
       staged.dispose();
     }
@@ -811,6 +855,16 @@ describe("the migrated delivery project, with this checkout's chant", () => {
       expect(ledger.records).toHaveLength(1);
       expect(ledger.records[0]).toMatchObject({ component: "app", env: "fly", digest: plan.digest, gitSha: plan.gitSha, actor: "releaser", approver: "alice" });
       expect(await readReleasePlan(plan.digest, { cwd: delivery })).toMatchObject({ digest: plan.digest, artifact: { digest: plan.artifact.digest } });
+
+      // The app component's liveNames (chud-lexicon-exit-live-names, #2833)
+      // join it to the Machine the FlySite composite gives it, so `components
+      // status --live` reads the release reconciled instead of stale (#2839).
+      const status = await chant(delivery, env, "components", "status", "fly", "--live", "--json");
+      expect(status.status, status.out).toBe(0);
+      const statusLines = status.out.split("\n");
+      const statusJsonAt = statusLines.findIndex((l) => l === "[");
+      const statusRows = JSON.parse(statusLines.slice(statusJsonAt).join("\n")) as Array<{ component: string; reconciliation: string; live?: boolean }>;
+      expect(statusRows.find((r) => r.component === "app")).toMatchObject({ reconciliation: "reconciled", live: true });
 
       // A retry: the same plan, still approved; the Machine is left as it is, the migration's receipt matches, and nothing more is recorded.
       const again = await chant(delivery, env, "run", "release");
