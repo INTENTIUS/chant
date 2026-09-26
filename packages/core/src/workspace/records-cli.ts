@@ -611,9 +611,10 @@ function formatRecords(records: RecordView[], summary: { total: number; valid: n
     const title = typeof r.data?.title === "string" ? r.data.title : r.path;
     const flag = r.valid ? "" : "  INVALID";
     const superseded = r.supersededBy ? `  superseded by ${r.supersededBy}` : "";
+    const remediated = r.remediatedBy.length > 0 ? `  remediated by ${r.remediatedBy.join(", ")}` : "";
     const attested = r.provenance.level === "attested" ? `  attested by ${r.provenance.principal}` : "";
     const sealed = r.attested === true ? `  sealed by ${(r.data?.[RECORD_SEAL_FIELD] as { signer: string }).signer}` : "";
-    lines.push(`${(r.id ?? "-").padEnd(idWidth)}  ${(r.state ?? "-").padEnd(stateWidth)}  ${title}${superseded}${attested}${sealed}${flag}`);
+    lines.push(`${(r.id ?? "-").padEnd(idWidth)}  ${(r.state ?? "-").padEnd(stateWidth)}  ${title}${superseded}${remediated}${attested}${sealed}${flag}`);
     if (r.ready !== undefined) {
       const blocked = (r.blockedBy ?? []).map((b) => `${b.id} (${b.state ?? "unknown"})`).join(", ");
       const implemented = (r.implements ?? []).map((d) => `${d.id} (${d.state ?? "unknown"})`).join(", ");

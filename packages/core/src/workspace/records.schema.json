@@ -116,7 +116,7 @@
     },
     "record": {
       "type": "object",
-      "required": ["id", "path", "state", "valid", "reasons", "supersededBy", "data"],
+      "required": ["id", "path", "state", "valid", "reasons", "supersededBy", "remediatedBy", "data"],
       "properties": {
         "id": { "type": ["string", "null"], "description": "Null when the record could not be parsed or has no string id. For a content-addressed kind (idFrom sha256, added by #2664), the lowercase hex SHA-256 of the file's bytes, the same string a pin of the file carries." },
         "path": { "type": "string", "description": "From the repository root, with / separators." },
@@ -126,6 +126,11 @@
         "supersededBy": {
           "type": ["string", "null"],
           "description": "The id of the closed record whose supersedes link replaces this one. Derived from that record's link, never from this record's own fields."
+        },
+        "remediatedBy": {
+          "description": "Added in contract 1 by #2774. The ids of records whose remediates link names this one, in path order. Unlike supersededBy, several records may remediate the same one, and a remediation never changes this record's state or supersededBy: it stays exactly as current as it was.",
+          "type": "array",
+          "items": { "type": "string" }
         },
         "data": {
           "type": ["object", "null"],
@@ -399,6 +404,8 @@
             "record-id-duplicate",
             "record-supersedes-unknown",
             "record-supersedes-conflict",
+            "record-remediates-unknown",
+            "record-remediates-not-closed",
             "session-seal-mismatch",
             "session-verdict-unknown-record"
           ]

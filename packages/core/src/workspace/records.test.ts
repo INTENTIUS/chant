@@ -11,12 +11,17 @@ const REPO = join(import.meta.dirname, "..", "..", "..", "..");
 const DECISIONS = join(REPO, "docs", "design", "decisions");
 const SAMPLE = readFileSync(join(DECISIONS, "ws-003-seal-scope.md"), "utf-8");
 
-/** A copy of a real decision with its id, state and supersedes links replaced. */
-function decision(id: string, state = "decided", supersedes: string[] = []): string {
+/** A copy of a real decision with its id, state, supersedes and remediates links replaced. */
+function decision(id: string, state = "decided", supersedes: string[] = [], remediates: string[] = []): string {
   const links = supersedes.length === 0 ? "supersedes: []" : `supersedes:\n${supersedes.map((d) => `  - decision: "${d}"`).join("\n")}`;
-  return SAMPLE.replace(/^id: .*$/m, `id: "${id}"`)
+  let text = SAMPLE.replace(/^id: .*$/m, `id: "${id}"`)
     .replace(/^state: .*$/m, `state: "${state}"`)
     .replace(/^supersedes:(?: \[\])?\n(?:  .*\n)*/m, `${links}\n`);
+  if (remediates.length > 0) {
+    const block = `remediates:\n${remediates.map((d) => `  - decision: "${d}"`).join("\n")}\n`;
+    text = text.replace(/^evidence:/m, `${block}evidence:`);
+  }
+  return text;
 }
 
 let dir: string;
@@ -233,6 +238,46 @@ describe("readRecords", () => {
     const records = (await read()).records;
     expect(records[0].supersededBy).toBe("ws-002");
     expect(codes(records[2])).toEqual(["record-supersedes-conflict"]);
+  });
+
+  test("a remediates link to a missing id is record-remediates-unknown", async () => {
+    write("ws-002-b.md", decision("ws-002", "decided", [], ["ws-404"]));
+    const [r] = (await read()).records;
+    expect(codes(r)).toEqual(["record-remediates-unknown"]);
+  });
+
+  test("a remediates link to an open record is record-remediates-not-closed: a record still open is amended instead", async () => {
+    write("ws-001-a.md", decision("ws-001", "decided"));
+    write("ws-002-b.md", decision("ws-002", "ratified", [], ["ws-001"]));
+    const [ws001, ws002] = (await read()).records;
+    expect(codes(ws002)).toEqual(["record-remediates-not-closed"]);
+    expect(ws001.remediatedBy).toEqual([]);
+  });
+
+  test("remediation leaves the target current and its state unchanged, and several records may remediate the same one (#2774)", async () => {
+    write("ws-001-a.md", decision("ws-001", "ratified"));
+    write("ws-002-b.md", decision("ws-002", "ratified", [], ["ws-001"]));
+    write("ws-003-c.md", decision("ws-003", "ratified", [], ["ws-001"]));
+    const all = await read();
+    const [ws001] = all.records;
+    expect(ws001.state).toBe("ratified");
+    expect(ws001.supersededBy).toBeNull();
+    expect(ws001.remediatedBy).toEqual(["ws-002", "ws-003"]);
+    expect(all.summary.superseded).toBe(0);
+    const current = await read({ current: true });
+    expect(current.records.map((r) => r.id)).toEqual(["ws-001", "ws-002", "ws-003"]);
+  });
+
+  test("remediates and supersedes are independent links, and a record may carry both to different targets (#2774)", async () => {
+    write("ws-001-a.md", decision("ws-001", "ratified"));
+    write("ws-002-b.md", decision("ws-002", "ratified"));
+    write("ws-003-c.md", decision("ws-003", "ratified", ["ws-002"], ["ws-001"]));
+    const all = await read();
+    expect(all.records.map((r) => [r.id, r.supersededBy, r.remediatedBy])).toEqual([
+      ["ws-001", null, ["ws-003"]],
+      ["ws-002", "ws-003", []],
+      ["ws-003", null, []],
+    ]);
   });
 
   test("a missing records directory is location-missing", async () => {

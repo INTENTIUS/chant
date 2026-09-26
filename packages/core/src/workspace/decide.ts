@@ -526,7 +526,7 @@ export async function askPoint(opts: AskPointOptions): Promise<PointsWriteDocume
 }
 
 function emptyEntry(path: string): RecordEntry {
-  return { id: null, path, state: null, valid: true, reasons: [], supersededBy: null, data: null, assets: [], warnings: [], digest: "" };
+  return { id: null, path, state: null, valid: true, reasons: [], supersededBy: null, remediatedBy: [], data: null, assets: [], warnings: [], digest: "" };
 }
 
 // ── points answer ────────────────────────────────────────────────────────────

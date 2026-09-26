@@ -39,7 +39,7 @@ This page is generated from `docs/data/boundary.yaml`, which has one row for eac
 | record link kind | `RECORD_LINK_KINDS` in `record-assets.ts` | 2 | 0 | 0 |
 | intent node kind | the node kinds of `intent.schema.json` | 9 | 0 | 3 |
 | intent edge kind | the edge kinds of `intent.schema.json` | 9 | 0 | 3 |
-| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 128 | 0 | 0 |
+| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 130 | 0 | 0 |
 | finding code | the finding codes of `intent.schema.json` | 17 | 0 | 0 |
 | WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 44 | 0 | 0 |
 | hud view | the hud reader requirements H1 to H11 of #2650 | 0 | 11 | 0 |
@@ -158,6 +158,8 @@ Each row follows, in the order of the table above.
 | reason code | `record-id-duplicate` | chant | intent.schema.json, points-write.schema.json, records-amend.schema.json, records-close.schema.json, records-new.schema.json, records-review.schema.json, records.schema.json, work-evidence.schema.json | Another record earlier in path order has the same id. |
 | reason code | `record-supersedes-unknown` | chant | intent.schema.json, points-write.schema.json, records-amend.schema.json, records-close.schema.json, records-new.schema.json, records-review.schema.json, records.schema.json, work-evidence.schema.json | A supersedes link names an id no record has. |
 | reason code | `record-supersedes-conflict` | chant | intent.schema.json, points-write.schema.json, records-amend.schema.json, records-close.schema.json, records-new.schema.json, records-review.schema.json, records.schema.json, work-evidence.schema.json | A second closed record supersedes a record another one already superseded. |
+| reason code | `record-remediates-unknown` | chant | intent.schema.json, points-write.schema.json, records-amend.schema.json, records-close.schema.json, records-new.schema.json, records-review.schema.json, records.schema.json | A remediates link names an id no record has. |
+| reason code | `record-remediates-not-closed` | chant | intent.schema.json, points-write.schema.json, records-amend.schema.json, records-close.schema.json, records-new.schema.json, records-review.schema.json, records.schema.json | A remediates link names a record that isn't closed; a record still open is amended instead. |
 | reason code | `session-seal-mismatch` | chant | points-write.schema.json, records-amend.schema.json, records-close.schema.json, records-new.schema.json, records-review.schema.json, records.schema.json, work-evidence.schema.json | A closed session's seal is not the digest of its text: the session changed after it closed. |
 | reason code | `session-verdict-unknown-record` | chant | points-write.schema.json, records-amend.schema.json, records-close.schema.json, records-new.schema.json, records-review.schema.json, records.schema.json, work-evidence.schema.json | A session's verdict names a record that none of the session kind's subject records has. |
 | reason code | `asset-drift` | chant | points-write.schema.json, points.schema.json, records-amend.schema.json, records-close.schema.json, records-new.schema.json, records-review.schema.json, records.schema.json | A file the record pins by hash has changed: its bytes no longer hash to the pinned sha256. |

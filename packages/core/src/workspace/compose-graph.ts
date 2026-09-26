@@ -113,6 +113,8 @@ export interface GraphRecord {
   state: string | null;
   valid: boolean;
   supersededBy: string | null;
+  /** The ids of records whose remediates link names this one (#2774). */
+  remediatedBy: string[];
 }
 
 /** Read one member's `chant graph --format ir` output, upgrading an unversioned (v1) IR in place. */

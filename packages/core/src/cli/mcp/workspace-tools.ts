@@ -128,7 +128,7 @@ export const workspaceReadTools: ToolDefinition[] = [
   {
     name: "workspace-records",
     description:
-      "The records of a kind, validated, with supersession, provenance, quorum and warnings: chant workspace records --json (records.schema.json). With since, what changed since a revision or a review session (records-since.schema.json). Returns the document unchanged; with id, only that record is kept in records. " +
+      "The records of a kind, validated, with supersession, remediation, provenance, quorum and warnings: chant workspace records --json (records.schema.json). With since, what changed since a revision or a review session (records-since.schema.json). Returns the document unchanged; with id, only that record is kept in records. " +
       PROTOCOL,
     inputSchema: {
       type: "object",

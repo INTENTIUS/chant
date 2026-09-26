@@ -6,8 +6,10 @@
  * record a kind locates, parses its structured core (the front matter, as the
  * JSON subset of YAML, or the whole file as one I-JSON object, ws-053),
  * validates it against the kind's schema and derives supersession from the
- * records' own `supersedes` links. It never writes a record; `records-write.ts`
- * does, through the rules here (#2670).
+ * records' own `supersedes` links, and remediation from their `remediates`
+ * links (#2774): a later record fixing a closed one's consequence without
+ * replacing it, which leaves the closed record's status unchanged. It never
+ * writes a record; `records-write.ts` does, through the rules here (#2670).
  *
  * A record that fails any of that is still returned, with reason codes, and the
  * read succeeds. Only a failure to read the kind, its schema or the revision is
@@ -51,6 +53,10 @@ export const RECORD_REASON_CODES = [
   "record-supersedes-unknown",
   /** A second closed record supersedes a record another one already superseded. */
   "record-supersedes-conflict",
+  /** A `remediates` link names an id no record has (#2774). */
+  "record-remediates-unknown",
+  /** A `remediates` link names a record that isn't closed: a record still open is amended instead (#2774). */
+  "record-remediates-not-closed",
   /** A closed session's seal is not the digest of its text: it changed after it closed (#2673). */
   "session-seal-mismatch",
   /** A session's verdict names a record the kind's subject records do not have (#2673). */
@@ -280,6 +286,16 @@ export const recordKindSchema = z
      */
     supersedes: z.object({ field: z.string().min(1), key: z.string().min(1).optional() }).strict().optional(),
     /**
+     * The field of links to records this one remediates: a later fix to a
+     * closed record's consequence, that leaves the closed record's status
+     * unchanged (#2774). Shaped like `supersedes`: with `key`, a list of
+     * objects whose `key` holds the target id; without it, one id or a list
+     * of ids. Optional, and only on a kind with states. A link is valid only
+     * when the target exists and is in one of `closedStates`; a target still
+     * open is amended instead, never remediated.
+     */
+    remediates: z.object({ field: z.string().min(1), key: z.string().min(1).optional() }).strict().optional(),
+    /**
      * How strongly each state is approved (#2524 D4). With it, a supersedes
      * link takes effect when the new record's rank is above 0 and at least the
      * old record's, "under an equal or stricter approval rule". A state it
@@ -415,6 +431,10 @@ export const recordKindSchema = z
   .refine((k) => k.states !== undefined || k.supersedes === undefined, {
     message: "a kind without states cannot have supersedes: a link takes effect only from a closed or ranked state",
     path: ["supersedes"],
+  })
+  .refine((k) => k.states !== undefined || k.remediates === undefined, {
+    message: "a kind without states cannot have remediates: a link only ever targets a record in a closed state",
+    path: ["remediates"],
   })
   .refine((k) => k.states !== undefined || k.session === undefined, {
     message: "a session kind must have states: a session is sealed when it reaches a closed state",
@@ -999,6 +1019,13 @@ export interface RecordEntry {
   reasons: RecordReason[];
   /** The id of the closed record whose `supersedes` link replaces this one, or null. */
   supersededBy: string | null;
+  /**
+   * The ids of records whose `remediates` link names this one (#2774), in
+   * path order. Unlike `supersededBy`, several records may remediate the
+   * same one, and a remediation never changes this record's state or
+   * `supersededBy`: it stays exactly as current as it was.
+   */
+  remediatedBy: string[];
   /** The record's structured core as JSON (the front matter, or the whole JSON file), or null when it could not be parsed. */
   data: Record<string, unknown> | null;
   /**
@@ -1140,6 +1167,20 @@ export function supersedesTargets(kind: Pick<RecordKind, "supersedes">, data: Re
   return ids.filter((x): x is string => typeof x === "string");
 }
 
+/**
+ * The ids a record's remediates field names (#2774), read the same way
+ * {@link supersedesTargets} reads `supersedes`.
+ */
+export function remediatesTargets(kind: Pick<RecordKind, "remediates">, data: Record<string, unknown> | null): string[] {
+  if (!kind.remediates || data === null) return [];
+  const { field, key } = kind.remediates;
+  const value = data[field];
+  if (key === undefined && typeof value === "string") return [value];
+  if (!Array.isArray(value)) return [];
+  const ids = key === undefined ? value : value.map((l) => (l !== null && typeof l === "object" ? (l as Record<string, unknown>)[key] : undefined));
+  return ids.filter((x): x is string => typeof x === "string");
+}
+
 /** The stem of a file name: the name up to its first `.`, the hash a content-addressed record's name claims (ws-053). */
 function nameStem(path: string): string {
   const name = path.slice(path.lastIndexOf("/") + 1);
@@ -1175,6 +1216,7 @@ export async function readRecords(loaded: LoadedRecordKind, options: ReadRecords
       valid: true,
       reasons: [],
       supersededBy: null,
+      remediatedBy: [],
       data: null,
       assets: [],
       warnings: [],
@@ -1291,6 +1333,30 @@ export async function readRecords(loaded: LoadedRecordKind, options: ReadRecords
         continue;
       }
       old.supersededBy = e.id;
+    }
+  }
+
+  // Remediation (#2774): a later record fixes a consequence of a closed one
+  // without replacing it. The target's status, and its supersededBy, never
+  // change; several records may remediate the same one. Unlike supersedes,
+  // this needs no approval rank: the target is closed or it isn't, and a
+  // still-open target is amended instead of remediated.
+  for (const e of entries) {
+    for (const target of remediatesTargets(kind, e.data)) {
+      const old = byId.get(target);
+      if (!old) {
+        e.reasons.push({ code: "record-remediates-unknown", message: `remediates ${target}, which no record has` });
+        continue;
+      }
+      if (old === e) continue;
+      if (old.state === null || !closed.has(old.state)) {
+        e.reasons.push({
+          code: "record-remediates-not-closed",
+          message: `remediates ${target}, which is ${old.state ?? "stateless"}, not closed; a record still open is amended instead`,
+        });
+        continue;
+      }
+      if (e.id !== null && !old.remediatedBy.includes(e.id)) old.remediatedBy.push(e.id);
     }
   }
 

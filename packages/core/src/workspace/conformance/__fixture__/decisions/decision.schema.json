@@ -116,6 +116,19 @@
         ]
       }
     },
+    "remediates": {
+      "description": "Closed decisions this one fixes the consequence of, without replacing them: each names the decision by id and may say why (#2774). The named decision's status never changes because of a remediates link; a decision still open is amended instead, never remediated. Optional: most decisions remediate nothing.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["decision"],
+        "properties": {
+          "decision": { "$ref": "#/definitions/decisionId" },
+          "reason": { "type": ["string", "null"] }
+        }
+      }
+    },
     "evidence": {
       "description": "The research, audits, design sections and workspace files behind the decision. A public link carries a url; a file in the workspace carries a path and the hash of its bytes (#2549). May be empty when the decision cites nothing; chant workspace records then warns decision-no-evidence (#2654).",
       "type": "array",

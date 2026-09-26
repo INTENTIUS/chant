@@ -180,6 +180,8 @@
                 "record-id-duplicate",
                 "record-supersedes-unknown",
                 "record-supersedes-conflict",
+                "record-remediates-unknown",
+                "record-remediates-not-closed",
                 "session-seal-mismatch",
                 "session-verdict-unknown-record"
               ]

@@ -94,7 +94,7 @@ A declared link replaces the inferred edge it covers, so the same join never app
 
 ## Record links
 
-The `--kind <kind file>` option reads the records of that kind at the revision the declaration is read at. It reads them the way [`chant workspace records`](/chant/cli/workspace-records/) does. The records are listed in `records`. Each current record, one that no other record supersedes, adds rows to `links` ([#2549](https://github.com/INTENTIUS/chant/issues/2549)):
+The `--kind <kind file>` option reads the records of that kind at the revision the declaration is read at. It reads them the way [`chant workspace records`](/chant/cli/workspace-records/) does. The records are listed in `records`, each with `supersededBy` and `remediatedBy` ([#2774](https://github.com/INTENTIUS/chant/issues/2774)): the id of the closed record that replaces it, and the ids of records that remediate it without changing its state. Each current record, one that no other record supersedes, adds rows to `links` ([#2549](https://github.com/INTENTIUS/chant/issues/2549)):
 
 - An `asset` row for each file the record pins by hash in its evidence, with the pin's state: `pinned`, `drifted`, `missing` or `stale`.
 - A `constrains` row for each `member:<name>` or `path:<path>` the record governs, `resolved` when the member is declared or the path exists and `missing` otherwise.
