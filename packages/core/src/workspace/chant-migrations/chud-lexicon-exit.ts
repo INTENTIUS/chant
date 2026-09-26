@@ -292,14 +292,14 @@ export const app: Component = {
 }
 
 /** A scope file as text, or undefined. */
-function readText(dir: string, path: string): string | undefined {
+export function readText(dir: string, path: string): string | undefined {
   const abs = join(dir, path);
   return existsSync(abs) ? readFileSync(abs, "utf-8") : undefined;
 }
 
 // ── Text edits ───────────────────────────────────────────────────────────────
 
-interface Edit {
+export interface Edit {
   find: string | RegExp;
   replace: string;
   /** A required edit whose anchor is missing, while `unless` does not match, is a conflict. */
@@ -308,7 +308,7 @@ interface Edit {
   unless?: RegExp;
 }
 
-function applyEdits(text: string, edits: Edit[]): { text: string; missing: string[] } {
+export function applyEdits(text: string, edits: Edit[]): { text: string; missing: string[] } {
   const missing: string[] = [];
   for (const e of edits) {
     if (e.unless?.test(text)) continue;

@@ -28,6 +28,7 @@ import { CHANT_MIGRATIONS } from "./chant-migrations";
 import { CHUD_LEXICON_EXIT, chudLexiconExit, convertPoints } from "./chant-migrations/chud-lexicon-exit";
 import { CHUD_LEXICON_EXIT_SHIP_INPUTS } from "./chant-migrations/chud-lexicon-exit-ship-inputs";
 import { CHUD_LEXICON_EXIT_ROLLBACK } from "./chant-migrations/chud-lexicon-exit-rollback";
+import { CHUD_LEXICON_EXIT_SHIP_POLICY } from "./chant-migrations/chud-lexicon-exit-ship-policy";
 import { readerVersion } from "./declaration";
 import { runChecks } from "./lineage-check";
 import { initFromCommand } from "./lineage-init";
@@ -247,6 +248,8 @@ describe.each(["dir", "git"] as const)("chud-lexicon-exit, from a %s source", (f
     const lineage = readLock(proj)!.scopes["."];
     // A repo migrated from chud gets every follow-on in the same upgrade.
     expect(lineage.migrations).toEqual(CHANT_MIGRATIONS.map((m) => m.id));
+    // The ship gate's policy lets a person pass (#2810).
+    expect(read(proj, "delivery/decisions/ship-skip.cedar.ts")).toContain("policies: [personApproves, agentSkipsOnTableYes]");
     expect(lineage.manualSteps).toEqual([]);
 
     // chant workspace check is clean: the lock, the declaration and the points file.
@@ -400,6 +403,57 @@ describe("chud-lexicon-exit-ship-inputs, over a repo chud-lexicon-exit migrated 
     const staged = await stageUpgrade({ root: proj, to: target(), runChant: passing });
     try {
       expect(staged.chantMigrations.find((m) => m.id === CHUD_LEXICON_EXIT_SHIP_INPUTS)).toBeUndefined();
+    } finally {
+      staged.dispose();
+    }
+  });
+});
+
+describe("chud-lexicon-exit-ship-policy, over a repo chud-lexicon-exit migrated before it existed (#2810)", () => {
+  const POLICY = "delivery/decisions/ship-skip.cedar.ts";
+  beforeEach(async () => {
+    await makeProject("dir");
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const released = exitWrote([POLICY]);
+    await upgrade();
+    asReleased(released, readLock(proj)!.scopes["."].migrations.filter((id) => id !== CHUD_LEXICON_EXIT_SHIP_POLICY));
+  });
+
+  test("the dry run lists it; the upgrade adds the person's permit and the lock records it; a second plans nothing", async () => {
+    expect(read(proj, POLICY)).not.toContain("personApproves");
+    const lines: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((s: string) => void lines.push(s));
+    const dry = await upgradeCommand({ root: proj, to: target(), dryRun: true, runChant: passing });
+    expect(dry.outcome).toBe("dry-run");
+    const out = lines.join("\n");
+    expect(out).toContain(`chant migration: ${CHUD_LEXICON_EXIT_SHIP_POLICY} (applied)`);
+    expect(out).toContain(`write: ${POLICY}`);
+
+    await upgrade();
+    const policy = read(proj, POLICY);
+    expect(policy).toContain('import { DenyByDefaultSet, Policy, gatePolicy, GATE_AGENT_TYPE, GATE_HUMAN_TYPE, PASS_GATE_ACTION } from "@intentius/chant-lexicon-cedar";');
+    expect(policy).toContain('export const personApproves = new Policy({\n  effect: "permit",\n  principal: { is: person },');
+    expect(policy).toContain("policies: [personApproves, agentSkipsOnTableYes]");
+    expect(policy).toContain('annotations: { id: "agents-never-skip-otherwise" }');
+    expect(readLock(proj)!.scopes["."].migrations).toContain(CHUD_LEXICON_EXIT_SHIP_POLICY);
+
+    const again = await stageUpgrade({ root: proj, to: target(), runChant: passing });
+    try {
+      expect(again.chantMigrations).toEqual([]);
+      expect(again.changed).toBe(false);
+    } finally {
+      again.dispose();
+    }
+  });
+
+  test("a policy the project rewrote without the anchors is a conflict, and nothing is applied", async () => {
+    put(proj, POLICY, read(proj, POLICY).replace("  policies: [agentSkipsOnTableYes],\n", "  policies: [agentSkipsOnTableYes, ours],\n"));
+    commit("our own policy set");
+    const staged = await stageUpgrade({ root: proj, to: target(), runChant: passing });
+    try {
+      const m = staged.chantMigrations.find((x) => x.id === CHUD_LEXICON_EXIT_SHIP_POLICY);
+      expect(m).toMatchObject({ applied: false, conflicts: [{ path: POLICY }] });
     } finally {
       staged.dispose();
     }
@@ -721,6 +775,54 @@ describe("the migrated delivery project, with this checkout's chant", () => {
         answer: false,
         decider: { kind: "table", row: 1 },
       });
+    } finally {
+      await fly.close();
+    }
+  });
+
+  test("the ship gate's Cedar policy at enforce: a person's approval is allowed and passes the gate, an agent's is denied and does not (#2810)", { timeout: 1_200_000 }, async () => {
+    await upgrade();
+    const delivery = join(proj, "delivery");
+    symlinkSync(join(repoRoot, "node_modules"), join(delivery, "node_modules"));
+    writeFileSync(join(proj, ".git/info/exclude"), "node_modules\n");
+    const policy = read(proj, "delivery/decisions/ship-skip.cedar.ts");
+    expect(policy).toContain("principal: { is: person }");
+    expect(policy).toContain("policies: [personApproves, agentSkipsOnTableYes]");
+    const op = read(proj, "delivery/ops/release.op.ts");
+    expect(op).toContain('mode: "log-only"');
+    put(proj, "delivery/ops/release.op.ts", op.replace('mode: "log-only"', 'mode: "enforce"'));
+    commit("the ship gate's policy at enforce");
+
+    const fly = await flaps();
+    const env = { FLY_FLAPS_BASE_URL: fly.endpoint, FLY_API_TOKEN: "test", CHUD_FLY_APP_SECRET: "s3cret", GITHUB_ACTOR: "releaser" };
+    const decisions = () =>
+      git(proj, ["show", "chant/lifecycle:_members/delivery/_gates/release.jsonl"])
+        .split("\n")
+        .filter(Boolean)
+        .map((l) => JSON.parse(l) as { kind?: string; resolvedBy?: string; approver?: { kind: string }; policyDecision?: { decision: string; determining: string[] } })
+        .filter((r) => r.kind !== "pending");
+    try {
+      const gated = await chant(delivery, env, "run", "release");
+      expect(gated.status, gated.out).toBe(3);
+
+      // The agent's approval is recorded with the policy's deny, and does not count.
+      const agent = await chant(delivery, env, "approve", "release", "ship", "--agent", "--approver", "release-bot");
+      expect(agent.status, agent.out).toBe(0);
+      expect(agent.out).toMatch(/Policy "ship-skip" \S+: deny \(agents-never-skip-otherwise\)/);
+      expect(agent.out).toContain("An agent's approval does not count toward the quorum.");
+      expect(decisions().at(-1)).toMatchObject({ resolvedBy: "release-bot", approver: { kind: "agent" }, policyDecision: { decision: "deny", determining: ["agents-never-skip-otherwise"] } });
+      const stillGated = await chant(delivery, env, "run", "release");
+      expect(stillGated.status, stillGated.out).toBe(3);
+      expect(fly.fake.machines.size).toBe(0);
+
+      // The person's is recorded with the policy's allow, and the next run passes the gate and ships.
+      const person = await chant(delivery, env, "approve", "release", "ship", "--approver", "alice");
+      expect(person.status, person.out).toBe(0);
+      expect(person.out).toMatch(/Policy "ship-skip" \S+: allow \(a-person-approves\)/);
+      expect(decisions().at(-1)).toMatchObject({ resolvedBy: "alice", approver: { kind: "human" }, policyDecision: { decision: "allow", determining: ["a-person-approves"] } });
+      const shipped = await chant(delivery, env, "run", "release");
+      expect(shipped.status, shipped.out).toBe(0);
+      expect([...fly.fake.machines.values()].flat().map((m) => m.name)).toEqual(["web"]);
     } finally {
       await fly.close();
     }
