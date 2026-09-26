@@ -57,11 +57,12 @@ import {
 } from "./lineage-lock";
 import { mergeFile } from "./lineage-merge";
 import { applyChantMigration, planChantMigrations, reportPlan, type ChantMigrationReport } from "./chant-migrations";
-import { readerVersion } from "./declaration";
+import { readDeclaration, readerVersion, WorkspaceReadError } from "./declaration";
 import { assertCodeAllowed, planMigrations, runMigration, splitMigrations, type LoadedMigration } from "./lineage-migrations";
 import { applyUpstream, type UpdateResult } from "./lineage-update";
 import { carryParameters, readManifest, substituteParameters } from "./template-manifest";
 import { repinSubstituted, type RepinnedRecord } from "./template-pins";
+import { workingTree } from "./tree";
 
 /** The kind the patch digest is taken under, so it never collides with another kind of plan. */
 export const UPGRADE_PLAN_KIND = "workspace-upgrade";
@@ -80,6 +81,8 @@ export interface UpgradeCheck {
   status: "passed" | "failed" | "skipped";
   /** Why a check was skipped, or the tail of a failed command's output. */
   detail?: string;
+  /** The chant member `build` or `lint` ran in ("." for the scope root), when it is not the only one. */
+  member?: string;
 }
 
 /** Runs `chant build` or `chant lint` in a directory. */
@@ -465,6 +468,25 @@ function tail(text: string, lines = 30): string {
 }
 
 /**
+ * The `chant` members `chant.workspace.json` declares in `dir` (#2804): a
+ * template built as a workspace, such as the studio kit's, keeps its chant
+ * project in a member (`delivery`), not at the scope's root, and the root
+ * itself never has a `chant.config`. Empty when `dir` declares no workspace,
+ * or the declaration cannot be read: the caller then falls back to `dir`
+ * itself.
+ */
+function chantMemberDirs(dir: string): string[] {
+  try {
+    return readDeclaration(workingTree(dir))
+      .members.filter((m) => m.kind === "chant")
+      .map((m) => m.dir);
+  } catch (err) {
+    if (err instanceof WorkspaceReadError) return [];
+    throw err;
+  }
+}
+
+/**
  * Stage an upgrade: steps 1 to 5 and the digest of step 6. Nothing in the
  * project's tree changes. The caller decides the gate, then applies the patch
  * with {@link applyStagedUpgrade} or commits it with {@link commitStagedUpgrade},
@@ -629,11 +651,23 @@ export async function stageUpgrade(options: UpgradeOptions): Promise<StagedUpgra
       });
     }
     if (changed) {
-      if (isChantProject(worktreeProject)) {
+      // Every `chant` member chant.workspace.json declares, so a template
+      // whose chant project sits in a member (the studio kit's `delivery/`)
+      // is built and linted there, not skipped for having no chant.config at
+      // the scope's root (#2804). A scope with no workspace declaration falls
+      // back to the root, as before.
+      const members = chantMemberDirs(worktreeProject);
+      const targets = members.length > 0 ? members : isChantProject(worktreeProject) ? ["."] : [];
+      if (targets.length > 0) {
         const run = options.runChant ?? spawnChant;
-        for (const command of ["build", "lint"] as const) {
-          const r = await run(command, worktreeProject);
-          checks.push(r.exitCode === 0 ? { name: command, status: "passed" } : { name: command, status: "failed", detail: tail(r.output) });
+        const namedMember = targets.length > 1 || targets[0] !== ".";
+        for (const member of targets) {
+          const dir = member === "." ? worktreeProject : join(worktreeProject, member);
+          const at = namedMember ? { member } : {};
+          for (const command of ["build", "lint"] as const) {
+            const r = await run(command, dir);
+            checks.push(r.exitCode === 0 ? { name: command, status: "passed", ...at } : { name: command, status: "failed", detail: tail(r.output), ...at });
+          }
         }
       } else {
         for (const name of ["build", "lint"] as const) checks.push({ name, status: "skipped", detail: "not a chant project (no chant.config)" });
@@ -764,7 +798,10 @@ export function describeStaged(staged: StagedUpgrade): string[] {
       `  governance: ${staged.governance.paths.join(", ")}; needs ${q.count} human approval(s)${q.roles ? ` with a role in ${q.roles.join(", ")}` : ""}, from the rules at ${staged.governance.rules.slice(0, 12)}`,
     );
   }
-  for (const c of staged.checks) lines.push(`  ${c.name}: ${c.status}${c.status === "skipped" && c.detail ? ` (${c.detail})` : ""}`);
+  for (const c of staged.checks) {
+    const label = c.member !== undefined ? `${c.name} (${c.member})` : c.name;
+    lines.push(`  ${label}: ${c.status}${c.status === "skipped" && c.detail ? ` (${c.detail})` : ""}`);
+  }
   lines.push(`  patch: ${staged.changedPaths.length} file(s)${staged.lock.tracked ? "" : ` and the untracked ${LOCK_FILE}`}, ${staged.digest}`);
   return lines;
 }

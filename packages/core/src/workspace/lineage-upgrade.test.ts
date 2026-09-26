@@ -124,6 +124,50 @@ describe("chant workspace upgrade", () => {
     expect(git(proj, ["worktree", "list"]).split("\n")).toHaveLength(1);
   });
 
+  test("builds and lints the chant member chant.workspace.json declares, not the scope root (#2804)", async () => {
+    release("v2.0.0", {
+      "chant.workspace.json": JSON.stringify({ name: "proj", schema: 1, members: [{ name: "delivery", dir: "delivery", kind: "chant" }] }, null, 2) + "\n",
+      "delivery/chant.config.ts": "export default {};\n",
+    });
+    const calls: Array<{ command: string; cwd: string }> = [];
+    const recording: ChantRunner = async (command, cwd) => {
+      calls.push({ command, cwd });
+      return { exitCode: 0, output: "" };
+    };
+
+    const staged = await stageUpgrade({ root: proj, to: "v2.0.0", runChant: recording });
+    try {
+      // Never at the scope root: it has no chant.config once the project is a workspace.
+      expect(calls.every((c) => c.cwd === join(staged.worktreeProject, "delivery"))).toBe(true);
+      expect(calls.map((c) => c.command).sort()).toEqual(["build", "lint"]);
+      expect(staged.checks).toEqual(
+        expect.arrayContaining([
+          { name: "build", status: "passed", member: "delivery" },
+          { name: "lint", status: "passed", member: "delivery" },
+        ]),
+      );
+    } finally {
+      staged.dispose();
+    }
+  });
+
+  test("a member's failing build fails the upgrade's checks before the gate (#2804)", async () => {
+    release("v2.0.0", {
+      "chant.workspace.json": JSON.stringify({ name: "proj", schema: 1, members: [{ name: "delivery", dir: "delivery", kind: "chant" }] }, null, 2) + "\n",
+      "delivery/chant.config.ts": "export default {};\n",
+    });
+    const failingBuild: ChantRunner = async (command) => (command === "build" ? { exitCode: 1, output: "boom\n" } : { exitCode: 0, output: "" });
+
+    const result = await upgradeCommand({ root: proj, to: "v2.0.0", runChant: failingBuild });
+    expect(result.outcome).toBe("checks-failed");
+    expect(result.exitCode).toBe(1);
+    expect(result.staged!.checks).toEqual(
+      expect.arrayContaining([{ name: "build", status: "failed", detail: "boom", member: "delivery" }]),
+    );
+    // The tree is unchanged: an unbuildable migration never reaches the gate.
+    expect(git(proj, ["status", "--porcelain"])).toBe("");
+  });
+
   test("gates on the patch digest, then applies exactly the approved patch", async () => {
     release("v2.0.0", { "README.md": "starter v2\n" });
     const port = ledger();
