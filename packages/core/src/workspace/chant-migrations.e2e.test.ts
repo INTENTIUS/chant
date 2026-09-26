@@ -33,6 +33,7 @@ import { CHUD_LEXICON_EXIT_SHIP_INPUTS } from "./chant-migrations/chud-lexicon-e
 import { CHUD_LEXICON_EXIT_ROLLBACK } from "./chant-migrations/chud-lexicon-exit-rollback";
 import { CHUD_LEXICON_EXIT_SHIP_POLICY } from "./chant-migrations/chud-lexicon-exit-ship-policy";
 import { CHUD_LEXICON_EXIT_FLY_SITE, chudLexiconExitFlySite } from "./chant-migrations/chud-lexicon-exit-fly-site";
+import { CHUD_LEXICON_EXIT_LIVE_NAMES } from "./chant-migrations/chud-lexicon-exit-live-names";
 import { readerVersion } from "./declaration";
 import { runChecks } from "./lineage-check";
 import { initFromCommand } from "./lineage-init";
@@ -511,6 +512,66 @@ describe("chud-lexicon-exit-fly-site, over a repo chud-lexicon-exit migrated bef
       expect(again.changed).toBe(false);
     } finally {
       again.dispose();
+    }
+  });
+});
+
+describe("chud-lexicon-exit-live-names, over a repo chud-lexicon-exit migrated before it existed (#2833)", () => {
+  const COMPONENT = "delivery/deploy/app.component.ts";
+  beforeEach(async () => {
+    await makeProject("dir");
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const released = exitWrote([COMPONENT]);
+    await upgrade();
+    asReleased(released, readLock(proj)!.scopes["."].migrations.filter((id) => id !== CHUD_LEXICON_EXIT_LIVE_NAMES));
+  });
+
+  test("the dry run lists it; the upgrade adds liveNames and the lock records it; a second plans nothing", async () => {
+    expect(read(proj, COMPONENT)).not.toContain("liveNames");
+    const lines: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((s: string) => void lines.push(s));
+    const dry = await upgradeCommand({ root: proj, to: target(), dryRun: true, runChant: passing });
+    expect(dry.outcome).toBe("dry-run");
+    const out = lines.join("\n");
+    expect(out).toContain(`chant migration: ${CHUD_LEXICON_EXIT_LIVE_NAMES} (applied)`);
+    expect(out).toContain(`write: ${COMPONENT}`);
+
+    await upgrade();
+    const component = read(proj, COMPONENT);
+    expect(component).toContain('dependsOn: [],\n  liveNames: ["server"],\n');
+    expect(component).toContain("Its live name is the Machine the release Op\n * ships to, the entity fly-machine.ts calls server (chant#2833)");
+    expect(readLock(proj)!.scopes["."].migrations).toContain(CHUD_LEXICON_EXIT_LIVE_NAMES);
+
+    const again = await stageUpgrade({ root: proj, to: target(), runChant: passing });
+    try {
+      expect(again.chantMigrations).toEqual([]);
+      expect(again.changed).toBe(false);
+    } finally {
+      again.dispose();
+    }
+  });
+
+  test("an app component the project rewrote without the anchor is a conflict, and nothing is applied", async () => {
+    put(proj, COMPONENT, read(proj, COMPONENT).replace("  dependsOn: [],\n", ""));
+    commit("our own component shape");
+    const staged = await stageUpgrade({ root: proj, to: target(), runChant: passing });
+    try {
+      const m = staged.chantMigrations.find((x) => x.id === CHUD_LEXICON_EXIT_LIVE_NAMES);
+      expect(m).toMatchObject({ applied: false, conflicts: [{ path: COMPONENT }] });
+    } finally {
+      staged.dispose();
+    }
+  });
+
+  test("a component that already declares liveNames is left alone", async () => {
+    put(proj, COMPONENT, read(proj, COMPONENT).replace("  dependsOn: [],\n", '  dependsOn: [],\n  liveNames: ["web"],\n'));
+    commit("our own liveNames");
+    const staged = await stageUpgrade({ root: proj, to: target(), runChant: passing });
+    try {
+      expect(staged.chantMigrations.find((m) => m.id === CHUD_LEXICON_EXIT_LIVE_NAMES)).toBeUndefined();
+    } finally {
+      staged.dispose();
     }
   });
 });
