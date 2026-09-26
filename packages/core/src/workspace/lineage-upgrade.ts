@@ -56,6 +56,8 @@ import {
   type ManualStep,
 } from "./lineage-lock";
 import { mergeFile } from "./lineage-merge";
+import { applyChantMigration, planChantMigrations, reportPlan, type ChantMigrationReport } from "./chant-migrations";
+import { readerVersion } from "./declaration";
 import { assertCodeAllowed, planMigrations, runMigration, splitMigrations, type LoadedMigration } from "./lineage-migrations";
 import { applyUpstream, type UpdateResult } from "./lineage-update";
 import { carryParameters, readManifest, substituteParameters } from "./template-manifest";
@@ -74,7 +76,7 @@ export class UpgradeError extends LockError {
 // ── Checks ───────────────────────────────────────────────────────────────────
 
 export interface UpgradeCheck {
-  name: "build" | "lint" | "workspace check";
+  name: "build" | "lint" | "workspace check" | "migration";
   status: "passed" | "failed" | "skipped";
   /** Why a check was skipped, or the tail of a failed command's output. */
   detail?: string;
@@ -141,6 +143,8 @@ export interface StagedUpgrade {
   to: string | null;
   commit?: { from?: string; to: string };
   migrations: string[];
+  /** The migrations chant ships (./chant-migrations.ts) that found something to move, applied or not. */
+  chantMigrations: ChantMigrationReport[];
   written: string[];
   merged: string[];
   removed: string[];
@@ -568,6 +572,16 @@ export async function stageUpgrade(options: UpgradeOptions): Promise<StagedUpgra
       rmSync(scratch, { recursive: true, force: true });
     }
 
+    // chant's own migrations (#2737): planned from what the scope holds, and
+    // applied only when the plan has no conflict. A conflict fails the checks.
+    const chantPlans = lineage.kind === "template" ? planChantMigrations({ dir: scopeDir, lineage: staged, chantVersion: readerVersion() }) : [];
+    const chantMigrations: ChantMigrationReport[] = [];
+    for (const p of chantPlans) {
+      const ok = p.conflicts.length === 0;
+      if (ok) applyChantMigration(p, scopeDir, staged);
+      chantMigrations.push(reportPlan(p, ok));
+    }
+
     // 4. Merge per file.
     const result = applyUpstream(scopeDir, staged, upstream.files, { base, merge: mergeFile });
     for (const path of result.written) if (upstream.executable.has(path)) chmodSync(join(scopeDir, path), 0o755);
@@ -607,6 +621,13 @@ export async function stageUpgrade(options: UpgradeOptions): Promise<StagedUpgra
 
     // 5. Checks.
     const checks: UpgradeCheck[] = [];
+    for (const m of chantMigrations.filter((m) => !m.applied)) {
+      checks.push({
+        name: "migration",
+        status: "failed",
+        detail: `${m.id} was not applied: ${m.conflicts.map((c) => `${c.path}: ${c.reason}`).join("\n")}`,
+      });
+    }
     if (changed) {
       if (isChantProject(worktreeProject)) {
         const run = options.runChant ?? spawnChant;
@@ -627,7 +648,8 @@ export async function stageUpgrade(options: UpgradeOptions): Promise<StagedUpgra
       from: fromDir ? sourcePin(lineage.source) : lineage.ref ?? null,
       to: fromDir ? sourcePin(staged.source) : staged.ref ?? null,
       ...(upstream.commit ? { commit: { ...(lineage.address?.commit ? { from: lineage.address.commit } : {}), to: upstream.commit } } : {}),
-      migrations: plan.chain.map((m) => m.migration.id),
+      migrations: [...plan.chain.map((m) => m.migration.id), ...chantMigrations.filter((m) => m.applied).map((m) => m.id)],
+      chantMigrations,
       written: result.written,
       merged: result.merged,
       removed: result.removed,
@@ -721,7 +743,14 @@ export function describeStaged(staged: StagedUpgrade): string[] {
   const lines: string[] = [];
   const at = (p: string) => (staged.scope === "." ? p : `${staged.scope}/${p}`);
   lines.push(`${staged.scope}  ${staged.template}  ${staged.from ?? "(no ref)"} -> ${staged.to ?? "(no ref)"}`);
-  for (const id of staged.migrations) lines.push(`  migration: ${id}`);
+  const chantIds = new Set(staged.chantMigrations.map((m) => m.id));
+  for (const id of staged.migrations) if (!chantIds.has(id)) lines.push(`  migration: ${id}`);
+  for (const m of staged.chantMigrations) {
+    lines.push(`  chant migration: ${m.id} (${m.applied ? "applied" : "not applied: it has conflicts"}), to ${m.description}`);
+    for (const c of m.changes) lines.push(`    ${c.action === "delete" ? "delete" : "write"}: ${at(c.path)} (${c.why}${c.edited ? "; it was edited since the template, and the edit stays in git history" : ""})`);
+    for (const n of m.notMoved) lines.push(`    not moved: ${n.what} -> ${n.where}`);
+    for (const c of m.conflicts) lines.push(`    conflict: ${at(c.path)}: ${c.reason}`);
+  }
   for (const p of staged.written) lines.push(`  updated: ${at(p)}`);
   for (const p of staged.merged) lines.push(`  merged: ${at(p)}`);
   for (const p of staged.removed) lines.push(`  removed: ${at(p)}`);
