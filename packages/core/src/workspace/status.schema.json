@@ -335,7 +335,7 @@
           }
         },
         "waiting": {
-          "description": "The open decision points the steward waits on (#2749): one for each of its Ops whose newest run is the steward's own and stopped on a question, in ops order. The state is the question's when the run stopped; `chant workspace points --open` has its state now, and hud asks a person there. The steward never answers one, and runs the Op again on the first round after it is answered.",
+          "description": "The open decision points the steward waits on (#2749): one for each Op whose newest run is the steward's own (its ledger record names the steward) and stopped on a question: the steward's own Ops in ops order, then any other Op of the member, such as one the steward's process starts itself (studio#137), by name. The state is the question's when the run stopped; `chant workspace points --open` has its state now, and hud asks a person there. The steward never answers one, and runs an Op it lists again on the first round after it is answered.",
           "type": "array",
           "items": {
             "allOf": [

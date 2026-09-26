@@ -16,7 +16,11 @@
  *   is the Op's own `labels.Env` or `local`;
  * - `waiting` lists the open decision points the steward waits on (#2749):
  *   each Op whose newest run is the steward's own and stopped on a question,
- *   as the run ledger records it. The question's state now is `points`'s;
+ *   as the run ledger records it. The question's state now is `points`'s.
+ *   A run is the steward's when its record names it (`steward`, written for
+ *   a run started in the steward's turn or under `CHANT_STEWARD`), so this
+ *   also covers the member's other Ops, those no steward lists, that such a
+ *   run belongs to, such as an Op the steward's process starts itself;
  * - `lease` is the local steward's own lease ref
  *   (`refs/chant/lease/[<prefix>]_stewards/<name>`), present while a
  *   `chant operator --steward` holds it or until it expires;
@@ -27,7 +31,7 @@
 
 import { existsSync, realpathSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
-import { discoverStewards } from "../op/discover";
+import { discoverOps, discoverStewards } from "../op/discover";
 import { stewardFormFor, stewardLeaseName, type StewardForm } from "../op/steward";
 import { readRunLedger, runEnvOf } from "../lifecycle/run-ledger";
 import { readConvergeLedger, type ConvergeTickRecord } from "../lifecycle/converge-ledger";
@@ -152,7 +156,9 @@ export interface StatusSteward {
   ops: StatusStewardOp[];
   /**
    * The open decision points the steward waits on (#2749): each Op whose
-   * newest run is the steward's own and stopped on a question.
+   * newest run is the steward's own and stopped on a question. Its declared
+   * Ops come first, in `ops` order, then any other Op of the member whose
+   * newest run names the steward, by Op name.
    */
   waiting: (StatusStewardWait & { op: string; run: string })[];
 }
@@ -325,5 +331,45 @@ export async function readMemberStewards(
       waiting,
     });
   }
+  if (stewards.length > 0) await addUndeclaredWaits(memberDir, stewards, found, reasons);
   return { stewards, reasons };
+}
+
+/**
+ * The waiting runs of the member's Ops that no steward lists, each under the
+ * steward its record names. A steward's process can start an Op itself
+ * with `CHANT_STEWARD` set (studio#137), and the run ledger then records
+ * the run as the steward's though the declaration does not list the Op.
+ * Import failures are left out here: `discoverStewards` read the same files
+ * and reported them as `stewards-unreadable`.
+ */
+async function addUndeclaredWaits(
+  memberDir: string,
+  stewards: StatusSteward[],
+  found: Awaited<ReturnType<typeof discoverStewards>>["stewards"],
+  reasons: MemberStewards["reasons"],
+): Promise<void> {
+  const declared = new Set([...found.values()].flatMap(({ declaration }) => declaration.ops.map((op) => op.name)));
+  let ops: OpConfig[];
+  try {
+    ops = [...(await discoverOps({ cwd: memberDir })).ops.values()].map((d) => d.config).filter((op) => !declared.has(op.name));
+  } catch {
+    return;
+  }
+  const byName = new Map(stewards.map((s) => [s.name, s]));
+  for (const op of ops.sort((a, b) => a.name.localeCompare(b.name))) {
+    const opEnv = runEnvOf(op);
+    try {
+      const newest = (await readRunLedger(opEnv, op.name, { cwd: memberDir })).records.at(-1);
+      const steward = newest?.steward ? byName.get(newest.steward) : undefined;
+      if (steward && newest?.status === "waiting" && newest.point) {
+        steward.waiting.push({ op: op.name, run: newest.id, ...waitOf(newest.point) });
+      }
+    } catch (err) {
+      reasons.push({
+        code: "steward-runs-unreadable",
+        message: `${opEnv}/runs__${op.name}.jsonl: ${err instanceof Error ? err.message.split("\n")[0] : String(err)}`,
+      });
+    }
+  }
 }
