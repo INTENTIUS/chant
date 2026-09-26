@@ -1065,8 +1065,9 @@ Options:
   -h, --help            Show this help message
   -V, --version         Print the installed chant's version
   --on <lexicon>        Which runtime hosts the run: a configured lexicon with
-                        an opRuntime, or the built-in local runtime when
-                        omitted (every run subcommand; #2121)
+                        an opRuntime, or local. Omitted, run.on in
+                        chant.config.ts decides, then the built-in local
+                        runtime (every run subcommand; #2121, #2523)
   --local               Run an Op with the local in-process executor (default)
   -p, --profile <name>  Named connection profile the hosting runtime targets
                         (fountain.profiles in chant.config.ts); each runtime's

@@ -826,6 +826,53 @@ describe("run subcommands on the resolved runtime", () => {
     expect(stderr.join("\n")).toContain('lexicon "plain" does not host Op runs');
   });
 
+  test("run.on in chant.config.ts is the default runtime when --on is not given (#2523)", async () => {
+    const runtime = makeStubRuntime();
+    discoverOpsMock.mockResolvedValue({ ops: new Map([makeOp("hello")]), errors: [] });
+    loadChantConfigMock.mockResolvedValue({ config: { lexicons: ["stub"], run: { on: "stub" } } });
+    makeStdoutSpy();
+    makeStderrSpy();
+    const ctx = (over: Partial<ParsedArgs>) => ({ args: makeArgs(over), plugins: [stubPlugin(runtime)], serializers: [] });
+
+    expect(await runOp(ctx({ path: "hello" }))).toBe(0);
+    expect(await runOpStatus(ctx({ extraPositional: "hello" }))).toBe(0);
+    expect(await runOpLog(ctx({ extraPositional: "hello" }))).toBe(0);
+    expect(await runOpList(ctx({}))).toBe(0);
+    expect(runtime.start).toHaveBeenCalledTimes(1);
+    expect(runtime.status).toHaveBeenCalledWith("hello");
+    expect(runtime.log).toHaveBeenCalledTimes(1);
+    expect(runtime.list).toHaveBeenCalledTimes(1);
+  });
+
+  test("--on local overrides run.on and runs on the built-in runtime (#2523)", async () => {
+    const runtime = makeStubRuntime();
+    discoverOpsMock.mockResolvedValue({ ops: new Map([makeOp("hello")]), errors: [] });
+    loadChantConfigMock.mockResolvedValue({ config: { lexicons: ["stub"], run: { on: "stub" } } });
+    makeStdoutSpy();
+    makeStderrSpy();
+    await runOpList({ args: makeArgs({ on: "local" }), plugins: [stubPlugin(runtime)], serializers: [] });
+    expect(runtime.list).not.toHaveBeenCalled();
+  });
+
+  test("run.on naming an unconfigured lexicon is refused with the --on message (#2523)", async () => {
+    discoverOpsMock.mockResolvedValue({ ops: new Map([makeOp("hello")]), errors: [] });
+    loadChantConfigMock.mockResolvedValue({ config: { lexicons: ["aws"], run: { on: "nope" } } });
+    const stderr = makeStderrSpy();
+    const exit = await runOp({ args: makeArgs({ path: "hello" }), plugins: [], serializers: [] });
+    expect(exit).toBe(1);
+    expect(stderr.join("\n")).toContain('--on nope: "nope" is not a configured lexicon');
+    expect(stderr.join("\n")).toContain("run.on");
+  });
+
+  test("run.on naming a lexicon with no opRuntime is refused with the --on message (#2523)", async () => {
+    discoverOpsMock.mockResolvedValue({ ops: new Map([makeOp("hello")]), errors: [] });
+    loadChantConfigMock.mockResolvedValue({ config: { lexicons: ["plain"], run: { on: "plain" } } });
+    const stderr = makeStderrSpy();
+    const exit = await runOp({ args: makeArgs({ path: "hello" }), plugins: [{ name: "plain" } as never], serializers: [] });
+    expect(exit).toBe(1);
+    expect(stderr.join("\n")).toContain('--on plain: lexicon "plain" does not host Op runs');
+  });
+
   test("--components on a runtime that cannot host them → one line, exit 1", async () => {
     const runtime = makeStubRuntime();
     const stderr = makeStderrSpy();
