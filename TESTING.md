@@ -461,7 +461,7 @@ How confident can we be that published npm packages actually work for end users?
 
 | Gap | Severity | Notes |
 |-----|----------|-------|
-| Smoke tests disabled in CI | Accepted | Docker builds are slow (~10min). Publish workflow runs `prepack` + `npx vitest run` as a gate. Run `just smoke` locally before releases. |
+| Smoke tests disabled in CI | Accepted | Docker builds are slow (~10min). The publish workflow checks that the released commit's `chant` run passed (`scripts/publish-verify-ci.sh`), and each `npm publish` re-runs the package's `prepack`. Run `just smoke` locally before releases. |
 | `integrity.json` never verified at runtime | Low | `verifyIntegrity()` exists in `lexicon-integrity.ts` but `loadPlugin()` in `cli/plugins.ts` doesn't call it. Defense-in-depth, not a correctness issue. |
 | Lexicon tarballs include entire `src/` | Low | Ships codegen scripts, fetch utilities, and test files. Bloats tarballs but doesn't break anything. Could narrow `"files"` in package.json. |
 | Sequential publish — partial failure risk | Low | If npm goes down mid-publish, some packages may be at different versions. `scripts/publish-packages.sh` skips any package already at its version, so re-running the workflow republishes only the stragglers. (There is no `--tolerate-republish` flag; that was never implemented.) |

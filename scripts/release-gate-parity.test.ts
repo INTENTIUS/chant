@@ -9,6 +9,9 @@
  * surface-snapshot check and the pinned-spec refusal ran in exactly the one
  * place a green build had never exercised. This pins the workflows to each
  * other so the gap cannot reopen without a failing test.
+ *
+ * Since #2817 publish does not re-run the suite: its gate is that same green
+ * `chant` run, checked through the API by scripts/publish-verify-ci.sh.
  */
 
 import { readFileSync } from "node:fs";
@@ -46,10 +49,13 @@ describe("release gate parity (#1481)", () => {
   });
   const gate = envOf(publish.jobs.publish, publishStep[0], "CHANT_RELEASE_GATE");
 
-  it("publish.yml's own test gate runs the aws prepack under the same gate", () => {
-    const steps = stepsRunning(publish.jobs.test, AWS_PREPACK);
-    expect(steps.length).toBeGreaterThan(0);
-    for (const step of steps) expect(envOf(publish.jobs.test, step, "CHANT_RELEASE_GATE")).toBe(gate);
+  // #2817: publish no longer runs the suite and the prepacks again. Its gate
+  // is the chant run on the released commit, which must therefore arm the
+  // release gate itself (the next test).
+  it("publish.yml's test gate requires the released commit's chant run to have passed", () => {
+    const steps = stepsRunning(publish.jobs.test, /scripts\/publish-verify-ci\.sh/);
+    expect(steps).toHaveLength(1);
+    expect(publish.jobs.publish.needs).toEqual(expect.arrayContaining(["test"]));
   });
 
   it("the chant workflow runs the aws prepack under the gate in at least one job", () => {
