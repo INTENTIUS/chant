@@ -191,6 +191,7 @@
         "questionType",
         "instructions",
         "candidates",
+        "criteria",
         "inputs",
         "deciders",
         "quorum"
@@ -235,6 +236,23 @@
               }
             ]
           }
+        },
+        "criteria": {
+          "description": "What each candidate means, as the points file declares it: noul and choice give an object of strings keyed by candidate, score an array of ordered level descriptions.",
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
         },
         "inputs": {
           "type": "array",

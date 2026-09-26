@@ -71,6 +71,8 @@ export interface PointView {
   questionType: string;
   instructions: string;
   candidates: (string | boolean)[];
+  /** What each candidate means, as the points file declares it: an object of strings for noul and choice, an array for score. */
+  criteria: Record<string, string> | string[];
   /** Each input: its name, the read-contract output it names, and its description. */
   inputs: { name: string; output: string; description: string }[];
   deciders: Decider[];
@@ -163,6 +165,7 @@ export async function workspacePoints(query: PointsQuery): Promise<PointsDocumen
           questionType: p.question.type,
           instructions: p.question.instructions,
           candidates: candidates(p.question),
+          criteria: p.question.criteria,
           inputs: Object.entries(p.inputs).map(([n, description]) => ({ name: n, output: inputOutput(n), description })),
           deciders: p.deciders,
           quorum: quorumOf(p),

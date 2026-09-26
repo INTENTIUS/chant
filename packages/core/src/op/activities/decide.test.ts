@@ -65,6 +65,14 @@ afterAll(async () => {
 });
 
 describe("decide against the stub (#2740)", () => {
+  test("points --json carries each point's criteria, as the points file declares it (#2853)", async () => {
+    const doc = await workspacePoints({ cwd: root });
+    if ("error" in doc) throw new Error(doc.error.message);
+    expect(doc.points.find((p) => p.name === "triage")?.criteria).toEqual({ true: "A person looks at it today.", false: "It can wait." });
+    expect(doc.points.find((p) => p.name === "route")?.criteria).toEqual({ platform: "The platform team.", app: "The app team.", docs: "The docs team." });
+    expect(doc.points.find((p) => p.name === "effort")?.criteria).toEqual(["low", "medium", "high"]);
+  });
+
   test("a noul: the model's answer at the threshold is recorded as proposed, and the run waits on it", async () => {
     script = { triage: { type: "noul", noul: 0.91 } };
     const w = await waitsOn(ask({ point: "triage", inputs: { "record.size": 5, "record.risky": true }, subject: "T-1" }));

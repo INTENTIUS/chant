@@ -55,7 +55,7 @@ People who give the answer a model proposed confirm it, and the model stays the 
 
 ## Output
 
-`--json` prints the read-contract document of [`points.schema.json`](/chant/reference/workspace-read-contract/#decision-points). Its `sources` hold one entry per answer kind read, with a `reason` when that kind could not be read. `points` lists each declared point with its inputs and deciders. `questions` lists each answer record, including those held on the ledger, which carry `ledger`. A record on the ledger wins over a file of the same name in the tree. `--at` reads a commit of the working branch, so it lists the tree's records only.
+`--json` prints the read-contract document of [`points.schema.json`](/chant/reference/workspace-read-contract/#decision-points). Its `sources` hold one entry per answer kind read, with a `reason` when that kind could not be read. `points` lists each declared point with its inputs and deciders, its `candidates`, and their `criteria`, what each candidate means, as the points file declares it: an object of strings for `noul` and `choice`, an array of ordered level descriptions for `score`. `questions` lists each answer record, including those held on the ledger, which carry `ledger`. A record on the ledger wins over a file of the same name in the tree. `--at` reads a commit of the working branch, so it lists the tree's records only.
 
 | Field | Meaning |
 |---|---|
