@@ -36,8 +36,9 @@
       "minLength": 1
     },
     "state": {
-      "description": "open: nobody has started it. in-progress: someone has. done: finished, with its proof in evidence. dropped: not going to happen. done and dropped are closed.",
+      "description": "proposed: suggested, by an agent or a decision point's model decider, and not yet kept by a person. open: nobody has started it. in-progress: someone has. done: finished, with its proof in evidence. dropped: not going to happen. done and dropped are closed. A person keeps a proposed item by moving it to open, or drops it.",
       "enum": [
+        "proposed",
         "open",
         "in-progress",
         "done",
@@ -82,6 +83,13 @@
           }
         ]
       }
+    },
+    "proposed_by": {
+      "description": "Who proposed this work item: the name chant workspace records new --by or the MCP records-new tool's by wrote, for an item that opened proposed (#2756). Null or absent when nobody named a proposer, or the item opened straight into a later state. Never cleared when a person keeps or drops the item.",
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "owner": {
       "description": "Who has taken the work: a principal, such as a forge login or an agent's name. Null or absent while nobody has.",
@@ -270,6 +278,11 @@
         "artifact": {
           "description": "The artifact the finding concerned, from the workspace root, when it concerned one.",
           "$ref": "#/definitions/workspacePath"
+        },
+        "answer": {
+          "description": "The finding-triage answer that made the finding this work item, by record id (ws-058), when a decision point triaged it.",
+          "type": "string",
+          "pattern": "^finding-triage-[0-9a-f]{12}$"
         }
       }
     },

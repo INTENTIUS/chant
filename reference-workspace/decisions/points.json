@@ -35,7 +35,7 @@
       "title": "May this release skip the human gate",
       "question": {
         "type": "noul",
-        "instructions": "May this release pass the ship gate without a person approving it? The state is what the release would change.",
+        "instructions": "May this release pass the ship gate without a person approving it? The state is what the release would change. No model decider answers this point, since a model's answer may route or report and never authorizes a release.",
         "criteria": {
           "true": "An agent may pass the gate for this release.",
           "false": "A person approves the release at the gate."
@@ -46,6 +46,7 @@
         "release.new_migrations": "migrations that would fire",
         "release.files_changed": "files changed since the serving release",
         "release.app_changed": "whether any file under the app directory changed",
+        "release.work_changed": "whether any work item changed",
         "release.units": "work items the release ships"
       },
       "deciders": [
@@ -53,6 +54,72 @@
           "kind": "table",
           "rows": [{ "when": {}, "answer": false, "note": "Never, until someone adds a row above this one that says when." }]
         },
+        { "kind": "quorum", "count": 1, "note": "The ship gate's quorum: a gate that asks this point takes its approver count from here." }
+      ]
+    },
+    "finding-triage": {
+      "title": "What to do about this finding",
+      "question": {
+        "type": "choice",
+        "instructions": "A finding from chant workspace graph --intent is a gap between what the workspace decided and what it holds. Pick what happens to it. The state is the finding and the region it fired on.",
+        "criteria": {
+          "work-item": "Someone closes the gap. It becomes a work item whose source names the finding and its region.",
+          "needs-a-decision": "The gap is a choice nobody has made. Someone writes a decision before any work starts.",
+          "leave": "Nothing happens. The finding is known, accepted or already taken."
+        }
+      },
+      "inputs": {
+        "finding.code": "the finding's code",
+        "finding.message": "what the finding says",
+        "finding.addressed": "whether a work item already addresses it",
+        "region.path": "the path the finding fired on",
+        "region.member": "the member the region is in",
+        "region.generated": "whether the region is a generated file"
+      },
+      "deciders": [
+        {
+          "kind": "table",
+          "rows": [
+            { "when": { "finding.addressed": true }, "answer": "leave", "note": "A work item already addresses it." },
+            { "when": { "finding.code": "intent-decision-unimplemented" }, "answer": "work-item", "note": "A decided decision that nobody is carrying out is work." },
+            {
+              "when": { "finding.code": { "in": ["intent-region-unconstrained", "intent-decision-contested", "intent-decision-superseded-live"] } },
+              "answer": "needs-a-decision",
+              "note": "No current decision that everyone agrees with covers the region."
+            }
+          ]
+        },
+        { "kind": "model", "backend": "systemone", "model": "jev-1.13.0", "threshold": 0.8 },
+        { "kind": "quorum", "count": 1 }
+      ]
+    },
+    "needs-a-decision": {
+      "title": "Does this change need a decision",
+      "question": {
+        "type": "noul",
+        "instructions": "Does the change need a decision written before it lands? The state is the commits in the change's window that changed its region, as chant workspace graph --intent reads them, and the decisions the change's work item implements.",
+        "criteria": {
+          "true": "Someone writes a decision that covers the change, or amends one, before it lands.",
+          "false": "The decisions already in the workspace cover the change."
+        }
+      },
+      "inputs": {
+        "commit.count": "commits in the window that changed the region",
+        "commit.undecided": "of those, the commits no decision's path window holds",
+        "commit.decided_by_window": "of those, the commits in a decision's window that are not that decision's own work",
+        "region.path": "the path the change touches",
+        "region.generated": "whether the region is a generated file",
+        "work-item.implements": "the decisions the change's work item implements"
+      },
+      "deciders": [
+        {
+          "kind": "table",
+          "rows": [
+            { "when": { "commit.count": 0 }, "answer": false, "note": "Nothing changed in the window." },
+            { "when": { "commit.undecided": 0, "commit.decided_by_window": 0 }, "answer": false, "note": "Every commit in the window is a decision's own work." }
+          ]
+        },
+        { "kind": "model", "backend": "systemone", "model": "jev-1.13.0", "threshold": 0.8 },
         { "kind": "quorum", "count": 1 }
       ]
     }

@@ -43,14 +43,15 @@ ref-002 puts the home screen's spec in the design member, and the app is to impl
 |---|---|
 | `id` | `W-` and three or more digits. Never reused. |
 | `title` | What the work is, in a few words. |
-| `state` | `open`, `in-progress`, `done` or `dropped`. `done` and `dropped` are closed. |
+| `state` | `proposed`, `open`, `in-progress`, `done` or `dropped`. `done` and `dropped` are closed. |
+| `proposed_by` | Who proposed a work item that opened `proposed`, as `records new --by` wrote it. Optional. |
 | `implements` | The decisions the work carries out, by id. May be empty. |
 | `needs` | The work that must be done first, by id. May be empty. |
 | `constrains` | What the work touches, in the grammar decisions use: `path:<path>`, `member:<name>`, `owner/repo#n` or a decision id. At least one entry. |
 | `evidence` | The proof of done: links, or workspace files pinned by hash. Empty while the work is open. |
 | `owner` | Who has taken the work, a forge login or an agent's name. Optional. |
 | `opened_on`, `closed_on` | Dates as `YYYY-MM-DD`. `closed_on` is set on `done` or `dropped`. |
-| `source` | Where the work came from: a gap, an issue (`issue`), or the workspace (`kind: workspace` with a `member`). |
+| `source` | Where the work came from: a gap, an issue (`issue`), or the workspace (`kind: workspace` with a `member`). A gap may name the `finding-triage` answer that made it work as `answer`. |
 | `supersedes` | Earlier work this one replaces, as `{ work: <id> }`. |
 
 To write one without an editor, pass its fields as JSON to `records new` and leave out `id`. The command picks the next id (`W-003` after `W-002`) and writes the file once the schema accepts it:
@@ -61,6 +62,10 @@ chant workspace records amend W-003 --kind work --set - <<< '{"state": "in-progr
 ```
 
 A work kind declares no reviews, so `records review` on W-003 is refused with `review-unsupported`.
+
+### Proposed work
+
+An item an agent or a decision point's model suggests opens `proposed`, the work kind's first state ([#2741](https://github.com/INTENTIUS/chant/issues/2741)). `records new work --by <name>` writes the proposer to `proposed_by`, and the MCP `records-new` tool opens every new work item `proposed`. A proposed item is never `ready`. A person keeps it by amending its state to `open`, or drops it. [Decision Points](/chant/guide/decision-points/#from-a-finding-to-a-work-item) shows the flow from a finding's triage answer to a kept work item.
 
 Fields that start with `x-` are free for your own use. W-001 keeps its id while its state changes, so the file is edited in place rather than written once under a content hash. A kind may read JSON files since [ws-053](https://github.com/INTENTIUS/chant/issues/2664), but `records new` and `records amend` write Markdown only, so the work kind stays Markdown until they write JSON.
 

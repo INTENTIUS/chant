@@ -156,6 +156,38 @@ A [steward](/chant/lexicons/fountain/steward/) runs unattended, so a point asked
 - The question names the steward and its run in its source block, and `points --open` shows them as `askedBy`. `workspace status --json` lists the question in the steward's `waiting`, and hud asks a person there. The question never goes to the steward's own thread.
 - The steward never answers it. `points answer` is refused with `answer-in-steward-turn` during a steward's turn and in any process the turn starts, and the quorum never counts the steward that asked. A local steward runs the Op again on the first round after a person answers.
 
+## The reference workspace's points
+
+The [reference workspace](https://github.com/INTENTIUS/chant/tree/main/reference-workspace) declares four points in `decisions/points.json`, each about the work graph that `graph --intent` exposes ([#2741](https://github.com/INTENTIUS/chant/issues/2741)).
+
+| Point | Question | Reads | Deciders |
+|---|---|---|---|
+| `finding-triage` | a `choice` of `work-item`, `needs-a-decision` or `leave` for one finding | `finding.code`, `finding.message`, `finding.addressed`, `region.path`, `region.member`, `region.generated` | table, model, quorum |
+| `needs-a-decision` | a `noul`: does the change need a decision before it lands | the commits in the change's window (`commit.count`, `commit.undecided`, `commit.decided_by_window`), `region.path`, `region.generated`, `work-item.implements` | table, model, quorum |
+| `slice-tier` | a `choice` of builder tier for a work item ([ws-057](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-057-factory-fountain-builds.md)) | the work item's size and whether it fits each tier | table, model, quorum |
+| `ship-skip` | a `noul`: may a release pass the ship gate without a person | what the release would change | table, quorum |
+
+The triage table leaves a finding a work item already addresses. It makes `intent-decision-unimplemented` a work item, and it sends `intent-region-unconstrained`, `intent-decision-contested` and `intent-decision-superseded-live` to a decision. Any other finding goes to the model, then to people. The `needs-a-decision` table says no when nothing changed in the window, or when every commit in it is a decision's own work.
+
+`ship-skip` came from chud's `points.yaml`. Its table says no to every release until someone adds a row above the last one, and its quorum is the approver count a ship gate reads, as chud's release Op read it. It has no model decider, because a model's answer may route or report and never authorizes a release. chud's `contracts_changed` became `release.work_changed`, since chud's contracts are work items here.
+
+### From a finding to a work item
+
+A runtime such as the studio kit walks a region with `graph --intent` and asks `finding-triage` for each finding, through the `decide` activity. When the model answers `work-item` at or above its threshold, the answer is a proposal, and the run waits on it. The runtime then writes the work item it proposes, in the work kind's first state, `proposed`, naming the decider as its proposer:
+
+```bash
+chant workspace records new work --from item.json --by jev-1.13.0
+```
+
+`item.json` gives `state: "proposed"` and a `source` naming the finding, its region and the triage answer's id as `answer`. `--by` fills the work item's `proposed_by`, as the kind's `proposedBy` declares ([#2763](https://github.com/INTENTIUS/chant/pull/2763)). A proposed item is never `ready`, so no builder takes it. A person keeps it by confirming the answer and opening the item:
+
+```bash
+chant workspace points answer <answer id> --answer work-item --by alice
+chant workspace records amend W-003 --kind work --set keep.json   # {"state": "open"}
+```
+
+Or the person gives another answer and drops the item. Once the item is committed, `graph --intent` shows the finding addressed by it, and asking the triage again for that finding, the table answers `leave`. `test/reference-workspace.test.ts` runs this flow against the stub backend.
+
 ## Moving from chud
 
 chud's `decisions/points.yaml` validates unchanged apart from the input names. Write it as JSON and give each input a read-contract output as its prefix. chud's `fits_small` becomes `work-item.fits_small`, and its `first_release` becomes `release.first_release`. The `when` keys of its table rows follow. chud's `chud/decisions` records stay chud's. New answers are chant records.

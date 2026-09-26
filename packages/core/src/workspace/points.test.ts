@@ -142,7 +142,7 @@ describe("the decision points schema (#2738)", () => {
 
   test("the reference workspace's points validate", () => {
     const points = parsePoints(readFileSync(join(REPO, "reference-workspace", "decisions", "points.json"), "utf-8"), "decisions/points.json");
-    expect(Object.keys(points)).toEqual(["slice-tier", "ship-skip"]);
+    expect(Object.keys(points)).toEqual(["slice-tier", "ship-skip", "finding-triage", "needs-a-decision"]);
   });
 
   test("a point whose chain does not end in a quorum is refused", () => {
