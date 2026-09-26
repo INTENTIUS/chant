@@ -3,7 +3,8 @@
  * and the comparison. The fixture is a repository with commits for a review
  * session's open and close: between them the session closes with two
  * verdicts, ref-001 gains the two reviews that name it and is ratified,
- * a new decision supersedes ref-002, and ref-002's pin moves. Every document
+ * a new decision (ref-004, after the reference workspace's own ref-003)
+ * supersedes ref-002, and ref-002's pin moves. Every document
  * validates against records-since.schema.json.
  */
 
@@ -56,8 +57,8 @@ function sessionHistory(): { root: string; before: string; open: string; close: 
   const text = readFileSync(ref002, "utf-8");
   writeFileSync(ref002, text.replace(/sha256: "[0-9a-f]{64}"/, `sha256: "${"a".repeat(64)}"`));
   writeFileSync(
-    join(root, "decisions", "ref-003-a-successor.md"),
-    text.replace(/^id: .*$/m, 'id: "ref-003"').replace(/^supersedes: \[\]$/m, 'supersedes:\n  - decision: "ref-002"'),
+    join(root, "decisions", "ref-004-a-successor.md"),
+    text.replace(/^id: .*$/m, 'id: "ref-004"').replace(/^supersedes: \[\]$/m, 'supersedes:\n  - decision: "ref-002"'),
   );
   const close = commitAll(root, "close S-0002");
   return { root, before, open, close };
@@ -85,11 +86,11 @@ describe("records --since (#2673)", () => {
     expect(doc.at).toBe(h.close);
     expect(doc.kind).toEqual({ name: "decision", schema: "urn:intentius:chant:decision:1", file: "decisions/decision.kind.mjs" });
     expect(doc.changes).toEqual([
-      { change: "new", id: "ref-003", path: "decisions/ref-003-a-successor.md", state: "decided" },
+      { change: "new", id: "ref-004", path: "decisions/ref-004-a-successor.md", state: "decided" },
       { change: "state", id: "ref-001", from: "decided", to: "ratified" },
       { change: "verdict", id: "ref-001", principal: "alice", verdict: "agree", index: 0, session: "S-0002" },
       { change: "verdict", id: "ref-001", principal: "bob", verdict: "agree", index: 1, session: "S-0002" },
-      { change: "supersession", id: "ref-003", supersedes: "ref-002" },
+      { change: "supersession", id: "ref-004", supersedes: "ref-002" },
       { change: "pin", id: "ref-002", path: "design/screens/home.json", from: expect.stringMatching(/^[0-9a-f]{64}$/), to: "a".repeat(64) },
     ]);
     expect(doc.summary).toEqual({ new: 1, removed: 0, state: 1, verdict: 2, supersession: 1, pin: 1 });
@@ -105,11 +106,11 @@ describe("records --since (#2673)", () => {
   });
 
   test("without --at it compares with the working tree, and a record deleted there is removed", async () => {
-    rmSync(join(h.root, "decisions", "ref-003-a-successor.md"));
+    rmSync(join(h.root, "decisions", "ref-004-a-successor.md"));
     try {
       const doc = ok(await since({ kind: DECISIONS_KIND, since: h.close, cwd: h.root }));
       expect(doc.at).toBeNull();
-      expect(doc.changes).toEqual([{ change: "removed", id: "ref-003", path: "decisions/ref-003-a-successor.md", state: "decided" }]);
+      expect(doc.changes).toEqual([{ change: "removed", id: "ref-004", path: "decisions/ref-004-a-successor.md", state: "decided" }]);
     } finally {
       git(h.root, "checkout", "--", "decisions");
     }

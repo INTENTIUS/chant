@@ -34,7 +34,7 @@
  *   member, and no reason.
  *
  * - `chant workspace graph --intent app/src/server.mjs:19` (#2651) lists
- *   ref-001 and ref-002 by member, the commit that wrote line 19, and the
+ *   ref-001, ref-002 and ref-003 by member, the commit that wrote line 19, and the
  *   findings #2651's acceptance names. No decision constrains the line by
  *   path, so no commit is inside a decision's window (#2656).
  * - the work items W-001 and W-002 (#2683) validate against the work schema
@@ -370,7 +370,14 @@ describe("decision files", () => {
     const ref002 = doc.records.find((r) => r.id === "ref-002")!;
     expect(ref002.assets.map((a) => [a.path, a.state])).toEqual([["design/screens/home.json", "pinned"]]);
     expect(ref002.assets[0].sha256).toBe(createHash("sha256").update(readFileSync(join(fixture, "design", "screens", "home.json"))).digest("hex"));
-    expect(doc.records.flatMap((r) => r.warnings)).toEqual([]);
+    // ref-003, the app box's intent (#2850), is a proposed question with no
+    // evidence yet, so its one warning is record-no-evidence. The decided
+    // records carry none.
+    expect(doc.records.map((r) => [r.id, r.warnings.map((w) => w.code)])).toEqual([
+      ["ref-001", []],
+      ["ref-002", []],
+      ["ref-003", ["record-no-evidence"]],
+    ]);
   });
 
   test("editing the pinned file makes records report asset-drift, and the decision stays valid (#2549)", async () => {
@@ -618,6 +625,7 @@ describe("work items (#2683)", () => {
     expect(doc.decisions!.map((d) => [d.id, d.implementedBy])).toEqual([
       ["ref-001", []],
       ["ref-002", [{ id: "W-001", state: "in-progress" }]],
+      ["ref-003", []],
     ]);
   });
 });
@@ -625,7 +633,7 @@ describe("work items (#2683)", () => {
 describe("the intent graph on the fixture (#2651)", () => {
   const intentSchema = JSON.parse(readFileSync(join(workspaceSrc, "intent.schema.json"), "utf-8")) as object;
 
-  test("graph --intent app/src/server.mjs:19 lists ref-001 and ref-002 by member, 72173388, and the findings #2651 names", () => {
+  test("graph --intent app/src/server.mjs:19 lists ref-001, ref-002 and ref-003 by member, 72173388, and the findings #2651 names", () => {
     const run = chant(fixture, "workspace", "graph", "--intent", "app/src/server.mjs:19", "--kind", "decisions/decision.kind.mjs", "--json");
     expect(run.status, run.stderr).toBe(0);
     const doc = JSON.parse(run.stdout) as {
@@ -643,6 +651,7 @@ describe("the intent graph on the fixture (#2651)", () => {
     expect(constrains).toEqual([
       ["record:decision/ref-001", "member"],
       ["record:decision/ref-002", "member"],
+      ["record:decision/ref-003", "member"],
     ]);
     const touched = doc.edges.filter((e) => e.kind === "touched-by").map((e) => e.to);
     // A shallow clone (CI checks out one commit) cuts the history at its
@@ -652,7 +661,7 @@ describe("the intent graph on the fixture (#2651)", () => {
 
     const codes = doc.nodes.filter((n) => n.kind === "finding").map((n) => n.code);
     for (const code of ["intent-commit-undecided", "intent-constraint-coarse", "intent-decision-provisional"]) expect(codes).toContain(code);
-    // Both decisions constrain the region by member only, so no commit falls in a path window (#2656).
+    // All three decisions constrain the region by member only, so no commit falls in a path window (#2656).
     expect(doc.edges.filter((e) => e.kind === "within")).toEqual([]);
     for (const n of doc.nodes.filter((n) => n.kind === "commit")) expect(n.state).toBe("undecided");
     // Decisions reach artifacts, and ref-002 pins the screen spec.
