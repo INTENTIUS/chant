@@ -78,6 +78,7 @@ export {
   flyMachineVerify,
   flyMachineRestore,
   flyRelease,
+  flyRollback,
 } from "./op/builders";
 
 // Generated resources — export everything from generated index.

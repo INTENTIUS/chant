@@ -20,6 +20,8 @@ export { httpCheck, statusOk } from "./http-check";
 
 export { sourceArchive, releasePlan, releaseRecord } from "./source-release";
 export type { SourceArchiveArgs, SourceArchiveResult, ReleasePlanArgs, ReleasePlanResult, ReleaseRecordArgs, ReleaseRecordResult } from "./source-release";
+export { releaseRollbackPlan, releaseRollbackRecord } from "./source-rollback";
+export type { ReleaseRollbackPlanArgs, ReleaseRollbackPlanResult, ReleaseRollbackRecordArgs, ReleaseRollbackRecordResult } from "./source-rollback";
 export type { HttpCheckArgs, HttpFetch } from "./http-check";
 
 export { lifecycleSnapshot, lifecycleDiff } from "./lifecycle";

@@ -32,6 +32,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Lineage } from "./lineage-lock";
 import { chudLexiconExit } from "./chant-migrations/chud-lexicon-exit";
+import { chudLexiconExitRollback } from "./chant-migrations/chud-lexicon-exit-rollback";
 
 /** One file a plan writes or deletes, relative to the scope. */
 export interface PlannedChange {
@@ -81,7 +82,7 @@ export interface ChantMigration {
 }
 
 /** Every migration chant ships, in the order they are planned. */
-export const CHANT_MIGRATIONS: readonly ChantMigration[] = [chudLexiconExit];
+export const CHANT_MIGRATIONS: readonly ChantMigration[] = [chudLexiconExit, chudLexiconExitRollback];
 
 /** The plans for a scope: each migration not yet in the lineage that finds something to move. */
 export function planChantMigrations(ctx: ChantMigrationContext, migrations: readonly ChantMigration[] = CHANT_MIGRATIONS): ChantMigrationPlan[] {
@@ -93,6 +94,26 @@ export function planChantMigrations(ctx: ChantMigrationContext, migrations: read
     if (plan && (plan.changes.length > 0 || plan.conflicts.length > 0)) plans.push(plan);
   }
   return plans;
+}
+
+/**
+ * Plan each migration in order and apply each plan with no conflict before
+ * the next is planned, so a migration planned after another sees the tree
+ * the earlier one left (#2800: `chud-lexicon-exit-rollback` after
+ * `chud-lexicon-exit`). A plan with a conflict is not applied, and the ones
+ * after it plan from the tree as it is.
+ */
+export function runChantMigrations(ctx: ChantMigrationContext, migrations: readonly ChantMigration[] = CHANT_MIGRATIONS): Array<{ plan: ChantMigrationPlan; applied: boolean }> {
+  const out: Array<{ plan: ChantMigrationPlan; applied: boolean }> = [];
+  for (const m of migrations) {
+    if (ctx.lineage.migrations.includes(m.id)) continue;
+    const plan = m.plan(ctx);
+    if (!plan || (plan.changes.length === 0 && plan.conflicts.length === 0)) continue;
+    const applied = plan.conflicts.length === 0;
+    if (applied) applyChantMigration(plan, ctx.dir, ctx.lineage);
+    out.push({ plan, applied });
+  }
+  return out;
 }
 
 /** Apply a plan with no conflicts, and record its id in the lineage. */

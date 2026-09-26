@@ -286,3 +286,70 @@ describe("fly-release with a source tree (#2782)", () => {
     expect(s.fake.calls.filter((c) => c.startsWith("POST"))).toEqual([]);
   });
 });
+
+describe("fly-rollback with a source tree (#2800)", () => {
+  /** Two commits of an app, each archived. */
+  function twoReleases() {
+    const repo = join(dir, "repo2");
+    const git = (...args: string[]) => execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", ...args], { cwd: repo, stdio: "pipe" });
+    mkdirSync(join(repo, "app"), { recursive: true });
+    git("init", "-q", "-b", "main");
+    const commit = (body: string, out: string) => {
+      writeFileSync(join(repo, "app/server.js"), body);
+      git("add", "-A");
+      git("commit", "-q", "-m", body);
+      return archiveSourceTree({ dir: "app", cwd: repo, out });
+    };
+    return { a: commit("console.log('a');\n", "a.tar"), b: commit("console.log('b');\n", "b.tar") };
+  }
+  const src = (x: { archive: string; digest: string; dir: string }) => ({ archive: x.archive, digest: x.digest, dir: x.dir });
+  const rollbackInput = (to: string, source: ReturnType<typeof src>) => ({ plan: planPath, endpoint: ENDPOINT, wait: NO_WAIT, verify: { intervalMs: 1, timeoutMs: 20 }, to, source });
+
+  test("puts back the recorded config of the release whose tree it is, and a rerun changes nothing", async () => {
+    const s = setup();
+    const { a, b } = twoReleases();
+    await s.release.run(CTX, input("sha256:aaaaaaaaaaaa", { source: { ...src(a), start: "node server.js" } }));
+    const one = structuredClone(s.fake.machine("shop", "web")!.config);
+    await s.release.run(CTX, input("sha256:bbbbbbbbbbbb", { source: { ...src(b), start: "node server.js" } }));
+    expect(s.fake.machine("shop", "web")!.config).not.toEqual(one);
+
+    const back = await s.rollback.run(CTX, rollbackInput("sha256:aaaaaaaaaaaa", src(a)));
+    expect(back).toMatchObject({ digest: "sha256:aaaaaaaaaaaa", previous: { digest: "sha256:bbbbbbbbbbbb" } });
+    const m = s.fake.machine("shop", "web")!;
+    expect(m.config).toEqual(one);
+    const server = (m.config.files as Array<{ guest_path: string; raw_value: string }>).find((f) => f.guest_path === "/srv/app/server.js")!;
+    expect(Buffer.from(server.raw_value, "base64").toString()).toBe("console.log('a');\n");
+
+    const calls = s.fake.calls.length;
+    await s.rollback.run(CTX, rollbackInput("sha256:aaaaaaaaaaaa", src(a)));
+    expect(s.fake.calls.slice(calls).filter((c) => c.startsWith("POST") && !c.endsWith("/wait"))).toEqual([]);
+    expect(s.fake.machine("shop", "web")!.config).toEqual(one);
+  });
+
+  test("an archive that is not its digest is refused before any flaps call", async () => {
+    const s = setup();
+    const { a, b } = twoReleases();
+    await s.release.run(CTX, input("sha256:aaaaaaaaaaaa", { source: { ...src(a), start: "node server.js" } }));
+    await s.release.run(CTX, input("sha256:bbbbbbbbbbbb", { source: { ...src(b), start: "node server.js" } }));
+    const calls = s.fake.calls.length;
+    await expect(s.rollback.run(CTX, rollbackInput("sha256:aaaaaaaaaaaa", { ...src(a), digest: b.digest }))).rejects.toThrow(/not the approved/);
+    expect(s.fake.calls.length).toBe(calls);
+  });
+
+  test("a recorded config that does not carry the tree is refused, and the Machine is left as it is", async () => {
+    const s = setup();
+    const { a, b } = twoReleases();
+    await s.release.run(CTX, input("sha256:aaaaaaaaaaaa", { source: { ...src(a), start: "node server.js" } }));
+    await s.release.run(CTX, input("sha256:bbbbbbbbbbbb", { source: { ...src(b), start: "node server.js" } }));
+    const serving = structuredClone(s.fake.machine("shop", "web")!.config);
+    await expect(s.rollback.run(CTX, rollbackInput("sha256:aaaaaaaaaaaa", src(b)))).rejects.toThrow(/does not carry the tree .*\/srv\/app\/server\.js has other bytes/);
+    expect(s.fake.machine("shop", "web")!.config).toEqual(serving);
+  });
+
+  test("a release with no recorded Machine config is refused by name", async () => {
+    const s = setup();
+    const { a, b } = twoReleases();
+    await s.release.run(CTX, input("sha256:bbbbbbbbbbbb", { source: { ...src(b), start: "node server.js" } }));
+    await expect(s.rollback.run(CTX, rollbackInput("sha256:aaaaaaaaaaaa", src(a)))).rejects.toThrow("fly-rollback: no recorded Machine config for sha256:aaaaaaaaaaaa on shop/web");
+  });
+});

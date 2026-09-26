@@ -50,6 +50,9 @@ export {
 // The fly-release capability as an Op step (#2782): a release Op's ship phase.
 export { flyRelease } from "./fly-release-step";
 export type { FlyReleaseArgs, FlyReleaseResult } from "./fly-release-step";
+// The fly-rollback capability as an Op step (#2800): a rollback Op's restore.
+export { flyRollback } from "./fly-rollback-step";
+export type { FlyRollbackArgs, FlyRollbackResult } from "./fly-rollback-step";
 export type {
   MachineRelease,
   FlyMachineReleaseArgs,

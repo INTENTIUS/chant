@@ -122,3 +122,34 @@ export default Op({
 ```
 
 The Machine's metadata names the plan's digest, and so does the ledger record, so `chant components status fly --live` reconciles them. Running the Op again for the same commit plans the same digest, leaves the Machine as it is, and records nothing twice.
+
+### Rolling a source release back
+
+A rollback Op takes the site back to the release it served before the latest one. Core's `releaseRollbackPlan` reads the release ledger, reads the earlier release's plan back, archives the same directory of the same commit again, and refuses unless the archive hashes to the digest that plan recorded. The gate binds to the rollback plan's digest. `flyRollback` puts back the Machine config `flyRelease` recorded for that release. It checks the archive against its digest before any flaps call, and checks that the recorded config carries exactly that tree. `releaseRollbackRecord` appends the restored release with `restores`, the actor and the approver:
+
+```ts
+import { Op, phase, gate, build, releaseRollbackPlan, releaseRollbackRecord } from "@intentius/chant/op";
+import { flyRollback } from "@intentius/chant-lexicon-fly";
+
+const plan = releaseRollbackPlan({ id: "plan", component: "app", env: "fly" });
+
+export default Op({
+  name: "rollback",
+  overview: "Put the previous release back on Fly once the rollback plan is approved",
+  phases: [
+    phase("Plan", [plan, build(".", { script: "build:fly" })]),
+    phase("Gate", [gate("rollback", { plan: plan.out.digest })]),
+    phase("Roll back", [
+      flyRollback({
+        environment: "fly",
+        plan: "dist/fly.json",
+        to: plan.out.to,
+        source: { archive: plan.out.archive, digest: plan.out.archiveDigest, dir: plan.out.dir },
+      }),
+    ]),
+    phase("Record", [releaseRollbackRecord({ plan: plan.out.file, digest: plan.out.digest, approval: { op: "rollback", gate: "rollback" } })]),
+  ],
+});
+```
+
+A rollback's own ledger record is not counted as a release, so running the Op again plans the same rollback, leaves the Machine as it is and records nothing. `to: "sha256:..."` on `releaseRollbackPlan` picks another release. Migrations are not undone.

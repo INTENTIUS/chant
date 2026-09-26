@@ -32,7 +32,9 @@
  * Each release's Machine config is kept on the lifecycle branch
  * (../release-store.ts). `fly-rollback` puts back the config of the release
  * the serving one replaced (or the digest it is given), which is also the
- * saga compensation `fly-release` declares.
+ * saga compensation `fly-release` declares. Given the source tree of that
+ * release (#2800), it checks the archive against its digest before any flaps
+ * call and refuses a recorded config that does not carry exactly that tree.
  */
 
 import { createHash } from "node:crypto";
@@ -82,16 +84,26 @@ export interface FlySource {
 /** Most bytes of files, base64, a release puts in a Machine's config (as chud's fly-site.mjs capped them). */
 export const SOURCE_FILES_LIMIT = 1024 * 1024;
 
-/** A source tree as Machine files and the start command, once its archive is the approved one. */
-export async function sourceMachineFiles(source: FlySource): Promise<{ files: MachineFile[]; cmd: string[] }> {
+/** Where a source tree goes on the Machine, without a trailing slash. */
+const intoOf = (source: { into?: string }) => (source.into ?? "/srv/app").replace(/\/+$/, "");
+
+/** A source tree's files as a Machine config carries them, once its archive is the approved one. */
+async function sourceTreeFiles(source: Omit<FlySource, "start">, kind: string): Promise<MachineFile[]> {
   const { readSourceArchive } = await import("@intentius/chant/op/source-archive");
-  const into = (source.into ?? "/srv/app").replace(/\/+$/, "");
+  const into = intoOf(source);
   const files: MachineFile[] = readSourceArchive(source).map((f) => ({
     guest_path: `${into}/${f.path}`,
     raw_value: f.data.toString("base64"),
     ...(f.executable ? { mode: 0o755 } : {}),
   }));
-  if (files.length === 0) throw new Error(`fly-release: ${source.archive} holds no files`);
+  if (files.length === 0) throw new Error(`${kind}: ${source.archive} holds no files`);
+  return files;
+}
+
+/** A source tree as Machine files and the start command, once its archive is the approved one. */
+export async function sourceMachineFiles(source: FlySource): Promise<{ files: MachineFile[]; cmd: string[] }> {
+  const into = intoOf(source);
+  const files = await sourceTreeFiles(source, "fly-release");
   const bytes = files.reduce((n, f) => n + f.raw_value.length, 0);
   if (bytes > SOURCE_FILES_LIMIT) {
     throw new Error(
@@ -157,12 +169,22 @@ export interface FlyReleaseOutput {
   migrations: Array<{ name: string; fired: boolean }>;
 }
 
+/** The source tree a rollback puts back (#2800): the archive of the release it goes back to. */
+export type FlyRollbackSource = Omit<FlySource, "start">;
+
 export interface FlyRollbackInput {
   /** Path to the fly build output, naming the App and Machine. */
   plan: string;
   machine?: string;
   /** The release digest to go back to. Default: the one the serving release replaced. */
   to?: string;
+  /**
+   * The source tree of the release it goes back to (#2800). The archive is
+   * read only once its bytes hash to `digest`, before any flaps call, and the
+   * Machine config recorded for `to` must carry exactly that tree under
+   * `into`, or the rollback is refused.
+   */
+  source?: FlyRollbackSource;
   verify?: FlyVerify;
   endpoint?: string;
   wait?: WaitOpts;
@@ -346,12 +368,18 @@ export function createFlyRollbackCapability(deps: FlyReleaseDeps = {}): Capabili
   const log = deps.log ?? ((line: string) => console.error(line));
   const httpFor = () => deps.http ?? defaultFlyHttp();
 
-  async function restoreTo(ctx: DeployContext, input: FlyRollbackInput, app: string, machine: string, digest: string) {
+  async function recordedConfig(ctx: DeployContext, app: string, machine: string, digest: string): Promise<Record<string, unknown>> {
     const store = await (deps.configStore ?? defaultConfigStore)(ctx);
     const config = await store.read({ app, machine, digest });
     if (!config) throw new Error(`fly-rollback: no recorded Machine config for ${digest} on ${app}/${machine}`);
+    return config;
+  }
+
+  async function restoreTo(ctx: DeployContext, input: FlyRollbackInput, app: string, machine: string, digest: string, config?: Record<string, unknown>, serving?: string) {
+    config ??= await recordedConfig(ctx, app, machine, digest);
     const http = httpFor();
-    await flyMachineRestore({ app, machine, config, endpoint: input.endpoint, wait: input.wait }, undefined, http);
+    // Already serving it (a rerun after the rollback finished): leave the Machine as it is.
+    if (serving !== digest) await flyMachineRestore({ app, machine, config, endpoint: input.endpoint, wait: input.wait }, undefined, http);
     await flyMachineVerify({ app, machine, digest, endpoint: input.endpoint, ...(input.verify ?? {}) }, undefined, http, deps.fetch);
     return readMachineRelease((config as { metadata?: Record<string, string> }).metadata);
   }
@@ -360,6 +388,8 @@ export function createFlyRollbackCapability(deps: FlyReleaseDeps = {}): Capabili
     kind: "fly-rollback",
     rollbackPolicy: "native",
     async run(ctx, input) {
+      // The tree is checked against its digest before any flaps call.
+      const tree = input.source ? await sourceTreeFiles(input.source, "fly-rollback") : undefined;
       const http = httpFor();
       const { target } = loadTarget(input.plan, input.machine);
       const live = await findMachine({ base: resolveEndpoint(input) }, target.app, target.name, http);
@@ -367,8 +397,19 @@ export function createFlyRollbackCapability(deps: FlyReleaseDeps = {}): Capabili
       const serving = readMachineRelease(live.config?.metadata);
       const to = input.to ?? serving?.previousDigest;
       if (!to) throw new Error(`fly-rollback: ${target.app}/${target.name} serves ${serving?.digest ?? "no release"}, with no release before it to roll back to`);
-      const restored = await restoreTo(ctx, input, target.app, target.name, to);
-      log(`fly-rollback: ${target.app}/${target.name} serves ${to} again (was ${serving?.digest ?? "no release"})`);
+      const config = await recordedConfig(ctx, target.app, target.name, to);
+      if (tree) {
+        const differs = treeDifference(config, tree, intoOf(input.source!));
+        if (differs) {
+          throw new Error(`fly-rollback: the Machine config recorded for ${to} does not carry the tree ${input.source!.digest} (${differs}); refusing to restore it`);
+        }
+      }
+      const restored = await restoreTo(ctx, input, target.app, target.name, to, config, serving?.digest);
+      log(
+        serving?.digest === to
+          ? `fly-rollback: ${target.app}/${target.name} already serves ${to}`
+          : `fly-rollback: ${target.app}/${target.name} serves ${to} again (was ${serving?.digest ?? "no release"})`,
+      );
       return {
         uri: uriOf(target.app, target.name),
         digest: to,
@@ -383,6 +424,23 @@ export function createFlyRollbackCapability(deps: FlyReleaseDeps = {}): Capabili
       await restoreTo(ctx, input, output.app, output.machine.name, output.previous.digest);
     },
   };
+}
+
+/**
+ * How a recorded Machine config's files under `into` differ from a source
+ * tree, or undefined when they are the same files with the same bytes. Pure.
+ */
+export function treeDifference(config: Record<string, unknown>, tree: MachineFile[], into: string): string | undefined {
+  const prefix = `${into}/`;
+  const recorded = new Map(((config.files as MachineFile[] | undefined) ?? []).filter((f) => f.guest_path.startsWith(prefix)).map((f) => [f.guest_path, f.raw_value]));
+  for (const f of tree) {
+    const bytes = recorded.get(f.guest_path);
+    if (bytes === undefined) return `${f.guest_path} is not in it`;
+    if (bytes !== f.raw_value) return `${f.guest_path} has other bytes`;
+    recorded.delete(f.guest_path);
+  }
+  const extra = [...recorded.keys()][0];
+  return extra ? `it also carries ${extra}` : undefined;
 }
 
 /** The default `fly-release` capability. */

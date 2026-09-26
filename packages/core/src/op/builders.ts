@@ -13,6 +13,7 @@ import type { ChantTeardownArgs } from "./activities/teardown";
 import type { EnvTeardownArgs } from "./activities/env-teardown";
 import type { HttpCheckArgs } from "./activities/http-check";
 import type { SourceArchiveArgs, ReleasePlanArgs, ReleaseRecordArgs } from "./activities/source-release";
+import type { ReleaseRollbackPlanArgs, ReleaseRollbackRecordArgs } from "./activities/source-rollback";
 import type { PolicyGateArgs } from "./activities/policy";
 import type { GuardValidateArgs } from "./activities/guard-validate";
 import type { WorkEvidenceArgs } from "./activities/work-evidence";
@@ -422,6 +423,29 @@ export const releaseRecord = (args: WithStepRefs<ReleaseRecordArgs> & StepOpts):
 export const decide = (point: string, opts?: WithStepRefs<Omit<DecideArgs, "point">> & StepOpts): NamedActivityStep => {
   const { args, profile, id } = takeProfileAndId(opts as Record<string, unknown> | undefined);
   return activity("decide", { point, ...args }, { profile: profile ?? "fastIdempotent", ...(id ? { id } : {}) });
+};
+
+/**
+ * Plan a rollback of a source release (#2800): the release the site served
+ * before the latest one (or `to`), its plan read back from the ledger, and its
+ * source tree archived again from its commit and refused unless it hashes to
+ * the digest that plan recorded. Writes a rollback plan named by its own
+ * sha256, which the rollback gate binds to (`gate("rollback", { plan:
+ * plan.out.digest })`). Defaults to the `fastIdempotent` profile.
+ */
+export const releaseRollbackPlan = (args: WithStepRefs<ReleaseRollbackPlanArgs> & StepOpts): NamedActivityStep => {
+  const { args: rest, profile, id } = takeProfileAndId(args as Record<string, unknown>);
+  return activity("releaseRollbackPlan", rest, { profile: profile ?? "fastIdempotent", ...(id ? { id } : {}) });
+};
+
+/**
+ * Record a rollback in the release ledger (#2800): the restored release's
+ * digest and commit, `restores` naming that release, the actor and the gate's
+ * approver, once. Defaults to the `fastIdempotent` profile.
+ */
+export const releaseRollbackRecord = (args: WithStepRefs<ReleaseRollbackRecordArgs> & StepOpts): NamedActivityStep => {
+  const { args: rest, profile, id } = takeProfileAndId(args as Record<string, unknown>);
+  return activity("releaseRollbackRecord", rest, { profile: profile ?? "fastIdempotent", ...(id ? { id } : {}) });
 };
 
 /**
