@@ -21,6 +21,7 @@ import { toDot } from "../../graph-dot";
 import { getLayoutEngine, toLayoutInput, type NodeSize } from "../../graph-layout";
 import { lintCommand } from "../commands/lint";
 import { loadPlugins, resolveProjectLexicons, collectBuildRootContributors } from "../plugins";
+import { isNoLexiconDetected } from "../../detectLexicon";
 import { readFileSync } from "node:fs";
 import { formatError, formatWarning, formatBold } from "../format";
 import type { CommandContext, ParsedArgs } from "../registry";
@@ -31,6 +32,19 @@ import type { BuildParamProvenance } from "../../provenance";
 import { discoverComponents } from "../../components/discover";
 import { cfnDeployStacks } from "./components";
 
+/**
+ * The project's lexicons, or none for a project that declares none and imports
+ * none (an Ops-only member, `lexicons: []`): detection's NO_LEXICON_DETECTED
+ * sentinel means "no lexicon", as `chant lint` reads it, not a failed graph (#2841).
+ */
+async function projectLexiconsOrNone(projectPath: string): Promise<string[]> {
+  try {
+    return await resolveProjectLexicons(projectPath);
+  } catch (err) {
+    if (isNoLexiconDetected(err)) return [];
+    throw err;
+  }
+}
 
 /**
  * Resolve this invocation's declared build-time parameters, the same way
@@ -223,7 +237,7 @@ async function runGraphLive(
   // `graph` is not `requiresPlugins` (Op/source-graph modes must work without a
   // lexicon), so `ctx.plugins` is empty. The live path needs the project's
   // observation plugins — load them here, mirroring the lifecycle handlers.
-  const plugins = ctx.plugins.length > 0 ? ctx.plugins : await loadPlugins(await resolveProjectLexicons(projectPath));
+  const plugins = ctx.plugins.length > 0 ? ctx.plugins : await loadPlugins(await projectLexiconsOrNone(projectPath));
   const declaredEnvNames = environmentNames(config.environments);
   if (declaredEnvNames && !matchesDeclaredEnvironment(config.environments, environment)) {
     console.error(formatError({
@@ -828,7 +842,7 @@ async function runGraphView(
   {
     const plugins = ctx.plugins.length > 0
       ? ctx.plugins
-      : await loadPlugins(await resolveProjectLexicons(projectPath));
+      : await loadPlugins(await projectLexiconsOrNone(projectPath));
     const predicted = await predictOntoIr(ir, plugins as LexiconPlugin[], ctx.args, {
       // No environment on the declared path: the file is not deployed anywhere
       // yet, and naming one would claim it was.
