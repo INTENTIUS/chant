@@ -595,15 +595,18 @@ describe("stewards in chant workspace status --json (#2731)", () => {
         schedule: { cron: "* * * * *", overlap: "skip" },
         env: "local",
         lastRun: { id: expect.any(String), status: "ok", started: "2026-09-25T10:00:00.000Z", ended: "2026-09-25T10:00:05.000Z", gate: null, point: null },
+        // #2778: not a ConvergeOp (no Converge label), so no tick.
+        lastTick: null,
         changesCheckout: false,
         workLease: null,
       },
-      { name: "box-release", schedule: null, env: "local", lastRun: null, changesCheckout: false, workLease: null },
+      { name: "box-release", schedule: null, env: "local", lastRun: null, lastTick: null, changesCheckout: false, workLease: null },
       {
         name: "box-dispatch",
         schedule: { cron: "*/5 * * * *", overlap: "skip" },
         env: "local",
         lastRun: null,
+        lastTick: null,
         changesCheckout: true,
         workLease: {
           kind: null,

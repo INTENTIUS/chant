@@ -60,7 +60,7 @@ export const REASONS = {
   // A member's stewards status can't fully list (status, #2731).
   "stewards-unreadable": "An *.op.ts file could not be imported, so a steward it declares may be missing.",
   "stewards-conflict": "A steward was dropped: its name, or an Op it lists, belongs to another steward.",
-  "steward-runs-unreadable": "Reading an Op's run ledger failed, so its last run is null.",
+  "steward-runs-unreadable": "Reading an Op's run ledger, or a ConvergeOp's converge ledger, failed, so its last run or last tick is null.",
   // A record that isn't valid (records).
   "record-unparseable": "No front matter, a YAML error or a value outside the JSON subset of YAML, or for a JSON kind a file that is not one object or repeats a member name.",
   "record-schema-invalid": "The record's front matter, or its JSON object, does not match the kind's schema.",

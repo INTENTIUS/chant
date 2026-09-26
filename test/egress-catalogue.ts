@@ -432,6 +432,13 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     why: "Sprite lifecycle activities — create, exec, destroy — for the Sprites Ops.",
   },
   {
+    file: "lexicons/fly/src/op/activities/sprite-service-converge.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "a box service's own health URL, as the Op declares it",
+    why: "`spriteServicesObserve` probes each declared service's health URL for a ConvergeOp, and `spriteServiceRestart` waits for it after a restart (#2778). The Sprites API calls go through sprite-services.ts.",
+  },
+  {
     file: "lexicons/fly/src/op/activities/sprite-fs.ts",
     primitives: ["fetch"],
     phase: "apply",

@@ -50,6 +50,49 @@ Phases: **Observe -> Converge**.
 
 `chant run staging-converge` runs a single tick here, which is also the test story. `schedule` is the cadence on the Op, and the thing that fires it is your choice: `chant operator` ticks every discovered `ConvergeOp` from a loop on git alone (see the [operator guide](/chant/guide/operator/)), a generated CI workflow ticks it from a cron job, and a fountain [`Steward`](/chant/lexicons/fountain/steward/) ticks it in its own thread.
 
+## Converging resources no lexicon observes
+
+Some resources are declared nowhere a lexicon can observe them. The services a box runs under its supervisor are one example. That supervisor is sprite-env on a sprite, or a stand-in with the same command line. For these, `observe` takes the place of the lexicon observation ([#2778](https://github.com/INTENTIUS/chant/issues/2778)). It is an activity step that returns one verdict per resource:
+
+```typescript
+{ resources: [{ name: "app", status: "drifted", detail: "stopped" }, { name: "hud", status: "in-sync" }] }
+```
+
+`status` is `in-sync`, `drifted` or `unknown`. A `shell()` step that prints that object as JSON works too. The fly lexicon's `spriteServicesObserve` is the observer for a box's services. It reads the supervisor's list and probes each declared service's health URL.
+
+```typescript
+import { ConvergeOp, Op, eq, phase, report, run, when, type ResourceSymptom } from "@intentius/chant/op";
+import { spriteServicesObserve, spriteServiceRestart } from "@intentius/chant-lexicon-fly";
+
+export const { op } = ConvergeOp({
+  name: "converge",
+  env: "box",
+  dial: "apply",
+  schedule: "* * * * *",
+  observe: spriteServicesObserve({ servicesFile: "services.json" }),
+  rules: [
+    when<ResourceSymptom>(eq("status", "drifted"), run("restart-service"), {
+      id: "restart-drifted",
+      why: "A declared service that stopped, or stopped answering its health URL, is restarted through its supervisor.",
+    }),
+    when<ResourceSymptom>(eq("status", "unknown"), report("a service could not be observed"), {
+      id: "report-unknown",
+      why: "unknown never remediates.",
+    }),
+  ],
+});
+export default op;
+
+// restart-service.op.ts: the service is the one the rule fired for.
+export const restartService = Op({
+  name: "restart-service",
+  overview: "Restart the service a converge rule names, and wait for its health URL.",
+  phases: [phase("Restart", [spriteServiceRestart({ servicesFile: "services.json" })])],
+});
+```
+
+The rules read a `ResourceSymptom` (`env`, `resource`, `status`, `detail`) and are evaluated once for each resource. A `run()` that fires is dispatched for that resource. The dispatched run reads its name from `CHANT_CONVERGE_RESOURCE`, which `spriteServiceRestart` uses when it is given no `name`. The rest of this page holds per resource: `unknown` never remediates and flap damping counts one rule's fires for one resource. `budget` still bounds the dispatches of the whole tick. The dial × verb class matrix below applies to the dispatched Op as it does to any other. The tick's ledger record lists the resources and their verdicts in `resources`, and each outcome names its `resource`. `chant workspace status --json` shows a steward's ConvergeOp's newest tick as `lastTick`.
+
 ## The dial × verb class matrix
 
 `ConvergeOp` adds no authority an environment didn't already grant. Every Op a rule's `run()` dispatches is classified read-only / mutating / destructive from its own composition (its steps, its `deleteMode`, whether it carries a gate) — never self-reported. Issue #1484's own Autonomy table is the target:
@@ -79,7 +122,7 @@ Phases: **Observe -> Converge**.
 `chant build` refuses a rule table that isn't honest about what it will do, via `OPS014` ([rules reference](/chant/lint-rules/correctness/)):
 
 - a rule with no (or a blank) `why`,
-- a predicate outside the evaluable subset — `eq`/`neq`/`gt`/`gte`/`lt`/`lte`/`truthy`/`falsy`/`allOf`/`anyOf` over a field `ConvergeSymptom` actually produces; nothing else,
+- a predicate outside the evaluable subset — `eq`/`neq`/`gt`/`gte`/`lt`/`lte`/`truthy`/`falsy`/`allOf`/`anyOf` over a field `ConvergeSymptom` actually produces (`ResourceSymptom` for a ConvergeOp with `observe`); nothing else,
 - `run()` naming an Op that doesn't exist,
 - a mutating dispatch under any dial other than `apply` (see the matrix above — `reconcile`'s "open PR" isn't implemented in v1),
 - a destructive dispatch under any dial, unconditionally (an unattended tick can't ask for approval first; see above),

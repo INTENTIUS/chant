@@ -53,7 +53,7 @@
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "../../post-synth";
 import { classifyOpVerbClass, isWellFormedPredicate, predicateReferencesField } from "../../../op";
 import type { ConvergeRule, OpConfig } from "../../../op";
-import { CONVERGE_SYMPTOM_FIELDS, type ConvergeSymptom } from "../../../lifecycle/symptoms";
+import { CONVERGE_SYMPTOM_FIELDS, RESOURCE_SYMPTOM_FIELDS, type ConvergeSymptom } from "../../../lifecycle/symptoms";
 import { isOpEntity } from "./support";
 
 function looksLikeOpProps(props: Record<string, unknown>): boolean {
@@ -61,12 +61,15 @@ function looksLikeOpProps(props: Record<string, unknown>): boolean {
 }
 
 /** Read a ConvergeOp's rule table back off its `convergeTick` step's `args.rules`. `undefined` if this doesn't look like a ConvergeOp-shaped Op (defensive — never crashes the build over an unexpected shape). */
-function findConvergeRules(props: OpConfig): ConvergeRule<ConvergeSymptom>[] | undefined {
+function findConvergeRules(props: OpConfig): { rules: ConvergeRule<ConvergeSymptom>[]; fields: ReadonlySet<string> } | undefined {
   for (const phase of props.phases) {
     for (const step of phase.steps) {
       if (step.kind === "activity" && step.fn === "convergeTick") {
         const rules = step.args?.rules;
-        return Array.isArray(rules) ? (rules as ConvergeRule<ConvergeSymptom>[]) : undefined;
+        // #2778: a ConvergeOp with an observer step passes its result as
+        // `observed`, and its rules read a ResourceSymptom.
+        const fields = step.args?.observed !== undefined ? RESOURCE_SYMPTOM_FIELDS : CONVERGE_SYMPTOM_FIELDS;
+        return Array.isArray(rules) ? { rules: rules as ConvergeRule<ConvergeSymptom>[], fields } : undefined;
       }
     }
   }
@@ -100,8 +103,9 @@ export const ops014: PostSynthCheck = {
       if (props.labels?.Converge !== "true") continue;
 
       const dial = props.labels?.Dial ?? "observe";
-      const rules = findConvergeRules(props);
-      if (!rules) continue;
+      const found = findConvergeRules(props);
+      if (!found) continue;
+      const { rules, fields } = found;
 
       for (const rule of rules) {
         const label = typeof rule?.id === "string" ? rule.id : "(unnamed rule)";
@@ -119,7 +123,7 @@ export const ops014: PostSynthCheck = {
           push("every rule must carry its why — refused at build");
           continue;
         }
-        if (!isWellFormedPredicate(rule.when, CONVERGE_SYMPTOM_FIELDS)) {
+        if (!isWellFormedPredicate(rule.when, fields)) {
           push("predicate is outside the evaluable subset (build it from eq/neq/gt/gte/lt/lte/truthy/falsy/allOf/anyOf over a known symptom field)");
           continue;
         }

@@ -66,6 +66,12 @@ export interface ConvergeRuleOutcome {
   action: "ran" | "reported" | "skipped-budget" | "skipped-flap" | "gated";
   /** The dispatched Op name, for `action: "ran"` or `"gated"`. */
   op?: string;
+  /**
+   * The resource the rule fired for, on a tick of a ConvergeOp with an
+   * observer step (#2778), which evaluates its rules once per resource. The
+   * dispatched Op reads it from `CHANT_CONVERGE_RESOURCE`.
+   */
+  resource?: string;
   /** The gate's signal name, for `action: "gated"`. */
   gateName?: string;
   /**
@@ -131,6 +137,14 @@ export function componentVerdicts(rows: readonly ComponentStatusRow[]): Converge
   }));
 }
 
+/** One resource an observer step reported on a tick (#2778). */
+export interface ConvergeResourceVerdict {
+  name: string;
+  status: "in-sync" | "drifted" | "unknown";
+  /** The observer's reason, capped to one line. */
+  detail?: string;
+}
+
 /** One immutable converge-tick record. */
 export interface ConvergeTickRecord {
   /** Schema version, so an incompatible future shape is detected before being misread. */
@@ -168,6 +182,12 @@ export interface ConvergeTickRecord {
    * records written before #2027 have none; absent is not "no components".
    */
   components?: ConvergeComponentVerdict[];
+  /**
+   * What a ConvergeOp's observer step reported this tick (#2778), one entry
+   * per resource: in its place of `components` for resources no lexicon
+   * observes. Absent on a tick observed through a lexicon environment.
+   */
+  resources?: ConvergeResourceVerdict[];
   /** Aggregate counts backing the tick's one log line. */
   summary: {
     drifted: number;

@@ -40,6 +40,7 @@ import type {
   SpriteServiceDeleteArgs,
   SpriteServiceLogsArgs,
 } from "./activities/sprite-services";
+import type { SpriteServicesObserveArgs, SpriteServiceRestartArgs } from "./activities/sprite-service-converge";
 import type { SpriteTaskCreateArgs, SpriteTaskRefreshArgs, SpriteTaskReleaseArgs } from "./activities/sprite-tasks";
 import type { SpritesUpArgs, SpritesDownArgs } from "./activities/sprites-emulator";
 import type {
@@ -122,6 +123,19 @@ export const spriteServiceStop = spriteStep<SpriteServiceStopArgs>("spriteServic
 export const spriteServiceDelete = spriteStep<SpriteServiceDeleteArgs>("spriteServiceDelete", "fastIdempotent");
 /** Read a background service's log tail (#2711). Defaults to the `fastIdempotent` profile. */
 export const spriteServiceLogs = spriteStep<SpriteServiceLogsArgs>("spriteServiceLogs", "fastIdempotent");
+/**
+ * Observe a box's declared services for a ConvergeOp (#2778): one verdict per
+ * service, `in-sync`, `drifted` or `unknown`, from the supervisor's list and
+ * each service's health URL. Pass it as `ConvergeOp({ observe })`. Defaults
+ * to the `fastIdempotent` profile.
+ */
+export const spriteServicesObserve = spriteStep<SpriteServicesObserveArgs>("spriteServicesObserve", "fastIdempotent");
+/**
+ * Restart one service through its supervisor and wait for its health URL
+ * (#2778). Without `name`, the service is the one a ConvergeOp rule
+ * dispatched the run for. Defaults to the `longInfra` profile.
+ */
+export const spriteServiceRestart = spriteStep<SpriteServiceRestartArgs>("spriteServiceRestart", "longInfra");
 /** Create a keep-alive task — the fully typed twin of core's `spriteTaskCreate`. Defaults to the `fastIdempotent` profile. */
 export const spriteTaskCreate = spriteStep<SpriteTaskCreateArgs>("spriteTaskCreate", "fastIdempotent");
 /** Refresh a keep-alive task's expiry — the fully typed twin of core's `spriteTaskRefresh`. Defaults to the `fastIdempotent` profile. */

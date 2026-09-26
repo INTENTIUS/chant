@@ -96,7 +96,7 @@ A steward is the one writer that runs a member's operational Ops, on Fountain or
 | `forms` | The declared default form, and the environments whose form differs from it |
 | `vault`, `capabilities` | The vault the steward holds, or `null`, and the box capabilities it reaches through a broker, each with the `broker` the member's box block gives it and `declared: false` when the block doesn't list it ([#2726](https://github.com/INTENTIUS/chant/issues/2726)) |
 | `lease` | The local steward's lease (`holder`, `acquiredAt`, `expiresAt`, `live`), or `null` when no local operator has held it |
-| `ops[]` | Each Op the steward runs, in declaration order, with `schedule` (`null` for an Op it runs only when asked), the `env` its runs are recorded under, and `lastRun` (`id`, `status`, `started`, `ended`, `gate`, `point`) or `null`. A gated run's `gate` has its `name`, `since`, the `op` it is recorded under and the `approve` command; `op` is a command's own, such as `workspace-upgrade`, when a step's command stopped at its gate ([#2779](https://github.com/INTENTIUS/chant/issues/2779)). `status` is `waiting` for a run that stopped on an open decision point, and `point` names that question |
+| `ops[]` | Each Op the steward runs, in declaration order, with `schedule` (`null` for an Op it runs only when asked), the `env` its runs are recorded under, and `lastRun` (`id`, `status`, `started`, `ended`, `gate`, `point`) or `null`. A gated run's `gate` has its `name`, `since`, the `op` it is recorded under and the `approve` command; `op` is a command's own, such as `workspace-upgrade`, when a step's command stopped at its gate ([#2779](https://github.com/INTENTIUS/chant/issues/2779)). `status` is `waiting` for a run that stopped on an open decision point, and `point` names that question. A ConvergeOp also has `lastTick`, its newest tick on the converge ledger: the rules that fired, what each did and for which resource, and what its observer step reported ([#2778](https://github.com/INTENTIUS/chant/issues/2778)). It is `null` for any other Op |
 | `ops[].changesCheckout`, `ops[].workLease` | Whether the Op changes the checkout, and its [work lease](/chant/guide/ops/#running-under-a-work-lease) or `null` ([#2748](https://github.com/INTENTIUS/chant/issues/2748)). `workLease.kind` is the work kind file whose ledger holds the lease, or `null` for the member's own. `workLease.held` lists the leases the steward's turns of this Op hold, the ones whose holder is `<steward>/<op>@<process>`: an `active` one while a turn runs, an `expired` one left by a turn that stopped renewing |
 | `waiting[]` | The open decision points the steward waits on ([#2749](https://github.com/INTENTIUS/chant/issues/2749)): for each Op whose newest run is the steward's own and stopped on a question, the `op`, the `run`, and the question's `id`, `point`, `state`, `path`, `subject` and `since`. [`points --open`](/chant/cli/workspace-points/) has the question's state now |
 
@@ -216,15 +216,27 @@ The output is part of the workspace [read contract](/chant/reference/workspace-r
               "schedule": { "cron": "*/5 * * * *", "overlap": "skip" },
               "env": "local",
               "lastRun": { "id": "0b6f...", "status": "ok", "started": "2026-09-21T09:00:00.000Z", "ended": "2026-09-21T09:00:04.000Z", "gate": null, "point": null },
+              "lastTick": {
+                "id": "5d1e...",
+                "timestamp": "2026-09-21T09:00:03.000Z",
+                "log": "converge(local): resources=2 in-sync=1 drifted=1 unknown=0 remediated=1 reported=0 skipped-budget=0 skipped-flap=0 gated=0",
+                "firedRuleIds": ["restart-drifted"],
+                "outcomes": [{ "ruleId": "restart-drifted", "action": "ran", "op": "restart-service", "resource": "app", "reason": null }],
+                "resources": [
+                  { "name": "app", "status": "drifted", "detail": "stopped" },
+                  { "name": "hud", "status": "in-sync", "detail": "running, http://127.0.0.1:8081/__hud/health answers 200" }
+                ]
+              },
               "changesCheckout": false,
               "workLease": null
             },
-            { "name": "api-release", "schedule": null, "env": "prod", "lastRun": null, "changesCheckout": false, "workLease": null },
+            { "name": "api-release", "schedule": null, "env": "prod", "lastRun": null, "lastTick": null, "changesCheckout": false, "workLease": null },
             {
               "name": "api-dispatch",
               "schedule": { "cron": "*/5 * * * *", "overlap": "skip" },
               "env": "local",
               "lastRun": null,
+              "lastTick": null,
               "changesCheckout": true,
               "workLease": {
                 "kind": null,
@@ -288,7 +300,7 @@ Stewards have reasons of their own, in `stewardReasons`. They don't change `read
 |---|---|
 | `stewards-unreadable` | an `*.op.ts` file couldn't be imported, so a steward it declares may be missing |
 | `stewards-conflict` | a steward was dropped because its name, or an Op it lists, belongs to another steward |
-| `steward-runs-unreadable` | an Op's run ledger couldn't be read, so its `lastRun` is `null` |
+| `steward-runs-unreadable` | an Op's run ledger or a ConvergeOp's converge ledger couldn't be read, so its `lastRun` or `lastTick` is `null` |
 
 ### Error codes
 

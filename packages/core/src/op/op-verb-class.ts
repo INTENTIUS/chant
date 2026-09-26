@@ -51,6 +51,7 @@ const READ_ONLY_ACTIVITY_FNS: ReadonlySet<string> = new Set([
   "spriteServiceGet",
   "spriteServiceList",
   "spriteServiceLogs",
+  "spriteServicesObserve",
 ]);
 
 /** Activity function names that always delete/destroy, regardless of args. */
