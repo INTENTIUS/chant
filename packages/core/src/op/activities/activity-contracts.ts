@@ -314,3 +314,44 @@ export const decideContract = activityContract(
   }),
   { entities: ["point"] },
 );
+
+/**
+ * The rollback activities for a source release (#2800, ./source-rollback.ts).
+ * A rollback Op reads `plan.out.digest` into its gate, `plan.out.to` and the
+ * archive fields into the step that restores the Machine, and
+ * `plan.out.file` into its record step.
+ */
+export const releaseRollbackPlanContract = activityContract(
+  "releaseRollbackPlan",
+  z.strictObject({
+    component: z.string(),
+    env: z.string(),
+    to: z.string().optional(),
+    path: z.string().optional(),
+    dir: z.string().optional(),
+    cwd: z.string().optional(),
+  }),
+  z.object({
+    digest: z.string(),
+    file: z.string(),
+    to: z.string(),
+    from: z.string(),
+    gitSha: z.string(),
+    archive: z.string(),
+    archiveDigest: z.string(),
+    dir: z.string(),
+  }),
+);
+
+export const releaseRollbackRecordContract = activityContract(
+  "releaseRollbackRecord",
+  z.strictObject({
+    plan: z.string(),
+    digest: z.string().optional(),
+    approval: z.strictObject({ op: z.string(), gate: z.string() }).optional(),
+    actor: z.string().optional(),
+    runId: z.string().optional(),
+    cwd: z.string().optional(),
+  }),
+  z.object({ recorded: z.boolean(), digest: z.string(), env: z.string(), component: z.string(), approver: z.string().nullable() }),
+);

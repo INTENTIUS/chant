@@ -51,6 +51,7 @@ import type {
   FlyMachineRestoreArgs,
 } from "./activities/machine-release";
 import type { FlyReleaseArgs } from "./activities/fly-release-step";
+import type { FlyRollbackArgs } from "./activities/fly-rollback-step";
 
 type StepOpts = { profile?: ActivityStep["profile"] };
 
@@ -175,3 +176,11 @@ export const flyMachineRestore = spriteStep<FlyMachineRestoreArgs>("flyMachineRe
  * profile.
  */
 export const flyRelease = spriteStep<FlyReleaseArgs>("flyRelease", "longInfra");
+/**
+ * Put an earlier release back on a Fly Machine from an Op (#2800): the
+ * `fly-rollback` capability's restore of the Machine config recorded for `to`
+ * in `environment`, then its verify. With `source` the archive is checked
+ * against its digest, and the recorded config against the archive's tree,
+ * before the Machine changes. Defaults to the `longInfra` profile.
+ */
+export const flyRollback = spriteStep<FlyRollbackArgs>("flyRollback", "longInfra");

@@ -30,9 +30,9 @@
  * (`releasePlan`), gates on the plan's digest, ships the approved tree to the
  * Fly Machine with the fly lexicon's `flyRelease` (each migration once per
  * environment, under a receipt), and records it in the release ledger with
- * its plan (`releaseRecord`). Signing the archive (#2515) and the rollback Op
- * (#2800) have no chant home yet: the rollback Op is deleted, and the plan
- * says so.
+ * its plan (`releaseRecord`). Signing the archive (#2515) has no chant home
+ * yet. chud's rollback Op is deleted here, and the migration planned after
+ * this one, `chud-lexicon-exit-rollback` (#2800), writes chant's in its place.
  *
  * Files are matched by what they hold, not by the template version the scope
  * is pinned at, so a repo from any chud template commit or the studio kit's
@@ -70,7 +70,7 @@ const ROLLBACK_ISSUE = "INTENTIUS/chant#2800";
 /** Where each chud-only file of the delivery project went, relative to the delivery member. */
 const DELETED: Array<{ path: string; why: string; notMoved?: NotMoved }> = [
   { path: "ops/dispatch.op.ts", why: "the dispatch Op is the kit's runtime (ws-057)", notMoved: { what: "the dispatch Op (ops/dispatch.op.ts) and `chud factory run`", where: `${KIT}: the runner and its dispatch Op (arugula-salad/studio#47); the dispatcher is a Steward (ws-057), and work leases are chant's (INTENTIUS/chant#2762)` } },
-  { path: "ops/rollback.op.ts", why: "chud's site rollback has no chant home yet", notMoved: { what: "the rollback Op (ops/rollback.op.ts)", where: `${ROLLBACK_ISSUE}: \`chant components rollback\` over a release the release Op shipped` } },
+  { path: "ops/rollback.op.ts", why: "chud's site rollback runs on the chud packages", notMoved: { what: "chud's rollback Op (ops/rollback.op.ts)", where: `chant's rollback Op, which the migration chud-lexicon-exit-rollback writes in its place (${ROLLBACK_ISSUE})` } },
   { path: "ops/upgrade.op.ts", why: "replaced by chant workspace upgrade" },
   { path: "ops/upgrade.mjs", why: "replaced by chant workspace upgrade" },
   { path: "ops/site.mjs", why: "npm run check runs the app's tests itself", notMoved: { what: "the approved contracts' checks in `npm run check` and the release's Check phase, and the evidence they record", where: `${KIT}: the development model's checks and evidence records` } },

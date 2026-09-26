@@ -1,5 +1,5 @@
 export { Op, phase, activity, gate, effect, build, kubectlApply, helmInstall, helmInstallPinned, waitForStack, waitForReady,
-         gitlabPipeline, lifecycleSnapshot, shell, sourceArchive, releasePlan, releaseRecord, decide, ensureSecret, teardown, envTeardown, k3dUp, k3dDown,
+         gitlabPipeline, lifecycleSnapshot, shell, sourceArchive, releasePlan, releaseRecord, releaseRollbackPlan, releaseRollbackRecord, decide, ensureSecret, teardown, envTeardown, k3dUp, k3dDown,
          k3sInstall, k3sUninstall, flociUp, flociDown,
          flociAzUp, flociAzDown, flociGcpUp, flociGcpDown, httpCheck,
          azGroupEnsure, azGroupDelete, azApply, azDelete, awsApply, awsDelete, gcpApply, gcpDelete, policyGate,

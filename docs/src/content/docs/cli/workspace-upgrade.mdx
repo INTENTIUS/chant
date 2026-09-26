@@ -82,6 +82,9 @@ Each one lists every file it writes or deletes and why, what it does not move an
 | Id | What it moves |
 |---|---|
 | `chud-lexicon-exit` | A repo made from chud's template, or the studio kit's copy of it, off `@intentius/chant-lexicon-chud` and `@intentius/chud-runtime` ([#2737](https://github.com/INTENTIUS/chant/issues/2737), [ws-056](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-056-chud-lexicon-home.md)) |
+| `chud-lexicon-exit-rollback` | Adds the rollback Op to a repo `chud-lexicon-exit` migrated, so the Fly site can go back to its previous source release ([#2800](https://github.com/INTENTIUS/chant/issues/2800)) |
+
+The migrations run in the order of this table, and each one plans from the tree the ones before it left, so a repo migrated now gets both in one upgrade. A repo migrated before `chud-lexicon-exit-rollback` existed already has `chud-lexicon-exit` in its lock, and its next upgrade plans only the rollback migration, which the dry run lists.
 
 `chud-lexicon-exit` finds the `chant` member whose `package.json` depends on either package, usually `delivery/`, and makes these changes:
 
@@ -102,7 +105,16 @@ The runtime half of chud's template is the studio kit's ([arugula-salad/studio](
 | `.chant/rules/contract-sizing.ts` | the kit, which sizes work items for `slice-tier` |
 | `chud dev`, `chud design` | hud on the box |
 
-Two of chud's release steps have no chant home yet, and the plan lists them as not moved: signing the archive and checking the signature before the Machine runs it ([#2515](https://github.com/INTENTIUS/chant/issues/2515)), and the rollback Op ([#2800](https://github.com/INTENTIUS/chant/issues/2800)).
+One of chud's release steps has no chant home yet, and the plan lists it as not moved: signing the archive and checking the signature before the Machine runs it ([#2515](https://github.com/INTENTIUS/chant/issues/2515)). chud's rollback Op is deleted too, and `chud-lexicon-exit-rollback` writes chant's in its place.
+
+`chud-lexicon-exit-rollback` writes `ops/rollback.op.ts` beside the release Op and adds a `rollback` script (`chant run rollback`). The release Op's comment is changed to point at the new Op. The migration plans only where the release Op is the one `chud-lexicon-exit` wrote, and a different file already at `ops/rollback.op.ts` is a conflict. The rollback Op runs in four phases:
+
+- In the Plan phase, the Op looks through the `fly` ledger for whatever the site served before the release Op's most recent release. Records a rollback wrote are skipped in that search, so a second run lands on the same target. The chosen release's plan is read back from `chant/lifecycle`. Its commit's app member is then archived again, and the run stops unless the archive hashes to the digest that plan recorded. Both releases and the archive go into a rollback plan whose digest the gate will bind to. This phase also builds `dist/fly.json`.
+- An approval of the rollback plan's digest opens the `rollback` gate (`chant approve rollback rollback --plan <digest>`). Approvals count toward the same quorum as the ship gate's, and each is put to the same Cedar policy in `log-only` mode. A rollback has no ship-skip answer, so only people pass it.
+- Roll back runs the fly lexicon's `flyRollback` step. It reads the archive again before any call to Fly and refuses bytes that no longer hash to the planned digest. The Machine config that `flyRelease` recorded for that release must carry exactly the archive's files under `/srv/app`. That config then goes back on the Machine with its files and start command, and the Machine must come up started with that release. A release with no recorded config is refused by name. Migrations are not undone.
+- Record appends the restored release to the `fly` ledger. Its `restores` field names that release, and the record carries the actor who ran the rollback and the approver.
+
+The rollback lives in an Op rather than in `chant components rollback` because the release is an Op too. The app component publishes nothing, and moving the rollback into the component would split publish and rollback between two homes, which [Execution Backends](/chant/components/backends-reference/) warns against.
 
 A file the migration replaces or deletes is replaced or deleted even when the project edited it, since it cannot build without the chud packages. The plan marks it edited, and the edit stays in git history. A file it only edits, such as `chant.config.ts`, keeps the project's edits. It is a conflict when the text the migration edits is gone. So is any other file that imports the chud packages, and a point in `points.yaml` whose inputs have no known read-contract output.
 

@@ -56,7 +56,7 @@ import {
   type ManualStep,
 } from "./lineage-lock";
 import { mergeFile } from "./lineage-merge";
-import { applyChantMigration, planChantMigrations, reportPlan, type ChantMigrationReport } from "./chant-migrations";
+import { reportPlan, runChantMigrations, type ChantMigrationReport } from "./chant-migrations";
 import { readDeclaration, readerVersion, WorkspaceReadError } from "./declaration";
 import { assertCodeAllowed, planMigrations, runMigration, splitMigrations, type LoadedMigration } from "./lineage-migrations";
 import { applyUpstream, type UpdateResult } from "./lineage-update";
@@ -596,13 +596,9 @@ export async function stageUpgrade(options: UpgradeOptions): Promise<StagedUpgra
 
     // chant's own migrations (#2737): planned from what the scope holds, and
     // applied only when the plan has no conflict. A conflict fails the checks.
-    const chantPlans = lineage.kind === "template" ? planChantMigrations({ dir: scopeDir, lineage: staged, chantVersion: readerVersion() }) : [];
-    const chantMigrations: ChantMigrationReport[] = [];
-    for (const p of chantPlans) {
-      const ok = p.conflicts.length === 0;
-      if (ok) applyChantMigration(p, scopeDir, staged);
-      chantMigrations.push(reportPlan(p, ok));
-    }
+    // Each is planned from the tree the ones before it left.
+    const chantRuns = lineage.kind === "template" ? runChantMigrations({ dir: scopeDir, lineage: staged, chantVersion: readerVersion() }) : [];
+    const chantMigrations: ChantMigrationReport[] = chantRuns.map((r) => reportPlan(r.plan, r.applied));
 
     // 4. Merge per file.
     const result = applyUpstream(scopeDir, staged, upstream.files, { base, merge: mergeFile });

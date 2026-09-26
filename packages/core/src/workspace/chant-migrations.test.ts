@@ -8,7 +8,8 @@
  *
  * The last test builds, lints and runs the migrated delivery project with
  * this checkout's chant: to the ship gate, then, once the plan is approved,
- * through Ship to the fly lexicon's in-memory Machines API and Record (#2782).
+ * through Ship to the fly lexicon's in-memory Machines API and Record (#2782);
+ * then a second release, and the rollback Op back to the first (#2800).
  */
 
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
@@ -23,6 +24,7 @@ import type { GateLedgerPort } from "../op/gate";
 import type { GateResolutionRecord, PendingGateRecord } from "../lifecycle/gate-ledger";
 import { WORKSPACE_UPGRADE_GATE_OP } from "../op/gate-name";
 import { CHUD_LEXICON_EXIT, convertPoints } from "./chant-migrations/chud-lexicon-exit";
+import { CHUD_LEXICON_EXIT_ROLLBACK } from "./chant-migrations/chud-lexicon-exit-rollback";
 import { readerVersion } from "./declaration";
 import { runChecks } from "./lineage-check";
 import { initFromCommand } from "./lineage-init";
@@ -143,7 +145,10 @@ describe.each(["dir", "git"] as const)("chud-lexicon-exit, from a %s source", (f
     expect(out).toContain("write: decisions/points.json");
     expect(out).toMatch(/not moved: the dispatch Op .* -> the studio kit \(arugula-salad\/studio, template\/\)/);
     expect(out).toMatch(/not moved: signing the release archive.* -> INTENTIUS\/chant#2515/);
-    expect(out).toMatch(/not moved: the rollback Op \(ops\/rollback\.op\.ts\) -> INTENTIUS\/chant#2800/);
+    expect(out).toMatch(/not moved: chud's rollback Op \(ops\/rollback\.op\.ts\) -> chant's rollback Op, which the migration chud-lexicon-exit-rollback writes/);
+    // The rollback Op is planned after the exit, from the tree the exit left (#2800).
+    expect(out).toContain(`chant migration: ${CHUD_LEXICON_EXIT_ROLLBACK} (applied)`);
+    expect(out).toContain("write: delivery/ops/rollback.op.ts");
     expect(out).not.toContain("not moved: the release's steps after the ship gate");
     // #2805: the plan lists README.md, CLAUDE.md and design/CLAUDE.md as
     // changed, not silently left describing what the migration just deleted.
@@ -159,7 +164,7 @@ describe.each(["dir", "git"] as const)("chud-lexicon-exit, from a %s source", (f
 
     const imports = sources(proj).filter((f) => CHUD_IMPORT.test(read(proj, f)));
     expect(imports).toEqual([]);
-    for (const gone of ["delivery/ops/chant-lexicon-chud", "delivery/ops/dispatch.op.ts", "delivery/ops/rollback.op.ts", "delivery/ops/upgrade.op.ts", "delivery/deploy/site.ts", "delivery/.chant", "delivery/.npmrc", "delivery/decisions/points.yaml"]) {
+    for (const gone of ["delivery/ops/chant-lexicon-chud", "delivery/ops/dispatch.op.ts", "delivery/ops/upgrade.op.ts", "delivery/deploy/site.ts", "delivery/.chant", "delivery/.npmrc", "delivery/decisions/points.yaml"]) {
       expect(existsSync(join(proj, gone)), gone).toBe(false);
     }
 
@@ -175,6 +180,15 @@ describe.each(["dir", "git"] as const)("chud-lexicon-exit, from a %s source", (f
     expect(pkg.scripts["build:fly"]).toBe("chant build deploy --lexicon fly -o dist/fly.json");
     const release = read(proj, "delivery/ops/release.op.ts");
     for (const step of ["sourceArchive(", "releasePlan(", "plan: plan.out.digest", "flyRelease(", "releaseRecord("]) expect(release).toContain(step);
+    expect(release).not.toContain("#2800");
+    expect(release).toContain("ops/rollback.op.ts rolls the site back to the\n * previous release.");
+    expect(pkg.scripts.rollback).toBe("chant run rollback");
+    const rollback = read(proj, "delivery/ops/rollback.op.ts");
+    for (const step of ["releaseRollbackPlan(", 'gate("rollback"', "plan: plan.out.digest", "flyRollback(", "to: plan.out.to", "releaseRollbackRecord("]) expect(rollback).toContain(step);
+    expect(CHUD_IMPORT.test(rollback)).toBe(false);
+    expect(read(proj, "README.md")).toContain("npm run rollback     # chant run rollback");
+    expect(read(proj, "README.md")).toContain("and the rollback Op,");
+    expect(read(proj, "CLAUDE.md")).toContain("`ops/` (the release and rollback Ops),");
     expect(pkg.scripts.check).toBe("npm --prefix ../app test --silent");
     expect(pkg.scripts).not.toHaveProperty("dispatch");
     expect(Object.values(pkg.scripts).join("\n")).not.toMatch(/--on chud|\bchud (dev|design)\b/);
@@ -214,7 +228,7 @@ describe.each(["dir", "git"] as const)("chud-lexicon-exit, from a %s source", (f
     expect(read(proj, "design/CLAUDE.md")).toMatch(/chud-runtime\/design\/`\. That package is\ngone/);
 
     const lineage = readLock(proj)!.scopes["."];
-    expect(lineage.migrations).toContain(CHUD_LEXICON_EXIT);
+    expect(lineage.migrations).toEqual([CHUD_LEXICON_EXIT, CHUD_LEXICON_EXIT_ROLLBACK]);
     expect(lineage.manualSteps).toEqual([]);
 
     // chant workspace check is clean: the lock, the declaration and the points file.
@@ -246,6 +260,73 @@ describe.each(["dir", "git"] as const)("chud-lexicon-exit, from a %s source", (f
       expect(fresh.chantMigrations).toEqual([]);
     } finally {
       fresh.dispose();
+    }
+  });
+});
+
+describe("chud-lexicon-exit-rollback, over a repo chud-lexicon-exit migrated before it existed", () => {
+  beforeEach(async () => {
+    await makeProject("dir");
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    // What 0.92.0's upgrade left: the exit applied, no rollback Op, and the lock naming the exit alone.
+    await upgrade();
+    const released = read(proj, "delivery/ops/release.op.ts").replace(
+      "). ops/rollback.op.ts rolls the site back to the\n * previous release. ",
+      "), and rolling the site back to the previous\n * release (INTENTIUS/chant#2800). ",
+    );
+    put(proj, "delivery/ops/release.op.ts", released);
+    rmSync(join(proj, "delivery/ops/rollback.op.ts"));
+    put(proj, "README.md", read(proj, "README.md").replace(" and the rollback Op,", ",").replace(/npm run rollback {5}# chant run rollback[^\n]*\n/, ""));
+    put(proj, "CLAUDE.md", read(proj, "CLAUDE.md").replace("`ops/` (the release and rollback Ops),", "`ops/` (the release Op),"));
+    const pkg = JSON.parse(read(proj, "delivery/package.json")) as { scripts: Record<string, string> };
+    delete pkg.scripts.rollback;
+    put(proj, "delivery/package.json", JSON.stringify(pkg, null, 2) + "\n");
+    const lock = JSON.parse(read(proj, ".chant/workspace.lock.json")) as { scopes: Record<string, { migrations: string[] }> };
+    lock.scopes["."].migrations = [CHUD_LEXICON_EXIT];
+    put(proj, ".chant/workspace.lock.json", JSON.stringify(lock, null, 2) + "\n");
+    commit("as 0.92.0 migrated it");
+  });
+
+  test("the dry run lists it; the upgrade writes the rollback Op and the lock records it; a second plans nothing", async () => {
+    const lines: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((s: string) => void lines.push(s));
+    const dry = await upgradeCommand({ root: proj, to: target(), dryRun: true, runChant: passing });
+    expect(dry.outcome).toBe("dry-run");
+    const out = lines.join("\n");
+    expect(out).toContain(`chant migration: ${CHUD_LEXICON_EXIT_ROLLBACK} (applied)`);
+    expect(out).not.toContain(`chant migration: ${CHUD_LEXICON_EXIT} `);
+    expect(out).toContain("write: delivery/ops/rollback.op.ts");
+    expect(out).toContain("write: delivery/ops/release.op.ts");
+    expect(out).toContain("write: delivery/package.json");
+    expect(out).toContain("write: README.md");
+    expect(out).toContain("write: CLAUDE.md");
+    expect(existsSync(join(proj, "delivery/ops/rollback.op.ts"))).toBe(false);
+
+    await upgrade();
+    expect(read(proj, "delivery/ops/rollback.op.ts")).toContain("flyRollback(");
+    expect(read(proj, "delivery/ops/release.op.ts")).not.toContain("#2800");
+    expect((JSON.parse(read(proj, "delivery/package.json")) as { scripts: Record<string, string> }).scripts.rollback).toBe("chant run rollback");
+    expect(readLock(proj)!.scopes["."].migrations).toEqual([CHUD_LEXICON_EXIT, CHUD_LEXICON_EXIT_ROLLBACK]);
+
+    const again = await stageUpgrade({ root: proj, to: target(), runChant: passing });
+    try {
+      expect(again.chantMigrations).toEqual([]);
+      expect(again.changed).toBe(false);
+    } finally {
+      again.dispose();
+    }
+  });
+
+  test("a rollback Op of the project's own is a conflict, and nothing is applied", async () => {
+    put(proj, "delivery/ops/rollback.op.ts", "export default {};\n");
+    commit("our own rollback");
+    const staged = await stageUpgrade({ root: proj, to: target(), runChant: passing });
+    try {
+      const [m] = staged.chantMigrations;
+      expect(m).toMatchObject({ id: CHUD_LEXICON_EXIT_ROLLBACK, applied: false, conflicts: [{ path: "delivery/ops/rollback.op.ts" }] });
+    } finally {
+      staged.dispose();
     }
   });
 });
@@ -359,7 +440,7 @@ describe("the migrated delivery project, with this checkout's chant", () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
   });
 
-  test("builds, lints, rebuilds its CI, stops at the ship gate, and once its plan is approved ships it to Fly and records it, once", { timeout: 1_200_000 }, async () => {
+  test("builds, lints, rebuilds its CI, stops at the ship gate, ships each approved plan to Fly and records it once, and rolls back to the previous release", { timeout: 1_800_000 }, async () => {
     await upgrade();
     const delivery = join(proj, "delivery");
     symlinkSync(join(repoRoot, "node_modules"), join(delivery, "node_modules"));
@@ -429,6 +510,57 @@ describe("the migrated delivery project, with this checkout's chant", () => {
       expect(machine.config.metadata?.["chant-release-digest"]).toBe(plan.digest);
       expect(fly.fake.execs).toHaveLength(1);
       expect((await readReleaseLedger("fly", { cwd: delivery })).records).toHaveLength(1);
+
+      // Release B: that plan approved and shipped.
+      const served = () => [...fly.fake.machines.values()].flat()[0];
+      const servedFile = (path: string) =>
+        Buffer.from((served().config.files as Array<{ guest_path: string; raw_value: string }>).find((f) => f.guest_path === path)!.raw_value, "base64").toString();
+      const serverA = read(proj, "app/server.js").replace("// a change\n", "");
+      const approveB = await chant(delivery, env, "approve", "release", "ship", "--plan", nextPlan.digest, "--approver", "alice");
+      expect(approveB.status, approveB.out).toBe(0);
+      const shippedB = await chant(delivery, env, "run", "release");
+      expect(shippedB.status, shippedB.out).toBe(0);
+      expect(served().config.metadata?.["chant-release-digest"]).toBe(nextPlan.digest);
+      expect(servedFile("/srv/app/server.js")).toBe(read(proj, "app/server.js"));
+      expect((await readReleaseLedger("fly", { cwd: delivery })).records).toHaveLength(2);
+
+      // Roll back (#2800): the rollback Op plans release A again, its tree archived again from its commit, and stops at its gate.
+      const plansBefore = new Set(readdirSync(join(delivery, "dist/plans")));
+      const gatedBack = await chant(delivery, env, "run", "rollback");
+      expect(gatedBack.status, gatedBack.out).toBe(3);
+      expect(gatedBack.out).toContain(`gated on "rollback"`);
+      const rollbackPlans = readdirSync(join(delivery, "dist/plans")).filter((f) => !plansBefore.has(f));
+      expect(rollbackPlans).toHaveLength(1);
+      const rollbackPlan = JSON.parse(read(delivery, `dist/plans/${rollbackPlans[0]}`)) as { digest: string; gitSha: string; rollback: { to: string; from: string }; artifact: { digest: string } };
+      expect(rollbackPlan).toMatchObject({ gitSha: plan.gitSha, rollback: { to: plan.digest, from: nextPlan.digest }, artifact: { digest: plan.artifact.digest } });
+      expect(served().config.metadata?.["chant-release-digest"]).toBe(nextPlan.digest);
+
+      const approveBack = await chant(delivery, env, "approve", "rollback", "rollback", "--plan", rollbackPlan.digest, "--approver", "carol");
+      expect(approveBack.status, approveBack.out).toBe(0);
+      const back = await chant(delivery, env, "run", "rollback");
+      expect(back.status, back.out).toBe(0);
+      // The Machine serves A: its digest, its commit and its files. Migrations are not run again.
+      expect(served().config.metadata?.["chant-release-digest"]).toBe(plan.digest);
+      expect(served().config.metadata?.["chant-release-git-sha"]).toBe(plan.gitSha);
+      expect(servedFile("/srv/app/server.js")).toBe(serverA);
+      expect(fly.fake.execs).toHaveLength(1);
+      const afterBack = (await readReleaseLedger("fly", { cwd: delivery })).records;
+      expect(afterBack).toHaveLength(3);
+      expect(afterBack[2]).toMatchObject({
+        component: "app",
+        env: "fly",
+        digest: plan.digest,
+        gitSha: plan.gitSha,
+        actor: "releaser",
+        approver: "carol",
+        restores: { env: "fly", runId: afterBack[0].runId, timestamp: afterBack[0].timestamp },
+      });
+
+      // Again: the same rollback plan, still approved; the Machine is left as it is and nothing more is recorded.
+      const backAgain = await chant(delivery, env, "run", "rollback");
+      expect(backAgain.status, backAgain.out).toBe(0);
+      expect(served().config.metadata?.["chant-release-digest"]).toBe(plan.digest);
+      expect((await readReleaseLedger("fly", { cwd: delivery })).records).toHaveLength(3);
     } finally {
       await fly.close();
     }
