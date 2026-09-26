@@ -167,7 +167,7 @@ The [reference workspace](https://github.com/INTENTIUS/chant/tree/main/reference
 | `slice-tier` | a `choice` of builder tier for a work item ([ws-057](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-057-factory-fountain-builds.md)) | the work item's size and whether it fits each tier | table, model, quorum |
 | `ship-skip` | a `noul`: may a release pass the ship gate without a person | what the release would change | table, quorum |
 
-The triage table leaves a finding a work item already addresses. It makes `intent-decision-unimplemented` a work item, and it sends `intent-region-unconstrained`, `intent-decision-contested` and `intent-decision-superseded-live` to a decision. Any other finding goes to the model, then to people. The `needs-a-decision` table says no when nothing changed in the window, or when every commit in it is a decision's own work.
+A finding that a work item already addresses is left by the triage table. `intent-decision-unimplemented` becomes a work item, while `intent-region-unconstrained`, `intent-decision-contested` and `intent-decision-superseded-live` go to a decision. Any other finding goes to the model, then to people. For `needs-a-decision`, the table says no when nothing changed in the window, or when every commit in it is a decision's own work.
 
 `ship-skip` came from chud's `points.yaml`. Its table says no to every release until someone adds a row above the last one, and its quorum is the approver count a ship gate reads, as chud's release Op read it. It has no model decider, because a model's answer may route or report and never authorizes a release. chud's `contracts_changed` became `release.work_changed`, since chud's contracts are work items here.
 
