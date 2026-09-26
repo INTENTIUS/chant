@@ -186,6 +186,9 @@ describe.each(["dir", "git"] as const)("chud-lexicon-exit, from a %s source", (f
     const rollback = read(proj, "delivery/ops/rollback.op.ts");
     for (const step of ["releaseRollbackPlan(", 'gate("rollback"', "plan: plan.out.digest", "flyRollback(", "to: plan.out.to", "releaseRollbackRecord("]) expect(rollback).toContain(step);
     expect(CHUD_IMPORT.test(rollback)).toBe(false);
+    expect(read(proj, "README.md")).toContain("npm run rollback     # chant run rollback");
+    expect(read(proj, "README.md")).toContain("and the rollback Op,");
+    expect(read(proj, "CLAUDE.md")).toContain("`ops/` (the release and rollback Ops),");
     expect(pkg.scripts.check).toBe("npm --prefix ../app test --silent");
     expect(pkg.scripts).not.toHaveProperty("dispatch");
     expect(Object.values(pkg.scripts).join("\n")).not.toMatch(/--on chud|\bchud (dev|design)\b/);
@@ -274,6 +277,8 @@ describe("chud-lexicon-exit-rollback, over a repo chud-lexicon-exit migrated bef
     );
     put(proj, "delivery/ops/release.op.ts", released);
     rmSync(join(proj, "delivery/ops/rollback.op.ts"));
+    put(proj, "README.md", read(proj, "README.md").replace(" and the rollback Op,", ",").replace(/npm run rollback {5}# chant run rollback[^\n]*\n/, ""));
+    put(proj, "CLAUDE.md", read(proj, "CLAUDE.md").replace("`ops/` (the release and rollback Ops),", "`ops/` (the release Op),"));
     const pkg = JSON.parse(read(proj, "delivery/package.json")) as { scripts: Record<string, string> };
     delete pkg.scripts.rollback;
     put(proj, "delivery/package.json", JSON.stringify(pkg, null, 2) + "\n");
@@ -294,6 +299,8 @@ describe("chud-lexicon-exit-rollback, over a repo chud-lexicon-exit migrated bef
     expect(out).toContain("write: delivery/ops/rollback.op.ts");
     expect(out).toContain("write: delivery/ops/release.op.ts");
     expect(out).toContain("write: delivery/package.json");
+    expect(out).toContain("write: README.md");
+    expect(out).toContain("write: CLAUDE.md");
     expect(existsSync(join(proj, "delivery/ops/rollback.op.ts"))).toBe(false);
 
     await upgrade();

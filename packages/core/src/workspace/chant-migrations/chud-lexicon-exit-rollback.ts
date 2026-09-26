@@ -121,6 +121,21 @@ export default Op({
 const RELEASE_SAID = /\), and rolling the site back to the previous\n \* release \(INTENTIUS\/chant#2800\)\. /;
 const RELEASE_SAYS = "). ops/rollback.op.ts rolls the site back to the\n * previous release. ";
 
+/** The root docs' lines `chud-lexicon-exit` wrote without a rollback (#2805), and what they say once it is there. Each is left alone when not found. */
+const DOC_EDITS: Array<{ path: string; find: string; replace: string }> = [
+  {
+    path: "README.md",
+    find: "the release Op (Check, the ship-skip decision point, then the ship gate), the app component's supply chain,",
+    replace: "the release Op (Check, the ship-skip decision point, then the ship gate) and the rollback Op, the app component's supply chain,",
+  },
+  {
+    path: "README.md",
+    find: "npm run release      # ship it\n",
+    replace: "npm run release      # ship it\nnpm run rollback     # chant run rollback: the previous release back, through its gate\n",
+  },
+  { path: "CLAUDE.md", find: "`ops/` (the release Op),", replace: "`ops/` (the release and rollback Ops)," },
+];
+
 interface Declaration {
   members?: Array<{ name?: string; dir?: string; kind?: string }>;
 }
@@ -185,6 +200,17 @@ function planRollback(ctx: ChantMigrationContext): ChantMigrationPlan | null {
       } catch {
         conflicts.push({ path: pkgPath, reason: "is not JSON" });
       }
+    }
+  }
+  if (conflicts.length === 0) {
+    for (const path of [...new Set(DOC_EDITS.map((e) => e.path))]) {
+      const text = readText(dir, path);
+      if (text === undefined) continue;
+      let next = text;
+      for (const e of DOC_EDITS.filter((x) => x.path === path)) {
+        if (next.includes(e.find) && !next.includes(e.replace)) next = next.replace(e.find, e.replace);
+      }
+      if (next !== text) changes.push({ path, action: "write", why: "names the rollback Op", data: Buffer.from(next) });
     }
   }
   return { id: CHUD_LEXICON_EXIT_ROLLBACK, description: DESCRIPTION, changes, notMoved: [], conflicts };
