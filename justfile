@@ -226,7 +226,7 @@ testing-harness-e2e:
 # pinned chart, render twice with closed inputs, assert every verdict against
 # expected.txt (on-demand here; CI runs it via helm-survey.yml — needs helm 4 + network)
 helm-survey:
-    CHANT_HELM_SURVEY=1 npx vitest run lexicons/helm/test/survey/survey.test.ts
+    CHANT_HELM_SURVEY=1 CHANT_UNIT_TEST_BUDGET_MS=0 npx vitest run lexicons/helm/test/survey/survey.test.ts
 
 # Prove the adopt-alb-services GENERATED pipeline deploys multi-service across isolated jobs, with cross-stack outputs threaded as artifacts (Floci in Docker; on-demand, needs Docker + aws CLI)
 adopt-alb-services-e2e:

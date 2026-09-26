@@ -523,7 +523,9 @@ describe("runOp: --gated-exit (#2243)", () => {
 
   test("a run that fails for any other reason is still red under the flag", async () => {
     discoverOpsMock.mockResolvedValue({
-      ops: new Map([localOp("broken", [{ kind: "activity", fn: "shellCmd", args: { cmd: "exit 7" } }])]),
+      // atMostOnce: one attempt. The default profile retries twice with 5s and
+      // 10s backoff, which put this test at 15s for waits it does not test (#2817).
+      ops: new Map([localOp("broken", [{ kind: "activity", fn: "shellCmd", profile: "atMostOnce", args: { cmd: "exit 7" } }])]),
       errors: [],
     });
     const file = summaryFile();

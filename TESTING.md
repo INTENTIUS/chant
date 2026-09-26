@@ -345,16 +345,37 @@ The test suite is designed to run in continuous integration:
 - Deterministic results with automatic cleanup
 - Exit code 0 on success, non-zero on failure
 
-Example CI configuration:
+### Unit and end-to-end tests
 
-```yaml
-# GitHub Actions example
-- name: Run tests
-  run: npx vitest run
+`vitest.config.ts` defines two projects (#2817):
 
-- name: Generate coverage
-  run: npx vitest run --coverage --coverage-reporter=lcov
+- `unit`: every included `*.test.ts` except `*.e2e.test.ts`. Each test has a 15 second budget, set in `test/unit-test-budget.setup.ts`. A test that runs longer fails with a message naming the budget, whether or not it passes otherwise.
+- `e2e`: every `*.e2e.test.ts` under `packages/`, `lexicons/` and `test/`. These spawn the CLI, boot containers or release whole projects. They have no budget beyond their own timeouts.
+
+```bash
+npx vitest run                    # both projects
+npx vitest run --project unit     # the unit tests only
+npx vitest run --project e2e      # the end-to-end tests only
+CHANT_UNIT_TEST_BUDGET_MS=0 npx vitest run path/to/file.test.ts   # no budget, for a debugger
 ```
+
+A unit test over the budget either gets faster or moves out of the unit project. When only some tests in a file are slow, split them into a sibling `<name>.e2e.test.ts`. When the whole file is end to end, rename it.
+
+### The `chant` workflow
+
+`.github/workflows/chant.yml` runs on every pull request and on every push to main:
+
+| Job | What it runs |
+|---|---|
+| `check` | typechecks, the lexicon completeness contract, lint and build guards |
+| `test-shard (1/4)` to `(4/4)` | `npx vitest run --project unit --shard=N/4` |
+| `test-e2e` | `npx vitest run --project e2e`, in parallel with the shards |
+| `test` | passes only when all four shards and `test-e2e` passed |
+| `validate` | every lexicon's prepack with the release gate armed |
+
+Branch protection requires `check`, `test` and `validate`. The `test` job is how the shards and `test-e2e` become required.
+
+Every job that needs lexicon artifacts builds them with `scripts/ci-lexicon-artifacts.sh`. It runs each lexicon's `generate` one at a time and the rest of its prepack (bundle, validate, build) with one lexicon per CPU. The shards and `test-e2e` keep vitest's recorded durations between runs, so a long file starts first, and each job writes its duration to the run summary.
 
 ## Smoke Tests (Docker)
 
