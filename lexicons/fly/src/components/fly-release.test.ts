@@ -105,6 +105,29 @@ describe("fly-release", () => {
     expect(out.gitSha).toBe("0000000000000000000000000000000000000000");
   });
 
+  test("the commit goes into the Machine's APP_REVISION env var, as chud's fly-site.mjs set it (#2834)", async () => {
+    const s = setup();
+    await s.release.run(CTX, input("sha256:aaaaaaaaaaaa"));
+    const m = s.fake.machine("shop", "web")!;
+    expect((m.config.env as Record<string, string>).APP_REVISION).toBe("aaaaaaa");
+  });
+
+  test("a caller's own env.APP_REVISION overrides the commit (#2834)", async () => {
+    const s = setup();
+    await s.release.run(CTX, input("sha256:aaaaaaaaaaaa", { env: { APP_REVISION: "custom" } }));
+    const m = s.fake.machine("shop", "web")!;
+    expect((m.config.env as Record<string, string>).APP_REVISION).toBe("custom");
+  });
+
+  test("a rollback restores the recorded APP_REVISION with the rest of the config (#2834)", async () => {
+    const s = setup();
+    await s.release.run(CTX, input("sha256:aaaaaaaaaaaa"));
+    await s.release.run(CTX, input("sha256:bbbbbbbbbbbb"));
+    await s.rollback.run(CTX, { plan: planPath, endpoint: ENDPOINT, wait: NO_WAIT, verify: { intervalMs: 1, timeoutMs: 20 } });
+    const m = s.fake.machine("shop", "web")!;
+    expect((m.config.env as Record<string, string>).APP_REVISION).toBe("aaaaaaa");
+  });
+
   test("each migration fires once per environment, then the Machine restarts", async () => {
     const s = setup();
     const migrations = [
