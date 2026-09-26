@@ -311,3 +311,54 @@ describe("an Op waiting on a decision point (#2749)", () => {
     expect((await readMemberStewards(root, "local", "2027-01-01T00:11:00Z")).stewards[0].waiting).toEqual([]);
   });
 });
+
+describe("a waiting run of an Op the steward does not list (studio#137)", () => {
+  test("status lists it under the steward its record names, and leaves out a run no steward of the member started", async () => {
+    // The steward lists one Op; its process starts `dispatch` itself, with CHANT_STEWARD set.
+    const tick = shipOp("factory-tick", "r-20", "0 0 1 1 *");
+    const steward = declareSteward({ name: "factory-steward", ops: [tick], capabilities: ["inference"] });
+    const dispatch = shipOp("factory-dispatch", "r-21");
+    const lonely = shipOp("factory-lonely", "r-22");
+    const stranger = shipOp("factory-stranger", "r-23");
+    mkdirSync(join(root, "ops"), { recursive: true });
+    writeFileSync(join(root, "chant.config.json"), "{}\n");
+    writeFileSync(join(root, "ops", "factory-steward.op.ts"), `export const steward = ${JSON.stringify(steward)};\n`);
+    writeFileSync(
+      join(root, "ops", "factory.op.ts"),
+      [dispatch, lonely, stranger].map((op, i) => `export const op${i} = { props: ${JSON.stringify(op)} };\n`).join(""),
+    );
+
+    // Each release its own subject, so no earlier answer to ship-now stands for it.
+    const log: string[] = [];
+    const acts = new Map<string, ActivityFn>([
+      ...shipActivities(log),
+      ["askShip", async (args) => (await askPointInRun({ cwd: root, point: "ship-now", inputs: { release: args.release }, subject: String(args.release), on })).answer],
+    ]);
+    process.env[STEWARD_ENV] = "factory-steward";
+    const run = await runOpLocally(dispatch, acts, PROFILES, undefined, { ledger: { cwd: root } });
+    process.env[STEWARD_ENV] = "not-a-steward-here";
+    await runOpLocally(stranger, acts, PROFILES, undefined, { ledger: { cwd: root } });
+    resetStewardTurn();
+    await runOpLocally(lonely, acts, PROFILES, undefined, { ledger: { cwd: root } });
+    expect(run.status).toBe("waiting");
+    const newest = (await readRunLedger("local", "factory-dispatch", { cwd: root })).records.at(-1)!;
+    expect(newest).toMatchObject({ status: "waiting", steward: "factory-steward", point: { id: run.point!.id } });
+    expect((await readRunLedger("local", "factory-lonely", { cwd: root })).records.at(-1)).toMatchObject({ status: "waiting" });
+    expect((await readRunLedger("local", "factory-stranger", { cwd: root })).records.at(-1)).toMatchObject({ status: "waiting", steward: "not-a-steward-here" });
+
+    const status = await readMemberStewards(root, "local", "2027-01-01T00:01:00Z");
+    expect(status.reasons).toEqual([]);
+    const entry = status.stewards.find((s) => s.name === "factory-steward")!;
+    const stewardShape = contract({ $schema: statusSchema.$schema, $id: "urn:test:status-steward-undeclared", $defs: statusSchema.$defs, $ref: "#/$defs/steward" });
+    stewardShape.expectValid(entry);
+    // `ops` stays the declared Ops; `waiting` also names the run of the Op the steward's process started.
+    expect(entry.ops.map((o) => o.name)).toEqual(["factory-tick"]);
+    expect(entry.waiting).toEqual([
+      { op: "factory-dispatch", run: newest.id, id: run.point!.id, point: "ship-now", state: "escalated", path: newest.point!.path, subject: "r-21", since: newest.point!.since },
+    ]);
+    // A run nobody's turn started, or another steward's, is no steward's wait here.
+    const listed = status.stewards.flatMap((s) => s.waiting.map((w) => w.op));
+    expect(listed).not.toContain("factory-lonely");
+    expect(listed).not.toContain("factory-stranger");
+  });
+});
