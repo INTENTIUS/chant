@@ -139,8 +139,15 @@ Releases go out through `just release`, which bumps every package in lockstep,
 commits, and pushes the tag the workflow actually listens for:
 
 ```bash
-just release patch    # or: minor / major
+just release patch             # or: minor / major
+just release minor --dry-run   # print the commit and version, change nothing
+just release patch <commit>    # release a named commit on main
 ```
+
+The recipe releases the newest commit on main whose `chant` run succeeded, not
+main's HEAD. It commits the version bump on top of that commit, tags it, and
+merges the tag back into main, so main ends up on the released version without
+any history being rewritten.
 
 To move a single lexicon without a full release:
 

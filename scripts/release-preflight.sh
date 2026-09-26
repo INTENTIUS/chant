@@ -1,30 +1,26 @@
 #!/usr/bin/env bash
-# Refuse to cut a release from a commit CI has not proven green (#1255).
+# Choose the commit a release tags, and refuse one CI has not proven green
+# (#1255, #2816).
 #
-# Both release recipes push the version-bump commit straight to main, which
-# bypasses branch protection:
+# A release used to tag main's HEAD and required HEAD's own `chant` run to
+# have succeeded. With merges every few minutes and a 15-minute run, HEAD is
+# rarely green, so a release chased main round after round. Now a release
+# tags the newest commit on main whose `chant` run succeeded (or the commit
+# you name), and the release recipes merge the bump back into main.
 #
-#   remote: Bypassed rule violations for refs/heads/main:
-#   remote: - 3 of 3 required status checks are expected.
+# Usage: release-preflight.sh [<commit>]
+#   No commit: the newest first-parent commit of origin/main whose latest
+#   `chant` push run concluded success.
+#   A commit: it must be on origin/main and its latest `chant` run must have
+#   concluded success.
 #
-# So the commit a release tag points at is one CI never ran, and nothing
-# verified the code being released was green either. `just release-lexicon`
-# will happily tag and publish from a red or unpushed main.
+# Prints the chosen full SHA on stdout. Everything else goes to stderr.
 #
-# Usage: release-preflight.sh [required-branch]
-#   With a branch argument, HEAD must be on it (the whole-repo release pushes
-#   `main` explicitly, so releasing from anywhere else is a mistake).
-#   Without one, any branch is allowed but must still be pushed and green.
-#
-# Emergency opt-out: CHANT_RELEASE_SKIP_PREFLIGHT=1
+# Emergency opt-out: CHANT_RELEASE_SKIP_PREFLIGHT=1 (releases the named
+# commit, or origin/main's HEAD, without checking CI).
 set -euo pipefail
 
-required_branch="${1:-}"
-
-if [ "${CHANT_RELEASE_SKIP_PREFLIGHT:-}" = "1" ]; then
-  echo "preflight: SKIPPED (CHANT_RELEASE_SKIP_PREFLIGHT=1) — releasing unverified"
-  exit 0
-fi
+wanted="${1:-}"
 
 fail() {
   echo "" >&2
@@ -34,27 +30,22 @@ fail() {
   exit 1
 }
 
-branch=$(git rev-parse --abbrev-ref HEAD)
+short() { git rev-parse --short "$1"; }
 
-if [ -n "$required_branch" ] && [ "$branch" != "$required_branch" ]; then
-  fail "on branch \"$branch\", but this recipe pushes \"$required_branch\"."
+git fetch --quiet origin main 2>/dev/null || fail "could not fetch origin/main."
+main=$(git rev-parse origin/main 2>/dev/null) || fail "origin/main does not exist."
+
+if [ -n "$wanted" ]; then
+  sha=$(git rev-parse --verify --quiet "$wanted^{commit}") || fail "\"$wanted\" is not a commit here."
+  # Anything off main would be merged into main by the release, unreviewed.
+  git merge-base --is-ancestor "$sha" "$main" || fail "$(short "$sha") is not on origin/main."
 fi
 
-# A dirty tree means the tag would not describe what you tested. Untracked
-# files are ignored — they are not part of the commit being released.
-if ! git diff --quiet || ! git diff --cached --quiet; then
-  echo "preflight: uncommitted changes —" >&2
-  git status --short --untracked-files=no >&2
-  fail "commit or stash them before releasing."
-fi
-
-git fetch --quiet origin "$branch" 2>/dev/null || fail "could not fetch origin/$branch."
-
-head=$(git rev-parse HEAD)
-remote=$(git rev-parse "origin/$branch" 2>/dev/null) || fail "origin/$branch does not exist."
-
-if [ "$head" != "$remote" ]; then
-  fail "HEAD ($(git rev-parse --short HEAD)) is not origin/$branch ($(git rev-parse --short "$remote")) — push or pull first."
+if [ "${CHANT_RELEASE_SKIP_PREFLIGHT:-}" = "1" ]; then
+  sha="${sha:-$main}"
+  echo "preflight: SKIPPED (CHANT_RELEASE_SKIP_PREFLIGHT=1) — releasing $(short "$sha") unverified" >&2
+  echo "$sha"
+  exit 0
 fi
 
 if ! command -v gh >/dev/null 2>&1; then
@@ -62,24 +53,51 @@ if ! command -v gh >/dev/null 2>&1; then
 fi
 
 # The `chant` workflow is the gate (build, lint, full suite, lexicon
-# contract). docs/docs-check are not release-blocking.
-run=$(gh run list --commit "$head" --workflow=chant.yml --limit 1 \
-        --json status,conclusion,url 2>/dev/null || echo "")
+# contract). docs/docs-check are not release-blocking. Newest run first, so
+# the first entry per headSha is that commit's latest verdict (a re-run
+# reuses its run).
+runs=$(gh run list --workflow=chant.yml --branch main --event push --limit 200 \
+         --json headSha,status,conclusion,url 2>/dev/null) \
+  || fail "gh run list failed, so CI status cannot be verified."
 
-if [ -z "$run" ] || [ "$run" = "[]" ]; then
-  fail "no chant CI run found for $(git rev-parse --short HEAD) — push it and let CI run."
+verdict() { # <sha> -> "status conclusion url", or empty
+  printf '%s' "$runs" | jq -r --arg s "$1" \
+    'map(select(.headSha == $s)) | first // empty | "\(.status) \(.conclusion // "" | if . == "" then "-" else . end) \(.url)"'
+}
+
+if [ -n "$wanted" ]; then
+  v=$(verdict "$sha")
+  [ -n "$v" ] || fail "no chant CI run found on main for $(short "$sha")."
+  read -r status conclusion url <<< "$v"
+  [ "$status" = "completed" ] || fail "chant CI is still $status for $(short "$sha") — wait for it. $url"
+  [ "$conclusion" = "success" ] || fail "chant CI concluded \"$conclusion\" for $(short "$sha"). $url"
+  echo "preflight: $(short "$sha") is on main and green ✓ $url" >&2
+  echo "$sha"
+  exit 0
 fi
 
-status=$(printf '%s' "$run" | jq -r '.[0].status')
-conclusion=$(printf '%s' "$run" | jq -r '.[0].conclusion // ""')
-url=$(printf '%s' "$run" | jq -r '.[0].url')
+# Walk main newest first. Only first-parent commits: they are what main
+# actually was, and the ones CI ran on push.
+skipped=0
+for c in $(git rev-list --first-parent --max-count 200 "$main"); do
+  v=$(verdict "$c")
+  if [ -z "$v" ]; then
+    echo "preflight: skip $(short "$c") — no chant run" >&2
+  else
+    read -r status conclusion url <<< "$v"
+    if [ "$status" = "completed" ] && [ "$conclusion" = "success" ]; then
+      [ "$skipped" -gt 0 ] && echo "preflight: $skipped newer commit(s) on main are not green; releasing an older one" >&2
+      echo "preflight: $(short "$c") is the newest green commit on main ✓ $url" >&2
+      echo "$c"
+      exit 0
+    fi
+    if [ "$status" = "completed" ]; then
+      echo "preflight: skip $(short "$c") — chant $conclusion" >&2
+    else
+      echo "preflight: skip $(short "$c") — chant $status" >&2
+    fi
+  fi
+  skipped=$((skipped + 1))
+done
 
-if [ "$status" != "completed" ]; then
-  fail "chant CI is still $status for $(git rev-parse --short HEAD) — wait for it. $url"
-fi
-
-if [ "$conclusion" != "success" ]; then
-  fail "chant CI concluded \"$conclusion\" for $(git rev-parse --short HEAD). $url"
-fi
-
-echo "preflight: $branch @ $(git rev-parse --short HEAD) is pushed and green ✓"
+fail "no green chant run among the last 200 commits on main."

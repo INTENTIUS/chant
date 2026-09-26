@@ -273,104 +273,148 @@ ext-vscode-build:
 ext-vscode-package:
     cd editors/vscode && npm install && npm run build && npm run package
 
-# Bump version, tag, and push to trigger npm publish (e.g. just release patch)
-release bump="patch":
+# Releases the newest commit on main whose `chant` run succeeded, or <commit>,
+# not HEAD (#2816). The bump is committed on top of that commit and tagged,
+# then merged back into main. --dry-run says what it would tag and stops.
+# Bump every package, tag the newest green main commit, publish (just release [major|minor|patch] [<commit>] [--dry-run])
+release bump="patch" *args:
     #!/usr/bin/env bash
     set -euo pipefail
-    # Refuse to tag a commit CI has not proven green (#1255). This recipe
-    # pushes `main` explicitly, so it also requires you to be on it.
-    bash scripts/release-preflight.sh main
+    source scripts/release-lib.sh
+    release_args {{bump}} {{args}}
+    # Refuse to tag a commit CI has not proven green (#1255). With no commit
+    # named, the preflight picks the newest green one on main.
+    sha=$(bash scripts/release-preflight.sh ${RELEASE_COMMIT:+"$RELEASE_COMMIT"})
+    release_open "$sha"
+    bump_files=(packages/core/package.json packages/k8s-client/package.json lexicons/*/package.json)
     # Bump from the HIGHEST version any workspace package is on, not core's.
     # `just release-lexicon` can push one lexicon ahead of core — k8s shipped
     # 0.36.0 while core sat at 0.34.1 — and deriving the next version from core
     # alone then rewrites that lexicon BACKWARDS. The publish step skips it as
     # already-published, so the repo is left permanently behind the registry
     # with no error anywhere. Flooring at the max makes the lockstep bump
-    # monotonic for every package (#1255).
+    # monotonic for every package (#1255). The floor reads main as well as the
+    # green commit: main may already carry a later release's bump (#2816).
     current=$(jq -r .version packages/core/package.json)
-    highest=$(jq -r .version packages/core/package.json packages/k8s-client/package.json lexicons/*/package.json | sort -V | tail -1)
-    IFS='.' read -r major minor patch <<< "$highest"
-    case "{{bump}}" in
-      major) major=$((major + 1)); minor=0; patch=0 ;;
-      minor) minor=$((minor + 1)); patch=0 ;;
-      patch) patch=$((patch + 1)) ;;
-      *) echo "Usage: just release [major|minor|patch]"; exit 1 ;;
-    esac
-    next="$major.$minor.$patch"
+    versions=()
+    for f in "${bump_files[@]}"; do
+      versions+=("$(release_version_at "$sha" "$f")" "$(release_version_at "$RELEASE_MAIN" "$f")")
+    done
+    highest=$(release_max "${versions[@]}")
+    next=$(release_next "$highest" "$RELEASE_BUMP")
     if [ "$highest" != "$current" ]; then
-      echo "Floor: $highest — a package is ahead of core ($current)"
+      echo "Floor: $highest — a package, here or on main, is ahead of core ($current)"
     fi
     # Monotonic or bust. The floor above already guarantees this; the check is
     # here so that reverting to a core-only bump fails loudly instead of
     # rewriting a package backwards and going quiet at publish time.
-    for f in packages/core/package.json packages/k8s-client/package.json lexicons/*/package.json; do
-      have=$(jq -r .version "$f")
-      if [ "$(printf '%s\n%s\n' "$have" "$next" | sort -V | tail -1)" != "$next" ]; then
-        echo "refusing to release: $f is at $have, ahead of the computed $next" >&2
+    for v in "${versions[@]}"; do
+      if [ -n "$v" ] && [ "$(release_max "$v" "$next")" != "$next" ]; then
+        echo "refusing to release: a package is at $v, ahead of the computed $next" >&2
         exit 1
       fi
     done
-    echo "Bumping $current → $next"
+    tag="chant-v$next"
+    if release_tag_exists "$tag"; then
+      echo "refusing to release: $tag already exists" >&2
+      exit 1
+    fi
+    last=$(git tag -l 'chant-v*' --sort=-v:refname | head -1)
+    if [ -n "$last" ] && git merge-base --is-ancestor "$sha" "$last"; then
+      echo "refusing to release: $(git rev-parse --short "$sha") is already released in $last" >&2
+      exit 1
+    fi
+    echo "Release $tag from $(git rev-parse --short "$sha") ($(git log -1 --format=%s "$sha"))"
+    echo "Bumping $current → $next; main is at $(git rev-parse --short "$RELEASE_MAIN")"
+    if [ "$RELEASE_DRY_RUN" = 1 ]; then
+      echo "Dry run: nothing committed, tagged or pushed."
+      exit 0
+    fi
     # Bump .version everywhere, and keep the @intentius/* peer/optional
     # dependency ranges in lockstep (they were frozen at ^0.1.0, which breaks
     # clean installs — #411). packages/k8s-client is published alongside the
-    # lexicons (#1074), so it bumps with them.
-    for f in packages/core/package.json packages/k8s-client/package.json lexicons/*/package.json; do
-      jq --arg v "$next" '
-        .version = $v
-        | if .peerDependencies then .peerDependencies |= with_entries(if (.key | startswith("@intentius/")) then .value = "^" + $v else . end) else . end
-        | if .optionalDependencies then .optionalDependencies |= with_entries(if ((.key | startswith("@intentius/")) and .value != "*") then .value = "^" + $v else . end) else . end
-      ' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
-    done
-    # Keep the committed lockfile's workspace entries in step with the bump —
-    # without this every release leaves package-lock.json recording the
-    # previous version for all 12 workspace packages (#1094).
-    npm install --package-lock-only
-    git add packages/core/package.json packages/k8s-client/package.json lexicons/*/package.json package-lock.json
-    git commit -m "chant-v$next"
+    # lexicons (#1074), so it bumps with them. release_ship runs this again on
+    # main's copies of the same files.
+    apply_bump() {
+      for f in "${bump_files[@]}"; do
+        jq --arg v "$next" '
+          .version = $v
+          | if .peerDependencies then .peerDependencies |= with_entries(if (.key | startswith("@intentius/")) then .value = "^" + $v else . end) else . end
+          | if .optionalDependencies then .optionalDependencies |= with_entries(if ((.key | startswith("@intentius/")) and .value != "*") then .value = "^" + $v else . end) else . end
+        ' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+      done
+      # Keep the committed lockfile's workspace entries in step with the bump —
+      # without this every release leaves package-lock.json recording the
+      # previous version for all 12 workspace packages (#1094).
+      npm install --package-lock-only --ignore-scripts --no-audit --no-fund >/dev/null
+    }
+    apply_bump
+    git add "${bump_files[@]}" package-lock.json
+    git commit --quiet --no-verify -m "$tag"
     git tag "chant-v$next"
-    git push origin main "chant-v$next"
-    echo "Released chant-v$next — publish workflow triggered (tag pattern chant-v*)"
+    release_ship "$tag" "Merge $tag into main"
+    echo "Released $tag — publish workflow triggered (tag pattern chant-v*)"
 
-# Bump a single lexicon version and tag (e.g. just release-lexicon docker patch)
-release-lexicon name bump="patch":
+# Like `just release`, it releases the newest green commit on main (#2816).
+# Bump one lexicon and tag the newest green main commit (just release-lexicon <name> [major|minor|patch] [<commit>] [--dry-run])
+release-lexicon name bump="patch" *args:
     #!/usr/bin/env bash
     set -euo pipefail
-    # Refuse to tag a commit CI has not proven green (#1255). No branch is
-    # required — this recipe pushes HEAD, wherever it is — but HEAD must be
-    # pushed and its chant run must have concluded success.
-    bash scripts/release-preflight.sh
-    current=$(jq -r .version lexicons/{{name}}/package.json)
-    IFS='.' read -r major minor patch <<< "$current"
-    case "{{bump}}" in
-      major) major=$((major + 1)); minor=0; patch=0 ;;
-      minor) minor=$((minor + 1)); patch=0 ;;
-      patch) patch=$((patch + 1)) ;;
-      *) echo "Usage: just release-lexicon <name> [major|minor|patch]"; exit 1 ;;
-    esac
-    next="$major.$minor.$patch"
-    echo "Bumping @intentius/chant-lexicon-{{name}} $current → $next"
+    source scripts/release-lib.sh
+    release_args {{bump}} {{args}}
+    # Refuse to tag a commit CI has not proven green (#1255). With no commit
+    # named, the preflight picks the newest green one on main.
+    sha=$(bash scripts/release-preflight.sh ${RELEASE_COMMIT:+"$RELEASE_COMMIT"})
+    release_open "$sha"
+    bump_files=(lexicons/{{name}}/package.json)
+    if [ ! -f "${bump_files[0]}" ]; then
+      echo "refusing to release: ${bump_files[0]} does not exist at $(git rev-parse --short "$sha")" >&2
+      exit 1
+    fi
+    # Floor on main too: it may already carry a later bump of this lexicon.
+    current=$(release_max "$(release_version_at "$sha" "${bump_files[0]}")" "$(release_version_at "$RELEASE_MAIN" "${bump_files[0]}")")
+    next=$(release_next "$current" "$RELEASE_BUMP")
+    tag="lexicon-{{name}}-v$next"
+    if release_tag_exists "$tag"; then
+      echo "refusing to release: $tag already exists" >&2
+      exit 1
+    fi
+    last=$(git tag -l 'lexicon-{{name}}-v*' --sort=-v:refname | head -1)
+    if [ -n "$last" ] && git merge-base --is-ancestor "$sha" "$last"; then
+      echo "refusing to release: $(git rev-parse --short "$sha") is already released in $last" >&2
+      exit 1
+    fi
+    echo "Release $tag from $(git rev-parse --short "$sha") ($(git log -1 --format=%s "$sha"))"
+    echo "Bumping @intentius/chant-lexicon-{{name}} $current → $next; main is at $(git rev-parse --short "$RELEASE_MAIN")"
+    if [ "$RELEASE_DRY_RUN" = 1 ]; then
+      echo "Dry run: nothing committed, tagged or pushed."
+      exit 0
+    fi
     # Keep the @intentius/* peer ranges in lockstep, the way `just release`
     # has since #411 — ranges frozen at an old version break clean installs.
     # A single-lexicon patch does NOT move core, so the ranges track the
     # CURRENT core / github-lexicon versions rather than this lexicon's new
     # one (#1255). Pinning them to $next would demand a core that does not
-    # exist.
-    core=$(jq -r .version packages/core/package.json)
-    github_lexicon=$(jq -r .version lexicons/github/package.json)
-    jq --arg v "$next" --arg core "$core" --arg ghl "$github_lexicon" '
-      .version = $v
-      | if .peerDependencies["@intentius/chant"] then .peerDependencies["@intentius/chant"] = "^" + $core else . end
-      | if .peerDependencies["@intentius/chant-lexicon-github"] then .peerDependencies["@intentius/chant-lexicon-github"] = "^" + $ghl else . end
-    ' lexicons/{{name}}/package.json \
-      > lexicons/{{name}}/package.json.tmp && mv lexicons/{{name}}/package.json.tmp lexicons/{{name}}/package.json
-    # And keep the committed lockfile's entry for this package in step, the
-    # same reason `just release` does it (#1094).
-    npm install --package-lock-only
-    git add lexicons/{{name}}/package.json package-lock.json
-    git commit -m "lexicon-{{name}}: v$next"
+    # exist. "Current" is read from the tree being bumped, so when
+    # release_ship re-runs this on main it follows main's core.
+    apply_bump() {
+      core=$(jq -r .version packages/core/package.json)
+      github_lexicon=$(jq -r .version lexicons/github/package.json)
+      jq --arg v "$next" --arg core "$core" --arg ghl "$github_lexicon" '
+        .version = $v
+        | if .peerDependencies["@intentius/chant"] then .peerDependencies["@intentius/chant"] = "^" + $core else . end
+        | if .peerDependencies["@intentius/chant-lexicon-github"] then .peerDependencies["@intentius/chant-lexicon-github"] = "^" + $ghl else . end
+      ' lexicons/{{name}}/package.json \
+        > lexicons/{{name}}/package.json.tmp && mv lexicons/{{name}}/package.json.tmp lexicons/{{name}}/package.json
+      # And keep the committed lockfile's entry for this package in step, the
+      # same reason `just release` does it (#1094).
+      npm install --package-lock-only --ignore-scripts --no-audit --no-fund >/dev/null
+    }
+    apply_bump
+    git add "${bump_files[@]}" package-lock.json
+    git commit --quiet --no-verify -m "lexicon-{{name}}: v$next"
     git tag "lexicon-{{name}}-v$next"
-    git push origin HEAD "lexicon-{{name}}-v$next"
+    release_ship "$tag" "Merge $tag into main"
     echo "Released @intentius/chant-lexicon-{{name}} v$next — publish workflow triggered"
 
 # Build Zed extension (WASM)

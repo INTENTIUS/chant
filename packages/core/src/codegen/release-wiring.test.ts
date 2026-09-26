@@ -171,7 +171,54 @@ describe("release wiring: preflight gates both recipes (#1255)", () => {
     }
   });
 
-  it("the whole-repo release requires main, since it pushes main", () => {
-    expect(recipeBody("release")).toMatch(/release-preflight\.sh main/);
+});
+
+/**
+ * #2816 — main's HEAD is rarely green, so a release tags the newest green
+ * commit on main (or the one named) and merges the bump back into main.
+ * scripts/release-preflight.test.ts runs the mechanics; this pins the wiring.
+ */
+describe("release wiring: release the newest green commit (#2816)", () => {
+  it("both recipes tag the commit the preflight chose, not HEAD", () => {
+    for (const recipe of ["release", "release-lexicon"]) {
+      const body = recipeBody(recipe);
+      expect(body).toMatch(/sha=\$\(bash scripts\/release-preflight\.sh/);
+      expect(body).toMatch(/release_open "\$sha"/);
+    }
+  });
+
+  it("both recipes merge the tag back into main instead of pushing HEAD", () => {
+    for (const recipe of ["release", "release-lexicon"]) {
+      const body = recipeBody(recipe);
+      expect(body).toMatch(/release_ship "\$tag"/);
+      expect(body).not.toMatch(/git push/);
+      expect(body.indexOf("git tag")).toBeLessThan(body.indexOf("release_ship"));
+    }
+    const lib = readFileSync(join(repoRoot, "scripts", "release-lib.sh"), "utf-8");
+    // main and the tag land together or not at all, and nothing is forced.
+    expect(lib).toMatch(/git push --quiet --atomic origin "HEAD:refs\/heads\/main" "refs\/tags\/\$tag"/);
+    expect(lib).not.toMatch(/git push[^\n]*(--force|\s-f\b)/);
+  });
+
+  it("both recipes offer a dry run that stops before committing", () => {
+    for (const recipe of ["release", "release-lexicon"]) {
+      const body = recipeBody(recipe);
+      expect(body.indexOf("RELEASE_DRY_RUN")).toBeGreaterThan(-1);
+      expect(body.indexOf("RELEASE_DRY_RUN")).toBeLessThan(body.indexOf("git commit"));
+    }
+  });
+
+  it("the whole-repo floor reads main as well as the green commit", () => {
+    expect(recipeBody("release")).toMatch(/release_version_at "\$RELEASE_MAIN"/);
+    expect(recipeBody("release-lexicon")).toMatch(/release_version_at "\$RELEASE_MAIN"/);
+  });
+
+  it("a push to main does not cancel main's chant run; PR runs still cancel", () => {
+    const workflow = readFileSync(join(repoRoot, ".github", "workflows", "chant.yml"), "utf-8");
+    const block = workflow.match(/^concurrency:\n((?:[ ]+.*\n)+)/m)?.[1] ?? "";
+    // One group per commit on main, so a later push neither cancels a running
+    // run nor replaces a queued one.
+    expect(block).toMatch(/group:.*github\.ref == 'refs\/heads\/main' && github\.sha \|\| github\.ref/);
+    expect(block).toMatch(/cancel-in-progress: \$\{\{ github\.ref != 'refs\/heads\/main' \}\}/);
   });
 });
