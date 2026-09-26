@@ -609,6 +609,13 @@
             }
           ]
         },
+        "ledger": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Where the record is held when it is on the lifecycle ledger rather than in the working tree (#2786): chant/lifecycle:<path>, which git show reads. A question asked in a steward's turn is held there, since a steward never writes the checkout; people's answer to it is written there too. null for a record in the working tree. path is where the record reads as being either way."
+        },
         "askedOn": {
           "type": [
             "string",

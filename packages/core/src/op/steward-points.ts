@@ -32,6 +32,10 @@
  *   (`declareSteward({ capabilities })`, #2726). A steward that names none,
  *   or holds a vault, makes no model call: the model decider is recorded as
  *   not reached and the question goes to people.
+ * - The question is written on the `chant/lifecycle` branch, not in the
+ *   checkout (#2786): the working tree is the coding agent's, and an Op's
+ *   leased worktree goes when the run ends. `points` reads it from there
+ *   (`../workspace/answers-ledger.ts`), and a person's answer goes there too.
  * - The question names the steward and its run in its source block, and
  *   neither the steward's turn nor the steward's name can answer it: `points
  *   answer` refuses inside a steward's turn (`answer-in-steward-turn`) and

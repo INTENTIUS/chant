@@ -15,7 +15,7 @@
  */
 
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { relative, resolve, sep } from "node:path";
 import { formatError } from "../cli/format";
 import type { CommandContext } from "../cli/registry";
 import { declaredRecordKinds, readDeclaration, readerVersion, WorkspaceReadError, type ErrorLocation, type WorkspaceErrorCode } from "./declaration";
@@ -24,6 +24,7 @@ import { answerPoint, askPoint, questionView, POINTS_WRITE_CONTRACT_VERSION, POI
 import { candidates, inputOutput, pointsFileOf, pointVersion, quorumOf, readPointsThrough, type Decider, type ModelAsk, type WireAnswer } from "./points";
 import type { ReasonCode } from "./reason-codes";
 import { gitRevisionSource, workingTreeSource } from "./record-source";
+import { readLedgerAnswers, withLedgerAnswers, type LedgerAnswers } from "./answers-ledger";
 import { loadRecordKind, RecordReadError, type ReadErrorCode } from "./records";
 import { readRecordsFor } from "./records-cli";
 import { locateWorkspace } from "./which-chant";
@@ -136,7 +137,17 @@ export async function workspacePoints(query: PointsQuery): Promise<PointsDocumen
         if (k.given) sources.push({ kind: k.shown, points: null, reason: { code: "kind-invalid", message: `the ${loaded.kind.name} kind has no answers block, so it holds no answers to decision points` } });
         continue;
       }
-      const read = await readRecordsFor({ kind: k.file, cwd: query.cwd, at: query.at });
+      // Without --at, the questions a steward keeps on the lifecycle ledger are read too (#2786).
+      let ledger = undefined as LedgerAnswers | undefined;
+      const read = await readRecordsFor({
+        kind: k.file,
+        cwd: query.cwd,
+        at: query.at,
+        overlay: async (base, { loaded: l, root }) => {
+          ledger = await readLedgerAnswers({ file: l.file, name: l.kind.name, dirRel: relative(root, l.dir).split(sep).join("/") || "." });
+          return withLedgerAnswers(base, ledger);
+        },
+      });
       const source = read.at !== null && read.top ? gitRevisionSource(read.top, read.at) : workingTreeSource(read.root);
       const file = pointsFileOf(read.loaded, read.root);
       const parsed = readPointsThrough(source, file);
@@ -158,7 +169,7 @@ export async function workspacePoints(query: PointsQuery): Promise<PointsDocumen
         });
       }
       for (const e of read.result.records) {
-        const view = questionView(e, typeof e.data?.point === "string" ? declared[e.data.point] : undefined);
+        const view = questionView(e, typeof e.data?.point === "string" ? declared[e.data.point] : undefined, ledger?.byPath.get(e.path)?.ledger ?? null);
         if (view && (!query.open || view.open)) questions.push(view);
       }
     } catch (err) {

@@ -24,7 +24,7 @@ import { formatError } from "../cli/format";
 import type { CommandContext } from "../cli/registry";
 import { findWorkspaceRoot } from "../project-root";
 import { fileDigest, isWorkspacePath } from "./record-assets";
-import { gitRevisionSource, gitRoot, resolveRevision, workingTreeSource } from "./record-source";
+import { gitRevisionSource, gitRoot, resolveRevision, workingTreeSource, type RecordSource } from "./record-source";
 import { declaredRecordKinds, readDeclaration, WorkspaceReadError, type RecordKindDeclaration } from "./declaration";
 import { declaredKindFile } from "./declared-kinds";
 import { locateWorkspace } from "./which-chant";
@@ -249,7 +249,15 @@ function gitHistory(top: string, rev: string, prefix: string): RecordHistory {
  * with each pin checked in the same tree. Throws a {@link RecordReadError}.
  * `chant workspace graph` and `check` read records through this too.
  */
-export async function readRecordsFor(query: Omit<RecordsQuery, "base">): Promise<RecordsRead> {
+export async function readRecordsFor(
+  query: Omit<RecordsQuery, "base"> & {
+    /**
+     * Lay more records over a working-tree read, such as the answer records a
+     * steward keeps on the lifecycle ledger (#2786). Not called with `at`.
+     */
+    overlay?: (source: RecordSource, kind: { loaded: LoadedRecordKind; root: string }) => Promise<RecordSource>;
+  },
+): Promise<RecordsRead> {
   // git reports its top through symlinks resolved (/var is /private/var on
   // macOS), so the directory has to be too, or record paths leave the repository.
   const cwd = realpathOr(query.cwd);
@@ -266,6 +274,7 @@ export async function readRecordsFor(query: Omit<RecordsQuery, "base">): Promise
     source = gitRevisionSource(top, at);
     assets = gitTree(top, at, workspaceRoot === "." ? "" : workspaceRoot);
   }
+  if (at === null && query.overlay) source = await query.overlay(source, { loaded, root });
   const history = top ? gitHistory(top, at ?? "HEAD", workspaceRoot) : undefined;
   // A session kind's verdicts name records of another kind, read from the same tree (#2673).
   let subjects: { records: RecordEntry[]; reviews: string } | undefined;

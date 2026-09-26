@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://intentius.io/chant/schemas/workspace/points-write/v1/points-write.schema.json",
   "title": "chant workspace points ask and answer output",
-  "description": "What `chant workspace points ask` and `points answer` print (ws-058, #2739): the answer record asked for or written, as `points --json` lists a question. ask returns the record that is there when the same point, declaration and inputs were answered or proposed before (reused), and otherwise writes one: answered from a table, proposed from a model at or above its threshold, escalated to people below it. answer records people's answer to an open question once the point's quorum is met. Nothing is committed, and nothing is written on a refusal or with --dry-run. The error codes are a closed list, each in the one closed list of `reason-codes.ts`. Written at contract version 1 of the write documents.",
+  "description": "What `chant workspace points ask` and `points answer` print (ws-058, #2739): the answer record asked for or written, as `points --json` lists a question. ask returns the record that is there when the same point, declaration and inputs were answered or proposed before (reused), and otherwise writes one: answered from a table, proposed from a model at or above its threshold, escalated to people below it. answer records people's answer to an open question once the point's quorum is met. Nothing is committed to the working branch, and nothing is written on a refusal or with --dry-run. In a steward's turn a new record goes on the lifecycle ledger instead of the working tree (#2786), as a commit on chant/lifecycle, and a record already held there is rewritten there. The error codes are a closed list, each in the one closed list of `reason-codes.ts`. Written at contract version 1 of the write documents.",
   "oneOf": [
     {
       "$ref": "#/$defs/result"
@@ -371,6 +371,13 @@
           "items": {
             "type": "string"
           }
+        },
+        "ledger": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Where the record is held when it is on the lifecycle ledger rather than in the working tree (#2786): chant/lifecycle:<path>, which git show reads. A question asked in a steward's turn is held there, since a steward never writes the checkout; people's answer to it is written there too. null for a record in the working tree. path is where the record reads as being either way."
         },
         "askedOn": {
           "type": [
