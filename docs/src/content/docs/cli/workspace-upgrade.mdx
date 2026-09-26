@@ -83,8 +83,9 @@ Each one lists every file it writes or deletes and why, what it does not move an
 |---|---|
 | `chud-lexicon-exit` | A repo made from chud's template, or the studio kit's copy of it, off `@intentius/chant-lexicon-chud` and `@intentius/chud-runtime` ([#2737](https://github.com/INTENTIUS/chant/issues/2737), [ws-056](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-056-chud-lexicon-home.md)) |
 | `chud-lexicon-exit-rollback` | Adds the rollback Op to a repo `chud-lexicon-exit` migrated, so the Fly site can go back to its previous source release ([#2800](https://github.com/INTENTIUS/chant/issues/2800)) |
+| `chud-lexicon-exit-ship-inputs` | Has the release Op that `chud-lexicon-exit` wrote ask `ship-skip` with the inputs the point declares ([#2811](https://github.com/INTENTIUS/chant/issues/2811)) |
 
-The migrations run in the order of this table, and each one plans from the tree the ones before it left, so a repo migrated now gets both in one upgrade. A repo migrated before `chud-lexicon-exit-rollback` existed already has `chud-lexicon-exit` in its lock, and its next upgrade plans only the rollback migration, which the dry run lists.
+The migrations run in the order of this table, and each one plans from the tree the ones before it left, so a repo migrated now gets all of them in one upgrade. A repo migrated before `chud-lexicon-exit-rollback` existed already has `chud-lexicon-exit` in its lock, and its next upgrade plans only the rollback migration, which the dry run lists.
 
 `chud-lexicon-exit` finds the `chant` member whose `package.json` depends on either package, usually `delivery/`, and makes these changes:
 
@@ -115,6 +116,8 @@ One of chud's release steps has no chant home yet, and the plan lists it as not 
 - Record appends the restored release to the `fly` ledger. Its `restores` field names that release, and the record carries the actor who ran the rollback and the approver.
 
 The rollback lives in an Op rather than in `chant components rollback` because the release is an Op too. The app component publishes nothing, and moving the rollback into the component would split publish and rollback between two homes, which [Execution Backends](/chant/components/backends-reference/) warns against.
+
+`chud-lexicon-exit-ship-inputs` changes the release Op `chud-lexicon-exit` wrote, which asked `ship-skip` with no inputs, so only the table's default row could answer. The Op now computes the point's `release.*` inputs when it loads. It diffs the commit the `fly` site serves (the last release in its ledger) against HEAD: `first_release`, `new_migrations`, `files_changed`, `app_changed`, `work_changed` (a file where a declared work kind keeps its items) and `units` (work items added or changed). A first release counts every file on HEAD. Only the inputs the point declares are passed, and each answer record carries them. The release plan keeps the answer and its decider, not the inputs, so a retry of a shipped commit plans the same digest. A release Op whose `decide` step the project changed is left as it is.
 
 A file the migration replaces or deletes is replaced or deleted even when the project edited it, since it cannot build without the chud packages. The plan marks it edited, and the edit stays in git history. A file it only edits, such as `chant.config.ts`, keeps the project's edits. It is a conflict when the text the migration edits is gone. So is any other file that imports the chud packages, and a point in `points.yaml` whose inputs have no known read-contract output.
 

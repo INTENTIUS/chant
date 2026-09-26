@@ -33,6 +33,7 @@ import { dirname, join } from "node:path";
 import type { Lineage } from "./lineage-lock";
 import { chudLexiconExit } from "./chant-migrations/chud-lexicon-exit";
 import { chudLexiconExitRollback } from "./chant-migrations/chud-lexicon-exit-rollback";
+import { chudLexiconExitShipInputs } from "./chant-migrations/chud-lexicon-exit-ship-inputs";
 
 /** One file a plan writes or deletes, relative to the scope. */
 export interface PlannedChange {
@@ -82,7 +83,7 @@ export interface ChantMigration {
 }
 
 /** Every migration chant ships, in the order they are planned. */
-export const CHANT_MIGRATIONS: readonly ChantMigration[] = [chudLexiconExit, chudLexiconExitRollback];
+export const CHANT_MIGRATIONS: readonly ChantMigration[] = [chudLexiconExit, chudLexiconExitRollback, chudLexiconExitShipInputs];
 
 /** The plans for a scope: each migration not yet in the lineage that finds something to move. */
 export function planChantMigrations(ctx: ChantMigrationContext, migrations: readonly ChantMigration[] = CHANT_MIGRATIONS): ChantMigrationPlan[] {
