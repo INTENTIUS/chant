@@ -288,7 +288,7 @@ export interface GateTally {
   counted: GateResolutionRecord[];
   /** The quorum's count, 1 when the gate declares none. */
   need: number;
-  /** The newest approval whose recorded permit passes the gate on its own. Only in `enforce` mode, and only under the gate's current policy version. */
+  /** The newest approval whose recorded permit passes the gate on its own. Only in `enforce` mode, only for a permit recorded under `enforce`, and only under the gate's current policy version. */
   permit?: GateResolutionRecord;
   /** The newest approval of this gate for a different plan, when the gate binds one. */
   mismatched?: GateResolutionRecord;
@@ -305,8 +305,9 @@ export interface GateTally {
  * Of those, only a human's counts toward the quorum, once per `resolvedBy`,
  * and only with one of the quorum's roles when it names any. An agent counts
  * only through a recorded `allow` in `enforce` mode, evaluated under the
- * policy version the gate declares now. A `log-only` decision never changes
- * the outcome, and a `deny` never removes a human's approval: a policy can add
+ * policy version the gate declares now and recorded while the gate was in
+ * `enforce` (#2512). A `log-only` decision never changes the outcome, even
+ * after the gate switches to `enforce`, and a `deny` never removes a human's approval: a policy can add
  * a way through the gate but cannot take one away.
  */
 export function tallyGateApprovals(
@@ -331,8 +332,12 @@ export function tallyGateApprovals(
     }
 
     const decision = r.policyDecision;
+    // #2512: the decision must also have been recorded under `enforce`. An
+    // allow recorded while the gate was log-only was never binding, and a
+    // later switch to enforce does not make it binding.
     if (
       approval.mode === "enforce" && approval.policy && decision?.decision === "allow" &&
+      decision.mode === "enforce" &&
       decision.version === approval.policy.version && (!permit || at(r) >= at(permit))
     ) {
       permit = r;

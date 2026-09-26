@@ -174,6 +174,51 @@ describe("gate approval — policy decisions (#2508)", () => {
     expect(check.satisfied).toBe(false);
   });
 
+  test("log-only then enforce: a permit recorded under log-only does not pass the enforced gate (#2512)", async () => {
+    const logOnly: ResolvedGateApproval = { policy: POLICY, mode: "log-only", context: { risk: "low" } };
+    const enforce: ResolvedGateApproval = { ...logOnly, mode: "enforce" };
+    // The pending fact was recorded while the gate was log-only, and the agent's allow was recorded against it.
+    const port = memoryGateLedgerPort({
+      resolutions: [approval({ resolvedBy: "release-bot", timestamp: "2026-09-01T01:00:00.000Z", approver: { kind: "agent" }, policyDecision: allow("log-only") })],
+      pending: [{ ...PENDING, approval: logOnly }],
+    });
+    const check = await evaluateGate(port, { op: "release", gate: "ship", planDigest: PLAN_A, approval: enforce, now: NOW });
+    expect(check.satisfied).toBe(false);
+
+    const tally = tallyGateApprovals(
+      [approval({ resolvedBy: "release-bot", timestamp: "2026-09-01T01:00:00.000Z", approver: { kind: "agent" }, policyDecision: allow("log-only") })],
+      "ship", PENDING.timestamp, PLAN_A, enforce,
+    );
+    expect(tally.permit).toBeUndefined();
+  });
+
+  test("log-only then enforce: a human's approval recorded under log-only still counts toward the quorum (#2512)", async () => {
+    const logOnly: ResolvedGateApproval = { quorum: { count: 1 }, policy: POLICY, mode: "log-only" };
+    const enforce: ResolvedGateApproval = { ...logOnly, mode: "enforce" };
+    const port = memoryGateLedgerPort({
+      resolutions: [approval({ resolvedBy: "alex", timestamp: "2026-09-01T01:00:00.000Z", policyDecision: allow("log-only") })],
+      pending: [{ ...PENDING, approval: logOnly }],
+    });
+    const check = await evaluateGate(port, { op: "release", gate: "ship", planDigest: PLAN_A, approval: enforce, now: NOW });
+    expect(check.satisfied).toBe(true);
+    if (!check.satisfied) return;
+    expect(check.via).toBe("quorum");
+    expect(check.resolution.resolvedBy).toBe("alex");
+  });
+
+  test("enforce: a recorded decision with no mode does not pass the gate (#2512)", async () => {
+    const block: ResolvedGateApproval = { policy: POLICY, mode: "enforce" };
+    const { mode: _mode, ...noMode } = allow()!;
+    const { check } = await decide(
+      [approval({
+        resolvedBy: "release-bot", timestamp: "2026-09-01T01:00:00.000Z", approver: { kind: "agent" },
+        policyDecision: noMode as GateResolutionRecord["policyDecision"],
+      })],
+      block,
+    );
+    expect(check.satisfied).toBe(false);
+  });
+
   test("enforce: a deny-by-default policy keeps the old behaviour, where only a human's approval counts", async () => {
     const block: ResolvedGateApproval = { policy: POLICY, mode: "enforce" };
     const deny = { ...allow()!, decision: "deny" as const, determining: ["floor"] };
