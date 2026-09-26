@@ -41,7 +41,8 @@
  * ## What a steward writes
  *
  * A steward's writes are chant writes: run, converge and gate records on the
- * `chant/lifecycle` branch and lease refs under `refs/chant/lease/`, all made
+ * `chant/lifecycle` branch, the answer records of the decision points its
+ * Ops ask (`_answers/`, #2786), and lease refs under `refs/chant/lease/`, all made
  * with git plumbing (`../lifecycle/git.ts`: `hash-object`, `mktree`,
  * `commit-tree`, `update-ref`). None of them reads or writes the checkout's
  * index or working tree, so a coding agent editing the app in the same

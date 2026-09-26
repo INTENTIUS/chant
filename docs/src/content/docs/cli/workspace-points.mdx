@@ -43,6 +43,8 @@ chant calls no model. `--response <file>` hands it a `POST /v1/systemone` respon
 
 The record's id is the point's name and the first 12 hex digits of the sha256 of the point, its declaration and the inputs. So the same question is answered once. Asking again returns the record that is there, with `reused: true`, when it is `proposed` or `answered`. An `escalated` record is asked again, since a backend may answer now. It is rewritten only when the chain no longer escalates.
 
+In a steward's turn, including a `points ask` that an Op's step runs while `CHANT_STEWARD` is set, the record goes on the `chant/lifecycle` branch instead, under `_answers/<kind name>/<id>.md` in the ledger of the member that owns the answer kind ([#2786](https://github.com/INTENTIUS/chant/issues/2786)). The checkout's working tree is left alone, since it belongs to the coding agent. The question's `ledger` gives the place on the branch, such as `chant/lifecycle:_answers/answer/slice-tier-0c1d2e3f4a5b.md`, which `git show` reads. A question already on the ledger stays there when it is asked again, and `points answer` writes people's answer there too. Both push the branch when there is a remote, and neither fails when the push does.
+
 `--subject <id>` says what the question is about, such as a work item's id, and is written to the record's `constrains`. `--dry-run` prints the document with the text it would write, and writes nothing.
 
 ## Answering a question
@@ -53,7 +55,7 @@ People who give the answer a model proposed confirm it, and the model stays the 
 
 ## Output
 
-`--json` prints the read-contract document of [`points.schema.json`](/chant/reference/workspace-read-contract/#decision-points). Its `sources` hold one entry per answer kind read, with a `reason` when that kind could not be read. `points` lists each declared point with its inputs and deciders. `questions` lists each answer record.
+`--json` prints the read-contract document of [`points.schema.json`](/chant/reference/workspace-read-contract/#decision-points). Its `sources` hold one entry per answer kind read, with a `reason` when that kind could not be read. `points` lists each declared point with its inputs and deciders. `questions` lists each answer record, including those held on the ledger, which carry `ledger`. A record on the ledger wins over a file of the same name in the tree. `--at` reads a commit of the working branch, so it lists the tree's records only.
 
 | Field | Meaning |
 |---|---|

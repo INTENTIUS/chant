@@ -66,7 +66,10 @@ import { policyAtBase, resolveBase } from "./trust/provenance";
 import { emptyPolicy, type TrustPolicy } from "./trust/policy";
 import { AGENT_ROLE } from "./records-cli";
 import type { SourceVia } from "./source-block";
+import type { RecordSource } from "./record-source";
 import { currentStewardTurn } from "../op/steward-turn";
+import { RefCASConflictError } from "../lifecycle/git";
+import { readLedgerAnswers, refreshLedger, withLedgerAnswers, writeLedgerAnswer, type LedgerAnswers } from "./answers-ledger";
 
 /** The version of the write documents `points ask` and `points answer` print. */
 export const POINTS_WRITE_CONTRACT_VERSION = 1;
@@ -150,6 +153,14 @@ export interface QuestionView {
    * never answers it: a person does, through hud or `points answer`.
    */
   askedBy: { steward: string; run: string | null } | null;
+  /**
+   * Where the record is held when it is on the lifecycle ledger rather than
+   * in the working tree (#2786): `chant/lifecycle:<path>`, which `git show`
+   * reads. A question asked in a steward's turn is held there, since a
+   * steward never writes the checkout. null for a record in the tree; `path`
+   * is where the record reads as being either way.
+   */
+  ledger: string | null;
   valid: boolean;
   warnings: RecordWarning[];
 }
@@ -171,8 +182,12 @@ export function askedByOf(data: Record<string, unknown>): QuestionView["askedBy"
   return { steward, run };
 }
 
-/** One answer record as a {@link QuestionView}, or null when its front matter can't be read. `point` is its point as declared now, when there is one. */
-export function questionView(entry: RecordEntry, point: Point | undefined): QuestionView | null {
+/**
+ * One answer record as a {@link QuestionView}, or null when its front matter
+ * can't be read. `point` is its point as declared now, when there is one, and
+ * `ledger` where the record is held when it is on the lifecycle ledger.
+ */
+export function questionView(entry: RecordEntry, point: Point | undefined, ledger: string | null = null): QuestionView | null {
   const d = entry.data;
   if (d === null || entry.id === null) return null;
   const str = (v: unknown): string | null => (typeof v === "string" ? v : null);
@@ -214,6 +229,7 @@ export function questionView(entry: RecordEntry, point: Point | undefined): Ques
     askedOn: str(d.asked_on),
     answeredOn: str(d.answered_on),
     askedBy: askedByOf(d),
+    ledger,
     valid: entry.valid,
     warnings: entry.warnings,
   };
@@ -310,6 +326,14 @@ export interface AskPointOptions {
    * never counts the steward toward its quorum. Takes the place of `client`.
    */
   steward?: { name: string; run?: string };
+  /**
+   * Where a new record goes: the answer kind's directory in the working tree,
+   * or the lifecycle ledger (#2786). Defaults to the ledger in a steward's
+   * turn (`steward` given, or this process a steward's turn), since a steward
+   * never writes the checkout, and to the tree otherwise. A question already
+   * held on the ledger is rewritten there whatever this says.
+   */
+  store?: "tree" | "ledger";
   /** The date written as asked_on, and answered_on for a table's answer, YYYY-MM-DD. Defaults to today, in UTC. */
   on?: string;
   dryRun?: boolean;
@@ -353,9 +377,34 @@ function checkInputs(name: string, point: Point, inputs: unknown): Record<string
   return inputs as Record<string, unknown>;
 }
 
-/** Write `data` as the record at `path`, after reading it back with every other record. */
-async function write(o: Opened, before: RecordEntry[], path: string, text: string, create: boolean, dryRun: boolean): Promise<RecordWarning[]> {
-  const warnings = await validateWrite(o, before, path, text);
+/** Where a write goes: the working tree, or the lifecycle ledger (#2786). */
+interface WriteTarget {
+  /** The records as read: the tree with the ledger's answers laid over it. */
+  source: RecordSource;
+  ledger: LedgerAnswers;
+  /** Write to the ledger rather than the tree. */
+  onLedger: boolean;
+  message: string;
+}
+
+/**
+ * Write `text` as the record at `path`, after reading it back with every
+ * other record: into the working tree, or onto the ledger. Returns the
+ * record's warnings and, for a ledger write, where it went.
+ */
+async function write(o: Opened, before: RecordEntry[], path: string, text: string, create: boolean, dryRun: boolean, target: WriteTarget): Promise<{ warnings: RecordWarning[]; ledger: string | null }> {
+  const warnings = await validateWrite(o, before, path, text, target.source);
+  const held = target.ledger.byPath.get(path);
+  if (target.onLedger) {
+    if (dryRun) return { warnings, ledger: held?.ledger ?? null };
+    try {
+      const { ledger } = await writeLedgerAnswer(target.ledger, path, text, target.message, held?.sha ?? null);
+      return { warnings, ledger };
+    } catch (err) {
+      if (err instanceof RefCASConflictError) throw new PointsWriteError("record-id-taken", `${path} was written on chant/lifecycle by another ask or answer at the same time: ask again to read it`);
+      throw err;
+    }
+  }
   if (!dryRun) {
     try {
       writeFileSync(abs(o, path), text, create ? { flag: "wx" } : undefined);
@@ -364,7 +413,14 @@ async function write(o: Opened, before: RecordEntry[], path: string, text: strin
       throw err;
     }
   }
-  return warnings;
+  return { warnings, ledger: null };
+}
+
+/** The kind's answers on the ledger, and its records read with them laid over the tree. */
+async function readWithLedger(o: Opened): Promise<{ ledger: LedgerAnswers; source: RecordSource; before: RecordEntry[] }> {
+  const ledger = await readLedgerAnswers({ file: o.loaded.file, name: o.loaded.kind.name, dirRel: o.dirRel });
+  const source = withLedgerAnswers(o.source, ledger);
+  return { ledger, source, before: await readAll(o, source) };
 }
 
 function recordData(o: Opened, fields: Record<string, unknown>): Record<string, unknown> {
@@ -389,15 +445,21 @@ function resultFields(result: ChainResult): Record<string, unknown> {
  */
 export async function askPoint(opts: AskPointOptions): Promise<PointsWriteDocument> {
   try {
+    // A steward's turn (#2749): named by the caller, or this process's, as when an Op shells out to `points ask`.
+    const turn = opts.steward ? undefined : currentStewardTurn();
+    const steward = opts.steward ?? (turn ? { name: turn.steward, ...(turn.run ? { run: turn.run } : {}) } : undefined);
+    const toLedger = opts.store !== undefined ? opts.store === "ledger" : steward !== undefined;
     const kinds = await answerKindFiles(opts.cwd, opts.kind);
     const { o, point } = await findPoint(kinds, opts.point, opts.cwd);
     const inputs = checkInputs(opts.point, point, opts.inputs);
     const version = pointVersion(point);
     const hash = inputsHash(opts.point, version, inputs);
     const id = answerId(opts.point, hash);
-    const before = await readAll(o, o.source);
+    if (toLedger && !opts.dryRun) await refreshLedger(o.loaded.file);
+    const { ledger, source: read, before } = await readWithLedger(o);
     const existing = before.find((e) => e.id === id);
-    const done = (entry: RecordEntry, extra: { reused: boolean; written: boolean; text?: string }): PointsWriteDocument => ({
+    const heldAt = (entry: RecordEntry): string | null => ledger.byPath.get(entry.path)?.ledger ?? null;
+    const done = (entry: RecordEntry, extra: { reused: boolean; written: boolean; text?: string; ledger?: string | null }): PointsWriteDocument => ({
       $schema: POINTS_WRITE_SCHEMA_ID,
       contract: POINTS_WRITE_CONTRACT_VERSION,
       verb: "ask",
@@ -407,7 +469,7 @@ export async function askPoint(opts: AskPointOptions): Promise<PointsWriteDocume
       reused: extra.reused,
       written: extra.written,
       dryRun: !!opts.dryRun,
-      question: questionView(entry, point)!,
+      question: questionView(entry, point, extra.ledger !== undefined ? extra.ledger : heldAt(entry))!,
       ...(extra.text !== undefined ? { text: extra.text } : {}),
     });
     if (existing && existing.data !== null && (existing.state === "answered" || existing.state === "proposed")) return done(existing, { reused: true, written: false });
@@ -427,13 +489,13 @@ export async function askPoint(opts: AskPointOptions): Promise<PointsWriteDocume
     const answer = result.status === "escalated" ? undefined : result.answer;
     const title = titleFor(point, opts.subject, state, answer);
     const modelId = result.status === "proposed" ? result.decider.model : undefined;
-    const client = opts.steward ? { name: opts.steward.name } : opts.client;
+    const client = steward ? { name: steward.name } : opts.client;
     const source = {
       via: opts.via ?? "cli",
-      ...(opts.steward ? { harness: STEWARD_HARNESS } : {}),
+      ...(steward ? { harness: STEWARD_HARNESS } : {}),
       ...(client ? { client } : {}),
       ...(modelId ? { model: modelId } : {}),
-      ...(opts.steward?.run ? { session: { id: opts.steward.run } } : {}),
+      ...(steward?.run ? { session: { id: steward.run } } : {}),
     };
     const data = recordData(o, {
       id,
@@ -452,9 +514,12 @@ export async function askPoint(opts: AskPointOptions): Promise<PointsWriteDocume
     });
     const path = existing ? existing.path : o.dirRel === "." ? `${id}.md` : `${o.dirRel}/${id}.md`;
     const text = renderRecord(data, body(point, title));
-    const warnings = await write(o, before, path, text, !existing, !!opts.dryRun);
-    const entry: RecordEntry = { ...(existing ?? emptyEntry(path)), id, path, state, data, valid: true, reasons: [], warnings };
-    return done(entry, { reused: false, written: !opts.dryRun, ...(opts.dryRun ? { text } : {}) });
+    // A steward's question goes on the ledger, and one already held there stays there (#2786).
+    const onLedger = toLedger || ledger.byPath.has(path);
+    const message = `Decision point ${opts.point}: ${state}${opts.subject ? ` (${opts.subject})` : ""}${steward ? `, asked by ${steward.name}` : ""}`;
+    const wrote = await write(o, before, path, text, !existing, !!opts.dryRun, { source: read, ledger, onLedger, message });
+    const entry: RecordEntry = { ...(existing ?? emptyEntry(path)), id, path, state, data, valid: true, reasons: [], warnings: wrote.warnings };
+    return done(entry, { reused: false, written: !opts.dryRun, ledger: wrote.ledger, ...(opts.dryRun ? { text } : {}) });
   } catch (err) {
     return failure("ask", err);
   }
@@ -548,18 +613,22 @@ export async function answerPoint(opts: AnswerPointOptions): Promise<PointsWrite
     }
     const kinds = await answerKindFiles(opts.cwd, opts.kind);
     if (kinds.length === 0) throw new PointsWriteError("points-undeclared", "no record kind with an answers block is declared: name one with --kind, or declare one in chant.workspace.json");
-    let found: { opened: OpenedPoints; before: RecordEntry[]; target: RecordEntry & { data: Record<string, unknown> } } | undefined;
+    let found:
+      | { opened: OpenedPoints; before: RecordEntry[]; read: Awaited<ReturnType<typeof readWithLedger>>; target: RecordEntry & { data: Record<string, unknown> } }
+      | undefined;
     for (const k of kinds) {
       const opened = await openAnswers(k, opts.cwd);
-      const before = await readAll(opened.o, opened.o.source);
-      const target = before.find((e) => e.id === opts.id);
+      // A question a steward asked is on the ledger (#2786), and people's answer goes back there.
+      const read = await readWithLedger(opened.o);
+      const target = read.before.find((e) => e.id === opts.id);
       if (target && target.data !== null) {
-        found = { opened, before, target: target as RecordEntry & { data: Record<string, unknown> } };
+        found = { opened, before: read.before, read, target: target as RecordEntry & { data: Record<string, unknown> } };
         break;
       }
     }
     if (!found) throw new PointsWriteError("record-not-found", `no answer record has id ${opts.id}`);
     const { opened, before, target } = found;
+    const ledger = found.read.ledger;
     const { o } = opened;
     const d = target.data;
     if (target.state === "answered") throw new PointsWriteError("record-closed", `${opts.id} is answered, and an answer never changes: ask again with other inputs, or change the point, which asks the question anew`);
@@ -617,8 +686,10 @@ export async function answerPoint(opts: AnswerPointOptions): Promise<PointsWrite
     fields.title = titleFor(point, subject, "answered", value);
     const data = recordData(o, fields);
     const text = renderRecord(data, body(point, String(fields.title)));
-    const warnings = await write(o, before, target.path, text, false, !!opts.dryRun);
-    const entry: RecordEntry = { ...target, state: "answered", data, valid: true, reasons: [], warnings };
+    const onLedger = ledger.byPath.has(target.path);
+    const message = `Decision point ${name}: answered ${show(value, type)} by ${tally.counted.join(", ")}`;
+    const wrote = await write(o, before, target.path, text, false, !!opts.dryRun, { source: found.read.source, ledger, onLedger, message });
+    const entry: RecordEntry = { ...target, state: "answered", data, valid: true, reasons: [], warnings: wrote.warnings };
     return {
       $schema: POINTS_WRITE_SCHEMA_ID,
       contract: POINTS_WRITE_CONTRACT_VERSION,
@@ -629,7 +700,7 @@ export async function answerPoint(opts: AnswerPointOptions): Promise<PointsWrite
       reused: false,
       written: !opts.dryRun,
       dryRun: !!opts.dryRun,
-      question: questionView(entry, point)!,
+      question: questionView(entry, point, onLedger ? (wrote.ledger ?? ledger.byPath.get(target.path)?.ledger ?? null) : null)!,
       ...(opts.dryRun ? { text } : {}),
     };
   } catch (err) {
