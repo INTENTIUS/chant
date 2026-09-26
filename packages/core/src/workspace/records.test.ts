@@ -311,7 +311,7 @@ describe("a decision that originates in the workspace (#2654)", () => {
 
   test("takes a session and an issue, and nothing else", async () => {
     const base = workspaceDecision("ws-001");
-    write("ws-001-a.md", base.replace('  member: "app"\n', '  member: "app"\n  session: "S-0001"\n  issue: "jhgaylor/chud#77"\n'));
+    write("ws-001-a.md", base.replace('  member: "app"\n', '  member: "app"\n  session: "S-0001"\n  issue: "acme/example#77"\n'));
     write("ws-002-b.md", base.replace('id: "ws-001"', 'id: "ws-002"').replace('  member: "app"\n', '  member: "app"\n  session: null\n'));
     write("ws-003-c.md", base.replace('id: "ws-001"', 'id: "ws-003"').replace('  member: "app"\n', '  member: "app"\n  row: "Sort order"\n'));
     write("ws-004-d.md", base.replace('id: "ws-001"', 'id: "ws-004"').replace('  member: "app"\n', ""));

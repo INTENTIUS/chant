@@ -2,12 +2,12 @@
  * #2700 — the lexicons `chant serve mcp` loads at the root of a declared
  * workspace that has no lexicon of its own.
  *
- * Such a root (a generated chud repo, say, whose lexicons are all in
- * `delivery/`) used to refuse with "No lexicon detected", so an agent started
- * there got none of chant's tools. The server now starts with core's tools and
- * resources, and with the lexicons of the workspace's members of kind chant,
- * each read from that member's own config the way `chant build` in the
- * member's directory reads it.
+ * Such a root (a generated app repo, say, whose lexicons are all under a
+ * delivery directory) used to refuse with "No lexicon detected", so an agent
+ * started there got none of chant's tools. The server now starts with core's
+ * tools and resources, and with the lexicons of the workspace's members of
+ * kind chant, each read from that member's own config the way `chant build`
+ * in the member's directory reads it.
  *
  * Loading is best effort, one member and one lexicon at a time: a member whose
  * config does not load, or a lexicon this chant cannot import, is left out and

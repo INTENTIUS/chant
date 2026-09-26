@@ -157,11 +157,11 @@ describe("the closed list of reason codes", () => {
   });
 
   test("a plugin's finding codes are in its own namespace, outside the list, and the intent schema accepts them (#2656)", () => {
-    expect(isPluginCode("plugin:chud:contract-criteria-changed")).toBe(true);
-    expect(isPluginCode("plugin:chud:contract-criteria-changed", "chud")).toBe(true);
-    expect(isPluginCode("plugin:chud:contract-criteria-changed", "units")).toBe(false);
-    for (const bad of ["plugin:chud", "plugin::x", "plugin:chud:Upper", "plugin:chud:a:b", "intent-commit-bare", 7]) expect(isPluginCode(bad), String(bad)).toBe(false);
-    expect(isReasonCode("plugin:chud:contract-criteria-changed")).toBe(false);
+    expect(isPluginCode("plugin:acme:contract-criteria-changed")).toBe(true);
+    expect(isPluginCode("plugin:acme:contract-criteria-changed", "acme")).toBe(true);
+    expect(isPluginCode("plugin:acme:contract-criteria-changed", "units")).toBe(false);
+    for (const bad of ["plugin:acme", "plugin::x", "plugin:acme:Upper", "plugin:acme:a:b", "intent-commit-bare", 7]) expect(isPluginCode(bad), String(bad)).toBe(false);
+    expect(isReasonCode("plugin:acme:contract-criteria-changed")).toBe(false);
     const { validate } = contract(intentSchema);
     const finding = (code: string) => ({ id: `finding:${code}:1`, kind: "finding", code, message: "m", concerns: [] });
     const doc = (code: string) => ({
@@ -178,9 +178,9 @@ describe("the closed list of reason codes", () => {
       reasons: [],
       summary: { commits: 0, decisions: 0, artifacts: 0, findings: 1 },
     });
-    expect(validate(doc("plugin:chud:contract-criteria-changed"))).toBe(true);
+    expect(validate(doc("plugin:acme:contract-criteria-changed"))).toBe(true);
     expect(validate(doc("intent-commit-bare"))).toBe(true);
-    expect(validate(doc("plugin:chud:Nope"))).toBe(false);
+    expect(validate(doc("plugin:acme:Nope"))).toBe(false);
     expect(validate(doc("made-up-code"))).toBe(false);
   });
 

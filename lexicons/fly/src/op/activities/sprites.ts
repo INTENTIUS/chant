@@ -630,7 +630,7 @@ export interface SpriteUrlResult {
  * nothing until now exposed it on its own (for a later phase that only has
  * the sprite `id`) or waited on it. `GET /v1/sprites/{id}` for the URL; with
  * `path` set, polls `GET {url}{path}` until `status` (default any 2xx) or
- * `timeoutMs` runs out — the box's door/hud/chud services take a moment to
+ * `timeoutMs` runs out — the box's door/hud services take a moment to
  * bind their `http_port` after `spriteServiceStart`.
  */
 export async function spriteUrl(

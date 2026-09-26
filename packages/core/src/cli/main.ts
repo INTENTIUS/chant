@@ -1284,9 +1284,10 @@ async function loadPluginsOrExit(path: string): Promise<import("../lexicon").Lex
  * #2700 — whether `path` is the root of a declared workspace and holds no
  * lexicon of its own: no `lexicons` in a root config, and no lexicon import in
  * the root's source, which leaves the members' directories out (#2527). A
- * generated chud repo is this shape: its lexicons are all in `delivery/`.
- * `chant serve mcp` starts there instead of refusing with "No lexicon
- * detected", and serves core with the chant members' lexicons.
+ * generated app repo can be this shape: its lexicons are all under a
+ * delivery directory, not the root. `chant serve mcp` starts there instead of
+ * refusing with "No lexicon detected", and serves core with the chant
+ * members' lexicons.
  *
  * A directory with no workspace declaration costs only `findWorkspaceRoot`'s
  * existence checks, so a level-0 project reaches `loadPluginsOrExit` as before.

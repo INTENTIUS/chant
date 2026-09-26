@@ -20,7 +20,7 @@
  * runtime's decider or a test's stub supplies. Without one, a model decider is
  * not asked and the chain moves on.
  *
- * Taken from chud's `packages/runtime/src/decide.mjs` at 43afcf1: the chain,
+ * Ported from chud's `packages/runtime/src/decide.mjs` at 43afcf1: the chain,
  * the observation rule, the point version and the inputs hash. The records
  * are chant records: `decide.ts` writes them, and {@link applyAnswers} warns
  * about them on read.
@@ -71,7 +71,6 @@ export function inputOutput(name: string): string {
 export type QuestionType = "noul" | "choice" | "score";
 
 export interface Question {
-  /** `boolean` in a points file is read as `noul`. */
   type: QuestionType;
   instructions: string;
   criteria: Record<string, string> | string[];
@@ -220,20 +219,9 @@ export function schemaProblems(data: unknown): PointProblem[] {
   return out;
 }
 
-/** `boolean` read as `noul`. The declaration is otherwise kept as written. */
-function normalise(points: Record<string, Point>): Record<string, Point> {
-  const out: Record<string, Point> = {};
-  for (const [name, p] of Object.entries(points)) {
-    const type = (p.question.type as string) === "boolean" ? "noul" : p.question.type;
-    out[name] = { ...p, question: { ...p.question, type } };
-  }
-  return out;
-}
-
 /**
- * Parse and validate a points file's text. Returns its points, with
- * `boolean` read as `noul`. Throws a {@link PointsError} naming the file and
- * each field.
+ * Parse and validate a points file's text. Returns its points. Throws a
+ * {@link PointsError} naming the file and each field.
  */
 export function parsePoints(text: string, file: string): Record<string, Point> {
   let data: unknown;
@@ -244,7 +232,7 @@ export function parsePoints(text: string, file: string): Record<string, Point> {
   }
   const problems = schemaProblems(data);
   if (problems.length > 0) throw new PointsError(file, problems);
-  const points = normalise((data as { points: Record<string, Point> }).points);
+  const points = (data as { points: Record<string, Point> }).points;
   const more = pointProblems(points);
   if (more.length > 0) throw new PointsError(file, more);
   return points;

@@ -89,7 +89,7 @@ describe("box-credential-declared (WSP121)", () => {
   test("an env file and a shell script in the box's directory are read too; prose only for credential shapes", async () => {
     const root = repo({
       "chant.workspace.json": declaration(BROKERED),
-      "spec/.env": `FOUNTAIN_API_KEY=abc123def456\nPORT=8080\nGIT_TOKEN=\${CHUD_GIT_TOKEN}\n`,
+      "spec/.env": `FOUNTAIN_API_KEY=abc123def456\nPORT=8080\nGIT_TOKEN=\${ACME_GIT_TOKEN}\n`,
       "spec/run.sh": `#!/bin/sh\nexport GITHUB_TOKEN=${GITHUB_TOKEN}\necho "password=$GIT_TOKEN"\nTOKEN=$1\ntoken=~/box/llm-token\nSECRET=/run/secrets/x\n`,
       "spec/README.md": `Token: rotate it monthly.\n`,
       "spec/node_modules/pkg/index.js": `export const k = ${JSON.stringify(ANTHROPIC_KEY)};\n`,

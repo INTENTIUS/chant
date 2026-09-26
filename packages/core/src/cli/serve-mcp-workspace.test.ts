@@ -73,8 +73,8 @@ describe("chant serve mcp at a workspace root with no lexicon of its own (#2700)
     expect(init.instructions).toContain("Member delivery (delivery/) declares docker.");
   }, TIMEOUT);
 
-  test("a chud-shaped root, lexicons only in a member, serves core and the lexicons that load", () => {
-    const root = join(scratch, "chud-shaped");
+  test("a lexiconless root, lexicons only in a member, serves core and the lexicons that load", () => {
+    const root = join(scratch, "lexiconless-shaped");
     mkdirSync(join(root, ".git"), { recursive: true });
     mkdirSync(join(root, "delivery"), { recursive: true });
     mkdirSync(join(root, "app"), { recursive: true });
@@ -87,9 +87,9 @@ describe("chant serve mcp at a workspace root with no lexicon of its own (#2700)
       ],
       pins: [],
     }));
-    // `chud` is not installed here, as it would not be for a chant without
-    // @intentius/chud: it is named as not loaded and the rest is served.
-    writeFileSync(join(root, "delivery", "chant.config.ts"), 'export default { lexicons: ["docker", "chud"] };\n');
+    // `acme` names a lexicon package that isn't installed here: it is named
+    // as not loaded and the rest is served.
+    writeFileSync(join(root, "delivery", "chant.config.ts"), 'export default { lexicons: ["docker", "acme"] };\n');
     writeFileSync(join(root, "app", "server.js"), "// not chant\n");
 
     const { status, stderr, init, tools } = initializeAndList(root);
@@ -97,7 +97,7 @@ describe("chant serve mcp at a workspace root with no lexicon of its own (#2700)
     for (const name of CORE_TOOLS) expect(tools).toContain(name);
     expect(tools).toContain("docker:diff");
     expect(init.instructions).toContain('workspace "t"');
-    expect(init.instructions).toContain("Lexicon chud did not load");
+    expect(init.instructions).toContain("Lexicon acme did not load");
     expect(init.instructions).toContain("Lexicon tools and resources served: docker.");
   }, TIMEOUT);
 

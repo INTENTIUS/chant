@@ -74,7 +74,7 @@ The composite also returns `declaration`, the steward as core reads it: its name
 
 ## Box
 
-A persistent machine that serves an app repo and its tools: an Environment that runs a provisioning script as its `setup_script`, an Agent on a persistent sandbox provisioned from it, and optionally a Vault for the secrets every box of this kind shares. An arugula studio box is the case it was written for: `box/provision-template.sh` is the setup, and the door serves on :8080 with hud and chud box behind it.
+A persistent machine that serves an app repo and its tools: an Environment that runs a provisioning script as its `setup_script`, an Agent on a persistent sandbox provisioned from it, and optionally a Vault for the secrets every box of this kind shares. An arugula studio box is the case it was written for: `box/provision-template.sh` is the setup, and the door serves on :8080 with hud behind it.
 
 `repo` is optional. Given, the Environment clones it in (`repositories`) before `setup_script` runs. Omitted — a blank-slate app, such as the one hud's `init` makes, has no git remote yet — the Environment declares no `repositories` at all, and `setup_script` runs against whatever working tree the sandbox already has (a self-hosted `runner`'s own).
 

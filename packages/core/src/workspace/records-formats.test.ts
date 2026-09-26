@@ -3,11 +3,11 @@
  * kinds without a lifecycle, a supersedes field of bare ids, schema files a
  * schema `$ref`s, and content-addressed ids.
  *
- * The fixtures are shaped like chud's records (jhgaylor/chud#78: units,
- * evidence named by the hash of its bytes, sessions, driver closures and
- * Markdown contracts, with draft-07 schemas that `$ref` a shared
- * `defs.schema.json`), trimmed to the fields that matter here. Each one reads
- * through a kind file alone: no reader code.
+ * The fixtures are shaped like a development-model plugin's records (ported
+ * from chud, jhgaylor/chud#78: units, evidence named by the hash of its
+ * bytes, sessions, driver closures and Markdown contracts, with draft-07
+ * schemas that `$ref` a shared `defs.schema.json`), trimmed to the fields
+ * that matter here. Each one reads through a kind file alone: no reader code.
  */
 
 import { execFileSync } from "node:child_process";
@@ -29,7 +29,7 @@ const validateOutput = new Ajv2020({ strict: true, allErrors: true }).compile(sc
 let root: string;
 beforeEach(() => {
   root = realpathSync(mkdtempSync(join(tmpdir(), "chant-record-formats-")));
-  writeChudModel();
+  writeAcmeModel();
 });
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
@@ -72,9 +72,9 @@ async function failure(kind: string): Promise<{ code: string; message: string }>
 const codes = (r: { reasons: Array<{ code: string }> }) => r.reasons.map((x) => x.code);
 const warned = (r: { warnings: Array<{ code: string }> }) => r.warnings.map((x) => x.code);
 
-// ── chud's model, as kind files ──────────────────────────────────────────────
+// ── acme's model, as kind files ──────────────────────────────────────────────
 
-const BASE = "https://schemas.example.test/chud-runtime/v0";
+const BASE = "https://schemas.example.test/acme-runtime/v0";
 const ref = (name: string) => ({ $ref: `defs.schema.json#/definitions/${name}` });
 
 const DEFS = {
@@ -106,7 +106,7 @@ const UNIT_SCHEMA = {
     scope: { type: "array", minItems: 1, items: ref("text") },
     base_commit: ref("gitId"),
     result: { type: "object", required: ["commit", "ref"], properties: { commit: { type: ["string", "null"] }, ref: { type: ["string", "null"] } } },
-    // A bare hash, as chud writes today, or a pin chant checks.
+    // A bare hash, as acme writes today, or a pin chant checks.
     evidence: {
       type: "array",
       items: { anyOf: [ref("sha256"), { type: "object", required: ["path", "sha256"], properties: { path: ref("text"), sha256: ref("sha256") } }] },
@@ -178,7 +178,7 @@ const CONTRACT_SCHEMA = {
   },
 };
 
-/** A kind file: data only, the way chud's model package would ship it. */
+/** A kind file: data only, the way acme's model package would ship it. */
 function kindFile(kind: Record<string, unknown>): string {
   return `export const recordKind = ${JSON.stringify(kind, null, 2)};\n`;
 }
@@ -235,7 +235,7 @@ const KINDS: Record<string, Record<string, unknown>> = {
   },
 };
 
-function writeChudModel(): void {
+function writeAcmeModel(): void {
   write("design/schemas/defs.schema.json", json(DEFS));
   write("design/schemas/unit.schema.json", json(UNIT_SCHEMA));
   write("design/schemas/evidence.schema.json", json(EVIDENCE_SCHEMA));
@@ -304,7 +304,7 @@ test("the output schema lists exactly the formats a kind file may name", () => {
 });
 
 describe("format json", () => {
-  test("chud's units, sessions and driver closures read through kind files alone", async () => {
+  test("acme's units, sessions and driver closures read through kind files alone", async () => {
     write("design/units/U-0001.json", json(unit("U-0001", { outcome: "done", closed_at: "2026-09-24T11:00:00.000Z" })));
     write("design/units/U-0002.json", json(unit("U-0002")));
     write("design/sessions/S-0001.json", json(SESSION));
@@ -407,7 +407,7 @@ describe("the write commands through a declared kind (#2680)", () => {
   test.each(["unit", "evidence"])("refuse the declared %s kind with write-usage-invalid", async (kind) => {
     write(
       "chant.workspace.json",
-      json({ name: "chud", schema: 1, members: [{ name: "design", dir: "design", kind: "other", because: "chud's records" }], records: [{ kind: `design/${kind}.kind.mjs` }] }),
+      json({ name: "acme", schema: 1, members: [{ name: "design", dir: "design", kind: "other", because: "acme's records" }], records: [{ kind: `design/${kind}.kind.mjs` }] }),
     );
     write("design/units/U-0001.json", json(unit("U-0001")));
     write("fields.json", "{}\n");
@@ -510,7 +510,7 @@ describe("kinds without a lifecycle", () => {
   const contract = (id: string, status: string, supersedes?: string | string[]) =>
     `---\nid: "${id}"\nstatus: "${status}"\n${supersedes === undefined ? "" : `supersedes: ${JSON.stringify(supersedes)}\n`}---\n\n# ${id}\n`;
 
-  test("supersedes as one id, as chud's contracts write it, derives supersededBy under approval ranks", async () => {
+  test("supersedes as one id, as acme's contracts write it, derives supersededBy under approval ranks", async () => {
     write("design/contracts/C-001-first.md", contract("C-001", "approved"));
     write("design/contracts/C-002-second.md", contract("C-002", "approved", "C-001"));
     write("design/contracts/C-003-draft.md", contract("C-003", "draft", "C-002"));
@@ -588,7 +588,7 @@ describe("schema.refs", () => {
 // ── 4. Content-addressed ids ─────────────────────────────────────────────────
 
 describe("idFrom sha256", () => {
-  test("chud's evidence reads with the hash of its bytes as its id, in the tree and under --at", async () => {
+  test("acme's evidence reads with the hash of its bytes as its id, in the tree and under --at", async () => {
     const h = writeEvidence();
     const bytes = readFileSync(join(root, "design", "evidence", `${h}.json`));
     expect(createHash("sha256").update(bytes).digest("hex")).toBe(h);
