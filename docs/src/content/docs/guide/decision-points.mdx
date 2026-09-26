@@ -101,7 +101,7 @@ export const recordKind = {
 
 ## Ask a point
 
-chant never calls a model. The call belongs to the operations layer, in the decide Op activity ([#2740](https://github.com/INTENTIUS/chant/issues/2740)) or a runtime's decider, which hands chant the backend's response:
+chant never calls a model on a read. The call belongs to the operations layer: the `decide` Op activity of the [systemone lexicon](/chant/lexicons/systemone/decide/), or a runtime's decider, which hands chant the backend's response:
 
 ```bash
 chant workspace points ask slice-tier --inputs inputs.json --subject W-002 --response response.json
@@ -131,7 +131,7 @@ Giving the answer the model proposed confirms it. Any other answer is the quorum
 
 ## Ask a point from an Op
 
-An Op asks a point from one of its activities with `askPointInRun` from `@intentius/chant/op` ([#2749](https://github.com/INTENTIUS/chant/issues/2749)). The decide activity ([#2740](https://github.com/INTENTIUS/chant/issues/2740)) calls it. An answered question returns its answer, and the Op goes on. An escalated or proposed question is still open, so the activity throws `PointWait`. The run then ends with status `waiting`, the way a gate ends it with `gated`. No later step runs, no `onFailure` phase runs, and the run's ledger record names the question as `point`. `chant run` exits 3. Nothing waits in the meantime. Once a person has answered, the next run asks the same point with the same inputs and reads the answer from its record.
+An Op asks a point from one of its activities with `askPointInRun` from `@intentius/chant/op` ([#2749](https://github.com/INTENTIUS/chant/issues/2749)). The `decide` activity of the [systemone lexicon](/chant/lexicons/systemone/decide/) calls it. An answered question returns its answer, and the Op goes on. An escalated or proposed question is still open, so the activity throws `PointWait`. The run then ends with status `waiting`, the way a gate ends it with `gated`. No later step runs, no `onFailure` phase runs, and the run's ledger record names the question as `point`. `chant run` exits 3. Nothing waits in the meantime. Once a person has answered, the next run asks the same point with the same inputs and reads the answer from its record.
 
 ```ts
 import { askPointInRun, type BrokeredModelAsk } from "@intentius/chant/op";

@@ -39,7 +39,7 @@ It never writes and never calls a model.
 | `model` | Its answer at or above its threshold is a proposal, and the record is `proposed`. Below the threshold, the next decider is asked. |
 | `quorum` | Always last. The record is `escalated`, open for people. |
 
-chant calls no model. `--response <file>` hands it a `POST /v1/systemone` response the caller already got from a backend, `{ "model": ..., "answers": { "<point>": ... } }`, and a model decider reads its answer there. It is observed only when `model` is the pinned id the decider names. Without `--response` a model decider is not asked, so the question moves on to the quorum. The decide Op activity ([#2740](https://github.com/INTENTIUS/chant/issues/2740)) makes the call and passes the answer the same way.
+chant calls no model. `--response <file>` hands it a `POST /v1/systemone` response the caller already got from a backend, `{ "model": ..., "answers": { "<point>": ... } }`, and a model decider reads its answer there. It is observed only when `model` is the pinned id the decider names. Without `--response` a model decider is not asked, so the question moves on to the quorum. The `decide` Op activity of the [systemone lexicon](/chant/lexicons/systemone/decide/) makes the call from an Op and passes the answer the same way.
 
 The record's id is the point's name and the first 12 hex digits of the sha256 of the point, its declaration and the inputs. So the same question is answered once. Asking again returns the record that is there, with `reused: true`, when it is `proposed` or `answered`. An `escalated` record is asked again, since a backend may answer now. It is rewritten only when the chain no longer escalates.
 

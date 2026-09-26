@@ -124,6 +124,12 @@
       "@intentius/chant-lexicon-otel/*": [
         "lexicons/otel/src/*"
       ],
+      "@intentius/chant-lexicon-systemone": [
+        "lexicons/systemone/src/index.ts"
+      ],
+      "@intentius/chant-lexicon-systemone/*": [
+        "lexicons/systemone/src/*"
+      ],
       "@intentius/chant-lexicon-render": [
         "lexicons/render/src/index.ts"
       ],

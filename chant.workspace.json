@@ -362,6 +362,23 @@
       ]
     },
     {
+      "name": "lexicon-systemone",
+      "dir": "lexicons/systemone",
+      "kind": "other",
+      "because": "an npm workspace package with no chant project",
+      "generated": [
+        {
+          "path": "src/lint/post-synth/index.ts",
+          "generator": "npx tsx ../../scripts/generate-post-synth-barrels.ts",
+          "sources": [
+            "scripts/generate-post-synth-barrels.ts",
+            "packages/core/src/codegen/generate-post-synth-barrel.ts",
+            "lexicons/systemone/src/lint/post-synth"
+          ]
+        }
+      ]
+    },
+    {
       "name": "lexicon-terraform",
       "dir": "lexicons/terraform",
       "kind": "other",

@@ -460,6 +460,13 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     why: "`renderApply` performs the lexicon's resource CRUD.",
   },
   {
+    file: "lexicons/systemone/src/backend.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "a Jev-compatible `POST /v1/systemone` server a backend declares",
+    why: "The `decide` activity asks a decision point's model decider. It runs only as an Op step: no chant read calls a model (ws-052).",
+  },
+  {
     file: "lexicons/k8s/src/op/activities/argo.ts",
     primitives: ["fetch"],
     phase: "apply",
