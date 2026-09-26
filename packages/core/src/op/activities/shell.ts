@@ -1,5 +1,7 @@
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
+import { GateWait, asPendingGate } from "../gate-wait";
+import type { PendingGateRecord } from "../../lifecycle/gate-ledger";
 
 const execAsync = promisify(exec);
 
@@ -19,6 +21,25 @@ export interface ShellCmdArgs {
    * step can branch on instead of a failed Op.
    */
   okExit?: number[];
+  /**
+   * The exit code that means the command stopped at a gate of its own
+   * (#2779), such as `chant workspace upgrade`'s 3. On it the step does not
+   * fail and does not pass: the run ends `gated` at the command's gate, as it
+   * would at a pending `gate` step, and a work lease is released `gated`.
+   *
+   * The gate is read from the command's stdout when that is JSON carrying a
+   * `pending` fact, as `chant workspace upgrade --json` prints; otherwise
+   * `gate` names it, and the newest pending fact for it on the gate ledger is
+   * the one the run stops at. It is read before `okExit`, so a code in both
+   * stops the run.
+   */
+  gatedExit?: number;
+  /**
+   * The gate the command records, for `gatedExit`, when its stdout doesn't
+   * carry it: the op it is recorded under and its name, the two arguments
+   * `chant approve` takes (`{ op: "workspace-upgrade", gate: "." }`).
+   */
+  gate?: { op: string; gate: string };
 }
 
 /**
@@ -86,6 +107,11 @@ export async function shellCmd(args: ShellCmdArgs, signal?: AbortSignal): Promis
     // not an exit status the author declared anything about, so it rethrows
     // even if `okExit` happens to contain the code.
     const died = failure.killed === true || typeof failure.signal === "string" || signal?.aborted === true;
+    if (exitCode !== undefined && !died && args.gatedExit !== undefined && exitCode === args.gatedExit) {
+      const stderrText = (failure.stderr ?? "").trim();
+      if (stderrText) console.error(stderrText);
+      throw new GateWait(await commandGate(args, (failure.stdout ?? "").trim(), exitCode));
+    }
     if (exitCode !== undefined && !died && okExit.includes(exitCode)) {
       const stderrText = (failure.stderr ?? "").trim();
       if (stderrText) console.error(stderrText);
@@ -98,4 +124,45 @@ export async function shellCmd(args: ShellCmdArgs, signal?: AbortSignal): Promis
     }
     throw failure;
   }
+}
+
+/** The pending fact a command's stdout carries: the whole of it as JSON, or its last line. */
+function pendingFromStdout(stdout: string): PendingGateRecord | undefined {
+  const lines = stdout.split("\n");
+  for (const text of [stdout, lines[lines.length - 1] ?? ""]) {
+    try {
+      const parsed = JSON.parse(text) as { pending?: unknown } | null;
+      const pending = asPendingGate(parsed?.pending);
+      if (pending) return pending;
+    } catch {
+      // Not JSON: try the next reading, then the step's own `gate`.
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The gate a command stopped at (#2779): the pending fact its stdout
+ * carries, or the newest one the gate ledger holds for the step's `gate`.
+ * Throws when neither names one, since a run can't be `gated` at a gate
+ * nobody can approve.
+ */
+async function commandGate(args: ShellCmdArgs, stdout: string, exitCode: number): Promise<PendingGateRecord> {
+  const fromStdout = pendingFromStdout(stdout);
+  if (fromStdout) return fromStdout;
+  const named = args.gate;
+  if (!named) {
+    throw new Error(
+      `command exited ${exitCode}, its gatedExit, and named no gate: its stdout carries no \`pending\` gate fact as JSON, and the step has no \`gate\``,
+    );
+  }
+  const { readGateLedger, latestPendingGate } = await import("../../lifecycle/gate-ledger");
+  const { pending } = await readGateLedger(named.op, args.cwd ? { cwd: args.cwd } : undefined);
+  const latest = latestPendingGate(pending, named.gate);
+  if (!latest) {
+    throw new Error(
+      `command exited ${exitCode}, its gatedExit, but the gate ledger holds no pending fact for ${named.op} / ${named.gate}, so there is no gate to stop at`,
+    );
+  }
+  return latest;
 }

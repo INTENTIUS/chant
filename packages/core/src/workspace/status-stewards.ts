@@ -37,6 +37,7 @@ import { listWorkLeases } from "../lifecycle/work-lease";
 import { stewardWorkHolder } from "../op/work-lease-run";
 import type { OpConfig } from "../op/types";
 import type { OpRunRecord } from "../op/runtime";
+import { approveCommand } from "./status-gates";
 import type { ReasonCode } from "./reason-codes";
 
 /** Why a member's stewards can't be fully listed. Closed: a new code is a contract change. */
@@ -55,8 +56,13 @@ export interface StatusStewardRun {
   status: OpRunRecord["status"];
   started: string;
   ended: string;
-  /** The gate the run stopped at, for a `gated` run. */
-  gate: { name: string; since: string } | null;
+  /**
+   * The gate the run stopped at, for a `gated` run: its name, when the run
+   * stopped there, the op it is recorded under (the Op's own, or the
+   * command's for a step whose command stopped at its own gate, #2779, such
+   * as `workspace-upgrade`), and the command that approves it.
+   */
+  gate: { name: string; since: string; op: string; approve: string } | null;
   /** The open decision point the run stopped on, for a `waiting` run (#2749). */
   point: StatusStewardWait | null;
 }
@@ -143,6 +149,11 @@ function waitOf(p: NonNullable<OpRunRecord["point"]>): StatusStewardWait {
   };
 }
 
+function gateOf(g: NonNullable<OpRunRecord["gate"]>, opName: string): NonNullable<StatusStewardRun["gate"]> {
+  const op = g.op ?? opName;
+  return { name: g.name, since: g.since, op, approve: approveCommand(op, g.name, null) };
+}
+
 /** Whether a directory is a chant project of its own. */
 function isChantProject(dir: string): boolean {
   return existsSync(join(dir, "chant.config.ts")) || existsSync(join(dir, "chant.config.json"));
@@ -221,7 +232,7 @@ export async function readMemberStewards(
             status: newest.status,
             started: newest.started,
             ended: newest.ended,
-            gate: newest.gate ? { name: newest.gate.name, since: newest.gate.since } : null,
+            gate: newest.gate ? gateOf(newest.gate, op.name) : null,
             point: newest.point ? waitOf(newest.point) : null,
           };
           if (newest.status === "waiting" && lastRun.point && newest.steward === declaration.name) {

@@ -57,6 +57,8 @@ export interface OpRunStepRecord {
   refusal?: string;
   /** The open decision point this step asked (#2749), for a step skipped because it is waiting on one. */
   point?: WaitingPoint;
+  /** The gate this step's command stopped at (#2779), for a step skipped because of it. */
+  gate?: { op: string; gate: string };
 }
 
 /** One phase's steps and the verdict they add up to. */
@@ -87,8 +89,8 @@ export interface OpRunStatus {
   records?: StepRecord[];
   /** The executor's own result, when the runtime is executing in this process. */
   result?: OpRunResult;
-  /** The gate this run is waiting on, when `state` is `gated`. */
-  gate?: { name: string; since: string };
+  /** The gate this run is waiting on, when `state` is `gated`; `op` names the op it is recorded under when that isn't the run's own (#2779). */
+  gate?: { name: string; since: string; op?: string };
   /** The open decision point this run is waiting on, when `state` is `waiting` (#2749). */
   point?: WaitingPoint & { since: string };
   /** Free-text detail for a failed run. */
@@ -132,8 +134,13 @@ export interface OpRunRecord {
   outcomes: Record<string, unknown>;
   /** Per-phase, per-step status, in execution order. */
   phases: OpRunPhaseRecord[];
-  /** The gate the run stopped on, for `status: "gated"`. */
-  gate?: { name: string; since: string };
+  /**
+   * The gate the run stopped on, for `status: "gated"`. `op` is set when the
+   * gate is recorded under another op than the run's (#2779): a step whose
+   * command stopped at its own gate, such as `chant workspace upgrade`'s
+   * `workspace-upgrade` / `<scope>`.
+   */
+  gate?: { name: string; since: string; op?: string };
   /**
    * The open decision point the run stopped on, for `status: "waiting"`
    * (#2749): the answer record's id, the point, its state then, and when the

@@ -41,6 +41,7 @@ import { runOpLocally, OpRunFailure, type OpRunResult } from "./local-executor";
 import { acquireLease, releaseLease, stillHoldsLease, currentHolderId, DEFAULT_LEASE_TTL_MS, type LeaseRecord, type AcquireLeaseResult } from "../lifecycle/lease";
 import { randomUUID } from "node:crypto";
 import { readRunLedger, runEnvOf } from "../lifecycle/run-ledger";
+import { readGateLedger, latestResolutionSince } from "../lifecycle/gate-ledger";
 import { enterStewardTurn } from "./steward-turn";
 import { stewardLeaseName, stewardTurnLeaseName, type StewardDeclaration } from "./steward";
 import { stewardWorkHolder } from "./work-lease-run";
@@ -86,13 +87,31 @@ export type OperatorTickEvent =
    * (#2749) when a steward ran it because that question is now answered,
    * rather than because its cron fired.
    */
-  | { kind: "ticked"; op: string; env: string; result: OpRunResult; resumed?: string }
+  | {
+      kind: "ticked";
+      op: string;
+      env: string;
+      result: OpRunResult;
+      resumed?: string;
+      /**
+       * The gate the Op's last run stopped at (#2779), when a steward ran it
+       * because that gate is now approved rather than because its cron fired.
+       */
+      approved?: { op: string; gate: string };
+    }
   /**
    * A steward's Op whose last run stopped on an open decision point (#2749),
    * and the question is still open, so the Op is not run this round. A person
    * answers it through hud or `points answer`; the steward never does.
    */
   | { kind: "waiting-on-point"; op: string; env: string; point: string; question: string; state: string }
+  /**
+   * A steward's Op whose last run stopped at a gate (#2779), and nobody has
+   * approved it since, so the Op is not run this round. `gateOp` is the op
+   * the gate is recorded under: the Op's own, or a command's such as
+   * `workspace-upgrade`.
+   */
+  | { kind: "waiting-on-gate"; op: string; env: string; gateOp: string; gate: string }
   | { kind: "skipped-lease-held"; op: string; env: string; heldBy?: string }
   /** The Op declares its own `schedule.cron` (#2120) and this round did not land on a firing minute — the lease was never touched. An Op without a cron is never reported this way: it ticks every round, on `--interval`. */
   | { kind: "skipped-not-due"; op: string; env: string; cron: string }
@@ -204,6 +223,37 @@ async function stewardWaits(steward: StewardDeclaration, opts: OperatorRoundOpti
     const now = states?.get(r.question);
     const answered = states !== null && (now === undefined || now === "answered");
     out.set(r.op, { question: r.question, point: r.point, state: now ?? r.state, answered });
+  }
+  return out;
+}
+
+/** A steward's Op whose last run stopped at a gate (#2779). */
+interface GateWaitState {
+  /** The op the gate is recorded under. */
+  gateOp: string;
+  gate: string;
+  /** Someone approved the gate since the run stopped there, so the Op runs again. */
+  approved: boolean;
+}
+
+/**
+ * The steward's Ops whose newest run is the steward's own and stopped at a
+ * gate, and whether the gate has been approved since. A gate ledger that
+ * can't be read leaves the run where it stopped.
+ */
+async function stewardGates(steward: StewardDeclaration, opts: OperatorRoundOptions): Promise<Map<string, GateWaitState>> {
+  const out = new Map<string, GateWaitState>();
+  for (const op of steward.ops) {
+    try {
+      const newest = (await readRunLedger(runEnvOf(op), op.name, { cwd: opts.cwd })).records.at(-1);
+      if (newest?.status !== "gated" || !newest.gate || newest.steward !== steward.name) continue;
+      const gateOp = newest.gate.op ?? op.name;
+      const { resolutions } = await readGateLedger(gateOp, { cwd: opts.cwd });
+      const approved = latestResolutionSince(resolutions, newest.gate.name, newest.gate.since) !== undefined;
+      out.set(op.name, { gateOp, gate: newest.gate.name, approved });
+    } catch {
+      // A ledger that can't be read has no gated run to resume.
+    }
   }
   return out;
 }
@@ -341,16 +391,29 @@ export async function runOperatorRound(opts: OperatorRoundOptions): Promise<Oper
   // A steward's Ops whose last run waits on a decision point (#2749), read
   // once per round, and the state of those questions now.
   const waiting = steward ? await stewardWaits(steward, opts) : new Map<string, WaitState>();
+  // And those whose last run stopped at a gate (#2779), with whether it has
+  // been approved since.
+  const gated = steward ? await stewardGates(steward, opts) : new Map<string, GateWaitState>();
 
   for (const config of await roundOps(opts)) {
     const env = steward ? runEnvOf(config) : (envOf(config) ?? "unknown");
     const wait = waiting.get(config.name);
+    const stopped = gated.get(config.name);
     let resumed: string | undefined;
+    let approved: { op: string; gate: string } | undefined;
 
     // A run waiting on a question that is now answered is resumed on this
     // round, whatever its cron says. One whose question is still open is left
     // until a person answers it, unless its cron fires, which asks again.
     if (wait?.answered) resumed = wait.question;
+    // The same for a run stopped at a gate that is now approved (#2779).
+    if (stopped?.approved) approved = { op: stopped.gateOp, gate: stopped.gate };
+    const standing: OperatorTickEvent | undefined = wait
+      ? { kind: "waiting-on-point", op: config.name, env, point: wait.point, question: wait.question, state: wait.state }
+      : stopped
+        ? { kind: "waiting-on-gate", op: config.name, env, gateOp: stopped.gateOp, gate: stopped.gate }
+        : undefined;
+    const resuming = resumed !== undefined || approved !== undefined;
 
     // An Op that declares its own cadence (#2120) is ticked on that cron
     // rather than on every round. Level-triggered: the question is whether a
@@ -364,18 +427,14 @@ export async function runOperatorRound(opts: OperatorRoundOptions): Promise<Oper
       const lastSeen = opts.scheduleState?.get(config.name);
       const due = lastSeen === undefined ? cronMatches(cron, now) : cronDueBetween(cron, lastSeen, now);
       opts.scheduleState?.set(config.name, now);
-      if (!due && resumed === undefined) {
-        events.push(
-          wait
-            ? { kind: "waiting-on-point", op: config.name, env, point: wait.point, question: wait.question, state: wait.state }
-            : { kind: "skipped-not-due", op: config.name, env, cron },
-        );
+      if (!due && !resuming) {
+        events.push(standing ?? { kind: "skipped-not-due", op: config.name, env, cron });
         continue;
       }
-    } else if (steward && resumed === undefined) {
+    } else if (steward && !resuming) {
       // An unscheduled Op runs when someone asks for it; the steward runs it
-      // only to resume its own waiting run.
-      if (wait) events.push({ kind: "waiting-on-point", op: config.name, env, point: wait.point, question: wait.question, state: wait.state });
+      // only to resume its own waiting or gated run.
+      if (standing) events.push(standing);
       continue;
     }
 
@@ -462,7 +521,14 @@ export async function runOperatorRound(opts: OperatorRoundOptions): Promise<Oper
       const held = await stillHoldsLease(config.name, holder, lease.token, { cwd: opts.cwd });
       events.push(
         held
-          ? { kind: "ticked", op: config.name, env, result, ...(resumed !== undefined ? { resumed } : {}) }
+          ? {
+              kind: "ticked",
+              op: config.name,
+              env,
+              result,
+              ...(resumed !== undefined ? { resumed } : {}),
+              ...(approved !== undefined ? { approved } : {}),
+            }
           : { kind: "fenced", op: config.name, env },
       );
     } catch (err) {
@@ -694,9 +760,12 @@ export function formatRoundLine(event: OperatorTickEvent): string {
       return `operator: ${event.op}@${event.env} ticked=1 status=${event.result.status}` +
         (event.result.gate ? ` gate="${event.result.gate.gate}"` : "") +
         (event.result.point ? ` point="${event.result.point.id}"` : "") +
-        (event.resumed ? ` resumed="${event.resumed}"` : "");
+        (event.resumed ? ` resumed="${event.resumed}"` : "") +
+        (event.approved ? ` approved="${event.approved.op}/${event.approved.gate}"` : "");
     case "waiting-on-point":
       return `operator: ${event.op}@${event.env} waiting=1(point:${event.question}:${event.state})`;
+    case "waiting-on-gate":
+      return `operator: ${event.op}@${event.env} gated=1(gate:${event.gateOp}/${event.gate})`;
     case "skipped-lease-held":
       return `operator: ${event.op}@${event.env} skipped=1(lease-held${event.heldBy ? `:${event.heldBy}` : ""})`;
     case "skipped-not-due":

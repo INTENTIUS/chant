@@ -29,7 +29,7 @@ import {
 } from "../../op/operator";
 import { readLease, releaseLease, currentHolderId, DEFAULT_LEASE_TTL_MS } from "../../lifecycle/lease";
 import { readConvergeLedger, type ConvergeTickRecord } from "../../lifecycle/converge-ledger";
-import { readRunLedger } from "../../lifecycle/run-ledger";
+import { readRunLedger, runEnvOf } from "../../lifecycle/run-ledger";
 import type { OpRunRecord } from "../../op/runtime";
 import type { GateResolutionRecord, PendingGateRecord } from "../../lifecycle/gate-ledger";
 import {
@@ -413,6 +413,12 @@ async function statusFor(opName: string, env: string, cwd?: string): Promise<OpS
 export interface StandaloneGateLine {
   op: string;
   gate: string;
+  /**
+   * The Op whose newest run stopped at this gate, when the gate is a
+   * command's own rather than the Op's (#2779): a step running `chant
+   * workspace upgrade` stops its run at `workspace-upgrade` / `<scope>`.
+   */
+  run?: string;
   description?: string;
   expiresAt: string;
   url?: string;
@@ -458,6 +464,32 @@ export async function runOperatorStatus(ctx: CommandContext): Promise<number> {
     }
   }
 
+  // A gate a command decided inside an Op's step (#2779) is recorded under
+  // the command's op, which is not an `*.op.ts`, so the loop above never
+  // reads it. The Op's newest run names it; list it against that Op while it
+  // still stands.
+  for (const [opName, discovered] of [...allOps.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+    let newest: OpRunRecord | undefined;
+    try {
+      newest = (await readRunLedger(runEnvOf(discovered.config), opName)).records.at(-1);
+    } catch {
+      continue;
+    }
+    const gateOp = newest?.status === "gated" ? newest.gate?.op : undefined;
+    if (!newest?.gate || !gateOp || gateOp === opName) continue;
+    const record = (await pendingGatesFor(gateOp)).find((r) => r.gate === newest.gate!.name);
+    if (!record || covered.has(`${gateOp} ${record.gate}`)) continue;
+    covered.add(`${gateOp} ${record.gate}`);
+    standalone.push({
+      op: gateOp,
+      gate: record.gate,
+      run: opName,
+      expiresAt: record.expiresAt,
+      ...(record.description ? { description: record.description } : {}),
+      ...(record.url ? { url: record.url } : {}),
+    });
+  }
+
   if (ops.length === 0 && standalone.length === 0) {
     console.error(formatWarning({ message: "No ConvergeOp declarations found" }));
     return 0;
@@ -494,7 +526,7 @@ export async function runOperatorStatus(ctx: CommandContext): Promise<number> {
   if (standalone.length > 0) {
     console.log(formatBold("pending gates (no converge tick)"));
     for (const g of standalone) {
-      console.log(`  - ${g.op} gate "${g.gate}" — resolve: chant approve ${g.op} ${g.gate}`);
+      console.log(`  - ${g.op} gate "${g.gate}"${g.run ? ` (Op ${g.run}'s run stopped here)` : ""} — resolve: chant approve ${g.op} ${g.gate}`);
       if (g.description) console.log(`    ${g.description}`);
       console.log(`    expires: ${g.expiresAt}`);
       if (g.url) console.log(`    approve at: ${g.url}`);

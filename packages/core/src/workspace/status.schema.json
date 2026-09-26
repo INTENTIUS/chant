@@ -234,7 +234,16 @@
                       "gate": {
                         "oneOf": [
                           { "type": "null" },
-                          { "type": "object", "required": ["name", "since"], "properties": { "name": { "type": "string" }, "since": { "type": "string" } } }
+                          {
+                            "type": "object",
+                            "required": ["name", "since"],
+                            "properties": {
+                              "name": { "type": "string" },
+                              "since": { "type": "string" },
+                              "op": { "type": "string", "description": "The op the gate is recorded under: the Op's own, or the command's when a step's command stopped at a gate of its own (#2779), such as workspace-upgrade." },
+                              "approve": { "type": "string", "description": "The command that approves the gate, run in the member's directory." }
+                            }
+                          }
                         ]
                       },
                       "point": {
