@@ -281,6 +281,43 @@ export const b = new Bucket({ config: { y: 2 } });
     expect(result.diagnostics.some(d => d.ruleId === "COR001")).toBe(true);
     expect(result.diagnostics.filter(d => d.ruleId === "COR001")).toHaveLength(2);
   });
+
+  // #2511: a project-local rule that throws is an error, never a clean pass.
+  test("a project-local rule that throws fails the lint and names the rule, file and message", async () => {
+    await mkdir(join(testDir, ".chant", "rules"), { recursive: true });
+    await writeFile(
+      join(testDir, ".chant", "rules", "local.ts"),
+      `
+export const boom = {
+  id: "LOCAL_BOOM",
+  severity: "warning",
+  category: "correctness",
+  check() { throw new Error("cannot read sibling file"); },
+};
+export const fine = {
+  id: "LOCAL_FINE",
+  severity: "warning",
+  category: "correctness",
+  check(ctx) {
+    return [{ file: ctx.filePath, line: 1, column: 1, ruleId: "LOCAL_FINE", severity: "warning", message: "fine ran" }];
+  },
+};
+      `,
+    );
+    const file = join(testDir, "clean.ts");
+    await writeFile(file, `// chant-disable\nexport const config = { a: 1 };\n`);
+
+    const result = await lintCommand({ path: testDir, format: "stylish" });
+
+    expect(result.success).toBe(false);
+    const threw = result.diagnostics.filter((d) => d.ruleId === "LOCAL_BOOM");
+    expect(threw).toHaveLength(1);
+    expect(threw[0].severity).toBe("error");
+    expect(threw[0].file).toBe(file);
+    expect(threw[0].message).toContain("LOCAL_BOOM");
+    expect(threw[0].message).toContain(file);
+    expect(threw[0].message).toContain("cannot read sibling file");
+  });
 });
 
 describe("isLintRule", () => {

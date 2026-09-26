@@ -190,6 +190,23 @@ function isDiagnosticDisabled(
 }
 
 /**
+ * The error reported when a rule throws while checking a file (#2511). It
+ * names the rule, the file and the thrown message, at error severity so
+ * `chant lint` exits non-zero.
+ */
+export function ruleThrewDiagnostic(ruleId: string, filePath: string, error: unknown): LintDiagnostic {
+  const message = error instanceof Error ? error.message : String(error);
+  return {
+    file: filePath,
+    line: 1,
+    column: 1,
+    ruleId,
+    severity: "error",
+    message: `Rule ${ruleId} threw while checking ${filePath}: ${message}`,
+  };
+}
+
+/**
  * Execute lint rules on a set of files
  * @param files - Array of file paths to lint
  * @param rules - Array of lint rules to execute
@@ -239,11 +256,17 @@ export async function runLint(
         projectConfig,
       };
 
-      // Execute each rule
+      // Execute each rule. A rule that throws is reported as an error for
+      // this file (#2511) and the remaining rules still run.
+      const ruleErrors: LintDiagnostic[] = [];
       for (const rule of rules) {
         const options = ruleOptions?.get(rule.id);
-        const diagnostics = rule.check(context, options);
-        allDiagnostics.push(...diagnostics);
+        try {
+          const diagnostics = rule.check(context, options);
+          allDiagnostics.push(...diagnostics);
+        } catch (error) {
+          ruleErrors.push(ruleThrewDiagnostic(rule.id, filePath, error));
+        }
       }
 
       // Partition file diagnostics into active and suppressed
@@ -262,7 +285,10 @@ export async function runLint(
 
       // Replace file diagnostics with filtered ones
       allDiagnostics.length = 0;
-      allDiagnostics.push(...otherFileDiags, ...keptDiags);
+      // A rule's own failure is never suppressed by a disable comment: the
+      // comment is aimed at the rule's findings, and hiding the failure would
+      // make a rule that did not run look like a clean lint.
+      allDiagnostics.push(...otherFileDiags, ...keptDiags, ...ruleErrors);
     } catch (error) {
       // If parsing fails, skip this file and continue with others
       continue;
