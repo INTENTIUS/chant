@@ -5,13 +5,12 @@
  * is not open and appends the verdict to the session too, and
  * `records --since <session id>` compares the session's own revisions. The
  * fixture is a copy of the reference workspace's decisions and design
- * member with a declaration naming both kinds.
+ * member with a declaration naming both kinds. The CLI run of close and
+ * --since is in records-sessions-write.e2e.test.ts (#2817).
  */
 
-import { spawnSync } from "node:child_process";
 import { cpSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
 import { afterAll, describe, expect, test } from "vitest";
 import { cleanScratch, commitAll, contract, git, REPO, scratchDir } from "./__fixtures__/contract-repo";
 import { declareSessions, DECISIONS_KIND, newSessionFields, sessionsRepo, SESSIONS_KIND } from "./__fixtures__/sessions";
@@ -240,35 +239,4 @@ describe("records --since <session id> (#2693)", () => {
     git(root, "tag", "v-1");
     expect((await sinceDoc({ kind: DECISIONS_KIND, since: "v-1", cwd: root })).session).toBeUndefined();
   });
-
-  test(
-    "through the CLI: close with the declared session kind, and --since <session id> without --kind",
-    async () => {
-      const root = declared();
-      await opened(root);
-      const run = (...args: string[]) =>
-        spawnSync(process.execPath, ["--import", pathToFileURL(join(REPO, "node_modules/tsx/dist/loader.mjs")).href, join(REPO, "packages/core/src/cli/main.ts"), "workspace", "records", ...args], {
-          cwd: root,
-          encoding: "utf-8",
-          env: { ...process.env, NO_COLOR: "1" },
-          timeout: 60_000,
-        });
-      const closed = run("close", "S-0002");
-      expect(closed.status, closed.stderr).toBe(0);
-      close.expectValid(JSON.parse(closed.stdout));
-      const again = run("close", "S-0002");
-      expect(again.status).toBe(1);
-      expect(JSON.parse(again.stdout).error.code).toBe("record-closed");
-      commitAll(root, "close");
-      const set = run("--since", "S-0002", "--json");
-      expect(set.status, set.stderr).toBe(0);
-      const kinds = JSON.parse(set.stdout).kinds as RecordsSinceDocument[];
-      for (const k of kinds) since.expectValid(k);
-      expect(kinds.map((k) => ("session" in k ? k.session?.id : null))).toEqual(["S-0002", "S-0002"]);
-      const text = run("--kind", SESSIONS_KIND, "--since", "S-0002");
-      expect(text.stdout).toContain("session S-0002 (closed)");
-      expect(text.stdout).toContain("S-0002  new, closed");
-    },
-    120_000,
-  );
 });

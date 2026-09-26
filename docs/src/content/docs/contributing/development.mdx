@@ -45,6 +45,15 @@ npx vitest run lexicons/aws       # AWS lexicon only
 npx vitest run lexicons/k8s       # K8s lexicon only
 ```
 
+The suite is two vitest projects. `unit` is every test file except `*.e2e.test.ts`, and each of its tests has a 15 second budget: a test that runs longer fails with a message naming the budget. `e2e` is every `*.e2e.test.ts`, the tests that spawn the CLI, boot containers or release whole projects, all on the machine running the suite. They are not the cloud deployments on the [E2E Testing](/chant/contributing/e2e-testing/) page. CI runs the unit tests in four shards and the e2e tests in their own job, in parallel.
+
+```bash
+npx vitest run --project unit     # unit tests only
+npx vitest run --project e2e      # end-to-end tests only
+```
+
+A unit test over the budget either gets faster or moves into a `*.e2e.test.ts` file. `CHANT_UNIT_TEST_BUDGET_MS` sets a different budget for a local run, and `0` turns it off.
+
 ### Lexicon artifacts on a fresh clone
 
 Lexicon tests import each lexicon's generated barrel (`src/generated/`) and bundled `dist/meta.json`. Neither is committed. `just test` builds whatever is missing before running vitest (about a minute the first time, nothing afterwards). If you run `npx vitest run` directly on a fresh clone, the run stops before any test with a message naming the lexicons that need generating. Build them with either of these:

@@ -1,5 +1,5 @@
 import { cpus, totalmem } from "node:os";
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 import tsconfigPaths from "vite-tsconfig-paths";
 
 /**
@@ -35,100 +35,133 @@ const forkHeapMb = Math.max(
  * test had passed and the job went red. vitest-dev/vitest#8297 (shipped in
  * 4.0.0-beta.4) sets that timeout to -1; there is no 3.x option to raise it.
  */
+/**
+ * The suite is two vitest projects (chant #2817).
+ *
+ * `unit` is everything below, minus `*.e2e.test.ts`. CI runs it as four
+ * shards, and each of its tests has a time budget (`test/unit-test-budget.setup.ts`,
+ * 15s by default): a test that takes longer fails with a message naming the
+ * budget. One slow test sets the length of its whole shard, and every PR and
+ * release waits on the slowest shard.
+ *
+ * `e2e` is every `*.e2e.test.ts` under packages/, lexicons/ and test/, plus the
+ * testing-harness example. These spawn the CLI, boot containers, or build and
+ * release whole projects, and take tens of seconds to minutes each. CI runs
+ * them in their own job, `test-e2e`, in parallel with the shards, with no
+ * per-test budget beyond each test's own timeout.
+ *
+ * A test over the budget either gets faster or moves: split it into a sibling
+ * `<name>.e2e.test.ts` (or rename the file, when the whole file is end to end).
+ * `npx vitest run` runs both projects; `--project unit` or `--project e2e`
+ * picks one.
+ */
+export const UNIT_INCLUDE = [
+  // The top-level examples/ tree is not globbed wholesale: its fargate docker
+  // e2e/volume suites need Docker and are not CI tests. The shared example
+  // harness file is included explicitly.
+  "packages/**/*.test.ts",
+  "lexicons/**/*.test.ts",
+  "examples/examples.test.ts",
+  // Repo tooling in scripts/ was covered by nothing until #1688's dogwood
+  // freshness check arrived with pure comparison logic worth testing. A
+  // test here must be hermetic like any other in this suite — the network
+  // layer it covers is injectable for exactly that reason.
+  "scripts/**/*.test.ts",
+  // The alert-triage app ships colocated unit tests for its triage
+  // activities. (examples/ is not globbed wholesale — fargate's docker
+  // e2e/volume suites need Docker and aren't CI unit tests.)
+  "examples/alert-triage/**/*.test.ts",
+  // chant #1025 — the fold-vs-run differential corpus. Walks examples/
+  // and lexicons/*/examples/ itself (no Docker), so it's included
+  // explicitly the same way examples.test.ts is.
+  "test/no-consumer-apps.test.ts",
+  // chant #1996 — unit coverage for discoverCorpus() itself: a
+  // lexicons/*/examples/* fixture's own declared lexicons, not just the
+  // directory it lives under. Same corpus-walking shape as the
+  // differentials below (no Docker), but no build — just what the corpus
+  // entries came back as.
+  "examples/differential-corpus.test.ts",
+  "examples/fold-differential.test.ts",
+  // chant #2422/#2423 — what `foldProject()` needs beyond intrinsics
+  // before it answers the same question a build does. Same corpus-walking
+  // shape as the differential above (no Docker, no build).
+  "examples/fold-project-options.test.ts",
+  // chant #2347 — the adversarial corpus entry's own test: which of its
+  // files fold, which fall back, and which of those the taint fixpoint
+  // moved. The differential above builds the same entry and compares
+  // bytes; it cannot say which file did what, which for this entry is the
+  // whole claim.
+  "examples/fold-adversarial/*.test.ts",
+  // chant #1045 Phase 1 — the JSON entity-boundary differential. Same
+  // corpus-walking shape as fold-differential.test.ts above (no Docker).
+  "examples/json-boundary-differential.test.ts",
+  // chant #1045 Phase 2 — the sandboxed-run-vs-in-process-run
+  // differential. Same corpus-walking shape as the two above (no Docker;
+  // spawns real, short-lived child processes of its own instead).
+  "examples/sandbox-differential.test.ts",
+  // chant #1093 — the sandbox execution-boundary gate: over the same
+  // corpus, nothing from a project's own source directory may be imported
+  // into the CLI's process during a `{ fold: true, sandbox: true }` build.
+  "examples/sandbox-execution-boundary.test.ts",
+  // chant #1074 — the k8s API client boundary gate: nothing on the build
+  // path may statically import (or, when built for real, load) the
+  // optional Kubernetes client package. Same corpus-walking shape as the
+  // differentials above (no Docker, no cluster).
+  "examples/k8s-client-boundary.test.ts",
+  "examples/readme-counts.test.ts",
+  // chant #2249 (epic #2248) — the root-examples build-and-lint gate.
+  // One test per `examples/*` directory holding a `chant.config.*`,
+  // running that example's own package.json build/lint scripts through
+  // the CLI command modules. No Docker, no network; the same reason
+  // examples.test.ts is named here rather than globbed.
+  "examples/root-examples-gate.test.ts",
+  // chant #1224 — the testing-harness worked example's survival fixture. It
+  // is gated on the env vars the outer suite sets and skips cleanly in a
+  // plain run. The worked example itself is in E2E_INCLUDE below.
+  "examples/testing-harness-aws/fixtures/failing-suite.test.ts",
+  // chant #1419 — unit tests for the missing-artifacts guard below.
+  "test/lexicon-artifacts.test.ts",
+  // chant #1984 — the no-egress guard and the egress catalogue it checks
+  // itself against. Walks the same corpus the differentials above walk
+  // (no Docker, no network — that is the point), and additionally scans
+  // packages/ and lexicons/ for network primitives.
+  "test/no-egress.test.ts",
+  // chant #2404 — the behaviour coverage page against the contributed rows.
+  "test/behaviour-coverage.test.ts",
+  // chant #2526 — the level-0 goldens (rule 2 of #2525): the real CLI over
+  // a few example copies in a temp dir, each command's output held against
+  // a committed golden, plus the no-workspace-module check on the same
+  // runs and the ledger-path fixture. No Docker, no network.
+  "test/level0-goldens/*.test.ts",
+  // chant #2543 — the reference workspace, chant's integration fixture:
+  // its members' build, lint and test, and its decision files read by
+  // `chant workspace records`. No Docker, no network.
+  "test/reference-workspace.test.ts",
+  // chant #2657 — the chant and hud boundary (ws-052): the owner roster in
+  // docs/data/boundary.yaml against the code's closed lists, and the
+  // static guard that packages/core opens no listener and imports no UI
+  // or agent-runtime package. Both read source only.
+  "test/boundary-roster.test.ts",
+  "test/no-listener.test.ts",
+  // chant #2817 — the per-test budget's own value and message. The run that
+  // shows a slow test failing on it is test/unit-test-budget.e2e.test.ts.
+  "test/unit-test-budget.test.ts",
+];
+
+/** The end-to-end files: out of the shards, into CI's `test-e2e` job. */
+export const E2E_INCLUDE = [
+  "packages/**/*.e2e.test.ts",
+  "lexicons/**/*.e2e.test.ts",
+  "test/**/*.e2e.test.ts",
+  // chant #1224 — the testing-harness worked example. Gated on
+  // CHANT_HARNESS_E2E and skips cleanly in a plain run; Docker and Floci come
+  // into play only via `just testing-harness-e2e`.
+  "examples/testing-harness-aws/harness.e2e.test.ts",
+];
+
 export default defineConfig({
   plugins: [tsconfigPaths({ ignoreConfigErrors: true })],
   test: {
-    // Note: the top-level examples/ tree is not globbed wholesale — its
-    // fargate docker e2e/volume suites need Docker and are not CI unit tests.
-    // The shared example harness file is included explicitly.
-    include: [
-      "packages/**/*.test.ts",
-      "lexicons/**/*.test.ts",
-      "examples/examples.test.ts",
-      // Repo tooling in scripts/ was covered by nothing until #1688's dogwood
-      // freshness check arrived with pure comparison logic worth testing. A
-      // test here must be hermetic like any other in this suite — the network
-      // layer it covers is injectable for exactly that reason.
-      "scripts/**/*.test.ts",
-      // The alert-triage app ships colocated unit tests for its triage
-      // activities. (examples/ is not globbed wholesale — fargate's docker
-      // e2e/volume suites need Docker and aren't CI unit tests.)
-      "examples/alert-triage/**/*.test.ts",
-      // chant #1025 — the fold-vs-run differential corpus. Walks examples/
-      // and lexicons/*/examples/ itself (no Docker), so it's included
-      // explicitly the same way examples.test.ts is.
-      "test/no-consumer-apps.test.ts",
-      // chant #1996 — unit coverage for discoverCorpus() itself: a
-      // lexicons/*/examples/* fixture's own declared lexicons, not just the
-      // directory it lives under. Same corpus-walking shape as the
-      // differentials below (no Docker), but no build — just what the corpus
-      // entries came back as.
-      "examples/differential-corpus.test.ts",
-      "examples/fold-differential.test.ts",
-      // chant #2422/#2423 — what `foldProject()` needs beyond intrinsics
-      // before it answers the same question a build does. Same corpus-walking
-      // shape as the differential above (no Docker, no build).
-      "examples/fold-project-options.test.ts",
-      // chant #2347 — the adversarial corpus entry's own test: which of its
-      // files fold, which fall back, and which of those the taint fixpoint
-      // moved. The differential above builds the same entry and compares
-      // bytes; it cannot say which file did what, which for this entry is the
-      // whole claim.
-      "examples/fold-adversarial/*.test.ts",
-      // chant #1045 Phase 1 — the JSON entity-boundary differential. Same
-      // corpus-walking shape as fold-differential.test.ts above (no Docker).
-      "examples/json-boundary-differential.test.ts",
-      // chant #1045 Phase 2 — the sandboxed-run-vs-in-process-run
-      // differential. Same corpus-walking shape as the two above (no Docker;
-      // spawns real, short-lived child processes of its own instead).
-      "examples/sandbox-differential.test.ts",
-      // chant #1093 — the sandbox execution-boundary gate: over the same
-      // corpus, nothing from a project's own source directory may be imported
-      // into the CLI's process during a `{ fold: true, sandbox: true }` build.
-      "examples/sandbox-execution-boundary.test.ts",
-      // chant #1074 — the k8s API client boundary gate: nothing on the build
-      // path may statically import (or, when built for real, load) the
-      // optional Kubernetes client package. Same corpus-walking shape as the
-      // differentials above (no Docker, no cluster).
-      "examples/k8s-client-boundary.test.ts",
-      "examples/readme-counts.test.ts",
-      // chant #2249 (epic #2248) — the root-examples build-and-lint gate.
-      // One test per `examples/*` directory holding a `chant.config.*`,
-      // running that example's own package.json build/lint scripts through
-      // the CLI command modules. No Docker, no network; the same reason
-      // examples.test.ts is named here rather than globbed.
-      "examples/root-examples-gate.test.ts",
-      // chant #1224 — the testing-harness worked example and its survival
-      // fixture. Both are gated (CHANT_HARNESS_E2E; the fixture on the env
-      // vars the outer suite sets) and skip cleanly in a plain run — Docker
-      // and Floci come into play only via `just testing-harness-e2e`.
-      "examples/testing-harness-aws/harness.e2e.test.ts",
-      "examples/testing-harness-aws/fixtures/failing-suite.test.ts",
-      // chant #1419 — unit tests for the missing-artifacts guard below.
-      "test/lexicon-artifacts.test.ts",
-      // chant #1984 — the no-egress guard and the egress catalogue it checks
-      // itself against. Walks the same corpus the differentials above walk
-      // (no Docker, no network — that is the point), and additionally scans
-      // packages/ and lexicons/ for network primitives.
-      "test/no-egress.test.ts",
-      // chant #2404 — the behaviour coverage page against the contributed rows.
-      "test/behaviour-coverage.test.ts",
-      // chant #2526 — the level-0 goldens (rule 2 of #2525): the real CLI over
-      // a few example copies in a temp dir, each command's output held against
-      // a committed golden, plus the no-workspace-module check on the same
-      // runs and the ledger-path fixture. No Docker, no network.
-      "test/level0-goldens/*.test.ts",
-      // chant #2543 — the reference workspace, chant's integration fixture:
-      // its members' build, lint and test, and its decision files read by
-      // `chant workspace records`. No Docker, no network.
-      "test/reference-workspace.test.ts",
-      // chant #2657 — the chant and hud boundary (ws-052): the owner roster in
-      // docs/data/boundary.yaml against the code's closed lists, and the
-      // static guard that packages/core opens no listener and imports no UI
-      // or agent-runtime package. Both read source only.
-      "test/boundary-roster.test.ts",
-      "test/no-listener.test.ts",
-    ],
     // chant #1419 — a fresh clone has no lexicon src/generated/ or
     // dist/meta.json, and lexicon tests fail against their absence with
     // module-not-found and plain assertion errors. `just test` builds them
@@ -147,5 +180,25 @@ export default defineConfig({
     // while still making progress. 20s absorbs that without masking a
     // genuinely hung test for long.
     testTimeout: 20_000,
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: "unit",
+          include: UNIT_INCLUDE,
+          exclude: [...configDefaults.exclude, "**/*.e2e.test.ts"],
+          // The per-test budget (chant #2817). CHANT_UNIT_TEST_BUDGET_MS
+          // overrides the 15s default; 0 turns it off, for a debugger.
+          setupFiles: ["test/unit-test-budget.setup.ts"],
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: "e2e",
+          include: E2E_INCLUDE,
+        },
+      },
+    ],
   },
 });

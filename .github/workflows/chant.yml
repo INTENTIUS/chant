@@ -56,29 +56,12 @@ jobs:
           restore-keys: |
             lexicon-schemas-
 
+      # Every lexicon's prepack (generate, bundle, validate, build): the
+      # generates one at a time, then the rest with one lexicon per CPU
+      # (#2817). Run in sequence this step took 4 to 5 minutes in every job
+      # that needs the artifacts.
       - name: Generate lexicon artifacts
-        run: |
-          npm run --prefix lexicons/aws prepack
-          npm run --prefix lexicons/azure prepack
-          npm run --prefix lexicons/gitlab prepack
-          npm run --prefix lexicons/github prepack
-          npm run --prefix lexicons/forgejo prepack
-          npm run --prefix lexicons/otel prepack
-          npm run --prefix lexicons/k8s prepack
-          npm run --prefix lexicons/gcp prepack
-          npm run --prefix lexicons/helm prepack
-          npm run --prefix lexicons/docker prepack
-          npm run --prefix lexicons/fly prepack
-          npm run --prefix lexicons/fountain prepack
-          npm run --prefix lexicons/k3d prepack
-          npm run --prefix lexicons/k3s prepack
-          npm run --prefix lexicons/render prepack
-          npm run --prefix lexicons/terraform prepack
-          # cedar generates from the project's own .cedarschema, falling
-          # back to the schema bundled at src/spec/default-schema.cedarschema
-          # so a clean checkout still produces a surface to gate (#1650).
-          npm run --prefix lexicons/cedar prepack
-          npm run --prefix lexicons/cpln prepack
+        run: scripts/ci-lexicon-artifacts.sh
 
       - name: Typecheck
         run: npx tsc --noEmit -p packages/core/tsconfig.json
@@ -100,6 +83,10 @@ jobs:
         run: npx tsc --noEmit -p packages/k8s-client/tsconfig.build.json
 
       - name: Lexicon completeness contract (#1067)
+        # The prepack above ends with each lexicon's `npm run build`, the same
+        # tsc build check-lexicons runs; the second run doubled this step (#2817).
+        env:
+          CHECK_LEXICONS_SKIP_BUILD: "1"
         run: npx tsx scripts/check-lexicons.ts
 
       # #1388 — the two typechecks above cover packages/core and k8s-client, and
@@ -149,6 +136,14 @@ jobs:
           test -s config-bom.spdx.json
           rm -f result.json sbom.spdx.json config-bom.spdx.json
 
+      # #2817: each run's length in its summary, so drift shows before it
+      # becomes a timeout.
+      - name: Record the job's duration
+        if: always()
+        run: |
+          elapsed=$(( $(date +%s) - ${{ steps.start-time.outputs.epoch }} ))
+          echo "check ran $((elapsed / 60))m$((elapsed % 60))s" | tee -a "$GITHUB_STEP_SUMMARY"
+
       - name: Upload SARIF results
         if: always()
         uses: github/codeql-action/upload-sarif@v4
@@ -171,10 +166,14 @@ jobs:
             echo "${message}" >> "$GITHUB_STEP_SUMMARY"
           fi
 
-  # The suite runs as four vitest shards in parallel. vitest assigns each test
-  # file to exactly one shard (sorted by a hash of its path), so the four
-  # together run the same files a single `npx vitest run` does. The required
-  # `test` check is the aggregate job below, not these.
+  # The unit tests run as four vitest shards in parallel. vitest assigns each
+  # test file to exactly one shard (sorted by a hash of its path), so the four
+  # together run the same files `npx vitest run --project unit` does. The
+  # end-to-end files (*.e2e.test.ts) are the `e2e` project and run in the
+  # test-e2e job below, in parallel with the shards (#2817). Every unit test
+  # has a 15s budget (test/unit-test-budget.setup.ts): one slow test sets the
+  # length of its shard, and every PR and release waits on the slowest job.
+  # The required `test` check is the aggregate job below, not these.
   test-shard:
     name: test-shard (${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
@@ -211,29 +210,12 @@ jobs:
           restore-keys: |
             lexicon-schemas-
 
+      # Every lexicon's prepack (generate, bundle, validate, build): the
+      # generates one at a time, then the rest with one lexicon per CPU
+      # (#2817). Run in sequence this step took 4 to 5 minutes in every job
+      # that needs the artifacts.
       - name: Generate lexicon artifacts
-        run: |
-          npm run --prefix lexicons/aws prepack
-          npm run --prefix lexicons/azure prepack
-          npm run --prefix lexicons/gitlab prepack
-          npm run --prefix lexicons/github prepack
-          npm run --prefix lexicons/forgejo prepack
-          npm run --prefix lexicons/otel prepack
-          npm run --prefix lexicons/k8s prepack
-          npm run --prefix lexicons/gcp prepack
-          npm run --prefix lexicons/helm prepack
-          npm run --prefix lexicons/docker prepack
-          npm run --prefix lexicons/fly prepack
-          npm run --prefix lexicons/fountain prepack
-          npm run --prefix lexicons/k3d prepack
-          npm run --prefix lexicons/k3s prepack
-          npm run --prefix lexicons/render prepack
-          npm run --prefix lexicons/terraform prepack
-          # cedar generates from the project's own .cedarschema, falling
-          # back to the schema bundled at src/spec/default-schema.cedarschema
-          # so a clean checkout still produces a surface to gate (#1650).
-          npm run --prefix lexicons/cedar prepack
-          npm run --prefix lexicons/cpln prepack
+        run: scripts/ci-lexicon-artifacts.sh
 
       # The helm lexicon targets Helm 4 (epic #1228); the runner image ships
       # Helm 3. Pin the version the render tests run against.
@@ -245,14 +227,33 @@ jobs:
           sudo install /tmp/linux-amd64/helm /usr/local/bin/helm
           helm version --short
 
+      # vitest orders a shard's files by their last recorded duration, longest
+      # first, when it has one, and by file size when it does not. Keeping its
+      # results between runs lets a long file start first instead of last.
+      - name: Restore vitest's recorded durations
+        uses: actions/cache@v5
+        with:
+          path: node_modules/.vite/vitest
+          key: vitest-results-unit-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            vitest-results-unit-${{ matrix.shard }}-
+
       # Includes examples/fold-differential.test.ts (#1025, epic #1019) — the
       # fold-vs-run zero-drift gate over examples/* + every lexicon's own
       # examples/* fixtures. It's a normal vitest file (see
-      # vitest.config.ts's `include`), gated here like everything else in
+      # vitest.config.ts's UNIT_INCLUDE), gated here like everything else in
       # this step; `just fold-differential` runs it alone with its
       # per-source report.
-      - name: Run tests (shard ${{ matrix.shard }}/4)
-        run: npx vitest run --shard=${{ matrix.shard }}/4
+      - name: Run unit tests (shard ${{ matrix.shard }}/4)
+        run: npx vitest run --project unit --shard=${{ matrix.shard }}/4
+
+      # #2817: each run's length in its summary, so drift shows before it
+      # becomes a timeout.
+      - name: Record the job's duration
+        if: always()
+        run: |
+          elapsed=$(( $(date +%s) - ${{ steps.start-time.outputs.epoch }} ))
+          echo "test shard ${{ matrix.shard }}/4 ran $((elapsed / 60))m$((elapsed % 60))s" | tee -a "$GITHUB_STEP_SUMMARY"
 
       # #2076, a job-level timeout-minutes cancels the job rather than
       # failing it (GitHub Actions docs, "expressions": cancelled() is true
@@ -270,25 +271,95 @@ jobs:
             echo "${message}" >> "$GITHUB_STEP_SUMMARY"
           fi
 
+  # The end-to-end tests (#2817): every *.e2e.test.ts, the vitest `e2e`
+  # project. They spawn the CLI, boot containers or release whole projects,
+  # and take from tens of seconds to minutes each (#2812's migrated release
+  # has a 20 minute timeout), so they run here, in parallel with the unit
+  # shards, with no per-test budget. Required through the `test` job below.
+  test-e2e:
+    runs-on: ubuntu-latest
+    # #2812's migrated-release test allows itself 20 minutes; the setup
+    # before it is about 3.
+    timeout-minutes: 25
+    steps:
+      - name: Record job start time
+        id: start-time
+        run: echo "epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Cache lexicon schemas
+        uses: actions/cache@v5
+        with:
+          path: ~/.chant
+          key: lexicon-schemas-${{ hashFiles('lexicons/*/src/**/fetch.ts', 'lexicons/*/src/**/versions.ts') }}
+          restore-keys: |
+            lexicon-schemas-
+
+      - name: Generate lexicon artifacts
+        run: scripts/ci-lexicon-artifacts.sh
+
+      # Longest file first, as in the shards: the longest e2e file is several
+      # times the next, and started last it would set the job's length.
+      - name: Restore vitest's recorded durations
+        uses: actions/cache@v5
+        with:
+          path: node_modules/.vite/vitest
+          key: vitest-results-e2e-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            vitest-results-e2e-
+
+      - name: Run end-to-end tests
+        run: npx vitest run --project e2e
+
+      - name: Record the job's duration
+        if: always()
+        run: |
+          elapsed=$(( $(date +%s) - ${{ steps.start-time.outputs.epoch }} ))
+          echo "test-e2e ran $((elapsed / 60))m$((elapsed % 60))s" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Report a timeout, distinct from a test failure
+        if: cancelled()
+        run: |
+          elapsed=$(( ($(date +%s) - ${{ steps.start-time.outputs.epoch }}) / 60 ))
+          message="test-e2e timed out after ~${elapsed}m against its 25 minute ceiling. This is a CI timeout, not a test failure."
+          echo "::error::${message}"
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+            echo "${message}" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   # The required status check. Branch protection requires a check named
-  # `test`; this job reports it and passes only when every shard passed. It
-  # runs with always() so a failed or cancelled shard still produces a red
-  # `test` rather than a skipped one.
+  # `test`; this job reports it and passes only when every unit shard and
+  # the e2e job passed, so test-e2e is required without a change to branch
+  # protection (#2817). It runs with always() so a failed or cancelled job
+  # still produces a red `test` rather than a skipped one.
   test:
-    needs: test-shard
+    needs: [test-shard, test-e2e]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Require every test shard to pass
+      - name: Require every test shard and the e2e tests to pass
         env:
           SHARDS: ${{ needs.test-shard.result }}
+          E2E: ${{ needs.test-e2e.result }}
         run: |
           echo "test-shard result: ${SHARDS}"
+          echo "test-e2e result: ${E2E}"
           if [ "${SHARDS}" != "success" ]; then
             echo "::error::One or more test shards did not succeed (result: ${SHARDS})."
-            exit 1
           fi
+          if [ "${E2E}" != "success" ]; then
+            echo "::error::The end-to-end tests did not succeed (result: ${E2E})."
+          fi
+          [ "${SHARDS}" = "success" ] && [ "${E2E}" = "success" ]
 
   validate:
     runs-on: ubuntu-latest
